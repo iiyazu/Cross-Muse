@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from enum import StrEnum
 from typing import Protocol
 
 import httpx
@@ -11,6 +12,12 @@ from xmuse_core.integrations.memoryos_namespace import MemoryOSNamespace
 logger = logging.getLogger(__name__)
 
 
+class MemoryOSMemoryLayer(StrEnum):
+    PINNED_CORE = "pinned_core"
+    TASK_STATE = "task_state"
+    ARCHIVAL = "archival"
+
+
 class MemoryOSPage(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -18,14 +25,18 @@ class MemoryOSPage(BaseModel):
     content: str
     source_refs: list[str] = Field(default_factory=list)
     metadata: dict[str, object] = Field(default_factory=dict)
+    actor_id: str | None = None
+    memory_layer: MemoryOSMemoryLayer = MemoryOSMemoryLayer.TASK_STATE
 
 
 class MemoryOSIngestRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     namespace: MemoryOSNamespace
+    actor_id: str = Field(min_length=1)
     content: str = Field(min_length=1)
     source_refs: list[str] = Field(default_factory=list)
+    memory_layer: MemoryOSMemoryLayer = MemoryOSMemoryLayer.TASK_STATE
     metadata: dict[str, object] = Field(default_factory=dict)
     promote_to_shared: bool = False
     shared_namespace: MemoryOSNamespace | None = None
@@ -77,6 +88,7 @@ class MemoryOSClientProtocol(Protocol):
 class FakeMemoryOSClient:
     def __init__(self) -> None:
         self._pages_by_namespace: dict[str, list[MemoryOSPage]] = {}
+        self._tombstoned_source_refs_by_namespace: dict[str, set[str]] = {}
 
     async def ingest(self, request: MemoryOSIngestRequest) -> MemoryOSIngestResult:
         page = MemoryOSPage(
@@ -84,6 +96,8 @@ class FakeMemoryOSClient:
             content=request.content,
             source_refs=_dedupe(request.source_refs),
             metadata=dict(request.metadata),
+            actor_id=request.actor_id,
+            memory_layer=request.memory_layer,
         )
         self._pages_by_namespace.setdefault(request.namespace.uri, []).append(page)
         if request.promote_to_shared and request.shared_namespace is not None:
@@ -119,12 +133,26 @@ class FakeMemoryOSClient:
     ) -> list[MemoryOSPage]:
         query_lower = query.lower()
         pages = self._pages_by_namespace.get(namespace.uri, [])
+        tombstoned_source_refs = self._tombstoned_source_refs_by_namespace.get(
+            namespace.uri,
+            set(),
+        )
         matched = [
             page
             for page in pages
             if not query_lower or query_lower in page.content.lower()
+            if not tombstoned_source_refs.intersection(page.source_refs)
         ]
         return matched[:limit]
+
+    def tombstone_source_refs(
+        self,
+        namespace: MemoryOSNamespace,
+        *,
+        source_refs: list[str],
+    ) -> None:
+        refs = {_clean_ref(ref) for ref in source_refs}
+        self._tombstoned_source_refs_by_namespace.setdefault(namespace.uri, set()).update(refs)
 
 
 class RestMemoryOSClient:
@@ -146,8 +174,10 @@ class RestMemoryOSClient:
                 json={
                     "namespace": request.namespace.model_dump(mode="json"),
                     "namespace_uri": request.namespace.uri,
+                    "actor_id": request.actor_id,
                     "content": request.content,
                     "source_refs": request.source_refs,
+                    "memory_layer": request.memory_layer.value,
                     "metadata": request.metadata,
                     "promote_to_shared": request.promote_to_shared,
                     "shared_namespace_uri": (
@@ -238,6 +268,13 @@ def _memory_ref_for_page(page: MemoryOSPage) -> str:
     if page.source_refs:
         return f"{page.namespace_uri}/refs/{page.source_refs[0]}"
     return f"{page.namespace_uri}/refs/inline"
+
+
+def _clean_ref(value: str) -> str:
+    value = value.strip()
+    if not value:
+        raise ValueError("source_ref must be non-empty")
+    return value
 
 
 def _dedupe(values: list[str]) -> list[str]:

@@ -33,6 +33,7 @@ GOD groupchat deliberation
 | `docs/xmuse/mainline-contracts.md` | 当前产品主线合同：GOD 群聊、blueprint freeze、laneDAG、review/GitHub gate、REST-first MemoryOS |
 | `docs/xmuse/deep-research-02-next-goal.md` | 第二轮深度研究转化目标，定义 #13-#19 的下一阶段任务 |
 | `docs/xmuse/github-review-merge-contract.md` | GitHub PR template、CODEOWNERS、required checks 和 merge-ready 合同 |
+| `docs/xmuse/memoryos-governance-contract.md` | MemoryOS namespace、actor identity、memory layer、redaction、tombstone 和 MCP 写入边界 |
 | `docs/xmuse/解耦开发协议.md` | 四层解耦边界、事件契约、数据权威和开发规则 |
 | `docs/xmuse/walkthrough-maintenance-notes.md` | 逐步走读 xmuse 时维护的当前实现事实、进度和非生产级记录 |
 | `docs/xmuse/walkthrough-maintenance-notes-v7.md` | 群聊层 runtime 生产级闭环线：真实长 session、provider binding、MCP writeback、latency gate |

@@ -28,6 +28,7 @@ class MemoryOSWritebackEvent(BaseModel):
 
     kind: MemoryOSWritebackKind
     namespace: MemoryOSNamespace
+    actor_id: str = Field(min_length=1)
     event_id: str = Field(min_length=1)
     summary: str = Field(min_length=1)
     source_refs: list[str] = Field(default_factory=list)
@@ -55,6 +56,7 @@ class MemoryOSWritebackEvent(BaseModel):
         source_refs = _dedupe([self.deterministic_source_ref, *self.source_refs])
         return MemoryOSIngestRequest(
             namespace=self.namespace,
+            actor_id=self.actor_id,
             content=_render_event_content(self.kind, self.summary, source_refs),
             source_refs=source_refs,
             metadata={"memory_writeback_kind": self.kind, **self.metadata},

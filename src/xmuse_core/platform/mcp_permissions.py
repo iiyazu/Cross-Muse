@@ -205,7 +205,12 @@ MUTATING_TOOL_NAMES = {
 }
 
 
-def authorize_mcp_tool(tool_name: str, *, role: str) -> McpAuthorizationDecision:
+def authorize_mcp_tool(
+    tool_name: str,
+    *,
+    role: str,
+    host_auth_enabled: bool = False,
+) -> McpAuthorizationDecision:
     metadata = MCP_TOOL_PERMISSIONS.get(tool_name)
     if metadata is None:
         return McpAuthorizationDecision(
@@ -215,6 +220,14 @@ def authorize_mcp_tool(tool_name: str, *, role: str) -> McpAuthorizationDecision
             role=role,
         )
     role = role.strip().lower()
+    if metadata.family == "memory" and metadata.mutates and not host_auth_enabled:
+        return McpAuthorizationDecision(
+            allowed=False,
+            reason=f"memory write tool {tool_name} requires host auth/RBAC",
+            tool_name=tool_name,
+            role=role,
+            permission_category=metadata.permission_category,
+        )
     if role == "admin":
         return McpAuthorizationDecision(
             allowed=True,

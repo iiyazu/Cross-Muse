@@ -11,6 +11,7 @@ class MemoryOSNamespaceKind(StrEnum):
     CONVERSATION = "conversation"
     PARTICIPANT = "participant"
     SHARED = "shared"
+    TASK = "task"
 
 
 class MemoryOSNamespace(BaseModel):
@@ -21,6 +22,11 @@ class MemoryOSNamespace(BaseModel):
     workspace_id: str | None = None
     conversation_id: str | None = None
     participant_id: str | None = None
+    god_id: str | None = None
+    thread_id: str | None = None
+    blueprint_id: str | None = None
+    feature_id: str | None = None
+    lane_id: str | None = None
 
     @model_validator(mode="after")
     def _validate_kind_fields(self) -> MemoryOSNamespace:
@@ -36,6 +42,23 @@ class MemoryOSNamespace(BaseModel):
             raise ValueError("participant namespace requires conversation_id and participant_id")
         if self.kind is MemoryOSNamespaceKind.SHARED and not self.repo_id:
             raise ValueError("shared namespace requires repo_id")
+        if self.kind is MemoryOSNamespaceKind.TASK:
+            missing = [
+                field_name
+                for field_name, value in {
+                    "repo_id": self.repo_id,
+                    "workspace_id": self.workspace_id,
+                    "god_id": self.god_id,
+                    "conversation_id": self.conversation_id,
+                    "thread_id": self.thread_id,
+                    "blueprint_id": self.blueprint_id,
+                    "feature_id": self.feature_id,
+                    "lane_id": self.lane_id,
+                }.items()
+                if not value
+            ]
+            if missing:
+                raise ValueError("task namespace missing dimensions: " + ", ".join(missing))
         return self
 
     @property
@@ -48,6 +71,13 @@ class MemoryOSNamespace(BaseModel):
             return f"memory://conversation/{self.conversation_id}"
         if self.kind is MemoryOSNamespaceKind.PARTICIPANT:
             return f"memory://conversation/{self.conversation_id}/god/{self.participant_id}"
+        if self.kind is MemoryOSNamespaceKind.TASK:
+            return (
+                f"memory://repo/{self.repo_id}/workspace/{self.workspace_id}"
+                f"/conversation/{self.conversation_id}/thread/{self.thread_id}"
+                f"/god/{self.god_id}/blueprint/{self.blueprint_id}"
+                f"/feature/{self.feature_id}/lane/{self.lane_id}"
+            )
         return f"memory://global/shared/{self.repo_id}"
 
 
@@ -96,6 +126,30 @@ def participant_namespace(conversation_id: str, participant_id: str) -> MemoryOS
 
 def shared_namespace(repo_id: str) -> MemoryOSNamespace:
     return MemoryOSNamespace(kind=MemoryOSNamespaceKind.SHARED, repo_id=_clean(repo_id))
+
+
+def task_namespace(
+    *,
+    repo_id: str,
+    workspace_id: str,
+    god_id: str,
+    conversation_id: str,
+    thread_id: str,
+    blueprint_id: str,
+    feature_id: str,
+    lane_id: str,
+) -> MemoryOSNamespace:
+    return MemoryOSNamespace(
+        kind=MemoryOSNamespaceKind.TASK,
+        repo_id=_clean(repo_id),
+        workspace_id=_clean(workspace_id),
+        god_id=_clean(god_id),
+        conversation_id=_clean(conversation_id),
+        thread_id=_clean(thread_id),
+        blueprint_id=_clean(blueprint_id),
+        feature_id=_clean(feature_id),
+        lane_id=_clean(lane_id),
+    )
 
 
 def deterministic_memory_source_ref(
