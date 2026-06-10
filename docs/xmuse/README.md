@@ -37,6 +37,7 @@ GOD groupchat deliberation
 | `docs/xmuse/real-runtime-integration-gate.md` | 第三轮无 secrets focused gate，区分 contract proof 与 runtime proof |
 | `docs/xmuse/github-server-side-gate.md` | GitHub branch protection、required checks、CODEOWNER review 和 PR evidence 的服务器侧配置合同 |
 | `docs/xmuse/broad-suite-baseline-debt.md` | 全仓 format、legacy chat API、live MemoryOS Lite、real provider/Ray/Codex 缺口登记表 |
+| `docs/xmuse/memoryos-lite-runtime-compatibility.md` | MemoryOS Lite 公共 API payload、ContextPackage 解析、namespace/session 持久绑定与 live opt-in 兼容闭环 |
 | `docs/xmuse/github-review-merge-contract.md` | GitHub PR template、CODEOWNERS、required checks 和 merge-ready 合同 |
 | `docs/xmuse/memoryos-governance-contract.md` | MemoryOS namespace、actor identity、memory layer、redaction、tombstone 和 MCP 写入边界 |
 | `docs/xmuse/解耦开发协议.md` | 四层解耦边界、事件契约、数据权威和开发规则 |

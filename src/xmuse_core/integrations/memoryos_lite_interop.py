@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import os
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any, Literal
 
 import httpx
@@ -17,11 +19,13 @@ from xmuse_core.integrations.memoryos_client import (
     MemoryOSPage,
 )
 from xmuse_core.integrations.memoryos_namespace import MemoryOSNamespace
+from xmuse_core.runtime.paths import default_xmuse_root
 
 logger = logging.getLogger(__name__)
 
 LIVE_MEMORYOS_LITE_ENV = "XMUSE_LIVE_MEMORYOS_LITE"
 MEMORYOS_LITE_BASE_URL_ENV = "XMUSE_MEMORYOS_LITE_URL"
+DEFAULT_BINDING_STORE_NAME = "memoryos_lite_sessions.json"
 
 
 class MemoryOSLiteSessionBinding(BaseModel):
@@ -30,6 +34,103 @@ class MemoryOSLiteSessionBinding(BaseModel):
     namespace_uri: str
     session_id: str = Field(min_length=1)
     session_title: str = Field(min_length=1)
+    status: Literal["active", "stale"] = "active"
+    stale_reason: str | None = None
+
+
+class MemoryOSLiteSessionBindingStore:
+    def __init__(self, path: str | Path | None = None) -> None:
+        root = default_xmuse_root("xmuse")
+        self.path = Path(path) if path is not None else root / DEFAULT_BINDING_STORE_NAME
+
+    def get(self, namespace_uri: str) -> MemoryOSLiteSessionBinding | None:
+        for binding in self._load():
+            if binding.namespace_uri == namespace_uri and binding.status == "active":
+                return binding
+        return None
+
+    def list_stale(self, namespace_uri: str | None = None) -> list[MemoryOSLiteSessionBinding]:
+        return [
+            binding
+            for binding in self._load()
+            if binding.status == "stale"
+            if namespace_uri is None or binding.namespace_uri == namespace_uri
+        ]
+
+    def upsert_active(
+        self,
+        *,
+        namespace_uri: str,
+        session_id: str,
+        session_title: str,
+    ) -> MemoryOSLiteSessionBinding:
+        binding = MemoryOSLiteSessionBinding(
+            namespace_uri=namespace_uri,
+            session_id=session_id,
+            session_title=session_title,
+            status="active",
+        )
+        bindings = [
+            existing
+            for existing in self._load()
+            if not (existing.namespace_uri == namespace_uri and existing.status == "active")
+        ]
+        bindings.append(binding)
+        self._save(bindings)
+        return binding
+
+    def mark_stale(
+        self,
+        binding: MemoryOSLiteSessionBinding,
+        *,
+        reason: str,
+    ) -> MemoryOSLiteSessionBinding:
+        stale = binding.model_copy(
+            update={
+                "status": "stale",
+                "stale_reason": reason,
+            }
+        )
+        bindings = [
+            existing
+            for existing in self._load()
+            if not (
+                existing.namespace_uri == binding.namespace_uri
+                and existing.session_id == binding.session_id
+                and existing.status == "active"
+            )
+        ]
+        bindings.append(stale)
+        self._save(bindings)
+        return stale
+
+    def _load(self) -> list[MemoryOSLiteSessionBinding]:
+        if not self.path.exists():
+            return []
+        payload = json.loads(self.path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("memoryos lite binding store must be an object")
+        bindings = payload.get("bindings", [])
+        if not isinstance(bindings, list):
+            raise ValueError("memoryos lite binding store bindings must be a list")
+        return [
+            MemoryOSLiteSessionBinding.model_validate(item)
+            for item in bindings
+            if isinstance(item, dict)
+        ]
+
+    def _save(self, bindings: list[MemoryOSLiteSessionBinding]) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "schema_version": "xmuse.memoryos_lite_sessions.v1",
+            "bindings": [binding.model_dump(mode="json") for binding in bindings],
+        }
+        temp_path = self.path.with_suffix(self.path.suffix + ".tmp")
+        temp_path.write_text(
+            json.dumps(payload, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        temp_path.replace(self.path)
 
 
 class MemoryOSLiteEndpointPlan(BaseModel):
@@ -61,9 +162,11 @@ class MemoryOSLiteInteropAdapter:
         *,
         base_url: str,
         http_client: httpx.AsyncClient | None = None,
+        binding_store: MemoryOSLiteSessionBindingStore | None = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._client = http_client
+        self._binding_store = binding_store or MemoryOSLiteSessionBindingStore()
         self._sessions_by_namespace_uri: dict[str, MemoryOSLiteSessionBinding] = {}
 
     async def ingest(self, request: MemoryOSIngestRequest) -> MemoryOSIngestResult:
@@ -74,6 +177,16 @@ class MemoryOSLiteInteropAdapter:
                 degraded_reason="memoryos_lite_unavailable",
             )
         result = await self._ingest_to_binding(binding, request)
+        if _is_stale_session_result(result):
+            stale_result = await self._replace_stale_binding(
+                request.namespace,
+                binding,
+                reason=result.degraded_reason or "memoryos_lite_session_not_found",
+            )
+            if stale_result is None:
+                return result
+            binding = stale_result
+            result = await self._ingest_to_binding(binding, request)
         if result.ok and request.promote_to_shared and request.shared_namespace is not None:
             shared_binding = await self._ensure_session(request.shared_namespace)
             if shared_binding is not None:
@@ -95,15 +208,12 @@ class MemoryOSLiteInteropAdapter:
                 degraded_reason="memoryos_lite_unavailable",
             )
         try:
-            response = await self._http().post(
-                f"{self._base_url}/sessions/{binding.session_id}/build-context",
-                json=build_memoryos_lite_build_context_payload(
-                    query=query,
-                    budget=budget,
-                ),
+            payload = await self._post_build_context_with_stale_retry(
+                namespace,
+                binding,
+                query=query,
+                budget=budget,
             )
-            response.raise_for_status()
-            payload = response.json()
             text = _context_text(payload)
             return MemoryOSContext(
                 namespace_uri=namespace.uri,
@@ -129,16 +239,12 @@ class MemoryOSLiteInteropAdapter:
         if binding is None:
             return []
         try:
-            response = await self._http().post(
-                f"{self._base_url}/memory/search",
-                json=build_memoryos_lite_search_payload(
-                    session_id=binding.session_id,
-                    query=query,
-                    limit=limit,
-                ),
+            payload = await self._post_search_with_stale_retry(
+                namespace,
+                binding,
+                query=query,
+                limit=limit,
             )
-            response.raise_for_status()
-            payload = response.json()
             if not isinstance(payload, list):
                 return []
             return [
@@ -157,6 +263,10 @@ class MemoryOSLiteInteropAdapter:
         existing = self._sessions_by_namespace_uri.get(namespace.uri)
         if existing is not None:
             return existing
+        persisted = self._binding_store.get(namespace.uri)
+        if persisted is not None:
+            self._sessions_by_namespace_uri[namespace.uri] = persisted
+            return persisted
         try:
             response = await self._http().post(
                 f"{self._base_url}/sessions",
@@ -167,7 +277,7 @@ class MemoryOSLiteInteropAdapter:
             session_id = str(payload.get("id") or "")
             if not session_id:
                 return None
-            binding = MemoryOSLiteSessionBinding(
+            binding = self._binding_store.upsert_active(
                 namespace_uri=namespace.uri,
                 session_id=session_id,
                 session_title=memoryos_lite_session_title(namespace),
@@ -197,6 +307,17 @@ class MemoryOSLiteInteropAdapter:
                 ok=True,
                 memory_ref=f"{binding.namespace_uri}/messages/{suffix}",
             )
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                return MemoryOSIngestResult(
+                    ok=False,
+                    degraded_reason="memoryos_lite_session_not_found",
+                )
+            logger.warning("memoryos-lite ingest degraded: %s", exc)
+            return MemoryOSIngestResult(
+                ok=False,
+                degraded_reason="memoryos_lite_unavailable",
+            )
         except (httpx.HTTPError, ValueError) as exc:
             logger.warning("memoryos-lite ingest degraded: %s", exc)
             return MemoryOSIngestResult(
@@ -209,6 +330,95 @@ class MemoryOSLiteInteropAdapter:
             return self._client
         self._client = httpx.AsyncClient()
         return self._client
+
+    async def _replace_stale_binding(
+        self,
+        namespace: MemoryOSNamespace,
+        binding: MemoryOSLiteSessionBinding,
+        *,
+        reason: str,
+    ) -> MemoryOSLiteSessionBinding | None:
+        self._binding_store.mark_stale(binding, reason=reason)
+        self._sessions_by_namespace_uri.pop(namespace.uri, None)
+        return await self._ensure_session(namespace)
+
+    async def _post_build_context_with_stale_retry(
+        self,
+        namespace: MemoryOSNamespace,
+        binding: MemoryOSLiteSessionBinding,
+        *,
+        query: str,
+        budget: int,
+    ) -> object:
+        try:
+            response = await self._http().post(
+                f"{self._base_url}/sessions/{binding.session_id}/build-context",
+                json=build_memoryos_lite_build_context_payload(
+                    query=query,
+                    budget=budget,
+                ),
+            )
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code != 404:
+                raise
+            fresh = await self._replace_stale_binding(
+                namespace,
+                binding,
+                reason="memoryos_lite_session_not_found",
+            )
+            if fresh is None:
+                raise
+            response = await self._http().post(
+                f"{self._base_url}/sessions/{fresh.session_id}/build-context",
+                json=build_memoryos_lite_build_context_payload(
+                    query=query,
+                    budget=budget,
+                ),
+            )
+            response.raise_for_status()
+            return response.json()
+
+    async def _post_search_with_stale_retry(
+        self,
+        namespace: MemoryOSNamespace,
+        binding: MemoryOSLiteSessionBinding,
+        *,
+        query: str,
+        limit: int,
+    ) -> object:
+        try:
+            response = await self._http().post(
+                f"{self._base_url}/memory/search",
+                json=build_memoryos_lite_search_payload(
+                    session_id=binding.session_id,
+                    query=query,
+                    limit=limit,
+                ),
+            )
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code != 404:
+                raise
+            fresh = await self._replace_stale_binding(
+                namespace,
+                binding,
+                reason="memoryos_lite_session_not_found",
+            )
+            if fresh is None:
+                raise
+            response = await self._http().post(
+                f"{self._base_url}/memory/search",
+                json=build_memoryos_lite_search_payload(
+                    session_id=fresh.session_id,
+                    query=query,
+                    limit=limit,
+                ),
+            )
+            response.raise_for_status()
+            return response.json()
 
 
 def build_memoryos_lite_interop_plan(
@@ -250,13 +460,11 @@ def build_memoryos_lite_build_context_payload(
     *,
     query: str,
     budget: int,
-    include_global_core: bool = False,
 ) -> dict[str, object]:
     return {
         "task": query,
         "budget": budget,
         "retrieval_query": query,
-        "include_global_core": include_global_core,
     }
 
 
@@ -270,7 +478,6 @@ def build_memoryos_lite_search_payload(
         "query": query,
         "top_k": limit,
         "session_id": session_id,
-        "limit": limit,
     }
 
 
@@ -324,6 +531,9 @@ def _context_source_refs(payload: object) -> list[str]:
     if not isinstance(payload, dict):
         return []
     refs: list[str] = []
+    metadata = payload.get("metadata", {})
+    if isinstance(metadata, dict):
+        refs.extend(_string_list(metadata.get("xmuse_source_refs")))
     for item in payload.get("retrieved_evidence", []):
         if isinstance(item, dict):
             metadata = item.get("metadata", {})
@@ -341,6 +551,10 @@ def _context_source_refs(payload: object) -> list[str]:
             if isinstance(message_id, str):
                 refs.append(f"memoryos-lite-message:{message_id}")
     return refs
+
+
+def _is_stale_session_result(result: MemoryOSIngestResult) -> bool:
+    return result.degraded_reason == "memoryos_lite_session_not_found"
 
 
 def _page_from_search_hit(
@@ -401,6 +615,7 @@ __all__ = [
     "MemoryOSLiteInteropAdapter",
     "MemoryOSLiteInteropPlan",
     "MemoryOSLiteSessionBinding",
+    "MemoryOSLiteSessionBindingStore",
     "build_memoryos_lite_build_context_payload",
     "build_memoryos_lite_create_session_payload",
     "build_memoryos_lite_ingest_payload",

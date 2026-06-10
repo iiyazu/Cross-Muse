@@ -14,6 +14,7 @@ from xmuse_core.integrations.memoryos_lite_interop import (
     LIVE_MEMORYOS_LITE_ENV,
     MEMORYOS_LITE_BASE_URL_ENV,
     MemoryOSLiteInteropAdapter,
+    MemoryOSLiteSessionBindingStore,
     build_memoryos_lite_build_context_payload,
     build_memoryos_lite_create_session_payload,
     build_memoryos_lite_ingest_payload,
@@ -72,7 +73,6 @@ def test_memoryos_lite_payload_builders_match_session_centric_api() -> None:
         "task": "lane",
         "budget": 2048,
         "retrieval_query": "lane",
-        "include_global_core": False,
     }
     assert build_memoryos_lite_search_payload(
         session_id="ses-1",
@@ -82,7 +82,6 @@ def test_memoryos_lite_payload_builders_match_session_centric_api() -> None:
         "query": "lane",
         "top_k": 3,
         "session_id": "ses-1",
-        "limit": 3,
     }
 
     payload = build_memoryos_lite_ingest_payload(ingest_request)
@@ -99,7 +98,9 @@ def test_memoryos_lite_payload_builders_match_session_centric_api() -> None:
 
 
 @pytest.mark.asyncio
-async def test_memoryos_lite_adapter_uses_sessions_ingest_and_context_endpoints() -> None:
+async def test_memoryos_lite_adapter_uses_sessions_ingest_and_context_endpoints(
+    tmp_path,
+) -> None:
     namespace = _task_namespace()
     requests: list[tuple[str, dict[str, object]]] = []
 
@@ -157,6 +158,7 @@ async def test_memoryos_lite_adapter_uses_sessions_ingest_and_context_endpoints(
         adapter = MemoryOSLiteInteropAdapter(
             base_url="http://memoryos-lite.test",
             http_client=http_client,
+            binding_store=MemoryOSLiteSessionBindingStore(tmp_path / "memoryos_lite_sessions.json"),
         )
         result = await adapter.ingest(
             MemoryOSIngestRequest(
@@ -182,7 +184,7 @@ async def test_memoryos_lite_adapter_uses_sessions_ingest_and_context_endpoints(
 
 
 @pytest.mark.asyncio
-async def test_memoryos_lite_adapter_maps_search_hits_to_xmuse_pages() -> None:
+async def test_memoryos_lite_adapter_maps_search_hits_to_xmuse_pages(tmp_path) -> None:
     namespace = _task_namespace()
 
     def route(request: httpx.Request) -> httpx.Response:
@@ -194,7 +196,6 @@ async def test_memoryos_lite_adapter_maps_search_hits_to_xmuse_pages() -> None:
                 "query": "lane",
                 "top_k": 2,
                 "session_id": "ses-task-1",
-                "limit": 2,
             }
             return httpx.Response(
                 200,
@@ -222,6 +223,7 @@ async def test_memoryos_lite_adapter_maps_search_hits_to_xmuse_pages() -> None:
         adapter = MemoryOSLiteInteropAdapter(
             base_url="http://memoryos-lite.test",
             http_client=http_client,
+            binding_store=MemoryOSLiteSessionBindingStore(tmp_path / "memoryos_lite_sessions.json"),
         )
         results = await adapter.search(namespace, query="lane", limit=2)
 
@@ -232,6 +234,188 @@ async def test_memoryos_lite_adapter_maps_search_hits_to_xmuse_pages() -> None:
     assert results[0].source_refs == ["msg-1"]
     assert results[0].metadata["memoryos_lite_page_id"] == "page-1"
     assert results[0].metadata["memoryos_lite_reason"] == "hybrid"
+
+
+@pytest.mark.asyncio
+async def test_context_package_public_shape_does_not_require_retrieved_evidence(
+    tmp_path,
+) -> None:
+    namespace = _task_namespace()
+
+    def route(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode() or "{}")
+        if request.url.path == "/sessions":
+            return httpx.Response(200, json={"id": "ses-task-1"})
+        if request.url.path == "/sessions/ses-task-1/build-context":
+            assert "include_global_core" not in payload
+            return httpx.Response(
+                200,
+                json={
+                    "session_id": "ses-task-1",
+                    "task": "review",
+                    "pinned_core": ["Pinned core rule."],
+                    "active_task_pages": [
+                        {
+                            "page_id": "page-active",
+                            "title": "Active task title",
+                            "reason": "still relevant",
+                            "estimated_tokens": 4,
+                        }
+                    ],
+                    "recent_messages": [
+                        {
+                            "id": "msg-recent",
+                            "session_id": "ses-task-1",
+                            "role": "assistant",
+                            "content": "Recent message with xmuse source refs.",
+                            "metadata": {
+                                "xmuse_source_refs": ["lane:recent"],
+                            },
+                        }
+                    ],
+                    "retrieved_pages": [
+                        {
+                            "page_id": "page-retrieved",
+                            "title": "Retrieved page title",
+                            "reason": "query match",
+                            "estimated_tokens": 4,
+                        }
+                    ],
+                    "dropped_pages": [
+                        {
+                            "page_id": "page-dropped",
+                            "title": "Dropped page title",
+                            "reason": "budget",
+                            "estimated_tokens": 4,
+                        }
+                    ],
+                    "metadata": {
+                        "xmuse_source_refs": ["context:metadata"],
+                    },
+                },
+            )
+        raise AssertionError(f"unexpected endpoint: {request.url.path}")
+
+    transport = httpx.MockTransport(route)
+    async with httpx.AsyncClient(transport=transport) as http_client:
+        adapter = MemoryOSLiteInteropAdapter(
+            base_url="http://memoryos-lite.test",
+            http_client=http_client,
+            binding_store=MemoryOSLiteSessionBindingStore(tmp_path / "memoryos_lite_sessions.json"),
+        )
+        context = await adapter.build_context(namespace, query="review", budget=1024)
+
+    assert "Pinned core rule." in context.text
+    assert "Active task title" in context.text
+    assert "Recent message with xmuse source refs." in context.text
+    assert "Retrieved page title" in context.text
+    assert "Dropped page title" not in context.text
+    assert context.source_refs == [
+        "context:metadata",
+        "lane:recent",
+        "memoryos-lite-message:msg-recent",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_namespace_session_binding_survives_adapter_recreation(tmp_path) -> None:
+    namespace = _task_namespace()
+    session_creations = 0
+    requests: list[str] = []
+
+    def route(request: httpx.Request) -> httpx.Response:
+        nonlocal session_creations
+        requests.append(request.url.path)
+        if request.url.path == "/sessions":
+            session_creations += 1
+            return httpx.Response(200, json={"id": "ses-persisted"})
+        if request.url.path == "/sessions/ses-persisted/ingest":
+            return httpx.Response(200, json={"message": {"id": "msg-ok"}})
+        raise AssertionError(f"unexpected endpoint: {request.url.path}")
+
+    store_path = tmp_path / "memoryos_lite_sessions.json"
+    transport = httpx.MockTransport(route)
+    async with httpx.AsyncClient(transport=transport) as http_client:
+        first = MemoryOSLiteInteropAdapter(
+            base_url="http://memoryos-lite.test",
+            http_client=http_client,
+            binding_store=MemoryOSLiteSessionBindingStore(store_path),
+        )
+        second = MemoryOSLiteInteropAdapter(
+            base_url="http://memoryos-lite.test",
+            http_client=http_client,
+            binding_store=MemoryOSLiteSessionBindingStore(store_path),
+        )
+        first_result = await first.ingest(
+            MemoryOSIngestRequest(
+                namespace=namespace,
+                actor_id="god-review",
+                content="first",
+            )
+        )
+        second_result = await second.ingest(
+            MemoryOSIngestRequest(
+                namespace=namespace,
+                actor_id="god-review",
+                content="second",
+            )
+        )
+
+    assert first_result.ok is True
+    assert second_result.ok is True
+    assert session_creations == 1
+    assert requests == [
+        "/sessions",
+        "/sessions/ses-persisted/ingest",
+        "/sessions/ses-persisted/ingest",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_stale_session_404_marks_binding_and_retries_with_new_session(tmp_path) -> None:
+    namespace = _task_namespace()
+    store = MemoryOSLiteSessionBindingStore(tmp_path / "memoryos_lite_sessions.json")
+    store.upsert_active(
+        namespace_uri=namespace.uri,
+        session_id="ses-stale",
+        session_title=memoryos_lite_session_title(namespace),
+    )
+    requests: list[str] = []
+
+    def route(request: httpx.Request) -> httpx.Response:
+        requests.append(request.url.path)
+        if request.url.path == "/sessions/ses-stale/ingest":
+            return httpx.Response(404, json={"detail": "session not found"})
+        if request.url.path == "/sessions":
+            return httpx.Response(200, json={"id": "ses-fresh"})
+        if request.url.path == "/sessions/ses-fresh/ingest":
+            return httpx.Response(200, json={"message": {"id": "msg-fresh"}})
+        raise AssertionError(f"unexpected endpoint: {request.url.path}")
+
+    transport = httpx.MockTransport(route)
+    async with httpx.AsyncClient(transport=transport) as http_client:
+        adapter = MemoryOSLiteInteropAdapter(
+            base_url="http://memoryos-lite.test",
+            http_client=http_client,
+            binding_store=store,
+        )
+        result = await adapter.ingest(
+            MemoryOSIngestRequest(
+                namespace=namespace,
+                actor_id="god-review",
+                content="retry",
+            )
+        )
+
+    assert result.ok is True
+    assert result.memory_ref == f"{namespace.uri}/messages/msg-fresh"
+    assert requests == [
+        "/sessions/ses-stale/ingest",
+        "/sessions",
+        "/sessions/ses-fresh/ingest",
+    ]
+    assert store.get(namespace.uri).session_id == "ses-fresh"
+    assert store.list_stale(namespace.uri)[0].session_id == "ses-stale"
 
 
 def test_live_memoryos_lite_requires_explicit_opt_in_and_base_url() -> None:
@@ -249,7 +433,7 @@ def test_live_memoryos_lite_requires_explicit_opt_in_and_base_url() -> None:
 
 
 @pytest.mark.asyncio
-async def test_live_memoryos_lite_service_contract_is_explicit_opt_in() -> None:
+async def test_live_memoryos_lite_service_contract_is_explicit_opt_in(tmp_path) -> None:
     if not live_memoryos_lite_enabled():
         pytest.skip(
             f"set {LIVE_MEMORYOS_LITE_ENV}=1 and {MEMORYOS_LITE_BASE_URL_ENV} "
@@ -258,12 +442,14 @@ async def test_live_memoryos_lite_service_contract_is_explicit_opt_in() -> None:
 
     base_url = os.environ[MEMORYOS_LITE_BASE_URL_ENV]
     namespace = _task_namespace()
+    store_path = tmp_path / "memoryos_lite_sessions.json"
     async with httpx.AsyncClient(timeout=10) as http_client:
         health = await http_client.get(f"{base_url.rstrip('/')}/health")
         health.raise_for_status()
         adapter = MemoryOSLiteInteropAdapter(
             base_url=base_url,
             http_client=http_client,
+            binding_store=MemoryOSLiteSessionBindingStore(store_path),
         )
         result = await adapter.ingest(
             MemoryOSIngestRequest(
@@ -274,7 +460,15 @@ async def test_live_memoryos_lite_service_contract_is_explicit_opt_in() -> None:
             )
         )
         context = await adapter.build_context(namespace, query="smoke", budget=256)
+        resumed = MemoryOSLiteInteropAdapter(
+            base_url=base_url,
+            http_client=http_client,
+            binding_store=MemoryOSLiteSessionBindingStore(store_path),
+        )
+        resumed_context = await resumed.build_context(namespace, query="smoke", budget=256)
 
     assert result.ok is True
     assert result.degraded_reason is None
     assert context.degraded_reason is None
+    assert context.text or context.source_refs
+    assert resumed_context.degraded_reason is None

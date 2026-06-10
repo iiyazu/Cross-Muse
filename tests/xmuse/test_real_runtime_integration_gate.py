@@ -8,6 +8,7 @@ README = PROJECT_ROOT / "docs" / "xmuse" / "README.md"
 GOAL_DOC = PROJECT_ROOT / "docs" / "xmuse" / "deep-research-03-next-goal.md"
 RUNTIME_GATE_DOC = PROJECT_ROOT / "docs" / "xmuse" / "real-runtime-integration-gate.md"
 BROAD_SUITE_DEBT_DOC = PROJECT_ROOT / "docs" / "xmuse" / "broad-suite-baseline-debt.md"
+MEMORYOS_COMPAT_DOC = PROJECT_ROOT / "docs" / "xmuse" / "memoryos-lite-runtime-compatibility.md"
 
 REAL_RUNTIME_GATE_TARGETS = {
     "tests/xmuse/test_github_server_gate_contract.py",
@@ -75,6 +76,7 @@ def test_deep_research_03_docs_define_contract_vs_runtime_proof() -> None:
     assert "docs/xmuse/deep-research-03-next-goal.md" in readme
     assert "docs/xmuse/real-runtime-integration-gate.md" in readme
     assert "docs/xmuse/broad-suite-baseline-debt.md" in readme
+    assert "docs/xmuse/memoryos-lite-runtime-compatibility.md" in readme
 
 
 def test_broad_suite_debt_registry_names_known_gaps_with_repro_commands() -> None:
@@ -95,3 +97,23 @@ def test_broad_suite_debt_registry_names_known_gaps_with_repro_commands() -> Non
         "The contract smoke gate is not a broad-suite green claim",
     ):
         assert fragment in debt_doc
+
+
+def test_memoryos_lite_runtime_compatibility_doc_names_public_contract() -> None:
+    doc = _read(MEMORYOS_COMPAT_DOC)
+
+    for fragment in (
+        "Public API Payload Contract",
+        "POST /sessions",
+        "POST /sessions/{id}/ingest",
+        "POST /sessions/{id}/build-context",
+        "POST /memory/search",
+        "does not send `include_global_core` or `limit`",
+        "`retrieved_evidence` is parsed when present",
+        "Durable Namespace Binding",
+        "MemoryOSNamespace.uri -> MemoryOS Lite session_id",
+        "${XMUSE_ROOT:-xmuse}/memoryos_lite_sessions.json",
+        "marks that binding `stale`",
+        "restart/resume continuity",
+    ):
+        assert fragment in doc

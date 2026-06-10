@@ -31,7 +31,7 @@ uv run mypy src/xmuse_core/integrations/memoryos_lite_interop.py
 | Layer | Evidence | Proof |
 | --- | --- | --- |
 | GitHub server settings | `github-server-side-gate.md`, workflow job names, CODEOWNERS, merge-readiness tests | Contract proof |
-| MemoryOS Lite interop | `memoryos_lite_interop.py`, fake HTTP endpoint tests | Contract proof |
+| MemoryOS Lite interop | `memoryos_lite_interop.py`, fake HTTP endpoint tests, `memoryos-lite-runtime-compatibility.md` | Contract proof |
 | Live MemoryOS Lite | operator-run service check with `XMUSE_LIVE_MEMORYOS_LITE=1` and `XMUSE_MEMORYOS_LITE_URL` | Runtime proof |
 | Provider / CLI / Ray soak | documented opt-in soak layers, not default PR CI | Runtime proof |
 | Broad-suite debt | `broad-suite-baseline-debt.md` | Contract proof of known gaps |
@@ -61,6 +61,11 @@ Message metadata carries:
 
 The fake contract proves payload shape and response mapping. A live opt-in run
 proves service compatibility.
+
+`docs/xmuse/memoryos-lite-runtime-compatibility.md` is the stricter runtime
+compatibility contract. It states that default payloads do not rely on
+`include_global_core` or `limit`, and that `retrieved_evidence` is optional
+compatibility data rather than a live-service requirement.
 
 ## Provider / CLI / Ray Soak Layers
 
