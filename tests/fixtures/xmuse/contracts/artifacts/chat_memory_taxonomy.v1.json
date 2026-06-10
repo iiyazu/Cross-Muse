@@ -1,0 +1,41 @@
+{
+  "description": "xmuse V6 chat-memory taxonomy — scope-to-category mapping",
+  "version": "1",
+  "scopes": {
+    "conversation_shared": {
+      "categories": ["conversation_summary", "session_boundary"],
+      "description": "Shared group-chat context that all participants can reference"
+    },
+    "blueprint_decision": {
+      "categories": ["blueprint_version", "decision_rationale", "feature_plan_ref"],
+      "description": "Mission/planning decisions and the rationale behind them"
+    },
+    "participant": {
+      "categories": ["participant_preference", "participant_history"],
+      "description": "Per-participant long-term memory, preferences, and history"
+    },
+    "unresolved_thread": {
+      "categories": ["thread_question", "thread_decision_pending"],
+      "description": "Dangling threads needing recall or resolution"
+    },
+    "cross_restart_recall": {
+      "categories": ["recovery_checkpoint", "session_boundary"],
+      "description": "Context needed to recover after runner restart"
+    }
+  },
+  "source_evidence_fields": {
+    "source_type": "message|card|proposal|blueprint|verdict|artifact",
+    "source_id": "string (required)",
+    "conversation_id": "string (required)",
+    "participant_id": "string (required)",
+    "timestamp": "datetime (required)",
+    "thread_id": "string (optional)",
+    "evidence_uri": "string (optional)"
+  },
+  "design_rationale": {
+    "separate_participant_scope": "Participant memory is isolated from shared conversation memory to support per-participant long-term preferences",
+    "unresolved_thread_as_first_class": "Threads that aren't resolved need explicit recall treatment, not implicit conversation summary",
+    "cross_restart_recall_as_scope": "Recovery context after restart is a different memory need than active shared memory",
+    "session_boundary_shared": "Session boundary category appears in both conversation_shared and cross_restart_recall to bridge active and recovery views"
+  }
+}

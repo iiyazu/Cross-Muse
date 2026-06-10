@@ -1,0 +1,46 @@
+{
+  "description": "xmuse V6 sidecar replay packet contract — example fixture",
+  "version": "1",
+  "packet": {
+    "packet_id": "replay_fixture_example",
+    "conversation_id": "conv_v6_demo",
+    "ingest_intent": "raw_message",
+    "scope_note": "initial conversation intake",
+    "items": [
+      {
+        "source_type": "message",
+        "source_id": "msg_001",
+        "conversation_id": "conv_v6_demo",
+        "participant_id": "p_human",
+        "content": "We need to implement feature X for the platform",
+        "timestamp": "2026-06-04T10:00:00Z",
+        "envelope_type": "message"
+      },
+      {
+        "source_type": "message",
+        "source_id": "msg_002",
+        "conversation_id": "conv_v6_demo",
+        "participant_id": "p_arch",
+        "content": "Let me analyze the requirements and create a plan",
+        "timestamp": "2026-06-04T10:01:00Z",
+        "envelope_type": "message"
+      },
+      {
+        "source_type": "blueprint",
+        "source_id": "prop_001",
+        "conversation_id": "conv_v6_demo",
+        "participant_id": "p_arch",
+        "content": "Mission blueprint: implement feature X across 3 lanes",
+        "timestamp": "2026-06-04T10:05:00Z",
+        "envelope_type": "mission_blueprint"
+      }
+    ],
+    "created_at": "2026-06-04T10:00:00Z"
+  },
+  "design_rationale": {
+    "packet_id_stable": "Deterministic from conversation_id + intent hash, reproducible",
+    "scope_note": "Optional hint linking to ChatMemoryScope for downstream routing",
+    "items_sorted": "Items are always sorted chronologically for deterministic replay",
+    "source_type_vs_envelope": "source_type is the canonical PacketSourceType; envelope_type preserves original xmuse envelope classification"
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "schema_version": "xmuse.event.v1",
+  "event_id": "evt_takeover_resolved_demo_v1",
+  "event_type": "takeover.resolved",
+  "producer": "coordinator",
+  "producer_session": "S2",
+  "consumers": ["god_chat_layer", "execution_scheduling", "dashboard"],
+  "consumer_sessions": ["S1", "S5", "S7"],
+  "delivery": "at_least_once",
+  "dedupe_strategy": "idempotency_key",
+  "idempotency_key": "takeover.resolved:takeover_demo:1",
+  "aggregate_key": "lane:lane_demo:12",
+  "aggregate": {
+    "type": "lane",
+    "id": "lane_demo",
+    "version": 12
+  },
+  "created_at": "2026-06-02T00:08:30Z",
+  "payload": {
+    "takeover_attempt_id": "takeover_demo",
+    "lane_id": "lane_demo",
+    "resolution": "accepted_for_manual_replan",
+    "artifact_refs": [
+      {
+        "artifact_type": "lane_graph",
+        "artifact_id": "lg_demo",
+        "version": 1,
+        "ref": "lane_graph:lg_demo:v1"
+      }
+    ],
+    "source_refs": ["event:evt_takeover_requested_demo_v1"]
+  }
+}

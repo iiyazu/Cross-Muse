@@ -1,0 +1,46 @@
+{
+  "schema_version": "xmuse.artifact.v1",
+  "artifact_type": "feature_graph_patch_forward_gate_result",
+  "artifact_id": "feature_graph_patch_forward_gate_result_demo",
+  "artifact_ref": "feature_graph_patch_forward_gate_result:feature_graph_patch_forward_gate_result_demo:v1",
+  "version": 1,
+  "created_at": "2026-06-03T02:19:00Z",
+  "updated_at": "2026-06-03T02:19:00Z",
+  "source_event_ref": "event:evt_patch_forward_gate_result_demo_v1",
+  "source_refs": [
+    "feature_graph_patch_forward_plan:feature_graph_patch_forward_plan_demo:v1",
+    "feature_review_verdict:fverdict_patch_forward_demo:v1",
+    "feature_evidence_bundle:fevb_demo:v1"
+  ],
+  "lineage": {
+    "source_event_refs": ["event:evt_patch_forward_gate_result_demo_v1"]
+  },
+  "ownership": {
+    "producer_session": "S2",
+    "consumer_sessions": ["S2"]
+  },
+  "payload": {
+    "result_id": "fgpfr:fverdict_patch_forward_demo:fevb_demo:20260603T021900z",
+    "plan_id": "fgpf:fverdict_patch_forward_demo:fevb_demo:20260603T021600z",
+    "verdict_id": "fverdict_patch_forward_demo",
+    "evidence_bundle_id": "fevb_demo",
+    "graph_set_id": "gs-xmuse-hardening",
+    "graph_set_version": 1,
+    "feature_id": "feature-provider-session-binding",
+    "feature_graph_id": "graph-provider-session-binding",
+    "reviewer_session_id": "god-review-demo",
+    "changed_file_refs": ["src/xmuse_core/agents/provider_session_binding.py"],
+    "lines_changed": 3,
+    "focused_gates_rerun": [
+      "uv run pytest -q tests/xmuse/test_provider_session_binding.py"
+    ],
+    "focused_gate_evidence_refs": ["logs/gates/provider-binding-patch-forward.json"],
+    "patch_diff_ref": "diffs/patch-forward/provider-session-binding.diff",
+    "verification_summary": "Focused provider session binding gate passed after reviewer patch.",
+    "introduced_dependency_refs": [],
+    "public_contract_change_refs": [],
+    "passed": true,
+    "failure_reasons": [],
+    "created_at": "2026-06-03T02:19:00Z"
+  }
+}
