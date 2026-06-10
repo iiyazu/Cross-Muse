@@ -1,6 +1,6 @@
 # xmuse 文档入口
 
-更新日期: 2026-06-03
+更新日期: 2026-06-10
 
 本目录是 xmuse 当前阶段的文档入口。旧的 `docs/superpowers/specs/` 和
 `docs/superpowers/plans/` 仍保留原路径，因为测试、lane graph 和历史记录会引用
@@ -11,19 +11,27 @@
 xmuse 的当前 north-star 是:
 
 ```text
-Ray 管理的持久化 GOD 群聊
--> 人类/GOD 对等讨论并产出 mission blueprint
--> LangGraph 或原生 workflow 将 blueprint 拆为 feature 和 lane graph
--> 并行 agentic worker 执行
--> review / rework / merge / takeover
--> TUI 展示群聊和 compact cards
--> dashboard 作为灰盒 drill-down
+GOD groupchat deliberation
+-> frozen blueprint
+-> feature/lane/laneDAG
+-> centralized execution/review
+-> GitHub merge gate
+-> REST-first MemoryOS
 ```
+
+`docs/xmuse/mainline-contracts.md` 是当前主线合同入口。它明确:
+
+- demo/legacy 路径只能作为 smoke、历史兼容或参考，不能绕过主线合同；
+- blueprint freeze 是去中心化 GOD deliberation 与中心化 execution/review 的边界；
+- graph-set / lane graph / review plane / GitHub checks / MemoryOS refs 才是对应阶段的权威，
+  `feature_lanes.json`、cards、dashboard/TUI 读模型是投影或视图。
 
 ## 当前权威文档
 
 | 文档 | 用途 |
 |---|---|
+| `docs/xmuse/mainline-contracts.md` | 当前产品主线合同：GOD 群聊、blueprint freeze、laneDAG、review/GitHub gate、REST-first MemoryOS |
+| `docs/xmuse/deep-research-02-next-goal.md` | 第二轮深度研究转化目标，定义 #13-#19 的下一阶段任务 |
 | `docs/xmuse/解耦开发协议.md` | 四层解耦边界、事件契约、数据权威和开发规则 |
 | `docs/xmuse/walkthrough-maintenance-notes.md` | 逐步走读 xmuse 时维护的当前实现事实、进度和非生产级记录 |
 | `docs/xmuse/walkthrough-maintenance-notes-v7.md` | 群聊层 runtime 生产级闭环线：真实长 session、provider binding、MCP writeback、latency gate |
