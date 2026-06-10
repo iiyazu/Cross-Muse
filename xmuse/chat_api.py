@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import ValidationError
 
 from xmuse_core.chat.api_models import (
+    BlueprintFreezeRequest,
     BootstrapApplyCreate,
     BootstrapProposalCreate,
     CollaborationBlockerCreate,
@@ -21,6 +22,7 @@ from xmuse_core.chat.api_models import (
     CollaborationRequestCreate,
     CollaborationResponseCreate,
     ConversationCreate,
+    DeliberationAppendCreate,
     DispatchClaimRequest,
     DispatchDispatchedRequest,
     DispatchFailedRequest,
@@ -38,6 +40,7 @@ from xmuse_core.chat.collaboration_contracts import (
     DispatchGateDecision,
 )
 from xmuse_core.chat.collaboration_store import ChatCollaborationStore
+from xmuse_core.chat.deliberation_engine import DeliberationFreezeGuard
 from xmuse_core.chat.dispatch_queue import ChatDispatchQueueStore
 from xmuse_core.chat.health_cards import build_run_health_chat_card
 from xmuse_core.chat.inbox_store import ChatInboxStore
@@ -50,6 +53,7 @@ from xmuse_core.chat.participant_store import (
 )
 from xmuse_core.chat.peer_proposals import classify_structured_proposal
 from xmuse_core.chat.peer_service import PeerChatError, PeerChatService
+from xmuse_core.chat.protocol_v2 import DeliberationMessageV1
 from xmuse_core.chat.store import ChatStore
 from xmuse_core.platform.read_contracts import build_execution_drilldown_refs
 from xmuse_core.platform.run_health import summarize_run_health
@@ -63,6 +67,12 @@ from xmuse_core.structuring.feature_plan_store import (
     save_approved_feature_plan_artifacts,
 )
 from xmuse_core.structuring.graph_store import LaneGraphStore
+from xmuse_core.structuring.mission_blueprint_v1 import (
+    MissionBlueprintDecisionLogEntry,
+    MissionBlueprintStatus,
+    MissionBlueprintV1,
+    render_mission_blueprint_markdown,
+)
 from xmuse_core.structuring.models import FeaturePlanFeature, FeaturePlanProposalApproval
 from xmuse_core.structuring.planner import build_lane_graph
 from xmuse_core.structuring.projection import project_ready_lanes
@@ -209,6 +219,125 @@ def _execute_feasibility_verdict_confirmed(content: str) -> bool:
 
 def _conversation_exists(store: ChatStore, conversation_id: str) -> bool:
     return any(conversation.id == conversation_id for conversation in store.list_conversations())
+
+
+def _deliberation_message_from_request(
+    conversation_id: str,
+    request: DeliberationAppendCreate,
+) -> DeliberationMessageV1:
+    return DeliberationMessageV1(
+        msg_id=request.msg_id,
+        conversation_id=conversation_id,
+        agent_id=request.agent_id,
+        lamport_ts=request.lamport_ts,
+        kind=request.kind,
+        parent_id=request.parent_id,
+        target_ref=request.target_ref,
+        mentions=request.mentions,
+        payload=request.payload,
+        source_refs=request.source_refs,
+        objection_level=request.objection_level,
+        decision_scope=request.decision_scope,
+    )
+
+
+def _deliberation_content(message: DeliberationMessageV1) -> str:
+    for key in ("summary", "question", "body", "commitment", "evidence", "vote"):
+        value = message.payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return f"{message.kind.value}: {message.msg_id}"
+
+
+def _stored_deliberation_messages(
+    store: ChatStore,
+    conversation_id: str,
+) -> list[DeliberationMessageV1]:
+    messages: list[DeliberationMessageV1] = []
+    for message in store.list_messages(conversation_id):
+        if message.envelope_type != "deliberation":
+            continue
+        envelope = message.envelope_json or {}
+        payload = envelope.get("message")
+        if not isinstance(payload, dict):
+            continue
+        try:
+            messages.append(DeliberationMessageV1.model_validate(payload))
+        except ValidationError:
+            continue
+    return messages
+
+
+def _frozen_blueprint_from_request(
+    request: BlueprintFreezeRequest,
+    *,
+    conversation_id: str,
+    decision_evidence_refs: list[str],
+    decision_open_questions: list[dict[str, Any]],
+    commit_agent_ids: list[str],
+) -> MissionBlueprintV1:
+    source_refs = _dedupe_text([*request.blueprint.source_refs, *decision_evidence_refs])
+    open_questions = _dedupe_text(
+        [
+            *request.blueprint.open_questions,
+            *[
+                str(question["question"])
+                for question in decision_open_questions
+                if isinstance(question.get("question"), str)
+            ],
+        ]
+    )
+    return MissionBlueprintV1(
+        blueprint_id=request.blueprint.blueprint_id,
+        conversation_id=conversation_id,
+        revision=request.blueprint.revision,
+        goal=request.blueprint.goal,
+        scope=request.blueprint.scope,
+        constraints=request.blueprint.constraints,
+        non_goals=request.blueprint.non_goals,
+        acceptance_contracts=request.blueprint.acceptance_contracts,
+        repo_areas=request.blueprint.repo_areas,
+        open_questions=open_questions,
+        decision_log=[
+            MissionBlueprintDecisionLogEntry(
+                decision="deliberation freeze allowed",
+                source_refs=decision_evidence_refs,
+            )
+        ],
+        source_refs=source_refs,
+        status=MissionBlueprintStatus.FROZEN,
+        approved_by=commit_agent_ids,
+    )
+
+
+def _blueprint_resolution_content(
+    blueprint: MissionBlueprintV1,
+    decision_payload: dict[str, Any],
+) -> dict[str, Any]:
+    markdown = render_mission_blueprint_markdown(blueprint)
+    return {
+        "type": "mission_blueprint",
+        "title": blueprint.goal,
+        "body": markdown,
+        "acceptance_criteria": blueprint.acceptance_contracts,
+        "references": blueprint.source_refs,
+        "blueprint_v1": blueprint.model_dump(mode="json"),
+        "markdown": markdown,
+        "freeze_decision": decision_payload,
+        "open_questions": blueprint.open_questions,
+        "repo_areas": blueprint.repo_areas,
+    }
+
+
+def _dedupe_text(values: list[str]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        result.append(value)
+    return result
 
 
 def _role_template_has_participants(base_dir: Path, template_id: str) -> bool:
@@ -1268,6 +1397,117 @@ def create_app(
             item.model_dump(mode="json") for item in result.inbox_items
         ]
         return payload
+
+    @app.post(
+        "/api/chat/conversations/{conversation_id}/deliberations",
+        status_code=status.HTTP_201_CREATED,
+    )
+    def append_deliberation(
+        conversation_id: str,
+        request: DeliberationAppendCreate,
+    ) -> dict[str, object]:
+        store = _store(root)
+        if not _conversation_exists(store, conversation_id):
+            raise HTTPException(status_code=404, detail="conversation not found")
+        try:
+            deliberation = _deliberation_message_from_request(conversation_id, request)
+        except ValidationError as exc:
+            raise HTTPException(status_code=422, detail=exc.errors()) from exc
+        idempotency_key = deliberation.idempotency_key()
+        message = store.add_message(
+            conversation_id=conversation_id,
+            author=deliberation.agent_id,
+            role="assistant",
+            content=_deliberation_content(deliberation),
+            envelope_type="deliberation",
+            envelope_json={
+                "type": "deliberation",
+                "message": deliberation.model_dump(mode="json"),
+                "idempotency_key": idempotency_key,
+            },
+            mentions=deliberation.mentions,
+            reply_to_message_id=deliberation.parent_id,
+        )
+        payload = message.model_dump(mode="json")
+        payload["deliberation"] = deliberation.model_dump(mode="json")
+        payload["idempotency_key"] = idempotency_key
+        return payload
+
+    @app.post(
+        "/api/chat/conversations/{conversation_id}/freeze-blueprint",
+        status_code=status.HTTP_201_CREATED,
+    )
+    def freeze_blueprint(
+        conversation_id: str,
+        request: BlueprintFreezeRequest,
+    ) -> dict[str, object]:
+        store = _store(root)
+        if not _conversation_exists(store, conversation_id):
+            raise HTTPException(status_code=404, detail="conversation not found")
+        deliberations = _stored_deliberation_messages(store, conversation_id)
+        decision = DeliberationFreezeGuard(
+            required_commits=request.required_commits,
+            objection_window_lamports=request.objection_window_lamports,
+        ).evaluate(deliberations, target_ref=request.target_ref)
+        decision_payload = decision.model_dump(mode="json")
+        if not decision.can_freeze:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "blueprint_freeze_blocked",
+                    "decision": decision_payload,
+                },
+            )
+        try:
+            blueprint = _frozen_blueprint_from_request(
+                request,
+                conversation_id=conversation_id,
+                decision_evidence_refs=decision.evidence_refs,
+                decision_open_questions=decision.open_questions,
+                commit_agent_ids=decision.commit_agent_ids,
+            )
+        except ValidationError as exc:
+            raise HTTPException(status_code=422, detail=exc.errors()) from exc
+        content = _blueprint_resolution_content(blueprint, decision_payload)
+        proposal = store.create_proposal(
+            conversation_id=conversation_id,
+            author="xmuse-deliberation",
+            proposal_type="mission_blueprint",
+            content=json.dumps(content, ensure_ascii=False, sort_keys=True),
+            references=blueprint.source_refs,
+        )
+        resolution = store.approve_proposal(
+            proposal.id,
+            approved_by=blueprint.approved_by,
+            approval_mode="deliberation_freeze",
+            goal_summary=blueprint.goal,
+            content=content,
+        )
+        resolution_payload = resolution.model_dump(mode="json")
+        _append_resolution_read_model(root, resolution_payload)
+        produce_blueprint_approval_event(root, resolution)
+        message = store.add_message(
+            conversation_id=conversation_id,
+            author="xmuse-deliberation",
+            role="assistant",
+            content=f"Frozen mission blueprint: {blueprint.goal}",
+            envelope_type="blueprint_freeze",
+            envelope_json={
+                "type": "blueprint_freeze",
+                "target_ref": request.target_ref,
+                "proposal_id": proposal.id,
+                "resolution_id": resolution.id,
+                "blueprint": blueprint.model_dump(mode="json"),
+                "decision": decision_payload,
+            },
+        )
+        return {
+            "decision": decision_payload,
+            "blueprint": blueprint.model_dump(mode="json"),
+            "proposal": proposal.model_dump(mode="json"),
+            "resolution": resolution_payload,
+            "message": message.model_dump(mode="json"),
+        }
 
     @app.post(
         "/api/chat/conversations/{conversation_id}/proposals",

@@ -151,6 +151,65 @@ class DispatchFailedRequest(BaseModel):
         return _strip_required_string(value)
 
 
+class DeliberationAppendCreate(BaseModel):
+    msg_id: str = Field(min_length=1)
+    agent_id: str = Field(min_length=1)
+    lamport_ts: int = Field(ge=0)
+    kind: Literal["note", "challenge", "proposal", "vote", "commit", "evidence"]
+    parent_id: str | None = None
+    target_ref: str | None = None
+    mentions: list[str] = Field(default_factory=list)
+    payload: dict[str, Any] = Field(default_factory=dict)
+    source_refs: list[str] = Field(default_factory=list)
+    objection_level: Literal["none", "non_blocking", "blocking"] = "none"
+    decision_scope: str = Field(min_length=1)
+
+    @field_validator(
+        "msg_id",
+        "agent_id",
+        "decision_scope",
+        mode="before",
+    )
+    @classmethod
+    def _strip_required_text(cls, value: object) -> object:
+        return _strip_required_string(value)
+
+    @field_validator("parent_id", "target_ref", mode="before")
+    @classmethod
+    def _strip_optional_text(cls, value: object) -> object:
+        return _strip_optional_string(value)
+
+
+class BlueprintFreezePayload(BaseModel):
+    blueprint_id: str = Field(min_length=1)
+    revision: int = Field(default=1, ge=1)
+    goal: str = Field(min_length=1)
+    scope: list[str] = Field(min_length=1)
+    constraints: list[str] = Field(default_factory=list)
+    non_goals: list[str] = Field(default_factory=list)
+    acceptance_contracts: list[str] = Field(min_length=1)
+    repo_areas: list[str] = Field(default_factory=list)
+    open_questions: list[str] = Field(default_factory=list)
+    source_refs: list[str] = Field(default_factory=list)
+
+    @field_validator("blueprint_id", "goal", mode="before")
+    @classmethod
+    def _strip_required_text(cls, value: object) -> object:
+        return _strip_required_string(value)
+
+
+class BlueprintFreezeRequest(BaseModel):
+    target_ref: str = Field(min_length=1)
+    blueprint: BlueprintFreezePayload
+    required_commits: int = Field(default=1, ge=1)
+    objection_window_lamports: int = Field(default=0, ge=0)
+
+    @field_validator("target_ref", mode="before")
+    @classmethod
+    def _strip_required_text(cls, value: object) -> object:
+        return _strip_required_string(value)
+
+
 class RoleTemplateCreate(BaseModel):
     slug: str = Field(min_length=1)
     display_name: str = Field(min_length=1)

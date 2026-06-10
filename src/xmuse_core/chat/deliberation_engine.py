@@ -48,10 +48,18 @@ class FreezeDecision(BaseModel):
 class DeliberationFreezeGuard:
     """Pure freeze guard over `DeliberationMessageV1` events."""
 
-    def __init__(self, *, required_commits: int = 1) -> None:
+    def __init__(
+        self,
+        *,
+        required_commits: int = 1,
+        objection_window_lamports: int = 0,
+    ) -> None:
         if required_commits < 1:
             raise ValueError("required_commits must be >= 1")
+        if objection_window_lamports < 0:
+            raise ValueError("objection_window_lamports must be >= 0")
         self.required_commits = required_commits
+        self.objection_window_lamports = objection_window_lamports
 
     def evaluate(
         self,
@@ -74,10 +82,31 @@ class DeliberationFreezeGuard:
             and message.payload.get("review") == "no_objection"
             for message in scoped_messages
         )
+        has_challenge = any(
+            message.kind is DeliberationMessageKind.CHALLENGE for message in scoped_messages
+        )
         if not proposal_message_ids and not has_no_objection_review:
             return self._decision(
                 FreezeDecisionStatus.DENIED,
                 "missing proposal or explicit no-objection review",
+                target_ref=target_ref,
+                evidence_refs=evidence_refs,
+                proposal_message_ids=proposal_message_ids,
+                duplicate_message_ids=duplicate_message_ids,
+            )
+        if proposal_message_ids and not has_challenge and not has_no_objection_review:
+            return self._decision(
+                FreezeDecisionStatus.DENIED,
+                "missing challenge or explicit no-objection review",
+                target_ref=target_ref,
+                evidence_refs=evidence_refs,
+                proposal_message_ids=proposal_message_ids,
+                duplicate_message_ids=duplicate_message_ids,
+            )
+        if not has_no_objection_review and self._objection_window_is_open(scoped_messages):
+            return self._decision(
+                FreezeDecisionStatus.DENIED,
+                "objection window still open",
                 target_ref=target_ref,
                 evidence_refs=evidence_refs,
                 proposal_message_ids=proposal_message_ids,
@@ -175,6 +204,20 @@ class DeliberationFreezeGuard:
             ):
                 resolved.add(message.parent_id)
         return resolved
+
+    def _objection_window_is_open(self, messages: list[DeliberationMessageV1]) -> bool:
+        if self.objection_window_lamports <= 0:
+            return False
+        proposal_ts = [
+            message.lamport_ts
+            for message in messages
+            if message.kind is DeliberationMessageKind.PROPOSAL
+        ]
+        if not proposal_ts:
+            return False
+        return max(message.lamport_ts for message in messages) < (
+            max(proposal_ts) + self.objection_window_lamports
+        )
 
     def _open_questions(self, messages: list[DeliberationMessageV1]) -> list[dict[str, Any]]:
         questions: list[dict[str, Any]] = []
