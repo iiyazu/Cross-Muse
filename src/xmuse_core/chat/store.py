@@ -976,7 +976,19 @@ class ChatStore:
                     status text not null,
                     created_at text not null
                 );
+
+                create table if not exists schema_migrations (
+                    version text primary key,
+                    applied_at text not null
+                );
                 """
+            )
+            conn.execute(
+                """
+                insert or ignore into schema_migrations (version, applied_at)
+                values (?, ?)
+                """,
+                ("chat_store_v1", _utc_now()),
             )
         self._seed_role_templates()
 

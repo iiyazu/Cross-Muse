@@ -8,8 +8,9 @@ from pathlib import Path
 from typing import Any
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
 from xmuse_core.chat.api_models import (
@@ -885,6 +886,7 @@ def create_app(
     base_dir: Path | str = DEFAULT_BASE_DIR,
     *,
     execution_worktree: Path | str | None = None,
+    auth_token: str | None = None,
 ) -> FastAPI:
     root = Path(base_dir)
     execution_root = Path(execution_worktree) if execution_worktree is not None else REPO_ROOT
@@ -896,6 +898,19 @@ def create_app(
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.middleware("http")
+    async def require_write_auth(request: Request, call_next):
+        if (
+            auth_token
+            and request.method in {"POST", "PUT", "PATCH", "DELETE"}
+            and request.headers.get("X-XMUSE-API-Key") != auth_token
+        ):
+            return JSONResponse(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                content={"detail": "authentication required"},
+            )
+        return await call_next(request)
 
     @app.get("/health")
     def health() -> dict[str, object]:
