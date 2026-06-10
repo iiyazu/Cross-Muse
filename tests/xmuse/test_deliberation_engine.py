@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from xmuse_core.chat.deliberation_engine import (
+    BlueprintArbitrationPolicy,
     DeliberationFreezeGuard,
     FreezeDecisionStatus,
 )
@@ -251,6 +252,178 @@ def test_freeze_requires_explicit_proposal_or_no_objection_review_note() -> None
     assert denied.status is FreezeDecisionStatus.DENIED
     assert denied.reason == "missing proposal or explicit no-objection review"
     assert allowed.status is FreezeDecisionStatus.ALLOWED
+
+
+def test_arbitration_quorum_requires_two_thirds_approval() -> None:
+    proposal = _message(
+        "msg-proposal",
+        kind=DeliberationMessageKind.PROPOSAL,
+        target_ref="blueprint:bp-1:1",
+        payload={"blueprint_id": "bp-1"},
+    )
+    review = _message(
+        "msg-review",
+        kind=DeliberationMessageKind.NOTE,
+        target_ref=proposal.target_ref,
+        payload={"review": "no_objection"},
+        agent_id="god-review",
+    )
+    commit = _message(
+        "msg-commit",
+        kind=DeliberationMessageKind.COMMIT,
+        target_ref=proposal.target_ref,
+        payload={"commitment": "ready_to_freeze"},
+    )
+    first_vote = _message(
+        "msg-vote-a",
+        kind=DeliberationMessageKind.VOTE,
+        target_ref=proposal.target_ref,
+        payload={"vote": "approve"},
+        agent_id="god-architect",
+    )
+    second_vote = _message(
+        "msg-vote-b",
+        kind=DeliberationMessageKind.VOTE,
+        target_ref=proposal.target_ref,
+        payload={"vote": "approve"},
+        agent_id="god-review",
+    )
+    guard = DeliberationFreezeGuard(
+        required_commits=1,
+        arbitration_policy=BlueprintArbitrationPolicy(
+            eligible_voter_ids=["god-architect", "god-review", "god-execute"],
+            approval_ratio=2 / 3,
+        ),
+    )
+
+    denied = guard.evaluate(
+        [proposal, review, commit, first_vote],
+        target_ref="blueprint:bp-1:1",
+    )
+    allowed = guard.evaluate(
+        [proposal, review, commit, first_vote, second_vote],
+        target_ref="blueprint:bp-1:1",
+    )
+
+    assert denied.status is FreezeDecisionStatus.DENIED
+    assert denied.reason == "arbitration quorum not satisfied"
+    assert denied.arbitration_required_approvals == 2
+    assert denied.arbitration_approval_agent_ids == ["god-architect"]
+    assert allowed.status is FreezeDecisionStatus.ALLOWED
+    assert allowed.arbitration_approval_agent_ids == ["god-architect", "god-review"]
+
+
+def test_veto_agent_blocking_challenge_denies_freeze_until_resolved() -> None:
+    proposal = _message(
+        "msg-proposal",
+        kind=DeliberationMessageKind.PROPOSAL,
+        target_ref="blueprint:bp-1:1",
+        payload={"blueprint_id": "bp-1"},
+    )
+    veto = _message(
+        "msg-veto",
+        kind=DeliberationMessageKind.CHALLENGE,
+        parent_id=proposal.msg_id,
+        target_ref=proposal.target_ref,
+        payload={"question": "Privacy impact is unspecified.", "veto": True},
+        objection_level=ObjectionLevel.BLOCKING,
+        agent_id="god-review",
+    )
+    response = _message(
+        "msg-response",
+        kind=DeliberationMessageKind.EVIDENCE,
+        parent_id=veto.msg_id,
+        target_ref=proposal.target_ref,
+        payload={"resolves": veto.msg_id, "evidence": "privacy impact added"},
+    )
+    commit = _message(
+        "msg-commit",
+        kind=DeliberationMessageKind.COMMIT,
+        target_ref=proposal.target_ref,
+        payload={"commitment": "ready_to_freeze"},
+    )
+    guard = DeliberationFreezeGuard(
+        required_commits=1,
+        arbitration_policy=BlueprintArbitrationPolicy(veto_agent_ids=["god-review"]),
+    )
+
+    denied = guard.evaluate([proposal, veto, commit], target_ref="blueprint:bp-1:1")
+    allowed = guard.evaluate(
+        [proposal, veto, response, commit],
+        target_ref="blueprint:bp-1:1",
+    )
+
+    assert denied.status is FreezeDecisionStatus.DENIED
+    assert denied.reason == "unresolved veto blockers"
+    assert denied.veto_blocker_ids == ["msg-veto"]
+    assert allowed.status is FreezeDecisionStatus.ALLOWED
+    assert allowed.resolved_challenge_ids == ["msg-veto"]
+
+
+def test_operator_approval_is_required_for_sensitive_freeze_policy() -> None:
+    proposal = _message(
+        "msg-proposal",
+        kind=DeliberationMessageKind.PROPOSAL,
+        target_ref="blueprint:bp-1:1",
+        payload={"blueprint_id": "bp-1", "privacy_sensitive": True},
+    )
+    review = _message(
+        "msg-review",
+        kind=DeliberationMessageKind.NOTE,
+        target_ref=proposal.target_ref,
+        payload={"review": "no_objection"},
+        agent_id="god-review",
+    )
+    architect_vote = _message(
+        "msg-vote-a",
+        kind=DeliberationMessageKind.VOTE,
+        target_ref=proposal.target_ref,
+        payload={"vote": "approve"},
+        agent_id="god-architect",
+    )
+    review_vote = _message(
+        "msg-vote-b",
+        kind=DeliberationMessageKind.VOTE,
+        target_ref=proposal.target_ref,
+        payload={"vote": "approve"},
+        agent_id="god-review",
+    )
+    operator_vote = _message(
+        "msg-vote-c",
+        kind=DeliberationMessageKind.VOTE,
+        target_ref=proposal.target_ref,
+        payload={"vote": "approve"},
+        agent_id="operator",
+    )
+    commit = _message(
+        "msg-commit",
+        kind=DeliberationMessageKind.COMMIT,
+        target_ref=proposal.target_ref,
+        payload={"commitment": "ready_to_freeze"},
+    )
+    guard = DeliberationFreezeGuard(
+        required_commits=1,
+        arbitration_policy=BlueprintArbitrationPolicy(
+            eligible_voter_ids=["god-architect", "god-review", "operator"],
+            require_operator_approval=True,
+            operator_agent_ids=["operator"],
+        ),
+    )
+
+    denied = guard.evaluate(
+        [proposal, review, architect_vote, review_vote, commit],
+        target_ref="blueprint:bp-1:1",
+    )
+    allowed = guard.evaluate(
+        [proposal, review, architect_vote, review_vote, operator_vote, commit],
+        target_ref="blueprint:bp-1:1",
+    )
+
+    assert denied.status is FreezeDecisionStatus.DENIED
+    assert denied.reason == "operator approval required"
+    assert denied.operator_approval_agent_ids == []
+    assert allowed.status is FreezeDecisionStatus.ALLOWED
+    assert allowed.operator_approval_agent_ids == ["operator"]
 
 
 def _message(
