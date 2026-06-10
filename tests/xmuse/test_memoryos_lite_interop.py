@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 
 import httpx
 import pytest
@@ -245,3 +246,35 @@ def test_live_memoryos_lite_requires_explicit_opt_in_and_base_url() -> None:
         )
         is True
     )
+
+
+@pytest.mark.asyncio
+async def test_live_memoryos_lite_service_contract_is_explicit_opt_in() -> None:
+    if not live_memoryos_lite_enabled():
+        pytest.skip(
+            f"set {LIVE_MEMORYOS_LITE_ENV}=1 and {MEMORYOS_LITE_BASE_URL_ENV} "
+            "to run the live MemoryOS Lite interop smoke"
+        )
+
+    base_url = os.environ[MEMORYOS_LITE_BASE_URL_ENV]
+    namespace = _task_namespace()
+    async with httpx.AsyncClient(timeout=10) as http_client:
+        health = await http_client.get(f"{base_url.rstrip('/')}/health")
+        health.raise_for_status()
+        adapter = MemoryOSLiteInteropAdapter(
+            base_url=base_url,
+            http_client=http_client,
+        )
+        result = await adapter.ingest(
+            MemoryOSIngestRequest(
+                namespace=namespace,
+                actor_id="god-review",
+                content="Live MemoryOS Lite opt-in smoke.",
+                source_refs=["live:memoryos-lite:smoke"],
+            )
+        )
+        context = await adapter.build_context(namespace, query="smoke", budget=256)
+
+    assert result.ok is True
+    assert result.degraded_reason is None
+    assert context.degraded_reason is None
