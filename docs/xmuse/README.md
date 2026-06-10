@@ -40,6 +40,7 @@ GOD groupchat deliberation
 | `docs/xmuse/memoryos-lite-runtime-compatibility.md` | MemoryOS Lite 公共 API payload、ContextPackage 解析、namespace/session 持久绑定与 live opt-in 兼容闭环 |
 | `docs/xmuse/self-iteration-runtime-closure-plan.md` | 下一轮自迭代 runtime 闭环的详细任务、验收标准和执行行为规范 |
 | `docs/xmuse/self-iteration-runtime-closure-goal-prompt.md` | 可直接用于 `/goal` 的简洁自迭代闭环 prompt，详细任务引用 plan 文档 |
+| `docs/xmuse/self-iteration-runtime-closure.md` | 自迭代 runtime 闭环 replay artifact，记录 speech-act、blueprint、laneDAG、runtime contract、review、GitHub 和 MemoryOS 证据 |
 | `docs/xmuse/github-review-merge-contract.md` | GitHub PR template、CODEOWNERS、required checks 和 merge-ready 合同 |
 | `docs/xmuse/memoryos-governance-contract.md` | MemoryOS namespace、actor identity、memory layer、redaction、tombstone 和 MCP 写入边界 |
 | `docs/xmuse/解耦开发协议.md` | 四层解耦边界、事件契约、数据权威和开发规则 |

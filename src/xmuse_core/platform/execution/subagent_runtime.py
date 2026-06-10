@@ -18,27 +18,44 @@ class SubagentRuntimeContract(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     schema_version: str = "subagent_runtime_contract.v1"
+    blueprint_id: str | None = None
     lane_id: str
     feature_id: str
+    depends_on: list[str] = Field(default_factory=list)
     worktree_path: Path
+    allowed_files: list[str] = Field(default_factory=list)
     allowed_tools: list[str] = Field(min_length=1)
     write_scope: list[str] = Field(min_length=1)
     acceptance_criteria: list[str] = Field(min_length=1)
+    required_checks: list[str] = Field(default_factory=list)
     gate_profiles: list[str] = Field(default_factory=list)
     base_branch: str
     parent_pr: int | str | None = None
     source_context_refs: list[str] = Field(default_factory=list)
+    memory_context_ref: str | None = None
     memory_context: dict[str, Any] = Field(default_factory=dict)
+    rollback_plan: str = "Revert the feature branch or patch-forward from review evidence."
+    review_profile: str = "default"
 
-    @field_validator("lane_id", "feature_id", "base_branch")
+    @field_validator("lane_id", "feature_id", "base_branch", "rollback_plan", "review_profile")
     @classmethod
     def _validate_required_text(cls, value: str) -> str:
         return _require_non_empty(value)
 
+    @field_validator("blueprint_id", "memory_context_ref")
+    @classmethod
+    def _validate_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _require_non_empty(value)
+
     @field_validator(
+        "depends_on",
+        "allowed_files",
         "allowed_tools",
         "write_scope",
         "acceptance_criteria",
+        "required_checks",
         "gate_profiles",
         "source_context_refs",
     )
