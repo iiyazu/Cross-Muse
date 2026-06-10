@@ -23,6 +23,15 @@ class McpToolPermission:
     notes: str = ""
 
 
+@dataclass(frozen=True)
+class McpAuthorizationDecision:
+    allowed: bool
+    reason: str
+    tool_name: str
+    role: str
+    permission_category: PermissionCategory | None = None
+
+
 def _read(family: str, *, scope: str, notes: str = "") -> McpToolPermission:
     return McpToolPermission(
         family=family,
@@ -168,6 +177,15 @@ MCP_TOOL_PERMISSIONS: dict[str, McpToolPermission] = {
         notes="read-only inspector; not identity-bound in V11",
     ),
     "chat_emit_blueprint_proposal": _identity_chat(mutates=True),
+    # Memory tools stay REST-first and RBAC-gated; MCP exposure remains disabled
+    # until auth/RBAC is enabled by the host.
+    "memory_search": _read("memory", scope="memory_namespace"),
+    "memory_build_context": _read("memory", scope="memory_namespace"),
+    "memory_ingest": _write(
+        "memory",
+        scope="memory_namespace",
+        audit_guard="audit_guard_required",
+    ),
 }
 
 IDENTITY_BOUND_CHAT_TOOL_NAMES = {
@@ -185,3 +203,67 @@ READ_ONLY_TOOL_NAMES = {
 MUTATING_TOOL_NAMES = {
     name for name, metadata in MCP_TOOL_PERMISSIONS.items() if metadata.mutates
 }
+
+
+def authorize_mcp_tool(tool_name: str, *, role: str) -> McpAuthorizationDecision:
+    metadata = MCP_TOOL_PERMISSIONS.get(tool_name)
+    if metadata is None:
+        return McpAuthorizationDecision(
+            allowed=False,
+            reason=f"unknown MCP tool: {tool_name}",
+            tool_name=tool_name,
+            role=role,
+        )
+    role = role.strip().lower()
+    if role == "admin":
+        return McpAuthorizationDecision(
+            allowed=True,
+            reason="admin role allowed",
+            tool_name=tool_name,
+            role=role,
+            permission_category=metadata.permission_category,
+        )
+    if role == "viewer":
+        if metadata.mutates:
+            return McpAuthorizationDecision(
+                allowed=False,
+                reason=f"role viewer cannot mutate write tool {tool_name}",
+                tool_name=tool_name,
+                role=role,
+                permission_category=metadata.permission_category,
+            )
+        return McpAuthorizationDecision(
+            allowed=True,
+            reason="viewer read allowed",
+            tool_name=tool_name,
+            role=role,
+            permission_category=metadata.permission_category,
+        )
+    if role == "operator":
+        allowed = metadata.permission_category is not PermissionCategory.ADMIN_OPERATOR
+        return McpAuthorizationDecision(
+            allowed=allowed,
+            reason="operator role allowed" if allowed else "operator role cannot use admin tool",
+            tool_name=tool_name,
+            role=role,
+            permission_category=metadata.permission_category,
+        )
+    if role == "god":
+        allowed = metadata.permission_category in {
+            PermissionCategory.READ_ONLY,
+            PermissionCategory.IDENTITY_BOUND_GOD,
+        }
+        return McpAuthorizationDecision(
+            allowed=allowed,
+            reason="god role allowed" if allowed else "god role cannot use platform write tool",
+            tool_name=tool_name,
+            role=role,
+            permission_category=metadata.permission_category,
+        )
+    return McpAuthorizationDecision(
+        allowed=False,
+        reason=f"unknown MCP role: {role}",
+        tool_name=tool_name,
+        role=role,
+        permission_category=metadata.permission_category,
+    )
