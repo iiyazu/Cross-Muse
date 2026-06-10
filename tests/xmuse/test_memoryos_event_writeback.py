@@ -24,6 +24,7 @@ async def test_blueprint_frozen_writeback_uses_commit_aligned_source_ref() -> No
         MemoryOSWritebackEvent(
             kind="blueprint_frozen",
             namespace=namespace,
+            actor_id="god-review",
             event_id="bp-1",
             summary="Blueprint bp-1 was frozen.",
             source_refs=["message:proposal"],
@@ -50,6 +51,7 @@ async def test_pr_merged_writeback_can_promote_to_shared_memory() -> None:
         MemoryOSWritebackEvent(
             kind="pr_merged",
             namespace=namespace,
+            actor_id="god-execute",
             event_id="123",
             summary="PR 123 merged the feature.",
             source_refs=["pr:123"],
@@ -76,6 +78,7 @@ async def test_god_prompt_memory_block_includes_source_refs() -> None:
         MemoryOSWritebackEvent(
             kind="review_verdict_finalized",
             namespace=namespace,
+            actor_id="god-review",
             event_id="verdict-1",
             summary="Review approved after gate evidence.",
             source_refs=["review:verdict-1", "gate:pytest"],

@@ -35,12 +35,21 @@ def test_chat_api_auth_rejects_anonymous_write_when_enabled(tmp_path: Path) -> N
 def test_mcp_rbac_blocks_viewer_lane_and_memory_mutation() -> None:
     lane_decision = authorize_mcp_tool("update_lane_status", role="viewer")
     memory_decision = authorize_mcp_tool("memory_ingest", role="viewer")
-    operator_decision = authorize_mcp_tool("memory_ingest", role="operator")
+    unauthenticated_operator_decision = authorize_mcp_tool("memory_ingest", role="operator")
+    operator_decision = authorize_mcp_tool(
+        "memory_ingest",
+        role="operator",
+        host_auth_enabled=True,
+    )
 
     assert lane_decision.allowed is False
     assert lane_decision.reason == "role viewer cannot mutate write tool update_lane_status"
     assert memory_decision.allowed is False
-    assert memory_decision.reason == "role viewer cannot mutate write tool memory_ingest"
+    assert memory_decision.reason == "memory write tool memory_ingest requires host auth/RBAC"
+    assert unauthenticated_operator_decision.allowed is False
+    assert unauthenticated_operator_decision.reason == (
+        "memory write tool memory_ingest requires host auth/RBAC"
+    )
     assert operator_decision.allowed is True
 
 
