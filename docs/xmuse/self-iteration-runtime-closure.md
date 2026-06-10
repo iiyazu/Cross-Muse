@@ -230,7 +230,10 @@ Default CI uses `FakeMemoryOSClient` through the REST-first
 - `blueprint_frozen`
 - `feature_reworked`
 - `review_verdict_finalized`
-- `pr_merged`
+- `merge_readiness_evaluated`
+
+`merge_readiness_evaluated` is not a real GitHub merge fact. `pr_merged` is
+reserved for server-side GitHub merge evidence.
 
 The task namespace preserves repo, workspace, god, conversation, thread,
 blueprint, feature, and lane dimensions:
@@ -253,6 +256,7 @@ remains opt-in and is tracked as debt.
 | Evidence bundle | fake/local evidence model and review tests | fake runtime proof |
 | Review patch-forward | patch lane lineage test | contract proof |
 | GitHub PR metadata | `FakeGitHubOps` body and merge readiness | contract proof |
+| GitHub merge fact | not produced by fake/local closure | manual gap |
 | Workflow/CODEOWNERS/template | local file evidence | contract proof |
 | Branch protection | not verified | manual gap |
 | MemoryOS writeback | `FakeMemoryOSClient` through REST-first protocol | fake runtime proof |

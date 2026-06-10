@@ -19,6 +19,7 @@ MemoryOSWritebackKind = Literal[
     "blueprint_frozen",
     "feature_reworked",
     "review_verdict_finalized",
+    "merge_readiness_evaluated",
     "pr_merged",
 ]
 

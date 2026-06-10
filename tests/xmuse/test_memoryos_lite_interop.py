@@ -52,6 +52,7 @@ def test_memoryos_lite_session_plan_maps_task_namespace_to_session_contract() ->
     assert plan.endpoint_plan.create_session == "/sessions"
     assert plan.endpoint_plan.ingest == "/sessions/{session_id}/ingest"
     assert plan.endpoint_plan.build_context == "/sessions/{session_id}/build-context"
+    assert plan.endpoint_plan.trace == "/sessions/{session_id}/trace"
     assert plan.endpoint_plan.search == "/memory/search"
 
 
@@ -151,6 +152,23 @@ async def test_memoryos_lite_adapter_uses_sessions_ingest_and_context_endpoints(
                     "recent_messages": [],
                 },
             )
+        if request.url.path == "/sessions/ses-task-1/trace":
+            return httpx.Response(
+                200,
+                json={
+                    "events": [
+                        {
+                            "kind": "session_created",
+                            "metadata": {"xmuse_source_refs": ["session:created"]},
+                        },
+                        {
+                            "kind": "context_built",
+                            "estimated_tokens": 64,
+                            "metadata": {"xmuse_source_refs": ["lane:lane-1"]},
+                        },
+                    ]
+                },
+            )
         raise AssertionError(f"unexpected endpoint: {request.url.path}")
 
     transport = httpx.MockTransport(route)
@@ -169,6 +187,7 @@ async def test_memoryos_lite_adapter_uses_sessions_ingest_and_context_endpoints(
             )
         )
         context = await adapter.build_context(namespace, query="review", budget=512)
+        trace = await adapter.fetch_trace(namespace)
 
     assert result.ok is True
     assert result.memory_ref == f"{namespace.uri}/messages/msg-1"
@@ -176,10 +195,16 @@ async def test_memoryos_lite_adapter_uses_sessions_ingest_and_context_endpoints(
     assert "Pinned architecture rule." in context.text
     assert "Review accepted the lane." in context.text
     assert context.source_refs == ["lane:lane-1", "memoryos-lite-message:msg-1"]
+    assert trace is not None
+    assert trace.proof_level == "live_service_proof"
+    assert trace.session_id == "ses-task-1"
+    assert trace.estimated_tokens == 64
+    assert trace.source_refs == ["session:created", "lane:lane-1"]
     assert [path for path, _payload in requests] == [
         "/sessions",
         "/sessions/ses-task-1/ingest",
         "/sessions/ses-task-1/build-context",
+        "/sessions/ses-task-1/trace",
     ]
 
 
@@ -460,6 +485,7 @@ async def test_live_memoryos_lite_service_contract_is_explicit_opt_in(tmp_path) 
             )
         )
         context = await adapter.build_context(namespace, query="smoke", budget=256)
+        trace = await adapter.fetch_trace(namespace)
         resumed = MemoryOSLiteInteropAdapter(
             base_url=base_url,
             http_client=http_client,
@@ -471,4 +497,6 @@ async def test_live_memoryos_lite_service_contract_is_explicit_opt_in(tmp_path) 
     assert result.degraded_reason is None
     assert context.degraded_reason is None
     assert context.text or context.source_refs
+    assert trace is not None
+    assert trace.proof_level == "live_service_proof"
     assert resumed_context.degraded_reason is None
