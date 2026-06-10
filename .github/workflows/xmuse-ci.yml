@@ -106,3 +106,43 @@ jobs:
         run: >-
           uv run mypy
           src/xmuse_core/platform/production_readiness.py
+
+  real-runtime-integration-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install project
+        run: uv sync --frozen --all-groups
+
+      - name: Runtime gate lint
+        run: >-
+          uv run ruff check
+          src/xmuse_core/integrations/memoryos_lite_interop.py
+          tests/xmuse/test_github_server_gate_contract.py
+          tests/xmuse/test_memoryos_lite_interop.py
+          tests/xmuse/test_real_runtime_integration_gate.py
+
+      - name: Runtime integration focused tests
+        run: >-
+          uv run pytest -q
+          tests/xmuse/test_github_server_gate_contract.py
+          tests/xmuse/test_memoryos_lite_interop.py
+          tests/xmuse/test_real_runtime_integration_gate.py
+          tests/xmuse/test_package_boundaries.py
+
+      - name: Runtime gate type check
+        run: >-
+          uv run mypy
+          src/xmuse_core/integrations/memoryos_lite_interop.py
