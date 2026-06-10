@@ -29,6 +29,8 @@ Ray 管理的持久化 GOD 群聊
 | `docs/xmuse/walkthrough-maintenance-notes-v7.md` | 群聊层 runtime 生产级闭环线：真实长 session、provider binding、MCP writeback、latency gate |
 | `docs/xmuse/codex-strengthening-handoff.md` | 给 `/goal` Codex session 的强化开发交接文档、优先级和硬 gate |
 | `docs/xmuse/xmuse-production-strengthening-goal-prompt.md` | 可直接用于 `/goal` 的生产级强化 prompt |
+| `docs/xmuse/deep-research-conversion-roadmap.md` | 将深度研究报告转为 M1-M6 路线图和 GitHub issue 结构 |
+| `docs/xmuse/deep-research-execution-tasks.md` | 深度研究转化的全量执行任务清单，供短 goal prompt 引用 |
 | `docs/xmuse/parallel-development-runbook.md` | 多个 Codex session 并行开发的分工、批次、接口包和合并规则 |
 | `docs/xmuse/code-quality-and-archive-policy.md` | 代码复用、重写、隔离、测试和状态写入质量规则 |
 | `docs/xmuse/memoryos-file-separation.md` | xmuse 与 MemoryOS 的文件、依赖和迁出边界 |
