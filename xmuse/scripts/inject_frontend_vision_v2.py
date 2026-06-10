@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: E501,E741
 """Re-inject Frontend Vision Layer 1-4 work, AFTER Layer 1 store is already
 implemented (the previous chain hit max retries on review-god rework but the
 code is verified good — 38 tests pass).

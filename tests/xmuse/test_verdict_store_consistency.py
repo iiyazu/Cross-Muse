@@ -31,7 +31,6 @@ from xmuse_core.structuring.models import (
 from xmuse_core.structuring.projection import project_ready_lanes
 from xmuse_core.structuring.verdict_store import EvidenceBundleStore, VerdictStore
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

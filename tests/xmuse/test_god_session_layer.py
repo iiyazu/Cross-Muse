@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from xmuse_core.agents.god_session_registry import GodSessionRecord
 from xmuse_core.agents.god_session_layer import GodSessionLayer
+from xmuse_core.agents.god_session_registry import GodSessionRecord
 from xmuse_core.agents.persistent_peer import PersistentCliPeerService
 from xmuse_core.agents.protocol import parse_stdout_line
 from xmuse_core.agents.registry import AgentDescriptor, AgentRuntime, SessionConfig

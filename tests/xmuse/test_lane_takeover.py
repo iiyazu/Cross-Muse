@@ -382,7 +382,7 @@ def test_build_lane_takeover_bundle_includes_guard_context_contract_sections(
         ("terminal_escalation_policy", "max_attempt.terminal_escalation_policy"),
     ],
 )
-def test_build_lane_takeover_bundle_marks_missing_required_guards_without_blocking_read_only_context(
+def test_build_lane_takeover_bundle_marks_missing_required_guards_without_blocking_context(
     tmp_path: Path,
     fields: tuple[str, ...] | str,
     expected_missing_field: str,

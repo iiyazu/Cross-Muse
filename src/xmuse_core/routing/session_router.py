@@ -61,7 +61,12 @@ class SessionRouter:
         temp_path.replace(inbox_path)
 
     def _validate_inbox_id(self, inbox_id: str) -> None:
-        if "/" in inbox_id or "\\" in inbox_id or inbox_id in {".", ".."} or ".." in inbox_id.split("/"):
+        if (
+            "/" in inbox_id
+            or "\\" in inbox_id
+            or inbox_id in {".", ".."}
+            or ".." in inbox_id.split("/")
+        ):
             raise ValueError(f"invalid inbox_id: {inbox_id}")
 
     @contextmanager

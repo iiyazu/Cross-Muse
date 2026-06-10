@@ -107,7 +107,7 @@ def _extract_root_cause(pit: str, error_output: str) -> str:
 
 
 def _entry_id(lane_id: str, pit: str, root_cause: str) -> str:
-    digest = hashlib.sha256(f"{lane_id}\n{pit}\n{root_cause}".encode("utf-8")).hexdigest()
+    digest = hashlib.sha256(f"{lane_id}\n{pit}\n{root_cause}".encode()).hexdigest()
     return f"err-{digest[:16]}"
 
 

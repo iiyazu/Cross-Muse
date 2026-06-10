@@ -10,7 +10,6 @@ from typing import Any
 from xmuse_core.agents.protocol import AgentOutput
 from xmuse_core.agents.registry import AgentDescriptor, AgentRegistry
 
-
 WorktreeResolver = Callable[[str], Path]
 
 
@@ -84,7 +83,10 @@ class PlanExecuteReviewSkill:
             worktree=self._worktree(feature_id),
         )
         self._raise_on_failure("plan", output)
-        return self._write_plan(feature_id, self._artifact_text(output, preferred=("plan.md", "plan")))
+        return self._write_plan(
+            feature_id,
+            self._artifact_text(output, preferred=("plan.md", "plan")),
+        )
 
     async def execute(self, feature_id: str, plan: Path | str) -> AgentOutput:
         """Dispatch the implementer agent with the accepted plan as context."""

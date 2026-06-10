@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from xmuse_core.chat.execution_cards import ChatExecutionCardEmitter
 from xmuse_core.platform.event_bus import EventBus
@@ -34,7 +35,7 @@ def _audit_ref(event_id: str) -> str:
 
 
 def _audit_event_id(event_type: str, dedupe_key: str) -> str:
-    digest = sha256(f"{event_type}:{dedupe_key}".encode("utf-8")).hexdigest()[:12]
+    digest = sha256(f"{event_type}:{dedupe_key}".encode()).hexdigest()[:12]
     return f"evt-{digest}"
 
 

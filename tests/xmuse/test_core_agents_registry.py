@@ -6,10 +6,8 @@ from pathlib import Path
 import pytest
 
 from xmuse_core.agents.registry import (
-    AgentDescriptor,
     AgentRegistry,
     AgentRuntime,
-    SessionConfig,
 )
 
 

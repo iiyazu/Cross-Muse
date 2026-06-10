@@ -6,8 +6,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from xmuse_core.routing import session_router as session_router_module
 from xmuse_core.agents.god_session_registry import GodSessionRegistry
+from xmuse_core.routing import session_router as session_router_module
 from xmuse_core.routing.session_router import SessionRouter
 
 

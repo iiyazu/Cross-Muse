@@ -14,7 +14,10 @@ from xmuse_core.self_evolution.models import (
 )
 
 
-def _evidence(bundle_id: str = "evbundle-1", source_run_id: str = "src-1") -> StructuredEvidenceBundle:
+def _evidence(
+    bundle_id: str = "evbundle-1",
+    source_run_id: str = "src-1",
+) -> StructuredEvidenceBundle:
     return StructuredEvidenceBundle(
         bundle_id=bundle_id,
         source_run_id=source_run_id,

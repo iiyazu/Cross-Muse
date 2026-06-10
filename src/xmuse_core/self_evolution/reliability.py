@@ -24,7 +24,6 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-
 # ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------
@@ -103,7 +102,7 @@ class RunHeartbeat(BaseModel):
         lane_counts: dict[str, int] | None = None,
         notes: str = "",
         heartbeat_interval_s: int = 300,
-    ) -> "RunHeartbeat":
+    ) -> RunHeartbeat:
         now = _utc_now()
         expected = (
             datetime.now(UTC).replace(microsecond=0) + timedelta(seconds=heartbeat_interval_s)
@@ -168,7 +167,7 @@ class StaleArtifactRecord(BaseModel):
         run_id: str,
         reference_id: str,
         candidate_paths: list[Path],
-    ) -> "StaleArtifactRecord":
+    ) -> StaleArtifactRecord:
         """Scan *candidate_paths* and classify each as stale, active, or missing."""
         stale: list[str] = []
         active: list[str] = []
@@ -205,7 +204,7 @@ class StaleArtifactRecord(BaseModel):
             verdict=verdict,
         )
 
-    def quarantine(self, paths: list[str]) -> "StaleArtifactRecord":
+    def quarantine(self, paths: list[str]) -> StaleArtifactRecord:
         """Return a new record with *paths* moved from stale to quarantined."""
         remaining_stale = [p for p in self.stale_paths if p not in paths]
         newly_quarantined = [p for p in paths if p in self.stale_paths]

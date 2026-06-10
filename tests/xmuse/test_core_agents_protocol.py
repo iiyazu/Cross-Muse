@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import json
 
-import pytest
-
 from xmuse_core.agents.protocol import (
     PROTOCOL_VERSION,
     AgentOutput,

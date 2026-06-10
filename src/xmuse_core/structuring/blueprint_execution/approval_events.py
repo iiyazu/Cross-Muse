@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Callable
 
 from xmuse_core.chat.models import ResolutionStatus, StructuredResolution
 from xmuse_core.structuring.feature_plan_store import read_approved_mission_blueprint

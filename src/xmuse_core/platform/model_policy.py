@@ -5,6 +5,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
 
+from xmuse_core.providers.models import ProviderProfileId
 from xmuse_core.providers.policy import evaluate_lane_policy_signals
 from xmuse_core.providers.policy import (
     has_ambiguous_review_signal as provider_has_ambiguous_review_signal,
@@ -22,7 +23,6 @@ from xmuse_core.providers.registry import (
     DEFAULT_CODEX_WORKER_MODEL_ID,
     normalize_codex_model_id,
 )
-from xmuse_core.providers.models import ProviderProfileId
 
 DelegationMode = Literal["legacy_single_agent", "bounded_worker"]
 

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from xmuse_core.skills.models import LaneDefinition
 from xmuse_core.skills.spec_to_lanes import SpecToLanesSkill
 

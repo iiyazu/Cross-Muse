@@ -26,7 +26,6 @@ from xmuse_core.structuring.models import (
 )
 from xmuse_core.structuring.verdict_store import VerdictStore
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

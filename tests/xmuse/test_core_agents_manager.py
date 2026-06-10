@@ -3,11 +3,9 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-import pytest_asyncio
 
 from xmuse_core.agents.manager import ActiveSession, SessionManager, SessionState
 from xmuse_core.agents.registry import AgentDescriptor, AgentRuntime, SessionConfig
@@ -24,9 +22,15 @@ for line in sys.stdin:
     except json.JSONDecodeError:
         continue
     if d.get("type") == "hello":
-        print(json.dumps({"type": "hello_ack", "protocol_version": "1.0", "runtime": "mock"}), flush=True)
+        print(
+            json.dumps({"type": "hello_ack", "protocol_version": "1.0", "runtime": "mock"}),
+            flush=True,
+        )
     elif d.get("type") == "task":
-        print(json.dumps({"type": "result", "status": "success", "artifacts": {"done": True}}), flush=True)
+        print(
+            json.dumps({"type": "result", "status": "success", "artifacts": {"done": True}}),
+            flush=True,
+        )
     elif d.get("type") == "ping":
         print(json.dumps({"type": "pong"}), flush=True)
     elif d.get("type") == "abort":
@@ -41,7 +45,10 @@ for line in sys.stdin:
         continue
     d = json.loads(line)
     if d.get("type") == "hello":
-        print(json.dumps({"type": "hello_ack", "protocol_version": "99.0", "runtime": "mock"}), flush=True)
+        print(
+            json.dumps({"type": "hello_ack", "protocol_version": "99.0", "runtime": "mock"}),
+            flush=True,
+        )
     elif d.get("type") == "abort":
         break
 """
