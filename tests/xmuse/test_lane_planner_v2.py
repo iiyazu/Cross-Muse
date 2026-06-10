@@ -77,6 +77,59 @@ def test_lane_planner_v2_preserves_deterministic_cycle_rejection() -> None:
     assert "dependency cycle detected: lane-a -> lane-b -> lane-a" in report.issues[0].message
 
 
+def test_lane_planner_v2_serializes_lanes_that_touch_same_area() -> None:
+    request = _request(
+        lanes=[
+            _lane(
+                "api-a",
+                acceptance_criteria=["First API change is covered."],
+                touched_areas=["xmuse/chat_api.py"],
+            ),
+            _lane(
+                "api-b",
+                acceptance_criteria=["Second API change is covered."],
+                touched_areas=["xmuse/chat_api.py"],
+            ),
+            _lane(
+                "docs",
+                acceptance_criteria=["Docs update is covered."],
+                touched_areas=["docs/xmuse/README.md"],
+            ),
+        ]
+    )
+
+    graph = build_lane_graph_v2(request)
+
+    dependencies = {lane.feature_id: lane.depends_on for lane in graph.lanes}
+    assert dependencies["api-a"] == []
+    assert dependencies["api-b"] == ["api-a"]
+    assert dependencies["docs"] == []
+
+
+def test_lane_planner_v2_gate_profiles_insert_check_and_review_predecessors() -> None:
+    request = _request(
+        lanes=[
+            _lane(
+                "api",
+                acceptance_criteria=["API change passes required gates."],
+                gate_profiles=["check", "review"],
+            )
+        ]
+    )
+
+    graph = build_lane_graph_v2(request)
+
+    assert [lane.feature_id for lane in graph.lanes] == [
+        "api-check-gate",
+        "api-review-gate",
+        "api",
+    ]
+    assert graph.lanes[0].task_type == "check"
+    assert graph.lanes[1].task_type == "review"
+    assert graph.lanes[1].depends_on == ["api-check-gate"]
+    assert graph.lanes[2].depends_on == ["api-review-gate"]
+
+
 def test_lane_planner_v2_errors_are_actionable_for_chat_and_dashboard() -> None:
     request = _request(
         lanes=[
@@ -134,6 +187,8 @@ def _lane(
     acceptance_criteria: list[str],
     depends_on: list[str] | None = None,
     blueprint_refs: list[str] | None = None,
+    touched_areas: list[str] | None = None,
+    gate_profiles: list[str] | None = None,
 ) -> LanePlannerV2LaneInput:
     return LanePlannerV2LaneInput(
         lane_id=lane_id,
@@ -142,5 +197,6 @@ def _lane(
         acceptance_criteria=acceptance_criteria,
         depends_on=depends_on or [],
         blueprint_refs=blueprint_refs or ["resolution:bp-1:mission_blueprint"],
-        expected_touched_areas=[f"src/{lane_id}"],
+        expected_touched_areas=touched_areas or [f"src/{lane_id}"],
+        gate_profiles=gate_profiles or [],
     )
