@@ -33,6 +33,10 @@ GOD groupchat deliberation
 | `docs/xmuse/mainline-contracts.md` | 当前产品主线合同：GOD 群聊、blueprint freeze、laneDAG、review/GitHub gate、REST-first MemoryOS |
 | `docs/xmuse/deep-research-02-next-goal.md` | 第二轮深度研究转化目标，定义 #13-#19 的下一阶段任务 |
 | `docs/xmuse/contract-smoke-gates.md` | #19 合同 smoke CI：无 secrets 的 lint、format、typecheck、主线合约测试和 SLO smoke |
+| `docs/xmuse/deep-research-03-next-goal.md` | 第三轮真实运行层目标：GitHub 服务器 gate、MemoryOS Lite 互操作、provider/runtime soak 分层和 broad-suite 债务 |
+| `docs/xmuse/real-runtime-integration-gate.md` | 第三轮无 secrets focused gate，区分 contract proof 与 runtime proof |
+| `docs/xmuse/github-server-side-gate.md` | GitHub branch protection、required checks、CODEOWNER review 和 PR evidence 的服务器侧配置合同 |
+| `docs/xmuse/broad-suite-baseline-debt.md` | 全仓 format、legacy chat API、live MemoryOS Lite、real provider/Ray/Codex 缺口登记表 |
 | `docs/xmuse/github-review-merge-contract.md` | GitHub PR template、CODEOWNERS、required checks 和 merge-ready 合同 |
 | `docs/xmuse/memoryos-governance-contract.md` | MemoryOS namespace、actor identity、memory layer、redaction、tombstone 和 MCP 写入边界 |
 | `docs/xmuse/解耦开发协议.md` | 四层解耦边界、事件契约、数据权威和开发规则 |

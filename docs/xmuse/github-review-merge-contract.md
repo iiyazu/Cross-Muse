@@ -21,6 +21,20 @@ Every lane or feature PR must provide:
 
 The repository template at `.github/pull_request_template.md` mirrors this list.
 
+## Branch Protection
+
+`docs/xmuse/github-server-side-gate.md` is the server-side configuration
+contract for branch protection on `main`. It binds the required GitHub checks to
+the workflow job names:
+
+- `quality-gates`
+- `contract-smoke-gates`
+- `real-runtime-integration-gate`
+
+Repository tests can prove that this desired configuration is documented and
+kept in sync with workflow files. GitHub branch protection must still be enabled
+on the server before it becomes runtime enforcement.
+
 ## Required Checks
 
 The default local evidence bundle for a contract PR is:
