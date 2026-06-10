@@ -132,6 +132,13 @@ def test_duplicate_votes_and_commits_are_idempotent_by_message_content() -> None
         agent_id="god-review",
     )
     duplicate_vote = vote.model_copy(update={"msg_id": "msg-vote-b"})
+    no_objection = _message(
+        "msg-review",
+        kind=DeliberationMessageKind.NOTE,
+        target_ref=proposal.target_ref,
+        payload={"review": "no_objection"},
+        agent_id="god-review",
+    )
     commit = _message(
         "msg-commit-a",
         kind=DeliberationMessageKind.COMMIT,
@@ -142,7 +149,7 @@ def test_duplicate_votes_and_commits_are_idempotent_by_message_content() -> None
     duplicate_commit = commit.model_copy(update={"msg_id": "msg-commit-b"})
 
     decision = DeliberationFreezeGuard(required_commits=1).evaluate(
-        [proposal, vote, duplicate_vote, commit, duplicate_commit],
+        [proposal, vote, duplicate_vote, no_objection, commit, duplicate_commit],
         target_ref="blueprint:bp-1:1",
     )
 
@@ -150,6 +157,69 @@ def test_duplicate_votes_and_commits_are_idempotent_by_message_content() -> None
     assert decision.vote_tally == {"approve": 1, "reject": 0, "abstain": 0}
     assert decision.commit_agent_ids == ["god-review"]
     assert decision.duplicate_message_ids == ["msg-commit-b", "msg-vote-b"]
+
+
+def test_proposal_requires_challenge_or_explicit_no_objection_review() -> None:
+    proposal = _message(
+        "msg-proposal",
+        kind=DeliberationMessageKind.PROPOSAL,
+        target_ref="blueprint:bp-1:1",
+        payload={"blueprint_id": "bp-1"},
+    )
+    commit = _message(
+        "msg-commit",
+        kind=DeliberationMessageKind.COMMIT,
+        target_ref=proposal.target_ref,
+        payload={"commitment": "ready_to_freeze"},
+    )
+
+    decision = DeliberationFreezeGuard(required_commits=1).evaluate(
+        [proposal, commit],
+        target_ref="blueprint:bp-1:1",
+    )
+
+    assert decision.status is FreezeDecisionStatus.DENIED
+    assert decision.reason == "missing challenge or explicit no-objection review"
+
+
+def test_objection_window_blocks_freeze_until_lamport_bound_is_reached() -> None:
+    proposal = _message(
+        "msg-001",
+        kind=DeliberationMessageKind.PROPOSAL,
+        target_ref="blueprint:bp-1:1",
+        payload={"blueprint_id": "bp-1"},
+    )
+    objection = _message(
+        "msg-002",
+        kind=DeliberationMessageKind.CHALLENGE,
+        parent_id=proposal.msg_id,
+        target_ref=proposal.target_ref,
+        payload={"question": "Should this wait for review?"},
+        objection_level=ObjectionLevel.NON_BLOCKING,
+    )
+    commit = _message(
+        "msg-003",
+        kind=DeliberationMessageKind.COMMIT,
+        target_ref=proposal.target_ref,
+        payload={"commitment": "ready_to_freeze"},
+    )
+    clock = _message(
+        "msg-006",
+        kind=DeliberationMessageKind.NOTE,
+        target_ref=proposal.target_ref,
+        payload={"clock": "objection_window_elapsed"},
+    )
+
+    guard = DeliberationFreezeGuard(required_commits=1, objection_window_lamports=5)
+    early = guard.evaluate([proposal, objection, commit], target_ref="blueprint:bp-1:1")
+    elapsed = guard.evaluate(
+        [proposal, objection, commit, clock],
+        target_ref="blueprint:bp-1:1",
+    )
+
+    assert early.status is FreezeDecisionStatus.DENIED
+    assert early.reason == "objection window still open"
+    assert elapsed.status is FreezeDecisionStatus.ALLOWED
 
 
 def test_freeze_requires_explicit_proposal_or_no_objection_review_note() -> None:

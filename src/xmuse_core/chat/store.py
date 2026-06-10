@@ -634,6 +634,11 @@ class ChatStore:
             "proposal_blueprint_ref",
             "revision_of",
             "references",
+            "blueprint_v1",
+            "markdown",
+            "freeze_decision",
+            "open_questions",
+            "repo_areas",
         ):
             if key in content:
                 blueprint[key] = content[key]
