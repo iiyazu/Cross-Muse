@@ -1,0 +1,44 @@
+{
+  "schema_version": "xmuse.artifact.v1",
+  "artifact_type": "feature_graph_blocked_review_plan",
+  "artifact_id": "feature_graph_blocked_review_plan_demo",
+  "artifact_ref": "feature_graph_blocked_review_plan:feature_graph_blocked_review_plan_demo:v1",
+  "version": 1,
+  "created_at": "2026-06-03T02:17:00Z",
+  "updated_at": "2026-06-03T02:17:00Z",
+  "source_event_ref": "event:evt_review_verdict_blocked_demo_v1",
+  "source_refs": [
+    "feature_review_verdict:fverdict_blocked_demo:v1",
+    "feature_evidence_bundle:fevb_demo:v1",
+    "feature_graph_status:fgstatus_reviewing_demo:v1"
+  ],
+  "lineage": {
+    "source_event_refs": ["event:evt_review_verdict_blocked_demo_v1"]
+  },
+  "ownership": {
+    "producer_session": "S2",
+    "consumer_sessions": ["S2"]
+  },
+  "payload": {
+    "plan_id": "fgblocked:fverdict_blocked_demo:fevb_demo:20260603T021700z",
+    "verdict_id": "fverdict_blocked_demo",
+    "evidence_bundle_id": "fevb_demo",
+    "graph_set_id": "gs-xmuse-hardening",
+    "graph_set_version": 1,
+    "feature_id": "feature-provider-session-binding",
+    "feature_graph_id": "graph-provider-session-binding",
+    "current_status": "reviewing",
+    "expected_status": "reviewing",
+    "target_status": "blocked",
+    "reviewer_session_id": "god-review-demo",
+    "rationale": "Cannot review without provider CLI resume behavior evidence.",
+    "missing_inputs": ["Codex CLI resume smoke evidence"],
+    "blocked_reason": "Need Codex CLI resume smoke evidence.",
+    "blocked_owner": "coordinator",
+    "evidence_refs": [
+      "feature_evidence_bundle:fevb_demo:v1",
+      "logs/gates/provider-binding.json"
+    ],
+    "created_at": "2026-06-03T02:17:00Z"
+  }
+}

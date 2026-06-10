@@ -1,0 +1,27 @@
+{
+  "schema_version": "xmuse.card.v1",
+  "card_type": "feature_plan_ready",
+  "intent_id": "intent_feature_plan_ready_demo",
+  "version": 1,
+  "conversation_id": "conv_demo",
+  "title": "Feature plan ready",
+  "summary": "The approved blueprint has a reviewed feature plan.",
+  "status": "ready",
+  "source_event_ref": "event:evt_feature_plan_ready_demo_v1",
+  "source_refs": ["event:evt_feature_plan_ready_demo_v1"],
+  "created_at": "2026-06-02T00:02:00Z",
+  "artifact_refs": [
+    {
+      "artifact_type": "feature_plan",
+      "artifact_id": "fp_demo",
+      "version": 1,
+      "ref": "feature_plan:fp_demo:v1"
+    }
+  ],
+  "drilldown_refs": [
+    {
+      "label": "Feature plan",
+      "api_href": "/api/dashboard/feature-plans/fp_demo"
+    }
+  ]
+}

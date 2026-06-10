@@ -1,0 +1,83 @@
+[project]
+name = "xmuse"
+version = "0.1.0"
+description = "Multi-agent software delivery platform for chat-driven GOD orchestration"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.136.1",
+    "httpx>=0.28.1",
+    "langgraph>=1.1.10",
+    "pydantic>=2.13.3",
+    "pydantic-settings>=2.14.0",
+    "python-dotenv>=1.2.2",
+    "ray[default]>=2.55.1",
+    "rich>=15.0.0",
+    "textual>=8.2.7",
+    "typer>=0.25.1",
+    "uvicorn[standard]>=0.46.0",
+]
+
+[project.scripts]
+xmuse-chat-api = "xmuse.chat_api:main"
+xmuse-mcp-server = "xmuse.mcp_server:main"
+xmuse-platform-runner = "xmuse.platform_runner:main"
+xmuse-tui = "xmuse.tui.__main__:main"
+xmuse-tui-terminal-demo = "xmuse.tui.terminal_demo:main"
+
+[build-system]
+requires = ["hatchling>=1.28.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build]
+exclude = [
+    "/xmuse/**/*.db",
+    "/xmuse/**/*.sqlite3",
+    "/xmuse/**/*.jsonl",
+    "/xmuse/**/*.lock",
+    "/xmuse/*.json",
+    "/xmuse/approvals/**",
+    "/xmuse/dispatch/**",
+    "/xmuse/feature_plans/**",
+    "/xmuse/history/**",
+    "/xmuse/knowledge/**",
+    "/xmuse/lane_graphs/**",
+    "/xmuse/legacy/**",
+    "/xmuse/logs/**",
+    "/xmuse/master/**",
+    "/xmuse/read_models/**",
+    "/xmuse/reports/**",
+    "/xmuse/self_evolution/**",
+    "/xmuse/work/**",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["xmuse", "src/xmuse_core"]
+
+[dependency-groups]
+dev = [
+    "mypy>=1.18.2",
+    "pytest>=9.0.3",
+    "pytest-asyncio>=1.3.0",
+    "ruff>=0.15.12",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests/xmuse"]
+pythonpath = ["."]
+asyncio_mode = "auto"
+
+[tool.mypy]
+python_version = "3.11"
+mypy_path = ["src"]
+ignore_missing_imports = true
+warn_unused_configs = true
+show_error_codes = true
+check_untyped_defs = true

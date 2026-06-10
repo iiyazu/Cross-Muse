@@ -1,0 +1,68 @@
+{
+  "schema_version": "xmuse.read_envelope.v1",
+  "envelope_id": "env_tui_worklist_demo_v1",
+  "envelope_type": "tui_worklist",
+  "version": 1,
+  "conversation_id": "conv_demo",
+  "mutation_allowed": false,
+  "source_authority": "feature_lanes_projection",
+  "projection_revision": 8,
+  "created_at": "2026-06-02T00:08:00Z",
+  "generated_at": "2026-06-02T00:08:00Z",
+  "source_refs": ["event:evt_lane_updated_demo_v1", "event:evt_lane_blocked_demo_v1"],
+  "cards": [
+    {
+      "intent_id": "intent_feature_plan_ready_demo",
+      "card_type": "feature_plan_ready",
+      "title": "Feature plan ready",
+      "status": "ready"
+    },
+    {
+      "intent_id": "intent_run_progress_demo",
+      "card_type": "run_progress",
+      "title": "Run in progress",
+      "status": "running"
+    },
+    {
+      "intent_id": "intent_lane_blocked_demo",
+      "card_type": "lane_blocked",
+      "title": "Lane blocked",
+      "status": "blocked"
+    },
+    {
+      "intent_id": "intent_review_verdict_demo",
+      "card_type": "review_verdict",
+      "title": "Review verdict",
+      "status": "needs_rework"
+    },
+    {
+      "intent_id": "intent_takeover_requested_demo",
+      "card_type": "takeover_requested",
+      "title": "Takeover requested",
+      "status": "blocked"
+    }
+  ],
+  "worklist": [
+    {
+      "lane_id": "lane_demo",
+      "status": "running",
+      "graph_set_ref": "graph_set:gs_demo:v1",
+      "projection_revision": 8
+    }
+  ],
+  "run_health": {
+    "status": "degraded",
+    "warnings": [
+      {
+        "code": "blocked_lane",
+        "message": "A lane is waiting for contract review."
+      }
+    ]
+  },
+  "debug_drilldown_refs": [
+    {
+      "label": "Graph set",
+      "api_href": "/api/dashboard/graph-sets/gs_demo"
+    }
+  ]
+}

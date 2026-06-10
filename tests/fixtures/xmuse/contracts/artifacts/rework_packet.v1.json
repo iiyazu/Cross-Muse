@@ -1,0 +1,43 @@
+{
+  "schema_version": "xmuse.artifact.v1",
+  "artifact_type": "rework_packet",
+  "artifact_id": "rework_demo",
+  "artifact_ref": "rework_packet:rework_demo:v1",
+  "version": 1,
+  "created_at": "2026-06-03T02:14:00Z",
+  "updated_at": "2026-06-03T02:14:00Z",
+  "source_event_ref": "event:evt_review_verdict_rework_demo_v1",
+  "source_refs": ["feature_review_verdict:fverdict_rework_demo:v1", "feature_evidence_bundle:fevb_demo:v1"],
+  "lineage": {
+    "source_event_refs": ["event:evt_review_verdict_rework_demo_v1"]
+  },
+  "ownership": {
+    "producer_session": "S5",
+    "consumer_sessions": ["S5"]
+  },
+  "payload": {
+    "rework_id": "rework_demo",
+    "source_verdict_id": "fverdict_rework_demo",
+    "evidence_bundle_id": "fevb_demo",
+    "target_worker_session_id": "god-worker-demo",
+    "target_provider_session_binding_ref": "provider_session_binding:psb_demo:v1",
+    "blocking_findings": [
+      {
+        "finding_id": "finding-missing-stale-test",
+        "severity": "blocking",
+        "summary": "Stale binding recovery lacks a focused regression test.",
+        "evidence_refs": ["feature_evidence_bundle:fevb_demo:v1"]
+      }
+    ],
+    "required_changes": ["Add a stale binding recovery regression test."],
+    "forbidden_changes": ["Do not change provider selection policy in this rework."],
+    "evidence_refs": ["feature_evidence_bundle:fevb_demo:v1"],
+    "files_or_areas_to_revisit": ["tests/xmuse/test_provider_session_binding.py"],
+    "gates_to_rerun": ["uv run pytest -q tests/xmuse/test_provider_session_binding.py"],
+    "max_remaining_attempts": 1,
+    "return_requirements": [
+      "Return an updated FeatureEvidenceBundle with the new test evidence."
+    ],
+    "created_at": "2026-06-03T02:14:00Z"
+  }
+}

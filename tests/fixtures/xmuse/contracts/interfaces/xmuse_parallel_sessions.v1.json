@@ -1,0 +1,85 @@
+{
+  "schema_version": "xmuse.session_interfaces.v1",
+  "manifest_id": "manifest_xmuse_parallel_sessions_v1",
+  "version": 1,
+  "created_at": "2026-06-02T00:00:00Z",
+  "source_refs": [
+    "docs/xmuse/解耦开发协议.md",
+    "docs/xmuse/parallel-development-runbook.md",
+    "docs/xmuse/session-prompts/README.md"
+  ],
+  "sessions": [
+    {
+      "session": "S1",
+      "owner": "GOD Chat / TUI Read Layer",
+      "inputs": ["chat store", "execution cards", "tui_worklist read envelope"],
+      "outputs": ["conversation events", "compact cards", "TUI rendering of read envelopes"],
+      "allowed_files": ["src/xmuse_core/chat/*", "src/xmuse_core/platform/read_envelopes.py", "xmuse/tui/*", "tests/xmuse/test_chat*.py", "tests/xmuse/test_tui*.py"],
+      "must_not_write": ["feature_lanes.json", "runner status", "Layer 2 services"],
+      "ready_flag": "S1.chat_tui.ready.json"
+    },
+    {
+      "session": "S2",
+      "owner": "Coordinator Core",
+      "inputs": ["blueprint.approved", "graph_set.ready", "lane.updated", "dead-letter records"],
+      "outputs": ["coordinator lifecycle API", "degraded/dead-letter escalation paths"],
+      "allowed_files": ["xmuse/platform_runner.py", "src/xmuse_core/platform/orchestrator.py", "src/xmuse_core/platform/runner_supervisor.py", "tests/xmuse/test_*coordinator*.py"],
+      "must_not_write": ["feature_lanes.json", "chat/TUI implementation", "Ray/LangGraph required imports"],
+      "ready_flag": "S2.coordinator.ready.json"
+    },
+    {
+      "session": "S3",
+      "owner": "Blueprint Decomposition",
+      "inputs": ["blueprint.approved", "blueprint artifact"],
+      "outputs": ["planning.started", "feature_plan.ready", "planning.failed", "feature plan artifact"],
+      "allowed_files": ["src/xmuse_core/structuring/blueprint_execution/*", "src/xmuse_core/structuring/feature_plan_*", "src/xmuse_core/agents/planning_god_adapters.py", "tests/xmuse/test_*planning*.py", "tests/xmuse/test_*blueprint*.py"],
+      "must_not_write": ["feature_lanes.json", "graph-set artifacts", "runner status"],
+      "ready_flag": "S3.blueprint.ready.json"
+    },
+    {
+      "session": "S4",
+      "owner": "Lane Graph Generation",
+      "inputs": ["feature_plan.ready", "feature plan artifact"],
+      "outputs": ["graph_set.ready", "graph_set.failed", "graph-set artifact", "lane graph artifacts"],
+      "allowed_files": ["src/xmuse_core/structuring/feature_graph_builder.py", "src/xmuse_core/structuring/feature_plan_store.py", "src/xmuse_core/structuring/models.py", "tests/xmuse/test_*graph*.py"],
+      "must_not_write": ["feature_lanes.json", "worker scheduling", "runner status"],
+      "ready_flag": "S4.graph.ready.json"
+    },
+    {
+      "session": "S5",
+      "owner": "Execution Scheduling",
+      "inputs": ["graph_set.ready", "lane.ready", "coordinator API", "CLI subagent contract"],
+      "outputs": ["lane.ready", "lane.updated", "lane.blocked", "run.terminal", "projection lineage"],
+      "allowed_files": ["src/xmuse_core/structuring/projection.py", "src/xmuse_core/platform/projection/*", "src/xmuse_core/platform/state_machine.py", "tests/xmuse/test_*projection*.py", "tests/xmuse/test_*state_machine*.py"],
+      "must_not_write": ["feature_lanes.json", "TUI/chat implementation", "subagent direct status writes"],
+      "ready_flag": "S5.execution.ready.json"
+    },
+    {
+      "session": "S6",
+      "owner": "CLI Subagent / Skills Contract",
+      "inputs": ["lane context bundle", "acceptance criteria", "provider policy"],
+      "outputs": ["worker goal contract", "worker result schema", "failure/blocker classification", "skill prompt contract"],
+      "allowed_files": ["src/xmuse_core/providers/*", "src/xmuse_core/platform/prompts/*", "xmuse/skills/*", "tests/xmuse/test_worker_goal_contract.py", "tests/xmuse/test_provider*.py"],
+      "must_not_write": ["feature_lanes.json", "durable store", "runner status"],
+      "ready_flag": "S6.subagent.ready.json"
+    },
+    {
+      "session": "S7",
+      "owner": "Dashboard Drill-Down",
+      "inputs": ["read envelopes", "graph-set artifact refs", "run health", "dead-letter records"],
+      "outputs": ["read-only drill-down endpoints", "degraded/error shapes", "takeover context views"],
+      "allowed_files": ["xmuse/dashboard_api.py", "src/xmuse_core/platform/read_contracts.py", "src/xmuse_core/platform/run_health.py", "tests/xmuse/test_dashboard*.py", "tests/xmuse/test_run_health.py"],
+      "must_not_write": ["feature_lanes.json", "workflow driver state", "lane mutation main path"],
+      "ready_flag": "S7.dashboard.ready.json"
+    },
+    {
+      "session": "S8",
+      "owner": "Ray / LangGraph Adapters",
+      "inputs": ["S0 contract fixtures", "coordinator API", "blueprint workflow artifacts"],
+      "outputs": ["Ray actor backend adapter", "LangGraph shadow/replay adapter", "native parity tests"],
+      "allowed_files": ["src/xmuse_core/agents/ray_*", "src/xmuse_core/structuring/*langgraph*", "tests/xmuse/test_*ray*.py", "tests/xmuse/test_*langgraph*.py"],
+      "must_not_write": ["feature_lanes.json", "native required Ray/LangGraph imports", "Stage 0 coordinator replacement"],
+      "ready_flag": "S8.adapters.ready.json"
+    }
+  ]
+}

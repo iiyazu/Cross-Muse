@@ -1,0 +1,23 @@
+{
+  "schema_version": "xmuse.artifact.v1",
+  "artifact_type": "blueprint",
+  "artifact_id": "bp_demo",
+  "artifact_ref": "blueprint:bp_demo:v1",
+  "version": 1,
+  "created_at": "2026-06-02T00:00:00Z",
+  "updated_at": "2026-06-02T00:00:00Z",
+  "source_event_ref": "event:evt_blueprint_approved_demo_v1",
+  "source_refs": ["message:msg_blueprint_approval_demo"],
+  "lineage": {
+    "source_event_refs": ["event:evt_blueprint_approved_demo_v1"]
+  },
+  "ownership": {
+    "producer_session": "S1",
+    "consumer_sessions": ["S3", "S7"]
+  },
+  "payload": {
+    "conversation_id": "conv_demo",
+    "title": "Demo mission blueprint",
+    "acceptance_criteria": ["Freeze shared fixtures before module sessions run."]
+  }
+}

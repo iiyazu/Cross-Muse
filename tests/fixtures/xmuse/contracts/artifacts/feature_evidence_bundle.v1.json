@@ -1,0 +1,79 @@
+{
+  "schema_version": "xmuse.artifact.v1",
+  "artifact_type": "feature_evidence_bundle",
+  "artifact_id": "fevb_demo",
+  "artifact_ref": "feature_evidence_bundle:fevb_demo:v1",
+  "version": 1,
+  "created_at": "2026-06-03T02:12:00Z",
+  "updated_at": "2026-06-03T02:12:00Z",
+  "source_event_ref": "event:evt_feature_worker_completed_demo_v1",
+  "source_refs": ["event:evt_graph_set_ready_demo_v1", "provider_session_binding:psb_demo:v1"],
+  "lineage": {
+    "source_event_refs": ["event:evt_graph_set_ready_demo_v1", "event:evt_feature_worker_completed_demo_v1"]
+  },
+  "ownership": {
+    "producer_session": "S5",
+    "consumer_sessions": ["S5", "S7"]
+  },
+  "payload": {
+    "bundle_id": "fevb_demo",
+    "conversation_id": "conv-xmuse-hardening",
+    "planning_run_id": "prun-xmuse-hardening",
+    "feature_plan_id": "fp-xmuse-hardening",
+    "feature_plan_version": 1,
+    "graph_set_id": "gs-xmuse-hardening",
+    "graph_set_version": 1,
+    "feature_id": "feature-provider-session-binding",
+    "feature_graph_id": "graph-provider-session-binding",
+    "worker_session_id": "god-worker-demo",
+    "provider_session_binding_ref": "provider_session_binding:psb_demo:v1",
+    "blueprint_refs": ["blueprint:bp-xmuse-hardening:v1"],
+    "feature_goal": "Persist explicit provider session bindings for resumable feature workers.",
+    "acceptance_criteria": [
+      "Bindings record explicit provider session ids.",
+      "Resume commands never use --last.",
+      "Failed bindings can be marked stale without retry loops."
+    ],
+    "lane_graph_summary": {
+      "feature_graph_id": "graph-provider-session-binding",
+      "lane_count": 2,
+      "ready_lane_ids": ["binding-schema"],
+      "completed_lane_ids": ["binding-schema"],
+      "blocked_lane_ids": []
+    },
+    "touched_files": [
+      "src/xmuse_core/agents/provider_session_binding.py",
+      "tests/xmuse/test_provider_session_binding.py"
+    ],
+    "base_head_sha": "1111111111111111111111111111111111111111",
+    "branch": "feature-provider-session-binding",
+    "worktree": "/home/iiyatu/.config/superpowers/worktrees/memoryOS/feature-provider-session-binding",
+    "diff_ref": "logs/diffs/provider-session-binding.diff",
+    "patch_ref": "logs/patches/provider-session-binding.patch",
+    "changed_files": [
+      "src/xmuse_core/agents/provider_session_binding.py",
+      "tests/xmuse/test_provider_session_binding.py"
+    ],
+    "dependency_changes": [],
+    "verification": {
+      "commands_run": ["uv run pytest -q tests/xmuse/test_provider_session_binding.py"],
+      "test_results": [
+        {
+          "command": "uv run pytest -q tests/xmuse/test_provider_session_binding.py",
+          "status": "passed",
+          "evidence_ref": "logs/gates/provider-binding.json"
+        }
+      ],
+      "lint_results": [],
+      "screenshots_or_logs": ["logs/gates/provider-binding.json"],
+      "known_failures": []
+    },
+    "worker_notes": {
+      "implementation_summary": "Added explicit provider session binding records.",
+      "decisions_made": ["Keep binding records separate from GodSessionRecord."],
+      "risks_or_open_questions": ["Codex app-server durable thread resume still needs validation."],
+      "skipped_items_with_reason": []
+    },
+    "created_at": "2026-06-03T02:12:00Z"
+  }
+}

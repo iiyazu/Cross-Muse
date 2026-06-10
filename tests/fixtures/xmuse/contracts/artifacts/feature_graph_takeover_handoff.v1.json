@@ -1,0 +1,53 @@
+{
+  "schema_version": "xmuse.artifact.v1",
+  "artifact_type": "feature_graph_takeover_handoff",
+  "artifact_id": "feature_graph_takeover_handoff_demo",
+  "artifact_ref": "feature_graph_takeover_handoff:feature_graph_takeover_handoff_demo:v1",
+  "version": 1,
+  "created_at": "2026-06-03T02:23:00Z",
+  "updated_at": "2026-06-03T02:23:00Z",
+  "source_event_ref": "event:evt_takeover_gate_decision_demo_v1",
+  "source_refs": [
+    "feature_graph_takeover_decision:fgtd:fgtakeover:fverdict_takeover_demo:fevb_demo:20260603T022000z:20260603T022300z:v1",
+    "feature_graph_takeover_plan:fgtakeover:fverdict_takeover_demo:fevb_demo:20260603T022000z:v1"
+  ],
+  "lineage": {
+    "source_event_refs": ["event:evt_takeover_gate_decision_demo_v1"]
+  },
+  "ownership": {
+    "producer_session": "S5",
+    "consumer_sessions": ["S2", "S5"]
+  },
+  "payload": {
+    "handoff_id": "fgth:fgtd:fgtakeover:fverdict_takeover_demo:fevb_demo:20260603T022000z:20260603T022300z",
+    "decision_id": "fgtd:fgtakeover:fverdict_takeover_demo:fevb_demo:20260603T022000z:20260603T022300z",
+    "plan_id": "fgtakeover:fverdict_takeover_demo:fevb_demo:20260603T022000z",
+    "verdict_id": "fverdict_takeover_demo",
+    "evidence_bundle_id": "fevb_demo",
+    "graph_set_id": "gs-xmuse-hardening",
+    "graph_set_version": 1,
+    "feature_id": "feature-provider-session-binding",
+    "feature_graph_id": "graph-provider-session-binding",
+    "takeover_worker_session_id": "god-takeover-worker-demo",
+    "takeover_provider_session_binding_ref": "provider_session_binding:psb_takeover_demo:v1",
+    "takeover_reason": "Provider session binding is stale and worker context is lost.",
+    "takeover_triggers": ["worker_unrecoverable", "context_lost"],
+    "gate_refs": [
+      "feature_graph_takeover_plan:fgtakeover:fverdict_takeover_demo:fevb_demo:20260603T022000z:v1",
+      "logs/takeover/provider-binding-takeover-gate.json"
+    ],
+    "takeover_input_refs": [
+      "feature_graph_takeover_decision:fgtd:fgtakeover:fverdict_takeover_demo:fevb_demo:20260603T022000z:20260603T022300z:v1",
+      "feature_graph_takeover_plan:fgtakeover:fverdict_takeover_demo:fevb_demo:20260603T022000z:v1",
+      "logs/takeover/provider-binding-takeover-gate.json",
+      "provider_session_binding:psb_takeover_demo:v1"
+    ],
+    "required_takeover_checks": [
+      "verify_takeover_decision_approved",
+      "verify_takeover_worker_session_binding",
+      "verify_takeover_worktree_lease",
+      "verify_failed_worker_is_not_resumed"
+    ],
+    "created_at": "2026-06-03T02:23:00Z"
+  }
+}

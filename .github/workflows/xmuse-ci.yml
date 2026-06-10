@@ -1,0 +1,56 @@
+name: xmuse CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  quality-gates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install project
+        run: uv sync --frozen --all-groups
+
+      - name: Ruff
+        run: >-
+          uv run ruff check
+          src/xmuse_core/providers/models.py
+          src/xmuse_core/providers/registry.py
+          src/xmuse_core/platform/provider_read_contracts.py
+          tests/xmuse/test_provider_read_contracts_module.py
+          tests/xmuse/test_quality_gates_phase3.py
+
+      - name: Focused pytest gates
+        run: >-
+          uv run pytest -q
+          tests/xmuse/test_package_boundaries.py
+          tests/xmuse/test_split_export_contract.py::test_project_pyproject_has_no_local_memoryos_source_or_dependency
+          tests/xmuse/test_provider_models.py
+          tests/xmuse/test_provider_policy.py
+          tests/xmuse/test_provider_support_level.py
+          tests/xmuse/test_provider_read_contracts_module.py
+          tests/xmuse/test_quality_gates_phase3.py
+          tests/xmuse/test_platform_runner.py::test_health_once_handles_missing_lane_projection
+          tests/xmuse/test_full_chain_real_run.py::test_real_runtime_restart_resume_smoke_with_fake_app_server
+
+      - name: Scoped type check
+        run: >-
+          uv run mypy
+          src/xmuse_core/providers/models.py
+          src/xmuse_core/providers/registry.py
+          src/xmuse_core/platform/provider_read_contracts.py

@@ -1,0 +1,33 @@
+{
+  "schema_version": "xmuse.event.v1",
+  "event_id": "evt_lane_ready_demo_v1",
+  "event_type": "lane.ready",
+  "producer": "execution_scheduling",
+  "producer_session": "S5",
+  "consumers": ["coordinator", "runner"],
+  "consumer_sessions": ["S2", "S5"],
+  "delivery": "at_least_once",
+  "dedupe_strategy": "idempotency_key",
+  "idempotency_key": "lane.ready:lane_demo:7",
+  "aggregate_key": "lane:lane_demo:7",
+  "aggregate": {
+    "type": "lane",
+    "id": "lane_demo",
+    "version": 7
+  },
+  "created_at": "2026-06-02T00:04:00Z",
+  "payload": {
+    "lane_id": "lane_demo",
+    "graph_set_id": "gs_demo",
+    "projection_revision": 7,
+    "artifact_refs": [
+      {
+        "artifact_type": "lane_graph",
+        "artifact_id": "lg_demo",
+        "version": 1,
+        "ref": "lane_graph:lg_demo:v1"
+      }
+    ],
+    "source_refs": ["event:evt_graph_set_ready_demo_v1"]
+  }
+}

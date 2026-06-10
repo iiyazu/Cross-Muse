@@ -1,0 +1,39 @@
+{
+  "schema_version": "xmuse.event.v1",
+  "event_id": "evt_blueprint_gap_found_demo_v1",
+  "event_type": "blueprint.gap_found",
+  "producer": "coordinator",
+  "producer_session": "S2",
+  "consumers": ["god_chat_layer", "blueprint_decomposition", "dashboard"],
+  "consumer_sessions": ["S1", "S3", "S7"],
+  "delivery": "at_least_once",
+  "dedupe_strategy": "idempotency_key",
+  "idempotency_key": "blueprint.gap_found:gap_demo:1",
+  "aggregate_key": "blueprint:bp_demo:2",
+  "aggregate": {
+    "type": "blueprint",
+    "id": "bp_demo",
+    "version": 2
+  },
+  "created_at": "2026-06-02T00:09:00Z",
+  "payload": {
+    "gap_id": "gap_demo",
+    "blueprint_id": "bp_demo",
+    "summary": "Implementation evidence uncovered a missing acceptance criterion.",
+    "artifact_refs": [
+      {
+        "artifact_type": "blueprint",
+        "artifact_id": "bp_demo",
+        "version": 1,
+        "ref": "blueprint:bp_demo:v1"
+      },
+      {
+        "artifact_type": "graph_set",
+        "artifact_id": "gs_demo",
+        "version": 1,
+        "ref": "graph_set:gs_demo:v1"
+      }
+    ],
+    "source_refs": ["event:evt_run_terminal_demo_v1"]
+  }
+}

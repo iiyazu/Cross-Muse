@@ -1,0 +1,50 @@
+{
+  "schema_version": "xmuse.split_export.v1",
+  "target_project": "xmuse",
+  "source_project": "xmuse",
+  "package_metadata_template": "docs/xmuse/xmuse-package.pyproject.toml",
+  "copy_roots": [
+    "xmuse",
+    "src/xmuse_core",
+    "docs/xmuse",
+    "scripts/export_xmuse.py",
+    "tests/xmuse",
+    "tests/fixtures/xmuse"
+  ],
+  "required_package_files": [
+    "scripts/export_xmuse.py",
+    "xmuse/chat_api.py",
+    "xmuse/dashboard_api.py",
+    "xmuse/mcp_server.py",
+    "xmuse/platform_runner.py",
+    "xmuse/tui/__main__.py",
+    "src/xmuse_core/__init__.py"
+  ],
+  "runtime_state_patterns": [
+    "xmuse/**/*.db",
+    "xmuse/**/*.sqlite3",
+    "xmuse/**/*.json",
+    "xmuse/**/*.jsonl",
+    "xmuse/**/*.lock",
+    "xmuse/feature_lanes.json*",
+    "xmuse/lane_graphs/**",
+    "xmuse/logs/**",
+    "xmuse/self_evolution/**",
+    "xmuse/work/**",
+    "xmuse/history/**"
+  ],
+  "memoryos_owned_roots": [
+    "src/memoryos_lite",
+    "tests/memoryos"
+  ],
+  "post_export_checks": [
+    "uv run python scripts/export_xmuse.py /tmp/xmuse-export-check --repo-root /path/to/xmuse",
+    "uv build --wheel",
+    "uv run pytest tests/xmuse -q"
+  ],
+  "notes": [
+    "The exported xmuse project must not depend on memoryos-lite or local ../memoryOS.",
+    "Runtime state remains under XMUSE_ROOT and must not be copied as source.",
+    "The source_project pyproject must export xmuse console scripts, not memoryos console scripts."
+  ]
+}
