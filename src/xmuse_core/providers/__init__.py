@@ -50,6 +50,7 @@ __all__ = [
     "ProviderFailureKind",
     "ProviderPolicyDecision",
     "ProviderPolicyService",
+    "ProviderRegistry",
     "PersistentCapability",
     "ProviderId",
     "ProviderHealthSnapshot",

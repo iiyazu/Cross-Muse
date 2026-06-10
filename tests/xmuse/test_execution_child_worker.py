@@ -464,7 +464,6 @@ async def test_run_execution_god_marks_resume_binding_stale_on_stale_provider_fa
         )
     )
     recovery = RecoveryManager(RecoveryConfig(max_attempts=1), async_sleep=asyncio.sleep)
-    degradations: list[tuple[str, str, str | None]] = []
 
     await run_execution_god(
         lane_id="lane-a",

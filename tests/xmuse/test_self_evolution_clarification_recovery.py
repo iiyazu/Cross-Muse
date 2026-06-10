@@ -32,7 +32,6 @@ from xmuse_core.self_evolution import (
 from xmuse_core.self_evolution.models import RunTerminalStatus
 from xmuse_core.self_evolution.watcher import TerminalRunWatcher
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

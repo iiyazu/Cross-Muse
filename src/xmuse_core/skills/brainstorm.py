@@ -60,7 +60,9 @@ class BrainstormSkill(SkillProtocol):
         base = self._load_prompt("brainstorm_agent.md")
         constraints_block = ""
         if input.constraints:
-            constraints_block = "\n## Constraints\n" + "\n".join(f"- {c}" for c in input.constraints)
+            constraints_block = "\n## Constraints\n" + "\n".join(
+                f"- {constraint}" for constraint in input.constraints
+            )
         return (
             f"{base}\n\n"
             f"## Feature: {input.feature_id}\n"

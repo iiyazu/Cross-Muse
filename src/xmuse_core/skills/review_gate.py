@@ -8,7 +8,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from xmuse_core.skills.base import SkillContext, SkillProtocol, SkillResult
+from xmuse_core.skills.base import SkillProtocol, SkillResult
 from xmuse_core.skills.models import ReviewInput
 
 logger = logging.getLogger(__name__)
@@ -74,7 +74,9 @@ class ReviewGateSkill(SkillProtocol):
             f"## Review Type: {input.review_type}\n"
             f"{criteria_block}\n\n"
             f"## Artifact Content\n\n```\n{artifact_content}\n```\n\n"
-            "Return a JSON verdict: {\"verdict\": \"PASS\" or \"FAIL\", \"findings\": [...], \"blocking_findings\": [...]}\n"
+            "Return a JSON verdict: "
+            '{"verdict": "PASS" or "FAIL", "findings": [...], '
+            '"blocking_findings": [...]}\n'
         )
 
     def _load_prompt(self, name: str) -> str:

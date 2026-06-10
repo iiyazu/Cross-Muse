@@ -19,7 +19,13 @@ def test_overnight_runner_ignores_preround_dirty_agent_files(tmp_path: Path) -> 
     subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
     subprocess.run(["git", "config", "user.name", "Test User"], cwd=repo, check=True)
     subprocess.run(["git", "add", "."], cwd=repo, check=True)
-    subprocess.run(["git", "commit", "-m", "initial"], cwd=repo, check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["git", "commit", "-m", "initial"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
     dirty_file.write_text("before\nuser dirty change\n")
 
     fake_bin = repo / "fake-bin"

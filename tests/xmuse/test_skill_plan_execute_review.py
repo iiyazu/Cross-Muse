@@ -7,6 +7,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "xmuse"))
 from skills.plan_execute_review import PlanExecuteReviewSkill
+
 from xmuse_core.agents.protocol import AgentOutput
 from xmuse_core.agents.registry import AgentDescriptor, AgentRuntime
 

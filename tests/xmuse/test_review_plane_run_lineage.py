@@ -18,13 +18,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from xmuse_core.platform.review_plane import ReviewPlaneController
 from xmuse_core.self_evolution import SelfEvolutionController
 from xmuse_core.structuring.models import ReviewDecision, ReviewVerdict
 from xmuse_core.structuring.verdict_store import VerdictStore
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -213,7 +210,6 @@ def test_verdict_lineage_for_run_includes_patch_forward_descendants(
 
 def test_verdict_lineage_for_run_multiple_tasks_per_lane(tmp_path: Path) -> None:
     """A reworked lane produces two tasks; both appear in run lineage."""
-    from xmuse_core.structuring.models import ReviewTaskStatus
 
     controller = _make_controller(
         tmp_path,

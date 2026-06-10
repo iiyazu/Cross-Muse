@@ -11,7 +11,14 @@ class SkillRegistry:
     def __init__(self) -> None:
         self._skills: dict[str, type[SkillProtocol]] = {}
 
-    def register(self, name: str, cls: type[SkillProtocol], *, version: str = "1.0", tags: list[str] | None = None) -> None:
+    def register(
+        self,
+        name: str,
+        cls: type[SkillProtocol],
+        *,
+        version: str = "1.0",
+        tags: list[str] | None = None,
+    ) -> None:
         cls._skill_meta = SkillMeta(name=name, version=version, tags=tags or [])
         self._skills[name] = cls
 

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: E501,E741
 """Inject the Frontend Vision Layer 1-4 work as a multi-lane proposal.
 
 Posts a conversation, message, and proposal to chat_api, then approves it.
@@ -30,10 +31,8 @@ from __future__ import annotations
 
 import json
 import sys
-from pathlib import Path
-
 import urllib.request
-
+from pathlib import Path
 
 CHAT_BASE = "http://127.0.0.1:8201/api/chat"
 VISION_DOC = "xmuse/FRONTEND_VISION.md"

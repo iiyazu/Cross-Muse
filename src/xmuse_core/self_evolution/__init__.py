@@ -15,6 +15,16 @@ from xmuse_core.self_evolution.models import (
     RunTerminalAggregation,
     StructuredEvidenceBundle,
 )
+from xmuse_core.self_evolution.recovery import (
+    CircuitBreaker,
+    CircuitOpenError,
+    CircuitState,
+    RecoveryConfig,
+    RecoveryEvent,
+    RecoveryManager,
+    TransientRecoveryError,
+    is_transient_failure,
+)
 from xmuse_core.self_evolution.reliability import (
     AckConsistencyCheck,
     AckConsistencyGate,
@@ -27,16 +37,6 @@ from xmuse_core.self_evolution.reliability import (
     RunHeartbeat,
     StaleArtifactRecord,
     StaleArtifactVerdict,
-)
-from xmuse_core.self_evolution.recovery import (
-    CircuitBreaker,
-    CircuitOpenError,
-    CircuitState,
-    RecoveryConfig,
-    RecoveryEvent,
-    RecoveryManager,
-    TransientRecoveryError,
-    is_transient_failure,
 )
 from xmuse_core.self_evolution.store import SelfEvolutionStore
 

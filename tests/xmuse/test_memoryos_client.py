@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import pytest
 import httpx
+import pytest
 
 from xmuse_core.agents.memoryos_client import MemoryOSClient
 

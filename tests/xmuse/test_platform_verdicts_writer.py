@@ -5,8 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 from xmuse_core.platform.verdicts.writer import (
     gate_report_ref_for_lane,
     ingest_merge_verdict,

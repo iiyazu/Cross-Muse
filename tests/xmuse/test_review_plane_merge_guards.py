@@ -25,7 +25,6 @@ from xmuse_core.platform.review_plane import (
 )
 from xmuse_core.structuring.models import ReviewDecision, ReviewVerdict
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -287,7 +286,11 @@ def test_assemble_evidence_bundle_records_incomplete_termination(tmp_path):
     # signal_refs must contain both the negative signal and the
     # incomplete-termination signal for lane-b.
     negative_refs = [r for r in bundle.signal_refs if r.startswith("negative:lane:lane-b")]
-    incomplete_refs = [r for r in bundle.signal_refs if r.startswith("incomplete_termination:lane:lane-b")]
+    incomplete_refs = [
+        r
+        for r in bundle.signal_refs
+        if r.startswith("incomplete_termination:lane:lane-b")
+    ]
     assert negative_refs, "expected a negative signal ref for lane-b"
     assert incomplete_refs, "expected an incomplete-termination signal ref for lane-b"
 
@@ -297,7 +300,10 @@ def test_assemble_evidence_bundle_records_incomplete_termination(tmp_path):
         if p.get("type") == "incomplete_termination" and p.get("lane_id") == "lane-b"
     ]
     assert incomplete_primary
-    assert incomplete_primary[0]["evidence_bundle_ref"] == "evbundle_6259476d67dd414a8be293d1025ccb8c"
+    assert (
+        incomplete_primary[0]["evidence_bundle_ref"]
+        == "evbundle_6259476d67dd414a8be293d1025ccb8c"
+    )
 
     # The verdict must have been persisted in the store.
     incomplete_verdicts = [

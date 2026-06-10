@@ -19,12 +19,12 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 
+from xmuse_core.providers.registry import DEFAULT_CODEX_GOD_MODEL_ID
 from xmuse_core.self_evolution.decomposer import (
     SingleLaneDecomposer,
     TrackDecomposer,
 )
 from xmuse_core.self_evolution.models import StructuredEvidenceBundle
-from xmuse_core.providers.registry import DEFAULT_CODEX_GOD_MODEL_ID
 
 logger = logging.getLogger(__name__)
 

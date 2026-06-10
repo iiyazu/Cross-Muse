@@ -1,14 +1,12 @@
 """E2E smoke test: full dispatch cycle with a mock codex script."""
 import asyncio
 import sys
-from pathlib import Path
 
 import pytest
 
 from xmuse_core.agents.consumer import TaskDescriptor, WorklistConsumer
 from xmuse_core.agents.manager import SessionManager
 from xmuse_core.agents.registry import AgentDescriptor, AgentRegistry, AgentRuntime, SessionConfig
-
 
 MOCK_CODEX = """\
 import sys

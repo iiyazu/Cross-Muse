@@ -20,8 +20,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from xmuse_core.platform.final_action_gate import FinalActionGateStore
 from xmuse_core.platform.review_plane import ReviewPlaneController
 from xmuse_core.structuring.models import (
@@ -30,7 +28,6 @@ from xmuse_core.structuring.models import (
     ReviewVerdict,
     RunTerminalStatus,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
