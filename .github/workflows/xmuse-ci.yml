@@ -54,3 +54,55 @@ jobs:
           src/xmuse_core/providers/models.py
           src/xmuse_core/providers/registry.py
           src/xmuse_core/platform/provider_read_contracts.py
+
+  contract-smoke-gates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install project
+        run: uv sync --frozen --all-groups
+
+      - name: Full lint gate
+        run: uv run ruff check .
+
+      - name: Scoped format gate
+        run: >-
+          uv run ruff format --check
+          src/xmuse_core/platform/production_readiness.py
+          tests/xmuse/test_contract_smoke_gates.py
+
+      - name: Mainline contract smoke tests
+        run: >-
+          uv run pytest -q
+          tests/xmuse/test_mainline_contract_docs.py
+          tests/xmuse/test_deliberation_protocol_v2.py
+          tests/xmuse/test_god_speech_act_contract.py
+          tests/xmuse/test_deliberation_engine.py
+          tests/xmuse/test_deliberation_chat_api.py
+          tests/xmuse/test_mission_blueprint_v1.py
+          tests/xmuse/test_lane_planner_v2.py
+          tests/xmuse/test_blueprint_lane_dag_service.py
+          tests/xmuse/test_feature_graph_patch_forward.py
+          tests/xmuse/test_github_ops_contract.py
+          tests/xmuse/test_memoryos_rest_integration.py
+          tests/xmuse/test_memoryos_event_writeback.py
+          tests/xmuse/test_production_hardening.py
+          tests/xmuse/test_contract_smoke_gates.py
+          tests/xmuse/test_package_boundaries.py
+
+      - name: Scoped contract type check
+        run: >-
+          uv run mypy
+          src/xmuse_core/platform/production_readiness.py
