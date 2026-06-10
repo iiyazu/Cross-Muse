@@ -140,6 +140,7 @@ class MemoryOSLiteEndpointPlan(BaseModel):
     ingest: str = "/sessions/{session_id}/ingest"
     page: str = "/sessions/{session_id}/page"
     build_context: str = "/sessions/{session_id}/build-context"
+    trace: str = "/sessions/{session_id}/trace"
     search: str = "/memory/search"
     health: str = "/health"
 
@@ -152,6 +153,17 @@ class MemoryOSLiteInteropPlan(BaseModel):
     session_metadata: dict[str, object]
     endpoint_plan: MemoryOSLiteEndpointPlan = Field(default_factory=MemoryOSLiteEndpointPlan)
     proof_level: Literal["contract", "live"] = "contract"
+
+
+class MemoryOSLiteTraceEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    namespace_uri: str
+    session_id: str
+    trace_events: list[dict[str, object]] = Field(default_factory=list)
+    source_refs: list[str] = Field(default_factory=list)
+    estimated_tokens: int | None = None
+    proof_level: Literal["live_service_proof"] = "live_service_proof"
 
 
 class MemoryOSLiteInteropAdapter:
@@ -255,6 +267,28 @@ class MemoryOSLiteInteropAdapter:
         except (httpx.HTTPError, ValueError) as exc:
             logger.warning("memoryos-lite search degraded: %s", exc)
             return []
+
+    async def fetch_trace(
+        self,
+        namespace: MemoryOSNamespace,
+    ) -> MemoryOSLiteTraceEvidence | None:
+        binding = await self._ensure_session(namespace)
+        if binding is None:
+            return None
+        try:
+            response = await self._http().get(
+                f"{self._base_url}/sessions/{binding.session_id}/trace"
+            )
+            response.raise_for_status()
+            payload = response.json()
+            return _trace_evidence_from_payload(
+                namespace=namespace,
+                session_id=binding.session_id,
+                payload=payload,
+            )
+        except (httpx.HTTPError, ValueError) as exc:
+            logger.warning("memoryos-lite trace degraded: %s", exc)
+            return None
 
     async def _ensure_session(
         self,
@@ -591,6 +625,39 @@ def _page_text(page: dict[str, Any]) -> str:
     return "\n".join(part for part in parts if part)
 
 
+def _trace_evidence_from_payload(
+    *,
+    namespace: MemoryOSNamespace,
+    session_id: str,
+    payload: object,
+) -> MemoryOSLiteTraceEvidence:
+    events: list[dict[str, object]]
+    if isinstance(payload, list):
+        events = [item for item in payload if isinstance(item, dict)]
+    elif isinstance(payload, dict):
+        raw_events = payload.get("trace") or payload.get("events") or []
+        events = [item for item in raw_events if isinstance(item, dict)]
+    else:
+        events = []
+    source_refs: list[str] = []
+    estimated_tokens: int | None = None
+    for event in events:
+        metadata = event.get("metadata", {})
+        if isinstance(metadata, dict):
+            source_refs.extend(_string_list(metadata.get("xmuse_source_refs")))
+        if estimated_tokens is None:
+            tokens = event.get("estimated_tokens")
+            if isinstance(tokens, int) and not isinstance(tokens, bool):
+                estimated_tokens = tokens
+    return MemoryOSLiteTraceEvidence(
+        namespace_uri=namespace.uri,
+        session_id=session_id,
+        trace_events=events,
+        source_refs=_dedupe(source_refs),
+        estimated_tokens=estimated_tokens,
+    )
+
+
 def _string_list(value: object) -> list[str]:
     if not isinstance(value, list):
         return []
@@ -616,6 +683,7 @@ __all__ = [
     "MemoryOSLiteInteropPlan",
     "MemoryOSLiteSessionBinding",
     "MemoryOSLiteSessionBindingStore",
+    "MemoryOSLiteTraceEvidence",
     "build_memoryos_lite_build_context_payload",
     "build_memoryos_lite_create_session_payload",
     "build_memoryos_lite_ingest_payload",

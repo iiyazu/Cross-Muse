@@ -63,6 +63,9 @@ class ProofLevel(StrEnum):
     CONTRACT = "contract_proof"
     FAKE_RUNTIME = "fake_runtime_proof"
     LIVE_RUNTIME = "live_runtime_proof"
+    LIVE_SERVICE = "live_service_proof"
+    SERVER_SIDE_ENFORCEMENT = "server_side_enforcement_proof"
+    REAL_PROVIDER = "real_provider_proof"
     MANUAL_GAP = "manual_gap"
 
 
@@ -136,6 +139,24 @@ class SelfIterationClosureArtifacts(BaseModel):
     github_evidence: GitHubTruthEvidence
     draft_pr: DraftPRRecord
     merge_readiness: MergeReadiness
+
+
+class GodDeliberationReplayExport(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: str = "god_deliberation_replay_export.v1"
+    export_id: str
+    transcript_source: str
+    proof_level: ProofLevel
+    natural_deliberation: bool
+    speech_acts: list[str]
+    source_refs: list[str]
+    blueprint: MissionBlueprintV1
+
+    @field_validator("export_id", "transcript_source")
+    @classmethod
+    def _validate_required_text(cls, value: str) -> str:
+        return _require_non_empty(value)
 
 
 def build_self_iteration_replay_fixture() -> list[GodSpeechActMessageV1]:
@@ -348,6 +369,37 @@ def derive_frozen_self_iteration_blueprint(
         source_refs=[f"message:{message.message_id}" for message in ordered],
         status=MissionBlueprintStatus.FROZEN,
         approved_by=["god-review", "god-convenor"],
+    )
+
+
+def export_god_deliberation_replay(
+    messages: list[GodSpeechActMessageV1],
+    *,
+    export_id: str,
+    transcript_source: str,
+    proof_level: ProofLevel,
+    natural_deliberation: bool,
+) -> GodDeliberationReplayExport:
+    if natural_deliberation and proof_level not in {
+        ProofLevel.LIVE_SERVICE,
+        ProofLevel.REAL_PROVIDER,
+    }:
+        raise ValueError("natural deliberation evidence requires live/real proof level")
+    if not natural_deliberation and proof_level in {
+        ProofLevel.LIVE_SERVICE,
+        ProofLevel.REAL_PROVIDER,
+    }:
+        raise ValueError("contract exports must not claim live/real deliberation proof")
+    ordered = sort_god_speech_act_messages(messages)
+    blueprint = derive_frozen_self_iteration_blueprint(ordered)
+    return GodDeliberationReplayExport(
+        export_id=export_id,
+        transcript_source=transcript_source,
+        proof_level=proof_level,
+        natural_deliberation=natural_deliberation,
+        speech_acts=[message.speech_act.value for message in ordered],
+        source_refs=[f"message:{message.message_id}" for message in ordered],
+        blueprint=blueprint,
     )
 
 
@@ -743,7 +795,7 @@ async def write_self_iteration_memory_evidence(
             metadata={"memory_layer": "task_state", "proof_level": ProofLevel.CONTRACT},
         ),
         MemoryOSWritebackEvent(
-            kind="pr_merged",
+            kind="merge_readiness_evaluated",
             namespace=namespace,
             actor_id="god-github",
             event_id="self-iteration-gate-outcome",
@@ -753,7 +805,11 @@ async def write_self_iteration_memory_evidence(
                 *artifacts.review_pass.evidence_refs,
             ],
             commit_sha=commit_sha,
-            metadata={"memory_layer": "task_state", "proof_level": ProofLevel.CONTRACT},
+            metadata={
+                "memory_layer": "task_state",
+                "proof_level": ProofLevel.CONTRACT,
+                "real_merge_event": False,
+            },
         ),
     ]
     results: list[MemoryOSIngestResult] = []

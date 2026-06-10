@@ -15,6 +15,7 @@ from xmuse_core.self_iteration.runtime_closure import (
     build_self_iteration_lane_dag_request,
     build_self_iteration_replay_fixture,
     derive_frozen_self_iteration_blueprint,
+    export_god_deliberation_replay,
     read_github_truth_evidence,
     review_self_iteration_evidence,
     write_self_iteration_memory_evidence,
@@ -54,6 +55,39 @@ def test_replay_fixture_freezes_blueprint_and_blocks_unresolved_objection() -> N
     ]
     with pytest.raises(ValueError, match="unanswered replies|unresolved blockers"):
         derive_frozen_self_iteration_blueprint(without_resolution)
+
+
+def test_exported_deliberation_replay_keeps_contract_fixture_separate_from_natural_proof() -> None:
+    replay = build_self_iteration_replay_fixture()
+
+    exported = export_god_deliberation_replay(
+        replay,
+        export_id="export-contract-1",
+        transcript_source="deterministic-fixture",
+        proof_level=ProofLevel.CONTRACT,
+        natural_deliberation=False,
+    )
+
+    assert exported.proof_level is ProofLevel.CONTRACT
+    assert exported.natural_deliberation is False
+    assert exported.blueprint.status is MissionBlueprintStatus.FROZEN
+    assert GodSpeechAct.CHALLENGE.value in exported.speech_acts
+    with pytest.raises(ValueError, match="contract exports must not claim live/real"):
+        export_god_deliberation_replay(
+            replay,
+            export_id="invalid-export",
+            transcript_source="deterministic-fixture",
+            proof_level=ProofLevel.REAL_PROVIDER,
+            natural_deliberation=False,
+        )
+    with pytest.raises(ValueError, match="natural deliberation evidence requires"):
+        export_god_deliberation_replay(
+            replay,
+            export_id="invalid-natural-export",
+            transcript_source="runtime-transcript",
+            proof_level=ProofLevel.CONTRACT,
+            natural_deliberation=True,
+        )
 
 
 def test_blueprint_builds_authoritative_typed_lanedag_and_dispatch() -> None:
@@ -194,6 +228,14 @@ async def test_memoryos_writeback_preserves_namespace_actor_layer_and_sources(
     }
     assert all(page.memory_layer.value == "task_state" for page in pages)
     assert any("commits/abc123/events/blueprint_frozen" in ref for ref in pages[0].source_refs)
-    assert all(page.metadata["memory_writeback_kind"] for page in pages)
+    writeback_kinds = {page.metadata["memory_writeback_kind"] for page in pages}
+    assert "merge_readiness_evaluated" in writeback_kinds
+    assert "pr_merged" not in writeback_kinds
+    gate_page = next(
+        page
+        for page in pages
+        if page.metadata["memory_writeback_kind"] == "merge_readiness_evaluated"
+    )
+    assert gate_page.metadata["real_merge_event"] is False
     envelope = json.loads(artifacts.runtime_contract.stable_json())
     assert envelope["memory_context"]["proof_level"] != ProofLevel.LIVE_RUNTIME

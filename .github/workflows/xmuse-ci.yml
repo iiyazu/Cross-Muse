@@ -100,12 +100,16 @@ jobs:
           tests/xmuse/test_memoryos_event_writeback.py
           tests/xmuse/test_production_hardening.py
           tests/xmuse/test_contract_smoke_gates.py
+          tests/xmuse/test_self_iteration_runtime_closure.py
+          tests/xmuse/test_vision_runtime_evidence_closure.py
           tests/xmuse/test_package_boundaries.py
 
       - name: Scoped contract type check
         run: >-
           uv run mypy
           src/xmuse_core/platform/production_readiness.py
+          src/xmuse_core/platform/execution/subagent_runtime.py
+          src/xmuse_core/self_iteration/runtime_closure.py
 
   real-runtime-integration-gate:
     runs-on: ubuntu-latest
