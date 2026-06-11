@@ -186,7 +186,12 @@ class GitHubServerSideTruthEvidence(BaseModel):
 
     @property
     def has_server_enforcement_truth(self) -> bool:
-        return self.branch_protection_snapshot is not None or self.ruleset_snapshot is not None
+        if self.branch_protection_snapshot:
+            return True
+        if not self.ruleset_snapshot:
+            return False
+        rulesets = self.ruleset_snapshot.get("rulesets")
+        return isinstance(rulesets, list) and bool(rulesets)
 
     @property
     def has_review_truth(self) -> bool:

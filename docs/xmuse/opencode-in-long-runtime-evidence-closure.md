@@ -197,21 +197,60 @@ Result: no matches.
 
 ## Remaining Manual Gap
 
-This iteration cannot complete live/server-side merge proof without external
-operator action:
+PR `#42` now exists and the local GitHub CLI is authenticated. A read-only
+capture was run:
 
-- local `gh auth status` reports no authenticated GitHub hosts;
-- GitHub connector search for `repo:iiyazu/Cross-Muse is:pr` returns no PRs;
-- no real PR check-run, review, ruleset/branch-protection, or merge event exists
-  for capture.
+```bash
+uv run python scripts/github_server_truth_capture.py \
+  --repo iiyazu/Cross-Muse \
+  --pull-request 42 \
+  --output /tmp/xmuse-github-server-truth.json
+```
+
+Result: exit `2`, `manual_gap`.
+
+Captured server-side facts after configuring `main` branch protection:
+
+- required checks are present and successful:
+  - `quality-gates`;
+  - `contract-smoke-gates`;
+  - `real-runtime-integration-gate`.
+- source app: `github-actions`;
+- branch protection is enabled for `main`;
+- branch protection requires the three checks above with `strict: true`;
+- branch protection requires one approving PR review;
+- branch protection requires Code Owner review;
+- branch protection enforces admins;
+- branch protection requires conversation resolution;
+- PR state: `OPEN`;
+- merge state: `BLOCKED`;
+- review decision: `REVIEW_REQUIRED`.
+
+Missing server-side truth:
+
+- no review event / reviewer identity / Code Owner review verification;
+- no merge event (`merged_at` and merge event id are absent).
+
+Current `gap_reason`:
+
+```text
+missing server-side truth: review_truth, merge_truth
+```
+
+This iteration still cannot complete live/server-side merge proof without
+external operator action:
+
+- add the required review / Code Owner review evidence from an eligible
+  non-author reviewer;
+- merge the PR after the required checks and review are satisfied.
 
 Owner: GitHub operator.
 
 Next action:
 
-1. Create or provide a real PR number in `iiyazu/Cross-Muse`.
-2. Authenticate local GitHub CLI with `gh auth login`.
-3. Run `scripts/github_server_truth_capture.py` against that PR.
-4. Attach the resulting JSON as server-side evidence.
+1. Add an eligible non-author Code Owner reviewer for PR `#42`, or update the
+   repository ownership/collaborator policy so such a reviewer exists.
+2. Merge PR `#42` only after checks and review are satisfied.
+3. Re-run `scripts/github_server_truth_capture.py` against PR `#42`.
 
 Until that happens, `pr_merged` remains `manual_gap`.

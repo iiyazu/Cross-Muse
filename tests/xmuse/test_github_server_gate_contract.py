@@ -366,6 +366,34 @@ def test_server_side_snapshot_normalizer_keeps_incomplete_snapshot_as_gap() -> N
     assert can_emit_pr_merged(evidence) is False
 
 
+def test_server_side_snapshot_normalizer_treats_empty_rulesets_as_missing_enforcement() -> None:
+    snapshot = GitHubServerSideTruthSnapshot(
+        workflow_run_id=123,
+        check_run_ids=[111, 112, 113],
+        expected_source_app="github-actions",
+        ruleset_snapshot={"rulesets": []},
+        review_event_id=789,
+        reviewer_login="reviewer",
+        code_owner_review_verified=True,
+        merge_commit_sha="abc123",
+        merged_at="2026-06-10T15:00:00Z",
+        merge_event_id="merge-event-1",
+    )
+
+    evidence = build_github_server_side_truth_from_snapshot(
+        repo="iiyazu/Cross-Muse",
+        pull_request_number=42,
+        required_checks=sorted(REQUIRED_SERVER_CHECKS),
+        snapshot=snapshot,
+    )
+
+    assert evidence.proof_level == "manual_gap"
+    assert evidence.has_server_enforcement_truth is False
+    assert evidence.gap_reason is not None
+    assert "server_enforcement_truth" in evidence.gap_reason
+    assert can_emit_pr_merged(evidence) is False
+
+
 def test_read_only_collector_normalizes_client_snapshot_without_mutation() -> None:
     snapshot = GitHubServerSideTruthSnapshot(
         workflow_run_id=123,
