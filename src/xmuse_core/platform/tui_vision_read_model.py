@@ -328,11 +328,15 @@ def _build_github(github_truth: dict | None) -> dict[str, Any]:
         if isinstance(github_truth.get("review_truth"), dict)
         else {}
     )
-    merge = github_truth.get("merge") if isinstance(github_truth.get("merge"), dict) else {}
+    merge = _github_merge_fields(github_truth)
     can_emit_pr_merged = bool(github_truth.get("can_emit_pr_merged"))
     blockers = _github_blockers(required_checks, review_truth, github_truth)
 
-    if merge.get("merged") is True and proof_level == "server_side_merge_proof":
+    if _can_render_pr_merged(
+        proof_level=proof_level,
+        can_emit_pr_merged=can_emit_pr_merged,
+        merge=merge,
+    ):
         fact_state = "pr_merged"
         manual_gap_reason = github_truth.get("manual_gap_reason")
     elif merge.get("merged") is True:
@@ -360,6 +364,31 @@ def _build_github(github_truth: dict | None) -> dict[str, Any]:
         "review_truth": review_truth,
         "merge": merge,
     }
+
+
+def _github_merge_fields(github_truth: dict[str, Any]) -> dict[str, Any]:
+    merge = github_truth.get("merge") if isinstance(github_truth.get("merge"), dict) else {}
+    normalized = dict(merge)
+    for key in ("merged", "merge_commit_sha", "merged_at", "merge_event_id"):
+        if key not in normalized and key in github_truth:
+            normalized[key] = github_truth[key]
+    return normalized
+
+
+def _can_render_pr_merged(
+    *,
+    proof_level: str,
+    can_emit_pr_merged: bool,
+    merge: dict[str, Any],
+) -> bool:
+    return bool(
+        proof_level == "server_side_merge_proof"
+        and can_emit_pr_merged
+        and merge.get("merged") is True
+        and _text(merge.get("merge_commit_sha")) is not None
+        and _text(merge.get("merged_at")) is not None
+        and _text(merge.get("merge_event_id")) is not None
+    )
 
 
 def _build_providers(provider_runtime: list[dict] | None) -> dict[str, Any]:
