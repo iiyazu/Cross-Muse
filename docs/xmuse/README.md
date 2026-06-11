@@ -1,6 +1,6 @@
 # xmuse 文档入口
 
-更新日期: 2026-06-10
+更新日期: 2026-06-11
 
 本目录是 xmuse 当前阶段的文档入口。旧的 `docs/superpowers/specs/` 和
 `docs/superpowers/plans/` 仍保留原路径，因为测试、lane graph 和历史记录会引用
@@ -48,6 +48,8 @@ GOD groupchat deliberation
 | `docs/xmuse/vision-closure-wave-deliberation-tui-plan.md` | 根据 deep-research-report_07 制定的 TUI 愿景前门闭环详细任务与行为规范 |
 | `docs/xmuse/vision-closure-wave-deliberation-tui-goal-prompt.md` | 可直接用于 `/goal` 的简洁 TUI 愿景前门闭环 prompt，详细任务引用 plan 文档 |
 | `docs/xmuse/vision-closure-wave-deliberation-tui-walkthrough.md` | TUI 愿景前门闭环实现走读，记录 read-model、面板、proof-level 和剩余 manual gap |
+| `docs/xmuse/vision-galaxy-live-evidence-plan.md` | 下一轮多 GOD 星系 live evidence pack 的详细任务、proof 纪律、OpenCode 调用边界和行为规范 |
+| `docs/xmuse/vision-galaxy-live-evidence-goal-prompt.md` | 可直接用于 `/goal` 的简洁星系证据闭环 prompt，详细任务引用 plan 文档 |
 | `docs/xmuse/opencode-in-long-runtime-evidence-plan.md` | 下一轮 OpenCode-in 长执行证据闭环的详细任务、授权边界和行为规范 |
 | `docs/xmuse/opencode-in-long-runtime-evidence-goal-prompt.md` | 可直接用于 `/goal` 的简洁 OpenCode-in 长执行 prompt，详细任务引用 plan 文档 |
 | `docs/xmuse/opencode-in-long-runtime-evidence-closure.md` | OpenCode-in 长执行证据闭环的当前审计报告、stage evidence、proof-level 变化和剩余 GitHub manual gap |
