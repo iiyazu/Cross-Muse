@@ -207,6 +207,8 @@ def _build_execution(worklist_envelope: dict | None) -> dict[str, Any]:
     blocked_lane_ids: list[str] = []
     dependency_edges: list[dict[str, Any]] = []
     blockers: list[dict[str, Any]] = []
+    review_items: list[dict[str, Any]] = []
+    patch_forward_lineage: list[dict[str, Any]] = []
 
     for item in items:
         lane_id = _lane_id(item)
@@ -228,6 +230,19 @@ def _build_execution(worklist_envelope: dict | None) -> dict[str, Any]:
         deps = _dependency_ids(item)
         if deps:
             dependency_edges.append({"lane_id": lane_id, "depends_on": deps})
+        review_item = _review_item(item, lane_id=lane_id, source_ref=source_ref)
+        if review_item is not None:
+            review_items.append(review_item)
+        source_lane_id = _source_lane_id(item)
+        if source_lane_id is not None:
+            patch_forward_lineage.append(
+                {
+                    "source_lane_id": source_lane_id,
+                    "patch_lane_id": lane_id,
+                    "source_refs": [source_ref],
+                    "target_refs": [f"lane:{source_lane_id}", f"lane:{lane_id}"],
+                }
+            )
 
     graph_lineage = (
         worklist_envelope.get("graph_lineage")
@@ -259,6 +274,8 @@ def _build_execution(worklist_envelope: dict | None) -> dict[str, Any]:
         "ready_lane_ids": ready_lane_ids,
         "blocked_lane_ids": blocked_lane_ids,
         "dependency_edges": dependency_edges,
+        "review_items": review_items,
+        "patch_forward_lineage": patch_forward_lineage,
         "graph_lineage": graph_lineage,
     }
 
@@ -587,6 +604,47 @@ def _dependency_ids(item: dict[str, Any]) -> list[str]:
         if refs:
             return refs
     return []
+
+
+def _review_item(
+    item: dict[str, Any],
+    *,
+    lane_id: str,
+    source_ref: str,
+) -> dict[str, Any] | None:
+    verdict_id = _text(item.get("review_verdict_id") or item.get("verdict_id"))
+    decision_id = _text(item.get("review_decision_id") or item.get("decision_id"))
+    decision = _text(
+        item.get("review_decision")
+        or item.get("review_status")
+        or item.get("review_verdict")
+        or item.get("review_verdict_decision")
+    )
+    summary = _text(item.get("review_summary") or item.get("review_reason"))
+    if decision is None and summary is None and verdict_id is None and decision_id is None:
+        return None
+    review = {
+        "lane_id": lane_id,
+        "decision": decision or "observed",
+        "summary": summary or "",
+        "source_refs": [source_ref],
+        "target_refs": [f"lane:{lane_id}"],
+    }
+    if verdict_id is not None:
+        review["verdict_id"] = verdict_id
+        review["target_refs"].append(f"review_verdict:{verdict_id}")
+    if decision_id is not None:
+        review["decision_id"] = decision_id
+        review["target_refs"].append(f"review_decision:{decision_id}")
+    return review
+
+
+def _source_lane_id(item: dict[str, Any]) -> str | None:
+    return _text(
+        item.get("source_lane_id")
+        or item.get("patch_forward_source_lane_id")
+        or item.get("failed_lane_id")
+    )
 
 
 def _github_blockers(

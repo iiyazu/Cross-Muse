@@ -110,6 +110,19 @@ def test_tui_vision_read_model_summarizes_lane_dag_projection() -> None:
                     "blocked": True,
                     "scoped_dependency_ids": ["lane-a"],
                     "prompt_summary": "needs review evidence",
+                    "review_decision": "rework",
+                    "review_decision_id": "review-decision-b",
+                    "review_summary": "Review found missing evidence.",
+                    "review_verdict_id": "verdict-b",
+                },
+                {
+                    "lane_id": "lane-c",
+                    "plan_feature_id": "feature-a",
+                    "ready": True,
+                    "blocked": False,
+                    "source_lane_id": "lane-b",
+                    "review_decision": "merge",
+                    "review_summary": "Patch-forward reviewed cleanly.",
                 },
             ],
             "graph_lineage": {
@@ -123,21 +136,83 @@ def test_tui_vision_read_model_summarizes_lane_dag_projection() -> None:
     execution = model["execution"]
     assert execution["proof_level"] == "contract_proof"
     assert execution["fact_state"] == "blocked"
-    assert execution["lane_count"] == 2
-    assert execution["ready_lane_ids"] == ["lane-a"]
+    assert execution["lane_count"] == 3
+    assert execution["ready_lane_ids"] == ["lane-a", "lane-c"]
     assert execution["blocked_lane_ids"] == ["lane-b"]
     assert execution["dependency_edges"] == [
         {"lane_id": "lane-b", "depends_on": ["lane-a"]}
     ]
     assert execution["graph_lineage"]["authoritative_graph_id"] == "graph-1"
     assert execution["source_refs"] == ["feature_lanes_projection#projection_revision=7"]
-    assert execution["target_refs"] == ["lane:lane-a", "lane:lane-b", "graph:graph-1"]
+    assert execution["target_refs"] == [
+        "lane:lane-a",
+        "lane:lane-b",
+        "lane:lane-c",
+        "graph:graph-1",
+    ]
     assert execution["blockers"] == [
         {
             "lane_id": "lane-b",
             "reason": "needs review evidence",
             "source_refs": ["feature_lanes_projection#projection_revision=7"],
             "target_refs": ["lane:lane-b"],
+        }
+    ]
+    assert execution["review_items"] == [
+        {
+            "lane_id": "lane-b",
+            "decision": "rework",
+            "summary": "Review found missing evidence.",
+            "source_refs": ["feature_lanes_projection#projection_revision=7"],
+            "target_refs": [
+                "lane:lane-b",
+                "review_verdict:verdict-b",
+                "review_decision:review-decision-b",
+            ],
+            "verdict_id": "verdict-b",
+            "decision_id": "review-decision-b",
+        },
+        {
+            "lane_id": "lane-c",
+            "decision": "merge",
+            "summary": "Patch-forward reviewed cleanly.",
+            "source_refs": ["feature_lanes_projection#projection_revision=7"],
+            "target_refs": ["lane:lane-c"],
+        },
+    ]
+    assert execution["patch_forward_lineage"] == [
+        {
+            "source_lane_id": "lane-b",
+            "patch_lane_id": "lane-c",
+            "source_refs": ["feature_lanes_projection#projection_revision=7"],
+            "target_refs": ["lane:lane-b", "lane:lane-c"],
+        }
+    ]
+
+
+def test_tui_vision_read_model_keeps_review_verdict_refs_without_decision() -> None:
+    model = build_tui_vision_read_model(
+        worklist_envelope={
+            "source_authority": "review_projection",
+            "projection_revision": 3,
+            "items": [
+                {
+                    "lane_id": "lane-a",
+                    "ready": True,
+                    "review_verdict_id": "verdict-a",
+                }
+            ],
+        }
+    )
+
+    assert model["execution"]["review_items"] == [
+        {
+            "lane_id": "lane-a",
+            "decision": "observed",
+            "summary": "",
+            "source_refs": ["review_projection#projection_revision=3"],
+            "target_refs": ["lane:lane-a", "review_verdict:verdict-a"],
+            "verdict_id": "verdict-a",
         }
     ]
 

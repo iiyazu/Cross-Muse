@@ -157,6 +157,17 @@ def test_execution_cockpit_renders_lane_dag_and_blockers() -> None:
                 "blocked_lane_ids": ["lane-b"],
                 "dependency_edges": [{"lane_id": "lane-b", "depends_on": ["lane-a"]}],
                 "blockers": [{"lane_id": "lane-b", "reason": "needs review evidence"}],
+                "review_items": [
+                    {
+                        "lane_id": "lane-b",
+                        "decision": "rework",
+                        "summary": "Review found missing evidence.",
+                        "verdict_id": "verdict-b",
+                    }
+                ],
+                "patch_forward_lineage": [
+                    {"source_lane_id": "lane-b", "patch_lane_id": "lane-c"}
+                ],
                 "target_refs": ["lane:lane-a", "lane:lane-b", "graph:graph-1"],
                 "source_refs": ["feature_lanes_projection#projection_revision=7"],
                 "manual_gap_reason": None,
@@ -169,6 +180,9 @@ def test_execution_cockpit_renders_lane_dag_and_blockers() -> None:
     assert "Lanes: 2" in rendered
     assert "lane-b <- lane-a" in rendered
     assert "needs review evidence" in rendered
+    assert "lane-b rework" in rendered
+    assert "verdict-b" in rendered
+    assert "lane-b -> lane-c" in rendered
 
 
 def test_memory_trace_drawer_renders_trace_and_manual_gap() -> None:

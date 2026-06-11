@@ -56,7 +56,8 @@ Current contract/fake proof:
 - Blueprint freeze readiness can be rendered without presenting readiness as an
   already frozen blueprint.
 - LaneDAG projection can show lane count, ready lanes, blocked lanes,
-  dependencies, and graph lineage refs.
+  dependencies, graph lineage refs, review verdict refs, and patch-forward
+  lineage.
 - MemoryOS trace projection can show live trace fields when supplied, but
   default tests do not call live MemoryOS Lite.
 - GitHub truth projection can show merge readiness and merged fact separately.

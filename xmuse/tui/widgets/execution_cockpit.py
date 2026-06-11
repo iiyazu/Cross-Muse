@@ -41,6 +41,14 @@ def render_execution_cockpit(vision: dict[str, Any] | None) -> Panel:
     if blockers:
         lines.append("Blockers:")
         lines.extend(f"  {_blocker_line(blocker)}" for blocker in blockers[:4])
+    review_items = _dicts(execution.get("review_items"))
+    if review_items:
+        lines.append("Review:")
+        lines.extend(f"  {_review_line(item)}" for item in review_items[:4])
+    patch_lineage = _dicts(execution.get("patch_forward_lineage"))
+    if patch_lineage:
+        lines.append("Patch-forward:")
+        lines.extend(f"  {_patch_forward_line(item)}" for item in patch_lineage[:4])
     _append_refs(lines, "Targets", execution.get("target_refs"))
     _append_refs(lines, "Sources", execution.get("source_refs"))
     gap = _text(execution.get("manual_gap_reason"))
@@ -75,6 +83,25 @@ def _blocker_line(blocker: dict[str, Any]) -> str:
     lane_id = _text(blocker.get("lane_id")) or "lane"
     reason = _text(blocker.get("reason")) or "blocked"
     return f"{lane_id}: {reason}"
+
+
+def _review_line(item: dict[str, Any]) -> str:
+    lane_id = _text(item.get("lane_id")) or "lane"
+    decision = _text(item.get("decision")) or "observed"
+    summary = _text(item.get("summary"))
+    verdict_id = _text(item.get("verdict_id"))
+    suffix = f" [{verdict_id}]" if verdict_id is not None else ""
+    return (
+        f"{lane_id} {decision}: {summary}{suffix}"
+        if summary
+        else f"{lane_id} {decision}{suffix}"
+    )
+
+
+def _patch_forward_line(item: dict[str, Any]) -> str:
+    source = _text(item.get("source_lane_id")) or "source"
+    patch = _text(item.get("patch_lane_id")) or "patch"
+    return f"{source} -> {patch}"
 
 
 def _append_refs(lines: list[str], label: str, value: Any) -> None:
