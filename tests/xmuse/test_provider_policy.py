@@ -5,13 +5,19 @@ from datetime import UTC, datetime
 
 import pytest
 
+from xmuse_core.chat.protocol_v2 import GodSpeechAct
 from xmuse_core.platform.read_contracts import build_provider_selection_records
 from xmuse_core.providers.adapters.base import ProviderFailureKind
 from xmuse_core.providers.adapters.fake import (
     FakeProviderHealthState,
     build_fake_provider_health_snapshot,
 )
-from xmuse_core.providers.models import ProviderId, ProviderProfileId, RiskTier, TaskCapability
+from xmuse_core.providers.models import (
+    ProviderId,
+    ProviderProfileId,
+    RiskTier,
+    TaskCapability,
+)
 from xmuse_core.providers.policy import ProviderPolicyService
 from xmuse_core.providers.registry import build_default_provider_registry
 from xmuse_core.providers.selection_record import (
@@ -323,6 +329,72 @@ def test_provider_policy_prefers_healthy_low_cost_worker_for_bounded_code_writin
     assert decision.lane_risk is RiskTier.LOW
     assert decision.fallback_cause is None
     assert "healthy low-cost worker profile" in decision.selection_reason
+
+
+def test_provider_policy_selects_healthy_opencode_for_bounded_deliberation_only() -> None:
+    registry = build_default_provider_registry()
+    service = ProviderPolicyService(registry=registry)
+    worker_health = build_fake_provider_health_snapshot(
+        registry.get("opencode.deepseek_flash_worker"),
+        state=FakeProviderHealthState.READY,
+        checked_at=datetime(2026, 6, 10, 9, 0, tzinfo=UTC),
+    )
+
+    decision = service.select_bounded_deliberation(
+        lane={
+            "risk": "low",
+            "task_type": "bounded_deliberation",
+            "bounded_context": True,
+            "well_specified": True,
+        },
+        health_by_profile={worker_health.provider_profile_ref: worker_health},
+    )
+
+    assert decision.provider_profile_ref == "opencode.deepseek_flash_worker"
+    assert decision.task_type is TaskCapability.BOUNDED_DELIBERATION
+    assert decision.peer_type == "deliberation"
+    assert decision.state_write_allowed is False
+    assert decision.allowed_speech_acts == (
+        GodSpeechAct.PROPOSE.value,
+        GodSpeechAct.ASK.value,
+        GodSpeechAct.CHALLENGE.value,
+    )
+    for forbidden in (
+        GodSpeechAct.OBJECT,
+        GodSpeechAct.VOTE,
+        GodSpeechAct.DECIDE,
+        GodSpeechAct.EVIDENCE,
+        GodSpeechAct.HANDOFF,
+        GodSpeechAct.RETRACT,
+    ):
+        assert forbidden.value not in decision.allowed_speech_acts
+
+
+def test_provider_policy_falls_back_when_opencode_deliberation_is_unavailable() -> None:
+    registry = build_default_provider_registry()
+    service = ProviderPolicyService(registry=registry)
+    worker_health = build_fake_provider_health_snapshot(
+        registry.get("opencode.deepseek_flash_worker"),
+        state=FakeProviderHealthState.AUTH_ERROR,
+        checked_at=datetime(2026, 6, 10, 9, 1, tzinfo=UTC),
+    )
+
+    decision = service.select_bounded_deliberation(
+        lane={
+            "risk": "low",
+            "task_type": "bounded_deliberation",
+            "bounded_context": True,
+            "well_specified": True,
+        },
+        health_by_profile={worker_health.provider_profile_ref: worker_health},
+    )
+
+    assert decision.provider_profile_ref == "codex.god"
+    assert decision.task_type is TaskCapability.BOUNDED_DELIBERATION
+    assert decision.peer_type == "deliberation"
+    assert decision.state_write_allowed is False
+    assert decision.fallback_cause == ProviderFailureKind.AUTH_ERROR.value
+    assert decision.health_failure_kind == ProviderFailureKind.AUTH_ERROR.value
 
 
 @pytest.mark.parametrize(

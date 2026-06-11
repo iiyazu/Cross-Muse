@@ -11522,6 +11522,629 @@ production closure。当前只完成首批 collaboration writeback + proposal ap
 MemoryOS 状态: 本轮未读取或修改 `/home/iiyatu/projects/python/memoryOS`，未新增 MemoryOS
 import/config/runtime dependency。
 
+## 2026-06-11 OpenCode-In Stage Harness Recovery And Evidence Refresh
+
+在 OpenCode variant command correction 后，本轮重跑此前因旧命令格式阻塞的 stages。
+
+Stage harness evidence:
+
+| Stage | Status | Return code | Command prefix |
+|---|---:|---:|---|
+| `DiagOpenCode` | `ok` | 0 | `opencode run --model opencode-go/deepseek-v4-flash --variant max` |
+| `S0` | `ok` | 0 | `opencode run --model opencode-go/deepseek-v4-flash --variant max` |
+| `S4` | `ok` | 0 | `opencode run --model opencode-go/deepseek-v4-flash --variant max` |
+| `S5` | `ok` | 0 | `opencode run --model opencode-go/deepseek-v4-flash --variant max` |
+| `S5b` | `ok` | 0 | `opencode run --model opencode-go/deepseek-v4-flash --variant max` |
+| `S5c` | `ok` | 0 | `opencode run --model opencode-go/deepseek-v4-flash --variant max` |
+| `S5d` | `ok` | 0 | `opencode run --model opencode-go/deepseek-v4-flash --variant max` |
+| `S5e` | `ok` | 0 | `opencode run --model opencode-go/deepseek-v4-flash --variant max` |
+| `S6` | `ok` | 0 | `opencode run --model opencode-go/deepseek-v4-flash --variant max` |
+
+Notable stage outputs:
+
+- `S0` produced a baseline evidence map and identified that some blueprint claims were stale:
+  `pr_merged` is no longer emitted by current self-iteration writeback, and
+  `MemoryOSLiteTraceEvidence` / `fetch_trace(...)` exist in current source.
+- `S4` validated bounded OpenCode deliberation remains secondary, no MCP, no persistent sessions,
+  bounded speech acts only, no durable state writes.
+- `S5`-`S5e` validated GitHub server-side truth scaffolding and manual opt-in capture boundaries.
+- `S6` validated deterministic heartbeat/replay SLO audit without live provider heartbeat claims.
+
+Fresh review:
+
+- OpenCode command correction review returned:
+  `No Critical or Important findings.`
+
+Validation:
+
+- OpenCode/provider/GitHub/S6/package focused suite:
+  `uv run pytest tests/xmuse/test_provider_opencode.py tests/xmuse/test_goal_stage_runner.py tests/xmuse/test_platform_agent_spawner.py tests/xmuse/test_runtime_settings.py tests/xmuse/test_mcp_server.py tests/xmuse/test_bounded_deliberation_artifacts.py tests/xmuse/test_execution_provider_session_binding.py tests/xmuse/test_github_server_truth_capture.py tests/xmuse/test_github_server_gate_contract.py tests/xmuse/test_self_iteration_runtime_closure.py tests/xmuse/test_package_boundaries.py -q`
+  - 结果: `132 passed, 1 warning`。
+- `uv run ruff check .`
+  - 结果: `All checks passed!`。
+- `uv run mypy scripts/goal_stage_runner.py scripts/github_server_truth_capture.py src/xmuse_core/providers/adapters/opencode.py src/xmuse_core/providers/registry.py src/xmuse_core/runtime/settings.py src/xmuse_core/platform/execution/github_ops.py src/xmuse_core/self_iteration/runtime_closure.py`
+  - 结果: `Success: no issues found in 7 source files`。
+- Current canonical command scan:
+  `rg -n "deepseek-v4-flash:max|opencode-go/deepseek-v4-flash:max|deepseek-v4-flash-max|opencode-go/deepseek-v4-flash-max" src/xmuse_core tests/xmuse scripts .env.example docs/xmuse/goal-stage-harness.md docs/xmuse/opencode-in-long-runtime-evidence-plan.md docs/xmuse/provider-matrix.md docs/xmuse/config-matrix.md docs/xmuse/tui-slash-command-handoff.md -g '!*.pyc'`
+  - 结果: 无输出，exit 1。
+- `git diff --check`
+  - 结果: 无输出，exit 0。
+- `.goal-runs/*/result.json` confirmed ignored by `.gitignore`。
+
+Remaining live/server-side evidence gap:
+
+- `gh auth status`:
+  `You are not logged into any GitHub hosts.`
+- GitHub connector PR search:
+  `repo:iiyazu/Cross-Muse is:pr` 返回空列表。
+- 因此仍未捕获真实 GitHub branch protection/ruleset/check-run/review/merge evidence，
+  也不能声明 `pr_merged` server-side proof complete。
+
+Next operator action:
+
+- GitHub operator 创建或提供一个真实 PR number，并在本机完成 `gh auth login`。
+- 然后运行:
+  `uv run python scripts/github_server_truth_capture.py --repo iiyazu/Cross-Muse --pull-request <number> --output /tmp/xmuse-github-server-truth.json`。
+
+MemoryOS 状态: 本轮未读取或修改 `/home/iiyatu/projects/python/memoryOS`，未新增 MemoryOS
+import/config/runtime dependency。
+
+## 2026-06-11 OpenCode Variant Command Correction
+
+本轮根据本机 `opencode 1.15.13` 实测纠正 OpenCode canonical command。
+
+实测证据:
+
+- `opencode run --help` 显示:
+  - `--model` 格式为 `provider/model`;
+  - `--variant` 是独立参数，示例值包括 `high`、`max`、`minimal`。
+- `opencode models opencode-go` 返回 `opencode-go/deepseek-v4-flash`，未列出
+  `opencode-go/deepseek-v4-flash:max`。
+- 最小 no-op 调用成功:
+  `opencode run --model opencode-go/deepseek-v4-flash --variant max --format json --dir /home/iiyatu/projects/python/xmuse "..."`
+  - exit code: `0`;
+  - returned text: `{"diagnostic":"ok"}`。
+
+修复内容:
+
+- `scripts/goal_stage_runner.py`:
+  - `DEFAULT_OPENCODE_RUN_MODEL = "opencode-go/deepseek-v4-flash"`;
+  - `DEFAULT_OPENCODE_RUN_VARIANT = "max"`;
+  - command order 固定为
+    `opencode run --model opencode-go/deepseek-v4-flash --variant max --format json --dir ...`。
+- `src/xmuse_core/providers/adapters/opencode.py`:
+  - canonical model id 改为 `deepseek-v4-flash`;
+  - variant 固定为 `max`;
+  - adapter/health/invoke command 使用 `opencode run --model ... --variant max ...`。
+- `src/xmuse_core/providers/registry.py`、`src/xmuse_core/runtime/settings.py`、
+  `.env.example`:
+  - `DEEPSEEK_MODEL` 默认改为 `deepseek-v4-flash`;
+  - `max` 不再拼进 model id。
+- 当前权威 docs 已更新:
+  - `docs/xmuse/goal-stage-harness.md`;
+  - `docs/xmuse/opencode-in-long-runtime-evidence-plan.md`;
+  - `docs/xmuse/provider-matrix.md`;
+  - `docs/xmuse/config-matrix.md`;
+  - `docs/xmuse/tui-slash-command-handoff.md`。
+
+纠偏结论:
+
+- 旧记录中 `opencode-go/deepseek-v4-flash:max` / `opencode --model ... run`
+  是错误判断，已被本段纠正。
+- 当前权威格式是:
+  `opencode run --model opencode-go/deepseek-v4-flash --variant max ...`。
+
+验证:
+
+- RED:
+  `uv run pytest tests/xmuse/test_goal_stage_runner.py::test_goal_stage_runner_opencode_message_does_not_get_consumed_as_file tests/xmuse/test_goal_stage_runner.py::test_goal_stage_runner_run_stage_pins_opencode_model_with_hostile_env -q`
+  - 初始结果: `2 failed`，旧命令仍为 `opencode --model ...:max run`。
+- RED:
+  `uv run pytest tests/xmuse/test_provider_opencode.py::test_opencode_adapter_builds_non_interactive_run_command tests/xmuse/test_provider_opencode.py::test_opencode_health_check_reports_ready_snapshot_when_smoke_succeeds tests/xmuse/test_provider_opencode.py::test_opencode_health_check_uses_default_subprocess_runner_without_workspace_cwd -q`
+  - 初始结果: `3 failed`，adapter/health command 仍为旧格式。
+- GREEN:
+  `uv run pytest tests/xmuse/test_provider_opencode.py tests/xmuse/test_goal_stage_runner.py tests/xmuse/test_platform_agent_spawner.py tests/xmuse/test_runtime_settings.py tests/xmuse/test_mcp_server.py tests/xmuse/test_bounded_deliberation_artifacts.py tests/xmuse/test_execution_provider_session_binding.py -q`
+  - 结果: `81 passed, 1 warning`。
+
+MemoryOS 状态: 本轮未读取或修改 `/home/iiyatu/projects/python/memoryOS`，未新增 MemoryOS
+import/config/runtime dependency。
+
+## 2026-06-11 OpenCode-In External Evidence Blocker Audit
+
+本轮继续追踪 long runtime evidence closure 的外部证据缺口。
+
+OpenCode harness 诊断:
+
+- 新增 ignored diagnostic stage manifest:
+  `.goal-runs/DiagOpenCode/stage-manifest.json`。
+- 通过规定 harness 执行:
+  `uv run python scripts/goal_stage_runner.py --stage-manifest /home/iiyatu/projects/python/xmuse/.goal-runs/DiagOpenCode/stage-manifest.json --engine opencode --repo-root /home/iiyatu/projects/python/xmuse --output .goal-runs/DiagOpenCode/result.json`
+- 实际 argv:
+  `opencode --model opencode-go/deepseek-v4-flash:max run --format json --dir /home/iiyatu/projects/python/xmuse "Execute the attached goal stage prompt." --file .goal-runs/DiagOpenCode/result.json.prompt.txt`
+- 结果:
+  `result.json.status == "blocked"`，returncode `1`。
+- OpenCode stdout error:
+  `Unexpected server error. Check server logs for details.`，ref `err_3ba345cb`。
+- 结论:
+  no-op prompt 也失败，阻塞不依赖 S5e prompt 内容；当前 owner 是 OpenCode/DeepSeek
+  runtime operator，需要检查 provider/server/auth/model 后端状态。
+
+GitHub live/server-side proof availability:
+
+- `git remote -v`:
+  `origin git@github.com:iiyazu/Cross-Muse.git`。
+- `gh auth status`:
+  `You are not logged into any GitHub hosts.`。
+- GitHub connector只读查询 `iiyazu/Cross-Muse`:
+  仓库存在，default branch 为 `main`，connector 权限包含 admin/maintain/pull/push/triage。
+- GitHub connector PR search:
+  `repo:iiyazu/Cross-Muse is:pr` 返回空列表。
+- 结论:
+  当前没有真实 PR 可作为 `pr_merged` server-side proof 对象；本机 `gh` 未登录也无法运行
+  `scripts/github_server_truth_capture.py` 的真实 operator capture。不能声称已捕获真实
+  branch protection/ruleset/check-run/review/merge evidence。
+
+当前 blocker:
+
+- OpenCode live stage blocker:
+  OpenCode CLI 可运行且版本为 `1.15.13`，但 `opencode-go/deepseek-v4-flash:max`
+  no-op stage 与 S5e stage 均返回 server error。
+- GitHub server-side merge proof blocker:
+  仓库当前无 PR；没有真实 merge event/check-run/review 对象可验证 `pr_merged`。
+
+下一步 owner:
+
+- OpenCode/DeepSeek runtime operator:
+  修复 `opencode-go/deepseek-v4-flash:max` server/auth/model 后端错误，并重跑
+  `.goal-runs/DiagOpenCode` 与各 stage harness。
+- GitHub operator:
+  创建或提供一个真实 PR number，并在本机完成 `gh auth login`，然后运行:
+  `uv run python scripts/github_server_truth_capture.py --repo iiyazu/Cross-Muse --pull-request <number> --output /tmp/xmuse-github-server-truth.json`。
+
+MemoryOS 状态: 本轮未读取或修改 `/home/iiyatu/projects/python/memoryOS`，未新增 MemoryOS
+import/config/runtime dependency。
+
+## 2026-06-11 OpenCode-In S5e GitHub Truth Capture Rulesets Closure
+
+本轮在 S5e manual opt-in GitHub server truth capture 基础上继续收敛 fresh review findings。
+
+完成内容:
+
+- `scripts/github_server_truth_capture.py` 保持手动 opt-in；默认 CI/tests 不调用 live GitHub。
+- `GitHubCliServerSideTruthClient` 继续只使用 read-only `gh api`。
+- 当 classic branch protection endpoint 不可用时，client 读取 `repos/{repo}/rulesets` 作为
+  fallback server enforcement snapshot。
+- rulesets fallback 只有在以下条件同时满足时才提供 Code Owner review truth:
+  - ruleset `enforcement == "active"`；
+  - ruleset `target == "branch"`；
+  - `conditions.ref_name.include` / `exclude` 经 `fnmatchcase` 匹配后适用于当前
+    `base_branch`，且 exclude 优先；
+  - 存在 `type == "pull_request"` 的 rule，且
+    `parameters.require_code_owner_review == true`。
+- 不相关 branch ruleset、显式 exclude 当前 base branch 的 ruleset、缺失/partial evidence 均保持
+  `manual_gap`，不能触发 `pr_merged`。
+- `docs/xmuse/github-server-side-gate.md` 已补充 rulesets fallback proof boundary。
+
+Fresh review:
+
+- 初审 Important:
+  classic branch protection 缺失时未读取 rulesets，可能让 ruleset-only 仓库出现 false negative。
+- 修复:
+  增加 rulesets read-only fallback，并包装为 `ruleset_snapshot`。
+- 复审 Important:
+  ruleset applicability 未校验是否适用于目标 base branch，可能让不相关 ruleset 造成 false
+  `server_side_merge_proof`。
+- 修复:
+  ruleset 必须显式适用于 base branch。
+- 再复审 Important:
+  未处理 `ref_name.exclude` 和 pattern 条件，仍可能错误判定 applicability。
+- 修复:
+  include/exclude 均使用 `fnmatchcase` 匹配 `base_branch` 与 `refs/heads/{base_branch}`，
+  且 exclude 优先。
+- 最终复审:
+  `No Critical or Important findings.`
+
+验证:
+
+- RED:
+  `uv run pytest tests/xmuse/test_github_server_gate_contract.py::test_gh_cli_truth_client_uses_ruleset_snapshot_when_branch_protection_missing -q`
+  - 初始结果: `1 failed`，classic protection 缺失时仍为 `manual_gap`。
+- RED:
+  `uv run pytest tests/xmuse/test_github_server_gate_contract.py::test_gh_cli_truth_client_does_not_use_ruleset_for_different_branch -q`
+  - 初始结果: `1 failed`，不相关 branch ruleset 可错误生成 `server_side_merge_proof`。
+- RED:
+  `uv run pytest tests/xmuse/test_github_server_gate_contract.py::test_gh_cli_truth_client_accepts_ruleset_branch_pattern_for_base_branch -q`
+  - 初始结果: `1 failed`，pattern include 尚未生效。
+- Focused GREEN:
+  `uv run pytest tests/xmuse/test_github_server_gate_contract.py::test_gh_cli_truth_client_uses_ruleset_snapshot_when_branch_protection_missing tests/xmuse/test_github_server_gate_contract.py::test_gh_cli_truth_client_does_not_use_ruleset_for_different_branch tests/xmuse/test_github_server_gate_contract.py::test_gh_cli_truth_client_does_not_use_ruleset_excluding_base_branch tests/xmuse/test_github_server_gate_contract.py::test_gh_cli_truth_client_accepts_ruleset_branch_pattern_for_base_branch -q`
+  - 结果: `4 passed`。
+- GitHub gate/capture suite:
+  `uv run pytest tests/xmuse/test_github_server_truth_capture.py tests/xmuse/test_github_server_gate_contract.py -q`
+  - 结果: `23 passed`。
+- Focused ruff:
+  `uv run ruff check scripts/github_server_truth_capture.py tests/xmuse/test_github_server_truth_capture.py src/xmuse_core/platform/execution/github_ops.py tests/xmuse/test_github_server_gate_contract.py`
+  - 结果: `All checks passed!`。
+- Focused mypy:
+  `uv run mypy scripts/github_server_truth_capture.py src/xmuse_core/platform/execution/github_ops.py`
+  - 结果: `Success: no issues found in 2 source files`。
+
+仍未完成:
+
+- S5e stage harness 仍被 OpenCode server error 阻塞；之前记录的 canonical argv 为
+  `opencode --model opencode-go/deepseek-v4-flash:max run --format json ...`，返回
+  `Unexpected server error. Check server logs for details.`。
+- 尚未捕获真实 GitHub branch protection/ruleset/check-run/review/merge evidence；没有真实 PR
+  number 的 operator capture JSON。
+- 因此当前不能声称 live/server-side `pr_merged` proof complete。
+
+MemoryOS 状态: 本轮未读取或修改 `/home/iiyatu/projects/python/memoryOS`，未新增 MemoryOS
+import/config/runtime dependency。
+
+## 2026-06-10 OpenCode-In Long Runtime Evidence Closure Slice
+
+本轮目标来自 `docs/xmuse/opencode-in-long-runtime-evidence-plan.md` 与
+`/mnt/c/tmp/deep-research-long-blueprint.md`。重点不是扩功能面，而是继续把
+contract/fake proof 往可审计 long-runtime evidence 推进。
+
+Stage harness 状态:
+
+- 新增 `scripts/goal_stage_runner.py` 与 `docs/xmuse/goal-stage-harness.md`，要求每阶段通过
+  `result.json` / prompt / manifest jsonl / evidence output 产物门控。
+- 修复 OpenCode 命令构造: `opencode run ... "Execute..." --file <prompt>`，避免 `--file`
+  吞掉 message 并报 `File not found`。
+- 修复 `max_retries: 0` 被 `or 1` 覆盖的问题；0 次重试现在会立即 blocked。
+- `.goal-runs/` 已加入 `.gitignore`，避免本地 stage 产物进入提交。
+
+OpenCode-in 阻塞:
+
+- S0 baseline stage 已通过 harness 发起，但 OpenCode 返回:
+  `Unexpected server error. Check server logs for details.`
+- 当前 shell 未暴露 `DEEPSEEK_*` / `OPENCODE_*` 环境变量。
+- 本轮未把 S0 标记为 OpenCode pass；该 blocker 属于外部执行器/凭据/服务端状态。
+
+已完成本地 contract 进展:
+
+- P0 merge readiness 语义经现有代码与测试确认:
+  fake/local self-iteration writeback 使用 `merge_readiness_evaluated`，不写 `pr_merged`。
+- MemoryOS Lite trace evidence 经现有代码与测试确认:
+  `MemoryOSLiteTraceEvidence` / `fetch_trace(...)` 已存在，默认测试 fake/local，live test opt-in。
+- Natural deliberation proof boundary 经现有测试确认:
+  deterministic fixture 不能升级为 live/real proof，natural deliberation 需要 live/real proof level。
+- S4 OpenCode-in bounded deliberation provider-policy contract 已新增:
+  `opencode.deepseek_flash_worker` 仍为 `SupportLevel.SECONDARY`、无 MCP、无 persistent
+  session，但能力从纯 `bounded_code_writing` 扩为 `bounded_code_writing` +
+  `bounded_deliberation`。
+  `ProviderPolicyService.select_bounded_deliberation(...)` 只允许
+  `propose` / `ask` / `challenge`，设置 `state_write_allowed=False`，并在 OpenCode
+  unavailable/auth/config/timeout/model failure 时记录 `fallback_cause` / `health_failure_kind`
+  后 fallback 到 bounded Codex deliberation decision。
+  DeepSeek 默认模型标识同步为 `deepseek-v4-flash:max`，其中 `:max` 作为 flash 模型 variant，
+  不新增 provider/profile。
+  这不是 OpenCode GOD/review/takeover/merge authority，也不是 live natural deliberation proof。
+- S5 GitHub server-side truth collector scaffold 已新增:
+  `GitHubServerSideTruthEvidence`、`build_github_server_side_truth_gap(...)`、
+  `can_emit_pr_merged(...)`。
+  `server_side_merge_proof` 必须具备 workflow/check、source app、branch protection/ruleset、
+  Code Owner review、merge commit/merged_at/merge event 证据。
+- S6 long-run replay summary 已新增:
+  `LongRunEvidenceHeartbeat`、`SelfIterationLongRunReplaySummary`、
+  `build_self_iteration_long_run_replay_summary(...)`。
+  默认 summary 只证明 logical heartbeat/review/patch-forward/merge-readiness 顺序，不声称 live
+  service 或 server-side enforcement proof。
+
+验证:
+
+- `uv run pytest tests/xmuse/test_self_iteration_runtime_closure.py tests/xmuse/test_github_server_gate_contract.py tests/xmuse/test_github_ops_contract.py tests/xmuse/test_vision_runtime_evidence_closure.py tests/xmuse/test_memoryos_lite_interop.py tests/xmuse/test_goal_stage_runner.py tests/xmuse/test_package_boundaries.py -q`
+  - 结果: `55 passed, 1 skipped`。
+- `uv run ruff check .`
+  - 结果: `All checks passed!`。
+- `uv run mypy src/xmuse_core/platform/execution/github_ops.py src/xmuse_core/self_iteration/runtime_closure.py src/xmuse_core/self_iteration/__init__.py`
+  - 结果: `Success: no issues found in 3 source files`。
+- `uv run pytest tests/xmuse/test_provider_models.py tests/xmuse/test_provider_policy.py tests/xmuse/test_provider_support_level.py tests/xmuse/test_provider_read_contracts_module.py tests/xmuse/test_quality_gates_phase3.py tests/xmuse/test_mcp_server.py -q`
+  - 结果: `62 passed, 1 warning`。
+- 按补充约束，将 DeepSeek 默认模型统一为 `deepseek-v4-flash:max`，其中 `:max` 是 flash
+  variant；不新增 provider/profile，不把 `max` 当作独立能力层。
+- 按补充约束，将 OpenCode adapter 的运行 package/provider 从 `deepseek` 固化为
+  `opencode-go`；命令必须按 `opencode --model opencode-go/deepseek-v4-flash:max run ...`
+  调用，inline
+  `OPENCODE_CONFIG_CONTENT.provider` 也必须使用 `opencode-go` key。
+- `rg -n 'deepseek-v4-flash-max|opencode-go/deepseek-v4-flash-max' src/xmuse_core tests/xmuse docs/xmuse scripts .env.example opencode.json -g '!*.pyc'`
+  - 结果: 无输出，exit 1；旧 hyphen variant 已清空。
+- `rg -n 'deepseek/|"deepseek"|provider": \{\s*"deepseek"' src/xmuse_core tests/xmuse docs/xmuse scripts .env.example opencode.json -g '!*.pyc'`
+  - 结果: 仅命中文档中“不要退回旧 `deepseek/<model>` package”的警告和本 handoff
+    记录；代码/测试不再使用旧 `deepseek` OpenCode package/provider key。
+- `uv run pytest tests/xmuse/test_provider_opencode.py tests/xmuse/test_platform_agent_spawner.py tests/xmuse/test_provider_models.py tests/xmuse/test_mcp_server.py tests/xmuse/test_runtime_settings.py -q`
+  - 结果: `53 passed, 1 warning`。
+- `uv run mypy src/xmuse_core/providers/adapters/opencode.py src/xmuse_core/providers/registry.py src/xmuse_core/runtime/settings.py`
+  - 结果: `Success: no issues found in 3 source files`。
+- S4 bounded deliberation artifact contract 已新增:
+  `normalize_bounded_deliberation_output(...)` 将 bounded provider output 归一化为
+  `god_speech_act_message.v1`，sender 为 `opencode.deepseek_flash_worker`，只接受
+  `propose` / `ask` / `challenge`，并拒绝 `object`、`vote`、`decide`、`evidence`、
+  `handoff` 和任何 `state_write` / `durable_writes` / `writeback` 请求。该函数只产出
+  artifact，不写 chat storage 或 durable xmuse state。
+- S4 stage harness 已按规范执行:
+  `uv run python scripts/goal_stage_runner.py --stage-manifest /home/iiyatu/projects/python/xmuse/.goal-runs/S4/stage-manifest.json --engine opencode --repo-root /home/iiyatu/projects/python/xmuse --output .goal-runs/S4/result.json`
+  - 结果: exit 2，`result.json.status == "blocked"`。
+  - 命令已使用 `opencode --model opencode-go/deepseek-v4-flash:max run ...`。
+  - OpenCode 返回 `Unexpected server error. Check server logs for details.`，ref
+    `err_57205a18`。
+  - 结论: S4 local contract proof 已推进；S4 live OpenCode-in execution/review proof
+    仍缺失，owner 是 OpenCode/DeepSeek runtime operator。
+- S4 focused validation:
+  - `uv run pytest tests/xmuse/test_bounded_deliberation_artifacts.py tests/xmuse/test_goal_stage_runner.py tests/xmuse/test_provider_policy.py tests/xmuse/test_provider_models.py tests/xmuse/test_provider_opencode.py tests/xmuse/test_platform_agent_spawner.py tests/xmuse/test_mcp_server.py tests/xmuse/test_package_boundaries.py -q`
+  - 结果: `97 passed, 1 warning`。
+  - `uv run pytest tests/xmuse/test_bounded_deliberation_artifacts.py tests/xmuse/test_goal_stage_runner.py -q`
+  - 结果: `18 passed`。
+  - `uv run mypy src/xmuse_core/providers/bounded_deliberation.py src/xmuse_core/providers/policy.py src/xmuse_core/providers/models.py src/xmuse_core/providers/registry.py src/xmuse_core/providers/adapters/opencode.py scripts/goal_stage_runner.py`
+  - 结果: `Success: no issues found in 6 source files`。
+  - `uv run ruff check .`
+  - 结果: `All checks passed!`。
+- 按最新补充再次纠正 OpenCode 命令格式:
+  - 正确默认模型 id: `deepseek-v4-flash:max`
+  - 正确命令模型 ref: `opencode-go/deepseek-v4-flash:max`
+  - 正确命令顺序: `opencode --model opencode-go/deepseek-v4-flash:max run ...`
+  - 2026-06-11 再确认:
+    - adapter 实际生成:
+      `['opencode', '--model', 'opencode-go/deepseek-v4-flash:max', 'run', '--format', 'json', '--dir', '/home/iiyatu/projects/python/xmuse', 'Check command only.']`
+    - stage runner 实际生成:
+      `['opencode', '--model', 'opencode-go/deepseek-v4-flash:max', 'run', '--format', 'json', '--dir', '/home/iiyatu/projects/python/xmuse', 'Execute the attached goal stage prompt.', '--file', '/home/iiyatu/projects/python/xmuse/prompt.txt']`
+    - 针对性测试:
+      `uv run pytest tests/xmuse/test_provider_opencode.py::test_opencode_adapter_builds_non_interactive_run_command tests/xmuse/test_provider_opencode.py::test_opencode_health_check_reports_ready_snapshot_when_smoke_succeeds tests/xmuse/test_goal_stage_runner.py::test_goal_stage_runner_opencode_message_does_not_get_consumed_as_file tests/xmuse/test_platform_agent_spawner.py::test_agent_spawner_uses_final_prompt_on_argv_for_opencode_provider -q`
+    - 结果: `4 passed`。
+    - `rg -n 'deepseek-v4-flash-max|opencode-go/deepseek-v4-flash-max' src/xmuse_core tests/xmuse scripts .env.example -g '!*.pyc'`
+    - 结果: 无输出，exit 1；实现/测试/脚本/env 示例无旧 hyphen variant。
+  - `uv run pytest tests/xmuse/test_provider_opencode.py tests/xmuse/test_goal_stage_runner.py tests/xmuse/test_platform_agent_spawner.py tests/xmuse/test_mcp_server.py tests/xmuse/test_runtime_settings.py tests/xmuse/test_execution_provider_session_binding.py tests/xmuse/test_bounded_deliberation_artifacts.py tests/xmuse/test_provider_models.py tests/xmuse/test_provider_policy.py tests/xmuse/test_package_boundaries.py -q`
+  - 结果: `117 passed, 1 warning`。
+  - `uv run mypy src/xmuse_core/providers/bounded_deliberation.py src/xmuse_core/providers/policy.py src/xmuse_core/providers/models.py src/xmuse_core/providers/registry.py src/xmuse_core/providers/adapters/opencode.py src/xmuse_core/runtime/settings.py scripts/goal_stage_runner.py`
+  - 结果: `Success: no issues found in 7 source files`。
+- Fresh adversarial review:
+  - 初审 Important findings:
+    1. `normalize_bounded_deliberation_output(...)` 只信任
+       `decision.allowed_speech_acts`，若 policy 误配可能放行 `decide` 等 forbidden act。
+    2. `GOAL_OPENCODE_MODEL` env override 可能让 stage runner 偏离固定
+       `opencode-go/deepseek-v4-flash:max`。
+    3. `OpenCodeProviderAdapter` 仍可通过自定义 profile model 构造非 canonical model ref。
+    4. 旧测试还验证过非 canonical model。
+  - 修复:
+    - bounded normalizer 内置 canonical set `{propose, ask, challenge}`，即使 policy 误配也拒绝
+      forbidden act。
+    - stage runner 固定 `DEFAULT_OPENCODE_RUN_MODEL = "opencode-go/deepseek-v4-flash:max"`，
+      不再读取 `GOAL_OPENCODE_MODEL`。
+    - OpenCode adapter 对非 canonical model ref 抛出 `ValueError`，避免命令漂移。
+    - 增加 hostile env 端到端测试:
+      `test_goal_stage_runner_run_stage_pins_opencode_model_with_hostile_env`。
+  - 复审: `No Critical/Important findings.`
+  - 复审残余风险: 非 canonical profile 在所有上游 caller 中是否都应转成结构化
+    provider-health failure 仍未完全覆盖；当前已覆盖 command path 拒绝，但未扩成全调用链
+    failure policy。
+  - 追加验证:
+    - `uv run pytest tests/xmuse/test_goal_stage_runner.py -q`
+    - 结果: `9 passed`。
+    - `uv run ruff check tests/xmuse/test_goal_stage_runner.py`
+    - 结果: `All checks passed!`。
+- `rg --pcre2 -n 'deepseek-v4-flash(?!-max)' src/xmuse_core tests/xmuse docs/xmuse .env.example pyproject.toml opencode.json -g '!*.pyc'`
+  - 结果: 无输出，exit 1；旧默认模型字符串已从权威路径清空。
+- `uv run pytest tests/xmuse/test_provider_models.py tests/xmuse/test_provider_policy.py tests/xmuse/test_provider_support_level.py tests/xmuse/test_provider_read_contracts_module.py tests/xmuse/test_quality_gates_phase3.py tests/xmuse/test_mcp_server.py tests/xmuse/test_provider_opencode.py tests/xmuse/test_runtime_settings.py tests/xmuse/test_execution_provider_session_binding.py tests/xmuse/test_platform_agent_spawner.py -q`
+  - 结果: `105 passed, 1 warning`。
+- `uv run mypy src/xmuse_core/providers/models.py src/xmuse_core/providers/policy.py src/xmuse_core/providers/registry.py src/xmuse_core/runtime/settings.py`
+  - 结果: `Success: no issues found in 4 source files`。
+
+仍未完成:
+
+- OpenCode-in S0 没有 pass evidence；需要修复 OpenCode/DeepSeek 配置或服务端错误后重跑。
+- S4 仅完成 provider policy / inventory / docs contract；尚未让真实 OpenCode 产出结构化
+  live speech-act artifacts，也未接入 live groupchat transcript normalization。
+- 未捕获真实 GitHub branch protection/ruleset/check-run/review/merge evidence；
+  当前仍是 `manual_gap`，不能发 `pr_merged`。
+- 未实现 live GitHub API collector，只完成 server-side truth schema 与 fake/gap 边界。
+- 未捕获真实 long-running heartbeat；当前 S6 是 deterministic logical replay summary。
+
+MemoryOS 状态: 本轮未读取或修改 `/home/iiyatu/projects/python/memoryOS`，未新增
+`memoryos_lite` 直接 import；MemoryOS 仍保持 REST-first 边界。
+
+## 2026-06-11 OpenCode-In Long Runtime Evidence Latest Continuation Pointer
+
+本轮先按用户确认的 canonical 命令重新验证 OpenCode 调用格式:
+
+- Adapter 实际生成:
+  `['opencode', '--model', 'opencode-go/deepseek-v4-flash:max', 'run', '--format', 'json', '--dir', '/home/iiyatu/projects/python/xmuse', 'Check command only.']`
+- Stage runner 实际生成:
+  `['opencode', '--model', 'opencode-go/deepseek-v4-flash:max', 'run', '--format', 'json', '--dir', '/home/iiyatu/projects/python/xmuse', 'Execute the attached goal stage prompt.', '--file', '/home/iiyatu/projects/python/xmuse/prompt.txt']`
+- Targeted command tests:
+  `uv run pytest tests/xmuse/test_provider_opencode.py::test_opencode_adapter_builds_non_interactive_run_command tests/xmuse/test_provider_opencode.py::test_opencode_health_check_reports_ready_snapshot_when_smoke_succeeds tests/xmuse/test_goal_stage_runner.py::test_goal_stage_runner_opencode_message_does_not_get_consumed_as_file tests/xmuse/test_platform_agent_spawner.py::test_agent_spawner_uses_final_prompt_on_argv_for_opencode_provider -q`
+  - 结果: `4 passed`。
+
+S5 GitHub server-side truth collector scaffold 追加完成:
+
+- 新增 `FakeGitHubServerSideTruthCollector`。
+- fake collector 可模拟 workflow/check/ruleset/review 字段形状，但始终返回
+  `contract_proof`。
+- fake collector 会剥离 `merge_commit_sha`、`merged_at`、`merge_event_id`，因此无法让
+  `can_emit_pr_merged(...)` 为 true。
+- `can_emit_pr_merged(...)` 现在在事件发射 gate 本身重新检查
+  status-check identity、server enforcement、review truth、merge truth 四个维度，避免只依赖
+  model 构造时 validator。
+- 这仍不是 live GitHub API collector，也不是 server-side enforcement proof。
+
+验证:
+
+- `uv run pytest tests/xmuse/test_github_server_gate_contract.py -q`
+  - 结果: `7 passed`。
+- `uv run ruff check src/xmuse_core/platform/execution/github_ops.py tests/xmuse/test_github_server_gate_contract.py`
+  - 结果: `All checks passed!`。
+- `uv run mypy src/xmuse_core/platform/execution/github_ops.py`
+  - 结果: `Success: no issues found in 1 source file`。
+
+Fresh review:
+
+- 初审 Important:
+  `can_emit_pr_merged(...)` 只检查 `server_side_merge_proof` + `has_merge_truth`，没有在发射
+  gate 重新检查 workflow/check、branch protection/ruleset、review/Code Owner 三类证据。
+- 修复:
+  `can_emit_pr_merged(...)` 同时要求 `has_status_check_truth`、
+  `has_server_enforcement_truth`、`has_review_truth`、`has_merge_truth`。
+  新增 `model_construct` 污染对象回归测试，证明只有 merge fields 时 gate 返回 false。
+- 复审:
+  No Critical or Important findings。
+
+S5 read-only server snapshot normalization 追加完成:
+
+- 新增 `GitHubServerSideTruthSnapshot`。
+- 新增 `build_github_server_side_truth_from_snapshot(...)`。
+- 该 normalizer 只接收外部已捕获的只读 server-derived snapshot，不调用 GitHub API，不修改
+  GitHub 设置。
+- 完整 snapshot 可归一化为 `server_side_merge_proof`，并允许 `can_emit_pr_merged(...)` 为
+  true。
+- 不完整 snapshot 即使带有 merge commit / merged_at / merge event 字段，也只能返回
+  `manual_gap`，并在 `gap_reason` 中记录缺少的 server-side truth 维度。
+- 追加 adversarial regression:
+  即使用 `model_construct` 构造带完整 merge 字段的 `contract_proof`，`can_emit_pr_merged(...)`
+  仍返回 false。
+
+S5 snapshot focused validation:
+
+- `uv run pytest tests/xmuse/test_github_server_gate_contract.py -q`
+  - 结果: `10 passed`。
+- `uv run ruff check src/xmuse_core/platform/execution/github_ops.py tests/xmuse/test_github_server_gate_contract.py`
+  - 结果: `All checks passed!`。
+- `uv run mypy src/xmuse_core/platform/execution/github_ops.py`
+  - 结果: `Success: no issues found in 1 source file`。
+- Fresh review:
+  No Critical or Important findings。
+
+S5c read-only collector scaffold 追加完成:
+
+- 新增 `ReadOnlyGitHubServerSideTruthClient` protocol。
+- 新增 `ReadOnlyGitHubServerSideTruthCollector`。
+- collector 只调用注入 client 的 `fetch_server_side_truth_snapshot(...)`，不读取 GitHub
+  token/env，不内置 GitHub 网络 client，不暴露或调用 mutation API。
+- client 返回 snapshot 时复用 `build_github_server_side_truth_from_snapshot(...)`；client
+  无法提供 snapshot 时返回 `manual_gap`，原因是
+  `read-only GitHub server-side truth snapshot unavailable`。
+- fake client 测试确认只发生一次 read-only fetch，未触发 mutation。
+- partial snapshot 经 collector 路径仍归一化为 `manual_gap`，不会因携带 merge fields
+  触发 `pr_merged`。
+
+S5c focused validation:
+
+- `uv run pytest tests/xmuse/test_github_server_gate_contract.py -q`
+  - 结果: `13 passed`。
+- `uv run ruff check src/xmuse_core/platform/execution/github_ops.py tests/xmuse/test_github_server_gate_contract.py`
+  - 结果: `All checks passed!`。
+- `uv run mypy src/xmuse_core/platform/execution/github_ops.py`
+  - 结果: `Success: no issues found in 1 source file`。
+- Fresh review:
+  No Critical or Important findings。
+
+S5d opt-in `gh api` read-only client adapter 追加完成:
+
+- 新增 `GitHubCliServerSideTruthClient`。
+- 该 client 是 `ReadOnlyGitHubServerSideTruthClient` protocol 的 opt-in 实现；默认路径不会构造
+  或运行它。
+- 它通过注入 runner 调用只读 `gh api` endpoint，读取 PR state、reviews、branch
+  protection、check-runs，并产出 `GitHubServerSideTruthSnapshot`。
+- `gh api` read failure 或 payload 不完整时返回 `None`，由上层 collector 归一化为
+  `manual_gap`。
+- 测试使用 fake runner，确认命令形态是 `gh api <endpoint>`，没有 `PATCH` / `PUT` /
+  `DELETE` / `POST` mutation token。
+- `has_status_check_truth` 现在要求 successful check run ids 覆盖全部 `required_checks`，
+  partial check-runs payload 只能归一化为 `manual_gap`。
+
+S5d focused validation:
+
+- `uv run pytest tests/xmuse/test_github_server_gate_contract.py -q`
+  - 结果: `17 passed`。
+- `uv run ruff check src/xmuse_core/platform/execution/github_ops.py tests/xmuse/test_github_server_gate_contract.py`
+  - 结果: `All checks passed!`。
+- `uv run mypy src/xmuse_core/platform/execution/github_ops.py`
+  - 结果: `Success: no issues found in 1 source file`。
+- Fresh review:
+  - 初审 Important: partial required-check payload 仍可能满足旧的 status-check truth。
+  - 修复: status-check truth 要求 `len(check_run_ids) >= len(required_checks)`，并新增
+    model-construct gate regression 与 gh client partial-check regression。
+  - 复审: No Critical or Important findings。
+
+S5e manual opt-in GitHub server truth capture script 追加完成:
+
+- 新增 `scripts/github_server_truth_capture.py`。
+- 手动 operator 可运行:
+  `uv run python scripts/github_server_truth_capture.py --repo iiyazu/Cross-Muse --pull-request <number> --output /tmp/xmuse-github-server-truth.json`
+- 脚本显式调用时才构造 `GitHubCliServerSideTruthClient`；默认 CI 不运行 live GitHub。
+- 输出 JSON 包含 `schema_version: github_server_side_truth_capture.v1`、
+  `capture_mode: opt_in_read_only_gh_api`、`can_emit_pr_merged`。
+- 完整 server snapshot 返回 exit 0；缺失 snapshot / manual gap 返回 exit 2。
+- tests 使用 fake `gh api` runner；没有 live GitHub 访问。
+
+S5e focused validation:
+
+- `uv run pytest tests/xmuse/test_github_server_truth_capture.py tests/xmuse/test_github_server_gate_contract.py -q`
+  - 结果: `19 passed`。
+- `uv run ruff check scripts/github_server_truth_capture.py tests/xmuse/test_github_server_truth_capture.py src/xmuse_core/platform/execution/github_ops.py tests/xmuse/test_github_server_gate_contract.py`
+  - 结果: `All checks passed!`。
+- `uv run mypy scripts/github_server_truth_capture.py src/xmuse_core/platform/execution/github_ops.py`
+  - 结果: `Success: no issues found in 2 source files`。
+
+S5 stage harness:
+
+- 命令:
+  `uv run python scripts/goal_stage_runner.py --stage-manifest /home/iiyatu/projects/python/xmuse/.goal-runs/S5/stage-manifest.json --engine opencode --repo-root /home/iiyatu/projects/python/xmuse --output .goal-runs/S5/result.json`
+- 结果:
+  exit 2，`result.json.status == "blocked"`。
+- 实际 OpenCode argv:
+  `['opencode', '--model', 'opencode-go/deepseek-v4-flash:max', 'run', '--format', 'json', '--dir', '/home/iiyatu/projects/python/xmuse', 'Execute the attached goal stage prompt.', '--file', '.goal-runs/S5/result.json.prompt.txt']`
+- OpenCode 返回:
+  `Unexpected server error. Check server logs for details.`，ref `err_6ec74914`。
+- 结论:
+  S5 local contract proof 已推进并审查；S5 live OpenCode-in review proof 仍被外部 OpenCode
+  server error 阻塞，owner 是 OpenCode/DeepSeek runtime operator。
+
+仍未完成:
+
+- OpenCode-in live stage 仍缺 pass evidence；S4/S5 harness 调用均返回 OpenCode server error。
+- 未捕获真实 GitHub branch protection/ruleset/check-run/review/merge evidence。
+- 未实现 read-only live GitHub API collector。
+- 未捕获真实 long-running heartbeat；S6 仍是 deterministic logical replay summary。
+
+S6 long-run heartbeat/replay evidence 追加完成:
+
+- `SelfIterationLongRunReplaySummary` 新增 deterministic SLO audit 字段:
+  `max_heartbeat_gap_minutes`、`max_review_snapshot_gap_minutes`、`slo_status`、
+  `slo_violations`。
+- `build_self_iteration_long_run_replay_summary(...)` 支持传入模拟 heartbeat 时间序列，
+  用于无 sleep 测试 long-run SLO。
+- heartbeat gap 超过 15 分钟会记录 `heartbeat gap exceeded 15 minutes`。
+- review snapshot 到最终阶段超过 45 分钟会记录 `review snapshot gap exceeded 45 minutes`。
+- builder 拒绝 live/real proof level 污染，默认 replay summary 只允许
+  `contract_proof`、`fake_runtime_proof`、`manual_gap`。
+- 模拟 heartbeat 时间必须按 `heartbeat_seq` 单调不降，否则 fail closed。
+- 默认路径仍是 deterministic replay/contract proof；没有把本地模拟时间升级为 live
+  long-running heartbeat proof。
+
+S6 focused validation:
+
+- `uv run pytest tests/xmuse/test_self_iteration_runtime_closure.py::test_long_run_replay_summary_records_slo_violation_from_simulated_time tests/xmuse/test_self_iteration_runtime_closure.py::test_long_run_replay_summary_records_heartbeat_review_and_patch_lineage -q`
+  - 结果: `2 passed`。
+- `uv run pytest tests/xmuse/test_self_iteration_runtime_closure.py::test_long_run_replay_summary_records_review_snapshot_slo_violation -q`
+  - 结果: `1 passed`。
+- `uv run ruff check src/xmuse_core/self_iteration/runtime_closure.py tests/xmuse/test_self_iteration_runtime_closure.py`
+  - 结果: `All checks passed!`。
+- `uv run mypy src/xmuse_core/self_iteration/runtime_closure.py`
+  - 结果: `Success: no issues found in 1 source file`。
+
+Fresh review:
+
+- 初审 Important findings:
+  1. `build_self_iteration_long_run_replay_summary(...)` 直接复用 evidence bundle proof level，
+     若未来传入 live/real proof artifact 会污染默认 replay summary。
+  2. `heartbeat_emitted_at` 未校验单调顺序，倒序时间可能让 SLO 计算低估 gap。
+- 修复:
+  - 新增 `_validate_replay_summary_proof_level(...)`，只允许 contract/fake/manual-gap proof。
+  - 新增 `_validate_monotonic_timestamps(...)`，按 heartbeat sequence 校验时间单调不降。
+  - 新增两条回归测试覆盖 live proof 污染和非单调 heartbeat 时间。
+- 复审:
+  No Critical or Important findings。
+
 ## 2026-06-05 V14 Real Groupchat Runtime Closure Run
 
 本轮按真实任务跑完 V14 groupchat runtime closure，state root:

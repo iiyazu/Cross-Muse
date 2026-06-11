@@ -83,7 +83,7 @@ The enforceable support levels are:
 | Provider | Required V10 level | Enforcement |
 | --- | --- | --- |
 | Codex = PRIMARY for real groupchat | All default Codex profiles use `SupportLevel.PRIMARY`; Codex remains the only production groupchat GOD provider. | Registry tests and this contract test fail if Codex profiles drift. |
-| OpenCode = SECONDARY bounded worker only | `opencode.deepseek_flash_worker` uses `SupportLevel.SECONDARY`, has only `bounded_code_writing`, no MCP, no persistent session, and requires `DEEPSEEK_API_KEY` only for that worker smoke. | Provider model/policy tests fail if OpenCode gains broader default capabilities. |
+| OpenCode = SECONDARY bounded worker / bounded deliberation only | `opencode.deepseek_flash_worker` uses `SupportLevel.SECONDARY`, has only `bounded_code_writing` and `bounded_deliberation`, no MCP, no persistent session, and requires `DEEPSEEK_API_KEY` only for OpenCode smoke. Bounded deliberation may only emit `propose` / `ask` / `challenge` and has no state-write authority. | Provider model/policy tests fail if OpenCode gains broader default capabilities. |
 | Claude Code = launcher only / not provider adapter | `agents/launchers/claude_code.py` is not registered as a provider profile or adapter. | Phase 3 contract tests fail if a `claude` provider profile appears without updating this matrix. |
 | Fake = TEST ONLY and excluded from default registry | Fake adapters are test fixtures and no default registry profile may use `SupportLevel.TEST_ONLY`. | Support-level tests fail if fake/test profiles become selectable defaults. |
 

@@ -39,6 +39,20 @@ Hard constraints:
 - Do not describe contract, fake, local, or synthetic evidence as live/server-side/real-provider proof.
 - Do not use destructive git commands.
 - Preserve unrelated user worktree changes.
+- 每阶段执行采用 `scripts/goal_stage_runner.py`。
+- 未得到 `result.json` 且 `status=ok` 不得进入下一阶段。
+- 阶段异常分类：`ok` 继续、`retry` 同阶段重试、`blocked` 人工阻塞。
+- `--dry-run` 只允许预览 prompt/command，不得作为阶段通过证据。
+
+执行命令（硬约束）:
+
+```text
+uv run python scripts/goal_stage_runner.py \
+  --stage-manifest /abs/path/to/stage-manifest.json \
+  --engine <codex|opencode|auto> \
+  --repo-root /home/iiyatu/projects/python/xmuse \
+  --output .goal-runs/<stage_id>/result.json
+```
 
 Validation:
 - `uv run ruff check .`

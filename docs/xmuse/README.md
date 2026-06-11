@@ -41,9 +41,13 @@ GOD groupchat deliberation
 | `docs/xmuse/self-iteration-runtime-closure-plan.md` | 下一轮自迭代 runtime 闭环的详细任务、验收标准和执行行为规范 |
 | `docs/xmuse/self-iteration-runtime-closure-goal-prompt.md` | 可直接用于 `/goal` 的简洁自迭代闭环 prompt，详细任务引用 plan 文档 |
 | `docs/xmuse/self-iteration-runtime-closure.md` | 自迭代 runtime 闭环 replay artifact，记录 speech-act、blueprint、laneDAG、runtime contract、review、GitHub 和 MemoryOS 证据 |
+| `docs/xmuse/goal-stage-harness.md` | `/goal` 阶段统一执行/证据/失败分类规范与标准 manifest schema |
 | `docs/xmuse/vision-runtime-evidence-closure-plan.md` | 2fdb299 之后愿景 runtime evidence closure 的详细任务、验收标准和执行行为规范 |
 | `docs/xmuse/vision-runtime-evidence-closure-goal-prompt.md` | 可直接用于 `/goal` 的简洁愿景 runtime evidence closure prompt，详细任务引用 plan 文档 |
 | `docs/xmuse/vision-runtime-evidence-closure.md` | 愿景 runtime evidence closure 证据 artifact，记录 CI、merge 语义、GitHub server gap、live MemoryOS trace 和 real runtime soak 边界 |
+| `docs/xmuse/opencode-in-long-runtime-evidence-plan.md` | 下一轮 OpenCode-in 长执行证据闭环的详细任务、授权边界和行为规范 |
+| `docs/xmuse/opencode-in-long-runtime-evidence-goal-prompt.md` | 可直接用于 `/goal` 的简洁 OpenCode-in 长执行 prompt，详细任务引用 plan 文档 |
+| `docs/xmuse/opencode-in-long-runtime-evidence-closure.md` | OpenCode-in 长执行证据闭环的当前审计报告、stage evidence、proof-level 变化和剩余 GitHub manual gap |
 | `docs/xmuse/github-review-merge-contract.md` | GitHub PR template、CODEOWNERS、required checks 和 merge-ready 合同 |
 | `docs/xmuse/memoryos-governance-contract.md` | MemoryOS namespace、actor identity、memory layer、redaction、tombstone 和 MCP 写入边界 |
 | `docs/xmuse/解耦开发协议.md` | 四层解耦边界、事件契约、数据权威和开发规则 |

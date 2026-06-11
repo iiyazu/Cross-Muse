@@ -313,15 +313,17 @@ async def test_agent_spawner_uses_final_prompt_on_argv_for_opencode_provider(
     )
 
     command = tuple(captured["cmd"])
-    assert command[:8] == (
+    assert command[:10] == (
         "opencode",
         "run",
+        "--model",
+        "opencode-go/deepseek-v4-flash",
+        "--variant",
+        "max",
         "--format",
         "json",
         "--dir",
         str(tmp_path),
-        "--model",
-        "deepseek/deepseek-v4-flash",
     )
     assert "<memoryos_context>" in command[-1]
     assert command[-1].endswith("Implement the lane.")

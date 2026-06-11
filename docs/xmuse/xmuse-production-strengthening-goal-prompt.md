@@ -47,6 +47,25 @@
 4. 若触及 runtime，抽象 LongSessionManager / AgentRuntimeAdapter，保持 Ray 默认、native fallback。
 5. 若触及 execution，避免继续扩大 feature_lanes.json 权威；新增能力应朝 graph-native ready-set/status store 迁移。
 
+阶段执行约束（硬规则）:
+- 每个阶段必须使用统一脚本:
+  ```bash
+  uv run python scripts/goal_stage_runner.py \
+    --stage-manifest /abs/path/to/stage-manifest.json \
+    --engine <codex|opencode|auto> \
+    --repo-root /home/iiyatu/projects/python/xmuse \
+    --output .goal-runs/<stage_id>/result.json
+  ```
+- 每阶段必须先等待 result 文件写出，且 `status` 为 `ok` 才能进入下一阶段。
+- `retry`: 同阶段重试一次执行，使用同一 manifest。
+- `blocked`: 立即停止并上报阻塞原因与 owner。
+- `--dry-run`: 只允许预览 prompt/command，不得作为阶段通过证据。
+- 阶段必须产出至少:
+  - `result.json`
+  - `result.json.prompt.txt`
+  - `result.json.manifest.jsonl`
+  - `result.json.evidence/engine_output.txt`（执行器原始输出）
+
 Reviewer 行为 gate:
 - merge: 必须有 acceptance coverage、diff scope、verification、merge guard 证据。
 - rework: 必须生成结构化 ReworkPacket，发回同一个 feature worker session 或可恢复 session。

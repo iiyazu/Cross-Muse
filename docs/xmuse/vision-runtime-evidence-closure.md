@@ -88,6 +88,34 @@ Current server-side conclusion:
 
 Proof level: `manual_gap` until server-side settings/statuses are retrieved.
 
+Current collector boundary:
+
+```text
+GitHubServerSideTruthEvidence
+build_github_server_side_truth_gap(...)
+can_emit_pr_merged(...)
+```
+
+This schema can store authenticated server-side facts when available. In the
+default no-secrets path it records a `manual_gap` and does not permit
+`pr_merged`.
+
+## Long-Run Replay Summary Boundary
+
+The current self-iteration closure exposes:
+
+```text
+build_self_iteration_long_run_replay_summary(...)
+SelfIterationLongRunReplaySummary
+LongRunEvidenceHeartbeat
+```
+
+This is a logical replay artifact for lane evidence, review verdict,
+patch-forward lineage, and merge-readiness heartbeat order. It does not create a
+background runner or live timing proof. Default proof remains contract/fake
+runtime proof unless a separate live provider, live MemoryOS, or GitHub
+server-side evidence pack is attached.
+
 ## Real Multi-GOD Deliberation Evidence
 
 The deterministic fixture remains contract proof only.

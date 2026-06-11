@@ -111,9 +111,14 @@ def test_provider_matrix_docs_match_default_registry_support_levels() -> None:
     opencode = registry.get("opencode.deepseek_flash_worker")
     assert opencode.support_level is SupportLevel.SECONDARY
     assert opencode.adapter_kind is AdapterKind.OPENCODE_CLI
-    assert opencode.task_capabilities == (TaskCapability.BOUNDED_CODE_WRITING,)
+    assert opencode.task_capabilities == (
+        TaskCapability.BOUNDED_CODE_WRITING,
+        TaskCapability.BOUNDED_DELIBERATION,
+    )
+    assert TaskCapability.REVIEW not in opencode.task_capabilities
+    assert TaskCapability.TAKEOVER not in opencode.task_capabilities
     assert opencode.env_requirement_names == ("DEEPSEEK_API_KEY",)
-    assert "OpenCode = SECONDARY bounded worker only" in quality_doc
+    assert "OpenCode = SECONDARY bounded worker / bounded deliberation only" in quality_doc
 
     assert "Claude Code" in matrix
     assert "Launcher only" in matrix

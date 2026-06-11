@@ -40,6 +40,32 @@ Hard constraints:
 - `feature_lanes.json` is projection/queue only, never authority.
 - Do not describe contract proof or fake runtime proof as live runtime proof.
 
+Execution protocol (mandatory):
+- Use `scripts/goal_stage_runner.py` for each phase and only start next phase
+  when current `result.json` is `status: ok`.
+- One stage must include:
+  `--stage-manifest <stage_manifest>.json`, `--engine <codex|opencode|auto>`,
+  `--repo-root /home/iiyatu/projects/python/xmuse`,
+  `--output .goal-runs/<stage_id>/result.json`.
+- If status is `retry`, rerun the same stage with the same manifest.
+- If status is `blocked`, stop immediately, escalate with blocker reason and next
+  owner.
+- `--dry-run` may be used only to preview prompt/command and must not count as a
+  passed stage.
+- Required generated files per stage:
+  `result.json`, `result.json.prompt.txt`, `result.json.manifest.jsonl`,
+  `result.json.evidence/engine_output.txt`.
+
+  Command template:
+
+  ```bash
+  uv run python scripts/goal_stage_runner.py \
+    --stage-manifest /abs/path/<stage_manifest>.json \
+    --engine <codex|opencode|auto> \
+    --repo-root /home/iiyatu/projects/python/xmuse \
+    --output .goal-runs/<stage_id>/result.json
+  ```
+
 Required validation:
 - `uv run ruff check .`
 - focused pytest for all changed contracts
