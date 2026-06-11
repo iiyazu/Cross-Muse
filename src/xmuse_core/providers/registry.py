@@ -127,6 +127,7 @@ def build_default_provider_registry(
                 risk_tier=RiskTier.HIGH,
                 task_capabilities=(
                     TaskCapability.BOUNDED_CODE_WRITING,
+                    TaskCapability.BOUNDED_DELIBERATION,
                     TaskCapability.REVIEW,
                     TaskCapability.LANE_COORDINATION,
                     TaskCapability.PLANNING,
@@ -168,6 +169,7 @@ def build_default_provider_registry(
                 cost_tier=CostTier.MEDIUM,
                 risk_tier=RiskTier.HIGH,
                 task_capabilities=(
+                    TaskCapability.BOUNDED_DELIBERATION,
                     TaskCapability.LANE_COORDINATION,
                     TaskCapability.PLANNING,
                     TaskCapability.TAKEOVER,
@@ -198,7 +200,10 @@ def build_default_provider_registry(
                 support_level=SupportLevel.SECONDARY,
                 cost_tier=CostTier.LOW,
                 risk_tier=RiskTier.LOW,
-                task_capabilities=(TaskCapability.BOUNDED_CODE_WRITING,),
+                task_capabilities=(
+                    TaskCapability.BOUNDED_CODE_WRITING,
+                    TaskCapability.BOUNDED_DELIBERATION,
+                ),
             ),
         ]
     )

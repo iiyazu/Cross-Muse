@@ -62,7 +62,7 @@ uv run pytest -q tests/xmuse/test_full_chain_real_run.py::test_real_ray_codex_ap
 | Provider | Level | Release stance |
 | --- | --- | --- |
 | Codex = PRIMARY | Production groupchat GOD provider | Required for real Ray/Codex/MCP writeback proof. |
-| OpenCode = SECONDARY | Bounded worker only | Requires `DEEPSEEK_API_KEY`; no persistent GOD session or MCP writeback. |
+| OpenCode = SECONDARY | Bounded worker / bounded deliberation only | Requires `DEEPSEEK_API_KEY`; no persistent GOD session or MCP writeback; deliberation may only emit propose/ask/challenge and cannot write state. |
 | Claude Code = launcher only | Not a provider adapter | Not selectable through provider policy. |
 | Fake = TEST ONLY | Demo and CI smoke only | Useful for onboarding; not production evidence. |
 

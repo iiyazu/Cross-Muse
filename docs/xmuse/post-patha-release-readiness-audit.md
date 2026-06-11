@@ -186,7 +186,7 @@ XMUSE_CHAT_API_URL=http://127.0.0.1:8201
 
 **Provider classification is clear and enforced by contract tests:**
 - `Codex = PRIMARY` — real groupchat GOD provider (`quality-gates-and-provider-matrix.md:85-86`)
-- `OpenCode = SECONDARY` — bounded worker only, no MCP, no persistent session (`quality-gates-and-provider-matrix.md:87`)
+- `OpenCode = SECONDARY` — bounded worker / bounded deliberation only, no MCP, no persistent session (`quality-gates-and-provider-matrix.md:87`)
 - `Claude Code = launcher only, not provider adapter` (`quality-gates-and-provider-matrix.md:88-89`)
 - `Fake = TEST ONLY` — excluded from default registry (`quality-gates-and-provider-matrix.md:90`)
 - Enforcement at `tests/xmuse/test_provider_support_level.py`, `test_provider_policy.py`

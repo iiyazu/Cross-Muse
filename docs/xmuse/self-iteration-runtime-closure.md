@@ -246,6 +246,48 @@ The fake writeback test asserts actor identity, `task_state` memory layer,
 commit-aligned source refs, and writeback metadata. Live MemoryOS Lite proof
 remains opt-in and is tracked as debt.
 
+## Long-Run Replay Summary
+
+Source:
+
+```text
+src/xmuse_core/self_iteration/runtime_closure.py::build_self_iteration_long_run_replay_summary
+tests/xmuse/test_self_iteration_runtime_closure.py::test_long_run_replay_summary_records_heartbeat_review_and_patch_lineage
+tests/xmuse/test_self_iteration_runtime_closure.py::test_long_run_replay_summary_records_slo_violation_from_simulated_time
+tests/xmuse/test_self_iteration_runtime_closure.py::test_long_run_replay_summary_records_review_snapshot_slo_violation
+```
+
+The replay summary is a contract/fake-runtime evidence artifact for long-running
+closure runs. It records ordered logical heartbeats for:
+
+- lane evidence;
+- review verdict;
+- patch-forward lineage;
+- merge readiness.
+
+The default summary preserves proof levels from the underlying artifacts. It
+includes `fake_runtime_proof` and `contract_proof`, and explicitly excludes
+live service or server-side enforcement proof unless those external evidences
+are captured separately.
+
+`merge_readiness_kind` remains `merge_readiness_evaluated` and
+`real_merge_event` remains `false` in the default path.
+
+The summary also includes deterministic SLO audit fields:
+
+- `max_heartbeat_gap_minutes`;
+- `max_review_snapshot_gap_minutes`;
+- `slo_status`;
+- `slo_violations`.
+
+These fields let tests simulate long-run timing without sleeping. A heartbeat
+gap over 15 minutes or a review snapshot gap over 45 minutes marks the replay
+summary as `violated`. This remains replay/contract evidence only; it does not
+prove a live long-running provider session emitted real heartbeats.
+
+The builder rejects live/real proof levels in this default replay summary and
+requires simulated heartbeat timestamps to be monotonic by `heartbeat_seq`.
+
 ## Proof Levels
 
 | Surface | Current evidence | Proof level |
@@ -257,6 +299,7 @@ remains opt-in and is tracked as debt.
 | Review patch-forward | patch lane lineage test | contract proof |
 | GitHub PR metadata | `FakeGitHubOps` body and merge readiness | contract proof |
 | GitHub merge fact | not produced by fake/local closure | manual gap |
+| Long-run replay summary | logical heartbeat/review/patch-forward sequence | contract/fake runtime proof |
 | Workflow/CODEOWNERS/template | local file evidence | contract proof |
 | Branch protection | not verified | manual gap |
 | MemoryOS writeback | `FakeMemoryOSClient` through REST-first protocol | fake runtime proof |

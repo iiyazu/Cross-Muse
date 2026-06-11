@@ -28,7 +28,7 @@
 |------|------|------|----------|----------|
 | `XMUSE_CODEX_MODEL` | optional | `"gpt-5.4"` | `chat/driver.py:101`, `platform/execution/executor.py:748`, `platform/execution/review_god.py:1165`, `platform/agent_spawner.py:118-120` | 使用默认 |
 | `DEEPSEEK_API_KEY` | **required** | — | `providers/registry.py:25`, `providers/adapters/opencode.py:218,231-234,368` | 健康检查报 `CONFIG_ERROR`，adapter 返回 `UNAVAILABLE` |
-| `DEEPSEEK_MODEL` | optional | `"deepseek-v4-flash"` | `providers/registry.py:23` | 使用默认 |
+| `DEEPSEEK_MODEL` | optional | `"deepseek-v4-flash"` | `providers/registry.py:23`, `runtime/settings.py:27` | 使用默认 |
 | `DEEPSEEK_BASE_URL` | optional | None | `providers/registry.py:24` | 不使用 |
 
 ### Runtime Backend / GOD (required for groupchat)
@@ -101,6 +101,11 @@
 | `XMUSE_REQUEST_ID` | `platform/agent_spawner.py:173` |
 | `XMUSE_GRAPH_ID` | `platform/agent_spawner.py:177` |
 | `OPENCODE_CONFIG_CONTENT` | `providers/adapters/opencode.py:96` |
+
+OpenCode runtime config must use provider/package key `opencode-go`; model refs
+must be passed as `opencode-go/<DEEPSEEK_MODEL>`, for example
+`opencode-go/deepseek-v4-flash`, with the OpenCode CLI variant passed separately
+as `--variant max`.
 
 ## Production 群聊最小 env bundle
 

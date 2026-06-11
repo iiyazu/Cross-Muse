@@ -22,7 +22,10 @@ from xmuse_core.providers.models import AdapterKind, ProviderId, ProviderProfile
 
 OPENCODE_CONFIG_CONTENT_ENV_NAME = "OPENCODE_CONFIG_CONTENT"
 OPENCODE_EXECUTABLE = "opencode"
-OPENCODE_RUN_PROVIDER_NAME = "deepseek"
+OPENCODE_RUN_PROVIDER_NAME = "opencode-go"
+OPENCODE_CANONICAL_MODEL_ID = "deepseek-v4-flash"
+OPENCODE_CANONICAL_MODEL_REF = f"{OPENCODE_RUN_PROVIDER_NAME}/{OPENCODE_CANONICAL_MODEL_ID}"
+OPENCODE_CANONICAL_VARIANT = "max"
 OPENCODE_CONFIG_SCHEMA_URL = "https://opencode.ai/config.json"
 HEALTH_CHECK_TIMEOUT_SECONDS = 30
 _HEALTH_PROMPT = (
@@ -75,24 +78,31 @@ class OpenCodeProviderAdapter:
 
     def build_command(self, invocation: ProviderInvocation) -> list[str]:
         self._validate_invocation(invocation)
+        self._validate_canonical_model()
         return list(self._build_run_command(invocation.prompt, invocation.workspace))
 
     def _build_run_command(self, prompt: str, workspace: Path) -> tuple[str, ...]:
         return (
             self._opencode_binary,
             "run",
+            "--model",
+            self.model_ref,
+            "--variant",
+            OPENCODE_CANONICAL_VARIANT,
             "--format",
             "json",
             "--dir",
             str(workspace),
-            "--model",
-            self.model_ref,
             prompt,
         )
 
     def build_env(self, env: Mapping[str, str] | None = None) -> dict[str, str]:
+        self._validate_canonical_model()
         runtime_env = dict(env or {})
-        runtime_env[self.profile.model_id_env_name] = self.profile.model_id
+        model_id_env_name = self.profile.model_id_env_name
+        if model_id_env_name is None:
+            raise ValueError("OpenCodeProviderAdapter requires profile.model_id_env_name")
+        runtime_env[model_id_env_name] = self.profile.model_id
         runtime_env[OPENCODE_CONFIG_CONTENT_ENV_NAME] = json.dumps(
             self._build_inline_config(runtime_env),
             separators=(",", ":"),
@@ -165,6 +175,7 @@ class OpenCodeProviderAdapter:
         )
 
     def check_health(self) -> ProviderHealthSnapshot:
+        self._validate_canonical_model()
         checked_at = self._checked_at_factory()
 
         preflight_failure = self._preflight_snapshot(checked_at=checked_at)
@@ -212,6 +223,13 @@ class OpenCodeProviderAdapter:
             or invocation.profile_id is not self.profile.profile_id
         ):
             raise ValueError("invocation provider/profile must match adapter profile")
+
+    def _validate_canonical_model(self) -> None:
+        if self.model_ref != OPENCODE_CANONICAL_MODEL_REF:
+            raise ValueError(
+                "OpenCodeProviderAdapter requires model ref "
+                f"{OPENCODE_CANONICAL_MODEL_REF}"
+            )
 
     def _build_inline_config(self, env: Mapping[str, str]) -> dict[str, object]:
         options: dict[str, str] = {
@@ -285,14 +303,18 @@ class OpenCodeProviderAdapter:
         timeout_seconds: int,
         cwd: Path | None = None,
     ) -> subprocess.CompletedProcess[str]:
-        kwargs = {
-            "command": command,
-            "env": self._build_command_env(),
-            "timeout_seconds": timeout_seconds,
-        }
         if cwd is not None:
-            kwargs["cwd"] = cwd
-        return self._runner(**kwargs)
+            return self._runner(
+                command=command,
+                env=self._build_command_env(),
+                timeout_seconds=timeout_seconds,
+                cwd=cwd,
+            )
+        return self._runner(
+            command=command,
+            env=self._build_command_env(),
+            timeout_seconds=timeout_seconds,
+        )
 
     def _build_health_command(self) -> tuple[str, ...]:
         return self._build_run_command(_HEALTH_PROMPT, Path.cwd())

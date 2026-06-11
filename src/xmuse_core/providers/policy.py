@@ -15,7 +15,7 @@ from xmuse_core.providers.models import ProviderId, ProviderProfileId, RiskTier,
 from xmuse_core.providers.registry import ProviderRegistry, build_default_provider_registry
 from xmuse_core.providers.selection_record import ProviderSelectionRecord
 
-PolicyPeerType = Literal["god", "review", "coordinator", "worker"]
+PolicyPeerType = Literal["god", "review", "coordinator", "worker", "deliberation"]
 EscalationLevel = Literal["none", "medium", "high"]
 
 DEFAULT_GOD_PROFILE_REF = "codex.god"
@@ -25,6 +25,8 @@ DEFAULT_COORDINATOR_PROFILE_REF = "codex.god"
 DEFAULT_LOW_COST_WORKER_PROFILE_REF = "opencode.deepseek_flash_worker"
 DEFAULT_FALLBACK_WORKER_PROFILE_REF = "codex.worker"
 DEFAULT_ESCALATED_WORKER_PROFILE_REF = "codex.god"
+DEFAULT_FALLBACK_DELIBERATION_PROFILE_REF = "codex.god"
+BOUNDED_DELIBERATION_SPEECH_ACTS = ("propose", "ask", "challenge")
 
 
 def _require_text(value: str, field_name: str | None) -> str:
@@ -84,6 +86,8 @@ class ProviderPolicyDecision(BaseModel):
     health_failure_kind: str | None = Field(default=None, max_length=256)
     escalation_level: EscalationLevel = "none"
     escalation_reasons: tuple[str, ...] = Field(default_factory=tuple)
+    allowed_speech_acts: tuple[str, ...] = Field(default_factory=tuple)
+    state_write_allowed: bool = True
 
     @field_validator("selected_model", "selection_reason")
     @classmethod
@@ -98,6 +102,21 @@ class ProviderPolicyDecision(BaseModel):
         info: ValidationInfo,
     ) -> str | None:
         return _require_optional_text(value, info.field_name)
+
+    @field_validator("allowed_speech_acts")
+    @classmethod
+    def _validate_allowed_speech_acts(
+        cls,
+        value: tuple[str, ...],
+    ) -> tuple[str, ...]:
+        cleaned = tuple(_require_text(item, "allowed_speech_acts") for item in value)
+        duplicates = sorted({item for item in cleaned if cleaned.count(item) > 1})
+        if duplicates:
+            raise ValueError(
+                "allowed_speech_acts must not contain duplicates: "
+                + ", ".join(duplicates)
+            )
+        return cleaned
 
     @property
     def provider_profile_ref(self) -> str:
@@ -136,6 +155,7 @@ class ProviderPolicyService:
         low_cost_worker_profile_ref: str = DEFAULT_LOW_COST_WORKER_PROFILE_REF,
         fallback_worker_profile_ref: str = DEFAULT_FALLBACK_WORKER_PROFILE_REF,
         escalated_worker_profile_ref: str = DEFAULT_ESCALATED_WORKER_PROFILE_REF,
+        fallback_deliberation_profile_ref: str = DEFAULT_FALLBACK_DELIBERATION_PROFILE_REF,
     ) -> None:
         self._registry = registry or build_default_provider_registry()
         self._god_profile_ref = god_profile_ref
@@ -145,6 +165,7 @@ class ProviderPolicyService:
         self._low_cost_worker_profile_ref = low_cost_worker_profile_ref
         self._fallback_worker_profile_ref = fallback_worker_profile_ref
         self._escalated_worker_profile_ref = escalated_worker_profile_ref
+        self._fallback_deliberation_profile_ref = fallback_deliberation_profile_ref
 
     def select_god(
         self,
@@ -305,6 +326,64 @@ class ProviderPolicyService:
             ),
         )
 
+    def select_bounded_deliberation(
+        self,
+        *,
+        lane: Mapping[str, Any],
+        health_by_profile: Mapping[str, ProviderHealthSnapshot] | None = None,
+    ) -> ProviderPolicyDecision:
+        signals = evaluate_lane_policy_signals(lane)
+        low_cost_profile = self._registry.get(self._low_cost_worker_profile_ref)
+        if TaskCapability.BOUNDED_DELIBERATION not in low_cost_profile.task_capabilities:
+            raise ValueError(
+                f"{low_cost_profile.ref} does not support "
+                f"{TaskCapability.BOUNDED_DELIBERATION.value}"
+            )
+        low_cost_health = _select_health_snapshot(
+            low_cost_profile.provider_id,
+            low_cost_profile.profile_id,
+            health_by_profile,
+        )
+        if _is_healthy(low_cost_health):
+            return ProviderPolicyDecision(
+                provider_id=low_cost_profile.provider_id,
+                profile_id=low_cost_profile.profile_id,
+                task_type=TaskCapability.BOUNDED_DELIBERATION,
+                lane_risk=signals.lane_risk,
+                peer_type="deliberation",
+                selected_model=low_cost_profile.model_id,
+                selection_reason=(
+                    "Select healthy OpenCode as a bounded deliberation participant "
+                    "with no state-write authority."
+                ),
+                allowed_speech_acts=BOUNDED_DELIBERATION_SPEECH_ACTS,
+                state_write_allowed=False,
+            )
+
+        fallback_profile = self._registry.get(self._fallback_deliberation_profile_ref)
+        if TaskCapability.BOUNDED_DELIBERATION not in fallback_profile.task_capabilities:
+            raise ValueError(
+                f"{fallback_profile.ref} does not support "
+                f"{TaskCapability.BOUNDED_DELIBERATION.value}"
+            )
+        health_failure_kind = classify_provider_health_failure(low_cost_health)
+        return ProviderPolicyDecision(
+            provider_id=fallback_profile.provider_id,
+            profile_id=fallback_profile.profile_id,
+            task_type=TaskCapability.BOUNDED_DELIBERATION,
+            lane_risk=signals.lane_risk,
+            peer_type="deliberation",
+            selected_model=fallback_profile.model_id,
+            selection_reason=(
+                "Fallback to Codex for bounded deliberation because OpenCode is "
+                "unavailable."
+            ),
+            fallback_cause=health_failure_kind,
+            health_failure_kind=health_failure_kind,
+            allowed_speech_acts=BOUNDED_DELIBERATION_SPEECH_ACTS,
+            state_write_allowed=False,
+        )
+
 
 def classify_provider_health_failure(
     snapshot: ProviderHealthSnapshot | None,
@@ -424,6 +503,7 @@ def is_low_risk_bounded_task(lane: Mapping[str, Any]) -> bool:
         and _task_type(lane)
         in {
             TaskCapability.BOUNDED_CODE_WRITING.value,
+            TaskCapability.BOUNDED_DELIBERATION.value,
             "mechanical_cleanup",
             "cleanup",
             "rename",

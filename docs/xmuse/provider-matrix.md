@@ -32,7 +32,7 @@ executor → RunnerProviderService → ProviderAdapter.invoke() → CLI subproce
 | Provider | Adapter | 支持级别 | Profiles | MCP | 持久化 | 健康检查 |
 |----------|---------|----------|----------|-----|--------|----------|
 | Codex CLI | `CodexProviderAdapter` | **PRIMARY** | 5 | Yes | provider-native resume | binary 存在性 |
-| OpenCode CLI | `OpenCodeProviderAdapter` | **SECONDARY** (worker only) | 1 | No | N/A | 实际 smoke run |
+| OpenCode CLI | `OpenCodeProviderAdapter` | **SECONDARY** (bounded worker / bounded deliberation only) | 1 | No | N/A | 实际 smoke run |
 | Claude Code | `launchers/claude_code.py` | **Launcher only** — 不是 provider adapter | 0 | — | — | — |
 | Fake (test) | `FakeProviderAdapter` | **TEST ONLY** | 任意 mock | N/A | N/A | 模拟状态 |
 
@@ -51,12 +51,19 @@ executor → RunnerProviderService → ProviderAdapter.invoke() → CLI subproce
 
 | Profile Ref | Provider | 模型 | 成本 | 风险 | 能力 |
 |-------------|----------|------|------|------|------|
-| `codex.default` | CODEX | gpt-5.4 | HIGH | HIGH | write, review, coord, plan, takeover |
+| `codex.default` | CODEX | gpt-5.4 | HIGH | HIGH | write, bounded_deliberation, review, coord, plan, takeover |
 | `codex.worker` | CODEX | gpt-5.4-mini | LOW | LOW | bounded_code_writing |
 | `codex.review` | CODEX | gpt-5.4 | HIGH | HIGH | review |
-| `codex.god` | CODEX | gpt-5.4 | MEDIUM | HIGH | coord, plan, takeover |
+| `codex.god` | CODEX | gpt-5.4 | MEDIUM | HIGH | bounded_deliberation, coord, plan, takeover |
 | `codex.final_quality` | CODEX | gpt-5.5 | HIGH | HIGH | merge_final_review |
-| `opencode.deepseek_flash_worker` | OPENCODE | deepseek-v4-flash | LOW | LOW | bounded_code_writing |
+| `opencode.deepseek_flash_worker` | OPENCODE | deepseek-v4-flash (`--variant max`) | LOW | LOW | bounded_code_writing, bounded_deliberation |
+
+OpenCode worker and bounded-deliberation commands must address the model through
+the `opencode-go` package, for example `opencode-go/deepseek-v4-flash`, and pass
+`--variant max` as a separate CLI flag. `max` is a DeepSeek V4 Flash variant, not
+a separate provider profile or model id suffix.
+Bounded deliberation is normalized into `god_speech_act_message.v1` artifacts and
+cannot write durable xmuse state.
 
 ### 配置要求
 
@@ -70,18 +77,18 @@ executor → RunnerProviderService → ProviderAdapter.invoke() → CLI subproce
 `providers/policy.py` — `ProviderPolicyService` 的 worker 选择逻辑:
 
 1. lane 有升级信号（反复失败/模糊 review/高风险文件）→ `codex.god`
-2. 低风险边界任务且 `opencode.deepseek_flash_worker` 健康 → 选 OpenCode
+2. 低风险边界任务或有界群聊参与且 `opencode.deepseek_flash_worker` 健康 → 选 OpenCode
 3. OpenCode 不健康 → fallback 到 `codex.worker`
 4. 默认 → `codex.worker`
 
-God / review / coordinator 固定使用对应的 codex.* profile。
+God / review / coordinator 固定使用对应的 codex.* profile。OpenCode 的有界群聊参与仅允许 `propose` / `ask` / `challenge`，不得 `object`、`vote`、`decide`、`evidence`、`handoff` 或写入内部状态。
 
 ### 关键文件
 
 | 文件 | 核心职责 |
 |------|----------|
 | `providers/adapters/codex.py` | Codex CLI 适配器（主执行器） |
-| `providers/adapters/opencode.py` | OpenCode CLI 适配器（低成本 worker） |
+| `providers/adapters/opencode.py` | OpenCode CLI 适配器（低成本 worker，强制 `opencode-go/<model>` package） |
 | `providers/adapters/fake.py` | 测试用 fake adapter |
 | `providers/models.py` | ProviderProfile / 枚举定义 |
 | `providers/registry.py` | 6 个默认 profile 注册 |

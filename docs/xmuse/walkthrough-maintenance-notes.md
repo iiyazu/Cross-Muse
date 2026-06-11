@@ -282,7 +282,7 @@ ensure_conversation_session(...)
 - Codex 是完整主路径 provider: registry/profile、adapter、policy、execution/review/GOD
   profile、persistent capability、MCP、runner command 都已覆盖。
 - OpenCode 已经进入 provider registry 和 adapter，但定位是低成本、低风险、一次性 worker。
-  它目前支持 `opencode run --format json --dir ... --model deepseek/<model> <prompt>`，
+  它目前支持 `opencode --model opencode-go/<model> run --format json --dir ... <prompt>`，
   有 env/config/health/fallback 测试，但不支持 MCP 和 persistent session。
 - Claude Code 目前主要存在于 `AgentRuntime.CLAUDE_CODE` 和 `ClaudeCodeLauncher`，属于旧
   launcher/runtime 边界；它还没有进入 `ProviderId`、`ProviderRegistry`、`RunnerProviderService`
