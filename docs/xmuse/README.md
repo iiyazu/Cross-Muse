@@ -47,6 +47,7 @@ GOD groupchat deliberation
 | `docs/xmuse/vision-runtime-evidence-closure.md` | 愿景 runtime evidence closure 证据 artifact，记录 CI、merge 语义、GitHub server gap、live MemoryOS trace 和 real runtime soak 边界 |
 | `docs/xmuse/vision-closure-wave-deliberation-tui-plan.md` | 根据 deep-research-report_07 制定的 TUI 愿景前门闭环详细任务与行为规范 |
 | `docs/xmuse/vision-closure-wave-deliberation-tui-goal-prompt.md` | 可直接用于 `/goal` 的简洁 TUI 愿景前门闭环 prompt，详细任务引用 plan 文档 |
+| `docs/xmuse/vision-closure-wave-deliberation-tui-walkthrough.md` | TUI 愿景前门闭环实现走读，记录 read-model、面板、proof-level 和剩余 manual gap |
 | `docs/xmuse/opencode-in-long-runtime-evidence-plan.md` | 下一轮 OpenCode-in 长执行证据闭环的详细任务、授权边界和行为规范 |
 | `docs/xmuse/opencode-in-long-runtime-evidence-goal-prompt.md` | 可直接用于 `/goal` 的简洁 OpenCode-in 长执行 prompt，详细任务引用 plan 文档 |
 | `docs/xmuse/opencode-in-long-runtime-evidence-closure.md` | OpenCode-in 长执行证据闭环的当前审计报告、stage evidence、proof-level 变化和剩余 GitHub manual gap |
