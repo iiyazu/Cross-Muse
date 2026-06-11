@@ -126,7 +126,7 @@ Observed results:
 
 ```text
 47 passed
-133 passed, 1 warning
+134 passed, 1 warning
 16 passed
 38 passed, 1 skipped
 All checks passed!

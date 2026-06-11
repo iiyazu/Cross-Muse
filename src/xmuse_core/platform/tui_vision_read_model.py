@@ -332,14 +332,21 @@ def _build_github(github_truth: dict | None) -> dict[str, Any]:
     can_emit_pr_merged = bool(github_truth.get("can_emit_pr_merged"))
     blockers = _github_blockers(required_checks, review_truth, github_truth)
 
-    if merge.get("merged") is True:
+    if merge.get("merged") is True and proof_level == "server_side_merge_proof":
         fact_state = "pr_merged"
+        manual_gap_reason = github_truth.get("manual_gap_reason")
+    elif merge.get("merged") is True:
+        fact_state = "manual_gap"
+        manual_gap_reason = "server-side merge proof is missing"
     elif can_emit_pr_merged:
         fact_state = "merge_ready"
+        manual_gap_reason = github_truth.get("manual_gap_reason")
     elif blockers:
         fact_state = "blocked"
+        manual_gap_reason = github_truth.get("manual_gap_reason")
     else:
         fact_state = "observed"
+        manual_gap_reason = github_truth.get("manual_gap_reason")
 
     return {
         "proof_level": proof_level,
@@ -347,7 +354,7 @@ def _build_github(github_truth: dict | None) -> dict[str, Any]:
         "source_refs": _list_refs(github_truth.get("source_refs")),
         "blockers": blockers,
         "target_refs": _list_refs(github_truth.get("target_refs")),
-        "manual_gap_reason": github_truth.get("manual_gap_reason"),
+        "manual_gap_reason": manual_gap_reason,
         "can_emit_pr_merged": can_emit_pr_merged,
         "required_checks": required_checks,
         "review_truth": review_truth,

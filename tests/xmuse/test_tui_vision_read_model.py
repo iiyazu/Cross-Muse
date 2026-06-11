@@ -207,6 +207,23 @@ def test_tui_vision_read_model_preserves_github_truth_without_merging_readiness(
     assert merged["github"]["fact_state"] == "pr_merged"
 
 
+def test_tui_vision_read_model_requires_server_side_proof_for_pr_merged() -> None:
+    model = build_tui_vision_read_model(
+        github_truth={
+            "proof_level": "contract_proof",
+            "merge": {
+                "merged": True,
+                "merge_commit_sha": "synthetic",
+                "merged_at": "2026-06-11T00:00:00Z",
+            },
+            "source_refs": ["fake-github://pull/42"],
+        },
+    )
+
+    assert model["github"]["fact_state"] == "manual_gap"
+    assert model["github"]["manual_gap_reason"] == "server-side merge proof is missing"
+
+
 def test_tui_vision_read_model_uses_inspector_optional_evidence() -> None:
     model = build_tui_vision_read_model(
         conversation_id="conv-1",
