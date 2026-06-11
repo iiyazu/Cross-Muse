@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from xmuse.tui.adapter.xmuse_adapter import StateDelta, XmuseAdapter
 from xmuse.tui.state import AppState
+from xmuse_core.integrations.memoryos_lite_interop import MemoryOSLiteTraceEvidence
 from xmuse_core.platform.tui_vision_read_model import build_tui_vision_read_model
 
 
@@ -258,6 +259,27 @@ def test_tui_vision_read_model_summarizes_memory_trace_and_manual_gap() -> None:
     assert without_trace["memory"]["proof_level"] == "manual_gap"
     assert without_trace["memory"]["fact_state"] == "manual_gap"
     assert without_trace["memory"]["manual_gap_reason"] == "memory trace unavailable"
+
+
+def test_tui_vision_read_model_accepts_memoryos_lite_trace_evidence_shape() -> None:
+    trace = MemoryOSLiteTraceEvidence(
+        namespace_uri="memory://conversation/conv-1",
+        session_id="mem-session-1",
+        trace_events=[{"event": "context", "estimated_tokens": 64}],
+        source_refs=["lane:lane-1"],
+        estimated_tokens=64,
+    ).model_dump(mode="json")
+
+    model = build_tui_vision_read_model(memory_trace=trace)
+    memory = model["memory"]
+
+    assert memory["proof_level"] == "live_service_proof"
+    assert memory["session_id"] == "mem-session-1"
+    assert memory["namespace_uri"] == "memory://conversation/conv-1"
+    assert memory["namespace"] == {"uri": "memory://conversation/conv-1"}
+    assert memory["trace_events_count"] == 1
+    assert memory["token_estimate"] == 64
+    assert memory["source_refs"] == ["lane:lane-1"]
 
 
 def test_tui_vision_read_model_preserves_github_truth_without_merging_readiness() -> None:

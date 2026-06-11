@@ -286,6 +286,7 @@ def _build_memory(memory_trace: dict | None) -> dict[str, Any]:
         section.update(
             {
                 "session_id": None,
+                "namespace_uri": None,
                 "namespace": None,
                 "trace_events_count": 0,
                 "pinned_core_count": 0,
@@ -305,6 +306,15 @@ def _build_memory(memory_trace: dict | None) -> dict[str, Any]:
         events = []
     source_refs = _list_refs(memory_trace.get("source_refs"))
     session_id = _text(memory_trace.get("session_id"))
+    namespace_uri = _text(memory_trace.get("namespace_uri"))
+    namespace = (
+        memory_trace.get("namespace")
+        if isinstance(memory_trace.get("namespace"), dict)
+        else ({"uri": namespace_uri} if namespace_uri is not None else None)
+    )
+    token_estimate = memory_trace.get("token_estimate")
+    if not isinstance(token_estimate, int) or isinstance(token_estimate, bool):
+        token_estimate = memory_trace.get("estimated_tokens")
     target_refs: list[str] = []
     if session_id is not None:
         target_refs.append(f"memory_session:{session_id}")
@@ -321,11 +331,8 @@ def _build_memory(memory_trace: dict | None) -> dict[str, Any]:
         "target_refs": target_refs,
         "manual_gap_reason": None,
         "session_id": session_id,
-        "namespace": (
-            memory_trace.get("namespace")
-            if isinstance(memory_trace.get("namespace"), dict)
-            else None
-        ),
+        "namespace_uri": namespace_uri,
+        "namespace": namespace,
         "trace_events_count": len(events),
         "pinned_core_count": _memory_context_count(
             memory_trace,
@@ -352,7 +359,7 @@ def _build_memory(memory_trace: dict | None) -> dict[str, Any]:
             context_package,
             "dropped_pages",
         ),
-        "token_estimate": memory_trace.get("token_estimate"),
+        "token_estimate": token_estimate,
     }
 
 

@@ -26,6 +26,7 @@ def render_memory_trace_drawer(vision: dict[str, Any] | None) -> Panel:
         f"Proof: {_text(memory.get('proof_level')) or 'manual_gap'}",
         f"State: {fact_state}",
         f"Session: {_text(memory.get('session_id')) or 'none'}",
+        f"Namespace URI: {_text(memory.get('namespace_uri')) or 'none'}",
         f"Trace events: {_number(memory.get('trace_events_count'))}",
         f"Pinned core: {_number(memory.get('pinned_core_count'))}",
         f"Active task pages: {_number(memory.get('active_task_pages_count'))}",

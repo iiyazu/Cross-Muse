@@ -192,6 +192,7 @@ def test_memory_trace_drawer_renders_trace_and_manual_gap() -> None:
                 "proof_level": "live_service_proof",
                 "fact_state": "observed",
                 "session_id": "mem-session-1",
+                "namespace_uri": "memory://conversation/conv-1",
                 "namespace": {"conversation_id": "conv-1", "god_id": "architect"},
                 "trace_events_count": 2,
                 "pinned_core_count": 1,
@@ -211,6 +212,7 @@ def test_memory_trace_drawer_renders_trace_and_manual_gap() -> None:
     rendered = panel.renderable.plain
     assert "live_service_proof" in rendered
     assert "mem-session-1" in rendered
+    assert "memory://conversation/conv-1" in rendered
     assert "conversation_id=conv-1" in rendered
     assert "Trace events: 2" in rendered
     assert "Pinned core: 1" in rendered
