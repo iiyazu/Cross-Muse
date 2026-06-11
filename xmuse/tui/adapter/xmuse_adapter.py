@@ -14,6 +14,7 @@ from typing import Any
 import httpx
 
 from xmuse_core.platform.dashboard_details import _conversation_runtime_timeline_detail
+from xmuse_core.platform.tui_vision_read_model import build_tui_vision_read_model
 
 
 @dataclass
@@ -21,6 +22,7 @@ class StateDelta:
     messages: list[dict] = field(default_factory=list)
     cards: list[dict] = field(default_factory=list)
     participants: dict[str, list[dict]] = field(default_factory=dict)
+    vision: dict | None = None
     replace_peer_status_cards: bool = False
     features: dict[str, Any] = field(default_factory=dict)
     lanes: list[dict] = field(default_factory=list)
@@ -157,8 +159,15 @@ class XmuseAdapter:
                     health,
                     _runtime_health_from_inspector(inspector),
                 )
+            vision = build_tui_vision_read_model(
+                conversation_id=conv_id,
+                messages=msgs,
+                worklist_envelope=envelope,
+                inspector=inspector,
+            )
             return StateDelta(
                 messages=msgs, cards=cards, participants=participants,
+                vision=vision,
                 features=features, lanes=lanes_list,
                 replace_peer_status_cards=bool(conv_id and not card_err),
                 run_health=health, lanes_changed=envelope is not None, errors=errors,
