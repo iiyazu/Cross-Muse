@@ -228,6 +228,77 @@ def test_tui_vision_read_model_requires_can_emit_for_pr_merged() -> None:
     assert model["github"]["manual_gap_reason"] == "server-side merge proof is missing"
 
 
+def test_tui_vision_read_model_requires_literal_true_can_emit_for_pr_merged() -> None:
+    model = build_tui_vision_read_model(
+        github_truth={
+            "proof_level": "server_side_merge_proof",
+            "can_emit_pr_merged": "true",
+            "merge": {
+                "merged": True,
+                "merge_commit_sha": "abc123",
+                "merged_at": "2026-06-11T00:00:00Z",
+                "merge_event_id": "merge-event-1",
+            },
+            "source_refs": ["github://owner/repo/pull/42#merge"],
+        },
+    )
+
+    assert model["github"]["fact_state"] == "manual_gap"
+    assert model["github"]["can_emit_pr_merged"] is False
+
+
+def test_tui_vision_read_model_requires_merge_commit_for_pr_merged() -> None:
+    model = build_tui_vision_read_model(
+        github_truth={
+            "proof_level": "server_side_merge_proof",
+            "can_emit_pr_merged": True,
+            "merge": {
+                "merged": True,
+                "merged_at": "2026-06-11T00:00:00Z",
+                "merge_event_id": "merge-event-1",
+            },
+            "source_refs": ["github://owner/repo/pull/42#merge"],
+        },
+    )
+
+    assert model["github"]["fact_state"] == "manual_gap"
+
+
+def test_tui_vision_read_model_requires_merged_at_for_pr_merged() -> None:
+    model = build_tui_vision_read_model(
+        github_truth={
+            "proof_level": "server_side_merge_proof",
+            "can_emit_pr_merged": True,
+            "merge": {
+                "merged": True,
+                "merge_commit_sha": "abc123",
+                "merge_event_id": "merge-event-1",
+            },
+            "source_refs": ["github://owner/repo/pull/42#merge"],
+        },
+    )
+
+    assert model["github"]["fact_state"] == "manual_gap"
+
+
+def test_tui_vision_read_model_requires_merged_flag_for_pr_merged() -> None:
+    model = build_tui_vision_read_model(
+        github_truth={
+            "proof_level": "server_side_merge_proof",
+            "can_emit_pr_merged": True,
+            "merge": {
+                "merged": "true",
+                "merge_commit_sha": "abc123",
+                "merged_at": "2026-06-11T00:00:00Z",
+                "merge_event_id": "merge-event-1",
+            },
+            "source_refs": ["github://owner/repo/pull/42#merge"],
+        },
+    )
+
+    assert model["github"]["fact_state"] == "merge_ready"
+
+
 def test_tui_vision_read_model_requires_merge_event_for_pr_merged() -> None:
     model = build_tui_vision_read_model(
         github_truth={

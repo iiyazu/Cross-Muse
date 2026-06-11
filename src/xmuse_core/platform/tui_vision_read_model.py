@@ -329,7 +329,7 @@ def _build_github(github_truth: dict | None) -> dict[str, Any]:
         else {}
     )
     merge = _github_merge_fields(github_truth)
-    can_emit_pr_merged = bool(github_truth.get("can_emit_pr_merged"))
+    can_emit_pr_merged = github_truth.get("can_emit_pr_merged") is True
     blockers = _github_blockers(required_checks, review_truth, github_truth)
 
     if _can_render_pr_merged(
