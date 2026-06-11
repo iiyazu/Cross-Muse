@@ -13,6 +13,7 @@ from xmuse_core.self_iteration.runtime_closure import (
     ProofLevel,
     build_self_iteration_closure_artifacts,
     build_self_iteration_lane_dag_request,
+    build_self_iteration_long_run_replay_summary,
     build_self_iteration_replay_fixture,
     derive_frozen_self_iteration_blueprint,
     export_god_deliberation_replay,
@@ -170,6 +171,136 @@ def test_review_failure_appends_patch_forward_without_overwriting_failed_lane(
         and lane.source_lane_id == "lane-runtime-evidence"
         for lane in artifacts.patch_forward_plan.lane_graph.lanes
     )
+
+
+def test_long_run_replay_summary_records_heartbeat_review_and_patch_lineage(
+    tmp_path: Path,
+) -> None:
+    artifacts = build_self_iteration_closure_artifacts(
+        repo_root=PROJECT_ROOT,
+        worktree_path=tmp_path,
+    )
+
+    summary = build_self_iteration_long_run_replay_summary(
+        artifacts,
+        emitted_at="2026-06-10T15:00:00Z",
+    )
+
+    assert summary.schema_version == "self_iteration_long_run_replay_summary.v1"
+    assert [heartbeat.heartbeat_seq for heartbeat in summary.heartbeats] == [1, 2, 3, 4]
+    assert {heartbeat.event_type for heartbeat in summary.heartbeats} == {
+        "lane_evidence",
+        "review_verdict",
+        "patch_forward_lineage",
+        "merge_readiness",
+    }
+    assert ProofLevel.FAKE_RUNTIME in summary.proof_levels
+    assert ProofLevel.CONTRACT in summary.proof_levels
+    assert ProofLevel.LIVE_SERVICE not in summary.proof_levels
+    assert ProofLevel.SERVER_SIDE_ENFORCEMENT not in summary.proof_levels
+    assert summary.patch_forward_lineage[0] == {
+        "failed_lane_id": "lane-runtime-evidence",
+        "patch_lane_id": "lane-runtime-evidence-patch-1",
+    }
+    assert summary.real_merge_event is False
+
+
+def test_long_run_replay_summary_records_slo_violation_from_simulated_time(
+    tmp_path: Path,
+) -> None:
+    artifacts = build_self_iteration_closure_artifacts(
+        repo_root=PROJECT_ROOT,
+        worktree_path=tmp_path,
+    )
+
+    summary = build_self_iteration_long_run_replay_summary(
+        artifacts,
+        emitted_at="2026-06-10T15:00:00Z",
+        heartbeat_emitted_at=[
+            "2026-06-10T15:00:00Z",
+            "2026-06-10T15:16:00Z",
+            "2026-06-10T15:31:00Z",
+            "2026-06-10T15:45:00Z",
+        ],
+    )
+
+    assert [heartbeat.emitted_at for heartbeat in summary.heartbeats] == [
+        "2026-06-10T15:00:00Z",
+        "2026-06-10T15:16:00Z",
+        "2026-06-10T15:31:00Z",
+        "2026-06-10T15:45:00Z",
+    ]
+    assert summary.max_heartbeat_gap_minutes == 16
+    assert summary.max_review_snapshot_gap_minutes == 29
+    assert summary.slo_status == "violated"
+    assert "heartbeat gap exceeded 15 minutes" in summary.slo_violations
+
+
+def test_long_run_replay_summary_records_review_snapshot_slo_violation(
+    tmp_path: Path,
+) -> None:
+    artifacts = build_self_iteration_closure_artifacts(
+        repo_root=PROJECT_ROOT,
+        worktree_path=tmp_path,
+    )
+
+    summary = build_self_iteration_long_run_replay_summary(
+        artifacts,
+        emitted_at="2026-06-10T15:00:00Z",
+        heartbeat_emitted_at=[
+            "2026-06-10T15:00:00Z",
+            "2026-06-10T15:10:00Z",
+            "2026-06-10T15:20:00Z",
+            "2026-06-10T16:00:00Z",
+        ],
+    )
+
+    assert summary.max_review_snapshot_gap_minutes == 50
+    assert summary.slo_status == "violated"
+    assert "review snapshot gap exceeded 45 minutes" in summary.slo_violations
+
+
+def test_long_run_replay_summary_rejects_live_proof_level_in_default_replay(
+    tmp_path: Path,
+) -> None:
+    artifacts = build_self_iteration_closure_artifacts(
+        repo_root=PROJECT_ROOT,
+        worktree_path=tmp_path,
+    )
+    polluted = artifacts.model_copy(
+        update={
+            "evidence_bundle": artifacts.evidence_bundle.model_copy(
+                update={"proof_level": ProofLevel.LIVE_RUNTIME}
+            )
+        }
+    )
+
+    with pytest.raises(ValueError, match="contract/fake replay summary"):
+        build_self_iteration_long_run_replay_summary(
+            polluted,
+            emitted_at="2026-06-10T15:00:00Z",
+        )
+
+
+def test_long_run_replay_summary_rejects_non_monotonic_heartbeat_times(
+    tmp_path: Path,
+) -> None:
+    artifacts = build_self_iteration_closure_artifacts(
+        repo_root=PROJECT_ROOT,
+        worktree_path=tmp_path,
+    )
+
+    with pytest.raises(ValueError, match="monotonic"):
+        build_self_iteration_long_run_replay_summary(
+            artifacts,
+            emitted_at="2026-06-10T15:00:00Z",
+            heartbeat_emitted_at=[
+                "2026-06-10T15:00:00Z",
+                "2026-06-10T15:16:00Z",
+                "2026-06-10T15:10:00Z",
+                "2026-06-10T15:45:00Z",
+            ],
+        )
 
 
 def test_github_truth_evidence_and_pr_gate_are_contract_only(tmp_path: Path) -> None:

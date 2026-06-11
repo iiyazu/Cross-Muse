@@ -33,7 +33,11 @@ def _build_adapter(
     )
 
 
-def _build_invocation(tmp_path, *, model_id: str = "deepseek-v4-flash") -> ProviderInvocation:
+def _build_invocation(
+    tmp_path,
+    *,
+    model_id: str = "deepseek-v4-flash",
+) -> ProviderInvocation:
     profile = build_default_provider_registry(
         opencode_deepseek_model_id=model_id,
     ).get("opencode.deepseek_flash_worker")
@@ -50,10 +54,8 @@ def _build_invocation(tmp_path, *, model_id: str = "deepseek-v4-flash") -> Provi
 
 
 def test_opencode_adapter_builds_non_interactive_run_command(tmp_path) -> None:
-    invocation = _build_invocation(tmp_path, model_id="deepseek-v4-pro")
-    profile = build_default_provider_registry(
-        opencode_deepseek_model_id="deepseek-v4-pro",
-    ).get("opencode.deepseek_flash_worker")
+    invocation = _build_invocation(tmp_path)
+    profile = build_default_provider_registry().get("opencode.deepseek_flash_worker")
     adapter = OpenCodeProviderAdapter(profile)
 
     command = adapter.build_command(invocation)
@@ -61,14 +63,27 @@ def test_opencode_adapter_builds_non_interactive_run_command(tmp_path) -> None:
     assert command == [
         "opencode",
         "run",
+        "--model",
+        "opencode-go/deepseek-v4-flash",
+        "--variant",
+        "max",
         "--format",
         "json",
         "--dir",
         str(tmp_path),
-        "--model",
-        "deepseek/deepseek-v4-pro",
         "Summarize the provider contract.",
     ]
+
+
+def test_opencode_adapter_rejects_noncanonical_model_ref(tmp_path) -> None:
+    invocation = _build_invocation(tmp_path, model_id="deepseek-v4-pro")
+    profile = build_default_provider_registry(
+        opencode_deepseek_model_id="deepseek-v4-pro",
+    ).get("opencode.deepseek_flash_worker")
+    adapter = OpenCodeProviderAdapter(profile)
+
+    with pytest.raises(ValueError, match="opencode-go/deepseek-v4-flash"):
+        adapter.build_command(invocation)
 
 
 def test_opencode_adapter_builds_inline_config_env_without_embedding_secrets() -> None:
@@ -89,7 +104,7 @@ def test_opencode_adapter_builds_inline_config_env_without_embedding_secrets() -
     assert config == {
         "$schema": "https://opencode.ai/config.json",
         "provider": {
-            "deepseek": {
+            "opencode-go": {
                 "options": {
                     "apiKey": "{env:DEEPSEEK_API_KEY}",
                     "baseURL": "{env:DEEPSEEK_BASE_URL}",
@@ -130,12 +145,14 @@ def test_opencode_health_check_reports_ready_snapshot_when_smoke_succeeds() -> N
         assert command == (
             "opencode",
             "run",
+            "--model",
+            "opencode-go/deepseek-v4-flash",
+            "--variant",
+            "max",
             "--format",
             "json",
             "--dir",
             str(Path.cwd()),
-            "--model",
-            "deepseek/deepseek-v4-flash",
             (
                 "Run a non-mutating provider health smoke check. Do not edit files. "
                 "Reply with READY."
@@ -179,14 +196,18 @@ def test_opencode_health_check_uses_default_subprocess_runner_without_workspace_
         assert command[:4] == (
             "opencode",
             "run",
+            "--model",
+            "opencode-go/deepseek-v4-flash",
+        )
+        assert command[4:8] == (
+            "--variant",
+            "max",
             "--format",
             "json",
         )
-        assert command[4:8] == (
+        assert command[8:10] == (
             "--dir",
             str(Path.cwd()),
-            "--model",
-            "deepseek/deepseek-v4-flash",
         )
         assert env[DEFAULT_OPENCODE_DEEPSEEK_API_KEY_ENV_NAME] == "sk-test"
         assert env[DEFAULT_OPENCODE_DEEPSEEK_BASE_ENV_NAME] == "https://api.deepseek.com"

@@ -619,7 +619,7 @@ def test_read_provider_inventory_returns_sanitized_static_profile_metadata(
         "support_level": "secondary",
         "cost_tier": "low",
         "risk_tier": "low",
-        "task_capabilities": ["bounded_code_writing"],
+        "task_capabilities": ["bounded_code_writing", "bounded_deliberation"],
         "model_id_env_name": "DEEPSEEK_MODEL",
         "api_base_env_name": "DEEPSEEK_BASE_URL",
         "env_requirement_names": ["DEEPSEEK_API_KEY"],

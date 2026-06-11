@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -139,6 +140,79 @@ class SelfIterationClosureArtifacts(BaseModel):
     github_evidence: GitHubTruthEvidence
     draft_pr: DraftPRRecord
     merge_readiness: MergeReadiness
+
+
+class LongRunEvidenceHeartbeat(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    heartbeat_seq: int
+    event_type: Literal[
+        "lane_evidence",
+        "review_verdict",
+        "patch_forward_lineage",
+        "merge_readiness",
+    ]
+    stage_ref: str
+    proof_level: ProofLevel
+    evidence_refs: list[str]
+    emitted_at: str
+
+    @field_validator("heartbeat_seq")
+    @classmethod
+    def _validate_heartbeat_seq(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("heartbeat_seq must be positive")
+        return value
+
+    @field_validator("stage_ref", "emitted_at")
+    @classmethod
+    def _validate_required_text(cls, value: str) -> str:
+        return _require_non_empty(value)
+
+    @field_validator("evidence_refs")
+    @classmethod
+    def _validate_evidence_refs(cls, values: list[str]) -> list[str]:
+        cleaned = [_require_non_empty(value) for value in values]
+        if not cleaned:
+            raise ValueError("evidence_refs must contain at least one item")
+        return cleaned
+
+
+class SelfIterationLongRunReplaySummary(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: str = "self_iteration_long_run_replay_summary.v1"
+    summary_id: str
+    blueprint_id: str
+    feature_id: str
+    lane_id: str
+    heartbeats: list[LongRunEvidenceHeartbeat]
+    proof_levels: list[ProofLevel]
+    patch_forward_lineage: list[dict[str, str]]
+    merge_readiness_kind: str
+    real_merge_event: bool
+    max_heartbeat_gap_minutes: int
+    max_review_snapshot_gap_minutes: int
+    slo_status: Literal["satisfied", "violated"]
+    slo_violations: list[str] = Field(default_factory=list)
+    emitted_at: str
+
+    @field_validator("summary_id", "blueprint_id", "feature_id", "lane_id", "emitted_at")
+    @classmethod
+    def _validate_required_text(cls, value: str) -> str:
+        return _require_non_empty(value)
+
+    @field_validator("heartbeats")
+    @classmethod
+    def _validate_heartbeat_sequence(
+        cls,
+        values: list[LongRunEvidenceHeartbeat],
+    ) -> list[LongRunEvidenceHeartbeat]:
+        sequence = [heartbeat.heartbeat_seq for heartbeat in values]
+        expected = list(range(1, len(values) + 1))
+        if sequence != expected:
+            raise ValueError("heartbeats must have contiguous heartbeat_seq values")
+        return values
 
 
 class GodDeliberationReplayExport(BaseModel):
@@ -624,6 +698,163 @@ def review_self_iteration_evidence(
         summary="Patch-forward required to address missing runtime evidence.",
         evidence_refs=[evidence.ref, "review:self-iteration:changes-requested"],
     )
+
+
+def build_self_iteration_long_run_replay_summary(
+    artifacts: SelfIterationClosureArtifacts,
+    *,
+    emitted_at: str,
+    heartbeat_emitted_at: list[str] | None = None,
+) -> SelfIterationLongRunReplaySummary:
+    _validate_replay_summary_proof_level(artifacts.evidence_bundle.proof_level)
+    patch_forward_lineage = [
+        {
+            "failed_lane_id": link.failed_lane_id,
+            "patch_lane_id": link.patch_lane_id,
+        }
+        for link in artifacts.patch_forward_plan.patch_forward_links
+    ]
+    heartbeat_times = _long_run_heartbeat_times(
+        emitted_at=emitted_at,
+        heartbeat_emitted_at=heartbeat_emitted_at,
+        expected_count=4,
+    )
+    heartbeats = [
+        LongRunEvidenceHeartbeat(
+            heartbeat_seq=1,
+            event_type="lane_evidence",
+            stage_ref=artifacts.runtime_contract.lane_id,
+            proof_level=artifacts.evidence_bundle.proof_level,
+            evidence_refs=[artifacts.evidence_bundle.ref],
+            emitted_at=heartbeat_times[0],
+        ),
+        LongRunEvidenceHeartbeat(
+            heartbeat_seq=2,
+            event_type="review_verdict",
+            stage_ref="review:self-iteration:approved",
+            proof_level=ProofLevel.CONTRACT,
+            evidence_refs=list(artifacts.review_pass.evidence_refs),
+            emitted_at=heartbeat_times[1],
+        ),
+        LongRunEvidenceHeartbeat(
+            heartbeat_seq=3,
+            event_type="patch_forward_lineage",
+            stage_ref="patch-forward:self-iteration",
+            proof_level=ProofLevel.CONTRACT,
+            evidence_refs=[
+                f"patch-forward:{item['failed_lane_id']}->{item['patch_lane_id']}"
+                for item in patch_forward_lineage
+            ],
+            emitted_at=heartbeat_times[2],
+        ),
+        LongRunEvidenceHeartbeat(
+            heartbeat_seq=4,
+            event_type="merge_readiness",
+            stage_ref="github:self-iteration:merge-readiness",
+            proof_level=ProofLevel.CONTRACT,
+            evidence_refs=[f"draft-pr:{artifacts.draft_pr.number}"],
+            emitted_at=heartbeat_times[3],
+        ),
+    ]
+    max_heartbeat_gap = _max_gap_minutes(heartbeat_times)
+    max_review_snapshot_gap = _review_snapshot_gap_minutes(heartbeats)
+    slo_violations = _long_run_slo_violations(
+        max_heartbeat_gap_minutes=max_heartbeat_gap,
+        max_review_snapshot_gap_minutes=max_review_snapshot_gap,
+    )
+    proof_levels = []
+    for proof_level in [heartbeat.proof_level for heartbeat in heartbeats]:
+        if proof_level not in proof_levels:
+            proof_levels.append(proof_level)
+    return SelfIterationLongRunReplaySummary(
+        summary_id="self-iteration-long-run-replay-summary",
+        blueprint_id=artifacts.blueprint.blueprint_id,
+        feature_id=artifacts.runtime_contract.feature_id,
+        lane_id=artifacts.runtime_contract.lane_id,
+        heartbeats=heartbeats,
+        proof_levels=proof_levels,
+        patch_forward_lineage=patch_forward_lineage,
+        merge_readiness_kind="merge_readiness_evaluated",
+        real_merge_event=False,
+        max_heartbeat_gap_minutes=max_heartbeat_gap,
+        max_review_snapshot_gap_minutes=max_review_snapshot_gap,
+        slo_status="violated" if slo_violations else "satisfied",
+        slo_violations=slo_violations,
+        emitted_at=emitted_at,
+    )
+
+
+def _long_run_heartbeat_times(
+    *,
+    emitted_at: str,
+    heartbeat_emitted_at: list[str] | None,
+    expected_count: int,
+) -> list[str]:
+    if heartbeat_emitted_at is None:
+        return [emitted_at] * expected_count
+    if len(heartbeat_emitted_at) != expected_count:
+        raise ValueError("heartbeat_emitted_at must match heartbeat count")
+    heartbeat_times = [_require_non_empty(value) for value in heartbeat_emitted_at]
+    _validate_monotonic_timestamps(heartbeat_times)
+    return heartbeat_times
+
+
+def _validate_replay_summary_proof_level(proof_level: ProofLevel) -> None:
+    if proof_level not in {
+        ProofLevel.CONTRACT,
+        ProofLevel.FAKE_RUNTIME,
+        ProofLevel.MANUAL_GAP,
+    }:
+        raise ValueError("contract/fake replay summary cannot include live proof levels")
+
+
+def _validate_monotonic_timestamps(values: list[str]) -> None:
+    parsed = [_parse_utc_timestamp(value) for value in values]
+    for left, right in zip(parsed, parsed[1:], strict=False):
+        if right < left:
+            raise ValueError("heartbeat_emitted_at must be monotonic by heartbeat_seq")
+
+
+def _max_gap_minutes(values: list[str]) -> int:
+    if len(values) < 2:
+        return 0
+    parsed = [_parse_utc_timestamp(value) for value in values]
+    gaps = [
+        int((right - left).total_seconds() // 60)
+        for left, right in zip(parsed, parsed[1:], strict=False)
+    ]
+    return max(gaps, default=0)
+
+
+def _review_snapshot_gap_minutes(heartbeats: list[LongRunEvidenceHeartbeat]) -> int:
+    review_times = [
+        heartbeat.emitted_at
+        for heartbeat in heartbeats
+        if heartbeat.event_type == "review_verdict"
+    ]
+    if not review_times:
+        return 0
+    return _max_gap_minutes([review_times[-1], heartbeats[-1].emitted_at])
+
+
+def _long_run_slo_violations(
+    *,
+    max_heartbeat_gap_minutes: int,
+    max_review_snapshot_gap_minutes: int,
+) -> list[str]:
+    violations = []
+    if max_heartbeat_gap_minutes > 15:
+        violations.append("heartbeat gap exceeded 15 minutes")
+    if max_review_snapshot_gap_minutes > 45:
+        violations.append("review snapshot gap exceeded 45 minutes")
+    return violations
+
+
+def _parse_utc_timestamp(value: str) -> datetime:
+    normalized = _require_non_empty(value)
+    if normalized.endswith("Z"):
+        normalized = normalized[:-1] + "+00:00"
+    return datetime.fromisoformat(normalized)
 
 
 def read_github_truth_evidence(repo_root: Path) -> GitHubTruthEvidence:

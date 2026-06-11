@@ -4,6 +4,9 @@ from xmuse_core.providers.adapters.base import (
     ProviderInvocation,
     ProviderInvocationResult,
 )
+from xmuse_core.providers.bounded_deliberation import (
+    normalize_bounded_deliberation_output,
+)
 from xmuse_core.providers.goal_contract import (
     WorkerBlocker,
     WorkerBlockerKind,
@@ -78,5 +81,6 @@ __all__ = [
     "has_high_risk_files",
     "is_low_risk_bounded_task",
     "is_repeated_failure_lane",
+    "normalize_bounded_deliberation_output",
     "validate_worker_goal_result",
 ]

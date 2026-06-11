@@ -66,6 +66,7 @@ class RiskTier(StrEnum):
 
 class TaskCapability(StrEnum):
     BOUNDED_CODE_WRITING = "bounded_code_writing"
+    BOUNDED_DELIBERATION = "bounded_deliberation"
     REVIEW = "review"
     LANE_COORDINATION = "lane_coordination"
     PLANNING = "planning"

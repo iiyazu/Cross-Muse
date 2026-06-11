@@ -94,21 +94,26 @@ def test_provider_registry_lists_required_codex_and_opencode_profiles() -> None:
 
 def test_opencode_deepseek_flash_worker_has_configurable_model_and_env_requirements() -> None:
     registry = build_default_provider_registry(
-        opencode_deepseek_model_id="deepseek-v4-pro"
+        opencode_deepseek_model_id="deepseek-custom-test"
     )
 
     profile = registry.get("opencode.deepseek_flash_worker")
 
     assert profile.provider_id is ProviderId.OPENCODE
     assert profile.adapter_kind is AdapterKind.OPENCODE_CLI
-    assert profile.model_id == "deepseek-v4-pro"
+    assert profile.model_id == "deepseek-custom-test"
     assert profile.model_id_env_name == "DEEPSEEK_MODEL"
     assert profile.api_base_env_name == "DEEPSEEK_BASE_URL"
     assert profile.env_requirement_names == ("DEEPSEEK_API_KEY",)
     assert profile.supports_mcp is False
     assert profile.supports_persistent_sessions is False
     assert profile.persistent_capability is PersistentCapability.UNSUPPORTED
-    assert profile.task_capabilities == (TaskCapability.BOUNDED_CODE_WRITING,)
+    assert profile.task_capabilities == (
+        TaskCapability.BOUNDED_CODE_WRITING,
+        TaskCapability.BOUNDED_DELIBERATION,
+    )
+    assert TaskCapability.REVIEW not in profile.task_capabilities
+    assert TaskCapability.TAKEOVER not in profile.task_capabilities
 
 
 def test_provider_registry_rejects_duplicate_profile_refs() -> None:
