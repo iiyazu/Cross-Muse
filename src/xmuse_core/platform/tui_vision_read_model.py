@@ -288,6 +288,11 @@ def _build_memory(memory_trace: dict | None) -> dict[str, Any]:
                 "session_id": None,
                 "namespace": None,
                 "trace_events_count": 0,
+                "pinned_core_count": 0,
+                "active_task_pages_count": 0,
+                "recent_messages_count": 0,
+                "retrieved_pages_count": 0,
+                "dropped_pages_count": 0,
                 "token_estimate": None,
             }
         )
@@ -303,6 +308,11 @@ def _build_memory(memory_trace: dict | None) -> dict[str, Any]:
     target_refs: list[str] = []
     if session_id is not None:
         target_refs.append(f"memory_session:{session_id}")
+    context_package = (
+        memory_trace.get("context_package")
+        if isinstance(memory_trace.get("context_package"), dict)
+        else {}
+    )
     return {
         "proof_level": _normalize_proof_level(memory_trace.get("proof_level")),
         "fact_state": "observed",
@@ -317,6 +327,31 @@ def _build_memory(memory_trace: dict | None) -> dict[str, Any]:
             else None
         ),
         "trace_events_count": len(events),
+        "pinned_core_count": _memory_context_count(
+            memory_trace,
+            context_package,
+            "pinned_core",
+        ),
+        "active_task_pages_count": _memory_context_count(
+            memory_trace,
+            context_package,
+            "active_task_pages",
+        ),
+        "recent_messages_count": _memory_context_count(
+            memory_trace,
+            context_package,
+            "recent_messages",
+        ),
+        "retrieved_pages_count": _memory_context_count(
+            memory_trace,
+            context_package,
+            "retrieved_pages",
+        ),
+        "dropped_pages_count": _memory_context_count(
+            memory_trace,
+            context_package,
+            "dropped_pages",
+        ),
         "token_estimate": memory_trace.get("token_estimate"),
     }
 
@@ -479,6 +514,18 @@ def _first_list(data: dict[str, Any], *keys: str) -> list[dict[str, Any]] | None
         if isinstance(value, list):
             return [item for item in value if isinstance(item, dict)]
     return None
+
+
+def _memory_context_count(
+    memory_trace: dict[str, Any],
+    context_package: dict[str, Any],
+    key: str,
+) -> int:
+    for container in (context_package, memory_trace):
+        value = container.get(key)
+        if isinstance(value, list):
+            return len(value)
+    return 0
 
 
 def _manual_gap_section(reason: str) -> dict[str, Any]:

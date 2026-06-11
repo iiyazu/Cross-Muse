@@ -27,8 +27,16 @@ def render_memory_trace_drawer(vision: dict[str, Any] | None) -> Panel:
         f"State: {fact_state}",
         f"Session: {_text(memory.get('session_id')) or 'none'}",
         f"Trace events: {_number(memory.get('trace_events_count'))}",
+        f"Pinned core: {_number(memory.get('pinned_core_count'))}",
+        f"Active task pages: {_number(memory.get('active_task_pages_count'))}",
+        f"Recent messages: {_number(memory.get('recent_messages_count'))}",
+        f"Retrieved pages: {_number(memory.get('retrieved_pages_count'))}",
+        f"Dropped pages: {_number(memory.get('dropped_pages_count'))}",
         f"Tokens: {_number(memory.get('token_estimate'))}",
     ]
+    namespace = memory.get("namespace")
+    if isinstance(namespace, dict) and namespace:
+        lines.append(f"Namespace: {_format_mapping(namespace)}")
     _append_refs(lines, "Targets", memory.get("target_refs"))
     _append_refs(lines, "Sources", memory.get("source_refs"))
     gap = _text(memory.get("manual_gap_reason"))
@@ -62,6 +70,16 @@ def _compact(values: list[str]) -> str:
     visible = values[:3]
     suffix = f" +{len(values) - 3}" if len(values) > 3 else ""
     return ", ".join(visible) + suffix
+
+
+def _format_mapping(value: dict[str, Any]) -> str:
+    parts = []
+    for key in sorted(value):
+        item = value[key]
+        if item is None:
+            continue
+        parts.append(f"{key}={item}")
+    return "; ".join(parts) or "none"
 
 
 def _strings(value: Any) -> list[str]:

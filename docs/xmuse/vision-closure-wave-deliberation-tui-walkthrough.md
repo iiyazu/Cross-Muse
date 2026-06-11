@@ -61,8 +61,9 @@ Current contract/fake proof:
 - Repeated TUI polling now builds the vision read model from full message and
   worklist snapshots, so unchanged incremental deltas do not erase visible
   deliberation or laneDAG evidence.
-- MemoryOS trace projection can show live trace fields when supplied, but
-  default tests do not call live MemoryOS Lite.
+- MemoryOS trace projection can show namespace/session binding, trace event
+  count, pinned core, active task pages, recent messages, retrieved pages, and
+  dropped pages when supplied, but default tests do not call live MemoryOS Lite.
 - GitHub truth projection can show merge readiness and merged fact separately.
 
 Current manual gaps:

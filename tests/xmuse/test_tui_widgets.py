@@ -192,7 +192,13 @@ def test_memory_trace_drawer_renders_trace_and_manual_gap() -> None:
                 "proof_level": "live_service_proof",
                 "fact_state": "observed",
                 "session_id": "mem-session-1",
+                "namespace": {"conversation_id": "conv-1", "god_id": "architect"},
                 "trace_events_count": 2,
+                "pinned_core_count": 1,
+                "active_task_pages_count": 2,
+                "recent_messages_count": 3,
+                "retrieved_pages_count": 4,
+                "dropped_pages_count": 5,
                 "token_estimate": 321,
                 "source_refs": ["memory://conversation/conv-1/session/mem-session-1"],
                 "target_refs": ["memory_session:mem-session-1"],
@@ -205,7 +211,13 @@ def test_memory_trace_drawer_renders_trace_and_manual_gap() -> None:
     rendered = panel.renderable.plain
     assert "live_service_proof" in rendered
     assert "mem-session-1" in rendered
+    assert "conversation_id=conv-1" in rendered
     assert "Trace events: 2" in rendered
+    assert "Pinned core: 1" in rendered
+    assert "Active task pages: 2" in rendered
+    assert "Recent messages: 3" in rendered
+    assert "Retrieved pages: 4" in rendered
+    assert "Dropped pages: 5" in rendered
     assert "Tokens: 321" in rendered
 
 

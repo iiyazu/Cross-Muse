@@ -224,6 +224,13 @@ def test_tui_vision_read_model_summarizes_memory_trace_and_manual_gap() -> None:
             "session_id": "mem-session-1",
             "namespace": {"conversation_id": "conv-1"},
             "trace_events": [{"event": "retrieve"}, {"event": "drop"}],
+            "context_package": {
+                "pinned_core": [{"id": "core-1"}],
+                "active_task_pages": [{"id": "task-1"}, {"id": "task-2"}],
+                "recent_messages": [{"id": "msg-1"}],
+                "retrieved_pages": [{"id": "page-1"}, {"id": "page-2"}],
+                "dropped_pages": [{"id": "drop-1"}],
+            },
             "source_refs": ["memory://conversation/conv-1/session/mem-session-1"],
             "token_estimate": 321,
             "proof_level": "live_service_proof",
@@ -234,7 +241,13 @@ def test_tui_vision_read_model_summarizes_memory_trace_and_manual_gap() -> None:
     assert memory["proof_level"] == "live_service_proof"
     assert memory["fact_state"] == "observed"
     assert memory["session_id"] == "mem-session-1"
+    assert memory["namespace"] == {"conversation_id": "conv-1"}
     assert memory["trace_events_count"] == 2
+    assert memory["pinned_core_count"] == 1
+    assert memory["active_task_pages_count"] == 2
+    assert memory["recent_messages_count"] == 1
+    assert memory["retrieved_pages_count"] == 2
+    assert memory["dropped_pages_count"] == 1
     assert memory["token_estimate"] == 321
     assert memory["source_refs"] == [
         "memory://conversation/conv-1/session/mem-session-1"
