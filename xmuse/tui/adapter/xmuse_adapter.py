@@ -79,6 +79,22 @@ class XmuseAdapter:
         except Exception as exc:
             return [], str(exc)
 
+    def _message_snapshot(self, conv_id: str) -> list[dict]:
+        try:
+            from xmuse_core.chat.store import ChatStore
+
+            store = ChatStore(self._root / "chat.db")
+            raw = store.list_messages(conv_id)
+            dicts = [
+                _display_message_author(self._root, conv_id, m.model_dump(mode="json"))
+                for m in raw
+                if hasattr(m, "model_dump")
+            ]
+            dicts.extend(_active_stream_messages(self._root, conv_id))
+            return dicts
+        except Exception:
+            return []
+
     async def poll_worklist_envelope(
         self,
         conv_id: str | None = None,
@@ -159,10 +175,16 @@ class XmuseAdapter:
                     health,
                     _runtime_health_from_inspector(inspector),
                 )
+            vision_messages = self._message_snapshot(conv_id) if conv_id else []
+            if not vision_messages and msgs:
+                vision_messages = msgs
+            vision_envelope = envelope
+            if vision_envelope is None:
+                vision_envelope = self._worklist_envelope_snapshot(conv_id)
             vision = build_tui_vision_read_model(
                 conversation_id=conv_id,
-                messages=msgs,
-                worklist_envelope=envelope,
+                messages=vision_messages,
+                worklist_envelope=vision_envelope,
                 inspector=inspector,
             )
             return StateDelta(
@@ -651,7 +673,28 @@ class XmuseAdapter:
         return None
 
     def get_provider_inventory(self) -> list[dict]:
-        return []
+        try:
+            from xmuse_core.platform.provider_read_contracts import build_provider_inventory
+
+            inventory = build_provider_inventory()
+        except Exception:
+            return []
+        providers = inventory.get("providers") if isinstance(inventory, dict) else None
+        if not isinstance(providers, list):
+            return []
+        rows: list[dict] = []
+        for provider in providers:
+            if not isinstance(provider, dict):
+                continue
+            profiles = provider.get("profiles")
+            if not isinstance(profiles, list):
+                continue
+            rows.extend(
+                _provider_inventory_row(profile)
+                for profile in profiles
+                if isinstance(profile, dict)
+            )
+        return rows
 
     def _new_envelope_cards(self, scope_key: str, cards: list[dict]) -> list[dict]:
         seen = self._seen_envelope_card_fingerprints.setdefault(scope_key, set())
@@ -754,6 +797,61 @@ def _build_features(lanes: list[dict]) -> dict[str, Any]:
             features[fid]["merged"] += 1
         features[fid]["lanes"].append(lane)
     return features
+
+
+def _provider_inventory_row(profile: dict[str, Any]) -> dict[str, Any]:
+    provider_id = _clean_text(profile.get("provider_id")) or "unknown"
+    profile_id = _clean_text(profile.get("profile_id")) or "unknown"
+    adapter_kind = _clean_text(profile.get("adapter_kind")) or "unknown"
+    persistent_capability = _clean_text(profile.get("persistent_capability"))
+    return {
+        "provider_id": provider_id,
+        "profile_id": profile_id,
+        "provider_profile_ref": _clean_text(profile.get("ref")),
+        "capabilities": _string_values(profile.get("task_capabilities")),
+        "runtime_kind": adapter_kind,
+        "transport": "cli" if adapter_kind.endswith("_cli") else adapter_kind,
+        "session_continuity": (
+            "persistent_supported"
+            if persistent_capability == "supported"
+            else "bounded"
+        ),
+        "heartbeat": "manual_gap",
+        "waiting_reason": _provider_waiting_reason(provider_id),
+        "proof_level": "contract_proof",
+        "boundary_role": _provider_boundary_role(provider_id, profile_id),
+        "support_level": _clean_text(profile.get("support_level")),
+        "model_id": _clean_text(profile.get("model_id")),
+    }
+
+
+def _provider_boundary_role(provider_id: str, profile_id: str) -> str:
+    if provider_id == "codex" and profile_id in {"default", "god"}:
+        return "production_groupchat_god"
+    if provider_id == "codex":
+        return "production_support"
+    if provider_id == "opencode":
+        return "bounded_secondary"
+    return "manual_gap"
+
+
+def _provider_waiting_reason(provider_id: str) -> str:
+    if provider_id == "opencode":
+        return "secondary bounded worker"
+    return "static provider inventory; runtime heartbeat unavailable"
+
+
+def _string_values(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, str) and item]
+
+
+def _clean_text(value: Any) -> str | None:
+    if isinstance(value, str):
+        cleaned = value.strip()
+        return cleaned or None
+    return None
 
 
 def _worklist_items(envelope: dict[str, Any]) -> list[dict]:

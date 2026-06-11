@@ -505,3 +505,65 @@ async def test_adapter_poll_delta_includes_tui_vision_read_model(monkeypatch, tm
     assert delta.vision["deliberation"]["speech_act_counts"] == {"propose": 1}
     assert delta.vision["execution"]["lane_count"] == 1
     assert delta.vision["execution"]["source_authority"] == "feature_lanes_projection"
+
+
+async def test_adapter_poll_delta_keeps_vision_from_full_snapshots(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    adapter = XmuseAdapter(tmp_path)
+    envelope = {
+        "source_authority": "feature_lanes_projection",
+        "projection_revision": 9,
+        "items": [
+            {
+                "lane_id": "lane-a",
+                "plan_feature_id": "feature-a",
+                "ready": True,
+                "blocked": False,
+            }
+        ],
+    }
+    message = {
+        "id": "msg-1",
+        "conversation_id": "conv-1",
+        "created_at": "2026-06-11T00:00:00Z",
+        "envelope_json": {
+            "speech_act": "propose",
+            "target_ref": "blueprint:conv-1:1",
+        },
+    }
+    message_calls = 0
+    worklist_calls = 0
+
+    def _poll_messages(conv_id):
+        nonlocal message_calls
+        message_calls += 1
+        return ([message], None) if message_calls == 1 else ([], None)
+
+    def _message_snapshot(conv_id):
+        return [message]
+
+    async def _poll_worklist_envelope(conv_id: str | None = None):
+        nonlocal worklist_calls
+        worklist_calls += 1
+        return (envelope, None) if worklist_calls == 1 else (None, None)
+
+    monkeypatch.setattr(adapter, "poll_messages", _poll_messages)
+    monkeypatch.setattr(adapter, "_message_snapshot", _message_snapshot, raising=False)
+    monkeypatch.setattr(adapter, "poll_worklist_envelope", _poll_worklist_envelope)
+    monkeypatch.setattr(adapter, "_worklist_envelope_snapshot", lambda conv_id: envelope)
+    monkeypatch.setattr(adapter, "poll_cards", lambda conv_id: ([], None))
+    monkeypatch.setattr(adapter, "get_participants", lambda conv_id: [])
+    monkeypatch.setattr(adapter, "get_conversation_inspector", lambda conv_id: {})
+
+    first = await adapter.poll_delta("conv-1")
+    second = await adapter.poll_delta("conv-1")
+
+    assert first.vision["deliberation"]["speech_act_counts"] == {"propose": 1}
+    assert first.vision["execution"]["lane_count"] == 1
+    assert second.messages == []
+    assert second.lanes == []
+    assert second.lanes_changed is False
+    assert second.vision["deliberation"]["speech_act_counts"] == {"propose": 1}
+    assert second.vision["execution"]["lane_count"] == 1

@@ -58,6 +58,9 @@ Current contract/fake proof:
 - LaneDAG projection can show lane count, ready lanes, blocked lanes,
   dependencies, graph lineage refs, review verdict refs, and patch-forward
   lineage.
+- Repeated TUI polling now builds the vision read model from full message and
+  worklist snapshots, so unchanged incremental deltas do not erase visible
+  deliberation or laneDAG evidence.
 - MemoryOS trace projection can show live trace fields when supplied, but
   default tests do not call live MemoryOS Lite.
 - GitHub truth projection can show merge readiness and merged fact separately.
@@ -93,7 +96,9 @@ xmuse/tui/screens/provider_board.py
 ```
 
 It includes provider id, boundary role, profile, runtime kind, transport,
-session continuity, heartbeat, waiting reason, and proof level.
+session continuity, heartbeat, waiting reason, and proof level. The adapter now
+flattens the existing read-only provider inventory contract for this view;
+runtime heartbeat remains `manual_gap` unless runtime evidence is supplied.
 
 ## Proof-Level Discipline
 

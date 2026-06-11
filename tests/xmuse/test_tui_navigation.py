@@ -1967,15 +1967,18 @@ async def test_chat_screen_task_selection_updates_detail_and_execution_log(
 async def test_lane_detail_screen_uses_workbench_detail_contract(app: XmuseTUI) -> None:
     app.adapter.get_lane = lambda lane_id: (_ for _ in ()).throw(AssertionError("legacy get_lane"))
     app.adapter.get_workbench_lane_detail = lambda conv_id, lane_id: {
-        "task": {
-            "lane_id": lane_id,
-            "lane_local_id": "T1-03",
-            "plan_feature_id": "T1",
-            "feature_label": "Authoritative detail",
-            "effective_status": "dispatched",
-            "priority": 4,
-            "scoped_dependency_ids": ["T1-02"],
-        },
+            "task": {
+                "lane_id": lane_id,
+                "lane_local_id": "T1-03",
+                "plan_feature_id": "T1",
+                "feature_label": "Authoritative detail",
+                "effective_status": "dispatched",
+                "priority": 4,
+                "scoped_dependency_ids": ["T1-02"],
+                "review_decision": "rework",
+                "review_verdict_id": "verdict-lane-3",
+                "source_lane_id": "lane-2",
+            },
         "execution_log": {
             "events": [
                 {
@@ -1998,3 +2001,6 @@ async def test_lane_detail_screen_uses_workbench_detail_contract(app: XmuseTUI) 
         content = app.screen.query_one("#lane-content", Static).renderable
         assert "Authoritative detail" in str(content)
         assert "lane-detail -> execute" in str(content)
+        assert "Review: rework" in str(content)
+        assert "Verdict: verdict-lane-3" in str(content)
+        assert "Patch-forward: lane-2 -> lane-3" in str(content)

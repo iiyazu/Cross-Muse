@@ -46,6 +46,7 @@ def capture_github_server_truth(
     payload = evidence.model_dump(mode="json")
     payload["schema_version"] = "github_server_side_truth_capture.v1"
     payload["can_emit_pr_merged"] = can_emit_pr_merged(evidence)
+    payload["merged"] = payload["can_emit_pr_merged"] is True
     payload["capture_mode"] = "opt_in_read_only_gh_api"
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")

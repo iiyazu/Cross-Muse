@@ -52,10 +52,30 @@ class LaneDetailScreen(Screen):
             f"Source: {payload.get('source_authority', 'tui_worklist_envelope')}",
             f"Feature: {task.get('plan_feature_id', '?')}",
             f"Priority: {task.get('priority', 0)}",
-            "",
-            "--- Prompt Summary ---",
-            str(task.get("prompt_summary") or "")[:500],
         ]
+        review_decision = _text(
+            task.get("review_decision")
+            or task.get("review_status")
+            or task.get("review_verdict")
+            or task.get("review_verdict_decision")
+        )
+        review_verdict_id = _text(task.get("review_verdict_id") or task.get("verdict_id"))
+        if review_decision or review_verdict_id:
+            lines.extend(["", "--- Review ---"])
+            if review_decision:
+                lines.append(f"Review: {review_decision}")
+            if review_verdict_id:
+                lines.append(f"Verdict: {review_verdict_id}")
+        source_lane_id = _text(
+            task.get("source_lane_id")
+            or task.get("patch_forward_source_lane_id")
+            or task.get("failed_lane_id")
+        )
+        target_lane_id = _text(task.get("lane_id") or task.get("feature_id") or self.lane_id)
+        if source_lane_id and target_lane_id:
+            lines.extend(["", "--- Patch-forward ---"])
+            lines.append(f"Patch-forward: {source_lane_id} -> {target_lane_id}")
+        lines.extend(["", "--- Prompt Summary ---", str(task.get("prompt_summary") or "")[:500]])
         execution_log = payload.get("execution_log")
         if isinstance(execution_log, dict) and isinstance(execution_log.get("events"), list):
             lines.extend(["", "--- Execution Log ---"])
@@ -67,3 +87,10 @@ class LaneDetailScreen(Screen):
                 status = str(event.get("status") or "").strip()
                 lines.append(" ".join(part for part in (title, status, summary) if part))
         self.query_one("#lane-content", LaneContentPanel).update(Text("\n".join(lines)))
+
+
+def _text(value) -> str | None:
+    if isinstance(value, str):
+        cleaned = value.strip()
+        return cleaned or None
+    return None

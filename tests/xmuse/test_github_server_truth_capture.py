@@ -7,6 +7,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from xmuse_core.platform.tui_vision_read_model import build_tui_vision_read_model
+
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT_PATH = ROOT / "scripts" / "github_server_truth_capture.py"
 
@@ -106,6 +108,10 @@ def test_github_server_truth_capture_writes_complete_snapshot_evidence(
     assert rc == 0
     assert payload["proof_level"] == "server_side_merge_proof"
     assert payload["can_emit_pr_merged"] is True
+    assert payload["merged"] is True
+    assert build_tui_vision_read_model(github_truth=payload)["github"]["fact_state"] == (
+        "pr_merged"
+    )
     assert payload["repo"] == "iiyazu/Cross-Muse"
     assert all(command[:2] == ["gh", "api"] for command in runner.commands)
 
@@ -210,6 +216,10 @@ def test_github_server_truth_capture_accepts_internal_review_evidence(
     assert rc == 0
     assert payload["proof_level"] == "server_side_merge_proof"
     assert payload["can_emit_pr_merged"] is True
+    assert payload["merged"] is True
+    assert build_tui_vision_read_model(github_truth=payload)["github"]["fact_state"] == (
+        "pr_merged"
+    )
     assert payload["internal_review_artifact"] == str(artifact)
     assert payload["internal_reviewer"] == "opencode-in-review"
     assert payload["internal_review_verified"] is True

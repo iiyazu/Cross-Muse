@@ -1225,3 +1225,30 @@ def test_adapter_builds_workbench_lane_detail_from_read_models(monkeypatch, tmp_
         "tui_cmd_1",
     ]
     assert detail["execution_log"]["events"][1]["event_type"] == "tui_command"
+
+
+def test_adapter_get_provider_inventory_flattens_provider_read_contract(tmp_path):
+    rows = XmuseAdapter(tmp_path).get_provider_inventory()
+
+    codex_god = next(
+        row
+        for row in rows
+        if row["provider_id"] == "codex" and row["profile_id"] == "god"
+    )
+    opencode_worker = next(
+        row
+        for row in rows
+        if row["provider_id"] == "opencode"
+        and row["profile_id"] == "deepseek_flash_worker"
+    )
+
+    assert codex_god["boundary_role"] == "production_groupchat_god"
+    assert codex_god["runtime_kind"] == "codex_cli"
+    assert codex_god["transport"] == "cli"
+    assert codex_god["session_continuity"] == "persistent_supported"
+    assert codex_god["proof_level"] == "contract_proof"
+    assert "bounded_deliberation" in codex_god["capabilities"]
+    assert opencode_worker["boundary_role"] == "bounded_secondary"
+    assert opencode_worker["runtime_kind"] == "opencode_cli"
+    assert opencode_worker["session_continuity"] == "bounded"
+    assert opencode_worker["waiting_reason"] == "secondary bounded worker"
