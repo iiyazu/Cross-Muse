@@ -9,8 +9,13 @@ from xmuse.chat_api import create_app
 from xmuse.tui.adapter.xmuse_adapter import StateDelta, XmuseAdapter
 from xmuse.tui.app import XmuseTUI
 from xmuse.tui.screens.lane_detail import LaneDetailScreen
+from xmuse.tui.screens.provider_board import ProviderBoardScreen
 from xmuse.tui.state import StateUpdated
+from xmuse.tui.widgets.blueprint_freeze_panel import BlueprintFreezePanel
 from xmuse.tui.widgets.deliberation_cockpit import DeliberationCockpit
+from xmuse.tui.widgets.execution_cockpit import ExecutionCockpit
+from xmuse.tui.widgets.github_truth_panel import GitHubTruthPanel
+from xmuse.tui.widgets.memory_trace_drawer import MemoryTraceDrawer
 from xmuse_core.chat.peer_service import PeerChatService
 
 pytestmark = pytest.mark.asyncio
@@ -1440,6 +1445,126 @@ async def test_chat_screen_renders_deliberation_cockpit_from_vision(
         cockpit = app.screen.query_one("#deliberation-cockpit", DeliberationCockpit)
         assert "challenge: 1" in cockpit.renderable_text
         assert "missing rollback plan" in cockpit.renderable_text
+
+
+async def test_chat_screen_renders_vision_evidence_panels_from_state(
+    app: XmuseTUI,
+) -> None:
+    app.adapter.list_group_conversations = lambda: [
+        {
+            "id": "conv-new",
+            "title": "New conversation",
+            "created_at": "2026-06-02T00:00:00Z",
+        },
+    ]
+
+    async with app.run_test() as pilot:
+        app.state.active_conversation_id = "conv-new"
+        app.state.vision = {
+            "conversation_id": "conv-new",
+            "blueprint_freeze": {
+                "proof_level": "contract_proof",
+                "fact_state": "ready_to_freeze",
+                "ready_to_freeze": True,
+                "frozen": False,
+                "source_refs": ["message:msg-decide"],
+                "target_refs": ["blueprint:conv-new:1"],
+                "blockers": [],
+                "manual_gap_reason": None,
+            },
+            "execution": {
+                "proof_level": "contract_proof",
+                "fact_state": "blocked",
+                "lane_count": 2,
+                "ready_lane_ids": ["lane-a"],
+                "blocked_lane_ids": ["lane-b"],
+                "dependency_edges": [{"lane_id": "lane-b", "depends_on": ["lane-a"]}],
+                "blockers": [{"lane_id": "lane-b", "reason": "needs review evidence"}],
+                "source_refs": ["feature_lanes_projection#projection_revision=9"],
+                "target_refs": ["lane:lane-a", "lane:lane-b"],
+                "manual_gap_reason": None,
+            },
+            "memory": {
+                "proof_level": "live_service_proof",
+                "fact_state": "observed",
+                "session_id": "mem-session-1",
+                "trace_events_count": 2,
+                "token_estimate": 321,
+                "source_refs": ["memory://conversation/conv-new/session/mem-session-1"],
+                "target_refs": ["memory_session:mem-session-1"],
+                "blockers": [],
+                "manual_gap_reason": None,
+            },
+            "github": {
+                "proof_level": "server_side_enforcement_proof",
+                "fact_state": "merge_ready",
+                "can_emit_pr_merged": True,
+                "required_checks": {"state": "success", "checks": ["quality-gates"]},
+                "review_truth": {"approved": True, "blocking_reviews": []},
+                "merge": {"merged": False},
+                "source_refs": ["github://owner/repo/pull/42"],
+                "target_refs": [],
+                "blockers": [],
+                "manual_gap_reason": None,
+            },
+        }
+        app.screen.on_state_updated(StateUpdated(app.state))
+        await pilot.pause()
+
+        assert "ready_to_freeze" in app.screen.query_one(
+            "#blueprint-freeze-panel", BlueprintFreezePanel
+        ).renderable_text
+        assert "lane-b <- lane-a" in app.screen.query_one(
+            "#execution-cockpit", ExecutionCockpit
+        ).renderable_text
+        assert "mem-session-1" in app.screen.query_one(
+            "#memory-trace-drawer", MemoryTraceDrawer
+        ).renderable_text
+        assert "merge_ready" in app.screen.query_one(
+            "#github-truth-panel", GitHubTruthPanel
+        ).renderable_text
+
+
+async def test_provider_board_renders_god_runtime_overview(app: XmuseTUI) -> None:
+    app.adapter.get_provider_inventory = lambda: [
+        {
+            "provider_id": "codex",
+            "profile_id": "god",
+            "capabilities": ["groupchat"],
+            "runtime_kind": "codex_cli",
+            "transport": "cli",
+            "session_continuity": "active",
+            "heartbeat": "fresh",
+            "waiting_reason": "",
+            "proof_level": "contract_proof",
+            "boundary_role": "production_groupchat_god",
+        },
+        {
+            "provider_id": "opencode",
+            "profile_id": "worker",
+            "capabilities": ["bounded_execution"],
+            "runtime_kind": "opencode-go",
+            "transport": "cli",
+            "session_continuity": "bounded",
+            "heartbeat": "manual_gap",
+            "waiting_reason": "secondary bounded worker",
+            "proof_level": "manual_gap",
+            "boundary_role": "bounded_secondary",
+        },
+    ]
+
+    async with app.run_test() as pilot:
+        await app.push_screen("provider_board")
+        await pilot.pause()
+
+        screen = app.screen
+        assert isinstance(screen, ProviderBoardScreen)
+        table = screen.query_one("#provider-table", Static).renderable
+        rendered = str(table)
+        assert "GOD Runtime Overview" in screen.query_one("#provider-header", Static).renderable
+        assert "codex_cli" in rendered
+        assert "production_groupchat_god" in rendered
+        assert "secondary bounded worker" in rendered
 
 
 async def test_chat_screen_right_panel_shows_workbench_lists_and_detail_surfaces(

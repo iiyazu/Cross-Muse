@@ -16,7 +16,11 @@ from xmuse.tui.adapter.xmuse_adapter import StateDelta
 from xmuse.tui.completion import CompletionCandidate, CompletionEngine
 from xmuse.tui.slash_commands import SlashCommandContext, SlashCommandRouter
 from xmuse.tui.state import StateUpdated
+from xmuse.tui.widgets.blueprint_freeze_panel import BlueprintFreezePanel
 from xmuse.tui.widgets.deliberation_cockpit import DeliberationCockpit
+from xmuse.tui.widgets.execution_cockpit import ExecutionCockpit
+from xmuse.tui.widgets.github_truth_panel import GitHubTruthPanel
+from xmuse.tui.widgets.memory_trace_drawer import MemoryTraceDrawer
 from xmuse.tui.widgets.message_log import MessageLog
 from xmuse.tui.widgets.xmu_header import XmuHeader
 
@@ -199,6 +203,18 @@ class ChatScreen(Screen):
     #deliberation-cockpit {
         height: 9;
     }
+    #blueprint-freeze-panel {
+        height: 8;
+    }
+    #execution-cockpit {
+        height: 9;
+    }
+    #memory-trace-drawer {
+        height: 7;
+    }
+    #github-truth-panel {
+        height: 8;
+    }
     #task-detail {
         height: 1fr;
         border: solid $primary-darken-2;
@@ -245,6 +261,14 @@ class ChatScreen(Screen):
                 yield ListView(id="inbox-list")
                 yield Label("Deliberation", classes="panel-header")
                 yield DeliberationCockpit(id="deliberation-cockpit")
+                yield Label("Blueprint", classes="panel-header")
+                yield BlueprintFreezePanel(id="blueprint-freeze-panel")
+                yield Label("Execution", classes="panel-header")
+                yield ExecutionCockpit(id="execution-cockpit")
+                yield Label("Memory", classes="panel-header")
+                yield MemoryTraceDrawer(id="memory-trace-drawer")
+                yield Label("GitHub", classes="panel-header")
+                yield GitHubTruthPanel(id="github-truth-panel")
                 yield Label("Task list", classes="panel-header")
                 yield ListView(id="task-list")
                 yield Label("Task detail", classes="panel-header")
@@ -777,6 +801,10 @@ class ChatScreen(Screen):
         if getattr(self, "_copy_mode", False):
             self._sync_copy_view()
         self.query_one("#deliberation-cockpit", DeliberationCockpit).load(state.vision)
+        self.query_one("#blueprint-freeze-panel", BlueprintFreezePanel).load(state.vision)
+        self.query_one("#execution-cockpit", ExecutionCockpit).load(state.vision)
+        self.query_one("#memory-trace-drawer", MemoryTraceDrawer).load(state.vision)
+        self.query_one("#github-truth-panel", GitHubTruthPanel).load(state.vision)
         lanes = state.latest_lanes()
         self._refresh_workbench_lists(conv_id, lanes, cards)
 

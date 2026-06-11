@@ -1,8 +1,12 @@
 """Widget tests."""
 from rich.panel import Panel
 
+from xmuse.tui.widgets.blueprint_freeze_panel import render_blueprint_freeze_panel
 from xmuse.tui.widgets.card_renderer import CARD_STYLES, render_card
 from xmuse.tui.widgets.deliberation_cockpit import render_deliberation_cockpit
+from xmuse.tui.widgets.execution_cockpit import render_execution_cockpit
+from xmuse.tui.widgets.github_truth_panel import render_github_truth_panel
+from xmuse.tui.widgets.memory_trace_drawer import render_memory_trace_drawer
 from xmuse.tui.widgets.message_log import MessageLog
 
 
@@ -117,6 +121,103 @@ def test_deliberation_cockpit_renders_manual_gap() -> None:
     rendered = panel.renderable.plain
     assert "manual_gap" in rendered
     assert "No deliberation evidence" in rendered
+
+
+def test_blueprint_freeze_panel_renders_readiness_without_freeze_fact() -> None:
+    panel = render_blueprint_freeze_panel(
+        {
+            "blueprint_freeze": {
+                "proof_level": "contract_proof",
+                "fact_state": "ready_to_freeze",
+                "ready_to_freeze": True,
+                "frozen": False,
+                "source_refs": ["message:msg-decide"],
+                "target_refs": ["blueprint:conv-1:1"],
+                "blockers": [],
+                "manual_gap_reason": None,
+            }
+        }
+    )
+
+    rendered = panel.renderable.plain
+    assert "ready_to_freeze" in rendered
+    assert "Frozen: no" in rendered
+    assert "message:msg-decide" in rendered
+    assert "blueprint:conv-1:1" in rendered
+
+
+def test_execution_cockpit_renders_lane_dag_and_blockers() -> None:
+    panel = render_execution_cockpit(
+        {
+            "execution": {
+                "proof_level": "contract_proof",
+                "fact_state": "blocked",
+                "lane_count": 2,
+                "ready_lane_ids": ["lane-a"],
+                "blocked_lane_ids": ["lane-b"],
+                "dependency_edges": [{"lane_id": "lane-b", "depends_on": ["lane-a"]}],
+                "blockers": [{"lane_id": "lane-b", "reason": "needs review evidence"}],
+                "target_refs": ["lane:lane-a", "lane:lane-b", "graph:graph-1"],
+                "source_refs": ["feature_lanes_projection#projection_revision=7"],
+                "manual_gap_reason": None,
+            }
+        }
+    )
+
+    rendered = panel.renderable.plain
+    assert "blocked" in rendered
+    assert "Lanes: 2" in rendered
+    assert "lane-b <- lane-a" in rendered
+    assert "needs review evidence" in rendered
+
+
+def test_memory_trace_drawer_renders_trace_and_manual_gap() -> None:
+    panel = render_memory_trace_drawer(
+        {
+            "memory": {
+                "proof_level": "live_service_proof",
+                "fact_state": "observed",
+                "session_id": "mem-session-1",
+                "trace_events_count": 2,
+                "token_estimate": 321,
+                "source_refs": ["memory://conversation/conv-1/session/mem-session-1"],
+                "target_refs": ["memory_session:mem-session-1"],
+                "blockers": [],
+                "manual_gap_reason": None,
+            }
+        }
+    )
+
+    rendered = panel.renderable.plain
+    assert "live_service_proof" in rendered
+    assert "mem-session-1" in rendered
+    assert "Trace events: 2" in rendered
+    assert "Tokens: 321" in rendered
+
+
+def test_github_truth_panel_separates_readiness_from_merged_fact() -> None:
+    panel = render_github_truth_panel(
+        {
+            "github": {
+                "proof_level": "server_side_enforcement_proof",
+                "fact_state": "merge_ready",
+                "can_emit_pr_merged": True,
+                "required_checks": {"state": "success", "checks": ["quality-gates"]},
+                "review_truth": {"approved": True, "blocking_reviews": []},
+                "merge": {"merged": False, "merge_commit_sha": None},
+                "source_refs": ["github://owner/repo/pull/42"],
+                "target_refs": [],
+                "blockers": [],
+                "manual_gap_reason": None,
+            }
+        }
+    )
+
+    rendered = panel.renderable.plain
+    assert "merge_ready" in rendered
+    assert "pr_merged" not in rendered
+    assert "quality-gates" in rendered
+    assert "github://owner/repo/pull/42" in rendered
 
 
 class TestRunHealthCounts:
