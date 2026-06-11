@@ -99,7 +99,8 @@ def test_branch_protection_doc_matches_workflow_job_names_and_ownership() -> Non
     for fragment in (
         "Require status checks to pass before merging",
         "Require branches to be up to date before merging",
-        "Require review from Code Owners",
+        "Clowder-style review split",
+        "verified xmuse internal review artifact",
         "Require conversation resolution before merging",
         "Do not allow bypassing the above settings",
         "review_evidence_bundle",
@@ -363,6 +364,77 @@ def test_server_side_snapshot_normalizer_keeps_incomplete_snapshot_as_gap() -> N
     assert evidence.has_review_truth is False
     assert evidence.gap_reason is not None
     assert "review" in evidence.gap_reason
+    assert can_emit_pr_merged(evidence) is False
+
+
+def test_server_side_snapshot_accepts_internal_review_when_github_review_not_required() -> None:
+    snapshot = GitHubServerSideTruthSnapshot(
+        workflow_run_id=123,
+        check_suite_id=456,
+        check_run_ids=[111, 112, 113],
+        expected_source_app="github-actions",
+        branch_protection_snapshot={
+            "required_status_checks": sorted(REQUIRED_SERVER_CHECKS),
+            "required_pull_request_reviews": None,
+        },
+        internal_review_artifact="docs/xmuse/opencode-in-long-runtime-evidence-closure.md",
+        internal_reviewer="opencode-in-review",
+        internal_reviewed_head_sha="abc123",
+        internal_review_verified=True,
+        merge_commit_sha="merge123",
+        merged_at="2026-06-10T15:00:00Z",
+        merge_event_id="merge-event-1",
+    )
+
+    evidence = build_github_server_side_truth_from_snapshot(
+        repo="iiyazu/Cross-Muse",
+        pull_request_number=42,
+        required_checks=sorted(REQUIRED_SERVER_CHECKS),
+        snapshot=snapshot,
+    )
+
+    assert evidence.proof_level == "server_side_merge_proof"
+    assert evidence.has_review_truth is True
+    assert evidence.has_internal_review_truth is True
+    assert evidence.has_github_review_truth is False
+    assert can_emit_pr_merged(evidence) is True
+
+
+def test_internal_review_does_not_replace_required_github_review() -> None:
+    snapshot = GitHubServerSideTruthSnapshot(
+        workflow_run_id=123,
+        check_suite_id=456,
+        check_run_ids=[111, 112, 113],
+        expected_source_app="github-actions",
+        branch_protection_snapshot={
+            "required_status_checks": sorted(REQUIRED_SERVER_CHECKS),
+            "required_pull_request_reviews": {
+                "required_approving_review_count": 1,
+                "require_code_owner_reviews": True,
+            },
+        },
+        internal_review_artifact="docs/xmuse/opencode-in-long-runtime-evidence-closure.md",
+        internal_reviewer="opencode-in-review",
+        internal_reviewed_head_sha="abc123",
+        internal_review_verified=True,
+        merge_commit_sha="merge123",
+        merged_at="2026-06-10T15:00:00Z",
+        merge_event_id="merge-event-1",
+    )
+
+    evidence = build_github_server_side_truth_from_snapshot(
+        repo="iiyazu/Cross-Muse",
+        pull_request_number=42,
+        required_checks=sorted(REQUIRED_SERVER_CHECKS),
+        snapshot=snapshot,
+    )
+
+    assert evidence.proof_level == "manual_gap"
+    assert evidence.has_internal_review_truth is True
+    assert evidence.has_github_review_truth is False
+    assert evidence.has_review_truth is False
+    assert evidence.gap_reason is not None
+    assert "review_truth" in evidence.gap_reason
     assert can_emit_pr_merged(evidence) is False
 
 

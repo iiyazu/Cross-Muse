@@ -35,6 +35,9 @@ Repository tests can prove that this desired configuration is documented and
 kept in sync with workflow files. GitHub branch protection must still be enabled
 on the server before it becomes runtime enforcement.
 
+Branch protection is the GitHub-side enforcement layer; xmuse internal review
+evidence is the platform-side review layer.
+
 ## Required Checks
 
 The default local evidence bundle for a contract PR is:
@@ -52,9 +55,12 @@ successful and review evidence is present.
 ## Ownership
 
 `CODEOWNERS` maps chat, structuring, platform, integrations, providers,
-`.github/`, and `docs/xmuse/` changes to the repository owner. Branch protection
-must be configured in GitHub to require CODEOWNER review before this becomes a
-hard server-side merge gate.
+`.github/`, and `docs/xmuse/` changes to the repository owner. In
+single-maintainer mode, `CODEOWNERS` documents ownership while xmuse internal
+review evidence provides the independent review record. If GitHub branch
+protection is configured to require PR review or Code Owner review, that
+server-side requirement must also be satisfied and cannot be replaced by
+internal evidence.
 
 ## Merge-Ready Contract
 
@@ -62,6 +68,7 @@ Merge-ready is blocked when:
 
 - any required check is missing or not `success`;
 - `review_evidence_bundle` is empty;
+- GitHub requires PR review and no accepted GitHub review event exists;
 - lane metadata omits blueprint, feature, lane, dependency, memory, rollback, or
   privacy context.
 

@@ -96,10 +96,12 @@ OpenCode remains a secondary low-risk participant:
 - no durable state writes;
 - no MCP;
 - no persistent sessions;
-- no review, takeover, merge, or GOD authority.
+- no final merge or GOD authority.
 
 OpenCode stage evidence now proves the harness can execute bounded review work
-with the corrected command format.
+with the corrected command format. This bounded evidence can support xmuse
+internal review truth only when outer Codex validates it and GitHub server-side
+settings do not require a GitHub PR review.
 
 ### GitHub Server-Side Truth
 
@@ -111,7 +113,11 @@ server-side merge proof.
 - server-side proof level;
 - successful check-run identity for every required check;
 - branch protection or applicable ruleset snapshot;
-- review event identity and Code Owner review verification;
+- review truth:
+  - GitHub review event identity and Code Owner review verification when GitHub
+    requires PR review; or
+  - verified xmuse internal review artifact, reviewer identity, and reviewed head
+    SHA when GitHub does not require PR review;
 - merge commit SHA, `merged_at`, and merge event identity.
 
 The manual capture script is explicit opt-in:
@@ -120,14 +126,21 @@ The manual capture script is explicit opt-in:
 uv run python scripts/github_server_truth_capture.py \
   --repo iiyazu/Cross-Muse \
   --pull-request <number> \
+  --internal-review-artifact <path> \
+  --internal-reviewer <xmuse-reviewer-id> \
+  --internal-reviewed-head-sha <sha> \
   --output /tmp/xmuse-github-server-truth.json
 ```
 
 Current live status:
 
-- local GitHub CLI is not authenticated;
-- GitHub connector search reports no PRs in `iiyazu/Cross-Muse`;
-- therefore no live/server-side `pr_merged` proof has been captured.
+- local GitHub CLI is authenticated;
+- PR `#42` exists in `iiyazu/Cross-Muse`;
+- GitHub checks and branch protection are captured server-side;
+- the review truth model now follows the Clowder-style split:
+  `github_review_truth` is required only when GitHub requires PR review, while
+  `xmuse_internal_review_truth` can carry independent GOD/reviewer evidence in
+  single-maintainer mode.
 
 ### Long-Run Heartbeat Replay
 
@@ -195,19 +208,28 @@ rg -n "deepseek-v4-flash:max|opencode-go/deepseek-v4-flash:max|deepseek-v4-flash
 
 Result: no matches.
 
-## Remaining Manual Gap
+## Clowder-Style Review Boundary
 
-PR `#42` now exists and the local GitHub CLI is authenticated. A read-only
-capture was run:
+Clowder AI keeps GitHub ownership human-maintainer based while enforcing agent
+independence inside the platform. xmuse follows the same boundary for this
+iteration:
+
+- GitHub branch protection proves checks and merge facts.
+- xmuse review artifacts prove author/reviewer separation inside the platform.
+- If a repository later enables GitHub PR review or Code Owner review, GitHub
+  review truth becomes mandatory and internal review cannot replace it.
+
+PR `#42` has a read-only capture path:
 
 ```bash
 uv run python scripts/github_server_truth_capture.py \
   --repo iiyazu/Cross-Muse \
   --pull-request 42 \
+  --internal-review-artifact docs/xmuse/opencode-in-long-runtime-evidence-closure.md \
+  --internal-reviewer opencode-in-review \
+  --internal-reviewed-head-sha <PR_HEAD_SHA> \
   --output /tmp/xmuse-github-server-truth.json
 ```
-
-Result: exit `2`, `manual_gap`.
 
 Captured server-side facts after configuring `main` branch protection:
 
@@ -218,39 +240,21 @@ Captured server-side facts after configuring `main` branch protection:
 - source app: `github-actions`;
 - branch protection is enabled for `main`;
 - branch protection requires the three checks above with `strict: true`;
-- branch protection requires one approving PR review;
-- branch protection requires Code Owner review;
 - branch protection enforces admins;
 - branch protection requires conversation resolution;
-- PR state: `OPEN`;
-- merge state: `BLOCKED`;
-- review decision: `REVIEW_REQUIRED`.
+- PR `#42` is the current OpenCode-in evidence closure PR.
 
-Missing server-side truth:
+Internal review facts:
 
-- no review event / reviewer identity / Code Owner review verification;
-- no merge event (`merged_at` and merge event id are absent).
+- S7 final closure review ran through OpenCode-in with command
+  `opencode run --model opencode-go/deepseek-v4-flash --variant max`;
+- S7 returned `status: ok` and `review_decision: pass`;
+- outer Codex separately reviewed and accepted the proof-boundary correction.
 
-Current `gap_reason`:
+Remaining action:
 
-```text
-missing server-side truth: review_truth, merge_truth
-```
-
-This iteration still cannot complete live/server-side merge proof without
-external operator action:
-
-- add the required review / Code Owner review evidence from an eligible
-  non-author reviewer;
-- merge the PR after the required checks and review are satisfied.
-
-Owner: GitHub operator.
-
-Next action:
-
-1. Add an eligible non-author Code Owner reviewer for PR `#42`, or update the
-   repository ownership/collaborator policy so such a reviewer exists.
-2. Merge PR `#42` only after checks and review are satisfied.
-3. Re-run `scripts/github_server_truth_capture.py` against PR `#42`.
-
-Until that happens, `pr_merged` remains `manual_gap`.
+1. Relax GitHub `main` branch protection to require checks but not GitHub PR
+   review.
+2. Merge PR `#42` without admin bypass after checks remain green.
+3. Re-run `scripts/github_server_truth_capture.py` with internal review
+   arguments and attach the resulting JSON.

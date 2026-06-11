@@ -26,10 +26,16 @@ def capture_github_server_truth(
     output: Path,
     base_branch: str = "main",
     runner: Any | None = None,
+    internal_review_artifact: Path | None = None,
+    internal_reviewer: str | None = None,
+    internal_reviewed_head_sha: str | None = None,
 ) -> int:
     client = GitHubCliServerSideTruthClient(
         base_branch=base_branch,
         runner=runner,
+        internal_review_artifact=internal_review_artifact,
+        internal_reviewer=internal_reviewer,
+        internal_reviewed_head_sha=internal_reviewed_head_sha,
     )
     collector = ReadOnlyGitHubServerSideTruthCollector(client=client)
     evidence = collector.collect(
@@ -55,6 +61,22 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", required=True, type=Path, help="Output evidence JSON path.")
     parser.add_argument("--base-branch", default="main")
     parser.add_argument(
+        "--internal-review-artifact",
+        type=Path,
+        default=None,
+        help="Path to xmuse internal GOD/reviewer evidence for Clowder-style review truth.",
+    )
+    parser.add_argument(
+        "--internal-reviewer",
+        default=None,
+        help="xmuse internal reviewer identity, e.g. opencode-in-review.",
+    )
+    parser.add_argument(
+        "--internal-reviewed-head-sha",
+        default=None,
+        help="PR head SHA covered by the internal review artifact.",
+    )
+    parser.add_argument(
         "--required-check",
         action="append",
         dest="required_checks",
@@ -68,6 +90,9 @@ def main(argv: list[str] | None = None) -> int:
         required_checks=args.required_checks or list(DEFAULT_REQUIRED_CHECKS),
         output=args.output,
         base_branch=args.base_branch,
+        internal_review_artifact=args.internal_review_artifact,
+        internal_reviewer=args.internal_reviewer,
+        internal_reviewed_head_sha=args.internal_reviewed_head_sha,
     )
 
 

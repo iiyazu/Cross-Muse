@@ -4,6 +4,7 @@ import json
 import subprocess
 from collections.abc import Callable
 from fnmatch import fnmatchcase
+from pathlib import Path
 from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -120,6 +121,10 @@ class GitHubServerSideTruthEvidence(BaseModel):
     review_event_id: int | str | None = None
     reviewer_login: str | None = None
     code_owner_review_verified: bool = False
+    internal_review_artifact: str | None = None
+    internal_reviewer: str | None = None
+    internal_reviewed_head_sha: str | None = None
+    internal_review_verified: bool = False
     merge_commit_sha: str | None = None
     merged_at: str | None = None
     merge_event_id: int | str | None = None
@@ -145,6 +150,9 @@ class GitHubServerSideTruthEvidence(BaseModel):
     @field_validator(
         "expected_source_app",
         "reviewer_login",
+        "internal_review_artifact",
+        "internal_reviewer",
+        "internal_reviewed_head_sha",
         "merge_commit_sha",
         "merged_at",
         "gap_reason",
@@ -165,7 +173,7 @@ class GitHubServerSideTruthEvidence(BaseModel):
         if not self.has_server_enforcement_truth:
             missing.append("branch_protection_snapshot_or_ruleset_snapshot")
         if not self.has_review_truth:
-            missing.append("review_event_id/reviewer_login/code_owner_review_verified")
+            missing.append("github_review_or_internal_review_evidence")
         if not self.has_merge_truth:
             missing.append("merge_commit_sha/merged_at/merge_event_id")
         if missing:
@@ -190,16 +198,46 @@ class GitHubServerSideTruthEvidence(BaseModel):
             return True
         if not self.ruleset_snapshot:
             return False
-        rulesets = self.ruleset_snapshot.get("rulesets")
-        return isinstance(rulesets, list) and bool(rulesets)
+        return _rulesets_apply_to_branch(self.ruleset_snapshot, base_branch="main")
+
+    @property
+    def requires_github_review_truth(self) -> bool:
+        return _requires_pull_request_review(
+            self.branch_protection_snapshot
+        ) or _rulesets_require_pull_request_review(
+            self.ruleset_snapshot,
+            base_branch="main",
+        )
+
+    @property
+    def has_github_review_truth(self) -> bool:
+        if self.review_event_id is None or self.reviewer_login is None:
+            return False
+        if _requires_code_owner_review(
+            self.branch_protection_snapshot
+        ) or _rulesets_require_code_owner_review(
+            self.ruleset_snapshot,
+            base_branch="main",
+        ):
+            return self.code_owner_review_verified
+        return True
+
+    @property
+    def has_internal_review_truth(self) -> bool:
+        return (
+            self.internal_review_artifact is not None
+            and self.internal_reviewer is not None
+            and self.internal_reviewed_head_sha is not None
+            and self.internal_review_verified
+        )
 
     @property
     def has_review_truth(self) -> bool:
-        return (
-            self.review_event_id is not None
-            and self.reviewer_login is not None
-            and self.code_owner_review_verified
-        )
+        if not self.has_server_enforcement_truth:
+            return False
+        if self.requires_github_review_truth:
+            return self.has_github_review_truth
+        return self.has_github_review_truth or self.has_internal_review_truth
 
     @property
     def has_merge_truth(self) -> bool:
@@ -222,6 +260,10 @@ class GitHubServerSideTruthSnapshot(BaseModel):
     review_event_id: int | str | None = None
     reviewer_login: str | None = None
     code_owner_review_verified: bool = False
+    internal_review_artifact: str | None = None
+    internal_reviewer: str | None = None
+    internal_reviewed_head_sha: str | None = None
+    internal_review_verified: bool = False
     merge_commit_sha: str | None = None
     merged_at: str | None = None
     merge_event_id: int | str | None = None
@@ -275,10 +317,28 @@ class GitHubCliServerSideTruthClient:
         base_branch: str = "main",
         runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
         gh_binary: str = "gh",
+        internal_review_artifact: str | Path | None = None,
+        internal_reviewer: str | None = None,
+        internal_reviewed_head_sha: str | None = None,
     ) -> None:
         self._base_branch = _require_non_empty(base_branch)
         self._runner = runner or _run_gh_api
         self._gh_binary = _require_non_empty(gh_binary)
+        self._internal_review_artifact = (
+            _require_non_empty(str(internal_review_artifact))
+            if internal_review_artifact is not None
+            else None
+        )
+        self._internal_reviewer = (
+            _require_non_empty(internal_reviewer)
+            if internal_reviewer is not None
+            else None
+        )
+        self._internal_reviewed_head_sha = (
+            _require_non_empty(internal_reviewed_head_sha)
+            if internal_reviewed_head_sha is not None
+            else None
+        )
 
     def fetch_server_side_truth_snapshot(
         self,
@@ -317,6 +377,7 @@ class GitHubCliServerSideTruthClient:
             required_checks=required_checks,
         )
         review_event_id, reviewer_login = _approved_review_identity(reviews_payload)
+        internal_review_verified = self._internal_review_verified(head_sha)
         return GitHubServerSideTruthSnapshot(
             workflow_run_id=check_run_ids[0] if check_run_ids else None,
             check_run_ids=check_run_ids,
@@ -333,11 +394,27 @@ class GitHubCliServerSideTruthClient:
                 )
             )
             and review_event_id is not None,
+            internal_review_artifact=self._internal_review_artifact,
+            internal_reviewer=self._internal_reviewer,
+            internal_reviewed_head_sha=self._internal_reviewed_head_sha,
+            internal_review_verified=internal_review_verified,
             merge_commit_sha=_optional_str(pr_payload.get("merge_commit_sha")),
             merged_at=_optional_str(pr_payload.get("merged_at")),
             merge_event_id=_optional_str(pr_payload.get("node_id"))
             if pr_payload.get("merged") is True
             else None,
+        )
+
+    def _internal_review_verified(self, head_sha: str) -> bool:
+        if (
+            self._internal_review_artifact is None
+            or self._internal_reviewer is None
+            or self._internal_reviewed_head_sha is None
+        ):
+            return False
+        return (
+            self._internal_reviewed_head_sha == head_sha
+            and Path(self._internal_review_artifact).is_file()
         )
 
     def _gh_api(self, endpoint: str) -> Any | None:
@@ -362,6 +439,10 @@ class FakeGitHubServerSideTruthCollector(BaseModel):
     review_event_id: int | str | None = None
     reviewer_login: str | None = None
     code_owner_review_verified: bool = False
+    internal_review_artifact: str | None = None
+    internal_reviewer: str | None = None
+    internal_reviewed_head_sha: str | None = None
+    internal_review_verified: bool = False
     merge_commit_sha: str | None = None
     merged_at: str | None = None
     merge_event_id: int | str | None = None
@@ -387,6 +468,10 @@ class FakeGitHubServerSideTruthCollector(BaseModel):
             review_event_id=self.review_event_id,
             reviewer_login=self.reviewer_login,
             code_owner_review_verified=self.code_owner_review_verified,
+            internal_review_artifact=self.internal_review_artifact,
+            internal_reviewer=self.internal_reviewer,
+            internal_reviewed_head_sha=self.internal_reviewed_head_sha,
+            internal_review_verified=self.internal_review_verified,
         )
 
 
@@ -535,6 +620,10 @@ def build_github_server_side_truth_from_snapshot(
         review_event_id=snapshot.review_event_id,
         reviewer_login=snapshot.reviewer_login,
         code_owner_review_verified=snapshot.code_owner_review_verified,
+        internal_review_artifact=snapshot.internal_review_artifact,
+        internal_reviewer=snapshot.internal_reviewer,
+        internal_reviewed_head_sha=snapshot.internal_reviewed_head_sha,
+        internal_review_verified=snapshot.internal_review_verified,
         merge_commit_sha=snapshot.merge_commit_sha,
         merged_at=snapshot.merged_at,
         merge_event_id=snapshot.merge_event_id,
@@ -555,6 +644,10 @@ def build_github_server_side_truth_from_snapshot(
             review_event_id=snapshot.review_event_id,
             reviewer_login=snapshot.reviewer_login,
             code_owner_review_verified=snapshot.code_owner_review_verified,
+            internal_review_artifact=snapshot.internal_review_artifact,
+            internal_reviewer=snapshot.internal_reviewer,
+            internal_reviewed_head_sha=snapshot.internal_reviewed_head_sha,
+            internal_review_verified=snapshot.internal_review_verified,
             merge_commit_sha=snapshot.merge_commit_sha,
             merged_at=snapshot.merged_at,
             merge_event_id=snapshot.merge_event_id,
@@ -573,6 +666,10 @@ def build_github_server_side_truth_from_snapshot(
         review_event_id=snapshot.review_event_id,
         reviewer_login=snapshot.reviewer_login,
         code_owner_review_verified=snapshot.code_owner_review_verified,
+        internal_review_artifact=snapshot.internal_review_artifact,
+        internal_reviewer=snapshot.internal_reviewer,
+        internal_reviewed_head_sha=snapshot.internal_reviewed_head_sha,
+        internal_review_verified=snapshot.internal_review_verified,
         merge_commit_sha=snapshot.merge_commit_sha,
         merged_at=snapshot.merged_at,
         merge_event_id=snapshot.merge_event_id,
@@ -666,7 +763,32 @@ def _requires_code_owner_review(payload: Any) -> bool:
     return review_policy.get("require_code_owner_reviews") is True
 
 
+def _requires_pull_request_review(payload: Any) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    review_policy = payload.get("required_pull_request_reviews")
+    if not isinstance(review_policy, dict):
+        return False
+    count = review_policy.get("required_approving_review_count")
+    return review_policy.get("require_code_owner_reviews") is True or (
+        isinstance(count, int) and count > 0
+    )
+
+
 def _rulesets_require_code_owner_review(payload: Any, *, base_branch: str) -> bool:
+    return _rulesets_require_pull_request_review(
+        payload,
+        base_branch=base_branch,
+        code_owner_only=True,
+    )
+
+
+def _rulesets_require_pull_request_review(
+    payload: Any,
+    *,
+    base_branch: str,
+    code_owner_only: bool = False,
+) -> bool:
     if not isinstance(payload, dict):
         return False
     rulesets = payload.get("rulesets")
@@ -688,12 +810,31 @@ def _rulesets_require_code_owner_review(payload: Any, *, base_branch: str) -> bo
             if not isinstance(rule, dict) or rule.get("type") != "pull_request":
                 continue
             parameters = rule.get("parameters")
-            if (
-                isinstance(parameters, dict)
-                and parameters.get("require_code_owner_review") is True
-            ):
+            if not isinstance(parameters, dict):
+                continue
+            if parameters.get("require_code_owner_review") is True:
+                return True
+            if code_owner_only:
+                continue
+            count = parameters.get("required_approving_review_count")
+            if isinstance(count, int) and count > 0:
                 return True
     return False
+
+
+def _rulesets_apply_to_branch(payload: Any, *, base_branch: str) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    rulesets = payload.get("rulesets")
+    if not isinstance(rulesets, list):
+        return False
+    return any(
+        isinstance(ruleset, dict)
+        and ruleset.get("enforcement") == "active"
+        and ruleset.get("target") == "branch"
+        and _ruleset_applies_to_branch(ruleset, base_branch=base_branch)
+        for ruleset in rulesets
+    )
 
 
 def _ruleset_applies_to_branch(ruleset: dict[str, Any], *, base_branch: str) -> bool:

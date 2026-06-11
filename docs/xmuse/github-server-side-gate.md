@@ -25,18 +25,22 @@ Settings:
 
 The named checks correspond to jobs in `.github/workflows/xmuse-ci.yml`.
 
-## Required Review Policy
+## Review Evidence Policy
 
-Settings:
+The xmuse mainline follows a Clowder-style review split:
 
-- Require a pull request before merging.
-- Require at least one approving review.
-- Require review from Code Owners.
-- Dismiss stale approvals when new commits are pushed.
+- GitHub branch protection enforces server-side status checks and merge facts.
+- xmuse records independent internal review evidence in `review_evidence_bundle`.
+- If GitHub branch protection or an applicable ruleset also requires PR review,
+  GitHub review truth is mandatory and internal evidence cannot replace it.
+- If GitHub does not require PR review, a verified xmuse internal review artifact
+  can satisfy `review_truth`.
 
 `CODEOWNERS` covers `.github/`, `docs/xmuse/`, `src/xmuse_core/chat/`,
 `src/xmuse_core/structuring/`, `src/xmuse_core/platform/`,
-`src/xmuse_core/integrations/`, and `src/xmuse_core/providers/`.
+`src/xmuse_core/integrations/`, and `src/xmuse_core/providers/`. It documents
+ownership but is not required to be the active review gate in single-maintainer
+mode.
 
 ## Required PR Evidence
 
@@ -71,7 +75,9 @@ Contract proof:
 Runtime proof:
 
 - branch protection on GitHub `main` requires the checks above;
-- a real PR cannot merge without CODEOWNER review and passing checks;
+- a real PR cannot merge without passing checks;
+- `review_truth` is either GitHub review truth when GitHub requires it, or
+  verified xmuse internal review truth when GitHub does not require it;
 - a real PR with missing `review_evidence_bundle` is rejected by the merge
   process.
 
@@ -87,7 +93,11 @@ only evidence structure; it does not query or mutate GitHub settings.
 - successful check run identities covering every documented required check;
 - expected source GitHub App for checks;
 - branch protection or ruleset snapshot;
-- review event identity, reviewer identity, and Code Owner review verification;
+- review truth:
+  - GitHub review event identity, reviewer identity, and Code Owner review
+    verification when server-side GitHub review is required; or
+  - verified xmuse internal review artifact, reviewer identity, and reviewed head
+    SHA when GitHub review is not required;
 - merge commit SHA, `merged_at`, and merge event identity.
 
 `build_github_server_side_truth_gap(...)` records the current unauthenticated or
@@ -115,11 +125,10 @@ when the client cannot provide a snapshot.
 `GitHubCliServerSideTruthClient` is an opt-in `gh api` implementation of that
 client protocol. It uses read-only `gh api` calls for PR state, reviews, branch
 protection, repository rulesets, and check runs, then returns a snapshot for the
-collector to normalize. Rulesets only contribute Code Owner review truth when an
-active branch ruleset explicitly applies to the target base branch through
-`conditions.ref_name.include` / `exclude` and contains a pull-request rule with
-Code Owner review required. Tests inject a fake runner; default CI does not call
-GitHub.
+collector to normalize. Rulesets only contribute enforcement and review truth
+when an active branch ruleset explicitly applies to the target base branch
+through `conditions.ref_name.include` / `exclude`. Tests inject a fake runner;
+default CI does not call GitHub.
 
 Manual operator capture can use:
 
@@ -127,6 +136,9 @@ Manual operator capture can use:
 uv run python scripts/github_server_truth_capture.py \
   --repo iiyazu/Cross-Muse \
   --pull-request <number> \
+  --internal-review-artifact <path> \
+  --internal-reviewer <xmuse-reviewer-id> \
+  --internal-reviewed-head-sha <sha> \
   --output /tmp/xmuse-github-server-truth.json
 ```
 
