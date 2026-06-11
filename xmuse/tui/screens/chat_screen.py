@@ -16,6 +16,7 @@ from xmuse.tui.adapter.xmuse_adapter import StateDelta
 from xmuse.tui.completion import CompletionCandidate, CompletionEngine
 from xmuse.tui.slash_commands import SlashCommandContext, SlashCommandRouter
 from xmuse.tui.state import StateUpdated
+from xmuse.tui.widgets.deliberation_cockpit import DeliberationCockpit
 from xmuse.tui.widgets.message_log import MessageLog
 from xmuse.tui.widgets.xmu_header import XmuHeader
 
@@ -195,6 +196,9 @@ class ChatScreen(Screen):
         height: 6;
         border: solid $secondary;
     }
+    #deliberation-cockpit {
+        height: 9;
+    }
     #task-detail {
         height: 1fr;
         border: solid $primary-darken-2;
@@ -239,6 +243,8 @@ class ChatScreen(Screen):
             with Vertical(id="pane-right"):
                 yield Label("Inbox", classes="panel-header")
                 yield ListView(id="inbox-list")
+                yield Label("Deliberation", classes="panel-header")
+                yield DeliberationCockpit(id="deliberation-cockpit")
                 yield Label("Task list", classes="panel-header")
                 yield ListView(id="task-list")
                 yield Label("Task detail", classes="panel-header")
@@ -770,6 +776,7 @@ class ChatScreen(Screen):
             self._rendered_fingerprints[conv_id] = fingerprint
         if getattr(self, "_copy_mode", False):
             self._sync_copy_view()
+        self.query_one("#deliberation-cockpit", DeliberationCockpit).load(state.vision)
         lanes = state.latest_lanes()
         self._refresh_workbench_lists(conv_id, lanes, cards)
 

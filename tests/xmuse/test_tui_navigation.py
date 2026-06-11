@@ -10,6 +10,7 @@ from xmuse.tui.adapter.xmuse_adapter import StateDelta, XmuseAdapter
 from xmuse.tui.app import XmuseTUI
 from xmuse.tui.screens.lane_detail import LaneDetailScreen
 from xmuse.tui.state import StateUpdated
+from xmuse.tui.widgets.deliberation_cockpit import DeliberationCockpit
 from xmuse_core.chat.peer_service import PeerChatService
 
 pytestmark = pytest.mark.asyncio
@@ -1398,6 +1399,47 @@ async def test_chat_screen_tick_renders_worklist_summary(app: XmuseTUI) -> None:
         assert len(task_list.children) == 1
         assert "TUI-01" in str(detail)
         assert "Visible worklist" in str(detail)
+
+
+async def test_chat_screen_renders_deliberation_cockpit_from_vision(
+    app: XmuseTUI,
+) -> None:
+    app.adapter.list_group_conversations = lambda: [
+        {
+            "id": "conv-new",
+            "title": "New conversation",
+            "created_at": "2026-06-02T00:00:00Z",
+        },
+    ]
+
+    async with app.run_test() as pilot:
+        app.state.active_conversation_id = "conv-new"
+        app.state.vision = {
+            "conversation_id": "conv-new",
+            "deliberation": {
+                "proof_level": "contract_proof",
+                "fact_state": "blocked",
+                "speech_act_counts": {"challenge": 1},
+                "blockers": [
+                    {
+                        "message_id": "msg-1",
+                        "speech_act": "challenge",
+                        "reason": "missing rollback plan",
+                        "target_refs": ["blueprint:conv-new:1"],
+                        "source_refs": ["message:msg-0"],
+                    }
+                ],
+                "target_refs": ["blueprint:conv-new:1"],
+                "source_refs": ["message:msg-0", "message:msg-1"],
+                "manual_gap_reason": None,
+            },
+        }
+        app.screen.on_state_updated(StateUpdated(app.state))
+        await pilot.pause()
+
+        cockpit = app.screen.query_one("#deliberation-cockpit", DeliberationCockpit)
+        assert "challenge: 1" in cockpit.renderable_text
+        assert "missing rollback plan" in cockpit.renderable_text
 
 
 async def test_chat_screen_right_panel_shows_workbench_lists_and_detail_surfaces(

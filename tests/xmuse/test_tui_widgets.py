@@ -2,6 +2,7 @@
 from rich.panel import Panel
 
 from xmuse.tui.widgets.card_renderer import CARD_STYLES, render_card
+from xmuse.tui.widgets.deliberation_cockpit import render_deliberation_cockpit
 from xmuse.tui.widgets.message_log import MessageLog
 
 
@@ -77,6 +78,45 @@ def test_message_log_enables_wrapped_selectable_text():
 
     assert log.wrap is True
     assert log.allow_select is True
+
+
+def test_deliberation_cockpit_renders_speech_acts_and_blockers() -> None:
+    panel = render_deliberation_cockpit(
+        {
+            "deliberation": {
+                "proof_level": "contract_proof",
+                "fact_state": "blocked",
+                "speech_act_counts": {"challenge": 1, "propose": 1},
+                "blockers": [
+                    {
+                        "message_id": "msg-challenge",
+                        "speech_act": "challenge",
+                        "reason": "acceptance criteria are missing",
+                        "target_refs": ["blueprint:conv-1:1"],
+                        "source_refs": ["message:msg-propose"],
+                    }
+                ],
+                "target_refs": ["blueprint:conv-1:1"],
+                "source_refs": ["message:msg-propose", "message:msg-challenge"],
+                "manual_gap_reason": None,
+            }
+        }
+    )
+
+    rendered = panel.renderable.plain
+    assert "contract_proof" in rendered
+    assert "blocked" in rendered
+    assert "challenge: 1" in rendered
+    assert "acceptance criteria are missing" in rendered
+    assert "blueprint:conv-1:1" in rendered
+
+
+def test_deliberation_cockpit_renders_manual_gap() -> None:
+    panel = render_deliberation_cockpit(None)
+
+    rendered = panel.renderable.plain
+    assert "manual_gap" in rendered
+    assert "No deliberation evidence" in rendered
 
 
 class TestRunHealthCounts:
