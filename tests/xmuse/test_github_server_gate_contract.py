@@ -599,6 +599,7 @@ def test_gh_cli_truth_client_fetches_read_only_server_snapshot() -> None:
     )
 
     assert snapshot == GitHubServerSideTruthSnapshot(
+        head_sha="head123",
         workflow_run_id=111,
         check_run_ids=[111, 112, 113],
         expected_source_app="github-actions",

@@ -9,6 +9,11 @@ from xmuse_core.integrations.memoryos_client import (
     MemoryOSIngestRequest,
     MemoryOSIngestResult,
 )
+from xmuse_core.integrations.memoryos_governance import (
+    MemoryOSGovernanceScope,
+    MemoryOSGovernedWritePlan,
+    plan_memoryos_governed_write,
+)
 from xmuse_core.integrations.memoryos_namespace import (
     MemoryOSNamespace,
     deterministic_memory_source_ref,
@@ -37,6 +42,8 @@ class MemoryOSWritebackEvent(BaseModel):
     metadata: dict[str, object] = Field(default_factory=dict)
     promote_to_shared: bool = False
     shared_namespace: MemoryOSNamespace | None = None
+    reviewed: bool = False
+    governance_scope: MemoryOSGovernanceScope | None = None
 
     @model_validator(mode="after")
     def _validate_shared_promotion(self) -> MemoryOSWritebackEvent:
@@ -55,22 +62,55 @@ class MemoryOSWritebackEvent(BaseModel):
 
     def to_ingest_request(self) -> MemoryOSIngestRequest:
         source_refs = _dedupe([self.deterministic_source_ref, *self.source_refs])
-        return MemoryOSIngestRequest(
+        plan = plan_memoryos_governed_write(
+            scope=self.governance_scope or _default_governance_scope(self),
+            event_kind=self.kind,
             namespace=self.namespace,
             actor_id=self.actor_id,
             content=_render_event_content(self.kind, self.summary, source_refs),
             source_refs=source_refs,
-            metadata={"memory_writeback_kind": self.kind, **self.metadata},
             promote_to_shared=self.promote_to_shared,
             shared_namespace=self.shared_namespace,
+            reviewed=self.reviewed,
+            metadata={"memory_writeback_kind": self.kind, **self.metadata},
         )
+        request = plan.to_ingest_request()
+        if request is None:
+            raise MemoryOSWritebackBlocked(plan.blocked_reason or plan.decision)
+        return request
+
+    def to_governed_write_plan(self) -> MemoryOSGovernedWritePlan:
+        source_refs = _dedupe([self.deterministic_source_ref, *self.source_refs])
+        return plan_memoryos_governed_write(
+            scope=self.governance_scope or _default_governance_scope(self),
+            event_kind=self.kind,
+            namespace=self.namespace,
+            actor_id=self.actor_id,
+            content=_render_event_content(self.kind, self.summary, source_refs),
+            source_refs=source_refs,
+            promote_to_shared=self.promote_to_shared,
+            shared_namespace=self.shared_namespace,
+            reviewed=self.reviewed,
+            metadata={"memory_writeback_kind": self.kind, **self.metadata},
+        )
+
+
+class MemoryOSWritebackBlocked(Exception):
+    pass
 
 
 async def write_memory_event(
     client: MemoryOSClientProtocol,
     event: MemoryOSWritebackEvent,
 ) -> MemoryOSIngestResult:
-    return await client.ingest(event.to_ingest_request())
+    plan = event.to_governed_write_plan()
+    request = plan.to_ingest_request()
+    if request is None:
+        return MemoryOSIngestResult(
+            ok=False,
+            degraded_reason=plan.blocked_reason or plan.decision,
+        )
+    return await client.ingest(request)
 
 
 async def build_god_prompt_memory_block(
@@ -97,6 +137,14 @@ def _render_event_content(kind: str, summary: str, source_refs: list[str]) -> st
         lines.append("Source refs:")
         lines.extend(f"- {ref}" for ref in source_refs)
     return "\n".join(lines)
+
+
+def _default_governance_scope(
+    event: MemoryOSWritebackEvent,
+) -> MemoryOSGovernanceScope:
+    if event.promote_to_shared:
+        return MemoryOSGovernanceScope.SHARED
+    return MemoryOSGovernanceScope.TASK
 
 
 def _dedupe(values: list[str]) -> list[str]:

@@ -377,6 +377,7 @@ def _known_env_keys_present(env: Mapping[str, str]) -> set[str]:
         "XMUSE_GITHUB_TRUTH_PULL_REQUEST",
         "XMUSE_GITHUB_TRUTH_BASE_BRANCH",
         "XMUSE_GITHUB_TRUTH_REQUIRED_CHECKS",
+        "XMUSE_GITHUB_TRUTH_EXPECTED_HEAD_SHA",
         "DEEPSEEK_API_KEY",
         "OPENAI_API_KEY",
     }
@@ -406,6 +407,7 @@ def _github_truth_target(env: Mapping[str, str]) -> dict[str, Any] | None:
         "pull_request_number": pull_request_number,
         "base_branch": _clean_text(env.get("XMUSE_GITHUB_TRUTH_BASE_BRANCH")) or "main",
         "required_checks": _required_checks(env.get("XMUSE_GITHUB_TRUTH_REQUIRED_CHECKS")),
+        "expected_head_sha": _clean_text(env.get("XMUSE_GITHUB_TRUTH_EXPECTED_HEAD_SHA")),
     }
 
 
@@ -432,8 +434,18 @@ def _capture_github_server_truth_gate(
             required_checks=list(target["required_checks"]),
         )
         payload = evidence.model_dump(mode="json")
+        expected_head_sha = _clean_text(target.get("expected_head_sha"))
+        head_sha_matches_expected = (
+            True
+            if expected_head_sha is None
+            else payload.get("head_sha") == expected_head_sha
+        )
         payload["schema_version"] = "github_server_side_truth_capture.v1"
-        payload["can_emit_pr_merged"] = can_emit_pr_merged(evidence)
+        payload["expected_head_sha"] = expected_head_sha
+        payload["head_sha_matches_expected"] = head_sha_matches_expected
+        payload["can_emit_pr_merged"] = (
+            can_emit_pr_merged(evidence) and head_sha_matches_expected
+        )
         payload["merged"] = payload["can_emit_pr_merged"] is True
         payload["capture_mode"] = "opt_in_read_only_gh_api"
         raw_path.write_text(
@@ -444,6 +456,7 @@ def _capture_github_server_truth_gate(
             payload,
             artifact_path=raw_path,
             base_branch=base_branch,
+            expected_head_sha=expected_head_sha,
         )
     except Exception as exc:
         return _github_truth_config_error_gate(

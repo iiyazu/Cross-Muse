@@ -162,6 +162,66 @@ def test_natural_deliberation_gate_blocks_unresolved_blockers(
     assert "unresolved blockers" in gate["summary"]
 
 
+def test_natural_deliberation_gate_blocks_bounded_selected_god_runtime(
+    tmp_path: Path,
+) -> None:
+    artifact = tmp_path / "natural-transcript.json"
+    runtime = tmp_path / "god-runtime.json"
+    _write_json(artifact, _transcript())
+    _write_json(
+        runtime,
+        {
+            "schema_version": "xmuse.god_runtime_continuity.v1",
+            "conversation_id": "conv-prod-1",
+            "proof_level": "contract_proof",
+            "fact_state": "blocked",
+            "source_refs": ["god_cli_selection:conv-prod-1"],
+            "items": [
+                {
+                    "god_id": "architect-god",
+                    "cli_id": "codex.god",
+                    "peer_god_ready": True,
+                    "bounded": False,
+                    "provider_session_ready": True,
+                    "proof_level": "contract_proof",
+                    "source_refs": ["god_session:architect"],
+                },
+                {
+                    "god_id": "review-god",
+                    "cli_id": "opencode.deepseek_flash_worker",
+                    "peer_god_ready": False,
+                    "bounded": True,
+                    "provider_session_ready": True,
+                    "waiting_reason": "selected CLI lacks peer_god capability",
+                    "proof_level": "contract_proof",
+                    "source_refs": ["god_session:review"],
+                },
+            ],
+        },
+    )
+
+    gate = capture_natural_deliberation_release_gate(
+        artifact_path=artifact,
+        output_path=tmp_path / "gate.json",
+        god_runtime_path=runtime,
+    )
+
+    assert gate["status"] == "blocked"
+    assert gate["proof_level"] == "manual_gap"
+    assert "selected GOD runtime is not peer-GOD ready for review-god" in gate["summary"]
+    assert gate["source_refs"] == [
+        "memory://conversation/conv-prod-1/transcript",
+        "conversation:conv-prod-1",
+        "god:architect-god",
+        "god:review-god",
+        "provider:codex",
+        "provider:opencode",
+        "god_cli_selection:conv-prod-1",
+        "god_session:architect",
+        "god_session:review",
+    ]
+
+
 def test_natural_deliberation_gate_cli_script_is_registered() -> None:
     pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
 
@@ -169,3 +229,6 @@ def test_natural_deliberation_gate_cli_script_is_registered() -> None:
         pyproject["project"]["scripts"]["xmuse-natural-deliberation-gate-capture"]
         == "xmuse.natural_deliberation_gate_capture:main"
     )
+
+    script = Path("xmuse/natural_deliberation_gate_capture.py").read_text(encoding="utf-8")
+    assert "--god-runtime" in script

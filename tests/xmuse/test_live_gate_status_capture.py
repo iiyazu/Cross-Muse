@@ -206,7 +206,11 @@ def test_live_gate_status_capture_uses_configured_github_server_truth(
     assert gate["kind"] == "github_server_truth"
     assert gate["status"] == "ok"
     assert gate["proof_level"] == "server_side_enforcement_proof"
-    assert gate["source_refs"] == ["github:pr:43", "github:branch:main"]
+    assert gate["source_refs"] == [
+        "github:pr:43",
+        "github:branch:main",
+        "github:head:head456",
+    ]
     assert gate["artifacts"] == [str(snapshot_path)]
     assert snapshot["schema_version"] == "github_server_side_truth_capture.v1"
     assert snapshot["capture_mode"] == "opt_in_read_only_gh_api"
@@ -216,6 +220,85 @@ def test_live_gate_status_capture_uses_configured_github_server_truth(
     assert "github-server-truth" not in {
         blocker["gate_id"] for blocker in report["blockers"]
     }
+
+
+def test_live_gate_status_capture_blocks_github_truth_for_stale_expected_head(
+    tmp_path: Path,
+) -> None:
+    output_dir = tmp_path / "artifacts" / "live_gate_status"
+    runner = _FakeGhApiRunner(
+        {
+            "repos/iiyazu/Cross-Muse/pulls/43": {
+                "node_id": "PR_node_43",
+                "merged": False,
+                "merged_at": None,
+                "merge_commit_sha": "merge-candidate",
+                "head": {"sha": "old-head"},
+            },
+            "repos/iiyazu/Cross-Muse/pulls/43/reviews": [],
+            "repos/iiyazu/Cross-Muse/branches/main/protection": {
+                "required_status_checks": {
+                    "checks": [
+                        {"context": "quality-gates"},
+                        {"context": "contract-smoke-gates"},
+                        {"context": "real-runtime-integration-gate"},
+                    ]
+                },
+            },
+            "repos/iiyazu/Cross-Muse/commits/old-head/check-runs": {
+                "check_runs": [
+                    {
+                        "id": 211,
+                        "name": "quality-gates",
+                        "conclusion": "success",
+                        "app": {"slug": "github-actions"},
+                    },
+                    {
+                        "id": 212,
+                        "name": "contract-smoke-gates",
+                        "conclusion": "success",
+                        "app": {"slug": "github-actions"},
+                    },
+                    {
+                        "id": 213,
+                        "name": "real-runtime-integration-gate",
+                        "conclusion": "success",
+                        "app": {"slug": "github-actions"},
+                    },
+                ]
+            },
+        }
+    )
+
+    capture_live_gate_status(
+        output_dir=output_dir,
+        env={
+            "XMUSE_GITHUB_TRUTH_REPO": "iiyazu/Cross-Muse",
+            "XMUSE_GITHUB_TRUTH_PULL_REQUEST": "43",
+            "XMUSE_GITHUB_TRUTH_EXPECTED_HEAD_SHA": "current-head",
+        },
+        command_runner=_fake_runner(
+            {
+                "gh auth status": ProbeResult(
+                    name="github_auth",
+                    command=("gh", "auth", "status"),
+                    returncode=0,
+                    stdout="Logged in to github.com as iiyazu",
+                    stderr="",
+                )
+            }
+        ),
+        github_truth_runner=runner,
+    )
+
+    gate = json.loads((output_dir / "github-server-truth-status.json").read_text())
+    snapshot = json.loads((output_dir / "github-server-truth-snapshot.json").read_text())
+    assert gate["status"] == "manual_gap"
+    assert gate["proof_level"] == "manual_gap"
+    assert "does not match expected current head current-head" in gate["summary"]
+    assert snapshot["head_sha"] == "old-head"
+    assert snapshot["expected_head_sha"] == "current-head"
+    assert snapshot["head_sha_matches_expected"] is False
 
 
 def test_live_gate_status_capture_converts_configured_live_artifacts(

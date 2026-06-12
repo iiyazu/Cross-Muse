@@ -112,6 +112,7 @@ class GitHubServerSideTruthEvidence(BaseModel):
     proof_level: Literal["manual_gap", "contract_proof", "server_side_merge_proof"] = (
         "manual_gap"
     )
+    head_sha: str | None = None
     workflow_run_id: int | None = None
     check_suite_id: int | None = None
     check_run_ids: list[int] = Field(default_factory=list)
@@ -149,6 +150,7 @@ class GitHubServerSideTruthEvidence(BaseModel):
 
     @field_validator(
         "expected_source_app",
+        "head_sha",
         "reviewer_login",
         "internal_review_artifact",
         "internal_reviewer",
@@ -255,6 +257,7 @@ class GitHubServerSideTruthSnapshot(BaseModel):
     check_suite_id: int | None = None
     check_run_ids: list[int] = Field(default_factory=list)
     expected_source_app: str | None = None
+    head_sha: str | None = None
     branch_protection_snapshot: dict[str, Any] | None = None
     ruleset_snapshot: dict[str, Any] | None = None
     review_event_id: int | str | None = None
@@ -379,6 +382,7 @@ class GitHubCliServerSideTruthClient:
         review_event_id, reviewer_login = _approved_review_identity(reviews_payload)
         internal_review_verified = self._internal_review_verified(head_sha)
         return GitHubServerSideTruthSnapshot(
+            head_sha=head_sha,
             workflow_run_id=check_run_ids[0] if check_run_ids else None,
             check_run_ids=check_run_ids,
             expected_source_app=expected_source_app,
@@ -434,6 +438,7 @@ class FakeGitHubServerSideTruthCollector(BaseModel):
     check_suite_id: int | None = None
     check_run_ids: list[int] = Field(default_factory=list)
     expected_source_app: str | None = "fake-github"
+    head_sha: str | None = None
     branch_protection_snapshot: dict[str, Any] | None = None
     ruleset_snapshot: dict[str, Any] | None = None
     review_event_id: int | str | None = None
@@ -459,6 +464,7 @@ class FakeGitHubServerSideTruthCollector(BaseModel):
             pull_request_number=pull_request_number,
             required_checks=required_checks,
             proof_level="contract_proof",
+            head_sha=self.head_sha,
             workflow_run_id=self.workflow_run_id,
             check_suite_id=self.check_suite_id,
             check_run_ids=list(self.check_run_ids),
@@ -611,6 +617,7 @@ def build_github_server_side_truth_from_snapshot(
         pull_request_number=pull_request_number,
         required_checks=required_checks,
         proof_level="server_side_merge_proof",
+        head_sha=snapshot.head_sha,
         workflow_run_id=snapshot.workflow_run_id,
         check_suite_id=snapshot.check_suite_id,
         check_run_ids=list(snapshot.check_run_ids),
@@ -635,6 +642,7 @@ def build_github_server_side_truth_from_snapshot(
             pull_request_number=pull_request_number,
             required_checks=required_checks,
             proof_level="server_side_merge_proof",
+            head_sha=snapshot.head_sha,
             workflow_run_id=snapshot.workflow_run_id,
             check_suite_id=snapshot.check_suite_id,
             check_run_ids=list(snapshot.check_run_ids),
@@ -657,6 +665,7 @@ def build_github_server_side_truth_from_snapshot(
         pull_request_number=pull_request_number,
         required_checks=required_checks,
         proof_level="manual_gap",
+        head_sha=snapshot.head_sha,
         workflow_run_id=snapshot.workflow_run_id,
         check_suite_id=snapshot.check_suite_id,
         check_run_ids=list(snapshot.check_run_ids),

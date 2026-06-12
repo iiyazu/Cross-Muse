@@ -10,13 +10,23 @@ def capture_natural_deliberation_release_gate(
     *,
     artifact_path: str | Path,
     output_path: str | Path,
+    god_runtime_path: str | Path | None = None,
 ) -> dict[str, Any]:
     artifact = Path(artifact_path)
     payload, load_error = _load_artifact(artifact)
+    god_runtime_payload = None
+    god_runtime_load_error = None
+    god_runtime_artifact = None
+    if god_runtime_path is not None:
+        god_runtime_artifact = Path(god_runtime_path)
+        god_runtime_payload, god_runtime_load_error = _load_artifact(god_runtime_artifact)
     gate = build_natural_deliberation_release_gate(
         payload,
         artifact_path=artifact,
         load_error=load_error,
+        god_runtime_continuity=god_runtime_payload,
+        god_runtime_path=god_runtime_artifact,
+        god_runtime_load_error=god_runtime_load_error,
     )
     destination = Path(output_path)
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -32,12 +42,17 @@ def build_natural_deliberation_release_gate(
     *,
     artifact_path: str | Path,
     load_error: str | None = None,
+    god_runtime_continuity: dict[str, Any] | None = None,
+    god_runtime_path: str | Path | None = None,
+    god_runtime_load_error: str | None = None,
 ) -> dict[str, Any]:
     artifact = Path(artifact_path)
+    runtime_artifact = Path(god_runtime_path) if god_runtime_path is not None else None
     if transcript_artifact is None:
         return _blocked_gate(
             summary=load_error or "Natural deliberation transcript artifact is unavailable.",
             artifact_path=artifact,
+            extra_artifacts=[runtime_artifact] if runtime_artifact is not None else [],
             source_refs=[],
             proof_level="manual_gap",
         )
@@ -51,6 +66,7 @@ def build_natural_deliberation_release_gate(
                 "xmuse.operator_transcript.v1."
             ),
             artifact_path=artifact,
+            extra_artifacts=[runtime_artifact] if runtime_artifact is not None else [],
             source_refs=source_refs,
             proof_level="manual_gap",
         )
@@ -66,6 +82,7 @@ def build_natural_deliberation_release_gate(
                 f"natural_deliberation={natural_deliberation!r}."
             ),
             artifact_path=artifact,
+            extra_artifacts=[runtime_artifact] if runtime_artifact is not None else [],
             source_refs=source_refs,
             proof_level="manual_gap",
         )
@@ -75,6 +92,7 @@ def build_natural_deliberation_release_gate(
         return _blocked_gate(
             summary="Natural GOD deliberation transcript has no structured messages.",
             artifact_path=artifact,
+            extra_artifacts=[runtime_artifact] if runtime_artifact is not None else [],
             source_refs=source_refs,
             proof_level="manual_gap",
         )
@@ -96,8 +114,25 @@ def build_natural_deliberation_release_gate(
                 f"{', '.join(missing_runtime_metadata)}."
             ),
             artifact_path=artifact,
+            extra_artifacts=[runtime_artifact] if runtime_artifact is not None else [],
             source_refs=source_refs,
             proof_level="manual_gap",
+        )
+
+    runtime_gate = _selected_god_runtime_gate(
+        god_ids=god_ids,
+        runtime=god_runtime_continuity,
+        runtime_artifact=runtime_artifact,
+        load_error=god_runtime_load_error,
+    )
+    if runtime_gate is not None:
+        return _blocked_gate(
+            summary=runtime_gate["summary"],
+            artifact_path=artifact,
+            extra_artifacts=[runtime_artifact] if runtime_artifact is not None else [],
+            source_refs=_dedupe([*source_refs, *runtime_gate["source_refs"]]),
+            proof_level="manual_gap",
+            next_action=runtime_gate["next_action"],
         )
 
     blockers = _blockers(transcript_artifact.get("blockers"))
@@ -105,6 +140,7 @@ def build_natural_deliberation_release_gate(
         return _blocked_gate(
             summary=f"Natural GOD deliberation has {len(blockers) or 1} unresolved blockers.",
             artifact_path=artifact,
+            extra_artifacts=[runtime_artifact] if runtime_artifact is not None else [],
             source_refs=source_refs,
             proof_level="real_provider_proof",
             next_action="Resolve transcript blockers before blueprint freeze or release.",
@@ -116,6 +152,7 @@ def build_natural_deliberation_release_gate(
             f"{len(god_ids)} GOD participants."
         ),
         artifact_path=artifact,
+        extra_artifacts=[runtime_artifact] if runtime_artifact is not None else [],
         source_refs=source_refs,
     )
 
@@ -136,6 +173,7 @@ def _ok_gate(
     *,
     summary: str,
     artifact_path: Path,
+    extra_artifacts: list[Path] | None = None,
     source_refs: list[str],
 ) -> dict[str, Any]:
     return _gate(
@@ -143,6 +181,7 @@ def _ok_gate(
         proof_level="real_provider_proof",
         summary=summary,
         artifact_path=artifact_path,
+        extra_artifacts=extra_artifacts or [],
         source_refs=source_refs,
         next_action="Attach this natural deliberation gate to release readiness.",
     )
@@ -152,6 +191,7 @@ def _blocked_gate(
     *,
     summary: str,
     artifact_path: Path,
+    extra_artifacts: list[Path] | None = None,
     source_refs: list[str],
     proof_level: str,
     next_action: str | None = None,
@@ -161,6 +201,7 @@ def _blocked_gate(
         proof_level=proof_level,
         summary=summary,
         artifact_path=artifact_path,
+        extra_artifacts=extra_artifacts or [],
         source_refs=source_refs,
         next_action=next_action
         or (
@@ -176,6 +217,7 @@ def _gate(
     proof_level: str,
     summary: str,
     artifact_path: Path,
+    extra_artifacts: list[Path],
     source_refs: list[str],
     next_action: str,
 ) -> dict[str, Any]:
@@ -192,9 +234,81 @@ def _gate(
         "attempted_command": "uv run xmuse-natural-deliberation-gate-capture",
         "next_action": next_action,
         "source_refs": source_refs,
-        "artifacts": [str(artifact_path)],
+        "artifacts": [str(path) for path in [artifact_path, *extra_artifacts]],
         "generated_at": _utc_now(),
     }
+
+
+def _selected_god_runtime_gate(
+    *,
+    god_ids: list[str],
+    runtime: dict[str, Any] | None,
+    runtime_artifact: Path | None,
+    load_error: str | None,
+) -> dict[str, Any] | None:
+    if runtime_artifact is None:
+        return None
+    if runtime is None:
+        return {
+            "summary": load_error or "Selected GOD runtime continuity artifact is unavailable.",
+            "source_refs": [],
+            "next_action": (
+                "Capture selected GOD runtime continuity before accepting natural "
+                "multi-GOD transcript evidence."
+            ),
+        }
+    if _text(runtime.get("schema_version")) != "xmuse.god_runtime_continuity.v1":
+        return {
+            "summary": (
+                "Selected GOD runtime continuity schema_version must be "
+                "xmuse.god_runtime_continuity.v1."
+            ),
+            "source_refs": _string_list(runtime.get("source_refs")),
+            "next_action": "Regenerate selected GOD runtime continuity evidence.",
+        }
+    source_refs = _god_runtime_source_refs(runtime)
+    items = _messages(runtime.get("items"))
+    by_god = {_text(item.get("god_id")): item for item in items if _text(item.get("god_id"))}
+    missing = [god_id for god_id in god_ids if god_id not in by_god]
+    if missing:
+        return {
+            "summary": (
+                "Selected GOD runtime continuity is missing transcript GODs: "
+                f"{', '.join(missing)}."
+            ),
+            "source_refs": source_refs,
+            "next_action": "Capture runtime continuity for every transcript GOD.",
+        }
+    blocked: list[str] = []
+    for god_id in god_ids:
+        item = by_god[god_id]
+        if item.get("peer_god_ready") is not True:
+            reason = _text(item.get("waiting_reason"))
+            if reason is None and item.get("bounded") is True:
+                reason = "selected CLI lacks peer_god capability"
+            if reason is None and item.get("provider_session_ready") is not True:
+                reason = "provider session metadata unavailable"
+            blocked.append(f"{god_id} ({reason or 'runtime not peer-GOD ready'})")
+    if blocked:
+        return {
+            "summary": (
+                "Natural GOD deliberation selected GOD runtime is not peer-GOD ready for "
+                f"{', '.join(blocked)}."
+            ),
+            "source_refs": source_refs,
+            "next_action": (
+                "Select only peer-GOD-ready runtime participants or attach stronger "
+                "provider/runtime proof."
+            ),
+        }
+    return None
+
+
+def _god_runtime_source_refs(runtime: dict[str, Any]) -> list[str]:
+    refs = _string_list(runtime.get("source_refs"))
+    for item in _messages(runtime.get("items")):
+        refs.extend(_string_list(item.get("source_refs")))
+    return _dedupe(refs)
 
 
 def _source_refs(transcript_artifact: dict[str, Any]) -> list[str]:

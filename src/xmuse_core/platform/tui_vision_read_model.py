@@ -25,6 +25,9 @@ def build_tui_vision_read_model(
     memory_trace: dict | None = None,
     github_truth: dict | None = None,
     provider_runtime: list[dict] | None = None,
+    god_runtime: dict | None = None,
+    replay_bundle: dict | None = None,
+    release_evidence_pack: dict | None = None,
 ) -> dict[str, Any]:
     """Build a provider-agnostic TUI read model from read-only inputs."""
     inspector_evidence = _inspector_evidence(inspector)
@@ -40,6 +43,13 @@ def build_tui_vision_read_model(
         "github": _build_github(github_truth or inspector_evidence["github_truth"]),
         "providers": _build_providers(
             provider_runtime or inspector_evidence["provider_runtime"]
+        ),
+        "god_runtime": _build_god_runtime(
+            god_runtime or inspector_evidence["god_runtime"]
+        ),
+        "proof_cockpit": _build_proof_cockpit(
+            replay_bundle or inspector_evidence["replay_bundle"],
+            release_evidence_pack or inspector_evidence["release_evidence_pack"],
         ),
     }
 
@@ -488,9 +498,168 @@ def _build_providers(provider_runtime: list[dict] | None) -> dict[str, Any]:
     }
 
 
+def _build_god_runtime(god_runtime: dict | None) -> dict[str, Any]:
+    if not isinstance(god_runtime, dict):
+        section = _manual_gap_section("selected GOD runtime continuity unavailable")
+        section.update({"read_only": True, "items": []})
+        return section
+    items = [
+        {
+            "god_id": _text(item.get("god_id")),
+            "cli_id": _text(item.get("cli_id")),
+            "provider_profile_ref": _text(item.get("provider_profile_ref")),
+            "provider_session_id": _text(item.get("provider_session_id")),
+            "capability_scope": _list_refs(item.get("capability_scope")),
+            "session_status": _text(item.get("session_status")),
+            "heartbeat_freshness": _text(item.get("heartbeat_freshness")),
+            "waiting_reason": _text(item.get("waiting_reason")),
+            "proof_level": _normalize_proof_level(item.get("proof_level")),
+            "bounded": item.get("bounded") is True,
+            "peer_god_ready": item.get("peer_god_ready") is True,
+            "provider_session_ready": item.get("provider_session_ready") is True,
+        }
+        for item in _dicts(god_runtime.get("items"))
+    ]
+    return {
+        "proof_level": _normalize_proof_level(god_runtime.get("proof_level")),
+        "fact_state": _text(god_runtime.get("fact_state")) or "manual_gap",
+        "source_refs": _list_refs(god_runtime.get("source_refs")),
+        "blockers": _dicts(god_runtime.get("blockers")),
+        "target_refs": [],
+        "manual_gap_reason": _text(god_runtime.get("manual_gap_reason")),
+        "read_only": True,
+        "source_authority": _list_refs(god_runtime.get("source_authority")),
+        "items": items,
+    }
+
+
+def _build_proof_cockpit(
+    replay_bundle: dict | None,
+    release_evidence_pack: dict | None,
+) -> dict[str, Any]:
+    if not isinstance(replay_bundle, dict) and not isinstance(
+        release_evidence_pack,
+        dict,
+    ):
+        return _manual_gap_section(
+            "overnight replay bundle and release evidence pack unavailable"
+        )
+
+    source_authority: list[str] = []
+    blockers: list[dict[str, Any]] = []
+    artifacts: list[str] = []
+    source_refs: list[str] = []
+    proof_level_summary: dict[str, int] = {}
+    section_statuses: list[dict[str, str]] = []
+    section_count = 0
+    artifact_count = 0
+    finding_count = 0
+    replay_decision = "not_evaluated"
+    release_decision = "not_evaluated"
+    proof_contamination_decision = "not_evaluated"
+    authority = None
+
+    if isinstance(replay_bundle, dict):
+        _append_unique(
+            source_authority,
+            _text(replay_bundle.get("schema_version"))
+            or "xmuse.overnight_replay_bundle.v1",
+        )
+        replay_decision = _text(replay_bundle.get("decision")) or "not_evaluated"
+        authority = _text(replay_bundle.get("authority"))
+        sections = _dicts(replay_bundle.get("sections"))
+        section_count = len(sections)
+        proof_level_summary.update(_proof_summary(replay_bundle.get("proof_level_summary")))
+        for section in sections:
+            section_statuses.append(
+                {
+                    "section_id": _text(section.get("section_id")) or "unknown",
+                    "status": _text(section.get("status")) or "not_evaluated",
+                    "proof_level": _normalize_proof_level(section.get("proof_level")),
+                    "source_authority": _text(section.get("source_authority")) or "unknown",
+                }
+            )
+            for ref in _list_refs(section.get("source_refs")):
+                _append_unique(source_refs, ref)
+            for artifact in _list_refs(section.get("artifacts")):
+                _append_unique(artifacts, artifact)
+        for blocker in _dicts(replay_bundle.get("blockers")):
+            blockers.append(
+                {
+                    "kind": "replay_section",
+                    "id": _text(blocker.get("section_id")) or "unknown",
+                    "reason": _text(blocker.get("reason")) or "blocked",
+                    "owner": _text(blocker.get("owner")) or "operator",
+                    "next_action": _text(blocker.get("next_action")),
+                }
+            )
+
+    if isinstance(release_evidence_pack, dict):
+        _append_unique(
+            source_authority,
+            _text(release_evidence_pack.get("schema_version"))
+            or "xmuse.release_evidence_pack.v1",
+        )
+        release_decision = _text(release_evidence_pack.get("decision")) or "not_evaluated"
+        proof_contamination_decision = (
+            _text(release_evidence_pack.get("proof_contamination_decision"))
+            or "not_evaluated"
+        )
+        artifact_count = _int(release_evidence_pack.get("artifact_count"))
+        finding_count = _int(release_evidence_pack.get("finding_count"))
+        for key in ("readiness_report", "proof_contamination_audit"):
+            artifact = _text(release_evidence_pack.get(key))
+            if artifact is not None:
+                _append_unique(artifacts, artifact)
+        for blocker in _dicts(release_evidence_pack.get("blockers")):
+            blockers.append(
+                {
+                    "kind": "release_gate",
+                    "id": _text(blocker.get("gate_id")) or "unknown",
+                    "reason": _text(blocker.get("reason")) or "blocked",
+                    "owner": _text(blocker.get("owner")) or "operator",
+                    "next_action": _text(blocker.get("next_action")),
+                }
+            )
+
+    fact_state = "observed"
+    if blockers or replay_decision == "blocked" or release_decision == "blocked":
+        fact_state = "blocked"
+    elif replay_decision == "ready_for_replay" or release_decision == "ready":
+        fact_state = "ready"
+
+    return {
+        "proof_level": "contract_proof",
+        "fact_state": fact_state,
+        "source_refs": source_refs,
+        "blockers": blockers,
+        "target_refs": [],
+        "manual_gap_reason": None,
+        "source_authority": source_authority,
+        "authority": authority,
+        "replay_decision": replay_decision,
+        "release_decision": release_decision,
+        "proof_contamination_decision": proof_contamination_decision,
+        "proof_level_summary": proof_level_summary,
+        "section_statuses": section_statuses,
+        "section_count": section_count,
+        "artifact_count": artifact_count,
+        "blocker_count": len(blockers),
+        "finding_count": finding_count,
+        "artifacts": artifacts,
+    }
+
+
 def _inspector_evidence(inspector: dict | None) -> dict[str, Any]:
     if not isinstance(inspector, dict):
-        return {"memory_trace": None, "github_truth": None, "provider_runtime": None}
+        return {
+            "memory_trace": None,
+            "github_truth": None,
+            "provider_runtime": None,
+            "god_runtime": None,
+            "replay_bundle": None,
+            "release_evidence_pack": None,
+        }
     return {
         "memory_trace": _first_dict(
             inspector,
@@ -510,6 +679,22 @@ def _inspector_evidence(inspector: dict | None) -> dict[str, Any]:
             "provider_runtime",
             "provider_sessions",
             "providers",
+        ),
+        "god_runtime": _first_dict(
+            inspector,
+            "god_runtime",
+            "selected_god_runtime",
+            "god_runtime_continuity",
+        ),
+        "replay_bundle": _first_dict(
+            inspector,
+            "replay_bundle",
+            "overnight_replay_bundle",
+        ),
+        "release_evidence_pack": _first_dict(
+            inspector,
+            "release_evidence_pack",
+            "release_pack",
         ),
     }
 
@@ -551,6 +736,26 @@ def _manual_gap_section(reason: str) -> dict[str, Any]:
         "target_refs": [],
         "manual_gap_reason": reason,
     }
+
+
+def _dicts(value: Any) -> list[dict[str, Any]]:
+    return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
+
+
+def _proof_summary(value: Any) -> dict[str, int]:
+    if not isinstance(value, dict):
+        return {}
+    summary: dict[str, int] = {}
+    for key, count in value.items():
+        proof_level = _normalize_proof_level(key)
+        normalized_count = _int(count)
+        if normalized_count:
+            summary[proof_level] = summary.get(proof_level, 0) + normalized_count
+    return dict(sorted(summary.items()))
+
+
+def _int(value: Any) -> int:
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
 
 
 def _message_envelope(message: dict[str, Any]) -> dict[str, Any]:

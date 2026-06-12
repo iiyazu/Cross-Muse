@@ -34,10 +34,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         / "natural-deliberation.json",
         help="Path for the release gate JSON artifact.",
     )
+    parser.add_argument(
+        "--god-runtime",
+        type=Path,
+        default=None,
+        help="Optional xmuse.god_runtime_continuity.v1 JSON artifact.",
+    )
     args = parser.parse_args(argv)
     gate = capture_natural_deliberation_release_gate(
         artifact_path=args.artifact,
         output_path=args.output,
+        god_runtime_path=args.god_runtime,
     )
     print(json.dumps({"status": gate["status"], "output": str(args.output)}, sort_keys=True))
     return 0 if gate["status"] == "ok" else 2

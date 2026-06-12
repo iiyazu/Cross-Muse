@@ -8,6 +8,7 @@ from xmuse.tui.widgets.execution_cockpit import render_execution_cockpit
 from xmuse.tui.widgets.github_truth_panel import render_github_truth_panel
 from xmuse.tui.widgets.memory_trace_drawer import render_memory_trace_drawer
 from xmuse.tui.widgets.message_log import MessageLog
+from xmuse.tui.widgets.proof_cockpit import render_proof_cockpit
 
 
 def test_render_card_returns_panel():
@@ -246,6 +247,127 @@ def test_github_truth_panel_separates_readiness_from_merged_fact() -> None:
     assert "pr_merged" not in rendered
     assert "quality-gates" in rendered
     assert "github://owner/repo/pull/42" in rendered
+
+
+def test_proof_cockpit_renders_replay_and_release_blockers() -> None:
+    panel = render_proof_cockpit(
+        {
+            "proof_cockpit": {
+                "proof_level": "contract_proof",
+                "fact_state": "blocked",
+                "authority": "replay_index_only",
+                "replay_decision": "blocked",
+                "release_decision": "blocked",
+                "proof_contamination_decision": "clean",
+                "section_count": 2,
+                "artifact_count": 4,
+                "blocker_count": 2,
+                "finding_count": 0,
+                "proof_level_summary": {
+                    "contract_proof": 3,
+                    "manual_gap": 1,
+                },
+                "blockers": [
+                    {
+                        "kind": "replay_section",
+                        "id": "memoryos_trace",
+                        "reason": "MemoryOS Lite was not configured",
+                    },
+                    {
+                        "kind": "release_gate",
+                        "id": "real-provider-runtime",
+                        "reason": "provider soak missing",
+                    },
+                ],
+                "artifacts": ["artifact://release-readiness.json"],
+                "source_refs": ["github:pr:43"],
+                "manual_gap_reason": None,
+            }
+        }
+    )
+
+    rendered = panel.renderable.plain
+    assert "blocked" in rendered
+    assert "replay_index_only" in rendered
+    assert "Replay: blocked" in rendered
+    assert "Release: blocked" in rendered
+    assert "Proof contamination: clean" in rendered
+    assert "contract_proof=3" in rendered
+    assert "manual_gap=1" in rendered
+    assert "replay_section memoryos_trace: MemoryOS Lite was not configured" in rendered
+    assert "release_gate real-provider-runtime: provider soak missing" in rendered
+    assert "artifact://release-readiness.json" in rendered
+    assert "github:pr:43" in rendered
+
+
+def test_proof_cockpit_renders_section_statuses_and_god_runtime() -> None:
+    panel = render_proof_cockpit(
+        {
+            "proof_cockpit": {
+                "proof_level": "contract_proof",
+                "fact_state": "blocked",
+                "section_statuses": [
+                    {
+                        "section_id": "memory_governance",
+                        "status": "ok",
+                        "proof_level": "contract_proof",
+                        "source_authority": "memoryos_governance_policy",
+                    },
+                    {
+                        "section_id": "memoryos_trace",
+                        "status": "manual_gap",
+                        "proof_level": "manual_gap",
+                        "source_authority": "memoryos_rest",
+                    },
+                ],
+                "blockers": [],
+                "manual_gap_reason": None,
+            },
+            "god_runtime": {
+                "proof_level": "contract_proof",
+                "fact_state": "blocked",
+                "items": [
+                    {
+                        "god_id": "codex.god",
+                        "cli_id": "codex.god",
+                        "peer_god_ready": True,
+                        "bounded": False,
+                        "provider_session_ready": True,
+                        "proof_level": "contract_proof",
+                        "waiting_reason": None,
+                    },
+                    {
+                        "god_id": "opencode-worker",
+                        "cli_id": "opencode.deepseek_flash_worker",
+                        "peer_god_ready": False,
+                        "bounded": True,
+                        "provider_session_ready": True,
+                        "proof_level": "contract_proof",
+                        "waiting_reason": "selected CLI lacks peer_god capability",
+                    },
+                ],
+            },
+        }
+    )
+
+    rendered = panel.renderable.plain
+    assert "Sections:" in rendered
+    assert "memory_governance ok/contract_proof via memoryos_governance_policy" in rendered
+    assert "memoryos_trace manual_gap/manual_gap via memoryos_rest" in rendered
+    assert "GOD runtime: ready=1; bounded=1; blocked=1; total=2" in rendered
+    assert "codex.god codex.god ready contract_proof" in rendered
+    assert (
+        "opencode-worker opencode.deepseek_flash_worker bounded contract_proof: "
+        "selected CLI lacks peer_god capability"
+    ) in rendered
+
+
+def test_proof_cockpit_renders_manual_gap() -> None:
+    panel = render_proof_cockpit(None)
+
+    rendered = panel.renderable.plain
+    assert "manual_gap" in rendered
+    assert "No proof cockpit evidence" in rendered
 
 
 class TestRunHealthCounts:

@@ -6,6 +6,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
+from xmuse_core.platform.production_evidence import (
+    ProductionEvidenceEnvelope,
+    ProductionEvidenceStatus,
+)
+from xmuse_core.platform.release_readiness import ProofLevel
+
 StageStatus = Literal["pending", "running", "ok", "manual_gap"]
 
 
@@ -40,6 +46,7 @@ class OvernightSupervisor:
         self._issue_queue: list[dict[str, Any]] = []
         self._failure_classifications: list[dict[str, Any]] = []
         self._stage_journal: list[dict[str, Any]] = []
+        self._production_evidence: list[dict[str, Any]] = []
         self._persist()
 
     @classmethod
@@ -74,6 +81,7 @@ class OvernightSupervisor:
             snapshot.get("failure_classifications")
         )
         supervisor._stage_journal = _dict_rows(snapshot.get("stage_journal"))
+        supervisor._production_evidence = _dict_rows(snapshot.get("production_evidence"))
         return supervisor
 
     def start_stage(self, stage_id: str) -> None:
@@ -102,6 +110,13 @@ class OvernightSupervisor:
         stage_id: str,
         summary: str,
         validation: list[str] | None = None,
+        commands: list[str] | None = None,
+        source_refs: list[str] | None = None,
+        target_refs: list[str] | None = None,
+        artifacts: list[str] | None = None,
+        proof_level: ProofLevel = "contract_proof",
+        owner: str = "codex",
+        next_action: str | None = None,
     ) -> dict[str, Any]:
         checkpoint = {
             "run_id": self._config.run_id,
@@ -112,6 +127,25 @@ class OvernightSupervisor:
         }
         self._checkpoints.append(checkpoint)
         self._journal("checkpoint", stage_id=stage_id, summary=summary)
+        self._record_production_evidence(
+            stage_id=stage_id,
+            action="checkpoint",
+            status="ok",
+            proof_level=proof_level,
+            source_refs=source_refs,
+            target_refs=target_refs,
+            commands=commands,
+            test_results=validation,
+            artifacts=artifacts,
+            blocked_reason=None,
+            owner=owner,
+            next_action=next_action,
+            summary=summary,
+            gate_id=f"goal-stage-{stage_id}-checkpoint",
+            kind="local_validation",
+            configured=True,
+            required=False,
+        )
         self._persist()
         return checkpoint
 
@@ -179,11 +213,16 @@ class OvernightSupervisor:
         reason: str,
         attempted_command: str | None = None,
         next_action: str | None = None,
+        owner: str = "operator",
+        source_refs: list[str] | None = None,
+        target_refs: list[str] | None = None,
+        artifacts: list[str] | None = None,
     ) -> dict[str, Any]:
         stage = self._stage(stage_id)
         stage["status"] = "manual_gap"
         stage["manual_gap_reason"] = reason
         stage["completed_at"] = _utcnow()
+        manual_gap_path = self._config.artifact_dir / f"manual-gap-{stage_id}.json"
         gap = {
             "schema_version": "xmuse.manual_gap.v1",
             "run_id": self._config.run_id,
@@ -195,7 +234,28 @@ class OvernightSupervisor:
             "timestamp_utc": _utcnow(),
         }
         self._manual_gaps.append(gap)
-        self._write_json(self._config.artifact_dir / f"manual-gap-{stage_id}.json", gap)
+        self._write_json(manual_gap_path, gap)
+        commands = [attempted_command] if attempted_command else []
+        evidence_artifacts = [str(manual_gap_path), *(artifacts or [])]
+        self._record_production_evidence(
+            stage_id=stage_id,
+            action="manual_gap",
+            status="manual_gap",
+            proof_level="manual_gap",
+            source_refs=source_refs,
+            target_refs=target_refs,
+            commands=commands,
+            test_results=[],
+            artifacts=evidence_artifacts,
+            blocked_reason=reason,
+            owner=owner,
+            next_action=next_action,
+            summary=reason,
+            gate_id=f"goal-stage-{stage_id}-manual-gap",
+            kind="local_validation",
+            configured=False,
+            required=False,
+        )
         self._journal("manual_gap", stage_id=stage_id, reason=reason)
         if self._current_stage_id == stage_id:
             self._current_stage_id = None
@@ -239,6 +299,7 @@ class OvernightSupervisor:
             "issue_queue": list(self._issue_queue),
             "failure_classifications": list(self._failure_classifications),
             "stage_journal": list(self._stage_journal),
+            "production_evidence": list(self._production_evidence),
         }
 
     def _stage(self, stage_id: str) -> dict[str, Any]:
@@ -252,6 +313,55 @@ class OvernightSupervisor:
             {"event": event, "timestamp_utc": _utcnow(), **fields}
         )
 
+    def _record_production_evidence(
+        self,
+        *,
+        stage_id: str,
+        action: str,
+        status: ProductionEvidenceStatus,
+        proof_level: ProofLevel,
+        source_refs: list[str] | None = None,
+        target_refs: list[str] | None = None,
+        commands: list[str] | None = None,
+        test_results: list[str] | None = None,
+        artifacts: list[str] | None = None,
+        blocked_reason: str | None = None,
+        owner: str,
+        next_action: str | None = None,
+        summary: str | None = None,
+        gate_id: str | None = None,
+        kind: str | None = None,
+        configured: bool | None = None,
+        required: bool | None = None,
+    ) -> dict[str, Any]:
+        envelope = ProductionEvidenceEnvelope(
+            run_id=self._config.run_id,
+            stage_id=stage_id,
+            action=action,
+            status=status,
+            proof_level=proof_level,
+            source_authority="overnight_operator_supervisor",
+            source_refs=tuple(source_refs or ()),
+            target_refs=tuple(target_refs or ()),
+            commands=tuple(commands or ()),
+            test_results=tuple(test_results or ()),
+            artifacts=tuple(artifacts or ()),
+            blocked_reason=blocked_reason,
+            owner=owner,
+            next_action=next_action,
+            summary=summary,
+            gate_id=gate_id,
+            kind=kind,
+            configured=configured,
+            required=required,
+        ).model_dump()
+        self._production_evidence.append(envelope)
+        self._write_json(
+            self._production_evidence_path(stage_id=stage_id, action=action),
+            envelope,
+        )
+        return envelope
+
     def _persist(self) -> None:
         self._write_json(
             self._snapshot_path(self._config),
@@ -261,6 +371,12 @@ class OvernightSupervisor:
     @staticmethod
     def _snapshot_path(config: OvernightSupervisorConfig) -> Path:
         return config.artifact_dir / f"overnight-supervisor-{config.run_id}.json"
+
+    def _production_evidence_path(self, *, stage_id: str, action: str) -> Path:
+        index = len(self._production_evidence)
+        return self._config.artifact_dir / (
+            f"production-evidence-{index:03d}-{_slug(stage_id)}-{_slug(action)}.json"
+        )
 
     @staticmethod
     def _write_json(path: Path, payload: dict[str, Any]) -> None:
@@ -281,6 +397,12 @@ def _dict_rows(value: Any) -> list[dict[str, Any]]:
     if not isinstance(value, list):
         return []
     return [dict(item) for item in value if isinstance(item, dict)]
+
+
+def _slug(value: str) -> str:
+    slug = "".join(ch if ch.isalnum() else "-" for ch in value.strip().lower())
+    slug = "-".join(part for part in slug.split("-") if part)
+    return slug or "unknown"
 
 
 def _utcnow() -> str:

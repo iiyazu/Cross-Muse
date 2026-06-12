@@ -444,6 +444,149 @@ def test_tui_vision_read_model_requires_server_side_proof_for_pr_merged() -> Non
     assert model["github"]["manual_gap_reason"] == "server-side merge proof is missing"
 
 
+def test_tui_vision_read_model_summarizes_proof_cockpit_without_authority_upgrade() -> None:
+    model = build_tui_vision_read_model(
+        replay_bundle={
+            "schema_version": "xmuse.overnight_replay_bundle.v1",
+            "authority": "replay_index_only",
+            "decision": "blocked",
+            "proof_level_summary": {
+                "contract_proof": 4,
+                "manual_gap": 1,
+                "server_side_enforcement_proof": 1,
+            },
+            "sections": [
+                {
+                    "section_id": "github_truth",
+                    "status": "ok",
+                    "proof_level": "server_side_enforcement_proof",
+                    "source_authority": "github_server",
+                    "source_refs": ["github:pr:43"],
+                    "artifacts": ["artifact://github-truth.json"],
+                },
+                {
+                    "section_id": "memoryos_trace",
+                    "status": "manual_gap",
+                    "proof_level": "manual_gap",
+                    "source_authority": "memoryos_rest",
+                    "source_refs": [],
+                    "artifacts": [],
+                },
+                {
+                    "section_id": "memory_governance",
+                    "status": "ok",
+                    "proof_level": "contract_proof",
+                    "source_authority": "memoryos_governance_policy",
+                    "source_refs": ["memory-governance:policy:S5"],
+                    "artifacts": ["artifact://memory-governance.json"],
+                },
+            ],
+            "blockers": [
+                {
+                    "section_id": "memoryos_trace",
+                    "reason": "MemoryOS Lite was not configured",
+                    "owner": "operator",
+                    "next_action": "Enable MemoryOS Lite.",
+                }
+            ],
+        },
+        release_evidence_pack={
+            "schema_version": "xmuse.release_evidence_pack.v1",
+            "decision": "blocked",
+            "release_readiness_decision": "blocked",
+            "proof_contamination_decision": "clean",
+            "artifact_count": 4,
+            "blocker_count": 1,
+            "finding_count": 0,
+            "blockers": [
+                {
+                    "gate_id": "real-provider-runtime",
+                    "kind": "real_provider",
+                    "reason": "real provider runtime soak was not captured",
+                    "owner": "operator",
+                    "next_action": "Run provider soak.",
+                }
+            ],
+            "readiness_report": "artifact://release-readiness.json",
+            "proof_contamination_audit": "artifact://proof-contamination-audit.json",
+        },
+    )
+
+    cockpit = model["proof_cockpit"]
+    assert cockpit["proof_level"] == "contract_proof"
+    assert cockpit["fact_state"] == "blocked"
+    assert cockpit["source_authority"] == [
+        "xmuse.overnight_replay_bundle.v1",
+        "xmuse.release_evidence_pack.v1",
+    ]
+    assert cockpit["replay_decision"] == "blocked"
+    assert cockpit["release_decision"] == "blocked"
+    assert cockpit["proof_contamination_decision"] == "clean"
+    assert cockpit["authority"] == "replay_index_only"
+    assert cockpit["proof_level_summary"] == {
+        "contract_proof": 4,
+        "manual_gap": 1,
+        "server_side_enforcement_proof": 1,
+    }
+    assert cockpit["section_count"] == 3
+    assert cockpit["section_statuses"] == [
+        {
+            "section_id": "github_truth",
+            "status": "ok",
+            "proof_level": "server_side_enforcement_proof",
+            "source_authority": "github_server",
+        },
+        {
+            "section_id": "memoryos_trace",
+            "status": "manual_gap",
+            "proof_level": "manual_gap",
+            "source_authority": "memoryos_rest",
+        },
+        {
+            "section_id": "memory_governance",
+            "status": "ok",
+            "proof_level": "contract_proof",
+            "source_authority": "memoryos_governance_policy",
+        },
+    ]
+    assert cockpit["artifact_count"] == 4
+    assert cockpit["blocker_count"] == 2
+    assert cockpit["finding_count"] == 0
+    assert cockpit["source_refs"] == ["github:pr:43", "memory-governance:policy:S5"]
+    assert cockpit["artifacts"] == [
+        "artifact://github-truth.json",
+        "artifact://memory-governance.json",
+        "artifact://release-readiness.json",
+        "artifact://proof-contamination-audit.json",
+    ]
+    assert cockpit["blockers"] == [
+        {
+            "kind": "replay_section",
+            "id": "memoryos_trace",
+            "reason": "MemoryOS Lite was not configured",
+            "owner": "operator",
+            "next_action": "Enable MemoryOS Lite.",
+        },
+        {
+            "kind": "release_gate",
+            "id": "real-provider-runtime",
+            "reason": "real provider runtime soak was not captured",
+            "owner": "operator",
+            "next_action": "Run provider soak.",
+        },
+    ]
+
+
+def test_tui_vision_read_model_reports_proof_cockpit_manual_gap_without_artifacts() -> None:
+    model = build_tui_vision_read_model()
+
+    assert model["proof_cockpit"]["proof_level"] == "manual_gap"
+    assert model["proof_cockpit"]["fact_state"] == "manual_gap"
+    assert model["proof_cockpit"]["manual_gap_reason"] == (
+        "overnight replay bundle and release evidence pack unavailable"
+    )
+
+
 def test_tui_vision_read_model_uses_inspector_optional_evidence() -> None:
     model = build_tui_vision_read_model(
         conversation_id="conv-1",

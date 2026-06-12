@@ -33,6 +33,7 @@ def capture_github_server_truth(
     internal_reviewer: str | None = None,
     internal_reviewed_head_sha: str | None = None,
     release_gate_output: Path | None = None,
+    expected_head_sha: str | None = None,
 ) -> int:
     client = GitHubCliServerSideTruthClient(
         base_branch=base_branch,
@@ -48,8 +49,15 @@ def capture_github_server_truth(
         required_checks=required_checks,
     )
     payload = evidence.model_dump(mode="json")
+    head_sha_matches_expected = (
+        True if expected_head_sha is None else payload.get("head_sha") == expected_head_sha
+    )
     payload["schema_version"] = "github_server_side_truth_capture.v1"
-    payload["can_emit_pr_merged"] = can_emit_pr_merged(evidence)
+    payload["expected_head_sha"] = expected_head_sha
+    payload["head_sha_matches_expected"] = head_sha_matches_expected
+    payload["can_emit_pr_merged"] = (
+        can_emit_pr_merged(evidence) and head_sha_matches_expected
+    )
     payload["merged"] = payload["can_emit_pr_merged"] is True
     payload["capture_mode"] = "opt_in_read_only_gh_api"
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -60,6 +68,7 @@ def capture_github_server_truth(
             artifact_path=output,
             output_path=release_gate_output,
             base_branch=base_branch,
+            expected_head_sha=expected_head_sha,
         )
     return 0 if payload["can_emit_pr_merged"] else 2
 
@@ -101,6 +110,14 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Required check name. May be repeated.",
     )
+    parser.add_argument(
+        "--expected-head-sha",
+        default=None,
+        help=(
+            "Optional current PR head SHA expected by this run. A mismatch keeps "
+            "the release gate at manual_gap."
+        ),
+    )
     args = parser.parse_args(argv)
     return capture_github_server_truth(
         repo=args.repo,
@@ -112,6 +129,7 @@ def main(argv: list[str] | None = None) -> int:
         internal_reviewer=args.internal_reviewer,
         internal_reviewed_head_sha=args.internal_reviewed_head_sha,
         release_gate_output=args.release_gate_output,
+        expected_head_sha=args.expected_head_sha,
     )
 
 

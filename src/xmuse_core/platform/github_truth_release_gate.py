@@ -11,9 +11,33 @@ def build_github_server_truth_release_gate(
     *,
     artifact_path: str | Path,
     base_branch: str = "main",
+    expected_head_sha: str | None = None,
 ) -> dict[str, Any]:
     pull_request_number = github_truth.get("pull_request_number")
-    source_refs = _source_refs(pull_request_number, base_branch=base_branch)
+    actual_head_sha = _text(github_truth.get("head_sha"))
+    expected_head_sha = expected_head_sha or _text(github_truth.get("expected_head_sha"))
+    source_refs = _source_refs(
+        pull_request_number,
+        base_branch=base_branch,
+        head_sha=actual_head_sha,
+        expected_head_sha=expected_head_sha,
+    )
+    if expected_head_sha is not None and actual_head_sha != expected_head_sha:
+        return _gate(
+            status="manual_gap",
+            proof_level="manual_gap",
+            summary=(
+                "GitHub server truth head "
+                f"{actual_head_sha or '<missing>'} does not match expected current "
+                f"head {expected_head_sha}."
+            ),
+            source_refs=source_refs,
+            artifact_path=artifact_path,
+            next_action=(
+                "Re-capture GitHub server truth for the current PR head before "
+                "using this artifact in release readiness."
+            ),
+        )
     if _has_server_enforcement_proof(github_truth):
         return _gate(
             status="ok",
@@ -39,11 +63,13 @@ def write_github_server_truth_release_gate(
     artifact_path: str | Path,
     output_path: str | Path,
     base_branch: str = "main",
+    expected_head_sha: str | None = None,
 ) -> dict[str, Any]:
     gate = build_github_server_truth_release_gate(
         github_truth,
         artifact_path=artifact_path,
         base_branch=base_branch,
+        expected_head_sha=expected_head_sha,
     )
     destination = Path(output_path)
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -122,11 +148,21 @@ def _gap_summary(github_truth: dict[str, Any]) -> str:
     return "GitHub branch protection/ruleset or required check truth is unavailable."
 
 
-def _source_refs(pull_request_number: Any, *, base_branch: str) -> list[str]:
+def _source_refs(
+    pull_request_number: Any,
+    *,
+    base_branch: str,
+    head_sha: str | None,
+    expected_head_sha: str | None,
+) -> list[str]:
     refs: list[str] = []
     if isinstance(pull_request_number, int) and not isinstance(pull_request_number, bool):
         refs.append(f"github:pr:{pull_request_number}")
     refs.append(f"github:branch:{base_branch}")
+    if head_sha is not None:
+        refs.append(f"github:head:{head_sha}")
+    if expected_head_sha is not None:
+        refs.append(f"github:expected-head:{expected_head_sha}")
     return refs
 
 
