@@ -296,6 +296,40 @@ def _write_production_baseline(path: Path, **overrides: object) -> Path:
     return path
 
 
+def _write_goal_stage_result(
+    path: Path,
+    *,
+    stage_id: str = "S1",
+    status: str = "ok",
+) -> Path:
+    payload = {
+        "stage_id": stage_id,
+        "status": status,
+        "engine": "opencode",
+        "issues": [],
+        "review_decision": "pass" if status == "ok" else status,
+        "retry_hint": None,
+        "evidence_dir": str(path.parent / f"{path.name}.evidence"),
+        "agent_output_path": str(path),
+        "command": [
+            "opencode",
+            "run",
+            "--model",
+            "opencode-go/deepseek-v4-flash",
+            "--variant",
+            "max",
+        ],
+        "agent_stdout_path": str(
+            path.parent / f"{path.name}.evidence" / "engine_output.txt"
+        ),
+        "returncode": 0 if status == "ok" else 2,
+        "attempt": 1,
+        "timestamp_utc": "2026-06-12T00:00:00Z",
+    }
+    _write_json(path, payload)
+    return path
+
+
 def _write_transcript(path: Path) -> Path:
     _write_json(
         path,
@@ -586,6 +620,46 @@ def test_release_evidence_pack_attaches_production_baseline_truth_map(
     }
     assert pack["decision"] == "blocked"
     assert pack["release_readiness_decision"] == "ready"
+
+
+def test_release_evidence_pack_converts_goal_stage_results_to_replay_section(
+    tmp_path: Path,
+) -> None:
+    artifacts = tmp_path / "artifacts"
+    output = tmp_path / "pack" / "evidence-pack.json"
+    stage_result = _write_goal_stage_result(tmp_path / "goal" / "S1.result.json")
+    _write_json(
+        artifacts / "github-server-truth.json",
+        _gate(
+            gate_id="github-server-truth",
+            kind="github_server_truth",
+            status="ok",
+            proof_level="server_side_enforcement_proof",
+        ),
+    )
+
+    pack = capture_release_evidence_pack(
+        artifacts_dir=artifacts,
+        output_path=output,
+        run_id="pack-stage-evidence",
+        goal_stage_results=(stage_result,),
+    )
+
+    replay = json.loads(
+        (output.parent / "overnight-replay-bundle.json").read_text(encoding="utf-8")
+    )
+    sections = {section["section_id"]: section for section in replay["sections"]}
+    assert "stage_evidence" in sections
+    assert sections["stage_evidence"]["status"] == "ok"
+    assert sections["stage_evidence"]["source_authority"] == "goal_stage_harness"
+    assert sections["stage_evidence"]["source_refs"] == [
+        "goal_run:pack-stage-evidence",
+        "goal_stage:S1",
+        f"goal_stage_result:{stage_result}",
+    ]
+    assert pack["source_reports"]["goal_stage_evidence"] == str(
+        output.parent / "goal-stage-production-evidence.json"
+    )
 
 
 def test_release_evidence_pack_rejects_invalid_production_baseline_schema(
@@ -1343,6 +1417,56 @@ def test_release_evidence_pack_cli_accepts_production_baseline(
     pack = json.loads(output.read_text(encoding="utf-8"))
     assert pack["source_reports"]["production_baseline"] == str(baseline)
     assert pack["production_baseline"]["head_sha"] == "head-pack-1"
+
+
+def test_release_evidence_pack_cli_accepts_goal_stage_results(
+    tmp_path: Path,
+) -> None:
+    from xmuse.release_evidence_pack import main
+
+    artifacts = tmp_path / "artifacts"
+    output = tmp_path / "pack.json"
+    stage_result = _write_goal_stage_result(tmp_path / "goal" / "S1.result.json")
+    _write_json(
+        artifacts / "github-server-truth.json",
+        _gate(
+            gate_id="github-server-truth",
+            kind="github_server_truth",
+            status="ok",
+            proof_level="server_side_enforcement_proof",
+        ),
+    )
+
+    assert (
+        main(
+            [
+                "--artifacts-dir",
+                str(artifacts),
+                "--output",
+                str(output),
+                "--run-id",
+                "overnight-cli-stage",
+                "--goal-stage-result",
+                str(stage_result),
+            ]
+        )
+        == 0
+    )
+
+    pack = json.loads(output.read_text(encoding="utf-8"))
+    replay = json.loads(
+        (output.parent / "overnight-replay-bundle.json").read_text(encoding="utf-8")
+    )
+    sections = {section["section_id"]: section for section in replay["sections"]}
+    assert pack["source_reports"]["goal_stage_evidence"] == str(
+        output.parent / "goal-stage-production-evidence.json"
+    )
+    assert sections["stage_evidence"]["status"] == "ok"
+    assert sections["stage_evidence"]["source_refs"] == [
+        "goal_run:overnight-cli-stage",
+        "goal_stage:S1",
+        f"goal_stage_result:{stage_result}",
+    ]
 
 
 def test_release_evidence_pack_cli_accepts_supervisor_snapshot(

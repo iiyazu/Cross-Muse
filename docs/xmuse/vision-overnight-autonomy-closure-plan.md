@@ -214,6 +214,24 @@ Acceptance:
 - Evidence envelopes do not become durable authority for lane/review/GitHub
   facts; they only summarize source authorities.
 
+Current implementation status:
+
+- `uv run xmuse-goal-stage-evidence-capture --stage-result RESULT.json`
+  converts one or more goal-stage runner `result.json` files into a replay-ready
+  `xmuse.production_evidence.v1` artifact for the `stage_evidence` section.
+  Non-`ok` stage results stay blocked `manual_gap` with owner and next action.
+- The overnight replay bundle now requires a `stage_evidence` section alongside
+  deliberation, blueprint, feature lineage, MemoryOS, GitHub, supervisor, and
+  readiness sections. Missing stage evidence is represented as a replay
+  `manual_gap`, not hidden in prose.
+- `uv run xmuse-release-evidence-pack --goal-stage-result RESULT.json` converts
+  goal-stage results into `goal-stage-production-evidence.json` before building
+  the nested replay bundle. The pack only indexes prompt/manifest/result/output
+  artifacts; it does not make `result.json` authoritative for lane status,
+  review truth, GitHub truth, release readiness, or live runtime proof.
+- TUI `/release pack stage=goal/S1.result.json` routes the same handoff through
+  the audited operator action path and release-root path guard.
+
 ## S2 - GOD Runtime Continuity And Natural Transcript Spine
 
 Goal: close the gap between selectable GOD CLI choices and repeatable natural
@@ -401,8 +419,9 @@ Current implementation status:
   and the policy decision that made a memory write/promotion acceptable.
 - `uv run xmuse-overnight-replay-bundle-capture` builds a replay index from
   release gate artifacts and explicit `xmuse.production_evidence.v1` section
-  artifacts. It fills unattached required sections with `manual_gap` instead of
-  omitting them, so an overnight run can be replayed without prose-only gaps.
+  artifacts. It fills unattached required sections, including `stage_evidence`,
+  with `manual_gap` instead of omitting them, so an overnight run can be
+  replayed without prose-only gaps.
 - `uv run xmuse-release-evidence-pack` now writes the same overnight replay
   bundle as a nested `replay_index_only` source report alongside release
   readiness and proof-contamination reports. Section artifacts and tombstoned
@@ -595,6 +614,10 @@ Tasks:
 - Or use `uv run xmuse-release-evidence-pack --section-artifact SECTION=PATH`
   to produce the release-readiness, proof-contamination, and overnight replay
   reports in one operator handoff pack.
+- When goal-stage runner results exist, prefer
+  `uv run xmuse-release-evidence-pack --goal-stage-result RESULT.json` for the
+  final handoff pack; do not pass it together with an explicit
+  `--section-artifact stage_evidence=...`.
 - When a supervisor snapshot exists, prefer
   `uv run xmuse-release-evidence-pack --supervisor-snapshot SNAPSHOT` for the
   final handoff pack; do not pass both `--supervisor-snapshot` and an explicit

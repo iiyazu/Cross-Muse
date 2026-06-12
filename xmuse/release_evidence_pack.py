@@ -64,6 +64,25 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--goal-stage-result",
+        type=Path,
+        action="append",
+        default=[],
+        help=(
+            "Goal stage runner result.json to convert into the replay bundle's "
+            "stage_evidence section. May be repeated."
+        ),
+    )
+    parser.add_argument(
+        "--goal-stage-evidence-output",
+        type=Path,
+        default=None,
+        help=(
+            "Optional path for the goal-stage production evidence generated "
+            "from --goal-stage-result inputs."
+        ),
+    )
+    parser.add_argument(
         "--supervisor-snapshot",
         type=Path,
         default=None,
@@ -296,6 +315,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         internal_review_artifact=args.internal_review_artifact,
         internal_review_expected_head_sha=args.internal_review_expected_head_sha,
         production_baseline=args.production_baseline,
+        goal_stage_results=tuple(args.goal_stage_result),
+        goal_stage_evidence_output=args.goal_stage_evidence_output,
         tombstoned_source_refs=tuple(args.tombstoned_source_ref),
     )
     print(json.dumps({"decision": pack["decision"], "output": str(args.output)}, sort_keys=True))

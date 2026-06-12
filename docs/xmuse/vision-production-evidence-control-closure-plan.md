@@ -558,6 +558,11 @@ Current implementation status:
   summary and `source_reports`. This keeps the starting git/env/resource/blocker
   map in the handoff artifact, but does not make baseline inventory a release
   gate, replay section, live proof, or readiness input.
+- The same release pack command can accept repeated `--goal-stage-result`
+  inputs and convert goal-stage runner `result.json` files into the replay
+  bundle's `stage_evidence` section. This makes the long `/goal` stage spine
+  replayable without treating stage results as lane status, review truth,
+  GitHub truth, release readiness proof, or live runtime proof.
 - The same release pack command can accept `--supervisor-snapshot` and convert
   a durable `xmuse.overnight_supervisor.v1` snapshot into replay-ready
   supervisor production evidence before building the nested replay bundle. This

@@ -18,6 +18,7 @@ from xmuse_core.platform.frozen_blueprint_evidence_capture import (
 from xmuse_core.platform.github_truth_release_gate import (
     write_github_server_truth_release_gate,
 )
+from xmuse_core.platform.goal_stage_evidence_capture import capture_goal_stage_evidence
 from xmuse_core.platform.internal_review_release_gate import (
     capture_internal_review_release_gate,
 )
@@ -76,6 +77,8 @@ def capture_release_evidence_pack(
     internal_review_artifact: str | Path | None = None,
     internal_review_expected_head_sha: str | None = None,
     production_baseline: str | Path | None = None,
+    goal_stage_results: tuple[str | Path, ...] = (),
+    goal_stage_evidence_output: str | Path | None = None,
     tombstoned_source_refs: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     output = Path(output_path)
@@ -107,6 +110,8 @@ def capture_release_evidence_pack(
         memoryos_governance_plans=memoryos_governance_plans,
         memoryos_writeback_events=memoryos_writeback_events,
         memoryos_governance_evidence_output=memoryos_governance_evidence_output,
+        goal_stage_results=goal_stage_results,
+        goal_stage_evidence_output=goal_stage_evidence_output,
     )
     release_gate_source_reports = _release_gate_artifacts(
         artifacts_dir=Path(artifacts_dir),
@@ -197,9 +202,29 @@ def _replay_section_artifacts(
     memoryos_governance_plans: tuple[str | Path, ...],
     memoryos_writeback_events: tuple[str | Path, ...],
     memoryos_governance_evidence_output: str | Path | None,
+    goal_stage_results: tuple[str | Path, ...],
+    goal_stage_evidence_output: str | Path | None,
 ) -> tuple[dict[str, str | Path] | None, dict[str, str]]:
     artifacts = dict(section_artifacts or {})
     source_reports: dict[str, str] = {}
+    if goal_stage_results:
+        if "stage_evidence" in artifacts:
+            raise ValueError(
+                "stage_evidence source is ambiguous: pass either "
+                "section_artifacts['stage_evidence'] or goal_stage_results, not both"
+            )
+        goal_stage_evidence_path = (
+            Path(goal_stage_evidence_output)
+            if goal_stage_evidence_output is not None
+            else report_dir / "goal-stage-production-evidence.json"
+        )
+        capture_goal_stage_evidence(
+            run_id=run_id,
+            output_path=goal_stage_evidence_path,
+            stage_results=goal_stage_results,
+        )
+        artifacts["stage_evidence"] = goal_stage_evidence_path
+        source_reports["goal_stage_evidence"] = str(goal_stage_evidence_path)
     if supervisor_snapshot is not None:
         if "supervisor" in artifacts:
             raise ValueError(

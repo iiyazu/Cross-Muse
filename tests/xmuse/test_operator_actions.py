@@ -876,6 +876,42 @@ def _write_production_baseline(path: Path) -> None:
     )
 
 
+def _write_goal_stage_result(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "stage_id": "S1",
+                "status": "ok",
+                "engine": "opencode",
+                "issues": [],
+                "review_decision": "pass",
+                "retry_hint": None,
+                "evidence_dir": str(path.parent / f"{path.name}.evidence"),
+                "agent_output_path": str(path),
+                "command": [
+                    "opencode",
+                    "run",
+                    "--model",
+                    "opencode-go/deepseek-v4-flash",
+                    "--variant",
+                    "max",
+                ],
+                "agent_stdout_path": str(
+                    path.parent / f"{path.name}.evidence" / "engine_output.txt"
+                ),
+                "returncode": 0,
+                "attempt": 1,
+                "timestamp_utc": "2026-06-12T00:00:00Z",
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
 def test_operator_action_captures_release_evidence_pack_with_capability(
     tmp_path: Path,
 ) -> None:
@@ -1024,6 +1060,46 @@ def test_operator_action_captures_release_pack_with_production_baseline(
     assert pack["production_baseline"]["head_sha"] == "head-pack-1"
     assert pack["production_baseline"]["blockers"] == [
         "memoryos_lite_live_environment_missing"
+    ]
+
+
+def test_operator_action_captures_release_pack_with_goal_stage_result(
+    tmp_path: Path,
+) -> None:
+    release_dir = tmp_path / "release_readiness"
+    _write_goal_stage_result(release_dir / "goal" / "S1.result.json")
+    _write_gate(release_dir / "artifacts" / "provider.json")
+    service = OperatorActionService(
+        god_cli_registry=build_default_god_cli_registry(),
+        audit_dir=tmp_path / "operator_actions",
+        release_readiness_dir=release_dir,
+    )
+
+    result = service.handle(
+        OperatorActionRequest(
+            action="capture_release_evidence_pack",
+            actor_id="operator-1",
+            capabilities=(OperatorActionCapability.RELEASE_GATE,),
+            idempotency_key="idem-release-stage-1",
+            payload={"goal_stage_result": "goal/S1.result.json"},
+            source="tui",
+        )
+    )
+
+    assert result.status == "ok"
+    pack = result.payload["evidence_pack"]
+    replay = json.loads(
+        (release_dir / "overnight-replay-bundle.json").read_text(encoding="utf-8")
+    )
+    sections = {section["section_id"]: section for section in replay["sections"]}
+    assert pack["source_reports"]["goal_stage_evidence"] == str(
+        release_dir / "goal-stage-production-evidence.json"
+    )
+    assert sections["stage_evidence"]["status"] == "ok"
+    assert sections["stage_evidence"]["source_refs"] == [
+        "goal_run:release-evidence-pack",
+        "goal_stage:S1",
+        f"goal_stage_result:{release_dir / 'goal' / 'S1.result.json'}",
     ]
 
 

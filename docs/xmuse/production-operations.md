@@ -698,6 +698,7 @@ uv run xmuse-release-evidence-pack \
   --artifacts-dir xmuse/work/release_readiness/artifacts \
   --output xmuse/work/release_readiness/evidence-pack.json \
   --production-baseline xmuse/work/release_readiness/production-baseline.json \
+  --goal-stage-result /tmp/goal-runs/S1/result.json \
   --supervisor-snapshot xmuse/work/release_readiness/overnight-supervisor.json \
   --deliberation-transcript xmuse/work/release_readiness/natural-transcript.json \
   --god-runtime xmuse/work/release_readiness/god-runtime-continuity.json \
@@ -718,6 +719,12 @@ uv run xmuse-release-evidence-pack \
 map to the top-level pack summary and `source_reports`. It does not become a
 release gate, replay section, live proof, or readiness input; it records the
 starting branch/env/resource/blocker state for operator handoff.
+`--goal-stage-result` converts one or more goal-stage runner `result.json`
+files into the replay `stage_evidence` section. The generated
+`goal-stage-production-evidence.json` indexes stage id, engine, status,
+attempt, related prompt/manifest/engine-output artifacts, and non-ok blockers.
+It is replay/evidence-spine metadata only; it does not become lane status,
+review truth, GitHub truth, release readiness proof, or live runtime proof.
 `--supervisor-snapshot` generates the replay `supervisor` section from a durable
 `xmuse.overnight_supervisor.v1` snapshot. `--deliberation-transcript` generates
 the replay `deliberation_transcript` section from an
@@ -770,6 +777,7 @@ uv run xmuse-tui
 /release refresh
 /release pack
 /release pack baseline=production-baseline.json
+/release pack stage=goal/S1.result.json
 /release pack github=artifacts/github-truth.json github_head=<current-head-sha>
 /release pack review=internal-review.json review_head=<current-head-sha>
 /release candidates
@@ -789,6 +797,9 @@ CLI, for example `github=artifacts/github-truth.json` and
 example `review=internal-review.json` and `review_head=<current-head-sha>`.
 It can also pass `baseline=production-baseline.json` to attach the S0
 production baseline artifact through the same release-root path guard.
+It can pass `stage=goal/S1.result.json` to attach goal-stage harness evidence
+through the replay `stage_evidence` section, again using only release-root
+scoped paths and the audited operator action path.
 `/release candidates` calls
 `inspect_release_evidence_candidates` and reads durable `chat.db`,
 `god_sessions.json`, the peer latency trace table, and redacted MemoryOS env

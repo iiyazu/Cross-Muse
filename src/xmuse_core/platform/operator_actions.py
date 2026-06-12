@@ -903,6 +903,9 @@ class OperatorActionService:
             production_baseline = self._release_optional_path(
                 request.payload.get("production_baseline")
             )
+            goal_stage_result = self._release_optional_path(
+                request.payload.get("goal_stage_result")
+            )
         except ValueError as exc:
             return OperatorActionResult(
                 action=action,
@@ -930,6 +933,9 @@ class OperatorActionService:
                     request.payload.get("internal_review_expected_head_sha")
                 ),
                 production_baseline=production_baseline,
+                goal_stage_results=(
+                    (goal_stage_result,) if goal_stage_result is not None else ()
+                ),
             )
         except Exception as exc:
             return OperatorActionResult(

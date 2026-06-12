@@ -14,6 +14,7 @@ REPLAY_BUNDLE_AUTHORITY = "replay_index_only"
 ReplaySectionStatus = Literal["ok", "blocked", "manual_gap", "not_evaluated"]
 
 REQUIRED_REPLAY_SECTIONS = (
+    "stage_evidence",
     "deliberation_transcript",
     "frozen_blueprint",
     "feature_lineage",

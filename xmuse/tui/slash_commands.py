@@ -948,6 +948,9 @@ def _release_pack_payload(args: list[str]) -> dict[str, Any]:
             "baseline": "production_baseline",
             "production_baseline": "production_baseline",
             "s0_baseline": "production_baseline",
+            "stage": "goal_stage_result",
+            "stage_result": "goal_stage_result",
+            "goal_stage_result": "goal_stage_result",
         },
         list_keys=set(),
     )

@@ -144,6 +144,40 @@ def test_capture_overnight_replay_bundle_accepts_explicit_section_artifacts(
     )
 
 
+def test_capture_overnight_replay_bundle_accepts_stage_evidence_section(
+    tmp_path: Path,
+) -> None:
+    artifacts = tmp_path / "artifacts"
+    stage_evidence = tmp_path / "stage-evidence.json"
+    _write_production_evidence(
+        stage_evidence,
+        stage_id="S1",
+        action="goal_stage_results_indexed",
+        status="ok",
+        proof_level="contract_proof",
+        source_authority="goal_stage_harness",
+        source_refs=["goal_run:overnight-stage-run", "goal_stage:S1"],
+        summary="Goal stage harness indexed 1 result(s): ok=1.",
+    )
+
+    bundle = capture_overnight_replay_bundle(
+        run_id="overnight-with-stage-evidence",
+        artifacts_dir=artifacts,
+        output_path=tmp_path / "bundle.json",
+        section_artifacts={"stage_evidence": stage_evidence},
+    )
+
+    sections = {section["section_id"]: section for section in bundle["sections"]}
+    assert "stage_evidence" in REQUIRED_REPLAY_SECTIONS
+    assert sections["stage_evidence"]["status"] == "ok"
+    assert sections["stage_evidence"]["source_authority"] == "goal_stage_harness"
+    assert sections["stage_evidence"]["source_refs"] == [
+        "goal_run:overnight-stage-run",
+        "goal_stage:S1",
+    ]
+    assert str(stage_evidence) in sections["stage_evidence"]["artifacts"]
+
+
 def test_overnight_replay_bundle_capture_cli_script_is_registered() -> None:
     pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
 

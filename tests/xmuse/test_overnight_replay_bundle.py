@@ -15,6 +15,15 @@ def test_overnight_replay_bundle_links_sections_without_upgrading_proof_levels(
 ) -> None:
     sections = [
         ReplayBundleSection(
+            section_id="stage_evidence",
+            status="ok",
+            proof_level="contract_proof",
+            source_authority="goal_stage_harness",
+            source_refs=("goal_run:overnight-1", "goal_stage:S1"),
+            artifacts=("artifact://stage-evidence.json",),
+            summary="goal stage result artifacts indexed",
+        ),
+        ReplayBundleSection(
             section_id="deliberation_transcript",
             status="ok",
             proof_level="real_provider_proof",
@@ -102,12 +111,13 @@ def test_overnight_replay_bundle_links_sections_without_upgrading_proof_levels(
     assert bundle["authority"] == "replay_index_only"
     assert bundle["decision"] == "blocked"
     assert bundle["proof_level_summary"] == {
-        "contract_proof": 5,
+        "contract_proof": 6,
         "manual_gap": 1,
         "real_provider_proof": 1,
         "server_side_enforcement_proof": 1,
     }
     assert [section["section_id"] for section in bundle["sections"]] == [
+        "stage_evidence",
         "deliberation_transcript",
         "frozen_blueprint",
         "feature_lineage",
@@ -158,6 +168,7 @@ def test_overnight_replay_bundle_reports_missing_required_sections() -> None:
 
     assert bundle["decision"] == "blocked"
     assert missing_ids == [
+        "stage_evidence",
         "deliberation_transcript",
         "frozen_blueprint",
         "feature_lineage",
