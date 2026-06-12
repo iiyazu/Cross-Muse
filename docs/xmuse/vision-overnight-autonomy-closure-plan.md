@@ -391,6 +391,14 @@ Current implementation status:
   assembling the nested replay bundle. This reduces handoff friction after
   governed writeback events while keeping MemoryOS governance separate from
   live MemoryOS trace proof.
+- `uv run xmuse-release-evidence-pack --deliberation-transcript <transcript>`
+  and optional `--god-runtime <runtime>` now convert an
+  `xmuse.operator_transcript.v1` artifact into replay-ready
+  `deliberation_transcript` production evidence before assembling the nested
+  replay bundle. The conversion reuses the natural deliberation release-gate
+  rules, so deterministic replay, single-GOD transcripts, missing provider
+  session metadata, bounded selected runtime, or unresolved blockers remain
+  weak/blocked evidence.
 - `uv run xmuse-memoryos-governance-evidence-capture` exports governed
   MemoryOS writeback events or governed write plans into a replay-ready
   `xmuse.production_evidence.v1` artifact for the `memory_governance` section.
@@ -549,6 +557,11 @@ Tasks:
   `uv run xmuse-release-evidence-pack --supervisor-snapshot SNAPSHOT` for the
   final handoff pack; do not pass both `--supervisor-snapshot` and an explicit
   `--section-artifact supervisor=...`.
+- When a natural transcript and selected GOD runtime continuity artifact exist,
+  prefer `uv run xmuse-release-evidence-pack --deliberation-transcript TRANSCRIPT`
+  plus `--god-runtime RUNTIME` for the final handoff pack; do not pass those
+  inputs together with an explicit
+  `--section-artifact deliberation_transcript=...`.
 - When governed MemoryOS write plans or writeback events exist, prefer
   `uv run xmuse-release-evidence-pack --memoryos-governance-plan PLAN` or
   `--memoryos-writeback-event EVENT` for the final handoff pack; do not pass

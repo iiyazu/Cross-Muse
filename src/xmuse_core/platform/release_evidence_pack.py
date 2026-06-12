@@ -6,6 +6,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from xmuse_core.platform.deliberation_transcript_evidence_capture import (
+    capture_deliberation_transcript_evidence,
+)
 from xmuse_core.platform.memoryos_governance_evidence_capture import (
     capture_memoryos_governance_evidence,
 )
@@ -32,6 +35,9 @@ def capture_release_evidence_pack(
     section_artifacts: Mapping[str, str | Path] | None = None,
     supervisor_snapshot: str | Path | None = None,
     supervisor_evidence_output: str | Path | None = None,
+    deliberation_transcript: str | Path | None = None,
+    god_runtime_artifact: str | Path | None = None,
+    deliberation_transcript_evidence_output: str | Path | None = None,
     memoryos_governance_plans: tuple[str | Path, ...] = (),
     memoryos_writeback_events: tuple[str | Path, ...] = (),
     memoryos_governance_evidence_output: str | Path | None = None,
@@ -53,6 +59,11 @@ def capture_release_evidence_pack(
         section_artifacts=section_artifacts,
         supervisor_snapshot=supervisor_snapshot,
         supervisor_evidence_output=supervisor_evidence_output,
+        deliberation_transcript=deliberation_transcript,
+        god_runtime_artifact=god_runtime_artifact,
+        deliberation_transcript_evidence_output=(
+            deliberation_transcript_evidence_output
+        ),
         run_id=run_id,
         memoryos_governance_plans=memoryos_governance_plans,
         memoryos_writeback_events=memoryos_writeback_events,
@@ -112,6 +123,9 @@ def _replay_section_artifacts(
     section_artifacts: Mapping[str, str | Path] | None,
     supervisor_snapshot: str | Path | None,
     supervisor_evidence_output: str | Path | None,
+    deliberation_transcript: str | Path | None,
+    god_runtime_artifact: str | Path | None,
+    deliberation_transcript_evidence_output: str | Path | None,
     run_id: str,
     memoryos_governance_plans: tuple[str | Path, ...],
     memoryos_writeback_events: tuple[str | Path, ...],
@@ -136,6 +150,28 @@ def _replay_section_artifacts(
         )
         artifacts["supervisor"] = supervisor_evidence_path
         source_reports["overnight_supervisor_evidence"] = str(supervisor_evidence_path)
+    if deliberation_transcript is not None:
+        if "deliberation_transcript" in artifacts:
+            raise ValueError(
+                "deliberation_transcript evidence source is ambiguous: pass either "
+                "section_artifacts['deliberation_transcript'] or "
+                "deliberation_transcript, not both"
+            )
+        deliberation_evidence_path = (
+            Path(deliberation_transcript_evidence_output)
+            if deliberation_transcript_evidence_output is not None
+            else report_dir / "deliberation-transcript-production-evidence.json"
+        )
+        capture_deliberation_transcript_evidence(
+            run_id=run_id,
+            output_path=deliberation_evidence_path,
+            transcript_artifact=deliberation_transcript,
+            god_runtime_artifact=god_runtime_artifact,
+        )
+        artifacts["deliberation_transcript"] = deliberation_evidence_path
+        source_reports["deliberation_transcript_evidence"] = str(
+            deliberation_evidence_path
+        )
     if memoryos_governance_plans or memoryos_writeback_events:
         if "memory_governance" in artifacts:
             raise ValueError(

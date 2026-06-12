@@ -89,6 +89,85 @@ def _write_memoryos_event(path: Path) -> Path:
     return path
 
 
+def _write_transcript(path: Path) -> Path:
+    _write_json(
+        path,
+        {
+            "schema_version": "xmuse.operator_transcript.v1",
+            "conversation_id": "conv-prod-1",
+            "proof_level": "real_provider_proof",
+            "fact_state": "observed",
+            "natural_deliberation": True,
+            "source_refs": ["memory://conversation/conv-prod-1/transcript"],
+            "target_refs": ["blueprint:prod:1"],
+            "messages": [
+                {
+                    "message_id": "msg-1",
+                    "conversation_id": "conv-prod-1",
+                    "god_id": "architect-god",
+                    "provider_id": "codex",
+                    "provider_profile": "codex-prod",
+                    "session_id": "codex-session-1",
+                    "speech_act": "propose",
+                    "decision_scope": "blueprint.freeze",
+                    "source_refs": ["memory://conversation/conv-prod-1/source"],
+                    "target_refs": ["blueprint:prod:1"],
+                    "blocking": False,
+                },
+                {
+                    "message_id": "msg-2",
+                    "conversation_id": "conv-prod-1",
+                    "god_id": "review-god",
+                    "provider_id": "opencode",
+                    "provider_profile": "opencode-prod",
+                    "session_id": "opencode-session-1",
+                    "speech_act": "vote",
+                    "decision_scope": "blueprint.freeze",
+                    "source_refs": ["message:msg-1"],
+                    "target_refs": ["blueprint:prod:1", "lane:prod-a"],
+                    "blocking": False,
+                },
+            ],
+            "blockers": [],
+        },
+    )
+    return path
+
+
+def _write_god_runtime(path: Path) -> Path:
+    _write_json(
+        path,
+        {
+            "schema_version": "xmuse.god_runtime_continuity.v1",
+            "conversation_id": "conv-prod-1",
+            "proof_level": "contract_proof",
+            "fact_state": "observed",
+            "source_refs": ["god_cli_selection:conv-prod-1"],
+            "items": [
+                {
+                    "god_id": "architect-god",
+                    "cli_id": "codex.god",
+                    "peer_god_ready": True,
+                    "bounded": False,
+                    "provider_session_ready": True,
+                    "proof_level": "contract_proof",
+                    "source_refs": ["god_session:architect"],
+                },
+                {
+                    "god_id": "review-god",
+                    "cli_id": "custom.peer",
+                    "peer_god_ready": True,
+                    "bounded": False,
+                    "provider_session_ready": True,
+                    "proof_level": "contract_proof",
+                    "source_refs": ["god_session:review"],
+                },
+            ],
+        },
+    )
+    return path
+
+
 def _gate(
     *,
     gate_id: str,
@@ -273,6 +352,54 @@ def test_release_evidence_pack_converts_memoryos_writeback_events_into_replay_se
     ]
 
 
+def test_release_evidence_pack_converts_deliberation_transcript_into_replay_section(
+    tmp_path: Path,
+) -> None:
+    artifacts = tmp_path / "artifacts"
+    output = tmp_path / "pack" / "evidence-pack.json"
+    transcript = _write_transcript(tmp_path / "transcript" / "natural-transcript.json")
+    runtime = _write_god_runtime(tmp_path / "transcript" / "god-runtime.json")
+    _write_json(
+        artifacts / "github-server-truth.json",
+        _gate(
+            gate_id="github-server-truth",
+            kind="github_server_truth",
+            status="ok",
+            proof_level="server_side_enforcement_proof",
+        ),
+    )
+
+    pack = capture_release_evidence_pack(
+        artifacts_dir=artifacts,
+        output_path=output,
+        run_id="pack-natural-transcript",
+        deliberation_transcript=transcript,
+        god_runtime_artifact=runtime,
+    )
+
+    transcript_evidence = (
+        output.parent / "deliberation-transcript-production-evidence.json"
+    )
+    replay = json.loads(
+        (output.parent / "overnight-replay-bundle.json").read_text(encoding="utf-8")
+    )
+    sections = {section["section_id"]: section for section in replay["sections"]}
+    assert transcript_evidence.exists()
+    assert pack["source_reports"]["deliberation_transcript_evidence"] == str(
+        transcript_evidence
+    )
+    assert sections["deliberation_transcript"]["status"] == "ok"
+    assert sections["deliberation_transcript"]["proof_level"] == "real_provider_proof"
+    assert sections["deliberation_transcript"]["source_authority"] == (
+        "operator_transcript_v1"
+    )
+    assert sections["deliberation_transcript"]["artifacts"] == [
+        str(transcript),
+        str(runtime),
+        str(transcript_evidence),
+    ]
+
+
 def test_release_evidence_pack_rejects_ambiguous_supervisor_sources(
     tmp_path: Path,
 ) -> None:
@@ -330,6 +457,36 @@ def test_release_evidence_pack_rejects_ambiguous_memoryos_governance_sources(
         assert "memory_governance evidence source is ambiguous" in str(exc)
     else:
         raise AssertionError("expected ambiguous memory_governance source to be rejected")
+
+
+def test_release_evidence_pack_rejects_ambiguous_deliberation_transcript_sources(
+    tmp_path: Path,
+) -> None:
+    transcript = _write_transcript(tmp_path / "transcript" / "natural-transcript.json")
+    deliberation = tmp_path / "deliberation-transcript-production-evidence.json"
+    _write_section_evidence(
+        deliberation,
+        section_id="deliberation_transcript",
+        status="ok",
+        proof_level="real_provider_proof",
+        source_authority="operator_transcript_v1",
+        source_refs=["memory://conversation/conv-prod-1/transcript"],
+        summary="Natural deliberation captured.",
+    )
+
+    try:
+        capture_release_evidence_pack(
+            artifacts_dir=tmp_path / "artifacts",
+            output_path=tmp_path / "pack.json",
+            section_artifacts={"deliberation_transcript": deliberation},
+            deliberation_transcript=transcript,
+        )
+    except ValueError as exc:
+        assert "deliberation_transcript evidence source is ambiguous" in str(exc)
+    else:
+        raise AssertionError(
+            "expected ambiguous deliberation_transcript source to be rejected"
+        )
 
 
 def test_release_evidence_pack_marks_contaminated_audit_as_terminal(
@@ -543,6 +700,54 @@ def test_release_evidence_pack_cli_accepts_memoryos_writeback_event(
         output.parent / "memoryos-governance-production-evidence.json"
     )
     assert sections["memory_governance"]["status"] == "ok"
+
+
+def test_release_evidence_pack_cli_accepts_deliberation_transcript(
+    tmp_path: Path,
+) -> None:
+    from xmuse.release_evidence_pack import main
+
+    artifacts = tmp_path / "artifacts"
+    output = tmp_path / "pack.json"
+    transcript = _write_transcript(tmp_path / "transcript" / "natural-transcript.json")
+    runtime = _write_god_runtime(tmp_path / "transcript" / "god-runtime.json")
+    _write_json(
+        artifacts / "github-server-truth.json",
+        _gate(
+            gate_id="github-server-truth",
+            kind="github_server_truth",
+            status="ok",
+            proof_level="server_side_enforcement_proof",
+        ),
+    )
+
+    assert (
+        main(
+            [
+                "--artifacts-dir",
+                str(artifacts),
+                "--output",
+                str(output),
+                "--run-id",
+                "overnight-cli-pack",
+                "--deliberation-transcript",
+                str(transcript),
+                "--god-runtime",
+                str(runtime),
+            ]
+        )
+        == 0
+    )
+
+    pack = json.loads(output.read_text(encoding="utf-8"))
+    replay = json.loads(
+        (output.parent / "overnight-replay-bundle.json").read_text(encoding="utf-8")
+    )
+    sections = {section["section_id"]: section for section in replay["sections"]}
+    assert pack["source_reports"]["deliberation_transcript_evidence"] == str(
+        output.parent / "deliberation-transcript-production-evidence.json"
+    )
+    assert sections["deliberation_transcript"]["status"] == "ok"
 
 
 def test_release_evidence_pack_cli_script_is_registered() -> None:

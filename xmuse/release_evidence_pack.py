@@ -82,6 +82,33 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--deliberation-transcript",
+        type=Path,
+        default=None,
+        help=(
+            "Optional xmuse.operator_transcript.v1 artifact to convert into "
+            "the replay bundle's deliberation_transcript section."
+        ),
+    )
+    parser.add_argument(
+        "--god-runtime",
+        type=Path,
+        default=None,
+        help=(
+            "Optional xmuse.god_runtime_continuity.v1 artifact to validate "
+            "alongside --deliberation-transcript."
+        ),
+    )
+    parser.add_argument(
+        "--deliberation-transcript-evidence-output",
+        type=Path,
+        default=None,
+        help=(
+            "Optional path for the deliberation transcript production evidence "
+            "generated from --deliberation-transcript."
+        ),
+    )
+    parser.add_argument(
         "--memoryos-governance-plan",
         type=Path,
         action="append",
@@ -127,6 +154,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         section_artifacts=_section_artifacts(args.section_artifact),
         supervisor_snapshot=args.supervisor_snapshot,
         supervisor_evidence_output=args.supervisor_evidence_output,
+        deliberation_transcript=args.deliberation_transcript,
+        god_runtime_artifact=args.god_runtime,
+        deliberation_transcript_evidence_output=(
+            args.deliberation_transcript_evidence_output
+        ),
         memoryos_governance_plans=tuple(args.memoryos_governance_plan),
         memoryos_writeback_events=tuple(args.memoryos_writeback_event),
         memoryos_governance_evidence_output=args.memoryos_governance_evidence_output,

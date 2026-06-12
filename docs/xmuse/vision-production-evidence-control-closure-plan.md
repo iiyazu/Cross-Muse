@@ -530,6 +530,14 @@ Current implementation status:
   reduces handoff friction after governed MemoryOS writes, but remains
   contract-level governance evidence and does not create live MemoryOS trace
   proof.
+- The same release pack command can accept `--deliberation-transcript` and
+  optional `--god-runtime`, convert them through
+  `xmuse-deliberation-transcript-evidence-capture`, and attach the generated
+  artifact as the replay bundle's `deliberation_transcript` section. This
+  reduces handoff friction after natural transcript export, but the existing
+  natural deliberation gate rules still block deterministic replay, single-GOD
+  transcripts, missing provider session metadata, bounded selected runtime, and
+  unresolved blockers.
 
 Acceptance:
 

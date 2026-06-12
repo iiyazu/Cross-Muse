@@ -588,15 +588,21 @@ uv run xmuse-release-evidence-pack \
   --artifacts-dir xmuse/work/release_readiness/artifacts \
   --output xmuse/work/release_readiness/evidence-pack.json \
   --supervisor-snapshot xmuse/work/release_readiness/overnight-supervisor.json \
+  --deliberation-transcript xmuse/work/release_readiness/natural-transcript.json \
+  --god-runtime xmuse/work/release_readiness/god-runtime-continuity.json \
   --memoryos-writeback-event xmuse/work/release_readiness/memoryos-writeback-event.json
 ```
 
 `--supervisor-snapshot` generates the replay `supervisor` section from a durable
-`xmuse.overnight_supervisor.v1` snapshot. `--memoryos-governance-plan` and
+`xmuse.overnight_supervisor.v1` snapshot. `--deliberation-transcript` generates
+the replay `deliberation_transcript` section from an
+`xmuse.operator_transcript.v1` artifact, optionally validated with
+`--god-runtime` selected-GOD continuity. `--memoryos-governance-plan` and
 `--memoryos-writeback-event` generate the replay `memory_governance` section
 from governed MemoryOS policy inputs. These conversions are contract-level
-handoff evidence only; they do not create live MemoryOS trace proof and must not
-be passed together with an explicit `--section-artifact` for the same section.
+handoff evidence only; they do not create live MemoryOS trace proof, provider
+runtime gate proof, or GitHub merge proof, and must not be passed together with
+an explicit `--section-artifact` for the same section.
 
 The same capture is available through the TUI operator action surface:
 
