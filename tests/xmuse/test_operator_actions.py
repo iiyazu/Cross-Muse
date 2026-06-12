@@ -797,6 +797,39 @@ def _write_gate(path: Path, *, gate_id: str = "provider-soak") -> None:
     )
 
 
+def _write_github_server_truth(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "github_server_side_truth_capture.v1",
+                "repo": "iiyazu/Cross-Muse",
+                "pull_request_number": 43,
+                "head_sha": "head-pack-1",
+                "expected_head_sha": "head-pack-1",
+                "head_sha_matches_expected": True,
+                "required_checks": ["quality-gates"],
+                "check_run_ids": [211],
+                "expected_source_app": "github-actions",
+                "branch_protection_snapshot": {
+                    "required_status_checks": {
+                        "checks": [{"context": "quality-gates"}]
+                    }
+                },
+                "ruleset_snapshot": None,
+                "proof_level": "manual_gap",
+                "gap_reason": "missing server-side truth: review_truth, merge_truth",
+                "can_emit_pr_merged": False,
+                "merged": False,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
 def test_operator_action_captures_release_evidence_pack_with_capability(
     tmp_path: Path,
 ) -> None:
@@ -835,6 +868,45 @@ def test_operator_action_captures_release_evidence_pack_with_capability(
     assert audit_rows[-1]["action"] == "capture_release_evidence_pack"
     assert audit_rows[-1]["status"] == "ok"
     assert audit_rows[-1]["result_payload"]["evidence_pack"]["decision"] == "blocked"
+
+
+def test_operator_action_captures_release_pack_with_github_truth_snapshot(
+    tmp_path: Path,
+) -> None:
+    release_dir = tmp_path / "release_readiness"
+    _write_github_server_truth(release_dir / "artifacts" / "github-truth.json")
+    service = OperatorActionService(
+        god_cli_registry=build_default_god_cli_registry(),
+        audit_dir=tmp_path / "operator_actions",
+        release_readiness_dir=release_dir,
+    )
+
+    result = service.handle(
+        OperatorActionRequest(
+            action="capture_release_evidence_pack",
+            actor_id="operator-1",
+            capabilities=(OperatorActionCapability.RELEASE_GATE,),
+            idempotency_key="idem-release-github-1",
+            payload={
+                "github_server_truth": "artifacts/github-truth.json",
+                "github_expected_head_sha": "head-pack-1",
+                "github_base_branch": "main",
+            },
+            source="tui",
+        )
+    )
+
+    gate = json.loads(
+        (release_dir / "artifacts" / "github-server-truth.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert result.status == "ok"
+    assert gate["status"] == "ok"
+    assert gate["proof_level"] == "server_side_enforcement_proof"
+    assert result.payload["evidence_pack"]["source_reports"][
+        "github_server_truth_gate"
+    ] == str(release_dir / "artifacts" / "github-server-truth.json")
 
 
 def test_operator_action_denies_release_evidence_pack_without_capability(

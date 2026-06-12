@@ -592,6 +592,13 @@ Tasks:
   final handoff pack. The pack writes `real-provider-runtime.json` under
   `--artifacts-dir` through the same real-provider gate validator and blocks
   fake/local/stdout fallback artifacts.
+- When a raw GitHub server truth snapshot exists, prefer
+  `uv run xmuse-release-evidence-pack --github-server-truth SNAPSHOT --github-expected-head-sha HEAD`
+  for the final handoff pack. The pack writes `github-server-truth.json` under
+  `--artifacts-dir` through the same GitHub server-truth gate builder, but it
+  does not call GitHub itself. A stale head remains `manual_gap`, and
+  `server_side_enforcement_proof` still does not create review truth, merge
+  truth, or `pr_merged`.
 - When a frozen mission blueprint artifact exists, prefer
   `uv run xmuse-release-evidence-pack --frozen-blueprint BLUEPRINT` for the
   final handoff pack; do not pass it together with an explicit

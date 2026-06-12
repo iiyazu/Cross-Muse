@@ -542,6 +542,54 @@ async def test_chat_screen_release_pack_runs_operator_control_action(app: XmuseT
         assert "Captured release evidence pack: decision=blocked." in content
 
 
+async def test_chat_screen_release_pack_accepts_github_truth_payload(
+    app: XmuseTUI,
+) -> None:
+    app.adapter.list_group_conversations = lambda: [
+        {"id": "conv-user", "title": "User group", "created_at": "2026-06-01T00:00:00Z"},
+    ]
+    calls = []
+
+    def _run_operator_control_action(action: str, conv_id: str, payload: dict):
+        calls.append((action, conv_id, payload))
+        return {
+            "action": "capture_release_evidence_pack",
+            "status": "ok",
+            "proof_level": "contract_proof",
+            "fact_state": "release_evidence_pack_captured",
+            "audit_id": "operator-action:release-github",
+            "summary": "Captured release evidence pack: decision=blocked.",
+        }
+
+    app.adapter.run_operator_control_action = _run_operator_control_action
+
+    async with app.run_test() as pilot:
+        appended = []
+        log = app.screen.query_one("#message-log")
+        log.append_message = lambda **kwargs: appended.append(kwargs)
+
+        input_widget = app.screen.query_one("#message-input")
+        input_widget.value = (
+            "/release pack github_server_truth=artifacts/github-truth.json "
+            "github_expected_head_sha=head-pack-1 github_base_branch=main"
+        )
+        input_widget.post_message(input_widget.Submitted(input_widget, input_widget.value))
+        await pilot.pause()
+
+        assert calls == [
+            (
+                "capture_release_evidence_pack",
+                "conv-user",
+                {
+                    "github_server_truth": "artifacts/github-truth.json",
+                    "github_expected_head_sha": "head-pack-1",
+                    "github_base_branch": "main",
+                },
+            )
+        ]
+        assert "Operator action: capture_release_evidence_pack" in appended[-1]["content"]
+
+
 async def test_chat_screen_release_refresh_runs_operator_control_action(
     app: XmuseTUI,
 ) -> None:

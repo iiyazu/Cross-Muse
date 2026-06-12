@@ -15,6 +15,9 @@ from xmuse_core.platform.feature_lineage_evidence_capture import (
 from xmuse_core.platform.frozen_blueprint_evidence_capture import (
     capture_frozen_blueprint_evidence,
 )
+from xmuse_core.platform.github_truth_release_gate import (
+    write_github_server_truth_release_gate,
+)
 from xmuse_core.platform.memoryos_governance_evidence_capture import (
     capture_memoryos_governance_evidence,
 )
@@ -64,6 +67,9 @@ def capture_release_evidence_pack(
     real_provider_runtime: str | Path | None = None,
     natural_deliberation_transcript: str | Path | None = None,
     natural_deliberation_god_runtime: str | Path | None = None,
+    github_server_truth: str | Path | None = None,
+    github_base_branch: str = "main",
+    github_expected_head_sha: str | None = None,
     tombstoned_source_refs: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     output = Path(output_path)
@@ -102,6 +108,9 @@ def capture_release_evidence_pack(
         real_provider_runtime=real_provider_runtime,
         natural_deliberation_transcript=natural_deliberation_transcript,
         natural_deliberation_god_runtime=natural_deliberation_god_runtime,
+        github_server_truth=github_server_truth,
+        github_base_branch=github_base_branch,
+        github_expected_head_sha=github_expected_head_sha,
     )
 
     readiness = capture_release_readiness(
@@ -279,8 +288,22 @@ def _release_gate_artifacts(
     real_provider_runtime: str | Path | None,
     natural_deliberation_transcript: str | Path | None,
     natural_deliberation_god_runtime: str | Path | None,
+    github_server_truth: str | Path | None,
+    github_base_branch: str,
+    github_expected_head_sha: str | None,
 ) -> dict[str, str]:
     source_reports: dict[str, str] = {}
+    if github_server_truth is not None:
+        github_truth_path = Path(github_server_truth)
+        github_gate_path = artifacts_dir / "github-server-truth.json"
+        write_github_server_truth_release_gate(
+            _load_json_object(github_truth_path, label="GitHub server truth"),
+            artifact_path=github_truth_path,
+            output_path=github_gate_path,
+            base_branch=github_base_branch,
+            expected_head_sha=github_expected_head_sha,
+        )
+        source_reports["github_server_truth_gate"] = str(github_gate_path)
     if natural_deliberation_transcript is not None:
         if natural_deliberation_god_runtime is None:
             raise ValueError(
@@ -309,6 +332,18 @@ def _release_gate_artifacts(
         )
         source_reports["real_provider_runtime_gate"] = str(provider_gate_path)
     return source_reports
+
+
+def _load_json_object(path: Path, *, label: str) -> dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise ValueError(f"{label} artifact does not exist: {path}") from exc
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{label} artifact is not valid JSON: {path}") from exc
+    if not isinstance(payload, dict):
+        raise ValueError(f"{label} artifact must be a JSON object: {path}")
+    return payload
 
 
 def _pack_decision(

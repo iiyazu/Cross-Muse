@@ -211,6 +211,28 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--github-server-truth",
+        type=Path,
+        default=None,
+        help=(
+            "Optional github_server_side_truth_capture.v1 snapshot to convert "
+            "into artifacts-dir/github-server-truth.json before release readiness."
+        ),
+    )
+    parser.add_argument(
+        "--github-base-branch",
+        default="main",
+        help="Base branch name to record in the generated GitHub server truth gate.",
+    )
+    parser.add_argument(
+        "--github-expected-head-sha",
+        default=None,
+        help=(
+            "Expected current PR head SHA. A mismatch keeps the generated GitHub "
+            "server truth gate as manual_gap."
+        ),
+    )
+    parser.add_argument(
         "--tombstoned-source-ref",
         action="append",
         default=[],
@@ -243,6 +265,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         real_provider_runtime=args.real_provider_runtime,
         natural_deliberation_transcript=args.natural_deliberation_transcript,
         natural_deliberation_god_runtime=args.natural_deliberation_god_runtime,
+        github_server_truth=args.github_server_truth,
+        github_base_branch=args.github_base_branch,
+        github_expected_head_sha=args.github_expected_head_sha,
         tombstoned_source_refs=tuple(args.tombstoned_source_ref),
     )
     print(json.dumps({"decision": pack["decision"], "output": str(args.output)}, sort_keys=True))

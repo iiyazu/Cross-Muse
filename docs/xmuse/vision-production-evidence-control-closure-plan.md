@@ -358,6 +358,11 @@ Current implementation status:
   `--github-repo`, `--github-pull-request`, `--github-base-branch`, repeated
   `--github-required-check`, and `--github-expected-head-sha`; these flags only
   populate the capture input and do not weaken merge/review truth semantics.
+- A captured raw `github_server_side_truth_capture.v1` snapshot can also be
+  handed to `uv run xmuse-release-evidence-pack --github-server-truth SNAPSHOT`
+  with `--github-expected-head-sha HEAD`. The pack only converts the explicit
+  snapshot through the same GitHub server-truth gate builder; it does not call
+  GitHub and stale snapshots remain `manual_gap`.
 - When `XMUSE_MEMORYOS_LIVE_TRACE_ARTIFACT`,
   `XMUSE_NATURAL_GOD_TRANSCRIPT_PATH`, or
   `XMUSE_REAL_PROVIDER_RUNTIME_ARTIFACT` point at existing artifacts, it
@@ -561,6 +566,12 @@ Current implementation status:
   release gate artifacts under `--artifacts-dir` before readiness/audit. This
   reduces handoff friction but does not start live services, run providers, or
   upgrade contract/fake/local evidence into live/provider proof.
+- The same release pack command can accept `--github-server-truth`, convert the
+  explicit raw GitHub server truth snapshot through the existing release-gate
+  builder, and write `github-server-truth.json` under `--artifacts-dir` before
+  readiness/audit. This reduces handoff friction after a fresh capture, but the
+  pack does not perform GitHub API calls and does not create review truth, merge
+  truth, or `pr_merged`.
 
 Acceptance:
 

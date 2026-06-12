@@ -380,7 +380,11 @@ class SlashCommandRouter:
         except ValueError as exc:
             return SlashCommandResult(True, message=f"Invalid /release command: {exc}")
         payload: dict[str, Any] = {}
-        if parts in (["pack"], ["evidence-pack"], ["evidence"]):
+        if parts and parts[0] in {"pack", "evidence-pack", "evidence"}:
+            try:
+                payload = _release_pack_payload(parts[1:])
+            except ValueError as exc:
+                return SlashCommandResult(True, message=str(exc))
             action = "capture_release_evidence_pack"
             command = "/release pack"
         elif parts in (["refresh"], ["status"], ["live-gate-status"]):
@@ -916,6 +920,29 @@ def _release_export_action(args: list[str]) -> tuple[str, dict[str, Any]]:
             ),
         )
     raise ValueError(usage)
+
+
+def _release_pack_payload(args: list[str]) -> dict[str, Any]:
+    raw = _key_value_args(
+        args,
+        usage="Usage: /release pack [key=value...]",
+    ) if args else {}
+    return _normalize_release_export_payload(
+        raw,
+        aliases={
+            "artifacts": "artifacts_dir",
+            "output": "output_path",
+            "readiness": "readiness_output",
+            "audit": "audit_output",
+            "github": "github_server_truth",
+            "github_truth": "github_server_truth",
+            "github_snapshot": "github_server_truth",
+            "github_head": "github_expected_head_sha",
+            "expected_head": "github_expected_head_sha",
+            "base_branch": "github_base_branch",
+        },
+        list_keys=set(),
+    )
 
 
 def _release_candidates_payload(args: list[str]) -> dict[str, Any]:
@@ -1492,7 +1519,7 @@ def _help_text() -> str:
             "/dashboard (alias for /overview)",
             "/evidence <transcript|github|memory|blockers>",
             "/release refresh",
-            "/release pack",
+            "/release pack [key=value...]",
             "/release candidates [key=value...]",
             "/release attempt [natural|provider|memoryos|all] [key=value...]",
             "/release export <natural|provider|memoryos> <key=value...>",

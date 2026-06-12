@@ -593,6 +593,8 @@ uv run xmuse-release-evidence-pack \
   --god-runtime xmuse/work/release_readiness/god-runtime-continuity.json \
   --natural-deliberation-transcript xmuse/work/release_readiness/natural-transcript.json \
   --natural-deliberation-god-runtime xmuse/work/release_readiness/god-runtime-continuity.json \
+  --github-server-truth xmuse/work/release_readiness/artifacts/github-truth.json \
+  --github-expected-head-sha "$(git rev-parse HEAD)" \
   --frozen-blueprint xmuse/work/release_readiness/mission-blueprint.json \
   --feature-contract xmuse/work/release_readiness/feature-owner-contract.json \
   --memoryos-live-trace xmuse/work/release_readiness/memoryos-trace.json \
@@ -626,7 +628,14 @@ raw trace artifact already carries valid live MemoryOS Lite evidence.
 through the same validator as `xmuse-real-provider-runtime-gate-capture`; it
 emits `real_provider_proof` only when the raw runtime artifact already proves
 real provider MCP writeback and restart/resume continuity. None of these
-handoffs create GitHub merge proof.
+handoffs create GitHub merge proof. `--github-server-truth` converts an
+explicit `github_server_side_truth_capture.v1` raw snapshot into
+`artifacts-dir/github-server-truth.json` through the same GitHub server truth
+gate builder as `scripts/github_server_truth_capture.py --release-gate-output`.
+The pack does not call GitHub itself. Pass `--github-expected-head-sha` for the
+current PR head; a stale snapshot remains `manual_gap`. GitHub server
+enforcement proof can satisfy the `github_server_truth` release gate, but
+review truth, merge truth, and `pr_merged` remain separate server-side facts.
 
 The same capture is available through the TUI operator action surface:
 
@@ -636,6 +645,7 @@ uv run xmuse-tui
 # in the active group chat:
 /release refresh
 /release pack
+/release pack github=artifacts/github-truth.json github_head=<current-head-sha>
 /release candidates
 /release attempt natural provider memoryos runtime_backend=ray transport=codex-app-server repo_id=iiyazu/Cross-Muse workspace_id=xmuse god_id=<god-id> thread_id=<thread-id> blueprint_id=<blueprint-id> feature_id=<feature-id> lane_id=<lane-id> actor_id=<actor-id> content='<content>' query='<query>'
 /release export natural target_ref=blueprint:<blueprint-id>
@@ -646,7 +656,10 @@ uv run xmuse-tui
 `/release refresh` calls `refresh_live_gate_status` and writes the live-gate
 status blocker artifacts under `xmuse/work/release_readiness/artifacts`.
 `/release pack` calls `capture_release_evidence_pack` and writes the operator
-handoff pack plus nested readiness/audit reports. `/release candidates` calls
+handoff pack plus nested readiness/audit reports. `/release pack key=value`
+can pass the same release-root-scoped GitHub snapshot handoff fields as the
+CLI, for example `github=artifacts/github-truth.json` and
+`github_head=<current-head-sha>`. `/release candidates` calls
 `inspect_release_evidence_candidates` and reads durable `chat.db`,
 `god_sessions.json`, the peer latency trace table, and redacted MemoryOS env
 presence to show whether the operator has enough inputs for the export actions.

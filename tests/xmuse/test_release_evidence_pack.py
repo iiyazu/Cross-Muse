@@ -191,6 +191,44 @@ def _write_real_provider_runtime(path: Path, **overrides: object) -> Path:
     return path
 
 
+def _write_github_server_truth(path: Path, **overrides: object) -> Path:
+    payload: dict[str, object] = {
+        "schema_version": "github_server_side_truth_capture.v1",
+        "repo": "iiyazu/Cross-Muse",
+        "pull_request_number": 43,
+        "head_sha": "head-pack-1",
+        "expected_head_sha": "head-pack-1",
+        "head_sha_matches_expected": True,
+        "required_checks": [
+            "quality-gates",
+            "contract-smoke-gates",
+            "real-runtime-integration-gate",
+        ],
+        "check_run_ids": [211, 212, 213],
+        "expected_source_app": "github-actions",
+        "branch_protection_snapshot": {
+            "required_status_checks": {
+                "checks": [
+                    {"context": "quality-gates"},
+                    {"context": "contract-smoke-gates"},
+                    {"context": "real-runtime-integration-gate"},
+                ]
+            }
+        },
+        "ruleset_snapshot": None,
+        "proof_level": "manual_gap",
+        "gap_reason": "missing server-side truth: review_truth, merge_truth",
+        "can_emit_pr_merged": False,
+        "merged": False,
+        "review_event_id": None,
+        "merge_event_id": None,
+        "capture_mode": "opt_in_read_only_gh_api",
+    }
+    payload.update(overrides)
+    _write_json(path, payload)
+    return path
+
+
 def _write_transcript(path: Path) -> Path:
     _write_json(
         path,
@@ -603,6 +641,67 @@ def test_release_evidence_pack_converts_natural_deliberation_into_release_gate(
     assert pack["release_readiness_decision"] == "ready"
     assert pack["proof_contamination_decision"] == "clean"
     assert pack["decision"] == "blocked"
+
+
+def test_release_evidence_pack_converts_github_truth_into_release_gate(
+    tmp_path: Path,
+) -> None:
+    artifacts = tmp_path / "artifacts"
+    output = tmp_path / "pack" / "evidence-pack.json"
+    truth = _write_github_server_truth(tmp_path / "github" / "github-truth.json")
+
+    pack = capture_release_evidence_pack(
+        artifacts_dir=artifacts,
+        output_path=output,
+        run_id="pack-github-server-truth",
+        github_server_truth=truth,
+        github_base_branch="main",
+        github_expected_head_sha="head-pack-1",
+    )
+
+    gate_path = artifacts / "github-server-truth.json"
+    gate = json.loads(gate_path.read_text(encoding="utf-8"))
+    assert gate["gate_id"] == "github-server-truth"
+    assert gate["status"] == "ok"
+    assert gate["proof_level"] == "server_side_enforcement_proof"
+    assert gate["artifacts"] == [str(truth)]
+    assert gate["source_refs"] == [
+        "github:pr:43",
+        "github:branch:main",
+        "github:head:head-pack-1",
+        "github:expected-head:head-pack-1",
+    ]
+    assert pack["source_reports"]["github_server_truth_gate"] == str(gate_path)
+    assert pack["artifact_count"] == 1
+    assert pack["release_readiness_decision"] == "ready"
+    assert pack["proof_contamination_decision"] == "clean"
+    assert pack["decision"] == "blocked"
+
+
+def test_release_evidence_pack_keeps_stale_github_truth_as_manual_gap(
+    tmp_path: Path,
+) -> None:
+    artifacts = tmp_path / "artifacts"
+    truth = _write_github_server_truth(
+        tmp_path / "github" / "github-truth.json",
+        head_sha="stale-head",
+        expected_head_sha="fresh-head",
+        head_sha_matches_expected=False,
+    )
+
+    pack = capture_release_evidence_pack(
+        artifacts_dir=artifacts,
+        output_path=tmp_path / "pack.json",
+        github_server_truth=truth,
+        github_expected_head_sha="fresh-head",
+    )
+
+    gate = json.loads((artifacts / "github-server-truth.json").read_text())
+    assert gate["status"] == "manual_gap"
+    assert gate["proof_level"] == "manual_gap"
+    assert "does not match expected current head fresh-head" in gate["summary"]
+    assert pack["release_readiness_decision"] == "blocked"
+    assert pack["blockers"][0]["gate_id"] == "github-server-truth"
 
 
 def test_release_evidence_pack_requires_runtime_for_natural_release_gate(
@@ -1205,6 +1304,48 @@ def test_release_evidence_pack_cli_accepts_natural_release_gate_input(
     assert gate["proof_level"] == "real_provider_proof"
     assert pack["source_reports"]["natural_deliberation_gate"] == str(
         artifacts / "natural-deliberation.json"
+    )
+    assert pack["artifact_count"] == 1
+    assert pack["release_readiness_decision"] == "ready"
+
+
+def test_release_evidence_pack_cli_accepts_github_server_truth_input(
+    tmp_path: Path,
+) -> None:
+    from xmuse.release_evidence_pack import main
+
+    artifacts = tmp_path / "artifacts"
+    output = tmp_path / "pack.json"
+    truth = _write_github_server_truth(tmp_path / "github" / "github-truth.json")
+
+    assert (
+        main(
+            [
+                "--artifacts-dir",
+                str(artifacts),
+                "--output",
+                str(output),
+                "--run-id",
+                "overnight-cli-pack",
+                "--github-server-truth",
+                str(truth),
+                "--github-base-branch",
+                "main",
+                "--github-expected-head-sha",
+                "head-pack-1",
+            ]
+        )
+        == 0
+    )
+
+    pack = json.loads(output.read_text(encoding="utf-8"))
+    gate = json.loads(
+        (artifacts / "github-server-truth.json").read_text(encoding="utf-8")
+    )
+    assert gate["status"] == "ok"
+    assert gate["proof_level"] == "server_side_enforcement_proof"
+    assert pack["source_reports"]["github_server_truth_gate"] == str(
+        artifacts / "github-server-truth.json"
     )
     assert pack["artifact_count"] == 1
     assert pack["release_readiness_decision"] == "ready"

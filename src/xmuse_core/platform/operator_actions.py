@@ -890,6 +890,9 @@ class OperatorActionService:
                 request.payload.get("readiness_output")
             )
             audit_output = self._release_optional_path(request.payload.get("audit_output"))
+            github_server_truth = self._release_optional_path(
+                request.payload.get("github_server_truth")
+            )
         except ValueError as exc:
             return OperatorActionResult(
                 action=action,
@@ -906,6 +909,12 @@ class OperatorActionService:
                 output_path=output_path,
                 readiness_output=readiness_output,
                 audit_output=audit_output,
+                github_server_truth=github_server_truth,
+                github_base_branch=_text(request.payload.get("github_base_branch"))
+                or "main",
+                github_expected_head_sha=_text(
+                    request.payload.get("github_expected_head_sha")
+                ),
             )
         except Exception as exc:
             return OperatorActionResult(
