@@ -28,6 +28,7 @@ from xmuse_core.chat.api_models import (
     DispatchDispatchedRequest,
     DispatchFailedRequest,
     MessageCreate,
+    OperatorActionCreate,
     ParticipantInit,
     PeerForkCreate,
     ProposalApproval,
@@ -56,8 +57,15 @@ from xmuse_core.chat.peer_proposals import classify_structured_proposal
 from xmuse_core.chat.peer_service import PeerChatError, PeerChatService
 from xmuse_core.chat.protocol_v2 import DeliberationMessageV1
 from xmuse_core.chat.store import ChatStore
+from xmuse_core.platform.operator_actions import (
+    OperatorActionRequest,
+    OperatorActionResult,
+    OperatorActionService,
+)
 from xmuse_core.platform.read_contracts import build_execution_drilldown_refs
 from xmuse_core.platform.run_health import summarize_run_health
+from xmuse_core.providers.god_cli_registry import build_default_god_cli_registry
+from xmuse_core.providers.god_cli_selection_store import GodCliSelectionStore
 from xmuse_core.runtime.paths import default_xmuse_root
 from xmuse_core.structuring.blueprint_execution.approval_events import (
     produce_blueprint_approval_event,
@@ -141,6 +149,36 @@ def _collaboration_store(base_dir: Path) -> ChatCollaborationStore:
 
 def _dispatch_queue_store(base_dir: Path) -> ChatDispatchQueueStore:
     return ChatDispatchQueueStore(base_dir / "chat.db")
+
+
+def _operator_action_service(base_dir: Path) -> OperatorActionService:
+    return OperatorActionService(
+        god_cli_registry=build_default_god_cli_registry(),
+        audit_dir=base_dir / "work" / "operator_actions",
+        selection_store=GodCliSelectionStore(base_dir / "god_cli_selections.json"),
+    )
+
+
+def _god_cli_selection_store(base_dir: Path) -> GodCliSelectionStore:
+    return GodCliSelectionStore(base_dir / "god_cli_selections.json")
+
+
+def _operator_actor_id(request: Request) -> str:
+    value = request.headers.get("X-XMuse-Operator-Id", "")
+    return value.strip() or "anonymous-operator"
+
+
+def _operator_capabilities(request: Request) -> tuple[str, ...]:
+    raw = request.headers.get("X-XMuse-Operator-Capabilities", "")
+    return tuple(item.strip() for item in raw.split(",") if item.strip())
+
+
+def _operator_action_http_status(result: OperatorActionResult) -> int:
+    if result.status == "denied":
+        return status.HTTP_403_FORBIDDEN
+    if result.status in {"blocked", "manual_gap"}:
+        return status.HTTP_409_CONFLICT
+    return status.HTTP_200_OK
 
 
 def _collaboration_run_refs(references: list[str]) -> list[str]:
@@ -1015,6 +1053,51 @@ def create_app(
         return _peer_service(root).list_conversations(
             api_href_template="/api/chat/conversations/{conversation_id}/messages"
         )
+
+    @app.post("/api/chat/operator/actions")
+    def run_operator_action(
+        request: OperatorActionCreate,
+        http_request: Request,
+    ) -> dict[str, object]:
+        payload = dict(request.payload)
+        action = request.action.strip().lower().replace("-", "_")
+        conversation_id = payload.get("conversation_id")
+        if (
+            action == "select_god_cli"
+            and isinstance(conversation_id, str)
+            and conversation_id.strip()
+            and not _conversation_exists(_store(root), conversation_id.strip())
+        ):
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "code": "unknown_conversation",
+                    "message": "conversation not found",
+                },
+            )
+        result = _operator_action_service(root).handle(
+            OperatorActionRequest(
+                action=action,
+                actor_id=_operator_actor_id(http_request),
+                capabilities=_operator_capabilities(http_request),
+                idempotency_key=_request_id(request.idempotency_key),
+                payload=payload,
+                source="chat_api",
+            )
+        )
+        if result.status != "ok":
+            raise HTTPException(
+                status_code=_operator_action_http_status(result),
+                detail=result.model_dump(),
+            )
+        return result.model_dump()
+
+    @app.get("/api/chat/operator/god-cli-selections/{conversation_id}")
+    def get_god_cli_selection(conversation_id: str) -> dict[str, object]:
+        selection = _god_cli_selection_store(root).get(conversation_id)
+        if selection is None:
+            raise HTTPException(status_code=404, detail="god cli selection not found")
+        return {"selection": selection.model_dump()}
 
     @app.get("/api/chat/conversations/{conversation_id}/participants")
     def list_participants(conversation_id: str) -> dict[str, object]:

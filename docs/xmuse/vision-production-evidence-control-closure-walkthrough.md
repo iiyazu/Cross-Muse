@@ -101,7 +101,27 @@ Adapter behavior:
   `operator_evidence_action` as recorded surface authorities.
 
 This is intentionally not a direct projection write. Selection goes through a
-contract service and emits audit evidence.
+contract service and emits audit evidence. The current production-control path
+also exposes the action through Chat API:
+
+```text
+POST /api/chat/operator/actions
+GET /api/chat/operator/god-cli-selections/{conversation_id}
+```
+
+The API reads operator identity from `X-XMuse-Operator-Id` and operator
+capabilities from `X-XMuse-Operator-Capabilities`. A successful `select_god_cli`
+call persists the selected CLI in:
+
+```text
+xmuse/god_cli_selections.json
+```
+
+That file is runtime state. It records the selected CLI per conversation with
+`source_authority=operator_action_contract`, `proof_level=contract_proof`, and
+the audit id that authorized the write. The TUI adapter now attempts this Chat
+API path first and falls back to the same local contract service only when the
+API is unavailable.
 
 ### Release Readiness Contract
 
@@ -128,8 +148,9 @@ blocks internal review from substituting for GitHub server enforcement.
 | Surface | Current proof | Boundary |
 | --- | --- | --- |
 | GOD/CLI registry | `contract_proof` | Defines selectable boundaries; does not prove live CLI runtime. |
-| `/god select` route | `contract_proof` | TUI action path and audit work in tests; no live operator session proof. |
+| `/god select` route | `contract_proof` | TUI action path calls Chat API first; no live operator session proof. |
 | Operator action audit | `contract_proof` | JSONL audit row written in test/runtime path; not durable authority. |
+| GOD CLI selection store | `contract_proof` | Durable per-conversation selection record; does not prove live CLI runtime. |
 | Release readiness evaluator | `contract_proof` | Blocks proof contamination; no live gate captured. |
 | MemoryOS live gate | `manual_gap` | Env not configured in current shell. |
 | Ray/Codex/OpenCode live gate | `manual_gap` | Binaries/Ray import exist, but production services/env are not running/configured. |
@@ -158,8 +179,9 @@ The warning is the existing Starlette/httpx deprecation warning from FastAPI
 
 - No production Auth/RBAC middleware has been applied to Chat API or MCP routes
   yet.
-- `/god select` currently proves action contract/audit behavior, not durable
-  persisted GOD assignment across platform restarts.
+- `/god select` now persists selected GOD CLI per conversation, but this is
+  still a CLI selection authority only; it does not prove a live provider
+  session is running.
 - Live MemoryOS Lite was not configured in the current shell.
 - Ray/Codex/MCP services were not running during health check.
 - OpenCode binary exists, but `DEEPSEEK_API_KEY` is not configured in this
@@ -171,9 +193,10 @@ The warning is the existing Starlette/httpx deprecation warning from FastAPI
 
 ## Next Recommended Slice
 
-1. Add a persistent GOD CLI selection store or bind selected CLI to the official
-   conversation/bootstrap participant flow.
-2. Implement production operator capabilities for Chat API/MCP write routes.
+1. Bind selected CLI records into the official conversation/bootstrap
+   participant flow where role templates need selected runtime providers.
+2. Implement production operator capabilities for the remaining Chat API/MCP
+   write routes.
 3. Add a release-readiness capture command that reads live gate artifacts and
    writes a redacted readiness report.
 4. Start the configured Chat API/MCP/platform runner bundle and capture a real

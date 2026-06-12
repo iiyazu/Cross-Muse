@@ -199,6 +199,69 @@ def test_chat_conversation_message_flow_uses_sqlite_store(tmp_path: Path) -> Non
     assert conversations_response.json()["conversations"][0]["id"] == conversation["id"]
 
 
+def test_chat_api_operator_action_selects_god_cli_and_persists_selection(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    conversation = client.post("/api/chat/conversations", json={"title": "Mission"}).json()
+
+    response = client.post(
+        "/api/chat/operator/actions",
+        headers={
+            "X-XMuse-Operator-Id": "operator-1",
+            "X-XMuse-Operator-Capabilities": "select_god_cli",
+        },
+        json={
+            "action": "select_god_cli",
+            "idempotency_key": "idem-chat-1",
+            "payload": {
+                "conversation_id": conversation["id"],
+                "cli_id": "codex.god",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "ok"
+    assert payload["payload"]["selection"]["durable_state_ref"] == (
+        f"god_cli_selection:{conversation['id']}"
+    )
+    selection_response = client.get(
+        f"/api/chat/operator/god-cli-selections/{conversation['id']}"
+    )
+    assert selection_response.status_code == 200
+    selection = selection_response.json()["selection"]
+    assert selection["cli_id"] == "codex.god"
+    assert selection["selected_by"] == "operator-1"
+    assert selection["audit_id"] == payload["audit_id"]
+
+
+def test_chat_api_operator_action_denies_missing_capability(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    conversation = client.post("/api/chat/conversations", json={"title": "Mission"}).json()
+
+    response = client.post(
+        "/api/chat/operator/actions",
+        headers={"X-XMuse-Operator-Id": "operator-1"},
+        json={
+            "action": "select_god_cli",
+            "idempotency_key": "idem-chat-2",
+            "payload": {
+                "conversation_id": conversation["id"],
+                "cli_id": "codex.god",
+            },
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"]["status"] == "denied"
+    selection_response = client.get(
+        f"/api/chat/operator/god-cli-selections/{conversation['id']}"
+    )
+    assert selection_response.status_code == 404
+
+
 def test_default_chat_participants_are_codex_only(tmp_path: Path) -> None:
     client = _client(tmp_path)
 

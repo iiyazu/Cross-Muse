@@ -9,6 +9,7 @@ from typing import Any, Literal
 from uuid import uuid4
 
 from xmuse_core.providers.god_cli_registry import GodCliRegistry
+from xmuse_core.providers.god_cli_selection_store import GodCliSelectionStore
 
 ActionStatus = Literal["ok", "denied", "blocked", "manual_gap"]
 ProofLevel = Literal["contract_proof", "manual_gap"]
@@ -53,14 +54,17 @@ class OperatorActionService:
         *,
         god_cli_registry: GodCliRegistry,
         audit_dir: Path,
+        selection_store: GodCliSelectionStore | None = None,
     ) -> None:
         self._god_cli_registry = god_cli_registry
         self._audit_dir = audit_dir
+        self._selection_store = selection_store
 
     def handle(self, request: OperatorActionRequest) -> OperatorActionResult:
         action = request.action.strip().lower()
+        audit_id = f"operator-action:{uuid4().hex}"
         if action == "select_god_cli":
-            result = self._handle_select_god_cli(request)
+            result = self._handle_select_god_cli(request, audit_id=audit_id)
         else:
             result = OperatorActionResult(
                 action=action or "unknown",
@@ -68,14 +72,16 @@ class OperatorActionService:
                 proof_level="manual_gap",
                 fact_state="blocked",
                 actor_id=request.actor_id,
-                audit_id=None,
+                audit_id=audit_id,
                 summary=f"unknown operator action: {request.action}",
             )
-        return self._audit(request, result)
+        return self._audit(request, result, audit_id=audit_id)
 
     def _handle_select_god_cli(
         self,
         request: OperatorActionRequest,
+        *,
+        audit_id: str,
     ) -> OperatorActionResult:
         missing = self._missing_capability(
             request,
@@ -88,7 +94,7 @@ class OperatorActionService:
                 proof_level="contract_proof",
                 fact_state="denied",
                 actor_id=request.actor_id,
-                audit_id=None,
+                audit_id=audit_id,
                 summary=missing,
             )
         cli_id = _text(request.payload.get("cli_id"))
@@ -100,8 +106,19 @@ class OperatorActionService:
                 proof_level="manual_gap",
                 fact_state="blocked",
                 actor_id=request.actor_id,
-                audit_id=None,
+                audit_id=audit_id,
                 summary="select_god_cli requires payload.cli_id",
+                payload={"selection_allowed": False},
+            )
+        if self._selection_store is not None and conversation_id is None:
+            return OperatorActionResult(
+                action="select_god_cli",
+                status="blocked",
+                proof_level="manual_gap",
+                fact_state="blocked",
+                actor_id=request.actor_id,
+                audit_id=audit_id,
+                summary="select_god_cli requires payload.conversation_id for durable selection",
                 payload={"selection_allowed": False},
             )
         selection = self._god_cli_registry.select_for_god(cli_id)
@@ -112,31 +129,40 @@ class OperatorActionService:
                 proof_level="contract_proof",
                 fact_state="blocked",
                 actor_id=request.actor_id,
-                audit_id=None,
+                audit_id=audit_id,
                 summary=selection.reason,
                 payload={
                     "selection_allowed": False,
                     "selection": selection.model_dump(),
                 },
             )
+        selection_payload = {
+            "cli_id": cli_id,
+            "conversation_id": conversation_id,
+            "source_authority": "operator_action_contract",
+            "registration": selection.registration.model_dump()
+            if selection.registration is not None
+            else None,
+        }
+        if self._selection_store is not None and conversation_id is not None:
+            record = self._selection_store.record_selection(
+                conversation_id=conversation_id,
+                cli_id=cli_id,
+                selected_by=request.actor_id,
+                audit_id=audit_id,
+                idempotency_key=request.idempotency_key,
+            )
+            selection_payload["durable_state_ref"] = f"god_cli_selection:{conversation_id}"
+            selection_payload["record"] = record.model_dump()
         return OperatorActionResult(
             action="select_god_cli",
             status="ok",
             proof_level="contract_proof",
             fact_state="god_cli_selected",
             actor_id=request.actor_id,
-            audit_id=None,
+            audit_id=audit_id,
             summary=f"Selected GOD CLI {cli_id}.",
-            payload={
-                "selection": {
-                    "cli_id": cli_id,
-                    "conversation_id": conversation_id,
-                    "source_authority": "operator_action_contract",
-                    "registration": selection.registration.model_dump()
-                    if selection.registration is not None
-                    else None,
-                }
-            },
+            payload={"selection": selection_payload},
         )
 
     def _missing_capability(
@@ -156,8 +182,9 @@ class OperatorActionService:
         self,
         request: OperatorActionRequest,
         result: OperatorActionResult,
+        *,
+        audit_id: str,
     ) -> OperatorActionResult:
-        audit_id = f"operator-action:{uuid4().hex}"
         audited = OperatorActionResult(
             action=result.action,
             status=result.status,

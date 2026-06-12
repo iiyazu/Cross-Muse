@@ -26,6 +26,7 @@ from xmuse_core.platform.operator_evidence_actions import (
 )
 from xmuse_core.platform.tui_vision_read_model import build_tui_vision_read_model
 from xmuse_core.providers.god_cli_registry import build_default_god_cli_registry
+from xmuse_core.providers.god_cli_selection_store import GodCliSelectionStore
 
 
 @dataclass
@@ -425,15 +426,50 @@ class XmuseAdapter:
         action_payload = dict(payload or {})
         if conv_id and "conversation_id" not in action_payload:
             action_payload["conversation_id"] = conv_id
+        idempotency_key = f"tui:{clean_action}:{uuid.uuid4().hex}"
+        headers = {
+            "X-XMuse-Operator-Id": _operator_actor_id(),
+            "X-XMuse-Operator-Capabilities": ",".join(_operator_capabilities()),
+        }
+        try:
+            with self._chat_api_client(10.0) as client:
+                response = client.post(
+                    f"{self._chat_api_base_url}/api/chat/operator/actions",
+                    json={
+                        "action": clean_action,
+                        "idempotency_key": idempotency_key,
+                        "payload": action_payload,
+                    },
+                    headers=headers,
+                )
+                status_code = getattr(response, "status_code", 200)
+                if isinstance(status_code, int) and status_code >= 400:
+                    data = response.json()
+                    detail = data.get("detail") if isinstance(data, dict) else None
+                    if isinstance(detail, dict) and "status" in detail:
+                        return detail
+                    return _operator_api_error_result(
+                        action=clean_action,
+                        actor_id=headers["X-XMuse-Operator-Id"],
+                        status_code=status_code,
+                        detail=detail,
+                    )
+                response.raise_for_status()
+                data = response.json()
+            if isinstance(data, dict):
+                return data
+        except Exception:
+            pass
         service = OperatorActionService(
             god_cli_registry=build_default_god_cli_registry(),
             audit_dir=self._root / "work" / "operator_actions",
+            selection_store=GodCliSelectionStore(self._root / "god_cli_selections.json"),
         )
         request = OperatorActionRequest(
             action=clean_action,
             actor_id=_operator_actor_id(),
             capabilities=_operator_capabilities(),
-            idempotency_key=f"tui:{clean_action}:{uuid.uuid4().hex}",
+            idempotency_key=idempotency_key,
             payload=action_payload,
             source="tui",
         )
@@ -1751,6 +1787,33 @@ def _operator_actor_id() -> str:
 def _operator_capabilities() -> tuple[str, ...]:
     raw = os.environ.get("XMUSE_TUI_OPERATOR_CAPABILITIES", "")
     return tuple(item.strip() for item in raw.split(",") if item.strip())
+
+
+def _operator_api_error_result(
+    *,
+    action: str,
+    actor_id: str,
+    status_code: int,
+    detail: Any,
+) -> dict[str, Any]:
+    if isinstance(detail, dict):
+        summary = str(detail.get("message") or detail.get("code") or detail)
+    else:
+        summary = str(detail or f"operator API rejected request with {status_code}")
+    status = "denied" if status_code in {401, 403} else "blocked"
+    return {
+        "action": action,
+        "status": status,
+        "proof_level": "contract_proof",
+        "fact_state": status,
+        "actor_id": actor_id,
+        "audit_id": None,
+        "summary": summary,
+        "payload": {
+            "api_status_code": status_code,
+            "api_detail": detail,
+        },
+    }
 
 
 def _read_json_file(path: Path, *, default: Any) -> Any:

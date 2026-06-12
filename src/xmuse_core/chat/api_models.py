@@ -84,6 +84,22 @@ class BootstrapApplyCreate(BaseModel):
         return _strip_required_string(value)
 
 
+class OperatorActionCreate(BaseModel):
+    action: str = Field(min_length=1)
+    payload: dict[str, Any] = Field(default_factory=dict)
+    idempotency_key: str | None = None
+
+    @field_validator("action", mode="before")
+    @classmethod
+    def _strip_required_text(cls, value: object) -> object:
+        return _strip_required_string(value)
+
+    @field_validator("idempotency_key", mode="before")
+    @classmethod
+    def _strip_optional_text(cls, value: object) -> object:
+        return _strip_optional_string(value)
+
+
 class CollaborationRequestCreate(BaseModel):
     goal: str = Field(min_length=1)
     initiator: str = Field(min_length=1)

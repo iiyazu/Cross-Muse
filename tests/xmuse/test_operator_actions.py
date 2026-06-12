@@ -9,6 +9,7 @@ from xmuse_core.platform.operator_actions import (
     OperatorActionService,
 )
 from xmuse_core.providers.god_cli_registry import build_default_god_cli_registry
+from xmuse_core.providers.god_cli_selection_store import GodCliSelectionStore
 
 
 def test_operator_action_denies_god_selection_without_capability(tmp_path: Path) -> None:
@@ -40,9 +41,11 @@ def test_operator_action_denies_god_selection_without_capability(tmp_path: Path)
 
 
 def test_operator_action_selects_god_cli_with_audited_capability(tmp_path: Path) -> None:
+    selection_store = GodCliSelectionStore(tmp_path / "god_cli_selections.json")
     service = OperatorActionService(
         god_cli_registry=build_default_god_cli_registry(),
         audit_dir=tmp_path,
+        selection_store=selection_store,
     )
     request = OperatorActionRequest(
         action="select_god_cli",
@@ -61,12 +64,20 @@ def test_operator_action_selects_god_cli_with_audited_capability(tmp_path: Path)
     assert result.payload["selection"]["conversation_id"] == "conv-1"
     assert result.payload["selection"]["source_authority"] == "operator_action_contract"
     assert result.audit_id is not None
+    assert result.payload["selection"]["durable_state_ref"] == "god_cli_selection:conv-1"
+    stored = selection_store.get("conv-1")
+    assert stored is not None
+    assert stored.cli_id == "codex.god"
+    assert stored.audit_id == result.audit_id
+    assert stored.idempotency_key == "idem-2"
 
 
 def test_operator_action_blocks_opencode_peer_god_without_peer_proof(tmp_path: Path) -> None:
+    selection_store = GodCliSelectionStore(tmp_path / "god_cli_selections.json")
     service = OperatorActionService(
         god_cli_registry=build_default_god_cli_registry(),
         audit_dir=tmp_path,
+        selection_store=selection_store,
     )
     request = OperatorActionRequest(
         action="select_god_cli",
@@ -86,3 +97,4 @@ def test_operator_action_blocks_opencode_peer_god_without_peer_proof(tmp_path: P
     assert result.fact_state == "blocked"
     assert "does not advertise peer_god" in result.summary
     assert result.payload["selection_allowed"] is False
+    assert selection_store.get("conv-1") is None

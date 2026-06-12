@@ -131,7 +131,12 @@ def classify_structured_proposal(
                 "invalid_structured_escalation",
                 "mission blueprint content must be a JSON object",
             )
-        normalized_payload = _normalize_mission_blueprint_payload(payload)
+        try:
+            normalized_payload = _normalize_mission_blueprint_payload(payload)
+        except PeerChatError:
+            if normalized_type != StructuredEscalationTarget.MISSION_BLUEPRINT.value:
+                raise
+            normalized_payload = dict(payload)
         return StructuredEscalationDecision(
             target=StructuredEscalationTarget.MISSION_BLUEPRINT,
             normalized_proposal_type=StructuredEscalationTarget.MISSION_BLUEPRINT.value,
