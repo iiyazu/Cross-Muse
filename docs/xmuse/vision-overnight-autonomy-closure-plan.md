@@ -367,6 +367,11 @@ Current implementation status:
   `xmuse.production_evidence.v1` artifact for the `memory_governance` section.
   It reuses the existing policy, preserves blocked shared-promotion decisions as
   `manual_gap`, and does not claim live MemoryOS trace proof.
+- `uv run xmuse-frozen-blueprint-evidence-capture` exports a frozen
+  `mission_blueprint.v1` artifact into replay-ready
+  `xmuse.production_evidence.v1` for the `frozen_blueprint` section. Draft or
+  otherwise unfrozen blueprints stay `manual_gap` and cannot start feature
+  execution proof by rendering alone.
 - `uv run xmuse-overnight-supervisor-evidence-capture` exports a supervisor
   snapshot into a replay-ready `xmuse.production_evidence.v1` artifact. This
   can satisfy the replay bundle's `supervisor` section with contract-level
@@ -481,6 +486,8 @@ Tasks:
 - Use `uv run xmuse-memoryos-governance-evidence-capture --writeback-event ...`
   or `--plan ...` to turn MemoryOS governance decisions into explicit replay
   section evidence.
+- Use `uv run xmuse-frozen-blueprint-evidence-capture --blueprint ...` to turn
+  a frozen mission blueprint artifact into explicit replay section evidence.
 - Use `uv run xmuse-overnight-replay-bundle-capture` to assemble the replay
   index from release gate artifacts and attached section evidence.
 - Update walkthrough/evidence docs under `docs/xmuse/`.

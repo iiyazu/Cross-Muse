@@ -20,6 +20,7 @@ dependencies = [
 
 [project.scripts]
 xmuse-chat-api = "xmuse.chat_api:main"
+xmuse-frozen-blueprint-evidence-capture = "xmuse.frozen_blueprint_evidence_capture:main"
 xmuse-internal-review-gate-capture = "xmuse.internal_review_gate_capture:main"
 xmuse-memoryos-live-gate-capture = "xmuse.memoryos_live_gate_capture:main"
 xmuse-memoryos-live-trace-capture = "xmuse.memoryos_live_trace_capture:main"
