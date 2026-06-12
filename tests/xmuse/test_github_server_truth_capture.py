@@ -223,3 +223,82 @@ def test_github_server_truth_capture_accepts_internal_review_evidence(
     assert payload["internal_review_artifact"] == str(artifact)
     assert payload["internal_reviewer"] == "opencode-in-review"
     assert payload["internal_review_verified"] is True
+
+
+def test_github_server_truth_capture_can_write_release_gate_artifact(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "github-truth.json"
+    gate_output = tmp_path / "release-gates" / "github-server-truth.json"
+    runner = _FakeGhApiRunner(
+        {
+            "repos/iiyazu/Cross-Muse/pulls/43": {
+                "node_id": "PR_node_43",
+                "merged": False,
+                "merged_at": None,
+                "merge_commit_sha": "merge-candidate",
+                "head": {"sha": "head456"},
+            },
+            "repos/iiyazu/Cross-Muse/pulls/43/reviews": [],
+            "repos/iiyazu/Cross-Muse/branches/main/protection": {
+                "required_status_checks": {
+                    "checks": [
+                        {"context": "quality-gates"},
+                        {"context": "contract-smoke-gates"},
+                        {"context": "real-runtime-integration-gate"},
+                    ]
+                },
+            },
+            "repos/iiyazu/Cross-Muse/commits/head456/check-runs": {
+                "check_runs": [
+                    {
+                        "id": 211,
+                        "name": "quality-gates",
+                        "conclusion": "success",
+                        "app": {"slug": "github-actions"},
+                    },
+                    {
+                        "id": 212,
+                        "name": "contract-smoke-gates",
+                        "conclusion": "success",
+                        "app": {"slug": "github-actions"},
+                    },
+                    {
+                        "id": 213,
+                        "name": "real-runtime-integration-gate",
+                        "conclusion": "success",
+                        "app": {"slug": "github-actions"},
+                    },
+                ]
+            },
+        }
+    )
+
+    rc = module.capture_github_server_truth(
+        repo="iiyazu/Cross-Muse",
+        pull_request_number=43,
+        required_checks=[
+            "quality-gates",
+            "contract-smoke-gates",
+            "real-runtime-integration-gate",
+        ],
+        output=output,
+        base_branch="main",
+        runner=runner,
+        release_gate_output=gate_output,
+    )
+
+    truth_payload = json.loads(output.read_text(encoding="utf-8"))
+    gate_payload = json.loads(gate_output.read_text(encoding="utf-8"))
+    assert rc == 2
+    assert truth_payload["proof_level"] == "manual_gap"
+    assert truth_payload["gap_reason"] == "missing server-side truth: review_truth, merge_truth"
+    assert gate_payload["schema_version"] == "xmuse.production_evidence.v1"
+    assert gate_payload["gate_id"] == "github-server-truth"
+    assert gate_payload["kind"] == "github_server_truth"
+    assert gate_payload["configured"] is True
+    assert gate_payload["required"] is True
+    assert gate_payload["status"] == "ok"
+    assert gate_payload["proof_level"] == "server_side_enforcement_proof"
+    assert gate_payload["source_refs"] == ["github:pr:43", "github:branch:main"]
+    assert gate_payload["artifacts"] == [str(output)]

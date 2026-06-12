@@ -61,7 +61,49 @@ def load_release_gate_artifacts(artifacts_dir: str | Path) -> list[ReleaseGateEv
         if not isinstance(payload, dict) or "gate_id" not in payload:
             continue
         gates.append(_gate_from_payload(payload, source_path=path))
-    return gates
+    return _deduplicate_gates(gates)
+
+
+def _deduplicate_gates(gates: list[ReleaseGateEvidence]) -> list[ReleaseGateEvidence]:
+    selected: dict[str, ReleaseGateEvidence] = {}
+    for gate in gates:
+        current = selected.get(gate.gate_id)
+        if current is None or _gate_score(gate) > _gate_score(current):
+            selected[gate.gate_id] = gate
+    return [selected[gate_id] for gate_id in sorted(selected)]
+
+
+def _gate_score(gate: ReleaseGateEvidence) -> tuple[int, int, int, int, str]:
+    readiness = evaluate_release_readiness([gate])
+    return (
+        1 if not readiness.blockers else 0,
+        _status_score(gate.status),
+        _proof_score(gate.proof_level),
+        1 if gate.configured else 0,
+        gate.summary,
+    )
+
+
+def _status_score(status: GateStatus) -> int:
+    return {
+        "ok": 3,
+        "blocked": 2,
+        "manual_gap": 1,
+        "not_evaluated": 0,
+    }[status]
+
+
+def _proof_score(proof_level: ProofLevel) -> int:
+    return {
+        "server_side_merge_proof": 8,
+        "server_side_enforcement_proof": 7,
+        "real_provider_proof": 6,
+        "live_service_proof": 5,
+        "internal_review_proof": 4,
+        "contract_proof": 3,
+        "fake_runtime_proof": 2,
+        "manual_gap": 1,
+    }[proof_level]
 
 
 def _gate_from_payload(

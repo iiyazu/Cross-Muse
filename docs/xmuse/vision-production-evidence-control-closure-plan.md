@@ -324,9 +324,16 @@ Current implementation status:
 
 - `uv run xmuse-live-gate-status-capture` can pre-populate live gate blocker
   artifacts that the readiness capture command will evaluate.
+- `uv run python scripts/github_server_truth_capture.py --release-gate-output`
+  can write a `github_server_truth` release gate artifact from the raw GitHub
+  server truth snapshot. This can satisfy `server_side_enforcement_proof`
+  without weakening `pr_merged`, which still requires merge truth.
 - `uv run xmuse-release-readiness-capture` reads JSON release gate artifacts
   from an artifact directory, writes a redacted report, and evaluates the gates
   with the same proof-level rules as `evaluate_release_readiness`.
+- Release readiness capture deduplicates artifacts by `gate_id` and keeps the
+  strongest non-blocking proof, so stronger live/server artifacts replace
+  earlier status-capture blockers.
 - The capture command is `contract_proof`; it does not create live MemoryOS,
   GitHub, provider, or natural transcript proof by itself.
 

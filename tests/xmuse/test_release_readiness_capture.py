@@ -81,6 +81,48 @@ def test_capture_release_readiness_reports_not_evaluated_without_artifacts(
     assert report["artifact_count"] == 0
 
 
+def test_capture_release_readiness_deduplicates_gate_id_with_stronger_proof(
+    tmp_path: Path,
+) -> None:
+    artifacts = tmp_path / "artifacts"
+    output = tmp_path / "release-readiness.json"
+    _write_json(
+        artifacts / "live_gate_status" / "github-server-truth-status.json",
+        {
+            "gate_id": "github-server-truth",
+            "kind": "github_server_truth",
+            "configured": True,
+            "required": True,
+            "status": "blocked",
+            "proof_level": "manual_gap",
+            "owner": "operator",
+            "summary": "GitHub auth is available, but server truth was not captured.",
+        },
+    )
+    _write_json(
+        artifacts / "github-server-truth.json",
+        {
+            "gate_id": "github-server-truth",
+            "kind": "github_server_truth",
+            "configured": True,
+            "required": True,
+            "status": "ok",
+            "proof_level": "server_side_enforcement_proof",
+            "owner": "github",
+            "summary": "Branch protection and required checks were captured.",
+            "source_refs": ["github:pr:43", "github:branch:main"],
+        },
+    )
+
+    report = capture_release_readiness(artifacts_dir=artifacts, output_path=output)
+
+    assert report["decision"] == "ready"
+    assert report["artifact_count"] == 1
+    assert report["blockers"] == []
+    assert report["gates"][0]["gate_id"] == "github-server-truth"
+    assert report["gates"][0]["proof_level"] == "server_side_enforcement_proof"
+
+
 def test_release_readiness_capture_cli_writes_report(tmp_path: Path) -> None:
     from xmuse.release_readiness_capture import main
 

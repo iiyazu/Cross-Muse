@@ -255,6 +255,39 @@ A local `/tmp` status capture plus readiness aggregation in this slice produced
 - Real provider runtime: Codex/OpenCode/Ray probes are visible, but no real
   provider runtime soak artifact was captured.
 
+### GitHub Server Truth Release Gate
+
+`scripts/github_server_truth_capture.py` now accepts:
+
+```text
+--release-gate-output <gate.json>
+```
+
+The raw GitHub truth snapshot still returns exit code `0` only when
+`can_emit_pr_merged=true`. For draft/unmerged PRs it can return exit code `2`
+while still writing a release gate artifact. The release gate artifact is
+limited to `github_server_truth`: it may use `server_side_enforcement_proof`
+when branch protection/ruleset and required check truth are captured, but it
+does not claim review truth, merge truth, or `pr_merged`.
+
+Running the collector against draft PR #43 produced:
+
+- raw GitHub truth: `proof_level=manual_gap`,
+  `gap_reason=missing server-side truth: review_truth, merge_truth`;
+- release gate: `gate_id=github-server-truth`, `status=ok`,
+  `proof_level=server_side_enforcement_proof`;
+- release readiness over that single gate: `decision=ready`;
+- combined readiness over live status blockers plus PR #43 GitHub gate:
+  `decision=blocked`, with GitHub satisfied and MemoryOS, natural transcript,
+  and real provider runtime still blocking;
+- full production readiness remains blocked by MemoryOS, natural transcript,
+  and real provider runtime gates.
+
+Release readiness capture now deduplicates artifacts by `gate_id`, preferring
+the strongest non-blocking proof. This lets a later GitHub server truth gate
+replace the earlier `xmuse-live-gate-status-capture` GitHub blocker without
+letting stale status artifacts contaminate the report.
+
 ## Proof-Level Summary
 
 | Surface | Current proof | Boundary |
@@ -273,7 +306,7 @@ A local `/tmp` status capture plus readiness aggregation in this slice produced
 | Release readiness capture command | `contract_proof` | Aggregates and redacts supplied gate artifacts; does not capture live services by itself. |
 | MemoryOS live gate | `manual_gap` | Env not configured in current shell. |
 | Ray/Codex/OpenCode live gate | `manual_gap` | Binaries/Ray import exist, but production services/env are not running/configured. |
-| GitHub server truth | `manual_gap` | GitHub auth exists, but no PR/server capture was completed in this slice. |
+| GitHub server truth | `server_side_enforcement_proof` | PR #43 branch protection and required checks were captured; review truth and merge truth remain missing, so no `pr_merged`. |
 
 ## Validation
 
@@ -306,6 +339,12 @@ uv run pytest tests/xmuse/test_live_gate_status_capture.py -q
 uv run xmuse-live-gate-status-capture --help
 uv run xmuse-live-gate-status-capture --output-dir /tmp/xmuse-live-gate-status
 uv run xmuse-release-readiness-capture --artifacts-dir /tmp/xmuse-live-gate-status --output /tmp/xmuse-release-readiness.json
+uv run pytest tests/xmuse/test_github_server_truth_capture.py tests/xmuse/test_release_readiness_capture.py -q
+uv run python scripts/github_server_truth_capture.py --repo iiyazu/Cross-Muse --pull-request 43 --output /tmp/xmuse-pr43-github-truth.json --release-gate-output /tmp/xmuse-pr43-release-gates/github-server-truth.json --base-branch main
+uv run xmuse-release-readiness-capture --artifacts-dir /tmp/xmuse-pr43-release-gates --output /tmp/xmuse-pr43-readiness.json
+uv run xmuse-live-gate-status-capture --output-dir /tmp/xmuse-combined-release-gates/live_gate_status
+uv run python scripts/github_server_truth_capture.py --repo iiyazu/Cross-Muse --pull-request 43 --output /tmp/xmuse-combined-github-truth.json --release-gate-output /tmp/xmuse-combined-release-gates/github-server-truth.json --base-branch main
+uv run xmuse-release-readiness-capture --artifacts-dir /tmp/xmuse-combined-release-gates --output /tmp/xmuse-combined-readiness.json
 uv run ruff check .
 git diff --check
 ```
@@ -339,6 +378,10 @@ xmuse-release-readiness-capture help rendered
 xmuse-live-gate-status-capture help rendered
 xmuse-live-gate-status-capture wrote 4 gate artifacts under /tmp/xmuse-live-gate-status
 xmuse-release-readiness-capture reported decision=blocked for the /tmp live-gate status artifacts
+9 passed
+github_server_truth_capture returned 2 for draft PR #43 and wrote a github_server_truth release gate
+xmuse-release-readiness-capture reported decision=ready for the single GitHub server-truth gate
+xmuse-release-readiness-capture reported decision=blocked for combined live-gate status plus PR #43 GitHub server-truth gates; blockers were live-memoryos, natural-god-deliberation, and real-provider-runtime
 All checks passed
 git diff --check clean
 ```
@@ -357,6 +400,9 @@ The warning is the existing Starlette/httpx deprecation warning from FastAPI
 - Live gate status capture can create honest blocker artifacts for missing or
   configured-but-uncaptured live gates, but those artifacts remain `manual_gap`
   proof and cannot satisfy release readiness.
+- GitHub branch protection and required check server truth has been captured for
+  PR #43, but review truth and merge truth remain missing. This satisfies the
+  `github_server_truth` release gate only; it does not permit `pr_merged`.
 - `/god select` now persists selected GOD CLI per conversation, but this is
   still a CLI selection authority only; it does not prove a live provider
   session is running.
@@ -364,7 +410,8 @@ The warning is the existing Starlette/httpx deprecation warning from FastAPI
 - Ray/Codex/MCP services were not running during health check.
 - OpenCode binary exists, but `DEEPSEEK_API_KEY` is not configured in this
   shell.
-- GitHub auth exists, but no PR/server-truth release capture was completed.
+- PR #43 exists as a draft PR. GitHub server enforcement truth was captured,
+  but the PR is unmerged and has no review truth artifact attached.
 - No natural multi-GOD live transcript was captured.
 - Release readiness cannot be `ready` until configured live gates produce real
   evidence or named blockers are resolved.

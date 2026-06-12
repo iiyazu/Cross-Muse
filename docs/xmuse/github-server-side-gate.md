@@ -139,13 +139,20 @@ uv run python scripts/github_server_truth_capture.py \
   --internal-review-artifact <path> \
   --internal-reviewer <xmuse-reviewer-id> \
   --internal-reviewed-head-sha <sha> \
-  --output /tmp/xmuse-github-server-truth.json
+  --output /tmp/xmuse-github-server-truth.json \
+  --release-gate-output /tmp/xmuse-github-server-truth-gate.json
 ```
 
 The script writes evidence JSON with `capture_mode:
 opt_in_read_only_gh_api`. It returns exit `0` only when the captured server
 snapshot can emit `pr_merged`; otherwise it writes `manual_gap` evidence and
 returns exit `2`.
+
+`--release-gate-output` writes an `xmuse.production_evidence.v1`
+`github_server_truth` artifact. That artifact may carry
+`server_side_enforcement_proof` when GitHub branch protection/ruleset and
+required check truth are captured. It does not emit `pr_merged`; merge truth
+still requires `can_emit_pr_merged=true` from the raw GitHub truth snapshot.
 
 Local workflow files, PR template fields, and CODEOWNERS coverage remain contract
 proof. They do not by themselves prove server-side enforcement.

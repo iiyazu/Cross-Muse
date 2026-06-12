@@ -142,6 +142,27 @@ This command does not run MemoryOS, GitHub server-truth, Ray/Codex/OpenCode, or
 natural GOD transcript proof. It creates honest blocker artifacts for the
 release-readiness report.
 
+## GitHub Server Truth Release Gate
+
+After a draft PR exists, capture GitHub server truth into both a raw GitHub
+truth snapshot and a release gate artifact:
+
+```bash
+uv run python scripts/github_server_truth_capture.py \
+  --repo iiyazu/Cross-Muse \
+  --pull-request <pr-number> \
+  --output xmuse/work/release_readiness/artifacts/github-truth.json \
+  --release-gate-output xmuse/work/release_readiness/artifacts/github-server-truth.json \
+  --base-branch main
+```
+
+Exit code `2` means the PR is not allowed to emit `pr_merged`; this is expected
+for an unmerged draft PR. If branch protection/ruleset and required check truth
+were captured, the release gate artifact can still satisfy the
+`github_server_truth` gate with `server_side_enforcement_proof`. Review truth
+and merge truth remain separate requirements and must not be inferred from this
+gate.
+
 ## Release Readiness Capture
 
 Use this command to aggregate release gate artifacts into a redacted readiness
@@ -157,7 +178,9 @@ The input directory contains JSON gate artifacts with `gate_id`, `kind` or
 `release_gate_kind`, `status`, `proof_level`, `configured`, `required`,
 `owner`, and `summary`. The output report is ignored runtime state. It redacts
 token/API-key shaped strings and evaluates readiness with the same proof-level
-rules used by `src/xmuse_core/platform/release_readiness.py`.
+rules used by `src/xmuse_core/platform/release_readiness.py`. If multiple
+artifacts share the same `gate_id`, the strongest non-blocking proof is used so
+fresh live/server evidence can replace earlier status-capture blockers.
 
 ## Degradation Matrix
 
