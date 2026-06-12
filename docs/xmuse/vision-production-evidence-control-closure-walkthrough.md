@@ -288,6 +288,30 @@ the strongest non-blocking proof. This lets a later GitHub server truth gate
 replace the earlier `xmuse-live-gate-status-capture` GitHub blocker without
 letting stale status artifacts contaminate the report.
 
+### Internal Review Release Gate
+
+New command:
+
+```text
+uv run xmuse-internal-review-gate-capture \
+  --artifact <xmuse.internal_review.v1.json> \
+  --expected-head-sha <head-sha> \
+  --output <gate.json>
+```
+
+The command converts a structured internal review artifact into an
+`internal_review` release gate. It emits `internal_review_proof` only when:
+
+- `schema_version` is `xmuse.internal_review.v1`;
+- `reviewer` is present;
+- `reviewed_head_sha` matches the expected head SHA;
+- `decision` is `approved`;
+- no open `critical` or `important` findings remain.
+
+Anything else writes a blocked `manual_gap` gate. This artifact is internal
+review truth only; it is not GitHub server-side enforcement and does not affect
+`pr_merged`.
+
 ## Proof-Level Summary
 
 | Surface | Current proof | Boundary |
@@ -304,6 +328,7 @@ letting stale status artifacts contaminate the report.
 | Release readiness evaluator | `contract_proof` | Blocks proof contamination; no live gate captured. |
 | Live gate status capture command | `contract_proof` | Captures configured/missing gate status as `manual_gap` blocker artifacts; does not create live proof. |
 | Release readiness capture command | `contract_proof` | Aggregates and redacts supplied gate artifacts; does not capture live services by itself. |
+| Internal review release gate command | `contract_proof` | Converts a verified structured internal review artifact into `internal_review_proof`; does not replace GitHub enforcement. |
 | MemoryOS live gate | `manual_gap` | Env not configured in current shell. |
 | Ray/Codex/OpenCode live gate | `manual_gap` | Binaries/Ray import exist, but production services/env are not running/configured. |
 | GitHub server truth | `server_side_enforcement_proof` | PR #43 branch protection and required checks were captured; review truth and merge truth remain missing, so no `pr_merged`. |
@@ -340,6 +365,8 @@ uv run xmuse-live-gate-status-capture --help
 uv run xmuse-live-gate-status-capture --output-dir /tmp/xmuse-live-gate-status
 uv run xmuse-release-readiness-capture --artifacts-dir /tmp/xmuse-live-gate-status --output /tmp/xmuse-release-readiness.json
 uv run pytest tests/xmuse/test_github_server_truth_capture.py tests/xmuse/test_release_readiness_capture.py -q
+uv run pytest tests/xmuse/test_internal_review_release_gate.py -q
+uv run xmuse-internal-review-gate-capture --help
 uv run python scripts/github_server_truth_capture.py --repo iiyazu/Cross-Muse --pull-request 43 --output /tmp/xmuse-pr43-github-truth.json --release-gate-output /tmp/xmuse-pr43-release-gates/github-server-truth.json --base-branch main
 uv run xmuse-release-readiness-capture --artifacts-dir /tmp/xmuse-pr43-release-gates --output /tmp/xmuse-pr43-readiness.json
 uv run xmuse-live-gate-status-capture --output-dir /tmp/xmuse-combined-release-gates/live_gate_status
@@ -379,6 +406,8 @@ xmuse-live-gate-status-capture help rendered
 xmuse-live-gate-status-capture wrote 4 gate artifacts under /tmp/xmuse-live-gate-status
 xmuse-release-readiness-capture reported decision=blocked for the /tmp live-gate status artifacts
 9 passed
+4 passed
+xmuse-internal-review-gate-capture help rendered
 github_server_truth_capture returned 2 for draft PR #43 and wrote a github_server_truth release gate
 xmuse-release-readiness-capture reported decision=ready for the single GitHub server-truth gate
 xmuse-release-readiness-capture reported decision=blocked for combined live-gate status plus PR #43 GitHub server-truth gates; blockers were live-memoryos, natural-god-deliberation, and real-provider-runtime
@@ -403,6 +432,9 @@ The warning is the existing Starlette/httpx deprecation warning from FastAPI
 - GitHub branch protection and required check server truth has been captured for
   PR #43, but review truth and merge truth remain missing. This satisfies the
   `github_server_truth` release gate only; it does not permit `pr_merged`.
+- Internal review gate tooling exists, but no independent reviewer artifact has
+  been produced for the current PR head. A timed independent Codex review
+  attempt expired without artifact and is not counted as proof.
 - `/god select` now persists selected GOD CLI per conversation, but this is
   still a CLI selection authority only; it does not prove a live provider
   session is running.

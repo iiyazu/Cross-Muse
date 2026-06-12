@@ -117,6 +117,10 @@ uv run python -m xmuse.mcp_server --port 8100
 uv run xmuse-platform-runner --peer-chat --mcp-port 8100
 uv run xmuse-live-gate-status-capture \
   --output-dir xmuse/work/release_readiness/artifacts/live_gate_status
+uv run xmuse-internal-review-gate-capture \
+  --artifact xmuse/work/release_readiness/internal-review.json \
+  --expected-head-sha <current-head-sha> \
+  --output xmuse/work/release_readiness/artifacts/internal-review.json
 uv run xmuse-release-readiness-capture \
   --artifacts-dir xmuse/work/release_readiness/artifacts \
   --output xmuse/work/release_readiness/report.json

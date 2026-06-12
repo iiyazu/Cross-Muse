@@ -328,6 +328,10 @@ Current implementation status:
   can write a `github_server_truth` release gate artifact from the raw GitHub
   server truth snapshot. This can satisfy `server_side_enforcement_proof`
   without weakening `pr_merged`, which still requires merge truth.
+- `uv run xmuse-internal-review-gate-capture` converts an approved
+  `xmuse.internal_review.v1` artifact for the current head SHA into an
+  `internal_review_proof` release gate. It blocks mismatched heads and open
+  critical/important findings.
 - `uv run xmuse-release-readiness-capture` reads JSON release gate artifacts
   from an artifact directory, writes a redacted report, and evaluates the gates
   with the same proof-level rules as `evaluate_release_readiness`.

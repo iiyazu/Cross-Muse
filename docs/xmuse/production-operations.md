@@ -163,6 +163,38 @@ were captured, the release gate artifact can still satisfy the
 and merge truth remain separate requirements and must not be inferred from this
 gate.
 
+## Internal Review Release Gate
+
+Use a structured internal review artifact only after a reviewer has reviewed the
+current PR head:
+
+```json
+{
+  "schema_version": "xmuse.internal_review.v1",
+  "review_id": "review-pr-<number>-<head-sha>",
+  "reviewer": "codex-reviewer",
+  "reviewed_head_sha": "<current-head-sha>",
+  "decision": "approved",
+  "summary": "No blocking findings.",
+  "findings": [],
+  "source_refs": ["github:pr:<number>"]
+}
+```
+
+Convert it to a release gate artifact:
+
+```bash
+uv run xmuse-internal-review-gate-capture \
+  --artifact xmuse/work/release_readiness/internal-review.json \
+  --expected-head-sha <current-head-sha> \
+  --output xmuse/work/release_readiness/artifacts/internal-review.json
+```
+
+The command writes `internal_review_proof` only when the artifact is approved,
+matches the expected head SHA, has a reviewer, and contains no open
+critical/important findings. It is internal review truth only; it is not GitHub
+server-side enforcement.
+
 ## Release Readiness Capture
 
 Use this command to aggregate release gate artifacts into a redacted readiness
