@@ -311,6 +311,19 @@ Acceptance:
 - Heartbeat/review snapshot SLO checks are deterministic in tests.
 - A failed live/auth/provider step does not erase independent work.
 
+Current implementation status:
+
+- `uv run xmuse-overnight-supervisor` now exposes the existing
+  `OvernightSupervisor` contract as a resumable operator command. It can start
+  stages, record heartbeats, write checkpoint production-evidence envelopes,
+  record `manual_gap` artifacts, complete stages, move to the next pending
+  stage, and print the durable snapshot. This makes the supervisor harness
+  usable from long `/goal` scripts without making it a lane status authority or
+  live 8 hour proof.
+- `uv run xmuse-overnight-supervisor-evidence-capture` still performs the
+  explicit conversion from the durable supervisor snapshot into replay-ready
+  `xmuse.production_evidence.v1` for the replay bundle's `supervisor` section.
+
 ## S5 - Memory Governance And Replay Bundle
 
 Goal: move MemoryOS from a live trace adapter into a governed memory/replay

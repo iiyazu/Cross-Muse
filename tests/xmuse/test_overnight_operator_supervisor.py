@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import tomllib
 from pathlib import Path
 
 from xmuse_core.platform.overnight_operator_supervisor import (
@@ -282,3 +283,133 @@ def test_overnight_supervisor_live_soak_requires_explicit_flags(tmp_path: Path) 
             "manual_gap_reason": None,
         },
     }
+
+
+def test_overnight_supervisor_cli_records_resumable_stage_flow(
+    tmp_path: Path,
+) -> None:
+    from xmuse.overnight_operator_supervisor import main
+
+    common = [
+        "--run-id",
+        "overnight-cli-run",
+        "--artifact-dir",
+        str(tmp_path),
+        "--stage",
+        "S3=supervise goal loop",
+        "--stage",
+        "S4=attempt live soak",
+    ]
+
+    assert main([*common, "start-stage", "S3"]) == 0
+    assert main([*common, "--resume", "heartbeat", "--note", "S3 heartbeat"]) == 0
+    assert (
+        main(
+            [
+                *common,
+                "--resume",
+                "checkpoint",
+                "S3",
+                "--summary",
+                "supervisor checkpoint captured",
+                "--command",
+                "uv run pytest tests/xmuse/test_overnight_operator_supervisor.py -q",
+                "--test-result",
+                "test_overnight_supervisor_cli_records_resumable_stage_flow passed",
+                "--source-ref",
+                "goal:stage:S3",
+                "--target-ref",
+                "artifact://overnight-supervisor/overnight-cli-run",
+            ]
+        )
+        == 0
+    )
+    assert main([*common, "--resume", "complete-stage", "S3", "--summary", "S3 done"]) == 0
+    assert (
+        main(
+            [
+                *common,
+                "--resume",
+                "manual-gap",
+                "S4",
+                "--reason",
+                "MemoryOS Lite live gate is not configured",
+                "--attempted-command",
+                "uv run xmuse-memoryos-live-trace-capture",
+                "--next-action",
+                "Configure MemoryOS Lite and rerun live trace capture.",
+            ]
+        )
+        == 0
+    )
+
+    snapshot = json.loads(
+        (tmp_path / "overnight-supervisor-overnight-cli-run.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert snapshot["run_id"] == "overnight-cli-run"
+    assert [stage["status"] for stage in snapshot["stages"]] == ["ok", "manual_gap"]
+    assert snapshot["heartbeats"][0]["note"] == "S3 heartbeat"
+    assert snapshot["checkpoints"][0]["summary"] == "supervisor checkpoint captured"
+    assert snapshot["manual_gaps"][0]["reason"] == (
+        "MemoryOS Lite live gate is not configured"
+    )
+    assert snapshot["production_evidence"][0]["commands"] == [
+        "uv run pytest tests/xmuse/test_overnight_operator_supervisor.py -q"
+    ]
+    assert snapshot["production_evidence"][0]["source_refs"] == ["goal:stage:S3"]
+    assert snapshot["production_evidence"][0]["target_refs"] == [
+        "artifact://overnight-supervisor/overnight-cli-run"
+    ]
+    assert snapshot["production_evidence"][1]["status"] == "manual_gap"
+
+
+def test_overnight_supervisor_cli_can_move_to_next_stage(
+    tmp_path: Path,
+) -> None:
+    from xmuse.overnight_operator_supervisor import main
+
+    common = [
+        "--run-id",
+        "overnight-next-stage",
+        "--artifact-dir",
+        str(tmp_path),
+        "--stage",
+        "S3=supervise goal loop",
+        "--stage",
+        "S4=attempt live soak",
+    ]
+
+    assert main([*common, "start-stage", "S3"]) == 0
+    assert (
+        main(
+            [
+                *common,
+                "--resume",
+                "manual-gap",
+                "S3",
+                "--reason",
+                "GitHub review truth is unavailable",
+            ]
+        )
+        == 0
+    )
+    assert main([*common, "--resume", "next-stage"]) == 0
+
+    snapshot = json.loads(
+        (tmp_path / "overnight-supervisor-overnight-next-stage.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert snapshot["current_stage_id"] == "S4"
+    assert snapshot["stages"][1]["status"] == "running"
+
+
+def test_overnight_supervisor_cli_script_is_registered() -> None:
+    pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+
+    assert (
+        pyproject["project"]["scripts"]["xmuse-overnight-supervisor"]
+        == "xmuse.overnight_operator_supervisor:main"
+    )

@@ -1,0 +1,184 @@
+"""CLI for driving the xmuse overnight operator supervisor snapshot."""
+
+from __future__ import annotations
+
+import argparse
+import json
+from collections.abc import Sequence
+from pathlib import Path
+
+from xmuse_core.platform.overnight_operator_supervisor import (
+    OvernightSupervisor,
+    OvernightSupervisorConfig,
+    OvernightSupervisorStage,
+)
+from xmuse_core.runtime.paths import default_xmuse_root
+
+DEFAULT_XMUSE_ROOT = default_xmuse_root(Path(__file__).resolve().parent)
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = _parser()
+    args = parser.parse_args(argv)
+    supervisor = _load_supervisor(args)
+
+    if args.command == "start-stage":
+        supervisor.start_stage(args.stage_id)
+        result = {"status": "ok", "stage_id": args.stage_id}
+    elif args.command == "heartbeat":
+        heartbeat = supervisor.record_heartbeat(note=args.note)
+        result = {"status": "ok", "heartbeat": heartbeat}
+    elif args.command == "checkpoint":
+        checkpoint = supervisor.record_checkpoint(
+            stage_id=args.stage_id,
+            summary=args.summary,
+            validation=args.test_result,
+            commands=args.command_ref,
+            source_refs=args.source_ref,
+            target_refs=args.target_ref,
+            artifacts=args.artifact,
+            owner=args.owner,
+            next_action=args.next_action,
+        )
+        result = {"status": "ok", "checkpoint": checkpoint}
+    elif args.command == "complete-stage":
+        supervisor.complete_stage(args.stage_id, summary=args.summary)
+        result = {"status": "ok", "stage_id": args.stage_id}
+    elif args.command == "manual-gap":
+        gap = supervisor.manual_gap(
+            stage_id=args.stage_id,
+            reason=args.reason,
+            attempted_command=args.attempted_command,
+            next_action=args.next_action,
+            owner=args.owner,
+            source_refs=args.source_ref,
+            target_refs=args.target_ref,
+            artifacts=args.artifact,
+        )
+        result = {"status": "manual_gap", "manual_gap": gap}
+    elif args.command == "next-stage":
+        stage_id = supervisor.move_to_next_high_value_stage()
+        result = {
+            "status": "ok" if stage_id is not None else "not_evaluated",
+            "stage_id": stage_id,
+        }
+    elif args.command == "snapshot":
+        result = {"status": "ok", "snapshot": supervisor.snapshot()}
+    else:  # pragma: no cover - argparse prevents this.
+        raise SystemExit(f"unsupported command: {args.command}")
+
+    print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+    return 0 if result["status"] in {"ok", "manual_gap"} else 2
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--run-id",
+        required=True,
+        help="Stable overnight run id used for the durable supervisor snapshot.",
+    )
+    parser.add_argument(
+        "--artifact-dir",
+        type=Path,
+        default=DEFAULT_XMUSE_ROOT / "work" / "overnight_supervisor",
+        help="Directory for supervisor snapshots and production evidence artifacts.",
+    )
+    parser.add_argument(
+        "--stage",
+        action="append",
+        default=[],
+        metavar="STAGE_ID=OBJECTIVE",
+        help="Declare a supervisor stage. May be repeated.",
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume the existing supervisor snapshot instead of starting a new one.",
+    )
+
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    start = subparsers.add_parser("start-stage", help="Mark a stage as running.")
+    start.add_argument("stage_id")
+
+    heartbeat = subparsers.add_parser(
+        "heartbeat",
+        help="Record a supervisor heartbeat for the current stage.",
+    )
+    heartbeat.add_argument("--note", required=True)
+
+    checkpoint = subparsers.add_parser(
+        "checkpoint",
+        help="Record a checkpoint and production evidence envelope.",
+    )
+    checkpoint.add_argument("stage_id")
+    checkpoint.add_argument("--summary", required=True)
+    checkpoint.add_argument("--command", dest="command_ref", action="append", default=[])
+    checkpoint.add_argument("--test-result", action="append", default=[])
+    checkpoint.add_argument("--source-ref", action="append", default=[])
+    checkpoint.add_argument("--target-ref", action="append", default=[])
+    checkpoint.add_argument("--artifact", action="append", default=[])
+    checkpoint.add_argument("--owner", default="codex")
+    checkpoint.add_argument("--next-action", default=None)
+
+    complete = subparsers.add_parser("complete-stage", help="Mark a stage as ok.")
+    complete.add_argument("stage_id")
+    complete.add_argument("--summary", required=True)
+
+    manual_gap = subparsers.add_parser(
+        "manual-gap",
+        help="Mark a stage as manual_gap and write a gap artifact.",
+    )
+    manual_gap.add_argument("stage_id")
+    manual_gap.add_argument("--reason", required=True)
+    manual_gap.add_argument("--attempted-command", default=None)
+    manual_gap.add_argument("--next-action", default=None)
+    manual_gap.add_argument("--owner", default="operator")
+    manual_gap.add_argument("--source-ref", action="append", default=[])
+    manual_gap.add_argument("--target-ref", action="append", default=[])
+    manual_gap.add_argument("--artifact", action="append", default=[])
+
+    subparsers.add_parser(
+        "next-stage",
+        help="Start the next pending stage after a checkpoint or manual gap.",
+    )
+    subparsers.add_parser("snapshot", help="Print the current supervisor snapshot.")
+    return parser
+
+
+def _load_supervisor(args: argparse.Namespace) -> OvernightSupervisor:
+    stages = _parse_stages(args.stage)
+    config = OvernightSupervisorConfig(
+        run_id=args.run_id,
+        artifact_dir=args.artifact_dir,
+        stages=stages,
+    )
+    if args.resume:
+        snapshot_path = args.artifact_dir / f"overnight-supervisor-{args.run_id}.json"
+        if not snapshot_path.exists():
+            raise SystemExit(
+                f"cannot resume missing supervisor snapshot: {snapshot_path}"
+            )
+        return OvernightSupervisor.resume(config)
+    if not stages:
+        raise SystemExit("--stage is required when starting a new supervisor snapshot")
+    return OvernightSupervisor(config)
+
+
+def _parse_stages(values: list[str]) -> list[OvernightSupervisorStage]:
+    stages: list[OvernightSupervisorStage] = []
+    for value in values:
+        if "=" not in value:
+            raise SystemExit("--stage must use STAGE_ID=OBJECTIVE")
+        stage_id, objective = value.split("=", 1)
+        stage_id = stage_id.strip()
+        objective = objective.strip()
+        if not stage_id or not objective:
+            raise SystemExit("--stage requires non-empty STAGE_ID and OBJECTIVE")
+        stages.append(OvernightSupervisorStage(stage_id=stage_id, objective=objective))
+    return stages
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

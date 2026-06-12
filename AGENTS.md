@@ -24,6 +24,7 @@ uv run xmuse-mcp-server        # MCP-over-HTTP server (FastAPI)
 uv run xmuse-platform-runner   # Platform orchestrator
 uv run xmuse-live-gate-status-capture  # Live-gate status artifacts
 uv run xmuse-natural-deliberation-gate-capture  # Natural GOD transcript release gate
+uv run xmuse-overnight-supervisor  # Overnight supervisor snapshot runner
 uv run xmuse-release-readiness-capture  # Redacted release-readiness report
 uv run xmuse-proof-contamination-audit  # Release proof contamination audit
 uv run xmuse-real-provider-runtime-gate-capture  # Real provider runtime release gate
@@ -39,6 +40,7 @@ uv run python xmuse/internal_review_gate_capture.py
 uv run python xmuse/memoryos_live_gate_capture.py
 uv run python xmuse/live_gate_status_capture.py
 uv run python xmuse/natural_deliberation_gate_capture.py
+uv run python xmuse/overnight_operator_supervisor.py
 uv run python xmuse/release_readiness_capture.py
 uv run python xmuse/proof_contamination_audit.py
 uv run python xmuse/real_provider_runtime_gate_capture.py

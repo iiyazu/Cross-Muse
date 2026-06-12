@@ -133,6 +133,12 @@ tests and future runtime integration. It records:
 The tests simulate stage transitions, checkpoint/resume, issue discovery,
 failure classification, and blocked fallback. They do not run for 8 real hours.
 
+`uv run xmuse-overnight-supervisor` now provides a scriptable operator entry
+point for the same supervisor snapshot. It records start-stage, heartbeat,
+checkpoint, manual-gap, complete-stage, next-stage, and snapshot actions through
+the existing contract object, so long `/goal` runs can persist progress without
+editing projections or lane status directly.
+
 ## Opt-In Live Soak Boundary
 
 The supervisor exposes a live soak plan helper that requires explicit opt-in
