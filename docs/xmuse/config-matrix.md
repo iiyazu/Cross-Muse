@@ -140,7 +140,7 @@ XMUSE_CHAT_API_AUTH_TOKEN=<server-token>
 XMUSE_CHAT_API_KEY=<same-token-for-tui-client>
 XMUSE_TUI_OPERATOR_ID=operator
 XMUSE_TUI_OPERATOR_ROLE=operator
-XMUSE_TUI_OPERATOR_CAPABILITIES=chat_create_conversation,chat_post_message,chat_bootstrap,chat_approve_proposal,chat_manage_participants,register_god_cli,select_god_cli,release_gate
+XMUSE_TUI_OPERATOR_CAPABILITIES=chat_create_conversation,chat_post_message,chat_bootstrap,chat_approve_proposal,chat_manage_participants,register_god_cli,select_god_cli,release_gate,workflow_write
 XMUSE_MCP_AUTH_TOKEN=<server-token>
 ```
 

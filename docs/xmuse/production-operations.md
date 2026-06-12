@@ -41,7 +41,7 @@ export XMUSE_CHAT_API_AUTH_TOKEN=<server-token>
 export XMUSE_CHAT_API_KEY=<same-token-for-tui-client>
 export XMUSE_TUI_OPERATOR_ID=operator
 export XMUSE_TUI_OPERATOR_ROLE=operator
-export XMUSE_TUI_OPERATOR_CAPABILITIES=chat_create_conversation,chat_post_message,chat_bootstrap,chat_approve_proposal,chat_manage_participants,register_god_cli,select_god_cli,release_gate
+export XMUSE_TUI_OPERATOR_CAPABILITIES=chat_create_conversation,chat_post_message,chat_bootstrap,chat_approve_proposal,chat_manage_participants,register_god_cli,select_god_cli,release_gate,workflow_write
 export XMUSE_MCP_AUTH_TOKEN=<server-token>
 ```
 
@@ -72,6 +72,8 @@ routes as well as operator actions:
 - `chat_manage_participants` for participant add/remove;
 - `register_god_cli`, `select_god_cli`, and `release_gate` for operator
   actions.
+- `workflow_write` for guarded `/lane retry` and `/lane abort` operator
+  actions.
 
 `XMUSE_TUI_OPERATOR_ROLE` defaults to `operator` and
 `XMUSE_TUI_OPERATOR_ID` defaults to `local-operator`. Capabilities are not
@@ -84,6 +86,21 @@ Operator actions currently use these focused capabilities:
 - `register_god_cli` for manual GOD CLI registration;
 - `select_god_cli` for per-conversation GOD CLI selection;
 - `release_gate` for `/release refresh` and `/release pack`.
+- `workflow_write` for guarded lane retry/abort requests.
+
+Lane workflow control is also an operator action, not a projection edit:
+
+```text
+/lane retry <lane_id> <current_status> [reason]
+/lane abort <lane_id> <current_status> [reason]
+```
+
+Both commands call the Chat API operator action endpoint when available, or the
+same local `OperatorActionService` fallback when Chat API is unavailable. They
+require `workflow_write`, require the operator to provide the current lane
+status as a guard, stamp `last_mutation_audit`, and use `LaneStateMachine`
+transition rules. If the guard does not match, the state transition is blocked
+and the lane is left unchanged.
 
 When `XMUSE_MCP_AUTH_TOKEN` or `XMUSE_MCP_API_KEY` is set for the MCP process,
 mutating JSON-RPC `tools/call` requests on `/mcp`, `/mcp/chat`, `/sse`, and

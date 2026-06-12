@@ -236,6 +236,11 @@ Current implementation status:
 - `/release pack` routes release evidence pack capture through the same
   operator action path. It requires `release_gate`, writes audit evidence, and
   only permits paths under `xmuse/work/release_readiness`.
+- `/lane retry <lane_id> <current_status> [reason]` and
+  `/lane abort <lane_id> <current_status> [reason]` route guarded lane control
+  through the same operator action path. They require `workflow_write`, require
+  current-status guard input, stamp mutation audit metadata, and use
+  `LaneStateMachine` transition rules.
 - TUI command events record `operator_action_contract` as their read-surface
   authority. They do not write projections or release facts directly.
 - Ordinary TUI Chat API write methods now forward the production operator auth
@@ -288,6 +293,9 @@ Current implementation status:
   `X-XMuse-Operator-Id`, `X-XMuse-Operator-Role`, and
   `X-XMuse-Operator-Capabilities` headers when auth is configured. The TUI
   forwards configured capabilities; it does not fabricate route authorization.
+- Workflow write operator actions use `workflow_write` capability and require
+  state guards. The first implemented actions are `retry_lane` and
+  `abort_lane`; mismatched guards are blocked and leave lane state unchanged.
 - `XMUSE_DEPLOYMENT_PROFILE=production` makes Chat API and MCP startup fail
   closed when write auth tokens are missing.
 - Read-only HTTP/MCP routes still follow the local trust policy.

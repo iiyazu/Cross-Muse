@@ -588,6 +588,102 @@ async def test_chat_screen_release_refresh_runs_operator_control_action(
         assert "Refreshed live gate status artifacts: artifact_count=4." in content
 
 
+async def test_chat_screen_lane_retry_runs_operator_control_action(app: XmuseTUI) -> None:
+    app.adapter.list_group_conversations = lambda: [
+        {"id": "conv-user", "title": "User group", "created_at": "2026-06-01T00:00:00Z"},
+    ]
+    calls = []
+
+    def _run_operator_control_action(action: str, conv_id: str, payload: dict):
+        calls.append((action, conv_id, payload))
+        return {
+            "action": "retry_lane",
+            "status": "ok",
+            "proof_level": "contract_proof",
+            "fact_state": "lane_retry_requested",
+            "audit_id": "operator-action:retry",
+            "summary": "Retry requested for lane lane-1.",
+            "payload": {"lane": {"feature_id": "lane-1", "status": "reworking"}},
+        }
+
+    app.adapter.run_operator_control_action = _run_operator_control_action
+
+    async with app.run_test() as pilot:
+        appended = []
+        log = app.screen.query_one("#message-log")
+        log.append_message = lambda **kwargs: appended.append(kwargs)
+
+        input_widget = app.screen.query_one("#message-input")
+        input_widget.value = "/lane retry lane-1 failed retry after review"
+        input_widget.post_message(input_widget.Submitted(input_widget, input_widget.value))
+        await pilot.pause()
+
+        assert calls == [
+            (
+                "retry_lane",
+                "conv-user",
+                {
+                    "lane_id": "lane-1",
+                    "current_status": "failed",
+                    "reason": "retry after review",
+                },
+            )
+        ]
+        content = appended[-1]["content"]
+        assert "Operator action: retry_lane" in content
+        assert "status=ok proof=contract_proof fact=lane_retry_requested" in content
+        assert "audit=operator-action:retry" in content
+        assert "Retry requested for lane lane-1." in content
+
+
+async def test_chat_screen_lane_abort_runs_operator_control_action(app: XmuseTUI) -> None:
+    app.adapter.list_group_conversations = lambda: [
+        {"id": "conv-user", "title": "User group", "created_at": "2026-06-01T00:00:00Z"},
+    ]
+    calls = []
+
+    def _run_operator_control_action(action: str, conv_id: str, payload: dict):
+        calls.append((action, conv_id, payload))
+        return {
+            "action": "abort_lane",
+            "status": "ok",
+            "proof_level": "contract_proof",
+            "fact_state": "lane_aborted",
+            "audit_id": "operator-action:abort",
+            "summary": "Aborted lane lane-2.",
+            "payload": {"lane": {"feature_id": "lane-2", "status": "failed"}},
+        }
+
+    app.adapter.run_operator_control_action = _run_operator_control_action
+
+    async with app.run_test() as pilot:
+        appended = []
+        log = app.screen.query_one("#message-log")
+        log.append_message = lambda **kwargs: appended.append(kwargs)
+
+        input_widget = app.screen.query_one("#message-input")
+        input_widget.value = "/lane abort lane-2 rejected abandoned stale lane"
+        input_widget.post_message(input_widget.Submitted(input_widget, input_widget.value))
+        await pilot.pause()
+
+        assert calls == [
+            (
+                "abort_lane",
+                "conv-user",
+                {
+                    "lane_id": "lane-2",
+                    "current_status": "rejected",
+                    "reason": "abandoned stale lane",
+                },
+            )
+        ]
+        content = appended[-1]["content"]
+        assert "Operator action: abort_lane" in content
+        assert "status=ok proof=contract_proof fact=lane_aborted" in content
+        assert "audit=operator-action:abort" in content
+        assert "Aborted lane lane-2." in content
+
+
 async def test_chat_screen_sessions_matches_id_and_unique_title_fragment(app: XmuseTUI) -> None:
     app.adapter.list_group_conversations = lambda: [
         {

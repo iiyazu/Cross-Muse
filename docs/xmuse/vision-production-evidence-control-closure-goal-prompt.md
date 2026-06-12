@@ -95,6 +95,11 @@ Hard constraints:
 - TUI `/release refresh` must go through `refresh_live_gate_status` operator
   action with `release_gate`; it must not write live-gate status artifacts
   directly.
+- TUI `/lane retry <lane_id> <current_status> [reason]` and
+  `/lane abort <lane_id> <current_status> [reason]` must go through
+  `retry_lane` / `abort_lane` operator actions with `workflow_write`. They must
+  require current-state guards, stamp mutation audit metadata, and use
+  `LaneStateMachine`; TUI must not edit lane projection state directly.
 - Chat API and MCP writes must use configured tokens and
   `X-XMUSE-API-Key`/`X-XMuse-Operator-Role`/`X-XMuse-Operator-Capabilities`
   headers when auth is enabled.

@@ -9,6 +9,7 @@ from xmuse_core.platform.operator_actions import (
     OperatorActionRequest,
     OperatorActionService,
 )
+from xmuse_core.platform.state_machine import LaneStateMachine
 from xmuse_core.providers.god_cli_registration_store import GodCliRegistrationStore
 from xmuse_core.providers.god_cli_registry import build_default_god_cli_registry
 from xmuse_core.providers.god_cli_selection_store import GodCliSelectionStore
@@ -210,6 +211,163 @@ def test_operator_action_blocks_manual_peer_god_registration_without_proof_ref(
     assert "peer_god requires proof_refs" in result.summary
 
 
+def test_operator_action_retries_lane_with_guarded_workflow_capability(
+    tmp_path: Path,
+) -> None:
+    lanes_path = _write_lanes(
+        tmp_path,
+        [{"feature_id": "lane-1", "status": "failed", "retry_count": 0}],
+    )
+    state_machine = LaneStateMachine(
+        lanes_path,
+        history_path=tmp_path / "state_history.json",
+    )
+    service = OperatorActionService(
+        god_cli_registry=build_default_god_cli_registry(),
+        audit_dir=tmp_path / "operator_actions",
+        lane_state_machine=state_machine,
+    )
+
+    result = service.handle(
+        OperatorActionRequest(
+            action="retry_lane",
+            actor_id="operator-1",
+            capabilities=(OperatorActionCapability.WORKFLOW_WRITE,),
+            idempotency_key="idem-lane-retry-1",
+            payload={
+                "lane_id": "lane-1",
+                "current_status": "failed",
+                "reason": "retry after operator review",
+            },
+            source="tui",
+        )
+    )
+
+    assert result.status == "ok"
+    assert result.fact_state == "lane_retry_requested"
+    assert result.payload["lane"]["feature_id"] == "lane-1"
+    assert result.payload["lane"]["status"] == "reworking"
+    assert result.payload["lane"]["retry_count"] == 1
+    assert result.payload["lane"]["last_mutation_audit"] == {
+        "actor": "operator-1",
+        "reason": "retry after operator review",
+        "request_id": "idem-lane-retry-1",
+        "tool": "retry_lane",
+    }
+    assert state_machine.get_lane("lane-1")["status"] == "reworking"
+    audit_rows = [
+        json.loads(line)
+        for line in (tmp_path / "operator_actions" / "operator-actions.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert audit_rows[-1]["action"] == "retry_lane"
+    assert audit_rows[-1]["status"] == "ok"
+
+
+def test_operator_action_denies_lane_retry_without_workflow_capability(
+    tmp_path: Path,
+) -> None:
+    lanes_path = _write_lanes(
+        tmp_path,
+        [{"feature_id": "lane-1", "status": "failed", "retry_count": 0}],
+    )
+    service = OperatorActionService(
+        god_cli_registry=build_default_god_cli_registry(),
+        audit_dir=tmp_path / "operator_actions",
+        lane_state_machine=LaneStateMachine(lanes_path),
+    )
+
+    result = service.handle(
+        OperatorActionRequest(
+            action="retry_lane",
+            actor_id="operator-1",
+            capabilities=(),
+            idempotency_key="idem-lane-retry-2",
+            payload={"lane_id": "lane-1", "current_status": "failed"},
+            source="tui",
+        )
+    )
+
+    assert result.status == "denied"
+    assert result.fact_state == "denied"
+    assert "missing capability workflow_write" in result.summary
+    assert json.loads(lanes_path.read_text(encoding="utf-8"))["lanes"][0]["status"] == (
+        "failed"
+    )
+
+
+def test_operator_action_aborts_lane_with_guarded_workflow_capability(
+    tmp_path: Path,
+) -> None:
+    lanes_path = _write_lanes(
+        tmp_path,
+        [{"feature_id": "lane-2", "status": "rejected", "retry_count": 1}],
+    )
+    state_machine = LaneStateMachine(lanes_path)
+    service = OperatorActionService(
+        god_cli_registry=build_default_god_cli_registry(),
+        audit_dir=tmp_path / "operator_actions",
+        lane_state_machine=state_machine,
+    )
+
+    result = service.handle(
+        OperatorActionRequest(
+            action="abort_lane",
+            actor_id="operator-1",
+            capabilities=(OperatorActionCapability.WORKFLOW_WRITE,),
+            idempotency_key="idem-lane-abort-1",
+            payload={
+                "lane_id": "lane-2",
+                "current_status": "rejected",
+                "reason": "operator abandoned stale lane",
+            },
+            source="tui",
+        )
+    )
+
+    assert result.status == "ok"
+    assert result.fact_state == "lane_aborted"
+    assert result.payload["lane"]["status"] == "failed"
+    assert result.payload["lane"]["failure_reason"] == "operator abandoned stale lane"
+    assert result.payload["lane"]["last_mutation_audit"] == {
+        "actor": "operator-1",
+        "reason": "operator abandoned stale lane",
+        "request_id": "idem-lane-abort-1",
+        "tool": "abort_lane",
+    }
+
+
+def test_operator_action_blocks_lane_action_when_guard_mismatches(
+    tmp_path: Path,
+) -> None:
+    lanes_path = _write_lanes(
+        tmp_path,
+        [{"feature_id": "lane-1", "status": "failed", "retry_count": 0}],
+    )
+    service = OperatorActionService(
+        god_cli_registry=build_default_god_cli_registry(),
+        audit_dir=tmp_path / "operator_actions",
+        lane_state_machine=LaneStateMachine(lanes_path),
+    )
+
+    result = service.handle(
+        OperatorActionRequest(
+            action="retry_lane",
+            actor_id="operator-1",
+            capabilities=(OperatorActionCapability.WORKFLOW_WRITE,),
+            idempotency_key="idem-lane-retry-3",
+            payload={"lane_id": "lane-1", "current_status": "dispatched"},
+            source="tui",
+        )
+    )
+
+    assert result.status == "blocked"
+    assert result.fact_state == "blocked"
+    assert "state guard mismatch" in result.summary
+    assert LaneStateMachine(lanes_path).get_lane("lane-1")["status"] == "failed"
+
+
 def _manual_registration_payload() -> dict[str, object]:
     return {
         "cli_id": "custom.peer",
@@ -223,6 +381,15 @@ def _manual_registration_payload() -> dict[str, object]:
         "proof_level": "real_provider_proof",
         "proof_refs": ["provider-run://custom.peer/live-smoke-1"],
     }
+
+
+def _write_lanes(tmp_path: Path, lanes: list[dict[str, object]]) -> Path:
+    lanes_path = tmp_path / "feature_lanes.json"
+    lanes_path.write_text(
+        json.dumps({"projection_revision": 1, "lanes": lanes}),
+        encoding="utf-8",
+    )
+    return lanes_path
 
 
 def _write_gate(path: Path, *, gate_id: str = "provider-soak") -> None:

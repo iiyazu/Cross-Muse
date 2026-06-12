@@ -414,6 +414,82 @@ def test_chat_api_operator_action_refreshes_live_gate_status(
     ).exists()
 
 
+def test_chat_api_operator_action_retries_lane_with_workflow_capability(
+    tmp_path: Path,
+) -> None:
+    _write_json(
+        tmp_path / "feature_lanes.json",
+        {
+            "projection_revision": 1,
+            "lanes": [
+                {
+                    "feature_id": "lane-1",
+                    "status": "failed",
+                    "retry_count": 0,
+                    "conversation_id": "conv-user",
+                }
+            ],
+        },
+    )
+    client = _client(tmp_path)
+
+    response = client.post(
+        "/api/chat/operator/actions",
+        headers={
+            "X-XMuse-Operator-Id": "operator-1",
+            "X-XMuse-Operator-Capabilities": "workflow_write",
+        },
+        json={
+            "action": "retry_lane",
+            "idempotency_key": "idem-lane-api-1",
+            "payload": {
+                "lane_id": "lane-1",
+                "current_status": "failed",
+                "reason": "retry via TUI operator action",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "ok"
+    assert payload["fact_state"] == "lane_retry_requested"
+    assert payload["payload"]["lane"]["status"] == "reworking"
+    updated = json.loads((tmp_path / "feature_lanes.json").read_text(encoding="utf-8"))
+    assert updated["lanes"][0]["status"] == "reworking"
+    assert updated["lanes"][0]["last_mutation_audit"] == {
+        "actor": "operator-1",
+        "reason": "retry via TUI operator action",
+        "request_id": "idem-lane-api-1",
+        "tool": "retry_lane",
+    }
+
+
+def test_chat_api_operator_action_denies_lane_retry_without_workflow_capability(
+    tmp_path: Path,
+) -> None:
+    _write_json(
+        tmp_path / "feature_lanes.json",
+        {"lanes": [{"feature_id": "lane-1", "status": "failed", "retry_count": 0}]},
+    )
+    client = _client(tmp_path)
+
+    response = client.post(
+        "/api/chat/operator/actions",
+        headers={"X-XMuse-Operator-Id": "operator-1"},
+        json={
+            "action": "retry_lane",
+            "idempotency_key": "idem-lane-api-2",
+            "payload": {"lane_id": "lane-1", "current_status": "failed"},
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"]["status"] == "denied"
+    updated = json.loads((tmp_path / "feature_lanes.json").read_text(encoding="utf-8"))
+    assert updated["lanes"][0]["status"] == "failed"
+
+
 def test_default_chat_participants_are_codex_only(tmp_path: Path) -> None:
     client = _client(tmp_path)
 

@@ -10,7 +10,13 @@ from typing import Any, Literal
 from uuid import uuid4
 
 from xmuse_core.platform.live_gate_status_capture import CommandRunner, capture_live_gate_status
+from xmuse_core.platform.projection.allowlist import stamp_mutation_audit
 from xmuse_core.platform.release_evidence_pack import capture_release_evidence_pack
+from xmuse_core.platform.state_machine import (
+    InvalidTransitionError,
+    LaneStateMachine,
+)
+from xmuse_core.platform.state_validation import StateValidationError
 from xmuse_core.providers.god_cli_registration_store import GodCliRegistrationStore
 from xmuse_core.providers.god_cli_registry import (
     PEER_GOD_SPEECH_ACTS,
@@ -65,6 +71,7 @@ class OperatorActionService:
         audit_dir: Path,
         registration_store: GodCliRegistrationStore | None = None,
         selection_store: GodCliSelectionStore | None = None,
+        lane_state_machine: LaneStateMachine | None = None,
         release_readiness_dir: Path | None = None,
         live_gate_env: Mapping[str, str] | None = None,
         live_gate_command_runner: CommandRunner | None = None,
@@ -73,6 +80,7 @@ class OperatorActionService:
         self._audit_dir = audit_dir
         self._registration_store = registration_store
         self._selection_store = selection_store
+        self._lane_state_machine = lane_state_machine
         self._release_readiness_dir = release_readiness_dir or (
             audit_dir.parent / "release_readiness"
         )
@@ -98,6 +106,10 @@ class OperatorActionService:
             "live_gate_status",
         }:
             result = self._handle_refresh_live_gate_status(request, audit_id=audit_id)
+        elif action in {"retry_lane", "lane_retry"}:
+            result = self._handle_retry_lane(request, audit_id=audit_id)
+        elif action in {"abort_lane", "lane_abort"}:
+            result = self._handle_abort_lane(request, audit_id=audit_id)
         else:
             result = OperatorActionResult(
                 action=action or "unknown",
@@ -273,6 +285,202 @@ class OperatorActionService:
             audit_id=audit_id,
             summary=f"Selected GOD CLI {cli_id}.",
             payload={"selection": selection_payload},
+        )
+
+    def _handle_retry_lane(
+        self,
+        request: OperatorActionRequest,
+        *,
+        audit_id: str,
+    ) -> OperatorActionResult:
+        action = "retry_lane"
+        missing = self._missing_capability(
+            request,
+            OperatorActionCapability.WORKFLOW_WRITE,
+        )
+        if missing is not None:
+            return OperatorActionResult(
+                action=action,
+                status="denied",
+                proof_level="contract_proof",
+                fact_state="denied",
+                actor_id=request.actor_id,
+                audit_id=audit_id,
+                summary=missing,
+            )
+        if self._lane_state_machine is None:
+            return OperatorActionResult(
+                action=action,
+                status="blocked",
+                proof_level="manual_gap",
+                fact_state="blocked",
+                actor_id=request.actor_id,
+                audit_id=audit_id,
+                summary="retry_lane requires a lane state machine",
+            )
+        lane_id = _text(request.payload.get("lane_id"))
+        current_status = _text(request.payload.get("current_status"))
+        if lane_id is None:
+            return _blocked_missing_lane_field(
+                action=action,
+                actor_id=request.actor_id,
+                audit_id=audit_id,
+                field_name="payload.lane_id",
+            )
+        if current_status is None:
+            return _blocked_missing_lane_field(
+                action=action,
+                actor_id=request.actor_id,
+                audit_id=audit_id,
+                field_name="payload.current_status",
+            )
+        reason = _text(request.payload.get("reason")) or "operator requested lane retry"
+        metadata = stamp_mutation_audit(
+            {},
+            audit={
+                "actor": request.actor_id,
+                "reason": reason,
+                "request_id": request.idempotency_key,
+            },
+            tool_name=action,
+        )
+        try:
+            if current_status == "failed":
+                lane = self._lane_state_machine.controlled_terminal_update(
+                    lane_id,
+                    "reworking",
+                    metadata=metadata,
+                    guard=_status_guard(current_status, action=action),
+                )
+            else:
+                lane = self._lane_state_machine.transition_if_metadata(
+                    lane_id,
+                    "reworking",
+                    expected_metadata={"status": current_status},
+                    metadata=metadata,
+                )
+                if lane is None:
+                    raise ValueError(
+                        f"state guard mismatch for {action}: "
+                        f"expected status {current_status}"
+                    )
+        except (InvalidTransitionError, StateValidationError, KeyError, ValueError) as exc:
+            return OperatorActionResult(
+                action=action,
+                status="blocked",
+                proof_level="contract_proof",
+                fact_state="blocked",
+                actor_id=request.actor_id,
+                audit_id=audit_id,
+                summary=str(exc),
+            )
+        return OperatorActionResult(
+            action=action,
+            status="ok",
+            proof_level="contract_proof",
+            fact_state="lane_retry_requested",
+            actor_id=request.actor_id,
+            audit_id=audit_id,
+            summary=f"Retry requested for lane {lane_id}.",
+            payload={
+                "lane": lane,
+                "source_authority": "operator_action_contract",
+                "durable_state_ref": f"lane_state:{lane_id}",
+            },
+        )
+
+    def _handle_abort_lane(
+        self,
+        request: OperatorActionRequest,
+        *,
+        audit_id: str,
+    ) -> OperatorActionResult:
+        action = "abort_lane"
+        missing = self._missing_capability(
+            request,
+            OperatorActionCapability.WORKFLOW_WRITE,
+        )
+        if missing is not None:
+            return OperatorActionResult(
+                action=action,
+                status="denied",
+                proof_level="contract_proof",
+                fact_state="denied",
+                actor_id=request.actor_id,
+                audit_id=audit_id,
+                summary=missing,
+            )
+        if self._lane_state_machine is None:
+            return OperatorActionResult(
+                action=action,
+                status="blocked",
+                proof_level="manual_gap",
+                fact_state="blocked",
+                actor_id=request.actor_id,
+                audit_id=audit_id,
+                summary="abort_lane requires a lane state machine",
+            )
+        lane_id = _text(request.payload.get("lane_id"))
+        current_status = _text(request.payload.get("current_status"))
+        if lane_id is None:
+            return _blocked_missing_lane_field(
+                action=action,
+                actor_id=request.actor_id,
+                audit_id=audit_id,
+                field_name="payload.lane_id",
+            )
+        if current_status is None:
+            return _blocked_missing_lane_field(
+                action=action,
+                actor_id=request.actor_id,
+                audit_id=audit_id,
+                field_name="payload.current_status",
+            )
+        reason = _text(request.payload.get("reason")) or "operator aborted lane"
+        metadata = stamp_mutation_audit(
+            {"failure_reason": reason},
+            audit={
+                "actor": request.actor_id,
+                "reason": reason,
+                "request_id": request.idempotency_key,
+            },
+            tool_name=action,
+        )
+        try:
+            lane = self._lane_state_machine.transition_if_metadata(
+                lane_id,
+                "failed",
+                expected_metadata={"status": current_status},
+                metadata=metadata,
+            )
+            if lane is None:
+                raise ValueError(
+                    f"state guard mismatch for {action}: "
+                    f"expected status {current_status}"
+                )
+        except (InvalidTransitionError, StateValidationError, KeyError, ValueError) as exc:
+            return OperatorActionResult(
+                action=action,
+                status="blocked",
+                proof_level="contract_proof",
+                fact_state="blocked",
+                actor_id=request.actor_id,
+                audit_id=audit_id,
+                summary=str(exc),
+            )
+        return OperatorActionResult(
+            action=action,
+            status="ok",
+            proof_level="contract_proof",
+            fact_state="lane_aborted",
+            actor_id=request.actor_id,
+            audit_id=audit_id,
+            summary=f"Aborted lane {lane_id}.",
+            payload={
+                "lane": lane,
+                "source_authority": "operator_action_contract",
+                "durable_state_ref": f"lane_state:{lane_id}",
+            },
         )
 
     def _handle_capture_release_evidence_pack(
@@ -524,6 +732,35 @@ def _text(value: Any) -> str | None:
         cleaned = value.strip()
         return cleaned or None
     return None
+
+
+def _blocked_missing_lane_field(
+    *,
+    action: str,
+    actor_id: str,
+    audit_id: str,
+    field_name: str,
+) -> OperatorActionResult:
+    return OperatorActionResult(
+        action=action,
+        status="blocked",
+        proof_level="manual_gap",
+        fact_state="blocked",
+        actor_id=actor_id,
+        audit_id=audit_id,
+        summary=f"{action} requires {field_name}",
+    )
+
+
+def _status_guard(expected_status: str, *, action: str):
+    def guard(lane: dict[str, Any], _data: dict[str, Any]) -> None:
+        actual = str(lane.get("status") or "pending")
+        if actual != expected_status:
+            raise ValueError(
+                f"state guard mismatch for {action}: expected status {expected_status}"
+            )
+
+    return guard
 
 
 def _registration_from_payload(payload: dict[str, Any]) -> GodCliRegistration:

@@ -69,6 +69,7 @@ from xmuse_core.platform.operator_actions import (
 )
 from xmuse_core.platform.read_contracts import build_execution_drilldown_refs
 from xmuse_core.platform.run_health import summarize_run_health
+from xmuse_core.platform.state_machine import LaneStateMachine
 from xmuse_core.providers.god_cli_registration_store import GodCliRegistrationStore
 from xmuse_core.providers.god_cli_registry import build_default_god_cli_registry
 from xmuse_core.providers.god_cli_selection_store import GodCliSelectionStore
@@ -174,6 +175,10 @@ def _operator_action_service(base_dir: Path) -> OperatorActionService:
             base_dir / "god_cli_registrations.json"
         ),
         selection_store=GodCliSelectionStore(base_dir / "god_cli_selections.json"),
+        lane_state_machine=LaneStateMachine(
+            base_dir / "feature_lanes.json",
+            history_path=base_dir / "state_history.json",
+        ),
     )
 
 

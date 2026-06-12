@@ -59,6 +59,8 @@ class SlashCommandRouter:
             return self._evidence(rest, context)
         if command == "release":
             return self._release(rest, context)
+        if command == "lane":
+            return self._lane(rest, context)
         if command == "god":
             return self._god(rest, context)
         if command == "archive":
@@ -394,6 +396,53 @@ class SlashCommandRouter:
             _record_official_tui_command_event(
                 context,
                 command=command,
+                conversation_id=conv_id,
+                read_surface_authority="operator_action_contract",
+            )
+        return SlashCommandResult(
+            True,
+            refresh=True,
+            message=_operator_action_block(result if isinstance(result, dict) else {}),
+        )
+
+    def _lane(self, rest: str, context: SlashCommandContext) -> SlashCommandResult:
+        conv_id = _active_conversation_id(context)
+        if not conv_id:
+            return SlashCommandResult(True, message="No active group.")
+        try:
+            parts = shlex.split(rest)
+        except ValueError as exc:
+            return SlashCommandResult(True, message=f"Invalid /lane command: {exc}")
+        if len(parts) < 3 or parts[0] not in {"retry", "abort"}:
+            return SlashCommandResult(
+                True,
+                message=(
+                    "Usage: /lane retry <lane_id> <current_status> [reason] | "
+                    "/lane abort <lane_id> <current_status> [reason]"
+                ),
+            )
+        runner = getattr(context.app.adapter, "run_operator_control_action", None)
+        if not callable(runner):
+            return SlashCommandResult(
+                True,
+                message="Operator control actions unavailable for this adapter.",
+            )
+        verb = parts[0]
+        lane_id = parts[1]
+        current_status = parts[2]
+        reason = " ".join(parts[3:]).strip()
+        action = "retry_lane" if verb == "retry" else "abort_lane"
+        payload = {
+            "lane_id": lane_id,
+            "current_status": current_status,
+        }
+        if reason:
+            payload["reason"] = reason
+        result = runner(action, conv_id, payload)
+        if isinstance(result, dict):
+            _record_official_tui_command_event(
+                context,
+                command=f"/lane {verb} {lane_id}",
                 conversation_id=conv_id,
                 read_surface_authority="operator_action_contract",
             )
@@ -1158,6 +1207,8 @@ def _help_text() -> str:
             "/evidence <transcript|github|memory|blockers>",
             "/release refresh",
             "/release pack",
+            "/lane retry <lane_id> <current_status> [reason]",
+            "/lane abort <lane_id> <current_status> [reason]",
             "/discussion",
             "/blockers",
             "/god add <role> [display name]",

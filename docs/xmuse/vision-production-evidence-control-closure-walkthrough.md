@@ -165,6 +165,20 @@ TUI forwards configured operator capabilities; it does not infer or self-grant
 route authorization. This keeps the TUI usable as a product control surface
 while preserving Chat API contract authority.
 
+The TUI also exposes guarded lane workflow controls through the same operator
+contract:
+
+```text
+/lane retry <lane_id> <current_status> [reason]
+/lane abort <lane_id> <current_status> [reason]
+```
+
+Both commands call Chat API operator actions first and use the local operator
+service only as the existing offline fallback. They require `workflow_write`,
+apply a caller-supplied current-status guard through `LaneStateMachine`, and
+stamp the lane metadata with mutation audit details. A stale guard blocks the
+operation instead of mutating the lane projection.
+
 ### Bootstrap Session Authority
 
 The default Chat API conversation path creates durable bootstrap peer sessions
@@ -489,6 +503,8 @@ release readiness as `ready`, `blocked`, or `not_evaluated`.
 | `/god select` route | `contract_proof` | TUI action path calls Chat API first; no live operator session proof. |
 | `/release refresh` route | `contract_proof` | TUI action path calls Chat API/operator contract and writes only ignored live-gate status artifacts. |
 | `/release pack` route | `contract_proof` | TUI action path calls Chat API/operator contract and writes only ignored release-readiness artifacts. |
+| `/lane retry` route | `contract_proof` | TUI action path calls Chat API/operator contract, requires `workflow_write`, and applies a current-status guard; it does not make `feature_lanes.json` authoritative. |
+| `/lane abort` route | `contract_proof` | TUI action path calls Chat API/operator contract, requires `workflow_write`, and applies a current-status guard; it does not make `feature_lanes.json` authoritative. |
 | Operator action audit | `contract_proof` | JSONL audit row written in test/runtime path; not durable authority. |
 | GOD CLI selection store | `contract_proof` | Durable per-conversation selection record; does not prove live CLI runtime. |
 | TUI direct Chat API write auth | `contract_proof` | Message send, conversation creation, bootstrap, approval, and participant writes forward operator auth headers; no live operator service proof. |
@@ -553,6 +569,7 @@ uv run xmuse-release-readiness-capture --artifacts-dir /tmp/xmuse-combined-relea
 uv run pytest tests/xmuse/test_god_cli_registration_store.py tests/xmuse/test_god_cli_selection_store.py tests/xmuse/test_god_cli_registry.py tests/xmuse/test_operator_actions.py tests/xmuse/test_chat_api.py tests/xmuse/test_tui_adapter.py tests/xmuse/test_tui_navigation.py tests/xmuse/test_provider_read_contracts_module.py tests/xmuse/test_model_policy_surfaces.py tests/xmuse/test_production_hardening.py tests/xmuse/test_production_operations_doc.py tests/xmuse/test_mainline_contract_docs.py tests/xmuse/test_package_boundaries.py -q
 uv run pytest tests/xmuse/test_tui_adapter.py::test_adapter_send_message_posts_human_message_to_chat_api tests/xmuse/test_tui_adapter.py::test_adapter_create_group_conversation_uses_chat_api tests/xmuse/test_tui_adapter.py::test_adapter_create_bootstrap_proposal_uses_chat_api_auth_headers tests/xmuse/test_tui_adapter.py::test_adapter_apply_bootstrap_proposal_uses_chat_api_auth_headers tests/xmuse/test_tui_adapter.py::test_adapter_approve_proposal_uses_chat_api_endpoint tests/xmuse/test_tui_adapter.py::test_adapter_add_participant_uses_chat_api tests/xmuse/test_tui_adapter.py::test_adapter_remove_participant_resolves_unique_role_and_uses_chat_api tests/xmuse/test_tui_adapter.py::test_adapter_operator_control_action_prefers_chat_api_contract -q
 uv run pytest tests/xmuse/test_tui_adapter.py tests/xmuse/test_tui_navigation.py tests/xmuse/test_production_hardening.py tests/xmuse/test_chat_api.py tests/xmuse/test_package_boundaries.py -q
+uv run pytest tests/xmuse/test_operator_actions.py::test_operator_action_retries_lane_with_guarded_workflow_capability tests/xmuse/test_operator_actions.py::test_operator_action_denies_lane_retry_without_workflow_capability tests/xmuse/test_operator_actions.py::test_operator_action_aborts_lane_with_guarded_workflow_capability tests/xmuse/test_operator_actions.py::test_operator_action_blocks_lane_action_when_guard_mismatches tests/xmuse/test_chat_api.py::test_chat_api_operator_action_retries_lane_with_workflow_capability tests/xmuse/test_chat_api.py::test_chat_api_operator_action_denies_lane_retry_without_workflow_capability tests/xmuse/test_tui_navigation.py::test_chat_screen_lane_retry_runs_operator_control_action tests/xmuse/test_tui_navigation.py::test_chat_screen_lane_abort_runs_operator_control_action -q
 uv run ruff check .
 git diff --check
 test ! -e xmuse/__init__.py
@@ -607,6 +624,7 @@ second Codex independent review attempt for `/release refresh` timed out after 1
 third Codex independent review attempt for manual GOD CLI registration timed out after 120 seconds; no formal review artifact captured
 8 passed
 157 passed, 1 warning
+8 passed, 1 warning
 All checks passed
 git diff --check clean
 xmuse/__init__.py absent
