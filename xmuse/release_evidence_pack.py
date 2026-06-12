@@ -64,6 +64,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--supervisor-snapshot",
+        type=Path,
+        default=None,
+        help=(
+            "Optional xmuse.overnight_supervisor.v1 snapshot to convert into "
+            "the replay bundle's supervisor section."
+        ),
+    )
+    parser.add_argument(
+        "--supervisor-evidence-output",
+        type=Path,
+        default=None,
+        help=(
+            "Optional path for the supervisor production evidence generated "
+            "from --supervisor-snapshot."
+        ),
+    )
+    parser.add_argument(
         "--tombstoned-source-ref",
         action="append",
         default=[],
@@ -78,6 +96,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         audit_output=args.audit_output,
         replay_output=args.replay_output,
         section_artifacts=_section_artifacts(args.section_artifact),
+        supervisor_snapshot=args.supervisor_snapshot,
+        supervisor_evidence_output=args.supervisor_evidence_output,
         tombstoned_source_refs=tuple(args.tombstoned_source_ref),
     )
     print(json.dumps({"decision": pack["decision"], "output": str(args.output)}, sort_keys=True))

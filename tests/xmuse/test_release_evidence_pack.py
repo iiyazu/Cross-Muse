@@ -4,6 +4,11 @@ import json
 import tomllib
 from pathlib import Path
 
+from xmuse_core.platform.overnight_operator_supervisor import (
+    OvernightSupervisor,
+    OvernightSupervisorConfig,
+    OvernightSupervisorStage,
+)
 from xmuse_core.platform.release_evidence_pack import capture_release_evidence_pack
 
 
@@ -42,6 +47,31 @@ def _write_section_evidence(
             "summary": summary,
         },
     )
+
+
+def _write_supervisor_snapshot(tmp_path: Path, *, run_id: str) -> Path:
+    supervisor = OvernightSupervisor(
+        OvernightSupervisorConfig(
+            run_id=run_id,
+            artifact_dir=tmp_path,
+            stages=[
+                OvernightSupervisorStage(
+                    stage_id="S4",
+                    objective="supervise overnight closure",
+                )
+            ],
+        )
+    )
+    supervisor.start_stage("S4")
+    supervisor.record_heartbeat(note="supervisor running")
+    supervisor.record_checkpoint(
+        stage_id="S4",
+        summary="supervisor checkpoint captured",
+        validation=["uv run pytest tests/xmuse/test_overnight_operator_supervisor.py -q"],
+        commands=["uv run pytest tests/xmuse/test_overnight_operator_supervisor.py -q"],
+        source_refs=["goal:stage:S4"],
+    )
+    return tmp_path / f"overnight-supervisor-{run_id}.json"
 
 
 def _gate(
@@ -146,6 +176,74 @@ def test_release_evidence_pack_writes_readiness_audit_and_summary(
     assert replay["authority"] == "replay_index_only"
     assert sections["supervisor"]["status"] == "ok"
     assert sections["supervisor"]["source_authority"] == "overnight_operator_supervisor"
+
+
+def test_release_evidence_pack_converts_supervisor_snapshot_into_replay_section(
+    tmp_path: Path,
+) -> None:
+    artifacts = tmp_path / "artifacts"
+    output = tmp_path / "pack" / "evidence-pack.json"
+    snapshot = _write_supervisor_snapshot(tmp_path / "supervisor", run_id="pack-supervisor")
+    _write_json(
+        artifacts / "github-server-truth.json",
+        _gate(
+            gate_id="github-server-truth",
+            kind="github_server_truth",
+            status="ok",
+            proof_level="server_side_enforcement_proof",
+        ),
+    )
+
+    pack = capture_release_evidence_pack(
+        artifacts_dir=artifacts,
+        output_path=output,
+        run_id="pack-supervisor",
+        supervisor_snapshot=snapshot,
+    )
+
+    supervisor_evidence = output.parent / "supervisor-production-evidence.json"
+    replay = json.loads(
+        (output.parent / "overnight-replay-bundle.json").read_text(encoding="utf-8")
+    )
+    sections = {section["section_id"]: section for section in replay["sections"]}
+    assert supervisor_evidence.exists()
+    assert pack["source_reports"]["overnight_supervisor_evidence"] == str(
+        supervisor_evidence
+    )
+    assert sections["supervisor"]["status"] == "ok"
+    assert sections["supervisor"]["source_authority"] == "overnight_operator_supervisor"
+    assert sections["supervisor"]["artifacts"][0] == str(snapshot)
+
+
+def test_release_evidence_pack_rejects_ambiguous_supervisor_sources(
+    tmp_path: Path,
+) -> None:
+    supervisor = tmp_path / "supervisor-production-evidence.json"
+    snapshot = _write_supervisor_snapshot(
+        tmp_path / "supervisor",
+        run_id="ambiguous-supervisor",
+    )
+    _write_section_evidence(
+        supervisor,
+        section_id="supervisor",
+        status="ok",
+        proof_level="contract_proof",
+        source_authority="overnight_operator_supervisor",
+        source_refs=["goal:stage:S4"],
+        summary="Supervisor captured.",
+    )
+
+    try:
+        capture_release_evidence_pack(
+            artifacts_dir=tmp_path / "artifacts",
+            output_path=tmp_path / "pack.json",
+            supervisor_snapshot=snapshot,
+            section_artifacts={"supervisor": supervisor},
+        )
+    except ValueError as exc:
+        assert "supervisor evidence source is ambiguous" in str(exc)
+    else:
+        raise AssertionError("expected ambiguous supervisor source to be rejected")
 
 
 def test_release_evidence_pack_marks_contaminated_audit_as_terminal(
@@ -265,6 +363,54 @@ def test_release_evidence_pack_cli_accepts_replay_section_artifacts(
     sections = {section["section_id"]: section for section in replay["sections"]}
     assert pack["overnight_replay_decision"] == "blocked"
     assert replay["run_id"] == "overnight-cli-pack"
+    assert sections["supervisor"]["status"] == "ok"
+
+
+def test_release_evidence_pack_cli_accepts_supervisor_snapshot(
+    tmp_path: Path,
+) -> None:
+    from xmuse.release_evidence_pack import main
+
+    artifacts = tmp_path / "artifacts"
+    output = tmp_path / "pack.json"
+    snapshot = _write_supervisor_snapshot(
+        tmp_path / "supervisor",
+        run_id="overnight-cli-pack",
+    )
+    _write_json(
+        artifacts / "github-server-truth.json",
+        _gate(
+            gate_id="github-server-truth",
+            kind="github_server_truth",
+            status="ok",
+            proof_level="server_side_enforcement_proof",
+        ),
+    )
+
+    assert (
+        main(
+            [
+                "--artifacts-dir",
+                str(artifacts),
+                "--output",
+                str(output),
+                "--run-id",
+                "overnight-cli-pack",
+                "--supervisor-snapshot",
+                str(snapshot),
+            ]
+        )
+        == 0
+    )
+
+    pack = json.loads(output.read_text(encoding="utf-8"))
+    replay = json.loads(
+        (output.parent / "overnight-replay-bundle.json").read_text(encoding="utf-8")
+    )
+    sections = {section["section_id"]: section for section in replay["sections"]}
+    assert pack["source_reports"]["overnight_supervisor_evidence"] == str(
+        output.parent / "supervisor-production-evidence.json"
+    )
     assert sections["supervisor"]["status"] == "ok"
 
 

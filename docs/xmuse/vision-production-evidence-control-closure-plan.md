@@ -514,6 +514,11 @@ Current implementation status:
   reports for the same artifact directory. It accepts replay section artifacts
   and tombstoned source refs, but remains an aggregation command only; it does
   not create live proof or replace the underlying authorities.
+- The same release pack command can accept `--supervisor-snapshot` and convert
+  a durable `xmuse.overnight_supervisor.v1` snapshot into replay-ready
+  supervisor production evidence before building the nested replay bundle. This
+  removes a manual handoff step but remains contract-level supervisor evidence,
+  not live overnight proof.
 
 Acceptance:
 

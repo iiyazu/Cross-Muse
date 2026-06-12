@@ -380,6 +380,11 @@ Current implementation status:
   readiness and proof-contamination reports. Section artifacts and tombstoned
   source refs can be supplied through the pack command, but the pack remains an
   aggregation surface and does not upgrade release or replay proof.
+- `uv run xmuse-release-evidence-pack --supervisor-snapshot <snapshot>` now
+  converts an `xmuse.overnight_supervisor.v1` snapshot into replay-ready
+  supervisor production evidence before assembling the nested replay bundle.
+  This reduces handoff friction after a long `/goal` run while keeping the
+  snapshot conversion explicit and contract-level.
 - `uv run xmuse-memoryos-governance-evidence-capture` exports governed
   MemoryOS writeback events or governed write plans into a replay-ready
   `xmuse.production_evidence.v1` artifact for the `memory_governance` section.
@@ -528,6 +533,10 @@ Tasks:
 - Or use `uv run xmuse-release-evidence-pack --section-artifact SECTION=PATH`
   to produce the release-readiness, proof-contamination, and overnight replay
   reports in one operator handoff pack.
+- When a supervisor snapshot exists, prefer
+  `uv run xmuse-release-evidence-pack --supervisor-snapshot SNAPSHOT` for the
+  final handoff pack; do not pass both `--supervisor-snapshot` and an explicit
+  `--section-artifact supervisor=...`.
 - Update walkthrough/evidence docs under `docs/xmuse/`.
 - Run focused tests for every changed surface.
 - Always run:
