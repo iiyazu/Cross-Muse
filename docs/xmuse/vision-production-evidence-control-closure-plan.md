@@ -344,6 +344,11 @@ Current implementation status:
   GOD deliberation.
 - The command records configured/missing state and blocker next actions without
   writing secret values.
+- `uv run xmuse-memoryos-live-trace-capture` runs the explicit opt-in
+  MemoryOS Lite REST capture path: namespace/session binding, ingest,
+  build-context, trace fetch, and `xmuse.memoryos_lite_trace.v1` artifact
+  writing. It does not import `memoryos_lite` and it writes `manual_gap` when
+  trace evidence is unavailable.
 - It emits `manual_gap` proof for uncaptured gates. When
   `XMUSE_GITHUB_TRUTH_REPO` and `XMUSE_GITHUB_TRUTH_PULL_REQUEST` are set, it
   runs the opt-in read-only GitHub server truth collector and can write a
@@ -355,8 +360,9 @@ Current implementation status:
   validates and converts them through the same release-gate contracts as the
   standalone gate capture commands. Missing, invalid, fake/local, blocked, or
   stale artifacts remain blockers.
-- It does not create live MemoryOS, real provider, or natural transcript proof
-  by itself.
+- `xmuse-live-gate-status-capture` does not create live MemoryOS, real
+  provider, or natural transcript proof by itself; it converts supplied
+  artifacts and writes blocker status for missing proof.
 - `uv run xmuse-real-provider-runtime-gate-capture` converts an explicit
   `xmuse.real_provider_runtime.v1` soak artifact into the `real_provider`
   release gate. It requires `real_provider_proof`, MCP writeback, real
@@ -455,6 +461,10 @@ Current implementation status:
   artifact into the `live_memoryos` release gate. It blocks contract/fake proof,
   empty trace events, invalid namespace/session evidence, and unresolved
   blockers.
+- `uv run xmuse-memoryos-live-trace-capture` is the production path for
+  producing that trace artifact from a configured MemoryOS Lite service. It
+  performs create/ingest/build-context/trace through REST and keeps failed
+  trace capture as blocked `manual_gap`, not fake live evidence.
 - `uv run xmuse-release-readiness-capture` reads JSON release gate artifacts
   from an artifact directory, writes a redacted report, and evaluates the gates
   with the same proof-level rules as `evaluate_release_readiness`.

@@ -161,10 +161,11 @@ def _memoryos_gate(env: Mapping[str, str], *, output_dir: Path) -> dict[str, Any
             if configured
             else "MemoryOS Lite live gate is required but not configured in this environment."
         ),
-        attempted_command="uv run pytest tests/xmuse/test_memoryos_lite_interop.py -q",
+        attempted_command="uv run xmuse-memoryos-live-trace-capture",
         next_action=(
-            "Run a live MemoryOS Lite create/ingest/build-context/trace capture and "
-            "write a live_service_proof gate artifact."
+            "Run xmuse-memoryos-live-trace-capture against a configured MemoryOS "
+            "Lite service, then convert the xmuse.memoryos_lite_trace.v1 artifact "
+            "to a live_service_proof gate artifact."
         ),
         source_refs=source_refs,
     )

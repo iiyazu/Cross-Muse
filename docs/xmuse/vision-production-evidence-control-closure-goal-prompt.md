@@ -51,10 +51,11 @@ Priority order:
 4. Harden Auth/RBAC. Chat API and MCP mutating writes must require configured
    tokens, roles/capabilities, and fail closed under
    XMUSE_DEPLOYMENT_PROFILE=production when write tokens are missing.
-5. Attempt configured live gates: MemoryOS Lite trace, GitHub server truth,
-   Ray/Codex GOD runtime, OpenCode health/bounded runtime, and natural GOD
-   transcript evidence. Configured gate failures are release blockers, not
-   cosmetic gaps.
+5. Attempt configured live gates: run `xmuse-memoryos-live-trace-capture` when
+   MemoryOS Lite is configured, then capture MemoryOS Lite gate status, GitHub
+   server truth, Ray/Codex GOD runtime, OpenCode health/bounded runtime, and
+   natural GOD transcript evidence. Configured gate failures are release
+   blockers, not cosmetic gaps.
 6. Aggregate release readiness with tests, ruff, package boundary, internal
    review, live/server/provider evidence, blocker artifacts, and proof
    contamination audit.

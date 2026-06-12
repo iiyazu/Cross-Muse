@@ -43,6 +43,8 @@ export XMUSE_TUI_OPERATOR_ID=operator
 export XMUSE_TUI_OPERATOR_ROLE=operator
 export XMUSE_TUI_OPERATOR_CAPABILITIES=chat_create_conversation,chat_post_message,chat_bootstrap,chat_approve_proposal,chat_manage_participants,chat_freeze_blueprint,register_god_cli,select_god_cli,release_gate,workflow_write
 export XMUSE_MCP_AUTH_TOKEN=<server-token>
+export XMUSE_LIVE_MEMORYOS_LITE=1
+export XMUSE_MEMORYOS_LITE_URL=<memoryos-lite-base-url>
 export XMUSE_MEMORYOS_LIVE_TRACE_ARTIFACT=xmuse/work/release_readiness/memoryos-trace.json
 export XMUSE_NATURAL_GOD_TRANSCRIPT_PATH=xmuse/work/release_readiness/natural-transcript.json
 export XMUSE_REAL_PROVIDER_RUNTIME_ARTIFACT=xmuse/work/release_readiness/real-provider-runtime.json
@@ -259,12 +261,42 @@ Invalid, missing, fake/local, blocked, or stale artifacts remain blockers.
 
 This command does not run MemoryOS, Ray/Codex/OpenCode, or natural GOD
 transcript sessions. It creates honest blocker artifacts for those gates until
-their live proof artifacts are supplied.
+their live proof artifacts are supplied. For MemoryOS Lite, use
+`xmuse-memoryos-live-trace-capture` first, then rerun live-gate status capture
+with `XMUSE_MEMORYOS_LIVE_TRACE_ARTIFACT` pointing at the captured trace.
 
 ## MemoryOS Lite Live Release Gate
 
-After a live MemoryOS Lite create/ingest/build-context/trace run has written an
-`xmuse.memoryos_lite_trace.v1` artifact, convert it to a release gate artifact:
+Run the explicit opt-in REST capture against a configured MemoryOS Lite service:
+
+```bash
+XMUSE_LIVE_MEMORYOS_LITE=1 \
+XMUSE_MEMORYOS_LITE_URL=<memoryos-lite-base-url> \
+uv run xmuse-memoryos-live-trace-capture \
+  --repo-id iiyazu/Cross-Muse \
+  --workspace-id xmuse \
+  --god-id god-review \
+  --conversation-id <conversation-id> \
+  --thread-id <thread-id> \
+  --blueprint-id <blueprint-id> \
+  --feature-id <feature-id> \
+  --lane-id <lane-id> \
+  --actor-id god-review \
+  --content "Live MemoryOS Lite production evidence." \
+  --query "production evidence" \
+  --source-ref lane:<lane-id> \
+  --source-ref blueprint:<blueprint-id> \
+  --output xmuse/work/release_readiness/memoryos-trace.json
+```
+
+The command uses the REST-only MemoryOS Lite adapter. It creates or reuses the
+durable namespace/session binding, ingests source-attributed evidence, builds
+context, fetches `/sessions/{session_id}/trace`, and writes an
+`xmuse.memoryos_lite_trace.v1` artifact. If trace fetch is unavailable, it
+writes a blocked `manual_gap` artifact rather than relabeling a partial run as
+`live_service_proof`.
+
+After that live artifact exists, convert it to a release gate artifact:
 
 ```bash
 uv run xmuse-memoryos-live-gate-capture \
@@ -282,7 +314,7 @@ If the live trace artifact has unresolved blockers, the gate keeps
 `live_service_proof` but remains `blocked`, so release readiness cannot become
 `ready` until the blockers are resolved.
 
-This command does not start MemoryOS Lite. It only validates and converts an
+The gate command does not start MemoryOS Lite. It only validates and converts an
 existing live trace artifact.
 
 ## GitHub Server Truth Release Gate
