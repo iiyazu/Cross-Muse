@@ -18,6 +18,9 @@ from xmuse_core.platform.frozen_blueprint_evidence_capture import (
 from xmuse_core.platform.github_truth_release_gate import (
     write_github_server_truth_release_gate,
 )
+from xmuse_core.platform.internal_review_release_gate import (
+    capture_internal_review_release_gate,
+)
 from xmuse_core.platform.memoryos_governance_evidence_capture import (
     capture_memoryos_governance_evidence,
 )
@@ -70,6 +73,8 @@ def capture_release_evidence_pack(
     github_server_truth: str | Path | None = None,
     github_base_branch: str = "main",
     github_expected_head_sha: str | None = None,
+    internal_review_artifact: str | Path | None = None,
+    internal_review_expected_head_sha: str | None = None,
     tombstoned_source_refs: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     output = Path(output_path)
@@ -111,6 +116,8 @@ def capture_release_evidence_pack(
         github_server_truth=github_server_truth,
         github_base_branch=github_base_branch,
         github_expected_head_sha=github_expected_head_sha,
+        internal_review_artifact=internal_review_artifact,
+        internal_review_expected_head_sha=internal_review_expected_head_sha,
     )
 
     readiness = capture_release_readiness(
@@ -291,8 +298,23 @@ def _release_gate_artifacts(
     github_server_truth: str | Path | None,
     github_base_branch: str,
     github_expected_head_sha: str | None,
+    internal_review_artifact: str | Path | None,
+    internal_review_expected_head_sha: str | None,
 ) -> dict[str, str]:
     source_reports: dict[str, str] = {}
+    if internal_review_artifact is not None:
+        if internal_review_expected_head_sha is None:
+            raise ValueError(
+                "internal_review_expected_head_sha is required when "
+                "internal_review_artifact is supplied for a release gate"
+            )
+        internal_review_gate_path = artifacts_dir / "internal-review.json"
+        capture_internal_review_release_gate(
+            artifact_path=internal_review_artifact,
+            output_path=internal_review_gate_path,
+            expected_head_sha=internal_review_expected_head_sha,
+        )
+        source_reports["internal_review_gate"] = str(internal_review_gate_path)
     if github_server_truth is not None:
         github_truth_path = Path(github_server_truth)
         github_gate_path = artifacts_dir / "github-server-truth.json"

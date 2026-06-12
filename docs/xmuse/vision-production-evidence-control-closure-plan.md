@@ -480,6 +480,11 @@ Current implementation status:
   `xmuse.internal_review.v1` artifact for the current head SHA into an
   `internal_review_proof` release gate. It blocks mismatched heads and open
   critical/important findings.
+- A captured structured internal review artifact can also be handed to
+  `uv run xmuse-release-evidence-pack --internal-review-artifact REVIEW` with
+  `--internal-review-expected-head-sha HEAD`. The pack only converts the
+  explicit artifact through the same internal review gate validator; it does
+  not create GitHub server-side review enforcement or merge truth.
 - `uv run xmuse-natural-deliberation-gate-capture` converts an explicit natural
   GOD transcript artifact into the `natural_deliberation` release gate. It
   blocks deterministic replay, missing session metadata, single-GOD transcript
@@ -572,6 +577,12 @@ Current implementation status:
   readiness/audit. This reduces handoff friction after a fresh capture, but the
   pack does not perform GitHub API calls and does not create review truth, merge
   truth, or `pr_merged`.
+- The same release pack command can accept `--internal-review-artifact`,
+  convert the explicit structured internal review artifact through the existing
+  internal review gate validator, and write `internal-review.json` under
+  `--artifacts-dir` before readiness/audit. This reduces handoff friction after
+  an independent current-head review, but the proof remains
+  `internal_review_proof` and must not be rendered as GitHub enforcement.
 
 Acceptance:
 

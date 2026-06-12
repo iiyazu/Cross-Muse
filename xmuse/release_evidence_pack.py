@@ -233,6 +233,22 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--internal-review-artifact",
+        type=Path,
+        default=None,
+        help=(
+            "Optional xmuse.internal_review.v1 artifact to convert into "
+            "artifacts-dir/internal-review.json before release readiness."
+        ),
+    )
+    parser.add_argument(
+        "--internal-review-expected-head-sha",
+        default=None,
+        help=(
+            "Expected current head SHA that --internal-review-artifact must cover."
+        ),
+    )
+    parser.add_argument(
         "--tombstoned-source-ref",
         action="append",
         default=[],
@@ -268,6 +284,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         github_server_truth=args.github_server_truth,
         github_base_branch=args.github_base_branch,
         github_expected_head_sha=args.github_expected_head_sha,
+        internal_review_artifact=args.internal_review_artifact,
+        internal_review_expected_head_sha=args.internal_review_expected_head_sha,
         tombstoned_source_refs=tuple(args.tombstoned_source_ref),
     )
     print(json.dumps({"decision": pack["decision"], "output": str(args.output)}, sort_keys=True))

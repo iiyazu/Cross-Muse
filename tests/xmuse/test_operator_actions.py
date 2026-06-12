@@ -830,6 +830,28 @@ def _write_github_server_truth(path: Path) -> None:
     )
 
 
+def _write_internal_review(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "xmuse.internal_review.v1",
+                "review_id": "review-pr43-head-pack-1",
+                "reviewer": "codex-reviewer",
+                "reviewed_head_sha": "head-pack-1",
+                "decision": "approved",
+                "summary": "No blocking findings.",
+                "findings": [],
+                "source_refs": ["github:pr:43"],
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
 def test_operator_action_captures_release_evidence_pack_with_capability(
     tmp_path: Path,
 ) -> None:
@@ -907,6 +929,44 @@ def test_operator_action_captures_release_pack_with_github_truth_snapshot(
     assert result.payload["evidence_pack"]["source_reports"][
         "github_server_truth_gate"
     ] == str(release_dir / "artifacts" / "github-server-truth.json")
+
+
+def test_operator_action_captures_release_pack_with_internal_review(
+    tmp_path: Path,
+) -> None:
+    release_dir = tmp_path / "release_readiness"
+    _write_internal_review(release_dir / "artifacts" / "internal-review-input.json")
+    service = OperatorActionService(
+        god_cli_registry=build_default_god_cli_registry(),
+        audit_dir=tmp_path / "operator_actions",
+        release_readiness_dir=release_dir,
+    )
+
+    result = service.handle(
+        OperatorActionRequest(
+            action="capture_release_evidence_pack",
+            actor_id="operator-1",
+            capabilities=(OperatorActionCapability.RELEASE_GATE,),
+            idempotency_key="idem-release-review-1",
+            payload={
+                "internal_review_artifact": "artifacts/internal-review-input.json",
+                "internal_review_expected_head_sha": "head-pack-1",
+            },
+            source="tui",
+        )
+    )
+
+    gate = json.loads(
+        (release_dir / "artifacts" / "internal-review.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert result.status == "ok"
+    assert gate["status"] == "ok"
+    assert gate["proof_level"] == "internal_review_proof"
+    assert result.payload["evidence_pack"]["source_reports"][
+        "internal_review_gate"
+    ] == str(release_dir / "artifacts" / "internal-review.json")
 
 
 def test_operator_action_denies_release_evidence_pack_without_capability(

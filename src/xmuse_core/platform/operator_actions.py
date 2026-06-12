@@ -893,6 +893,9 @@ class OperatorActionService:
             github_server_truth = self._release_optional_path(
                 request.payload.get("github_server_truth")
             )
+            internal_review_artifact = self._release_optional_path(
+                request.payload.get("internal_review_artifact")
+            )
         except ValueError as exc:
             return OperatorActionResult(
                 action=action,
@@ -914,6 +917,10 @@ class OperatorActionService:
                 or "main",
                 github_expected_head_sha=_text(
                     request.payload.get("github_expected_head_sha")
+                ),
+                internal_review_artifact=internal_review_artifact,
+                internal_review_expected_head_sha=_text(
+                    request.payload.get("internal_review_expected_head_sha")
                 ),
             )
         except Exception as exc:

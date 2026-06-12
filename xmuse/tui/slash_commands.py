@@ -940,6 +940,11 @@ def _release_pack_payload(args: list[str]) -> dict[str, Any]:
             "github_head": "github_expected_head_sha",
             "expected_head": "github_expected_head_sha",
             "base_branch": "github_base_branch",
+            "review": "internal_review_artifact",
+            "internal_review": "internal_review_artifact",
+            "review_artifact": "internal_review_artifact",
+            "review_head": "internal_review_expected_head_sha",
+            "internal_review_head": "internal_review_expected_head_sha",
         },
         list_keys=set(),
     )

@@ -595,6 +595,8 @@ uv run xmuse-release-evidence-pack \
   --natural-deliberation-god-runtime xmuse/work/release_readiness/god-runtime-continuity.json \
   --github-server-truth xmuse/work/release_readiness/artifacts/github-truth.json \
   --github-expected-head-sha "$(git rev-parse HEAD)" \
+  --internal-review-artifact xmuse/work/release_readiness/internal-review.json \
+  --internal-review-expected-head-sha "$(git rev-parse HEAD)" \
   --frozen-blueprint xmuse/work/release_readiness/mission-blueprint.json \
   --feature-contract xmuse/work/release_readiness/feature-owner-contract.json \
   --memoryos-live-trace xmuse/work/release_readiness/memoryos-trace.json \
@@ -636,6 +638,11 @@ The pack does not call GitHub itself. Pass `--github-expected-head-sha` for the
 current PR head; a stale snapshot remains `manual_gap`. GitHub server
 enforcement proof can satisfy the `github_server_truth` release gate, but
 review truth, merge truth, and `pr_merged` remain separate server-side facts.
+`--internal-review-artifact` writes `artifacts-dir/internal-review.json`
+through the same validator as `xmuse-internal-review-gate-capture`. It emits
+`internal_review_proof` only for an approved current-head review artifact with
+no open critical/important findings. This is internal review truth only; it
+does not become GitHub server-side review enforcement.
 
 The same capture is available through the TUI operator action surface:
 
@@ -646,6 +653,7 @@ uv run xmuse-tui
 /release refresh
 /release pack
 /release pack github=artifacts/github-truth.json github_head=<current-head-sha>
+/release pack review=internal-review.json review_head=<current-head-sha>
 /release candidates
 /release attempt natural provider memoryos runtime_backend=ray transport=codex-app-server repo_id=iiyazu/Cross-Muse workspace_id=xmuse god_id=<god-id> thread_id=<thread-id> blueprint_id=<blueprint-id> feature_id=<feature-id> lane_id=<lane-id> actor_id=<actor-id> content='<content>' query='<query>'
 /release export natural target_ref=blueprint:<blueprint-id>
@@ -659,7 +667,9 @@ status blocker artifacts under `xmuse/work/release_readiness/artifacts`.
 handoff pack plus nested readiness/audit reports. `/release pack key=value`
 can pass the same release-root-scoped GitHub snapshot handoff fields as the
 CLI, for example `github=artifacts/github-truth.json` and
-`github_head=<current-head-sha>`. `/release candidates` calls
+`github_head=<current-head-sha>`, and the same internal review fields, for
+example `review=internal-review.json` and `review_head=<current-head-sha>`.
+`/release candidates` calls
 `inspect_release_evidence_candidates` and reads durable `chat.db`,
 `god_sessions.json`, the peer latency trace table, and redacted MemoryOS env
 presence to show whether the operator has enough inputs for the export actions.

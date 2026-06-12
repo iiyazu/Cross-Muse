@@ -548,18 +548,23 @@ The evidence pack does not create live MemoryOS, GitHub, provider, or natural
 transcript proof from nothing. It evaluates supplied release-gate artifacts
 through the existing readiness and contamination rules, and it can now convert
 explicit `--natural-deliberation-transcript`, `--memoryos-live-trace`,
-`--real-provider-runtime`, and `--github-server-truth` inputs into
+`--real-provider-runtime`, `--github-server-truth`, and
+`--internal-review-artifact` inputs into
 `natural-deliberation.json`, `live-memoryos.json`,
-`real-provider-runtime.json`, and `github-server-truth.json` gate artifacts
-under `--artifacts-dir` before readiness. The natural deliberation gate path
-also requires `--natural-deliberation-god-runtime`, keeping it separate from
-the replay-only `--deliberation-transcript` handoff. Those conversions use the
-same validators as the standalone gate-capture commands, so deterministic
-replay, bounded selected runtime, contract/fake/local/stdout fallback
-artifacts, and stale GitHub head snapshots remain blocked/manual-gap evidence.
-The pack does not call GitHub; `--github-server-truth` only converts an explicit
-raw snapshot and `server_side_enforcement_proof` still does not create review
-truth, merge truth, or `pr_merged`. If the contamination audit reports
+`real-provider-runtime.json`, `github-server-truth.json`, and
+`internal-review.json` gate artifacts under `--artifacts-dir` before readiness.
+The natural deliberation gate path also requires
+`--natural-deliberation-god-runtime`, keeping it separate from the replay-only
+`--deliberation-transcript` handoff. Those conversions use the same validators
+as the standalone gate-capture commands, so deterministic replay, bounded
+selected runtime, contract/fake/local/stdout fallback artifacts, stale GitHub
+head snapshots, stale internal review heads, and open blocking review findings
+remain blocked/manual-gap evidence. The pack does not call GitHub;
+`--github-server-truth` only converts an explicit raw snapshot and
+`server_side_enforcement_proof` still does not create review truth, merge truth,
+or `pr_merged`. `--internal-review-artifact` only converts an explicit
+structured review artifact into `internal_review_proof`; it does not become
+GitHub server-side enforcement. If the contamination audit reports
 `contaminated`, the pack decision is `contaminated`; otherwise it mirrors
 release readiness as `ready`, `blocked`, or `not_evaluated`.
 
@@ -776,13 +781,15 @@ does not call MemoryOS Lite, and none of these replay sections creates
   and do not permit a `pr_merged` claim.
 - Release evidence pack can write one operator handoff report plus nested
   readiness/audit reports, and can now convert explicit raw MemoryOS,
-  provider, natural transcript, and GitHub server truth artifacts through their
-  release-gate validators. It still depends on supplied artifacts and does not
-  create live proof or GitHub merge proof.
+  provider, natural transcript, GitHub server truth, and internal review
+  artifacts through their release-gate validators. It still depends on supplied
+  artifacts and does not create live proof, GitHub review enforcement, or
+  GitHub merge proof.
 - TUI `/release pack` can trigger that evidence pack through the audited
   operator action contract with `release_gate`. It accepts release-root-scoped
   key/value handoff fields such as `github=artifacts/github-truth.json` and
-  `github_head=<current-head-sha>`, but no live operator service run has
+  `github_head=<current-head-sha>`, plus `review=internal-review.json` and
+  `review_head=<current-head-sha>`, but no live operator service run has
   exercised the production token bundle end to end.
 - TUI `/release refresh` and the matching Chat API/operator action can refresh
   live-gate status artifacts under the release-readiness work directory. With

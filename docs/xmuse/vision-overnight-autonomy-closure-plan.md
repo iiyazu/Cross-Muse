@@ -599,6 +599,13 @@ Tasks:
   does not call GitHub itself. A stale head remains `manual_gap`, and
   `server_side_enforcement_proof` still does not create review truth, merge
   truth, or `pr_merged`.
+- When a structured internal review artifact exists for the current head,
+  prefer
+  `uv run xmuse-release-evidence-pack --internal-review-artifact REVIEW --internal-review-expected-head-sha HEAD`
+  for the final handoff pack. The pack writes `internal-review.json` under
+  `--artifacts-dir` through the same internal review gate validator. This can
+  satisfy the `internal_review` release gate as `internal_review_proof`, but it
+  does not create GitHub server-side review enforcement or merge truth.
 - When a frozen mission blueprint artifact exists, prefer
   `uv run xmuse-release-evidence-pack --frozen-blueprint BLUEPRINT` for the
   final handoff pack; do not pass it together with an explicit
