@@ -337,6 +337,35 @@ Deterministic replay and `contract_proof` transcripts write blocked
 `real_provider_proof` but remains blocked, so release readiness cannot become
 `ready` until the blockers are resolved.
 
+### Real Provider Runtime Release Gate
+
+New command:
+
+```text
+uv run xmuse-real-provider-runtime-gate-capture \
+  --artifact <xmuse.real_provider_runtime.v1.json> \
+  --output <gate.json>
+```
+
+The command converts an explicit real-provider runtime soak artifact into the
+`real_provider` release gate. It emits an `ok` gate only when:
+
+- `schema_version` is `xmuse.real_provider_runtime.v1`;
+- `proof_level` is `real_provider_proof`;
+- provider id, provider session id, runtime backend, and transport are present;
+- backend/transport are not fake, fixture, local, or stdout fallback paths;
+- every turn uses `delivery_mode: mcp_writeback` with no degraded reason;
+- every turn has finite ordered stage timings for Ray delivery, provider turn,
+  chat post, and trace persistence;
+- the artifact contains both fresh and resume turns;
+- restart/resume evidence proves the same provider session id was reused;
+- no unresolved runtime blockers remain.
+
+Contract/fake proof, fake transports, stdout fallback, missing stage timings,
+and missing restart/resume evidence write blocked `manual_gap` gates. A real
+soak artifact with unresolved blockers keeps `real_provider_proof` but remains
+blocked.
+
 ## Proof-Level Summary
 
 | Surface | Current proof | Boundary |
@@ -355,6 +384,7 @@ Deterministic replay and `contract_proof` transcripts write blocked
 | Release readiness capture command | `contract_proof` | Aggregates and redacts supplied gate artifacts; does not capture live services by itself. |
 | Internal review release gate command | `contract_proof` | Converts a verified structured internal review artifact into `internal_review_proof`; does not replace GitHub enforcement. |
 | Natural GOD deliberation gate command | `contract_proof` | Converts explicit natural transcript artifacts into a `natural_deliberation` gate; deterministic replay and single-GOD artifacts remain blocked. |
+| Real provider runtime gate command | `contract_proof` | Converts explicit real-provider runtime soak artifacts into a `real_provider` gate; fake/stdout/local artifacts remain blocked. |
 | MemoryOS live gate | `manual_gap` | Env not configured in current shell. |
 | Natural GOD transcript evidence | `manual_gap` | No fresh real multi-GOD transcript artifact has been captured in this slice. |
 | Ray/Codex/OpenCode live gate | `manual_gap` | Binaries/Ray import exist, but production services/env are not running/configured. |

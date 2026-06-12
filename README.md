@@ -124,6 +124,9 @@ uv run xmuse-internal-review-gate-capture \
 uv run xmuse-natural-deliberation-gate-capture \
   --artifact xmuse/work/release_readiness/natural-transcript.json \
   --output xmuse/work/release_readiness/artifacts/natural-deliberation.json
+uv run xmuse-real-provider-runtime-gate-capture \
+  --artifact xmuse/work/release_readiness/real-provider-runtime.json \
+  --output xmuse/work/release_readiness/artifacts/real-provider-runtime.json
 uv run xmuse-release-readiness-capture \
   --artifacts-dir xmuse/work/release_readiness/artifacts \
   --output xmuse/work/release_readiness/report.json

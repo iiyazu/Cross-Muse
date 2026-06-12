@@ -281,6 +281,11 @@ Current implementation status:
   writing secret values.
 - It emits `manual_gap` proof only. It does not create live MemoryOS, GitHub
   server, real provider, or natural transcript proof by itself.
+- `uv run xmuse-real-provider-runtime-gate-capture` converts an explicit
+  `xmuse.real_provider_runtime.v1` soak artifact into the `real_provider`
+  release gate. It requires `real_provider_proof`, MCP writeback, real
+  non-fake transport/backend metadata, ordered stage timings, and
+  restart/resume provider-session reuse.
 
 ## S5 - Natural GOD Transcript And Freeze Path
 
@@ -349,6 +354,10 @@ Current implementation status:
   GOD transcript artifact into the `natural_deliberation` release gate. It
   blocks deterministic replay, missing session metadata, single-GOD transcript
   evidence, and unresolved blockers.
+- `uv run xmuse-real-provider-runtime-gate-capture` converts a real provider
+  runtime soak artifact into the `real_provider` release gate. It blocks
+  contract/fake proof, stdout fallback, missing MCP writeback, missing ordered
+  stage timings, and missing restart/resume evidence.
 - `uv run xmuse-release-readiness-capture` reads JSON release gate artifacts
   from an artifact directory, writes a redacted report, and evaluates the gates
   with the same proof-level rules as `evaluate_release_readiness`.

@@ -217,6 +217,32 @@ cannot become `ready`.
 This command does not create the natural transcript. It only converts an
 already exported transcript into the `natural_deliberation` release gate.
 
+## Real Provider Runtime Release Gate
+
+After a real Ray/Codex/OpenCode runtime soak has written an
+`xmuse.real_provider_runtime.v1` artifact, convert it to a release gate
+artifact:
+
+```bash
+uv run xmuse-real-provider-runtime-gate-capture \
+  --artifact xmuse/work/release_readiness/real-provider-runtime.json \
+  --output xmuse/work/release_readiness/artifacts/real-provider-runtime.json
+```
+
+The artifact must carry `proof_level: real_provider_proof`, provider/session
+metadata, real runtime backend and transport values, MCP writeback for every
+turn, ordered finite stage timings, and restart/resume evidence that reuses the
+same provider session. Deterministic fixtures, fake app-server transports,
+`stdout_fallback`, missing stage timings, or missing fresh/resume turns write a
+blocked `manual_gap` gate.
+
+If a real soak artifact has unresolved blockers, the gate keeps
+`real_provider_proof` but remains `blocked`, so release readiness cannot become
+`ready` until the blockers are resolved.
+
+This command does not start Ray, Codex, OpenCode, or MCP. It only validates and
+converts an existing real-provider runtime artifact.
+
 ## Release Readiness Capture
 
 Use this command to aggregate release gate artifacts into a redacted readiness
