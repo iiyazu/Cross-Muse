@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from xmuse_core.platform.overnight_replay_bundle_capture import (
+    capture_overnight_replay_bundle,
+)
 from xmuse_core.platform.proof_contamination_audit import (
     capture_proof_contamination_audit,
 )
@@ -15,8 +19,12 @@ def capture_release_evidence_pack(
     *,
     artifacts_dir: str | Path,
     output_path: str | Path,
+    run_id: str = "release-evidence-pack",
     readiness_output: str | Path | None = None,
     audit_output: str | Path | None = None,
+    replay_output: str | Path | None = None,
+    section_artifacts: Mapping[str, str | Path] | None = None,
+    tombstoned_source_refs: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     output = Path(output_path)
     report_dir = output.parent
@@ -25,6 +33,9 @@ def capture_release_evidence_pack(
     )
     audit_path = Path(audit_output) if audit_output is not None else (
         report_dir / "proof-contamination-audit.json"
+    )
+    replay_path = Path(replay_output) if replay_output is not None else (
+        report_dir / "overnight-replay-bundle.json"
     )
 
     readiness = capture_release_readiness(
@@ -35,6 +46,13 @@ def capture_release_evidence_pack(
         artifacts_dir=artifacts_dir,
         output_path=audit_path,
     )
+    replay = capture_overnight_replay_bundle(
+        run_id=run_id,
+        artifacts_dir=artifacts_dir,
+        output_path=replay_path,
+        section_artifacts=section_artifacts,
+        tombstoned_source_refs=tombstoned_source_refs,
+    )
 
     pack = {
         "schema_version": "xmuse.release_evidence_pack.v1",
@@ -42,17 +60,23 @@ def capture_release_evidence_pack(
         "artifacts_dir": str(Path(artifacts_dir)),
         "readiness_report": str(readiness_path),
         "proof_contamination_audit": str(audit_path),
-        "decision": _pack_decision(readiness=readiness, audit=audit),
+        "overnight_replay_bundle": str(replay_path),
+        "decision": _pack_decision(readiness=readiness, audit=audit, replay=replay),
         "release_readiness_decision": readiness["decision"],
         "proof_contamination_decision": audit["decision"],
+        "overnight_replay_decision": replay["decision"],
+        "overnight_replay_authority": replay["authority"],
         "artifact_count": readiness["artifact_count"],
         "blocker_count": len(readiness["blockers"]),
+        "replay_blocker_count": len(replay["blockers"]),
         "finding_count": audit["finding_count"],
         "blockers": readiness["blockers"],
+        "replay_blockers": replay["blockers"],
         "findings": audit["findings"],
         "source_reports": {
             "release_readiness": str(readiness_path),
             "proof_contamination_audit": str(audit_path),
+            "overnight_replay_bundle": str(replay_path),
         },
     }
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -60,9 +84,18 @@ def capture_release_evidence_pack(
     return pack
 
 
-def _pack_decision(*, readiness: dict[str, Any], audit: dict[str, Any]) -> str:
+def _pack_decision(
+    *,
+    readiness: dict[str, Any],
+    audit: dict[str, Any],
+    replay: dict[str, Any],
+) -> str:
     if audit["decision"] == "contaminated":
         return "contaminated"
+    if readiness["decision"] == "not_evaluated" and readiness["artifact_count"] == 0:
+        return "not_evaluated"
+    if readiness["decision"] == "blocked" or replay["decision"] == "blocked":
+        return "blocked"
     return str(readiness["decision"])
 
 

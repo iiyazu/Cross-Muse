@@ -362,6 +362,11 @@ Current implementation status:
   release gate artifacts and explicit `xmuse.production_evidence.v1` section
   artifacts. It fills unattached required sections with `manual_gap` instead of
   omitting them, so an overnight run can be replayed without prose-only gaps.
+- `uv run xmuse-release-evidence-pack` now writes the same overnight replay
+  bundle as a nested `replay_index_only` source report alongside release
+  readiness and proof-contamination reports. Section artifacts and tombstoned
+  source refs can be supplied through the pack command, but the pack remains an
+  aggregation surface and does not upgrade release or replay proof.
 - `uv run xmuse-memoryos-governance-evidence-capture` exports governed
   MemoryOS writeback events or governed write plans into a replay-ready
   `xmuse.production_evidence.v1` artifact for the `memory_governance` section.
@@ -507,6 +512,9 @@ Tasks:
   section evidence.
 - Use `uv run xmuse-overnight-replay-bundle-capture` to assemble the replay
   index from release gate artifacts and attached section evidence.
+- Or use `uv run xmuse-release-evidence-pack --section-artifact SECTION=PATH`
+  to produce the release-readiness, proof-contamination, and overnight replay
+  reports in one operator handoff pack.
 - Update walkthrough/evidence docs under `docs/xmuse/`.
 - Run focused tests for every changed surface.
 - Always run:

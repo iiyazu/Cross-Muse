@@ -12,6 +12,38 @@ def _write_json(path: Path, payload: dict[str, object]) -> None:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def _write_section_evidence(
+    path: Path,
+    *,
+    section_id: str,
+    status: str,
+    proof_level: str,
+    source_authority: str,
+    source_refs: list[str],
+    summary: str,
+) -> None:
+    _write_json(
+        path,
+        {
+            "schema_version": "xmuse.production_evidence.v1",
+            "stage_id": "S4",
+            "action": f"{section_id}_evidence",
+            "status": status,
+            "proof_level": proof_level,
+            "source_authority": source_authority,
+            "source_refs": source_refs,
+            "target_refs": [],
+            "commands": [],
+            "test_results": [],
+            "artifacts": [],
+            "blocked_reason": None,
+            "owner": "codex",
+            "next_action": None,
+            "summary": summary,
+        },
+    )
+
+
 def _gate(
     *,
     gate_id: str,
@@ -42,6 +74,7 @@ def test_release_evidence_pack_writes_readiness_audit_and_summary(
 ) -> None:
     artifacts = tmp_path / "artifacts"
     output = tmp_path / "pack" / "evidence-pack.json"
+    supervisor = tmp_path / "supervisor-production-evidence.json"
     _write_json(
         artifacts / "github-server-truth.json",
         _gate(
@@ -63,25 +96,56 @@ def test_release_evidence_pack_writes_readiness_audit_and_summary(
             next_action="Start the configured production provider bundle.",
         ),
     )
+    _write_section_evidence(
+        supervisor,
+        section_id="supervisor",
+        status="ok",
+        proof_level="contract_proof",
+        source_authority="overnight_operator_supervisor",
+        source_refs=["goal:stage:S4"],
+        summary="Supervisor heartbeat and checkpoint captured.",
+    )
 
-    pack = capture_release_evidence_pack(artifacts_dir=artifacts, output_path=output)
+    pack = capture_release_evidence_pack(
+        artifacts_dir=artifacts,
+        output_path=output,
+        run_id="overnight-pack-test",
+        section_artifacts={"supervisor": supervisor},
+    )
 
     readiness_output = output.parent / "release-readiness.json"
     audit_output = output.parent / "proof-contamination-audit.json"
+    replay_output = output.parent / "overnight-replay-bundle.json"
     assert output.exists()
     assert readiness_output.exists()
     assert audit_output.exists()
+    assert replay_output.exists()
     assert json.loads(output.read_text(encoding="utf-8")) == pack
     assert pack["schema_version"] == "xmuse.release_evidence_pack.v1"
     assert pack["decision"] == "blocked"
     assert pack["release_readiness_decision"] == "blocked"
     assert pack["proof_contamination_decision"] == "clean"
+    assert pack["overnight_replay_decision"] == "blocked"
+    assert pack["overnight_replay_authority"] == "replay_index_only"
     assert pack["artifact_count"] == 2
     assert pack["blocker_count"] == 1
+    assert pack["replay_blocker_count"] >= 1
     assert pack["finding_count"] == 0
     assert pack["readiness_report"] == str(readiness_output)
     assert pack["proof_contamination_audit"] == str(audit_output)
+    assert pack["overnight_replay_bundle"] == str(replay_output)
     assert pack["blockers"][0]["gate_id"] == "real-provider-runtime"
+    assert pack["source_reports"] == {
+        "release_readiness": str(readiness_output),
+        "proof_contamination_audit": str(audit_output),
+        "overnight_replay_bundle": str(replay_output),
+    }
+    replay = json.loads(replay_output.read_text(encoding="utf-8"))
+    sections = {section["section_id"]: section for section in replay["sections"]}
+    assert replay["run_id"] == "overnight-pack-test"
+    assert replay["authority"] == "replay_index_only"
+    assert sections["supervisor"]["status"] == "ok"
+    assert sections["supervisor"]["source_authority"] == "overnight_operator_supervisor"
 
 
 def test_release_evidence_pack_marks_contaminated_audit_as_terminal(
@@ -146,6 +210,62 @@ def test_release_evidence_pack_cli_writes_pack(tmp_path: Path) -> None:
     pack = json.loads(output.read_text(encoding="utf-8"))
     assert pack["decision"] == "blocked"
     assert pack["blocker_count"] == 1
+    assert pack["overnight_replay_bundle"] == str(
+        output.parent / "overnight-replay-bundle.json"
+    )
+
+
+def test_release_evidence_pack_cli_accepts_replay_section_artifacts(
+    tmp_path: Path,
+) -> None:
+    from xmuse.release_evidence_pack import main
+
+    artifacts = tmp_path / "artifacts"
+    output = tmp_path / "pack.json"
+    supervisor = tmp_path / "supervisor.json"
+    _write_json(
+        artifacts / "github-server-truth.json",
+        _gate(
+            gate_id="github-server-truth",
+            kind="github_server_truth",
+            status="ok",
+            proof_level="server_side_enforcement_proof",
+        ),
+    )
+    _write_section_evidence(
+        supervisor,
+        section_id="supervisor",
+        status="ok",
+        proof_level="contract_proof",
+        source_authority="overnight_operator_supervisor",
+        source_refs=["goal:stage:S4"],
+        summary="Supervisor captured.",
+    )
+
+    assert (
+        main(
+            [
+                "--artifacts-dir",
+                str(artifacts),
+                "--output",
+                str(output),
+                "--run-id",
+                "overnight-cli-pack",
+                "--section-artifact",
+                f"supervisor={supervisor}",
+            ]
+        )
+        == 0
+    )
+
+    pack = json.loads(output.read_text(encoding="utf-8"))
+    replay = json.loads(
+        (output.parent / "overnight-replay-bundle.json").read_text(encoding="utf-8")
+    )
+    sections = {section["section_id"]: section for section in replay["sections"]}
+    assert pack["overnight_replay_decision"] == "blocked"
+    assert replay["run_id"] == "overnight-cli-pack"
+    assert sections["supervisor"]["status"] == "ok"
 
 
 def test_release_evidence_pack_cli_script_is_registered() -> None:

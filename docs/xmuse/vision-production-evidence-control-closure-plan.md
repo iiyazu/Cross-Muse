@@ -510,8 +510,10 @@ Current implementation status:
   markers in production proof, and `pr_merged` claims without server-side merge
   proof.
 - `uv run xmuse-release-evidence-pack` writes one operator handoff report plus
-  nested release-readiness and proof-contamination reports for the same artifact
-  directory. It is an aggregation command only; it does not create live proof.
+  nested release-readiness, proof-contamination, and overnight replay-bundle
+  reports for the same artifact directory. It accepts replay section artifacts
+  and tombstoned source refs, but remains an aggregation command only; it does
+  not create live proof or replace the underlying authorities.
 
 Acceptance:
 
