@@ -9,6 +9,10 @@ from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from xmuse_core.platform.internal_review_release_gate import (
+    build_internal_review_release_gate,
+)
+
 
 class FeatureDraftPRRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -418,7 +422,11 @@ class GitHubCliServerSideTruthClient:
             return False
         return (
             self._internal_reviewed_head_sha == head_sha
-            and Path(self._internal_review_artifact).is_file()
+            and _internal_review_artifact_verified(
+                artifact_path=self._internal_review_artifact,
+                expected_head_sha=head_sha,
+                expected_reviewer=self._internal_reviewer,
+            )
         )
 
     def _gh_api(self, endpoint: str) -> Any | None:
@@ -880,6 +888,31 @@ def _nested_str(payload: dict[str, Any], *path: str) -> str | None:
             return None
         current = current.get(key)
     return _optional_str(current)
+
+
+def _internal_review_artifact_verified(
+    *,
+    artifact_path: str,
+    expected_head_sha: str,
+    expected_reviewer: str,
+) -> bool:
+    path = Path(artifact_path)
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    if _optional_str(payload.get("reviewer")) != expected_reviewer:
+        return False
+    gate = build_internal_review_release_gate(
+        payload,
+        artifact_path=path,
+        expected_head_sha=expected_head_sha,
+    )
+    return gate.get("status") == "ok" and gate.get(
+        "proof_level"
+    ) == "internal_review_proof"
 
 
 def _optional_str(value: Any) -> str | None:

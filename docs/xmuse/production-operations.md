@@ -254,6 +254,10 @@ writes the raw snapshot plus the `github_server_truth` release gate. This can
 satisfy `server_side_enforcement_proof` when branch protection/ruleset and
 required-check truth are captured. It still cannot create review truth, merge
 truth, or `pr_merged`.
+If internal review evidence is supplied to the GitHub truth collector, it must
+be the same structured full-PR/current-head artifact accepted by
+`xmuse-internal-review-gate-capture`; arbitrary files or partial reviews do not
+satisfy `review_truth`.
 
 For one-off operator runs, the same GitHub target may be supplied directly:
 

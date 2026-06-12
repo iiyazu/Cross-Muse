@@ -481,6 +481,10 @@ Current implementation status:
   `internal_review_proof` release gate only when it declares
   `review_scope=full_pr_current_head`. It blocks mismatched heads, missing or
   partial review scope, and open critical/important findings.
+- GitHub truth capture reuses the same structured internal review validation
+  before treating an internal review artifact as `review_truth`; a file that
+  merely exists, stale head evidence, reviewer mismatch, or partial-scope review
+  remains a `manual_gap`.
 - A captured structured internal review artifact can also be handed to
   `uv run xmuse-release-evidence-pack --internal-review-artifact REVIEW` with
   `--internal-review-expected-head-sha HEAD`. The pack only converts the

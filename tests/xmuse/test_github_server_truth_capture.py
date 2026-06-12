@@ -149,8 +149,23 @@ def test_github_server_truth_capture_accepts_internal_review_evidence(
     tmp_path: Path,
 ) -> None:
     output = tmp_path / "github-truth.json"
-    artifact = tmp_path / "internal-review.md"
-    artifact.write_text("opencode-in review passed", encoding="utf-8")
+    artifact = tmp_path / "internal-review.json"
+    artifact.write_text(
+        json.dumps(
+            {
+                "schema_version": "xmuse.internal_review.v1",
+                "review_id": "review-pr42-head123",
+                "reviewer": "opencode-in-review",
+                "reviewed_head_sha": "head123",
+                "review_scope": "full_pr_current_head",
+                "decision": "approved",
+                "summary": "No blocking findings.",
+                "findings": [],
+                "source_refs": ["github:pr:42"],
+            }
+        ),
+        encoding="utf-8",
+    )
     runner = _FakeGhApiRunner(
         {
             "repos/iiyazu/Cross-Muse/pulls/42": {
@@ -223,6 +238,96 @@ def test_github_server_truth_capture_accepts_internal_review_evidence(
     assert payload["internal_review_artifact"] == str(artifact)
     assert payload["internal_reviewer"] == "opencode-in-review"
     assert payload["internal_review_verified"] is True
+
+
+def test_github_server_truth_capture_rejects_partial_internal_review_scope(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "github-truth.json"
+    artifact = tmp_path / "internal-review.json"
+    artifact.write_text(
+        json.dumps(
+            {
+                "schema_version": "xmuse.internal_review.v1",
+                "review_id": "review-pr42-slice",
+                "reviewer": "opencode-in-review",
+                "reviewed_head_sha": "head123",
+                "review_scope": "latest_commit_only",
+                "decision": "approved",
+                "summary": "Latest commit reviewed only.",
+                "findings": [],
+                "source_refs": ["github:pr:42"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    runner = _FakeGhApiRunner(
+        {
+            "repos/iiyazu/Cross-Muse/pulls/42": {
+                "node_id": "PR_node_42",
+                "merged": True,
+                "merged_at": "2026-06-10T15:00:00Z",
+                "merge_commit_sha": "merge123",
+                "head": {"sha": "head123"},
+            },
+            "repos/iiyazu/Cross-Muse/pulls/42/reviews": [],
+            "repos/iiyazu/Cross-Muse/branches/main/protection": {
+                "required_pull_request_reviews": None,
+                "required_status_checks": {
+                    "checks": [
+                        {"context": "quality-gates"},
+                        {"context": "contract-smoke-gates"},
+                        {"context": "real-runtime-integration-gate"},
+                    ]
+                },
+            },
+            "repos/iiyazu/Cross-Muse/commits/head123/check-runs": {
+                "check_runs": [
+                    {
+                        "id": 111,
+                        "name": "quality-gates",
+                        "conclusion": "success",
+                        "app": {"slug": "github-actions"},
+                    },
+                    {
+                        "id": 112,
+                        "name": "contract-smoke-gates",
+                        "conclusion": "success",
+                        "app": {"slug": "github-actions"},
+                    },
+                    {
+                        "id": 113,
+                        "name": "real-runtime-integration-gate",
+                        "conclusion": "success",
+                        "app": {"slug": "github-actions"},
+                    },
+                ]
+            },
+        }
+    )
+
+    rc = module.capture_github_server_truth(
+        repo="iiyazu/Cross-Muse",
+        pull_request_number=42,
+        required_checks=[
+            "quality-gates",
+            "contract-smoke-gates",
+            "real-runtime-integration-gate",
+        ],
+        output=output,
+        base_branch="main",
+        runner=runner,
+        internal_review_artifact=artifact,
+        internal_reviewer="opencode-in-review",
+        internal_reviewed_head_sha="head123",
+    )
+
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert rc == 2
+    assert payload["proof_level"] == "manual_gap"
+    assert payload["can_emit_pr_merged"] is False
+    assert payload["internal_review_verified"] is False
+    assert payload["gap_reason"] == "missing server-side truth: review_truth"
 
 
 def test_github_server_truth_capture_can_write_release_gate_artifact(

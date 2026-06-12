@@ -143,6 +143,13 @@ uv run python scripts/github_server_truth_capture.py \
   --release-gate-output /tmp/xmuse-github-server-truth-gate.json
 ```
 
+When `--internal-review-artifact` is supplied, the artifact must be a structured
+`xmuse.internal_review.v1` JSON artifact that passes the same
+`xmuse-internal-review-gate-capture` validator for the current head, including
+`review_scope=full_pr_current_head`; the supplied `--internal-reviewer` must
+match the artifact reviewer. A local file that merely exists, a stale artifact,
+or a partial-scope review cannot satisfy `review_truth`.
+
 The script writes evidence JSON with `capture_mode:
 opt_in_read_only_gh_api`. It returns exit `0` only when the captured server
 snapshot can emit `pr_merged`; otherwise it writes `manual_gap` evidence and
