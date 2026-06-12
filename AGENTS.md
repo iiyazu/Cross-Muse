@@ -19,6 +19,7 @@ Two packages, one `pyproject.toml`:
 ```bash
 uv run xmuse-chat-api          # REST API (FastAPI)
 uv run xmuse-goal-stage-evidence-capture  # Goal stage result replay evidence
+uv run xmuse-god-runtime-continuity-capture  # Selected-GOD runtime continuity artifact
 uv run xmuse-internal-review-gate-capture  # Internal review release gate
 uv run xmuse-memoryos-live-gate-capture  # MemoryOS Lite live release gate
 uv run xmuse-mcp-server        # MCP-over-HTTP server (FastAPI)
@@ -37,6 +38,7 @@ Or directly:
 uv run python xmuse/chat_api.py
 uv run python -m xmuse.tui
 uv run python xmuse/goal_stage_evidence_capture.py
+uv run python xmuse/god_runtime_continuity_capture.py
 uv run python xmuse/platform_runner.py
 uv run python xmuse/internal_review_gate_capture.py
 uv run python xmuse/memoryos_live_gate_capture.py

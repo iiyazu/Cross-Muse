@@ -499,6 +499,17 @@ bounded selected CLIs, or stale/invalid heartbeat evidence remains blocked or
 `manual_gap`; the capture command never upgrades a selected CLI into peer-GOD
 proof by assertion.
 
+The same capture is available through the audited TUI/operator action surface:
+
+```text
+/release export god-runtime ttl=300 output=xmuse/work/release_readiness/god-runtime-continuity.json
+```
+
+The action is `export_god_runtime_continuity`, requires `release_gate`, and uses
+the standard durable stores under `$XMUSE_ROOT`. It does not accept alternate
+selection/session store paths through TUI, so the operator console cannot point
+release evidence at a hand-edited projection file.
+
 After the `xmuse.operator_transcript.v1` artifact exists, convert it to a
 release gate artifact:
 

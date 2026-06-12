@@ -539,6 +539,10 @@ Current implementation status:
   natural deliberation gate and release evidence pack a repeatable selected-GOD
   runtime artifact without reading TUI/dashboard projections or Ray actor
   memory.
+- TUI `/release export god-runtime ...` now routes through the audited
+  `export_god_runtime_continuity` operator action and the same durable-store
+  capture helper. The TUI path requires `release_gate`, writes under release
+  readiness, and does not allow alternate projection/session paths.
 - Selected-GOD runtime continuity now includes durable session heartbeat
   metadata from `god_sessions.json`. Stale or invalid heartbeats keep the
   runtime row blocked/manual-gap and prevent `peer_god_ready`, so natural
@@ -639,7 +643,10 @@ Current implementation status:
 - Prefer producing that selected-GOD runtime continuity input with
   `uv run xmuse-god-runtime-continuity-capture` against the durable selection,
   registration, and session stores for the same conversation. Do not hand-edit
-  the artifact or derive it from TUI/dashboard projection output.
+  the artifact or derive it from TUI/dashboard projection output. Operators can
+  trigger the same capture from TUI with `/release export god-runtime`, which
+  still routes through the release-gate capability contract rather than writing
+  projection state.
 - The same release pack command can accept `--frozen-blueprint` and repeated
   `--feature-contract` inputs, convert them through
   `xmuse-frozen-blueprint-evidence-capture` and

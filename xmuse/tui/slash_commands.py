@@ -854,7 +854,8 @@ def _freeze_payload(args: list[str]) -> dict[str, Any]:
 
 def _release_export_action(args: list[str]) -> tuple[str, dict[str, Any]]:
     usage = (
-        "Usage: /release export <natural|provider|memoryos|github> <key=value...>"
+        "Usage: /release export <natural|provider|memoryos|github|god-runtime> "
+        "<key=value...>"
     )
     if not args:
         raise ValueError(usage)
@@ -947,6 +948,29 @@ def _release_export_action(args: list[str]) -> tuple[str, dict[str, Any]]:
                 },
                 list_keys={"required_checks"},
                 int_keys={"pull_request_number"},
+            ),
+        )
+    if target in {
+        "god",
+        "god_runtime",
+        "god_runtime_continuity",
+        "selected_god_runtime",
+    }:
+        return (
+            "export_god_runtime_continuity",
+            _normalize_release_export_payload(
+                raw,
+                aliases={
+                    "output": "output_path",
+                    "artifact": "output_path",
+                    "now": "now_utc",
+                    "at": "now_utc",
+                    "ttl": "heartbeat_ttl_seconds",
+                    "heartbeat_ttl": "heartbeat_ttl_seconds",
+                    "heartbeat_ttl_seconds": "heartbeat_ttl_seconds",
+                },
+                list_keys=set(),
+                int_keys={"heartbeat_ttl_seconds"},
             ),
         )
     raise ValueError(usage)
@@ -1578,7 +1602,7 @@ def _help_text() -> str:
             "/release pack [key=value...]",
             "/release candidates [key=value...]",
             "/release attempt [natural|provider|memoryos|github|all] [key=value...]",
-            "/release export <natural|provider|memoryos|github> <key=value...>",
+            "/release export <natural|provider|memoryos|github|god-runtime> <key=value...>",
             "/lane retry <lane_id> <current_status> [reason]",
             "/lane abort <lane_id> <current_status> [reason]",
             "/freeze target_ref=<ref> blueprint_id=<id> goal=<goal> "

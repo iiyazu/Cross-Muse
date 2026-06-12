@@ -20,6 +20,9 @@ from xmuse_core.platform.execution.github_ops import (
 from xmuse_core.platform.github_truth_release_gate import (
     write_github_server_truth_release_gate,
 )
+from xmuse_core.platform.god_runtime_continuity_capture import (
+    capture_selected_god_runtime_continuity_artifact,
+)
 from xmuse_core.platform.memoryos_live_release_gate import (
     capture_memoryos_live_release_gate,
 )
@@ -68,11 +71,19 @@ GITHUB_EXPORT_ACTIONS = {
     "github_server_truth_export",
     "github_truth_export",
 }
+GOD_RUNTIME_EXPORT_ACTIONS = {
+    "export_god_runtime_continuity",
+    "export_selected_god_runtime",
+    "export_god_runtime",
+    "god_runtime_continuity_export",
+    "selected_god_runtime_export",
+}
 RELEASE_EVIDENCE_EXPORT_ACTIONS = (
     NATURAL_EXPORT_ACTIONS
     | PROVIDER_EXPORT_ACTIONS
     | MEMORYOS_EXPORT_ACTIONS
     | GITHUB_EXPORT_ACTIONS
+    | GOD_RUNTIME_EXPORT_ACTIONS
 )
 DEFAULT_GITHUB_REQUIRED_CHECKS = (
     "quality-gates",
@@ -110,6 +121,8 @@ def run_release_evidence_export_action(
             release_root=release_root,
             runner=github_truth_runner,
         )
+    if action in GOD_RUNTIME_EXPORT_ACTIONS:
+        return _export_god_runtime(request, root=root, release_root=release_root)
     raise OperatorActionBlockedError(
         f"unknown release evidence export action: {request.action}",
         proof_level="manual_gap",
@@ -351,6 +364,37 @@ def _export_github(
     )
 
 
+def _export_god_runtime(
+    request: OperatorActionRequest,
+    *,
+    root: Path,
+    release_root: Path,
+) -> dict[str, Any]:
+    conversation_id = _required_text(request.payload, "conversation_id")
+    artifact_path = _release_path(
+        request.payload.get("output_path") or request.payload.get("artifact_path"),
+        release_root=release_root,
+        default=release_root / "god-runtime-continuity.json",
+    )
+    artifact = capture_selected_god_runtime_continuity_artifact(
+        conversation_id=conversation_id,
+        selection_store_path=root / "god_cli_selections.json",
+        registration_store_path=root / "god_cli_registrations.json",
+        registry_path=root / "god_sessions.json",
+        output_path=artifact_path,
+        now_utc=_text(request.payload.get("now_utc")),
+        heartbeat_ttl_seconds=_int_value(
+            request.payload.get("heartbeat_ttl_seconds"),
+            default=300,
+        ),
+    )
+    return {
+        "kind": "god_runtime_continuity",
+        "artifact_path": str(artifact_path.resolve(strict=False)),
+        "artifact": artifact,
+    }
+
+
 def _export_result(
     *,
     kind: str,
@@ -462,6 +506,7 @@ def _ensure_no_running_event_loop() -> None:
 
 __all__ = [
     "GITHUB_EXPORT_ACTIONS",
+    "GOD_RUNTIME_EXPORT_ACTIONS",
     "MEMORYOS_EXPORT_ACTIONS",
     "NATURAL_EXPORT_ACTIONS",
     "PROVIDER_EXPORT_ACTIONS",

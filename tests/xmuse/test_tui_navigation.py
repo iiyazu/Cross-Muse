@@ -1050,6 +1050,74 @@ async def test_chat_screen_release_export_github_runs_operator_control_action(
         assert "can_emit_pr_merged" not in content
 
 
+async def test_chat_screen_release_export_god_runtime_runs_operator_control_action(
+    app: XmuseTUI,
+) -> None:
+    app.adapter.list_group_conversations = lambda: [
+        {"id": "conv-user", "title": "User group", "created_at": "2026-06-01T00:00:00Z"},
+    ]
+    calls = []
+
+    def _run_operator_control_action(action: str, conv_id: str, payload: dict):
+        calls.append((action, conv_id, payload))
+        return {
+            "action": "export_god_runtime_continuity",
+            "status": "ok",
+            "proof_level": "contract_proof",
+            "fact_state": "release_evidence_exported",
+            "audit_id": "operator-action:god-runtime",
+            "summary": (
+                "Exported god_runtime_continuity release evidence "
+                "artifact_proof=contract_proof."
+            ),
+            "payload": {
+                "export": {
+                    "kind": "god_runtime_continuity",
+                    "artifact_path": (
+                        "xmuse/work/release_readiness/god-runtime-continuity.json"
+                    ),
+                    "artifact": {
+                        "schema_version": "xmuse.god_runtime_continuity.v1",
+                        "fact_state": "observed",
+                    },
+                }
+            },
+        }
+
+    app.adapter.run_operator_control_action = _run_operator_control_action
+
+    async with app.run_test() as pilot:
+        appended = []
+        log = app.screen.query_one("#message-log")
+        log.append_message = lambda **kwargs: appended.append(kwargs)
+
+        input_widget = app.screen.query_one("#message-input")
+        input_widget.value = (
+            "/release export god-runtime now_utc=2026-06-13T00:05:00Z "
+            "ttl=120 output=xmuse/work/release_readiness/god-runtime-continuity.json"
+        )
+        input_widget.post_message(input_widget.Submitted(input_widget, input_widget.value))
+        await pilot.pause()
+
+        assert calls == [
+            (
+                "export_god_runtime_continuity",
+                "conv-user",
+                {
+                    "now_utc": "2026-06-13T00:05:00Z",
+                    "heartbeat_ttl_seconds": 120,
+                    "output_path": (
+                        "xmuse/work/release_readiness/god-runtime-continuity.json"
+                    ),
+                },
+            ),
+        ]
+        content = appended[-1]["content"]
+        assert "Operator action: export_god_runtime_continuity" in content
+        assert "status=ok proof=contract_proof fact=release_evidence_exported" in content
+        assert "audit=operator-action:god-runtime" in content
+
+
 async def test_chat_screen_release_candidates_runs_operator_control_action(
     app: XmuseTUI,
 ) -> None:

@@ -52,6 +52,11 @@ _RELEASE_EVIDENCE_EXPORT_ACTIONS = {
     "capture_github_server_truth",
     "github_server_truth_export",
     "github_truth_export",
+    "export_god_runtime_continuity",
+    "export_selected_god_runtime",
+    "export_god_runtime",
+    "god_runtime_continuity_export",
+    "selected_god_runtime_export",
 }
 _RELEASE_EVIDENCE_CANDIDATE_ACTIONS = {
     "inspect_release_evidence_candidates",

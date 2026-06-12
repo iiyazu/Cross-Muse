@@ -610,6 +610,51 @@ def test_operator_action_exports_github_server_truth_with_capability(
     assert calls[0].payload["expected_head_sha"] == "head123"
 
 
+def test_operator_action_exports_god_runtime_continuity_with_capability(
+    tmp_path: Path,
+) -> None:
+    calls: list[OperatorActionRequest] = []
+
+    def _export_handler(request: OperatorActionRequest) -> dict[str, object]:
+        calls.append(request)
+        return {
+            "kind": "god_runtime_continuity",
+            "artifact_path": str(tmp_path / "god-runtime-continuity.json"),
+            "artifact": {
+                "schema_version": "xmuse.god_runtime_continuity.v1",
+                "proof_level": "contract_proof",
+                "fact_state": "observed",
+            },
+        }
+
+    service = OperatorActionService(
+        god_cli_registry=build_default_god_cli_registry(),
+        audit_dir=tmp_path / "operator_actions",
+        release_evidence_export_handler=_export_handler,
+    )
+
+    result = service.handle(
+        OperatorActionRequest(
+            action="export_god_runtime_continuity",
+            actor_id="operator-1",
+            capabilities=(OperatorActionCapability.RELEASE_GATE,),
+            idempotency_key="idem-release-god-runtime-export",
+            payload={
+                "conversation_id": "conv-prod-1",
+                "heartbeat_ttl_seconds": 120,
+            },
+            source="tui",
+        )
+    )
+
+    assert result.status == "ok"
+    assert result.fact_state == "release_evidence_exported"
+    assert result.payload["source_authority"] == "operator_action_contract"
+    assert result.payload["export"]["kind"] == "god_runtime_continuity"
+    assert calls and calls[0].action == "export_god_runtime_continuity"
+    assert calls[0].payload["heartbeat_ttl_seconds"] == 120
+
+
 def test_operator_action_blocks_release_evidence_export_without_handler(
     tmp_path: Path,
 ) -> None:

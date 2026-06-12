@@ -291,6 +291,11 @@ Current implementation status:
   runtime-continuity input repeatable for overnight evidence packs without
   treating TUI/dashboard projections, feature lane projections, Ray actor
   memory, or provider subprocess state as authority.
+- TUI `/release export god-runtime ...` calls the audited
+  `export_god_runtime_continuity` operator action for the same capture. This
+  gives the overnight operator console a write path for the supporting runtime
+  artifact while preserving durable-store authority and `release_gate`
+  capability checks.
 - `xmuse-natural-deliberation-gate-capture` accepts an optional
   `--god-runtime` artifact. When supplied, the natural-deliberation release
   gate requires every transcript GOD to have a peer-GOD-ready selected runtime
