@@ -1085,6 +1085,33 @@ def _format_lane_detail(detail: dict | None) -> str:
     ]
     if detail.get("priority") is not None:
         lines.append(f"priority: {detail.get('priority')}")
+    dependencies = _text_items(
+        detail.get("scoped_dependency_ids")
+        or detail.get("lane_depends_on_ids")
+        or detail.get("depends_on")
+    )
+    gate_predecessors = _text_items(
+        detail.get("gate_predecessors")
+        or detail.get("gate_predecessor_ids")
+        or detail.get("predecessor_gate_ids")
+    )
+    touched_areas = _text_items(detail.get("touched_areas") or detail.get("touched_paths"))
+    source_refs = _text_items(detail.get("source_refs") or detail.get("blueprint_refs"))
+    merge_blockers = _text_items(
+        detail.get("merge_blockers")
+        or detail.get("merge_blockage")
+        or detail.get("merge_blockage_reasons")
+    )
+    if dependencies:
+        lines.append(f"depends_on: {', '.join(dependencies)}")
+    if gate_predecessors:
+        lines.append(f"gate_predecessors: {', '.join(gate_predecessors)}")
+    if touched_areas:
+        lines.append(f"touched_areas: {', '.join(touched_areas)}")
+    if source_refs:
+        lines.append(f"source_refs: {', '.join(source_refs)}")
+    if merge_blockers:
+        lines.append(f"merge_blockers: {', '.join(merge_blockers)}")
     prompt_summary = str(detail.get("prompt_summary") or "").strip()
     if prompt_summary:
         lines.extend(["", "prompt:", prompt_summary])
@@ -1141,6 +1168,19 @@ def _format_inbox_execution_context(item: dict) -> str:
         if value:
             lines.append(f"{key}: {value}")
     return "\n".join(lines)
+
+
+def _text_items(value) -> list[str]:
+    if isinstance(value, str):
+        return [value] if value.strip() else []
+    if not isinstance(value, list):
+        return []
+    items: list[str] = []
+    for item in value:
+        text = str(item).strip()
+        if text:
+            items.append(text)
+    return items
 
 
 def _message_display_author(message: dict) -> str:

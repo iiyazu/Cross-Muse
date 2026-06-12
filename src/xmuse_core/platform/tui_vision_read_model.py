@@ -144,6 +144,13 @@ def _build_blueprint_freeze(
             _append_unique(source_refs, ref)
         for ref in _list_refs(inspector_freeze.get("target_refs")):
             _append_unique(target_refs, ref)
+        freeze_blockers = inspector_freeze.get("blockers")
+        if isinstance(freeze_blockers, list):
+            blockers.extend(
+                blocker
+                for blocker in freeze_blockers
+                if isinstance(blocker, dict)
+            )
 
     frozen = bool(
         inspector_freeze

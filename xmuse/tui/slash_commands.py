@@ -55,6 +55,8 @@ class SlashCommandRouter:
             return self._overview(context)
         if command == "dashboard":
             return self._overview(context)
+        if command == "evidence":
+            return self._evidence(rest, context)
         if command == "god":
             return self._god(rest, context)
         if command == "archive":
@@ -333,6 +335,36 @@ class SlashCommandRouter:
             ),
         )
 
+    def _evidence(self, rest: str, context: SlashCommandContext) -> SlashCommandResult:
+        conv_id = _active_conversation_id(context)
+        if not conv_id:
+            return SlashCommandResult(True, message="No active group.")
+        action = rest.strip() or "transcript"
+        if action not in {"transcript", "github", "memory", "blockers"}:
+            return SlashCommandResult(
+                True,
+                message="Usage: /evidence <transcript|github|memory|blockers>",
+            )
+        runner = getattr(context.app.adapter, "run_operator_evidence_action", None)
+        if not callable(runner):
+            return SlashCommandResult(
+                True,
+                message="Evidence actions unavailable for this adapter.",
+            )
+        result = runner(action, conv_id)
+        if isinstance(result, dict):
+            _record_official_tui_command_event(
+                context,
+                command=f"/evidence {action}",
+                conversation_id=conv_id,
+                read_surface_authority="operator_evidence_action",
+            )
+        return SlashCommandResult(
+            True,
+            refresh=True,
+            message=_evidence_action_block(result if isinstance(result, dict) else {}),
+        )
+
     def _god(self, rest: str, context: SlashCommandContext) -> SlashCommandResult:
         try:
             parts = shlex.split(rest)
@@ -568,6 +600,40 @@ def _participant_block(participants: list[dict]) -> str:
         participant_id = str(participant.get("participant_id") or participant.get("id") or "?")
         lines.append(f"- {role}: {name} [{status}] model={model} id={participant_id}")
     return "\n".join(lines)
+
+
+def _evidence_action_block(result: dict) -> str:
+    action = str(result.get("action") or "unknown")
+    status = str(result.get("status") or "?")
+    proof = str(result.get("proof_level") or "?")
+    fact = str(result.get("fact_state") or "?")
+    lines = [
+        f"Evidence action: {action}",
+        f"status={status} proof={proof} fact={fact}",
+    ]
+    artifact_path = str(result.get("artifact_path") or "").strip()
+    if artifact_path:
+        lines.append(f"artifact={artifact_path}")
+    manual_gap_reason = str(result.get("manual_gap_reason") or "").strip()
+    if manual_gap_reason:
+        lines.append(f"manual_gap={manual_gap_reason}")
+    source_refs = _inline_refs(result.get("source_refs"))
+    target_refs = _inline_refs(result.get("target_refs"))
+    if source_refs:
+        lines.append(f"sources={source_refs}")
+    if target_refs:
+        lines.append(f"targets={target_refs}")
+    summary = str(result.get("summary") or "").strip()
+    if summary:
+        lines.append(summary)
+    return "\n".join(lines)
+
+
+def _inline_refs(value: object) -> str:
+    if not isinstance(value, list):
+        return ""
+    refs = [str(item).strip() for item in value if str(item).strip()]
+    return ", ".join(refs[:5])
 
 
 def _discussion_block(inspector: dict | None) -> str:
@@ -899,6 +965,7 @@ def _help_text() -> str:
             "/participants",
             "/overview",
             "/dashboard (alias for /overview)",
+            "/evidence <transcript|github|memory|blockers>",
             "/discussion",
             "/blockers",
             "/god add <role> [display name]",

@@ -332,7 +332,48 @@ async def test_chat_screen_help_command_lists_slash_commands(app: XmuseTUI) -> N
 
         assert "/sessions" in appended[-1]["content"]
         assert "/sessions <number|conversation_id|title>" in appended[-1]["content"]
+        assert "/evidence <transcript|github|memory|blockers>" in appended[-1]["content"]
         assert "/god add <role> [display name]" in appended[-1]["content"]
+
+
+async def test_chat_screen_evidence_command_runs_operator_action(app: XmuseTUI) -> None:
+    app.adapter.list_group_conversations = lambda: [
+        {"id": "conv-user", "title": "User group", "created_at": "2026-06-01T00:00:00Z"},
+    ]
+    calls = []
+
+    def _run_operator_evidence_action(action: str, conv_id: str):
+        calls.append((action, conv_id))
+        return {
+            "action": "transcript_export",
+            "status": "ok",
+            "proof_level": "contract_proof",
+            "fact_state": "observed",
+            "artifact_path": "/tmp/transcript.json",
+            "source_refs": ["message:msg-1"],
+            "target_refs": ["blueprint:conv-user:1"],
+            "manual_gap_reason": None,
+            "summary": "Exported 1 structured deliberation messages.",
+        }
+
+    app.adapter.run_operator_evidence_action = _run_operator_evidence_action
+
+    async with app.run_test() as pilot:
+        appended = []
+        log = app.screen.query_one("#message-log")
+        log.append_message = lambda **kwargs: appended.append(kwargs)
+
+        input_widget = app.screen.query_one("#message-input")
+        input_widget.value = "/evidence transcript"
+        input_widget.post_message(input_widget.Submitted(input_widget, input_widget.value))
+        await pilot.pause()
+
+        assert calls == [("transcript", "conv-user")]
+        content = appended[-1]["content"]
+        assert "Evidence action: transcript_export" in content
+        assert "status=ok proof=contract_proof fact=observed" in content
+        assert "artifact=/tmp/transcript.json" in content
+        assert "sources=message:msg-1" in content
 
 
 async def test_chat_screen_sessions_matches_id_and_unique_title_fragment(app: XmuseTUI) -> None:
@@ -1583,10 +1624,12 @@ async def test_chat_screen_right_panel_shows_workbench_lists_and_detail_surfaces
             "lane_local_id": "TUI-01",
             "plan_feature_id": "TUI",
             "feature_label": "Closure workbench",
-            "effective_status": "ready",
-            "priority": 2,
-            "scoped_dependency_ids": ["TUI-00"],
-        },
+                "effective_status": "ready",
+                "priority": 2,
+                "scoped_dependency_ids": ["TUI-00"],
+                "source_refs": ["blueprint:conv-new:1"],
+                "merge_blockers": ["review not complete"],
+            },
         "execution_log": {
             "events": [
                 {
@@ -1636,6 +1679,9 @@ async def test_chat_screen_right_panel_shows_workbench_lists_and_detail_surfaces
         assert len(inbox_list.children) == 1
         assert len(task_list.children) == 1
         assert "Closure workbench" in str(task_detail)
+        assert "depends_on: TUI-00" in str(task_detail)
+        assert "source_refs: blueprint:conv-new:1" in str(task_detail)
+        assert "merge_blockers: review not complete" in str(task_detail)
         assert "Queued for execute" in str(execution_log)
 
 
@@ -1975,6 +2021,10 @@ async def test_lane_detail_screen_uses_workbench_detail_contract(app: XmuseTUI) 
                 "effective_status": "dispatched",
                 "priority": 4,
                 "scoped_dependency_ids": ["T1-02"],
+                "gate_predecessors": ["review-gate"],
+                "touched_areas": ["xmuse/tui", "src/xmuse_core/platform"],
+                "source_refs": ["blueprint:conv-1:1", "message:msg-decide"],
+                "merge_blockers": ["required GitHub checks pending"],
                 "review_decision": "rework",
                 "review_verdict_id": "verdict-lane-3",
                 "source_lane_id": "lane-2",
@@ -2004,3 +2054,8 @@ async def test_lane_detail_screen_uses_workbench_detail_contract(app: XmuseTUI) 
         assert "Review: rework" in str(content)
         assert "Verdict: verdict-lane-3" in str(content)
         assert "Patch-forward: lane-2 -> lane-3" in str(content)
+        assert "Depends on: T1-02" in str(content)
+        assert "Gate predecessors: review-gate" in str(content)
+        assert "Touched areas: xmuse/tui, src/xmuse_core/platform" in str(content)
+        assert "Source refs: blueprint:conv-1:1, message:msg-decide" in str(content)
+        assert "Merge blockers: required GitHub checks pending" in str(content)

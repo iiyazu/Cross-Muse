@@ -14,6 +14,12 @@ from typing import Any
 import httpx
 
 from xmuse_core.platform.dashboard_details import _conversation_runtime_timeline_detail
+from xmuse_core.platform.operator_evidence_actions import (
+    build_blocker_navigation_action,
+    build_github_truth_action,
+    build_memory_trace_action,
+    export_deliberation_transcript,
+)
 from xmuse_core.platform.tui_vision_read_model import build_tui_vision_read_model
 
 
@@ -356,6 +362,66 @@ class XmuseAdapter:
             timeline=timeline,
             tui_command_events=self.list_tui_command_events(conv_id or None),
         )
+
+    def run_operator_evidence_action(
+        self,
+        action: str,
+        conv_id: str,
+    ) -> dict[str, Any]:
+        clean_action = action.strip().lower().replace("-", "_")
+        if clean_action in {"transcript", "transcript_export", "export_transcript"}:
+            result = export_deliberation_transcript(
+                conversation_id=conv_id,
+                messages=self._message_snapshot(conv_id),
+                artifact_path=self._operator_evidence_artifact_path(
+                    conv_id,
+                    "transcript.json",
+                ),
+            )
+            return result.model_dump()
+
+        vision = self._operator_vision_snapshot(conv_id)
+        if clean_action in {"github", "github_truth", "github_truth_load"}:
+            return build_github_truth_action(
+                conversation_id=conv_id,
+                github=vision.get("github") if isinstance(vision, dict) else None,
+            ).model_dump()
+        if clean_action in {"memory", "memory_trace", "memory_trace_load"}:
+            return build_memory_trace_action(
+                conversation_id=conv_id,
+                memory=vision.get("memory") if isinstance(vision, dict) else None,
+            ).model_dump()
+        if clean_action in {"blockers", "blocker", "navigation", "blocker_navigation"}:
+            return build_blocker_navigation_action(
+                conversation_id=conv_id,
+                vision=vision,
+            ).model_dump()
+        return {
+            "action": clean_action or "unknown",
+            "status": "manual_gap",
+            "proof_level": "manual_gap",
+            "fact_state": "manual_gap",
+            "conversation_id": conv_id,
+            "source_refs": [],
+            "target_refs": [],
+            "artifact_path": None,
+            "manual_gap_reason": f"unknown evidence action: {action}",
+            "summary": f"Unknown evidence action: {action}",
+            "payload": {},
+        }
+
+    def _operator_vision_snapshot(self, conv_id: str) -> dict[str, Any]:
+        inspector = self.get_conversation_inspector(conv_id)
+        return build_tui_vision_read_model(
+            conversation_id=conv_id,
+            messages=self._message_snapshot(conv_id),
+            worklist_envelope=self._worklist_envelope_snapshot(conv_id),
+            inspector=inspector,
+        )
+
+    def _operator_evidence_artifact_path(self, conv_id: str, filename: str) -> Path:
+        safe_conv_id = _safe_path_segment(conv_id)
+        return self._root / "work" / "operator_evidence" / safe_conv_id / filename
 
     def _worklist_envelope_snapshot(self, conv_id: str | None = None) -> dict | None:
         try:
@@ -852,6 +918,14 @@ def _clean_text(value: Any) -> str | None:
         cleaned = value.strip()
         return cleaned or None
     return None
+
+
+def _safe_path_segment(value: str) -> str:
+    cleaned = "".join(
+        char if char.isalnum() or char in {"-", "_", "."} else "_"
+        for char in value.strip()
+    )
+    return cleaned or "unknown"
 
 
 def _worklist_items(envelope: dict[str, Any]) -> list[dict]:

@@ -273,6 +273,87 @@ def test_adapter_poll_messages_includes_active_stream_state(tmp_path):
     assert stream_message["content"] == "Drafting..."
 
 
+def test_adapter_operator_evidence_action_exports_transcript_artifact(tmp_path):
+    root = tmp_path
+    chat = ChatStore(root / "chat.db")
+    conversation = chat.create_conversation("Mission")
+    chat.add_message(
+        conversation.id,
+        author="architect",
+        role="assistant",
+        content="Freeze the blueprint.",
+        envelope_json={
+            "speech_act": "decide",
+            "god_id": "architect-god",
+            "provider_id": "codex",
+            "decision_scope": "blueprint.freeze",
+            "target_ref": "blueprint:conv-1:1",
+        },
+    )
+
+    result = XmuseAdapter(root).run_operator_evidence_action(
+        "transcript",
+        conversation.id,
+    )
+
+    assert result["action"] == "transcript_export"
+    assert result["status"] == "ok"
+    assert result["proof_level"] == "contract_proof"
+    assert result["artifact_path"]
+    artifact_path = Path(result["artifact_path"])
+    assert artifact_path.exists()
+    assert root / "work" / "operator_evidence" in artifact_path.parents
+
+
+def test_adapter_operator_evidence_action_loads_github_memory_and_blockers(
+    monkeypatch,
+    tmp_path,
+):
+    adapter = XmuseAdapter(tmp_path)
+    monkeypatch.setattr(adapter, "_message_snapshot", lambda conv_id: [])
+    monkeypatch.setattr(adapter, "_worklist_envelope_snapshot", lambda conv_id: {})
+    monkeypatch.setattr(
+        adapter,
+        "get_conversation_inspector",
+        lambda conv_id: {
+            "memory_trace": {
+                "proof_level": "live_service_proof",
+                "fact_state": "observed",
+                "session_id": "mem-session-1",
+                "source_refs": ["memory://conversation/conv-1/session/mem-session-1"],
+            },
+            "github_truth": {
+                "proof_level": "server_side_enforcement_proof",
+                "fact_state": "merge_ready",
+                "source_refs": ["github://repo/pull/42"],
+            },
+            "blueprint_freeze": {
+                "proof_level": "contract_proof",
+                "fact_state": "blocked",
+                "blockers": [
+                    {
+                        "reason": "needs review evidence",
+                        "source_refs": ["message:msg-review"],
+                        "target_refs": ["blueprint:conv-1:1"],
+                    }
+                ],
+            },
+        },
+    )
+
+    github = adapter.run_operator_evidence_action("github", "conv-1")
+    memory = adapter.run_operator_evidence_action("memory", "conv-1")
+    blockers = adapter.run_operator_evidence_action("blockers", "conv-1")
+
+    assert github["action"] == "github_truth_load"
+    assert github["status"] == "ok"
+    assert github["proof_level"] == "server_side_enforcement_proof"
+    assert memory["action"] == "memory_trace_load"
+    assert memory["proof_level"] == "live_service_proof"
+    assert blockers["action"] == "blocker_navigation"
+    assert blockers["target_refs"] == ["blueprint:conv-1:1"]
+
+
 def test_adapter_create_group_conversation_uses_chat_api(monkeypatch, tmp_path):
     calls = []
 

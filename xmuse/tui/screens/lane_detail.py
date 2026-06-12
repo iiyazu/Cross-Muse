@@ -53,6 +53,36 @@ class LaneDetailScreen(Screen):
             f"Feature: {task.get('plan_feature_id', '?')}",
             f"Priority: {task.get('priority', 0)}",
         ]
+        dependencies = _text_items(
+            task.get("scoped_dependency_ids")
+            or task.get("lane_depends_on_ids")
+            or task.get("depends_on")
+        )
+        gate_predecessors = _text_items(
+            task.get("gate_predecessors")
+            or task.get("gate_predecessor_ids")
+            or task.get("predecessor_gate_ids")
+        )
+        touched_areas = _text_items(task.get("touched_areas") or task.get("touched_paths"))
+        source_refs = _text_items(task.get("source_refs") or task.get("blueprint_refs"))
+        merge_blockers = _text_items(
+            task.get("merge_blockers")
+            or task.get("merge_blockage")
+            or task.get("merge_blockage_reasons")
+        )
+        if dependencies or gate_predecessors or touched_areas or source_refs:
+            lines.extend(["", "--- LaneDAG ---"])
+            if dependencies:
+                lines.append(f"Depends on: {', '.join(dependencies)}")
+            if gate_predecessors:
+                lines.append(f"Gate predecessors: {', '.join(gate_predecessors)}")
+            if touched_areas:
+                lines.append(f"Touched areas: {', '.join(touched_areas)}")
+            if source_refs:
+                lines.append(f"Source refs: {', '.join(source_refs)}")
+        if merge_blockers:
+            lines.extend(["", "--- Merge blockers ---"])
+            lines.append(f"Merge blockers: {', '.join(merge_blockers)}")
         review_decision = _text(
             task.get("review_decision")
             or task.get("review_status")
@@ -94,3 +124,16 @@ def _text(value) -> str | None:
         cleaned = value.strip()
         return cleaned or None
     return None
+
+
+def _text_items(value) -> list[str]:
+    if isinstance(value, str):
+        return [value] if value.strip() else []
+    if not isinstance(value, list):
+        return []
+    items: list[str] = []
+    for item in value:
+        text = _text(item)
+        if text:
+            items.append(text)
+    return items
