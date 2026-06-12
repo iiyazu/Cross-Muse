@@ -9,6 +9,7 @@ from xmuse_core.platform.operator_actions import (
     OperatorActionRequest,
     OperatorActionService,
 )
+from xmuse_core.providers.god_cli_registration_store import GodCliRegistrationStore
 from xmuse_core.providers.god_cli_registry import build_default_god_cli_registry
 from xmuse_core.providers.god_cli_selection_store import GodCliSelectionStore
 
@@ -99,6 +100,129 @@ def test_operator_action_blocks_opencode_peer_god_without_peer_proof(tmp_path: P
     assert "does not advertise peer_god" in result.summary
     assert result.payload["selection_allowed"] is False
     assert selection_store.get("conv-1") is None
+
+
+def test_operator_action_registers_manual_god_cli_with_audited_capability(
+    tmp_path: Path,
+) -> None:
+    registration_store = GodCliRegistrationStore(tmp_path / "god_cli_registrations.json")
+    selection_store = GodCliSelectionStore(tmp_path / "god_cli_selections.json")
+    service = OperatorActionService(
+        god_cli_registry=build_default_god_cli_registry(),
+        audit_dir=tmp_path,
+        registration_store=registration_store,
+        selection_store=selection_store,
+    )
+
+    register_result = service.handle(
+        OperatorActionRequest(
+            action="register_god_cli",
+            actor_id="operator-1",
+            capabilities=(OperatorActionCapability.REGISTER_GOD_CLI,),
+            idempotency_key="idem-register-1",
+            payload=_manual_registration_payload(),
+            source="tui",
+        )
+    )
+    select_result = service.handle(
+        OperatorActionRequest(
+            action="select_god_cli",
+            actor_id="operator-1",
+            capabilities=(OperatorActionCapability.SELECT_GOD_CLI,),
+            idempotency_key="idem-select-registered-1",
+            payload={"cli_id": "custom.peer", "conversation_id": "conv-1"},
+            source="tui",
+        )
+    )
+
+    assert register_result.status == "ok"
+    assert register_result.fact_state == "god_cli_registered"
+    assert register_result.payload["registration"]["cli_id"] == "custom.peer"
+    assert register_result.payload["registration"]["proof_refs"] == [
+        "provider-run://custom.peer/live-smoke-1"
+    ]
+    assert (
+        register_result.payload["durable_state_ref"]
+        == "god_cli_registration:custom.peer"
+    )
+    stored = registration_store.get("custom.peer")
+    assert stored is not None
+    assert stored.audit_id == register_result.audit_id
+    assert stored.registration.cli_id == "custom.peer"
+    assert select_result.status == "ok"
+    assert select_result.payload["selection"]["cli_id"] == "custom.peer"
+    assert selection_store.get("conv-1").cli_id == "custom.peer"
+
+
+def test_operator_action_denies_god_cli_registration_without_capability(
+    tmp_path: Path,
+) -> None:
+    service = OperatorActionService(
+        god_cli_registry=build_default_god_cli_registry(),
+        audit_dir=tmp_path,
+        registration_store=GodCliRegistrationStore(
+            tmp_path / "god_cli_registrations.json"
+        ),
+    )
+
+    result = service.handle(
+        OperatorActionRequest(
+            action="register_god_cli",
+            actor_id="operator-1",
+            capabilities=(),
+            idempotency_key="idem-register-2",
+            payload=_manual_registration_payload(),
+            source="tui",
+        )
+    )
+
+    assert result.status == "denied"
+    assert result.fact_state == "denied"
+    assert "missing capability register_god_cli" in result.summary
+
+
+def test_operator_action_blocks_manual_peer_god_registration_without_proof_ref(
+    tmp_path: Path,
+) -> None:
+    service = OperatorActionService(
+        god_cli_registry=build_default_god_cli_registry(),
+        audit_dir=tmp_path,
+        registration_store=GodCliRegistrationStore(
+            tmp_path / "god_cli_registrations.json"
+        ),
+    )
+    payload = _manual_registration_payload()
+    payload["proof_refs"] = []
+
+    result = service.handle(
+        OperatorActionRequest(
+            action="register_god_cli",
+            actor_id="operator-1",
+            capabilities=(OperatorActionCapability.REGISTER_GOD_CLI,),
+            idempotency_key="idem-register-3",
+            payload=payload,
+            source="tui",
+        )
+    )
+
+    assert result.status == "blocked"
+    assert result.fact_state == "blocked"
+    assert "peer_god requires proof_refs" in result.summary
+
+
+def _manual_registration_payload() -> dict[str, object]:
+    return {
+        "cli_id": "custom.peer",
+        "display_name": "Custom Peer",
+        "command_family": "custom-cli",
+        "provider_profile_ref": "custom.peer",
+        "capabilities": ["peer_god"],
+        "supports_persistent_sessions": True,
+        "supports_mcp_writeback": True,
+        "state_write_allowed": True,
+        "proof_level": "real_provider_proof",
+        "proof_refs": ["provider-run://custom.peer/live-smoke-1"],
+    }
 
 
 def _write_gate(path: Path, *, gate_id: str = "provider-soak") -> None:

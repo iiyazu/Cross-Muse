@@ -408,14 +408,22 @@ class SlashCommandRouter:
             parts = shlex.split(rest)
         except ValueError as exc:
             return SlashCommandResult(True, message=f"Invalid /god command: {exc}")
-        if not parts or parts[0] not in {"add", "rm", "select"}:
+        if not parts or parts[0] not in {"add", "rm", "register", "select"}:
             return SlashCommandResult(
                 True,
                 message=(
                     "Usage: /god add <role> [display name] | "
-                    "/god rm <role|participant_id> | /god select <cli_id>"
+                    "/god rm <role|participant_id> | /god register <key=value...> | "
+                    "/god select <cli_id>"
                 ),
             )
+        if parts[0] == "register":
+            if len(parts) < 2:
+                return SlashCommandResult(
+                    True,
+                    message="Usage: /god register <key=value...>",
+                )
+            return self._god_register(parts[1:], context)
         if parts[0] == "select":
             if len(parts) < 2:
                 return SlashCommandResult(True, message="Usage: /god select <cli_id>")
@@ -425,7 +433,8 @@ class SlashCommandRouter:
                 True,
                 message=(
                     "Usage: /god add <role> [display name] | "
-                    "/god rm <role|participant_id> | /god select <cli_id>"
+                    "/god rm <role|participant_id> | /god register <key=value...> | "
+                    "/god select <cli_id>"
                 ),
             )
         if parts[0] == "add":
@@ -467,6 +476,39 @@ class SlashCommandRouter:
             return SlashCommandResult(True, message=f"Could not remove GOD {target}.")
         _refresh_participants(context, conv_id)
         return SlashCommandResult(True, refresh=True, message=f"Removed GOD {target}.")
+
+    def _god_register(
+        self,
+        args: list[str],
+        context: SlashCommandContext,
+    ) -> SlashCommandResult:
+        conv_id = _active_conversation_id(context)
+        if not conv_id:
+            return SlashCommandResult(True, message="No active group.")
+        runner = getattr(context.app.adapter, "run_operator_control_action", None)
+        if not callable(runner):
+            return SlashCommandResult(
+                True,
+                message="Operator control actions unavailable for this adapter.",
+            )
+        try:
+            payload = _god_registration_payload(args)
+        except ValueError as exc:
+            return SlashCommandResult(True, message=str(exc))
+        result = runner("register_god_cli", conv_id, payload)
+        if isinstance(result, dict):
+            cli_id = str(payload.get("cli_id") or "")
+            _record_official_tui_command_event(
+                context,
+                command=f"/god register {cli_id}",
+                conversation_id=conv_id,
+                read_surface_authority="operator_action_contract",
+            )
+        return SlashCommandResult(
+            True,
+            refresh=True,
+            message=_operator_action_block(result if isinstance(result, dict) else {}),
+        )
 
     def _god_select(self, args: list[str], context: SlashCommandContext) -> SlashCommandResult:
         conv_id = _active_conversation_id(context)
@@ -612,6 +654,61 @@ def _record_resume_command_event_if_available(
             conversation_id=conversation_id,
             read_surface_authority="chat_inspector",
         )
+
+
+def _god_registration_payload(args: list[str]) -> dict[str, Any]:
+    raw = _key_value_args(args)
+    if not raw:
+        raise ValueError("Usage: /god register <key=value...>")
+    aliases = {
+        "id": "cli_id",
+        "display": "display_name",
+        "command": "command_family",
+        "family": "command_family",
+        "profile": "provider_profile_ref",
+        "proof": "proof_level",
+        "persistent": "supports_persistent_sessions",
+        "mcp": "supports_mcp_writeback",
+        "mcp_writeback": "supports_mcp_writeback",
+        "state_write": "state_write_allowed",
+        "speech": "allowed_speech_acts",
+        "proof_ref": "proof_refs",
+    }
+    payload: dict[str, Any] = {}
+    list_keys = {"capabilities", "allowed_speech_acts", "proof_refs"}
+    bool_keys = {
+        "supports_persistent_sessions",
+        "supports_mcp_writeback",
+        "state_write_allowed",
+    }
+    for key, value in raw.items():
+        normalized_key = aliases.get(key, key)
+        if normalized_key in list_keys:
+            payload[normalized_key] = _comma_values(value)
+        elif normalized_key in bool_keys:
+            payload[normalized_key] = _bool_arg(value)
+        else:
+            payload[normalized_key] = value
+    return payload
+
+
+def _key_value_args(args: list[str]) -> dict[str, str]:
+    parsed: dict[str, str] = {}
+    for arg in args:
+        key, sep, value = arg.partition("=")
+        clean_key = key.strip().lower().replace("-", "_")
+        if not sep or not clean_key:
+            raise ValueError("Usage: /god register <key=value...>")
+        parsed[clean_key] = value.strip()
+    return parsed
+
+
+def _comma_values(value: str) -> list[str]:
+    return [part.strip() for part in value.split(",") if part.strip()]
+
+
+def _bool_arg(value: str) -> bool:
+    return value.strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
 def _has_read_surface_section(payload: dict | None, section: str) -> bool:
@@ -1065,6 +1162,7 @@ def _help_text() -> str:
             "/blockers",
             "/god add <role> [display name]",
             "/god rm <role|participant_id>",
+            "/god register <key=value...>",
             "/god select <cli_id>",
             "/archive",
             "/copy",

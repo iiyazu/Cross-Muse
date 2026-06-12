@@ -18,8 +18,25 @@ from xmuse_core.chat.inbox_store import ChatInboxStore
 from xmuse_core.chat.participant_store import ParticipantStore, RoleTemplateStore
 from xmuse_core.chat.store import ChatStore
 from xmuse_core.chat.stream_store import ChatStreamStore, PeerTurnLatencyTraceStore
+from xmuse_core.providers.god_cli_registration_store import GodCliRegistrationStore
+from xmuse_core.providers.god_cli_registry import GodCliCapability, GodCliRegistration
 
 ROOT = Path(__file__).resolve().parents[2] / "xmuse"
+
+
+def _manual_god_cli_registration_payload() -> dict[str, object]:
+    return {
+        "cli_id": "custom.peer",
+        "display_name": "Custom Peer",
+        "command_family": "custom-cli",
+        "provider_profile_ref": "custom.peer",
+        "capabilities": ["peer_god"],
+        "supports_persistent_sessions": True,
+        "supports_mcp_writeback": True,
+        "state_write_allowed": True,
+        "proof_level": "real_provider_proof",
+        "proof_refs": ["provider-run://custom.peer/live-smoke-1"],
+    }
 
 
 def test_build_features_empty():
@@ -503,6 +520,39 @@ def test_adapter_operator_control_action_denies_without_capability(tmp_path):
 
     assert result["status"] == "denied"
     assert "missing capability select_god_cli" in result["summary"]
+
+
+def test_adapter_operator_control_action_registers_god_cli_locally(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setenv(
+        "XMUSE_TUI_OPERATOR_CAPABILITIES",
+        "register_god_cli,select_god_cli",
+    )
+    adapter = XmuseAdapter(tmp_path)
+
+    register_result = adapter.run_operator_control_action(
+        "register_god_cli",
+        "conv-1",
+        _manual_god_cli_registration_payload(),
+    )
+    select_result = adapter.run_operator_control_action(
+        "select_god_cli",
+        "conv-1",
+        {"cli_id": "custom.peer"},
+    )
+
+    assert register_result["action"] == "register_god_cli"
+    assert register_result["status"] == "ok"
+    assert register_result["payload"]["registration"]["cli_id"] == "custom.peer"
+    assert select_result["status"] == "ok"
+    assert select_result["payload"]["selection"]["cli_id"] == "custom.peer"
+    stored = GodCliRegistrationStore(tmp_path / "god_cli_registrations.json").get(
+        "custom.peer"
+    )
+    assert stored is not None
+    assert stored.registration.proof_refs == ("provider-run://custom.peer/live-smoke-1",)
 
 
 def test_adapter_records_operator_action_tui_command_event(tmp_path):
@@ -1477,6 +1527,25 @@ def test_adapter_builds_workbench_lane_detail_from_read_models(monkeypatch, tmp_
 
 
 def test_adapter_get_provider_inventory_flattens_provider_read_contract(tmp_path):
+    GodCliRegistrationStore(tmp_path / "god_cli_registrations.json").record_registration(
+        registration=GodCliRegistration(
+            cli_id="custom.peer",
+            display_name="Custom Peer",
+            command_family="custom-cli",
+            provider_profile_ref="custom.peer",
+            capabilities=(GodCliCapability.PEER_GOD,),
+            allowed_speech_acts=("propose", "decide"),
+            supports_persistent_sessions=True,
+            supports_mcp_writeback=True,
+            state_write_allowed=True,
+            proof_level="real_provider_proof",
+            proof_refs=("provider-run://custom.peer/live-smoke-1",),
+        ),
+        registered_by="operator-1",
+        audit_id="operator-action:provider-board",
+        idempotency_key="idem-provider-board",
+    )
+
     rows = XmuseAdapter(tmp_path).get_provider_inventory()
 
     codex_god = next(
@@ -1490,6 +1559,11 @@ def test_adapter_get_provider_inventory_flattens_provider_read_contract(tmp_path
         if row["provider_id"] == "opencode"
         and row["profile_id"] == "deepseek_flash_worker"
     )
+    custom_peer = next(
+        row
+        for row in rows
+        if row["provider_profile_ref"] == "custom.peer"
+    )
 
     assert codex_god["boundary_role"] == "production_groupchat_god"
     assert codex_god["runtime_kind"] == "codex_cli"
@@ -1501,3 +1575,9 @@ def test_adapter_get_provider_inventory_flattens_provider_read_contract(tmp_path
     assert opencode_worker["runtime_kind"] == "opencode_cli"
     assert opencode_worker["session_continuity"] == "bounded"
     assert opencode_worker["waiting_reason"] == "secondary bounded worker"
+    assert custom_peer["provider_id"] == "custom-cli"
+    assert custom_peer["boundary_role"] == "manual_registered_peer_god"
+    assert custom_peer["runtime_kind"] == "custom-cli"
+    assert custom_peer["transport"] == "cli"
+    assert custom_peer["proof_level"] == "real_provider_proof"
+    assert custom_peer["registration_kind"] == "manual"

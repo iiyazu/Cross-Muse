@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass
 from enum import StrEnum
 from typing import Literal
@@ -56,6 +57,7 @@ class GodCliRegistration:
     supports_mcp_writeback: bool
     state_write_allowed: bool
     proof_level: ProofLevel
+    proof_refs: tuple[str, ...] = ()
     registration_kind: RegistrationKind = "manual"
     source_authority: str = "god_cli_registry"
 
@@ -70,9 +72,12 @@ class GodCliRegistration:
             raise ValueError("allowed_speech_acts must contain at least one item")
         _require_unique([capability.value for capability in self.capabilities], "capabilities")
         _require_unique(list(self.allowed_speech_acts), "allowed_speech_acts")
+        _require_unique(list(self.proof_refs), "proof_refs")
         if GodCliCapability.PEER_GOD in self.capabilities:
             if self.registration_kind == "manual" and self.proof_level != "real_provider_proof":
                 raise ValueError("manual peer_god requires real_provider_proof")
+            if self.registration_kind == "manual" and not self.proof_refs:
+                raise ValueError("manual peer_god requires proof_refs")
             if not self.supports_persistent_sessions:
                 raise ValueError("peer_god requires persistent sessions")
             if not self.supports_mcp_writeback:
@@ -83,6 +88,8 @@ class GodCliRegistration:
     def model_dump(self) -> dict[str, object]:
         data = asdict(self)
         data["capabilities"] = [capability.value for capability in self.capabilities]
+        data["allowed_speech_acts"] = list(self.allowed_speech_acts)
+        data["proof_refs"] = list(self.proof_refs)
         return data
 
 
@@ -156,7 +163,10 @@ class GodCliRegistry:
         )
 
 
-def build_default_god_cli_registry() -> GodCliRegistry:
+def build_default_god_cli_registry(
+    *,
+    extra_registrations: Iterable[GodCliRegistration] | None = None,
+) -> GodCliRegistry:
     provider_registry = build_default_provider_registry()
     registrations: list[GodCliRegistration] = []
     for profile in provider_registry.list_profiles():
@@ -185,11 +195,16 @@ def build_default_god_cli_registry() -> GodCliRegistry:
                 source_authority="default_provider_registry",
             )
         )
+    if extra_registrations is not None:
+        registrations.extend(extra_registrations)
     return GodCliRegistry(registrations)
 
 
-def build_god_cli_inventory() -> dict[str, object]:
-    registry = build_default_god_cli_registry()
+def build_god_cli_inventory(
+    *,
+    extra_registrations: Iterable[GodCliRegistration] | None = None,
+) -> dict[str, object]:
+    registry = build_default_god_cli_registry(extra_registrations=extra_registrations)
     registrations = registry.list_registrations()
     return {
         "kind": "god_cli_inventory",

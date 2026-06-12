@@ -61,6 +61,12 @@ The TUI reads `XMUSE_CHAT_API_KEY` and forwards it to Chat API operator action
 requests. Read routes remain unauthenticated until a broader deployment policy
 decides otherwise.
 
+Operator actions currently use these focused capabilities:
+
+- `register_god_cli` for manual GOD CLI registration;
+- `select_god_cli` for per-conversation GOD CLI selection;
+- `release_gate` for `/release refresh` and `/release pack`.
+
 When `XMUSE_MCP_AUTH_TOKEN` or `XMUSE_MCP_API_KEY` is set for the MCP process,
 mutating JSON-RPC `tools/call` requests on `/mcp`, `/mcp/chat`, `/sse`, and
 `/messages` require:
@@ -73,6 +79,50 @@ mutating JSON-RPC `tools/call` requests on `/mcp`, `/mcp/chat`, `/sse`, and
 Read-only MCP tools remain token-free under the current local trust policy.
 MCP auth does not replace tool-specific audit guards or GOD session identity
 checks.
+
+## GOD CLI Registration And Selection
+
+Manual GOD CLI registration is a production control action, not a projection
+edit. Use the Chat API operator action endpoint:
+
+```bash
+curl -sS http://127.0.0.1:8201/api/chat/operator/actions \
+  -H "Content-Type: application/json" \
+  -H "X-XMUSE-API-Key: $XMUSE_CHAT_API_KEY" \
+  -H "X-XMuse-Operator-Id: operator" \
+  -H "X-XMuse-Operator-Role: operator" \
+  -H "X-XMuse-Operator-Capabilities: register_god_cli" \
+  -d '{
+    "action": "register_god_cli",
+    "idempotency_key": "operator-register-custom-peer-1",
+    "payload": {
+      "cli_id": "custom.peer",
+      "display_name": "Custom Peer",
+      "command_family": "custom-cli",
+      "provider_profile_ref": "custom.peer",
+      "capabilities": ["peer_god"],
+      "supports_persistent_sessions": true,
+      "supports_mcp_writeback": true,
+      "state_write_allowed": true,
+      "proof_level": "real_provider_proof",
+      "proof_refs": ["provider-run://custom.peer/live-smoke-1"]
+    }
+  }'
+```
+
+From TUI, use the same contract through slash commands:
+
+```text
+/god register cli_id=custom.peer display_name="Custom Peer" command_family=custom-cli provider_profile_ref=custom.peer capabilities=peer_god proof_level=real_provider_proof supports_persistent_sessions=true supports_mcp_writeback=true state_write_allowed=true proof_refs=provider-run://custom.peer/live-smoke-1
+/god select custom.peer
+```
+
+Manual `peer_god` registration requires `real_provider_proof`, at least one
+proof ref, persistent sessions, MCP writeback, and state-write permission. The
+registration file (`god_cli_registrations.json`) is ignored runtime state and
+records the operator decision plus proof refs. It does not satisfy the
+real-provider release gate by itself; release readiness still needs an explicit
+real-provider runtime gate artifact.
 
 ## Startup
 

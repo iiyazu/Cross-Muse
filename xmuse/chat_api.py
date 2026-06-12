@@ -69,6 +69,7 @@ from xmuse_core.platform.operator_actions import (
 )
 from xmuse_core.platform.read_contracts import build_execution_drilldown_refs
 from xmuse_core.platform.run_health import summarize_run_health
+from xmuse_core.providers.god_cli_registration_store import GodCliRegistrationStore
 from xmuse_core.providers.god_cli_registry import build_default_god_cli_registry
 from xmuse_core.providers.god_cli_selection_store import GodCliSelectionStore
 from xmuse_core.runtime.paths import default_xmuse_root
@@ -169,8 +170,15 @@ def _operator_action_service(base_dir: Path) -> OperatorActionService:
     return OperatorActionService(
         god_cli_registry=build_default_god_cli_registry(),
         audit_dir=base_dir / "work" / "operator_actions",
+        registration_store=GodCliRegistrationStore(
+            base_dir / "god_cli_registrations.json"
+        ),
         selection_store=GodCliSelectionStore(base_dir / "god_cli_selections.json"),
     )
+
+
+def _god_cli_registration_store(base_dir: Path) -> GodCliRegistrationStore:
+    return GodCliRegistrationStore(base_dir / "god_cli_registrations.json")
 
 
 def _god_cli_selection_store(base_dir: Path) -> GodCliSelectionStore:
@@ -1142,6 +1150,11 @@ def create_app(
         if selection is None:
             raise HTTPException(status_code=404, detail="god cli selection not found")
         return {"selection": selection.model_dump()}
+
+    @app.get("/api/chat/operator/god-cli-registrations")
+    def list_god_cli_registrations() -> dict[str, object]:
+        records = _god_cli_registration_store(root).list_records()
+        return {"registrations": [record.model_dump() for record in records]}
 
     @app.get("/api/chat/conversations/{conversation_id}/participants")
     def list_participants(conversation_id: str) -> dict[str, object]:

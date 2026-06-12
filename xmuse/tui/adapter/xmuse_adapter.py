@@ -25,6 +25,7 @@ from xmuse_core.platform.operator_evidence_actions import (
     export_deliberation_transcript,
 )
 from xmuse_core.platform.tui_vision_read_model import build_tui_vision_read_model
+from xmuse_core.providers.god_cli_registration_store import GodCliRegistrationStore
 from xmuse_core.providers.god_cli_registry import build_default_god_cli_registry
 from xmuse_core.providers.god_cli_selection_store import GodCliSelectionStore
 
@@ -466,6 +467,9 @@ class XmuseAdapter:
         service = OperatorActionService(
             god_cli_registry=build_default_god_cli_registry(),
             audit_dir=self._root / "work" / "operator_actions",
+            registration_store=GodCliRegistrationStore(
+                self._root / "god_cli_registrations.json"
+            ),
             selection_store=GodCliSelectionStore(self._root / "god_cli_selections.json"),
         )
         request = OperatorActionRequest(
@@ -828,6 +832,12 @@ class XmuseAdapter:
                 for profile in profiles
                 if isinstance(profile, dict)
             )
+        rows.extend(
+            _god_cli_registration_inventory_row(registration)
+            for registration in GodCliRegistrationStore(
+                self._root / "god_cli_registrations.json"
+            ).list_registrations()
+        )
         return rows
 
     def _new_envelope_cards(self, scope_key: str, cards: list[dict]) -> list[dict]:
@@ -959,6 +969,40 @@ def _provider_inventory_row(profile: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _god_cli_registration_inventory_row(registration: Any) -> dict[str, Any]:
+    capabilities = [
+        str(getattr(capability, "value", capability))
+        for capability in getattr(registration, "capabilities", ())
+    ]
+    provider_profile_ref = _clean_text(getattr(registration, "provider_profile_ref", None))
+    profile_id = _profile_id_from_ref(provider_profile_ref) or registration.cli_id
+    return {
+        "provider_id": registration.command_family,
+        "profile_id": profile_id,
+        "provider_profile_ref": provider_profile_ref,
+        "capabilities": capabilities,
+        "runtime_kind": registration.command_family,
+        "transport": "cli",
+        "session_continuity": (
+            "persistent_supported"
+            if registration.supports_persistent_sessions
+            else "bounded"
+        ),
+        "heartbeat": "manual_gap",
+        "waiting_reason": "manual GOD CLI registration; runtime heartbeat unavailable",
+        "proof_level": registration.proof_level,
+        "boundary_role": (
+            "manual_registered_peer_god"
+            if "peer_god" in capabilities
+            else "manual_registered_support"
+        ),
+        "support_level": "manual",
+        "model_id": None,
+        "registration_kind": registration.registration_kind,
+        "source_authority": registration.source_authority,
+    }
+
+
 def _provider_boundary_role(provider_id: str, profile_id: str) -> str:
     if provider_id == "codex" and profile_id in {"default", "god"}:
         return "production_groupchat_god"
@@ -973,6 +1017,13 @@ def _provider_waiting_reason(provider_id: str) -> str:
     if provider_id == "opencode":
         return "secondary bounded worker"
     return "static provider inventory; runtime heartbeat unavailable"
+
+
+def _profile_id_from_ref(ref: str | None) -> str | None:
+    if not ref:
+        return None
+    _provider, sep, profile = ref.partition(".")
+    return profile if sep and profile else None
 
 
 def _string_values(value: Any) -> list[str]:

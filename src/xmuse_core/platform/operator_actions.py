@@ -11,7 +11,13 @@ from uuid import uuid4
 
 from xmuse_core.platform.live_gate_status_capture import CommandRunner, capture_live_gate_status
 from xmuse_core.platform.release_evidence_pack import capture_release_evidence_pack
-from xmuse_core.providers.god_cli_registry import GodCliRegistry
+from xmuse_core.providers.god_cli_registration_store import GodCliRegistrationStore
+from xmuse_core.providers.god_cli_registry import (
+    PEER_GOD_SPEECH_ACTS,
+    GodCliCapability,
+    GodCliRegistration,
+    GodCliRegistry,
+)
 from xmuse_core.providers.god_cli_selection_store import GodCliSelectionStore
 
 ActionStatus = Literal["ok", "denied", "blocked", "manual_gap"]
@@ -57,6 +63,7 @@ class OperatorActionService:
         *,
         god_cli_registry: GodCliRegistry,
         audit_dir: Path,
+        registration_store: GodCliRegistrationStore | None = None,
         selection_store: GodCliSelectionStore | None = None,
         release_readiness_dir: Path | None = None,
         live_gate_env: Mapping[str, str] | None = None,
@@ -64,6 +71,7 @@ class OperatorActionService:
     ) -> None:
         self._god_cli_registry = god_cli_registry
         self._audit_dir = audit_dir
+        self._registration_store = registration_store
         self._selection_store = selection_store
         self._release_readiness_dir = release_readiness_dir or (
             audit_dir.parent / "release_readiness"
@@ -74,7 +82,9 @@ class OperatorActionService:
     def handle(self, request: OperatorActionRequest) -> OperatorActionResult:
         action = request.action.strip().lower()
         audit_id = f"operator-action:{uuid4().hex}"
-        if action == "select_god_cli":
+        if action == "register_god_cli":
+            result = self._handle_register_god_cli(request, audit_id=audit_id)
+        elif action == "select_god_cli":
             result = self._handle_select_god_cli(request, audit_id=audit_id)
         elif action in {
             "capture_release_evidence_pack",
@@ -99,6 +109,83 @@ class OperatorActionService:
                 summary=f"unknown operator action: {request.action}",
             )
         return self._audit(request, result, audit_id=audit_id)
+
+    def _handle_register_god_cli(
+        self,
+        request: OperatorActionRequest,
+        *,
+        audit_id: str,
+    ) -> OperatorActionResult:
+        action = "register_god_cli"
+        missing = self._missing_capability(
+            request,
+            OperatorActionCapability.REGISTER_GOD_CLI,
+        )
+        if missing is not None:
+            return OperatorActionResult(
+                action=action,
+                status="denied",
+                proof_level="contract_proof",
+                fact_state="denied",
+                actor_id=request.actor_id,
+                audit_id=audit_id,
+                summary=missing,
+            )
+        if self._registration_store is None:
+            return OperatorActionResult(
+                action=action,
+                status="blocked",
+                proof_level="manual_gap",
+                fact_state="blocked",
+                actor_id=request.actor_id,
+                audit_id=audit_id,
+                summary="register_god_cli requires a durable registration store",
+            )
+        try:
+            registration = _registration_from_payload(request.payload)
+            self._effective_god_cli_registry().get(registration.cli_id)
+        except KeyError:
+            pass
+        except ValueError as exc:
+            return OperatorActionResult(
+                action=action,
+                status="blocked",
+                proof_level="contract_proof",
+                fact_state="blocked",
+                actor_id=request.actor_id,
+                audit_id=audit_id,
+                summary=str(exc),
+            )
+        else:
+            return OperatorActionResult(
+                action=action,
+                status="blocked",
+                proof_level="contract_proof",
+                fact_state="blocked",
+                actor_id=request.actor_id,
+                audit_id=audit_id,
+                summary=f"GOD CLI already registered: {registration.cli_id}",
+            )
+        record = self._registration_store.record_registration(
+            registration=registration,
+            registered_by=request.actor_id,
+            audit_id=audit_id,
+            idempotency_key=request.idempotency_key,
+        )
+        return OperatorActionResult(
+            action=action,
+            status="ok",
+            proof_level="contract_proof",
+            fact_state="god_cli_registered",
+            actor_id=request.actor_id,
+            audit_id=audit_id,
+            summary=f"Registered GOD CLI {registration.cli_id}.",
+            payload={
+                "registration": registration.model_dump(),
+                "durable_state_ref": f"god_cli_registration:{registration.cli_id}",
+                "record": record.model_dump(),
+            },
+        )
 
     def _handle_select_god_cli(
         self,
@@ -144,7 +231,7 @@ class OperatorActionService:
                 summary="select_god_cli requires payload.conversation_id for durable selection",
                 payload={"selection_allowed": False},
             )
-        selection = self._god_cli_registry.select_for_god(cli_id)
+        selection = self._effective_god_cli_registry().select_for_god(cli_id)
         if not selection.allowed:
             return OperatorActionResult(
                 action="select_god_cli",
@@ -360,6 +447,16 @@ class OperatorActionService:
             return None
         return f"missing capability {capability.value}"
 
+    def _effective_god_cli_registry(self) -> GodCliRegistry:
+        if self._registration_store is None:
+            return self._god_cli_registry
+        return GodCliRegistry(
+            [
+                *self._god_cli_registry.list_registrations(),
+                *self._registration_store.list_registrations(),
+            ]
+        )
+
     def _release_optional_path(self, value: Any) -> Path | None:
         text = _text(value)
         if text is None:
@@ -427,6 +524,64 @@ def _text(value: Any) -> str | None:
         cleaned = value.strip()
         return cleaned or None
     return None
+
+
+def _registration_from_payload(payload: dict[str, Any]) -> GodCliRegistration:
+    cli_id = _required_text(payload.get("cli_id"), "payload.cli_id")
+    capabilities = tuple(
+        GodCliCapability(item)
+        for item in _string_values(payload.get("capabilities"))
+    )
+    allowed_speech_acts = tuple(_string_values(payload.get("allowed_speech_acts")))
+    if not allowed_speech_acts and GodCliCapability.PEER_GOD in capabilities:
+        allowed_speech_acts = PEER_GOD_SPEECH_ACTS
+    return GodCliRegistration(
+        cli_id=cli_id,
+        display_name=_text(payload.get("display_name")) or cli_id,
+        command_family=_required_text(
+            payload.get("command_family"),
+            "payload.command_family",
+        ),
+        provider_profile_ref=_required_text(
+            payload.get("provider_profile_ref"),
+            "payload.provider_profile_ref",
+        ),
+        capabilities=capabilities,
+        allowed_speech_acts=allowed_speech_acts,
+        supports_persistent_sessions=_bool_payload(
+            payload.get("supports_persistent_sessions")
+        ),
+        supports_mcp_writeback=_bool_payload(payload.get("supports_mcp_writeback")),
+        state_write_allowed=_bool_payload(payload.get("state_write_allowed")),
+        proof_level=_required_text(payload.get("proof_level"), "payload.proof_level"),
+        proof_refs=tuple(_string_values(payload.get("proof_refs"))),
+        registration_kind="manual",
+        source_authority="operator_action_contract",
+    )
+
+
+def _required_text(value: Any, field_name: str) -> str:
+    if isinstance(value, str):
+        cleaned = value.strip()
+        if cleaned:
+            return cleaned
+    raise ValueError(f"{field_name} must be non-empty")
+
+
+def _string_values(value: Any) -> list[str]:
+    if isinstance(value, list | tuple):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, str):
+        return [part.strip() for part in value.split(",") if part.strip()]
+    return []
+
+
+def _bool_payload(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+    return bool(value)
 
 
 def _utcnow() -> str:

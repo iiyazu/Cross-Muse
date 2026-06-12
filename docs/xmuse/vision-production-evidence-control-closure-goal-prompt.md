@@ -44,8 +44,9 @@ Priority:
    absence, configured live env, GitHub auth, MemoryOS, Ray/Codex/OpenCode, and
    current proof gaps.
 2. Add or advance GOD/CLI registry and manual selection. Product direction:
-   the user must be able to register/select which CLI acts as GOD. For this
-   round, OpenCode remains bounded unless peer-GOD parity is proven.
+   the user must be able to register/select which CLI acts as GOD from the
+   TUI/frontend. Manual peer-GOD registration must record proof refs and cannot
+   promote OpenCode or any CLI by assertion.
 3. Make TUI a full operation surface. Mutating actions must go through official
    Chat API/MCP/platform contracts with idempotency and audit; TUI must not
    write projections or internal state directly.
@@ -79,6 +80,16 @@ Hard constraints:
 - feature_lanes.json, TUI, dashboard, cards, and Ray actors are not durable
   authority.
 - TUI may operate the workflow only through authorized contracts/APIs.
+- TUI `/god register <key=value...>` must go through `register_god_cli`
+  operator action with `register_god_cli`; it must not write registry,
+  provider-board, or projection state directly.
+- Manual `peer_god` registration requires `real_provider_proof`, non-empty
+  proof refs, persistent session support, MCP writeback, and state-write
+  permission. Recording proof refs is not the same as satisfying the
+  real-provider release gate.
+- TUI `/god select <cli_id>` must go through `select_god_cli` operator action
+  with `select_god_cli`; it must select only from capability-compatible
+  built-in or durable manual registrations.
 - TUI `/release pack` must go through `capture_release_evidence_pack` operator
   action with `release_gate`; it must not write release reports directly.
 - TUI `/release refresh` must go through `refresh_live_gate_status` operator

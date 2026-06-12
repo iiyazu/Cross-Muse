@@ -158,21 +158,43 @@ Goal: make GOD participant selection explicit and product-ready.
 
 Tasks:
 
-- [ ] Add or extend a GOD/CLI registry contract in `src/xmuse_core/providers/`
+- [x] Add or extend a GOD/CLI registry contract in `src/xmuse_core/providers/`
   that records CLI id, display name, command family, provider profile,
   capabilities, allowed speech acts, persistence support, MCP/writeback support,
-  health status, and proof level.
-- [ ] Keep current OpenCode behavior bounded unless evidence proves peer-GOD
+  proof refs, registration source, and proof level.
+- [x] Keep current OpenCode behavior bounded unless evidence proves peer-GOD
   parity. For this round, OpenCode may be selectable only under bounded
   capability labels unless production proof exists.
-- [ ] Add TUI/provider-board read model support for registered GOD CLI choices.
-- [ ] Add tests that reject unregistered or capability-incompatible GOD choices.
+- [x] Add TUI/provider-board read model support for registered GOD CLI choices.
+- [x] Add tests that reject unregistered or capability-incompatible GOD choices.
 
 Acceptance:
 
 - Operator can see which CLI can be chosen as GOD and why.
 - GOD selection cannot bypass capability policy.
 - OpenCode is not upgraded by assertion.
+
+Current implementation status:
+
+- `GodCliRegistration` now carries `proof_refs`; manual `peer_god`
+  registration requires `real_provider_proof`, proof refs, persistent sessions,
+  MCP writeback, and state-write permission.
+- `GodCliRegistrationStore` writes ignored runtime state to
+  `god_cli_registrations.json` with operator audit metadata. This is the
+  durable manual registration store for CLI choices, not release proof.
+- `register_god_cli` is an operator action requiring `register_god_cli`
+  capability. It records an audit row and persists the manual registration
+  through the store.
+- `select_god_cli` selects from the effective registry: built-ins plus durable
+  manual registrations. Selection still requires `peer_god` capability.
+- TUI `/god register <key=value...>` and `/god select <cli_id>` route through
+  the Chat API operator action endpoint first, then local contract fallback only
+  when Chat API is unavailable.
+- Provider Board merges manual GOD CLI registrations into its projection with
+  `manual_gap` heartbeat and `registration_kind=manual`.
+- This status does not create live provider proof. `proof_refs` are recorded
+  references supplied by an authorized operator; release readiness still needs
+  independent real-provider runtime gate artifacts.
 
 ## S2 - TUI Full-Control Action Surface
 
@@ -201,6 +223,10 @@ Acceptance:
 
 Current implementation status:
 
+- `/god register <key=value...>` routes manual GOD CLI registration through the
+  Chat API operator action endpoint first, then local contract fallback only
+  when Chat API is unavailable. It requires `register_god_cli` and does not
+  write provider board/read-model state directly.
 - `/god select <cli_id>` routes GOD CLI selection through the Chat API operator
   action endpoint first, then the same local contract service only when Chat API
   is unavailable.

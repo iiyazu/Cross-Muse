@@ -68,6 +68,7 @@ def test_registry_allows_manual_peer_god_only_with_production_writeback_proof() 
                 supports_mcp_writeback=True,
                 state_write_allowed=True,
                 proof_level="real_provider_proof",
+                proof_refs=("provider-run://custom.peer/live-smoke-1",),
             )
         ]
     )
@@ -103,6 +104,21 @@ def test_manual_peer_god_requires_real_provider_proof_and_writeback() -> None:
             capabilities=(GodCliCapability.PEER_GOD,),
             allowed_speech_acts=("propose", "decide"),
             supports_persistent_sessions=False,
+            supports_mcp_writeback=True,
+            state_write_allowed=True,
+            proof_level="real_provider_proof",
+            proof_refs=("provider-run://no-session.peer/live-smoke-1",),
+        )
+
+    with pytest.raises(ValueError, match="peer_god requires proof_refs"):
+        GodCliRegistration(
+            cli_id="no-proof-ref.peer",
+            display_name="No Proof Ref Peer",
+            command_family="unsafe",
+            provider_profile_ref="unsafe.peer",
+            capabilities=(GodCliCapability.PEER_GOD,),
+            allowed_speech_acts=("propose", "decide"),
+            supports_persistent_sessions=True,
             supports_mcp_writeback=True,
             state_write_allowed=True,
             proof_level="real_provider_proof",

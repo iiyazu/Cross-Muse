@@ -334,6 +334,7 @@ async def test_chat_screen_help_command_lists_slash_commands(app: XmuseTUI) -> N
         assert "/sessions <number|conversation_id|title>" in appended[-1]["content"]
         assert "/evidence <transcript|github|memory|blockers>" in appended[-1]["content"]
         assert "/god add <role> [display name]" in appended[-1]["content"]
+        assert "/god register" in appended[-1]["content"]
         assert "/god select <cli_id>" in appended[-1]["content"]
 
 
@@ -421,6 +422,75 @@ async def test_chat_screen_god_select_runs_operator_control_action(app: XmuseTUI
         assert "status=ok proof=contract_proof fact=god_cli_selected" in content
         assert "audit=operator-action:1" in content
         assert "Selected GOD CLI codex.god." in content
+
+
+async def test_chat_screen_god_register_runs_operator_control_action(
+    app: XmuseTUI,
+) -> None:
+    app.adapter.list_group_conversations = lambda: [
+        {"id": "conv-user", "title": "User group", "created_at": "2026-06-01T00:00:00Z"},
+    ]
+    calls = []
+
+    def _run_operator_control_action(action: str, conv_id: str, payload: dict):
+        calls.append((action, conv_id, payload))
+        return {
+            "action": "register_god_cli",
+            "status": "ok",
+            "proof_level": "contract_proof",
+            "fact_state": "god_cli_registered",
+            "audit_id": "operator-action:register",
+            "summary": "Registered GOD CLI custom.peer.",
+            "payload": {
+                "registration": {
+                    "cli_id": "custom.peer",
+                    "proof_refs": ["provider-run://custom.peer/live-smoke-1"],
+                }
+            },
+        }
+
+    app.adapter.run_operator_control_action = _run_operator_control_action
+
+    async with app.run_test() as pilot:
+        appended = []
+        log = app.screen.query_one("#message-log")
+        log.append_message = lambda **kwargs: appended.append(kwargs)
+
+        input_widget = app.screen.query_one("#message-input")
+        input_widget.value = (
+            "/god register cli_id=custom.peer display_name='Custom Peer' "
+            "command_family=custom-cli provider_profile_ref=custom.peer "
+            "capabilities=peer_god proof_level=real_provider_proof "
+            "supports_persistent_sessions=true supports_mcp_writeback=true "
+            "state_write_allowed=true "
+            "proof_refs=provider-run://custom.peer/live-smoke-1"
+        )
+        input_widget.post_message(input_widget.Submitted(input_widget, input_widget.value))
+        await pilot.pause()
+
+        assert calls == [
+            (
+                "register_god_cli",
+                "conv-user",
+                {
+                    "cli_id": "custom.peer",
+                    "display_name": "Custom Peer",
+                    "command_family": "custom-cli",
+                    "provider_profile_ref": "custom.peer",
+                    "capabilities": ["peer_god"],
+                    "proof_level": "real_provider_proof",
+                    "supports_persistent_sessions": True,
+                    "supports_mcp_writeback": True,
+                    "state_write_allowed": True,
+                    "proof_refs": ["provider-run://custom.peer/live-smoke-1"],
+                },
+            )
+        ]
+        content = appended[-1]["content"]
+        assert "Operator action: register_god_cli" in content
+        assert "status=ok proof=contract_proof fact=god_cli_registered" in content
+        assert "audit=operator-action:register" in content
+        assert "Registered GOD CLI custom.peer." in content
 
 
 async def test_chat_screen_release_pack_runs_operator_control_action(app: XmuseTUI) -> None:

@@ -51,6 +51,21 @@ def _write_json(path: Path, payload: object) -> None:
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
+def _manual_god_cli_registration_payload() -> dict[str, object]:
+    return {
+        "cli_id": "custom.peer",
+        "display_name": "Custom Peer",
+        "command_family": "custom-cli",
+        "provider_profile_ref": "custom.peer",
+        "capabilities": ["peer_god"],
+        "supports_persistent_sessions": True,
+        "supports_mcp_writeback": True,
+        "state_write_allowed": True,
+        "proof_level": "real_provider_proof",
+        "proof_refs": ["provider-run://custom.peer/live-smoke-1"],
+    }
+
+
 def _seed_execution_card_drilldown_state(tmp_path: Path, conversation_id: str) -> None:
     source_blueprint = ApprovedMissionBlueprint(
         resolution_id="res-001",
@@ -260,6 +275,37 @@ def test_chat_api_operator_action_denies_missing_capability(tmp_path: Path) -> N
         f"/api/chat/operator/god-cli-selections/{conversation['id']}"
     )
     assert selection_response.status_code == 404
+
+
+def test_chat_api_operator_action_registers_manual_god_cli(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+
+    response = client.post(
+        "/api/chat/operator/actions",
+        headers={
+            "X-XMuse-Operator-Id": "operator-1",
+            "X-XMuse-Operator-Capabilities": "register_god_cli",
+        },
+        json={
+            "action": "register_god_cli",
+            "idempotency_key": "idem-chat-register-1",
+            "payload": _manual_god_cli_registration_payload(),
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "ok"
+    assert payload["fact_state"] == "god_cli_registered"
+    assert payload["payload"]["durable_state_ref"] == (
+        "god_cli_registration:custom.peer"
+    )
+
+    list_response = client.get("/api/chat/operator/god-cli-registrations")
+    assert list_response.status_code == 200
+    registrations = list_response.json()["registrations"]
+    assert registrations[0]["registration"]["cli_id"] == "custom.peer"
+    assert registrations[0]["registered_by"] == "operator-1"
 
 
 def test_chat_api_operator_action_captures_release_evidence_pack(

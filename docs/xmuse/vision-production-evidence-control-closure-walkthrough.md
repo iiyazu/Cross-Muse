@@ -466,6 +466,8 @@ release readiness as `ready`, `blocked`, or `not_evaluated`.
 | Surface | Current proof | Boundary |
 | --- | --- | --- |
 | GOD/CLI registry | `contract_proof` | Defines selectable boundaries; does not prove live CLI runtime. |
+| GOD CLI registration store | `contract_proof` | Durable manual registration state with operator audit metadata; does not prove live CLI runtime. |
+| `/god register` route | `contract_proof` | TUI action path calls Chat API/operator contract and records proof refs; it does not satisfy real-provider release gate. |
 | `/god select` route | `contract_proof` | TUI action path calls Chat API first; no live operator session proof. |
 | `/release refresh` route | `contract_proof` | TUI action path calls Chat API/operator contract and writes only ignored live-gate status artifacts. |
 | `/release pack` route | `contract_proof` | TUI action path calls Chat API/operator contract and writes only ignored release-readiness artifacts. |
@@ -529,8 +531,10 @@ uv run xmuse-release-readiness-capture --artifacts-dir /tmp/xmuse-pr43-release-g
 uv run xmuse-live-gate-status-capture --output-dir /tmp/xmuse-combined-release-gates/live_gate_status
 uv run python scripts/github_server_truth_capture.py --repo iiyazu/Cross-Muse --pull-request 43 --output /tmp/xmuse-combined-github-truth.json --release-gate-output /tmp/xmuse-combined-release-gates/github-server-truth.json --base-branch main
 uv run xmuse-release-readiness-capture --artifacts-dir /tmp/xmuse-combined-release-gates --output /tmp/xmuse-combined-readiness.json
+uv run pytest tests/xmuse/test_god_cli_registration_store.py tests/xmuse/test_god_cli_selection_store.py tests/xmuse/test_god_cli_registry.py tests/xmuse/test_operator_actions.py tests/xmuse/test_chat_api.py tests/xmuse/test_tui_adapter.py tests/xmuse/test_tui_navigation.py tests/xmuse/test_provider_read_contracts_module.py tests/xmuse/test_model_policy_surfaces.py tests/xmuse/test_production_hardening.py tests/xmuse/test_production_operations_doc.py tests/xmuse/test_mainline_contract_docs.py tests/xmuse/test_package_boundaries.py -q
 uv run ruff check .
 git diff --check
+test ! -e xmuse/__init__.py
 ```
 
 Observed results:
@@ -578,8 +582,11 @@ Codex independent review attempt timed out after 120 seconds; no formal review a
 172 passed, 1 warning
 operator action smoke under /tmp refreshed live-gate status artifacts and captured evidence pack: decision=blocked, blocker_count=4, finding_count=0
 second Codex independent review attempt for `/release refresh` timed out after 120 seconds; no formal review artifact captured
+192 passed, 1 warning
+third Codex independent review attempt for manual GOD CLI registration timed out after 120 seconds; no formal review artifact captured
 All checks passed
 git diff --check clean
+xmuse/__init__.py absent
 ```
 
 The warning is the existing Starlette/httpx deprecation warning from FastAPI
@@ -618,12 +625,17 @@ The warning is the existing Starlette/httpx deprecation warning from FastAPI
 - `/god select` now persists selected GOD CLI per conversation, but this is
   still a CLI selection authority only; it does not prove a live provider
   session is running.
+- `/god register` now persists manual GOD CLI choices with proof refs and audit
+  metadata, but those proof refs do not satisfy the real-provider release gate
+  without a separate runtime gate artifact.
 - Live MemoryOS Lite was not configured in the current shell.
 - Ray/Codex/MCP services were not running during health check.
 - OpenCode binary exists, but `DEEPSEEK_API_KEY` is not configured in this
   shell.
 - PR #43 exists as a draft PR. GitHub server enforcement truth was captured,
   but the PR is unmerged and has no review truth artifact attached.
+- Independent Codex review for the manual GOD CLI registration slice timed out
+  after 120 seconds and is not counted as proof.
 - No natural multi-GOD live transcript was captured.
 - Release readiness cannot be `ready` until configured live gates produce real
   evidence or named blockers are resolved.
