@@ -122,6 +122,26 @@ The JSON includes `operations`:
 with `/mcp`, `/mcp/chat`, `/sse`, `chat.db`, `god_sessions.json`, and MCP auth
 metadata.
 
+## Live Gate Status Capture
+
+Use this command before the release readiness capture when live MemoryOS,
+GitHub, provider, or natural transcript evidence has not yet produced gate
+artifacts:
+
+```bash
+uv run xmuse-live-gate-status-capture \
+  --output-dir xmuse/work/release_readiness/artifacts/live_gate_status
+```
+
+The command records which production live gates are configured or missing and
+writes `xmuse.production_evidence.v1` gate artifacts with `manual_gap` proof.
+Configured-but-uncaptured gates are written as blockers. It records environment
+key names and probe results only; token/API-key values are not written.
+
+This command does not run MemoryOS, GitHub server-truth, Ray/Codex/OpenCode, or
+natural GOD transcript proof. It creates honest blocker artifacts for the
+release-readiness report.
+
 ## Release Readiness Capture
 
 Use this command to aggregate release gate artifacts into a redacted readiness

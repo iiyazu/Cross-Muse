@@ -219,6 +219,42 @@ The command reads JSON release gate artifacts, evaluates them with
 into live/server/provider proof. Token/API-key shaped strings in commands,
 refs, and artifact paths are replaced with `<redacted>`.
 
+### Live Gate Status Capture
+
+New command:
+
+```text
+uv run xmuse-live-gate-status-capture --output-dir <artifact-dir>
+```
+
+The command writes required release-gate artifacts for:
+
+- `live-memoryos`
+- `github-server-truth`
+- `real-provider-runtime`
+- `natural-god-deliberation`
+
+It detects configured or missing live-gate prerequisites from environment key
+presence and local probes (`gh auth status`, `codex --version`,
+`opencode --version`, and Ray import). It writes only environment key names and
+probe results, not secret values.
+
+Configured-but-uncaptured gates are written as `blocked`; missing required
+gates are written as `manual_gap`. All generated gates use `proof_level` of
+`manual_gap`, so the artifacts can drive release-readiness blockers without
+pretending that live MemoryOS, GitHub server truth, real provider runtime, or
+natural GOD transcript proof was captured.
+
+A local `/tmp` status capture plus readiness aggregation in this slice produced
+`decision=blocked` with four `manual_gap` gates:
+
+- GitHub server truth: configured through `gh auth status`, but server truth
+  capture was not run.
+- Live MemoryOS: not configured in the current shell.
+- Natural GOD deliberation: no natural transcript artifact configured.
+- Real provider runtime: Codex/OpenCode/Ray probes are visible, but no real
+  provider runtime soak artifact was captured.
+
 ## Proof-Level Summary
 
 | Surface | Current proof | Boundary |
@@ -233,6 +269,7 @@ refs, and artifact paths are replaced with `<redacted>`.
 | MCP Auth/RBAC | `contract_proof` | Token + role/capability gate tested in-process; no live service proof. |
 | Production auth startup profile | `contract_proof` | `XMUSE_DEPLOYMENT_PROFILE=production` fails closed without Chat API/MCP write tokens; no live service proof. |
 | Release readiness evaluator | `contract_proof` | Blocks proof contamination; no live gate captured. |
+| Live gate status capture command | `contract_proof` | Captures configured/missing gate status as `manual_gap` blocker artifacts; does not create live proof. |
 | Release readiness capture command | `contract_proof` | Aggregates and redacts supplied gate artifacts; does not capture live services by itself. |
 | MemoryOS live gate | `manual_gap` | Env not configured in current shell. |
 | Ray/Codex/OpenCode live gate | `manual_gap` | Binaries/Ray import exist, but production services/env are not running/configured. |
@@ -265,6 +302,10 @@ uv run pytest tests/xmuse/test_quality_gates_phase3.py tests/xmuse/test_producti
 uv run pytest tests/xmuse/test_release_readiness_capture.py tests/xmuse/test_release_readiness.py tests/xmuse/test_quality_gates_phase3.py tests/xmuse/test_package_boundaries.py -q
 uv run pytest tests/xmuse/test_release_readiness_capture.py tests/xmuse/test_release_readiness.py tests/xmuse/test_quality_gates_phase3.py tests/xmuse/test_production_operations_doc.py tests/xmuse/test_mainline_contract_docs.py tests/xmuse/test_package_boundaries.py -q
 uv run xmuse-release-readiness-capture --help
+uv run pytest tests/xmuse/test_live_gate_status_capture.py -q
+uv run xmuse-live-gate-status-capture --help
+uv run xmuse-live-gate-status-capture --output-dir /tmp/xmuse-live-gate-status
+uv run xmuse-release-readiness-capture --artifacts-dir /tmp/xmuse-live-gate-status --output /tmp/xmuse-release-readiness.json
 uv run ruff check .
 git diff --check
 ```
@@ -294,6 +335,10 @@ Observed results:
 28 passed
 31 passed
 xmuse-release-readiness-capture help rendered
+3 passed
+xmuse-live-gate-status-capture help rendered
+xmuse-live-gate-status-capture wrote 4 gate artifacts under /tmp/xmuse-live-gate-status
+xmuse-release-readiness-capture reported decision=blocked for the /tmp live-gate status artifacts
 All checks passed
 git diff --check clean
 ```
@@ -309,6 +354,9 @@ The warning is the existing Starlette/httpx deprecation warning from FastAPI
 - Release readiness capture can aggregate supplied artifacts into a redacted
   blocked/ready/not_evaluated report, but live gate artifacts still need to be
   produced by actual MemoryOS, GitHub, and provider runs.
+- Live gate status capture can create honest blocker artifacts for missing or
+  configured-but-uncaptured live gates, but those artifacts remain `manual_gap`
+  proof and cannot satisfy release readiness.
 - `/god select` now persists selected GOD CLI per conversation, but this is
   still a CLI selection authority only; it does not prove a live provider
   session is running.

@@ -115,6 +115,8 @@ export XMUSE_MCP_AUTH_TOKEN=<server-token>
 uv run python -m xmuse.chat_api
 uv run python -m xmuse.mcp_server --port 8100
 uv run xmuse-platform-runner --peer-chat --mcp-port 8100
+uv run xmuse-live-gate-status-capture \
+  --output-dir xmuse/work/release_readiness/artifacts/live_gate_status
 uv run xmuse-release-readiness-capture \
   --artifacts-dir xmuse/work/release_readiness/artifacts \
   --output xmuse/work/release_readiness/report.json

@@ -51,7 +51,9 @@ Priority:
    token, role/capability, idempotency/audit, and the existing contract guards.
 5. Attempt configured live evidence gates: MemoryOS Lite trace, GitHub server
    truth, Ray/Codex GOD runtime, OpenCode health/bounded runtime. Configured
-   gate failures are release blockers.
+   gate failures are release blockers. Use
+   `uv run xmuse-live-gate-status-capture` to record configured/missing gate
+   status as blocker artifacts when live proof has not yet been captured.
 6. Separate natural GOD transcript evidence from deterministic replay and keep
    unresolved blockers from freezing a blueprint.
 7. Add release readiness aggregation: tests, ruff, package boundary, internal
@@ -84,6 +86,8 @@ Hard constraints:
   live gates.
 - The release-readiness capture command aggregates supplied artifacts; it does
   not create live MemoryOS/GitHub/provider proof by itself.
+- The live-gate status capture command records blockers and missing
+  prerequisites; it does not satisfy live gates by itself.
 - If invoking OpenCode, use opencode-go/deepseek-v4-flash with --variant max as
   required by repo docs.
 - Never auto-merge.

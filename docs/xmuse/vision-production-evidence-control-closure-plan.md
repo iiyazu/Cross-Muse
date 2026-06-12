@@ -272,6 +272,16 @@ Acceptance:
 - A configured failing live gate blocks release readiness.
 - No credential or runtime state is committed.
 
+Current implementation status:
+
+- `uv run xmuse-live-gate-status-capture` writes required live-gate status
+  artifacts for MemoryOS, GitHub server truth, provider runtime, and natural
+  GOD deliberation.
+- The command records configured/missing state and blocker next actions without
+  writing secret values.
+- It emits `manual_gap` proof only. It does not create live MemoryOS, GitHub
+  server, real provider, or natural transcript proof by itself.
+
 ## S5 - Natural GOD Transcript And Freeze Path
 
 Goal: connect selected GOD participants to a real natural deliberation path
@@ -312,6 +322,8 @@ Required inputs:
 
 Current implementation status:
 
+- `uv run xmuse-live-gate-status-capture` can pre-populate live gate blocker
+  artifacts that the readiness capture command will evaluate.
 - `uv run xmuse-release-readiness-capture` reads JSON release gate artifacts
   from an artifact directory, writes a redacted report, and evaluates the gates
   with the same proof-level rules as `evaluate_release_readiness`.
