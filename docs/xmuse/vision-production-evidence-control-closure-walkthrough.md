@@ -156,6 +156,23 @@ It evaluates release gates with explicit proof-level requirements:
 The evaluator blocks fake/local proof from satisfying production live gates and
 blocks internal review from substituting for GitHub server enforcement.
 
+### Chat API Auth/RBAC
+
+Chat API mutating routes now have an opt-in token and role/capability gate:
+
+```text
+XMUSE_CHAT_API_AUTH_TOKEN=<server-token>
+XMUSE_CHAT_API_KEY=<client-token>
+X-XMUSE-API-Key: <client-token>
+X-XMuse-Operator-Role: operator
+X-XMuse-Operator-Capabilities: chat_create_conversation,select_god_cli
+```
+
+With auth enabled, API key proves caller authentication, but it does not grant
+write authority by itself. `viewer` cannot mutate, `admin` can mutate, and
+`operator` / `god` must present the required route capability. The TUI forwards
+`XMUSE_CHAT_API_KEY` for operator action calls.
+
 ## Proof-Level Summary
 
 | Surface | Current proof | Boundary |
@@ -166,6 +183,7 @@ blocks internal review from substituting for GitHub server enforcement.
 | GOD CLI selection store | `contract_proof` | Durable per-conversation selection record; does not prove live CLI runtime. |
 | GOD session registry | `contract_proof` | Enforces one durable session per conversation participant; no live runtime proof. |
 | Chat API workspace isolation | `contract_proof` | Full Chat API regression passes; no live multi-user soak. |
+| Chat API Auth/RBAC | `contract_proof` | Token + role/capability gate tested in-process; no live service proof. |
 | Release readiness evaluator | `contract_proof` | Blocks proof contamination; no live gate captured. |
 | MemoryOS live gate | `manual_gap` | Env not configured in current shell. |
 | Ray/Codex/OpenCode live gate | `manual_gap` | Binaries/Ray import exist, but production services/env are not running/configured. |
@@ -181,6 +199,8 @@ uv run pytest tests/xmuse/test_provider_read_contracts_module.py tests/xmuse/tes
 uv run pytest tests/xmuse/test_god_session_registry.py tests/xmuse/test_chat_api.py -q
 uv run pytest tests/xmuse/test_chat_bootstrap.py tests/xmuse/test_groupchat_bootstrap_lifecycle.py tests/xmuse/test_peer_forks.py -q
 uv run pytest tests/xmuse/test_god_cli_selection_store.py tests/xmuse/test_operator_actions.py tests/xmuse/test_tui_adapter.py tests/xmuse/test_package_boundaries.py tests/xmuse/test_provider_read_contracts_module.py -q
+uv run pytest tests/xmuse/test_production_hardening.py tests/xmuse/test_chat_api.py -q
+uv run pytest tests/xmuse/test_tui_adapter.py::test_adapter_operator_control_action_prefers_chat_api_contract tests/xmuse/test_tui_adapter.py::test_adapter_operator_control_action_does_not_fallback_after_api_rejection -q
 uv run ruff check .
 git diff --check
 ```
@@ -193,6 +213,8 @@ Observed results:
 43 passed, 1 warning
 16 passed, 1 warning
 63 passed
+37 passed, 1 warning
+2 passed
 All checks passed
 git diff --check clean
 ```
@@ -202,8 +224,8 @@ The warning is the existing Starlette/httpx deprecation warning from FastAPI
 
 ## Remaining Production Gaps
 
-- No production Auth/RBAC middleware has been applied to Chat API or MCP routes
-  yet.
+- MCP HTTP routes still need host auth/RBAC before exposure beyond trusted local
+  operator boundaries.
 - `/god select` now persists selected GOD CLI per conversation, but this is
   still a CLI selection authority only; it does not prove a live provider
   session is running.

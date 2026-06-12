@@ -431,6 +431,9 @@ class XmuseAdapter:
             "X-XMuse-Operator-Id": _operator_actor_id(),
             "X-XMuse-Operator-Capabilities": ",".join(_operator_capabilities()),
         }
+        api_key = _chat_api_key()
+        if api_key:
+            headers["X-XMUSE-API-Key"] = api_key
         try:
             with self._chat_api_client(10.0) as client:
                 response = client.post(
@@ -1787,6 +1790,11 @@ def _operator_actor_id() -> str:
 def _operator_capabilities() -> tuple[str, ...]:
     raw = os.environ.get("XMUSE_TUI_OPERATOR_CAPABILITIES", "")
     return tuple(item.strip() for item in raw.split(",") if item.strip())
+
+
+def _chat_api_key() -> str | None:
+    value = os.environ.get("XMUSE_CHAT_API_KEY", "").strip()
+    return value or None
 
 
 def _operator_api_error_result(

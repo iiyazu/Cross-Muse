@@ -36,10 +36,24 @@ export XMUSE_RAY_GOD_TRANSPORT=app-server
 export XMUSE_RAY_GOD_EFFORT=low
 export XMUSE_RAY_GOD_MCP=1
 export XMUSE_CHAT_API_URL=http://127.0.0.1:8201
+export XMUSE_CHAT_API_AUTH_TOKEN=<server-token>
+export XMUSE_CHAT_API_KEY=<same-token-for-tui-client>
 ```
 
 `XMUSE_DEGRADED_LOCAL_GOD_MODE=1` is an explicit degraded local mode. It is not
 the happy path and must be visible in health/readiness output or lane/peer traces.
+
+When `XMUSE_CHAT_API_AUTH_TOKEN` or `XMUSE_CHAT_API_KEY` is set for the Chat API
+process, mutating `/api/chat/*` routes require:
+
+- `X-XMUSE-API-Key` matching the configured token;
+- `X-XMuse-Operator-Role` such as `operator` or `admin`;
+- `X-XMuse-Operator-Capabilities` containing the route capability, for example
+  `chat_create_conversation` or `select_god_cli`.
+
+The TUI reads `XMUSE_CHAT_API_KEY` and forwards it to Chat API operator action
+requests. Read routes remain unauthenticated until a broader deployment policy
+decides otherwise.
 
 ## Startup
 
@@ -148,6 +162,8 @@ uv run pytest -q tests/xmuse/test_full_chain_real_run.py::test_real_ray_codex_ap
 - Health HTTP probing is opt-in through `--health-check-http` to avoid making
   normal read-only health summaries block on ports.
 - Process discovery is Linux `/proc` based.
-- Chat API and MCP still have no auth layer; this is not solved in Phase 2.
+- Chat API has opt-in token plus role/capability gating for mutating routes.
+  MCP HTTP endpoints still have no network auth layer; this remains a trusted
+  local boundary unless fronted by host auth.
 - Fake/local smoke remains useful for installability but does not replace real
   Ray/Codex/MCP writeback evidence.

@@ -2,6 +2,7 @@
 """REST API for the xmuse chat-plane MVP."""
 
 import json
+import os
 import sqlite3
 import uuid
 from pathlib import Path
@@ -57,6 +58,7 @@ from xmuse_core.chat.peer_proposals import classify_structured_proposal
 from xmuse_core.chat.peer_service import PeerChatError, PeerChatService
 from xmuse_core.chat.protocol_v2 import DeliberationMessageV1
 from xmuse_core.chat.store import ChatStore
+from xmuse_core.platform.http_auth import authorize_chat_api_write
 from xmuse_core.platform.operator_actions import (
     OperatorActionRequest,
     OperatorActionResult,
@@ -97,6 +99,15 @@ _EXECUTION_CARD_TYPES = {
     "run_takeover",
     "run_terminal",
 }
+
+
+def _auth_token_from_env() -> str | None:
+    value = (
+        os.environ.get("XMUSE_CHAT_API_AUTH_TOKEN")
+        or os.environ.get("XMUSE_CHAT_API_KEY")
+        or ""
+    ).strip()
+    return value or None
 
 
 def _store(base_dir: Path) -> ChatStore:
@@ -171,6 +182,11 @@ def _operator_actor_id(request: Request) -> str:
 def _operator_capabilities(request: Request) -> tuple[str, ...]:
     raw = request.headers.get("X-XMuse-Operator-Capabilities", "")
     return tuple(item.strip() for item in raw.split(",") if item.strip())
+
+
+def _operator_role(request: Request) -> str:
+    value = request.headers.get("X-XMuse-Operator-Role", "")
+    return value.strip() or "operator"
 
 
 def _operator_action_http_status(result: OperatorActionResult) -> int:
@@ -939,15 +955,30 @@ def create_app(
 
     @app.middleware("http")
     async def require_write_auth(request: Request, call_next):
-        if (
-            auth_token
-            and request.method in {"POST", "PUT", "PATCH", "DELETE"}
-            and request.headers.get("X-XMUSE-API-Key") != auth_token
-        ):
+        mutating = request.method in {"POST", "PUT", "PATCH", "DELETE"}
+        if auth_token and mutating and request.headers.get("X-XMUSE-API-Key") != auth_token:
             return JSONResponse(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 content={"detail": "authentication required"},
             )
+        if auth_token and mutating:
+            decision = authorize_chat_api_write(
+                method=request.method,
+                path=request.url.path,
+                role=_operator_role(request),
+                capabilities=_operator_capabilities(request),
+            )
+            if not decision.allowed:
+                return JSONResponse(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    content={
+                        "detail": {
+                            "code": decision.code,
+                            "message": decision.message,
+                            "required_capability": decision.required_capability,
+                        }
+                    },
+                )
         return await call_next(request)
 
     @app.get("/health")
@@ -1856,7 +1887,11 @@ def create_app(
 
 
 def main() -> None:
-    uvicorn.run(create_app(), host="127.0.0.1", port=DEFAULT_PORT)
+    uvicorn.run(
+        create_app(auth_token=_auth_token_from_env()),
+        host="127.0.0.1",
+        port=DEFAULT_PORT,
+    )
 
 
 if __name__ == "__main__":

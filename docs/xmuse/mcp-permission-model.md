@@ -3,14 +3,18 @@
 Date: 2026-06-04
 
 Scope: Path A Phase 4 contract closure. This document defines declarative MCP
-permission categories and current enforcement boundaries. It does not implement
-API authentication middleware, broad authorization, dashboard admin UI, or rate
-limiting.
+permission categories and current enforcement boundaries. Chat API now has a
+configurable token and role/capability gate for mutating routes; MCP HTTP
+authentication, dashboard admin UI, and rate limiting remain outside this
+document.
 
 ## Vocabulary
 
-- API authentication is not implemented: `/mcp` and `/mcp/chat` currently accept
-  JSON-RPC requests without a token/header gate.
+- MCP API authentication is not implemented: `/mcp` and `/mcp/chat` currently
+  accept JSON-RPC requests without a token/header gate.
+- Chat API authentication is opt-in: when started with an auth token, mutating
+  `/api/chat/*` requests require `X-XMUSE-API-Key` plus an allowed
+  `X-XMuse-Operator-Role` and `X-XMuse-Operator-Capabilities` value.
 - identity verification is not API authentication: selected chat tools verify
   `god_session_id`, `conversation_id`, and `participant_id` against
   `god_sessions.json`; this proves session scope, not network caller identity.
@@ -80,3 +84,19 @@ The identity-bound chat tools must reject:
 Read-only tools are classified as non-mutating. They still require future API
 authentication and caller authorization before exposing the MCP server beyond a
 trusted local operator boundary.
+
+## Chat API Runtime Gate
+
+When Chat API auth is enabled:
+
+- missing or wrong `X-XMUSE-API-Key` returns `401`;
+- `viewer` cannot mutate any Chat API write surface;
+- `admin` may mutate without an explicit capability;
+- `operator` and `god` must include the route capability in
+  `X-XMuse-Operator-Capabilities`;
+- `/api/chat/operator/actions` still enforces the action-specific capability,
+  such as `select_god_cli`, inside the operator action contract.
+
+This is `contract_proof` for HTTP write-surface RBAC. It is not live service
+proof until the configured Chat API process is started with the token and
+exercised by a real operator/TUI session.

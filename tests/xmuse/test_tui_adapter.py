@@ -417,6 +417,7 @@ def test_adapter_operator_control_action_prefers_chat_api_contract(
 
     monkeypatch.setenv("XMUSE_TUI_OPERATOR_ID", "operator-api")
     monkeypatch.setenv("XMUSE_TUI_OPERATOR_CAPABILITIES", "select_god_cli")
+    monkeypatch.setenv("XMUSE_CHAT_API_KEY", "secret")
     monkeypatch.setattr("xmuse.tui.adapter.xmuse_adapter.httpx.Client", _Client)
 
     result = XmuseAdapter(
@@ -438,6 +439,7 @@ def test_adapter_operator_control_action_prefers_chat_api_contract(
         "conversation_id": "conv-1",
     }
     assert calls[0]["headers"] == {
+        "X-XMUSE-API-Key": "secret",
         "X-XMuse-Operator-Id": "operator-api",
         "X-XMuse-Operator-Capabilities": "select_god_cli",
     }
