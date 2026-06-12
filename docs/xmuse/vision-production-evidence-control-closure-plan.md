@@ -546,6 +546,13 @@ Current implementation status:
   This reduces handoff friction after blueprint freeze and feature graph owner
   planning, but remains contract-level replay evidence and does not make TUI
   rendering, `feature_lanes.json`, or lane projections authoritative.
+- The same release pack command can accept `--memoryos-live-trace` and
+  `--real-provider-runtime`, convert those raw live/provider artifacts through
+  the existing `xmuse-memoryos-live-gate-capture` and
+  `xmuse-real-provider-runtime-gate-capture` validators, and write the generated
+  release gate artifacts under `--artifacts-dir` before readiness/audit. This
+  reduces handoff friction but does not start live services, run providers, or
+  upgrade contract/fake/local evidence into live/provider proof.
 
 Acceptance:
 

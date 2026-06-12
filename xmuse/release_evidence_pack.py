@@ -175,6 +175,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--memoryos-live-trace",
+        type=Path,
+        default=None,
+        help=(
+            "Optional xmuse.memoryos_lite_trace.v1 artifact to convert into "
+            "artifacts-dir/live-memoryos.json before release readiness."
+        ),
+    )
+    parser.add_argument(
+        "--real-provider-runtime",
+        type=Path,
+        default=None,
+        help=(
+            "Optional xmuse.real_provider_runtime.v1 artifact to convert into "
+            "artifacts-dir/real-provider-runtime.json before release readiness."
+        ),
+    )
+    parser.add_argument(
         "--tombstoned-source-ref",
         action="append",
         default=[],
@@ -203,6 +221,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         memoryos_governance_plans=tuple(args.memoryos_governance_plan),
         memoryos_writeback_events=tuple(args.memoryos_writeback_event),
         memoryos_governance_evidence_output=args.memoryos_governance_evidence_output,
+        memoryos_live_trace=args.memoryos_live_trace,
+        real_provider_runtime=args.real_provider_runtime,
         tombstoned_source_refs=tuple(args.tombstoned_source_ref),
     )
     print(json.dumps({"decision": pack["decision"], "output": str(args.output)}, sort_keys=True))

@@ -18,6 +18,9 @@ from xmuse_core.platform.frozen_blueprint_evidence_capture import (
 from xmuse_core.platform.memoryos_governance_evidence_capture import (
     capture_memoryos_governance_evidence,
 )
+from xmuse_core.platform.memoryos_live_release_gate import (
+    capture_memoryos_live_release_gate,
+)
 from xmuse_core.platform.overnight_replay_bundle_capture import (
     capture_overnight_replay_bundle,
 )
@@ -26,6 +29,9 @@ from xmuse_core.platform.overnight_supervisor_evidence_capture import (
 )
 from xmuse_core.platform.proof_contamination_audit import (
     capture_proof_contamination_audit,
+)
+from xmuse_core.platform.real_provider_runtime_release_gate import (
+    capture_real_provider_runtime_release_gate,
 )
 from xmuse_core.platform.release_readiness_capture import capture_release_readiness
 
@@ -51,6 +57,8 @@ def capture_release_evidence_pack(
     memoryos_governance_plans: tuple[str | Path, ...] = (),
     memoryos_writeback_events: tuple[str | Path, ...] = (),
     memoryos_governance_evidence_output: str | Path | None = None,
+    memoryos_live_trace: str | Path | None = None,
+    real_provider_runtime: str | Path | None = None,
     tombstoned_source_refs: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     output = Path(output_path)
@@ -82,6 +90,11 @@ def capture_release_evidence_pack(
         memoryos_governance_plans=memoryos_governance_plans,
         memoryos_writeback_events=memoryos_writeback_events,
         memoryos_governance_evidence_output=memoryos_governance_evidence_output,
+    )
+    release_gate_source_reports = _release_gate_artifacts(
+        artifacts_dir=Path(artifacts_dir),
+        memoryos_live_trace=memoryos_live_trace,
+        real_provider_runtime=real_provider_runtime,
     )
 
     readiness = capture_release_readiness(
@@ -123,6 +136,7 @@ def capture_release_evidence_pack(
             "release_readiness": str(readiness_path),
             "proof_contamination_audit": str(audit_path),
             "overnight_replay_bundle": str(replay_path),
+            **release_gate_source_reports,
             **generated_source_reports,
         },
     }
@@ -249,6 +263,30 @@ def _replay_section_artifacts(
         artifacts["memory_governance"] = memoryos_governance_path
         source_reports["memoryos_governance_evidence"] = str(memoryos_governance_path)
     return (artifacts or None), source_reports
+
+
+def _release_gate_artifacts(
+    *,
+    artifacts_dir: Path,
+    memoryos_live_trace: str | Path | None,
+    real_provider_runtime: str | Path | None,
+) -> dict[str, str]:
+    source_reports: dict[str, str] = {}
+    if memoryos_live_trace is not None:
+        memoryos_gate_path = artifacts_dir / "live-memoryos.json"
+        capture_memoryos_live_release_gate(
+            artifact_path=memoryos_live_trace,
+            output_path=memoryos_gate_path,
+        )
+        source_reports["memoryos_live_gate"] = str(memoryos_gate_path)
+    if real_provider_runtime is not None:
+        provider_gate_path = artifacts_dir / "real-provider-runtime.json"
+        capture_real_provider_runtime_release_gate(
+            artifact_path=real_provider_runtime,
+            output_path=provider_gate_path,
+        )
+        source_reports["real_provider_runtime_gate"] = str(provider_gate_path)
+    return source_reports
 
 
 def _pack_decision(

@@ -96,6 +96,101 @@ def _write_memoryos_event(path: Path) -> Path:
     return path
 
 
+def _write_memoryos_trace(path: Path, **overrides: object) -> Path:
+    payload: dict[str, object] = {
+        "schema_version": "xmuse.memoryos_lite_trace.v1",
+        "proof_level": "live_service_proof",
+        "fact_state": "observed",
+        "namespace_uri": "memory://conversation/conv-prod-1/god-review/thread-1",
+        "session_id": "memoryos-session-1",
+        "trace_events": [
+            {
+                "kind": "session_created",
+                "metadata": {"xmuse_source_refs": ["conversation:conv-prod-1"]},
+            },
+            {
+                "kind": "ingest",
+                "metadata": {"xmuse_source_refs": ["lane:lane-memoryos"]},
+            },
+            {
+                "kind": "context_built",
+                "estimated_tokens": 128,
+                "metadata": {"xmuse_source_refs": ["blueprint:bp-overnight"]},
+            },
+        ],
+        "source_refs": [
+            "conversation:conv-prod-1",
+            "lane:lane-memoryos",
+            "blueprint:bp-overnight",
+        ],
+        "estimated_tokens": 128,
+        "blockers": [],
+    }
+    payload.update(overrides)
+    _write_json(path, payload)
+    return path
+
+
+def _provider_stage_timings(offset: float) -> dict[str, dict[str, float]]:
+    return {
+        "ray_actor_delivery_start": {"at": offset + 1.0},
+        "codex_app_server_turn_start": {"at": offset + 2.0},
+        "chat_post_message": {"at": offset + 3.0},
+        "trace_persisted": {"at": offset + 4.0},
+    }
+
+
+def _write_real_provider_runtime(path: Path, **overrides: object) -> Path:
+    payload: dict[str, object] = {
+        "schema_version": "xmuse.real_provider_runtime.v1",
+        "proof_level": "real_provider_proof",
+        "fact_state": "observed",
+        "run_id": "real-provider-pack-run",
+        "conversation_id": "conv-prod-1",
+        "source_refs": ["chat:conversation:conv-prod-1"],
+        "provider_runtime": {
+            "provider_id": "codex",
+            "runtime_backend": "ray",
+            "transport": "codex-app-server",
+            "provider_session_id": "codex-thread-prod-1",
+            "mcp_writeback": True,
+        },
+        "restart_resume": {
+            "fresh_provider_session_id": "codex-thread-prod-1",
+            "resumed_provider_session_id": "codex-thread-prod-1",
+            "provider_session_reused": True,
+        },
+        "turns": [
+            {
+                "turn_id": "turn-fresh-1",
+                "phase": "fresh",
+                "delivery_mode": "mcp_writeback",
+                "degraded_reason": None,
+                "provider_id": "codex",
+                "runtime_backend": "ray",
+                "transport": "codex-app-server",
+                "provider_session_id": "codex-thread-prod-1",
+                "stage_timings": _provider_stage_timings(1.0),
+            },
+            {
+                "turn_id": "turn-resume-1",
+                "phase": "resume",
+                "delivery_mode": "mcp_writeback",
+                "degraded_reason": None,
+                "provider_id": "codex",
+                "runtime_backend": "ray",
+                "transport": "codex-app-server",
+                "provider_session_id": "codex-thread-prod-1",
+                "stage_timings": _provider_stage_timings(10.0),
+            },
+        ],
+        "blockers": [],
+    }
+    payload.update(overrides)
+    _write_json(path, payload)
+    return path
+
+
 def _write_transcript(path: Path) -> Path:
     _write_json(
         path,
@@ -423,6 +518,62 @@ def test_release_evidence_pack_converts_memoryos_writeback_events_into_replay_se
         str(event_path),
         str(memoryos_evidence),
     ]
+
+
+def test_release_evidence_pack_converts_memoryos_trace_into_release_gate(
+    tmp_path: Path,
+) -> None:
+    artifacts = tmp_path / "artifacts"
+    output = tmp_path / "pack" / "evidence-pack.json"
+    trace = _write_memoryos_trace(tmp_path / "memoryos" / "memoryos-trace.json")
+
+    pack = capture_release_evidence_pack(
+        artifacts_dir=artifacts,
+        output_path=output,
+        run_id="pack-memoryos-live-gate",
+        memoryos_live_trace=trace,
+    )
+
+    gate_path = artifacts / "live-memoryos.json"
+    gate = json.loads(gate_path.read_text(encoding="utf-8"))
+    assert gate["gate_id"] == "live-memoryos"
+    assert gate["status"] == "ok"
+    assert gate["proof_level"] == "live_service_proof"
+    assert gate["artifacts"] == [str(trace)]
+    assert pack["source_reports"]["memoryos_live_gate"] == str(gate_path)
+    assert pack["artifact_count"] == 1
+    assert pack["release_readiness_decision"] == "ready"
+    assert pack["proof_contamination_decision"] == "clean"
+    assert pack["decision"] == "blocked"
+
+
+def test_release_evidence_pack_converts_real_provider_runtime_into_release_gate(
+    tmp_path: Path,
+) -> None:
+    artifacts = tmp_path / "artifacts"
+    output = tmp_path / "pack" / "evidence-pack.json"
+    runtime = _write_real_provider_runtime(
+        tmp_path / "provider" / "real-provider-runtime.json"
+    )
+
+    pack = capture_release_evidence_pack(
+        artifacts_dir=artifacts,
+        output_path=output,
+        run_id="pack-real-provider-gate",
+        real_provider_runtime=runtime,
+    )
+
+    gate_path = artifacts / "real-provider-runtime.json"
+    gate = json.loads(gate_path.read_text(encoding="utf-8"))
+    assert gate["gate_id"] == "real-provider-runtime"
+    assert gate["status"] == "ok"
+    assert gate["proof_level"] == "real_provider_proof"
+    assert gate["artifacts"] == [str(runtime)]
+    assert pack["source_reports"]["real_provider_runtime_gate"] == str(gate_path)
+    assert pack["artifact_count"] == 1
+    assert pack["release_readiness_decision"] == "ready"
+    assert pack["proof_contamination_decision"] == "clean"
+    assert pack["decision"] == "blocked"
 
 
 def test_release_evidence_pack_converts_deliberation_transcript_into_replay_section(
@@ -921,6 +1072,55 @@ def test_release_evidence_pack_cli_accepts_memoryos_writeback_event(
         output.parent / "memoryos-governance-production-evidence.json"
     )
     assert sections["memory_governance"]["status"] == "ok"
+
+
+def test_release_evidence_pack_cli_accepts_raw_live_gate_inputs(
+    tmp_path: Path,
+) -> None:
+    from xmuse.release_evidence_pack import main
+
+    artifacts = tmp_path / "artifacts"
+    output = tmp_path / "pack.json"
+    trace = _write_memoryos_trace(tmp_path / "memoryos" / "memoryos-trace.json")
+    runtime = _write_real_provider_runtime(
+        tmp_path / "provider" / "real-provider-runtime.json"
+    )
+
+    assert (
+        main(
+            [
+                "--artifacts-dir",
+                str(artifacts),
+                "--output",
+                str(output),
+                "--run-id",
+                "overnight-cli-pack",
+                "--memoryos-live-trace",
+                str(trace),
+                "--real-provider-runtime",
+                str(runtime),
+            ]
+        )
+        == 0
+    )
+
+    pack = json.loads(output.read_text(encoding="utf-8"))
+    memoryos_gate = json.loads(
+        (artifacts / "live-memoryos.json").read_text(encoding="utf-8")
+    )
+    provider_gate = json.loads(
+        (artifacts / "real-provider-runtime.json").read_text(encoding="utf-8")
+    )
+    assert memoryos_gate["status"] == "ok"
+    assert provider_gate["status"] == "ok"
+    assert pack["source_reports"]["memoryos_live_gate"] == str(
+        artifacts / "live-memoryos.json"
+    )
+    assert pack["source_reports"]["real_provider_runtime_gate"] == str(
+        artifacts / "real-provider-runtime.json"
+    )
+    assert pack["artifact_count"] == 2
+    assert pack["release_readiness_decision"] == "ready"
 
 
 def test_release_evidence_pack_cli_accepts_deliberation_transcript(

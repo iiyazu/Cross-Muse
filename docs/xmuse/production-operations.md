@@ -576,9 +576,10 @@ The command writes ignored runtime-state reports:
 
 The pack decision is `contaminated` when the proof audit finds contamination.
 Otherwise it mirrors the release-readiness decision: `ready`, `blocked`, or
-`not_evaluated`. This command aggregates existing release-gate artifacts only;
-it does not start live services, call GitHub, run providers, or turn
-`manual_gap` blockers into production proof.
+`not_evaluated`. This command can aggregate existing release-gate artifacts and
+can convert explicitly supplied raw live/provider artifacts into release-gate
+artifacts before readiness. It does not start live services, call GitHub, run
+providers, or turn `manual_gap` blockers into production proof.
 
 For long `/goal` handoff packs, the command can also convert explicit replay
 section inputs before assembling the nested overnight replay bundle:
@@ -592,6 +593,8 @@ uv run xmuse-release-evidence-pack \
   --god-runtime xmuse/work/release_readiness/god-runtime-continuity.json \
   --frozen-blueprint xmuse/work/release_readiness/mission-blueprint.json \
   --feature-contract xmuse/work/release_readiness/feature-owner-contract.json \
+  --memoryos-live-trace xmuse/work/release_readiness/memoryos-trace.json \
+  --real-provider-runtime xmuse/work/release_readiness/real-provider-runtime.json \
   --memoryos-writeback-event xmuse/work/release_readiness/memoryos-writeback-event.json
 ```
 
@@ -605,10 +608,17 @@ Repeated `--feature-contract` inputs generate the replay `feature_lineage`
 section from graph-native feature owner execution contracts.
 `--memoryos-governance-plan` and `--memoryos-writeback-event` generate the
 replay `memory_governance` section from governed MemoryOS policy inputs.
-These conversions are contract-level
-handoff evidence only; they do not create live MemoryOS trace proof, provider
-runtime gate proof, or GitHub merge proof, and must not be passed together with
-an explicit `--section-artifact` for the same section.
+These replay-section conversions are contract-level handoff evidence only and
+must not be passed together with an explicit `--section-artifact` for the same
+section. `--memoryos-live-trace` writes
+`artifacts-dir/live-memoryos.json` through the same validator as
+`xmuse-memoryos-live-gate-capture`; it emits `live_service_proof` only when the
+raw trace artifact already carries valid live MemoryOS Lite evidence.
+`--real-provider-runtime` writes `artifacts-dir/real-provider-runtime.json`
+through the same validator as `xmuse-real-provider-runtime-gate-capture`; it
+emits `real_provider_proof` only when the raw runtime artifact already proves
+real provider MCP writeback and restart/resume continuity. None of these
+handoffs create GitHub merge proof.
 
 The same capture is available through the TUI operator action surface:
 

@@ -545,10 +545,15 @@ artifact and, by default, sibling nested reports:
 - `proof-contamination-audit.json`.
 
 The evidence pack does not create live MemoryOS, GitHub, provider, or natural
-transcript proof. It only evaluates supplied release-gate artifacts through the
-existing readiness and contamination rules. If the contamination audit reports
-`contaminated`, the pack decision is `contaminated`; otherwise it mirrors
-release readiness as `ready`, `blocked`, or `not_evaluated`.
+transcript proof from nothing. It evaluates supplied release-gate artifacts
+through the existing readiness and contamination rules, and it can now convert
+explicit `--memoryos-live-trace` and `--real-provider-runtime` inputs into
+`live-memoryos.json` and `real-provider-runtime.json` gate artifacts under
+`--artifacts-dir` before readiness. Those conversions use the same validators
+as the standalone gate-capture commands, so contract/fake/local/stdout fallback
+artifacts remain blocked. If the contamination audit reports `contaminated`,
+the pack decision is `contaminated`; otherwise it mirrors release readiness as
+`ready`, `blocked`, or `not_evaluated`.
 
 ## Proof-Level Summary
 

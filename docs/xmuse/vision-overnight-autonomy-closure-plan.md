@@ -577,6 +577,15 @@ Tasks:
   `--memoryos-writeback-event EVENT` for the final handoff pack; do not pass
   those inputs together with an explicit
   `--section-artifact memory_governance=...`.
+- When a live MemoryOS Lite trace artifact exists, prefer
+  `uv run xmuse-release-evidence-pack --memoryos-live-trace TRACE` for the final
+  handoff pack. The pack writes `live-memoryos.json` under `--artifacts-dir`
+  through the same live gate validator and blocks contract/fake/empty traces.
+- When a real provider runtime artifact exists, prefer
+  `uv run xmuse-release-evidence-pack --real-provider-runtime RUNTIME` for the
+  final handoff pack. The pack writes `real-provider-runtime.json` under
+  `--artifacts-dir` through the same real-provider gate validator and blocks
+  fake/local/stdout fallback artifacts.
 - When a frozen mission blueprint artifact exists, prefer
   `uv run xmuse-release-evidence-pack --frozen-blueprint BLUEPRINT` for the
   final handoff pack; do not pass it together with an explicit
