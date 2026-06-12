@@ -238,6 +238,12 @@ Current implementation status:
   supervisor stage as `contract_proof`; `blocked` results stay `manual_gap`,
   record issue/failure rows, and can trigger dependency-aware fallback to the
   next ready independent stage.
+- The TUI proof cockpit read model can project those supervisor
+  `goal_stage_results` as a read-only long `/goal` stage spine with summary
+  counts, result artifact refs, blockers, and fallback targets. This keeps stage
+  harness evidence visible to the operator without turning TUI rendering into
+  release readiness, lane status, review truth, GitHub truth, or live runtime
+  proof.
 
 ## S2 - GOD Runtime Continuity And Natural Transcript Spine
 

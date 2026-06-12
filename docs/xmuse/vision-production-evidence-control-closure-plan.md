@@ -597,6 +597,11 @@ Current implementation status:
   with dependency-aware fallback. This makes stage-harness output replayable in
   the supervisor snapshot without making `result.json` authoritative for lane
   status, review truth, GitHub truth, release readiness, or live runtime proof.
+- The TUI proof cockpit can now project the same supervisor `goal_stage_results`
+  as read-only operator evidence, including summary counts, per-stage status,
+  proof level, engine, result artifact refs, blocker reason, and fallback target.
+  The projection remains non-authoritative and cannot complete release gates or
+  upgrade bounded worker proof by itself.
 - The same release pack command can also accept repeated
   `--memoryos-governance-plan` and `--memoryos-writeback-event` inputs, convert
   them through `xmuse-memoryos-governance-evidence-capture`, and attach the

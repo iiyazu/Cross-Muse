@@ -26,6 +26,7 @@ def build_tui_vision_read_model(
     github_truth: dict | None = None,
     provider_runtime: list[dict] | None = None,
     god_runtime: dict | None = None,
+    overnight_supervisor: dict | None = None,
     replay_bundle: dict | None = None,
     release_evidence_pack: dict | None = None,
 ) -> dict[str, Any]:
@@ -50,6 +51,7 @@ def build_tui_vision_read_model(
         "proof_cockpit": _build_proof_cockpit(
             replay_bundle or inspector_evidence["replay_bundle"],
             release_evidence_pack or inspector_evidence["release_evidence_pack"],
+            overnight_supervisor or inspector_evidence["overnight_supervisor"],
         ),
     }
 
@@ -536,11 +538,12 @@ def _build_god_runtime(god_runtime: dict | None) -> dict[str, Any]:
 def _build_proof_cockpit(
     replay_bundle: dict | None,
     release_evidence_pack: dict | None,
+    overnight_supervisor: dict | None,
 ) -> dict[str, Any]:
     if not isinstance(replay_bundle, dict) and not isinstance(
         release_evidence_pack,
         dict,
-    ):
+    ) and not isinstance(overnight_supervisor, dict):
         return _manual_gap_section(
             "overnight replay bundle and release evidence pack unavailable"
         )
@@ -558,6 +561,45 @@ def _build_proof_cockpit(
     release_decision = "not_evaluated"
     proof_contamination_decision = "not_evaluated"
     authority = None
+    stage_results: list[dict[str, Any]] = []
+    stage_result_summary = {
+        "ok": 0,
+        "blocked": 0,
+        "manual_gap": 0,
+        "retry": 0,
+        "total": 0,
+    }
+
+    if isinstance(overnight_supervisor, dict):
+        _append_unique(
+            source_authority,
+            _text(overnight_supervisor.get("schema_version"))
+            or "xmuse.overnight_supervisor.v1",
+        )
+        for result in _dicts(overnight_supervisor.get("goal_stage_results")):
+            stage_result = _goal_stage_result_projection(result)
+            stage_results.append(stage_result)
+            status = stage_result["status"]
+            if status in stage_result_summary:
+                stage_result_summary[status] += 1
+            stage_result_summary["total"] += 1
+            stage_id = stage_result["stage_id"]
+            result_path = stage_result["result_path"]
+            if stage_id != "unknown":
+                _append_unique(source_refs, f"goal_stage:{stage_id}")
+            if result_path is not None:
+                _append_unique(source_refs, f"goal_stage_result:{result_path}")
+                _append_unique(artifacts, result_path)
+            if status in {"blocked", "manual_gap"}:
+                blockers.append(
+                    {
+                        "kind": "goal_stage_result",
+                        "id": stage_id,
+                        "reason": stage_result["blocked_reason"] or status,
+                        "owner": "codex",
+                        "next_action": _goal_stage_next_action(stage_result),
+                    }
+                )
 
     if isinstance(replay_bundle, dict):
         _append_unique(
@@ -647,6 +689,8 @@ def _build_proof_cockpit(
         "blocker_count": len(blockers),
         "finding_count": finding_count,
         "artifacts": artifacts,
+        "stage_result_summary": stage_result_summary,
+        "stage_results": stage_results,
     }
 
 
@@ -657,6 +701,7 @@ def _inspector_evidence(inspector: dict | None) -> dict[str, Any]:
             "github_truth": None,
             "provider_runtime": None,
             "god_runtime": None,
+            "overnight_supervisor": None,
             "replay_bundle": None,
             "release_evidence_pack": None,
         }
@@ -686,6 +731,12 @@ def _inspector_evidence(inspector: dict | None) -> dict[str, Any]:
             "selected_god_runtime",
             "god_runtime_continuity",
         ),
+        "overnight_supervisor": _first_dict(
+            inspector,
+            "overnight_supervisor",
+            "supervisor_snapshot",
+            "supervisor",
+        ),
         "replay_bundle": _first_dict(
             inspector,
             "replay_bundle",
@@ -712,6 +763,27 @@ def _first_list(data: dict[str, Any], *keys: str) -> list[dict[str, Any]] | None
         value = data.get(key)
         if isinstance(value, list):
             return [item for item in value if isinstance(item, dict)]
+    return None
+
+
+def _goal_stage_result_projection(result: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "stage_id": _text(result.get("stage_id")) or "unknown",
+        "status": _text(result.get("status")) or "not_evaluated",
+        "proof_level": _normalize_proof_level(result.get("proof_level")),
+        "engine": _text(result.get("engine")) or "unknown",
+        "source_authority": _text(result.get("source_authority"))
+        or "goal_stage_harness",
+        "result_path": _text(result.get("result_path")),
+        "blocked_reason": _text(result.get("blocked_reason")),
+        "next_stage_id": _text(result.get("next_stage_id")),
+    }
+
+
+def _goal_stage_next_action(stage_result: dict[str, Any]) -> str | None:
+    next_stage_id = _text(stage_result.get("next_stage_id"))
+    if next_stage_id is not None:
+        return f"Continue via dependency-aware fallback to {next_stage_id}."
     return None
 
 

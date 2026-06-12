@@ -577,6 +577,88 @@ def test_tui_vision_read_model_summarizes_proof_cockpit_without_authority_upgrad
     ]
 
 
+def test_tui_vision_read_model_projects_supervisor_goal_stage_results() -> None:
+    model = build_tui_vision_read_model(
+        overnight_supervisor={
+            "schema_version": "xmuse.overnight_supervisor.v1",
+            "run_id": "overnight-stage-spine",
+            "goal_stage_results": [
+                {
+                    "stage_id": "S1",
+                    "status": "ok",
+                    "proof_level": "contract_proof",
+                    "engine": "opencode",
+                    "source_authority": "goal_stage_harness",
+                    "result_path": "/tmp/goal-runs/S1/result.json",
+                },
+                {
+                    "stage_id": "S4",
+                    "status": "blocked",
+                    "proof_level": "manual_gap",
+                    "engine": "codex",
+                    "source_authority": "goal_stage_harness",
+                    "result_path": "/tmp/goal-runs/S4/result.json",
+                    "blocked_reason": "goal stage result is blocked: GitHub review truth missing",
+                    "next_stage_id": "S7",
+                },
+            ],
+        }
+    )
+
+    cockpit = model["proof_cockpit"]
+    assert cockpit["proof_level"] == "contract_proof"
+    assert cockpit["fact_state"] == "blocked"
+    assert cockpit["source_authority"] == ["xmuse.overnight_supervisor.v1"]
+    assert cockpit["stage_result_summary"] == {
+        "ok": 1,
+        "blocked": 1,
+        "manual_gap": 0,
+        "retry": 0,
+        "total": 2,
+    }
+    assert cockpit["stage_results"] == [
+        {
+            "stage_id": "S1",
+            "status": "ok",
+            "proof_level": "contract_proof",
+            "engine": "opencode",
+            "source_authority": "goal_stage_harness",
+            "result_path": "/tmp/goal-runs/S1/result.json",
+            "blocked_reason": None,
+            "next_stage_id": None,
+        },
+        {
+            "stage_id": "S4",
+            "status": "blocked",
+            "proof_level": "manual_gap",
+            "engine": "codex",
+            "source_authority": "goal_stage_harness",
+            "result_path": "/tmp/goal-runs/S4/result.json",
+            "blocked_reason": "goal stage result is blocked: GitHub review truth missing",
+            "next_stage_id": "S7",
+        },
+    ]
+    assert cockpit["blockers"] == [
+        {
+            "kind": "goal_stage_result",
+            "id": "S4",
+            "reason": "goal stage result is blocked: GitHub review truth missing",
+            "owner": "codex",
+            "next_action": "Continue via dependency-aware fallback to S7.",
+        }
+    ]
+    assert cockpit["artifacts"] == [
+        "/tmp/goal-runs/S1/result.json",
+        "/tmp/goal-runs/S4/result.json",
+    ]
+    assert cockpit["source_refs"] == [
+        "goal_stage:S1",
+        "goal_stage_result:/tmp/goal-runs/S1/result.json",
+        "goal_stage:S4",
+        "goal_stage_result:/tmp/goal-runs/S4/result.json",
+    ]
+
+
 def test_tui_vision_read_model_reports_proof_cockpit_manual_gap_without_artifacts() -> None:
     model = build_tui_vision_read_model()
 

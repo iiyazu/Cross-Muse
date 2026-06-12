@@ -52,6 +52,22 @@ def render_proof_cockpit(vision: dict[str, Any] | None) -> Panel:
     if section_statuses:
         lines.append("Sections:")
         lines.extend(f"  {_section_line(section)}" for section in section_statuses[:6])
+    stage_results = _dicts(cockpit.get("stage_results"))
+    if stage_results:
+        summary = cockpit.get("stage_result_summary")
+        if isinstance(summary, dict):
+            lines.append(
+                "Goal stages: "
+                f"ok={_number(summary.get('ok'))}; "
+                f"blocked={_number(summary.get('blocked'))}; "
+                f"retry={_number(summary.get('retry'))}; "
+                f"manual_gap={_number(summary.get('manual_gap'))}; "
+                f"total={_number(summary.get('total'))}"
+            )
+        lines.extend(
+            f"  {_stage_result_line(stage_result)}"
+            for stage_result in stage_results[:6]
+        )
     _append_god_runtime(lines, vision)
     blockers = _dicts(cockpit.get("blockers"))
     if blockers:
@@ -93,6 +109,22 @@ def _section_line(section: dict[str, Any]) -> str:
     proof_level = _text(section.get("proof_level")) or "manual_gap"
     authority = _text(section.get("source_authority")) or "unknown"
     return f"{section_id} {status}/{proof_level} via {authority}"
+
+
+def _stage_result_line(stage_result: dict[str, Any]) -> str:
+    stage_id = _text(stage_result.get("stage_id")) or "unknown"
+    status = _text(stage_result.get("status")) or "not_evaluated"
+    proof_level = _text(stage_result.get("proof_level")) or "manual_gap"
+    authority = _text(stage_result.get("source_authority")) or "goal_stage_harness"
+    engine = _text(stage_result.get("engine")) or "unknown"
+    line = f"{stage_id} {status}/{proof_level} via {authority} ({engine})"
+    reason = _text(stage_result.get("blocked_reason"))
+    if reason is not None:
+        line += f": {reason}"
+    next_stage_id = _text(stage_result.get("next_stage_id"))
+    if next_stage_id is not None:
+        line += f" -> {next_stage_id}"
+    return line
 
 
 def _append_god_runtime(

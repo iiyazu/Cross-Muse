@@ -362,6 +362,52 @@ def test_proof_cockpit_renders_section_statuses_and_god_runtime() -> None:
     ) in rendered
 
 
+def test_proof_cockpit_renders_goal_stage_results() -> None:
+    panel = render_proof_cockpit(
+        {
+            "proof_cockpit": {
+                "proof_level": "contract_proof",
+                "fact_state": "blocked",
+                "stage_result_summary": {
+                    "ok": 1,
+                    "blocked": 1,
+                    "retry": 0,
+                    "manual_gap": 0,
+                    "total": 2,
+                },
+                "stage_results": [
+                    {
+                        "stage_id": "S1",
+                        "status": "ok",
+                        "proof_level": "contract_proof",
+                        "engine": "opencode",
+                        "source_authority": "goal_stage_harness",
+                    },
+                    {
+                        "stage_id": "S4",
+                        "status": "blocked",
+                        "proof_level": "manual_gap",
+                        "engine": "codex",
+                        "source_authority": "goal_stage_harness",
+                        "blocked_reason": "GitHub review truth missing",
+                        "next_stage_id": "S7",
+                    },
+                ],
+                "blockers": [],
+                "manual_gap_reason": None,
+            }
+        }
+    )
+
+    rendered = panel.renderable.plain
+    assert "Goal stages: ok=1; blocked=1; retry=0; manual_gap=0; total=2" in rendered
+    assert "S1 ok/contract_proof via goal_stage_harness (opencode)" in rendered
+    assert (
+        "S4 blocked/manual_gap via goal_stage_harness (codex): "
+        "GitHub review truth missing -> S7"
+    ) in rendered
+
+
 def test_proof_cockpit_renders_manual_gap() -> None:
     panel = render_proof_cockpit(None)
 

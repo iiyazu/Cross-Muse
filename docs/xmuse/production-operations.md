@@ -652,6 +652,13 @@ results remain `manual_gap` blockers and may start the next ready independent
 stage. This is not lane status authority, review truth, GitHub truth, release
 readiness proof, or live runtime proof.
 
+The TUI proof cockpit read model can project the supervisor snapshot's
+`goal_stage_results` as an operator-visible stage spine. It shows per-stage
+status, proof level, engine, result artifact, blocker reason, and dependency
+fallback target when present. This is a projection of supervisor evidence only:
+rendering the stage spine does not mutate the supervisor, satisfy release
+readiness, or promote a bounded worker to peer-GOD status.
+
 For CI or local no-secrets rehearsal, use virtual time instead of sleeping for
 8 hours. Failure injection is JSON so long `/goal` scripts can record exact
 stage, minute, command, and source refs without shell-specific parsing:
