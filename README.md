@@ -106,11 +106,18 @@ export XMUSE_REVIEW_GOD_BACKEND=ray
 export XMUSE_RAY_GOD_TRANSPORT=app-server
 export XMUSE_RAY_GOD_EFFORT=low
 export XMUSE_RAY_GOD_MCP=1
+export XMUSE_DEPLOYMENT_PROFILE=production
 export XMUSE_CHAT_API_URL=http://127.0.0.1:8201
+export XMUSE_CHAT_API_AUTH_TOKEN=<server-token>
+export XMUSE_CHAT_API_KEY=<same-token-for-tui-client>
+export XMUSE_MCP_AUTH_TOKEN=<server-token>
 
 uv run python -m xmuse.chat_api
 uv run python -m xmuse.mcp_server --port 8100
 uv run xmuse-platform-runner --peer-chat --mcp-port 8100
+uv run xmuse-release-readiness-capture \
+  --artifacts-dir xmuse/work/release_readiness/artifacts \
+  --output xmuse/work/release_readiness/report.json
 ```
 
 Manual verification:

@@ -56,7 +56,8 @@ Priority:
    unresolved blockers from freezing a blueprint.
 7. Add release readiness aggregation: tests, ruff, package boundary, internal
    review, live MemoryOS, GitHub server truth, provider evidence, and proof
-   contamination audit.
+   contamination audit. Use `uv run xmuse-release-readiness-capture` to turn
+   supplied gate artifacts into a redacted readiness report.
 8. Update docs/walkthrough/evidence. If validation passes, commit, push, and
    create a draft PR. Do not auto-merge.
 
@@ -81,6 +82,8 @@ Hard constraints:
 - pr_merged requires server-side merge proof.
 - Fake/local/contract evidence can support tests but cannot satisfy release
   live gates.
+- The release-readiness capture command aggregates supplied artifacts; it does
+  not create live MemoryOS/GitHub/provider proof by itself.
 - If invoking OpenCode, use opencode-go/deepseek-v4-flash with --variant max as
   required by repo docs.
 - Never auto-merge.

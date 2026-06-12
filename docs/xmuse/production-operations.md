@@ -122,6 +122,23 @@ The JSON includes `operations`:
 with `/mcp`, `/mcp/chat`, `/sse`, `chat.db`, `god_sessions.json`, and MCP auth
 metadata.
 
+## Release Readiness Capture
+
+Use this command to aggregate release gate artifacts into a redacted readiness
+report:
+
+```bash
+uv run xmuse-release-readiness-capture \
+  --artifacts-dir xmuse/work/release_readiness/artifacts \
+  --output xmuse/work/release_readiness/report.json
+```
+
+The input directory contains JSON gate artifacts with `gate_id`, `kind` or
+`release_gate_kind`, `status`, `proof_level`, `configured`, `required`,
+`owner`, and `summary`. The output report is ignored runtime state. It redacts
+token/API-key shaped strings and evaluates readiness with the same proof-level
+rules used by `src/xmuse_core/platform/release_readiness.py`.
+
 ## Degradation Matrix
 
 | Condition | Expected behavior |

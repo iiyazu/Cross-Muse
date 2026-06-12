@@ -310,6 +310,14 @@ Required inputs:
 - real provider/Ray/Codex/OpenCode evidence or blocker;
 - proof contamination audit.
 
+Current implementation status:
+
+- `uv run xmuse-release-readiness-capture` reads JSON release gate artifacts
+  from an artifact directory, writes a redacted report, and evaluates the gates
+  with the same proof-level rules as `evaluate_release_readiness`.
+- The capture command is `contract_proof`; it does not create live MemoryOS,
+  GitHub, provider, or natural transcript proof by itself.
+
 Acceptance:
 
 - Release readiness can be `ready`, `blocked`, or `not_evaluated`.

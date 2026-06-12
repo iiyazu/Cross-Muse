@@ -20,6 +20,7 @@ Two packages, one `pyproject.toml`:
 uv run xmuse-chat-api          # REST API (FastAPI)
 uv run xmuse-mcp-server        # MCP-over-HTTP server (FastAPI)
 uv run xmuse-platform-runner   # Platform orchestrator
+uv run xmuse-release-readiness-capture  # Redacted release-readiness report
 uv run xmuse-tui               # Textual TUI
 ```
 
@@ -28,6 +29,7 @@ Or directly:
 uv run python xmuse/chat_api.py
 uv run python -m xmuse.tui
 uv run python xmuse/platform_runner.py
+uv run python xmuse/release_readiness_capture.py
 uv run python xmuse/mcp_server.py
 ```
 

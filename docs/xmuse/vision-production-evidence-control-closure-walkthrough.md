@@ -205,6 +205,20 @@ auth.read_tools_require_token
 `XMUSE_DEPLOYMENT_PROFILE=production` also makes MCP startup fail closed when
 no MCP write token is configured.
 
+### Release Readiness Capture
+
+New command:
+
+```text
+uv run xmuse-release-readiness-capture --artifacts-dir <dir> --output <report.json>
+```
+
+The command reads JSON release gate artifacts, evaluates them with
+`evaluate_release_readiness`, writes a redacted
+`xmuse.release_readiness_report.v1` report, and never upgrades fake/local proof
+into live/server/provider proof. Token/API-key shaped strings in commands,
+refs, and artifact paths are replaced with `<redacted>`.
+
 ## Proof-Level Summary
 
 | Surface | Current proof | Boundary |
@@ -219,6 +233,7 @@ no MCP write token is configured.
 | MCP Auth/RBAC | `contract_proof` | Token + role/capability gate tested in-process; no live service proof. |
 | Production auth startup profile | `contract_proof` | `XMUSE_DEPLOYMENT_PROFILE=production` fails closed without Chat API/MCP write tokens; no live service proof. |
 | Release readiness evaluator | `contract_proof` | Blocks proof contamination; no live gate captured. |
+| Release readiness capture command | `contract_proof` | Aggregates and redacts supplied gate artifacts; does not capture live services by itself. |
 | MemoryOS live gate | `manual_gap` | Env not configured in current shell. |
 | Ray/Codex/OpenCode live gate | `manual_gap` | Binaries/Ray import exist, but production services/env are not running/configured. |
 | GitHub server truth | `manual_gap` | GitHub auth exists, but no PR/server capture was completed in this slice. |
@@ -244,6 +259,12 @@ uv run pytest tests/xmuse/test_production_hardening.py tests/xmuse/test_mcp_serv
 uv run pytest tests/xmuse/test_chat_api.py -q
 uv run pytest tests/xmuse/test_depth_hardening_contracts.py tests/xmuse/test_production_operations_doc.py tests/xmuse/test_quality_gates_phase3.py -q
 uv run pytest tests/xmuse/test_mcp_server.py tests/xmuse/test_production_hardening.py -q
+uv run pytest tests/xmuse/test_release_readiness_capture.py -q
+uv run pytest tests/xmuse/test_release_readiness_capture.py tests/xmuse/test_release_readiness.py -q
+uv run pytest tests/xmuse/test_quality_gates_phase3.py tests/xmuse/test_production_operations_doc.py tests/xmuse/test_mainline_contract_docs.py -q
+uv run pytest tests/xmuse/test_release_readiness_capture.py tests/xmuse/test_release_readiness.py tests/xmuse/test_quality_gates_phase3.py tests/xmuse/test_package_boundaries.py -q
+uv run pytest tests/xmuse/test_release_readiness_capture.py tests/xmuse/test_release_readiness.py tests/xmuse/test_quality_gates_phase3.py tests/xmuse/test_production_operations_doc.py tests/xmuse/test_mainline_contract_docs.py tests/xmuse/test_package_boundaries.py -q
+uv run xmuse-release-readiness-capture --help
 uv run ruff check .
 git diff --check
 ```
@@ -267,6 +288,12 @@ Observed results:
 29 passed, 1 warning
 12 passed, 1 warning
 33 passed, 1 warning
+4 passed
+7 passed
+8 passed
+28 passed
+31 passed
+xmuse-release-readiness-capture help rendered
 All checks passed
 git diff --check clean
 ```
@@ -279,6 +306,9 @@ The warning is the existing Starlette/httpx deprecation warning from FastAPI
 - Chat API and MCP mutating routes now have Auth/RBAC plus a production
   fail-closed startup profile. Read routes still follow the local trust policy,
   and no live operator/TUI service run has exercised the production token bundle.
+- Release readiness capture can aggregate supplied artifacts into a redacted
+  blocked/ready/not_evaluated report, but live gate artifacts still need to be
+  produced by actual MemoryOS, GitHub, and provider runs.
 - `/god select` now persists selected GOD CLI per conversation, but this is
   still a CLI selection authority only; it does not prove a live provider
   session is running.
@@ -295,8 +325,6 @@ The warning is the existing Starlette/httpx deprecation warning from FastAPI
 
 1. Bind selected CLI records into the official conversation/bootstrap
    participant flow where role templates need selected runtime providers.
-2. Add a release-readiness capture command that reads live gate artifacts and
-   writes a redacted readiness report.
-3. Start the configured Chat API/MCP/platform runner bundle and capture a real
+2. Start the configured Chat API/MCP/platform runner bundle and capture a real
    Ray/Codex/MCP health proof.
-4. Create or target a draft PR and run GitHub server truth capture against it.
+3. Create or target a draft PR and run GitHub server truth capture against it.
