@@ -8,6 +8,8 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from xmuse_core.platform.overnight_operator_supervisor import (
+    OvernightSimulationConfig,
+    OvernightSimulationFailure,
     OvernightSupervisor,
     OvernightSupervisorConfig,
     OvernightSupervisorStage,
@@ -89,6 +91,22 @@ def main(argv: Sequence[str] | None = None) -> int:
             start_next=not args.no_start_next,
         )
         result = {"status": fallback["status"], "fallback": fallback}
+    elif args.command == "simulate":
+        simulation = supervisor.simulate_virtual_soak(
+            OvernightSimulationConfig(
+                total_minutes=args.total_minutes,
+                heartbeat_interval_minutes=args.heartbeat_interval_minutes,
+                self_review_interval_minutes=args.self_review_interval_minutes,
+                checkpoint_interval_minutes=args.checkpoint_interval_minutes,
+                max_heartbeat_gap_minutes=args.max_heartbeat_gap_minutes,
+                max_self_review_gap_minutes=args.max_self_review_gap_minutes,
+                failures=_parse_simulation_failures(args.failure_json),
+            )
+        )
+        result = {
+            "status": "ok" if simulation["slo_status"] == "ok" else "not_evaluated",
+            "simulation": simulation,
+        }
     elif args.command == "next-stage":
         stage_id = supervisor.move_to_next_high_value_stage()
         result = {
@@ -228,6 +246,27 @@ def _parser() -> argparse.ArgumentParser:
     blocked_fallback.add_argument("--target-ref", action="append", default=[])
     blocked_fallback.add_argument("--artifact", action="append", default=[])
 
+    simulate = subparsers.add_parser(
+        "simulate",
+        help="Run a deterministic virtual-time overnight supervisor soak.",
+    )
+    simulate.add_argument("--total-minutes", type=int, required=True)
+    simulate.add_argument("--heartbeat-interval-minutes", type=int, default=15)
+    simulate.add_argument("--self-review-interval-minutes", type=int, default=60)
+    simulate.add_argument("--checkpoint-interval-minutes", type=int, default=120)
+    simulate.add_argument("--max-heartbeat-gap-minutes", type=int, default=15)
+    simulate.add_argument("--max-self-review-gap-minutes", type=int, default=60)
+    simulate.add_argument(
+        "--failure-json",
+        action="append",
+        default=[],
+        help=(
+            "JSON object with minute, stage_id, reason, failure_class, and optional "
+            "retryable, attempted_command, configured, required, source_refs, "
+            "target_refs."
+        ),
+    )
+
     subparsers.add_parser(
         "next-stage",
         help="Start the next pending stage after a checkpoint or manual gap.",
@@ -267,6 +306,44 @@ def _parse_stages(values: list[str]) -> list[OvernightSupervisorStage]:
             raise SystemExit("--stage requires non-empty STAGE_ID and OBJECTIVE")
         stages.append(OvernightSupervisorStage(stage_id=stage_id, objective=objective))
     return stages
+
+
+def _parse_simulation_failures(values: list[str]) -> list[OvernightSimulationFailure]:
+    failures: list[OvernightSimulationFailure] = []
+    for value in values:
+        payload = json.loads(value)
+        if not isinstance(payload, dict):
+            raise SystemExit("--failure-json must be a JSON object")
+        try:
+            failures.append(
+                OvernightSimulationFailure(
+                    minute=int(payload["minute"]),
+                    stage_id=str(payload["stage_id"]),
+                    reason=str(payload["reason"]),
+                    failure_class=str(payload["failure_class"]),
+                    retryable=bool(payload.get("retryable", False)),
+                    attempted_command=_optional_str(payload.get("attempted_command")),
+                    configured=bool(payload.get("configured", True)),
+                    required=bool(payload.get("required", True)),
+                    source_refs=tuple(_string_list(payload.get("source_refs"))),
+                    target_refs=tuple(_string_list(payload.get("target_refs"))),
+                )
+            )
+        except KeyError as exc:
+            raise SystemExit(f"--failure-json missing required key: {exc.args[0]}") from exc
+    return failures
+
+
+def _optional_str(value: object) -> str | None:
+    if value is None:
+        return None
+    return str(value)
+
+
+def _string_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if str(item)]
 
 
 if __name__ == "__main__":

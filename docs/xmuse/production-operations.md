@@ -569,6 +569,29 @@ The snapshot and fallback artifacts are ignored runtime state. A
 and the next stage was started; it does not mean the blocked release evidence
 became acceptable.
 
+For CI or local no-secrets rehearsal, use virtual time instead of sleeping for
+8 hours. Failure injection is JSON so long `/goal` scripts can record exact
+stage, minute, command, and source refs without shell-specific parsing:
+
+```bash
+uv run xmuse-overnight-supervisor \
+  --run-id overnight-virtual-smoke \
+  --artifact-dir xmuse/work/release_readiness/overnight_supervisor \
+  --stage S4="live gates" \
+  --stage S5="docs and validation" \
+  simulate \
+  --total-minutes 480 \
+  --heartbeat-interval-minutes 15 \
+  --self-review-interval-minutes 60 \
+  --checkpoint-interval-minutes 120 \
+  --failure-json '{"minute":180,"stage_id":"S4","reason":"GitHub review truth is configured but unavailable.","failure_class":"github_review_truth_unavailable","attempted_command":"gh api repos/iiyazu/Cross-Muse/pulls/43/reviews","source_refs":["github://iiyazu/Cross-Muse/pull/43"]}'
+```
+
+The simulation writes the normal supervisor snapshot with `logical_minute`
+markers, heartbeats, checkpoints, self-reviews, and blocker/fallback evidence.
+It is `contract_proof` only; it proves the state machine and SLO accounting, not
+live MemoryOS, provider, GitHub review, or merge truth.
+
 ## Release Readiness Capture
 
 Use this command to aggregate release gate artifacts into a redacted readiness

@@ -102,6 +102,7 @@ jobs:
           tests/xmuse/test_contract_smoke_gates.py
           tests/xmuse/test_self_iteration_runtime_closure.py
           tests/xmuse/test_vision_runtime_evidence_closure.py
+          tests/xmuse/test_overnight_operator_supervisor.py
           tests/xmuse/test_package_boundaries.py
 
       - name: Scoped contract type check

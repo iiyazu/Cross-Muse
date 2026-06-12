@@ -333,6 +333,16 @@ Current implementation status:
   records a failure classification, writes an `xmuse.stage_fallback.v1`
   artifact, and can start the next pending independent stage. This preserves
   release blockers while allowing the overnight run to keep useful momentum.
+- The supervisor now has a deterministic virtual-time soak path through
+  `OvernightSupervisor.simulate_virtual_soak(...)` and
+  `uv run xmuse-overnight-supervisor simulate`. A CI/local run can compress
+  8 hours into logical minutes, emit heartbeat/checkpoint/self-review rows with
+  `logical_minute`, inject configured blockers, verify heartbeat and
+  self-review SLOs, and continue to the next pending stage without sleeping or
+  using live credentials.
+- `.github/workflows/xmuse-ci.yml` includes
+  `tests/xmuse/test_overnight_operator_supervisor.py` in the contract smoke
+  gate, so the no-secrets virtual soak state machine is exercised by CI.
 - `uv run xmuse-overnight-supervisor-evidence-capture` still performs the
   explicit conversion from the durable supervisor snapshot into replay-ready
   `xmuse.production_evidence.v1` for the replay bundle's `supervisor` section.

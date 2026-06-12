@@ -5,6 +5,8 @@ import tomllib
 from pathlib import Path
 
 from xmuse_core.platform.overnight_operator_supervisor import (
+    OvernightSimulationConfig,
+    OvernightSimulationFailure,
     OvernightSupervisor,
     OvernightSupervisorConfig,
     OvernightSupervisorStage,
@@ -429,6 +431,122 @@ def test_overnight_supervisor_live_soak_requires_explicit_flags(tmp_path: Path) 
     }
 
 
+def test_overnight_supervisor_virtual_soak_simulates_8h_and_blocked_fallback(
+    tmp_path: Path,
+) -> None:
+    supervisor = OvernightSupervisor(
+        OvernightSupervisorConfig(
+            run_id="virtual-overnight",
+            artifact_dir=tmp_path,
+            stages=[
+                OvernightSupervisorStage(stage_id="S4", objective="live gates"),
+                OvernightSupervisorStage(stage_id="S5", objective="docs and validation"),
+            ],
+        )
+    )
+
+    result = supervisor.simulate_virtual_soak(
+        OvernightSimulationConfig(
+            total_minutes=480,
+            heartbeat_interval_minutes=15,
+            self_review_interval_minutes=60,
+            checkpoint_interval_minutes=120,
+            failures=[
+                OvernightSimulationFailure(
+                    minute=180,
+                    stage_id="S4",
+                    reason="GitHub review truth is configured but unavailable.",
+                    failure_class="github_review_truth_unavailable",
+                    retryable=False,
+                    attempted_command="gh api repos/iiyazu/Cross-Muse/pulls/43/reviews",
+                    source_refs=("github://iiyazu/Cross-Muse/pull/43",),
+                )
+            ],
+        )
+    )
+
+    snapshot = supervisor.snapshot()
+    assert result == {
+        "schema_version": "xmuse.overnight_virtual_soak.v1",
+        "run_id": "virtual-overnight",
+        "total_minutes": 480,
+        "heartbeat_count": 33,
+        "checkpoint_count": 4,
+        "self_review_count": 8,
+        "blocked_fallback_count": 1,
+        "max_heartbeat_gap_minutes": 15,
+        "max_self_review_gap_minutes": 60,
+        "slo_status": "ok",
+        "slo_violations": [],
+        "final_stage_id": "S5",
+    }
+    assert [stage["status"] for stage in snapshot["stages"]] == [
+        "blocked",
+        "running",
+    ]
+    assert snapshot["current_stage_id"] == "S5"
+    assert snapshot["heartbeats"][0]["logical_minute"] == 0
+    assert snapshot["heartbeats"][-1]["logical_minute"] == 480
+    assert {row["logical_minute"] for row in snapshot["self_reviews"]} == {
+        60,
+        120,
+        180,
+        240,
+        300,
+        360,
+        420,
+        480,
+    }
+    assert snapshot["checkpoints"][-1]["stage_id"] == "S5"
+    assert snapshot["checkpoints"][-1]["logical_minute"] == 480
+    assert snapshot["issue_queue"][0]["severity"] == "blocked"
+    assert snapshot["failure_classifications"][0]["failure_class"] == (
+        "github_review_truth_unavailable"
+    )
+    assert any(
+        evidence["action"] == "checkpoint"
+        and evidence["summary"] == "virtual soak checkpoint at minute 480"
+        for evidence in snapshot["production_evidence"]
+    )
+    assert any(
+        evidence["action"] == "blocked_fallback"
+        and evidence["blocked_reason"]
+        == "GitHub review truth is configured but unavailable."
+        for evidence in snapshot["production_evidence"]
+    )
+
+
+def test_overnight_supervisor_virtual_soak_reports_slo_violations(
+    tmp_path: Path,
+) -> None:
+    supervisor = OvernightSupervisor(
+        OvernightSupervisorConfig(
+            run_id="virtual-slo-violation",
+            artifact_dir=tmp_path,
+            stages=[OvernightSupervisorStage(stage_id="S4", objective="live gates")],
+        )
+    )
+
+    result = supervisor.simulate_virtual_soak(
+        OvernightSimulationConfig(
+            total_minutes=180,
+            heartbeat_interval_minutes=20,
+            self_review_interval_minutes=75,
+            checkpoint_interval_minutes=90,
+            max_heartbeat_gap_minutes=15,
+            max_self_review_gap_minutes=60,
+        )
+    )
+
+    assert result["slo_status"] == "violated"
+    assert result["max_heartbeat_gap_minutes"] == 20
+    assert result["max_self_review_gap_minutes"] == 75
+    assert result["slo_violations"] == [
+        "heartbeat gap 20m exceeds 15m",
+        "self-review gap 75m exceeds 60m",
+    ]
+
+
 def test_overnight_supervisor_cli_records_resumable_stage_flow(
     tmp_path: Path,
 ) -> None:
@@ -632,6 +750,69 @@ def test_overnight_supervisor_cli_records_self_review_and_blocked_fallback(
     assert snapshot["current_stage_id"] == "S7"
     assert snapshot["production_evidence"][0]["action"] == "self_review"
     assert snapshot["production_evidence"][1]["action"] == "blocked_fallback"
+
+
+def test_overnight_supervisor_cli_simulates_virtual_soak_with_failure_json(
+    tmp_path: Path,
+) -> None:
+    from xmuse.overnight_operator_supervisor import main
+
+    common = [
+        "--run-id",
+        "overnight-cli-virtual",
+        "--artifact-dir",
+        str(tmp_path),
+        "--stage",
+        "S4=live gates",
+        "--stage",
+        "S5=docs and validation",
+    ]
+
+    assert (
+        main(
+            [
+                *common,
+                "simulate",
+                "--total-minutes",
+                "120",
+                "--heartbeat-interval-minutes",
+                "15",
+                "--self-review-interval-minutes",
+                "60",
+                "--checkpoint-interval-minutes",
+                "60",
+                "--failure-json",
+                json.dumps(
+                    {
+                        "minute": 45,
+                        "stage_id": "S4",
+                        "reason": "MemoryOS live trace is configured but unavailable.",
+                        "failure_class": "memoryos_live_trace_unavailable",
+                        "attempted_command": "uv run xmuse-memoryos-live-trace-capture",
+                        "source_refs": ["memoryos://live-trace"],
+                    }
+                ),
+            ]
+        )
+        == 0
+    )
+
+    snapshot = json.loads(
+        (tmp_path / "overnight-supervisor-overnight-cli-virtual.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert [stage["status"] for stage in snapshot["stages"]] == [
+        "blocked",
+        "running",
+    ]
+    assert snapshot["current_stage_id"] == "S5"
+    assert snapshot["heartbeats"][-1]["logical_minute"] == 120
+    assert snapshot["self_reviews"][-1]["logical_minute"] == 120
+    assert snapshot["checkpoints"][-1]["logical_minute"] == 120
+    assert snapshot["issue_queue"][0]["title"] == (
+        "MemoryOS live trace is configured but unavailable."
+    )
 
 
 def test_overnight_supervisor_cli_script_is_registered() -> None:

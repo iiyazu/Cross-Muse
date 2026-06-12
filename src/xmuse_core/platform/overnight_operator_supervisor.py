@@ -35,6 +35,31 @@ class OvernightSupervisorConfig:
     stages: list[OvernightSupervisorStage]
 
 
+@dataclass(frozen=True)
+class OvernightSimulationFailure:
+    minute: int
+    stage_id: str
+    reason: str
+    failure_class: str
+    retryable: bool = False
+    attempted_command: str | None = None
+    configured: bool = True
+    required: bool = True
+    source_refs: tuple[str, ...] = ()
+    target_refs: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class OvernightSimulationConfig:
+    total_minutes: int
+    heartbeat_interval_minutes: int = 15
+    self_review_interval_minutes: int = 60
+    checkpoint_interval_minutes: int = 120
+    max_heartbeat_gap_minutes: int = 15
+    max_self_review_gap_minutes: int = 60
+    failures: list[OvernightSimulationFailure] | None = None
+
+
 class OvernightSupervisor:
     def __init__(self, config: OvernightSupervisorConfig) -> None:
         self._config = config
@@ -101,15 +126,27 @@ class OvernightSupervisor:
         self._journal("stage_started", stage_id=stage_id)
         self._persist()
 
-    def record_heartbeat(self, *, note: str) -> dict[str, Any]:
-        heartbeat = {
+    def record_heartbeat(
+        self,
+        *,
+        note: str,
+        logical_minute: int | None = None,
+    ) -> dict[str, Any]:
+        heartbeat: dict[str, Any] = {
             "run_id": self._config.run_id,
             "stage_id": self._current_stage_id,
             "note": note,
             "timestamp_utc": _utcnow(),
         }
+        if logical_minute is not None:
+            heartbeat["logical_minute"] = logical_minute
         self._heartbeats.append(heartbeat)
-        self._journal("heartbeat", stage_id=self._current_stage_id, note=note)
+        self._journal(
+            "heartbeat",
+            stage_id=self._current_stage_id,
+            note=note,
+            logical_minute=logical_minute,
+        )
         self._persist()
         return heartbeat
 
@@ -126,16 +163,24 @@ class OvernightSupervisor:
         proof_level: ProofLevel = "contract_proof",
         owner: str = "codex",
         next_action: str | None = None,
+        logical_minute: int | None = None,
     ) -> dict[str, Any]:
-        checkpoint = {
+        checkpoint: dict[str, Any] = {
             "run_id": self._config.run_id,
             "stage_id": stage_id,
             "summary": summary,
             "validation": list(validation or []),
             "timestamp_utc": _utcnow(),
         }
+        if logical_minute is not None:
+            checkpoint["logical_minute"] = logical_minute
         self._checkpoints.append(checkpoint)
-        self._journal("checkpoint", stage_id=stage_id, summary=summary)
+        self._journal(
+            "checkpoint",
+            stage_id=stage_id,
+            summary=summary,
+            logical_minute=logical_minute,
+        )
         self._record_production_evidence(
             stage_id=stage_id,
             action="checkpoint",
@@ -221,6 +266,7 @@ class OvernightSupervisor:
         proof_level: ProofLevel = "contract_proof",
         owner: str = "codex",
         next_action: str | None = None,
+        logical_minute: int | None = None,
     ) -> dict[str, Any]:
         self._stage(stage_id)
         if decision not in _SELF_REVIEW_DECISIONS:
@@ -236,12 +282,15 @@ class OvernightSupervisor:
             "slo_status": _review_slo_status(minutes_since_previous_review),
             "timestamp_utc": _utcnow(),
         }
+        if logical_minute is not None:
+            review["logical_minute"] = logical_minute
         self._self_reviews.append(review)
         self._journal(
             "self_review_recorded",
             stage_id=stage_id,
             decision=decision,
             slo_status=str(review["slo_status"]),
+            logical_minute=logical_minute,
         )
         self._record_production_evidence(
             stage_id=stage_id,
@@ -281,6 +330,7 @@ class OvernightSupervisor:
         target_refs: list[str] | None = None,
         artifacts: list[str] | None = None,
         start_next: bool = True,
+        logical_minute: int | None = None,
     ) -> dict[str, Any]:
         stage = self._stage(stage_id)
         status: StageStatus = "blocked" if configured else "manual_gap"
@@ -291,10 +341,12 @@ class OvernightSupervisor:
         else:
             stage["manual_gap_reason"] = reason
         stage["completed_at"] = now
+        if logical_minute is not None:
+            stage["completed_logical_minute"] = logical_minute
         if self._current_stage_id == stage_id:
             self._current_stage_id = None
 
-        source_ref = (source_refs or [None])[0]
+        source_ref = source_refs[0] if source_refs else None
         self._issue_queue.append(
             {
                 "run_id": self._config.run_id,
@@ -304,6 +356,7 @@ class OvernightSupervisor:
                 "source_ref": source_ref,
                 "status": "open",
                 "timestamp_utc": now,
+                "logical_minute": logical_minute,
             }
         )
         self._failure_classifications.append(
@@ -314,6 +367,7 @@ class OvernightSupervisor:
                 "reason": reason,
                 "retryable": retryable,
                 "timestamp_utc": now,
+                "logical_minute": logical_minute,
             }
         )
 
@@ -343,6 +397,7 @@ class OvernightSupervisor:
             stage_id=stage_id,
             failure_class=failure_class,
             status=status,
+            logical_minute=logical_minute,
         )
         next_stage_id = self.move_to_next_high_value_stage() if start_next else None
         fallback = {
@@ -360,9 +415,118 @@ class OvernightSupervisor:
             "artifact_path": str(fallback_path),
             "timestamp_utc": now,
         }
+        if logical_minute is not None:
+            fallback["logical_minute"] = logical_minute
         self._write_json(fallback_path, fallback)
         self._persist()
         return fallback
+
+    def simulate_virtual_soak(
+        self,
+        config: OvernightSimulationConfig,
+    ) -> dict[str, Any]:
+        _validate_simulation_config(config)
+        if self._current_stage_id is None:
+            first_pending = self.move_to_next_high_value_stage()
+            if first_pending is None:
+                raise ValueError("cannot simulate overnight soak without stages")
+
+        failures_by_minute: dict[int, list[OvernightSimulationFailure]] = {}
+        for failure in config.failures or []:
+            if failure.minute < 0 or failure.minute > config.total_minutes:
+                raise ValueError(
+                    f"simulation failure minute outside window: {failure.minute}"
+                )
+            failures_by_minute.setdefault(failure.minute, []).append(failure)
+
+        for minute in range(0, config.total_minutes + 1):
+            for failure in failures_by_minute.get(minute, []):
+                self.fallback_blocked_stage(
+                    stage_id=failure.stage_id,
+                    reason=failure.reason,
+                    failure_class=failure.failure_class,
+                    retryable=failure.retryable,
+                    attempted_command=failure.attempted_command,
+                    configured=failure.configured,
+                    required=failure.required,
+                    source_refs=list(failure.source_refs),
+                    target_refs=list(failure.target_refs),
+                    next_action="continue to the next pending independent stage",
+                    logical_minute=minute,
+                )
+
+            if minute % config.heartbeat_interval_minutes == 0:
+                self.record_heartbeat(
+                    note=f"virtual soak heartbeat at minute {minute}",
+                    logical_minute=minute,
+                )
+            if minute > 0 and minute % config.checkpoint_interval_minutes == 0:
+                current_stage_id = self._current_stage_id or _last_stage_id(self._stages)
+                self.record_checkpoint(
+                    stage_id=current_stage_id,
+                    summary=f"virtual soak checkpoint at minute {minute}",
+                    validation=[
+                        "deterministic overnight virtual soak checkpoint"
+                    ],
+                    logical_minute=minute,
+                )
+            if minute > 0 and minute % config.self_review_interval_minutes == 0:
+                current_stage_id = self._current_stage_id or _last_stage_id(self._stages)
+                self.record_self_review(
+                    stage_id=current_stage_id,
+                    summary=f"virtual self-review at minute {minute}",
+                    decision="continue",
+                    findings=[
+                        "projection authority and proof-level boundaries checked"
+                    ],
+                    minutes_since_previous_review=(
+                        config.self_review_interval_minutes
+                    ),
+                    logical_minute=minute,
+                )
+
+        heartbeat_gaps = _logical_gaps(self._heartbeats)
+        self_review_gaps = _logical_gaps(self._self_reviews)
+        max_heartbeat_gap = (
+            max(heartbeat_gaps)
+            if heartbeat_gaps
+            else config.heartbeat_interval_minutes
+        )
+        max_self_review_gap = (
+            max(self_review_gaps)
+            if self_review_gaps
+            else config.self_review_interval_minutes
+        )
+        violations = _slo_violations(
+            max_heartbeat_gap=max_heartbeat_gap,
+            max_self_review_gap=max_self_review_gap,
+            max_heartbeat_allowed=config.max_heartbeat_gap_minutes,
+            max_self_review_allowed=config.max_self_review_gap_minutes,
+        )
+        result = {
+            "schema_version": "xmuse.overnight_virtual_soak.v1",
+            "run_id": self._config.run_id,
+            "total_minutes": config.total_minutes,
+            "heartbeat_count": len(self._heartbeats),
+            "checkpoint_count": len(self._checkpoints),
+            "self_review_count": len(self._self_reviews),
+            "blocked_fallback_count": _evidence_action_count(
+                self._production_evidence,
+                "blocked_fallback",
+            ),
+            "max_heartbeat_gap_minutes": max_heartbeat_gap,
+            "max_self_review_gap_minutes": max_self_review_gap,
+            "slo_status": "violated" if violations else "ok",
+            "slo_violations": violations,
+            "final_stage_id": self._current_stage_id,
+        }
+        self._journal(
+            "virtual_soak_completed",
+            total_minutes=config.total_minutes,
+            slo_status=str(result["slo_status"]),
+        )
+        self._persist()
+        return result
 
     def complete_stage(self, stage_id: str, *, summary: str) -> None:
         stage = self._stage(stage_id)
@@ -575,6 +739,60 @@ def _review_slo_status(minutes_since_previous_review: int | None) -> str:
     if minutes_since_previous_review is None:
         return "not_evaluated"
     return "ok" if minutes_since_previous_review <= 60 else "violated"
+
+
+def _validate_simulation_config(config: OvernightSimulationConfig) -> None:
+    if config.total_minutes < 0:
+        raise ValueError("total_minutes must be non-negative")
+    if config.heartbeat_interval_minutes <= 0:
+        raise ValueError("heartbeat_interval_minutes must be positive")
+    if config.self_review_interval_minutes <= 0:
+        raise ValueError("self_review_interval_minutes must be positive")
+    if config.checkpoint_interval_minutes <= 0:
+        raise ValueError("checkpoint_interval_minutes must be positive")
+    if config.max_heartbeat_gap_minutes <= 0:
+        raise ValueError("max_heartbeat_gap_minutes must be positive")
+    if config.max_self_review_gap_minutes <= 0:
+        raise ValueError("max_self_review_gap_minutes must be positive")
+
+
+def _last_stage_id(stages: list[dict[str, Any]]) -> str:
+    for stage in reversed(stages):
+        stage_id = stage.get("stage_id")
+        if isinstance(stage_id, str) and stage_id:
+            return stage_id
+    return "supervisor"
+
+
+def _logical_gaps(rows: list[dict[str, Any]]) -> list[int]:
+    minutes = [
+        minute for row in rows if isinstance((minute := row.get("logical_minute")), int)
+    ]
+    return [right - left for left, right in zip(minutes, minutes[1:], strict=False)]
+
+
+def _slo_violations(
+    *,
+    max_heartbeat_gap: int,
+    max_self_review_gap: int,
+    max_heartbeat_allowed: int,
+    max_self_review_allowed: int,
+) -> list[str]:
+    violations: list[str] = []
+    if max_heartbeat_gap > max_heartbeat_allowed:
+        violations.append(
+            f"heartbeat gap {max_heartbeat_gap}m exceeds {max_heartbeat_allowed}m"
+        )
+    if max_self_review_gap > max_self_review_allowed:
+        violations.append(
+            "self-review gap "
+            f"{max_self_review_gap}m exceeds {max_self_review_allowed}m"
+        )
+    return violations
+
+
+def _evidence_action_count(evidence_rows: list[dict[str, Any]], action: str) -> int:
+    return sum(1 for evidence in evidence_rows if evidence.get("action") == action)
 
 
 def _dict_rows(value: Any) -> list[dict[str, Any]]:
