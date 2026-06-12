@@ -576,6 +576,52 @@ def test_release_evidence_pack_converts_real_provider_runtime_into_release_gate(
     assert pack["decision"] == "blocked"
 
 
+def test_release_evidence_pack_converts_natural_deliberation_into_release_gate(
+    tmp_path: Path,
+) -> None:
+    artifacts = tmp_path / "artifacts"
+    output = tmp_path / "pack" / "evidence-pack.json"
+    transcript = _write_transcript(tmp_path / "transcript" / "natural-transcript.json")
+    runtime = _write_god_runtime(tmp_path / "transcript" / "god-runtime.json")
+
+    pack = capture_release_evidence_pack(
+        artifacts_dir=artifacts,
+        output_path=output,
+        run_id="pack-natural-deliberation-gate",
+        natural_deliberation_transcript=transcript,
+        natural_deliberation_god_runtime=runtime,
+    )
+
+    gate_path = artifacts / "natural-deliberation.json"
+    gate = json.loads(gate_path.read_text(encoding="utf-8"))
+    assert gate["gate_id"] == "natural-god-deliberation"
+    assert gate["status"] == "ok"
+    assert gate["proof_level"] == "real_provider_proof"
+    assert gate["artifacts"] == [str(transcript), str(runtime)]
+    assert pack["source_reports"]["natural_deliberation_gate"] == str(gate_path)
+    assert pack["artifact_count"] == 1
+    assert pack["release_readiness_decision"] == "ready"
+    assert pack["proof_contamination_decision"] == "clean"
+    assert pack["decision"] == "blocked"
+
+
+def test_release_evidence_pack_requires_runtime_for_natural_release_gate(
+    tmp_path: Path,
+) -> None:
+    transcript = _write_transcript(tmp_path / "transcript" / "natural-transcript.json")
+
+    try:
+        capture_release_evidence_pack(
+            artifacts_dir=tmp_path / "artifacts",
+            output_path=tmp_path / "pack.json",
+            natural_deliberation_transcript=transcript,
+        )
+    except ValueError as exc:
+        assert "natural_deliberation_god_runtime is required" in str(exc)
+    else:
+        raise AssertionError("expected natural release gate runtime to be required")
+
+
 def test_release_evidence_pack_converts_deliberation_transcript_into_replay_section(
     tmp_path: Path,
 ) -> None:
@@ -1120,6 +1166,47 @@ def test_release_evidence_pack_cli_accepts_raw_live_gate_inputs(
         artifacts / "real-provider-runtime.json"
     )
     assert pack["artifact_count"] == 2
+    assert pack["release_readiness_decision"] == "ready"
+
+
+def test_release_evidence_pack_cli_accepts_natural_release_gate_input(
+    tmp_path: Path,
+) -> None:
+    from xmuse.release_evidence_pack import main
+
+    artifacts = tmp_path / "artifacts"
+    output = tmp_path / "pack.json"
+    transcript = _write_transcript(tmp_path / "transcript" / "natural-transcript.json")
+    runtime = _write_god_runtime(tmp_path / "transcript" / "god-runtime.json")
+
+    assert (
+        main(
+            [
+                "--artifacts-dir",
+                str(artifacts),
+                "--output",
+                str(output),
+                "--run-id",
+                "overnight-cli-pack",
+                "--natural-deliberation-transcript",
+                str(transcript),
+                "--natural-deliberation-god-runtime",
+                str(runtime),
+            ]
+        )
+        == 0
+    )
+
+    pack = json.loads(output.read_text(encoding="utf-8"))
+    gate = json.loads(
+        (artifacts / "natural-deliberation.json").read_text(encoding="utf-8")
+    )
+    assert gate["status"] == "ok"
+    assert gate["proof_level"] == "real_provider_proof"
+    assert pack["source_reports"]["natural_deliberation_gate"] == str(
+        artifacts / "natural-deliberation.json"
+    )
+    assert pack["artifact_count"] == 1
     assert pack["release_readiness_decision"] == "ready"
 
 

@@ -193,6 +193,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--natural-deliberation-transcript",
+        type=Path,
+        default=None,
+        help=(
+            "Optional xmuse.operator_transcript.v1 artifact to convert into "
+            "artifacts-dir/natural-deliberation.json before release readiness."
+        ),
+    )
+    parser.add_argument(
+        "--natural-deliberation-god-runtime",
+        type=Path,
+        default=None,
+        help=(
+            "Required with --natural-deliberation-transcript; validates selected "
+            "GOD runtime continuity for the natural deliberation release gate."
+        ),
+    )
+    parser.add_argument(
         "--tombstoned-source-ref",
         action="append",
         default=[],
@@ -223,6 +241,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         memoryos_governance_evidence_output=args.memoryos_governance_evidence_output,
         memoryos_live_trace=args.memoryos_live_trace,
         real_provider_runtime=args.real_provider_runtime,
+        natural_deliberation_transcript=args.natural_deliberation_transcript,
+        natural_deliberation_god_runtime=args.natural_deliberation_god_runtime,
         tombstoned_source_refs=tuple(args.tombstoned_source_ref),
     )
     print(json.dumps({"decision": pack["decision"], "output": str(args.output)}, sort_keys=True))

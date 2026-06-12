@@ -547,13 +547,17 @@ artifact and, by default, sibling nested reports:
 The evidence pack does not create live MemoryOS, GitHub, provider, or natural
 transcript proof from nothing. It evaluates supplied release-gate artifacts
 through the existing readiness and contamination rules, and it can now convert
-explicit `--memoryos-live-trace` and `--real-provider-runtime` inputs into
-`live-memoryos.json` and `real-provider-runtime.json` gate artifacts under
-`--artifacts-dir` before readiness. Those conversions use the same validators
-as the standalone gate-capture commands, so contract/fake/local/stdout fallback
-artifacts remain blocked. If the contamination audit reports `contaminated`,
-the pack decision is `contaminated`; otherwise it mirrors release readiness as
-`ready`, `blocked`, or `not_evaluated`.
+explicit `--natural-deliberation-transcript`, `--memoryos-live-trace`, and
+`--real-provider-runtime` inputs into `natural-deliberation.json`,
+`live-memoryos.json`, and `real-provider-runtime.json` gate artifacts under
+`--artifacts-dir` before readiness. The natural deliberation gate path also
+requires `--natural-deliberation-god-runtime`, keeping it separate from the
+replay-only `--deliberation-transcript` handoff. Those conversions use the same
+validators as the standalone gate-capture commands, so deterministic replay,
+bounded selected runtime, contract/fake/local/stdout fallback artifacts remain
+blocked. If the contamination audit reports `contaminated`, the pack decision
+is `contaminated`; otherwise it mirrors release readiness as `ready`, `blocked`,
+or `not_evaluated`.
 
 ## Proof-Level Summary
 

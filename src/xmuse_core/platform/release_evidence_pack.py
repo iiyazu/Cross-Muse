@@ -21,6 +21,9 @@ from xmuse_core.platform.memoryos_governance_evidence_capture import (
 from xmuse_core.platform.memoryos_live_release_gate import (
     capture_memoryos_live_release_gate,
 )
+from xmuse_core.platform.natural_deliberation_release_gate import (
+    capture_natural_deliberation_release_gate,
+)
 from xmuse_core.platform.overnight_replay_bundle_capture import (
     capture_overnight_replay_bundle,
 )
@@ -59,6 +62,8 @@ def capture_release_evidence_pack(
     memoryos_governance_evidence_output: str | Path | None = None,
     memoryos_live_trace: str | Path | None = None,
     real_provider_runtime: str | Path | None = None,
+    natural_deliberation_transcript: str | Path | None = None,
+    natural_deliberation_god_runtime: str | Path | None = None,
     tombstoned_source_refs: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     output = Path(output_path)
@@ -95,6 +100,8 @@ def capture_release_evidence_pack(
         artifacts_dir=Path(artifacts_dir),
         memoryos_live_trace=memoryos_live_trace,
         real_provider_runtime=real_provider_runtime,
+        natural_deliberation_transcript=natural_deliberation_transcript,
+        natural_deliberation_god_runtime=natural_deliberation_god_runtime,
     )
 
     readiness = capture_release_readiness(
@@ -270,8 +277,23 @@ def _release_gate_artifacts(
     artifacts_dir: Path,
     memoryos_live_trace: str | Path | None,
     real_provider_runtime: str | Path | None,
+    natural_deliberation_transcript: str | Path | None,
+    natural_deliberation_god_runtime: str | Path | None,
 ) -> dict[str, str]:
     source_reports: dict[str, str] = {}
+    if natural_deliberation_transcript is not None:
+        if natural_deliberation_god_runtime is None:
+            raise ValueError(
+                "natural_deliberation_god_runtime is required when "
+                "natural_deliberation_transcript is supplied for a release gate"
+            )
+        natural_gate_path = artifacts_dir / "natural-deliberation.json"
+        capture_natural_deliberation_release_gate(
+            artifact_path=natural_deliberation_transcript,
+            output_path=natural_gate_path,
+            god_runtime_path=natural_deliberation_god_runtime,
+        )
+        source_reports["natural_deliberation_gate"] = str(natural_gate_path)
     if memoryos_live_trace is not None:
         memoryos_gate_path = artifacts_dir / "live-memoryos.json"
         capture_memoryos_live_release_gate(

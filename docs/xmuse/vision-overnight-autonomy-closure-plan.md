@@ -572,6 +572,12 @@ Tasks:
   plus `--god-runtime RUNTIME` for the final handoff pack; do not pass those
   inputs together with an explicit
   `--section-artifact deliberation_transcript=...`.
+- When the same natural transcript should participate in release readiness,
+  also pass `--natural-deliberation-transcript TRANSCRIPT` plus
+  `--natural-deliberation-god-runtime RUNTIME`. This writes
+  `natural-deliberation.json` under `--artifacts-dir` through the same natural
+  gate validator, and it requires selected-GOD runtime continuity so bounded
+  workers cannot satisfy the release gate.
 - When governed MemoryOS write plans or writeback events exist, prefer
   `uv run xmuse-release-evidence-pack --memoryos-governance-plan PLAN` or
   `--memoryos-writeback-event EVENT` for the final handoff pack; do not pass

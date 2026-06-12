@@ -538,6 +538,14 @@ Current implementation status:
   natural deliberation gate rules still block deterministic replay, single-GOD
   transcripts, missing provider session metadata, bounded selected runtime, and
   unresolved blockers.
+- The same release pack command can separately accept
+  `--natural-deliberation-transcript` and
+  `--natural-deliberation-god-runtime`, convert them through
+  `xmuse-natural-deliberation-gate-capture`, and write
+  `natural-deliberation.json` under `--artifacts-dir` before readiness/audit.
+  This is the release-gate path, not the replay-section path; it requires
+  selected-GOD runtime continuity so bounded OpenCode-style workers or missing
+  runtime rows cannot satisfy release readiness.
 - The same release pack command can accept `--frozen-blueprint` and repeated
   `--feature-contract` inputs, convert them through
   `xmuse-frozen-blueprint-evidence-capture` and

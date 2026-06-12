@@ -591,6 +591,8 @@ uv run xmuse-release-evidence-pack \
   --supervisor-snapshot xmuse/work/release_readiness/overnight-supervisor.json \
   --deliberation-transcript xmuse/work/release_readiness/natural-transcript.json \
   --god-runtime xmuse/work/release_readiness/god-runtime-continuity.json \
+  --natural-deliberation-transcript xmuse/work/release_readiness/natural-transcript.json \
+  --natural-deliberation-god-runtime xmuse/work/release_readiness/god-runtime-continuity.json \
   --frozen-blueprint xmuse/work/release_readiness/mission-blueprint.json \
   --feature-contract xmuse/work/release_readiness/feature-owner-contract.json \
   --memoryos-live-trace xmuse/work/release_readiness/memoryos-trace.json \
@@ -610,7 +612,13 @@ section from graph-native feature owner execution contracts.
 replay `memory_governance` section from governed MemoryOS policy inputs.
 These replay-section conversions are contract-level handoff evidence only and
 must not be passed together with an explicit `--section-artifact` for the same
-section. `--memoryos-live-trace` writes
+section. `--natural-deliberation-transcript` writes
+`artifacts-dir/natural-deliberation.json` through the same validator as
+`xmuse-natural-deliberation-gate-capture`; it requires
+`--natural-deliberation-god-runtime` so bounded selected CLIs or missing GOD
+runtime rows cannot satisfy release readiness. This flag is separate from
+`--deliberation-transcript`, which only creates the replay
+`deliberation_transcript` section. `--memoryos-live-trace` writes
 `artifacts-dir/live-memoryos.json` through the same validator as
 `xmuse-memoryos-live-gate-capture`; it emits `live_service_proof` only when the
 raw trace artifact already carries valid live MemoryOS Lite evidence.
