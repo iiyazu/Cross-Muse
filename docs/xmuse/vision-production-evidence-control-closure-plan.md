@@ -364,11 +364,13 @@ Current implementation status:
   snapshot through the same GitHub server-truth gate builder; it does not call
   GitHub and stale snapshots remain `manual_gap`.
 - When `XMUSE_MEMORYOS_LIVE_TRACE_ARTIFACT`,
-  `XMUSE_NATURAL_GOD_TRANSCRIPT_PATH`, or
+  `XMUSE_NATURAL_GOD_TRANSCRIPT_PATH`,
+  `XMUSE_NATURAL_GOD_RUNTIME_ARTIFACT`, or
   `XMUSE_REAL_PROVIDER_RUNTIME_ARTIFACT` point at existing artifacts, it
   validates and converts them through the same release-gate contracts as the
-  standalone gate capture commands. Missing, invalid, fake/local, blocked, or
-  stale artifacts remain blockers.
+  standalone gate capture commands. Natural deliberation conversion requires
+  both transcript and selected-GOD runtime continuity artifacts. Missing,
+  invalid, fake/local, blocked, or stale artifacts remain blockers.
 - `xmuse-live-gate-status-capture` does not create live MemoryOS, real
   provider, or natural transcript proof by itself; it converts supplied
   artifacts and writes blocker status for missing proof.

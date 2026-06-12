@@ -307,9 +307,11 @@ def test_live_gate_status_capture_converts_configured_live_artifacts(
     artifacts = tmp_path / "source-artifacts"
     memoryos_trace = artifacts / "memoryos-trace.json"
     natural_transcript = artifacts / "natural-transcript.json"
+    natural_runtime = artifacts / "god-runtime.json"
     provider_runtime = artifacts / "provider-runtime.json"
     _write_json(memoryos_trace, _memoryos_trace_artifact())
     _write_json(natural_transcript, _natural_transcript_artifact())
+    _write_json(natural_runtime, _god_runtime_artifact())
     _write_json(provider_runtime, _provider_runtime_artifact())
 
     output_dir = tmp_path / "artifacts" / "live_gate_status"
@@ -318,6 +320,7 @@ def test_live_gate_status_capture_converts_configured_live_artifacts(
         env={
             "XMUSE_MEMORYOS_LIVE_TRACE_ARTIFACT": str(memoryos_trace),
             "XMUSE_NATURAL_GOD_TRANSCRIPT_PATH": str(natural_transcript),
+            "XMUSE_NATURAL_GOD_RUNTIME_ARTIFACT": str(natural_runtime),
             "XMUSE_REAL_PROVIDER_RUNTIME_ARTIFACT": str(provider_runtime),
         },
         command_runner=_fake_runner({}),
@@ -339,13 +342,37 @@ def test_live_gate_status_capture_converts_configured_live_artifacts(
     assert memoryos_gate["artifacts"] == [str(memoryos_trace)]
     assert natural_gate["status"] == "ok"
     assert natural_gate["proof_level"] == "real_provider_proof"
-    assert natural_gate["artifacts"] == [str(natural_transcript)]
+    assert natural_gate["artifacts"] == [str(natural_transcript), str(natural_runtime)]
     assert provider_gate["status"] == "ok"
     assert provider_gate["proof_level"] == "real_provider_proof"
     assert provider_gate["artifacts"] == [str(provider_runtime)]
     assert {
         blocker["gate_id"] for blocker in report["blockers"]
     } == {"github-server-truth"}
+
+
+def test_live_gate_status_capture_blocks_natural_transcript_without_runtime(
+    tmp_path: Path,
+) -> None:
+    artifacts = tmp_path / "source-artifacts"
+    natural_transcript = artifacts / "natural-transcript.json"
+    _write_json(natural_transcript, _natural_transcript_artifact())
+
+    output_dir = tmp_path / "artifacts" / "live_gate_status"
+    capture_live_gate_status(
+        output_dir=output_dir,
+        env={"XMUSE_NATURAL_GOD_TRANSCRIPT_PATH": str(natural_transcript)},
+        command_runner=_fake_runner({}),
+    )
+
+    natural_gate = json.loads(
+        (output_dir / "natural-deliberation-status.json").read_text()
+    )
+
+    assert natural_gate["status"] == "blocked"
+    assert natural_gate["proof_level"] == "manual_gap"
+    assert "selected GOD runtime continuity" in natural_gate["summary"]
+    assert natural_gate["artifacts"] == [str(natural_transcript)]
 
 
 def test_live_gate_status_capture_cli_script_is_registered() -> None:
@@ -490,6 +517,36 @@ def _natural_transcript_artifact() -> dict[str, object]:
             },
         ],
         "blockers": [],
+    }
+
+
+def _god_runtime_artifact() -> dict[str, object]:
+    return {
+        "schema_version": "xmuse.god_runtime_continuity.v1",
+        "conversation_id": "conv-prod-1",
+        "proof_level": "contract_proof",
+        "fact_state": "observed",
+        "source_refs": ["god_cli_selection:conv-prod-1"],
+        "items": [
+            {
+                "god_id": "architect-god",
+                "cli_id": "codex.god",
+                "peer_god_ready": True,
+                "bounded": False,
+                "provider_session_ready": True,
+                "proof_level": "contract_proof",
+                "source_refs": ["god_session:architect"],
+            },
+            {
+                "god_id": "review-god",
+                "cli_id": "opencode.peer",
+                "peer_god_ready": True,
+                "bounded": False,
+                "provider_session_ready": True,
+                "proof_level": "contract_proof",
+                "source_refs": ["god_session:review"],
+            },
+        ],
     }
 
 

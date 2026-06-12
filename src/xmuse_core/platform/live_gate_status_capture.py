@@ -270,12 +270,43 @@ def _provider_gate(
 
 def _natural_deliberation_gate(env: Mapping[str, str], *, output_dir: Path) -> dict[str, Any]:
     transcript_path = _clean_text(env.get("XMUSE_NATURAL_GOD_TRANSCRIPT_PATH"))
+    runtime_path = _clean_text(env.get("XMUSE_NATURAL_GOD_RUNTIME_ARTIFACT"))
     if transcript_path is not None:
+        if runtime_path is None:
+            return _gate(
+                gate_id="natural-god-deliberation",
+                kind=ReleaseGateKind.NATURAL_DELIBERATION,
+                configured=True,
+                status="blocked",
+                summary=(
+                    "Natural GOD transcript artifact is configured, but selected "
+                    "GOD runtime continuity artifact is missing."
+                ),
+                attempted_command=(
+                    "uv run xmuse-natural-deliberation-gate-capture --god-runtime"
+                ),
+                next_action=(
+                    "Set XMUSE_NATURAL_GOD_RUNTIME_ARTIFACT to a selected-GOD "
+                    "runtime continuity artifact, then recapture the natural "
+                    "deliberation release gate."
+                ),
+                source_refs=_present_keys(
+                    env,
+                    "XMUSE_NATURAL_GOD_TRANSCRIPT_PATH",
+                    "XMUSE_NATURAL_GOD_RUNTIME_ARTIFACT",
+                ),
+                artifacts=[transcript_path],
+            )
         return capture_natural_deliberation_release_gate(
             artifact_path=transcript_path,
             output_path=output_dir / _artifact_filename("natural-god-deliberation"),
+            god_runtime_path=runtime_path,
         )
-    source_refs = _present_keys(env, "XMUSE_NATURAL_GOD_TRANSCRIPT_PATH")
+    source_refs = _present_keys(
+        env,
+        "XMUSE_NATURAL_GOD_TRANSCRIPT_PATH",
+        "XMUSE_NATURAL_GOD_RUNTIME_ARTIFACT",
+    )
     configured = bool(source_refs)
     return _gate(
         gate_id="natural-god-deliberation",
@@ -292,7 +323,7 @@ def _natural_deliberation_gate(env: Mapping[str, str], *, output_dir: Path) -> d
         next_action=(
             "Run a real selected-GOD deliberation session, export transcript evidence "
             "with xmuse-natural-deliberation-transcript-capture, then convert it "
-            "without relabeling deterministic replay."
+            "with selected-GOD runtime continuity without relabeling deterministic replay."
         ),
         source_refs=source_refs,
     )
@@ -308,6 +339,7 @@ def _gate(
     attempted_command: str,
     next_action: str,
     source_refs: list[str],
+    artifacts: list[str] | None = None,
 ) -> dict[str, Any]:
     return {
         "schema_version": "xmuse.production_evidence.v1",
@@ -322,7 +354,7 @@ def _gate(
         "attempted_command": attempted_command,
         "next_action": next_action,
         "source_refs": source_refs,
-        "artifacts": [],
+        "artifacts": artifacts or [],
         "generated_at": _utc_now(),
     }
 
@@ -372,6 +404,7 @@ def _known_env_keys_present(env: Mapping[str, str]) -> set[str]:
         "XMUSE_RAY_GOD_MCP",
         "XMUSE_MEMORYOS_LIVE_TRACE_ARTIFACT",
         "XMUSE_NATURAL_GOD_TRANSCRIPT_PATH",
+        "XMUSE_NATURAL_GOD_RUNTIME_ARTIFACT",
         "XMUSE_REAL_PROVIDER_RUNTIME_ARTIFACT",
         "XMUSE_GITHUB_TRUTH_REPO",
         "XMUSE_GITHUB_TRUTH_PULL_REQUEST",
