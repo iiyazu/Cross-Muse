@@ -630,6 +630,28 @@ and the next ready independent stage was started. Stages declared with
 `--stage-priority` and declaration order. This does not mean the blocked release
 evidence became acceptable.
 
+When a bounded `/goal` stage was executed through `scripts/goal_stage_runner.py`,
+import its `result.json` into the supervisor snapshot instead of summarizing it
+only in prose:
+
+```bash
+uv run xmuse-overnight-supervisor \
+  --run-id <run-id> \
+  --artifact-dir xmuse/work/release_readiness/overnight_supervisor \
+  --stage S4="live gates" \
+  --stage S5="docs and validation" \
+  --resume \
+  import-stage-result /tmp/goal-runs/S4/result.json
+```
+
+The import records a `goal_stage_result_imported` production-evidence envelope
+with `source_authority=goal_stage_harness`, indexes the result, prompt,
+manifest, and engine-output artifacts when present, and updates only the
+supervisor stage state. `ok` results are `contract_proof`; blocked stage
+results remain `manual_gap` blockers and may start the next ready independent
+stage. This is not lane status authority, review truth, GitHub truth, release
+readiness proof, or live runtime proof.
+
 For CI or local no-secrets rehearsal, use virtual time instead of sleeping for
 8 hours. Failure injection is JSON so long `/goal` scripts can record exact
 stage, minute, command, and source refs without shell-specific parsing:

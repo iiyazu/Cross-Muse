@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from xmuse_core.platform.production_evidence import (
     ProductionEvidenceEnvelope,
@@ -84,6 +84,7 @@ class OvernightSupervisor:
         self._stage_journal: list[dict[str, Any]] = []
         self._self_reviews: list[dict[str, Any]] = []
         self._production_evidence: list[dict[str, Any]] = []
+        self._goal_stage_results: list[dict[str, Any]] = []
         self._persist()
 
     @classmethod
@@ -126,6 +127,7 @@ class OvernightSupervisor:
         supervisor._stage_journal = _dict_rows(snapshot.get("stage_journal"))
         supervisor._self_reviews = _dict_rows(snapshot.get("self_reviews"))
         supervisor._production_evidence = _dict_rows(snapshot.get("production_evidence"))
+        supervisor._goal_stage_results = _dict_rows(snapshot.get("goal_stage_results"))
         return supervisor
 
     def start_stage(self, stage_id: str) -> None:
@@ -633,6 +635,131 @@ class OvernightSupervisor:
             return stage_id
         return None
 
+    def import_goal_stage_result(
+        self,
+        result_path: str | Path,
+        *,
+        start_next: bool = True,
+        owner: str = "codex",
+    ) -> dict[str, Any]:
+        row = _load_goal_stage_result(Path(result_path))
+        stage_id = str(row["stage_id"])
+        stage = self._stage(stage_id)
+        status = cast(ProductionEvidenceStatus, row["status"])
+        now = _utcnow()
+        blocked_reason = (
+            _goal_stage_blocked_reason(row)
+            if status in {"blocked", "retry"}
+            else None
+        )
+        proof_level: ProofLevel = (
+            "contract_proof" if status == "ok" else "manual_gap"
+        )
+        next_action = (
+            "Continue to the next pending independent stage."
+            if status == "blocked" and start_next
+            else row.get("retry_hint") if status == "retry" else None
+        )
+
+        stage_result: dict[str, Any] = {
+            "schema_version": "xmuse.goal_stage_result_import.v1",
+            "run_id": self._config.run_id,
+            "stage_id": stage_id,
+            "status": status,
+            "proof_level": proof_level,
+            "engine": row["engine"],
+            "result_path": row["result_path"],
+            "issues": row["issues"],
+            "command": row["command"],
+            "artifacts": row["artifacts"],
+            "returncode": row["returncode"],
+            "attempt": row["attempt"],
+            "blocked_reason": blocked_reason,
+            "next_action": next_action,
+            "timestamp_utc": now,
+        }
+
+        if status == "ok":
+            stage["status"] = "ok"
+            stage["completed_at"] = now
+            stage["completed_summary"] = (
+                f"Goal stage runner completed with engine {row['engine']}."
+            )
+            if self._current_stage_id == stage_id:
+                self._current_stage_id = None
+        elif status == "retry":
+            stage["status"] = "running"
+            stage["retry_hint"] = row.get("retry_hint")
+            self._current_stage_id = stage_id
+        else:
+            stage["status"] = "blocked"
+            stage["blocked_reason"] = blocked_reason
+            stage["completed_at"] = now
+            if self._current_stage_id == stage_id:
+                self._current_stage_id = None
+            self._issue_queue.append(
+                {
+                    "run_id": self._config.run_id,
+                    "stage_id": stage_id,
+                    "title": blocked_reason,
+                    "severity": "blocked",
+                    "source_ref": f"goal_stage_result:{row['result_path']}",
+                    "status": "open",
+                    "timestamp_utc": now,
+                }
+            )
+            self._failure_classifications.append(
+                {
+                    "run_id": self._config.run_id,
+                    "stage_id": stage_id,
+                    "failure_class": "goal_stage_blocked",
+                    "reason": blocked_reason,
+                    "retryable": False,
+                    "timestamp_utc": now,
+                }
+            )
+
+        self._goal_stage_results.append(stage_result)
+        self._record_production_evidence(
+            stage_id=stage_id,
+            action="goal_stage_result_imported",
+            status=status,
+            proof_level=proof_level,
+            source_authority="goal_stage_harness",
+            source_refs=[
+                f"goal_run:{self._config.run_id}",
+                f"goal_stage:{stage_id}",
+                f"goal_stage_result:{row['result_path']}",
+            ],
+            target_refs=[
+                f"overnight_supervisor:{self._config.run_id}",
+                f"overnight_supervisor_stage:{stage_id}",
+            ],
+            commands=[_command_text(row["command"])],
+            test_results=[],
+            artifacts=list(row["artifacts"]),
+            blocked_reason=blocked_reason,
+            owner=owner,
+            next_action=next_action,
+            summary=_goal_stage_result_summary(row),
+            gate_id=f"goal-stage-{stage_id}-stage-result",
+            kind="goal_stage_harness",
+            configured=True,
+            required=True,
+        )
+        self._journal(
+            "goal_stage_result_imported",
+            stage_id=stage_id,
+            status=status,
+            result_path=str(row["result_path"]),
+        )
+        if status == "blocked" and start_next:
+            stage_result["next_stage_id"] = self.move_to_next_high_value_stage()
+        else:
+            stage_result["next_stage_id"] = None
+        self._persist()
+        return stage_result
+
     def live_soak_plan(
         self,
         *,
@@ -665,6 +792,7 @@ class OvernightSupervisor:
             "stage_journal": list(self._stage_journal),
             "self_reviews": list(self._self_reviews),
             "production_evidence": list(self._production_evidence),
+            "goal_stage_results": list(self._goal_stage_results),
         }
 
     def _stage(self, stage_id: str) -> dict[str, Any]:
@@ -698,6 +826,7 @@ class OvernightSupervisor:
         kind: str | None = None,
         configured: bool | None = None,
         required: bool | None = None,
+        source_authority: str = "overnight_operator_supervisor",
     ) -> dict[str, Any]:
         envelope = ProductionEvidenceEnvelope(
             run_id=self._config.run_id,
@@ -705,7 +834,7 @@ class OvernightSupervisor:
             action=action,
             status=status,
             proof_level=proof_level,
-            source_authority="overnight_operator_supervisor",
+            source_authority=source_authority,
             source_refs=tuple(source_refs or ()),
             target_refs=tuple(target_refs or ()),
             commands=tuple(commands or ()),
@@ -874,6 +1003,117 @@ def _slo_violations(
 
 def _evidence_action_count(evidence_rows: list[dict[str, Any]], action: str) -> int:
     return sum(1 for evidence in evidence_rows if evidence.get("action") == action)
+
+
+def _load_goal_stage_result(path: Path) -> dict[str, Any]:
+    payload = _load_json_object(path)
+    stage_id = _clean_text(payload.get("stage_id")) or "unknown"
+    status = _goal_stage_status(payload.get("status"))
+    command = _command(payload.get("command"))
+    return {
+        "stage_id": stage_id,
+        "status": status,
+        "engine": _clean_text(payload.get("engine")) or "unknown",
+        "issues": _issue_messages(payload.get("issues")),
+        "retry_hint": _clean_text(payload.get("retry_hint")),
+        "result_path": str(path),
+        "command": command,
+        "artifacts": _goal_stage_artifacts(path=path, payload=payload),
+        "returncode": payload.get("returncode"),
+        "attempt": payload.get("attempt"),
+    }
+
+
+def _load_json_object(path: Path) -> dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise ValueError(f"goal stage result does not exist: {path}") from exc
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"goal stage result is not valid JSON: {path}") from exc
+    if not isinstance(payload, dict):
+        raise ValueError(f"goal stage result must be a JSON object: {path}")
+    return payload
+
+
+def _goal_stage_status(value: object) -> ProductionEvidenceStatus:
+    if value in {"ok", "retry", "blocked"}:
+        return cast(ProductionEvidenceStatus, value)
+    return "blocked"
+
+
+def _issue_messages(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    messages: list[str] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        message = _clean_text(item.get("message"))
+        if message:
+            messages.append(message)
+    return messages
+
+
+def _command(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, str)]
+
+
+def _goal_stage_artifacts(*, path: Path, payload: dict[str, Any]) -> list[str]:
+    artifacts = [
+        str(path),
+        str(path.parent / f"{path.name}.prompt.txt"),
+        str(path.parent / f"{path.name}.manifest.jsonl"),
+    ]
+    stdout_path = _clean_text(payload.get("agent_stdout_path"))
+    if stdout_path:
+        artifacts.append(stdout_path)
+    return _dedupe_existing(artifacts)
+
+
+def _dedupe_existing(paths: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for raw_path in paths:
+        if not raw_path or raw_path in seen:
+            continue
+        if not Path(raw_path).exists():
+            continue
+        seen.add(raw_path)
+        result.append(raw_path)
+    return result
+
+
+def _goal_stage_blocked_reason(row: dict[str, Any]) -> str:
+    status = _clean_text(row.get("status")) or "blocked"
+    issues = row.get("issues")
+    if isinstance(issues, list) and issues:
+        return f"goal stage result is {status}: " + "; ".join(
+            str(issue) for issue in issues
+        )
+    return f"goal stage result is {status}"
+
+
+def _goal_stage_result_summary(row: dict[str, Any]) -> str:
+    return (
+        f"Goal stage runner result imported for {row['stage_id']}: "
+        f"{row['status']} via {row['engine']}."
+    )
+
+
+def _command_text(command: object) -> str:
+    if not isinstance(command, list):
+        return ""
+    return " ".join(str(item) for item in command if str(item))
+
+
+def _clean_text(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    return text or None
 
 
 def _dict_rows(value: Any) -> list[dict[str, Any]]:

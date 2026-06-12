@@ -91,6 +91,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             start_next=not args.no_start_next,
         )
         result = {"status": fallback["status"], "fallback": fallback}
+    elif args.command == "import-stage-result":
+        stage_result = supervisor.import_goal_stage_result(
+            args.result_path,
+            start_next=not args.no_start_next,
+            owner=args.owner,
+        )
+        result = {"status": stage_result["status"], "stage_result": stage_result}
     elif args.command == "simulate":
         simulation = supervisor.simulate_virtual_soak(
             OvernightSimulationConfig(
@@ -259,6 +266,18 @@ def _parser() -> argparse.ArgumentParser:
     blocked_fallback.add_argument("--source-ref", action="append", default=[])
     blocked_fallback.add_argument("--target-ref", action="append", default=[])
     blocked_fallback.add_argument("--artifact", action="append", default=[])
+
+    import_stage_result = subparsers.add_parser(
+        "import-stage-result",
+        help="Import a goal-stage runner result.json into the supervisor snapshot.",
+    )
+    import_stage_result.add_argument("result_path", type=Path)
+    import_stage_result.add_argument("--owner", default="codex")
+    import_stage_result.add_argument(
+        "--no-start-next",
+        action="store_true",
+        help="Do not start the next pending stage when the result is blocked.",
+    )
 
     simulate = subparsers.add_parser(
         "simulate",

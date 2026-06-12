@@ -231,6 +231,13 @@ Current implementation status:
   review truth, GitHub truth, release readiness, or live runtime proof.
 - TUI `/release pack stage=goal/S1.result.json` routes the same handoff through
   the audited operator action path and release-root path guard.
+- `uv run xmuse-overnight-supervisor --resume import-stage-result RESULT.json`
+  imports one goal-stage runner result into the durable supervisor snapshot as
+  `goal_stage_results` plus a `goal_stage_result_imported` production-evidence
+  envelope sourced from `goal_stage_harness`. `ok` results complete only that
+  supervisor stage as `contract_proof`; `blocked` results stay `manual_gap`,
+  record issue/failure rows, and can trigger dependency-aware fallback to the
+  next ready independent stage.
 
 ## S2 - GOD Runtime Continuity And Natural Transcript Spine
 
@@ -371,6 +378,14 @@ Current implementation status:
   `logical_minute`, inject configured blockers, verify heartbeat and
   self-review SLOs, and continue to the next pending stage without sleeping or
   using live credentials.
+- The same supervisor can import `scripts/goal_stage_runner.py` outputs through
+  `OvernightSupervisor.import_goal_stage_result(...)` and
+  `uv run xmuse-overnight-supervisor --resume import-stage-result RESULT.json`.
+  This closes the local handoff between the stage harness and the overnight
+  snapshot: prompt/manifest/result/engine-output paths become replayable
+  supervisor evidence, while non-`ok` stage results remain blockers or retry
+  requests and do not become lane status, review truth, GitHub truth, release
+  readiness proof, or live runtime proof.
 - `.github/workflows/xmuse-ci.yml` includes
   `tests/xmuse/test_overnight_operator_supervisor.py` in the contract smoke
   gate, so the no-secrets virtual soak state machine is exercised by CI.

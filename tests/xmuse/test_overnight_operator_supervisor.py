@@ -419,6 +419,101 @@ def test_overnight_supervisor_fallback_skips_dependent_stage_and_prefers_priorit
     assert skipped[-1]["blocked_dependencies"] == ["S4"]
 
 
+def test_overnight_supervisor_imports_goal_stage_runner_result_evidence(
+    tmp_path: Path,
+) -> None:
+    ok_result = tmp_path / "goal" / "S1.result.json"
+    blocked_result = tmp_path / "goal" / "S4.result.json"
+    _write_goal_stage_runner_result(
+        ok_result,
+        stage_id="S1",
+        status="ok",
+        engine="opencode",
+        command=[
+            "opencode",
+            "run",
+            "--model",
+            "opencode-go/deepseek-v4-flash",
+            "--variant",
+            "max",
+        ],
+    )
+    _write_goal_stage_runner_result(
+        blocked_result,
+        stage_id="S4",
+        status="blocked",
+        engine="codex",
+        command=["codex", "exec", "-"],
+        issues=[{"message": "MemoryOS Lite live trace is configured but unavailable."}],
+    )
+
+    supervisor = OvernightSupervisor(
+        OvernightSupervisorConfig(
+            run_id="run-stage-result-import",
+            artifact_dir=tmp_path,
+            stages=[
+                OvernightSupervisorStage(stage_id="S1", objective="stage harness smoke"),
+                OvernightSupervisorStage(stage_id="S4", objective="live evidence gates"),
+                OvernightSupervisorStage(stage_id="S6", objective="independent docs"),
+            ],
+        )
+    )
+
+    ok_import = supervisor.import_goal_stage_result(ok_result)
+    supervisor.start_stage("S4")
+    blocked_import = supervisor.import_goal_stage_result(blocked_result)
+
+    snapshot = supervisor.snapshot()
+    assert ok_import["status"] == "ok"
+    assert blocked_import["status"] == "blocked"
+    assert blocked_import["next_stage_id"] == "S6"
+    assert [stage["status"] for stage in snapshot["stages"]] == [
+        "ok",
+        "blocked",
+        "running",
+    ]
+    assert snapshot["current_stage_id"] == "S6"
+    assert snapshot["goal_stage_results"] == [ok_import, blocked_import]
+
+    ok_evidence = snapshot["production_evidence"][0]
+    assert ok_evidence["action"] == "goal_stage_result_imported"
+    assert ok_evidence["status"] == "ok"
+    assert ok_evidence["proof_level"] == "contract_proof"
+    assert ok_evidence["source_authority"] == "goal_stage_harness"
+    assert ok_evidence["source_refs"] == [
+        "goal_run:run-stage-result-import",
+        "goal_stage:S1",
+        f"goal_stage_result:{ok_result}",
+    ]
+    assert ok_evidence["commands"] == [
+        "opencode run --model opencode-go/deepseek-v4-flash --variant max"
+    ]
+    assert ok_evidence["artifacts"] == [
+        str(ok_result),
+        str(ok_result.parent / f"{ok_result.name}.prompt.txt"),
+        str(ok_result.parent / f"{ok_result.name}.manifest.jsonl"),
+        str(ok_result.parent / f"{ok_result.name}.evidence" / "engine_output.txt"),
+    ]
+    assert ok_evidence["gate_id"] == "goal-stage-S1-stage-result"
+    assert ok_evidence["kind"] == "goal_stage_harness"
+
+    blocked_evidence = snapshot["production_evidence"][1]
+    assert blocked_evidence["status"] == "blocked"
+    assert blocked_evidence["proof_level"] == "manual_gap"
+    assert blocked_evidence["blocked_reason"] == (
+        "goal stage result is blocked: "
+        "MemoryOS Lite live trace is configured but unavailable."
+    )
+    assert snapshot["issue_queue"][0]["title"] == (
+        "goal stage result is blocked: "
+        "MemoryOS Lite live trace is configured but unavailable."
+    )
+    assert snapshot["failure_classifications"][0]["failure_class"] == (
+        "goal_stage_blocked"
+    )
+    assert snapshot["stage_journal"][-1]["event"] == "stage_started"
+
+
 def test_overnight_supervisor_can_resume_from_persisted_snapshot(tmp_path: Path) -> None:
     config = OvernightSupervisorConfig(
         run_id="run-resume",
@@ -784,6 +879,51 @@ def test_overnight_supervisor_cli_accepts_stage_priority_and_dependencies(
     assert snapshot["stages"][1]["priority"] == 95
 
 
+def test_overnight_supervisor_cli_imports_goal_stage_result_and_falls_back(
+    tmp_path: Path,
+) -> None:
+    from xmuse.overnight_operator_supervisor import main
+
+    result = tmp_path / "goal" / "S4.result.json"
+    _write_goal_stage_runner_result(
+        result,
+        stage_id="S4",
+        status="blocked",
+        engine="codex",
+        command=["codex", "exec", "-"],
+        issues=[{"message": "GitHub review truth is configured but unavailable."}],
+    )
+    common = [
+        "--run-id",
+        "overnight-cli-stage-import",
+        "--artifact-dir",
+        str(tmp_path),
+        "--stage",
+        "S4=fresh GitHub truth",
+        "--stage",
+        "S7=TUI proof cockpit",
+    ]
+
+    assert main([*common, "start-stage", "S4"]) == 0
+    assert main([*common, "--resume", "import-stage-result", str(result)]) == 0
+
+    snapshot = json.loads(
+        (tmp_path / "overnight-supervisor-overnight-cli-stage-import.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert [stage["status"] for stage in snapshot["stages"]] == [
+        "blocked",
+        "running",
+    ]
+    assert snapshot["current_stage_id"] == "S7"
+    assert snapshot["goal_stage_results"][0]["result_path"] == str(result)
+    assert snapshot["production_evidence"][0]["source_authority"] == (
+        "goal_stage_harness"
+    )
+    assert snapshot["production_evidence"][0]["status"] == "blocked"
+
+
 def test_overnight_supervisor_cli_records_self_review_and_blocked_fallback(
     tmp_path: Path,
 ) -> None:
@@ -937,4 +1077,49 @@ def test_overnight_supervisor_cli_script_is_registered() -> None:
     assert (
         pyproject["project"]["scripts"]["xmuse-overnight-supervisor"]
         == "xmuse.overnight_operator_supervisor:main"
+    )
+
+
+def _write_goal_stage_runner_result(
+    path: Path,
+    *,
+    stage_id: str,
+    status: str,
+    engine: str,
+    command: list[str],
+    issues: list[dict[str, str]] | None = None,
+) -> None:
+    evidence_dir = path.parent / f"{path.name}.evidence"
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "stage_id": stage_id,
+        "status": status,
+        "engine": engine,
+        "issues": issues or [],
+        "review_decision": "pass" if status == "ok" else status,
+        "retry_hint": None if status == "ok" else "Resolve blocked stage result.",
+        "evidence_dir": str(evidence_dir),
+        "agent_output_path": str(path),
+        "command": command,
+        "agent_stdout_path": str(evidence_dir / "engine_output.txt"),
+        "returncode": 0 if status == "ok" else 2,
+        "attempt": 1,
+        "timestamp_utc": "2026-06-12T00:00:00Z",
+    }
+    path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    (path.parent / f"{path.name}.prompt.txt").write_text(
+        f"Stage: {stage_id}\n",
+        encoding="utf-8",
+    )
+    (path.parent / f"{path.name}.manifest.jsonl").write_text(
+        json.dumps({"stage_id": stage_id, "status": status}) + "\n",
+        encoding="utf-8",
+    )
+    (evidence_dir / "engine_output.txt").write_text(
+        "bounded worker output\n",
+        encoding="utf-8",
     )

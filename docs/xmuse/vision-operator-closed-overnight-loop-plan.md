@@ -237,6 +237,17 @@ Acceptance:
 - The supervisor does not write lane status directly unless it goes through an
   approved contract.
 
+Current implementation status:
+
+- `uv run xmuse-overnight-supervisor` can import
+  `scripts/goal_stage_runner.py` `result.json` files with
+  `--resume import-stage-result RESULT.json`. Imported results are persisted as
+  `goal_stage_results` and `goal_stage_result_imported` production-evidence
+  envelopes sourced from `goal_stage_harness`. `ok` imports remain
+  `contract_proof`; non-`ok` imports stay blocked or retry evidence and cannot
+  satisfy lane status, review truth, GitHub truth, release readiness, or live
+  runtime proof.
+
 ### S4 - Opt-In Live Soak Harness
 
 Goal: allow live evidence attempts when configured, while keeping default tests

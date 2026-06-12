@@ -589,6 +589,14 @@ Current implementation status:
   stages to start; the supervisor journals skipped/waiting dependencies and
   starts the highest-priority ready independent stage. This keeps release
   blockers intact while allowing independent overnight work to continue.
+- The same supervisor can import a goal-stage runner `result.json` through
+  `uv run xmuse-overnight-supervisor --resume import-stage-result RESULT.json`.
+  It records `goal_stage_results`, writes a
+  `goal_stage_result_imported` production-evidence envelope sourced from
+  `goal_stage_harness`, and turns `blocked` results into supervisor blockers
+  with dependency-aware fallback. This makes stage-harness output replayable in
+  the supervisor snapshot without making `result.json` authoritative for lane
+  status, review truth, GitHub truth, release readiness, or live runtime proof.
 - The same release pack command can also accept repeated
   `--memoryos-governance-plan` and `--memoryos-writeback-event` inputs, convert
   them through `xmuse-memoryos-governance-evidence-capture`, and attach the
