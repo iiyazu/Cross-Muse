@@ -271,6 +271,11 @@ Tasks:
 - Define or extend a feature owner contract that carries feature-level
   objective, allowed files, lane ready-set, memory refs, required checks,
   review profile, patch-forward policy, and rollback constraints.
+- The `xmuse.feature_owner_execution_contract.v2` contract must include
+  graph-native ready-set provenance, explicit lane blocker reasons, and a
+  read-only status write policy so blocked lanes are replayable without making
+  TUI/dashboard projections, LangGraph, Ray, or `feature_lanes.json`
+  authoritative.
 - Keep lanes as internal execution/replay units under the feature owner. Do not
   make `feature_lanes.json` a new authority.
 - Add focused contract tests for ready-set scheduling, dependency blocking, and
@@ -428,10 +433,11 @@ Current implementation status:
   bundle. Draft or otherwise unfrozen blueprints remain `manual_gap`, so the
   pack cannot turn readiness or a rendered blueprint into freeze proof.
 - `uv run xmuse-release-evidence-pack --feature-contract <contract>` now
-  converts serialized `xmuse.feature_owner_execution_contract.v1` artifacts
+  converts serialized `xmuse.feature_owner_execution_contract.v2` artifacts
   into replay-ready `feature_lineage` production evidence before assembling the
-  nested replay bundle. Missing, invalid, or projection-authority contracts
-  remain `manual_gap`; graph-native feature owner contracts stay the authority.
+  nested replay bundle. Missing, invalid, opaque blocked-lane, or
+  projection-authority contracts remain `manual_gap`; graph-native feature
+  owner contracts stay the authority.
 - `uv run xmuse-memoryos-governance-evidence-capture` exports governed
   MemoryOS writeback events or governed write plans into a replay-ready
   `xmuse.production_evidence.v1` artifact for the `memory_governance` section.

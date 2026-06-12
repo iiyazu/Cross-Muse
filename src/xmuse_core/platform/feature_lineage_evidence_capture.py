@@ -153,10 +153,12 @@ def _source_refs(
                 f"feature-owner:{contract.feature_id}",
                 f"graph-set:{contract.graph_set_id}",
                 f"feature-graph:{contract.feature_graph_id}",
+                _ready_set_ref(contract),
             ]
         )
         refs.extend(contract.source_refs)
         refs.extend(f"lane:{lane_id}" for lane_id in contract.lane_ids)
+        refs.extend(_lane_blocker_refs(contract))
         refs.extend(contract.memory_refs)
     return _dedupe(refs)
 
@@ -198,11 +200,32 @@ def _summary(
     completed_count = sum(
         len(contract.completed_lane_ids) for _path, contract in contracts
     )
+    blocker_count = sum(len(contract.lane_blockers) for _path, contract in contracts)
     return (
         f"Feature lineage captured {contract_count} feature owner contract(s), "
         f"{lane_count} lane(s): {ready_count} ready, {blocked_count} blocked, "
-        f"{completed_count} completed."
+        f"{completed_count} completed, {blocker_count} blocker reason(s)."
     )
+
+
+def _ready_set_ref(contract: FeatureOwnerExecutionContract) -> str:
+    provenance = contract.ready_set_provenance
+    if provenance is None:
+        return (
+            "ready-set:graph-native:"
+            f"{contract.graph_set_id}:{contract.feature_graph_id}"
+        )
+    return (
+        "ready-set:graph-native:"
+        f"{provenance.graph_set_id}:{provenance.feature_graph_id}"
+    )
+
+
+def _lane_blocker_refs(contract: FeatureOwnerExecutionContract) -> list[str]:
+    return [
+        f"lane-blocker:{blocker.lane_id}:{blocker.blocker_ref}"
+        for blocker in contract.lane_blockers
+    ]
 
 
 def _one_line(value: str) -> str:

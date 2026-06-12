@@ -39,10 +39,12 @@ def test_capture_feature_lineage_evidence_exports_replay_ready_artifact(
         "feature-owner:feature-runtime-loop",
         "graph-set:graph-set-1",
         "feature-graph:graph-runtime",
+        "ready-set:graph-native:graph-set-1:graph-runtime",
         "blueprint:bp-1",
         "lane:lane-heartbeat",
         "lane:lane-replay",
         "lane:lane-docs",
+        "lane-blocker:lane-replay:lane:lane-heartbeat",
         "memory://conversation/conv-1/context",
     ]
     assert artifact["target_refs"] == [
@@ -57,7 +59,7 @@ def test_capture_feature_lineage_evidence_exports_replay_ready_artifact(
     assert artifact["blocked_reason"] is None
     assert artifact["summary"] == (
         "Feature lineage captured 1 feature owner contract(s), 3 lane(s): "
-        "1 ready, 1 blocked, 1 completed."
+        "1 ready, 1 blocked, 1 completed, 1 blocker reason(s)."
     )
 
     replay_bundle = capture_overnight_replay_bundle(

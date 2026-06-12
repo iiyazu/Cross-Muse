@@ -686,7 +686,10 @@ the replay `deliberation_transcript` section from an
 `--god-runtime` selected-GOD continuity. `--frozen-blueprint` generates the
 replay `frozen_blueprint` section from a `mission_blueprint.v1` artifact.
 Repeated `--feature-contract` inputs generate the replay `feature_lineage`
-section from graph-native feature owner execution contracts.
+section from graph-native `xmuse.feature_owner_execution_contract.v2`
+contracts. The v2 contract carries ready-set provenance, explicit lane blocker
+refs, and `read_only_contract_no_status_writes`; it is replay evidence, not a
+lane status writer.
 `--memoryos-governance-plan` and `--memoryos-writeback-event` generate the
 replay `memory_governance` section from governed MemoryOS policy inputs.
 These replay-section conversions are contract-level handoff evidence only and
