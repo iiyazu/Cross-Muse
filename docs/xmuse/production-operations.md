@@ -39,6 +39,9 @@ export XMUSE_DEPLOYMENT_PROFILE=production
 export XMUSE_CHAT_API_URL=http://127.0.0.1:8201
 export XMUSE_CHAT_API_AUTH_TOKEN=<server-token>
 export XMUSE_CHAT_API_KEY=<same-token-for-tui-client>
+export XMUSE_TUI_OPERATOR_ID=operator
+export XMUSE_TUI_OPERATOR_ROLE=operator
+export XMUSE_TUI_OPERATOR_CAPABILITIES=chat_create_conversation,chat_post_message,chat_bootstrap,chat_approve_proposal,chat_manage_participants,register_god_cli,select_god_cli,release_gate
 export XMUSE_MCP_AUTH_TOKEN=<server-token>
 ```
 
@@ -57,9 +60,24 @@ process, mutating `/api/chat/*` routes require:
 - `X-XMuse-Operator-Capabilities` containing the route capability, for example
   `chat_create_conversation` or `select_god_cli`.
 
-The TUI reads `XMUSE_CHAT_API_KEY` and forwards it to Chat API operator action
-requests. Read routes remain unauthenticated until a broader deployment policy
-decides otherwise.
+The TUI reads `XMUSE_CHAT_API_KEY`, `XMUSE_TUI_OPERATOR_ID`,
+`XMUSE_TUI_OPERATOR_ROLE`, and `XMUSE_TUI_OPERATOR_CAPABILITIES` and forwards
+them as Chat API write headers. This applies to ordinary mutating Chat API
+routes as well as operator actions:
+
+- `chat_create_conversation` for `/new` group conversation creation;
+- `chat_post_message` for sending human messages;
+- `chat_bootstrap` for bootstrap proposal creation and apply;
+- `chat_approve_proposal` for proposal approval;
+- `chat_manage_participants` for participant add/remove;
+- `register_god_cli`, `select_god_cli`, and `release_gate` for operator
+  actions.
+
+`XMUSE_TUI_OPERATOR_ROLE` defaults to `operator` and
+`XMUSE_TUI_OPERATOR_ID` defaults to `local-operator`. Capabilities are not
+self-granted by the TUI; missing capabilities are forwarded as missing and an
+auth-enabled Chat API will reject the write. Read routes remain unauthenticated
+until a broader deployment policy decides otherwise.
 
 Operator actions currently use these focused capabilities:
 

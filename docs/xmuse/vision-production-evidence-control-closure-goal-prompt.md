@@ -98,6 +98,11 @@ Hard constraints:
 - Chat API and MCP writes must use configured tokens and
   `X-XMUSE-API-Key`/`X-XMuse-Operator-Role`/`X-XMuse-Operator-Capabilities`
   headers when auth is enabled.
+- TUI direct Chat API writes must forward `XMUSE_CHAT_API_KEY`,
+  `XMUSE_TUI_OPERATOR_ID`, `XMUSE_TUI_OPERATOR_ROLE`, and
+  `XMUSE_TUI_OPERATOR_CAPABILITIES`; this covers `/new`, message send,
+  bootstrap proposal/apply, proposal approval, and participant add/remove.
+  The TUI must not self-grant missing route capabilities.
 - `XMUSE_DEPLOYMENT_PROFILE=production` must fail closed if Chat API or MCP
   write tokens are missing.
 - Internal review proof is allowed for single-maintainer review truth, but it is

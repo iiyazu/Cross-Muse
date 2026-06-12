@@ -149,6 +149,22 @@ nested evidence pack decision is `blocked`; that means the capture operation
 succeeded while release readiness remains blocked by the supplied gate
 artifacts.
 
+The ordinary TUI Chat API write paths now forward the same production operator
+auth envelope instead of making anonymous writes:
+
+```text
+X-XMUSE-API-Key: $XMUSE_CHAT_API_KEY
+X-XMuse-Operator-Id: $XMUSE_TUI_OPERATOR_ID
+X-XMuse-Operator-Role: $XMUSE_TUI_OPERATOR_ROLE
+X-XMuse-Operator-Capabilities: $XMUSE_TUI_OPERATOR_CAPABILITIES
+```
+
+Covered write paths are message post, group conversation creation, bootstrap
+proposal creation and apply, proposal approval, and participant add/remove. The
+TUI forwards configured operator capabilities; it does not infer or self-grant
+route authorization. This keeps the TUI usable as a product control surface
+while preserving Chat API contract authority.
+
 ### Bootstrap Session Authority
 
 The default Chat API conversation path creates durable bootstrap peer sessions
@@ -196,7 +212,9 @@ X-XMuse-Operator-Capabilities: chat_create_conversation,select_god_cli
 With auth enabled, API key proves caller authentication, but it does not grant
 write authority by itself. `viewer` cannot mutate, `admin` can mutate, and
 `operator` / `god` must present the required route capability. The TUI forwards
-`XMUSE_CHAT_API_KEY` for operator action calls.
+`XMUSE_CHAT_API_KEY`, `XMUSE_TUI_OPERATOR_ID`, `XMUSE_TUI_OPERATOR_ROLE`, and
+`XMUSE_TUI_OPERATOR_CAPABILITIES` for operator action calls and ordinary Chat
+API write calls.
 
 `XMUSE_DEPLOYMENT_PROFILE=production` now makes Chat API startup fail closed
 when no Chat API write token is configured. Default no-secrets development and
@@ -473,6 +491,7 @@ release readiness as `ready`, `blocked`, or `not_evaluated`.
 | `/release pack` route | `contract_proof` | TUI action path calls Chat API/operator contract and writes only ignored release-readiness artifacts. |
 | Operator action audit | `contract_proof` | JSONL audit row written in test/runtime path; not durable authority. |
 | GOD CLI selection store | `contract_proof` | Durable per-conversation selection record; does not prove live CLI runtime. |
+| TUI direct Chat API write auth | `contract_proof` | Message send, conversation creation, bootstrap, approval, and participant writes forward operator auth headers; no live operator service proof. |
 | GOD session registry | `contract_proof` | Enforces one durable session per conversation participant; no live runtime proof. |
 | Chat API workspace isolation | `contract_proof` | Full Chat API regression passes; no live multi-user soak. |
 | Chat API Auth/RBAC | `contract_proof` | Token + role/capability gate tested in-process; no live service proof. |
@@ -532,6 +551,8 @@ uv run xmuse-live-gate-status-capture --output-dir /tmp/xmuse-combined-release-g
 uv run python scripts/github_server_truth_capture.py --repo iiyazu/Cross-Muse --pull-request 43 --output /tmp/xmuse-combined-github-truth.json --release-gate-output /tmp/xmuse-combined-release-gates/github-server-truth.json --base-branch main
 uv run xmuse-release-readiness-capture --artifacts-dir /tmp/xmuse-combined-release-gates --output /tmp/xmuse-combined-readiness.json
 uv run pytest tests/xmuse/test_god_cli_registration_store.py tests/xmuse/test_god_cli_selection_store.py tests/xmuse/test_god_cli_registry.py tests/xmuse/test_operator_actions.py tests/xmuse/test_chat_api.py tests/xmuse/test_tui_adapter.py tests/xmuse/test_tui_navigation.py tests/xmuse/test_provider_read_contracts_module.py tests/xmuse/test_model_policy_surfaces.py tests/xmuse/test_production_hardening.py tests/xmuse/test_production_operations_doc.py tests/xmuse/test_mainline_contract_docs.py tests/xmuse/test_package_boundaries.py -q
+uv run pytest tests/xmuse/test_tui_adapter.py::test_adapter_send_message_posts_human_message_to_chat_api tests/xmuse/test_tui_adapter.py::test_adapter_create_group_conversation_uses_chat_api tests/xmuse/test_tui_adapter.py::test_adapter_create_bootstrap_proposal_uses_chat_api_auth_headers tests/xmuse/test_tui_adapter.py::test_adapter_apply_bootstrap_proposal_uses_chat_api_auth_headers tests/xmuse/test_tui_adapter.py::test_adapter_approve_proposal_uses_chat_api_endpoint tests/xmuse/test_tui_adapter.py::test_adapter_add_participant_uses_chat_api tests/xmuse/test_tui_adapter.py::test_adapter_remove_participant_resolves_unique_role_and_uses_chat_api tests/xmuse/test_tui_adapter.py::test_adapter_operator_control_action_prefers_chat_api_contract -q
+uv run pytest tests/xmuse/test_tui_adapter.py tests/xmuse/test_tui_navigation.py tests/xmuse/test_production_hardening.py tests/xmuse/test_chat_api.py tests/xmuse/test_package_boundaries.py -q
 uv run ruff check .
 git diff --check
 test ! -e xmuse/__init__.py
@@ -584,6 +605,8 @@ operator action smoke under /tmp refreshed live-gate status artifacts and captur
 second Codex independent review attempt for `/release refresh` timed out after 120 seconds; no formal review artifact captured
 192 passed, 1 warning
 third Codex independent review attempt for manual GOD CLI registration timed out after 120 seconds; no formal review artifact captured
+8 passed
+157 passed, 1 warning
 All checks passed
 git diff --check clean
 xmuse/__init__.py absent
@@ -595,8 +618,10 @@ The warning is the existing Starlette/httpx deprecation warning from FastAPI
 ## Remaining Production Gaps
 
 - Chat API and MCP mutating routes now have Auth/RBAC plus a production
-  fail-closed startup profile. Read routes still follow the local trust policy,
-  and no live operator/TUI service run has exercised the production token bundle.
+  fail-closed startup profile. TUI direct Chat API writes forward the configured
+  operator auth envelope in contract tests. Read routes still follow the local
+  trust policy, and no live operator/TUI service run has exercised the
+  production token bundle.
 - Release readiness capture can aggregate supplied artifacts into a redacted
   blocked/ready/not_evaluated report, but live gate artifacts still need to be
   produced by actual MemoryOS, GitHub, and provider runs.

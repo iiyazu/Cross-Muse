@@ -250,6 +250,7 @@ class XmuseAdapter:
                 response = client.post(
                     f"{self._chat_api_base_url}/api/chat/conversations/{conv_id}/messages",
                     json=payload,
+                    headers=_chat_api_write_headers(),
                 )
                 response.raise_for_status()
                 data = response.json()
@@ -286,6 +287,7 @@ class XmuseAdapter:
                         "preset_id": preset_id,
                         "init_mode": init_mode,
                     },
+                    headers=_chat_api_write_headers(),
                 )
                 response.raise_for_status()
                 data = response.json()
@@ -428,13 +430,7 @@ class XmuseAdapter:
         if conv_id and "conversation_id" not in action_payload:
             action_payload["conversation_id"] = conv_id
         idempotency_key = f"tui:{clean_action}:{uuid.uuid4().hex}"
-        headers = {
-            "X-XMuse-Operator-Id": _operator_actor_id(),
-            "X-XMuse-Operator-Capabilities": ",".join(_operator_capabilities()),
-        }
-        api_key = _chat_api_key()
-        if api_key:
-            headers["X-XMUSE-API-Key"] = api_key
+        headers = _chat_api_write_headers()
         try:
             with self._chat_api_client(10.0) as client:
                 response = client.post(
@@ -513,6 +509,7 @@ class XmuseAdapter:
                 response = client.post(
                     f"{self._chat_api_base_url}/api/chat/conversations/{conv_id}/bootstrap/proposals",
                     json={"source": "deterministic"},
+                    headers=_chat_api_write_headers(),
                 )
                 response.raise_for_status()
                 data = response.json()
@@ -526,6 +523,7 @@ class XmuseAdapter:
                 response = client.post(
                     f"{self._chat_api_base_url}/api/chat/conversations/{conv_id}/bootstrap/apply",
                     json={"proposal_id": proposal_id},
+                    headers=_chat_api_write_headers(),
                 )
                 response.raise_for_status()
                 data = response.json()
@@ -556,6 +554,7 @@ class XmuseAdapter:
                             or f"Approve xmuse chat proposal {clean_proposal_id}"
                         ),
                     },
+                    headers=_chat_api_write_headers(),
                 )
                 if response.status_code >= 400:
                     try:
@@ -703,6 +702,7 @@ class XmuseAdapter:
                 response = client.post(
                     f"{self._chat_api_base_url}/api/chat/conversations/{conv_id}/participants",
                     json=payload,
+                    headers=_chat_api_write_headers(),
                 )
                 response.raise_for_status()
                 data = response.json()
@@ -722,6 +722,7 @@ class XmuseAdapter:
                 response = client.delete(
                     f"{self._chat_api_base_url}/api/chat/conversations/"
                     f"{conv_id}/participants/{participant_id}",
+                    headers=_chat_api_write_headers(),
                 )
                 response.raise_for_status()
             return True
@@ -1843,9 +1844,27 @@ def _operator_capabilities() -> tuple[str, ...]:
     return tuple(item.strip() for item in raw.split(",") if item.strip())
 
 
+def _operator_role() -> str:
+    return os.environ.get("XMUSE_TUI_OPERATOR_ROLE", "operator").strip() or "operator"
+
+
 def _chat_api_key() -> str | None:
     value = os.environ.get("XMUSE_CHAT_API_KEY", "").strip()
     return value or None
+
+
+def _chat_api_write_headers() -> dict[str, str]:
+    headers = {
+        "X-XMuse-Operator-Id": _operator_actor_id(),
+        "X-XMuse-Operator-Role": _operator_role(),
+    }
+    capabilities = ",".join(_operator_capabilities())
+    if capabilities:
+        headers["X-XMuse-Operator-Capabilities"] = capabilities
+    api_key = _chat_api_key()
+    if api_key:
+        headers["X-XMUSE-API-Key"] = api_key
+    return headers
 
 
 def _operator_api_error_result(

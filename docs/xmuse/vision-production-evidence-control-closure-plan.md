@@ -238,6 +238,11 @@ Current implementation status:
   only permits paths under `xmuse/work/release_readiness`.
 - TUI command events record `operator_action_contract` as their read-surface
   authority. They do not write projections or release facts directly.
+- Ordinary TUI Chat API write methods now forward the production operator auth
+  envelope from `XMUSE_CHAT_API_KEY`, `XMUSE_TUI_OPERATOR_ID`,
+  `XMUSE_TUI_OPERATOR_ROLE`, and `XMUSE_TUI_OPERATOR_CAPABILITIES`. Covered
+  write paths are message post, group conversation creation, bootstrap proposal
+  create/apply, proposal approval, and participant add/remove.
 
 ## S3 - Auth/RBAC Production Gate
 
@@ -278,6 +283,11 @@ Current implementation status:
   `XMUSE_CHAT_API_AUTH_TOKEN` / `XMUSE_CHAT_API_KEY`.
 - MCP mutating `tools/call` routes have opt-in token plus role/capability
   gating through `XMUSE_MCP_AUTH_TOKEN` / `XMUSE_MCP_API_KEY`.
+- TUI no longer treats only operator actions as authenticated writes. Its direct
+  Chat API write calls use the same `X-XMUSE-API-Key`,
+  `X-XMuse-Operator-Id`, `X-XMuse-Operator-Role`, and
+  `X-XMuse-Operator-Capabilities` headers when auth is configured. The TUI
+  forwards configured capabilities; it does not fabricate route authorization.
 - `XMUSE_DEPLOYMENT_PROFILE=production` makes Chat API and MCP startup fail
   closed when write auth tokens are missing.
 - Read-only HTTP/MCP routes still follow the local trust policy.

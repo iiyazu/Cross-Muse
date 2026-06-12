@@ -207,10 +207,14 @@ def test_adapter_send_message_posts_human_message_to_chat_api(monkeypatch, tmp_p
         def __exit__(self, exc_type, exc, tb):
             return None
 
-        def post(self, url, json):
-            calls.append({"url": url, "json": json})
+        def post(self, url, json, headers=None):
+            calls.append({"url": url, "json": json, "headers": headers})
             return _Response()
 
+    monkeypatch.setenv("XMUSE_TUI_OPERATOR_ID", "operator-tui")
+    monkeypatch.setenv("XMUSE_TUI_OPERATOR_ROLE", "operator")
+    monkeypatch.setenv("XMUSE_TUI_OPERATOR_CAPABILITIES", "chat_post_message")
+    monkeypatch.setenv("XMUSE_CHAT_API_KEY", "secret")
     monkeypatch.setattr("xmuse.tui.adapter.xmuse_adapter.httpx.Client", _Client)
     adapter = XmuseAdapter(tmp_path, chat_api_base_url="http://chat-api")
 
@@ -224,6 +228,12 @@ def test_adapter_send_message_posts_human_message_to_chat_api(monkeypatch, tmp_p
                 "author": "user",
                 "role": "human",
                 "content": "@architect please improve TUI",
+            },
+            "headers": {
+                "X-XMUSE-API-Key": "secret",
+                "X-XMuse-Operator-Id": "operator-tui",
+                "X-XMuse-Operator-Role": "operator",
+                "X-XMuse-Operator-Capabilities": "chat_post_message",
             },
         }
     ]
@@ -458,6 +468,7 @@ def test_adapter_operator_control_action_prefers_chat_api_contract(
     assert calls[0]["headers"] == {
         "X-XMUSE-API-Key": "secret",
         "X-XMuse-Operator-Id": "operator-api",
+        "X-XMuse-Operator-Role": "operator",
         "X-XMuse-Operator-Capabilities": "select_god_cli",
     }
 
@@ -600,10 +611,14 @@ def test_adapter_create_group_conversation_uses_chat_api(monkeypatch, tmp_path):
         def __exit__(self, exc_type, exc, tb):
             return None
 
-        def post(self, url, json):
-            calls.append({"url": url, "json": json})
+        def post(self, url, json, headers=None):
+            calls.append({"url": url, "json": json, "headers": headers})
             return _Response()
 
+    monkeypatch.setenv("XMUSE_TUI_OPERATOR_ID", "operator-tui")
+    monkeypatch.setenv("XMUSE_TUI_OPERATOR_ROLE", "operator")
+    monkeypatch.setenv("XMUSE_TUI_OPERATOR_CAPABILITIES", "chat_create_conversation")
+    monkeypatch.setenv("XMUSE_CHAT_API_KEY", "secret")
     monkeypatch.setattr("xmuse.tui.adapter.xmuse_adapter.httpx.Client", _Client)
     adapter = XmuseAdapter(tmp_path, chat_api_base_url="http://chat-api")
 
@@ -617,6 +632,12 @@ def test_adapter_create_group_conversation_uses_chat_api(monkeypatch, tmp_path):
                 "title": "New mission",
                 "preset_id": "architect-review-execute",
                 "init_mode": "proposal_then_approve",
+            },
+            "headers": {
+                "X-XMUSE-API-Key": "secret",
+                "X-XMuse-Operator-Id": "operator-tui",
+                "X-XMuse-Operator-Role": "operator",
+                "X-XMuse-Operator-Capabilities": "chat_create_conversation",
             },
         }
     ]
@@ -669,6 +690,114 @@ def test_adapter_get_bootstrap_status_uses_chat_api_endpoint(monkeypatch, tmp_pa
     ]
 
 
+def test_adapter_create_bootstrap_proposal_uses_chat_api_auth_headers(
+    monkeypatch,
+    tmp_path,
+):
+    calls = []
+
+    class _Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"proposal": {"proposal_id": "bootstrap-proposal:conv-1"}}
+
+    class _Client:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return None
+
+        def post(self, url, json, headers=None):
+            calls.append({"url": url, "json": json, "headers": headers})
+            return _Response()
+
+    monkeypatch.setenv("XMUSE_TUI_OPERATOR_ID", "operator-tui")
+    monkeypatch.setenv("XMUSE_TUI_OPERATOR_ROLE", "operator")
+    monkeypatch.setenv("XMUSE_TUI_OPERATOR_CAPABILITIES", "chat_bootstrap")
+    monkeypatch.setenv("XMUSE_CHAT_API_KEY", "secret")
+    monkeypatch.setattr("xmuse.tui.adapter.xmuse_adapter.httpx.Client", _Client)
+    adapter = XmuseAdapter(tmp_path, chat_api_base_url="http://chat-api")
+
+    proposal = adapter.create_bootstrap_proposal("conv-1")
+
+    assert proposal == {"proposal": {"proposal_id": "bootstrap-proposal:conv-1"}}
+    assert calls == [
+        {
+            "url": (
+                "http://chat-api/api/chat/conversations/conv-1/"
+                "bootstrap/proposals"
+            ),
+            "json": {"source": "deterministic"},
+            "headers": {
+                "X-XMUSE-API-Key": "secret",
+                "X-XMuse-Operator-Id": "operator-tui",
+                "X-XMuse-Operator-Role": "operator",
+                "X-XMuse-Operator-Capabilities": "chat_bootstrap",
+            },
+        }
+    ]
+
+
+def test_adapter_apply_bootstrap_proposal_uses_chat_api_auth_headers(
+    monkeypatch,
+    tmp_path,
+):
+    calls = []
+
+    class _Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"bootstrap": {"status": "applied"}}
+
+    class _Client:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return None
+
+        def post(self, url, json, headers=None):
+            calls.append({"url": url, "json": json, "headers": headers})
+            return _Response()
+
+    monkeypatch.setenv("XMUSE_TUI_OPERATOR_ID", "operator-tui")
+    monkeypatch.setenv("XMUSE_TUI_OPERATOR_ROLE", "operator")
+    monkeypatch.setenv("XMUSE_TUI_OPERATOR_CAPABILITIES", "chat_bootstrap")
+    monkeypatch.setenv("XMUSE_CHAT_API_KEY", "secret")
+    monkeypatch.setattr("xmuse.tui.adapter.xmuse_adapter.httpx.Client", _Client)
+    adapter = XmuseAdapter(tmp_path, chat_api_base_url="http://chat-api")
+
+    applied = adapter.apply_bootstrap_proposal(
+        "conv-1",
+        "bootstrap-proposal:conv-1",
+    )
+
+    assert applied == {"bootstrap": {"status": "applied"}}
+    assert calls == [
+        {
+            "url": "http://chat-api/api/chat/conversations/conv-1/bootstrap/apply",
+            "json": {"proposal_id": "bootstrap-proposal:conv-1"},
+            "headers": {
+                "X-XMUSE-API-Key": "secret",
+                "X-XMuse-Operator-Id": "operator-tui",
+                "X-XMuse-Operator-Role": "operator",
+                "X-XMuse-Operator-Capabilities": "chat_bootstrap",
+            },
+        }
+    ]
+
+
 def test_adapter_approve_proposal_uses_chat_api_endpoint(monkeypatch, tmp_path):
     calls = []
 
@@ -688,10 +817,14 @@ def test_adapter_approve_proposal_uses_chat_api_endpoint(monkeypatch, tmp_path):
         def __exit__(self, exc_type, exc, tb):
             return None
 
-        def post(self, url, json):
-            calls.append({"url": url, "json": json})
+        def post(self, url, json, headers=None):
+            calls.append({"url": url, "json": json, "headers": headers})
             return _Response()
 
+    monkeypatch.setenv("XMUSE_TUI_OPERATOR_ID", "operator-tui")
+    monkeypatch.setenv("XMUSE_TUI_OPERATOR_ROLE", "operator")
+    monkeypatch.setenv("XMUSE_TUI_OPERATOR_CAPABILITIES", "chat_approve_proposal")
+    monkeypatch.setenv("XMUSE_CHAT_API_KEY", "secret")
     monkeypatch.setattr("xmuse.tui.adapter.xmuse_adapter.httpx.Client", _Client)
     adapter = XmuseAdapter(tmp_path, chat_api_base_url="http://chat-api")
 
@@ -710,6 +843,12 @@ def test_adapter_approve_proposal_uses_chat_api_endpoint(monkeypatch, tmp_path):
                 "approved_by": ["human"],
                 "approval_mode": "manual",
                 "goal_summary": "Approve from TUI",
+            },
+            "headers": {
+                "X-XMUSE-API-Key": "secret",
+                "X-XMuse-Operator-Id": "operator-tui",
+                "X-XMuse-Operator-Role": "operator",
+                "X-XMuse-Operator-Capabilities": "chat_approve_proposal",
             },
         }
     ]
@@ -837,10 +976,17 @@ def test_adapter_add_participant_uses_chat_api(monkeypatch, tmp_path):
         def __exit__(self, exc_type, exc, tb):
             return None
 
-        def post(self, url, json):
-            calls.append({"url": url, "json": json})
+        def post(self, url, json, headers=None):
+            calls.append({"url": url, "json": json, "headers": headers})
             return _Response()
 
+    monkeypatch.setenv("XMUSE_TUI_OPERATOR_ID", "operator-tui")
+    monkeypatch.setenv("XMUSE_TUI_OPERATOR_ROLE", "operator")
+    monkeypatch.setenv(
+        "XMUSE_TUI_OPERATOR_CAPABILITIES",
+        "chat_manage_participants",
+    )
+    monkeypatch.setenv("XMUSE_CHAT_API_KEY", "secret")
     monkeypatch.setattr("xmuse.tui.adapter.xmuse_adapter.httpx.Client", _Client)
     adapter = XmuseAdapter(tmp_path, chat_api_base_url="http://chat-api")
 
@@ -859,6 +1005,12 @@ def test_adapter_add_participant_uses_chat_api(monkeypatch, tmp_path):
                 "role": "execute",
                 "display_name": "Execution GOD",
                 "model": "gpt-5.4",
+            },
+            "headers": {
+                "X-XMUSE-API-Key": "secret",
+                "X-XMuse-Operator-Id": "operator-tui",
+                "X-XMuse-Operator-Role": "operator",
+                "X-XMuse-Operator-Capabilities": "chat_manage_participants",
             },
         }
     ]
@@ -884,10 +1036,17 @@ def test_adapter_remove_participant_resolves_unique_role_and_uses_chat_api(
         def __exit__(self, exc_type, exc, tb):
             return None
 
-        def delete(self, url):
-            calls.append({"method": "DELETE", "url": url})
+        def delete(self, url, headers=None):
+            calls.append({"method": "DELETE", "url": url, "headers": headers})
             return _Response()
 
+    monkeypatch.setenv("XMUSE_TUI_OPERATOR_ID", "operator-tui")
+    monkeypatch.setenv("XMUSE_TUI_OPERATOR_ROLE", "operator")
+    monkeypatch.setenv(
+        "XMUSE_TUI_OPERATOR_CAPABILITIES",
+        "chat_manage_participants",
+    )
+    monkeypatch.setenv("XMUSE_CHAT_API_KEY", "secret")
     monkeypatch.setattr("xmuse.tui.adapter.xmuse_adapter.httpx.Client", _Client)
     adapter = XmuseAdapter(tmp_path, chat_api_base_url="http://chat-api")
     adapter.get_participants = lambda conv_id: [
@@ -906,6 +1065,12 @@ def test_adapter_remove_participant_resolves_unique_role_and_uses_chat_api(
                 "http://chat-api/api/chat/conversations/conv-1/"
                 "participants/part-execute"
             ),
+            "headers": {
+                "X-XMUSE-API-Key": "secret",
+                "X-XMuse-Operator-Id": "operator-tui",
+                "X-XMuse-Operator-Role": "operator",
+                "X-XMuse-Operator-Capabilities": "chat_manage_participants",
+            },
         }
     ]
 
