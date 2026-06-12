@@ -449,6 +449,11 @@ Current implementation status:
   `export_real_provider_runtime_soak`, and `export_memoryos_live_trace`
   actions write both raw evidence artifacts and release gate artifacts under
   `xmuse/work/release_readiness`; weak inputs remain blocked/manual-gap proof.
+- TUI `/release candidates` now routes through
+  `inspect_release_evidence_candidates` with `release_gate`, reads durable
+  chat/session/peer-latency state plus redacted MemoryOS env presence, and
+  reports which export inputs are ready or missing before an operator attempts
+  a live evidence capture.
 - `uv run python scripts/github_server_truth_capture.py --release-gate-output`
   can write a `github_server_truth` release gate artifact from the raw GitHub
   server truth snapshot. This can satisfy `server_side_enforcement_proof`

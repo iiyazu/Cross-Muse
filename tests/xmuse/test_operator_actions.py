@@ -582,6 +582,80 @@ def test_operator_action_blocks_release_evidence_export_without_handler(
     assert "requires a release evidence export handler" in result.summary
 
 
+def test_operator_action_inspects_release_evidence_candidates_with_capability(
+    tmp_path: Path,
+) -> None:
+    calls: list[OperatorActionRequest] = []
+
+    def _candidate_handler(request: OperatorActionRequest) -> dict[str, object]:
+        calls.append(request)
+        return {
+            "schema_version": "xmuse.release_evidence_candidates.v1",
+            "conversation_id": request.payload["conversation_id"],
+            "natural_deliberation": {"conversations": []},
+            "real_provider_runtime": {"trace_table_present": False},
+            "live_memoryos": {"configured": False},
+        }
+
+    service = OperatorActionService(
+        god_cli_registry=build_default_god_cli_registry(),
+        audit_dir=tmp_path / "operator_actions",
+        release_evidence_candidate_handler=_candidate_handler,
+    )
+
+    result = service.handle(
+        OperatorActionRequest(
+            action="inspect_release_evidence_candidates",
+            actor_id="operator-1",
+            capabilities=(OperatorActionCapability.RELEASE_GATE,),
+            idempotency_key="idem-release-candidates-1",
+            payload={"conversation_id": "conv-1"},
+            source="tui",
+        )
+    )
+
+    assert result.status == "ok"
+    assert result.fact_state == "release_evidence_candidates_inspected"
+    assert result.payload["source_authority"] == "operator_action_contract"
+    assert result.payload["candidates"]["conversation_id"] == "conv-1"
+    assert calls and calls[0].payload == {"conversation_id": "conv-1"}
+    audit_rows = [
+        json.loads(line)
+        for line in (tmp_path / "operator_actions" / "operator-actions.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert audit_rows[-1]["action"] == "inspect_release_evidence_candidates"
+    assert audit_rows[-1]["status"] == "ok"
+
+
+def test_operator_action_denies_release_evidence_candidates_without_capability(
+    tmp_path: Path,
+) -> None:
+    calls: list[OperatorActionRequest] = []
+    service = OperatorActionService(
+        god_cli_registry=build_default_god_cli_registry(),
+        audit_dir=tmp_path / "operator_actions",
+        release_evidence_candidate_handler=lambda request: calls.append(request) or {},
+    )
+
+    result = service.handle(
+        OperatorActionRequest(
+            action="release_evidence_candidates",
+            actor_id="operator-1",
+            capabilities=(),
+            idempotency_key="idem-release-candidates-2",
+            payload={"conversation_id": "conv-1"},
+            source="tui",
+        )
+    )
+
+    assert result.status == "denied"
+    assert result.fact_state == "denied"
+    assert "missing capability release_gate" in result.summary
+    assert calls == []
+
+
 def _manual_registration_payload() -> dict[str, object]:
     return {
         "cli_id": "custom.peer",

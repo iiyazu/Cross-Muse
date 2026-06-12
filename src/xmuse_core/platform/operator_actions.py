@@ -45,6 +45,11 @@ _RELEASE_EVIDENCE_EXPORT_ACTIONS = {
     "memoryos_live_trace_export",
     "memoryos_live_trace_capture",
 }
+_RELEASE_EVIDENCE_CANDIDATE_ACTIONS = {
+    "inspect_release_evidence_candidates",
+    "release_evidence_candidates",
+    "release_candidates",
+}
 
 
 class OperatorActionCapability(StrEnum):
@@ -114,6 +119,10 @@ class OperatorActionService:
             [OperatorActionRequest], dict[str, Any]
         ]
         | None = None,
+        release_evidence_candidate_handler: Callable[
+            [OperatorActionRequest], dict[str, Any]
+        ]
+        | None = None,
     ) -> None:
         self._god_cli_registry = god_cli_registry
         self._audit_dir = audit_dir
@@ -127,6 +136,7 @@ class OperatorActionService:
         self._live_gate_command_runner = live_gate_command_runner
         self._blueprint_freeze_handler = blueprint_freeze_handler
         self._release_evidence_export_handler = release_evidence_export_handler
+        self._release_evidence_candidate_handler = release_evidence_candidate_handler
 
     def handle(self, request: OperatorActionRequest) -> OperatorActionResult:
         action = request.action.strip().lower()
@@ -149,6 +159,11 @@ class OperatorActionService:
             result = self._handle_refresh_live_gate_status(request, audit_id=audit_id)
         elif action in _RELEASE_EVIDENCE_EXPORT_ACTIONS:
             result = self._handle_export_release_evidence(request, audit_id=audit_id)
+        elif action in _RELEASE_EVIDENCE_CANDIDATE_ACTIONS:
+            result = self._handle_inspect_release_evidence_candidates(
+                request,
+                audit_id=audit_id,
+            )
         elif action in {"retry_lane", "lane_retry"}:
             result = self._handle_retry_lane(request, audit_id=audit_id)
         elif action in {"abort_lane", "lane_abort"}:
@@ -601,6 +616,74 @@ class OperatorActionService:
             summary=summary,
             payload={
                 "freeze": freeze,
+                "source_authority": "operator_action_contract",
+            },
+        )
+
+    def _handle_inspect_release_evidence_candidates(
+        self,
+        request: OperatorActionRequest,
+        *,
+        audit_id: str,
+    ) -> OperatorActionResult:
+        action = request.action.strip().lower().replace("-", "_")
+        missing = self._missing_capability(
+            request,
+            OperatorActionCapability.RELEASE_GATE,
+        )
+        if missing is not None:
+            return OperatorActionResult(
+                action=action,
+                status="denied",
+                proof_level="contract_proof",
+                fact_state="denied",
+                actor_id=request.actor_id,
+                audit_id=audit_id,
+                summary=missing,
+            )
+        if self._release_evidence_candidate_handler is None:
+            return OperatorActionResult(
+                action=action,
+                status="blocked",
+                proof_level="manual_gap",
+                fact_state="blocked",
+                actor_id=request.actor_id,
+                audit_id=audit_id,
+                summary=f"{action} requires a release evidence candidate handler",
+            )
+        try:
+            candidates = self._release_evidence_candidate_handler(request)
+        except OperatorActionBlockedError as exc:
+            return OperatorActionResult(
+                action=action,
+                status="blocked",
+                proof_level=exc.proof_level,
+                fact_state=exc.fact_state,
+                actor_id=request.actor_id,
+                audit_id=audit_id,
+                summary=exc.summary,
+                payload=exc.payload,
+            )
+        except Exception as exc:
+            return OperatorActionResult(
+                action=action,
+                status="blocked",
+                proof_level="manual_gap",
+                fact_state="blocked",
+                actor_id=request.actor_id,
+                audit_id=audit_id,
+                summary=f"release evidence candidate inspection failed: {exc}",
+            )
+        return OperatorActionResult(
+            action=action,
+            status="ok",
+            proof_level="contract_proof",
+            fact_state="release_evidence_candidates_inspected",
+            actor_id=request.actor_id,
+            audit_id=audit_id,
+            summary="Inspected release evidence candidates.",
+            payload={
+                "candidates": candidates,
                 "source_authority": "operator_action_contract",
             },
         )

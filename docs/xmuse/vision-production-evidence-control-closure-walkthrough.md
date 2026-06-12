@@ -129,6 +129,7 @@ The same operator action surface now captures the release evidence pack:
 ```text
 /release refresh
 /release pack
+/release candidates
 /release export natural target_ref=blueprint:<blueprint-id>
 /release export provider fresh_inbox=<fresh-inbox-id> resume_inbox=<resume-inbox-id> runtime_backend=ray transport=codex-app-server
 /release export memoryos repo_id=iiyazu/Cross-Muse workspace_id=xmuse god_id=<god-id> thread_id=<thread-id> blueprint_id=<blueprint-id> feature_id=<feature-id> lane_id=<lane-id> actor_id=<actor-id> content='<content>' query='<query>'
@@ -137,8 +138,11 @@ The same operator action surface now captures the release evidence pack:
 `/release refresh` calls `refresh_live_gate_status` through
 `run_operator_control_action` and writes live-gate status artifacts under the
 release-readiness work directory. `/release pack` calls
-`capture_release_evidence_pack` through the same path. `/release export` maps
-to `export_natural_deliberation_transcript`,
+`capture_release_evidence_pack` through the same path. `/release candidates`
+maps to `inspect_release_evidence_candidates`, reads durable chat/session/peer
+latency state plus redacted MemoryOS env presence, and reports which export
+inputs are ready or missing. `/release export` maps to
+`export_natural_deliberation_transcript`,
 `export_real_provider_runtime_soak`, or `export_memoryos_live_trace` and writes
 both the raw evidence artifact and matching release gate artifact under
 `xmuse/work/release_readiness`. Chat API receives these operator actions via:
@@ -551,6 +555,7 @@ release readiness as `ready`, `blocked`, or `not_evaluated`.
 | `/god select` route | `contract_proof` | TUI action path calls Chat API first; no live operator session proof. |
 | `/release refresh` route | `contract_proof` | TUI action path calls Chat API/operator contract and writes only ignored live-gate status artifacts. |
 | `/release pack` route | `contract_proof` | TUI action path calls Chat API/operator contract and writes only ignored release-readiness artifacts. |
+| `/release candidates` route | `contract_proof` | TUI action path calls Chat API/operator contract with `release_gate`; it reads durable candidate state and redacted env presence but writes no proof artifact. |
 | `/release export` routes | `contract_proof` | TUI action path calls Chat API/operator contract with `release_gate`; raw/gate artifacts reflect actual durable/live evidence and remain blocked for weak inputs. |
 | `/lane retry` route | `contract_proof` | TUI action path calls Chat API/operator contract, requires `workflow_write`, and applies a current-status guard; it does not make `feature_lanes.json` authoritative. |
 | `/lane abort` route | `contract_proof` | TUI action path calls Chat API/operator contract, requires `workflow_write`, and applies a current-status guard; it does not make `feature_lanes.json` authoritative. |

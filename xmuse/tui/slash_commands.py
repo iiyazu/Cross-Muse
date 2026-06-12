@@ -386,6 +386,13 @@ class SlashCommandRouter:
         elif parts in (["refresh"], ["status"], ["live-gate-status"]):
             action = "refresh_live_gate_status"
             command = "/release refresh"
+        elif parts and parts[0] in {"candidates", "candidate", "inspect"}:
+            try:
+                payload = _release_candidates_payload(parts[1:])
+            except ValueError as exc:
+                return SlashCommandResult(True, message=str(exc))
+            action = "inspect_release_evidence_candidates"
+            command = "/release candidates"
         elif len(parts) >= 2 and parts[0] == "export":
             try:
                 action, payload = _release_export_action(parts[1:])
@@ -902,6 +909,23 @@ def _release_export_action(args: list[str]) -> tuple[str, dict[str, Any]]:
             ),
         )
     raise ValueError(usage)
+
+
+def _release_candidates_payload(args: list[str]) -> dict[str, Any]:
+    raw = _key_value_args(
+        args,
+        usage="Usage: /release candidates [key=value...]",
+    ) if args else {}
+    return _normalize_release_export_payload(
+        raw,
+        aliases={
+            "source_ref": "source_refs",
+            "target_ref": "target_refs",
+            "target": "target_refs",
+        },
+        list_keys={"source_refs", "target_refs"},
+        int_keys={"trace_limit", "budget"},
+    )
 
 
 def _normalize_release_export_payload(
@@ -1428,6 +1452,7 @@ def _help_text() -> str:
             "/evidence <transcript|github|memory|blockers>",
             "/release refresh",
             "/release pack",
+            "/release candidates [key=value...]",
             "/release export <natural|provider|memoryos> <key=value...>",
             "/lane retry <lane_id> <current_status> [reason]",
             "/lane abort <lane_id> <current_status> [reason]",

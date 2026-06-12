@@ -24,6 +24,9 @@ from xmuse_core.platform.operator_evidence_actions import (
     build_memory_trace_action,
     export_deliberation_transcript,
 )
+from xmuse_core.platform.release_evidence_candidates import (
+    build_release_evidence_candidate_report,
+)
 from xmuse_core.platform.release_evidence_export_actions import (
     run_release_evidence_export_action,
 )
@@ -479,6 +482,9 @@ class XmuseAdapter:
                 request,
                 xmuse_root=self._root,
                 release_readiness_dir=self._root / "work" / "release_readiness",
+            ),
+            release_evidence_candidate_handler=lambda request: (
+                _release_evidence_candidate_report(self._root, request)
             ),
         )
         request = OperatorActionRequest(
@@ -1051,6 +1057,31 @@ def _clean_text(value: Any) -> str | None:
         cleaned = value.strip()
         return cleaned or None
     return None
+
+
+def _release_evidence_candidate_report(
+    root: Path,
+    request: OperatorActionRequest,
+) -> dict[str, Any]:
+    return build_release_evidence_candidate_report(
+        root,
+        conversation_id=_clean_text(request.payload.get("conversation_id")),
+        memoryos_payload=request.payload,
+        trace_limit=_int_payload(request.payload.get("trace_limit"), default=20),
+    )
+
+
+def _int_payload(value: Any, *, default: int) -> int:
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return default
+    return default
 
 
 def _safe_path_segment(value: str) -> str:

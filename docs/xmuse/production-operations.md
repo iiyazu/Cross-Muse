@@ -95,8 +95,8 @@ Operator actions currently use these focused capabilities:
 
 - `register_god_cli` for manual GOD CLI registration;
 - `select_god_cli` for per-conversation GOD CLI selection;
-- `release_gate` for `/release refresh`, `/release pack`, and
-  `/release export <natural|provider|memoryos>`.
+- `release_gate` for `/release refresh`, `/release pack`,
+  `/release candidates`, and `/release export <natural|provider|memoryos>`.
 - `workflow_write` for guarded lane retry/abort requests.
 - `chat_freeze_blueprint` for guarded blueprint freeze requests.
 
@@ -570,6 +570,7 @@ uv run xmuse-tui
 # in the active group chat:
 /release refresh
 /release pack
+/release candidates
 /release export natural target_ref=blueprint:<blueprint-id>
 /release export provider fresh_inbox=<fresh-inbox-id> resume_inbox=<resume-inbox-id> runtime_backend=ray transport=codex-app-server
 /release export memoryos repo_id=iiyazu/Cross-Muse workspace_id=xmuse god_id=<god-id> thread_id=<thread-id> blueprint_id=<blueprint-id> feature_id=<feature-id> lane_id=<lane-id> actor_id=<actor-id> content='<content>' query='<query>'
@@ -578,10 +579,14 @@ uv run xmuse-tui
 `/release refresh` calls `refresh_live_gate_status` and writes the live-gate
 status blocker artifacts under `xmuse/work/release_readiness/artifacts`.
 `/release pack` calls `capture_release_evidence_pack` and writes the operator
-handoff pack plus nested readiness/audit reports. `/release export natural`,
-`/release export provider`, and `/release export memoryos` call the matching
-release evidence export operator actions and write both the raw evidence
-artifact and the corresponding release gate artifact under
+handoff pack plus nested readiness/audit reports. `/release candidates` calls
+`inspect_release_evidence_candidates` and reads durable `chat.db`,
+`god_sessions.json`, the peer latency trace table, and redacted MemoryOS env
+presence to show whether the operator has enough inputs for the export actions.
+It does not create artifacts. `/release export natural`, `/release export
+provider`, and `/release export memoryos` call the matching release evidence
+export operator actions and write both the raw evidence artifact and the
+corresponding release gate artifact under
 `xmuse/work/release_readiness`. These TUI paths go through the
 Chat API operator action endpoint when available, or the same local contract
 service when Chat API is unavailable. These actions require `release_gate`, write

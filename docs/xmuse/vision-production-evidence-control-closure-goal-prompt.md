@@ -94,6 +94,9 @@ Required action paths:
 - TUI /release refresh -> refresh_live_gate_status with release_gate capability.
 - TUI /release pack -> capture_release_evidence_pack with release_gate
   capability.
+- TUI /release candidates -> inspect_release_evidence_candidates with
+  release_gate capability. It must read durable evidence candidates and redacted
+  configuration presence without creating proof artifacts.
 - TUI /release export natural|provider|memoryos ->
   export_natural_deliberation_transcript,
   export_real_provider_runtime_soak, or export_memoryos_live_trace with

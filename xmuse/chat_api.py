@@ -69,6 +69,9 @@ from xmuse_core.platform.operator_actions import (
     OperatorActionService,
 )
 from xmuse_core.platform.read_contracts import build_execution_drilldown_refs
+from xmuse_core.platform.release_evidence_candidates import (
+    build_release_evidence_candidate_report,
+)
 from xmuse_core.platform.release_evidence_export_actions import (
     run_release_evidence_export_action,
 )
@@ -192,6 +195,9 @@ def _operator_action_service(base_dir: Path) -> OperatorActionService:
             xmuse_root=base_dir,
             release_readiness_dir=base_dir / "work" / "release_readiness",
         ),
+        release_evidence_candidate_handler=lambda request: (
+            _operator_release_evidence_candidates(base_dir, request)
+        ),
     )
 
 
@@ -206,6 +212,38 @@ def _god_cli_selection_store(base_dir: Path) -> GodCliSelectionStore:
 def _operator_actor_id(request: Request) -> str:
     value = request.headers.get("X-XMuse-Operator-Id", "")
     return value.strip() or "anonymous-operator"
+
+
+def _operator_payload_text(value: Any) -> str | None:
+    if isinstance(value, str):
+        cleaned = value.strip()
+        return cleaned or None
+    return None
+
+
+def _operator_release_evidence_candidates(
+    base_dir: Path,
+    request: OperatorActionRequest,
+) -> dict[str, object]:
+    return build_release_evidence_candidate_report(
+        base_dir,
+        conversation_id=_operator_payload_text(request.payload.get("conversation_id")),
+        memoryos_payload=request.payload,
+        trace_limit=_operator_payload_int(request.payload.get("trace_limit"), default=20),
+    )
+
+
+def _operator_payload_int(value: Any, *, default: int) -> int:
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return default
+    return default
 
 
 def _operator_capabilities(request: Request) -> tuple[str, ...]:
