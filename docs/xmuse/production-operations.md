@@ -413,9 +413,31 @@ already exported transcript into the `natural_deliberation` release gate.
 
 ## Real Provider Runtime Release Gate
 
-After a real Ray/Codex/OpenCode runtime soak has written an
-`xmuse.real_provider_runtime.v1` artifact, convert it to a release gate
-artifact:
+After a real Ray/Codex/OpenCode fresh/resume runtime soak has produced durable
+peer latency traces and provider session metadata, export the runtime artifact:
+
+```bash
+uv run xmuse-real-provider-runtime-soak-capture \
+  --conversation-id <conversation-id> \
+  --fresh-inbox-item-id <fresh-inbox-id> \
+  --resume-inbox-item-id <resume-inbox-id> \
+  --runtime-backend ray \
+  --transport codex-app-server \
+  --chat-db xmuse/chat.db \
+  --registry xmuse/god_sessions.json \
+  --run-id real-soak-<pr-or-release-id> \
+  --output xmuse/work/release_readiness/real-provider-runtime.json
+```
+
+The soak export reads `peer_turn_latency_traces` from durable `chat.db` and
+provider session metadata from `god_sessions.json`. The operator must identify
+the fresh and resumed peer inbox traces; probe output alone cannot satisfy this
+gate. Fake/local/stdout runtime labels, non-`mcp_writeback` delivery, degraded
+turns, missing provider session ids, or non-reused provider sessions remain
+`manual_gap`.
+
+After the `xmuse.real_provider_runtime.v1` artifact exists, convert it to a
+release gate artifact:
 
 ```bash
 uv run xmuse-real-provider-runtime-gate-capture \
@@ -434,8 +456,8 @@ If a real soak artifact has unresolved blockers, the gate keeps
 `real_provider_proof` but remains `blocked`, so release readiness cannot become
 `ready` until the blockers are resolved.
 
-This command does not start Ray, Codex, OpenCode, or MCP. It only validates and
-converts an existing real-provider runtime artifact.
+The gate command does not start Ray, Codex, OpenCode, or MCP. It only validates
+and converts an existing real-provider runtime artifact.
 
 ## Release Readiness Capture
 

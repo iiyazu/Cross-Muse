@@ -55,8 +55,9 @@ Priority order:
    MemoryOS Lite is configured, then capture MemoryOS Lite gate status, GitHub
    server truth, Ray/Codex GOD runtime, OpenCode health/bounded runtime, and
    natural GOD transcript evidence via
-   `xmuse-natural-deliberation-transcript-capture`. Configured gate failures
-   are release blockers, not cosmetic gaps.
+   `xmuse-natural-deliberation-transcript-capture`; export provider soak
+   evidence with `xmuse-real-provider-runtime-soak-capture`. Configured gate
+   failures are release blockers, not cosmetic gaps.
 6. Aggregate release readiness with tests, ruff, package boundary, internal
    review, live/server/provider evidence, blocker artifacts, and proof
    contamination audit.

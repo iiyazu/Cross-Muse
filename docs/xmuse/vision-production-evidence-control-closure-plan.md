@@ -463,6 +463,12 @@ Current implementation status:
   runtime soak artifact into the `real_provider` release gate. It blocks
   contract/fake proof, stdout fallback, missing MCP writeback, missing ordered
   stage timings, and missing restart/resume evidence.
+- `uv run xmuse-real-provider-runtime-soak-capture` is the production path for
+  producing that runtime artifact from durable peer latency traces and
+  `god_sessions.json` provider session metadata. It requires operator-selected
+  fresh/resume inbox trace ids and keeps probes, stdout fallback, fake/local
+  backend labels, degraded turns, and missing provider session reuse as
+  `manual_gap`.
 - `uv run xmuse-memoryos-live-gate-capture` converts a live MemoryOS Lite trace
   artifact into the `live_memoryos` release gate. It blocks contract/fake proof,
   empty trace events, invalid namespace/session evidence, and unresolved

@@ -253,14 +253,16 @@ def _provider_gate(
         ),
         attempted_command="\n".join(
             [
+                "uv run xmuse-real-provider-runtime-soak-capture",
                 "codex --version",
                 "opencode --version",
                 "uv run python -c 'import ray; print(ray.__version__)'",
             ]
         ),
         next_action=(
-            "Run the configured real provider/Ray/Codex/OpenCode runtime gate and "
-            "write real_provider_proof."
+            "Run a real provider/Ray/Codex/OpenCode fresh/resume soak, export "
+            "durable peer latency evidence with xmuse-real-provider-runtime-soak-capture, "
+            "then convert it to real_provider_proof."
         ),
         source_refs=source_refs + successful_probe_refs,
     )
