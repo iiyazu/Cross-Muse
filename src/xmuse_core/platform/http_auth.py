@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from xmuse_core.platform.mcp_permissions import MCP_TOOL_PERMISSIONS, authorize_mcp_tool
+
 MUTATING_HTTP_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 OPERATOR_ACTION_CAPABILITIES = frozenset(
     {
@@ -75,6 +77,68 @@ def authorize_chat_api_write(
         code="missing_capability",
         message=f"missing capability {required_capability}",
         required_capability=required_capability,
+    )
+
+
+def authorize_mcp_http_tool(
+    *,
+    tool_name: str,
+    role: str,
+    capabilities: tuple[str, ...],
+    host_auth_enabled: bool = True,
+) -> HttpAuthorizationDecision:
+    metadata = MCP_TOOL_PERMISSIONS.get(tool_name)
+    if metadata is None:
+        return HttpAuthorizationDecision(
+            allowed=True,
+            code="unknown_tool_deferred",
+            message="unknown MCP tool authorization deferred to tool dispatcher",
+        )
+    if not metadata.mutates:
+        return HttpAuthorizationDecision(
+            allowed=True,
+            code="read_allowed",
+            message="read MCP tool allowed",
+        )
+
+    decision = authorize_mcp_tool(
+        tool_name,
+        role=role,
+        host_auth_enabled=host_auth_enabled,
+    )
+    if not decision.allowed:
+        normalized_role = role.strip().lower() or "operator"
+        return HttpAuthorizationDecision(
+            allowed=False,
+            code="unknown_role"
+            if normalized_role not in {"admin", "viewer", "operator", "god"}
+            else "role_not_authorized",
+            message=decision.reason,
+            required_capability=tool_name,
+        )
+
+    normalized_role = role.strip().lower() or "operator"
+    if normalized_role == "admin":
+        return HttpAuthorizationDecision(
+            allowed=True,
+            code="admin_allowed",
+            message="admin role allowed",
+            required_capability=tool_name,
+        )
+
+    granted = {item.strip() for item in capabilities if item.strip()}
+    if tool_name in granted:
+        return HttpAuthorizationDecision(
+            allowed=True,
+            code="capability_allowed",
+            message="required MCP tool capability granted",
+            required_capability=tool_name,
+        )
+    return HttpAuthorizationDecision(
+        allowed=False,
+        code="missing_capability",
+        message=f"missing capability for MCP tool {tool_name}",
+        required_capability=tool_name,
     )
 
 

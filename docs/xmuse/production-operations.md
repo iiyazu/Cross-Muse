@@ -38,6 +38,7 @@ export XMUSE_RAY_GOD_MCP=1
 export XMUSE_CHAT_API_URL=http://127.0.0.1:8201
 export XMUSE_CHAT_API_AUTH_TOKEN=<server-token>
 export XMUSE_CHAT_API_KEY=<same-token-for-tui-client>
+export XMUSE_MCP_AUTH_TOKEN=<server-token>
 ```
 
 `XMUSE_DEGRADED_LOCAL_GOD_MODE=1` is an explicit degraded local mode. It is not
@@ -54,6 +55,19 @@ process, mutating `/api/chat/*` routes require:
 The TUI reads `XMUSE_CHAT_API_KEY` and forwards it to Chat API operator action
 requests. Read routes remain unauthenticated until a broader deployment policy
 decides otherwise.
+
+When `XMUSE_MCP_AUTH_TOKEN` or `XMUSE_MCP_API_KEY` is set for the MCP process,
+mutating JSON-RPC `tools/call` requests on `/mcp`, `/mcp/chat`, `/sse`, and
+`/messages` require:
+
+- `X-XMUSE-API-Key` matching the configured MCP token;
+- `X-XMuse-Operator-Role` such as `operator`, `god`, or `admin`;
+- `X-XMuse-Operator-Capabilities` containing the exact MCP tool name for
+  non-admin writes, for example `enqueue_lane` or `chat_emit_proposal`.
+
+Read-only MCP tools remain token-free under the current local trust policy.
+MCP auth does not replace tool-specific audit guards or GOD session identity
+checks.
 
 ## Startup
 
@@ -100,7 +114,8 @@ The JSON includes `operations`:
 - `cleanup`: leftover Codex app-server and Ray process evidence when no runner owns them.
 
 `xmuse.chat_api` also exposes `/health`. `xmuse.mcp_server` exposes `/health`
-with `/mcp`, `/mcp/chat`, `/sse`, `chat.db`, and `god_sessions.json` metadata.
+with `/mcp`, `/mcp/chat`, `/sse`, `chat.db`, `god_sessions.json`, and MCP auth
+metadata.
 
 ## Degradation Matrix
 
@@ -162,8 +177,8 @@ uv run pytest -q tests/xmuse/test_full_chain_real_run.py::test_real_ray_codex_ap
 - Health HTTP probing is opt-in through `--health-check-http` to avoid making
   normal read-only health summaries block on ports.
 - Process discovery is Linux `/proc` based.
-- Chat API has opt-in token plus role/capability gating for mutating routes.
-  MCP HTTP endpoints still have no network auth layer; this remains a trusted
-  local boundary unless fronted by host auth.
+- Chat API and MCP have opt-in token plus role/capability gating for mutating
+  routes. Read routes remain under the local trust policy until a broader
+  deployment decision requires read authentication.
 - Fake/local smoke remains useful for installability but does not replace real
   Ray/Codex/MCP writeback evidence.

@@ -173,6 +173,31 @@ write authority by itself. `viewer` cannot mutate, `admin` can mutate, and
 `operator` / `god` must present the required route capability. The TUI forwards
 `XMUSE_CHAT_API_KEY` for operator action calls.
 
+### MCP HTTP Auth/RBAC
+
+MCP JSON-RPC `tools/call` execution now has an opt-in token and
+role/capability gate for mutating tools:
+
+```text
+XMUSE_MCP_AUTH_TOKEN=<server-token>
+X-XMUSE-API-Key: <client-token>
+X-XMuse-Operator-Role: operator
+X-XMuse-Operator-Capabilities: enqueue_lane
+```
+
+With auth enabled, read-only MCP tools such as `list_lanes` remain readable
+without a token under the current local trust policy. Mutating tools require a
+matching token, an allowed role, and the exact tool capability for non-admin
+callers. The gate runs before tool execution and does not replace audit guards
+or GOD session identity checks.
+
+The MCP `/health` response now reports:
+
+```text
+auth.write_auth_enabled
+auth.read_tools_require_token
+```
+
 ## Proof-Level Summary
 
 | Surface | Current proof | Boundary |
@@ -184,6 +209,7 @@ write authority by itself. `viewer` cannot mutate, `admin` can mutate, and
 | GOD session registry | `contract_proof` | Enforces one durable session per conversation participant; no live runtime proof. |
 | Chat API workspace isolation | `contract_proof` | Full Chat API regression passes; no live multi-user soak. |
 | Chat API Auth/RBAC | `contract_proof` | Token + role/capability gate tested in-process; no live service proof. |
+| MCP Auth/RBAC | `contract_proof` | Token + role/capability gate tested in-process; no live service proof. |
 | Release readiness evaluator | `contract_proof` | Blocks proof contamination; no live gate captured. |
 | MemoryOS live gate | `manual_gap` | Env not configured in current shell. |
 | Ray/Codex/OpenCode live gate | `manual_gap` | Binaries/Ray import exist, but production services/env are not running/configured. |
@@ -201,6 +227,10 @@ uv run pytest tests/xmuse/test_chat_bootstrap.py tests/xmuse/test_groupchat_boot
 uv run pytest tests/xmuse/test_god_cli_selection_store.py tests/xmuse/test_operator_actions.py tests/xmuse/test_tui_adapter.py tests/xmuse/test_package_boundaries.py tests/xmuse/test_provider_read_contracts_module.py -q
 uv run pytest tests/xmuse/test_production_hardening.py tests/xmuse/test_chat_api.py -q
 uv run pytest tests/xmuse/test_tui_adapter.py::test_adapter_operator_control_action_prefers_chat_api_contract tests/xmuse/test_tui_adapter.py::test_adapter_operator_control_action_does_not_fallback_after_api_rejection -q
+uv run pytest tests/xmuse/test_mcp_server.py -q
+uv run pytest tests/xmuse/test_production_hardening.py tests/xmuse/test_mainline_contract_docs.py -q
+uv run pytest tests/xmuse/test_mcp_server.py tests/xmuse/test_production_hardening.py tests/xmuse/test_depth_hardening_contracts.py -q
+uv run pytest tests/xmuse/test_mainline_contract_docs.py tests/xmuse/test_package_boundaries.py -q
 uv run ruff check .
 git diff --check
 ```
@@ -215,6 +245,10 @@ Observed results:
 63 passed
 37 passed, 1 warning
 2 passed
+20 passed, 1 warning
+11 passed, 1 warning
+35 passed, 1 warning
+18 passed
 All checks passed
 git diff --check clean
 ```
@@ -224,8 +258,9 @@ The warning is the existing Starlette/httpx deprecation warning from FastAPI
 
 ## Remaining Production Gaps
 
-- MCP HTTP routes still need host auth/RBAC before exposure beyond trusted local
-  operator boundaries.
+- Chat API and MCP mutating routes now have opt-in Auth/RBAC. Read routes still
+  follow the local trust policy, and a production deployment profile still needs
+  a fail-closed startup requirement for missing write tokens.
 - `/god select` now persists selected GOD CLI per conversation, but this is
   still a CLI selection authority only; it does not prove a live provider
   session is running.
@@ -242,8 +277,8 @@ The warning is the existing Starlette/httpx deprecation warning from FastAPI
 
 1. Bind selected CLI records into the official conversation/bootstrap
    participant flow where role templates need selected runtime providers.
-2. Implement production operator capabilities for the remaining Chat API/MCP
-   write routes.
+2. Make the chosen production deployment profile fail closed when Chat API or
+   MCP write tokens are missing.
 3. Add a release-readiness capture command that reads live gate artifacts and
    writes a redacted readiness report.
 4. Start the configured Chat API/MCP/platform runner bundle and capture a real

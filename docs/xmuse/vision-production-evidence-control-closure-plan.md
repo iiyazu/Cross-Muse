@@ -230,6 +230,16 @@ Acceptance:
 - Existing GOD identity checks remain in force and are not confused with API
   authentication.
 
+Current implementation status:
+
+- Chat API mutating routes have opt-in token plus role/capability gating through
+  `XMUSE_CHAT_API_AUTH_TOKEN` / `XMUSE_CHAT_API_KEY`.
+- MCP mutating `tools/call` routes have opt-in token plus role/capability
+  gating through `XMUSE_MCP_AUTH_TOKEN` / `XMUSE_MCP_API_KEY`.
+- Read-only HTTP/MCP routes still follow the local trust policy.
+- Remaining production hardening is to make the chosen deployment profile fail
+  closed when a production write surface starts without its required token.
+
 ## S4 - Live Evidence Gates
 
 Goal: promote configured live gates from optional smoke to release-readiness
@@ -323,7 +333,8 @@ uv run pytest tests/xmuse/test_tui_adapter.py tests/xmuse/test_tui_navigation.py
 uv run pytest tests/xmuse/test_memoryos_lite_interop.py -q
 uv run pytest tests/xmuse/test_github_server_truth_capture.py tests/xmuse/test_github_server_gate_contract.py -q
 uv run pytest tests/xmuse/test_goal_stage_runner.py -q
-uv run pytest tests/xmuse/test_mcp_server.py tests/xmuse/test_mcp_permissions.py -q
+uv run pytest tests/xmuse/test_mcp_server.py tests/xmuse/test_production_hardening.py tests/xmuse/test_depth_hardening_contracts.py -q
+uv run pytest tests/xmuse/test_production_hardening.py tests/xmuse/test_mainline_contract_docs.py -q
 uv run pytest tests/xmuse/test_provider_policy.py tests/xmuse/test_provider_opencode.py -q
 ```
 

@@ -47,8 +47,8 @@ Priority:
 3. Make TUI a full operation surface. Mutating actions must go through official
    Chat API/MCP/platform contracts with idempotency and audit; TUI must not
    write projections or internal state directly.
-4. Advance production Auth/RBAC: deny write/admin actions by default unless a
-   session/operator capability and audit requirements are satisfied.
+4. Advance production Auth/RBAC: Chat API and MCP mutating writes must require
+   token, role/capability, idempotency/audit, and the existing contract guards.
 5. Attempt configured live evidence gates: MemoryOS Lite trace, GitHub server
    truth, Ray/Codex GOD runtime, OpenCode health/bounded runtime. Configured
    gate failures are release blockers.
@@ -71,6 +71,9 @@ Hard constraints:
 - feature_lanes.json, TUI, dashboard, cards, and Ray actors are not durable
   authority.
 - TUI may operate the workflow only through authorized contracts/APIs.
+- Chat API and MCP writes must use configured tokens and
+  `X-XMUSE-API-Key`/`X-XMuse-Operator-Role`/`X-XMuse-Operator-Capabilities`
+  headers when auth is enabled.
 - Internal review proof is allowed for single-maintainer review truth, but it is
   not GitHub server-side enforcement proof.
 - pr_merged requires server-side merge proof.

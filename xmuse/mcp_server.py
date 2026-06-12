@@ -4,15 +4,18 @@
 from __future__ import annotations
 
 import json
+import os
+import secrets
 import uuid
 from pathlib import Path
 from typing import Any
 
 import uvicorn
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from xmuse_core.platform import mcp_responses, mcp_search
+from xmuse_core.platform.http_auth import authorize_mcp_http_tool
 from xmuse_core.platform.projection.allowlist import (
     normalize_mutation_audit,
     stamp_mutation_audit,
@@ -40,6 +43,66 @@ _json_rpc_response = mcp_responses.json_rpc_response
 _json_rpc_error = mcp_responses.json_rpc_error
 _text_for_search = mcp_search.text_for_search
 _query_terms = mcp_search.query_terms
+
+
+def _auth_token_from_env() -> str | None:
+    value = (
+        os.environ.get("XMUSE_MCP_AUTH_TOKEN")
+        or os.environ.get("XMUSE_MCP_API_KEY")
+        or ""
+    ).strip()
+    return value or None
+
+
+def _operator_capabilities(request: Request) -> tuple[str, ...]:
+    raw = request.headers.get("X-XMuse-Operator-Capabilities", "")
+    return tuple(item.strip() for item in raw.split(",") if item.strip())
+
+
+def _operator_role(request: Request) -> str:
+    value = request.headers.get("X-XMuse-Operator-Role", "")
+    return value.strip() or "operator"
+
+
+def _mcp_auth_response(
+    *,
+    request: Request | None,
+    tool_name: str,
+    auth_token: str | None,
+) -> JSONResponse | None:
+    if not auth_token or request is None:
+        return None
+
+    decision = authorize_mcp_http_tool(
+        tool_name=tool_name,
+        role=_operator_role(request),
+        capabilities=_operator_capabilities(request),
+        host_auth_enabled=True,
+    )
+    if decision.allowed and decision.code == "read_allowed":
+        return None
+    if decision.allowed and decision.code == "unknown_tool_deferred":
+        return None
+
+    provided = request.headers.get("X-XMUSE-API-Key", "")
+    if not provided or not secrets.compare_digest(provided, auth_token):
+        return JSONResponse(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            content={"detail": "authentication required"},
+        )
+    if not decision.allowed:
+        return JSONResponse(
+            status_code=status.HTTP_403_FORBIDDEN,
+            content={
+                "detail": {
+                    "code": decision.code,
+                    "message": decision.message,
+                    "required_capability": decision.required_capability,
+                    "tool_name": tool_name,
+                }
+            },
+        )
+    return None
 
 
 def _read_json_object(path: Path, default: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -1117,6 +1180,8 @@ async def _handle_json_rpc(
     payload: dict[str, Any],
     ops: XmuseOperations,
     *,
+    request: Request | None = None,
+    auth_token: str | None = None,
     tool_schemas: list[dict[str, Any]] | None = None,
 ) -> Response:
     request_id = payload.get("id")
@@ -1173,6 +1238,13 @@ async def _handle_json_rpc(
                 raise ValueError(f"tool is not exposed on this MCP endpoint: {name}")
             if not isinstance(arguments, dict):
                 raise ValueError("arguments must be an object")
+            auth_response = _mcp_auth_response(
+                request=request,
+                tool_name=name,
+                auth_token=auth_token,
+            )
+            if auth_response is not None:
+                return auth_response
             if name in scoped_tool_schemas:
                 _validate_required_tool_arguments(scoped_tool_schemas[name], arguments)
             return JSONResponse(_json_rpc_response(request_id, _tool_result(ops, name, arguments)))
@@ -1203,10 +1275,16 @@ def _validate_required_tool_arguments(
         )
 
 
-def create_app(xmuse_root: str | Path = DEFAULT_XMUSE_ROOT) -> FastAPI:
+def create_app(
+    xmuse_root: str | Path = DEFAULT_XMUSE_ROOT,
+    *,
+    auth_token: str | None = None,
+) -> FastAPI:
     ops = XmuseOperations(xmuse_root)
+    resolved_auth_token = (auth_token or _auth_token_from_env() or "").strip() or None
     app = FastAPI(title="xmuse MCP Server", version=SERVER_VERSION)
     app.state.xmuse_ops = ops
+    app.state.auth_token = resolved_auth_token
 
     from fastapi.middleware.cors import CORSMiddleware
     app.add_middleware(
@@ -1227,6 +1305,10 @@ def create_app(xmuse_root: str | Path = DEFAULT_XMUSE_ROOT) -> FastAPI:
                 "mcp": "/mcp",
                 "mcp_chat": "/mcp/chat",
                 "sse": "/sse",
+            },
+            "auth": {
+                "write_auth_enabled": resolved_auth_token is not None,
+                "read_tools_require_token": False,
             },
             "state_files": {
                 "chat_db": {
@@ -1254,28 +1336,49 @@ def create_app(xmuse_root: str | Path = DEFAULT_XMUSE_ROOT) -> FastAPI:
         payload = await request.json()
         if not isinstance(payload, dict):
             return JSONResponse(_json_rpc_error(None, -32600, "request must be an object"))
-        return await _handle_json_rpc(payload, ops)
+        return await _handle_json_rpc(
+            payload,
+            ops,
+            request=request,
+            auth_token=resolved_auth_token,
+        )
 
     @app.post("/messages")
     async def messages(request: Request) -> JSONResponse:
         payload = await request.json()
         if not isinstance(payload, dict):
             return JSONResponse(_json_rpc_error(None, -32600, "request must be an object"))
-        return await _handle_json_rpc(payload, ops)
+        return await _handle_json_rpc(
+            payload,
+            ops,
+            request=request,
+            auth_token=resolved_auth_token,
+        )
 
     @app.post("/mcp")
     async def mcp(request: Request) -> JSONResponse:
         payload = await request.json()
         if not isinstance(payload, dict):
             return JSONResponse(_json_rpc_error(None, -32600, "request must be an object"))
-        return await _handle_json_rpc(payload, ops)
+        return await _handle_json_rpc(
+            payload,
+            ops,
+            request=request,
+            auth_token=resolved_auth_token,
+        )
 
     @app.post("/mcp/chat")
     async def mcp_chat(request: Request) -> Response:
         payload = await request.json()
         if not isinstance(payload, dict):
             return JSONResponse(_json_rpc_error(None, -32600, "request must be an object"))
-        return await _handle_json_rpc(payload, ops, tool_schemas=_peer_chat_tool_schemas())
+        return await _handle_json_rpc(
+            payload,
+            ops,
+            request=request,
+            auth_token=resolved_auth_token,
+            tool_schemas=_peer_chat_tool_schemas(),
+        )
 
     return app
 
