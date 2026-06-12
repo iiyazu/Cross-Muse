@@ -358,6 +358,10 @@ Current implementation status:
 - The overnight replay bundle now requires a `memory_governance` section in
   addition to `memoryos_trace`, so replay can show both MemoryOS trace evidence
   and the policy decision that made a memory write/promotion acceptable.
+- `uv run xmuse-overnight-replay-bundle-capture` builds a replay index from
+  release gate artifacts and explicit `xmuse.production_evidence.v1` section
+  artifacts. It fills unattached required sections with `manual_gap` instead of
+  omitting them, so an overnight run can be replayed without prose-only gaps.
 - Existing redaction, tombstone filtering, REST-first MemoryOS Lite interop,
   and no-`memoryos_lite` package boundary rules remain in force. Live MemoryOS
   trace capture is still a configured live gate: when it is not configured, the
@@ -462,6 +466,8 @@ Tasks:
   `uv run xmuse-release-evidence-pack`,
   `uv run xmuse-release-readiness-capture`, and
   `uv run xmuse-proof-contamination-audit` where appropriate.
+- Use `uv run xmuse-overnight-replay-bundle-capture` to assemble the replay
+  index from release gate artifacts and attached section evidence.
 - Update walkthrough/evidence docs under `docs/xmuse/`.
 - Run focused tests for every changed surface.
 - Always run:
