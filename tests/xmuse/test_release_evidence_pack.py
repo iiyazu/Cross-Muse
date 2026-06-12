@@ -235,6 +235,7 @@ def _write_internal_review(path: Path, **overrides: object) -> Path:
         "review_id": "review-pr43-head-pack-1",
         "reviewer": "codex-reviewer",
         "reviewed_head_sha": "head-pack-1",
+        "review_scope": "full_pr_current_head",
         "decision": "approved",
         "summary": "No blocking findings.",
         "findings": [
@@ -745,6 +746,7 @@ def test_release_evidence_pack_converts_internal_review_into_release_gate(
     assert gate["source_refs"] == [
         "github:pr:43",
         "internal_review:review-pr43-head-pack-1",
+        "internal_review_scope:full_pr_current_head",
     ]
     assert pack["source_reports"]["internal_review_gate"] == str(gate_path)
     assert pack["artifact_count"] == 1

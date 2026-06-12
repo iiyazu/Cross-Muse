@@ -478,8 +478,9 @@ Current implementation status:
   without weakening `pr_merged`, which still requires merge truth.
 - `uv run xmuse-internal-review-gate-capture` converts an approved
   `xmuse.internal_review.v1` artifact for the current head SHA into an
-  `internal_review_proof` release gate. It blocks mismatched heads and open
-  critical/important findings.
+  `internal_review_proof` release gate only when it declares
+  `review_scope=full_pr_current_head`. It blocks mismatched heads, missing or
+  partial review scope, and open critical/important findings.
 - A captured structured internal review artifact can also be handed to
   `uv run xmuse-release-evidence-pack --internal-review-artifact REVIEW` with
   `--internal-review-expected-head-sha HEAD`. The pack only converts the

@@ -839,6 +839,7 @@ def _write_internal_review(path: Path) -> None:
                 "review_id": "review-pr43-head-pack-1",
                 "reviewer": "codex-reviewer",
                 "reviewed_head_sha": "head-pack-1",
+                "review_scope": "full_pr_current_head",
                 "decision": "approved",
                 "summary": "No blocking findings.",
                 "findings": [],

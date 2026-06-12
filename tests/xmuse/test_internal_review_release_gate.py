@@ -27,6 +27,7 @@ def test_internal_review_gate_accepts_verified_approved_artifact(
             "review_id": "review-pr43-4cbed89",
             "reviewer": "codex-reviewer",
             "reviewed_head_sha": "4cbed89",
+            "review_scope": "full_pr_current_head",
             "decision": "approved",
             "summary": "No blocking findings.",
             "findings": [
@@ -48,7 +49,11 @@ def test_internal_review_gate_accepts_verified_approved_artifact(
     assert gate["kind"] == "internal_review"
     assert gate["status"] == "ok"
     assert gate["proof_level"] == "internal_review_proof"
-    assert gate["source_refs"] == ["github:pr:43", "internal_review:review-pr43-4cbed89"]
+    assert gate["source_refs"] == [
+        "github:pr:43",
+        "internal_review:review-pr43-4cbed89",
+        "internal_review_scope:full_pr_current_head",
+    ]
     report = capture_release_readiness(
         artifacts_dir=tmp_path / "gates",
         output_path=tmp_path / "release-readiness.json",
@@ -65,6 +70,7 @@ def test_internal_review_gate_blocks_head_sha_mismatch(tmp_path: Path) -> None:
             "review_id": "review-pr43-old",
             "reviewer": "codex-reviewer",
             "reviewed_head_sha": "old-head",
+            "review_scope": "full_pr_current_head",
             "decision": "approved",
             "summary": "No blocking findings.",
         },
@@ -81,6 +87,33 @@ def test_internal_review_gate_blocks_head_sha_mismatch(tmp_path: Path) -> None:
     assert "reviewed_head_sha mismatch" in gate["summary"]
 
 
+def test_internal_review_gate_blocks_non_full_pr_review_scope(tmp_path: Path) -> None:
+    artifact = tmp_path / "internal-review.json"
+    _write_json(
+        artifact,
+        {
+            "schema_version": "xmuse.internal_review.v1",
+            "review_id": "review-pr43-slice",
+            "reviewer": "codex-reviewer",
+            "reviewed_head_sha": "4cbed89",
+            "review_scope": "latest_commit_only",
+            "decision": "approved",
+            "summary": "Latest commit only.",
+            "findings": [],
+        },
+    )
+
+    gate = capture_internal_review_release_gate(
+        artifact_path=artifact,
+        output_path=tmp_path / "gate.json",
+        expected_head_sha="4cbed89",
+    )
+
+    assert gate["status"] == "blocked"
+    assert gate["proof_level"] == "manual_gap"
+    assert "review_scope must be full_pr_current_head" in gate["summary"]
+
+
 def test_internal_review_gate_blocks_open_important_findings(tmp_path: Path) -> None:
     artifact = tmp_path / "internal-review.json"
     _write_json(
@@ -90,6 +123,7 @@ def test_internal_review_gate_blocks_open_important_findings(tmp_path: Path) -> 
             "review_id": "review-pr43-findings",
             "reviewer": "codex-reviewer",
             "reviewed_head_sha": "4cbed89",
+            "review_scope": "full_pr_current_head",
             "decision": "approved",
             "summary": "Important finding remains open.",
             "findings": [

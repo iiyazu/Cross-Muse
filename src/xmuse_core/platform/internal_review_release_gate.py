@@ -5,6 +5,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+FULL_PR_CURRENT_HEAD_REVIEW_SCOPE = "full_pr_current_head"
+
 
 def capture_internal_review_release_gate(
     *,
@@ -68,6 +70,18 @@ def build_internal_review_release_gate(
             summary=(
                 "Internal review artifact reviewed_head_sha mismatch: "
                 f"expected {expected_head_sha}, got {reviewed_head_sha or '<missing>'}."
+            ),
+            artifact_path=artifact,
+            source_refs=source_refs,
+        )
+
+    review_scope = _text(review_artifact.get("review_scope"))
+    if review_scope != FULL_PR_CURRENT_HEAD_REVIEW_SCOPE:
+        return _blocked_gate(
+            summary=(
+                "Internal review artifact review_scope must be "
+                f"{FULL_PR_CURRENT_HEAD_REVIEW_SCOPE}, got "
+                f"{review_scope or '<missing>'}."
             ),
             artifact_path=artifact,
             source_refs=source_refs,
@@ -174,6 +188,9 @@ def _source_refs(review_artifact: dict[str, Any], *, review_id: str | None) -> l
     refs = _string_list(review_artifact.get("source_refs"))
     if review_id is not None:
         refs.append(f"internal_review:{review_id}")
+    review_scope = _text(review_artifact.get("review_scope"))
+    if review_scope is not None:
+        refs.append(f"internal_review_scope:{review_scope}")
     return _dedupe(refs)
 
 

@@ -381,6 +381,7 @@ current PR head:
   "review_id": "review-pr-<number>-<head-sha>",
   "reviewer": "codex-reviewer",
   "reviewed_head_sha": "<current-head-sha>",
+  "review_scope": "full_pr_current_head",
   "decision": "approved",
   "summary": "No blocking findings.",
   "findings": [],
@@ -398,9 +399,10 @@ uv run xmuse-internal-review-gate-capture \
 ```
 
 The command writes `internal_review_proof` only when the artifact is approved,
-matches the expected head SHA, has a reviewer, and contains no open
-critical/important findings. It is internal review truth only; it is not GitHub
-server-side enforcement.
+matches the expected head SHA, declares `review_scope=full_pr_current_head`, has
+a reviewer, and contains no open critical/important findings. Latest-commit or
+partial-scope reviews remain `manual_gap`. It is internal review truth only; it
+is not GitHub server-side enforcement.
 
 ## Natural GOD Deliberation Release Gate
 

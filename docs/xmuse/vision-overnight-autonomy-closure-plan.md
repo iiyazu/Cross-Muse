@@ -484,6 +484,9 @@ Tasks:
   current proof unless recaptured or validated for the current head.
 - Keep internal review artifact semantics separate from GitHub server-side
   review enforcement.
+- Require internal review artifacts to declare `review_scope=full_pr_current_head`;
+  latest-commit or partial-scope reviews are useful evidence but cannot satisfy
+  the release gate.
 - If capture exits nonzero because the PR is draft/unmerged, preserve the raw
   snapshot and gate artifact; do not convert it into failure unless a required
   configured gate failed.
