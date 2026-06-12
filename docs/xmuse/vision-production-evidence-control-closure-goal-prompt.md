@@ -11,9 +11,11 @@ docs/xmuse/vision-production-evidence-control-closure-plan.md
 Goal: Execute xmuse Vision Production Evidence-Control Closure.
 
 Runtime target:
-- Run as an 8-10 hour production-grade closure task.
+- Run as tonight's 8 hour production-grade closure task.
 - This is not a demo. Do not stop at contract-only proof when configured live
   environments are available.
+- If full closure does not fit in 8 hours, land the strongest validated
+  production slice and record the next production slice explicitly.
 
 Authoritative repo:
 - /home/iiyatu/projects/python/xmuse

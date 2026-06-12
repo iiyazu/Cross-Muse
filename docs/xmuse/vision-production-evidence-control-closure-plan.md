@@ -107,20 +107,22 @@ Readiness is not completion. Never render `ready_to_freeze` as `frozen`,
 
 ## Stage Budget
 
-Treat this as an 8-10 hour production closure run. If a stage is blocked by a
-configured live dependency, record the blocker and owner, then continue only to
-independent stages. Do not silently downgrade production gates to demo paths.
+Treat this as tonight's 8 hour production closure run. If a stage is blocked by
+a configured live dependency, record the blocker and owner, then continue only
+to independent stages. Do not silently downgrade production gates to demo paths.
+If a stage cannot be completed within the 8 hour target, land the strongest
+validated production slice and record the next production slice explicitly.
 
 | Window | Stage | Expected output |
 | --- | --- | --- |
-| 0:00-0:45 | S0 Production baseline | Env, branch, current proof state, configured live resources, and dirty state recorded. |
-| 0:45-2:00 | S1 GOD/CLI registry | Manual GOD CLI registration and selection contract designed or implemented with tests. |
-| 2:00-3:30 | S2 TUI full-control actions | Mutating TUI actions go through authorized action contracts, not projection writes. |
-| 3:30-5:00 | S3 Auth/RBAC production gate | Operator/session capability and audit enforcement for write surfaces. |
-| 5:00-6:30 | S4 Live evidence gates | MemoryOS, GitHub, Ray/Codex/OpenCode gates attempted using configured environment. |
-| 6:30-7:45 | S5 Natural GOD transcript path | Natural transcript boundary tied to selected GOD CLI participants and freeze rules. |
-| 7:45-9:00 | S6 Release readiness | Release gate aggregates live/server/provider/internal review evidence. |
-| 9:00-10:00 | S7 Validation, docs, PR prep | Focused tests, ruff, diff check, walkthrough, commit/push/draft PR when green. |
+| 0:00-0:30 | S0 Production baseline | Env, branch, current proof state, configured live resources, and dirty state recorded. |
+| 0:30-1:30 | S1 GOD/CLI registry | Manual GOD CLI registration and selection contract advanced with tests. |
+| 1:30-2:45 | S2 TUI full-control actions | Mutating TUI actions go through authorized action contracts, not projection writes. |
+| 2:45-3:45 | S3 Auth/RBAC production gate | Operator/session capability and audit enforcement for write surfaces. |
+| 3:45-5:00 | S4 Live evidence gates | MemoryOS, GitHub, Ray/Codex/OpenCode gates attempted using configured environment. |
+| 5:00-6:00 | S5 Natural GOD transcript path | Natural transcript boundary tied to selected GOD CLI participants and freeze rules. |
+| 6:00-7:15 | S6 Release readiness | Release gate aggregates live/server/provider/internal review evidence. |
+| 7:15-8:00 | S7 Validation, docs, PR prep | Focused tests, ruff, diff check, walkthrough, commit/push/draft PR when green. |
 
 ## S0 - Production Baseline
 
