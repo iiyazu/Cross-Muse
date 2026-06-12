@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import tomllib
 from pathlib import Path
+from typing import Any
 
 from xmuse_core.platform.live_gate_status_capture import (
     ProbeResult,
@@ -119,6 +121,103 @@ def test_live_gate_status_artifacts_feed_release_readiness_as_blockers(
     }.issubset(blocker_ids)
 
 
+def test_live_gate_status_capture_uses_configured_github_server_truth(
+    tmp_path: Path,
+) -> None:
+    output_dir = tmp_path / "artifacts" / "live_gate_status"
+    runner = _FakeGhApiRunner(
+        {
+            "repos/iiyazu/Cross-Muse/pulls/43": {
+                "node_id": "PR_node_43",
+                "merged": False,
+                "merged_at": None,
+                "merge_commit_sha": "merge-candidate",
+                "head": {"sha": "head456"},
+            },
+            "repos/iiyazu/Cross-Muse/pulls/43/reviews": [],
+            "repos/iiyazu/Cross-Muse/branches/main/protection": {
+                "required_status_checks": {
+                    "checks": [
+                        {"context": "quality-gates"},
+                        {"context": "contract-smoke-gates"},
+                        {"context": "real-runtime-integration-gate"},
+                    ]
+                },
+            },
+            "repos/iiyazu/Cross-Muse/commits/head456/check-runs": {
+                "check_runs": [
+                    {
+                        "id": 211,
+                        "name": "quality-gates",
+                        "conclusion": "success",
+                        "app": {"slug": "github-actions"},
+                    },
+                    {
+                        "id": 212,
+                        "name": "contract-smoke-gates",
+                        "conclusion": "success",
+                        "app": {"slug": "github-actions"},
+                    },
+                    {
+                        "id": 213,
+                        "name": "real-runtime-integration-gate",
+                        "conclusion": "success",
+                        "app": {"slug": "github-actions"},
+                    },
+                ]
+            },
+        }
+    )
+
+    summary = capture_live_gate_status(
+        output_dir=output_dir,
+        env={
+            "XMUSE_GITHUB_TRUTH_REPO": "iiyazu/Cross-Muse",
+            "XMUSE_GITHUB_TRUTH_PULL_REQUEST": "43",
+            "XMUSE_GITHUB_TRUTH_BASE_BRANCH": "main",
+            "XMUSE_GITHUB_TRUTH_REQUIRED_CHECKS": (
+                "quality-gates,contract-smoke-gates,real-runtime-integration-gate"
+            ),
+        },
+        command_runner=_fake_runner(
+            {
+                "gh auth status": ProbeResult(
+                    name="github_auth",
+                    command=("gh", "auth", "status"),
+                    returncode=0,
+                    stdout="Logged in to github.com as iiyazu",
+                    stderr="",
+                )
+            }
+        ),
+        github_truth_runner=runner,
+    )
+
+    gate = json.loads((output_dir / "github-server-truth-status.json").read_text())
+    snapshot_path = output_dir / "github-server-truth-snapshot.json"
+    snapshot = json.loads(snapshot_path.read_text())
+    report = capture_release_readiness(
+        artifacts_dir=tmp_path / "artifacts",
+        output_path=tmp_path / "readiness.json",
+    )
+
+    assert summary["artifact_count"] == 4
+    assert gate["gate_id"] == "github-server-truth"
+    assert gate["kind"] == "github_server_truth"
+    assert gate["status"] == "ok"
+    assert gate["proof_level"] == "server_side_enforcement_proof"
+    assert gate["source_refs"] == ["github:pr:43", "github:branch:main"]
+    assert gate["artifacts"] == [str(snapshot_path)]
+    assert snapshot["schema_version"] == "github_server_side_truth_capture.v1"
+    assert snapshot["capture_mode"] == "opt_in_read_only_gh_api"
+    assert snapshot["can_emit_pr_merged"] is False
+    assert snapshot["gap_reason"] == "missing server-side truth: review_truth, merge_truth"
+    assert all(command[:2] == ["gh", "api"] for command in runner.commands)
+    assert "github-server-truth" not in {
+        blocker["gate_id"] for blocker in report["blockers"]
+    }
+
+
 def test_live_gate_status_capture_cli_script_is_registered() -> None:
     pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
 
@@ -143,3 +242,23 @@ def _fake_runner(results: dict[str, ProbeResult]):
         )
 
     return run
+
+
+class _FakeGhApiRunner:
+    def __init__(self, responses: dict[str, object]) -> None:
+        self.responses = responses
+        self.commands: list[list[str]] = []
+
+    def __call__(
+        self,
+        command: list[str],
+        **_kwargs: Any,
+    ) -> subprocess.CompletedProcess[str]:
+        self.commands.append(command)
+        endpoint = command[2]
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=0,
+            stdout=json.dumps(self.responses[endpoint]),
+            stderr="",
+        )

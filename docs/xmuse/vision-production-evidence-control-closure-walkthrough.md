@@ -297,10 +297,17 @@ presence and local probes (`gh auth status`, `codex --version`,
 probe results, not secret values.
 
 Configured-but-uncaptured gates are written as `blocked`; missing required
-gates are written as `manual_gap`. All generated gates use `proof_level` of
-`manual_gap`, so the artifacts can drive release-readiness blockers without
-pretending that live MemoryOS, GitHub server truth, real provider runtime, or
-natural GOD transcript proof was captured.
+gates are written as `manual_gap`. Without explicit GitHub target configuration,
+the artifacts can drive release-readiness blockers without pretending that live
+MemoryOS, GitHub server truth, real provider runtime, or natural GOD transcript
+proof was captured.
+
+When `XMUSE_GITHUB_TRUTH_REPO` and `XMUSE_GITHUB_TRUTH_PULL_REQUEST` are set,
+the same status capture command runs the opt-in read-only GitHub server truth
+collector and writes a raw `github_server_side_truth_capture.v1` snapshot plus
+the `github_server_truth` release gate. That gate may satisfy
+`server_side_enforcement_proof`; it still does not claim review truth, merge
+truth, or `pr_merged`.
 
 A local `/tmp` status capture plus readiness aggregation in this slice produced
 `decision=blocked` with four `manual_gap` gates:
@@ -311,6 +318,13 @@ A local `/tmp` status capture plus readiness aggregation in this slice produced
 - Natural GOD deliberation: no natural transcript artifact configured.
 - Real provider runtime: Codex/OpenCode/Ray probes are visible, but no real
   provider runtime soak artifact was captured.
+
+A later current-head status capture with `XMUSE_GITHUB_TRUTH_REPO`,
+`XMUSE_GITHUB_TRUTH_PULL_REQUEST`, base branch, and required checks configured
+for PR #43 produced a `github_server_truth` gate with
+`server_side_enforcement_proof`. The resulting release evidence pack remained
+`blocked` because live MemoryOS, natural GOD deliberation, and real provider
+runtime proof were still missing.
 
 ### GitHub Server Truth Release Gate
 
@@ -344,6 +358,11 @@ Release readiness capture now deduplicates artifacts by `gate_id`, preferring
 the strongest non-blocking proof. This lets a later GitHub server truth gate
 replace the earlier `xmuse-live-gate-status-capture` GitHub blocker without
 letting stale status artifacts contaminate the report.
+
+The live-gate status command can now perform that replacement itself when the
+target PR is configured through `XMUSE_GITHUB_TRUTH_*`. In that mode,
+`github-server-truth-status.json` is the release gate and references the raw
+`github-server-truth-snapshot.json` artifact written beside it.
 
 ### Internal Review Release Gate
 
@@ -570,6 +589,10 @@ uv run pytest tests/xmuse/test_god_cli_registration_store.py tests/xmuse/test_go
 uv run pytest tests/xmuse/test_tui_adapter.py::test_adapter_send_message_posts_human_message_to_chat_api tests/xmuse/test_tui_adapter.py::test_adapter_create_group_conversation_uses_chat_api tests/xmuse/test_tui_adapter.py::test_adapter_create_bootstrap_proposal_uses_chat_api_auth_headers tests/xmuse/test_tui_adapter.py::test_adapter_apply_bootstrap_proposal_uses_chat_api_auth_headers tests/xmuse/test_tui_adapter.py::test_adapter_approve_proposal_uses_chat_api_endpoint tests/xmuse/test_tui_adapter.py::test_adapter_add_participant_uses_chat_api tests/xmuse/test_tui_adapter.py::test_adapter_remove_participant_resolves_unique_role_and_uses_chat_api tests/xmuse/test_tui_adapter.py::test_adapter_operator_control_action_prefers_chat_api_contract -q
 uv run pytest tests/xmuse/test_tui_adapter.py tests/xmuse/test_tui_navigation.py tests/xmuse/test_production_hardening.py tests/xmuse/test_chat_api.py tests/xmuse/test_package_boundaries.py -q
 uv run pytest tests/xmuse/test_operator_actions.py::test_operator_action_retries_lane_with_guarded_workflow_capability tests/xmuse/test_operator_actions.py::test_operator_action_denies_lane_retry_without_workflow_capability tests/xmuse/test_operator_actions.py::test_operator_action_aborts_lane_with_guarded_workflow_capability tests/xmuse/test_operator_actions.py::test_operator_action_blocks_lane_action_when_guard_mismatches tests/xmuse/test_chat_api.py::test_chat_api_operator_action_retries_lane_with_workflow_capability tests/xmuse/test_chat_api.py::test_chat_api_operator_action_denies_lane_retry_without_workflow_capability tests/xmuse/test_tui_navigation.py::test_chat_screen_lane_retry_runs_operator_control_action tests/xmuse/test_tui_navigation.py::test_chat_screen_lane_abort_runs_operator_control_action -q
+uv run pytest tests/xmuse/test_live_gate_status_capture.py tests/xmuse/test_github_server_truth_capture.py tests/xmuse/test_release_readiness_capture.py -q
+uv run pytest tests/xmuse/test_production_operations_doc.py tests/xmuse/test_mainline_contract_docs.py tests/xmuse/test_quality_gates_phase3.py -q
+XMUSE_GITHUB_TRUTH_REPO=iiyazu/Cross-Muse XMUSE_GITHUB_TRUTH_PULL_REQUEST=43 XMUSE_GITHUB_TRUTH_BASE_BRANCH=main XMUSE_GITHUB_TRUTH_REQUIRED_CHECKS=quality-gates,contract-smoke-gates,real-runtime-integration-gate uv run xmuse-live-gate-status-capture --output-dir /tmp/xmuse-github-target-release-gates/live_gate_status
+uv run xmuse-release-evidence-pack --artifacts-dir /tmp/xmuse-github-target-release-gates --output /tmp/xmuse-github-target-release-evidence-pack.json --readiness-output /tmp/xmuse-github-target-release-readiness.json --audit-output /tmp/xmuse-github-target-proof-contamination-audit.json
 uv run ruff check .
 git diff --check
 test ! -e xmuse/__init__.py
@@ -625,6 +648,10 @@ third Codex independent review attempt for manual GOD CLI registration timed out
 8 passed
 157 passed, 1 warning
 8 passed, 1 warning
+13 passed
+8 passed
+xmuse-live-gate-status-capture with XMUSE_GITHUB_TRUTH_* wrote a github_server_truth gate with status=ok, proof_level=server_side_enforcement_proof, and raw snapshot gap_reason=missing server-side truth: review_truth, merge_truth
+xmuse-release-evidence-pack with the configured GitHub target reported decision=blocked, blocker_count=3, proof_contamination_decision=clean; remaining blockers were live-memoryos, natural-god-deliberation, and real-provider-runtime
 All checks passed
 git diff --check clean
 xmuse/__init__.py absent
@@ -642,7 +669,9 @@ The warning is the existing Starlette/httpx deprecation warning from FastAPI
   production token bundle.
 - Release readiness capture can aggregate supplied artifacts into a redacted
   blocked/ready/not_evaluated report, but live gate artifacts still need to be
-  produced by actual MemoryOS, GitHub, and provider runs.
+  produced by actual MemoryOS, natural GOD, and provider runs. GitHub server
+  enforcement truth can be captured when `XMUSE_GITHUB_TRUTH_*` is configured,
+  but review truth and merge truth remain separate.
 - Release evidence pack can write one operator handoff report plus nested
   readiness/audit reports, but it still depends on supplied gate artifacts and
   does not create live proof.
@@ -650,15 +679,18 @@ The warning is the existing Starlette/httpx deprecation warning from FastAPI
   operator action contract with `release_gate`, but no live operator service run
   has exercised the production token bundle end to end.
 - TUI `/release refresh` and the matching Chat API/operator action can refresh
-  live-gate status blocker artifacts under the release-readiness work directory,
-  but the artifacts remain `manual_gap`/blocked status until actual live proof
-  is supplied.
+  live-gate status artifacts under the release-readiness work directory. With
+  `XMUSE_GITHUB_TRUTH_*` target configuration, the GitHub artifact can carry
+  `server_side_enforcement_proof`; MemoryOS, natural transcript, and provider
+  artifacts remain blockers until their live proof is supplied.
 - The independent Codex review attempt timed out, so this slice does not add
   verified internal review proof. A second independent review attempt for the
   `/release refresh` slice also timed out.
 - Live gate status capture can create honest blocker artifacts for missing or
-  configured-but-uncaptured live gates, but those artifacts remain `manual_gap`
-  proof and cannot satisfy release readiness.
+  configured-but-uncaptured live gates. With explicit `XMUSE_GITHUB_TRUTH_*`
+  target configuration, it can also capture GitHub server enforcement truth;
+  MemoryOS, provider runtime, and natural transcript gates remain blockers
+  until their own live proof artifacts exist.
 - GitHub branch protection and required check server truth has been captured for
   PR #43, but review truth and merge truth remain missing. This satisfies the
   `github_server_truth` release gate only; it does not permit `pr_merged`.
@@ -689,4 +721,6 @@ The warning is the existing Starlette/httpx deprecation warning from FastAPI
    participant flow where role templates need selected runtime providers.
 2. Start the configured Chat API/MCP/platform runner bundle and capture a real
    Ray/Codex/MCP health proof.
-3. Create or target a draft PR and run GitHub server truth capture against it.
+3. Configure `XMUSE_GITHUB_TRUTH_*` for PR #43 and use `/release refresh` or
+   `xmuse-live-gate-status-capture` to keep GitHub server truth refreshed as
+   part of the normal readiness flow.

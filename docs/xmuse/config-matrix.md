@@ -142,6 +142,10 @@ XMUSE_TUI_OPERATOR_ID=operator
 XMUSE_TUI_OPERATOR_ROLE=operator
 XMUSE_TUI_OPERATOR_CAPABILITIES=chat_create_conversation,chat_post_message,chat_bootstrap,chat_approve_proposal,chat_manage_participants,register_god_cli,select_god_cli,release_gate,workflow_write
 XMUSE_MCP_AUTH_TOKEN=<server-token>
+XMUSE_GITHUB_TRUTH_REPO=iiyazu/Cross-Muse
+XMUSE_GITHUB_TRUTH_PULL_REQUEST=<pr-number>
+XMUSE_GITHUB_TRUTH_BASE_BRANCH=main
+XMUSE_GITHUB_TRUTH_REQUIRED_CHECKS=quality-gates,contract-smoke-gates,real-runtime-integration-gate
 ```
 
 此 bundle 的目的是确保:

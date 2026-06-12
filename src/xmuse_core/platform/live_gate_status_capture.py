@@ -10,9 +10,24 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from xmuse_core.platform.execution.github_ops import (
+    GitHubCliServerSideTruthClient,
+    ReadOnlyGitHubServerSideTruthCollector,
+    can_emit_pr_merged,
+)
+from xmuse_core.platform.github_truth_release_gate import (
+    build_github_server_truth_release_gate,
+)
 from xmuse_core.platform.release_readiness import ReleaseGateKind
 
 CommandRunner = Callable[[tuple[str, ...]], "ProbeResult"]
+GitHubTruthRunner = Callable[..., subprocess.CompletedProcess[str]]
+
+DEFAULT_REQUIRED_CHECKS = (
+    "quality-gates",
+    "contract-smoke-gates",
+    "real-runtime-integration-gate",
+)
 
 _SECRET_PATTERNS = (
     re.compile(
@@ -44,19 +59,25 @@ def capture_live_gate_status(
     output_dir: str | Path,
     env: Mapping[str, str] | None = None,
     command_runner: CommandRunner | None = None,
+    github_truth_runner: GitHubTruthRunner | None = None,
 ) -> dict[str, Any]:
     environment = os.environ if env is None else env
     runner = _run_probe if command_runner is None else command_runner
     probes = _collect_probes(runner)
+    root = Path(output_dir)
+    root.mkdir(parents=True, exist_ok=True)
     artifacts = [
         _memoryos_gate(environment),
-        _github_gate(probes["github_auth"]),
+        _github_gate(
+            environment,
+            probes["github_auth"],
+            output_dir=root,
+            github_truth_runner=github_truth_runner,
+        ),
         _provider_gate(environment, probes),
         _natural_deliberation_gate(environment),
     ]
 
-    root = Path(output_dir)
-    root.mkdir(parents=True, exist_ok=True)
     artifact_paths: list[str] = []
     for artifact in artifacts:
         path = root / _artifact_filename(str(artifact["gate_id"]))
@@ -134,8 +155,23 @@ def _memoryos_gate(env: Mapping[str, str]) -> dict[str, Any]:
     )
 
 
-def _github_gate(github_probe: ProbeResult) -> dict[str, Any]:
+def _github_gate(
+    env: Mapping[str, str],
+    github_probe: ProbeResult,
+    *,
+    output_dir: Path,
+    github_truth_runner: GitHubTruthRunner | None,
+) -> dict[str, Any]:
     configured = github_probe.returncode == 0
+    target = _github_truth_target(env)
+    if configured and target is not None:
+        captured = _capture_github_server_truth_gate(
+            target,
+            output_dir=output_dir,
+            github_truth_runner=github_truth_runner,
+        )
+        if captured is not None:
+            return captured
     return _gate(
         gate_id="github-server-truth",
         kind=ReleaseGateKind.GITHUB_SERVER_TRUTH,
@@ -299,14 +335,120 @@ def _known_env_keys_present(env: Mapping[str, str]) -> set[str]:
         "XMUSE_RAY_GOD_TRANSPORT",
         "XMUSE_RAY_GOD_MCP",
         "XMUSE_NATURAL_GOD_TRANSCRIPT_PATH",
+        "XMUSE_GITHUB_TRUTH_REPO",
+        "XMUSE_GITHUB_TRUTH_PULL_REQUEST",
+        "XMUSE_GITHUB_TRUTH_BASE_BRANCH",
+        "XMUSE_GITHUB_TRUTH_REQUIRED_CHECKS",
         "DEEPSEEK_API_KEY",
         "OPENAI_API_KEY",
     }
     return {key for key in keys if _has_value(env.get(key))}
 
 
+def _github_truth_target(env: Mapping[str, str]) -> dict[str, Any] | None:
+    repo = _clean_text(env.get("XMUSE_GITHUB_TRUTH_REPO"))
+    pull_request = _clean_text(env.get("XMUSE_GITHUB_TRUTH_PULL_REQUEST"))
+    if repo is None and pull_request is None:
+        return None
+    if repo is None or pull_request is None:
+        return {
+            "error": (
+                "GitHub server truth requires both XMUSE_GITHUB_TRUTH_REPO and "
+                "XMUSE_GITHUB_TRUTH_PULL_REQUEST"
+            )
+        }
+    try:
+        pull_request_number = int(pull_request)
+    except ValueError:
+        return {"error": "XMUSE_GITHUB_TRUTH_PULL_REQUEST must be an integer"}
+    if pull_request_number <= 0:
+        return {"error": "XMUSE_GITHUB_TRUTH_PULL_REQUEST must be positive"}
+    return {
+        "repo": repo,
+        "pull_request_number": pull_request_number,
+        "base_branch": _clean_text(env.get("XMUSE_GITHUB_TRUTH_BASE_BRANCH")) or "main",
+        "required_checks": _required_checks(env.get("XMUSE_GITHUB_TRUTH_REQUIRED_CHECKS")),
+    }
+
+
+def _capture_github_server_truth_gate(
+    target: dict[str, Any],
+    *,
+    output_dir: Path,
+    github_truth_runner: GitHubTruthRunner | None,
+) -> dict[str, Any] | None:
+    error = _clean_text(target.get("error"))
+    if error is not None:
+        return _github_truth_config_error_gate(error)
+    raw_path = output_dir / "github-server-truth-snapshot.json"
+    base_branch = str(target["base_branch"])
+    try:
+        client = GitHubCliServerSideTruthClient(
+            base_branch=base_branch,
+            runner=github_truth_runner,
+        )
+        collector = ReadOnlyGitHubServerSideTruthCollector(client=client)
+        evidence = collector.collect(
+            repo=str(target["repo"]),
+            pull_request_number=int(target["pull_request_number"]),
+            required_checks=list(target["required_checks"]),
+        )
+        payload = evidence.model_dump(mode="json")
+        payload["schema_version"] = "github_server_side_truth_capture.v1"
+        payload["can_emit_pr_merged"] = can_emit_pr_merged(evidence)
+        payload["merged"] = payload["can_emit_pr_merged"] is True
+        payload["capture_mode"] = "opt_in_read_only_gh_api"
+        raw_path.write_text(
+            json.dumps(_redact_value(payload), indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        return build_github_server_truth_release_gate(
+            payload,
+            artifact_path=raw_path,
+            base_branch=base_branch,
+        )
+    except Exception as exc:
+        return _github_truth_config_error_gate(
+            f"GitHub server truth capture failed: {exc}"
+        )
+
+
+def _github_truth_config_error_gate(summary: str) -> dict[str, Any]:
+    return _gate(
+        gate_id="github-server-truth",
+        kind=ReleaseGateKind.GITHUB_SERVER_TRUTH,
+        configured=True,
+        status="blocked",
+        summary=summary,
+        attempted_command="uv run python scripts/github_server_truth_capture.py",
+        next_action=(
+            "Fix XMUSE_GITHUB_TRUTH_* configuration and rerun the GitHub "
+            "server truth collector."
+        ),
+        source_refs=[
+            "env:XMUSE_GITHUB_TRUTH_REPO",
+            "env:XMUSE_GITHUB_TRUTH_PULL_REQUEST",
+        ],
+    )
+
+
+def _required_checks(value: str | None) -> list[str]:
+    configured = _clean_text(value)
+    if configured is None:
+        return list(DEFAULT_REQUIRED_CHECKS)
+    checks = [item.strip() for item in configured.split(",") if item.strip()]
+    return checks or list(DEFAULT_REQUIRED_CHECKS)
+
+
 def _has_value(value: str | None) -> bool:
     return value is not None and value.strip() != ""
+
+
+def _clean_text(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    return value or None
 
 
 def _artifact_filename(gate_id: str) -> str:

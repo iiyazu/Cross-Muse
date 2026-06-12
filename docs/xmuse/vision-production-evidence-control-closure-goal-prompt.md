@@ -56,8 +56,11 @@ Priority:
    truth, Ray/Codex GOD runtime, OpenCode health/bounded runtime. Configured
    gate failures are release blockers. Use
    `uv run xmuse-live-gate-status-capture` to record configured/missing gate
-   status as blocker artifacts when live proof has not yet been captured; from
-   TUI use `/release refresh` with `release_gate`.
+   status as blocker artifacts when live proof has not yet been captured. When
+   `XMUSE_GITHUB_TRUTH_REPO` and `XMUSE_GITHUB_TRUTH_PULL_REQUEST` are set, the
+   same command must run the read-only GitHub server truth collector and write
+   a `server_side_enforcement_proof` gate without claiming review truth, merge
+   truth, or `pr_merged`. From TUI use `/release refresh` with `release_gate`.
 6. Separate natural GOD transcript evidence from deterministic replay and keep
    unresolved blockers from freezing a blueprint.
 7. Add release readiness aggregation: tests, ruff, package boundary, internal

@@ -43,6 +43,10 @@ export XMUSE_TUI_OPERATOR_ID=operator
 export XMUSE_TUI_OPERATOR_ROLE=operator
 export XMUSE_TUI_OPERATOR_CAPABILITIES=chat_create_conversation,chat_post_message,chat_bootstrap,chat_approve_proposal,chat_manage_participants,register_god_cli,select_god_cli,release_gate,workflow_write
 export XMUSE_MCP_AUTH_TOKEN=<server-token>
+export XMUSE_GITHUB_TRUTH_REPO=iiyazu/Cross-Muse
+export XMUSE_GITHUB_TRUTH_PULL_REQUEST=<pr-number>
+export XMUSE_GITHUB_TRUTH_BASE_BRANCH=main
+export XMUSE_GITHUB_TRUTH_REQUIRED_CHECKS=quality-gates,contract-smoke-gates,real-runtime-integration-gate
 ```
 
 `XMUSE_DEGRADED_LOCAL_GOD_MODE=1` is an explicit degraded local mode. It is not
@@ -219,13 +223,20 @@ uv run xmuse-live-gate-status-capture \
 ```
 
 The command records which production live gates are configured or missing and
-writes `xmuse.production_evidence.v1` gate artifacts with `manual_gap` proof.
-Configured-but-uncaptured gates are written as blockers. It records environment
-key names and probe results only; token/API-key values are not written.
+writes `xmuse.production_evidence.v1` gate artifacts. Configured-but-uncaptured
+gates are written as blockers. It records environment key names and probe
+results only; token/API-key values are not written.
 
-This command does not run MemoryOS, GitHub server-truth, Ray/Codex/OpenCode, or
-natural GOD transcript proof. It creates honest blocker artifacts for the
-release-readiness report.
+When `XMUSE_GITHUB_TRUTH_REPO` and `XMUSE_GITHUB_TRUTH_PULL_REQUEST` are set,
+the command also runs the opt-in read-only GitHub server truth collector and
+writes the raw snapshot plus the `github_server_truth` release gate. This can
+satisfy `server_side_enforcement_proof` when branch protection/ruleset and
+required-check truth are captured. It still cannot create review truth, merge
+truth, or `pr_merged`.
+
+This command does not run MemoryOS, Ray/Codex/OpenCode, or natural GOD
+transcript proof. It creates honest blocker artifacts for those gates until
+their live proof artifacts are supplied.
 
 ## MemoryOS Lite Live Release Gate
 
