@@ -306,6 +306,29 @@ appears without `server_side_merge_proof` and `can_emit_pr_merged=true`.
 It does not mean missing live gates were satisfied; release readiness still
 comes from `xmuse-release-readiness-capture`.
 
+## Release Evidence Pack
+
+Use this command when the operator needs one handoff artifact for the current
+release-gate directory:
+
+```bash
+uv run xmuse-release-evidence-pack \
+  --artifacts-dir xmuse/work/release_readiness/artifacts \
+  --output xmuse/work/release_readiness/evidence-pack.json
+```
+
+The command writes three ignored runtime-state reports:
+
+- `evidence-pack.json`;
+- `release-readiness.json`;
+- `proof-contamination-audit.json`.
+
+The pack decision is `contaminated` when the proof audit finds contamination.
+Otherwise it mirrors the release-readiness decision: `ready`, `blocked`, or
+`not_evaluated`. This command aggregates existing release-gate artifacts only;
+it does not start live services, call GitHub, run providers, or turn
+`manual_gap` blockers into production proof.
+
 ## Degradation Matrix
 
 | Condition | Expected behavior |

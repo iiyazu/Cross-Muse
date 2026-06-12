@@ -61,7 +61,8 @@ Priority:
 7. Add release readiness aggregation: tests, ruff, package boundary, internal
    review, live MemoryOS, GitHub server truth, provider evidence, and proof
    contamination audit. Use `uv run xmuse-release-readiness-capture` to turn
-   supplied gate artifacts into a redacted readiness report.
+   supplied gate artifacts into a redacted readiness report, and use
+   `uv run xmuse-release-evidence-pack` to write the operator handoff pack.
 8. Update docs/walkthrough/evidence. If validation passes, commit, push, and
    create a draft PR. Do not auto-merge.
 
@@ -88,6 +89,8 @@ Hard constraints:
   live gates.
 - The release-readiness capture command aggregates supplied artifacts; it does
   not create live MemoryOS/GitHub/provider proof by itself.
+- The release-evidence-pack command aggregates readiness and proof-contamination
+  reports; it does not create live MemoryOS/GitHub/provider proof by itself.
 - The live-gate status capture command records blockers and missing
   prerequisites; it does not satisfy live gates by itself.
 - If invoking OpenCode, use opencode-go/deepseek-v4-flash with --variant max as

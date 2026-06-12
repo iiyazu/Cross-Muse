@@ -414,6 +414,28 @@ when:
 `decision: clean` only means scanned artifacts did not contain proof
 contamination. It does not satisfy missing live gates.
 
+### Release Evidence Pack
+
+New command:
+
+```text
+uv run xmuse-release-evidence-pack \
+  --artifacts-dir <release-gate-artifacts-dir> \
+  --output <evidence-pack.json>
+```
+
+The command writes a single `xmuse.release_evidence_pack.v1` operator handoff
+artifact and, by default, sibling nested reports:
+
+- `release-readiness.json`;
+- `proof-contamination-audit.json`.
+
+The evidence pack does not create live MemoryOS, GitHub, provider, or natural
+transcript proof. It only evaluates supplied release-gate artifacts through the
+existing readiness and contamination rules. If the contamination audit reports
+`contaminated`, the pack decision is `contaminated`; otherwise it mirrors
+release readiness as `ready`, `blocked`, or `not_evaluated`.
+
 ## Proof-Level Summary
 
 | Surface | Current proof | Boundary |
@@ -431,6 +453,7 @@ contamination. It does not satisfy missing live gates.
 | Live gate status capture command | `contract_proof` | Captures configured/missing gate status as `manual_gap` blocker artifacts; does not create live proof. |
 | Release readiness capture command | `contract_proof` | Aggregates and redacts supplied gate artifacts; does not capture live services by itself. |
 | Proof contamination audit command | `contract_proof` | Scans supplied release gate artifacts for mislabeled production proof; does not satisfy missing live gates. |
+| Release evidence pack command | `contract_proof` | Writes the operator handoff pack plus nested readiness/audit reports; does not create live proof. |
 | MemoryOS Lite live gate command | `contract_proof` | Converts explicit live MemoryOS Lite trace artifacts into a `live_memoryos` gate; fixture/local/empty traces remain blocked. |
 | Internal review release gate command | `contract_proof` | Converts a verified structured internal review artifact into `internal_review_proof`; does not replace GitHub enforcement. |
 | Natural GOD deliberation gate command | `contract_proof` | Converts explicit natural transcript artifacts into a `natural_deliberation` gate; deterministic replay and single-GOD artifacts remain blocked. |
@@ -518,6 +541,9 @@ xmuse-internal-review-gate-capture help rendered
 github_server_truth_capture returned 2 for draft PR #43 and wrote a github_server_truth release gate
 xmuse-release-readiness-capture reported decision=ready for the single GitHub server-truth gate
 xmuse-release-readiness-capture reported decision=blocked for combined live-gate status plus PR #43 GitHub server-truth gates; blockers were live-memoryos, natural-god-deliberation, and real-provider-runtime
+41 passed
+xmuse-release-evidence-pack help rendered
+xmuse-release-evidence-pack reported decision=blocked for the /tmp live-gate status artifacts; blockers were github-server-truth, live-memoryos, natural-god-deliberation, and real-provider-runtime; proof_contamination_decision=clean
 All checks passed
 git diff --check clean
 ```
@@ -533,6 +559,9 @@ The warning is the existing Starlette/httpx deprecation warning from FastAPI
 - Release readiness capture can aggregate supplied artifacts into a redacted
   blocked/ready/not_evaluated report, but live gate artifacts still need to be
   produced by actual MemoryOS, GitHub, and provider runs.
+- Release evidence pack can write one operator handoff report plus nested
+  readiness/audit reports, but it still depends on supplied gate artifacts and
+  does not create live proof.
 - Live gate status capture can create honest blocker artifacts for missing or
   configured-but-uncaptured live gates, but those artifacts remain `manual_gap`
   proof and cannot satisfy release readiness.

@@ -380,6 +380,9 @@ Current implementation status:
   proof contamination: weak proof on `ok` production gates, fake/fixture/stdout
   markers in production proof, and `pr_merged` claims without server-side merge
   proof.
+- `uv run xmuse-release-evidence-pack` writes one operator handoff report plus
+  nested release-readiness and proof-contamination reports for the same artifact
+  directory. It is an aggregation command only; it does not create live proof.
 
 Acceptance:
 
