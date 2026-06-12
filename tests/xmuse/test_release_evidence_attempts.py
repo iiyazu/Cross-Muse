@@ -95,6 +95,71 @@ def test_release_evidence_attempt_blocks_when_candidates_are_missing(
     assert expected_report.exists()
 
 
+def test_release_evidence_attempt_exports_github_when_requested(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    calls: list[OperatorActionRequest] = []
+
+    def _fake_export(
+        request: OperatorActionRequest,
+        **_kwargs: object,
+    ) -> dict[str, object]:
+        calls.append(request)
+        return {
+            "kind": "github_server_truth",
+            "artifact_path": str(
+                tmp_path / "work" / "release_readiness" / "github-server-truth-snapshot.json"
+            ),
+            "gate_path": str(
+                tmp_path
+                / "work"
+                / "release_readiness"
+                / "artifacts"
+                / "github-server-truth.json"
+            ),
+            "gate": {
+                "gate_id": "github-server-truth",
+                "status": "ok",
+                "proof_level": "server_side_enforcement_proof",
+            },
+        }
+
+    monkeypatch.setattr(
+        "xmuse_core.platform.release_evidence_attempts.run_release_evidence_export_action",
+        _fake_export,
+    )
+    release_dir = tmp_path / "work" / "release_readiness"
+
+    result = run_release_evidence_attempt_action(
+        OperatorActionRequest(
+            action="attempt_release_evidence",
+            actor_id="operator-1",
+            capabilities=("release_gate",),
+            idempotency_key="idem-attempt-github",
+            payload={
+                "kind": "github",
+                "repo": "iiyazu/Cross-Muse",
+                "pull_request_number": 43,
+                "required_checks": ["quality-gates", "contract-smoke-gates"],
+                "expected_head_sha": "head123",
+            },
+            source="chat_api",
+        ),
+        xmuse_root=tmp_path,
+        release_readiness_dir=release_dir,
+        env={},
+    )
+
+    assert result["decision"] == "ok"
+    assert result["attempted_kinds"] == ["github_server_truth"]
+    assert result["attempts"][0]["kind"] == "github_server_truth"
+    assert result["attempts"][0]["gate_id"] == "github-server-truth"
+    assert calls and calls[0].action == "export_github_server_truth"
+    assert calls[0].payload["repo"] == "iiyazu/Cross-Muse"
+    assert calls[0].payload["expected_head_sha"] == "head123"
+
+
 def _seed_ready_runtime_inputs(tmp_path: Path) -> str:
     db = tmp_path / "chat.db"
     chat = ChatStore(db)

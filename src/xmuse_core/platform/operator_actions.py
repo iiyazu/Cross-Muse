@@ -47,6 +47,11 @@ _RELEASE_EVIDENCE_EXPORT_ACTIONS = {
     "capture_memoryos_live_trace",
     "memoryos_live_trace_export",
     "memoryos_live_trace_capture",
+    "export_github_server_truth",
+    "export_github_truth",
+    "capture_github_server_truth",
+    "github_server_truth_export",
+    "github_truth_export",
 }
 _RELEASE_EVIDENCE_CANDIDATE_ACTIONS = {
     "inspect_release_evidence_candidates",

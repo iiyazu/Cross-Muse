@@ -254,6 +254,11 @@ Current implementation status:
   only permits paths under `xmuse/work/release_readiness`. It can attach a
   `baseline=...` / `production_baseline=...` S0 truth-map artifact to the pack
   summary without turning that baseline into a release gate or readiness proof.
+- `/release export github repo=<owner/repo> pr=<number> expected_head=<sha>`
+  routes fresh GitHub server-truth capture through the same operator action
+  path. It requires `release_gate`, writes a raw read-only GitHub snapshot plus
+  `github-server-truth` release gate under `xmuse/work/release_readiness`, and
+  does not create review truth, merge truth, or `pr_merged`.
 - `/lane retry <lane_id> <current_status> [reason]` and
   `/lane abort <lane_id> <current_status> [reason]` route guarded lane control
   through the same operator action path. They require `workflow_write`, require
@@ -381,6 +386,11 @@ Current implementation status:
   with `--github-expected-head-sha HEAD`. The pack only converts the explicit
   snapshot through the same GitHub server-truth gate builder; it does not call
   GitHub and stale snapshots remain `manual_gap`.
+- `export_github_server_truth` is the audited operator-action/TUI path for the
+  same fresh read-only capture. It writes
+  `github-server-truth-snapshot.json` and
+  `artifacts/github-server-truth.json` under the release readiness root and
+  preserves `can_emit_pr_merged=false` until server-side merge proof exists.
 - When `XMUSE_MEMORYOS_LIVE_TRACE_ARTIFACT`,
   `XMUSE_NATURAL_GOD_TRANSCRIPT_PATH`,
   `XMUSE_NATURAL_GOD_RUNTIME_ARTIFACT`, or
@@ -472,26 +482,31 @@ Current implementation status:
   `blockers`, and `release_decision` derived from those generated release gate
   artifacts. TUI `/release refresh` renders the summary without reading or
   mutating release state directly.
-- TUI `/release export natural|provider|memoryos` now routes through the
+- TUI `/release export natural|provider|memoryos|github` now routes through the
   audited operator action contract with `release_gate`. The matching
   `export_natural_deliberation_transcript`,
-  `export_real_provider_runtime_soak`, and `export_memoryos_live_trace`
-  actions write both raw evidence artifacts and release gate artifacts under
-  `xmuse/work/release_readiness`; weak inputs remain blocked/manual-gap proof.
+  `export_real_provider_runtime_soak`, `export_memoryos_live_trace`, and
+  `export_github_server_truth` actions write both raw evidence artifacts and
+  release gate artifacts under `xmuse/work/release_readiness`; weak inputs
+  remain blocked/manual-gap proof. GitHub export captures read-only server
+  truth and may satisfy `server_side_enforcement_proof`, but it still cannot
+  synthesize review truth, merge truth, or `pr_merged`.
 - TUI `/release candidates` now routes through
   `inspect_release_evidence_candidates` with `release_gate`, reads durable
   chat/session/peer-latency state plus redacted MemoryOS env presence, and
   reports which export inputs are ready or missing before an operator attempts
   a live evidence capture.
-- TUI `/release attempt [natural|provider|memoryos|all]` now routes through
+- TUI `/release attempt [natural|provider|memoryos|github|all]` now routes through
   `attempt_release_evidence` with `release_gate`. The action writes a
   `release-evidence-attempt.json` attempt report under
   `xmuse/work/release_readiness`, reuses the durable candidate report, and calls
   the existing export actions only for export-ready inputs. Not-ready natural
   GOD transcripts, missing peer latency traces, missing MemoryOS live
-  configuration, missing runtime metadata, fake/local labels, and blocked live
-  captures remain blocked `manual_gap` rows and do not satisfy release
-  readiness.
+  configuration, missing GitHub target fields, missing runtime metadata,
+  fake/local labels, and blocked live captures remain blocked `manual_gap`
+  rows and do not satisfy release readiness. When the GitHub target is present,
+  the attempt action invokes `export_github_server_truth` and records the
+  resulting gate status without converting it into merge truth.
 - `uv run python scripts/github_server_truth_capture.py --release-gate-output`
   can write a `github_server_truth` release gate artifact from the raw GitHub
   server truth snapshot. This can satisfy `server_side_enforcement_proof`

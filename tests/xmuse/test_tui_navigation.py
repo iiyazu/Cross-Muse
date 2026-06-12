@@ -971,6 +971,85 @@ async def test_chat_screen_release_export_memoryos_runs_operator_control_action(
         assert "status=blocked proof=manual_gap fact=blocked" in content
 
 
+async def test_chat_screen_release_export_github_runs_operator_control_action(
+    app: XmuseTUI,
+) -> None:
+    app.adapter.list_group_conversations = lambda: [
+        {"id": "conv-user", "title": "User group", "created_at": "2026-06-01T00:00:00Z"},
+    ]
+    calls = []
+
+    def _run_operator_control_action(action: str, conv_id: str, payload: dict):
+        calls.append((action, conv_id, payload))
+        return {
+            "action": "export_github_server_truth",
+            "status": "ok",
+            "proof_level": "contract_proof",
+            "fact_state": "release_evidence_exported",
+            "audit_id": "operator-action:github",
+            "summary": (
+                "Exported github_server_truth release evidence "
+                "gate=ok/server_side_enforcement_proof."
+            ),
+            "payload": {
+                "export": {
+                    "kind": "github_server_truth",
+                    "artifact_path": (
+                        "xmuse/work/release_readiness/"
+                        "github-server-truth-snapshot.json"
+                    ),
+                    "gate_path": (
+                        "xmuse/work/release_readiness/artifacts/"
+                        "github-server-truth.json"
+                    ),
+                    "artifact": {
+                        "can_emit_pr_merged": False,
+                        "merged": False,
+                    },
+                    "gate": {
+                        "gate_id": "github-server-truth",
+                        "status": "ok",
+                        "proof_level": "server_side_enforcement_proof",
+                    },
+                }
+            },
+        }
+
+    app.adapter.run_operator_control_action = _run_operator_control_action
+
+    async with app.run_test() as pilot:
+        appended = []
+        log = app.screen.query_one("#message-log")
+        log.append_message = lambda **kwargs: appended.append(kwargs)
+
+        input_widget = app.screen.query_one("#message-input")
+        input_widget.value = (
+            "/release export github repo=iiyazu/Cross-Muse pr=43 "
+            "expected_head=head123 base=main "
+            "check=quality-gates,contract-smoke-gates"
+        )
+        input_widget.post_message(input_widget.Submitted(input_widget, input_widget.value))
+        await pilot.pause()
+
+        assert calls == [
+            (
+                "export_github_server_truth",
+                "conv-user",
+                {
+                    "repo": "iiyazu/Cross-Muse",
+                    "pull_request_number": 43,
+                    "expected_head_sha": "head123",
+                    "base_branch": "main",
+                    "required_checks": ["quality-gates", "contract-smoke-gates"],
+                },
+            ),
+        ]
+        content = appended[-1]["content"]
+        assert "Operator action: export_github_server_truth" in content
+        assert "status=ok proof=contract_proof fact=release_evidence_exported" in content
+        assert "can_emit_pr_merged" not in content
+
+
 async def test_chat_screen_release_candidates_runs_operator_control_action(
     app: XmuseTUI,
 ) -> None:
@@ -1110,6 +1189,64 @@ async def test_chat_screen_release_attempt_runs_operator_control_action(
         content = appended[-1]["content"]
         assert "Operator action: attempt_release_evidence" in content
         assert "status=ok proof=contract_proof fact=release_evidence_attempted" in content
+        assert "Attempted configured release evidence." in content
+
+
+async def test_chat_screen_release_attempt_github_runs_operator_control_action(
+    app: XmuseTUI,
+) -> None:
+    app.adapter.list_group_conversations = lambda: [
+        {"id": "conv-user", "title": "User group", "created_at": "2026-06-01T00:00:00Z"},
+    ]
+    calls = []
+
+    def _run_operator_control_action(action: str, conv_id: str, payload: dict):
+        calls.append((action, conv_id, payload))
+        return {
+            "action": "attempt_release_evidence",
+            "status": "ok",
+            "proof_level": "contract_proof",
+            "fact_state": "release_evidence_attempted",
+            "audit_id": "operator-action:attempt-github",
+            "summary": "Attempted configured release evidence.",
+            "payload": {
+                "attempt": {
+                    "decision": "ok",
+                    "attempted_kinds": ["github_server_truth"],
+                }
+            },
+        }
+
+    app.adapter.run_operator_control_action = _run_operator_control_action
+
+    async with app.run_test() as pilot:
+        appended = []
+        log = app.screen.query_one("#message-log")
+        log.append_message = lambda **kwargs: appended.append(kwargs)
+
+        input_widget = app.screen.query_one("#message-input")
+        input_widget.value = (
+            "/release attempt github repo=iiyazu/Cross-Muse pr=43 "
+            "expected_head=head123 check=quality-gates,contract-smoke-gates"
+        )
+        input_widget.post_message(input_widget.Submitted(input_widget, input_widget.value))
+        await pilot.pause()
+
+        assert calls == [
+            (
+                "attempt_release_evidence",
+                "conv-user",
+                {
+                    "kinds": ["github"],
+                    "repo": "iiyazu/Cross-Muse",
+                    "pull_request_number": 43,
+                    "expected_head_sha": "head123",
+                    "required_checks": ["quality-gates", "contract-smoke-gates"],
+                },
+            ),
+        ]
+        content = appended[-1]["content"]
+        assert "Operator action: attempt_release_evidence" in content
         assert "Attempted configured release evidence." in content
 
 

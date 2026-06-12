@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -11,6 +12,14 @@ from xmuse_core.integrations.memoryos_lite_interop import (
     live_memoryos_lite_enabled,
 )
 from xmuse_core.integrations.memoryos_namespace import task_namespace
+from xmuse_core.platform.execution.github_ops import (
+    GitHubCliServerSideTruthClient,
+    ReadOnlyGitHubServerSideTruthCollector,
+    can_emit_pr_merged,
+)
+from xmuse_core.platform.github_truth_release_gate import (
+    write_github_server_truth_release_gate,
+)
 from xmuse_core.platform.memoryos_live_release_gate import (
     capture_memoryos_live_release_gate,
 )
@@ -52,8 +61,23 @@ MEMORYOS_EXPORT_ACTIONS = {
     "memoryos_live_trace_export",
     "memoryos_live_trace_capture",
 }
+GITHUB_EXPORT_ACTIONS = {
+    "export_github_server_truth",
+    "export_github_truth",
+    "capture_github_server_truth",
+    "github_server_truth_export",
+    "github_truth_export",
+}
 RELEASE_EVIDENCE_EXPORT_ACTIONS = (
-    NATURAL_EXPORT_ACTIONS | PROVIDER_EXPORT_ACTIONS | MEMORYOS_EXPORT_ACTIONS
+    NATURAL_EXPORT_ACTIONS
+    | PROVIDER_EXPORT_ACTIONS
+    | MEMORYOS_EXPORT_ACTIONS
+    | GITHUB_EXPORT_ACTIONS
+)
+DEFAULT_GITHUB_REQUIRED_CHECKS = (
+    "quality-gates",
+    "contract-smoke-gates",
+    "real-runtime-integration-gate",
 )
 
 
@@ -63,6 +87,7 @@ def run_release_evidence_export_action(
     xmuse_root: str | Path,
     release_readiness_dir: str | Path | None = None,
     env: Mapping[str, str] | None = None,
+    github_truth_runner: Any | None = None,
 ) -> dict[str, Any]:
     action = request.action.strip().lower().replace("-", "_")
     root = Path(xmuse_root)
@@ -78,6 +103,12 @@ def run_release_evidence_export_action(
             root=root,
             release_root=release_root,
             env=environment,
+        )
+    if action in GITHUB_EXPORT_ACTIONS:
+        return _export_github(
+            request,
+            release_root=release_root,
+            runner=github_truth_runner,
         )
     raise OperatorActionBlockedError(
         f"unknown release evidence export action: {request.action}",
@@ -232,6 +263,94 @@ def _export_memoryos(
     )
 
 
+def _export_github(
+    request: OperatorActionRequest,
+    *,
+    release_root: Path,
+    runner: Any | None,
+) -> dict[str, Any]:
+    repo = _required_text(request.payload, "repo")
+    pull_request_number = _required_positive_int(
+        request.payload.get("pull_request_number")
+        or request.payload.get("pull_request")
+        or request.payload.get("pr"),
+        field_name="payload.pull_request_number",
+    )
+    base_branch = _text(request.payload.get("base_branch")) or "main"
+    required_checks = _string_list(request.payload.get("required_checks")) or list(
+        DEFAULT_GITHUB_REQUIRED_CHECKS
+    )
+    artifact_path = _release_path(
+        request.payload.get("output_path") or request.payload.get("artifact_path"),
+        release_root=release_root,
+        default=release_root / "github-server-truth-snapshot.json",
+    )
+    gate_path = _release_path(
+        request.payload.get("gate_output_path") or request.payload.get("gate_path"),
+        release_root=release_root,
+        default=release_root / "artifacts" / "github-server-truth.json",
+    )
+    internal_review_artifact = request.payload.get("internal_review_artifact")
+    internal_review_artifact_path = (
+        _release_path(
+            internal_review_artifact,
+            release_root=release_root,
+            default=release_root / "artifacts" / "internal-review-input.json",
+        )
+        if _text(internal_review_artifact) is not None
+        else None
+    )
+    expected_head_sha = _text(request.payload.get("expected_head_sha"))
+    client = GitHubCliServerSideTruthClient(
+        base_branch=base_branch,
+        runner=runner,
+        internal_review_artifact=internal_review_artifact_path,
+        internal_reviewer=_text(request.payload.get("internal_reviewer")),
+        internal_reviewed_head_sha=_text(
+            request.payload.get("internal_reviewed_head_sha")
+        ),
+    )
+    collector = ReadOnlyGitHubServerSideTruthCollector(client=client)
+    evidence = collector.collect(
+        repo=repo,
+        pull_request_number=pull_request_number,
+        required_checks=required_checks,
+    )
+    artifact = evidence.model_dump(mode="json")
+    head_sha_matches_expected = (
+        True
+        if expected_head_sha is None
+        else artifact.get("head_sha") == expected_head_sha
+    )
+    artifact["schema_version"] = "github_server_side_truth_capture.v1"
+    artifact["expected_head_sha"] = expected_head_sha
+    artifact["head_sha_matches_expected"] = head_sha_matches_expected
+    artifact["can_emit_pr_merged"] = (
+        can_emit_pr_merged(evidence) and head_sha_matches_expected
+    )
+    artifact["merged"] = artifact["can_emit_pr_merged"] is True
+    artifact["capture_mode"] = "opt_in_read_only_gh_api"
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_path.write_text(
+        json.dumps(artifact, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    gate = write_github_server_truth_release_gate(
+        artifact,
+        artifact_path=artifact_path,
+        output_path=gate_path,
+        base_branch=base_branch,
+        expected_head_sha=expected_head_sha,
+    )
+    return _export_result(
+        kind="github_server_truth",
+        artifact_path=artifact_path,
+        gate_path=gate_path,
+        artifact=artifact,
+        gate=gate,
+    )
+
+
 def _export_result(
     *,
     kind: str,
@@ -308,6 +427,26 @@ def _int_value(value: Any, *, default: int) -> int:
     return default
 
 
+def _required_positive_int(value: Any, *, field_name: str) -> int:
+    if isinstance(value, bool):
+        parsed = None
+    elif isinstance(value, int):
+        parsed = value
+    elif isinstance(value, str):
+        try:
+            parsed = int(value)
+        except ValueError:
+            parsed = None
+    else:
+        parsed = None
+    if parsed is None or parsed <= 0:
+        raise OperatorActionBlockedError(
+            f"release evidence export requires positive integer {field_name}",
+            proof_level="manual_gap",
+        )
+    return parsed
+
+
 def _ensure_no_running_event_loop() -> None:
     try:
         loop = asyncio.get_running_loop()
@@ -322,6 +461,7 @@ def _ensure_no_running_event_loop() -> None:
 
 
 __all__ = [
+    "GITHUB_EXPORT_ACTIONS",
     "MEMORYOS_EXPORT_ACTIONS",
     "NATURAL_EXPORT_ACTIONS",
     "PROVIDER_EXPORT_ACTIONS",

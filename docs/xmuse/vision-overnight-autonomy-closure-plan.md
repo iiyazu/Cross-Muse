@@ -536,6 +536,14 @@ Current implementation status:
   `--github-expected-head-sha`. These flags only populate the same
   `XMUSE_GITHUB_TRUTH_*` capture inputs for this invocation; they do not create
   review truth, merge truth, or `pr_merged`.
+- TUI `/release export github repo=<owner/repo> pr=<number>
+  expected_head=<sha>` calls the audited `export_github_server_truth` operator
+  action. It performs the same read-only GitHub capture, writes a raw snapshot
+  and `github-server-truth` gate under the release readiness root, and preserves
+  `can_emit_pr_merged=false` unless full server-side merge proof exists.
+- `/release attempt github` and `/release attempt all` include GitHub server
+  truth in the attempt report. Missing repo/PR target fields become
+  `manual_gap` blockers; present targets invoke the same read-only export path.
 - The release gate source refs now include the actual GitHub head SHA, and
   include the expected head SHA when provided. These refs are evidence links,
   not merge truth.

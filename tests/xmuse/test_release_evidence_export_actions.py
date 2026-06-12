@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,34 @@ from xmuse_core.platform.operator_actions import (
 from xmuse_core.platform.release_evidence_export_actions import (
     run_release_evidence_export_action,
 )
+
+
+class _FakeGhApiRunner:
+    def __init__(self, responses: dict[str, object]) -> None:
+        self.responses = responses
+        self.commands: list[list[str]] = []
+
+    def __call__(
+        self,
+        command: list[str],
+        **_kwargs: object,
+    ) -> subprocess.CompletedProcess[str]:
+        self.commands.append(command)
+        endpoint = command[2]
+        response = self.responses.get(endpoint)
+        if response is None:
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=1,
+                stdout="",
+                stderr="not found",
+            )
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=0,
+            stdout=json.dumps(response),
+            stderr="",
+        )
 
 
 def test_release_export_action_writes_natural_transcript_and_gate(
@@ -132,3 +161,91 @@ def test_release_export_action_blocks_memoryos_without_live_configuration(
         )
 
     assert "XMUSE_LIVE_MEMORYOS_LITE=1" in exc_info.value.summary
+
+
+def test_release_export_action_writes_github_truth_snapshot_and_gate(
+    tmp_path: Path,
+) -> None:
+    release_dir = tmp_path / "work" / "release_readiness"
+    runner = _FakeGhApiRunner(
+        {
+            "repos/iiyazu/Cross-Muse/pulls/43": {
+                "node_id": "PR_node_43",
+                "merged": False,
+                "merged_at": None,
+                "merge_commit_sha": None,
+                "head": {"sha": "head123"},
+            },
+            "repos/iiyazu/Cross-Muse/pulls/43/reviews": [],
+            "repos/iiyazu/Cross-Muse/branches/main/protection": {
+                "required_status_checks": {
+                    "checks": [
+                        {"context": "quality-gates"},
+                        {"context": "contract-smoke-gates"},
+                    ],
+                },
+            },
+            "repos/iiyazu/Cross-Muse/commits/head123/check-runs": {
+                "check_runs": [
+                    {
+                        "id": 111,
+                        "name": "quality-gates",
+                        "conclusion": "success",
+                        "app": {"slug": "github-actions"},
+                    },
+                    {
+                        "id": 112,
+                        "name": "contract-smoke-gates",
+                        "conclusion": "success",
+                        "app": {"slug": "github-actions"},
+                    },
+                ],
+            },
+        }
+    )
+    request = OperatorActionRequest(
+        action="export_github_server_truth",
+        actor_id="operator-1",
+        capabilities=("release_gate",),
+        idempotency_key="idem-github-export",
+        payload={
+            "repo": "iiyazu/Cross-Muse",
+            "pull_request_number": 43,
+            "required_checks": ["quality-gates", "contract-smoke-gates"],
+            "expected_head_sha": "head123",
+        },
+        source="chat_api",
+    )
+
+    result = run_release_evidence_export_action(
+        request,
+        xmuse_root=tmp_path,
+        release_readiness_dir=release_dir,
+        env={},
+        github_truth_runner=runner,
+    )
+
+    artifact_path = release_dir / "github-server-truth-snapshot.json"
+    gate_path = release_dir / "artifacts" / "github-server-truth.json"
+    artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
+    gate = json.loads(gate_path.read_text(encoding="utf-8"))
+    assert result["kind"] == "github_server_truth"
+    assert result["artifact_path"] == str(artifact_path.resolve(strict=False))
+    assert result["gate_path"] == str(gate_path.resolve(strict=False))
+    assert result["artifact"] == artifact
+    assert result["gate"] == gate
+    assert artifact["schema_version"] == "github_server_side_truth_capture.v1"
+    assert artifact["repo"] == "iiyazu/Cross-Muse"
+    assert artifact["pull_request_number"] == 43
+    assert artifact["head_sha_matches_expected"] is True
+    assert artifact["can_emit_pr_merged"] is False
+    assert artifact["merged"] is False
+    assert gate["gate_id"] == "github-server-truth"
+    assert gate["status"] == "ok"
+    assert gate["proof_level"] == "server_side_enforcement_proof"
+    assert all(command[:2] == ["gh", "api"] for command in runner.commands)
+    assert not any(
+        token in command
+        for command in runner.commands
+        for token in ("--method", "PATCH", "POST", "PUT", "DELETE")
+    )

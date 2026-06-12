@@ -854,7 +854,7 @@ def _freeze_payload(args: list[str]) -> dict[str, Any]:
 
 def _release_export_action(args: list[str]) -> tuple[str, dict[str, Any]]:
     usage = (
-        "Usage: /release export <natural|provider|memoryos> <key=value...>"
+        "Usage: /release export <natural|provider|memoryos|github> <key=value...>"
     )
     if not args:
         raise ValueError(usage)
@@ -919,6 +919,36 @@ def _release_export_action(args: list[str]) -> tuple[str, dict[str, Any]]:
                 int_keys={"budget"},
             ),
         )
+    if target in {"github", "github_truth", "github_server_truth"}:
+        if not raw:
+            raise ValueError(usage)
+        return (
+            "export_github_server_truth",
+            _normalize_release_export_payload(
+                raw,
+                aliases={
+                    "repository": "repo",
+                    "pull_request": "pull_request_number",
+                    "pr": "pull_request_number",
+                    "base": "base_branch",
+                    "branch": "base_branch",
+                    "check": "required_checks",
+                    "required_check": "required_checks",
+                    "expected_head": "expected_head_sha",
+                    "head": "expected_head_sha",
+                    "output": "output_path",
+                    "artifact": "output_path",
+                    "gate": "gate_output_path",
+                    "gate_output": "gate_output_path",
+                    "review": "internal_review_artifact",
+                    "internal_review": "internal_review_artifact",
+                    "reviewer": "internal_reviewer",
+                    "reviewed_head": "internal_reviewed_head_sha",
+                },
+                list_keys={"required_checks"},
+                int_keys={"pull_request_number"},
+            ),
+        )
     raise ValueError(usage)
 
 
@@ -974,7 +1004,9 @@ def _release_candidates_payload(args: list[str]) -> dict[str, Any]:
 
 
 def _release_attempt_payload(args: list[str]) -> dict[str, Any]:
-    usage = "Usage: /release attempt [natural|provider|memoryos|all] [key=value...]"
+    usage = (
+        "Usage: /release attempt [natural|provider|memoryos|github|all] [key=value...]"
+    )
     kinds: list[str] = []
     key_values: list[str] = []
     for arg in args:
@@ -998,9 +1030,22 @@ def _release_attempt_payload(args: list[str]) -> dict[str, Any]:
             "report": "report_path",
             "attempt_report": "attempt_report_path",
             "binding_store": "binding_store_path",
+            "repository": "repo",
+            "pull_request": "pull_request_number",
+            "pr": "pull_request_number",
+            "check": "required_checks",
+            "required_check": "required_checks",
+            "expected_head": "expected_head_sha",
+            "head": "expected_head_sha",
+            "base": "base_branch",
+            "branch": "base_branch",
+            "review": "internal_review_artifact",
+            "internal_review": "internal_review_artifact",
+            "reviewer": "internal_reviewer",
+            "reviewed_head": "internal_reviewed_head_sha",
         },
-        list_keys={"source_refs", "target_refs"},
-        int_keys={"trace_limit", "budget"},
+        list_keys={"source_refs", "target_refs", "required_checks"},
+        int_keys={"trace_limit", "budget", "pull_request_number"},
     )
     if kinds:
         payload["kinds"] = kinds
@@ -1532,8 +1577,8 @@ def _help_text() -> str:
             "/release refresh",
             "/release pack [key=value...]",
             "/release candidates [key=value...]",
-            "/release attempt [natural|provider|memoryos|all] [key=value...]",
-            "/release export <natural|provider|memoryos> <key=value...>",
+            "/release attempt [natural|provider|memoryos|github|all] [key=value...]",
+            "/release export <natural|provider|memoryos|github> <key=value...>",
             "/lane retry <lane_id> <current_status> [reason]",
             "/lane abort <lane_id> <current_status> [reason]",
             "/freeze target_ref=<ref> blueprint_id=<id> goal=<goal> "

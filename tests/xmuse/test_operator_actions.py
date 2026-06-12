@@ -557,6 +557,59 @@ def test_operator_action_denies_release_evidence_export_without_capability(
     assert calls == []
 
 
+def test_operator_action_exports_github_server_truth_with_capability(
+    tmp_path: Path,
+) -> None:
+    calls: list[OperatorActionRequest] = []
+
+    def _export_handler(request: OperatorActionRequest) -> dict[str, object]:
+        calls.append(request)
+        return {
+            "kind": "github_server_truth",
+            "artifact_path": str(tmp_path / "github-server-truth-snapshot.json"),
+            "gate_path": str(tmp_path / "artifacts" / "github-server-truth.json"),
+            "artifact": {
+                "schema_version": "github_server_side_truth_capture.v1",
+                "can_emit_pr_merged": False,
+                "merged": False,
+            },
+            "gate": {
+                "gate_id": "github-server-truth",
+                "status": "ok",
+                "proof_level": "server_side_enforcement_proof",
+            },
+        }
+
+    service = OperatorActionService(
+        god_cli_registry=build_default_god_cli_registry(),
+        audit_dir=tmp_path / "operator_actions",
+        release_evidence_export_handler=_export_handler,
+    )
+
+    result = service.handle(
+        OperatorActionRequest(
+            action="export_github_server_truth",
+            actor_id="operator-1",
+            capabilities=(OperatorActionCapability.RELEASE_GATE,),
+            idempotency_key="idem-release-github-export",
+            payload={
+                "repo": "iiyazu/Cross-Muse",
+                "pull_request_number": 43,
+                "expected_head_sha": "head123",
+            },
+            source="tui",
+        )
+    )
+
+    assert result.status == "ok"
+    assert result.fact_state == "release_evidence_exported"
+    assert result.payload["source_authority"] == "operator_action_contract"
+    assert result.payload["export"]["kind"] == "github_server_truth"
+    assert result.payload["export"]["artifact"]["can_emit_pr_merged"] is False
+    assert calls and calls[0].action == "export_github_server_truth"
+    assert calls[0].payload["expected_head_sha"] == "head123"
+
+
 def test_operator_action_blocks_release_evidence_export_without_handler(
     tmp_path: Path,
 ) -> None:

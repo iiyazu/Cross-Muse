@@ -18,7 +18,12 @@ from xmuse_core.platform.release_evidence_export_actions import (
     run_release_evidence_export_action,
 )
 
-_DEFAULT_KINDS = ("natural_deliberation", "real_provider_runtime", "live_memoryos")
+_DEFAULT_KINDS = (
+    "natural_deliberation",
+    "real_provider_runtime",
+    "live_memoryos",
+    "github_server_truth",
+)
 _KIND_ALIASES = {
     "all": "all",
     "natural": "natural_deliberation",
@@ -37,6 +42,11 @@ _KIND_ALIASES = {
     "memoryos": "live_memoryos",
     "live_memoryos": "live_memoryos",
     "live-memoryos": "live_memoryos",
+    "github": "github_server_truth",
+    "github-truth": "github_server_truth",
+    "github_truth": "github_server_truth",
+    "github-server-truth": "github_server_truth",
+    "github_server_truth": "github_server_truth",
 }
 
 
@@ -131,6 +141,13 @@ def _attempt_kind(
             release_root=release_root,
             env=env,
             candidates=candidates,
+        )
+    if kind == "github_server_truth":
+        return _attempt_github(
+            request,
+            root=root,
+            release_root=release_root,
+            env=env,
         )
     return _blocked_attempt(
         kind=kind,
@@ -236,6 +253,39 @@ def _attempt_memoryos(
     return _execute_export(
         kind="live_memoryos",
         action="export_memoryos_live_trace",
+        payload=_export_payload(request.payload),
+        request=request,
+        root=root,
+        release_root=release_root,
+        env=env,
+    )
+
+
+def _attempt_github(
+    request: OperatorActionRequest,
+    *,
+    root: Path,
+    release_root: Path,
+    env: Mapping[str, str],
+) -> dict[str, Any]:
+    missing: list[str] = []
+    if _text(request.payload.get("repo")) is None:
+        missing.append("github_repo_missing")
+    if not _has_value(
+        request.payload.get("pull_request_number")
+        or request.payload.get("pull_request")
+        or request.payload.get("pr")
+    ):
+        missing.append("github_pull_request_missing")
+    if missing:
+        return _blocked_attempt(
+            kind="github_server_truth",
+            blockers=missing,
+            summary="GitHub server truth attempt requires repo and pull request target.",
+        )
+    return _execute_export(
+        kind="github_server_truth",
+        action="export_github_server_truth",
         payload=_export_payload(request.payload),
         request=request,
         root=root,
@@ -401,6 +451,12 @@ def _text(value: Any) -> str | None:
         cleaned = value.strip()
         return cleaned or None
     return None
+
+
+def _has_value(value: Any) -> bool:
+    if isinstance(value, str):
+        return bool(value.strip())
+    return value is not None
 
 
 def _string_list(value: Any) -> list[str]:

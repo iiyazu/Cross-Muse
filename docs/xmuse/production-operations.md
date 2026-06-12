@@ -122,7 +122,7 @@ Operator actions currently use these focused capabilities:
 - `select_god_cli` for per-conversation GOD CLI selection;
 - `release_gate` for `/release refresh`, `/release pack`,
   `/release candidates`, `/release attempt`, and
-  `/release export <natural|provider|memoryos>`.
+  `/release export <natural|provider|memoryos|github>`.
 - `workflow_write` for guarded lane retry/abort requests.
 - `chat_freeze_blueprint` for guarded blueprint freeze requests.
 
@@ -401,6 +401,21 @@ were captured, the release gate artifact can still satisfy the
 `github_server_truth` gate with `server_side_enforcement_proof`. Review truth
 and merge truth remain separate requirements and must not be inferred from this
 gate.
+
+The same read-only capture is available from the TUI/operator action surface:
+
+```text
+/release export github repo=iiyazu/Cross-Muse pr=<pr-number> \
+  expected_head=<current-head-sha> base=main \
+  check=quality-gates,contract-smoke-gates,real-runtime-integration-gate
+```
+
+This calls `export_github_server_truth` with `release_gate`, writes
+`github-server-truth-snapshot.json` plus
+`artifacts/github-server-truth.json` under `xmuse/work/release_readiness`, and
+records an operator audit row. It performs read-only `gh api` capture through
+the contract handler; it does not create review truth, merge truth, or
+`pr_merged`.
 
 ## Internal Review Release Gate
 
@@ -781,10 +796,18 @@ uv run xmuse-tui
 /release pack github=artifacts/github-truth.json github_head=<current-head-sha>
 /release pack review=internal-review.json review_head=<current-head-sha>
 /release candidates
-/release attempt natural provider memoryos runtime_backend=ray transport=codex-app-server repo_id=iiyazu/Cross-Muse workspace_id=xmuse god_id=<god-id> thread_id=<thread-id> blueprint_id=<blueprint-id> feature_id=<feature-id> lane_id=<lane-id> actor_id=<actor-id> content='<content>' query='<query>'
+/release attempt natural provider memoryos github runtime_backend=ray \
+  transport=codex-app-server repo_id=iiyazu/Cross-Muse workspace_id=xmuse \
+  god_id=<god-id> thread_id=<thread-id> blueprint_id=<blueprint-id> \
+  feature_id=<feature-id> lane_id=<lane-id> actor_id=<actor-id> \
+  content='<content>' query='<query>' repo=iiyazu/Cross-Muse pr=<pr-number> \
+  expected_head=<current-head-sha>
 /release export natural target_ref=blueprint:<blueprint-id>
 /release export provider fresh_inbox=<fresh-inbox-id> resume_inbox=<resume-inbox-id> runtime_backend=ray transport=codex-app-server
 /release export memoryos repo_id=iiyazu/Cross-Muse workspace_id=xmuse god_id=<god-id> thread_id=<thread-id> blueprint_id=<blueprint-id> feature_id=<feature-id> lane_id=<lane-id> actor_id=<actor-id> content='<content>' query='<query>'
+/release export github repo=iiyazu/Cross-Muse pr=<pr-number> \
+  expected_head=<current-head-sha> base=main \
+  check=quality-gates,contract-smoke-gates,real-runtime-integration-gate
 ```
 
 `/release refresh` calls `refresh_live_gate_status` and writes the live-gate
@@ -810,11 +833,13 @@ same release evidence export actions only for candidate inputs that are
 export-ready. It writes `release-evidence-attempt.json` under
 `xmuse/work/release_readiness` and may write the raw evidence plus matching gate
 artifacts for successful export attempts. Missing MemoryOS configuration,
-missing peer latency traces, missing natural GOD speech acts, missing runtime
-metadata, fake/local labels, and blocked live captures remain blocked
+missing peer latency traces, missing natural GOD speech acts, missing GitHub
+target fields, missing runtime metadata, fake/local labels, and blocked live
+captures remain blocked
 `manual_gap` attempt rows; the attempt action does not start absent services or
 upgrade weak evidence. `/release export natural`, `/release export provider`,
-and `/release export memoryos` call the matching release evidence export
+`/release export memoryos`, and `/release export github` call the matching
+release evidence export
 operator actions and write both the raw evidence artifact and the corresponding
 release gate artifact under `xmuse/work/release_readiness`. These TUI paths go
 through the Chat API operator action endpoint when available, or the same local
