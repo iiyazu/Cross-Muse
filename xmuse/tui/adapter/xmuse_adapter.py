@@ -24,6 +24,9 @@ from xmuse_core.platform.operator_evidence_actions import (
     build_memory_trace_action,
     export_deliberation_transcript,
 )
+from xmuse_core.platform.release_evidence_export_actions import (
+    run_release_evidence_export_action,
+)
 from xmuse_core.platform.state_machine import LaneStateMachine
 from xmuse_core.platform.tui_vision_read_model import build_tui_vision_read_model
 from xmuse_core.providers.god_cli_registration_store import GodCliRegistrationStore
@@ -471,6 +474,11 @@ class XmuseAdapter:
             lane_state_machine=LaneStateMachine(
                 self._root / "feature_lanes.json",
                 history_path=self._root / "state_history.json",
+            ),
+            release_evidence_export_handler=lambda request: run_release_evidence_export_action(
+                request,
+                xmuse_root=self._root,
+                release_readiness_dir=self._root / "work" / "release_readiness",
             ),
         )
         request = OperatorActionRequest(

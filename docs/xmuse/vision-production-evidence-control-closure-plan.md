@@ -443,6 +443,12 @@ Current implementation status:
   `blockers`, and `release_decision` derived from those generated release gate
   artifacts. TUI `/release refresh` renders the summary without reading or
   mutating release state directly.
+- TUI `/release export natural|provider|memoryos` now routes through the
+  audited operator action contract with `release_gate`. The matching
+  `export_natural_deliberation_transcript`,
+  `export_real_provider_runtime_soak`, and `export_memoryos_live_trace`
+  actions write both raw evidence artifacts and release gate artifacts under
+  `xmuse/work/release_readiness`; weak inputs remain blocked/manual-gap proof.
 - `uv run python scripts/github_server_truth_capture.py --release-gate-output`
   can write a `github_server_truth` release gate artifact from the raw GitHub
   server truth snapshot. This can satisfy `server_side_enforcement_proof`

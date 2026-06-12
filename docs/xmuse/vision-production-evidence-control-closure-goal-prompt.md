@@ -94,6 +94,11 @@ Required action paths:
 - TUI /release refresh -> refresh_live_gate_status with release_gate capability.
 - TUI /release pack -> capture_release_evidence_pack with release_gate
   capability.
+- TUI /release export natural|provider|memoryos ->
+  export_natural_deliberation_transcript,
+  export_real_provider_runtime_soak, or export_memoryos_live_trace with
+  release_gate capability. These actions write raw evidence plus matching
+  release gate artifacts; they must not upgrade weak or missing live evidence.
 - TUI /lane retry and /lane abort -> retry_lane/abort_lane with workflow_write
   capability and current-state guards.
 - TUI /freeze -> freeze_blueprint with chat_freeze_blueprint capability and the

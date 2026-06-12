@@ -69,6 +69,9 @@ from xmuse_core.platform.operator_actions import (
     OperatorActionService,
 )
 from xmuse_core.platform.read_contracts import build_execution_drilldown_refs
+from xmuse_core.platform.release_evidence_export_actions import (
+    run_release_evidence_export_action,
+)
 from xmuse_core.platform.run_health import summarize_run_health
 from xmuse_core.platform.state_machine import LaneStateMachine
 from xmuse_core.providers.god_cli_registration_store import GodCliRegistrationStore
@@ -183,6 +186,11 @@ def _operator_action_service(base_dir: Path) -> OperatorActionService:
         blueprint_freeze_handler=lambda request: _operator_freeze_blueprint(
             base_dir,
             request,
+        ),
+        release_evidence_export_handler=lambda request: run_release_evidence_export_action(
+            request,
+            xmuse_root=base_dir,
+            release_readiness_dir=base_dir / "work" / "release_readiness",
         ),
     )
 

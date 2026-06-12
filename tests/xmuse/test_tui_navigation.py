@@ -612,6 +612,186 @@ async def test_chat_screen_release_refresh_runs_operator_control_action(
         assert "blockers=live-memoryos" in content
 
 
+async def test_chat_screen_release_export_natural_runs_operator_control_action(
+    app: XmuseTUI,
+) -> None:
+    app.adapter.list_group_conversations = lambda: [
+        {"id": "conv-user", "title": "User group", "created_at": "2026-06-01T00:00:00Z"},
+    ]
+    calls = []
+
+    def _run_operator_control_action(action: str, conv_id: str, payload: dict):
+        calls.append((action, conv_id, payload))
+        return {
+            "action": "export_natural_deliberation_transcript",
+            "status": "ok",
+            "proof_level": "contract_proof",
+            "fact_state": "release_evidence_exported",
+            "audit_id": "operator-action:natural",
+            "summary": "Exported natural_deliberation release evidence.",
+            "payload": {
+                "export": {
+                    "kind": "natural_deliberation",
+                    "artifact_path": "xmuse/work/release_readiness/natural-transcript.json",
+                    "gate_path": (
+                        "xmuse/work/release_readiness/artifacts/"
+                        "natural-deliberation.json"
+                    ),
+                    "gate": {
+                        "gate_id": "natural-god-deliberation",
+                        "status": "blocked",
+                        "proof_level": "manual_gap",
+                    },
+                }
+            },
+        }
+
+    app.adapter.run_operator_control_action = _run_operator_control_action
+
+    async with app.run_test() as pilot:
+        appended = []
+        log = app.screen.query_one("#message-log")
+        log.append_message = lambda **kwargs: appended.append(kwargs)
+
+        input_widget = app.screen.query_one("#message-input")
+        input_widget.value = (
+            "/release export natural target_ref=blueprint:bp-1 "
+            "output_path=xmuse/work/release_readiness/natural-transcript.json"
+        )
+        input_widget.post_message(input_widget.Submitted(input_widget, input_widget.value))
+        await pilot.pause()
+
+        assert calls == [
+            (
+                "export_natural_deliberation_transcript",
+                "conv-user",
+                {
+                    "target_refs": ["blueprint:bp-1"],
+                    "output_path": "xmuse/work/release_readiness/natural-transcript.json",
+                },
+            ),
+        ]
+        content = appended[-1]["content"]
+        assert "Operator action: export_natural_deliberation_transcript" in content
+        assert "status=ok proof=contract_proof fact=release_evidence_exported" in content
+        assert "audit=operator-action:natural" in content
+        assert "Exported natural_deliberation release evidence." in content
+
+
+async def test_chat_screen_release_export_provider_runs_operator_control_action(
+    app: XmuseTUI,
+) -> None:
+    app.adapter.list_group_conversations = lambda: [
+        {"id": "conv-user", "title": "User group", "created_at": "2026-06-01T00:00:00Z"},
+    ]
+    calls = []
+
+    def _run_operator_control_action(action: str, conv_id: str, payload: dict):
+        calls.append((action, conv_id, payload))
+        return {
+            "action": "export_real_provider_runtime_soak",
+            "status": "ok",
+            "proof_level": "contract_proof",
+            "fact_state": "release_evidence_exported",
+            "audit_id": "operator-action:provider",
+            "summary": "Exported real_provider_runtime release evidence.",
+            "payload": {},
+        }
+
+    app.adapter.run_operator_control_action = _run_operator_control_action
+
+    async with app.run_test() as pilot:
+        appended = []
+        log = app.screen.query_one("#message-log")
+        log.append_message = lambda **kwargs: appended.append(kwargs)
+
+        input_widget = app.screen.query_one("#message-input")
+        input_widget.value = (
+            "/release export provider fresh_inbox=inbox-fresh "
+            "resume_inbox=inbox-resume runtime_backend=ray "
+            "transport=codex-app-server run_id=soak-pr43"
+        )
+        input_widget.post_message(input_widget.Submitted(input_widget, input_widget.value))
+        await pilot.pause()
+
+        assert calls == [
+            (
+                "export_real_provider_runtime_soak",
+                "conv-user",
+                {
+                    "fresh_inbox_item_id": "inbox-fresh",
+                    "resume_inbox_item_id": "inbox-resume",
+                    "runtime_backend": "ray",
+                    "transport": "codex-app-server",
+                    "run_id": "soak-pr43",
+                },
+            ),
+        ]
+        content = appended[-1]["content"]
+        assert "Operator action: export_real_provider_runtime_soak" in content
+        assert "status=ok proof=contract_proof fact=release_evidence_exported" in content
+
+
+async def test_chat_screen_release_export_memoryos_runs_operator_control_action(
+    app: XmuseTUI,
+) -> None:
+    app.adapter.list_group_conversations = lambda: [
+        {"id": "conv-user", "title": "User group", "created_at": "2026-06-01T00:00:00Z"},
+    ]
+    calls = []
+
+    def _run_operator_control_action(action: str, conv_id: str, payload: dict):
+        calls.append((action, conv_id, payload))
+        return {
+            "action": "export_memoryos_live_trace",
+            "status": "blocked",
+            "proof_level": "manual_gap",
+            "fact_state": "blocked",
+            "audit_id": "operator-action:memoryos",
+            "summary": "MemoryOS Lite live capture requires configured live service.",
+            "payload": {},
+        }
+
+    app.adapter.run_operator_control_action = _run_operator_control_action
+
+    async with app.run_test() as pilot:
+        appended = []
+        log = app.screen.query_one("#message-log")
+        log.append_message = lambda **kwargs: appended.append(kwargs)
+
+        input_widget = app.screen.query_one("#message-input")
+        input_widget.value = (
+            "/release export memoryos repo_id=iiyazu/Cross-Muse workspace_id=xmuse "
+            "god_id=review thread_id=thread-1 blueprint_id=bp-1 "
+            "feature_id=feature-1 lane_id=lane-1 actor_id=review "
+            "content='live evidence' query='production evidence'"
+        )
+        input_widget.post_message(input_widget.Submitted(input_widget, input_widget.value))
+        await pilot.pause()
+
+        assert calls == [
+            (
+                "export_memoryos_live_trace",
+                "conv-user",
+                {
+                    "repo_id": "iiyazu/Cross-Muse",
+                    "workspace_id": "xmuse",
+                    "god_id": "review",
+                    "thread_id": "thread-1",
+                    "blueprint_id": "bp-1",
+                    "feature_id": "feature-1",
+                    "lane_id": "lane-1",
+                    "actor_id": "review",
+                    "content": "live evidence",
+                    "query": "production evidence",
+                },
+            ),
+        ]
+        content = appended[-1]["content"]
+        assert "Operator action: export_memoryos_live_trace" in content
+        assert "status=blocked proof=manual_gap fact=blocked" in content
+
+
 async def test_chat_screen_freeze_runs_operator_control_action(app: XmuseTUI) -> None:
     app.adapter.list_group_conversations = lambda: [
         {"id": "conv-user", "title": "User group", "created_at": "2026-06-01T00:00:00Z"},

@@ -469,6 +469,119 @@ def test_operator_action_blocks_blueprint_freeze_without_handler(
     assert "requires a blueprint freeze handler" in result.summary
 
 
+def test_operator_action_exports_release_evidence_with_audited_capability(
+    tmp_path: Path,
+) -> None:
+    calls: list[OperatorActionRequest] = []
+
+    def _export_handler(request: OperatorActionRequest) -> dict[str, object]:
+        calls.append(request)
+        return {
+            "kind": "natural_deliberation",
+            "artifact_path": str(tmp_path / "natural-transcript.json"),
+            "gate_path": str(tmp_path / "artifacts" / "natural-deliberation.json"),
+            "artifact": {
+                "schema_version": "xmuse.operator_transcript.v1",
+                "proof_level": "manual_gap",
+                "fact_state": "blocked",
+            },
+            "gate": {
+                "gate_id": "natural-god-deliberation",
+                "status": "blocked",
+                "proof_level": "manual_gap",
+            },
+        }
+
+    service = OperatorActionService(
+        god_cli_registry=build_default_god_cli_registry(),
+        audit_dir=tmp_path / "operator_actions",
+        release_evidence_export_handler=_export_handler,
+    )
+
+    result = service.handle(
+        OperatorActionRequest(
+            action="export_natural_deliberation_transcript",
+            actor_id="operator-1",
+            capabilities=(OperatorActionCapability.RELEASE_GATE,),
+            idempotency_key="idem-release-export-1",
+            payload={
+                "conversation_id": "conv-1",
+                "target_refs": ["blueprint:bp-1"],
+            },
+            source="tui",
+        )
+    )
+
+    assert result.status == "ok"
+    assert result.fact_state == "release_evidence_exported"
+    assert result.proof_level == "contract_proof"
+    assert result.payload["source_authority"] == "operator_action_contract"
+    assert result.payload["export"]["kind"] == "natural_deliberation"
+    assert result.payload["export"]["gate"]["gate_id"] == "natural-god-deliberation"
+    assert calls and calls[0].action == "export_natural_deliberation_transcript"
+    audit_rows = [
+        json.loads(line)
+        for line in (tmp_path / "operator_actions" / "operator-actions.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert audit_rows[-1]["action"] == "export_natural_deliberation_transcript"
+    assert audit_rows[-1]["status"] == "ok"
+
+
+def test_operator_action_denies_release_evidence_export_without_capability(
+    tmp_path: Path,
+) -> None:
+    calls: list[OperatorActionRequest] = []
+
+    service = OperatorActionService(
+        god_cli_registry=build_default_god_cli_registry(),
+        audit_dir=tmp_path / "operator_actions",
+        release_evidence_export_handler=lambda request: calls.append(request) or {},
+    )
+
+    result = service.handle(
+        OperatorActionRequest(
+            action="export_real_provider_runtime_soak",
+            actor_id="operator-1",
+            capabilities=(),
+            idempotency_key="idem-release-export-2",
+            payload={"conversation_id": "conv-1"},
+            source="tui",
+        )
+    )
+
+    assert result.status == "denied"
+    assert result.fact_state == "denied"
+    assert "missing capability release_gate" in result.summary
+    assert calls == []
+
+
+def test_operator_action_blocks_release_evidence_export_without_handler(
+    tmp_path: Path,
+) -> None:
+    service = OperatorActionService(
+        god_cli_registry=build_default_god_cli_registry(),
+        audit_dir=tmp_path / "operator_actions",
+    )
+
+    result = service.handle(
+        OperatorActionRequest(
+            action="export_memoryos_live_trace",
+            actor_id="operator-1",
+            capabilities=(OperatorActionCapability.RELEASE_GATE,),
+            idempotency_key="idem-release-export-3",
+            payload={"conversation_id": "conv-1"},
+            source="tui",
+        )
+    )
+
+    assert result.status == "blocked"
+    assert result.proof_level == "manual_gap"
+    assert result.fact_state == "blocked"
+    assert "requires a release evidence export handler" in result.summary
+
+
 def _manual_registration_payload() -> dict[str, object]:
     return {
         "cli_id": "custom.peer",

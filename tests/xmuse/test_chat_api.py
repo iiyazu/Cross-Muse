@@ -376,6 +376,45 @@ def test_chat_api_operator_action_captures_release_evidence_pack(
     assert (tmp_path / "work" / "release_readiness" / "evidence-pack.json").exists()
 
 
+def test_chat_api_operator_action_exports_natural_release_evidence(
+    tmp_path: Path,
+) -> None:
+    conversation = ChatStore(tmp_path / "chat.db").create_conversation(
+        "Natural export",
+    )
+    client = _client(tmp_path)
+
+    response = client.post(
+        "/api/chat/operator/actions",
+        headers={
+            "X-XMuse-Operator-Id": "operator-1",
+            "X-XMuse-Operator-Capabilities": "release_gate",
+        },
+        json={
+            "action": "export_natural_deliberation_transcript",
+            "idempotency_key": "idem-natural-export-api",
+            "payload": {
+                "conversation_id": conversation.id,
+                "target_refs": ["blueprint:bp-1"],
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "ok"
+    assert payload["fact_state"] == "release_evidence_exported"
+    exported = payload["payload"]["export"]
+    assert exported["kind"] == "natural_deliberation"
+    assert exported["gate"]["gate_id"] == "natural-god-deliberation"
+    assert (
+        tmp_path / "work" / "release_readiness" / "natural-transcript.json"
+    ).exists()
+    assert (
+        tmp_path / "work" / "release_readiness" / "artifacts" / "natural-deliberation.json"
+    ).exists()
+
+
 def test_chat_api_operator_action_refreshes_live_gate_status(
     monkeypatch,
     tmp_path: Path,

@@ -31,6 +31,21 @@ from xmuse_core.providers.god_cli_selection_store import GodCliSelectionStore
 ActionStatus = Literal["ok", "denied", "blocked", "manual_gap"]
 ProofLevel = Literal["contract_proof", "manual_gap"]
 
+_RELEASE_EVIDENCE_EXPORT_ACTIONS = {
+    "export_natural_deliberation_transcript",
+    "export_natural_transcript",
+    "natural_deliberation_transcript_export",
+    "natural_transcript_export",
+    "export_real_provider_runtime_soak",
+    "export_provider_runtime_soak",
+    "real_provider_runtime_soak_export",
+    "provider_runtime_soak_export",
+    "export_memoryos_live_trace",
+    "capture_memoryos_live_trace",
+    "memoryos_live_trace_export",
+    "memoryos_live_trace_capture",
+}
+
 
 class OperatorActionCapability(StrEnum):
     REGISTER_GOD_CLI = "register_god_cli"
@@ -95,6 +110,10 @@ class OperatorActionService:
         live_gate_env: Mapping[str, str] | None = None,
         live_gate_command_runner: CommandRunner | None = None,
         blueprint_freeze_handler: Callable[[OperatorActionRequest], dict[str, Any]] | None = None,
+        release_evidence_export_handler: Callable[
+            [OperatorActionRequest], dict[str, Any]
+        ]
+        | None = None,
     ) -> None:
         self._god_cli_registry = god_cli_registry
         self._audit_dir = audit_dir
@@ -107,6 +126,7 @@ class OperatorActionService:
         self._live_gate_env = live_gate_env
         self._live_gate_command_runner = live_gate_command_runner
         self._blueprint_freeze_handler = blueprint_freeze_handler
+        self._release_evidence_export_handler = release_evidence_export_handler
 
     def handle(self, request: OperatorActionRequest) -> OperatorActionResult:
         action = request.action.strip().lower()
@@ -127,6 +147,8 @@ class OperatorActionService:
             "live_gate_status",
         }:
             result = self._handle_refresh_live_gate_status(request, audit_id=audit_id)
+        elif action in _RELEASE_EVIDENCE_EXPORT_ACTIONS:
+            result = self._handle_export_release_evidence(request, audit_id=audit_id)
         elif action in {"retry_lane", "lane_retry"}:
             result = self._handle_retry_lane(request, audit_id=audit_id)
         elif action in {"abort_lane", "lane_abort"}:
@@ -579,6 +601,93 @@ class OperatorActionService:
             summary=summary,
             payload={
                 "freeze": freeze,
+                "source_authority": "operator_action_contract",
+            },
+        )
+
+    def _handle_export_release_evidence(
+        self,
+        request: OperatorActionRequest,
+        *,
+        audit_id: str,
+    ) -> OperatorActionResult:
+        action = request.action.strip().lower().replace("-", "_")
+        missing = self._missing_capability(
+            request,
+            OperatorActionCapability.RELEASE_GATE,
+        )
+        if missing is not None:
+            return OperatorActionResult(
+                action=action,
+                status="denied",
+                proof_level="contract_proof",
+                fact_state="denied",
+                actor_id=request.actor_id,
+                audit_id=audit_id,
+                summary=missing,
+            )
+        if self._release_evidence_export_handler is None:
+            return OperatorActionResult(
+                action=action,
+                status="blocked",
+                proof_level="manual_gap",
+                fact_state="blocked",
+                actor_id=request.actor_id,
+                audit_id=audit_id,
+                summary=f"{action} requires a release evidence export handler",
+            )
+        try:
+            exported = self._release_evidence_export_handler(request)
+        except OperatorActionBlockedError as exc:
+            return OperatorActionResult(
+                action=action,
+                status="blocked",
+                proof_level=exc.proof_level,
+                fact_state=exc.fact_state,
+                actor_id=request.actor_id,
+                audit_id=audit_id,
+                summary=exc.summary,
+                payload=exc.payload,
+            )
+        except Exception as exc:
+            return OperatorActionResult(
+                action=action,
+                status="blocked",
+                proof_level="manual_gap",
+                fact_state="blocked",
+                actor_id=request.actor_id,
+                audit_id=audit_id,
+                summary=f"release evidence export failed: {exc}",
+            )
+        kind = _text(exported.get("kind")) or action
+        artifact = exported.get("artifact")
+        gate = exported.get("gate")
+        artifact_proof = (
+            _text(artifact.get("proof_level")) if isinstance(artifact, dict) else None
+        )
+        gate_status = _text(gate.get("status")) if isinstance(gate, dict) else None
+        gate_proof = _text(gate.get("proof_level")) if isinstance(gate, dict) else None
+        detail = []
+        if artifact_proof:
+            detail.append(f"artifact_proof={artifact_proof}")
+        if gate_status:
+            suffix = f"/{gate_proof}" if gate_proof else ""
+            detail.append(f"gate={gate_status}{suffix}")
+        summary = f"Exported {kind} release evidence"
+        if detail:
+            summary = f"{summary} {' '.join(detail)}."
+        else:
+            summary = f"{summary}."
+        return OperatorActionResult(
+            action=action,
+            status="ok",
+            proof_level="contract_proof",
+            fact_state="release_evidence_exported",
+            actor_id=request.actor_id,
+            audit_id=audit_id,
+            summary=summary,
+            payload={
+                "export": exported,
                 "source_authority": "operator_action_contract",
             },
         )

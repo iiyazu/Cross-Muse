@@ -95,7 +95,8 @@ Operator actions currently use these focused capabilities:
 
 - `register_god_cli` for manual GOD CLI registration;
 - `select_god_cli` for per-conversation GOD CLI selection;
-- `release_gate` for `/release refresh` and `/release pack`.
+- `release_gate` for `/release refresh`, `/release pack`, and
+  `/release export <natural|provider|memoryos>`.
 - `workflow_write` for guarded lane retry/abort requests.
 - `chat_freeze_blueprint` for guarded blueprint freeze requests.
 
@@ -314,6 +315,20 @@ If the live trace artifact has unresolved blockers, the gate keeps
 `live_service_proof` but remains `blocked`, so release readiness cannot become
 `ready` until the blockers are resolved.
 
+The same MemoryOS trace capture and gate conversion is available through the
+audited TUI operator action surface when the live service is explicitly
+configured:
+
+```text
+/release export memoryos repo_id=iiyazu/Cross-Muse workspace_id=xmuse god_id=<god-id> thread_id=<thread-id> blueprint_id=<blueprint-id> feature_id=<feature-id> lane_id=<lane-id> actor_id=<actor-id> content='<content>' query='<query>'
+```
+
+The action is `export_memoryos_live_trace`, requires `release_gate`, requires
+`XMUSE_LIVE_MEMORYOS_LITE=1` and `XMUSE_MEMORYOS_LITE_URL`, writes
+`xmuse/work/release_readiness/memoryos-trace.json`, then writes
+`xmuse/work/release_readiness/artifacts/live-memoryos.json`. It uses the same
+REST-only adapter as the CLI command and does not import `memoryos_lite`.
+
 The gate command does not start MemoryOS Lite. It only validates and converts an
 existing live trace artifact.
 
@@ -411,6 +426,20 @@ cannot become `ready`.
 The gate command does not create the natural transcript. It only converts an
 already exported transcript into the `natural_deliberation` release gate.
 
+The same export-and-gate conversion is available through the audited TUI
+operator action surface:
+
+```text
+/release export natural target_ref=blueprint:<blueprint-id>
+```
+
+The action is `export_natural_deliberation_transcript`, requires
+`release_gate`, reads durable `chat.db` and `god_sessions.json`, writes
+`xmuse/work/release_readiness/natural-transcript.json`, then writes
+`xmuse/work/release_readiness/artifacts/natural-deliberation.json`. It does not
+synthesize GOD messages or provider sessions; weak evidence remains a blocked
+gate.
+
 ## Real Provider Runtime Release Gate
 
 After a real Ray/Codex/OpenCode fresh/resume runtime soak has produced durable
@@ -455,6 +484,18 @@ blocked `manual_gap` gate.
 If a real soak artifact has unresolved blockers, the gate keeps
 `real_provider_proof` but remains `blocked`, so release readiness cannot become
 `ready` until the blockers are resolved.
+
+The TUI operator action path can export the raw soak artifact and the matching
+release gate in one audited step:
+
+```text
+/release export provider fresh_inbox=<fresh-inbox-id> resume_inbox=<resume-inbox-id> runtime_backend=ray transport=codex-app-server run_id=<run-id>
+```
+
+The action is `export_real_provider_runtime_soak`, requires `release_gate`, and
+uses the same durable peer latency trace and `god_sessions.json` inputs as the
+CLI capture. The operator must still identify the fresh and resume inbox trace
+ids; CLI version probes never satisfy this gate.
 
 The gate command does not start Ray, Codex, OpenCode, or MCP. It only validates
 and converts an existing real-provider runtime artifact.
@@ -529,18 +570,30 @@ uv run xmuse-tui
 # in the active group chat:
 /release refresh
 /release pack
+/release export natural target_ref=blueprint:<blueprint-id>
+/release export provider fresh_inbox=<fresh-inbox-id> resume_inbox=<resume-inbox-id> runtime_backend=ray transport=codex-app-server
+/release export memoryos repo_id=iiyazu/Cross-Muse workspace_id=xmuse god_id=<god-id> thread_id=<thread-id> blueprint_id=<blueprint-id> feature_id=<feature-id> lane_id=<lane-id> actor_id=<actor-id> content='<content>' query='<query>'
 ```
 
 `/release refresh` calls `refresh_live_gate_status` and writes the live-gate
 status blocker artifacts under `xmuse/work/release_readiness/artifacts`.
 `/release pack` calls `capture_release_evidence_pack` and writes the operator
-handoff pack plus nested readiness/audit reports. Both TUI paths go through the
+handoff pack plus nested readiness/audit reports. `/release export natural`,
+`/release export provider`, and `/release export memoryos` call the matching
+release evidence export operator actions and write both the raw evidence
+artifact and the corresponding release gate artifact under
+`xmuse/work/release_readiness`. These TUI paths go through the
 Chat API operator action endpoint when available, or the same local contract
-service when Chat API is unavailable. Both actions require `release_gate`, write
+service when Chat API is unavailable. These actions require `release_gate`, write
 an operator audit row, and restrict operator-supplied paths to
-`xmuse/work/release_readiness`. The refresh action records configured/missing
-gate status; it does not create live MemoryOS, GitHub, provider, or natural
-transcript proof.
+`xmuse/work/release_readiness`.
+
+The refresh action records configured/missing gate status; it does not create
+live MemoryOS, GitHub, provider, or natural transcript proof. The export
+actions can capture and gate durable evidence, but they do not upgrade weak
+inputs: missing MemoryOS live configuration, deterministic transcripts,
+single-GOD transcripts, stdout fallback, fake/local runtime labels, or missing
+provider session metadata remain blocked/manual-gap evidence.
 
 The refresh operator response includes `gate_statuses`, `blockers`, and
 `release_decision` derived from the release gate artifacts it just wrote. The

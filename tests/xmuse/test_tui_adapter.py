@@ -566,6 +566,32 @@ def test_adapter_operator_control_action_registers_god_cli_locally(
     assert stored.registration.proof_refs == ("provider-run://custom.peer/live-smoke-1",)
 
 
+def test_adapter_operator_control_action_exports_natural_release_evidence_locally(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setenv("XMUSE_TUI_OPERATOR_CAPABILITIES", "release_gate")
+    conversation = ChatStore(tmp_path / "chat.db").create_conversation(
+        "Natural export",
+    )
+
+    result = XmuseAdapter(tmp_path).run_operator_control_action(
+        "export_natural_deliberation_transcript",
+        conversation.id,
+        {"target_refs": ["blueprint:bp-1"]},
+    )
+
+    assert result["status"] == "ok"
+    assert result["fact_state"] == "release_evidence_exported"
+    exported = result["payload"]["export"]
+    assert exported["kind"] == "natural_deliberation"
+    assert exported["gate"]["gate_id"] == "natural-god-deliberation"
+    assert (tmp_path / "work" / "release_readiness" / "natural-transcript.json").exists()
+    assert (
+        tmp_path / "work" / "release_readiness" / "artifacts" / "natural-deliberation.json"
+    ).exists()
+
+
 def test_adapter_records_operator_action_tui_command_event(tmp_path):
     adapter = XmuseAdapter(tmp_path)
 

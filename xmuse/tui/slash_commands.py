@@ -379,21 +379,31 @@ class SlashCommandRouter:
             parts = shlex.split(rest)
         except ValueError as exc:
             return SlashCommandResult(True, message=f"Invalid /release command: {exc}")
+        payload: dict[str, Any] = {}
         if parts in (["pack"], ["evidence-pack"], ["evidence"]):
             action = "capture_release_evidence_pack"
             command = "/release pack"
         elif parts in (["refresh"], ["status"], ["live-gate-status"]):
             action = "refresh_live_gate_status"
             command = "/release refresh"
+        elif len(parts) >= 2 and parts[0] == "export":
+            try:
+                action, payload = _release_export_action(parts[1:])
+            except ValueError as exc:
+                return SlashCommandResult(True, message=str(exc))
+            command = f"/release export {parts[1]}"
         else:
-            return SlashCommandResult(True, message="Usage: /release <refresh|pack>")
+            return SlashCommandResult(
+                True,
+                message="Usage: /release <refresh|pack|export>",
+            )
         runner = getattr(context.app.adapter, "run_operator_control_action", None)
         if not callable(runner):
             return SlashCommandResult(
                 True,
                 message="Operator control actions unavailable for this adapter.",
             )
-        result = runner(action, conv_id, {})
+        result = runner(action, conv_id, payload)
         if isinstance(result, dict):
             _record_official_tui_command_event(
                 context,
@@ -824,13 +834,107 @@ def _freeze_payload(args: list[str]) -> dict[str, Any]:
     return payload
 
 
-def _key_value_args(args: list[str]) -> dict[str, str]:
+def _release_export_action(args: list[str]) -> tuple[str, dict[str, Any]]:
+    usage = (
+        "Usage: /release export <natural|provider|memoryos> <key=value...>"
+    )
+    if not args:
+        raise ValueError(usage)
+    target = args[0].strip().lower().replace("-", "_")
+    raw = _key_value_args(args[1:], usage=usage) if len(args) > 1 else {}
+    if target in {"natural", "transcript", "natural_transcript"}:
+        return (
+            "export_natural_deliberation_transcript",
+            _normalize_release_export_payload(
+                raw,
+                aliases={
+                    "output": "output_path",
+                    "artifact": "output_path",
+                    "gate": "gate_output_path",
+                    "gate_output": "gate_output_path",
+                    "source_ref": "source_refs",
+                    "target_ref": "target_refs",
+                    "target": "target_refs",
+                },
+                list_keys={"source_refs", "target_refs"},
+            ),
+        )
+    if target in {"provider", "real_provider", "runtime", "soak"}:
+        if not raw:
+            raise ValueError(usage)
+        return (
+            "export_real_provider_runtime_soak",
+            _normalize_release_export_payload(
+                raw,
+                aliases={
+                    "fresh": "fresh_inbox_item_id",
+                    "fresh_inbox": "fresh_inbox_item_id",
+                    "resume": "resume_inbox_item_id",
+                    "resume_inbox": "resume_inbox_item_id",
+                    "backend": "runtime_backend",
+                    "runtime": "runtime_backend",
+                    "output": "output_path",
+                    "artifact": "output_path",
+                    "gate": "gate_output_path",
+                    "gate_output": "gate_output_path",
+                    "source_ref": "source_refs",
+                },
+                list_keys={"source_refs"},
+            ),
+        )
+    if target in {"memoryos", "memory", "live_memoryos"}:
+        if not raw:
+            raise ValueError(usage)
+        return (
+            "export_memoryos_live_trace",
+            _normalize_release_export_payload(
+                raw,
+                aliases={
+                    "output": "output_path",
+                    "artifact": "output_path",
+                    "gate": "gate_output_path",
+                    "gate_output": "gate_output_path",
+                    "source_ref": "source_refs",
+                    "binding_store": "binding_store_path",
+                },
+                list_keys={"source_refs"},
+                int_keys={"budget"},
+            ),
+        )
+    raise ValueError(usage)
+
+
+def _normalize_release_export_payload(
+    raw: dict[str, str],
+    *,
+    aliases: dict[str, str],
+    list_keys: set[str],
+    int_keys: set[str] | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    int_key_set = int_keys or set()
+    for key, value in raw.items():
+        normalized_key = aliases.get(key, key)
+        if normalized_key in list_keys:
+            payload[normalized_key] = _comma_values(value)
+        elif normalized_key in int_key_set:
+            payload[normalized_key] = int(value)
+        else:
+            payload[normalized_key] = value
+    return payload
+
+
+def _key_value_args(
+    args: list[str],
+    *,
+    usage: str = "Usage: /god register <key=value...>",
+) -> dict[str, str]:
     parsed: dict[str, str] = {}
     for arg in args:
         key, sep, value = arg.partition("=")
         clean_key = key.strip().lower().replace("-", "_")
         if not sep or not clean_key:
-            raise ValueError("Usage: /god register <key=value...>")
+            raise ValueError(usage)
         parsed[clean_key] = value.strip()
     return parsed
 
@@ -1324,6 +1428,7 @@ def _help_text() -> str:
             "/evidence <transcript|github|memory|blockers>",
             "/release refresh",
             "/release pack",
+            "/release export <natural|provider|memoryos> <key=value...>",
             "/lane retry <lane_id> <current_status> [reason]",
             "/lane abort <lane_id> <current_status> [reason]",
             "/freeze target_ref=<ref> blueprint_id=<id> goal=<goal> "
