@@ -375,19 +375,25 @@ class SlashCommandRouter:
             parts = shlex.split(rest)
         except ValueError as exc:
             return SlashCommandResult(True, message=f"Invalid /release command: {exc}")
-        if parts not in (["pack"], ["evidence-pack"], ["evidence"]):
-            return SlashCommandResult(True, message="Usage: /release pack")
+        if parts in (["pack"], ["evidence-pack"], ["evidence"]):
+            action = "capture_release_evidence_pack"
+            command = "/release pack"
+        elif parts in (["refresh"], ["status"], ["live-gate-status"]):
+            action = "refresh_live_gate_status"
+            command = "/release refresh"
+        else:
+            return SlashCommandResult(True, message="Usage: /release <refresh|pack>")
         runner = getattr(context.app.adapter, "run_operator_control_action", None)
         if not callable(runner):
             return SlashCommandResult(
                 True,
                 message="Operator control actions unavailable for this adapter.",
             )
-        result = runner("capture_release_evidence_pack", conv_id, {})
+        result = runner(action, conv_id, {})
         if isinstance(result, dict):
             _record_official_tui_command_event(
                 context,
-                command="/release pack",
+                command=command,
                 conversation_id=conv_id,
                 read_surface_authority="operator_action_contract",
             )
@@ -1053,6 +1059,7 @@ def _help_text() -> str:
             "/overview",
             "/dashboard (alias for /overview)",
             "/evidence <transcript|github|memory|blockers>",
+            "/release refresh",
             "/release pack",
             "/discussion",
             "/blockers",

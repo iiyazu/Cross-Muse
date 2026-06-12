@@ -335,14 +335,20 @@ The same capture is available through the TUI operator action surface:
 export XMUSE_TUI_OPERATOR_CAPABILITIES=release_gate
 uv run xmuse-tui
 # in the active group chat:
+/release refresh
 /release pack
 ```
 
-The TUI path calls `capture_release_evidence_pack` through the Chat API
-operator action endpoint when available, or the same local contract service
-when Chat API is unavailable. The action requires `release_gate`, writes an
-operator audit row, and restricts operator-supplied paths to
-`xmuse/work/release_readiness`.
+`/release refresh` calls `refresh_live_gate_status` and writes the live-gate
+status blocker artifacts under `xmuse/work/release_readiness/artifacts`.
+`/release pack` calls `capture_release_evidence_pack` and writes the operator
+handoff pack plus nested readiness/audit reports. Both TUI paths go through the
+Chat API operator action endpoint when available, or the same local contract
+service when Chat API is unavailable. Both actions require `release_gate`, write
+an operator audit row, and restrict operator-supplied paths to
+`xmuse/work/release_readiness`. The refresh action records configured/missing
+gate status; it does not create live MemoryOS, GitHub, provider, or natural
+transcript proof.
 
 ## Degradation Matrix
 

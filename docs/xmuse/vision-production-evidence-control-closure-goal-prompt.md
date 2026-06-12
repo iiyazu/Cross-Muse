@@ -55,7 +55,8 @@ Priority:
    truth, Ray/Codex GOD runtime, OpenCode health/bounded runtime. Configured
    gate failures are release blockers. Use
    `uv run xmuse-live-gate-status-capture` to record configured/missing gate
-   status as blocker artifacts when live proof has not yet been captured.
+   status as blocker artifacts when live proof has not yet been captured; from
+   TUI use `/release refresh` with `release_gate`.
 6. Separate natural GOD transcript evidence from deterministic replay and keep
    unresolved blockers from freezing a blueprint.
 7. Add release readiness aggregation: tests, ruff, package boundary, internal
@@ -80,6 +81,9 @@ Hard constraints:
 - TUI may operate the workflow only through authorized contracts/APIs.
 - TUI `/release pack` must go through `capture_release_evidence_pack` operator
   action with `release_gate`; it must not write release reports directly.
+- TUI `/release refresh` must go through `refresh_live_gate_status` operator
+  action with `release_gate`; it must not write live-gate status artifacts
+  directly.
 - Chat API and MCP writes must use configured tokens and
   `X-XMUSE-API-Key`/`X-XMuse-Operator-Role`/`X-XMuse-Operator-Capabilities`
   headers when auth is enabled.

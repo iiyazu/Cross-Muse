@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -8,6 +9,7 @@ from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
 
+from xmuse_core.platform.live_gate_status_capture import CommandRunner, capture_live_gate_status
 from xmuse_core.platform.release_evidence_pack import capture_release_evidence_pack
 from xmuse_core.providers.god_cli_registry import GodCliRegistry
 from xmuse_core.providers.god_cli_selection_store import GodCliSelectionStore
@@ -57,6 +59,8 @@ class OperatorActionService:
         audit_dir: Path,
         selection_store: GodCliSelectionStore | None = None,
         release_readiness_dir: Path | None = None,
+        live_gate_env: Mapping[str, str] | None = None,
+        live_gate_command_runner: CommandRunner | None = None,
     ) -> None:
         self._god_cli_registry = god_cli_registry
         self._audit_dir = audit_dir
@@ -64,6 +68,8 @@ class OperatorActionService:
         self._release_readiness_dir = release_readiness_dir or (
             audit_dir.parent / "release_readiness"
         )
+        self._live_gate_env = live_gate_env
+        self._live_gate_command_runner = live_gate_command_runner
 
     def handle(self, request: OperatorActionRequest) -> OperatorActionResult:
         action = request.action.strip().lower()
@@ -76,6 +82,12 @@ class OperatorActionService:
             "capture_release_gate",
         }:
             result = self._handle_capture_release_evidence_pack(request, audit_id=audit_id)
+        elif action in {
+            "refresh_live_gate_status",
+            "capture_live_gate_status",
+            "live_gate_status",
+        }:
+            result = self._handle_refresh_live_gate_status(request, audit_id=audit_id)
         else:
             result = OperatorActionResult(
                 action=action or "unknown",
@@ -262,6 +274,76 @@ class OperatorActionService:
                     audit_output
                     or Path(pack["source_reports"]["proof_contamination_audit"])
                 ),
+            },
+        )
+
+    def _handle_refresh_live_gate_status(
+        self,
+        request: OperatorActionRequest,
+        *,
+        audit_id: str,
+    ) -> OperatorActionResult:
+        action = "refresh_live_gate_status"
+        missing = self._missing_capability(
+            request,
+            OperatorActionCapability.RELEASE_GATE,
+        )
+        if missing is not None:
+            return OperatorActionResult(
+                action=action,
+                status="denied",
+                proof_level="contract_proof",
+                fact_state="denied",
+                actor_id=request.actor_id,
+                audit_id=audit_id,
+                summary=missing,
+            )
+        try:
+            output_dir = self._release_path(
+                request.payload.get("output_dir"),
+                default=self._release_readiness_dir / "artifacts" / "live_gate_status",
+            )
+        except ValueError as exc:
+            return OperatorActionResult(
+                action=action,
+                status="blocked",
+                proof_level="contract_proof",
+                fact_state="blocked",
+                actor_id=request.actor_id,
+                audit_id=audit_id,
+                summary=str(exc),
+            )
+        try:
+            summary = capture_live_gate_status(
+                output_dir=output_dir,
+                env=self._live_gate_env,
+                command_runner=self._live_gate_command_runner,
+            )
+        except Exception as exc:
+            return OperatorActionResult(
+                action=action,
+                status="blocked",
+                proof_level="manual_gap",
+                fact_state="blocked",
+                actor_id=request.actor_id,
+                audit_id=audit_id,
+                summary=f"live gate status refresh failed: {exc}",
+            )
+        return OperatorActionResult(
+            action=action,
+            status="ok",
+            proof_level="contract_proof",
+            fact_state="live_gate_status_refreshed",
+            actor_id=request.actor_id,
+            audit_id=audit_id,
+            summary=(
+                "Refreshed live gate status artifacts: "
+                f"artifact_count={summary['artifact_count']}."
+            ),
+            payload={
+                "live_gate_status": summary,
+                "output_dir": str(output_dir),
+                "artifact_count": summary["artifact_count"],
             },
         )
 

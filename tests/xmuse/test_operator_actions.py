@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from xmuse_core.platform.live_gate_status_capture import ProbeResult
 from xmuse_core.platform.operator_actions import (
     OperatorActionCapability,
     OperatorActionRequest,
@@ -216,3 +217,116 @@ def test_operator_action_blocks_release_evidence_pack_paths_outside_release_root
     assert result.fact_state == "blocked"
     assert "must stay under release readiness root" in result.summary
     assert not (tmp_path / "outside-pack.json").exists()
+
+
+def test_operator_action_refreshes_live_gate_status_with_capability(
+    tmp_path: Path,
+) -> None:
+    release_dir = tmp_path / "release_readiness"
+    service = OperatorActionService(
+        god_cli_registry=build_default_god_cli_registry(),
+        audit_dir=tmp_path / "operator_actions",
+        release_readiness_dir=release_dir,
+        live_gate_env={"XMUSE_LIVE_MEMORYOS_LITE": "1"},
+        live_gate_command_runner=_fake_probe_runner(),
+    )
+
+    result = service.handle(
+        OperatorActionRequest(
+            action="refresh_live_gate_status",
+            actor_id="operator-1",
+            capabilities=(OperatorActionCapability.RELEASE_GATE,),
+            idempotency_key="idem-refresh-1",
+            payload={},
+            source="tui",
+        )
+    )
+
+    output_dir = release_dir / "artifacts" / "live_gate_status"
+    assert result.status == "ok"
+    assert result.fact_state == "live_gate_status_refreshed"
+    assert result.payload["live_gate_status"]["artifact_count"] == 4
+    assert result.payload["output_dir"] == str(output_dir.resolve(strict=False))
+    assert sorted(path.name for path in output_dir.glob("*.json")) == [
+        "github-server-truth-status.json",
+        "live-memoryos-status.json",
+        "natural-deliberation-status.json",
+        "real-provider-status.json",
+    ]
+    audit_rows = [
+        json.loads(line)
+        for line in (tmp_path / "operator_actions" / "operator-actions.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert audit_rows[-1]["action"] == "refresh_live_gate_status"
+    assert audit_rows[-1]["status"] == "ok"
+
+
+def test_operator_action_denies_live_gate_status_refresh_without_capability(
+    tmp_path: Path,
+) -> None:
+    release_dir = tmp_path / "release_readiness"
+    service = OperatorActionService(
+        god_cli_registry=build_default_god_cli_registry(),
+        audit_dir=tmp_path / "operator_actions",
+        release_readiness_dir=release_dir,
+        live_gate_command_runner=_fake_probe_runner(),
+    )
+
+    result = service.handle(
+        OperatorActionRequest(
+            action="refresh_live_gate_status",
+            actor_id="operator-1",
+            capabilities=(),
+            idempotency_key="idem-refresh-2",
+            payload={},
+            source="tui",
+        )
+    )
+
+    assert result.status == "denied"
+    assert result.fact_state == "denied"
+    assert "missing capability release_gate" in result.summary
+    assert not (release_dir / "artifacts" / "live_gate_status").exists()
+
+
+def test_operator_action_blocks_live_gate_status_paths_outside_release_root(
+    tmp_path: Path,
+) -> None:
+    release_dir = tmp_path / "release_readiness"
+    service = OperatorActionService(
+        god_cli_registry=build_default_god_cli_registry(),
+        audit_dir=tmp_path / "operator_actions",
+        release_readiness_dir=release_dir,
+        live_gate_command_runner=_fake_probe_runner(),
+    )
+
+    result = service.handle(
+        OperatorActionRequest(
+            action="refresh_live_gate_status",
+            actor_id="operator-1",
+            capabilities=(OperatorActionCapability.RELEASE_GATE,),
+            idempotency_key="idem-refresh-3",
+            payload={"output_dir": str(tmp_path / "outside-live-gates")},
+            source="tui",
+        )
+    )
+
+    assert result.status == "blocked"
+    assert result.fact_state == "blocked"
+    assert "must stay under release readiness root" in result.summary
+    assert not (tmp_path / "outside-live-gates").exists()
+
+
+def _fake_probe_runner():
+    def run(command: tuple[str, ...]) -> ProbeResult:
+        return ProbeResult(
+            name=" ".join(command),
+            command=command,
+            returncode=0,
+            stdout="ok",
+            stderr="",
+        )
+
+    return run

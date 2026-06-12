@@ -204,6 +204,9 @@ Current implementation status:
 - `/god select <cli_id>` routes GOD CLI selection through the Chat API operator
   action endpoint first, then the same local contract service only when Chat API
   is unavailable.
+- `/release refresh` routes live-gate status capture through the same operator
+  action path. It requires `release_gate`, writes audit evidence, and emits
+  honest `manual_gap`/blocked status artifacts without satisfying live gates.
 - `/release pack` routes release evidence pack capture through the same
   operator action path. It requires `release_gate`, writes audit evidence, and
   only permits paths under `xmuse/work/release_readiness`.

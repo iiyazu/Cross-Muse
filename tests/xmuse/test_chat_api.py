@@ -303,6 +303,71 @@ def test_chat_api_operator_action_captures_release_evidence_pack(
     assert (tmp_path / "work" / "release_readiness" / "evidence-pack.json").exists()
 
 
+def test_chat_api_operator_action_refreshes_live_gate_status(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    def _fake_capture_live_gate_status(*, output_dir, env=None, command_runner=None):
+        output = Path(output_dir)
+        output.mkdir(parents=True, exist_ok=True)
+        artifact = output / "live-memoryos-status.json"
+        _write_json(
+            artifact,
+            {
+                "schema_version": "xmuse.production_evidence.v1",
+                "gate_id": "live-memoryos",
+                "kind": "live_memoryos",
+                "configured": False,
+                "required": True,
+                "status": "manual_gap",
+                "proof_level": "manual_gap",
+                "owner": "operator",
+                "summary": "MemoryOS Lite live gate is required but not configured.",
+            },
+        )
+        return {
+            "schema_version": "xmuse.live_gate_status_capture.v1",
+            "artifact_count": 1,
+            "output_dir": str(output),
+            "artifacts": [str(artifact)],
+            "probes": {},
+            "env_keys_present": [],
+        }
+
+    monkeypatch.setattr(
+        "xmuse_core.platform.operator_actions.capture_live_gate_status",
+        _fake_capture_live_gate_status,
+    )
+    client = _client(tmp_path)
+
+    response = client.post(
+        "/api/chat/operator/actions",
+        headers={
+            "X-XMuse-Operator-Id": "operator-1",
+            "X-XMuse-Operator-Capabilities": "release_gate",
+        },
+        json={
+            "action": "refresh_live_gate_status",
+            "idempotency_key": "idem-refresh-api",
+            "payload": {},
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "ok"
+    assert payload["fact_state"] == "live_gate_status_refreshed"
+    assert payload["payload"]["live_gate_status"]["artifact_count"] == 1
+    assert (
+        tmp_path
+        / "work"
+        / "release_readiness"
+        / "artifacts"
+        / "live_gate_status"
+        / "live-memoryos-status.json"
+    ).exists()
+
+
 def test_default_chat_participants_are_codex_only(tmp_path: Path) -> None:
     client = _client(tmp_path)
 

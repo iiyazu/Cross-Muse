@@ -127,21 +127,27 @@ that rejection and does not perform a local write.
 The same operator action surface now captures the release evidence pack:
 
 ```text
+/release refresh
 /release pack
 ```
 
-The TUI command calls `capture_release_evidence_pack` through
-`run_operator_control_action`. Chat API receives the same operator action via:
+`/release refresh` calls `refresh_live_gate_status` through
+`run_operator_control_action` and writes live-gate status artifacts under the
+release-readiness work directory. `/release pack` calls
+`capture_release_evidence_pack` through the same path. Chat API receives these
+operator actions via:
 
 ```text
 POST /api/chat/operator/actions
 ```
 
-The action requires `release_gate`, writes `operator-actions.jsonl`, and
-restricts operator-supplied paths to `xmuse/work/release_readiness`. The action
-result can be `ok` even when the nested evidence pack decision is `blocked`;
-that means the capture operation succeeded while release readiness remains
-blocked by the supplied gate artifacts.
+Both actions require `release_gate`, write `operator-actions.jsonl`, and
+restrict operator-supplied paths to `xmuse/work/release_readiness`.
+`/release refresh` records configured/missing gate status as blocker artifacts;
+it does not create live proof. `/release pack` can return `ok` even when the
+nested evidence pack decision is `blocked`; that means the capture operation
+succeeded while release readiness remains blocked by the supplied gate
+artifacts.
 
 ### Bootstrap Session Authority
 
@@ -461,6 +467,7 @@ release readiness as `ready`, `blocked`, or `not_evaluated`.
 | --- | --- | --- |
 | GOD/CLI registry | `contract_proof` | Defines selectable boundaries; does not prove live CLI runtime. |
 | `/god select` route | `contract_proof` | TUI action path calls Chat API first; no live operator session proof. |
+| `/release refresh` route | `contract_proof` | TUI action path calls Chat API/operator contract and writes only ignored live-gate status artifacts. |
 | `/release pack` route | `contract_proof` | TUI action path calls Chat API/operator contract and writes only ignored release-readiness artifacts. |
 | Operator action audit | `contract_proof` | JSONL audit row written in test/runtime path; not durable authority. |
 | GOD CLI selection store | `contract_proof` | Durable per-conversation selection record; does not prove live CLI runtime. |
@@ -568,6 +575,9 @@ xmuse-release-evidence-pack reported decision=blocked for the /tmp live-gate sta
 TUI `/release pack`, Chat API `capture_release_evidence_pack`, and core `release_gate` operator action path verified
 164 passed, 1 warning
 Codex independent review attempt timed out after 120 seconds; no formal review artifact captured
+172 passed, 1 warning
+operator action smoke under /tmp refreshed live-gate status artifacts and captured evidence pack: decision=blocked, blocker_count=4, finding_count=0
+second Codex independent review attempt for `/release refresh` timed out after 120 seconds; no formal review artifact captured
 All checks passed
 git diff --check clean
 ```
@@ -589,8 +599,13 @@ The warning is the existing Starlette/httpx deprecation warning from FastAPI
 - TUI `/release pack` can trigger that evidence pack through the audited
   operator action contract with `release_gate`, but no live operator service run
   has exercised the production token bundle end to end.
+- TUI `/release refresh` and the matching Chat API/operator action can refresh
+  live-gate status blocker artifacts under the release-readiness work directory,
+  but the artifacts remain `manual_gap`/blocked status until actual live proof
+  is supplied.
 - The independent Codex review attempt timed out, so this slice does not add
-  verified internal review proof.
+  verified internal review proof. A second independent review attempt for the
+  `/release refresh` slice also timed out.
 - Live gate status capture can create honest blocker artifacts for missing or
   configured-but-uncaptured live gates, but those artifacts remain `manual_gap`
   proof and cannot satisfy release readiness.
