@@ -41,7 +41,7 @@ export XMUSE_CHAT_API_AUTH_TOKEN=<server-token>
 export XMUSE_CHAT_API_KEY=<same-token-for-tui-client>
 export XMUSE_TUI_OPERATOR_ID=operator
 export XMUSE_TUI_OPERATOR_ROLE=operator
-export XMUSE_TUI_OPERATOR_CAPABILITIES=chat_create_conversation,chat_post_message,chat_bootstrap,chat_approve_proposal,chat_manage_participants,register_god_cli,select_god_cli,release_gate,workflow_write
+export XMUSE_TUI_OPERATOR_CAPABILITIES=chat_create_conversation,chat_post_message,chat_bootstrap,chat_approve_proposal,chat_manage_participants,chat_freeze_blueprint,register_god_cli,select_god_cli,release_gate,workflow_write
 export XMUSE_MCP_AUTH_TOKEN=<server-token>
 export XMUSE_MEMORYOS_LIVE_TRACE_ARTIFACT=xmuse/work/release_readiness/memoryos-trace.json
 export XMUSE_NATURAL_GOD_TRANSCRIPT_PATH=xmuse/work/release_readiness/natural-transcript.json
@@ -77,6 +77,7 @@ routes as well as operator actions:
 - `chat_bootstrap` for bootstrap proposal creation and apply;
 - `chat_approve_proposal` for proposal approval;
 - `chat_manage_participants` for participant add/remove;
+- `chat_freeze_blueprint` for `/freeze` blueprint freeze requests;
 - `register_god_cli`, `select_god_cli`, and `release_gate` for operator
   actions.
 - `workflow_write` for guarded `/lane retry` and `/lane abort` operator
@@ -94,6 +95,19 @@ Operator actions currently use these focused capabilities:
 - `select_god_cli` for per-conversation GOD CLI selection;
 - `release_gate` for `/release refresh` and `/release pack`.
 - `workflow_write` for guarded lane retry/abort requests.
+- `chat_freeze_blueprint` for guarded blueprint freeze requests.
+
+Blueprint freeze is an operator action, not a TUI projection write:
+
+```text
+/freeze target_ref=<ref> blueprint_id=<id> goal=<goal> scope=<items> acceptance=<items>
+```
+
+The command calls the Chat API operator action endpoint with
+`freeze_blueprint`, requires `chat_freeze_blueprint`, and then uses the same
+deliberation freeze contract as `/api/chat/conversations/{id}/freeze-blueprint`.
+Unresolved blocking objections still block freeze, and the TUI only displays
+the audited result.
 
 Lane workflow control is also an operator action, not a projection edit:
 

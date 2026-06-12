@@ -368,6 +368,107 @@ def test_operator_action_blocks_lane_action_when_guard_mismatches(
     assert LaneStateMachine(lanes_path).get_lane("lane-1")["status"] == "failed"
 
 
+def test_operator_action_freezes_blueprint_with_audited_capability(
+    tmp_path: Path,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    def _freeze_handler(request: OperatorActionRequest) -> dict[str, object]:
+        calls.append(request.payload)
+        return {
+            "decision": {"status": "allowed"},
+            "blueprint": {"blueprint_id": "bp-1", "status": "frozen"},
+            "resolution": {"id": "res-1"},
+        }
+
+    service = OperatorActionService(
+        god_cli_registry=build_default_god_cli_registry(),
+        audit_dir=tmp_path / "operator_actions",
+        blueprint_freeze_handler=_freeze_handler,
+    )
+
+    result = service.handle(
+        OperatorActionRequest(
+            action="freeze_blueprint",
+            actor_id="operator-1",
+            capabilities=("chat_freeze_blueprint",),
+            idempotency_key="idem-freeze-1",
+            payload=_blueprint_freeze_payload(),
+            source="tui",
+        )
+    )
+
+    assert result.status == "ok"
+    assert result.fact_state == "blueprint_frozen"
+    assert result.payload["source_authority"] == "operator_action_contract"
+    assert result.payload["freeze"]["blueprint"]["blueprint_id"] == "bp-1"
+    assert calls == [_blueprint_freeze_payload()]
+    audit_rows = [
+        json.loads(line)
+        for line in (tmp_path / "operator_actions" / "operator-actions.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert audit_rows[-1]["action"] == "freeze_blueprint"
+    assert audit_rows[-1]["status"] == "ok"
+
+
+def test_operator_action_denies_blueprint_freeze_without_capability(
+    tmp_path: Path,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    def _freeze_handler(request: OperatorActionRequest) -> dict[str, object]:
+        calls.append(request.payload)
+        return {"decision": {"status": "allowed"}}
+
+    service = OperatorActionService(
+        god_cli_registry=build_default_god_cli_registry(),
+        audit_dir=tmp_path / "operator_actions",
+        blueprint_freeze_handler=_freeze_handler,
+    )
+
+    result = service.handle(
+        OperatorActionRequest(
+            action="freeze_blueprint",
+            actor_id="operator-1",
+            capabilities=(),
+            idempotency_key="idem-freeze-2",
+            payload=_blueprint_freeze_payload(),
+            source="tui",
+        )
+    )
+
+    assert result.status == "denied"
+    assert result.fact_state == "denied"
+    assert "missing capability chat_freeze_blueprint" in result.summary
+    assert calls == []
+
+
+def test_operator_action_blocks_blueprint_freeze_without_handler(
+    tmp_path: Path,
+) -> None:
+    service = OperatorActionService(
+        god_cli_registry=build_default_god_cli_registry(),
+        audit_dir=tmp_path / "operator_actions",
+    )
+
+    result = service.handle(
+        OperatorActionRequest(
+            action="freeze_blueprint",
+            actor_id="operator-1",
+            capabilities=("chat_freeze_blueprint",),
+            idempotency_key="idem-freeze-3",
+            payload=_blueprint_freeze_payload(),
+            source="tui",
+        )
+    )
+
+    assert result.status == "blocked"
+    assert result.fact_state == "blocked"
+    assert "requires a blueprint freeze handler" in result.summary
+
+
 def _manual_registration_payload() -> dict[str, object]:
     return {
         "cli_id": "custom.peer",
@@ -380,6 +481,21 @@ def _manual_registration_payload() -> dict[str, object]:
         "state_write_allowed": True,
         "proof_level": "real_provider_proof",
         "proof_refs": ["provider-run://custom.peer/live-smoke-1"],
+    }
+
+
+def _blueprint_freeze_payload() -> dict[str, object]:
+    return {
+        "conversation_id": "conv-1",
+        "target_ref": "blueprint:bp-1:1",
+        "blueprint": {
+            "blueprint_id": "bp-1",
+            "revision": 1,
+            "goal": "Ship REST-first deliberation freeze.",
+            "scope": ["Append deliberation events", "Freeze a blueprint"],
+            "acceptance_contracts": ["Frozen blueprint appears as a durable card"],
+            "source_refs": ["memory://conversation/conv-1/message/msg-proposal"],
+        },
     }
 
 

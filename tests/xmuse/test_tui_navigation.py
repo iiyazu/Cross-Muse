@@ -612,6 +612,73 @@ async def test_chat_screen_release_refresh_runs_operator_control_action(
         assert "blockers=live-memoryos" in content
 
 
+async def test_chat_screen_freeze_runs_operator_control_action(app: XmuseTUI) -> None:
+    app.adapter.list_group_conversations = lambda: [
+        {"id": "conv-user", "title": "User group", "created_at": "2026-06-01T00:00:00Z"},
+    ]
+    calls = []
+
+    def _run_operator_control_action(action: str, conv_id: str, payload: dict):
+        calls.append((action, conv_id, payload))
+        return {
+            "action": "freeze_blueprint",
+            "status": "ok",
+            "proof_level": "contract_proof",
+            "fact_state": "blueprint_frozen",
+            "audit_id": "operator-action:freeze",
+            "summary": "Frozen mission blueprint bp-tui-1.",
+            "payload": {
+                "freeze": {
+                    "decision": {"status": "allowed"},
+                    "blueprint": {"blueprint_id": "bp-tui-1", "status": "frozen"},
+                }
+            },
+        }
+
+    app.adapter.run_operator_control_action = _run_operator_control_action
+
+    async with app.run_test() as pilot:
+        appended = []
+        log = app.screen.query_one("#message-log")
+        log.append_message = lambda **kwargs: appended.append(kwargs)
+
+        input_widget = app.screen.query_one("#message-input")
+        input_widget.value = (
+            "/freeze target_ref=blueprint:bp-tui-1:1 blueprint_id=bp-tui-1 "
+            "goal='Ship TUI freeze action' scope='Route freeze through operator action' "
+            "acceptance='Durable blueprint resolution exists' "
+            "source_ref=memory://conversation/conv-user/message/msg-proposal"
+        )
+        input_widget.post_message(input_widget.Submitted(input_widget, input_widget.value))
+        await pilot.pause()
+
+        assert calls == [
+            (
+                "freeze_blueprint",
+                "conv-user",
+                {
+                    "target_ref": "blueprint:bp-tui-1:1",
+                    "blueprint": {
+                        "blueprint_id": "bp-tui-1",
+                        "goal": "Ship TUI freeze action",
+                        "scope": ["Route freeze through operator action"],
+                        "acceptance_contracts": [
+                            "Durable blueprint resolution exists"
+                        ],
+                        "source_refs": [
+                            "memory://conversation/conv-user/message/msg-proposal"
+                        ],
+                    },
+                },
+            )
+        ]
+        content = appended[-1]["content"]
+        assert "Operator action: freeze_blueprint" in content
+        assert "status=ok proof=contract_proof fact=blueprint_frozen" in content
+        assert "audit=operator-action:freeze" in content
+        assert "Frozen mission blueprint bp-tui-1." in content
+
+
 async def test_chat_screen_lane_retry_runs_operator_control_action(app: XmuseTUI) -> None:
     app.adapter.list_group_conversations = lambda: [
         {"id": "conv-user", "title": "User group", "created_at": "2026-06-01T00:00:00Z"},

@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from xmuse_core.agents.god_session_registry import GodSessionRegistry
 from xmuse_core.chat.execution_cards import ChatExecutionCardEmitter
 from xmuse_core.chat.inbox_store import ChatInboxStore
+from xmuse_core.chat.store import ChatStore
 from xmuse_core.structuring.blueprint_execution.approval_events import (
     build_blueprint_approval_dedupe_key,
 )
@@ -63,6 +64,32 @@ def _manual_god_cli_registration_payload() -> dict[str, object]:
         "state_write_allowed": True,
         "proof_level": "real_provider_proof",
         "proof_refs": ["provider-run://custom.peer/live-smoke-1"],
+    }
+
+
+def _deliberation(
+    conversation_id: str,
+    *,
+    msg_id: str,
+    kind: str,
+    payload: dict[str, object],
+    target_ref: str,
+    parent_id: str | None = None,
+    objection_level: str = "none",
+    agent_id: str = "god-architect",
+) -> dict[str, object]:
+    return {
+        "msg_id": msg_id,
+        "agent_id": agent_id,
+        "lamport_ts": 1,
+        "kind": kind,
+        "parent_id": parent_id,
+        "target_ref": target_ref,
+        "mentions": [],
+        "payload": payload,
+        "objection_level": objection_level,
+        "decision_scope": "blueprint.freeze",
+        "conversation_id": conversation_id,
     }
 
 
@@ -412,6 +439,112 @@ def test_chat_api_operator_action_refreshes_live_gate_status(
         / "live_gate_status"
         / "live-memoryos-status.json"
     ).exists()
+
+
+def test_chat_api_operator_action_freezes_blueprint_with_capability(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    conversation = client.post("/api/chat/conversations", json={"title": "Freeze"}).json()
+    conv_id = conversation["id"]
+    target_ref = "blueprint:bp-chat-1:1"
+    for event in [
+        _deliberation(
+            conv_id,
+            msg_id="msg-proposal",
+            kind="proposal",
+            target_ref=target_ref,
+            payload={"summary": "Freeze through operator action."},
+        ),
+        _deliberation(
+            conv_id,
+            msg_id="msg-review",
+            kind="note",
+            target_ref=target_ref,
+            payload={"review": "no_objection"},
+        ),
+        _deliberation(
+            conv_id,
+            msg_id="msg-commit",
+            kind="commit",
+            target_ref=target_ref,
+            agent_id="god-review",
+            payload={"commitment": "ready_to_freeze"},
+        ),
+    ]:
+        response = client.post(f"/api/chat/conversations/{conv_id}/deliberations", json=event)
+        assert response.status_code == 201
+
+    response = client.post(
+        "/api/chat/operator/actions",
+        headers={
+            "X-XMuse-Operator-Id": "operator-1",
+            "X-XMuse-Operator-Capabilities": "chat_freeze_blueprint",
+        },
+        json={
+            "action": "freeze_blueprint",
+            "idempotency_key": "idem-freeze-api-1",
+            "payload": {
+                "conversation_id": conv_id,
+                "target_ref": target_ref,
+                "blueprint": {
+                    "blueprint_id": "bp-chat-1",
+                    "revision": 1,
+                    "goal": "Freeze through the operator action contract.",
+                    "scope": ["Route freeze through operator action"],
+                    "acceptance_contracts": ["A durable mission blueprint resolution exists"],
+                    "source_refs": ["memory://conversation/conv-1/message/msg-proposal"],
+                },
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "ok"
+    assert payload["fact_state"] == "blueprint_frozen"
+    assert payload["payload"]["freeze"]["decision"]["status"] == "allowed"
+    resolution_id = payload["payload"]["freeze"]["resolution"]["id"]
+    stored = ChatStore(tmp_path / "chat.db").get_resolution(resolution_id)
+    assert stored.approval_mode == "deliberation_freeze"
+    audit_rows = [
+        json.loads(line)
+        for line in (tmp_path / "work" / "operator_actions" / "operator-actions.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert audit_rows[-1]["action"] == "freeze_blueprint"
+    assert audit_rows[-1]["status"] == "ok"
+
+
+def test_chat_api_operator_action_denies_blueprint_freeze_without_capability(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    conversation = client.post("/api/chat/conversations", json={"title": "Freeze"}).json()
+
+    response = client.post(
+        "/api/chat/operator/actions",
+        headers={"X-XMuse-Operator-Id": "operator-1"},
+        json={
+            "action": "freeze_blueprint",
+            "idempotency_key": "idem-freeze-api-2",
+            "payload": {
+                "conversation_id": conversation["id"],
+                "target_ref": "blueprint:bp-chat-2:1",
+                "blueprint": {
+                    "blueprint_id": "bp-chat-2",
+                    "goal": "Denied freeze.",
+                    "scope": ["No unauthorized freeze"],
+                    "acceptance_contracts": ["No resolution is created"],
+                },
+            },
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"]["status"] == "denied"
+    assert not ChatStore(tmp_path / "chat.db").list_resolutions()
 
 
 def test_chat_api_operator_action_retries_lane_with_workflow_capability(

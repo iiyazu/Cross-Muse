@@ -61,6 +61,8 @@ class SlashCommandRouter:
             return self._release(rest, context)
         if command == "lane":
             return self._lane(rest, context)
+        if command == "freeze":
+            return self._freeze(rest, context)
         if command == "god":
             return self._god(rest, context)
         if command == "archive":
@@ -452,6 +454,35 @@ class SlashCommandRouter:
             message=_operator_action_block(result if isinstance(result, dict) else {}),
         )
 
+    def _freeze(self, rest: str, context: SlashCommandContext) -> SlashCommandResult:
+        conv_id = _active_conversation_id(context)
+        if not conv_id:
+            return SlashCommandResult(True, message="No active group.")
+        runner = getattr(context.app.adapter, "run_operator_control_action", None)
+        if not callable(runner):
+            return SlashCommandResult(
+                True,
+                message="Operator control actions unavailable for this adapter.",
+            )
+        try:
+            parts = shlex.split(rest)
+            payload = _freeze_payload(parts)
+        except ValueError as exc:
+            return SlashCommandResult(True, message=str(exc))
+        result = runner("freeze_blueprint", conv_id, payload)
+        if isinstance(result, dict):
+            _record_official_tui_command_event(
+                context,
+                command="/freeze",
+                conversation_id=conv_id,
+                read_surface_authority="operator_action_contract",
+            )
+        return SlashCommandResult(
+            True,
+            refresh=True,
+            message=_operator_action_block(result if isinstance(result, dict) else {}),
+        )
+
     def _god(self, rest: str, context: SlashCommandContext) -> SlashCommandResult:
         try:
             parts = shlex.split(rest)
@@ -738,6 +769,58 @@ def _god_registration_payload(args: list[str]) -> dict[str, Any]:
             payload[normalized_key] = _bool_arg(value)
         else:
             payload[normalized_key] = value
+    return payload
+
+
+def _freeze_payload(args: list[str]) -> dict[str, Any]:
+    raw = _key_value_args(args)
+    if not raw:
+        raise ValueError(
+            "Usage: /freeze target_ref=<ref> blueprint_id=<id> "
+            "goal=<goal> scope=<items> acceptance=<items>"
+        )
+    aliases = {
+        "target": "target_ref",
+        "id": "blueprint_id",
+        "acceptance": "acceptance_contracts",
+        "acceptance_contract": "acceptance_contracts",
+        "repo_area": "repo_areas",
+        "source_ref": "source_refs",
+        "required": "required_commits",
+        "commits": "required_commits",
+        "window": "objection_window_lamports",
+    }
+    list_keys = {
+        "scope",
+        "constraints",
+        "non_goals",
+        "acceptance_contracts",
+        "repo_areas",
+        "open_questions",
+        "source_refs",
+    }
+    int_keys = {"revision", "required_commits", "objection_window_lamports"}
+    top_level_keys = {"target_ref", "required_commits", "objection_window_lamports"}
+    payload: dict[str, Any] = {}
+    blueprint: dict[str, Any] = {}
+    for key, value in raw.items():
+        normalized_key = aliases.get(key, key)
+        if normalized_key in int_keys:
+            parsed: Any = int(value)
+        elif normalized_key in list_keys:
+            parsed = _comma_values(value)
+        else:
+            parsed = value
+        if normalized_key in top_level_keys:
+            payload[normalized_key] = parsed
+        else:
+            blueprint[normalized_key] = parsed
+    if "target_ref" not in payload or not blueprint:
+        raise ValueError(
+            "Usage: /freeze target_ref=<ref> blueprint_id=<id> "
+            "goal=<goal> scope=<items> acceptance=<items>"
+        )
+    payload["blueprint"] = blueprint
     return payload
 
 
@@ -1243,6 +1326,8 @@ def _help_text() -> str:
             "/release pack",
             "/lane retry <lane_id> <current_status> [reason]",
             "/lane abort <lane_id> <current_status> [reason]",
+            "/freeze target_ref=<ref> blueprint_id=<id> goal=<goal> "
+            "scope=<items> acceptance=<items>",
             "/discussion",
             "/blockers",
             "/god add <role> [display name]",

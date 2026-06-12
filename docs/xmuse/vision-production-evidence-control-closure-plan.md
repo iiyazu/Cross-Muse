@@ -241,6 +241,11 @@ Current implementation status:
   through the same operator action path. They require `workflow_write`, require
   current-status guard input, stamp mutation audit metadata, and use
   `LaneStateMachine` transition rules.
+- `/freeze target_ref=<ref> blueprint_id=<id> goal=<goal> scope=<items>
+  acceptance=<items>` routes blueprint freeze through the same operator action
+  path. It requires `chat_freeze_blueprint`, calls the existing deliberation
+  freeze contract, writes the same durable mission blueprint resolution, and
+  leaves unresolved blocking objections as blockers.
 - TUI command events record `operator_action_contract` as their read-surface
   authority. They do not write projections or release facts directly.
 - Ordinary TUI Chat API write methods now forward the production operator auth
@@ -375,7 +380,7 @@ Tasks:
   provider profile, session id, and proof level.
 - [x] Keep deterministic replay labeled as `contract_proof`.
 - [x] Ensure unresolved blocking objections prevent freeze.
-- [ ] Route freeze approval through the production TUI/action contract when
+- [x] Route freeze approval through the production TUI/action contract when
   implemented.
 
 Acceptance:
@@ -396,6 +401,10 @@ Current implementation status:
 - Deterministic replay, single-GOD transcript evidence, missing provider session
   metadata, and unresolved blockers remain blocked and cannot satisfy release
   readiness.
+- `freeze_blueprint` is now an audited operator action. Chat API injects the
+  existing `/api/chat/conversations/{id}/freeze-blueprint` contract as the
+  freeze handler, TUI `/freeze` routes through `run_operator_control_action`,
+  and local fallback without a handler blocks instead of bypassing Chat API.
 
 ## S6 - Release Readiness Gate
 

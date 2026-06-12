@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -37,6 +37,7 @@ class OperatorActionCapability(StrEnum):
     SELECT_GOD_CLI = "select_god_cli"
     WORKFLOW_WRITE = "workflow_write"
     RELEASE_GATE = "release_gate"
+    CHAT_FREEZE_BLUEPRINT = "chat_freeze_blueprint"
 
 
 @dataclass(frozen=True)
@@ -65,6 +66,22 @@ class OperatorActionResult:
         return asdict(self)
 
 
+class OperatorActionBlockedError(Exception):
+    def __init__(
+        self,
+        summary: str,
+        *,
+        payload: dict[str, Any] | None = None,
+        proof_level: ProofLevel = "contract_proof",
+        fact_state: str = "blocked",
+    ) -> None:
+        super().__init__(summary)
+        self.summary = summary
+        self.payload = payload or {}
+        self.proof_level: ProofLevel = proof_level
+        self.fact_state = fact_state
+
+
 class OperatorActionService:
     def __init__(
         self,
@@ -77,6 +94,7 @@ class OperatorActionService:
         release_readiness_dir: Path | None = None,
         live_gate_env: Mapping[str, str] | None = None,
         live_gate_command_runner: CommandRunner | None = None,
+        blueprint_freeze_handler: Callable[[OperatorActionRequest], dict[str, Any]] | None = None,
     ) -> None:
         self._god_cli_registry = god_cli_registry
         self._audit_dir = audit_dir
@@ -88,6 +106,7 @@ class OperatorActionService:
         )
         self._live_gate_env = live_gate_env
         self._live_gate_command_runner = live_gate_command_runner
+        self._blueprint_freeze_handler = blueprint_freeze_handler
 
     def handle(self, request: OperatorActionRequest) -> OperatorActionResult:
         action = request.action.strip().lower()
@@ -112,6 +131,8 @@ class OperatorActionService:
             result = self._handle_retry_lane(request, audit_id=audit_id)
         elif action in {"abort_lane", "lane_abort"}:
             result = self._handle_abort_lane(request, audit_id=audit_id)
+        elif action in {"freeze_blueprint", "request_blueprint_freeze", "blueprint_freeze"}:
+            result = self._handle_freeze_blueprint(request, audit_id=audit_id)
         else:
             result = OperatorActionResult(
                 action=action or "unknown",
@@ -482,6 +503,83 @@ class OperatorActionService:
                 "lane": lane,
                 "source_authority": "operator_action_contract",
                 "durable_state_ref": f"lane_state:{lane_id}",
+            },
+        )
+
+    def _handle_freeze_blueprint(
+        self,
+        request: OperatorActionRequest,
+        *,
+        audit_id: str,
+    ) -> OperatorActionResult:
+        action = "freeze_blueprint"
+        missing = self._missing_capability(
+            request,
+            OperatorActionCapability.CHAT_FREEZE_BLUEPRINT,
+        )
+        if missing is not None:
+            return OperatorActionResult(
+                action=action,
+                status="denied",
+                proof_level="contract_proof",
+                fact_state="denied",
+                actor_id=request.actor_id,
+                audit_id=audit_id,
+                summary=missing,
+            )
+        if self._blueprint_freeze_handler is None:
+            return OperatorActionResult(
+                action=action,
+                status="blocked",
+                proof_level="manual_gap",
+                fact_state="blocked",
+                actor_id=request.actor_id,
+                audit_id=audit_id,
+                summary="freeze_blueprint requires a blueprint freeze handler",
+            )
+        try:
+            freeze = self._blueprint_freeze_handler(request)
+        except OperatorActionBlockedError as exc:
+            return OperatorActionResult(
+                action=action,
+                status="blocked",
+                proof_level=exc.proof_level,
+                fact_state=exc.fact_state,
+                actor_id=request.actor_id,
+                audit_id=audit_id,
+                summary=exc.summary,
+                payload=exc.payload,
+            )
+        except Exception as exc:
+            return OperatorActionResult(
+                action=action,
+                status="blocked",
+                proof_level="manual_gap",
+                fact_state="blocked",
+                actor_id=request.actor_id,
+                audit_id=audit_id,
+                summary=f"blueprint freeze failed: {exc}",
+            )
+        blueprint = freeze.get("blueprint") if isinstance(freeze, dict) else None
+        blueprint_id = (
+            _text(blueprint.get("blueprint_id"))
+            if isinstance(blueprint, dict)
+            else None
+        )
+        summary = "Frozen mission blueprint."
+        if blueprint_id:
+            summary = f"Frozen mission blueprint {blueprint_id}."
+        return OperatorActionResult(
+            action=action,
+            status="ok",
+            proof_level="contract_proof",
+            fact_state="blueprint_frozen",
+            actor_id=request.actor_id,
+            audit_id=audit_id,
+            summary=summary,
+            payload={
+                "freeze": freeze,
+                "source_authority": "operator_action_contract",
             },
         )
 
