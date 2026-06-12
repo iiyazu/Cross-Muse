@@ -582,9 +582,10 @@ release readiness as `ready`, `blocked`, or `not_evaluated`.
 | Internal review release gate command | `contract_proof` | Converts a verified structured internal review artifact into `internal_review_proof`; does not replace GitHub enforcement. |
 | Natural GOD deliberation gate command | `contract_proof` | Converts explicit natural transcript artifacts into a `natural_deliberation` gate; deterministic replay and single-GOD artifacts remain blocked. |
 | Real provider runtime gate command | `contract_proof` | Converts explicit real-provider runtime soak artifacts into a `real_provider` gate; fake/stdout/local artifacts remain blocked. |
-| MemoryOS live gate | `manual_gap` | Env not configured in current shell. |
-| Natural GOD transcript evidence | `manual_gap` | No fresh real multi-GOD transcript artifact has been captured in this slice. |
-| Ray/Codex/OpenCode live gate | `manual_gap` | Binaries/Ray import exist, but production services/env are not running/configured. |
+| MemoryOS live gate | `live_service_proof` | A local MemoryOS Lite FastAPI service was started from the sibling `memoryOS` repo and xmuse captured create/ingest/build-context/trace through REST. |
+| Natural GOD transcript evidence | `real_provider_proof` | Two selected Codex GOD participants wrote `god_speech_act` envelopes through MCP writeback; the natural transcript gate accepted two distinct GODs with provider session metadata. |
+| Ray/Codex live provider gate | `real_provider_proof` | Ray/Codex app-server fresh/resume MCP writeback reused the provider session and passed the real-provider runtime gate. |
+| OpenCode live worker proof | `manual_gap` | `opencode` exists (`1.17.3`), but `DEEPSEEK_API_KEY` is not configured; OpenCode remains a secondary bounded worker, not groupchat peer-GOD runtime proof. |
 | GitHub server truth | `server_side_enforcement_proof` | PR #43 branch protection and required checks were captured; review truth and merge truth remain missing, so no `pr_merged`. |
 
 ## Validation
@@ -699,6 +700,10 @@ third Codex independent review attempt for manual GOD CLI registration timed out
 8 passed
 xmuse-live-gate-status-capture with XMUSE_GITHUB_TRUTH_* wrote a github_server_truth gate with status=ok, proof_level=server_side_enforcement_proof, and raw snapshot gap_reason=missing server-side truth: review_truth, merge_truth
 xmuse-release-evidence-pack with the configured GitHub target reported decision=blocked, blocker_count=3, proof_contamination_decision=clean; remaining blockers were live-memoryos, natural-god-deliberation, and real-provider-runtime
+real Ray/Codex provider runtime evidence captured fresh/resume MCP writeback and passed xmuse-real-provider-runtime-gate-capture with proof_level=real_provider_proof
+real natural multi-GOD transcript evidence captured two Codex GOD participants writing god_speech_act envelopes through MCP; xmuse-natural-deliberation-gate-capture reported status=ok, proof_level=real_provider_proof
+MemoryOS Lite sibling service was started with DATA_DIR under xmuse/work; xmuse-memoryos-live-trace-capture performed create/ingest/build-context/trace over HTTP and xmuse-memoryos-live-gate-capture reported status=ok, proof_level=live_service_proof
+xmuse-release-evidence-pack over xmuse/work/release_readiness/artifacts reported decision=ready, blocker_count=0, proof_contamination_decision=clean
 All checks passed
 git diff --check clean
 xmuse/__init__.py absent
@@ -714,11 +719,11 @@ The warning is the existing Starlette/httpx deprecation warning from FastAPI
   operator auth envelope in contract tests. Read routes still follow the local
   trust policy, and no live operator/TUI service run has exercised the
   production token bundle.
-- Release readiness capture can aggregate supplied artifacts into a redacted
-  blocked/ready/not_evaluated report, but live gate artifacts still need to be
-  produced by actual MemoryOS, natural GOD, and provider runs. GitHub server
-  enforcement truth can be captured when `XMUSE_GITHUB_TRUTH_*` is configured,
-  but review truth and merge truth remain separate.
+- Release readiness capture now aggregates the current runtime artifacts into a
+  redacted `ready` report with no blockers. GitHub server enforcement truth,
+  live MemoryOS, natural GOD transcript, and real provider runtime gates are
+  satisfied by current artifacts. Review truth and merge truth remain separate
+  and do not permit a `pr_merged` claim.
 - Release evidence pack can write one operator handoff report plus nested
   readiness/audit reports, but it still depends on supplied gate artifacts and
   does not create live proof.
@@ -739,10 +744,9 @@ The warning is the existing Starlette/httpx deprecation warning from FastAPI
   `/release refresh` slice also timed out.
 - Live gate status capture can create honest blocker artifacts for missing or
   configured-but-uncaptured live gates. With explicit `XMUSE_GITHUB_TRUTH_*`
-  target configuration, it can also capture GitHub server enforcement truth.
-  With explicit live artifact paths, it can convert MemoryOS, provider runtime,
-  and natural transcript evidence, but the current environment still has no
-  fresh live artifacts for those gates.
+  target configuration, it also captured GitHub server enforcement truth. With
+  explicit live artifact paths, release readiness now consumes MemoryOS,
+  provider runtime, and natural transcript evidence from `xmuse/work`.
 - GitHub branch protection and required check server truth has been captured for
   PR #43, but review truth and merge truth remain missing. This satisfies the
   `github_server_truth` release gate only; it does not permit `pr_merged`.
@@ -755,24 +759,32 @@ The warning is the existing Starlette/httpx deprecation warning from FastAPI
 - `/god register` now persists manual GOD CLI choices with proof refs and audit
   metadata, but those proof refs do not satisfy the real-provider release gate
   without a separate runtime gate artifact.
-- Live MemoryOS Lite was not configured in the current shell.
-- Ray/Codex/MCP services were not running during health check.
+- Live MemoryOS Lite was configured by starting the sibling `memoryOS` FastAPI
+  service on `127.0.0.1:8000` and pointing
+  `XMUSE_MEMORYOS_LITE_URL=http://127.0.0.1:8000` at it for capture.
+- Ray/Codex/MCP runtime proof was captured through real app-server MCP
+  writeback. The service processes were runtime-only and are not durable state
+  authority.
 - OpenCode binary exists, but `DEEPSEEK_API_KEY` is not configured in this
   shell.
 - PR #43 exists as a draft PR. GitHub server enforcement truth was captured,
   but the PR is unmerged and has no review truth artifact attached.
 - Independent Codex review for the manual GOD CLI registration slice timed out
   after 120 seconds and is not counted as proof.
-- No natural multi-GOD live transcript was captured.
-- Release readiness cannot be `ready` until configured live gates produce real
-  evidence or named blockers are resolved.
+- A natural multi-GOD live transcript was captured from two Codex-backed GOD
+  participants. The first review `vote` envelope was rejected because its
+  payload lacked `vote=approve|reject|abstain`; the corrected provider
+  writeback was accepted, preserving the schema boundary.
+- Current release readiness is `ready` for the supplied artifacts, with proof
+  contamination audit `clean`. This is still not a merge claim: PR #43 remains
+  draft/unmerged and lacks server-side review/merge truth.
 
 ## Next Recommended Slice
 
 1. Bind selected CLI records into the official conversation/bootstrap
    participant flow where role templates need selected runtime providers.
-2. Start the configured Chat API/MCP/platform runner bundle and capture a real
-   Ray/Codex/MCP health proof.
-3. Configure `XMUSE_GITHUB_TRUTH_*` for PR #43 and use `/release refresh` or
-   `xmuse-live-gate-status-capture` to keep GitHub server truth refreshed as
-   part of the normal readiness flow.
+2. Exercise the production Chat API/MCP/TUI token bundle as a live operator
+   service run; current auth proof remains contract-level.
+3. Keep `XMUSE_GITHUB_TRUTH_*` refreshed for PR #43 and add server-side review
+   truth before converting the draft PR toward merge readiness. Do not claim
+   `pr_merged` until merge truth exists.
