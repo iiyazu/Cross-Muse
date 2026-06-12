@@ -583,6 +583,12 @@ Current implementation status:
   supervisor production evidence before building the nested replay bundle. This
   removes a manual handoff step but remains contract-level supervisor evidence,
   not live overnight proof.
+- `uv run xmuse-overnight-supervisor` supports dependency-aware high-value
+  fallback selection through `--stage-priority` and `--stage-depends-on`.
+  Blocked live/auth/provider stages no longer force dependent release-pack
+  stages to start; the supervisor journals skipped/waiting dependencies and
+  starts the highest-priority ready independent stage. This keeps release
+  blockers intact while allowing independent overnight work to continue.
 - The same release pack command can also accept repeated
   `--memoryos-governance-plan` and `--memoryos-writeback-event` inputs, convert
   them through `xmuse-memoryos-governance-evidence-capture`, and attach the

@@ -356,6 +356,14 @@ Current implementation status:
   records a failure classification, writes an `xmuse.stage_fallback.v1`
   artifact, and can start the next pending independent stage. This preserves
   release blockers while allowing the overnight run to keep useful momentum.
+- Supervisor stages can now carry priority and dependency metadata. The Python
+  API accepts `OvernightSupervisorStage(priority=..., depends_on=(...))`, and
+  the CLI accepts `--stage-priority STAGE=INT` plus
+  `--stage-depends-on STAGE=DEP1,DEP2`. When a fallback blocks a stage, the
+  supervisor skips pending stages whose dependencies are blocked or not yet
+  complete, journals `stage_selection_skipped` /
+  `stage_selection_waiting`, and starts the highest-priority ready independent
+  stage instead of blindly starting the next declaration.
 - The supervisor now has a deterministic virtual-time soak path through
   `OvernightSupervisor.simulate_virtual_soak(...)` and
   `uv run xmuse-overnight-supervisor simulate`. A CI/local run can compress

@@ -143,6 +143,20 @@ def _parser() -> argparse.ArgumentParser:
         help="Declare a supervisor stage. May be repeated.",
     )
     parser.add_argument(
+        "--stage-priority",
+        action="append",
+        default=[],
+        metavar="STAGE_ID=INT",
+        help="Set a supervisor stage priority. Higher values run first when ready.",
+    )
+    parser.add_argument(
+        "--stage-depends-on",
+        action="append",
+        default=[],
+        metavar="STAGE_ID=DEP1,DEP2",
+        help="Declare stage dependencies for high-value fallback selection.",
+    )
+    parser.add_argument(
         "--resume",
         action="store_true",
         help="Resume the existing supervisor snapshot instead of starting a new one.",
@@ -276,7 +290,11 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _load_supervisor(args: argparse.Namespace) -> OvernightSupervisor:
-    stages = _parse_stages(args.stage)
+    stages = _parse_stages(
+        args.stage,
+        priority_values=args.stage_priority,
+        dependency_values=args.stage_depends_on,
+    )
     config = OvernightSupervisorConfig(
         run_id=args.run_id,
         artifact_dir=args.artifact_dir,
@@ -294,7 +312,14 @@ def _load_supervisor(args: argparse.Namespace) -> OvernightSupervisor:
     return OvernightSupervisor(config)
 
 
-def _parse_stages(values: list[str]) -> list[OvernightSupervisorStage]:
+def _parse_stages(
+    values: list[str],
+    *,
+    priority_values: list[str] | None = None,
+    dependency_values: list[str] | None = None,
+) -> list[OvernightSupervisorStage]:
+    priorities = _parse_stage_priorities(priority_values or [])
+    dependencies = _parse_stage_dependencies(dependency_values or [])
     stages: list[OvernightSupervisorStage] = []
     for value in values:
         if "=" not in value:
@@ -304,8 +329,54 @@ def _parse_stages(values: list[str]) -> list[OvernightSupervisorStage]:
         objective = objective.strip()
         if not stage_id or not objective:
             raise SystemExit("--stage requires non-empty STAGE_ID and OBJECTIVE")
-        stages.append(OvernightSupervisorStage(stage_id=stage_id, objective=objective))
+        stages.append(
+            OvernightSupervisorStage(
+                stage_id=stage_id,
+                objective=objective,
+                priority=priorities.get(stage_id, 0),
+                depends_on=tuple(dependencies.get(stage_id, ())),
+            )
+        )
     return stages
+
+
+def _parse_stage_priorities(values: list[str]) -> dict[str, int]:
+    priorities: dict[str, int] = {}
+    for value in values:
+        stage_id, raw_priority = _split_stage_metadata(
+            value,
+            option_name="--stage-priority",
+        )
+        try:
+            priority = int(raw_priority)
+        except ValueError as exc:
+            raise SystemExit("--stage-priority requires integer priority") from exc
+        priorities[stage_id] = priority
+    return priorities
+
+
+def _parse_stage_dependencies(values: list[str]) -> dict[str, list[str]]:
+    dependencies: dict[str, list[str]] = {}
+    for value in values:
+        stage_id, raw_dependencies = _split_stage_metadata(
+            value,
+            option_name="--stage-depends-on",
+        )
+        dependencies[stage_id] = [
+            item.strip() for item in raw_dependencies.split(",") if item.strip()
+        ]
+    return dependencies
+
+
+def _split_stage_metadata(value: str, *, option_name: str) -> tuple[str, str]:
+    if "=" not in value:
+        raise SystemExit(f"{option_name} must use STAGE_ID=VALUE")
+    stage_id, raw_value = value.split("=", 1)
+    stage_id = stage_id.strip()
+    raw_value = raw_value.strip()
+    if not stage_id or not raw_value:
+        raise SystemExit(f"{option_name} requires non-empty STAGE_ID and VALUE")
+    return stage_id, raw_value
 
 
 def _parse_simulation_failures(values: list[str]) -> list[OvernightSimulationFailure]:

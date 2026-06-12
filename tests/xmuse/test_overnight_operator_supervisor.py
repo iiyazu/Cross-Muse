@@ -363,6 +363,62 @@ def test_overnight_supervisor_blocked_fallback_records_issue_failure_and_next_st
     assert json.loads(artifact_path.read_text()) == fallback
 
 
+def test_overnight_supervisor_fallback_skips_dependent_stage_and_prefers_priority(
+    tmp_path: Path,
+) -> None:
+    supervisor = OvernightSupervisor(
+        OvernightSupervisorConfig(
+            run_id="run-dependent-fallback",
+            artifact_dir=tmp_path,
+            stages=[
+                OvernightSupervisorStage(
+                    stage_id="S4",
+                    objective="live evidence gates",
+                    priority=100,
+                ),
+                OvernightSupervisorStage(
+                    stage_id="S5",
+                    objective="release pack that depends on live gates",
+                    priority=95,
+                    depends_on=("S4",),
+                ),
+                OvernightSupervisorStage(
+                    stage_id="S6",
+                    objective="independent docs and validation",
+                    priority=40,
+                ),
+            ],
+        )
+    )
+
+    supervisor.start_stage("S4")
+    fallback = supervisor.fallback_blocked_stage(
+        stage_id="S4",
+        reason="MemoryOS live trace is configured but unavailable.",
+        failure_class="memoryos_live_trace_unavailable",
+        retryable=False,
+        attempted_command="uv run xmuse-memoryos-live-trace-capture",
+        next_action="continue to the next independent stage",
+        source_refs=["memoryos://live-trace"],
+    )
+
+    snapshot = supervisor.snapshot()
+    assert fallback["next_stage_id"] == "S6"
+    assert [stage["status"] for stage in snapshot["stages"]] == [
+        "blocked",
+        "pending",
+        "running",
+    ]
+    assert snapshot["current_stage_id"] == "S6"
+    assert snapshot["stages"][1]["depends_on"] == ["S4"]
+    assert snapshot["stages"][1]["priority"] == 95
+    skipped = [
+        row for row in snapshot["stage_journal"] if row["event"] == "stage_selection_skipped"
+    ]
+    assert skipped[-1]["stage_id"] == "S5"
+    assert skipped[-1]["blocked_dependencies"] == ["S4"]
+
+
 def test_overnight_supervisor_can_resume_from_persisted_snapshot(tmp_path: Path) -> None:
     config = OvernightSupervisorConfig(
         run_id="run-resume",
@@ -666,6 +722,66 @@ def test_overnight_supervisor_cli_can_move_to_next_stage(
     )
     assert snapshot["current_stage_id"] == "S4"
     assert snapshot["stages"][1]["status"] == "running"
+
+
+def test_overnight_supervisor_cli_accepts_stage_priority_and_dependencies(
+    tmp_path: Path,
+) -> None:
+    from xmuse.overnight_operator_supervisor import main
+
+    common = [
+        "--run-id",
+        "overnight-cli-dependencies",
+        "--artifact-dir",
+        str(tmp_path),
+        "--stage",
+        "S4=live evidence gates",
+        "--stage",
+        "S5=release pack",
+        "--stage",
+        "S6=independent docs",
+        "--stage-priority",
+        "S4=100",
+        "--stage-priority",
+        "S5=95",
+        "--stage-priority",
+        "S6=40",
+        "--stage-depends-on",
+        "S5=S4",
+    ]
+
+    assert main([*common, "start-stage", "S4"]) == 0
+    assert (
+        main(
+            [
+                *common,
+                "--resume",
+                "blocked-fallback",
+                "S4",
+                "--reason",
+                "GitHub review truth is configured but unavailable.",
+                "--failure-class",
+                "github_review_truth_unavailable",
+                "--attempted-command",
+                "gh api repos/iiyazu/Cross-Muse/pulls/43/reviews",
+            ]
+        )
+        == 0
+    )
+
+    snapshot = json.loads(
+        (tmp_path / "overnight-supervisor-overnight-cli-dependencies.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert snapshot["current_stage_id"] == "S6"
+    assert [stage["status"] for stage in snapshot["stages"]] == [
+        "blocked",
+        "pending",
+        "running",
+    ]
+    assert snapshot["stages"][1]["depends_on"] == ["S4"]
+    assert snapshot["stages"][1]["priority"] == 95
 
 
 def test_overnight_supervisor_cli_records_self_review_and_blocked_fallback(

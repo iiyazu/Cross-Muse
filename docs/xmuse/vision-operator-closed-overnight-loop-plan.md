@@ -225,6 +225,9 @@ Implementation guidance:
   runtime DBs or logs.
 - The loop does not need to run for 8 real hours inside tests. Tests should
   simulate stage transitions, checkpoint/resume, and blocked fallback.
+- Fallback selection must respect explicit stage dependencies and priority:
+  blocked prerequisites keep dependent stages pending while independent
+  high-value work continues.
 
 Acceptance:
 

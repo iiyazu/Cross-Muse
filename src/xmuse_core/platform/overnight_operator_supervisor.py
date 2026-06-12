@@ -26,6 +26,8 @@ SelfReviewDecision = Literal[
 class OvernightSupervisorStage:
     stage_id: str
     objective: str
+    priority: int = 0
+    depends_on: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -67,6 +69,8 @@ class OvernightSupervisor:
             {
                 "stage_id": stage.stage_id,
                 "objective": stage.objective,
+                "priority": stage.priority,
+                "depends_on": list(stage.depends_on),
                 "status": "pending",
             }
             for stage in config.stages
@@ -98,10 +102,16 @@ class OvernightSupervisor:
                 {
                     "stage_id": stage.stage_id,
                     "objective": stage.objective,
+                    "priority": stage.priority,
+                    "depends_on": list(stage.depends_on),
                     "status": "pending",
                 }
                 for stage in config.stages
             ]
+        else:
+            for stage in supervisor._stages:
+                stage.setdefault("priority", 0)
+                stage.setdefault("depends_on", [])
         current_stage_id = snapshot.get("current_stage_id")
         supervisor._current_stage_id = (
             current_stage_id if isinstance(current_stage_id, str) else None
@@ -595,10 +605,32 @@ class OvernightSupervisor:
         return gap
 
     def move_to_next_high_value_stage(self) -> str | None:
-        for stage in self._stages:
-            if stage.get("status") == "pending":
-                self.start_stage(str(stage["stage_id"]))
-                return str(stage["stage_id"])
+        candidates: list[tuple[int, int, dict[str, Any]]] = []
+        for index, stage in enumerate(self._stages):
+            if stage.get("status") != "pending":
+                continue
+            blocked_dependencies = _blocked_dependencies(stage, self._stages)
+            if blocked_dependencies:
+                self._journal(
+                    "stage_selection_skipped",
+                    stage_id=str(stage["stage_id"]),
+                    blocked_dependencies=blocked_dependencies,
+                )
+                continue
+            waiting_dependencies = _waiting_dependencies(stage, self._stages)
+            if waiting_dependencies:
+                self._journal(
+                    "stage_selection_waiting",
+                    stage_id=str(stage["stage_id"]),
+                    waiting_dependencies=waiting_dependencies,
+                )
+                continue
+            candidates.append((_priority(stage), index, stage))
+        if candidates:
+            _, _, selected = max(candidates, key=lambda item: (item[0], -item[1]))
+            stage_id = str(selected["stage_id"])
+            self.start_stage(stage_id)
+            return stage_id
         return None
 
     def live_soak_plan(
@@ -754,6 +786,55 @@ def _validate_simulation_config(config: OvernightSimulationConfig) -> None:
         raise ValueError("max_heartbeat_gap_minutes must be positive")
     if config.max_self_review_gap_minutes <= 0:
         raise ValueError("max_self_review_gap_minutes must be positive")
+
+
+def _priority(stage: dict[str, Any]) -> int:
+    value = stage.get("priority")
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
+def _dependencies(stage: dict[str, Any]) -> list[str]:
+    value = stage.get("depends_on")
+    if isinstance(value, str):
+        return [item.strip() for item in value.split(",") if item.strip()]
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _stage_status_by_id(stages: list[dict[str, Any]]) -> dict[str, str]:
+    statuses: dict[str, str] = {}
+    for stage in stages:
+        stage_id = stage.get("stage_id")
+        status = stage.get("status")
+        if isinstance(stage_id, str) and isinstance(status, str):
+            statuses[stage_id] = status
+    return statuses
+
+
+def _blocked_dependencies(
+    stage: dict[str, Any],
+    stages: list[dict[str, Any]],
+) -> list[str]:
+    statuses = _stage_status_by_id(stages)
+    return [
+        dependency
+        for dependency in _dependencies(stage)
+        if statuses.get(dependency) in {"blocked", "manual_gap"}
+    ]
+
+
+def _waiting_dependencies(
+    stage: dict[str, Any],
+    stages: list[dict[str, Any]],
+) -> list[str]:
+    statuses = _stage_status_by_id(stages)
+    return [
+        dependency
+        for dependency in _dependencies(stage)
+        if statuses.get(dependency) != "ok"
+        and statuses.get(dependency) not in {"blocked", "manual_gap"}
+    ]
 
 
 def _last_stage_id(stages: list[dict[str, Any]]) -> str:

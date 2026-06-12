@@ -577,6 +577,8 @@ uv run xmuse-overnight-supervisor \
   --artifact-dir xmuse/work/release_readiness/overnight_supervisor \
   --stage S6="fresh GitHub truth" \
   --stage S7="TUI proof cockpit" \
+  --stage-priority S6=100 \
+  --stage-priority S7=40 \
   start-stage S6
 ```
 
@@ -588,6 +590,8 @@ uv run xmuse-overnight-supervisor \
   --artifact-dir xmuse/work/release_readiness/overnight_supervisor \
   --stage S6="fresh GitHub truth" \
   --stage S7="TUI proof cockpit" \
+  --stage-priority S6=100 \
+  --stage-priority S7=40 \
   --resume \
   self-review S6 \
   --summary "reviewed proof boundary and runtime state" \
@@ -604,7 +608,12 @@ uv run xmuse-overnight-supervisor \
   --run-id <run-id> \
   --artifact-dir xmuse/work/release_readiness/overnight_supervisor \
   --stage S6="fresh GitHub truth" \
+  --stage S6-pack="release pack after GitHub truth" \
   --stage S7="TUI proof cockpit" \
+  --stage-priority S6=100 \
+  --stage-priority S6-pack=90 \
+  --stage-priority S7=40 \
+  --stage-depends-on S6-pack=S6 \
   --resume \
   blocked-fallback S6 \
   --reason "GitHub review truth is configured but unavailable." \
@@ -615,8 +624,11 @@ uv run xmuse-overnight-supervisor \
 
 The snapshot and fallback artifacts are ignored runtime state. A
 `blocked-fallback` command returning exit code 0 means the blocker was captured
-and the next stage was started; it does not mean the blocked release evidence
-became acceptable.
+and the next ready independent stage was started. Stages declared with
+`--stage-depends-on` are skipped while their dependencies are blocked,
+`manual_gap`, running, or pending; ready stages are selected by highest
+`--stage-priority` and declaration order. This does not mean the blocked release
+evidence became acceptable.
 
 For CI or local no-secrets rehearsal, use virtual time instead of sleeping for
 8 hours. Failure injection is JSON so long `/goal` scripts can record exact
@@ -627,7 +639,12 @@ uv run xmuse-overnight-supervisor \
   --run-id overnight-virtual-smoke \
   --artifact-dir xmuse/work/release_readiness/overnight_supervisor \
   --stage S4="live gates" \
+  --stage S5-pack="release pack after live gates" \
   --stage S5="docs and validation" \
+  --stage-priority S4=100 \
+  --stage-priority S5-pack=90 \
+  --stage-priority S5=40 \
+  --stage-depends-on S5-pack=S4 \
   simulate \
   --total-minutes 480 \
   --heartbeat-interval-minutes 15 \
