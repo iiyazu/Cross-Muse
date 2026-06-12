@@ -21,6 +21,8 @@ _SECRET_PATTERNS = (
     re.compile(r"(?i)\b(--(?:api-key|token|secret|password)\s+)([^\s]+)"),
     re.compile(r"(?i)\b(authorization:\s*bearer\s+)([^\s]+)"),
     re.compile(r"\bsk-[A-Za-z0-9._-]+\b"),
+    re.compile(r"\bgh[opsu]_[A-Za-z0-9_*]+"),
+    re.compile(r"\bgithub_pat_[A-Za-z0-9_]+\b"),
     re.compile(r"\b(?:secret|token)[-_][A-Za-z0-9._-]+\b", re.IGNORECASE),
 )
 

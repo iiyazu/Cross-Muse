@@ -62,6 +62,30 @@ the happy path and must be visible in health/readiness output or lane/peer trace
 when their mutating write-surface tokens are missing. Leave it unset for
 no-secrets local contract tests and default development runs.
 
+## Production Baseline Capture
+
+Before a long production `/goal` changes behavior, capture the S0 truth map:
+
+```bash
+uv run xmuse-production-baseline-capture \
+  --repo-root /home/iiyatu/projects/python/xmuse \
+  --output xmuse/work/release_readiness/production-baseline.json
+```
+
+The command writes an ignored runtime artifact with schema
+`xmuse.production_baseline.v1`. It records the current git branch/head/dirty
+state, verifies that `xmuse/__init__.py` is absent, reports redacted env key
+presence, and probes GitHub auth, Codex, OpenCode, and Ray import visibility.
+It inventories MemoryOS Lite, GitHub truth target, provider runtime, natural
+GOD deliberation, Chat API auth, and MCP auth readiness with blockers and next
+actions.
+
+This is `contract_proof` baseline evidence only. It does not call live
+MemoryOS, does not run providers, does not call GitHub server truth APIs beyond
+the configured auth probe, and does not create release-readiness proof. Missing
+or configured-but-uncaptured live inputs stay visible as `manual_gap` blockers
+for later S4/S6 evidence capture.
+
 When `XMUSE_CHAT_API_AUTH_TOKEN` or `XMUSE_CHAT_API_KEY` is set for the Chat API
 process, mutating `/api/chat/*` routes require:
 

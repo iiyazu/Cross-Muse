@@ -36,7 +36,11 @@ def test_live_gate_status_capture_writes_release_gate_artifacts_without_secrets(
                     name="github_auth",
                     command=("gh", "auth", "status"),
                     returncode=0,
-                    stdout="Logged in to github.com as iiyazu",
+                    stdout=(
+                        "Logged in to github.com as iiyazu\n"
+                        "Token: gho_secretgithubtoken\n"
+                        "Masked token: gho_************************************"
+                    ),
                     stderr="",
                 ),
                 "codex --version": ProbeResult(
@@ -95,6 +99,7 @@ def test_live_gate_status_capture_writes_release_gate_artifacts_without_secrets(
     assert "secret-chat-key" not in rendered_summary
     assert "secret-mcp-token" not in rendered_summary
     assert "sk-secret-deepseek" not in rendered_summary
+    assert "gho_" not in rendered_summary
 
 
 def test_live_gate_status_artifacts_feed_release_readiness_as_blockers(

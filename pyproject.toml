@@ -36,6 +36,7 @@ xmuse-overnight-replay-bundle-capture = "xmuse.overnight_replay_bundle_capture:m
 xmuse-overnight-supervisor-evidence-capture = "xmuse.overnight_supervisor_evidence_capture:main"
 xmuse-platform-runner = "xmuse.platform_runner:main"
 xmuse-proof-contamination-audit = "xmuse.proof_contamination_audit:main"
+xmuse-production-baseline-capture = "xmuse.production_baseline_capture:main"
 xmuse-real-provider-runtime-gate-capture = "xmuse.real_provider_runtime_gate_capture:main"
 xmuse-real-provider-runtime-soak-capture = "xmuse.real_provider_runtime_soak_capture:main"
 xmuse-release-evidence-pack = "xmuse.release_evidence_pack:main"

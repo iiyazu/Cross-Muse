@@ -152,6 +152,22 @@ Acceptance:
 - Missing or failing configured resources have owner and next action.
 - Runtime state remains untracked.
 
+Current implementation status:
+
+- `uv run xmuse-production-baseline-capture` writes a redacted
+  `xmuse.production_baseline.v1` S0 truth-map artifact, defaulting to
+  `xmuse/work/release_readiness/production-baseline.json`.
+- The artifact records git branch/head/dirty state, `xmuse/__init__.py`
+  absence, known production env key presence, and probes for GitHub auth,
+  Codex, OpenCode, and Ray import visibility.
+- It inventories MemoryOS Lite, GitHub truth target, provider runtime, natural
+  GOD deliberation, Chat API auth, and MCP auth readiness with blocker ids,
+  owner, and next action. Secret-like env values and probe output are redacted.
+- This is S0 `contract_proof` only. It does not call live MemoryOS, does not
+  run providers, does not collect GitHub server truth, and does not satisfy
+  release readiness. Configured-but-uncaptured live inputs remain
+  `manual_gap` blockers for S4/S6.
+
 ## S1 - GOD/CLI Registry And Selection
 
 Goal: make GOD participant selection explicit and product-ready.
