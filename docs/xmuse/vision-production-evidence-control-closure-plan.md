@@ -374,6 +374,10 @@ Current implementation status:
   earlier status-capture blockers.
 - The capture command is `contract_proof`; it does not create live MemoryOS,
   GitHub, provider, or natural transcript proof by itself.
+- `uv run xmuse-proof-contamination-audit` scans release gate artifacts for
+  proof contamination: weak proof on `ok` production gates, fake/fixture/stdout
+  markers in production proof, and `pr_merged` claims without server-side merge
+  proof.
 
 Acceptance:
 

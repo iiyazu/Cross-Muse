@@ -133,6 +133,9 @@ uv run xmuse-real-provider-runtime-gate-capture \
 uv run xmuse-release-readiness-capture \
   --artifacts-dir xmuse/work/release_readiness/artifacts \
   --output xmuse/work/release_readiness/report.json
+uv run xmuse-proof-contamination-audit \
+  --artifacts-dir xmuse/work/release_readiness/artifacts \
+  --output xmuse/work/release_readiness/proof-contamination-audit.json
 ```
 
 Manual verification:

@@ -286,6 +286,26 @@ rules used by `src/xmuse_core/platform/release_readiness.py`. If multiple
 artifacts share the same `gate_id`, the strongest non-blocking proof is used so
 fresh live/server evidence can replace earlier status-capture blockers.
 
+## Proof Contamination Audit
+
+Run this command after release gate artifacts are captured and before claiming
+release readiness:
+
+```bash
+uv run xmuse-proof-contamination-audit \
+  --artifacts-dir xmuse/work/release_readiness/artifacts \
+  --output xmuse/work/release_readiness/proof-contamination-audit.json
+```
+
+The audit scans release gate artifacts for proof contamination. It fails when an
+`ok` production gate uses a weak proof level, when a production proof contains
+fake/fixture/stdout/local-only markers, or when a `pr_merged`/GitHub merge gate
+appears without `server_side_merge_proof` and `can_emit_pr_merged=true`.
+
+`decision: clean` means no contamination was found in the scanned artifacts.
+It does not mean missing live gates were satisfied; release readiness still
+comes from `xmuse-release-readiness-capture`.
+
 ## Degradation Matrix
 
 | Condition | Expected behavior |

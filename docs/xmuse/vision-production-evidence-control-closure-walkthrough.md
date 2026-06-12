@@ -392,6 +392,28 @@ namespace/session evidence, and malformed token counts write blocked
 `manual_gap` gates. A live trace artifact with unresolved blockers keeps
 `live_service_proof` but remains blocked.
 
+### Proof Contamination Audit
+
+New command:
+
+```text
+uv run xmuse-proof-contamination-audit \
+  --artifacts-dir <release-gate-artifacts-dir> \
+  --output <audit.json>
+```
+
+The audit scans release gate artifacts and reports `decision: contaminated`
+when:
+
+- an `ok` production gate uses a weak proof level;
+- a production proof contains fake, fixture, stdout fallback, local-only, or
+  contract-proof markers;
+- `github_merge_truth` or `pr_merged` appears without
+  `server_side_merge_proof` and `can_emit_pr_merged=true`.
+
+`decision: clean` only means scanned artifacts did not contain proof
+contamination. It does not satisfy missing live gates.
+
 ## Proof-Level Summary
 
 | Surface | Current proof | Boundary |
@@ -408,6 +430,7 @@ namespace/session evidence, and malformed token counts write blocked
 | Release readiness evaluator | `contract_proof` | Blocks proof contamination; no live gate captured. |
 | Live gate status capture command | `contract_proof` | Captures configured/missing gate status as `manual_gap` blocker artifacts; does not create live proof. |
 | Release readiness capture command | `contract_proof` | Aggregates and redacts supplied gate artifacts; does not capture live services by itself. |
+| Proof contamination audit command | `contract_proof` | Scans supplied release gate artifacts for mislabeled production proof; does not satisfy missing live gates. |
 | MemoryOS Lite live gate command | `contract_proof` | Converts explicit live MemoryOS Lite trace artifacts into a `live_memoryos` gate; fixture/local/empty traces remain blocked. |
 | Internal review release gate command | `contract_proof` | Converts a verified structured internal review artifact into `internal_review_proof`; does not replace GitHub enforcement. |
 | Natural GOD deliberation gate command | `contract_proof` | Converts explicit natural transcript artifacts into a `natural_deliberation` gate; deterministic replay and single-GOD artifacts remain blocked. |
