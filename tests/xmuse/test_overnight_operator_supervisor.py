@@ -217,6 +217,150 @@ def test_overnight_supervisor_tracks_issue_queue_and_failure_classification(
     assert failure["failure_class"] == "auth_unavailable"
 
 
+def test_overnight_supervisor_records_self_review_checkpoint_and_evidence(
+    tmp_path: Path,
+) -> None:
+    supervisor = OvernightSupervisor(
+        OvernightSupervisorConfig(
+            run_id="run-self-review",
+            artifact_dir=tmp_path,
+            stages=[
+                OvernightSupervisorStage(
+                    stage_id="S4",
+                    objective="overnight supervisor loop",
+                ),
+            ],
+        )
+    )
+
+    supervisor.start_stage("S4")
+    review = supervisor.record_self_review(
+        stage_id="S4",
+        summary="45 minute review found no projection authority leak.",
+        findings=["TUI remains an operator surface, not a durable authority."],
+        decision="continue",
+        minutes_since_previous_review=52,
+        commands=["uv run pytest tests/xmuse/test_overnight_operator_supervisor.py -q"],
+        test_results=["self-review contract red/green covered"],
+        source_refs=["goal:stage:S4"],
+        target_refs=["artifact://overnight-supervisor/run-self-review"],
+        artifacts=["artifact://self-review/S4"],
+        next_action="continue S4 until the next checkpoint",
+    )
+
+    snapshot = supervisor.snapshot()
+    assert snapshot["self_reviews"] == [review]
+    assert review["run_id"] == "run-self-review"
+    assert review["stage_id"] == "S4"
+    assert review["decision"] == "continue"
+    assert review["minutes_since_previous_review"] == 52
+    assert review["slo_status"] == "ok"
+    assert review["findings"] == [
+        "TUI remains an operator surface, not a durable authority."
+    ]
+    assert snapshot["stage_journal"][-1]["event"] == "self_review_recorded"
+
+    evidence = snapshot["production_evidence"][0]
+    assert evidence["schema_version"] == "xmuse.production_evidence.v1"
+    assert evidence["run_id"] == "run-self-review"
+    assert evidence["stage_id"] == "S4"
+    assert evidence["action"] == "self_review"
+    assert evidence["status"] == "ok"
+    assert evidence["proof_level"] == "contract_proof"
+    assert evidence["source_authority"] == "overnight_operator_supervisor"
+    assert evidence["commands"] == [
+        "uv run pytest tests/xmuse/test_overnight_operator_supervisor.py -q"
+    ]
+    assert evidence["test_results"] == ["self-review contract red/green covered"]
+    assert evidence["artifacts"] == ["artifact://self-review/S4"]
+    assert evidence["owner"] == "codex"
+    assert evidence["next_action"] == "continue S4 until the next checkpoint"
+    assert evidence["gate_id"] == "goal-stage-S4-self-review"
+    assert evidence["kind"] == "self_review"
+    assert evidence["configured"] is True
+    assert evidence["required"] is True
+
+    persisted = json.loads(
+        (tmp_path / "overnight-supervisor-run-self-review.json").read_text()
+    )
+    assert persisted["self_reviews"] == [review]
+
+
+def test_overnight_supervisor_blocked_fallback_records_issue_failure_and_next_stage(
+    tmp_path: Path,
+) -> None:
+    supervisor = OvernightSupervisor(
+        OvernightSupervisorConfig(
+            run_id="run-blocked-fallback",
+            artifact_dir=tmp_path,
+            stages=[
+                OvernightSupervisorStage(
+                    stage_id="S6",
+                    objective="fresh GitHub truth",
+                ),
+                OvernightSupervisorStage(
+                    stage_id="S7",
+                    objective="TUI proof cockpit",
+                ),
+            ],
+        )
+    )
+
+    supervisor.start_stage("S6")
+    fallback = supervisor.fallback_blocked_stage(
+        stage_id="S6",
+        reason="GitHub review truth is configured but unavailable.",
+        failure_class="github_review_truth_unavailable",
+        retryable=False,
+        attempted_command="gh api repos/iiyazu/Cross-Muse/pulls/43/reviews",
+        next_action="continue to independent TUI proof cockpit work",
+        source_refs=["github://iiyazu/Cross-Muse/pull/43"],
+        target_refs=["artifact://github-truth/pr-43"],
+    )
+
+    snapshot = supervisor.snapshot()
+    assert fallback["status"] == "blocked"
+    assert fallback["proof_level"] == "manual_gap"
+    assert fallback["stage_id"] == "S6"
+    assert fallback["next_stage_id"] == "S7"
+    assert snapshot["stages"][0]["status"] == "blocked"
+    assert snapshot["stages"][0]["blocked_reason"] == (
+        "GitHub review truth is configured but unavailable."
+    )
+    assert snapshot["stages"][1]["status"] == "running"
+    assert snapshot["current_stage_id"] == "S7"
+    assert snapshot["issue_queue"][0]["title"] == (
+        "GitHub review truth is configured but unavailable."
+    )
+    assert snapshot["issue_queue"][0]["severity"] == "blocked"
+    assert snapshot["failure_classifications"][0]["failure_class"] == (
+        "github_review_truth_unavailable"
+    )
+    assert snapshot["failure_classifications"][0]["retryable"] is False
+    assert snapshot["stage_journal"][-1]["event"] == "stage_started"
+
+    evidence = snapshot["production_evidence"][0]
+    assert evidence["action"] == "blocked_fallback"
+    assert evidence["status"] == "blocked"
+    assert evidence["proof_level"] == "manual_gap"
+    assert evidence["blocked_reason"] == (
+        "GitHub review truth is configured but unavailable."
+    )
+    assert evidence["commands"] == [
+        "gh api repos/iiyazu/Cross-Muse/pulls/43/reviews"
+    ]
+    assert evidence["source_refs"] == ["github://iiyazu/Cross-Muse/pull/43"]
+    assert evidence["target_refs"] == ["artifact://github-truth/pr-43"]
+    assert evidence["gate_id"] == "goal-stage-S6-blocked-fallback"
+    assert evidence["kind"] == "stage_fallback"
+    assert evidence["configured"] is True
+    assert evidence["required"] is True
+
+    artifact_path = Path(fallback["artifact_path"])
+    assert artifact_path.exists()
+    assert json.loads(artifact_path.read_text()) == fallback
+
+
 def test_overnight_supervisor_can_resume_from_persisted_snapshot(tmp_path: Path) -> None:
     config = OvernightSupervisorConfig(
         run_id="run-resume",
@@ -404,6 +548,90 @@ def test_overnight_supervisor_cli_can_move_to_next_stage(
     )
     assert snapshot["current_stage_id"] == "S4"
     assert snapshot["stages"][1]["status"] == "running"
+
+
+def test_overnight_supervisor_cli_records_self_review_and_blocked_fallback(
+    tmp_path: Path,
+) -> None:
+    from xmuse.overnight_operator_supervisor import main
+
+    common = [
+        "--run-id",
+        "overnight-review-fallback",
+        "--artifact-dir",
+        str(tmp_path),
+        "--stage",
+        "S6=fresh GitHub truth",
+        "--stage",
+        "S7=TUI proof cockpit",
+    ]
+
+    assert main([*common, "start-stage", "S6"]) == 0
+    assert (
+        main(
+            [
+                *common,
+                "--resume",
+                "self-review",
+                "S6",
+                "--summary",
+                "reviewed current GitHub truth boundary",
+                "--finding",
+                "review truth is not merge truth",
+                "--decision",
+                "continue",
+                "--minutes-since-previous-review",
+                "48",
+                "--command",
+                "uv run pytest tests/xmuse/test_overnight_operator_supervisor.py -q",
+                "--test-result",
+                "self-review CLI covered",
+                "--source-ref",
+                "goal:stage:S6",
+                "--target-ref",
+                "artifact://overnight-supervisor/overnight-review-fallback",
+            ]
+        )
+        == 0
+    )
+    assert (
+        main(
+            [
+                *common,
+                "--resume",
+                "blocked-fallback",
+                "S6",
+                "--reason",
+                "GitHub review truth is configured but unavailable.",
+                "--failure-class",
+                "github_review_truth_unavailable",
+                "--attempted-command",
+                "gh api repos/iiyazu/Cross-Muse/pulls/43/reviews",
+                "--next-action",
+                "continue to independent TUI proof cockpit work",
+                "--source-ref",
+                "github://iiyazu/Cross-Muse/pull/43",
+                "--target-ref",
+                "artifact://github-truth/pr-43",
+            ]
+        )
+        == 0
+    )
+
+    snapshot = json.loads(
+        (tmp_path / "overnight-supervisor-overnight-review-fallback.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert snapshot["self_reviews"][0]["decision"] == "continue"
+    assert snapshot["self_reviews"][0]["slo_status"] == "ok"
+    assert [stage["status"] for stage in snapshot["stages"]] == [
+        "blocked",
+        "running",
+    ]
+    assert snapshot["current_stage_id"] == "S7"
+    assert snapshot["production_evidence"][0]["action"] == "self_review"
+    assert snapshot["production_evidence"][1]["action"] == "blocked_fallback"
 
 
 def test_overnight_supervisor_cli_script_is_registered() -> None:

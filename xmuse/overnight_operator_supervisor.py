@@ -41,6 +41,22 @@ def main(argv: Sequence[str] | None = None) -> int:
             next_action=args.next_action,
         )
         result = {"status": "ok", "checkpoint": checkpoint}
+    elif args.command == "self-review":
+        review = supervisor.record_self_review(
+            stage_id=args.stage_id,
+            summary=args.summary,
+            findings=args.finding,
+            decision=args.decision,
+            minutes_since_previous_review=args.minutes_since_previous_review,
+            commands=args.command_ref,
+            test_results=args.test_result,
+            source_refs=args.source_ref,
+            target_refs=args.target_ref,
+            artifacts=args.artifact,
+            owner=args.owner,
+            next_action=args.next_action,
+        )
+        result = {"status": "ok", "self_review": review}
     elif args.command == "complete-stage":
         supervisor.complete_stage(args.stage_id, summary=args.summary)
         result = {"status": "ok", "stage_id": args.stage_id}
@@ -56,6 +72,23 @@ def main(argv: Sequence[str] | None = None) -> int:
             artifacts=args.artifact,
         )
         result = {"status": "manual_gap", "manual_gap": gap}
+    elif args.command == "blocked-fallback":
+        fallback = supervisor.fallback_blocked_stage(
+            stage_id=args.stage_id,
+            reason=args.reason,
+            failure_class=args.failure_class,
+            retryable=args.retryable,
+            attempted_command=args.attempted_command,
+            next_action=args.next_action,
+            owner=args.owner,
+            configured=not args.unconfigured_optional,
+            required=not args.optional,
+            source_refs=args.source_ref,
+            target_refs=args.target_ref,
+            artifacts=args.artifact,
+            start_next=not args.no_start_next,
+        )
+        result = {"status": fallback["status"], "fallback": fallback}
     elif args.command == "next-stage":
         stage_id = supervisor.move_to_next_high_value_stage()
         result = {
@@ -68,7 +101,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         raise SystemExit(f"unsupported command: {args.command}")
 
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))
-    return 0 if result["status"] in {"ok", "manual_gap"} else 2
+    return 0 if result["status"] in {"ok", "manual_gap", "blocked"} else 2
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -122,6 +155,32 @@ def _parser() -> argparse.ArgumentParser:
     checkpoint.add_argument("--owner", default="codex")
     checkpoint.add_argument("--next-action", default=None)
 
+    self_review = subparsers.add_parser(
+        "self-review",
+        help="Record a periodic self-review checkpoint and evidence envelope.",
+    )
+    self_review.add_argument("stage_id")
+    self_review.add_argument("--summary", required=True)
+    self_review.add_argument("--finding", action="append", default=[])
+    self_review.add_argument(
+        "--decision",
+        choices=["continue", "retry", "manual_gap", "blocked", "patch_forward"],
+        required=True,
+    )
+    self_review.add_argument("--minutes-since-previous-review", type=int, default=None)
+    self_review.add_argument(
+        "--command",
+        dest="command_ref",
+        action="append",
+        default=[],
+    )
+    self_review.add_argument("--test-result", action="append", default=[])
+    self_review.add_argument("--source-ref", action="append", default=[])
+    self_review.add_argument("--target-ref", action="append", default=[])
+    self_review.add_argument("--artifact", action="append", default=[])
+    self_review.add_argument("--owner", default="codex")
+    self_review.add_argument("--next-action", default=None)
+
     complete = subparsers.add_parser("complete-stage", help="Mark a stage as ok.")
     complete.add_argument("stage_id")
     complete.add_argument("--summary", required=True)
@@ -138,6 +197,36 @@ def _parser() -> argparse.ArgumentParser:
     manual_gap.add_argument("--source-ref", action="append", default=[])
     manual_gap.add_argument("--target-ref", action="append", default=[])
     manual_gap.add_argument("--artifact", action="append", default=[])
+
+    blocked_fallback = subparsers.add_parser(
+        "blocked-fallback",
+        help="Record a configured blocker and continue to the next pending stage.",
+    )
+    blocked_fallback.add_argument("stage_id")
+    blocked_fallback.add_argument("--reason", required=True)
+    blocked_fallback.add_argument("--failure-class", required=True)
+    blocked_fallback.add_argument("--retryable", action="store_true")
+    blocked_fallback.add_argument("--attempted-command", default=None)
+    blocked_fallback.add_argument("--next-action", default=None)
+    blocked_fallback.add_argument("--owner", default="codex")
+    blocked_fallback.add_argument(
+        "--unconfigured-optional",
+        action="store_true",
+        help="Record the fallback as manual_gap instead of configured blocked.",
+    )
+    blocked_fallback.add_argument(
+        "--optional",
+        action="store_true",
+        help="Mark the missing evidence as not required in the envelope.",
+    )
+    blocked_fallback.add_argument(
+        "--no-start-next",
+        action="store_true",
+        help="Record the fallback without starting the next pending stage.",
+    )
+    blocked_fallback.add_argument("--source-ref", action="append", default=[])
+    blocked_fallback.add_argument("--target-ref", action="append", default=[])
+    blocked_fallback.add_argument("--artifact", action="append", default=[])
 
     subparsers.add_parser(
         "next-stage",

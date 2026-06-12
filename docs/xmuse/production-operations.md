@@ -517,6 +517,58 @@ ids; CLI version probes never satisfy this gate.
 The gate command does not start Ray, Codex, OpenCode, or MCP. It only validates
 and converts an existing real-provider runtime artifact.
 
+## Overnight Supervisor Snapshot
+
+Use the supervisor snapshot during long `/goal` runs to keep stage progress,
+self-review, blockers, and fallback decisions replayable:
+
+```bash
+uv run xmuse-overnight-supervisor \
+  --run-id overnight-$(date -u +%Y%m%dT%H%M%SZ) \
+  --artifact-dir xmuse/work/release_readiness/overnight_supervisor \
+  --stage S6="fresh GitHub truth" \
+  --stage S7="TUI proof cockpit" \
+  start-stage S6
+```
+
+Periodic self-review is contract evidence, not live/provider/server proof:
+
+```bash
+uv run xmuse-overnight-supervisor \
+  --run-id <run-id> \
+  --artifact-dir xmuse/work/release_readiness/overnight_supervisor \
+  --stage S6="fresh GitHub truth" \
+  --stage S7="TUI proof cockpit" \
+  --resume \
+  self-review S6 \
+  --summary "reviewed proof boundary and runtime state" \
+  --finding "review truth is not merge truth" \
+  --decision continue \
+  --minutes-since-previous-review 52
+```
+
+If a configured live/auth/provider gate blocks, record it as a blocker and keep
+the next independent stage moving:
+
+```bash
+uv run xmuse-overnight-supervisor \
+  --run-id <run-id> \
+  --artifact-dir xmuse/work/release_readiness/overnight_supervisor \
+  --stage S6="fresh GitHub truth" \
+  --stage S7="TUI proof cockpit" \
+  --resume \
+  blocked-fallback S6 \
+  --reason "GitHub review truth is configured but unavailable." \
+  --failure-class github_review_truth_unavailable \
+  --attempted-command "gh api repos/iiyazu/Cross-Muse/pulls/43/reviews" \
+  --next-action "continue to independent TUI proof cockpit work"
+```
+
+The snapshot and fallback artifacts are ignored runtime state. A
+`blocked-fallback` command returning exit code 0 means the blocker was captured
+and the next stage was started; it does not mean the blocked release evidence
+became acceptable.
+
 ## Release Readiness Capture
 
 Use this command to aggregate release gate artifacts into a redacted readiness

@@ -12,7 +12,14 @@ from xmuse_core.platform.production_evidence import (
 )
 from xmuse_core.platform.release_readiness import ProofLevel
 
-StageStatus = Literal["pending", "running", "ok", "manual_gap"]
+StageStatus = Literal["pending", "running", "ok", "manual_gap", "blocked"]
+SelfReviewDecision = Literal[
+    "continue",
+    "retry",
+    "manual_gap",
+    "blocked",
+    "patch_forward",
+]
 
 
 @dataclass(frozen=True)
@@ -46,6 +53,7 @@ class OvernightSupervisor:
         self._issue_queue: list[dict[str, Any]] = []
         self._failure_classifications: list[dict[str, Any]] = []
         self._stage_journal: list[dict[str, Any]] = []
+        self._self_reviews: list[dict[str, Any]] = []
         self._production_evidence: list[dict[str, Any]] = []
         self._persist()
 
@@ -81,6 +89,7 @@ class OvernightSupervisor:
             snapshot.get("failure_classifications")
         )
         supervisor._stage_journal = _dict_rows(snapshot.get("stage_journal"))
+        supervisor._self_reviews = _dict_rows(snapshot.get("self_reviews"))
         supervisor._production_evidence = _dict_rows(snapshot.get("production_evidence"))
         return supervisor
 
@@ -196,6 +205,165 @@ class OvernightSupervisor:
         self._persist()
         return failure
 
+    def record_self_review(
+        self,
+        *,
+        stage_id: str,
+        summary: str,
+        decision: SelfReviewDecision,
+        findings: list[str] | None = None,
+        minutes_since_previous_review: int | None = None,
+        commands: list[str] | None = None,
+        test_results: list[str] | None = None,
+        source_refs: list[str] | None = None,
+        target_refs: list[str] | None = None,
+        artifacts: list[str] | None = None,
+        proof_level: ProofLevel = "contract_proof",
+        owner: str = "codex",
+        next_action: str | None = None,
+    ) -> dict[str, Any]:
+        self._stage(stage_id)
+        if decision not in _SELF_REVIEW_DECISIONS:
+            raise ValueError(f"unsupported self-review decision: {decision}")
+        review = {
+            "schema_version": "xmuse.overnight_self_review.v1",
+            "run_id": self._config.run_id,
+            "stage_id": stage_id,
+            "summary": summary,
+            "findings": list(findings or []),
+            "decision": decision,
+            "minutes_since_previous_review": minutes_since_previous_review,
+            "slo_status": _review_slo_status(minutes_since_previous_review),
+            "timestamp_utc": _utcnow(),
+        }
+        self._self_reviews.append(review)
+        self._journal(
+            "self_review_recorded",
+            stage_id=stage_id,
+            decision=decision,
+            slo_status=str(review["slo_status"]),
+        )
+        self._record_production_evidence(
+            stage_id=stage_id,
+            action="self_review",
+            status="ok",
+            proof_level=proof_level,
+            source_refs=source_refs,
+            target_refs=target_refs,
+            commands=commands,
+            test_results=test_results,
+            artifacts=artifacts,
+            blocked_reason=None,
+            owner=owner,
+            next_action=next_action,
+            summary=summary,
+            gate_id=f"goal-stage-{stage_id}-self-review",
+            kind="self_review",
+            configured=True,
+            required=True,
+        )
+        self._persist()
+        return review
+
+    def fallback_blocked_stage(
+        self,
+        *,
+        stage_id: str,
+        reason: str,
+        failure_class: str,
+        retryable: bool,
+        attempted_command: str | None = None,
+        next_action: str | None = None,
+        owner: str = "codex",
+        configured: bool = True,
+        required: bool = True,
+        source_refs: list[str] | None = None,
+        target_refs: list[str] | None = None,
+        artifacts: list[str] | None = None,
+        start_next: bool = True,
+    ) -> dict[str, Any]:
+        stage = self._stage(stage_id)
+        status: StageStatus = "blocked" if configured else "manual_gap"
+        now = _utcnow()
+        stage["status"] = status
+        if status == "blocked":
+            stage["blocked_reason"] = reason
+        else:
+            stage["manual_gap_reason"] = reason
+        stage["completed_at"] = now
+        if self._current_stage_id == stage_id:
+            self._current_stage_id = None
+
+        source_ref = (source_refs or [None])[0]
+        self._issue_queue.append(
+            {
+                "run_id": self._config.run_id,
+                "stage_id": stage_id,
+                "title": reason,
+                "severity": status,
+                "source_ref": source_ref,
+                "status": "open",
+                "timestamp_utc": now,
+            }
+        )
+        self._failure_classifications.append(
+            {
+                "run_id": self._config.run_id,
+                "stage_id": stage_id,
+                "failure_class": failure_class,
+                "reason": reason,
+                "retryable": retryable,
+                "timestamp_utc": now,
+            }
+        )
+
+        fallback_path = self._config.artifact_dir / f"blocked-fallback-{stage_id}.json"
+        evidence_artifacts = [str(fallback_path), *(artifacts or [])]
+        self._record_production_evidence(
+            stage_id=stage_id,
+            action="blocked_fallback",
+            status=status,
+            proof_level="manual_gap",
+            source_refs=source_refs,
+            target_refs=target_refs,
+            commands=[attempted_command] if attempted_command else [],
+            test_results=[],
+            artifacts=evidence_artifacts,
+            blocked_reason=reason,
+            owner=owner,
+            next_action=next_action,
+            summary=reason,
+            gate_id=f"goal-stage-{stage_id}-blocked-fallback",
+            kind="stage_fallback",
+            configured=configured,
+            required=required,
+        )
+        self._journal(
+            "blocked_fallback",
+            stage_id=stage_id,
+            failure_class=failure_class,
+            status=status,
+        )
+        next_stage_id = self.move_to_next_high_value_stage() if start_next else None
+        fallback = {
+            "schema_version": "xmuse.stage_fallback.v1",
+            "run_id": self._config.run_id,
+            "stage_id": stage_id,
+            "status": status,
+            "proof_level": "manual_gap",
+            "reason": reason,
+            "failure_class": failure_class,
+            "retryable": retryable,
+            "attempted_command": attempted_command,
+            "next_action": next_action,
+            "next_stage_id": next_stage_id,
+            "artifact_path": str(fallback_path),
+            "timestamp_utc": now,
+        }
+        self._write_json(fallback_path, fallback)
+        self._persist()
+        return fallback
+
     def complete_stage(self, stage_id: str, *, summary: str) -> None:
         stage = self._stage(stage_id)
         stage["status"] = "ok"
@@ -299,6 +467,7 @@ class OvernightSupervisor:
             "issue_queue": list(self._issue_queue),
             "failure_classifications": list(self._failure_classifications),
             "stage_journal": list(self._stage_journal),
+            "self_reviews": list(self._self_reviews),
             "production_evidence": list(self._production_evidence),
         }
 
@@ -391,6 +560,21 @@ def _truthy(value: str | None) -> bool:
     if value is None:
         return False
     return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+_SELF_REVIEW_DECISIONS = {
+    "continue",
+    "retry",
+    "manual_gap",
+    "blocked",
+    "patch_forward",
+}
+
+
+def _review_slo_status(minutes_since_previous_review: int | None) -> str:
+    if minutes_since_previous_review is None:
+        return "not_evaluated"
+    return "ok" if minutes_since_previous_review <= 60 else "violated"
 
 
 def _dict_rows(value: Any) -> list[dict[str, Any]]:

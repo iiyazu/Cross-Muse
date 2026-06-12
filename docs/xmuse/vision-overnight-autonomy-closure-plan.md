@@ -316,10 +316,23 @@ Current implementation status:
 - `uv run xmuse-overnight-supervisor` now exposes the existing
   `OvernightSupervisor` contract as a resumable operator command. It can start
   stages, record heartbeats, write checkpoint production-evidence envelopes,
-  record `manual_gap` artifacts, complete stages, move to the next pending
-  stage, and print the durable snapshot. This makes the supervisor harness
-  usable from long `/goal` scripts without making it a lane status authority or
-  live 8 hour proof.
+  record periodic self-review checkpoints, record `manual_gap` artifacts,
+  record configured blockers with issue/failure classification, complete
+  stages, move to the next pending stage, and print the durable snapshot. This
+  makes the supervisor harness usable from long `/goal` scripts without making
+  it a lane status authority or live 8 hour proof.
+- The supervisor snapshot now persists `self_reviews` as
+  `xmuse.overnight_self_review.v1` rows and emits matching
+  `xmuse.production_evidence.v1` envelopes with `action=self_review`,
+  `kind=self_review`, `configured=true`, and `required=true`. The deterministic
+  SLO marker treats review intervals over 60 minutes as `violated`; it remains
+  contract-level evidence unless attached to fresh live/provider/server
+  artifacts.
+- The `blocked-fallback` command records a configured blocker as
+  `status=blocked` with `proof_level=manual_gap`, creates an issue queue row,
+  records a failure classification, writes an `xmuse.stage_fallback.v1`
+  artifact, and can start the next pending independent stage. This preserves
+  release blockers while allowing the overnight run to keep useful momentum.
 - `uv run xmuse-overnight-supervisor-evidence-capture` still performs the
   explicit conversion from the durable supervisor snapshot into replay-ready
   `xmuse.production_evidence.v1` for the replay bundle's `supervisor` section.

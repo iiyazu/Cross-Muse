@@ -120,6 +120,54 @@ def test_capture_overnight_supervisor_evidence_reports_manual_gap_without_checkp
     )
 
 
+def test_capture_overnight_supervisor_evidence_summarizes_reviews_and_blockers(
+    tmp_path: Path,
+) -> None:
+    supervisor = OvernightSupervisor(
+        OvernightSupervisorConfig(
+            run_id="overnight-review-blocker",
+            artifact_dir=tmp_path,
+            stages=[
+                OvernightSupervisorStage(stage_id="S6", objective="fresh GitHub truth"),
+                OvernightSupervisorStage(stage_id="S7", objective="TUI proof cockpit"),
+            ],
+        )
+    )
+    supervisor.start_stage("S6")
+    supervisor.record_heartbeat(note="S6 running")
+    supervisor.record_checkpoint(stage_id="S6", summary="checkpoint before blocker")
+    supervisor.record_self_review(
+        stage_id="S6",
+        summary="reviewed GitHub proof boundary",
+        decision="continue",
+        findings=["review truth is not merge truth"],
+        minutes_since_previous_review=50,
+    )
+    fallback = supervisor.fallback_blocked_stage(
+        stage_id="S6",
+        reason="GitHub review truth is configured but unavailable.",
+        failure_class="github_review_truth_unavailable",
+        retryable=False,
+        attempted_command="gh api repos/iiyazu/Cross-Muse/pulls/43/reviews",
+    )
+
+    artifact = capture_overnight_supervisor_evidence(
+        snapshot_path=tmp_path / "overnight-supervisor-overnight-review-blocker.json",
+        output_path=tmp_path / "supervisor-production-evidence.json",
+    )
+
+    assert artifact["status"] == "ok"
+    assert artifact["proof_level"] == "contract_proof"
+    assert artifact["summary"] == (
+        "Supervisor captured 1 heartbeat(s), 1 checkpoint(s), "
+        "0 manual gap(s), 1 self-review(s), and 1 blocked fallback(s)."
+    )
+    assert artifact["commands"] == [
+        "gh api repos/iiyazu/Cross-Muse/pulls/43/reviews"
+    ]
+    assert fallback["artifact_path"] in artifact["artifacts"]
+
+
 def test_capture_overnight_supervisor_evidence_cli_writes_artifact(tmp_path: Path) -> None:
     from xmuse.overnight_supervisor_evidence_capture import main
 

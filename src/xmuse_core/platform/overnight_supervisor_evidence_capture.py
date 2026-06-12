@@ -44,6 +44,7 @@ def build_overnight_supervisor_evidence(
     heartbeats = _dict_rows(snapshot.get("heartbeats"))
     checkpoints = _dict_rows(snapshot.get("checkpoints"))
     manual_gaps = _dict_rows(snapshot.get("manual_gaps"))
+    self_reviews = _dict_rows(snapshot.get("self_reviews"))
     production_evidence = _dict_rows(snapshot.get("production_evidence"))
     stage_id = _selected_stage_id(
         checkpoints=checkpoints,
@@ -96,6 +97,8 @@ def build_overnight_supervisor_evidence(
             heartbeat_count=len(heartbeats),
             checkpoint_count=len(checkpoints),
             manual_gap_count=len(manual_gaps),
+            self_review_count=len(self_reviews),
+            blocked_fallback_count=_blocked_fallback_count(production_evidence),
         ),
     )
     return envelope.model_dump()
@@ -183,12 +186,24 @@ def _summary(
     heartbeat_count: int,
     checkpoint_count: int,
     manual_gap_count: int,
+    self_review_count: int,
+    blocked_fallback_count: int,
 ) -> str:
     return (
         "Supervisor captured "
         f"{heartbeat_count} heartbeat(s), "
-        f"{checkpoint_count} checkpoint(s), and "
-        f"{manual_gap_count} manual gap(s)."
+        f"{checkpoint_count} checkpoint(s), "
+        f"{manual_gap_count} manual gap(s), "
+        f"{self_review_count} self-review(s), and "
+        f"{blocked_fallback_count} blocked fallback(s)."
+    )
+
+
+def _blocked_fallback_count(production_evidence: list[dict[str, Any]]) -> int:
+    return sum(
+        1
+        for evidence in production_evidence
+        if evidence.get("action") == "blocked_fallback"
     )
 
 
