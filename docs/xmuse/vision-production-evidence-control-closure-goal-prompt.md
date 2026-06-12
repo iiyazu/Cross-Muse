@@ -74,6 +74,8 @@ Hard constraints:
 - Chat API and MCP writes must use configured tokens and
   `X-XMUSE-API-Key`/`X-XMuse-Operator-Role`/`X-XMuse-Operator-Capabilities`
   headers when auth is enabled.
+- `XMUSE_DEPLOYMENT_PROFILE=production` must fail closed if Chat API or MCP
+  write tokens are missing.
 - Internal review proof is allowed for single-maintainer review truth, but it is
   not GitHub server-side enforcement proof.
 - pr_merged requires server-side merge proof.

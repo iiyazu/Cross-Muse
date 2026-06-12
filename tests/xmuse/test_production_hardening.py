@@ -5,6 +5,7 @@ import sqlite3
 import time
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from xmuse.chat_api import _auth_token_from_env, create_app
@@ -56,6 +57,41 @@ def test_chat_api_auth_token_can_be_loaded_from_env(monkeypatch) -> None:
     monkeypatch.delenv("XMUSE_CHAT_API_AUTH_TOKEN")
 
     assert _auth_token_from_env() == "client-secret"
+
+
+def test_chat_api_production_profile_requires_write_auth_token(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("XMUSE_DEPLOYMENT_PROFILE", "production")
+    monkeypatch.delenv("XMUSE_CHAT_API_AUTH_TOKEN", raising=False)
+    monkeypatch.delenv("XMUSE_CHAT_API_KEY", raising=False)
+
+    with pytest.raises(RuntimeError, match="XMUSE_CHAT_API_AUTH_TOKEN"):
+        create_app(tmp_path)
+
+
+def test_chat_api_production_profile_uses_env_write_auth_token(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("XMUSE_DEPLOYMENT_PROFILE", "production")
+    monkeypatch.setenv("XMUSE_CHAT_API_AUTH_TOKEN", "server-secret")
+
+    client = TestClient(create_app(tmp_path))
+    rejected = client.post("/api/chat/conversations", json={"title": "Blocked"})
+    accepted = client.post(
+        "/api/chat/conversations",
+        json={"title": "Allowed"},
+        headers={
+            "X-XMUSE-API-Key": "server-secret",
+            "X-XMuse-Operator-Role": "operator",
+            "X-XMuse-Operator-Capabilities": "chat_create_conversation",
+        },
+    )
+
+    assert rejected.status_code == 401
+    assert accepted.status_code == 201
 
 
 def test_chat_api_auth_blocks_viewer_even_with_write_capability(tmp_path: Path) -> None:

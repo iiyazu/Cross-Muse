@@ -4,6 +4,7 @@ import importlib.util
 import json
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from xmuse_core.agents.god_session_registry import GodSessionRegistry
@@ -169,6 +170,34 @@ def test_mcp_auth_allows_read_tool_without_token(tmp_path: Path) -> None:
     result = response.json()["result"]
     assert result["isError"] is False
     assert result["structuredContent"] == {"lanes": []}
+
+
+def test_mcp_production_profile_requires_write_auth_token(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("XMUSE_DEPLOYMENT_PROFILE", "production")
+    monkeypatch.delenv("XMUSE_MCP_AUTH_TOKEN", raising=False)
+    monkeypatch.delenv("XMUSE_MCP_API_KEY", raising=False)
+
+    with pytest.raises(RuntimeError, match="XMUSE_MCP_AUTH_TOKEN"):
+        load_mcp_module()
+
+
+def test_mcp_production_profile_uses_env_write_auth_token(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("XMUSE_DEPLOYMENT_PROFILE", "production")
+    monkeypatch.setenv("XMUSE_MCP_AUTH_TOKEN", "server-secret")
+    server = load_mcp_module()
+    client = TestClient(server.create_app(xmuse_root=tmp_path / "xmuse"))
+
+    rejected = client.post("/mcp", json=mcp_tool_payload("enqueue_lane"))
+    allowed_read = client.post("/mcp", json=mcp_tool_payload("list_lanes"))
+
+    assert rejected.status_code == 401
+    assert allowed_read.status_code == 200
 
 
 def test_sse_endpoint_and_tools_list(tmp_path: Path) -> None:

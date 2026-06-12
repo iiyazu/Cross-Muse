@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import os
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from xmuse_core.platform.mcp_permissions import MCP_TOOL_PERMISSIONS, authorize_mcp_tool
 
+DEPLOYMENT_PROFILE_ENV = "XMUSE_DEPLOYMENT_PROFILE"
+PRODUCTION_DEPLOYMENT_PROFILE = "production"
 MUTATING_HTTP_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 OPERATOR_ACTION_CAPABILITIES = frozenset(
     {
@@ -22,6 +26,35 @@ class HttpAuthorizationDecision:
     code: str
     message: str
     required_capability: str | None = None
+
+
+def production_deployment_profile_enabled(
+    env: Mapping[str, str] | None = None,
+) -> bool:
+    source = os.environ if env is None else env
+    return (
+        source.get(DEPLOYMENT_PROFILE_ENV, "").strip().lower()
+        == PRODUCTION_DEPLOYMENT_PROFILE
+    )
+
+
+def require_production_write_auth_token(
+    *,
+    service_name: str,
+    auth_token: str | None,
+    env_names: tuple[str, ...],
+    env: Mapping[str, str] | None = None,
+) -> str | None:
+    token = (auth_token or "").strip()
+    if token:
+        return token
+    if production_deployment_profile_enabled(env):
+        expected = " or ".join(env_names)
+        raise RuntimeError(
+            f"{service_name} production deployment requires a write auth token; "
+            f"set {expected} or pass auth_token explicitly"
+        )
+    return None
 
 
 def authorize_chat_api_write(

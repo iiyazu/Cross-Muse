@@ -17,6 +17,11 @@ admin UI and rate limiting remain outside this document.
 - Chat API authentication is opt-in: when started with an auth token, mutating
   `/api/chat/*` requests require `X-XMUSE-API-Key` plus an allowed
   `X-XMuse-Operator-Role` and `X-XMuse-Operator-Capabilities` value.
+- production deployment profile is fail-closed: when
+  `XMUSE_DEPLOYMENT_PROFILE=production`, Chat API startup requires
+  `XMUSE_CHAT_API_AUTH_TOKEN`, `XMUSE_CHAT_API_KEY`, or an explicit
+  `auth_token`; MCP startup requires `XMUSE_MCP_AUTH_TOKEN`,
+  `XMUSE_MCP_API_KEY`, or an explicit `auth_token`.
 - identity verification is not API authentication: selected chat tools verify
   `god_session_id`, `conversation_id`, and `participant_id` against
   `god_sessions.json`; this proves session scope, not network caller identity.

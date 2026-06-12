@@ -15,7 +15,10 @@ from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from xmuse_core.platform import mcp_responses, mcp_search
-from xmuse_core.platform.http_auth import authorize_mcp_http_tool
+from xmuse_core.platform.http_auth import (
+    authorize_mcp_http_tool,
+    require_production_write_auth_token,
+)
 from xmuse_core.platform.projection.allowlist import (
     normalize_mutation_audit,
     stamp_mutation_audit,
@@ -1281,7 +1284,11 @@ def create_app(
     auth_token: str | None = None,
 ) -> FastAPI:
     ops = XmuseOperations(xmuse_root)
-    resolved_auth_token = (auth_token or _auth_token_from_env() or "").strip() or None
+    resolved_auth_token = require_production_write_auth_token(
+        service_name="xmuse MCP server",
+        auth_token=auth_token or _auth_token_from_env(),
+        env_names=("XMUSE_MCP_AUTH_TOKEN", "XMUSE_MCP_API_KEY"),
+    )
     app = FastAPI(title="xmuse MCP Server", version=SERVER_VERSION)
     app.state.xmuse_ops = ops
     app.state.auth_token = resolved_auth_token

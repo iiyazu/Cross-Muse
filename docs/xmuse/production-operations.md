@@ -35,6 +35,7 @@ export XMUSE_REVIEW_GOD_BACKEND=ray
 export XMUSE_RAY_GOD_TRANSPORT=app-server
 export XMUSE_RAY_GOD_EFFORT=low
 export XMUSE_RAY_GOD_MCP=1
+export XMUSE_DEPLOYMENT_PROFILE=production
 export XMUSE_CHAT_API_URL=http://127.0.0.1:8201
 export XMUSE_CHAT_API_AUTH_TOKEN=<server-token>
 export XMUSE_CHAT_API_KEY=<same-token-for-tui-client>
@@ -43,6 +44,10 @@ export XMUSE_MCP_AUTH_TOKEN=<server-token>
 
 `XMUSE_DEGRADED_LOCAL_GOD_MODE=1` is an explicit degraded local mode. It is not
 the happy path and must be visible in health/readiness output or lane/peer traces.
+
+`XMUSE_DEPLOYMENT_PROFILE=production` makes Chat API and MCP startup fail closed
+when their mutating write-surface tokens are missing. Leave it unset for
+no-secrets local contract tests and default development runs.
 
 When `XMUSE_CHAT_API_AUTH_TOKEN` or `XMUSE_CHAT_API_KEY` is set for the Chat API
 process, mutating `/api/chat/*` routes require:

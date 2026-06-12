@@ -44,6 +44,16 @@
 | `XMUSE_RAY_GOD_EFFORT` | optional | `"low"` | `src/xmuse_core/agents/ray_session_layer.py:387` | fallback "low" |
 | `XMUSE_RAY_GOD_MCP` | optional | `"0"` (off) | `src/xmuse_core/agents/ray_session_layer.py:395` | 关闭 |
 
+### Deployment / Auth (production write surfaces)
+
+| 变量 | 分类 | 默认 | 读取位置 | 缺失行为 |
+|------|------|------|----------|----------|
+| `XMUSE_DEPLOYMENT_PROFILE` | optional | unset | `src/xmuse_core/platform/http_auth.py` | unset 时不强制启动 token；`production` 时 Chat API/MCP 缺 write token 直接 fail closed |
+| `XMUSE_CHAT_API_AUTH_TOKEN` | required for production profile | — | `xmuse/chat_api.py` | `XMUSE_DEPLOYMENT_PROFILE=production` 时缺失会阻止 Chat API 启动，除非 `XMUSE_CHAT_API_KEY` 或 explicit `auth_token` 存在 |
+| `XMUSE_CHAT_API_KEY` | required for TUI/operator Chat API writes | — | `xmuse/chat_api.py`, `xmuse/tui/adapter/xmuse_adapter.py` | Chat API 可作为本地 auth token fallback；TUI 缺失时无法授权 Chat API 写操作 |
+| `XMUSE_MCP_AUTH_TOKEN` | required for production profile | — | `xmuse/mcp_server.py` | `XMUSE_DEPLOYMENT_PROFILE=production` 时缺失会阻止 MCP 启动，除非 `XMUSE_MCP_API_KEY` 或 explicit `auth_token` 存在 |
+| `XMUSE_MCP_API_KEY` | optional auth token alias | — | `xmuse/mcp_server.py` | 可作为 MCP auth token fallback |
+
 ### Orchestrator Control (optional)
 
 | 变量 | 分类 | 默认 | 读取位置 | 缺失行为 |
@@ -120,14 +130,19 @@ XMUSE_REVIEW_GOD_BACKEND=ray
 XMUSE_RAY_GOD_TRANSPORT=app-server
 XMUSE_RAY_GOD_EFFORT=low
 XMUSE_RAY_GOD_MCP=1
-# optional: TUI endpoint
+XMUSE_DEPLOYMENT_PROFILE=production
+# control plane endpoints and write auth
 XMUSE_CHAT_API_URL=http://127.0.0.1:8201
+XMUSE_CHAT_API_AUTH_TOKEN=<server-token>
+XMUSE_CHAT_API_KEY=<same-token-for-tui-client>
+XMUSE_MCP_AUTH_TOKEN=<server-token>
 ```
 
 此 bundle 的目的是确保:
 - Ray 作为 GOD 持久 session backend
 - Codex app-server 作为 transport（非 process-json batch）
 - MCP writeback 开启（`XMUSE_RAY_GOD_MCP=1` — 这是真实 MCP writeback gate；默认 off 避免普通 Ray session 意外暴露 MCP）
+- production profile 下 Chat API/MCP 缺 write token 会 fail closed
 - 其余使用各自默认值
 
 ## CLI 参数（platform_runner）

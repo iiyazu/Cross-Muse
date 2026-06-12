@@ -236,9 +236,12 @@ Current implementation status:
   `XMUSE_CHAT_API_AUTH_TOKEN` / `XMUSE_CHAT_API_KEY`.
 - MCP mutating `tools/call` routes have opt-in token plus role/capability
   gating through `XMUSE_MCP_AUTH_TOKEN` / `XMUSE_MCP_API_KEY`.
+- `XMUSE_DEPLOYMENT_PROFILE=production` makes Chat API and MCP startup fail
+  closed when write auth tokens are missing.
 - Read-only HTTP/MCP routes still follow the local trust policy.
-- Remaining production hardening is to make the chosen deployment profile fail
-  closed when a production write surface starts without its required token.
+- Remaining production hardening is live-service proof that the configured
+  production processes were started with the token bundle and exercised by a
+  real operator/TUI session.
 
 ## S4 - Live Evidence Gates
 

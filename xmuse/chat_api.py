@@ -58,7 +58,10 @@ from xmuse_core.chat.peer_proposals import classify_structured_proposal
 from xmuse_core.chat.peer_service import PeerChatError, PeerChatService
 from xmuse_core.chat.protocol_v2 import DeliberationMessageV1
 from xmuse_core.chat.store import ChatStore
-from xmuse_core.platform.http_auth import authorize_chat_api_write
+from xmuse_core.platform.http_auth import (
+    authorize_chat_api_write,
+    require_production_write_auth_token,
+)
 from xmuse_core.platform.operator_actions import (
     OperatorActionRequest,
     OperatorActionResult,
@@ -944,7 +947,13 @@ def create_app(
 ) -> FastAPI:
     root = Path(base_dir)
     execution_root = Path(execution_worktree) if execution_worktree is not None else REPO_ROOT
+    resolved_auth_token = require_production_write_auth_token(
+        service_name="xmuse Chat API",
+        auth_token=auth_token or _auth_token_from_env(),
+        env_names=("XMUSE_CHAT_API_AUTH_TOKEN", "XMUSE_CHAT_API_KEY"),
+    )
     app = FastAPI(title="xmuse Chat API", version="0.1.0")
+    app.state.auth_token = resolved_auth_token
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
@@ -956,12 +965,16 @@ def create_app(
     @app.middleware("http")
     async def require_write_auth(request: Request, call_next):
         mutating = request.method in {"POST", "PUT", "PATCH", "DELETE"}
-        if auth_token and mutating and request.headers.get("X-XMUSE-API-Key") != auth_token:
+        if (
+            resolved_auth_token
+            and mutating
+            and request.headers.get("X-XMUSE-API-Key") != resolved_auth_token
+        ):
             return JSONResponse(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 content={"detail": "authentication required"},
             )
-        if auth_token and mutating:
+        if resolved_auth_token and mutating:
             decision = authorize_chat_api_write(
                 method=request.method,
                 path=request.url.path,
