@@ -344,6 +344,12 @@ Current implementation status:
   runs the opt-in read-only GitHub server truth collector and can write a
   `github_server_truth` gate with `server_side_enforcement_proof`; it still
   cannot create review truth, merge truth, or `pr_merged`.
+- When `XMUSE_MEMORYOS_LIVE_TRACE_ARTIFACT`,
+  `XMUSE_NATURAL_GOD_TRANSCRIPT_PATH`, or
+  `XMUSE_REAL_PROVIDER_RUNTIME_ARTIFACT` point at existing artifacts, it
+  validates and converts them through the same release-gate contracts as the
+  standalone gate capture commands. Missing, invalid, fake/local, blocked, or
+  stale artifacts remain blockers.
 - It does not create live MemoryOS, real provider, or natural transcript proof
   by itself.
 - `uv run xmuse-real-provider-runtime-gate-capture` converts an explicit
@@ -412,7 +418,10 @@ Current implementation status:
 - `uv run xmuse-live-gate-status-capture` can pre-populate live gate blocker
   artifacts that the readiness capture command will evaluate. With explicit
   `XMUSE_GITHUB_TRUTH_*` target configuration, the same command also captures
-  GitHub server enforcement truth through the read-only collector.
+  GitHub server enforcement truth through the read-only collector. With
+  explicit live artifact path configuration, it also validates and converts
+  MemoryOS, natural deliberation, and real-provider runtime artifacts through
+  their existing gate builders.
 - `uv run python scripts/github_server_truth_capture.py --release-gate-output`
   can write a `github_server_truth` release gate artifact from the raw GitHub
   server truth snapshot. This can satisfy `server_side_enforcement_proof`

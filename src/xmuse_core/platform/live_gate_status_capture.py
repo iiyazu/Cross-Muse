@@ -18,6 +18,15 @@ from xmuse_core.platform.execution.github_ops import (
 from xmuse_core.platform.github_truth_release_gate import (
     build_github_server_truth_release_gate,
 )
+from xmuse_core.platform.memoryos_live_release_gate import (
+    capture_memoryos_live_release_gate,
+)
+from xmuse_core.platform.natural_deliberation_release_gate import (
+    capture_natural_deliberation_release_gate,
+)
+from xmuse_core.platform.real_provider_runtime_release_gate import (
+    capture_real_provider_runtime_release_gate,
+)
 from xmuse_core.platform.release_readiness import ReleaseGateKind
 
 CommandRunner = Callable[[tuple[str, ...]], "ProbeResult"]
@@ -67,15 +76,15 @@ def capture_live_gate_status(
     root = Path(output_dir)
     root.mkdir(parents=True, exist_ok=True)
     artifacts = [
-        _memoryos_gate(environment),
+        _memoryos_gate(environment, output_dir=root),
         _github_gate(
             environment,
             probes["github_auth"],
             output_dir=root,
             github_truth_runner=github_truth_runner,
         ),
-        _provider_gate(environment, probes),
-        _natural_deliberation_gate(environment),
+        _provider_gate(environment, probes, output_dir=root),
+        _natural_deliberation_gate(environment, output_dir=root),
     ]
 
     artifact_paths: list[str] = []
@@ -132,7 +141,13 @@ def _normalize_probe_result(
     )
 
 
-def _memoryos_gate(env: Mapping[str, str]) -> dict[str, Any]:
+def _memoryos_gate(env: Mapping[str, str], *, output_dir: Path) -> dict[str, Any]:
+    artifact_path = _clean_text(env.get("XMUSE_MEMORYOS_LIVE_TRACE_ARTIFACT"))
+    if artifact_path is not None:
+        return capture_memoryos_live_release_gate(
+            artifact_path=artifact_path,
+            output_path=output_dir / _artifact_filename("live-memoryos"),
+        )
     source_refs = _present_keys(env, "XMUSE_LIVE_MEMORYOS_LITE", "XMUSE_MEMORYOS_LITE_URL")
     configured = bool(source_refs)
     return _gate(
@@ -192,7 +207,18 @@ def _github_gate(
     )
 
 
-def _provider_gate(env: Mapping[str, str], probes: Mapping[str, ProbeResult]) -> dict[str, Any]:
+def _provider_gate(
+    env: Mapping[str, str],
+    probes: Mapping[str, ProbeResult],
+    *,
+    output_dir: Path,
+) -> dict[str, Any]:
+    artifact_path = _clean_text(env.get("XMUSE_REAL_PROVIDER_RUNTIME_ARTIFACT"))
+    if artifact_path is not None:
+        return capture_real_provider_runtime_release_gate(
+            artifact_path=artifact_path,
+            output_path=output_dir / _artifact_filename("real-provider-runtime"),
+        )
     source_refs = _present_keys(
         env,
         "XMUSE_PEER_GOD_BACKEND",
@@ -239,7 +265,13 @@ def _provider_gate(env: Mapping[str, str], probes: Mapping[str, ProbeResult]) ->
     )
 
 
-def _natural_deliberation_gate(env: Mapping[str, str]) -> dict[str, Any]:
+def _natural_deliberation_gate(env: Mapping[str, str], *, output_dir: Path) -> dict[str, Any]:
+    transcript_path = _clean_text(env.get("XMUSE_NATURAL_GOD_TRANSCRIPT_PATH"))
+    if transcript_path is not None:
+        return capture_natural_deliberation_release_gate(
+            artifact_path=transcript_path,
+            output_path=output_dir / _artifact_filename("natural-god-deliberation"),
+        )
     source_refs = _present_keys(env, "XMUSE_NATURAL_GOD_TRANSCRIPT_PATH")
     configured = bool(source_refs)
     return _gate(
@@ -334,7 +366,9 @@ def _known_env_keys_present(env: Mapping[str, str]) -> set[str]:
         "XMUSE_REVIEW_GOD_BACKEND",
         "XMUSE_RAY_GOD_TRANSPORT",
         "XMUSE_RAY_GOD_MCP",
+        "XMUSE_MEMORYOS_LIVE_TRACE_ARTIFACT",
         "XMUSE_NATURAL_GOD_TRANSCRIPT_PATH",
+        "XMUSE_REAL_PROVIDER_RUNTIME_ARTIFACT",
         "XMUSE_GITHUB_TRUTH_REPO",
         "XMUSE_GITHUB_TRUTH_PULL_REQUEST",
         "XMUSE_GITHUB_TRUTH_BASE_BRANCH",

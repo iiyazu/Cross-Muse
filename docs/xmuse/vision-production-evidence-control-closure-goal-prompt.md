@@ -60,7 +60,12 @@ Priority:
    `XMUSE_GITHUB_TRUTH_REPO` and `XMUSE_GITHUB_TRUTH_PULL_REQUEST` are set, the
    same command must run the read-only GitHub server truth collector and write
    a `server_side_enforcement_proof` gate without claiming review truth, merge
-   truth, or `pr_merged`. From TUI use `/release refresh` with `release_gate`.
+   truth, or `pr_merged`. When `XMUSE_MEMORYOS_LIVE_TRACE_ARTIFACT`,
+   `XMUSE_NATURAL_GOD_TRANSCRIPT_PATH`, or
+   `XMUSE_REAL_PROVIDER_RUNTIME_ARTIFACT` point at existing evidence artifacts,
+   the command must validate and convert them through the existing release-gate
+   contracts instead of writing generic blockers. From TUI use
+   `/release refresh` with `release_gate`.
 6. Separate natural GOD transcript evidence from deterministic replay and keep
    unresolved blockers from freezing a blueprint.
 7. Add release readiness aggregation: tests, ruff, package boundary, internal

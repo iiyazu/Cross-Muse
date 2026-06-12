@@ -218,6 +218,53 @@ def test_live_gate_status_capture_uses_configured_github_server_truth(
     }
 
 
+def test_live_gate_status_capture_converts_configured_live_artifacts(
+    tmp_path: Path,
+) -> None:
+    artifacts = tmp_path / "source-artifacts"
+    memoryos_trace = artifacts / "memoryos-trace.json"
+    natural_transcript = artifacts / "natural-transcript.json"
+    provider_runtime = artifacts / "provider-runtime.json"
+    _write_json(memoryos_trace, _memoryos_trace_artifact())
+    _write_json(natural_transcript, _natural_transcript_artifact())
+    _write_json(provider_runtime, _provider_runtime_artifact())
+
+    output_dir = tmp_path / "artifacts" / "live_gate_status"
+    summary = capture_live_gate_status(
+        output_dir=output_dir,
+        env={
+            "XMUSE_MEMORYOS_LIVE_TRACE_ARTIFACT": str(memoryos_trace),
+            "XMUSE_NATURAL_GOD_TRANSCRIPT_PATH": str(natural_transcript),
+            "XMUSE_REAL_PROVIDER_RUNTIME_ARTIFACT": str(provider_runtime),
+        },
+        command_runner=_fake_runner({}),
+    )
+
+    memoryos_gate = json.loads((output_dir / "live-memoryos-status.json").read_text())
+    natural_gate = json.loads(
+        (output_dir / "natural-deliberation-status.json").read_text()
+    )
+    provider_gate = json.loads((output_dir / "real-provider-status.json").read_text())
+    report = capture_release_readiness(
+        artifacts_dir=tmp_path / "artifacts",
+        output_path=tmp_path / "readiness.json",
+    )
+
+    assert summary["artifact_count"] == 4
+    assert memoryos_gate["status"] == "ok"
+    assert memoryos_gate["proof_level"] == "live_service_proof"
+    assert memoryos_gate["artifacts"] == [str(memoryos_trace)]
+    assert natural_gate["status"] == "ok"
+    assert natural_gate["proof_level"] == "real_provider_proof"
+    assert natural_gate["artifacts"] == [str(natural_transcript)]
+    assert provider_gate["status"] == "ok"
+    assert provider_gate["proof_level"] == "real_provider_proof"
+    assert provider_gate["artifacts"] == [str(provider_runtime)]
+    assert {
+        blocker["gate_id"] for blocker in report["blockers"]
+    } == {"github-server-truth"}
+
+
 def test_live_gate_status_capture_cli_script_is_registered() -> None:
     pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
 
@@ -242,6 +289,118 @@ def _fake_runner(results: dict[str, ProbeResult]):
         )
 
     return run
+
+
+def _write_json(path: Path, payload: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _memoryos_trace_artifact() -> dict[str, object]:
+    return {
+        "schema_version": "xmuse.memoryos_lite_trace.v1",
+        "proof_level": "live_service_proof",
+        "fact_state": "observed",
+        "namespace_uri": "memory://conversation/conv-live/god-review/thread-1",
+        "session_id": "ses-live-1",
+        "trace_events": [
+            {
+                "kind": "session_created",
+                "metadata": {"xmuse_source_refs": ["conversation:conv-live"]},
+            },
+            {
+                "kind": "context_built",
+                "estimated_tokens": 96,
+                "metadata": {"xmuse_source_refs": ["blueprint:bp-1"]},
+            },
+        ],
+        "source_refs": ["conversation:conv-live", "blueprint:bp-1"],
+        "estimated_tokens": 96,
+        "blockers": [],
+    }
+
+
+def _natural_transcript_artifact() -> dict[str, object]:
+    return {
+        "schema_version": "xmuse.operator_transcript.v1",
+        "conversation_id": "conv-prod-1",
+        "proof_level": "real_provider_proof",
+        "fact_state": "observed",
+        "natural_deliberation": True,
+        "source_refs": ["memory://conversation/conv-prod-1/transcript"],
+        "messages": [
+            {
+                "message_id": "msg-1",
+                "conversation_id": "conv-prod-1",
+                "god_id": "architect-god",
+                "provider_id": "codex",
+                "provider_profile": "codex-prod",
+                "session_id": "codex-session-1",
+                "speech_act": "propose",
+                "decision_scope": "blueprint.freeze",
+                "blocking": False,
+            },
+            {
+                "message_id": "msg-2",
+                "conversation_id": "conv-prod-1",
+                "god_id": "review-god",
+                "provider_id": "opencode",
+                "provider_profile": "opencode-prod",
+                "session_id": "opencode-session-1",
+                "speech_act": "vote",
+                "decision_scope": "blueprint.freeze",
+                "blocking": False,
+            },
+        ],
+        "blockers": [],
+    }
+
+
+def _provider_runtime_artifact() -> dict[str, object]:
+    return {
+        "schema_version": "xmuse.real_provider_runtime.v1",
+        "proof_level": "real_provider_proof",
+        "fact_state": "observed",
+        "run_id": "real-soak-pr43-live",
+        "conversation_id": "conv-real-1",
+        "source_refs": ["chat:conversation:conv-real-1"],
+        "provider_runtime": {
+            "provider_id": "codex",
+            "runtime_backend": "ray",
+            "transport": "codex-app-server",
+            "provider_session_id": "codex-thread-1",
+            "mcp_writeback": True,
+        },
+        "restart_resume": {
+            "fresh_provider_session_id": "codex-thread-1",
+            "resumed_provider_session_id": "codex-thread-1",
+            "provider_session_reused": True,
+        },
+        "turns": [
+            _provider_turn("turn-fresh-1", "fresh", 1.0),
+            _provider_turn("turn-resume-1", "resume", 10.0),
+        ],
+        "blockers": [],
+    }
+
+
+def _provider_turn(turn_id: str, phase: str, offset: float) -> dict[str, object]:
+    return {
+        "turn_id": turn_id,
+        "phase": phase,
+        "delivery_mode": "mcp_writeback",
+        "degraded_reason": None,
+        "provider_id": "codex",
+        "runtime_backend": "ray",
+        "transport": "codex-app-server",
+        "provider_session_id": "codex-thread-1",
+        "stage_timings": {
+            "ray_actor_delivery_start": {"at": offset + 1.0},
+            "codex_app_server_turn_start": {"at": offset + 2.0},
+            "chat_post_message": {"at": offset + 3.0},
+            "trace_persisted": {"at": offset + 4.0},
+        },
+    }
 
 
 class _FakeGhApiRunner:

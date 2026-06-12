@@ -43,6 +43,9 @@ export XMUSE_TUI_OPERATOR_ID=operator
 export XMUSE_TUI_OPERATOR_ROLE=operator
 export XMUSE_TUI_OPERATOR_CAPABILITIES=chat_create_conversation,chat_post_message,chat_bootstrap,chat_approve_proposal,chat_manage_participants,register_god_cli,select_god_cli,release_gate,workflow_write
 export XMUSE_MCP_AUTH_TOKEN=<server-token>
+export XMUSE_MEMORYOS_LIVE_TRACE_ARTIFACT=xmuse/work/release_readiness/memoryos-trace.json
+export XMUSE_NATURAL_GOD_TRANSCRIPT_PATH=xmuse/work/release_readiness/natural-transcript.json
+export XMUSE_REAL_PROVIDER_RUNTIME_ARTIFACT=xmuse/work/release_readiness/real-provider-runtime.json
 export XMUSE_GITHUB_TRUTH_REPO=iiyazu/Cross-Muse
 export XMUSE_GITHUB_TRUTH_PULL_REQUEST=<pr-number>
 export XMUSE_GITHUB_TRUTH_BASE_BRANCH=main
@@ -234,8 +237,14 @@ satisfy `server_side_enforcement_proof` when branch protection/ruleset and
 required-check truth are captured. It still cannot create review truth, merge
 truth, or `pr_merged`.
 
+When `XMUSE_MEMORYOS_LIVE_TRACE_ARTIFACT`,
+`XMUSE_NATURAL_GOD_TRANSCRIPT_PATH`, or `XMUSE_REAL_PROVIDER_RUNTIME_ARTIFACT`
+point at existing artifacts, the command validates and converts those artifacts
+through the same release-gate contracts as the standalone capture commands.
+Invalid, missing, fake/local, blocked, or stale artifacts remain blockers.
+
 This command does not run MemoryOS, Ray/Codex/OpenCode, or natural GOD
-transcript proof. It creates honest blocker artifacts for those gates until
+transcript sessions. It creates honest blocker artifacts for those gates until
 their live proof artifacts are supplied.
 
 ## MemoryOS Lite Live Release Gate
