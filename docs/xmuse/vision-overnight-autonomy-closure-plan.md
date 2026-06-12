@@ -285,6 +285,12 @@ Current implementation status:
   runtime view reports heartbeat freshness against an explicit TTL. Fresh
   heartbeats keep otherwise-ready selected GODs usable; stale or invalid
   heartbeats become `manual_gap` blockers and make `peer_god_ready=false`.
+- `uv run xmuse-god-runtime-continuity-capture` exports the selected-GOD
+  runtime continuity artifact from durable `god_cli_selections.json`,
+  `god_cli_registrations.json`, and `god_sessions.json`. This makes the
+  runtime-continuity input repeatable for overnight evidence packs without
+  treating TUI/dashboard projections, feature lane projections, Ray actor
+  memory, or provider subprocess state as authority.
 - `xmuse-natural-deliberation-gate-capture` accepts an optional
   `--god-runtime` artifact. When supplied, the natural-deliberation release
   gate requires every transcript GOD to have a peer-GOD-ready selected runtime
@@ -665,6 +671,9 @@ Tasks:
   final handoff pack; do not pass both `--supervisor-snapshot` and an explicit
   `--section-artifact supervisor=...`.
 - When a natural transcript and selected GOD runtime continuity artifact exist,
+  produce the runtime artifact with
+  `uv run xmuse-god-runtime-continuity-capture --conversation-id <id>` against
+  the durable stores for that same conversation, then
   prefer `uv run xmuse-release-evidence-pack --deliberation-transcript TRANSCRIPT`
   plus `--god-runtime RUNTIME` for the final handoff pack; do not pass those
   inputs together with an explicit

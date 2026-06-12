@@ -533,6 +533,12 @@ Current implementation status:
   for producing that transcript artifact from durable chat/session state. It
   does not synthesize live GOD messages; the conversation must already have
   real `god_speech_act` messages and provider session metadata.
+- `uv run xmuse-god-runtime-continuity-capture` now exports
+  `xmuse.god_runtime_continuity.v1` from durable `god_cli_selections.json`,
+  `god_cli_registrations.json`, and `god_sessions.json`. This gives the
+  natural deliberation gate and release evidence pack a repeatable selected-GOD
+  runtime artifact without reading TUI/dashboard projections or Ray actor
+  memory.
 - Selected-GOD runtime continuity now includes durable session heartbeat
   metadata from `god_sessions.json`. Stale or invalid heartbeats keep the
   runtime row blocked/manual-gap and prevent `peer_god_ready`, so natural
@@ -630,6 +636,10 @@ Current implementation status:
   This is the release-gate path, not the replay-section path; it requires
   selected-GOD runtime continuity so bounded OpenCode-style workers or missing
   runtime rows cannot satisfy release readiness.
+- Prefer producing that selected-GOD runtime continuity input with
+  `uv run xmuse-god-runtime-continuity-capture` against the durable selection,
+  registration, and session stores for the same conversation. Do not hand-edit
+  the artifact or derive it from TUI/dashboard projection output.
 - The same release pack command can accept `--frozen-blueprint` and repeated
   `--feature-contract` inputs, convert them through
   `xmuse-frozen-blueprint-evidence-capture` and

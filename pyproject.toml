@@ -24,6 +24,7 @@ xmuse-deliberation-transcript-evidence-capture = "xmuse.deliberation_transcript_
 xmuse-feature-lineage-evidence-capture = "xmuse.feature_lineage_evidence_capture:main"
 xmuse-frozen-blueprint-evidence-capture = "xmuse.frozen_blueprint_evidence_capture:main"
 xmuse-goal-stage-evidence-capture = "xmuse.goal_stage_evidence_capture:main"
+xmuse-god-runtime-continuity-capture = "xmuse.god_runtime_continuity_capture:main"
 xmuse-internal-review-gate-capture = "xmuse.internal_review_gate_capture:main"
 xmuse-memoryos-live-gate-capture = "xmuse.memoryos_live_gate_capture:main"
 xmuse-memoryos-live-trace-capture = "xmuse.memoryos_live_trace_capture:main"

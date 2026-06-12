@@ -480,12 +480,32 @@ heartbeat freshness from that timestamp; stale or invalid heartbeats block
 This proves only session-continuity metadata. It does not create live provider
 proof, natural transcript proof, GitHub truth, or release readiness by itself.
 
+Export that selected-GOD runtime continuity artifact from durable local stores
+before converting the transcript gate:
+
+```bash
+uv run xmuse-god-runtime-continuity-capture \
+  --conversation-id <conversation-id> \
+  --selection-store xmuse/god_cli_selections.json \
+  --registration-store xmuse/god_cli_registrations.json \
+  --registry xmuse/god_sessions.json \
+  --output xmuse/work/release_readiness/god-runtime-continuity.json
+```
+
+The command writes `xmuse.god_runtime_continuity.v1` from the durable GOD CLI
+selection store, durable manual registration store, and durable GOD session
+registry. Missing selection, missing session, missing provider session metadata,
+bounded selected CLIs, or stale/invalid heartbeat evidence remains blocked or
+`manual_gap`; the capture command never upgrades a selected CLI into peer-GOD
+proof by assertion.
+
 After the `xmuse.operator_transcript.v1` artifact exists, convert it to a
 release gate artifact:
 
 ```bash
 uv run xmuse-natural-deliberation-gate-capture \
   --artifact xmuse/work/release_readiness/natural-transcript.json \
+  --god-runtime xmuse/work/release_readiness/god-runtime-continuity.json \
   --output xmuse/work/release_readiness/artifacts/natural-deliberation.json
 ```
 
