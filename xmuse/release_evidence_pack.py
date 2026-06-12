@@ -249,6 +249,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--production-baseline",
+        type=Path,
+        default=None,
+        help=(
+            "Optional xmuse.production_baseline.v1 S0 truth-map artifact to attach "
+            "to the release evidence pack handoff."
+        ),
+    )
+    parser.add_argument(
         "--tombstoned-source-ref",
         action="append",
         default=[],
@@ -286,6 +295,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         github_expected_head_sha=args.github_expected_head_sha,
         internal_review_artifact=args.internal_review_artifact,
         internal_review_expected_head_sha=args.internal_review_expected_head_sha,
+        production_baseline=args.production_baseline,
         tombstoned_source_refs=tuple(args.tombstoned_source_ref),
     )
     print(json.dumps({"decision": pack["decision"], "output": str(args.output)}, sort_keys=True))

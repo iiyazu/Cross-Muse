@@ -75,6 +75,7 @@ def capture_release_evidence_pack(
     github_expected_head_sha: str | None = None,
     internal_review_artifact: str | Path | None = None,
     internal_review_expected_head_sha: str | None = None,
+    production_baseline: str | Path | None = None,
     tombstoned_source_refs: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     output = Path(output_path)
@@ -119,6 +120,7 @@ def capture_release_evidence_pack(
         internal_review_artifact=internal_review_artifact,
         internal_review_expected_head_sha=internal_review_expected_head_sha,
     )
+    baseline_summary = _production_baseline_summary(production_baseline)
 
     readiness = capture_release_readiness(
         artifacts_dir=artifacts_dir,
@@ -135,6 +137,9 @@ def capture_release_evidence_pack(
         section_artifacts=replay_section_artifacts,
         tombstoned_source_refs=tombstoned_source_refs,
     )
+    replay_blockers = replay.get("blockers")
+    if not isinstance(replay_blockers, list):
+        replay_blockers = []
 
     pack = {
         "schema_version": "xmuse.release_evidence_pack.v1",
@@ -150,19 +155,26 @@ def capture_release_evidence_pack(
         "overnight_replay_authority": replay["authority"],
         "artifact_count": readiness["artifact_count"],
         "blocker_count": len(readiness["blockers"]),
-        "replay_blocker_count": len(replay["blockers"]),
+        "replay_blocker_count": len(replay_blockers),
         "finding_count": audit["finding_count"],
         "blockers": readiness["blockers"],
-        "replay_blockers": replay["blockers"],
+        "replay_blockers": replay_blockers,
         "findings": audit["findings"],
         "source_reports": {
             "release_readiness": str(readiness_path),
             "proof_contamination_audit": str(audit_path),
             "overnight_replay_bundle": str(replay_path),
+            **(
+                {"production_baseline": str(production_baseline)}
+                if production_baseline
+                else {}
+            ),
             **release_gate_source_reports,
             **generated_source_reports,
         },
     }
+    if baseline_summary is not None:
+        pack["production_baseline"] = baseline_summary
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(pack, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return pack
@@ -366,6 +378,39 @@ def _load_json_object(path: Path, *, label: str) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError(f"{label} artifact must be a JSON object: {path}")
     return payload
+
+
+def _production_baseline_summary(path: str | Path | None) -> dict[str, Any] | None:
+    if path is None:
+        return None
+    baseline_path = Path(path)
+    payload = _load_json_object(baseline_path, label="production baseline")
+    if payload.get("schema_version") != "xmuse.production_baseline.v1":
+        raise ValueError(
+            f"production baseline artifact has unsupported schema: {baseline_path}"
+        )
+    git = payload.get("git")
+    if not isinstance(git, dict):
+        git = {}
+    package_boundary = payload.get("package_boundary")
+    if not isinstance(package_boundary, dict):
+        package_boundary = {}
+    return {
+        "artifact": str(baseline_path),
+        "schema_version": payload.get("schema_version"),
+        "status": payload.get("status"),
+        "proof_level": payload.get("proof_level"),
+        "head_sha": git.get("head_sha"),
+        "dirty": git.get("dirty"),
+        "xmuse_init_absent": package_boundary.get("xmuse_init_absent"),
+        "blockers": _string_list(payload.get("blockers")),
+    }
+
+
+def _string_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, str)]
 
 
 def _pack_decision(

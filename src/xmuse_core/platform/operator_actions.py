@@ -6,7 +6,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 from uuid import uuid4
 
 from xmuse_core.platform.live_gate_status_capture import CommandRunner, capture_live_gate_status
@@ -25,6 +25,9 @@ from xmuse_core.providers.god_cli_registry import (
     GodCliCapability,
     GodCliRegistration,
     GodCliRegistry,
+)
+from xmuse_core.providers.god_cli_registry import (
+    ProofLevel as GodCliProofLevel,
 )
 from xmuse_core.providers.god_cli_selection_store import GodCliSelectionStore
 
@@ -426,17 +429,18 @@ class OperatorActionService:
                     guard=_status_guard(current_status, action=action),
                 )
             else:
-                lane = self._lane_state_machine.transition_if_metadata(
+                candidate_lane = self._lane_state_machine.transition_if_metadata(
                     lane_id,
                     "reworking",
                     expected_metadata={"status": current_status},
                     metadata=metadata,
                 )
-                if lane is None:
+                if candidate_lane is None:
                     raise ValueError(
                         f"state guard mismatch for {action}: "
                         f"expected status {current_status}"
                     )
+                lane = candidate_lane
         except (InvalidTransitionError, StateValidationError, KeyError, ValueError) as exc:
             return OperatorActionResult(
                 action=action,
@@ -896,6 +900,9 @@ class OperatorActionService:
             internal_review_artifact = self._release_optional_path(
                 request.payload.get("internal_review_artifact")
             )
+            production_baseline = self._release_optional_path(
+                request.payload.get("production_baseline")
+            )
         except ValueError as exc:
             return OperatorActionResult(
                 action=action,
@@ -922,6 +929,7 @@ class OperatorActionService:
                 internal_review_expected_head_sha=_text(
                     request.payload.get("internal_review_expected_head_sha")
                 ),
+                production_baseline=production_baseline,
             )
         except Exception as exc:
             return OperatorActionResult(
@@ -1211,7 +1219,7 @@ def _registration_from_payload(payload: dict[str, Any]) -> GodCliRegistration:
         ),
         supports_mcp_writeback=_bool_payload(payload.get("supports_mcp_writeback")),
         state_write_allowed=_bool_payload(payload.get("state_write_allowed")),
-        proof_level=_required_text(payload.get("proof_level"), "payload.proof_level"),
+        proof_level=_god_cli_proof_level(payload.get("proof_level")),
         proof_refs=tuple(_string_values(payload.get("proof_refs"))),
         registration_kind="manual",
         source_authority="operator_action_contract",
@@ -1224,6 +1232,23 @@ def _required_text(value: Any, field_name: str) -> str:
         if cleaned:
             return cleaned
     raise ValueError(f"{field_name} must be non-empty")
+
+
+def _god_cli_proof_level(value: Any) -> GodCliProofLevel:
+    proof_level = _required_text(value, "payload.proof_level")
+    allowed = {
+        "contract_proof",
+        "fake_runtime_proof",
+        "live_service_proof",
+        "server_side_enforcement_proof",
+        "server_side_merge_proof",
+        "real_provider_proof",
+        "internal_review_proof",
+        "manual_gap",
+    }
+    if proof_level not in allowed:
+        raise ValueError("payload.proof_level must be an xmuse proof level")
+    return cast(GodCliProofLevel, proof_level)
 
 
 def _string_values(value: Any) -> list[str]:

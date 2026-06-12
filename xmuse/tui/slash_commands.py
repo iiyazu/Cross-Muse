@@ -945,6 +945,9 @@ def _release_pack_payload(args: list[str]) -> dict[str, Any]:
             "review_artifact": "internal_review_artifact",
             "review_head": "internal_review_expected_head_sha",
             "internal_review_head": "internal_review_expected_head_sha",
+            "baseline": "production_baseline",
+            "production_baseline": "production_baseline",
+            "s0_baseline": "production_baseline",
         },
         list_keys=set(),
     )

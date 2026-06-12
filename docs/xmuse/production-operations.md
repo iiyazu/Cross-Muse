@@ -697,6 +697,7 @@ section inputs before assembling the nested overnight replay bundle:
 uv run xmuse-release-evidence-pack \
   --artifacts-dir xmuse/work/release_readiness/artifacts \
   --output xmuse/work/release_readiness/evidence-pack.json \
+  --production-baseline xmuse/work/release_readiness/production-baseline.json \
   --supervisor-snapshot xmuse/work/release_readiness/overnight-supervisor.json \
   --deliberation-transcript xmuse/work/release_readiness/natural-transcript.json \
   --god-runtime xmuse/work/release_readiness/god-runtime-continuity.json \
@@ -713,6 +714,10 @@ uv run xmuse-release-evidence-pack \
   --memoryos-writeback-event xmuse/work/release_readiness/memoryos-writeback-event.json
 ```
 
+`--production-baseline` attaches the S0 `xmuse.production_baseline.v1` truth
+map to the top-level pack summary and `source_reports`. It does not become a
+release gate, replay section, live proof, or readiness input; it records the
+starting branch/env/resource/blocker state for operator handoff.
 `--supervisor-snapshot` generates the replay `supervisor` section from a durable
 `xmuse.overnight_supervisor.v1` snapshot. `--deliberation-transcript` generates
 the replay `deliberation_transcript` section from an
@@ -764,6 +769,7 @@ uv run xmuse-tui
 # in the active group chat:
 /release refresh
 /release pack
+/release pack baseline=production-baseline.json
 /release pack github=artifacts/github-truth.json github_head=<current-head-sha>
 /release pack review=internal-review.json review_head=<current-head-sha>
 /release candidates
@@ -781,6 +787,8 @@ can pass the same release-root-scoped GitHub snapshot handoff fields as the
 CLI, for example `github=artifacts/github-truth.json` and
 `github_head=<current-head-sha>`, and the same internal review fields, for
 example `review=internal-review.json` and `review_head=<current-head-sha>`.
+It can also pass `baseline=production-baseline.json` to attach the S0
+production baseline artifact through the same release-root path guard.
 `/release candidates` calls
 `inspect_release_evidence_candidates` and reads durable `chat.db`,
 `god_sessions.json`, the peer latency trace table, and redacted MemoryOS env

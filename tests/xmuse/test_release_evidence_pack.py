@@ -248,6 +248,54 @@ def _write_internal_review(path: Path, **overrides: object) -> Path:
     return path
 
 
+def _write_production_baseline(path: Path, **overrides: object) -> Path:
+    payload: dict[str, object] = {
+        "schema_version": "xmuse.production_baseline.v1",
+        "stage_id": "S0",
+        "action": "production_baseline_capture",
+        "status": "blocked",
+        "proof_level": "contract_proof",
+        "source_authority": "local_repository_and_environment",
+        "generated_at": "2026-06-12T00:00:00Z",
+        "repo_root": "/workspace/xmuse",
+        "git": {
+            "head_sha": "head-pack-1",
+            "branch": "vision-closure-deliberation-tui",
+            "dirty": False,
+            "status_returncode": 0,
+            "dirty_entries": [],
+        },
+        "package_boundary": {
+            "xmuse_init_absent": True,
+            "status": "ok",
+            "source_refs": ["path:xmuse/__init__.py"],
+            "blockers": [],
+        },
+        "env_keys_present": ["XMUSE_GITHUB_TRUTH_REPO"],
+        "live_resources": {
+            "github": {
+                "configured": True,
+                "available": True,
+                "blockers": ["github_server_truth_capture_pending"],
+            },
+            "memoryos_lite": {
+                "configured": False,
+                "available": False,
+                "blockers": ["memoryos_lite_live_environment_missing"],
+            },
+        },
+        "blockers": [
+            "github_server_truth_capture_pending",
+            "memoryos_lite_live_environment_missing",
+        ],
+        "owner": "operator",
+        "next_action": "Resolve or record S0 blockers.",
+    }
+    payload.update(overrides)
+    _write_json(path, payload)
+    return path
+
+
 def _write_transcript(path: Path) -> Path:
     _write_json(
         path,
@@ -495,6 +543,67 @@ def test_release_evidence_pack_writes_readiness_audit_and_summary(
     assert replay["authority"] == "replay_index_only"
     assert sections["supervisor"]["status"] == "ok"
     assert sections["supervisor"]["source_authority"] == "overnight_operator_supervisor"
+
+
+def test_release_evidence_pack_attaches_production_baseline_truth_map(
+    tmp_path: Path,
+) -> None:
+    artifacts = tmp_path / "artifacts"
+    output = tmp_path / "pack" / "evidence-pack.json"
+    baseline = _write_production_baseline(
+        tmp_path / "baseline" / "production-baseline.json"
+    )
+    _write_json(
+        artifacts / "github-server-truth.json",
+        _gate(
+            gate_id="github-server-truth",
+            kind="github_server_truth",
+            status="ok",
+            proof_level="server_side_enforcement_proof",
+        ),
+    )
+
+    pack = capture_release_evidence_pack(
+        artifacts_dir=artifacts,
+        output_path=output,
+        run_id="pack-production-baseline",
+        production_baseline=baseline,
+    )
+
+    assert pack["source_reports"]["production_baseline"] == str(baseline)
+    assert pack["production_baseline"] == {
+        "artifact": str(baseline),
+        "schema_version": "xmuse.production_baseline.v1",
+        "status": "blocked",
+        "proof_level": "contract_proof",
+        "head_sha": "head-pack-1",
+        "dirty": False,
+        "xmuse_init_absent": True,
+        "blockers": [
+            "github_server_truth_capture_pending",
+            "memoryos_lite_live_environment_missing",
+        ],
+    }
+    assert pack["decision"] == "blocked"
+    assert pack["release_readiness_decision"] == "ready"
+
+
+def test_release_evidence_pack_rejects_invalid_production_baseline_schema(
+    tmp_path: Path,
+) -> None:
+    baseline = tmp_path / "baseline.json"
+    _write_json(baseline, {"schema_version": "xmuse.production_evidence.v1"})
+
+    try:
+        capture_release_evidence_pack(
+            artifacts_dir=tmp_path / "artifacts",
+            output_path=tmp_path / "pack.json",
+            production_baseline=baseline,
+        )
+    except ValueError as exc:
+        assert "production baseline artifact has unsupported schema" in str(exc)
+    else:
+        raise AssertionError("expected invalid production baseline schema to fail")
 
 
 def test_release_evidence_pack_converts_supervisor_snapshot_into_replay_section(
@@ -1197,6 +1306,43 @@ def test_release_evidence_pack_cli_accepts_replay_section_artifacts(
     assert pack["overnight_replay_decision"] == "blocked"
     assert replay["run_id"] == "overnight-cli-pack"
     assert sections["supervisor"]["status"] == "ok"
+
+
+def test_release_evidence_pack_cli_accepts_production_baseline(
+    tmp_path: Path,
+) -> None:
+    from xmuse.release_evidence_pack import main
+
+    artifacts = tmp_path / "artifacts"
+    output = tmp_path / "pack.json"
+    baseline = _write_production_baseline(tmp_path / "baseline.json")
+    _write_json(
+        artifacts / "github-server-truth.json",
+        _gate(
+            gate_id="github-server-truth",
+            kind="github_server_truth",
+            status="ok",
+            proof_level="server_side_enforcement_proof",
+        ),
+    )
+
+    assert (
+        main(
+            [
+                "--artifacts-dir",
+                str(artifacts),
+                "--output",
+                str(output),
+                "--production-baseline",
+                str(baseline),
+            ]
+        )
+        == 0
+    )
+
+    pack = json.loads(output.read_text(encoding="utf-8"))
+    assert pack["source_reports"]["production_baseline"] == str(baseline)
+    assert pack["production_baseline"]["head_sha"] == "head-pack-1"
 
 
 def test_release_evidence_pack_cli_accepts_supervisor_snapshot(

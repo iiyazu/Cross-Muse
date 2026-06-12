@@ -853,6 +853,29 @@ def _write_internal_review(path: Path) -> None:
     )
 
 
+def _write_production_baseline(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "xmuse.production_baseline.v1",
+                "stage_id": "S0",
+                "action": "production_baseline_capture",
+                "status": "blocked",
+                "proof_level": "contract_proof",
+                "source_authority": "local_repository_and_environment",
+                "git": {"head_sha": "head-pack-1", "dirty": False},
+                "package_boundary": {"xmuse_init_absent": True},
+                "blockers": ["memoryos_lite_live_environment_missing"],
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
 def test_operator_action_captures_release_evidence_pack_with_capability(
     tmp_path: Path,
 ) -> None:
@@ -968,6 +991,40 @@ def test_operator_action_captures_release_pack_with_internal_review(
     assert result.payload["evidence_pack"]["source_reports"][
         "internal_review_gate"
     ] == str(release_dir / "artifacts" / "internal-review.json")
+
+
+def test_operator_action_captures_release_pack_with_production_baseline(
+    tmp_path: Path,
+) -> None:
+    release_dir = tmp_path / "release_readiness"
+    _write_production_baseline(release_dir / "production-baseline.json")
+    _write_gate(release_dir / "artifacts" / "provider.json")
+    service = OperatorActionService(
+        god_cli_registry=build_default_god_cli_registry(),
+        audit_dir=tmp_path / "operator_actions",
+        release_readiness_dir=release_dir,
+    )
+
+    result = service.handle(
+        OperatorActionRequest(
+            action="capture_release_evidence_pack",
+            actor_id="operator-1",
+            capabilities=(OperatorActionCapability.RELEASE_GATE,),
+            idempotency_key="idem-release-baseline-1",
+            payload={"production_baseline": "production-baseline.json"},
+            source="tui",
+        )
+    )
+
+    assert result.status == "ok"
+    pack = result.payload["evidence_pack"]
+    assert pack["source_reports"]["production_baseline"] == str(
+        release_dir / "production-baseline.json"
+    )
+    assert pack["production_baseline"]["head_sha"] == "head-pack-1"
+    assert pack["production_baseline"]["blockers"] == [
+        "memoryos_lite_live_environment_missing"
+    ]
 
 
 def test_operator_action_denies_release_evidence_pack_without_capability(

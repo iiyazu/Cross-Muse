@@ -251,7 +251,9 @@ Current implementation status:
   honest `manual_gap`/blocked status artifacts without satisfying live gates.
 - `/release pack` routes release evidence pack capture through the same
   operator action path. It requires `release_gate`, writes audit evidence, and
-  only permits paths under `xmuse/work/release_readiness`.
+  only permits paths under `xmuse/work/release_readiness`. It can attach a
+  `baseline=...` / `production_baseline=...` S0 truth-map artifact to the pack
+  summary without turning that baseline into a release gate or readiness proof.
 - `/lane retry <lane_id> <current_status> [reason]` and
   `/lane abort <lane_id> <current_status> [reason]` route guarded lane control
   through the same operator action path. They require `workflow_write`, require
@@ -551,6 +553,11 @@ Current implementation status:
   reports for the same artifact directory. It accepts replay section artifacts
   and tombstoned source refs, but remains an aggregation command only; it does
   not create live proof or replace the underlying authorities.
+- The same release pack command can accept `--production-baseline` and attach a
+  redacted `xmuse.production_baseline.v1` S0 truth map to the top-level pack
+  summary and `source_reports`. This keeps the starting git/env/resource/blocker
+  map in the handoff artifact, but does not make baseline inventory a release
+  gate, replay section, live proof, or readiness input.
 - The same release pack command can accept `--supervisor-snapshot` and convert
   a durable `xmuse.overnight_supervisor.v1` snapshot into replay-ready
   supervisor production evidence before building the nested replay bundle. This
