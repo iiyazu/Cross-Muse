@@ -999,8 +999,19 @@ def test_chat_messages_include_compact_drilldown_cards_without_large_embeds(
 
     other_response = client.get(f"/api/chat/conversations/{second_id}/messages")
     assert other_response.status_code == 200
-    assert [item["kind"] for item in other_response.json()["items"]] == ["message"]
-    assert other_response.json()["cards"] == []
+    other_payload = other_response.json()
+    assert [item["kind"] for item in other_payload["items"]] == ["message", "card"]
+    assert [card["card_type"] for card in other_payload["cards"]] == ["worklist_summary"]
+    assert other_payload["cards"][0]["counts"] == {
+        "unread_inbox": 1,
+        "claimed_inbox": 0,
+        "ready_lanes": 0,
+        "under_review_lanes": 0,
+        "failed_lanes": 0,
+        "terminal_lanes": 0,
+    }
+    assert "lane-a" not in json.dumps(other_payload)
+    assert "frontdoor-graph-v1" not in json.dumps(other_payload)
 
 
 def test_chat_messages_endpoint_exposes_conversation_scoped_compatibility_summary(
@@ -1066,7 +1077,7 @@ def test_chat_messages_endpoint_exposes_conversation_scoped_compatibility_summar
     assert payload["dashboard_href"] == payload["href"]
     assert payload["api_href"] == f"/api/chat/conversations/{first['id']}/messages"
     assert payload["participants"]["total"] == 3
-    assert payload["inbox_counts"] == {"unread": 0, "claimed": 0}
+    assert payload["inbox_counts"] == {"unread": 1, "claimed": 0}
     assert [message["id"] for message in payload["recent_messages"]] == [first_message["id"]]
     assert payload["card_counts"] == {
         "proposal": 1,
@@ -1515,10 +1526,18 @@ def test_chat_messages_include_worklist_summary_card_for_actionable_state(
     second_response = client.get(f"/api/chat/conversations/{second['id']}/messages")
 
     assert second_response.status_code == 200
-    assert all(
-        card["card_type"] != "worklist_summary"
-        for card in second_response.json()["cards"]
+    second_worklist = next(
+        card for card in second_response.json()["cards"]
+        if card["card_type"] == "worklist_summary"
     )
+    assert second_worklist["counts"] == {
+        "unread_inbox": 1,
+        "claimed_inbox": 0,
+        "ready_lanes": 0,
+        "under_review_lanes": 0,
+        "failed_lanes": 0,
+        "terminal_lanes": 0,
+    }
 
 
 def test_chat_health_card_uses_compact_operator_health_counts_for_scoped_lanes(
@@ -1870,16 +1889,15 @@ def test_chat_api_creates_forked_peer_participant_session_and_lineage_reads(
         json={"title": "fork-contracts"},
     ).json()
     source = conversation["participants"][0]
-    source_session = GodSessionRegistry(tmp_path / "god_sessions.json").create(
-        role=source["role"],
-        agent_name=source["display_name"],
-        runtime="codex",
-        session_address=f"@{conversation['id']}:{source['participant_id']}",
-        session_inbox_id=f"inbox-{source['participant_id']}",
-        conversation_id=conversation["id"],
-        participant_id=source["participant_id"],
-        model=source["model"],
+    source_session = GodSessionRegistry(
+        tmp_path / "god_sessions.json"
+    ).find_by_conversation_participant(
+        conversation["id"],
+        source["participant_id"],
     )
+    baseline_lineage = client.get(
+        f"/api/chat/conversations/{conversation['id']}/forks"
+    ).json()["lineage"]
 
     create_response = client.post(
         f"/api/chat/conversations/{conversation['id']}/forks",
@@ -1920,7 +1938,7 @@ def test_chat_api_creates_forked_peer_participant_session_and_lineage_reads(
 
     assert participants_response.status_code == 200
     participants_payload = participants_response.json()
-    assert participants_payload["lineage"] == [created["lineage"]]
+    assert participants_payload["lineage"] == [*baseline_lineage, created["lineage"]]
     forked = next(
         participant
         for participant in participants_payload["participants"]
@@ -1938,7 +1956,7 @@ def test_chat_api_creates_forked_peer_participant_session_and_lineage_reads(
     assert lineage_response.status_code == 200
     assert lineage_response.json() == {
         "conversation_id": conversation["id"],
-        "lineage": [created["lineage"]],
+        "lineage": [*baseline_lineage, created["lineage"]],
     }
 
 
@@ -1951,16 +1969,10 @@ def test_chat_api_rejects_invalid_fork_contract_without_side_effects(
         json={"title": "fork-contracts"},
     ).json()
     source = conversation["participants"][0]
-    GodSessionRegistry(tmp_path / "god_sessions.json").create(
-        role=source["role"],
-        agent_name=source["display_name"],
-        runtime="codex",
-        session_address=f"@{conversation['id']}:{source['participant_id']}",
-        session_inbox_id=f"inbox-{source['participant_id']}",
-        conversation_id=conversation["id"],
-        participant_id=source["participant_id"],
-        model=source["model"],
-    )
+    baseline_sessions = GodSessionRegistry(tmp_path / "god_sessions.json").list()
+    baseline_lineage = client.get(
+        f"/api/chat/conversations/{conversation['id']}/forks"
+    ).json()["lineage"]
 
     create_response = client.post(
         f"/api/chat/conversations/{conversation['id']}/forks",
@@ -1988,12 +2000,12 @@ def test_chat_api_rejects_invalid_fork_contract_without_side_effects(
     assert participants_response.status_code == 200
     participants_payload = participants_response.json()
     assert len(participants_payload["participants"]) == 3
-    assert participants_payload["lineage"] == []
+    assert participants_payload["lineage"] == baseline_lineage
     assert sum(
         participant["session"] is not None
         for participant in participants_payload["participants"]
-    ) == 1
-    assert len(GodSessionRegistry(tmp_path / "god_sessions.json").list()) == 1
+    ) == 3
+    assert GodSessionRegistry(tmp_path / "god_sessions.json").list() == baseline_sessions
 
     lineage_response = client.get(
         f"/api/chat/conversations/{conversation['id']}/forks"
@@ -2002,7 +2014,7 @@ def test_chat_api_rejects_invalid_fork_contract_without_side_effects(
     assert lineage_response.status_code == 200
     assert lineage_response.json() == {
         "conversation_id": conversation["id"],
-        "lineage": [],
+        "lineage": baseline_lineage,
     }
 
 
@@ -2021,26 +2033,13 @@ def test_chat_api_rejects_cross_conversation_fork_contamination_without_side_eff
     alpha_source = alpha["participants"][0]
     beta_source = beta["participants"][0]
     registry = GodSessionRegistry(tmp_path / "god_sessions.json")
-    registry.create(
-        role=alpha_source["role"],
-        agent_name=alpha_source["display_name"],
-        runtime="codex",
-        session_address=f"@{alpha['id']}:{alpha_source['participant_id']}",
-        session_inbox_id=f"inbox-{alpha_source['participant_id']}",
-        conversation_id=alpha["id"],
-        participant_id=alpha_source["participant_id"],
-        model=alpha_source["model"],
-    )
-    registry.create(
-        role=beta_source["role"],
-        agent_name=beta_source["display_name"],
-        runtime="codex",
-        session_address=f"@{beta['id']}:{beta_source['participant_id']}",
-        session_inbox_id=f"inbox-{beta_source['participant_id']}",
-        conversation_id=beta["id"],
-        participant_id=beta_source["participant_id"],
-        model=beta_source["model"],
-    )
+    baseline_sessions = registry.list()
+    alpha_baseline_lineage = client.get(
+        f"/api/chat/conversations/{alpha['id']}/forks"
+    ).json()["lineage"]
+    beta_baseline_lineage = client.get(
+        f"/api/chat/conversations/{beta['id']}/forks"
+    ).json()["lineage"]
 
     foreign_peer_response = client.post(
         f"/api/chat/conversations/{alpha['id']}/forks",
@@ -2091,8 +2090,14 @@ def test_chat_api_rejects_cross_conversation_fork_contamination_without_side_eff
 
     assert len(alpha_participants["participants"]) == 3
     assert len(beta_participants["participants"]) == 3
-    assert alpha_participants["lineage"] == []
-    assert beta_participants["lineage"] == []
-    assert alpha_forks == {"conversation_id": alpha["id"], "lineage": []}
-    assert beta_forks == {"conversation_id": beta["id"], "lineage": []}
-    assert len(registry.list()) == 2
+    assert alpha_participants["lineage"] == alpha_baseline_lineage
+    assert beta_participants["lineage"] == beta_baseline_lineage
+    assert alpha_forks == {
+        "conversation_id": alpha["id"],
+        "lineage": alpha_baseline_lineage,
+    }
+    assert beta_forks == {
+        "conversation_id": beta["id"],
+        "lineage": beta_baseline_lineage,
+    }
+    assert registry.list() == baseline_sessions

@@ -294,8 +294,6 @@ class PeerForkStore:
         summaries: list[PeerForkSummary] = []
         for record in self.list_by_conversation(conversation_id):
             source = self._participants.get(record.source_peer_id)
-            if source.role == "init":
-                continue
             new = self._participants.get(record.new_peer_id)
             source_session = self._registry.find_by_conversation_participant(
                 conversation_id,

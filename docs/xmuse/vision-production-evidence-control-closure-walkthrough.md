@@ -121,7 +121,20 @@ That file is runtime state. It records the selected CLI per conversation with
 `source_authority=operator_action_contract`, `proof_level=contract_proof`, and
 the audit id that authorized the write. The TUI adapter now attempts this Chat
 API path first and falls back to the same local contract service only when the
-API is unavailable.
+API is unavailable. If Chat API explicitly rejects the request, the TUI surfaces
+that rejection and does not perform a local write.
+
+### Bootstrap Session Authority
+
+The default Chat API conversation path creates durable bootstrap peer sessions
+and bootstrap fork lineage. That lineage is production evidence, not a UI leak.
+The public read model now treats it as baseline evidence while preserving
+workspace isolation for cards, worklist summaries, and lane health.
+
+`GodSessionRegistry` now rejects duplicate durable sessions for the same
+`conversation_id` and `participant_id`. This keeps peer lineage and provider
+binding resolution deterministic after restart and prevents manual session
+registration from silently shadowing an existing bootstrapped peer.
 
 ### Release Readiness Contract
 
@@ -151,6 +164,8 @@ blocks internal review from substituting for GitHub server enforcement.
 | `/god select` route | `contract_proof` | TUI action path calls Chat API first; no live operator session proof. |
 | Operator action audit | `contract_proof` | JSONL audit row written in test/runtime path; not durable authority. |
 | GOD CLI selection store | `contract_proof` | Durable per-conversation selection record; does not prove live CLI runtime. |
+| GOD session registry | `contract_proof` | Enforces one durable session per conversation participant; no live runtime proof. |
+| Chat API workspace isolation | `contract_proof` | Full Chat API regression passes; no live multi-user soak. |
 | Release readiness evaluator | `contract_proof` | Blocks proof contamination; no live gate captured. |
 | MemoryOS live gate | `manual_gap` | Env not configured in current shell. |
 | Ray/Codex/OpenCode live gate | `manual_gap` | Binaries/Ray import exist, but production services/env are not running/configured. |
@@ -163,6 +178,11 @@ Focused validation run during this slice:
 ```bash
 uv run pytest tests/xmuse/test_god_cli_registry.py tests/xmuse/test_operator_actions.py tests/xmuse/test_release_readiness.py -q
 uv run pytest tests/xmuse/test_provider_read_contracts_module.py tests/xmuse/test_tui_adapter.py::test_adapter_operator_control_action_selects_god_cli_with_capability tests/xmuse/test_tui_adapter.py::test_adapter_operator_control_action_denies_without_capability tests/xmuse/test_tui_adapter.py::test_adapter_records_operator_action_tui_command_event tests/xmuse/test_tui_navigation.py::test_chat_screen_help_command_lists_slash_commands tests/xmuse/test_tui_navigation.py::test_chat_screen_god_select_runs_operator_control_action -q
+uv run pytest tests/xmuse/test_god_session_registry.py tests/xmuse/test_chat_api.py -q
+uv run pytest tests/xmuse/test_chat_bootstrap.py tests/xmuse/test_groupchat_bootstrap_lifecycle.py tests/xmuse/test_peer_forks.py -q
+uv run pytest tests/xmuse/test_god_cli_selection_store.py tests/xmuse/test_operator_actions.py tests/xmuse/test_tui_adapter.py tests/xmuse/test_package_boundaries.py tests/xmuse/test_provider_read_contracts_module.py -q
+uv run ruff check .
+git diff --check
 ```
 
 Observed results:
@@ -170,6 +190,11 @@ Observed results:
 ```text
 10 passed
 8 passed, 1 warning
+43 passed, 1 warning
+16 passed, 1 warning
+63 passed
+All checks passed
+git diff --check clean
 ```
 
 The warning is the existing Starlette/httpx deprecation warning from FastAPI

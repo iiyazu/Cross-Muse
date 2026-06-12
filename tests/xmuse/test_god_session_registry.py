@@ -164,6 +164,31 @@ def test_create_rejects_duplicate_session_inbox_id(tmp_path):
         )
 
 
+def test_create_rejects_duplicate_conversation_participant_session(tmp_path):
+    path = tmp_path / "god_sessions.json"
+    registry = GodSessionRegistry(path)
+    registry.create(
+        role="architect",
+        agent_name="architect-god",
+        runtime="codex",
+        session_address="@conv-a:architect",
+        session_inbox_id="inbox-conv-a-architect",
+        conversation_id="conv-a",
+        participant_id="part-architect",
+    )
+
+    with pytest.raises(ValueError, match="duplicate conversation participant session"):
+        registry.create(
+            role="architect",
+            agent_name="architect-god-manual",
+            runtime="codex",
+            session_address="@conv-a:architect-manual",
+            session_inbox_id="inbox-conv-a-architect-manual",
+            conversation_id="conv-a",
+            participant_id="part-architect",
+        )
+
+
 def test_assign_preserves_unrelated_fields(tmp_path):
     path = tmp_path / "god_sessions.json"
     initial = {

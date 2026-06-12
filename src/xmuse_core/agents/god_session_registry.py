@@ -61,6 +61,16 @@ class GodSessionRegistry:
                 if existing.session_inbox_id == session_inbox_id:
                     raise ValueError(f"duplicate session_inbox_id: {session_inbox_id}")
                 if (
+                    conversation_id is not None
+                    and participant_id is not None
+                    and existing.conversation_id == conversation_id
+                    and existing.participant_id == participant_id
+                ):
+                    raise ValueError(
+                        "duplicate conversation participant session: "
+                        f"{conversation_id}:{participant_id}"
+                    )
+                if (
                     role == INIT_GOD_ROLE
                     and conversation_id is not None
                     and existing.conversation_id == conversation_id
