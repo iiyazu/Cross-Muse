@@ -286,10 +286,11 @@ def _natural_deliberation_gate(env: Mapping[str, str], *, output_dir: Path) -> d
             if configured
             else "Natural GOD transcript gate is required but no transcript artifact is configured."
         ),
-        attempted_command="uv run xmuse-chat-api / uv run xmuse-tui natural GOD session",
+        attempted_command="uv run xmuse-natural-deliberation-transcript-capture",
         next_action=(
-            "Run a real selected-GOD deliberation session and export transcript "
-            "evidence without relabeling deterministic replay."
+            "Run a real selected-GOD deliberation session, export transcript evidence "
+            "with xmuse-natural-deliberation-transcript-capture, then convert it "
+            "without relabeling deterministic replay."
         ),
         source_refs=source_refs,
     )

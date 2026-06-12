@@ -397,9 +397,11 @@ Acceptance:
 
 Current implementation status:
 
-- `export_deliberation_transcript(..., natural_deliberation=True)` writes an
-  explicit natural transcript marker and preserves per-message CLI/provider
-  session metadata when present.
+- `uv run xmuse-natural-deliberation-transcript-capture` exports
+  `xmuse.operator_transcript.v1` from durable `chat.db` and `god_sessions.json`.
+  It only accepts `god_speech_act` envelopes from assistant GOD participants,
+  links provider/profile/session metadata, and keeps deterministic
+  `deliberation` replay as `manual_gap`.
 - `uv run xmuse-natural-deliberation-gate-capture` converts an
   `xmuse.operator_transcript.v1` artifact into a `natural_deliberation` release
   gate. It emits `real_provider_proof` only for explicit natural, real-provider,
@@ -453,6 +455,10 @@ Current implementation status:
   GOD transcript artifact into the `natural_deliberation` release gate. It
   blocks deterministic replay, missing session metadata, single-GOD transcript
   evidence, and unresolved blockers.
+- `uv run xmuse-natural-deliberation-transcript-capture` is the production path
+  for producing that transcript artifact from durable chat/session state. It
+  does not synthesize live GOD messages; the conversation must already have
+  real `god_speech_act` messages and provider session metadata.
 - `uv run xmuse-real-provider-runtime-gate-capture` converts a real provider
   runtime soak artifact into the `real_provider` release gate. It blocks
   contract/fake proof, stdout fallback, missing MCP writeback, missing ordered
@@ -471,8 +477,8 @@ Current implementation status:
 - Release readiness capture deduplicates artifacts by `gate_id` and keeps the
   strongest non-blocking proof, so stronger live/server artifacts replace
   earlier status-capture blockers.
-- The capture command is `contract_proof`; it does not create live MemoryOS,
-  GitHub, provider, or natural transcript proof by itself.
+- The status capture command is `contract_proof`; it does not create live
+  MemoryOS, GitHub, provider, or natural transcript proof by itself.
 - `uv run xmuse-proof-contamination-audit` scans release gate artifacts for
   proof contamination: weak proof on `ok` production gates, fake/fixture/stdout
   markers in production proof, and `pr_merged` claims without server-side merge

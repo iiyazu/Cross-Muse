@@ -372,8 +372,27 @@ server-side enforcement.
 
 ## Natural GOD Deliberation Release Gate
 
-After a real multi-GOD conversation has been exported to an
-`xmuse.operator_transcript.v1` artifact, convert it to a release gate artifact:
+After a real selected-GOD conversation has produced durable GOD speech-act
+messages and provider session metadata, export the transcript artifact:
+
+```bash
+uv run xmuse-natural-deliberation-transcript-capture \
+  --conversation-id <conversation-id> \
+  --chat-db xmuse/chat.db \
+  --registry xmuse/god_sessions.json \
+  --target-ref blueprint:<blueprint-id> \
+  --target-ref lane:<lane-id> \
+  --output xmuse/work/release_readiness/natural-transcript.json
+```
+
+The transcript export reads durable `chat.db` and `god_sessions.json`. It only
+uses `god_speech_act` envelopes from assistant GOD participants and requires
+provider session metadata for each participant before emitting
+`real_provider_proof`. Deterministic `deliberation` envelopes, single-GOD
+transcripts, and missing provider session ids remain `manual_gap`.
+
+After the `xmuse.operator_transcript.v1` artifact exists, convert it to a
+release gate artifact:
 
 ```bash
 uv run xmuse-natural-deliberation-gate-capture \
@@ -389,7 +408,7 @@ unresolved blocker writes a blocked gate. If unresolved blockers exist, the
 gate keeps `real_provider_proof` but remains `blocked`, so release readiness
 cannot become `ready`.
 
-This command does not create the natural transcript. It only converts an
+The gate command does not create the natural transcript. It only converts an
 already exported transcript into the `natural_deliberation` release gate.
 
 ## Real Provider Runtime Release Gate
