@@ -329,6 +329,21 @@ Otherwise it mirrors the release-readiness decision: `ready`, `blocked`, or
 it does not start live services, call GitHub, run providers, or turn
 `manual_gap` blockers into production proof.
 
+The same capture is available through the TUI operator action surface:
+
+```bash
+export XMUSE_TUI_OPERATOR_CAPABILITIES=release_gate
+uv run xmuse-tui
+# in the active group chat:
+/release pack
+```
+
+The TUI path calls `capture_release_evidence_pack` through the Chat API
+operator action endpoint when available, or the same local contract service
+when Chat API is unavailable. The action requires `release_gate`, writes an
+operator audit row, and restricts operator-supplied paths to
+`xmuse/work/release_readiness`.
+
 ## Degradation Matrix
 
 | Condition | Expected behavior |

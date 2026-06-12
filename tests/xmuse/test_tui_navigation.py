@@ -423,6 +423,55 @@ async def test_chat_screen_god_select_runs_operator_control_action(app: XmuseTUI
         assert "Selected GOD CLI codex.god." in content
 
 
+async def test_chat_screen_release_pack_runs_operator_control_action(app: XmuseTUI) -> None:
+    app.adapter.list_group_conversations = lambda: [
+        {"id": "conv-user", "title": "User group", "created_at": "2026-06-01T00:00:00Z"},
+    ]
+    calls = []
+
+    def _run_operator_control_action(action: str, conv_id: str, payload: dict):
+        calls.append((action, conv_id, payload))
+        return {
+            "action": "capture_release_evidence_pack",
+            "status": "ok",
+            "proof_level": "contract_proof",
+            "fact_state": "release_evidence_pack_captured",
+            "audit_id": "operator-action:release",
+            "summary": "Captured release evidence pack: decision=blocked.",
+            "payload": {
+                "evidence_pack": {
+                    "decision": "blocked",
+                    "blocker_count": 1,
+                    "finding_count": 0,
+                }
+            },
+        }
+
+    app.adapter.run_operator_control_action = _run_operator_control_action
+
+    async with app.run_test() as pilot:
+        appended = []
+        log = app.screen.query_one("#message-log")
+        log.append_message = lambda **kwargs: appended.append(kwargs)
+
+        input_widget = app.screen.query_one("#message-input")
+        input_widget.value = "/release pack"
+        input_widget.post_message(input_widget.Submitted(input_widget, input_widget.value))
+        await pilot.pause()
+
+        assert calls == [
+            ("capture_release_evidence_pack", "conv-user", {}),
+        ]
+        content = appended[-1]["content"]
+        assert "Operator action: capture_release_evidence_pack" in content
+        assert (
+            "status=ok proof=contract_proof fact=release_evidence_pack_captured"
+            in content
+        )
+        assert "audit=operator-action:release" in content
+        assert "Captured release evidence pack: decision=blocked." in content
+
+
 async def test_chat_screen_sessions_matches_id_and_unique_title_fragment(app: XmuseTUI) -> None:
     app.adapter.list_group_conversations = lambda: [
         {

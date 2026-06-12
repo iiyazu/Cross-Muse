@@ -124,6 +124,25 @@ API path first and falls back to the same local contract service only when the
 API is unavailable. If Chat API explicitly rejects the request, the TUI surfaces
 that rejection and does not perform a local write.
 
+The same operator action surface now captures the release evidence pack:
+
+```text
+/release pack
+```
+
+The TUI command calls `capture_release_evidence_pack` through
+`run_operator_control_action`. Chat API receives the same operator action via:
+
+```text
+POST /api/chat/operator/actions
+```
+
+The action requires `release_gate`, writes `operator-actions.jsonl`, and
+restricts operator-supplied paths to `xmuse/work/release_readiness`. The action
+result can be `ok` even when the nested evidence pack decision is `blocked`;
+that means the capture operation succeeded while release readiness remains
+blocked by the supplied gate artifacts.
+
 ### Bootstrap Session Authority
 
 The default Chat API conversation path creates durable bootstrap peer sessions
@@ -442,6 +461,7 @@ release readiness as `ready`, `blocked`, or `not_evaluated`.
 | --- | --- | --- |
 | GOD/CLI registry | `contract_proof` | Defines selectable boundaries; does not prove live CLI runtime. |
 | `/god select` route | `contract_proof` | TUI action path calls Chat API first; no live operator session proof. |
+| `/release pack` route | `contract_proof` | TUI action path calls Chat API/operator contract and writes only ignored release-readiness artifacts. |
 | Operator action audit | `contract_proof` | JSONL audit row written in test/runtime path; not durable authority. |
 | GOD CLI selection store | `contract_proof` | Durable per-conversation selection record; does not prove live CLI runtime. |
 | GOD session registry | `contract_proof` | Enforces one durable session per conversation participant; no live runtime proof. |
@@ -544,6 +564,10 @@ xmuse-release-readiness-capture reported decision=blocked for combined live-gate
 41 passed
 xmuse-release-evidence-pack help rendered
 xmuse-release-evidence-pack reported decision=blocked for the /tmp live-gate status artifacts; blockers were github-server-truth, live-memoryos, natural-god-deliberation, and real-provider-runtime; proof_contamination_decision=clean
+36 passed, 1 warning
+TUI `/release pack`, Chat API `capture_release_evidence_pack`, and core `release_gate` operator action path verified
+164 passed, 1 warning
+Codex independent review attempt timed out after 120 seconds; no formal review artifact captured
 All checks passed
 git diff --check clean
 ```
@@ -562,6 +586,11 @@ The warning is the existing Starlette/httpx deprecation warning from FastAPI
 - Release evidence pack can write one operator handoff report plus nested
   readiness/audit reports, but it still depends on supplied gate artifacts and
   does not create live proof.
+- TUI `/release pack` can trigger that evidence pack through the audited
+  operator action contract with `release_gate`, but no live operator service run
+  has exercised the production token bundle end to end.
+- The independent Codex review attempt timed out, so this slice does not add
+  verified internal review proof.
 - Live gate status capture can create honest blocker artifacts for missing or
   configured-but-uncaptured live gates, but those artifacts remain `manual_gap`
   proof and cannot satisfy release readiness.

@@ -62,7 +62,8 @@ Priority:
    review, live MemoryOS, GitHub server truth, provider evidence, and proof
    contamination audit. Use `uv run xmuse-release-readiness-capture` to turn
    supplied gate artifacts into a redacted readiness report, and use
-   `uv run xmuse-release-evidence-pack` to write the operator handoff pack.
+   `uv run xmuse-release-evidence-pack` or TUI `/release pack` with
+   `release_gate` capability to write the operator handoff pack.
 8. Update docs/walkthrough/evidence. If validation passes, commit, push, and
    create a draft PR. Do not auto-merge.
 
@@ -77,6 +78,8 @@ Hard constraints:
 - feature_lanes.json, TUI, dashboard, cards, and Ray actors are not durable
   authority.
 - TUI may operate the workflow only through authorized contracts/APIs.
+- TUI `/release pack` must go through `capture_release_evidence_pack` operator
+  action with `release_gate`; it must not write release reports directly.
 - Chat API and MCP writes must use configured tokens and
   `X-XMUSE-API-Key`/`X-XMuse-Operator-Role`/`X-XMuse-Operator-Capabilities`
   headers when auth is enabled.

@@ -262,6 +262,47 @@ def test_chat_api_operator_action_denies_missing_capability(tmp_path: Path) -> N
     assert selection_response.status_code == 404
 
 
+def test_chat_api_operator_action_captures_release_evidence_pack(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    artifacts_dir = tmp_path / "work" / "release_readiness" / "artifacts"
+    _write_json(
+        artifacts_dir / "provider.json",
+        {
+            "schema_version": "xmuse.production_evidence.v1",
+            "gate_id": "provider-soak",
+            "kind": "real_provider",
+            "configured": True,
+            "required": True,
+            "status": "manual_gap",
+            "proof_level": "manual_gap",
+            "owner": "operator",
+            "summary": "Provider soak was not supplied.",
+        },
+    )
+
+    response = client.post(
+        "/api/chat/operator/actions",
+        headers={
+            "X-XMuse-Operator-Id": "operator-1",
+            "X-XMuse-Operator-Capabilities": "release_gate",
+        },
+        json={
+            "action": "capture_release_evidence_pack",
+            "idempotency_key": "idem-release-api",
+            "payload": {},
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "ok"
+    assert payload["fact_state"] == "release_evidence_pack_captured"
+    assert payload["payload"]["evidence_pack"]["decision"] == "blocked"
+    assert (tmp_path / "work" / "release_readiness" / "evidence-pack.json").exists()
+
+
 def test_default_chat_participants_are_codex_only(tmp_path: Path) -> None:
     client = _client(tmp_path)
 

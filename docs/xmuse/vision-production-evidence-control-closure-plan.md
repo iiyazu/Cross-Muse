@@ -199,6 +199,17 @@ Acceptance:
 - Projection-only writes are rejected in tests.
 - Failed actions return precise blocked/manual_gap/operator-denied states.
 
+Current implementation status:
+
+- `/god select <cli_id>` routes GOD CLI selection through the Chat API operator
+  action endpoint first, then the same local contract service only when Chat API
+  is unavailable.
+- `/release pack` routes release evidence pack capture through the same
+  operator action path. It requires `release_gate`, writes audit evidence, and
+  only permits paths under `xmuse/work/release_readiness`.
+- TUI command events record `operator_action_contract` as their read-surface
+  authority. They do not write projections or release facts directly.
+
 ## S3 - Auth/RBAC Production Gate
 
 Goal: move write surfaces from declarative permission categories toward

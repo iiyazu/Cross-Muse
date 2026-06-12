@@ -57,6 +57,8 @@ class SlashCommandRouter:
             return self._overview(context)
         if command == "evidence":
             return self._evidence(rest, context)
+        if command == "release":
+            return self._release(rest, context)
         if command == "god":
             return self._god(rest, context)
         if command == "archive":
@@ -363,6 +365,36 @@ class SlashCommandRouter:
             True,
             refresh=True,
             message=_evidence_action_block(result if isinstance(result, dict) else {}),
+        )
+
+    def _release(self, rest: str, context: SlashCommandContext) -> SlashCommandResult:
+        conv_id = _active_conversation_id(context)
+        if not conv_id:
+            return SlashCommandResult(True, message="No active group.")
+        try:
+            parts = shlex.split(rest)
+        except ValueError as exc:
+            return SlashCommandResult(True, message=f"Invalid /release command: {exc}")
+        if parts not in (["pack"], ["evidence-pack"], ["evidence"]):
+            return SlashCommandResult(True, message="Usage: /release pack")
+        runner = getattr(context.app.adapter, "run_operator_control_action", None)
+        if not callable(runner):
+            return SlashCommandResult(
+                True,
+                message="Operator control actions unavailable for this adapter.",
+            )
+        result = runner("capture_release_evidence_pack", conv_id, {})
+        if isinstance(result, dict):
+            _record_official_tui_command_event(
+                context,
+                command="/release pack",
+                conversation_id=conv_id,
+                read_surface_authority="operator_action_contract",
+            )
+        return SlashCommandResult(
+            True,
+            refresh=True,
+            message=_operator_action_block(result if isinstance(result, dict) else {}),
         )
 
     def _god(self, rest: str, context: SlashCommandContext) -> SlashCommandResult:
@@ -1021,6 +1053,7 @@ def _help_text() -> str:
             "/overview",
             "/dashboard (alias for /overview)",
             "/evidence <transcript|github|memory|blockers>",
+            "/release pack",
             "/discussion",
             "/blockers",
             "/god add <role> [display name]",

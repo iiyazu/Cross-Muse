@@ -98,3 +98,121 @@ def test_operator_action_blocks_opencode_peer_god_without_peer_proof(tmp_path: P
     assert "does not advertise peer_god" in result.summary
     assert result.payload["selection_allowed"] is False
     assert selection_store.get("conv-1") is None
+
+
+def _write_gate(path: Path, *, gate_id: str = "provider-soak") -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "xmuse.production_evidence.v1",
+                "gate_id": gate_id,
+                "kind": "real_provider",
+                "configured": True,
+                "required": True,
+                "status": "manual_gap",
+                "proof_level": "manual_gap",
+                "owner": "operator",
+                "summary": "Provider soak was not supplied.",
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def test_operator_action_captures_release_evidence_pack_with_capability(
+    tmp_path: Path,
+) -> None:
+    release_dir = tmp_path / "release_readiness"
+    _write_gate(release_dir / "artifacts" / "provider.json")
+    service = OperatorActionService(
+        god_cli_registry=build_default_god_cli_registry(),
+        audit_dir=tmp_path / "operator_actions",
+        release_readiness_dir=release_dir,
+    )
+
+    result = service.handle(
+        OperatorActionRequest(
+            action="capture_release_evidence_pack",
+            actor_id="operator-1",
+            capabilities=(OperatorActionCapability.RELEASE_GATE,),
+            idempotency_key="idem-release-1",
+            payload={},
+            source="tui",
+        )
+    )
+
+    assert result.status == "ok"
+    assert result.fact_state == "release_evidence_pack_captured"
+    assert result.payload["evidence_pack"]["decision"] == "blocked"
+    assert result.payload["evidence_pack"]["blocker_count"] == 1
+    assert (release_dir / "evidence-pack.json").exists()
+    assert (release_dir / "release-readiness.json").exists()
+    assert (release_dir / "proof-contamination-audit.json").exists()
+    audit_rows = [
+        json.loads(line)
+        for line in (tmp_path / "operator_actions" / "operator-actions.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert audit_rows[-1]["action"] == "capture_release_evidence_pack"
+    assert audit_rows[-1]["status"] == "ok"
+    assert audit_rows[-1]["result_payload"]["evidence_pack"]["decision"] == "blocked"
+
+
+def test_operator_action_denies_release_evidence_pack_without_capability(
+    tmp_path: Path,
+) -> None:
+    release_dir = tmp_path / "release_readiness"
+    _write_gate(release_dir / "artifacts" / "provider.json")
+    service = OperatorActionService(
+        god_cli_registry=build_default_god_cli_registry(),
+        audit_dir=tmp_path / "operator_actions",
+        release_readiness_dir=release_dir,
+    )
+
+    result = service.handle(
+        OperatorActionRequest(
+            action="capture_release_evidence_pack",
+            actor_id="operator-1",
+            capabilities=(),
+            idempotency_key="idem-release-2",
+            payload={},
+            source="tui",
+        )
+    )
+
+    assert result.status == "denied"
+    assert result.fact_state == "denied"
+    assert "missing capability release_gate" in result.summary
+    assert not (release_dir / "evidence-pack.json").exists()
+
+
+def test_operator_action_blocks_release_evidence_pack_paths_outside_release_root(
+    tmp_path: Path,
+) -> None:
+    release_dir = tmp_path / "release_readiness"
+    service = OperatorActionService(
+        god_cli_registry=build_default_god_cli_registry(),
+        audit_dir=tmp_path / "operator_actions",
+        release_readiness_dir=release_dir,
+    )
+
+    result = service.handle(
+        OperatorActionRequest(
+            action="capture_release_evidence_pack",
+            actor_id="operator-1",
+            capabilities=(OperatorActionCapability.RELEASE_GATE,),
+            idempotency_key="idem-release-3",
+            payload={"output_path": str(tmp_path / "outside-pack.json")},
+            source="tui",
+        )
+    )
+
+    assert result.status == "blocked"
+    assert result.fact_state == "blocked"
+    assert "must stay under release readiness root" in result.summary
+    assert not (tmp_path / "outside-pack.json").exists()

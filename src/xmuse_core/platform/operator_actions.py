@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
 
+from xmuse_core.platform.release_evidence_pack import capture_release_evidence_pack
 from xmuse_core.providers.god_cli_registry import GodCliRegistry
 from xmuse_core.providers.god_cli_selection_store import GodCliSelectionStore
 
@@ -55,16 +56,26 @@ class OperatorActionService:
         god_cli_registry: GodCliRegistry,
         audit_dir: Path,
         selection_store: GodCliSelectionStore | None = None,
+        release_readiness_dir: Path | None = None,
     ) -> None:
         self._god_cli_registry = god_cli_registry
         self._audit_dir = audit_dir
         self._selection_store = selection_store
+        self._release_readiness_dir = release_readiness_dir or (
+            audit_dir.parent / "release_readiness"
+        )
 
     def handle(self, request: OperatorActionRequest) -> OperatorActionResult:
         action = request.action.strip().lower()
         audit_id = f"operator-action:{uuid4().hex}"
         if action == "select_god_cli":
             result = self._handle_select_god_cli(request, audit_id=audit_id)
+        elif action in {
+            "capture_release_evidence_pack",
+            "release_evidence_pack",
+            "capture_release_gate",
+        }:
+            result = self._handle_capture_release_evidence_pack(request, audit_id=audit_id)
         else:
             result = OperatorActionResult(
                 action=action or "unknown",
@@ -165,6 +176,95 @@ class OperatorActionService:
             payload={"selection": selection_payload},
         )
 
+    def _handle_capture_release_evidence_pack(
+        self,
+        request: OperatorActionRequest,
+        *,
+        audit_id: str,
+    ) -> OperatorActionResult:
+        action = "capture_release_evidence_pack"
+        missing = self._missing_capability(
+            request,
+            OperatorActionCapability.RELEASE_GATE,
+        )
+        if missing is not None:
+            return OperatorActionResult(
+                action=action,
+                status="denied",
+                proof_level="contract_proof",
+                fact_state="denied",
+                actor_id=request.actor_id,
+                audit_id=audit_id,
+                summary=missing,
+            )
+        try:
+            artifacts_dir = self._release_path(
+                request.payload.get("artifacts_dir"),
+                default=self._release_readiness_dir / "artifacts",
+            )
+            output_path = self._release_path(
+                request.payload.get("output_path"),
+                default=self._release_readiness_dir / "evidence-pack.json",
+            )
+            readiness_output = self._release_optional_path(
+                request.payload.get("readiness_output")
+            )
+            audit_output = self._release_optional_path(request.payload.get("audit_output"))
+        except ValueError as exc:
+            return OperatorActionResult(
+                action=action,
+                status="blocked",
+                proof_level="contract_proof",
+                fact_state="blocked",
+                actor_id=request.actor_id,
+                audit_id=audit_id,
+                summary=str(exc),
+            )
+        try:
+            pack = capture_release_evidence_pack(
+                artifacts_dir=artifacts_dir,
+                output_path=output_path,
+                readiness_output=readiness_output,
+                audit_output=audit_output,
+            )
+        except Exception as exc:
+            return OperatorActionResult(
+                action=action,
+                status="blocked",
+                proof_level="manual_gap",
+                fact_state="blocked",
+                actor_id=request.actor_id,
+                audit_id=audit_id,
+                summary=f"release evidence pack capture failed: {exc}",
+            )
+        return OperatorActionResult(
+            action=action,
+            status="ok",
+            proof_level="contract_proof",
+            fact_state="release_evidence_pack_captured",
+            actor_id=request.actor_id,
+            audit_id=audit_id,
+            summary=(
+                "Captured release evidence pack: "
+                f"decision={pack['decision']} "
+                f"blockers={pack['blocker_count']} "
+                f"findings={pack['finding_count']}."
+            ),
+            payload={
+                "evidence_pack": pack,
+                "artifacts_dir": str(artifacts_dir),
+                "output_path": str(output_path),
+                "readiness_output": str(
+                    readiness_output
+                    or Path(pack["source_reports"]["release_readiness"])
+                ),
+                "audit_output": str(
+                    audit_output
+                    or Path(pack["source_reports"]["proof_contamination_audit"])
+                ),
+            },
+        )
+
     def _missing_capability(
         self,
         request: OperatorActionRequest,
@@ -177,6 +277,26 @@ class OperatorActionService:
         if capability.value in granted:
             return None
         return f"missing capability {capability.value}"
+
+    def _release_optional_path(self, value: Any) -> Path | None:
+        text = _text(value)
+        if text is None:
+            return None
+        return self._release_path(text, default=self._release_readiness_dir)
+
+    def _release_path(self, value: Any, *, default: Path) -> Path:
+        text = _text(value)
+        path = default if text is None else Path(text)
+        if not path.is_absolute():
+            path = self._release_readiness_dir / path
+        release_root = self._release_readiness_dir.resolve(strict=False)
+        resolved = path.resolve(strict=False)
+        if resolved != release_root and release_root not in resolved.parents:
+            raise ValueError(
+                f"release evidence path {path} must stay under release readiness root "
+                f"{self._release_readiness_dir}"
+            )
+        return resolved
 
     def _audit(
         self,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 import time
@@ -163,6 +164,53 @@ def test_chat_api_operator_action_keeps_action_capability_when_auth_enabled(
 
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+
+
+def test_chat_api_release_gate_operator_action_when_auth_enabled(
+    tmp_path: Path,
+) -> None:
+    client = TestClient(create_app(tmp_path, auth_token="secret"))
+    artifacts_dir = tmp_path / "work" / "release_readiness" / "artifacts"
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+    (artifacts_dir / "provider.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "xmuse.production_evidence.v1",
+                "gate_id": "provider-soak",
+                "kind": "real_provider",
+                "configured": True,
+                "required": True,
+                "status": "manual_gap",
+                "proof_level": "manual_gap",
+                "owner": "operator",
+                "summary": "Provider soak was not supplied.",
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    response = client.post(
+        "/api/chat/operator/actions",
+        headers={
+            "X-XMUSE-API-Key": "secret",
+            "X-XMuse-Operator-Id": "operator-1",
+            "X-XMuse-Operator-Role": "operator",
+            "X-XMuse-Operator-Capabilities": "release_gate",
+        },
+        json={
+            "action": "capture_release_evidence_pack",
+            "idempotency_key": "idem-release-auth",
+            "payload": {},
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "ok"
+    assert payload["payload"]["evidence_pack"]["decision"] == "blocked"
 
 
 def test_mcp_rbac_blocks_viewer_lane_and_memory_mutation() -> None:
