@@ -195,6 +195,28 @@ matches the expected head SHA, has a reviewer, and contains no open
 critical/important findings. It is internal review truth only; it is not GitHub
 server-side enforcement.
 
+## Natural GOD Deliberation Release Gate
+
+After a real multi-GOD conversation has been exported to an
+`xmuse.operator_transcript.v1` artifact, convert it to a release gate artifact:
+
+```bash
+uv run xmuse-natural-deliberation-gate-capture \
+  --artifact xmuse/work/release_readiness/natural-transcript.json \
+  --output xmuse/work/release_readiness/artifacts/natural-deliberation.json
+```
+
+The transcript must carry `proof_level: real_provider_proof`,
+`natural_deliberation: true`, at least two distinct `god_id` participants, and
+provider/session metadata for each participant. Any deterministic replay,
+`contract_proof`, single-GOD transcript, missing provider session metadata, or
+unresolved blocker writes a blocked gate. If unresolved blockers exist, the
+gate keeps `real_provider_proof` but remains `blocked`, so release readiness
+cannot become `ready`.
+
+This command does not create the natural transcript. It only converts an
+already exported transcript into the `natural_deliberation` release gate.
+
 ## Release Readiness Capture
 
 Use this command to aggregate release gate artifacts into a redacted readiness

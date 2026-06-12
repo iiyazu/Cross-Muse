@@ -55,6 +55,7 @@ def export_deliberation_transcript(
     messages: list[dict[str, Any]],
     artifact_path: Path | None = None,
     proof_level: str = "contract_proof",
+    natural_deliberation: bool = False,
 ) -> EvidenceActionResult:
     rows: list[dict[str, Any]] = []
     blockers: list[dict[str, Any]] = []
@@ -92,6 +93,12 @@ def export_deliberation_transcript(
             "blocking": blocking,
             "created_at": _text(message.get("created_at")),
         }
+        for metadata_key in ("cli_id", "provider_profile", "session_id"):
+            metadata_value = _text(envelope.get(metadata_key)) or _text(
+                message.get(metadata_key)
+            )
+            if metadata_value is not None:
+                row[metadata_key] = metadata_value
         rows.append(row)
         if blocking:
             blockers.append(
@@ -123,6 +130,7 @@ def export_deliberation_transcript(
             "conversation_id": conversation_id,
             "proof_level": normalized_proof,
             "fact_state": fact_state,
+            "natural_deliberation": natural_deliberation,
             "source_refs": source_refs,
             "target_refs": target_refs,
             "messages": rows,

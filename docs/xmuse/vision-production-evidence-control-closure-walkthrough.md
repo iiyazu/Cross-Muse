@@ -312,6 +312,31 @@ Anything else writes a blocked `manual_gap` gate. This artifact is internal
 review truth only; it is not GitHub server-side enforcement and does not affect
 `pr_merged`.
 
+### Natural GOD Deliberation Release Gate
+
+New command:
+
+```text
+uv run xmuse-natural-deliberation-gate-capture \
+  --artifact <xmuse.operator_transcript.v1.json> \
+  --output <gate.json>
+```
+
+The command converts an explicit natural transcript artifact into the
+`natural_deliberation` release gate. It emits an `ok` gate only when:
+
+- `schema_version` is `xmuse.operator_transcript.v1`;
+- `proof_level` is `real_provider_proof`;
+- `natural_deliberation` is `true`;
+- at least two distinct GOD participants are present;
+- provider/session metadata exists for each GOD participant;
+- no unresolved transcript blockers remain.
+
+Deterministic replay and `contract_proof` transcripts write blocked
+`manual_gap` gates. A real transcript with unresolved blockers keeps
+`real_provider_proof` but remains blocked, so release readiness cannot become
+`ready` until the blockers are resolved.
+
 ## Proof-Level Summary
 
 | Surface | Current proof | Boundary |
@@ -329,7 +354,9 @@ review truth only; it is not GitHub server-side enforcement and does not affect
 | Live gate status capture command | `contract_proof` | Captures configured/missing gate status as `manual_gap` blocker artifacts; does not create live proof. |
 | Release readiness capture command | `contract_proof` | Aggregates and redacts supplied gate artifacts; does not capture live services by itself. |
 | Internal review release gate command | `contract_proof` | Converts a verified structured internal review artifact into `internal_review_proof`; does not replace GitHub enforcement. |
+| Natural GOD deliberation gate command | `contract_proof` | Converts explicit natural transcript artifacts into a `natural_deliberation` gate; deterministic replay and single-GOD artifacts remain blocked. |
 | MemoryOS live gate | `manual_gap` | Env not configured in current shell. |
+| Natural GOD transcript evidence | `manual_gap` | No fresh real multi-GOD transcript artifact has been captured in this slice. |
 | Ray/Codex/OpenCode live gate | `manual_gap` | Binaries/Ray import exist, but production services/env are not running/configured. |
 | GitHub server truth | `server_side_enforcement_proof` | PR #43 branch protection and required checks were captured; review truth and merge truth remain missing, so no `pr_merged`. |
 

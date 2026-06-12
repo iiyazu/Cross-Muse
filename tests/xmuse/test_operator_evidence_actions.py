@@ -109,6 +109,56 @@ def test_export_deliberation_transcript_preserves_structured_evidence(
     ]
 
 
+def test_export_deliberation_transcript_preserves_natural_provider_metadata(
+    tmp_path: Path,
+) -> None:
+    artifact_path = tmp_path / "natural-transcript.json"
+
+    result = export_deliberation_transcript(
+        conversation_id="conv-live",
+        messages=[
+            {
+                "id": "msg-live-1",
+                "conversation_id": "conv-live",
+                "author": "architect",
+                "envelope_json": {
+                    "speech_act": "propose",
+                    "god_id": "architect-god",
+                    "cli_id": "codex-cli",
+                    "provider_id": "codex",
+                    "provider_profile": "codex-prod",
+                    "session_id": "codex-session-1",
+                    "target_ref": "blueprint:live:1",
+                },
+            }
+        ],
+        artifact_path=artifact_path,
+        proof_level="real_provider_proof",
+        natural_deliberation=True,
+    )
+
+    assert result.status == "ok"
+    assert result.proof_level == "real_provider_proof"
+    artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
+    assert artifact["natural_deliberation"] is True
+    assert artifact["messages"][0] == {
+        "message_id": "msg-live-1",
+        "conversation_id": "conv-live",
+        "god_id": "architect-god",
+        "provider_id": "codex",
+        "author": "architect",
+        "speech_act": "propose",
+        "decision_scope": None,
+        "source_refs": [],
+        "target_refs": ["blueprint:live:1"],
+        "blocking": False,
+        "created_at": None,
+        "cli_id": "codex-cli",
+        "provider_profile": "codex-prod",
+        "session_id": "codex-session-1",
+    }
+
+
 def test_export_deliberation_transcript_manual_gap_when_no_structured_messages(
     tmp_path: Path,
 ) -> None:

@@ -289,12 +289,12 @@ without weakening freeze rules.
 
 Tasks:
 
-- [ ] Export natural transcript evidence only when real GOD/CLI participants
+- [x] Export natural transcript evidence only when real GOD/CLI participants
   produced the conversation.
-- [ ] Preserve speech acts, source refs, target refs, blockers, participant CLI,
+- [x] Preserve speech acts, source refs, target refs, blockers, participant CLI,
   provider profile, session id, and proof level.
-- [ ] Keep deterministic replay labeled as `contract_proof`.
-- [ ] Ensure unresolved blocking objections prevent freeze.
+- [x] Keep deterministic replay labeled as `contract_proof`.
+- [x] Ensure unresolved blocking objections prevent freeze.
 - [ ] Route freeze approval through the production TUI/action contract when
   implemented.
 
@@ -303,6 +303,19 @@ Acceptance:
 - Natural transcript evidence is visibly separate from deterministic replay.
 - Freeze cannot be completed from unresolved blockers or local-only proof.
 - Transcript evidence links to blueprint, feature, and lane refs.
+
+Current implementation status:
+
+- `export_deliberation_transcript(..., natural_deliberation=True)` writes an
+  explicit natural transcript marker and preserves per-message CLI/provider
+  session metadata when present.
+- `uv run xmuse-natural-deliberation-gate-capture` converts an
+  `xmuse.operator_transcript.v1` artifact into a `natural_deliberation` release
+  gate. It emits `real_provider_proof` only for explicit natural, real-provider,
+  multi-GOD transcript evidence with provider session metadata.
+- Deterministic replay, single-GOD transcript evidence, missing provider session
+  metadata, and unresolved blockers remain blocked and cannot satisfy release
+  readiness.
 
 ## S6 - Release Readiness Gate
 
@@ -332,6 +345,10 @@ Current implementation status:
   `xmuse.internal_review.v1` artifact for the current head SHA into an
   `internal_review_proof` release gate. It blocks mismatched heads and open
   critical/important findings.
+- `uv run xmuse-natural-deliberation-gate-capture` converts an explicit natural
+  GOD transcript artifact into the `natural_deliberation` release gate. It
+  blocks deterministic replay, missing session metadata, single-GOD transcript
+  evidence, and unresolved blockers.
 - `uv run xmuse-release-readiness-capture` reads JSON release gate artifacts
   from an artifact directory, writes a redacted report, and evaluates the gates
   with the same proof-level rules as `evaluate_release_readiness`.
