@@ -372,6 +372,12 @@ Current implementation status:
   `xmuse.production_evidence.v1` for the `frozen_blueprint` section. Draft or
   otherwise unfrozen blueprints stay `manual_gap` and cannot start feature
   execution proof by rendering alone.
+- `uv run xmuse-deliberation-transcript-evidence-capture` exports an
+  `xmuse.operator_transcript.v1` artifact into replay-ready
+  `xmuse.production_evidence.v1` for the `deliberation_transcript` section. It
+  reuses the natural deliberation release-gate rules, so deterministic replay,
+  single-GOD transcripts, missing provider session metadata, bounded selected
+  runtime, or unresolved blockers cannot be upgraded by replay indexing.
 - `uv run xmuse-feature-lineage-evidence-capture` exports serialized
   `xmuse.feature_owner_execution_contract.v1` artifacts into replay-ready
   `xmuse.production_evidence.v1` for the `feature_lineage` section. It keeps
@@ -493,6 +499,9 @@ Tasks:
   section evidence.
 - Use `uv run xmuse-frozen-blueprint-evidence-capture --blueprint ...` to turn
   a frozen mission blueprint artifact into explicit replay section evidence.
+- Use `uv run xmuse-deliberation-transcript-evidence-capture --transcript ...`
+  to turn an exported operator transcript into explicit deliberation transcript
+  replay section evidence.
 - Use `uv run xmuse-feature-lineage-evidence-capture --contract ...` to turn
   feature owner execution contracts into explicit feature/lane lineage replay
   section evidence.

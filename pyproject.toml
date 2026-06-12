@@ -20,6 +20,7 @@ dependencies = [
 
 [project.scripts]
 xmuse-chat-api = "xmuse.chat_api:main"
+xmuse-deliberation-transcript-evidence-capture = "xmuse.deliberation_transcript_evidence_capture:main"
 xmuse-feature-lineage-evidence-capture = "xmuse.feature_lineage_evidence_capture:main"
 xmuse-frozen-blueprint-evidence-capture = "xmuse.frozen_blueprint_evidence_capture:main"
 xmuse-internal-review-gate-capture = "xmuse.internal_review_gate_capture:main"
