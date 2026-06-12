@@ -86,6 +86,11 @@ Current authoritative docs are in `docs/xmuse/`. Old `docs/superpowers/` specs/p
 
 Multi-agent orchestration system for long-running tasks. Configured in `opencode.json`.
 
+For Codex development `/goal` work, use
+`docs/xmuse/development-goal-worker-delegation-policy.md` as the canonical
+OpenCode worker delegation policy. Do not repeat that policy in every goal
+prompt; reference it unless the policy itself is being changed.
+
 ### Subagents (@-mention)
 
 | Agent | When to Use |

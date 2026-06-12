@@ -32,6 +32,9 @@ uv run python scripts/goal_stage_runner.py \
 - OpenCode engine 的默认模型 ref 必须是 `opencode-go/deepseek-v4-flash`，并且
   CLI 必须额外传 `--variant max`；不能把 `max` 拼进 model id，也不能退回旧
   `deepseek/<model>` package。
+- Codex 开发 xmuse 时如何把低风险高工作量阶段委派给 OpenCode，统一遵循
+  `docs/xmuse/development-goal-worker-delegation-policy.md`；后续 `/goal` prompt
+  只需引用该文档，不需要重复展开行为规范。
 
 ## Manifest schema（最小字段）
 
