@@ -862,10 +862,44 @@ def _operator_action_block(result: dict) -> str:
     audit_id = str(result.get("audit_id") or "").strip()
     if audit_id:
         lines.append(f"audit={audit_id}")
+    payload = result.get("payload")
+    if isinstance(payload, dict):
+        gates = _gate_status_summary(payload.get("gate_statuses"))
+        if gates:
+            lines.append(f"gates={gates}")
+        blockers = _gate_blocker_summary(payload.get("blockers"))
+        if blockers:
+            lines.append(f"blockers={blockers}")
     summary = str(result.get("summary") or "").strip()
     if summary:
         lines.append(summary)
     return "\n".join(lines)
+
+
+def _gate_status_summary(value: object) -> str:
+    if not isinstance(value, list):
+        return ""
+    parts: list[str] = []
+    for item in value[:6]:
+        if not isinstance(item, dict):
+            continue
+        gate_id = str(item.get("gate_id") or "").strip()
+        status = str(item.get("status") or "").strip()
+        proof = str(item.get("proof_level") or "").strip()
+        if gate_id and status and proof:
+            parts.append(f"{gate_id}:{status}/{proof}")
+    return ", ".join(parts)
+
+
+def _gate_blocker_summary(value: object) -> str:
+    if not isinstance(value, list):
+        return ""
+    gate_ids = [
+        str(item.get("gate_id") or "").strip()
+        for item in value[:8]
+        if isinstance(item, dict) and str(item.get("gate_id") or "").strip()
+    ]
+    return ", ".join(gate_ids)
 
 
 def _inline_refs(value: object) -> str:

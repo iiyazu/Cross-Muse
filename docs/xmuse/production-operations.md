@@ -455,6 +455,13 @@ an operator audit row, and restrict operator-supplied paths to
 gate status; it does not create live MemoryOS, GitHub, provider, or natural
 transcript proof.
 
+The refresh operator response includes `gate_statuses`, `blockers`, and
+`release_decision` derived from the release gate artifacts it just wrote. The
+TUI renders those fields in the command output so the operator can see which
+gates remain blocked. This is a read projection over generated artifacts; it
+does not replace release readiness capture and does not make the TUI
+authoritative.
+
 ## Degradation Matrix
 
 | Condition | Expected behavior |

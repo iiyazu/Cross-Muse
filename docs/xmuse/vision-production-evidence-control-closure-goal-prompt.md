@@ -65,7 +65,9 @@ Priority:
    `XMUSE_REAL_PROVIDER_RUNTIME_ARTIFACT` point at existing evidence artifacts,
    the command must validate and convert them through the existing release-gate
    contracts instead of writing generic blockers. From TUI use
-   `/release refresh` with `release_gate`.
+   `/release refresh` with `release_gate`; the response should expose
+   generated gate status and blockers as a projection over release gate
+   artifacts, not as TUI authority.
 6. Separate natural GOD transcript evidence from deterministic replay and keep
    unresolved blockers from freezing a blueprint.
 7. Add release readiness aggregation: tests, ruff, package boundary, internal

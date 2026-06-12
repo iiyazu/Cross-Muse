@@ -422,6 +422,10 @@ Current implementation status:
   explicit live artifact path configuration, it also validates and converts
   MemoryOS, natural deliberation, and real-provider runtime artifacts through
   their existing gate builders.
+- The `refresh_live_gate_status` operator action now returns `gate_statuses`,
+  `blockers`, and `release_decision` derived from those generated release gate
+  artifacts. TUI `/release refresh` renders the summary without reading or
+  mutating release state directly.
 - `uv run python scripts/github_server_truth_capture.py --release-gate-output`
   can write a `github_server_truth` release gate artifact from the raw GitHub
   server truth snapshot. This can satisfy `server_side_enforcement_proof`

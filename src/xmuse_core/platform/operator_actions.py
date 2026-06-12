@@ -12,6 +12,8 @@ from uuid import uuid4
 from xmuse_core.platform.live_gate_status_capture import CommandRunner, capture_live_gate_status
 from xmuse_core.platform.projection.allowlist import stamp_mutation_audit
 from xmuse_core.platform.release_evidence_pack import capture_release_evidence_pack
+from xmuse_core.platform.release_readiness import evaluate_release_readiness
+from xmuse_core.platform.release_readiness_capture import load_release_gate_artifacts
 from xmuse_core.platform.state_machine import (
     InvalidTransitionError,
     LaneStateMachine,
@@ -614,6 +616,7 @@ class OperatorActionService:
                 env=self._live_gate_env,
                 command_runner=self._live_gate_command_runner,
             )
+            gate_summary = _live_gate_refresh_summary(output_dir)
         except Exception as exc:
             return OperatorActionResult(
                 action=action,
@@ -639,6 +642,7 @@ class OperatorActionService:
                 "live_gate_status": summary,
                 "output_dir": str(output_dir),
                 "artifact_count": summary["artifact_count"],
+                **gate_summary,
             },
         )
 
@@ -761,6 +765,36 @@ def _status_guard(expected_status: str, *, action: str):
             )
 
     return guard
+
+
+def _live_gate_refresh_summary(output_dir: Path) -> dict[str, Any]:
+    gates = load_release_gate_artifacts(output_dir)
+    readiness = evaluate_release_readiness(gates)
+    gate_statuses = [
+        {
+            "gate_id": gate.gate_id,
+            "kind": gate.kind.value,
+            "configured": gate.configured,
+            "status": gate.status,
+            "proof_level": gate.proof_level,
+            "summary": gate.summary,
+        }
+        for gate in gates
+    ]
+    status_by_gate = {gate["gate_id"]: gate for gate in gate_statuses}
+    blockers = []
+    for blocker in readiness.blockers:
+        gate_status = status_by_gate.get(str(blocker.get("gate_id")))
+        enriched = dict(blocker)
+        if gate_status is not None:
+            enriched["status"] = gate_status["status"]
+            enriched["proof_level"] = gate_status["proof_level"]
+        blockers.append(enriched)
+    return {
+        "gate_statuses": gate_statuses,
+        "blockers": blockers,
+        "release_decision": readiness.decision,
+    }
 
 
 def _registration_from_payload(payload: dict[str, Any]) -> GodCliRegistration:

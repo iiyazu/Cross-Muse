@@ -562,7 +562,26 @@ async def test_chat_screen_release_refresh_runs_operator_control_action(
             "payload": {
                 "live_gate_status": {
                     "artifact_count": 4,
-                }
+                },
+                "gate_statuses": [
+                    {
+                        "gate_id": "github-server-truth",
+                        "status": "ok",
+                        "proof_level": "server_side_enforcement_proof",
+                    },
+                    {
+                        "gate_id": "live-memoryos",
+                        "status": "manual_gap",
+                        "proof_level": "manual_gap",
+                    },
+                ],
+                "blockers": [
+                    {
+                        "gate_id": "live-memoryos",
+                        "status": "manual_gap",
+                        "proof_level": "manual_gap",
+                    }
+                ],
             },
         }
 
@@ -586,6 +605,11 @@ async def test_chat_screen_release_refresh_runs_operator_control_action(
         assert "status=ok proof=contract_proof fact=live_gate_status_refreshed" in content
         assert "audit=operator-action:refresh" in content
         assert "Refreshed live gate status artifacts: artifact_count=4." in content
+        assert (
+            "gates=github-server-truth:ok/server_side_enforcement_proof, "
+            "live-memoryos:manual_gap/manual_gap"
+        ) in content
+        assert "blockers=live-memoryos" in content
 
 
 async def test_chat_screen_lane_retry_runs_operator_control_action(app: XmuseTUI) -> None:

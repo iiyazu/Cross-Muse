@@ -340,6 +340,12 @@ blocked in that isolated test scenario. This verifies the configured artifact
 handoff path; it is not a substitute for fresh live MemoryOS, natural GOD, or
 real-provider runtime artifacts in the production environment.
 
+The `refresh_live_gate_status` operator action now includes `gate_statuses`,
+`blockers`, and `release_decision` in its payload after reading the release gate
+artifacts it just wrote. TUI `/release refresh` renders those summaries so the
+operator sees which gates remain blocked without the TUI reading artifact files
+or becoming a release authority.
+
 ### GitHub Server Truth Release Gate
 
 `scripts/github_server_truth_capture.py` now accepts:
@@ -605,6 +611,8 @@ uv run pytest tests/xmuse/test_tui_adapter.py tests/xmuse/test_tui_navigation.py
 uv run pytest tests/xmuse/test_operator_actions.py::test_operator_action_retries_lane_with_guarded_workflow_capability tests/xmuse/test_operator_actions.py::test_operator_action_denies_lane_retry_without_workflow_capability tests/xmuse/test_operator_actions.py::test_operator_action_aborts_lane_with_guarded_workflow_capability tests/xmuse/test_operator_actions.py::test_operator_action_blocks_lane_action_when_guard_mismatches tests/xmuse/test_chat_api.py::test_chat_api_operator_action_retries_lane_with_workflow_capability tests/xmuse/test_chat_api.py::test_chat_api_operator_action_denies_lane_retry_without_workflow_capability tests/xmuse/test_tui_navigation.py::test_chat_screen_lane_retry_runs_operator_control_action tests/xmuse/test_tui_navigation.py::test_chat_screen_lane_abort_runs_operator_control_action -q
 uv run pytest tests/xmuse/test_live_gate_status_capture.py tests/xmuse/test_github_server_truth_capture.py tests/xmuse/test_release_readiness_capture.py -q
 uv run pytest tests/xmuse/test_live_gate_status_capture.py tests/xmuse/test_memoryos_live_release_gate.py tests/xmuse/test_natural_deliberation_release_gate.py tests/xmuse/test_real_provider_runtime_release_gate.py tests/xmuse/test_release_readiness_capture.py -q
+uv run pytest tests/xmuse/test_operator_actions.py::test_operator_action_refreshes_live_gate_status_with_capability tests/xmuse/test_tui_navigation.py::test_chat_screen_release_refresh_runs_operator_control_action -q
+uv run pytest tests/xmuse/test_operator_actions.py tests/xmuse/test_chat_api.py tests/xmuse/test_tui_navigation.py tests/xmuse/test_live_gate_status_capture.py tests/xmuse/test_release_readiness_capture.py tests/xmuse/test_production_hardening.py tests/xmuse/test_package_boundaries.py -q
 uv run pytest tests/xmuse/test_production_operations_doc.py tests/xmuse/test_mainline_contract_docs.py tests/xmuse/test_quality_gates_phase3.py -q
 XMUSE_GITHUB_TRUTH_REPO=iiyazu/Cross-Muse XMUSE_GITHUB_TRUTH_PULL_REQUEST=43 XMUSE_GITHUB_TRUTH_BASE_BRANCH=main XMUSE_GITHUB_TRUTH_REQUIRED_CHECKS=quality-gates,contract-smoke-gates,real-runtime-integration-gate uv run xmuse-live-gate-status-capture --output-dir /tmp/xmuse-github-target-release-gates/live_gate_status
 uv run xmuse-release-evidence-pack --artifacts-dir /tmp/xmuse-github-target-release-gates --output /tmp/xmuse-github-target-release-evidence-pack.json --readiness-output /tmp/xmuse-github-target-release-readiness.json --audit-output /tmp/xmuse-github-target-proof-contamination-audit.json
@@ -665,6 +673,8 @@ third Codex independent review attempt for manual GOD CLI registration timed out
 8 passed, 1 warning
 13 passed
 26 passed
+2 passed, 1 warning
+145 passed, 1 warning
 8 passed
 xmuse-live-gate-status-capture with XMUSE_GITHUB_TRUTH_* wrote a github_server_truth gate with status=ok, proof_level=server_side_enforcement_proof, and raw snapshot gap_reason=missing server-side truth: review_truth, merge_truth
 xmuse-release-evidence-pack with the configured GitHub target reported decision=blocked, blocker_count=3, proof_contamination_decision=clean; remaining blockers were live-memoryos, natural-god-deliberation, and real-provider-runtime
@@ -700,7 +710,9 @@ The warning is the existing Starlette/httpx deprecation warning from FastAPI
   `server_side_enforcement_proof`; with explicit live artifact path
   configuration, MemoryOS, natural transcript, and provider artifacts are
   validated through their release-gate contracts. Missing or invalid artifacts
-  remain blockers.
+  remain blockers. The operator response now renders gate summaries and
+  blockers derived from the generated artifacts, but the readiness artifact
+  remains the release decision source.
 - The independent Codex review attempt timed out, so this slice does not add
   verified internal review proof. A second independent review attempt for the
   `/release refresh` slice also timed out.

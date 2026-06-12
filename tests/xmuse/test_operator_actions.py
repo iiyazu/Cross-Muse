@@ -537,6 +537,23 @@ def test_operator_action_refreshes_live_gate_status_with_capability(
     assert result.status == "ok"
     assert result.fact_state == "live_gate_status_refreshed"
     assert result.payload["live_gate_status"]["artifact_count"] == 4
+    assert [
+        (gate["gate_id"], gate["status"], gate["proof_level"])
+        for gate in result.payload["gate_statuses"]
+    ] == [
+        ("github-server-truth", "blocked", "manual_gap"),
+        ("live-memoryos", "blocked", "manual_gap"),
+        ("natural-god-deliberation", "manual_gap", "manual_gap"),
+        ("real-provider-runtime", "blocked", "manual_gap"),
+    ]
+    assert [
+        blocker["gate_id"] for blocker in result.payload["blockers"]
+    ] == [
+        "github-server-truth",
+        "live-memoryos",
+        "natural-god-deliberation",
+        "real-provider-runtime",
+    ]
     assert result.payload["output_dir"] == str(output_dir.resolve(strict=False))
     assert sorted(path.name for path in output_dir.glob("*.json")) == [
         "github-server-truth-status.json",
