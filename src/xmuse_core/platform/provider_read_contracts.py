@@ -4,6 +4,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from xmuse_core.providers.god_cli_registry import (
+    build_god_cli_inventory as _build_god_cli_inventory,
+)
 from xmuse_core.providers.models import ProviderProfile
 from xmuse_core.providers.registry import build_default_provider_registry
 from xmuse_core.providers.selection_record import (
@@ -83,6 +86,10 @@ def build_provider_selection_records(
             _provider_selection_record_inventory(record) for record in records
         ],
     }
+
+
+def build_god_cli_inventory() -> dict[str, Any]:
+    return _build_god_cli_inventory()
 
 
 def _provider_profile_inventory(profile: ProviderProfile) -> dict[str, Any]:

@@ -370,12 +370,24 @@ class SlashCommandRouter:
             parts = shlex.split(rest)
         except ValueError as exc:
             return SlashCommandResult(True, message=f"Invalid /god command: {exc}")
-        if len(parts) < 2 or parts[0] not in {"add", "rm"}:
+        if not parts or parts[0] not in {"add", "rm", "select"}:
             return SlashCommandResult(
                 True,
                 message=(
                     "Usage: /god add <role> [display name] | "
-                    "/god rm <role|participant_id>"
+                    "/god rm <role|participant_id> | /god select <cli_id>"
+                ),
+            )
+        if parts[0] == "select":
+            if len(parts) < 2:
+                return SlashCommandResult(True, message="Usage: /god select <cli_id>")
+            return self._god_select(parts[1:], context)
+        if len(parts) < 2:
+            return SlashCommandResult(
+                True,
+                message=(
+                    "Usage: /god add <role> [display name] | "
+                    "/god rm <role|participant_id> | /god select <cli_id>"
                 ),
             )
         if parts[0] == "add":
@@ -417,6 +429,31 @@ class SlashCommandRouter:
             return SlashCommandResult(True, message=f"Could not remove GOD {target}.")
         _refresh_participants(context, conv_id)
         return SlashCommandResult(True, refresh=True, message=f"Removed GOD {target}.")
+
+    def _god_select(self, args: list[str], context: SlashCommandContext) -> SlashCommandResult:
+        conv_id = _active_conversation_id(context)
+        if not conv_id:
+            return SlashCommandResult(True, message="No active group.")
+        runner = getattr(context.app.adapter, "run_operator_control_action", None)
+        if not callable(runner):
+            return SlashCommandResult(
+                True,
+                message="Operator control actions unavailable for this adapter.",
+            )
+        cli_id = args[0]
+        result = runner("select_god_cli", conv_id, {"cli_id": cli_id})
+        if isinstance(result, dict):
+            _record_official_tui_command_event(
+                context,
+                command=f"/god select {cli_id}",
+                conversation_id=conv_id,
+                read_surface_authority="operator_action_contract",
+            )
+        return SlashCommandResult(
+            True,
+            refresh=True,
+            message=_operator_action_block(result if isinstance(result, dict) else {}),
+        )
 
 
 def _session_rows(app: Any) -> list[dict]:
@@ -623,6 +660,24 @@ def _evidence_action_block(result: dict) -> str:
         lines.append(f"sources={source_refs}")
     if target_refs:
         lines.append(f"targets={target_refs}")
+    summary = str(result.get("summary") or "").strip()
+    if summary:
+        lines.append(summary)
+    return "\n".join(lines)
+
+
+def _operator_action_block(result: dict) -> str:
+    action = str(result.get("action") or "unknown")
+    status = str(result.get("status") or "?")
+    proof = str(result.get("proof_level") or "?")
+    fact = str(result.get("fact_state") or "?")
+    lines = [
+        f"Operator action: {action}",
+        f"status={status} proof={proof} fact={fact}",
+    ]
+    audit_id = str(result.get("audit_id") or "").strip()
+    if audit_id:
+        lines.append(f"audit={audit_id}")
     summary = str(result.get("summary") or "").strip()
     if summary:
         lines.append(summary)
@@ -970,6 +1025,7 @@ def _help_text() -> str:
             "/blockers",
             "/god add <role> [display name]",
             "/god rm <role|participant_id>",
+            "/god select <cli_id>",
             "/archive",
             "/copy",
             "/resume [number|conversation_id|title] (resume session, default: most recent)",

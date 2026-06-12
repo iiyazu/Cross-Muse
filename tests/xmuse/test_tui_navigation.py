@@ -334,6 +334,7 @@ async def test_chat_screen_help_command_lists_slash_commands(app: XmuseTUI) -> N
         assert "/sessions <number|conversation_id|title>" in appended[-1]["content"]
         assert "/evidence <transcript|github|memory|blockers>" in appended[-1]["content"]
         assert "/god add <role> [display name]" in appended[-1]["content"]
+        assert "/god select <cli_id>" in appended[-1]["content"]
 
 
 async def test_chat_screen_evidence_command_runs_operator_action(app: XmuseTUI) -> None:
@@ -374,6 +375,52 @@ async def test_chat_screen_evidence_command_runs_operator_action(app: XmuseTUI) 
         assert "status=ok proof=contract_proof fact=observed" in content
         assert "artifact=/tmp/transcript.json" in content
         assert "sources=message:msg-1" in content
+
+
+async def test_chat_screen_god_select_runs_operator_control_action(app: XmuseTUI) -> None:
+    app.adapter.list_group_conversations = lambda: [
+        {"id": "conv-user", "title": "User group", "created_at": "2026-06-01T00:00:00Z"},
+    ]
+    calls = []
+
+    def _run_operator_control_action(action: str, conv_id: str, payload: dict):
+        calls.append((action, conv_id, payload))
+        return {
+            "action": "select_god_cli",
+            "status": "ok",
+            "proof_level": "contract_proof",
+            "fact_state": "god_cli_selected",
+            "audit_id": "operator-action:1",
+            "summary": "Selected GOD CLI codex.god.",
+            "payload": {
+                "selection": {
+                    "cli_id": "codex.god",
+                    "conversation_id": conv_id,
+                    "source_authority": "operator_action_contract",
+                }
+            },
+        }
+
+    app.adapter.run_operator_control_action = _run_operator_control_action
+
+    async with app.run_test() as pilot:
+        appended = []
+        log = app.screen.query_one("#message-log")
+        log.append_message = lambda **kwargs: appended.append(kwargs)
+
+        input_widget = app.screen.query_one("#message-input")
+        input_widget.value = "/god select codex.god"
+        input_widget.post_message(input_widget.Submitted(input_widget, input_widget.value))
+        await pilot.pause()
+
+        assert calls == [
+            ("select_god_cli", "conv-user", {"cli_id": "codex.god"}),
+        ]
+        content = appended[-1]["content"]
+        assert "Operator action: select_god_cli" in content
+        assert "status=ok proof=contract_proof fact=god_cli_selected" in content
+        assert "audit=operator-action:1" in content
+        assert "Selected GOD CLI codex.god." in content
 
 
 async def test_chat_screen_sessions_matches_id_and_unique_title_fragment(app: XmuseTUI) -> None:

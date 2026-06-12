@@ -354,6 +354,53 @@ def test_adapter_operator_evidence_action_loads_github_memory_and_blockers(
     assert blockers["target_refs"] == ["blueprint:conv-1:1"]
 
 
+def test_adapter_operator_control_action_selects_god_cli_with_capability(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setenv("XMUSE_TUI_OPERATOR_CAPABILITIES", "select_god_cli")
+
+    result = XmuseAdapter(tmp_path).run_operator_control_action(
+        "select_god_cli",
+        "conv-1",
+        {"cli_id": "codex.god"},
+    )
+
+    assert result["action"] == "select_god_cli"
+    assert result["status"] == "ok"
+    assert result["fact_state"] == "god_cli_selected"
+    assert result["payload"]["selection"]["cli_id"] == "codex.god"
+    assert result["payload"]["selection"]["conversation_id"] == "conv-1"
+
+
+def test_adapter_operator_control_action_denies_without_capability(tmp_path):
+    result = XmuseAdapter(tmp_path).run_operator_control_action(
+        "select_god_cli",
+        "conv-1",
+        {"cli_id": "codex.god"},
+    )
+
+    assert result["status"] == "denied"
+    assert "missing capability select_god_cli" in result["summary"]
+
+
+def test_adapter_records_operator_action_tui_command_event(tmp_path):
+    adapter = XmuseAdapter(tmp_path)
+
+    recorded = adapter.record_tui_command_event(
+        {
+            "command": "/god select codex.god",
+            "conversation_id": "conv-1",
+            "read_surface_authority": "operator_action_contract",
+            "surface_ref": "operator_action_contract:conv-1",
+        }
+    )
+
+    assert recorded is not None
+    assert recorded["read_surface_authority"] == "operator_action_contract"
+    assert adapter.list_tui_command_events("conv-1") == [recorded]
+
+
 def test_adapter_create_group_conversation_uses_chat_api(monkeypatch, tmp_path):
     calls = []
 

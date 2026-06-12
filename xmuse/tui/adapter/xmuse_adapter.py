@@ -14,6 +14,10 @@ from typing import Any
 import httpx
 
 from xmuse_core.platform.dashboard_details import _conversation_runtime_timeline_detail
+from xmuse_core.platform.operator_actions import (
+    OperatorActionRequest,
+    OperatorActionService,
+)
 from xmuse_core.platform.operator_evidence_actions import (
     build_blocker_navigation_action,
     build_github_truth_action,
@@ -21,6 +25,7 @@ from xmuse_core.platform.operator_evidence_actions import (
     export_deliberation_transcript,
 )
 from xmuse_core.platform.tui_vision_read_model import build_tui_vision_read_model
+from xmuse_core.providers.god_cli_registry import build_default_god_cli_registry
 
 
 @dataclass
@@ -409,6 +414,30 @@ class XmuseAdapter:
             "summary": f"Unknown evidence action: {action}",
             "payload": {},
         }
+
+    def run_operator_control_action(
+        self,
+        action: str,
+        conv_id: str,
+        payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        clean_action = action.strip().lower().replace("-", "_")
+        action_payload = dict(payload or {})
+        if conv_id and "conversation_id" not in action_payload:
+            action_payload["conversation_id"] = conv_id
+        service = OperatorActionService(
+            god_cli_registry=build_default_god_cli_registry(),
+            audit_dir=self._root / "work" / "operator_actions",
+        )
+        request = OperatorActionRequest(
+            action=clean_action,
+            actor_id=_operator_actor_id(),
+            capabilities=_operator_capabilities(),
+            idempotency_key=f"tui:{clean_action}:{uuid.uuid4().hex}",
+            payload=action_payload,
+            source="tui",
+        )
+        return service.handle(request).model_dump()
 
     def _operator_vision_snapshot(self, conv_id: str) -> dict[str, Any]:
         inspector = self.get_conversation_inspector(conv_id)
@@ -1715,6 +1744,15 @@ def _utc_now() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
+def _operator_actor_id() -> str:
+    return os.environ.get("XMUSE_TUI_OPERATOR_ID", "local-operator").strip() or "local-operator"
+
+
+def _operator_capabilities() -> tuple[str, ...]:
+    raw = os.environ.get("XMUSE_TUI_OPERATOR_CAPABILITIES", "")
+    return tuple(item.strip() for item in raw.split(",") if item.strip())
+
+
 def _read_json_file(path: Path, *, default: Any) -> Any:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
@@ -1729,7 +1767,12 @@ def _normalize_tui_command_event(event: dict[str, Any]) -> dict[str, Any] | None
     surface_ref = str(event.get("surface_ref") or "").strip()
     if not command or not conversation_id or not authority or not surface_ref:
         return None
-    if authority not in {"chat_inspector", "dashboard_runtime_timeline"}:
+    if authority not in {
+        "chat_inspector",
+        "dashboard_runtime_timeline",
+        "operator_action_contract",
+        "operator_evidence_action",
+    }:
         return None
     normalized = {
         "event_id": str(event.get("event_id") or f"tui_cmd_{uuid.uuid4().hex}"),

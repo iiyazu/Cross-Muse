@@ -53,6 +53,9 @@ GOD groupchat deliberation
 | `docs/xmuse/vision-operator-closed-overnight-loop-plan.md` | 根据 deep-research-report_08 制定的 8 小时 operator-closed overnight loop 详细任务、proof 纪律和行为规范 |
 | `docs/xmuse/vision-operator-closed-overnight-loop-goal-prompt.md` | 可直接用于 `/goal` 的简洁 8 小时过夜操作闭环 prompt，详细任务引用 plan 文档 |
 | `docs/xmuse/vision-operator-closed-overnight-loop-walkthrough.md` | 过夜操作闭环首个实现切片走读，记录 evidence action、laneDAG drill-down、supervisor harness 和剩余 manual gap |
+| `docs/xmuse/vision-production-evidence-control-closure-plan.md` | 根据 deep-research-report_09 和人工确认决策制定的生产级 evidence/control 闭环任务、live gate、TUI 操作面和 Auth/RBAC 行为规范 |
+| `docs/xmuse/vision-production-evidence-control-closure-goal-prompt.md` | 可直接用于 `/goal` 的简洁生产级 evidence/control closure prompt，详细任务引用 plan 文档 |
+| `docs/xmuse/vision-production-evidence-control-closure-walkthrough.md` | 生产级 evidence/control closure 首个实现切片走读，记录 GOD/CLI registry、operator action audit、release readiness 和当前 live blocker |
 | `docs/xmuse/opencode-in-long-runtime-evidence-plan.md` | 下一轮 OpenCode-in 长执行证据闭环的详细任务、授权边界和行为规范 |
 | `docs/xmuse/opencode-in-long-runtime-evidence-goal-prompt.md` | 可直接用于 `/goal` 的简洁 OpenCode-in 长执行 prompt，详细任务引用 plan 文档 |
 | `docs/xmuse/opencode-in-long-runtime-evidence-closure.md` | OpenCode-in 长执行证据闭环的当前审计报告、stage evidence、proof-level 变化和剩余 GitHub manual gap |
