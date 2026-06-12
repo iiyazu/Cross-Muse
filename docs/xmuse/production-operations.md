@@ -590,6 +590,8 @@ uv run xmuse-release-evidence-pack \
   --supervisor-snapshot xmuse/work/release_readiness/overnight-supervisor.json \
   --deliberation-transcript xmuse/work/release_readiness/natural-transcript.json \
   --god-runtime xmuse/work/release_readiness/god-runtime-continuity.json \
+  --frozen-blueprint xmuse/work/release_readiness/mission-blueprint.json \
+  --feature-contract xmuse/work/release_readiness/feature-owner-contract.json \
   --memoryos-writeback-event xmuse/work/release_readiness/memoryos-writeback-event.json
 ```
 
@@ -597,9 +599,13 @@ uv run xmuse-release-evidence-pack \
 `xmuse.overnight_supervisor.v1` snapshot. `--deliberation-transcript` generates
 the replay `deliberation_transcript` section from an
 `xmuse.operator_transcript.v1` artifact, optionally validated with
-`--god-runtime` selected-GOD continuity. `--memoryos-governance-plan` and
-`--memoryos-writeback-event` generate the replay `memory_governance` section
-from governed MemoryOS policy inputs. These conversions are contract-level
+`--god-runtime` selected-GOD continuity. `--frozen-blueprint` generates the
+replay `frozen_blueprint` section from a `mission_blueprint.v1` artifact.
+Repeated `--feature-contract` inputs generate the replay `feature_lineage`
+section from graph-native feature owner execution contracts.
+`--memoryos-governance-plan` and `--memoryos-writeback-event` generate the
+replay `memory_governance` section from governed MemoryOS policy inputs.
+These conversions are contract-level
 handoff evidence only; they do not create live MemoryOS trace proof, provider
 runtime gate proof, or GitHub merge proof, and must not be passed together with
 an explicit `--section-artifact` for the same section.

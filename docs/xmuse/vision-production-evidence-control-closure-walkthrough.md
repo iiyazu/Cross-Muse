@@ -714,8 +714,9 @@ The warning is the existing Starlette/httpx deprecation warning from FastAPI
 
 ## Latest Handoff Pack Slice
 
-`xmuse-release-evidence-pack` can now convert governed MemoryOS policy inputs
-and natural transcript inputs directly into nested replay bundle sections:
+`xmuse-release-evidence-pack` can now convert governed MemoryOS policy inputs,
+natural transcript inputs, frozen blueprint artifacts, and feature owner
+contracts directly into nested replay bundle sections:
 
 ```bash
 uv run xmuse-release-evidence-pack \
@@ -723,23 +724,30 @@ uv run xmuse-release-evidence-pack \
   --output xmuse/work/release_readiness/evidence-pack.json \
   --deliberation-transcript xmuse/work/release_readiness/natural-transcript.json \
   --god-runtime xmuse/work/release_readiness/god-runtime-continuity.json \
+  --frozen-blueprint xmuse/work/release_readiness/mission-blueprint.json \
+  --feature-contract xmuse/work/release_readiness/feature-owner-contract.json \
   --memoryos-writeback-event xmuse/work/release_readiness/memoryos-writeback-event.json
 ```
 
 The matching core API accepts `deliberation_transcript`,
 `god_runtime_artifact`, `memoryos_governance_plans`, and
-`memoryos_writeback_events`. The CLI accepts `--deliberation-transcript`,
-`--god-runtime`, repeated `--memoryos-governance-plan`, and repeated
-`--memoryos-writeback-event`, with explicit output-path flags for the generated
-section evidence. Passing these inputs together with an explicit
-`--section-artifact` for the same replay section is rejected as ambiguous.
+`memoryos_writeback_events`, plus `frozen_blueprint` and repeated
+`feature_contracts`. The CLI accepts `--deliberation-transcript`,
+`--god-runtime`, `--frozen-blueprint`, repeated `--feature-contract`, repeated
+`--memoryos-governance-plan`, and repeated `--memoryos-writeback-event`, with
+explicit output-path flags for the generated section evidence. Passing these
+inputs together with an explicit `--section-artifact` for the same replay
+section is rejected as ambiguous.
 
 These conversions call the existing deliberation transcript and MemoryOS
-governance evidence capture paths. The pack records the generated
+governance evidence capture paths, plus the existing frozen blueprint and
+feature lineage evidence capture paths. The pack records the generated
 `xmuse.production_evidence.v1` artifacts in `source_reports`. This is handoff
 aggregation only: weak natural transcripts remain weak, bounded selected
-runtime remains blocked, MemoryOS governance does not call MemoryOS Lite, and
-none of these replay sections creates `pr_merged` or live MemoryOS trace proof.
+runtime remains blocked, draft blueprints remain `manual_gap`, invalid or
+projection-authority feature contracts remain `manual_gap`, MemoryOS governance
+does not call MemoryOS Lite, and none of these replay sections creates
+`pr_merged` or live MemoryOS trace proof.
 
 ## Remaining Production Gaps
 

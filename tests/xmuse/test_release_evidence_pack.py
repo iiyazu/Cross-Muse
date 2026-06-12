@@ -12,6 +12,13 @@ from xmuse_core.platform.overnight_operator_supervisor import (
     OvernightSupervisorStage,
 )
 from xmuse_core.platform.release_evidence_pack import capture_release_evidence_pack
+from xmuse_core.structuring.feature_owner_contract import (
+    build_feature_owner_execution_contract,
+)
+from xmuse_core.structuring.mission_blueprint_v1 import (
+    MissionBlueprintStatus,
+    MissionBlueprintV1,
+)
 
 
 def _write_json(path: Path, payload: dict[str, object]) -> None:
@@ -165,6 +172,72 @@ def _write_god_runtime(path: Path) -> Path:
             ],
         },
     )
+    return path
+
+
+def _write_blueprint(path: Path, *, status: MissionBlueprintStatus) -> Path:
+    blueprint = MissionBlueprintV1(
+        blueprint_id="bp-overnight",
+        conversation_id="conv-prod-1",
+        revision=3,
+        goal="Close overnight autonomy evidence loop.",
+        scope=["feature graph", "release replay"],
+        constraints=["Use uv run.", "Do not create xmuse/__init__.py."],
+        non_goals=["No proof upgrades by rendering."],
+        acceptance_contracts=[
+            "Frozen blueprint is attached to replay evidence.",
+            "Feature execution starts from graph authority.",
+        ],
+        repo_areas=["src/xmuse_core/platform", "src/xmuse_core/structuring"],
+        open_questions=[],
+        decision_log=[
+            {
+                "decision": "Freeze before feature owner execution.",
+                "source_refs": ["message:challenge-1"],
+            }
+        ],
+        source_refs=["message:proposal-1", "message:challenge-1"],
+        status=status,
+        approved_by=["architect-god", "review-god"],
+    )
+    _write_json(path, blueprint.model_dump(mode="json"))
+    return path
+
+
+def _write_feature_contract(path: Path) -> Path:
+    contract = build_feature_owner_execution_contract(
+        feature_id="feature-replay-pack",
+        objective="Attach graph-native feature lineage to the release pack.",
+        graph_set_id="graph-set-prod-1",
+        feature_graph_id="graph-release-replay",
+        source_authority="graph_set_store",
+        source_refs=("graph-set:graph-set-prod-1", "blueprint:bp-overnight"),
+        allowed_files=("src/xmuse_core/platform/release_evidence_pack.py",),
+        lanes=(
+            {
+                "feature_id": "lane-blueprint",
+                "lane_local_id": "lane-blueprint",
+                "conversation_id": "conv-prod-1",
+                "graph_id": "graph-release-replay",
+                "status": "pending",
+                "depends_on": [],
+            },
+            {
+                "feature_id": "lane-feature-lineage",
+                "lane_local_id": "lane-feature-lineage",
+                "conversation_id": "conv-prod-1",
+                "graph_id": "graph-release-replay",
+                "status": "pending",
+                "depends_on": ["lane-blueprint"],
+            },
+        ),
+        memory_refs=("memory://conversation/conv-prod-1/feature-lineage",),
+        required_checks=("uv run pytest tests/xmuse/test_release_evidence_pack.py -q",),
+        review_profile="internal-adversarial",
+        patch_forward_policy="review_failures_spawn_patch_forward_lane",
+        rollback_constraints=("do not mutate feature_lanes.json",),
+    )
+    _write_json(path, contract.model_dump(mode="json"))
     return path
 
 
@@ -400,6 +473,93 @@ def test_release_evidence_pack_converts_deliberation_transcript_into_replay_sect
     ]
 
 
+def test_release_evidence_pack_converts_frozen_blueprint_into_replay_section(
+    tmp_path: Path,
+) -> None:
+    artifacts = tmp_path / "artifacts"
+    output = tmp_path / "pack" / "evidence-pack.json"
+    blueprint = _write_blueprint(
+        tmp_path / "blueprint" / "mission-blueprint.json",
+        status=MissionBlueprintStatus.FROZEN,
+    )
+    _write_json(
+        artifacts / "github-server-truth.json",
+        _gate(
+            gate_id="github-server-truth",
+            kind="github_server_truth",
+            status="ok",
+            proof_level="server_side_enforcement_proof",
+        ),
+    )
+
+    pack = capture_release_evidence_pack(
+        artifacts_dir=artifacts,
+        output_path=output,
+        run_id="pack-frozen-blueprint",
+        frozen_blueprint=blueprint,
+    )
+
+    blueprint_evidence = output.parent / "frozen-blueprint-production-evidence.json"
+    replay = json.loads(
+        (output.parent / "overnight-replay-bundle.json").read_text(encoding="utf-8")
+    )
+    sections = {section["section_id"]: section for section in replay["sections"]}
+    assert blueprint_evidence.exists()
+    assert pack["source_reports"]["frozen_blueprint_evidence"] == str(
+        blueprint_evidence
+    )
+    assert sections["frozen_blueprint"]["status"] == "ok"
+    assert sections["frozen_blueprint"]["proof_level"] == "contract_proof"
+    assert sections["frozen_blueprint"]["source_authority"] == "mission_blueprint_v1"
+    assert sections["frozen_blueprint"]["artifacts"] == [
+        str(blueprint),
+        str(blueprint_evidence),
+    ]
+
+
+def test_release_evidence_pack_converts_feature_contracts_into_replay_section(
+    tmp_path: Path,
+) -> None:
+    artifacts = tmp_path / "artifacts"
+    output = tmp_path / "pack" / "evidence-pack.json"
+    contract = _write_feature_contract(
+        tmp_path / "feature" / "feature-owner-contract.json"
+    )
+    _write_json(
+        artifacts / "github-server-truth.json",
+        _gate(
+            gate_id="github-server-truth",
+            kind="github_server_truth",
+            status="ok",
+            proof_level="server_side_enforcement_proof",
+        ),
+    )
+
+    pack = capture_release_evidence_pack(
+        artifacts_dir=artifacts,
+        output_path=output,
+        run_id="pack-feature-lineage",
+        feature_contracts=(contract,),
+    )
+
+    feature_evidence = output.parent / "feature-lineage-production-evidence.json"
+    replay = json.loads(
+        (output.parent / "overnight-replay-bundle.json").read_text(encoding="utf-8")
+    )
+    sections = {section["section_id"]: section for section in replay["sections"]}
+    assert feature_evidence.exists()
+    assert pack["source_reports"]["feature_lineage_evidence"] == str(feature_evidence)
+    assert sections["feature_lineage"]["status"] == "ok"
+    assert sections["feature_lineage"]["proof_level"] == "contract_proof"
+    assert sections["feature_lineage"]["source_authority"] == (
+        "feature_owner_execution_contract"
+    )
+    assert sections["feature_lineage"]["artifacts"] == [
+        str(contract),
+        str(feature_evidence),
+    ]
+
+
 def test_release_evidence_pack_rejects_ambiguous_supervisor_sources(
     tmp_path: Path,
 ) -> None:
@@ -487,6 +647,67 @@ def test_release_evidence_pack_rejects_ambiguous_deliberation_transcript_sources
         raise AssertionError(
             "expected ambiguous deliberation_transcript source to be rejected"
         )
+
+
+def test_release_evidence_pack_rejects_ambiguous_frozen_blueprint_sources(
+    tmp_path: Path,
+) -> None:
+    blueprint = _write_blueprint(
+        tmp_path / "blueprint" / "mission-blueprint.json",
+        status=MissionBlueprintStatus.FROZEN,
+    )
+    blueprint_evidence = tmp_path / "frozen-blueprint-production-evidence.json"
+    _write_section_evidence(
+        blueprint_evidence,
+        section_id="frozen_blueprint",
+        status="ok",
+        proof_level="contract_proof",
+        source_authority="mission_blueprint_v1",
+        source_refs=["mission_blueprint:bp-overnight:r3"],
+        summary="Frozen blueprint captured.",
+    )
+
+    try:
+        capture_release_evidence_pack(
+            artifacts_dir=tmp_path / "artifacts",
+            output_path=tmp_path / "pack.json",
+            section_artifacts={"frozen_blueprint": blueprint_evidence},
+            frozen_blueprint=blueprint,
+        )
+    except ValueError as exc:
+        assert "frozen_blueprint evidence source is ambiguous" in str(exc)
+    else:
+        raise AssertionError("expected ambiguous frozen_blueprint source to be rejected")
+
+
+def test_release_evidence_pack_rejects_ambiguous_feature_lineage_sources(
+    tmp_path: Path,
+) -> None:
+    contract = _write_feature_contract(
+        tmp_path / "feature" / "feature-owner-contract.json"
+    )
+    feature_evidence = tmp_path / "feature-lineage-production-evidence.json"
+    _write_section_evidence(
+        feature_evidence,
+        section_id="feature_lineage",
+        status="ok",
+        proof_level="contract_proof",
+        source_authority="feature_owner_execution_contract",
+        source_refs=["feature-owner:feature-replay-pack"],
+        summary="Feature lineage captured.",
+    )
+
+    try:
+        capture_release_evidence_pack(
+            artifacts_dir=tmp_path / "artifacts",
+            output_path=tmp_path / "pack.json",
+            section_artifacts={"feature_lineage": feature_evidence},
+            feature_contracts=(contract,),
+        )
+    except ValueError as exc:
+        assert "feature_lineage evidence source is ambiguous" in str(exc)
+    else:
+        raise AssertionError("expected ambiguous feature_lineage source to be rejected")
 
 
 def test_release_evidence_pack_marks_contaminated_audit_as_terminal(
@@ -748,6 +969,101 @@ def test_release_evidence_pack_cli_accepts_deliberation_transcript(
         output.parent / "deliberation-transcript-production-evidence.json"
     )
     assert sections["deliberation_transcript"]["status"] == "ok"
+
+
+def test_release_evidence_pack_cli_accepts_frozen_blueprint(
+    tmp_path: Path,
+) -> None:
+    from xmuse.release_evidence_pack import main
+
+    artifacts = tmp_path / "artifacts"
+    output = tmp_path / "pack.json"
+    blueprint = _write_blueprint(
+        tmp_path / "blueprint" / "mission-blueprint.json",
+        status=MissionBlueprintStatus.FROZEN,
+    )
+    _write_json(
+        artifacts / "github-server-truth.json",
+        _gate(
+            gate_id="github-server-truth",
+            kind="github_server_truth",
+            status="ok",
+            proof_level="server_side_enforcement_proof",
+        ),
+    )
+
+    assert (
+        main(
+            [
+                "--artifacts-dir",
+                str(artifacts),
+                "--output",
+                str(output),
+                "--run-id",
+                "overnight-cli-pack",
+                "--frozen-blueprint",
+                str(blueprint),
+            ]
+        )
+        == 0
+    )
+
+    pack = json.loads(output.read_text(encoding="utf-8"))
+    replay = json.loads(
+        (output.parent / "overnight-replay-bundle.json").read_text(encoding="utf-8")
+    )
+    sections = {section["section_id"]: section for section in replay["sections"]}
+    assert pack["source_reports"]["frozen_blueprint_evidence"] == str(
+        output.parent / "frozen-blueprint-production-evidence.json"
+    )
+    assert sections["frozen_blueprint"]["status"] == "ok"
+
+
+def test_release_evidence_pack_cli_accepts_feature_contract(
+    tmp_path: Path,
+) -> None:
+    from xmuse.release_evidence_pack import main
+
+    artifacts = tmp_path / "artifacts"
+    output = tmp_path / "pack.json"
+    contract = _write_feature_contract(
+        tmp_path / "feature" / "feature-owner-contract.json"
+    )
+    _write_json(
+        artifacts / "github-server-truth.json",
+        _gate(
+            gate_id="github-server-truth",
+            kind="github_server_truth",
+            status="ok",
+            proof_level="server_side_enforcement_proof",
+        ),
+    )
+
+    assert (
+        main(
+            [
+                "--artifacts-dir",
+                str(artifacts),
+                "--output",
+                str(output),
+                "--run-id",
+                "overnight-cli-pack",
+                "--feature-contract",
+                str(contract),
+            ]
+        )
+        == 0
+    )
+
+    pack = json.loads(output.read_text(encoding="utf-8"))
+    replay = json.loads(
+        (output.parent / "overnight-replay-bundle.json").read_text(encoding="utf-8")
+    )
+    sections = {section["section_id"]: section for section in replay["sections"]}
+    assert pack["source_reports"]["feature_lineage_evidence"] == str(
+        output.parent / "feature-lineage-production-evidence.json"
+    )
+    assert sections["feature_lineage"]["status"] == "ok"
 
 
 def test_release_evidence_pack_cli_script_is_registered() -> None:

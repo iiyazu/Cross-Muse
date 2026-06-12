@@ -399,6 +399,16 @@ Current implementation status:
   rules, so deterministic replay, single-GOD transcripts, missing provider
   session metadata, bounded selected runtime, or unresolved blockers remain
   weak/blocked evidence.
+- `uv run xmuse-release-evidence-pack --frozen-blueprint <blueprint>` now
+  converts a `mission_blueprint.v1` artifact into replay-ready
+  `frozen_blueprint` production evidence before assembling the nested replay
+  bundle. Draft or otherwise unfrozen blueprints remain `manual_gap`, so the
+  pack cannot turn readiness or a rendered blueprint into freeze proof.
+- `uv run xmuse-release-evidence-pack --feature-contract <contract>` now
+  converts serialized `xmuse.feature_owner_execution_contract.v1` artifacts
+  into replay-ready `feature_lineage` production evidence before assembling the
+  nested replay bundle. Missing, invalid, or projection-authority contracts
+  remain `manual_gap`; graph-native feature owner contracts stay the authority.
 - `uv run xmuse-memoryos-governance-evidence-capture` exports governed
   MemoryOS writeback events or governed write plans into a replay-ready
   `xmuse.production_evidence.v1` artifact for the `memory_governance` section.
@@ -567,6 +577,14 @@ Tasks:
   `--memoryos-writeback-event EVENT` for the final handoff pack; do not pass
   those inputs together with an explicit
   `--section-artifact memory_governance=...`.
+- When a frozen mission blueprint artifact exists, prefer
+  `uv run xmuse-release-evidence-pack --frozen-blueprint BLUEPRINT` for the
+  final handoff pack; do not pass it together with an explicit
+  `--section-artifact frozen_blueprint=...`.
+- When feature owner execution contract artifacts exist, prefer repeated
+  `--feature-contract CONTRACT` inputs on `uv run xmuse-release-evidence-pack`
+  for the final handoff pack; do not pass them together with an explicit
+  `--section-artifact feature_lineage=...`.
 - Update walkthrough/evidence docs under `docs/xmuse/`.
 - Run focused tests for every changed surface.
 - Always run:

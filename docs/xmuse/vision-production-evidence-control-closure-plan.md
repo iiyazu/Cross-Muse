@@ -538,6 +538,14 @@ Current implementation status:
   natural deliberation gate rules still block deterministic replay, single-GOD
   transcripts, missing provider session metadata, bounded selected runtime, and
   unresolved blockers.
+- The same release pack command can accept `--frozen-blueprint` and repeated
+  `--feature-contract` inputs, convert them through
+  `xmuse-frozen-blueprint-evidence-capture` and
+  `xmuse-feature-lineage-evidence-capture`, and attach the generated artifacts
+  as the replay bundle's `frozen_blueprint` and `feature_lineage` sections.
+  This reduces handoff friction after blueprint freeze and feature graph owner
+  planning, but remains contract-level replay evidence and does not make TUI
+  rendering, `feature_lanes.json`, or lane projections authoritative.
 
 Acceptance:
 

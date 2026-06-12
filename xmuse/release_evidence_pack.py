@@ -109,6 +109,43 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--frozen-blueprint",
+        type=Path,
+        default=None,
+        help=(
+            "Optional mission_blueprint.v1 artifact to convert into the replay "
+            "bundle's frozen_blueprint section."
+        ),
+    )
+    parser.add_argument(
+        "--frozen-blueprint-evidence-output",
+        type=Path,
+        default=None,
+        help=(
+            "Optional path for the frozen blueprint production evidence "
+            "generated from --frozen-blueprint."
+        ),
+    )
+    parser.add_argument(
+        "--feature-contract",
+        type=Path,
+        action="append",
+        default=[],
+        help=(
+            "Feature owner execution contract JSON to convert into the replay "
+            "bundle's feature_lineage section. May be repeated."
+        ),
+    )
+    parser.add_argument(
+        "--feature-lineage-evidence-output",
+        type=Path,
+        default=None,
+        help=(
+            "Optional path for the feature lineage production evidence "
+            "generated from --feature-contract inputs."
+        ),
+    )
+    parser.add_argument(
         "--memoryos-governance-plan",
         type=Path,
         action="append",
@@ -159,6 +196,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         deliberation_transcript_evidence_output=(
             args.deliberation_transcript_evidence_output
         ),
+        frozen_blueprint=args.frozen_blueprint,
+        frozen_blueprint_evidence_output=args.frozen_blueprint_evidence_output,
+        feature_contracts=tuple(args.feature_contract),
+        feature_lineage_evidence_output=args.feature_lineage_evidence_output,
         memoryos_governance_plans=tuple(args.memoryos_governance_plan),
         memoryos_writeback_events=tuple(args.memoryos_writeback_event),
         memoryos_governance_evidence_output=args.memoryos_governance_evidence_output,

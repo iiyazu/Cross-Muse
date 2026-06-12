@@ -9,6 +9,12 @@ from typing import Any
 from xmuse_core.platform.deliberation_transcript_evidence_capture import (
     capture_deliberation_transcript_evidence,
 )
+from xmuse_core.platform.feature_lineage_evidence_capture import (
+    capture_feature_lineage_evidence,
+)
+from xmuse_core.platform.frozen_blueprint_evidence_capture import (
+    capture_frozen_blueprint_evidence,
+)
 from xmuse_core.platform.memoryos_governance_evidence_capture import (
     capture_memoryos_governance_evidence,
 )
@@ -38,6 +44,10 @@ def capture_release_evidence_pack(
     deliberation_transcript: str | Path | None = None,
     god_runtime_artifact: str | Path | None = None,
     deliberation_transcript_evidence_output: str | Path | None = None,
+    frozen_blueprint: str | Path | None = None,
+    frozen_blueprint_evidence_output: str | Path | None = None,
+    feature_contracts: tuple[str | Path, ...] = (),
+    feature_lineage_evidence_output: str | Path | None = None,
     memoryos_governance_plans: tuple[str | Path, ...] = (),
     memoryos_writeback_events: tuple[str | Path, ...] = (),
     memoryos_governance_evidence_output: str | Path | None = None,
@@ -64,6 +74,10 @@ def capture_release_evidence_pack(
         deliberation_transcript_evidence_output=(
             deliberation_transcript_evidence_output
         ),
+        frozen_blueprint=frozen_blueprint,
+        frozen_blueprint_evidence_output=frozen_blueprint_evidence_output,
+        feature_contracts=feature_contracts,
+        feature_lineage_evidence_output=feature_lineage_evidence_output,
         run_id=run_id,
         memoryos_governance_plans=memoryos_governance_plans,
         memoryos_writeback_events=memoryos_writeback_events,
@@ -126,6 +140,10 @@ def _replay_section_artifacts(
     deliberation_transcript: str | Path | None,
     god_runtime_artifact: str | Path | None,
     deliberation_transcript_evidence_output: str | Path | None,
+    frozen_blueprint: str | Path | None,
+    frozen_blueprint_evidence_output: str | Path | None,
+    feature_contracts: tuple[str | Path, ...],
+    feature_lineage_evidence_output: str | Path | None,
     run_id: str,
     memoryos_governance_plans: tuple[str | Path, ...],
     memoryos_writeback_events: tuple[str | Path, ...],
@@ -172,6 +190,44 @@ def _replay_section_artifacts(
         source_reports["deliberation_transcript_evidence"] = str(
             deliberation_evidence_path
         )
+    if frozen_blueprint is not None:
+        if "frozen_blueprint" in artifacts:
+            raise ValueError(
+                "frozen_blueprint evidence source is ambiguous: pass either "
+                "section_artifacts['frozen_blueprint'] or frozen_blueprint, not both"
+            )
+        frozen_blueprint_evidence_path = (
+            Path(frozen_blueprint_evidence_output)
+            if frozen_blueprint_evidence_output is not None
+            else report_dir / "frozen-blueprint-production-evidence.json"
+        )
+        capture_frozen_blueprint_evidence(
+            run_id=run_id,
+            output_path=frozen_blueprint_evidence_path,
+            blueprint_artifact=frozen_blueprint,
+        )
+        artifacts["frozen_blueprint"] = frozen_blueprint_evidence_path
+        source_reports["frozen_blueprint_evidence"] = str(
+            frozen_blueprint_evidence_path
+        )
+    if feature_contracts:
+        if "feature_lineage" in artifacts:
+            raise ValueError(
+                "feature_lineage evidence source is ambiguous: pass either "
+                "section_artifacts['feature_lineage'] or feature_contracts, not both"
+            )
+        feature_lineage_evidence_path = (
+            Path(feature_lineage_evidence_output)
+            if feature_lineage_evidence_output is not None
+            else report_dir / "feature-lineage-production-evidence.json"
+        )
+        capture_feature_lineage_evidence(
+            run_id=run_id,
+            output_path=feature_lineage_evidence_path,
+            contract_artifacts=feature_contracts,
+        )
+        artifacts["feature_lineage"] = feature_lineage_evidence_path
+        source_reports["feature_lineage_evidence"] = str(feature_lineage_evidence_path)
     if memoryos_governance_plans or memoryos_writeback_events:
         if "memory_governance" in artifacts:
             raise ValueError(
