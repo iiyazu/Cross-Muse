@@ -455,6 +455,12 @@ Current implementation status:
 - `xmuse-live-gate-status-capture` accepts the same guard through
   `XMUSE_GITHUB_TRUTH_EXPECTED_HEAD_SHA` when it performs configured GitHub
   server-truth capture.
+- `uv run xmuse-live-gate-status-capture` can also receive the GitHub target
+  explicitly through `--github-repo`, `--github-pull-request`,
+  `--github-base-branch`, repeated `--github-required-check`, and
+  `--github-expected-head-sha`. These flags only populate the same
+  `XMUSE_GITHUB_TRUTH_*` capture inputs for this invocation; they do not create
+  review truth, merge truth, or `pr_merged`.
 - The release gate source refs now include the actual GitHub head SHA, and
   include the expected head SHA when provided. These refs are evidence links,
   not merge truth.

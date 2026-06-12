@@ -357,6 +357,60 @@ def test_live_gate_status_capture_cli_script_is_registered() -> None:
     )
 
 
+def test_live_gate_status_capture_cli_accepts_github_truth_target_flags(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    from xmuse import live_gate_status_capture as cli
+
+    captured: dict[str, Any] = {}
+
+    def fake_capture_live_gate_status(*, output_dir: Path, env: dict[str, str]):
+        captured["output_dir"] = output_dir
+        captured["env"] = env
+        return {
+            "schema_version": "xmuse.live_gate_status_capture.v1",
+            "artifact_count": 0,
+            "artifacts": [],
+        }
+
+    monkeypatch.setattr(cli, "capture_live_gate_status", fake_capture_live_gate_status)
+
+    assert (
+        cli.main(
+            [
+                "--output-dir",
+                str(tmp_path),
+                "--github-repo",
+                "iiyazu/Cross-Muse",
+                "--github-pull-request",
+                "43",
+                "--github-base-branch",
+                "main",
+                "--github-required-check",
+                "quality-gates",
+                "--github-required-check",
+                "contract-smoke-gates",
+                "--github-required-check",
+                "real-runtime-integration-gate",
+                "--github-expected-head-sha",
+                "head-sha",
+            ]
+        )
+        == 0
+    )
+
+    assert captured["output_dir"] == tmp_path
+    env = captured["env"]
+    assert env["XMUSE_GITHUB_TRUTH_REPO"] == "iiyazu/Cross-Muse"
+    assert env["XMUSE_GITHUB_TRUTH_PULL_REQUEST"] == "43"
+    assert env["XMUSE_GITHUB_TRUTH_BASE_BRANCH"] == "main"
+    assert env["XMUSE_GITHUB_TRUTH_REQUIRED_CHECKS"] == (
+        "quality-gates,contract-smoke-gates,real-runtime-integration-gate"
+    )
+    assert env["XMUSE_GITHUB_TRUTH_EXPECTED_HEAD_SHA"] == "head-sha"
+
+
 def _fake_runner(results: dict[str, ProbeResult]):
     def run(command: tuple[str, ...]) -> ProbeResult:
         key = " ".join(command)

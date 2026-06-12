@@ -354,6 +354,10 @@ Current implementation status:
   runs the opt-in read-only GitHub server truth collector and can write a
   `github_server_truth` gate with `server_side_enforcement_proof`; it still
   cannot create review truth, merge truth, or `pr_merged`.
+- The same GitHub target can be supplied per invocation with
+  `--github-repo`, `--github-pull-request`, `--github-base-branch`, repeated
+  `--github-required-check`, and `--github-expected-head-sha`; these flags only
+  populate the capture input and do not weaken merge/review truth semantics.
 - When `XMUSE_MEMORYOS_LIVE_TRACE_ARTIFACT`,
   `XMUSE_NATURAL_GOD_TRANSCRIPT_PATH`, or
   `XMUSE_REAL_PROVIDER_RUNTIME_ARTIFACT` point at existing artifacts, it

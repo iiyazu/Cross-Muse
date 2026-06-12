@@ -255,6 +255,22 @@ satisfy `server_side_enforcement_proof` when branch protection/ruleset and
 required-check truth are captured. It still cannot create review truth, merge
 truth, or `pr_merged`.
 
+For one-off operator runs, the same GitHub target may be supplied directly:
+
+```bash
+uv run xmuse-live-gate-status-capture \
+  --github-repo iiyazu/Cross-Muse \
+  --github-pull-request <pr-number> \
+  --github-base-branch main \
+  --github-required-check quality-gates \
+  --github-required-check contract-smoke-gates \
+  --github-required-check real-runtime-integration-gate \
+  --github-expected-head-sha "$(git rev-parse HEAD)"
+```
+
+These flags populate the same `XMUSE_GITHUB_TRUTH_*` inputs for that command
+invocation only; they do not bypass review truth, merge truth, or `pr_merged`.
+
 When `XMUSE_MEMORYOS_LIVE_TRACE_ARTIFACT`,
 `XMUSE_NATURAL_GOD_TRANSCRIPT_PATH`, or `XMUSE_REAL_PROVIDER_RUNTIME_ARTIFACT`
 point at existing artifacts, the command validates and converts those artifacts
