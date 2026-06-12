@@ -366,6 +366,32 @@ and missing restart/resume evidence write blocked `manual_gap` gates. A real
 soak artifact with unresolved blockers keeps `real_provider_proof` but remains
 blocked.
 
+### MemoryOS Lite Live Release Gate
+
+New command:
+
+```text
+uv run xmuse-memoryos-live-gate-capture \
+  --artifact <xmuse.memoryos_lite_trace.v1.json> \
+  --output <gate.json>
+```
+
+The command converts an explicit live MemoryOS Lite trace artifact into the
+`live_memoryos` release gate. It emits an `ok` gate only when:
+
+- `schema_version` is `xmuse.memoryos_lite_trace.v1`;
+- `proof_level` is `live_service_proof`;
+- `namespace_uri` is a `memory://` URI;
+- `session_id` is present;
+- trace events are non-empty and not fixture/local/contract events;
+- source refs tie the trace to xmuse workflow evidence;
+- no unresolved trace blockers remain.
+
+Contract proof, fixture/local trace events, empty trace events, invalid
+namespace/session evidence, and malformed token counts write blocked
+`manual_gap` gates. A live trace artifact with unresolved blockers keeps
+`live_service_proof` but remains blocked.
+
 ## Proof-Level Summary
 
 | Surface | Current proof | Boundary |
@@ -382,6 +408,7 @@ blocked.
 | Release readiness evaluator | `contract_proof` | Blocks proof contamination; no live gate captured. |
 | Live gate status capture command | `contract_proof` | Captures configured/missing gate status as `manual_gap` blocker artifacts; does not create live proof. |
 | Release readiness capture command | `contract_proof` | Aggregates and redacts supplied gate artifacts; does not capture live services by itself. |
+| MemoryOS Lite live gate command | `contract_proof` | Converts explicit live MemoryOS Lite trace artifacts into a `live_memoryos` gate; fixture/local/empty traces remain blocked. |
 | Internal review release gate command | `contract_proof` | Converts a verified structured internal review artifact into `internal_review_proof`; does not replace GitHub enforcement. |
 | Natural GOD deliberation gate command | `contract_proof` | Converts explicit natural transcript artifacts into a `natural_deliberation` gate; deterministic replay and single-GOD artifacts remain blocked. |
 | Real provider runtime gate command | `contract_proof` | Converts explicit real-provider runtime soak artifacts into a `real_provider` gate; fake/stdout/local artifacts remain blocked. |

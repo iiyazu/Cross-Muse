@@ -142,6 +142,30 @@ This command does not run MemoryOS, GitHub server-truth, Ray/Codex/OpenCode, or
 natural GOD transcript proof. It creates honest blocker artifacts for the
 release-readiness report.
 
+## MemoryOS Lite Live Release Gate
+
+After a live MemoryOS Lite create/ingest/build-context/trace run has written an
+`xmuse.memoryos_lite_trace.v1` artifact, convert it to a release gate artifact:
+
+```bash
+uv run xmuse-memoryos-live-gate-capture \
+  --artifact xmuse/work/release_readiness/memoryos-trace.json \
+  --output xmuse/work/release_readiness/artifacts/live-memoryos.json
+```
+
+The trace artifact must carry `proof_level: live_service_proof`, a `memory://`
+namespace URI, a session id, non-empty trace events, and source refs tying the
+trace back to xmuse workflow evidence. Contract traces, fixture/local events,
+empty trace events, or malformed token counts write a blocked `manual_gap`
+gate.
+
+If the live trace artifact has unresolved blockers, the gate keeps
+`live_service_proof` but remains `blocked`, so release readiness cannot become
+`ready` until the blockers are resolved.
+
+This command does not start MemoryOS Lite. It only validates and converts an
+existing live trace artifact.
+
 ## GitHub Server Truth Release Gate
 
 After a draft PR exists, capture GitHub server truth into both a raw GitHub

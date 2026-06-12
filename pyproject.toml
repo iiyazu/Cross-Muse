@@ -21,6 +21,7 @@ dependencies = [
 [project.scripts]
 xmuse-chat-api = "xmuse.chat_api:main"
 xmuse-internal-review-gate-capture = "xmuse.internal_review_gate_capture:main"
+xmuse-memoryos-live-gate-capture = "xmuse.memoryos_live_gate_capture:main"
 xmuse-mcp-server = "xmuse.mcp_server:main"
 xmuse-live-gate-status-capture = "xmuse.live_gate_status_capture:main"
 xmuse-natural-deliberation-gate-capture = "xmuse.natural_deliberation_gate_capture:main"

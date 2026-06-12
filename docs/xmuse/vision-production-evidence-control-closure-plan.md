@@ -286,6 +286,10 @@ Current implementation status:
   release gate. It requires `real_provider_proof`, MCP writeback, real
   non-fake transport/backend metadata, ordered stage timings, and
   restart/resume provider-session reuse.
+- `uv run xmuse-memoryos-live-gate-capture` converts an explicit
+  `xmuse.memoryos_lite_trace.v1` artifact into the `live_memoryos` release gate.
+  It requires `live_service_proof`, a `memory://` namespace, session id,
+  non-empty trace events, source refs, and no unresolved blockers.
 
 ## S5 - Natural GOD Transcript And Freeze Path
 
@@ -358,6 +362,10 @@ Current implementation status:
   runtime soak artifact into the `real_provider` release gate. It blocks
   contract/fake proof, stdout fallback, missing MCP writeback, missing ordered
   stage timings, and missing restart/resume evidence.
+- `uv run xmuse-memoryos-live-gate-capture` converts a live MemoryOS Lite trace
+  artifact into the `live_memoryos` release gate. It blocks contract/fake proof,
+  empty trace events, invalid namespace/session evidence, and unresolved
+  blockers.
 - `uv run xmuse-release-readiness-capture` reads JSON release gate artifacts
   from an artifact directory, writes a redacted report, and evaluates the gates
   with the same proof-level rules as `evaluate_release_readiness`.
