@@ -6,6 +6,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from xmuse_core.platform.memoryos_governance_evidence_capture import (
+    capture_memoryos_governance_evidence,
+)
 from xmuse_core.platform.overnight_replay_bundle_capture import (
     capture_overnight_replay_bundle,
 )
@@ -29,6 +32,9 @@ def capture_release_evidence_pack(
     section_artifacts: Mapping[str, str | Path] | None = None,
     supervisor_snapshot: str | Path | None = None,
     supervisor_evidence_output: str | Path | None = None,
+    memoryos_governance_plans: tuple[str | Path, ...] = (),
+    memoryos_writeback_events: tuple[str | Path, ...] = (),
+    memoryos_governance_evidence_output: str | Path | None = None,
     tombstoned_source_refs: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     output = Path(output_path)
@@ -47,6 +53,10 @@ def capture_release_evidence_pack(
         section_artifacts=section_artifacts,
         supervisor_snapshot=supervisor_snapshot,
         supervisor_evidence_output=supervisor_evidence_output,
+        run_id=run_id,
+        memoryos_governance_plans=memoryos_governance_plans,
+        memoryos_writeback_events=memoryos_writeback_events,
+        memoryos_governance_evidence_output=memoryos_governance_evidence_output,
     )
 
     readiness = capture_release_readiness(
@@ -102,6 +112,10 @@ def _replay_section_artifacts(
     section_artifacts: Mapping[str, str | Path] | None,
     supervisor_snapshot: str | Path | None,
     supervisor_evidence_output: str | Path | None,
+    run_id: str,
+    memoryos_governance_plans: tuple[str | Path, ...],
+    memoryos_writeback_events: tuple[str | Path, ...],
+    memoryos_governance_evidence_output: str | Path | None,
 ) -> tuple[dict[str, str | Path] | None, dict[str, str]]:
     artifacts = dict(section_artifacts or {})
     source_reports: dict[str, str] = {}
@@ -122,6 +136,26 @@ def _replay_section_artifacts(
         )
         artifacts["supervisor"] = supervisor_evidence_path
         source_reports["overnight_supervisor_evidence"] = str(supervisor_evidence_path)
+    if memoryos_governance_plans or memoryos_writeback_events:
+        if "memory_governance" in artifacts:
+            raise ValueError(
+                "memory_governance evidence source is ambiguous: pass either "
+                "section_artifacts['memory_governance'] or MemoryOS governance "
+                "plan/writeback inputs, not both"
+            )
+        memoryos_governance_path = (
+            Path(memoryos_governance_evidence_output)
+            if memoryos_governance_evidence_output is not None
+            else report_dir / "memoryos-governance-production-evidence.json"
+        )
+        capture_memoryos_governance_evidence(
+            run_id=run_id,
+            output_path=memoryos_governance_path,
+            plan_artifacts=memoryos_governance_plans,
+            writeback_event_artifacts=memoryos_writeback_events,
+        )
+        artifacts["memory_governance"] = memoryos_governance_path
+        source_reports["memoryos_governance_evidence"] = str(memoryos_governance_path)
     return (artifacts or None), source_reports
 
 

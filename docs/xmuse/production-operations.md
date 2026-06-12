@@ -567,17 +567,36 @@ uv run xmuse-release-evidence-pack \
   --output xmuse/work/release_readiness/evidence-pack.json
 ```
 
-The command writes three ignored runtime-state reports:
+The command writes ignored runtime-state reports:
 
 - `evidence-pack.json`;
 - `release-readiness.json`;
-- `proof-contamination-audit.json`.
+- `proof-contamination-audit.json`;
+- `overnight-replay-bundle.json`.
 
 The pack decision is `contaminated` when the proof audit finds contamination.
 Otherwise it mirrors the release-readiness decision: `ready`, `blocked`, or
 `not_evaluated`. This command aggregates existing release-gate artifacts only;
 it does not start live services, call GitHub, run providers, or turn
 `manual_gap` blockers into production proof.
+
+For long `/goal` handoff packs, the command can also convert explicit replay
+section inputs before assembling the nested overnight replay bundle:
+
+```bash
+uv run xmuse-release-evidence-pack \
+  --artifacts-dir xmuse/work/release_readiness/artifacts \
+  --output xmuse/work/release_readiness/evidence-pack.json \
+  --supervisor-snapshot xmuse/work/release_readiness/overnight-supervisor.json \
+  --memoryos-writeback-event xmuse/work/release_readiness/memoryos-writeback-event.json
+```
+
+`--supervisor-snapshot` generates the replay `supervisor` section from a durable
+`xmuse.overnight_supervisor.v1` snapshot. `--memoryos-governance-plan` and
+`--memoryos-writeback-event` generate the replay `memory_governance` section
+from governed MemoryOS policy inputs. These conversions are contract-level
+handoff evidence only; they do not create live MemoryOS trace proof and must not
+be passed together with an explicit `--section-artifact` for the same section.
 
 The same capture is available through the TUI operator action surface:
 

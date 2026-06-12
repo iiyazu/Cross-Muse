@@ -4,6 +4,8 @@ import json
 import tomllib
 from pathlib import Path
 
+from xmuse_core.integrations.memoryos_events import MemoryOSWritebackEvent
+from xmuse_core.integrations.memoryos_namespace import conversation_namespace
 from xmuse_core.platform.overnight_operator_supervisor import (
     OvernightSupervisor,
     OvernightSupervisorConfig,
@@ -72,6 +74,19 @@ def _write_supervisor_snapshot(tmp_path: Path, *, run_id: str) -> Path:
         source_refs=["goal:stage:S4"],
     )
     return tmp_path / f"overnight-supervisor-{run_id}.json"
+
+
+def _write_memoryos_event(path: Path) -> Path:
+    event = MemoryOSWritebackEvent(
+        kind="blueprint_frozen",
+        namespace=conversation_namespace("conv-1"),
+        actor_id="god-architect",
+        event_id="bp-1",
+        summary="Blueprint bp-1 was frozen.",
+        source_refs=["message:proposal-1", "blueprint:bp-1"],
+    )
+    _write_json(path, event.model_dump(mode="json"))
+    return path
 
 
 def _gate(
@@ -215,6 +230,49 @@ def test_release_evidence_pack_converts_supervisor_snapshot_into_replay_section(
     assert sections["supervisor"]["artifacts"][0] == str(snapshot)
 
 
+def test_release_evidence_pack_converts_memoryos_writeback_events_into_replay_section(
+    tmp_path: Path,
+) -> None:
+    artifacts = tmp_path / "artifacts"
+    output = tmp_path / "pack" / "evidence-pack.json"
+    event_path = _write_memoryos_event(tmp_path / "events" / "blueprint-event.json")
+    _write_json(
+        artifacts / "github-server-truth.json",
+        _gate(
+            gate_id="github-server-truth",
+            kind="github_server_truth",
+            status="ok",
+            proof_level="server_side_enforcement_proof",
+        ),
+    )
+
+    pack = capture_release_evidence_pack(
+        artifacts_dir=artifacts,
+        output_path=output,
+        run_id="pack-memoryos-governance",
+        memoryos_writeback_events=(event_path,),
+    )
+
+    memoryos_evidence = output.parent / "memoryos-governance-production-evidence.json"
+    replay = json.loads(
+        (output.parent / "overnight-replay-bundle.json").read_text(encoding="utf-8")
+    )
+    sections = {section["section_id"]: section for section in replay["sections"]}
+    assert memoryos_evidence.exists()
+    assert pack["source_reports"]["memoryos_governance_evidence"] == str(
+        memoryos_evidence
+    )
+    assert sections["memory_governance"]["status"] == "ok"
+    assert sections["memory_governance"]["proof_level"] == "contract_proof"
+    assert sections["memory_governance"]["source_authority"] == (
+        "memoryos_governance_policy"
+    )
+    assert sections["memory_governance"]["artifacts"] == [
+        str(event_path),
+        str(memoryos_evidence),
+    ]
+
+
 def test_release_evidence_pack_rejects_ambiguous_supervisor_sources(
     tmp_path: Path,
 ) -> None:
@@ -244,6 +302,34 @@ def test_release_evidence_pack_rejects_ambiguous_supervisor_sources(
         assert "supervisor evidence source is ambiguous" in str(exc)
     else:
         raise AssertionError("expected ambiguous supervisor source to be rejected")
+
+
+def test_release_evidence_pack_rejects_ambiguous_memoryos_governance_sources(
+    tmp_path: Path,
+) -> None:
+    event_path = _write_memoryos_event(tmp_path / "events" / "blueprint-event.json")
+    memoryos_governance = tmp_path / "memoryos-governance-production-evidence.json"
+    _write_section_evidence(
+        memoryos_governance,
+        section_id="memory_governance",
+        status="ok",
+        proof_level="contract_proof",
+        source_authority="memoryos_governance_policy",
+        source_refs=["memory-governance:plan:blueprint-event"],
+        summary="MemoryOS governance captured.",
+    )
+
+    try:
+        capture_release_evidence_pack(
+            artifacts_dir=tmp_path / "artifacts",
+            output_path=tmp_path / "pack.json",
+            section_artifacts={"memory_governance": memoryos_governance},
+            memoryos_writeback_events=(event_path,),
+        )
+    except ValueError as exc:
+        assert "memory_governance evidence source is ambiguous" in str(exc)
+    else:
+        raise AssertionError("expected ambiguous memory_governance source to be rejected")
 
 
 def test_release_evidence_pack_marks_contaminated_audit_as_terminal(
@@ -412,6 +498,51 @@ def test_release_evidence_pack_cli_accepts_supervisor_snapshot(
         output.parent / "supervisor-production-evidence.json"
     )
     assert sections["supervisor"]["status"] == "ok"
+
+
+def test_release_evidence_pack_cli_accepts_memoryos_writeback_event(
+    tmp_path: Path,
+) -> None:
+    from xmuse.release_evidence_pack import main
+
+    artifacts = tmp_path / "artifacts"
+    output = tmp_path / "pack.json"
+    event_path = _write_memoryos_event(tmp_path / "events" / "blueprint-event.json")
+    _write_json(
+        artifacts / "github-server-truth.json",
+        _gate(
+            gate_id="github-server-truth",
+            kind="github_server_truth",
+            status="ok",
+            proof_level="server_side_enforcement_proof",
+        ),
+    )
+
+    assert (
+        main(
+            [
+                "--artifacts-dir",
+                str(artifacts),
+                "--output",
+                str(output),
+                "--run-id",
+                "overnight-cli-pack",
+                "--memoryos-writeback-event",
+                str(event_path),
+            ]
+        )
+        == 0
+    )
+
+    pack = json.loads(output.read_text(encoding="utf-8"))
+    replay = json.loads(
+        (output.parent / "overnight-replay-bundle.json").read_text(encoding="utf-8")
+    )
+    sections = {section["section_id"]: section for section in replay["sections"]}
+    assert pack["source_reports"]["memoryos_governance_evidence"] == str(
+        output.parent / "memoryos-governance-production-evidence.json"
+    )
+    assert sections["memory_governance"]["status"] == "ok"
 
 
 def test_release_evidence_pack_cli_script_is_registered() -> None:

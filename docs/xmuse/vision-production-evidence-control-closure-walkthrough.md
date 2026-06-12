@@ -712,6 +712,32 @@ xmuse/__init__.py absent
 The warning is the existing Starlette/httpx deprecation warning from FastAPI
 `TestClient`.
 
+## Latest Handoff Pack Slice
+
+`xmuse-release-evidence-pack` can now convert governed MemoryOS policy inputs
+directly into the nested replay bundle's `memory_governance` section:
+
+```bash
+uv run xmuse-release-evidence-pack \
+  --artifacts-dir xmuse/work/release_readiness/artifacts \
+  --output xmuse/work/release_readiness/evidence-pack.json \
+  --memoryos-writeback-event xmuse/work/release_readiness/memoryos-writeback-event.json
+```
+
+The matching core API accepts `memoryos_governance_plans` and
+`memoryos_writeback_events`. The CLI also accepts repeated
+`--memoryos-governance-plan` and `--memoryos-writeback-event`, plus
+`--memoryos-governance-evidence-output` for an explicit generated artifact
+path. Passing these inputs together with
+`--section-artifact memory_governance=...` is rejected as ambiguous.
+
+This conversion calls the existing MemoryOS governance evidence capture path and
+records the generated `xmuse.production_evidence.v1` artifact in
+`source_reports["memoryos_governance_evidence"]`. It is contract-level
+governance/replay evidence only. It does not call MemoryOS Lite, does not create
+`live_service_proof`, and does not satisfy the separate `live_memoryos` release
+gate.
+
 ## Remaining Production Gaps
 
 - Chat API and MCP mutating routes now have Auth/RBAC plus a production

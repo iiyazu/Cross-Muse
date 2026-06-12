@@ -523,6 +523,13 @@ Current implementation status:
   supervisor production evidence before building the nested replay bundle. This
   removes a manual handoff step but remains contract-level supervisor evidence,
   not live overnight proof.
+- The same release pack command can also accept repeated
+  `--memoryos-governance-plan` and `--memoryos-writeback-event` inputs, convert
+  them through `xmuse-memoryos-governance-evidence-capture`, and attach the
+  generated artifact as the replay bundle's `memory_governance` section. This
+  reduces handoff friction after governed MemoryOS writes, but remains
+  contract-level governance evidence and does not create live MemoryOS trace
+  proof.
 
 Acceptance:
 

@@ -385,6 +385,12 @@ Current implementation status:
   supervisor production evidence before assembling the nested replay bundle.
   This reduces handoff friction after a long `/goal` run while keeping the
   snapshot conversion explicit and contract-level.
+- `uv run xmuse-release-evidence-pack --memoryos-governance-plan <plan>` and
+  `--memoryos-writeback-event <event>` now convert governed MemoryOS policy
+  inputs into replay-ready `memory_governance` production evidence before
+  assembling the nested replay bundle. This reduces handoff friction after
+  governed writeback events while keeping MemoryOS governance separate from
+  live MemoryOS trace proof.
 - `uv run xmuse-memoryos-governance-evidence-capture` exports governed
   MemoryOS writeback events or governed write plans into a replay-ready
   `xmuse.production_evidence.v1` artifact for the `memory_governance` section.
@@ -543,6 +549,11 @@ Tasks:
   `uv run xmuse-release-evidence-pack --supervisor-snapshot SNAPSHOT` for the
   final handoff pack; do not pass both `--supervisor-snapshot` and an explicit
   `--section-artifact supervisor=...`.
+- When governed MemoryOS write plans or writeback events exist, prefer
+  `uv run xmuse-release-evidence-pack --memoryos-governance-plan PLAN` or
+  `--memoryos-writeback-event EVENT` for the final handoff pack; do not pass
+  those inputs together with an explicit
+  `--section-artifact memory_governance=...`.
 - Update walkthrough/evidence docs under `docs/xmuse/`.
 - Run focused tests for every changed surface.
 - Always run:

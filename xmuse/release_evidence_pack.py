@@ -82,6 +82,35 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--memoryos-governance-plan",
+        type=Path,
+        action="append",
+        default=[],
+        help=(
+            "MemoryOS governed write plan JSON to convert into the replay "
+            "bundle's memory_governance section. May be repeated."
+        ),
+    )
+    parser.add_argument(
+        "--memoryos-writeback-event",
+        type=Path,
+        action="append",
+        default=[],
+        help=(
+            "MemoryOS writeback event JSON to convert into the replay "
+            "bundle's memory_governance section. May be repeated."
+        ),
+    )
+    parser.add_argument(
+        "--memoryos-governance-evidence-output",
+        type=Path,
+        default=None,
+        help=(
+            "Optional path for the MemoryOS governance production evidence "
+            "generated from MemoryOS plan/writeback inputs."
+        ),
+    )
+    parser.add_argument(
         "--tombstoned-source-ref",
         action="append",
         default=[],
@@ -98,6 +127,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         section_artifacts=_section_artifacts(args.section_artifact),
         supervisor_snapshot=args.supervisor_snapshot,
         supervisor_evidence_output=args.supervisor_evidence_output,
+        memoryos_governance_plans=tuple(args.memoryos_governance_plan),
+        memoryos_writeback_events=tuple(args.memoryos_writeback_event),
+        memoryos_governance_evidence_output=args.memoryos_governance_evidence_output,
         tombstoned_source_refs=tuple(args.tombstoned_source_ref),
     )
     print(json.dumps({"decision": pack["decision"], "output": str(args.output)}, sort_keys=True))
