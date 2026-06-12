@@ -362,6 +362,11 @@ Current implementation status:
   release gate artifacts and explicit `xmuse.production_evidence.v1` section
   artifacts. It fills unattached required sections with `manual_gap` instead of
   omitting them, so an overnight run can be replayed without prose-only gaps.
+- `uv run xmuse-overnight-supervisor-evidence-capture` exports a supervisor
+  snapshot into a replay-ready `xmuse.production_evidence.v1` artifact. This
+  can satisfy the replay bundle's `supervisor` section with contract-level
+  heartbeat/checkpoint evidence while preserving any live gate `manual_gap`
+  artifacts as separate blockers.
 - Existing redaction, tombstone filtering, REST-first MemoryOS Lite interop,
   and no-`memoryos_lite` package boundary rules remain in force. Live MemoryOS
   trace capture is still a configured live gate: when it is not configured, the
@@ -466,6 +471,8 @@ Tasks:
   `uv run xmuse-release-evidence-pack`,
   `uv run xmuse-release-readiness-capture`, and
   `uv run xmuse-proof-contamination-audit` where appropriate.
+- Use `uv run xmuse-overnight-supervisor-evidence-capture --snapshot ...` to
+  turn the durable supervisor snapshot into explicit replay section evidence.
 - Use `uv run xmuse-overnight-replay-bundle-capture` to assemble the replay
   index from release gate artifacts and attached section evidence.
 - Update walkthrough/evidence docs under `docs/xmuse/`.
