@@ -61,11 +61,13 @@ Current provider boundary:
 - If OpenCode is invoked, use the confirmed command format:
 
 ```bash
-opencode --model opencode-go/deepseek-v4-flash:max run ...
+opencode run --model opencode-go/deepseek-v4-flash --variant max ...
 ```
 
-Do not use the obsolete `deepseek-v4-flash-max` or
-`opencode-go/deepseek-v4-flash-max` spellings.
+Do not use the obsolete `deepseek-v4-flash-max`,
+`opencode-go/deepseek-v4-flash-max`, or
+`opencode-go/deepseek-v4-flash:max` spellings. `max` is the OpenCode
+variant, not part of the model id.
 
 ## Proof Vocabulary
 
@@ -227,7 +229,7 @@ bounded provider work.
 - [ ] When using OpenCode, invoke exactly:
 
 ```bash
-opencode --model opencode-go/deepseek-v4-flash:max run ...
+opencode run --model opencode-go/deepseek-v4-flash --variant max ...
 ```
 
 - [ ] Record OpenCode output as bounded worker evidence unless persistent

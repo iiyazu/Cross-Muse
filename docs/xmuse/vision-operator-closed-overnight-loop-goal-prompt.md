@@ -55,7 +55,7 @@ Hard constraints:
 - Codex remains the production primary GOD provider boundary.
 - OpenCode remains bounded unless persistent peer-GOD semantics are proven.
 - If invoking OpenCode, use exactly:
-  opencode --model opencode-go/deepseek-v4-flash:max run ...
+  opencode run --model opencode-go/deepseek-v4-flash --variant max ...
 - Never label contract/fake/local evidence as live, server-side, natural, or
   real-provider proof.
 - Never render readiness as completed fact, especially merge_ready as

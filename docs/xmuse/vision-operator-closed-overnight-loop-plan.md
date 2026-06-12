@@ -256,7 +256,7 @@ Rules:
 - If invoking OpenCode, use exactly:
 
 ```bash
-opencode --model opencode-go/deepseek-v4-flash:max run ...
+opencode run --model opencode-go/deepseek-v4-flash --variant max ...
 ```
 
 Acceptance:

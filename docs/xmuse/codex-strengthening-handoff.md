@@ -11653,21 +11653,21 @@ import/config/runtime dependency。
 
 本轮继续追踪 long runtime evidence closure 的外部证据缺口。
 
-OpenCode harness 诊断:
+OpenCode harness 旧诊断:
 
 - 新增 ignored diagnostic stage manifest:
   `.goal-runs/DiagOpenCode/stage-manifest.json`。
 - 通过规定 harness 执行:
   `uv run python scripts/goal_stage_runner.py --stage-manifest /home/iiyatu/projects/python/xmuse/.goal-runs/DiagOpenCode/stage-manifest.json --engine opencode --repo-root /home/iiyatu/projects/python/xmuse --output .goal-runs/DiagOpenCode/result.json`
-- 实际 argv:
+- 当时实际 argv:
   `opencode --model opencode-go/deepseek-v4-flash:max run --format json --dir /home/iiyatu/projects/python/xmuse "Execute the attached goal stage prompt." --file .goal-runs/DiagOpenCode/result.json.prompt.txt`
 - 结果:
   `result.json.status == "blocked"`，returncode `1`。
 - OpenCode stdout error:
   `Unexpected server error. Check server logs for details.`，ref `err_3ba345cb`。
 - 结论:
-  no-op prompt 也失败，阻塞不依赖 S5e prompt 内容；当前 owner 是 OpenCode/DeepSeek
-  runtime operator，需要检查 provider/server/auth/model 后端状态。
+  这是旧命令格式下的历史失败记录。当前命令格式已纠偏为
+  `opencode run --model opencode-go/deepseek-v4-flash --variant max ...`。
 
 GitHub live/server-side proof availability:
 
@@ -11687,15 +11687,15 @@ GitHub live/server-side proof availability:
 当前 blocker:
 
 - OpenCode live stage blocker:
-  OpenCode CLI 可运行且版本为 `1.15.13`，但 `opencode-go/deepseek-v4-flash:max`
-  no-op stage 与 S5e stage 均返回 server error。
+  OpenCode CLI 可运行且版本为 `1.15.13`，但旧命令格式
+  `opencode-go/deepseek-v4-flash:max` 的 no-op stage 与 S5e stage 均返回 server error。
 - GitHub server-side merge proof blocker:
   仓库当前无 PR；没有真实 merge event/check-run/review 对象可验证 `pr_merged`。
 
 下一步 owner:
 
 - OpenCode/DeepSeek runtime operator:
-  修复 `opencode-go/deepseek-v4-flash:max` server/auth/model 后端错误，并重跑
+  使用 `opencode run --model opencode-go/deepseek-v4-flash --variant max ...` 重跑
   `.goal-runs/DiagOpenCode` 与各 stage harness。
 - GitHub operator:
   创建或提供一个真实 PR number，并在本机完成 `gh auth login`，然后运行:
@@ -11770,7 +11770,7 @@ Fresh review:
 
 仍未完成:
 
-- S5e stage harness 仍被 OpenCode server error 阻塞；之前记录的 canonical argv 为
+- S5e stage harness 在旧命令下被 OpenCode server error 阻塞；之前记录的旧 argv 为
   `opencode --model opencode-go/deepseek-v4-flash:max run --format json ...`，返回
   `Unexpected server error. Check server logs for details.`。
 - 尚未捕获真实 GitHub branch protection/ruleset/check-run/review/merge evidence；没有真实 PR
@@ -11818,8 +11818,8 @@ OpenCode-in 阻塞:
   `propose` / `ask` / `challenge`，设置 `state_write_allowed=False`，并在 OpenCode
   unavailable/auth/config/timeout/model failure 时记录 `fallback_cause` / `health_failure_kind`
   后 fallback 到 bounded Codex deliberation decision。
-  DeepSeek 默认模型标识同步为 `deepseek-v4-flash:max`，其中 `:max` 作为 flash 模型 variant，
-  不新增 provider/profile。
+  旧判断曾把 DeepSeek 默认模型写成 `deepseek-v4-flash:max`；当前规范已改为
+  `opencode-go/deepseek-v4-flash`，并通过独立 `--variant max` 传递 variant。
   这不是 OpenCode GOD/review/takeover/merge authority，也不是 live natural deliberation proof。
 - S5 GitHub server-side truth collector scaffold 已新增:
   `GitHubServerSideTruthEvidence`、`build_github_server_side_truth_gap(...)`、
@@ -11842,11 +11842,11 @@ OpenCode-in 阻塞:
   - 结果: `Success: no issues found in 3 source files`。
 - `uv run pytest tests/xmuse/test_provider_models.py tests/xmuse/test_provider_policy.py tests/xmuse/test_provider_support_level.py tests/xmuse/test_provider_read_contracts_module.py tests/xmuse/test_quality_gates_phase3.py tests/xmuse/test_mcp_server.py -q`
   - 结果: `62 passed, 1 warning`。
-- 按补充约束，将 DeepSeek 默认模型统一为 `deepseek-v4-flash:max`，其中 `:max` 是 flash
-  variant；不新增 provider/profile，不把 `max` 当作独立能力层。
+- 按后续实测纠偏，DeepSeek 默认模型统一为 `deepseek-v4-flash`；`max` 是 OpenCode
+  CLI 的独立 `--variant max` 参数，不拼进 model id。
 - 按补充约束，将 OpenCode adapter 的运行 package/provider 从 `deepseek` 固化为
-  `opencode-go`；命令必须按 `opencode --model opencode-go/deepseek-v4-flash:max run ...`
-  调用，inline
+  `opencode-go`；命令必须按
+  `opencode run --model opencode-go/deepseek-v4-flash --variant max ...` 调用，inline
   `OPENCODE_CONFIG_CONTENT.provider` 也必须使用 `opencode-go` key。
 - `rg -n 'deepseek-v4-flash-max|opencode-go/deepseek-v4-flash-max' src/xmuse_core tests/xmuse docs/xmuse scripts .env.example opencode.json -g '!*.pyc'`
   - 结果: 无输出，exit 1；旧 hyphen variant 已清空。
@@ -11863,10 +11863,11 @@ OpenCode-in 阻塞:
   `propose` / `ask` / `challenge`，并拒绝 `object`、`vote`、`decide`、`evidence`、
   `handoff` 和任何 `state_write` / `durable_writes` / `writeback` 请求。该函数只产出
   artifact，不写 chat storage 或 durable xmuse state。
-- S4 stage harness 已按规范执行:
+- S4 stage harness 曾按旧规范执行:
   `uv run python scripts/goal_stage_runner.py --stage-manifest /home/iiyatu/projects/python/xmuse/.goal-runs/S4/stage-manifest.json --engine opencode --repo-root /home/iiyatu/projects/python/xmuse --output .goal-runs/S4/result.json`
   - 结果: exit 2，`result.json.status == "blocked"`。
-  - 命令已使用 `opencode --model opencode-go/deepseek-v4-flash:max run ...`。
+  - 旧命令使用了 `opencode --model opencode-go/deepseek-v4-flash:max run ...`；
+    当前应使用 `opencode run --model opencode-go/deepseek-v4-flash --variant max ...`。
   - OpenCode 返回 `Unexpected server error. Check server logs for details.`，ref
     `err_57205a18`。
   - 结论: S4 local contract proof 已推进；S4 live OpenCode-in execution/review proof
@@ -11881,14 +11882,14 @@ OpenCode-in 阻塞:
   - `uv run ruff check .`
   - 结果: `All checks passed!`。
 - 按最新补充再次纠正 OpenCode 命令格式:
-  - 正确默认模型 id: `deepseek-v4-flash:max`
-  - 正确命令模型 ref: `opencode-go/deepseek-v4-flash:max`
-  - 正确命令顺序: `opencode --model opencode-go/deepseek-v4-flash:max run ...`
-  - 2026-06-11 再确认:
+  - 正确默认模型 id: `deepseek-v4-flash`
+  - 正确命令模型 ref: `opencode-go/deepseek-v4-flash`
+  - 正确命令顺序: `opencode run --model opencode-go/deepseek-v4-flash --variant max ...`
+  - 2026-06-11 后续实测确认:
     - adapter 实际生成:
-      `['opencode', '--model', 'opencode-go/deepseek-v4-flash:max', 'run', '--format', 'json', '--dir', '/home/iiyatu/projects/python/xmuse', 'Check command only.']`
+      `['opencode', 'run', '--model', 'opencode-go/deepseek-v4-flash', '--variant', 'max', '--format', 'json', '--dir', '/home/iiyatu/projects/python/xmuse', 'Check command only.']`
     - stage runner 实际生成:
-      `['opencode', '--model', 'opencode-go/deepseek-v4-flash:max', 'run', '--format', 'json', '--dir', '/home/iiyatu/projects/python/xmuse', 'Execute the attached goal stage prompt.', '--file', '/home/iiyatu/projects/python/xmuse/prompt.txt']`
+      `['opencode', 'run', '--model', 'opencode-go/deepseek-v4-flash', '--variant', 'max', '--format', 'json', '--dir', '/home/iiyatu/projects/python/xmuse', 'Execute the attached goal stage prompt.', '--file', '/home/iiyatu/projects/python/xmuse/prompt.txt']`
     - 针对性测试:
       `uv run pytest tests/xmuse/test_provider_opencode.py::test_opencode_adapter_builds_non_interactive_run_command tests/xmuse/test_provider_opencode.py::test_opencode_health_check_reports_ready_snapshot_when_smoke_succeeds tests/xmuse/test_goal_stage_runner.py::test_goal_stage_runner_opencode_message_does_not_get_consumed_as_file tests/xmuse/test_platform_agent_spawner.py::test_agent_spawner_uses_final_prompt_on_argv_for_opencode_provider -q`
     - 结果: `4 passed`。
@@ -11903,14 +11904,14 @@ OpenCode-in 阻塞:
     1. `normalize_bounded_deliberation_output(...)` 只信任
        `decision.allowed_speech_acts`，若 policy 误配可能放行 `decide` 等 forbidden act。
     2. `GOAL_OPENCODE_MODEL` env override 可能让 stage runner 偏离固定
-       `opencode-go/deepseek-v4-flash:max`。
+       `opencode-go/deepseek-v4-flash` + `--variant max`。
     3. `OpenCodeProviderAdapter` 仍可通过自定义 profile model 构造非 canonical model ref。
     4. 旧测试还验证过非 canonical model。
   - 修复:
     - bounded normalizer 内置 canonical set `{propose, ask, challenge}`，即使 policy 误配也拒绝
       forbidden act。
-    - stage runner 固定 `DEFAULT_OPENCODE_RUN_MODEL = "opencode-go/deepseek-v4-flash:max"`，
-      不再读取 `GOAL_OPENCODE_MODEL`。
+    - stage runner 固定 `DEFAULT_OPENCODE_RUN_MODEL = "opencode-go/deepseek-v4-flash"` 与
+      `DEFAULT_OPENCODE_RUN_VARIANT = "max"`，不再读取 `GOAL_OPENCODE_MODEL`。
     - OpenCode adapter 对非 canonical model ref 抛出 `ValueError`，避免命令漂移。
     - 增加 hostile env 端到端测试:
       `test_goal_stage_runner_run_stage_pins_opencode_model_with_hostile_env`。
@@ -11948,9 +11949,9 @@ MemoryOS 状态: 本轮未读取或修改 `/home/iiyatu/projects/python/memoryOS
 本轮先按用户确认的 canonical 命令重新验证 OpenCode 调用格式:
 
 - Adapter 实际生成:
-  `['opencode', '--model', 'opencode-go/deepseek-v4-flash:max', 'run', '--format', 'json', '--dir', '/home/iiyatu/projects/python/xmuse', 'Check command only.']`
+  `['opencode', 'run', '--model', 'opencode-go/deepseek-v4-flash', '--variant', 'max', '--format', 'json', '--dir', '/home/iiyatu/projects/python/xmuse', 'Check command only.']`
 - Stage runner 实际生成:
-  `['opencode', '--model', 'opencode-go/deepseek-v4-flash:max', 'run', '--format', 'json', '--dir', '/home/iiyatu/projects/python/xmuse', 'Execute the attached goal stage prompt.', '--file', '/home/iiyatu/projects/python/xmuse/prompt.txt']`
+  `['opencode', 'run', '--model', 'opencode-go/deepseek-v4-flash', '--variant', 'max', '--format', 'json', '--dir', '/home/iiyatu/projects/python/xmuse', 'Execute the attached goal stage prompt.', '--file', '/home/iiyatu/projects/python/xmuse/prompt.txt']`
 - Targeted command tests:
   `uv run pytest tests/xmuse/test_provider_opencode.py::test_opencode_adapter_builds_non_interactive_run_command tests/xmuse/test_provider_opencode.py::test_opencode_health_check_reports_ready_snapshot_when_smoke_succeeds tests/xmuse/test_goal_stage_runner.py::test_goal_stage_runner_opencode_message_does_not_get_consumed_as_file tests/xmuse/test_platform_agent_spawner.py::test_agent_spawner_uses_final_prompt_on_argv_for_opencode_provider -q`
   - 结果: `4 passed`。
@@ -12092,7 +12093,7 @@ S5 stage harness:
 - 结果:
   exit 2，`result.json.status == "blocked"`。
 - 实际 OpenCode argv:
-  `['opencode', '--model', 'opencode-go/deepseek-v4-flash:max', 'run', '--format', 'json', '--dir', '/home/iiyatu/projects/python/xmuse', 'Execute the attached goal stage prompt.', '--file', '.goal-runs/S5/result.json.prompt.txt']`
+  `['opencode', 'run', '--model', 'opencode-go/deepseek-v4-flash', '--variant', 'max', '--format', 'json', '--dir', '/home/iiyatu/projects/python/xmuse', 'Execute the attached goal stage prompt.', '--file', '.goal-runs/S5/result.json.prompt.txt']`
 - OpenCode 返回:
   `Unexpected server error. Check server logs for details.`，ref `err_6ec74914`。
 - 结论:
