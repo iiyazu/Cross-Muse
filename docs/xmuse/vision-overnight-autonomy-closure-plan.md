@@ -280,6 +280,11 @@ Current implementation status:
 - `build_selected_god_runtime_continuity_view` projects selected GOD CLI,
   registration, session, provider-session metadata, capability scope, proof
   level, and waiting reasons without upgrading bounded workers.
+- `GodSessionRegistry.record_heartbeat(...)` persists
+  `last_heartbeat_at_utc` in durable `god_sessions.json`, and the selected-GOD
+  runtime view reports heartbeat freshness against an explicit TTL. Fresh
+  heartbeats keep otherwise-ready selected GODs usable; stale or invalid
+  heartbeats become `manual_gap` blockers and make `peer_god_ready=false`.
 - `xmuse-natural-deliberation-gate-capture` accepts an optional
   `--god-runtime` artifact. When supplied, the natural-deliberation release
   gate requires every transcript GOD to have a peer-GOD-ready selected runtime

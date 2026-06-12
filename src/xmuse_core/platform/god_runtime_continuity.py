@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from datetime import UTC, datetime
 from typing import Any
 
 from xmuse_core.agents.god_session_registry import GodSessionRecord
@@ -21,9 +22,12 @@ def build_selected_god_runtime_continuity_view(
     selections: Sequence[GodCliSelectionRecord],
     sessions: Sequence[GodSessionRecord],
     god_cli_registry: GodCliRegistry,
+    now_utc: str | None = None,
+    heartbeat_ttl_seconds: int = 300,
 ) -> dict[str, Any]:
     """Build a read-only selected-GOD runtime continuity envelope."""
     conversation = _required_text(conversation_id, "conversation_id")
+    now = _parse_utc(now_utc) or datetime.now(UTC)
     matching_selections = [
         selection for selection in selections if selection.conversation_id == conversation
     ]
@@ -55,6 +59,8 @@ def build_selected_god_runtime_continuity_view(
                     session=session,
                     selection_ref=selection_ref,
                     registration_ref=registration_ref,
+                    now=now,
+                    heartbeat_ttl_seconds=heartbeat_ttl_seconds,
                 )
                 items.append(item)
                 _extend_unique(source_refs, item["source_refs"])
@@ -120,15 +126,25 @@ def _build_item(
     session: GodSessionRecord,
     selection_ref: str,
     registration_ref: str,
+    now: datetime,
+    heartbeat_ttl_seconds: int,
 ) -> dict[str, Any]:
     source_refs = [selection_ref, registration_ref, f"god_session:{session.god_session_id}"]
     provider_session_ready = bool(session.provider_session_id)
     if session.provider_session_id:
         source_refs.append(f"provider_session:{session.provider_session_id}")
+    heartbeat_freshness = _heartbeat_freshness(
+        session.last_heartbeat_at_utc,
+        now=now,
+        ttl_seconds=heartbeat_ttl_seconds,
+    )
+    if session.last_heartbeat_at_utc:
+        source_refs.append(f"god_session_heartbeat:{session.god_session_id}")
     waiting_reason = _waiting_reason(
         registration=registration,
         session=session,
         provider_session_ready=provider_session_ready,
+        heartbeat_freshness=heartbeat_freshness,
     )
     has_peer_god = _has_peer_god(registration)
     proof_level = _item_proof_level(
@@ -153,7 +169,8 @@ def _build_item(
         if registration is not None
         else [],
         "session_status": session.status,
-        "heartbeat_freshness": "unknown",
+        "heartbeat_freshness": heartbeat_freshness,
+        "last_heartbeat_at_utc": session.last_heartbeat_at_utc,
         "waiting_reason": waiting_reason,
         "proof_level": proof_level,
         "bounded": not has_peer_god,
@@ -243,6 +260,7 @@ def _waiting_reason(
     registration: GodCliRegistration | None,
     session: GodSessionRecord,
     provider_session_ready: bool,
+    heartbeat_freshness: str,
 ) -> str | None:
     if registration is None:
         return "selected GOD CLI registration unavailable"
@@ -250,6 +268,10 @@ def _waiting_reason(
         return f"GOD session status is {session.status}"
     if not provider_session_ready:
         return "provider session metadata unavailable"
+    if heartbeat_freshness == "stale":
+        return "GOD session heartbeat stale"
+    if heartbeat_freshness == "invalid":
+        return "GOD session heartbeat timestamp invalid"
     if GodCliCapability.PEER_GOD not in registration.capabilities:
         return "selected CLI lacks peer_god capability"
     return None
@@ -266,6 +288,11 @@ def _item_proof_level(
     if not provider_session_ready:
         return "manual_gap"
     if waiting_reason == "selected GOD CLI registration unavailable":
+        return "manual_gap"
+    if waiting_reason in {
+        "GOD session heartbeat stale",
+        "GOD session heartbeat timestamp invalid",
+    }:
         return "manual_gap"
     return registration.proof_level
 
@@ -314,6 +341,37 @@ def _selection_summary(selection: GodCliSelectionRecord) -> dict[str, str]:
         "selected_at_utc": selection.selected_at_utc,
         "proof_level": selection.proof_level,
     }
+
+
+def _heartbeat_freshness(
+    value: str | None,
+    *,
+    now: datetime,
+    ttl_seconds: int,
+) -> str:
+    heartbeat_at = _parse_utc(value)
+    if heartbeat_at is None:
+        return "unknown" if value is None else "invalid"
+    if ttl_seconds <= 0:
+        return "fresh"
+    if (now - heartbeat_at).total_seconds() <= ttl_seconds:
+        return "fresh"
+    return "stale"
+
+
+def _parse_utc(value: str | None) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    text = value.strip()
+    if text.endswith("Z"):
+        text = f"{text[:-1]}+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 def _required_text(value: str, field_name: str) -> str:

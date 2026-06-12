@@ -472,6 +472,14 @@ provider session metadata for each participant before emitting
 `real_provider_proof`. Deterministic `deliberation` envelopes, single-GOD
 transcripts, and missing provider session ids remain `manual_gap`.
 
+Selected-GOD runtime continuity also reads durable `god_sessions.json`.
+`GodSessionRegistry.record_heartbeat(...)` records
+`last_heartbeat_at_utc` for a GOD session. The continuity view reports
+heartbeat freshness from that timestamp; stale or invalid heartbeats block
+`peer_god_ready` and remain `manual_gap` until a fresh heartbeat is recorded.
+This proves only session-continuity metadata. It does not create live provider
+proof, natural transcript proof, GitHub truth, or release readiness by itself.
+
 After the `xmuse.operator_transcript.v1` artifact exists, convert it to a
 release gate artifact:
 

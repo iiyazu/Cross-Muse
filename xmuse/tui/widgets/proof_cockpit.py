@@ -163,6 +163,9 @@ def _god_runtime_line(item: dict[str, Any]) -> str:
         state = "waiting"
     proof_level = _text(item.get("proof_level")) or "manual_gap"
     line = f"{god_id} {cli_id} {state} {proof_level}"
+    heartbeat_freshness = _text(item.get("heartbeat_freshness"))
+    if heartbeat_freshness is not None:
+        line += f" heartbeat={heartbeat_freshness}"
     reason = _god_waiting_reason(item)
     if reason is not None:
         line += f": {reason}"

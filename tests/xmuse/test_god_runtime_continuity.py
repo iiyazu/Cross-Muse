@@ -26,6 +26,7 @@ def _session(
     runtime: str,
     provider_session_id: str | None = "provider-thread-1",
     provider_binding_status: str | None = "active",
+    last_heartbeat_at_utc: str | None = None,
 ) -> GodSessionRecord:
     return GodSessionRecord(
         god_session_id="god-session-1",
@@ -43,6 +44,7 @@ def _session(
         provider_session_kind="provider_thread",
         provider_binding_status=provider_binding_status,
         provider_binding_failure_reason=None,
+        last_heartbeat_at_utc=last_heartbeat_at_utc,
     )
 
 
@@ -96,6 +98,7 @@ def test_selected_god_runtime_view_joins_selection_registration_and_session() ->
             ],
             "session_status": "active",
             "heartbeat_freshness": "unknown",
+            "last_heartbeat_at_utc": None,
             "waiting_reason": None,
             "proof_level": "contract_proof",
             "bounded": False,
@@ -187,6 +190,70 @@ def test_runtime_view_reports_manual_gap_without_provider_session_metadata() -> 
     assert item["peer_god_ready"] is False
     assert item["provider_session_ready"] is False
     assert item["waiting_reason"] == "provider session metadata unavailable"
+    assert item["proof_level"] == "manual_gap"
+
+
+def test_runtime_view_reports_fresh_heartbeat_when_within_ttl() -> None:
+    view = build_selected_god_runtime_continuity_view(
+        conversation_id="conv-1",
+        selections=[_selection("codex.god")],
+        sessions=[
+            _session(
+                agent_name="codex.god",
+                runtime="codex",
+                last_heartbeat_at_utc="2026-06-13T00:04:30Z",
+            )
+        ],
+        god_cli_registry=build_default_god_cli_registry(),
+        now_utc="2026-06-13T00:05:00Z",
+        heartbeat_ttl_seconds=120,
+    )
+
+    assert view["proof_level"] == "contract_proof"
+    assert view["fact_state"] == "observed"
+    assert view["blockers"] == []
+    item = view["items"][0]
+    assert item["heartbeat_freshness"] == "fresh"
+    assert item["last_heartbeat_at_utc"] == "2026-06-13T00:04:30Z"
+    assert item["peer_god_ready"] is True
+    assert "god_session_heartbeat:god-session-1" in item["source_refs"]
+
+
+def test_runtime_view_blocks_stale_heartbeat_without_upgrading_proof() -> None:
+    view = build_selected_god_runtime_continuity_view(
+        conversation_id="conv-1",
+        selections=[_selection("codex.god")],
+        sessions=[
+            _session(
+                agent_name="codex.god",
+                runtime="codex",
+                last_heartbeat_at_utc="2026-06-13T00:00:00Z",
+            )
+        ],
+        god_cli_registry=build_default_god_cli_registry(),
+        now_utc="2026-06-13T00:10:00Z",
+        heartbeat_ttl_seconds=300,
+    )
+
+    assert view["proof_level"] == "manual_gap"
+    assert view["fact_state"] == "blocked"
+    assert view["manual_gap_reason"] == "GOD session heartbeat stale"
+    assert view["blockers"] == [
+        {
+            "reason": "GOD session heartbeat stale",
+            "source_refs": [
+                "god_cli_selection:conv-1",
+                "god_cli_registration:codex.god",
+                "god_session:god-session-1",
+                "provider_session:provider-thread-1",
+                "god_session_heartbeat:god-session-1",
+            ],
+        }
+    ]
+    item = view["items"][0]
+    assert item["heartbeat_freshness"] == "stale"
+    assert item["waiting_reason"] == "GOD session heartbeat stale"
+    assert item["peer_god_ready"] is False
     assert item["proof_level"] == "manual_gap"
 
 

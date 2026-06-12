@@ -533,6 +533,11 @@ Current implementation status:
   for producing that transcript artifact from durable chat/session state. It
   does not synthesize live GOD messages; the conversation must already have
   real `god_speech_act` messages and provider session metadata.
+- Selected-GOD runtime continuity now includes durable session heartbeat
+  metadata from `god_sessions.json`. Stale or invalid heartbeats keep the
+  runtime row blocked/manual-gap and prevent `peer_god_ready`, so natural
+  deliberation release evidence cannot rely on a selected GOD whose session has
+  gone stale.
 - `uv run xmuse-real-provider-runtime-gate-capture` converts a real provider
   runtime soak artifact into the `real_provider` release gate. It blocks
   contract/fake proof, stdout fallback, missing MCP writeback, missing ordered

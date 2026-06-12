@@ -408,6 +408,41 @@ def test_proof_cockpit_renders_goal_stage_results() -> None:
     ) in rendered
 
 
+def test_proof_cockpit_renders_god_runtime_heartbeat_freshness() -> None:
+    panel = render_proof_cockpit(
+        {
+            "proof_cockpit": {
+                "proof_level": "contract_proof",
+                "fact_state": "blocked",
+                "blockers": [],
+                "manual_gap_reason": None,
+            },
+            "god_runtime": {
+                "proof_level": "manual_gap",
+                "fact_state": "blocked",
+                "items": [
+                    {
+                        "god_id": "codex.god",
+                        "cli_id": "codex.god",
+                        "peer_god_ready": False,
+                        "bounded": False,
+                        "provider_session_ready": True,
+                        "heartbeat_freshness": "stale",
+                        "proof_level": "manual_gap",
+                        "waiting_reason": "GOD session heartbeat stale",
+                    },
+                ],
+            },
+        }
+    )
+
+    rendered = panel.renderable.plain
+    assert (
+        "codex.god codex.god blocked manual_gap "
+        "heartbeat=stale: GOD session heartbeat stale"
+    ) in rendered
+
+
 def test_proof_cockpit_renders_manual_gap() -> None:
     panel = render_proof_cockpit(None)
 
