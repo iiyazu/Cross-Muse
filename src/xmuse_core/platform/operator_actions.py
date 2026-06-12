@@ -50,6 +50,11 @@ _RELEASE_EVIDENCE_CANDIDATE_ACTIONS = {
     "release_evidence_candidates",
     "release_candidates",
 }
+_RELEASE_EVIDENCE_ATTEMPT_ACTIONS = {
+    "attempt_release_evidence",
+    "release_evidence_attempt",
+    "release_attempt",
+}
 
 
 class OperatorActionCapability(StrEnum):
@@ -123,6 +128,8 @@ class OperatorActionService:
             [OperatorActionRequest], dict[str, Any]
         ]
         | None = None,
+        release_evidence_attempt_handler: Callable[[OperatorActionRequest], dict[str, Any]]
+        | None = None,
     ) -> None:
         self._god_cli_registry = god_cli_registry
         self._audit_dir = audit_dir
@@ -137,6 +144,7 @@ class OperatorActionService:
         self._blueprint_freeze_handler = blueprint_freeze_handler
         self._release_evidence_export_handler = release_evidence_export_handler
         self._release_evidence_candidate_handler = release_evidence_candidate_handler
+        self._release_evidence_attempt_handler = release_evidence_attempt_handler
 
     def handle(self, request: OperatorActionRequest) -> OperatorActionResult:
         action = request.action.strip().lower()
@@ -161,6 +169,11 @@ class OperatorActionService:
             result = self._handle_export_release_evidence(request, audit_id=audit_id)
         elif action in _RELEASE_EVIDENCE_CANDIDATE_ACTIONS:
             result = self._handle_inspect_release_evidence_candidates(
+                request,
+                audit_id=audit_id,
+            )
+        elif action in _RELEASE_EVIDENCE_ATTEMPT_ACTIONS:
+            result = self._handle_attempt_release_evidence(
                 request,
                 audit_id=audit_id,
             )
@@ -771,6 +784,74 @@ class OperatorActionService:
             summary=summary,
             payload={
                 "export": exported,
+                "source_authority": "operator_action_contract",
+            },
+        )
+
+    def _handle_attempt_release_evidence(
+        self,
+        request: OperatorActionRequest,
+        *,
+        audit_id: str,
+    ) -> OperatorActionResult:
+        action = request.action.strip().lower().replace("-", "_")
+        missing = self._missing_capability(
+            request,
+            OperatorActionCapability.RELEASE_GATE,
+        )
+        if missing is not None:
+            return OperatorActionResult(
+                action=action,
+                status="denied",
+                proof_level="contract_proof",
+                fact_state="denied",
+                actor_id=request.actor_id,
+                audit_id=audit_id,
+                summary=missing,
+            )
+        if self._release_evidence_attempt_handler is None:
+            return OperatorActionResult(
+                action=action,
+                status="blocked",
+                proof_level="manual_gap",
+                fact_state="blocked",
+                actor_id=request.actor_id,
+                audit_id=audit_id,
+                summary=f"{action} requires a release evidence attempt handler",
+            )
+        try:
+            attempt = self._release_evidence_attempt_handler(request)
+        except OperatorActionBlockedError as exc:
+            return OperatorActionResult(
+                action=action,
+                status="blocked",
+                proof_level=exc.proof_level,
+                fact_state=exc.fact_state,
+                actor_id=request.actor_id,
+                audit_id=audit_id,
+                summary=exc.summary,
+                payload=exc.payload,
+            )
+        except Exception as exc:
+            return OperatorActionResult(
+                action=action,
+                status="blocked",
+                proof_level="manual_gap",
+                fact_state="blocked",
+                actor_id=request.actor_id,
+                audit_id=audit_id,
+                summary=f"release evidence attempt failed: {exc}",
+            )
+        return OperatorActionResult(
+            action=action,
+            status="ok",
+            proof_level="contract_proof",
+            fact_state="release_evidence_attempted",
+            actor_id=request.actor_id,
+            audit_id=audit_id,
+            summary="Attempted configured release evidence.",
+            payload={
+                "attempt": attempt,
                 "source_authority": "operator_action_contract",
             },
         )

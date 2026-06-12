@@ -24,6 +24,9 @@ from xmuse_core.platform.operator_evidence_actions import (
     build_memory_trace_action,
     export_deliberation_transcript,
 )
+from xmuse_core.platform.release_evidence_attempts import (
+    run_release_evidence_attempt_action,
+)
 from xmuse_core.platform.release_evidence_candidates import (
     build_release_evidence_candidate_report,
 )
@@ -485,6 +488,11 @@ class XmuseAdapter:
             ),
             release_evidence_candidate_handler=lambda request: (
                 _release_evidence_candidate_report(self._root, request)
+            ),
+            release_evidence_attempt_handler=lambda request: run_release_evidence_attempt_action(
+                request,
+                xmuse_root=self._root,
+                release_readiness_dir=self._root / "work" / "release_readiness",
             ),
         )
         request = OperatorActionRequest(

@@ -69,6 +69,9 @@ from xmuse_core.platform.operator_actions import (
     OperatorActionService,
 )
 from xmuse_core.platform.read_contracts import build_execution_drilldown_refs
+from xmuse_core.platform.release_evidence_attempts import (
+    run_release_evidence_attempt_action,
+)
 from xmuse_core.platform.release_evidence_candidates import (
     build_release_evidence_candidate_report,
 )
@@ -197,6 +200,11 @@ def _operator_action_service(base_dir: Path) -> OperatorActionService:
         ),
         release_evidence_candidate_handler=lambda request: (
             _operator_release_evidence_candidates(base_dir, request)
+        ),
+        release_evidence_attempt_handler=lambda request: run_release_evidence_attempt_action(
+            request,
+            xmuse_root=base_dir,
+            release_readiness_dir=base_dir / "work" / "release_readiness",
         ),
     )
 

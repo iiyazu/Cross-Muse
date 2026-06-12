@@ -393,6 +393,13 @@ class SlashCommandRouter:
                 return SlashCommandResult(True, message=str(exc))
             action = "inspect_release_evidence_candidates"
             command = "/release candidates"
+        elif parts and parts[0] in {"attempt", "run", "try"}:
+            try:
+                payload = _release_attempt_payload(parts[1:])
+            except ValueError as exc:
+                return SlashCommandResult(True, message=str(exc))
+            action = "attempt_release_evidence"
+            command = "/release attempt"
         elif len(parts) >= 2 and parts[0] == "export":
             try:
                 action, payload = _release_export_action(parts[1:])
@@ -402,7 +409,7 @@ class SlashCommandRouter:
         else:
             return SlashCommandResult(
                 True,
-                message="Usage: /release <refresh|pack|export>",
+                message="Usage: /release <refresh|pack|candidates|attempt|export>",
             )
         runner = getattr(context.app.adapter, "run_operator_control_action", None)
         if not callable(runner):
@@ -926,6 +933,40 @@ def _release_candidates_payload(args: list[str]) -> dict[str, Any]:
         list_keys={"source_refs", "target_refs"},
         int_keys={"trace_limit", "budget"},
     )
+
+
+def _release_attempt_payload(args: list[str]) -> dict[str, Any]:
+    usage = "Usage: /release attempt [natural|provider|memoryos|all] [key=value...]"
+    kinds: list[str] = []
+    key_values: list[str] = []
+    for arg in args:
+        if "=" in arg:
+            key_values.append(arg)
+        elif arg.strip():
+            kinds.append(arg.strip().lower().replace("-", "_"))
+    raw = _key_value_args(key_values, usage=usage) if key_values else {}
+    payload = _normalize_release_export_payload(
+        raw,
+        aliases={
+            "source_ref": "source_refs",
+            "target_ref": "target_refs",
+            "target": "target_refs",
+            "backend": "runtime_backend",
+            "runtime": "runtime_backend",
+            "output": "output_path",
+            "artifact": "output_path",
+            "gate": "gate_output_path",
+            "gate_output": "gate_output_path",
+            "report": "report_path",
+            "attempt_report": "attempt_report_path",
+            "binding_store": "binding_store_path",
+        },
+        list_keys={"source_refs", "target_refs"},
+        int_keys={"trace_limit", "budget"},
+    )
+    if kinds:
+        payload["kinds"] = kinds
+    return payload
 
 
 def _normalize_release_export_payload(
@@ -1453,6 +1494,7 @@ def _help_text() -> str:
             "/release refresh",
             "/release pack",
             "/release candidates [key=value...]",
+            "/release attempt [natural|provider|memoryos|all] [key=value...]",
             "/release export <natural|provider|memoryos> <key=value...>",
             "/lane retry <lane_id> <current_status> [reason]",
             "/lane abort <lane_id> <current_status> [reason]",

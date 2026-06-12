@@ -97,6 +97,10 @@ Required action paths:
 - TUI /release candidates -> inspect_release_evidence_candidates with
   release_gate capability. It must read durable evidence candidates and redacted
   configuration presence without creating proof artifacts.
+- TUI /release attempt -> attempt_release_evidence with release_gate
+  capability. It may call the export actions for export-ready candidates and
+  must record blocked/manual_gap rows for missing live configuration or missing
+  durable inputs without upgrading weak evidence.
 - TUI /release export natural|provider|memoryos ->
   export_natural_deliberation_transcript,
   export_real_provider_runtime_soak, or export_memoryos_live_trace with

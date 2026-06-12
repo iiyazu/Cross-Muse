@@ -454,6 +454,15 @@ Current implementation status:
   chat/session/peer-latency state plus redacted MemoryOS env presence, and
   reports which export inputs are ready or missing before an operator attempts
   a live evidence capture.
+- TUI `/release attempt [natural|provider|memoryos|all]` now routes through
+  `attempt_release_evidence` with `release_gate`. The action writes a
+  `release-evidence-attempt.json` attempt report under
+  `xmuse/work/release_readiness`, reuses the durable candidate report, and calls
+  the existing export actions only for export-ready inputs. Not-ready natural
+  GOD transcripts, missing peer latency traces, missing MemoryOS live
+  configuration, missing runtime metadata, fake/local labels, and blocked live
+  captures remain blocked `manual_gap` rows and do not satisfy release
+  readiness.
 - `uv run python scripts/github_server_truth_capture.py --release-gate-output`
   can write a `github_server_truth` release gate artifact from the raw GitHub
   server truth snapshot. This can satisfy `server_side_enforcement_proof`
