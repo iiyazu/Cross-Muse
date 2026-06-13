@@ -796,7 +796,9 @@ Tasks:
   `--natural-deliberation-god-runtime RUNTIME`. This writes
   `natural-deliberation.json` under `--artifacts-dir` through the same natural
   gate validator, and it requires selected-GOD runtime continuity so bounded
-  workers cannot satisfy the release gate.
+  workers cannot satisfy the release gate. Replay preserves the gate's
+  `deliberation_transcript` message/GOD/runtime counts for proof cockpit audit
+  without turning the projection into natural release proof.
 - When governed MemoryOS write plans or writeback events exist, prefer
   `uv run xmuse-release-evidence-pack --memoryos-governance-plan PLAN` or
   `--memoryos-writeback-event EVENT` for the final handoff pack; do not pass

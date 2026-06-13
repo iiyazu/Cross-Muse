@@ -454,6 +454,11 @@ Current implementation status:
   `xmuse.operator_transcript.v1` artifact into a `natural_deliberation` release
   gate. It emits `real_provider_proof` only for explicit natural, real-provider,
   multi-GOD transcript evidence with provider session metadata.
+  Accepted or blocker-retaining real-provider transcripts also carry a read-only
+  `deliberation_transcript` detail projection with message/GOD counts,
+  speech-act counts, natural/real-provider flags, selected-runtime artifact
+  presence, peer-GOD-ready count, blocked runtime count, missing session GOD
+  ids, and blocker count.
 - Deterministic replay, single-GOD transcript evidence, missing provider session
   metadata, and unresolved blockers remain blocked and cannot satisfy release
   readiness.
@@ -572,6 +577,9 @@ Current implementation status:
   requires selected-GOD runtime continuity and blocks deterministic replay,
   missing session metadata, single-GOD transcript evidence, bounded or missing
   selected runtime, and unresolved blockers.
+  The gate artifact preserves `deliberation_transcript` details for replay/TUI
+  audit, but release readiness remains tied to the gate status and required
+  `real_provider_proof`.
 - `uv run xmuse-natural-deliberation-transcript-capture` is the production path
   for producing that transcript artifact from durable chat/session state. It
   does not synthesize live GOD messages; the conversation must already have
@@ -727,7 +735,10 @@ Current implementation status:
   `natural-deliberation.json` under `--artifacts-dir` before readiness/audit.
   This is the release-gate path, not the replay-section path; it requires
   selected-GOD runtime continuity so bounded OpenCode-style workers or missing
-  runtime rows cannot satisfy release readiness.
+  runtime rows cannot satisfy release readiness. Replay bundle capture preserves
+  the gate's `deliberation_transcript` detail when present so the proof cockpit
+  can display the same message/GOD/runtime counts without treating projection as
+  authority.
 - Prefer producing that selected-GOD runtime continuity input with
   `uv run xmuse-god-runtime-continuity-capture` against the durable selection,
   registration, and session stores for the same conversation. Do not hand-edit

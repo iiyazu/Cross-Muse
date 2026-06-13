@@ -153,6 +153,22 @@ def test_natural_deliberation_gate_accepts_real_multi_god_transcript_with_select
         "provider:codex",
         "provider:opencode",
     ]
+    assert gate["deliberation_transcript"] == {
+        "authority": "natural_deliberation_release_gate",
+        "conversation_id": "conv-prod-1",
+        "message_count": 2,
+        "distinct_god_count": 2,
+        "god_ids": ["architect-god", "review-god"],
+        "speech_act_counts": {"propose": 1, "vote": 1},
+        "natural_deliberation": True,
+        "real_provider_proof": True,
+        "runtime_required": True,
+        "runtime_artifact_attached": True,
+        "runtime_peer_god_ready_count": 2,
+        "runtime_blocked_count": 0,
+        "missing_provider_session_god_ids": [],
+        "blocker_count": 0,
+    }
     assert str(runtime) in gate["artifacts"]
     report = capture_release_readiness(
         artifacts_dir=tmp_path / "gates",

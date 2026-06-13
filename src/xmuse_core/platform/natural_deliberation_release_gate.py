@@ -144,6 +144,14 @@ def build_natural_deliberation_release_gate(
             source_refs=source_refs,
             proof_level="real_provider_proof",
             next_action="Resolve transcript blockers before blueprint freeze or release.",
+            deliberation_transcript=_transcript_detail(
+                transcript_artifact,
+                messages=messages,
+                god_ids=god_ids,
+                runtime=god_runtime_continuity,
+                runtime_artifact=runtime_artifact,
+                blockers=blockers,
+            ),
         )
 
     return _ok_gate(
@@ -154,6 +162,14 @@ def build_natural_deliberation_release_gate(
         artifact_path=artifact,
         extra_artifacts=[runtime_artifact] if runtime_artifact is not None else [],
         source_refs=source_refs,
+        deliberation_transcript=_transcript_detail(
+            transcript_artifact,
+            messages=messages,
+            god_ids=god_ids,
+            runtime=god_runtime_continuity,
+            runtime_artifact=runtime_artifact,
+            blockers=blockers,
+        ),
     )
 
 
@@ -175,6 +191,7 @@ def _ok_gate(
     artifact_path: Path,
     extra_artifacts: list[Path] | None = None,
     source_refs: list[str],
+    deliberation_transcript: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return _gate(
         status="ok",
@@ -184,6 +201,7 @@ def _ok_gate(
         extra_artifacts=extra_artifacts or [],
         source_refs=source_refs,
         next_action="Attach this natural deliberation gate to release readiness.",
+        deliberation_transcript=deliberation_transcript,
     )
 
 
@@ -195,6 +213,7 @@ def _blocked_gate(
     source_refs: list[str],
     proof_level: str,
     next_action: str | None = None,
+    deliberation_transcript: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return _gate(
         status="blocked",
@@ -208,6 +227,7 @@ def _blocked_gate(
             "Capture a natural multi-GOD transcript with real provider proof, "
             "provider session metadata, and no unresolved blockers."
         ),
+        deliberation_transcript=deliberation_transcript,
     )
 
 
@@ -220,8 +240,9 @@ def _gate(
     extra_artifacts: list[Path],
     source_refs: list[str],
     next_action: str,
+    deliberation_transcript: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return {
+    gate: dict[str, Any] = {
         "schema_version": "xmuse.production_evidence.v1",
         "gate_id": "natural-god-deliberation",
         "kind": "natural_deliberation",
@@ -236,6 +257,51 @@ def _gate(
         "source_refs": source_refs,
         "artifacts": [str(path) for path in [artifact_path, *extra_artifacts]],
         "generated_at": _utc_now(),
+    }
+    if deliberation_transcript is not None:
+        gate["deliberation_transcript"] = deliberation_transcript
+    return gate
+
+
+def _transcript_detail(
+    transcript_artifact: dict[str, Any],
+    *,
+    messages: list[dict[str, Any]],
+    god_ids: list[str],
+    runtime: dict[str, Any] | None,
+    runtime_artifact: Path | None,
+    blockers: list[dict[str, Any]],
+) -> dict[str, Any]:
+    runtime_items = _messages(runtime.get("items")) if isinstance(runtime, dict) else []
+    god_id_set = set(god_ids)
+    selected_runtime = [
+        item for item in runtime_items if _text(item.get("god_id")) in god_id_set
+    ]
+    speech_act_counts: dict[str, int] = {}
+    for message in messages:
+        speech_act = _text(message.get("speech_act"))
+        if speech_act is not None:
+            speech_act_counts[speech_act] = speech_act_counts.get(speech_act, 0) + 1
+    return {
+        "authority": "natural_deliberation_release_gate",
+        "conversation_id": _text(transcript_artifact.get("conversation_id")),
+        "message_count": len(messages),
+        "distinct_god_count": len(god_ids),
+        "god_ids": god_ids,
+        "speech_act_counts": dict(sorted(speech_act_counts.items())),
+        "natural_deliberation": transcript_artifact.get("natural_deliberation") is True,
+        "real_provider_proof": _text(transcript_artifact.get("proof_level"))
+        == "real_provider_proof",
+        "runtime_required": True,
+        "runtime_artifact_attached": runtime_artifact is not None,
+        "runtime_peer_god_ready_count": sum(
+            1 for item in selected_runtime if item.get("peer_god_ready") is True
+        ),
+        "runtime_blocked_count": sum(
+            1 for item in selected_runtime if item.get("peer_god_ready") is not True
+        ),
+        "missing_provider_session_god_ids": _missing_runtime_metadata(messages, god_ids),
+        "blocker_count": len(blockers),
     }
 
 

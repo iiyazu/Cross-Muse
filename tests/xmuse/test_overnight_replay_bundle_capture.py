@@ -134,6 +134,66 @@ def test_capture_overnight_replay_bundle_preserves_memoryos_trace_details(
     }
 
 
+def test_capture_overnight_replay_bundle_preserves_natural_transcript_details(
+    tmp_path: Path,
+) -> None:
+    artifacts = tmp_path / "artifacts"
+    _write_gate(
+        artifacts / "natural-deliberation.json",
+        gate_id="natural-god-deliberation",
+        kind="natural_deliberation",
+        status="ok",
+        proof_level="real_provider_proof",
+        summary="Natural GOD deliberation transcript captured.",
+        source_refs=["conversation:conv-prod-1", "god:architect-god"],
+        artifacts=["natural-transcript.json", "god-runtime.json"],
+        details={
+            "deliberation_transcript": {
+                "authority": "natural_deliberation_release_gate",
+                "conversation_id": "conv-prod-1",
+                "message_count": 2,
+                "distinct_god_count": 2,
+                "god_ids": ["architect-god", "review-god"],
+                "speech_act_counts": {"propose": 1, "vote": 1},
+                "natural_deliberation": True,
+                "real_provider_proof": True,
+                "runtime_required": True,
+                "runtime_artifact_attached": True,
+                "runtime_peer_god_ready_count": 2,
+                "runtime_blocked_count": 0,
+                "missing_provider_session_god_ids": [],
+                "blocker_count": 0,
+            }
+        },
+    )
+
+    bundle = capture_overnight_replay_bundle(
+        run_id="overnight-natural-deliberation",
+        artifacts_dir=artifacts,
+        output_path=tmp_path / "bundle.json",
+    )
+
+    sections = {section["section_id"]: section for section in bundle["sections"]}
+    assert sections["deliberation_transcript"]["details"] == {
+        "deliberation_transcript": {
+            "authority": "natural_deliberation_release_gate",
+            "conversation_id": "conv-prod-1",
+            "message_count": 2,
+            "distinct_god_count": 2,
+            "god_ids": ["architect-god", "review-god"],
+            "speech_act_counts": {"propose": 1, "vote": 1},
+            "natural_deliberation": True,
+            "real_provider_proof": True,
+            "runtime_required": True,
+            "runtime_artifact_attached": True,
+            "runtime_peer_god_ready_count": 2,
+            "runtime_blocked_count": 0,
+            "missing_provider_session_god_ids": [],
+            "blocker_count": 0,
+        }
+    }
+
+
 def test_capture_overnight_replay_bundle_accepts_explicit_section_artifacts(
     tmp_path: Path,
 ) -> None:

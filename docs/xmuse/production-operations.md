@@ -1026,7 +1026,10 @@ transcript schema `xmuse.operator_transcript.v1`, required runtime schema
 `xmuse.god_runtime_continuity.v1`, required proof `real_provider_proof`, source
 authority, and suggested `attempt_release_evidence` hints. Transcript readiness
 and selected-runtime readiness are prerequisites for capture; they do not prove
-the natural release gate passed. Provider candidate
+the natural release gate passed. After the natural release gate is captured, its
+artifact can display message/GOD counts, speech-act counts, selected-runtime
+presence/readiness, missing session GOD ids, and blocker count in replay/proof
+cockpit. Those fields remain read-only audit details. Provider candidate
 rows include `proof_boundary=candidate_report_is_not_release_proof`, required
 artifact schema `xmuse.real_provider_runtime.v1`, required proof
 `real_provider_proof`, source authority, and suggested
