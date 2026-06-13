@@ -916,6 +916,27 @@ class OperatorActionService:
             goal_stage_result = self._release_optional_path(
                 request.payload.get("goal_stage_result")
             )
+            god_room_participants = self._release_optional_path(
+                request.payload.get("god_room_participants")
+            )
+            god_room_events = self._release_optional_path(
+                request.payload.get("god_room_events")
+            )
+            god_room_blueprint_freeze = self._release_optional_path(
+                request.payload.get("god_room_blueprint_freeze")
+            )
+            god_room_lane_dag = self._release_optional_path(
+                request.payload.get("god_room_lane_dag")
+            )
+            god_room_memory_trace = self._release_optional_path(
+                request.payload.get("god_room_memory_trace")
+            )
+            god_room_tui_projection = self._release_optional_path(
+                request.payload.get("god_room_tui_projection")
+            )
+            god_room_runtime_closure_evidence_output = self._release_optional_path(
+                request.payload.get("god_room_runtime_closure_evidence_output")
+            )
         except ValueError as exc:
             return OperatorActionResult(
                 action=action,
@@ -945,6 +966,15 @@ class OperatorActionService:
                 production_baseline=production_baseline,
                 goal_stage_results=(
                     (goal_stage_result,) if goal_stage_result is not None else ()
+                ),
+                god_room_participants=god_room_participants,
+                god_room_events=god_room_events,
+                god_room_blueprint_freeze=god_room_blueprint_freeze,
+                god_room_lane_dag=god_room_lane_dag,
+                god_room_memory_trace=god_room_memory_trace,
+                god_room_tui_projection=god_room_tui_projection,
+                god_room_runtime_closure_evidence_output=(
+                    god_room_runtime_closure_evidence_output
                 ),
             )
         except Exception as exc:

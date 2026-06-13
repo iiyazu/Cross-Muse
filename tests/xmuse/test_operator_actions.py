@@ -3,6 +3,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from xmuse_core.chat.god_room_runtime import (
+    GodRoomActorKind,
+    GodRoomEventKind,
+    GodRoomEventV1,
+    GodRoomParticipant,
+)
 from xmuse_core.platform.live_gate_status_capture import ProbeResult
 from xmuse_core.platform.operator_actions import (
     OperatorActionCapability,
@@ -13,6 +19,9 @@ from xmuse_core.platform.state_machine import LaneStateMachine
 from xmuse_core.providers.god_cli_registration_store import GodCliRegistrationStore
 from xmuse_core.providers.god_cli_registry import build_default_god_cli_registry
 from xmuse_core.providers.god_cli_selection_store import GodCliSelectionStore
+from xmuse_core.structuring.god_room_blueprint_freeze import (
+    compile_blueprint_freeze_from_god_room_events,
+)
 
 
 def test_operator_action_denies_god_selection_without_capability(tmp_path: Path) -> None:
@@ -928,6 +937,41 @@ def _write_github_server_truth(path: Path) -> None:
     )
 
 
+def _write_json(path: Path, payload: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _god_room_event(
+    event_id: str,
+    *,
+    event_type: GodRoomEventKind = GodRoomEventKind.SPEAK,
+    participant_id: str = "part-architect",
+    god_id: str = "god-architect",
+    causal_parent_id: str | None = None,
+    payload: dict[str, object] | None = None,
+) -> GodRoomEventV1:
+    return GodRoomEventV1(
+        event_id=event_id,
+        room_id="god-room:conv-pack",
+        conversation_id="conv-pack",
+        participant_id=participant_id,
+        god_id=god_id,
+        actor_kind=GodRoomActorKind.GOD,
+        event_type=event_type,
+        timestamp_utc="2026-06-13T13:55:00Z",
+        content=str((payload or {}).get("goal") or "Package closure evidence."),
+        causal_parent_id=causal_parent_id,
+        source_refs=[f"message:{event_id}"],
+        cli_id="codex",
+        provider_profile="codex",
+        payload=payload or {"body": "Package closure evidence."},
+    )
+
+
 def _write_internal_review(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -1199,6 +1243,148 @@ def test_operator_action_captures_release_pack_with_goal_stage_result(
         "goal_stage:S1",
         f"goal_stage_result:{release_dir / 'goal' / 'S1.result.json'}",
     ]
+
+
+def test_operator_action_captures_release_pack_with_god_room_runtime_inputs(
+    tmp_path: Path,
+) -> None:
+    release_dir = tmp_path / "release_readiness"
+    _write_gate(release_dir / "artifacts" / "provider.json")
+    events = [
+        _god_room_event("evt-propose"),
+        _god_room_event(
+            "evt-freeze",
+            event_type=GodRoomEventKind.FREEZE_REQUESTED,
+            participant_id="part-review",
+            god_id="god-review",
+            causal_parent_id="evt-propose",
+            payload={
+                "freeze_target_ref": "blueprint:bp-room-pack:1",
+                "goal": "Package GOD room runtime closure evidence.",
+                "scope": ["GOD room replay", "release evidence"],
+                "acceptance_contracts": ["Closure evidence is in replay bundle."],
+            },
+        ),
+    ]
+    freeze = compile_blueprint_freeze_from_god_room_events(
+        blueprint_id="bp-room-pack",
+        revision=1,
+        events=events,
+    )
+    _write_json(
+        release_dir / "god-room" / "participants.json",
+        {
+            "participants": [
+                GodRoomParticipant(
+                    participant_id="part-architect",
+                    god_id="god-architect",
+                    role="architect",
+                    cli_id="codex",
+                ).model_dump(mode="json"),
+                GodRoomParticipant(
+                    participant_id="part-review",
+                    god_id="god-review",
+                    role="review",
+                    cli_id="codex",
+                ).model_dump(mode="json"),
+            ]
+        },
+    )
+    _write_json(
+        release_dir / "god-room" / "events.json",
+        {"events": [event.model_dump(mode="json") for event in events]},
+    )
+    _write_json(
+        release_dir / "god-room" / "blueprint-freeze.json",
+        freeze.model_dump(mode="json"),
+    )
+    _write_json(
+        release_dir / "god-room" / "lane-dag.json",
+        {
+            "blueprint_ref": "blueprint:bp-room-pack:1",
+            "lane_contracts": [
+                {
+                    "lane_id": "lane-room-pack",
+                    "feature_id": "feature-room-pack",
+                    "owner": "codex",
+                    "required_checks": ["focused-pytest"],
+                    "memory_refs": ["memory://conversation/conv-pack/blueprint/bp-room-pack"],
+                }
+            ],
+            "recovery_decisions": [
+                {
+                    "lane_id": "lane-room-pack",
+                    "decision": "refactor_required",
+                    "retry_allowed": False,
+                }
+            ],
+        },
+    )
+    _write_json(
+        release_dir / "god-room" / "memory-trace.json",
+        {
+            "trace_anchors": [
+                {
+                    "anchor_uri": "memory://conversation/conv-pack/traces/trace-room",
+                    "proof_level": "contract_proof",
+                    "source_refs": ["blueprint:bp-room-pack:1"],
+                }
+            ]
+        },
+    )
+    _write_json(
+        release_dir / "god-room" / "tui-projection.json",
+        {
+            "execution": {
+                "lane_contracts": [{"lane_id": "lane-room-pack"}],
+                "recovery_decisions": [{"lane_id": "lane-room-pack"}],
+            },
+            "memory": {"trace_anchors": [{"trace_id": "trace-room"}]},
+        },
+    )
+    _write_github_server_truth(release_dir / "artifacts" / "github-truth.json")
+    service = OperatorActionService(
+        god_cli_registry=build_default_god_cli_registry(),
+        audit_dir=tmp_path / "operator_actions",
+        release_readiness_dir=release_dir,
+    )
+
+    result = service.handle(
+        OperatorActionRequest(
+            action="capture_release_evidence_pack",
+            actor_id="operator-1",
+            capabilities=(OperatorActionCapability.RELEASE_GATE,),
+            idempotency_key="idem-release-god-room-1",
+            payload={
+                "github_server_truth": "artifacts/github-truth.json",
+                "github_expected_head_sha": "head-pack-1",
+                "god_room_participants": "god-room/participants.json",
+                "god_room_events": "god-room/events.json",
+                "god_room_blueprint_freeze": "god-room/blueprint-freeze.json",
+                "god_room_lane_dag": "god-room/lane-dag.json",
+                "god_room_memory_trace": "god-room/memory-trace.json",
+                "god_room_tui_projection": "god-room/tui-projection.json",
+            },
+            source="tui",
+        )
+    )
+
+    assert result.status == "ok"
+    pack = result.payload["evidence_pack"]
+    closure_path = Path(pack["source_reports"]["god_room_runtime_closure_evidence"])
+    replay_path = Path(pack["overnight_replay_bundle"])
+    closure = json.loads(closure_path.read_text(encoding="utf-8"))
+    replay = json.loads(replay_path.read_text(encoding="utf-8"))
+    sections = {section["section_id"]: section for section in replay["sections"]}
+    assert closure["status"] == "ok"
+    assert closure["god_room_runtime_closure"]["room_replay"]["status"] == "ok"
+    assert closure["god_room_runtime_closure"]["lane_dag"][
+        "refactor_required_count"
+    ] == 1
+    assert "god_room_runtime_closure" in sections
+    assert sections["god_room_runtime_closure"]["source_authority"] == (
+        "god_room_runtime_closure_contract"
+    )
 
 
 def test_operator_action_denies_release_evidence_pack_without_capability(

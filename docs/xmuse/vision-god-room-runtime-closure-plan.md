@@ -630,6 +630,14 @@ Current implementation status:
   explicit GOD room closure inputs after release readiness is captured and
   before the overnight replay bundle is written. The CLI exposes matching
   `--god-room-*` inputs.
+- `OperatorActionService` now passes GOD room runtime closure inputs from
+  `capture_release_evidence_pack` operator payloads into
+  `capture_release_evidence_pack(...)`, so TUI/operator control can generate a
+  fresh `god_room_runtime_closure` evidence envelope and include it as an
+  optional overnight replay section. `/release pack` accepts concise
+  `room_participants`, `room_events`, `room_freeze`, `room_lane_dag`,
+  `room_memory`, `room_tui`, and `room_closure_output` aliases for those
+  artifact paths.
 - `capture_overnight_replay_bundle(...)` accepts `god_room_runtime_closure` as
   an optional replay section while leaving required replay sections unchanged.
 - Missing GitHub truth, release readiness, live MemoryOS, or other configured

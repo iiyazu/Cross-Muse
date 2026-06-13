@@ -968,6 +968,65 @@ async def test_chat_screen_release_pack_accepts_goal_stage_payload(
         assert "Operator action: capture_release_evidence_pack" in appended[-1]["content"]
 
 
+async def test_chat_screen_release_pack_accepts_god_room_runtime_payload(
+    app: XmuseTUI,
+) -> None:
+    app.adapter.list_group_conversations = lambda: [
+        {"id": "conv-user", "title": "User group", "created_at": "2026-06-01T00:00:00Z"},
+    ]
+    calls = []
+
+    def _run_operator_control_action(action: str, conv_id: str, payload: dict):
+        calls.append((action, conv_id, payload))
+        return {
+            "action": "capture_release_evidence_pack",
+            "status": "ok",
+            "proof_level": "contract_proof",
+            "fact_state": "release_evidence_pack_captured",
+            "audit_id": "operator-action:release-god-room",
+            "summary": "Captured release evidence pack: decision=blocked.",
+        }
+
+    app.adapter.run_operator_control_action = _run_operator_control_action
+
+    async with app.run_test() as pilot:
+        appended = []
+        log = app.screen.query_one("#message-log")
+        log.append_message = lambda **kwargs: appended.append(kwargs)
+
+        input_widget = app.screen.query_one("#message-input")
+        input_widget.value = (
+            "/release pack room_participants=god-room/participants.json "
+            "room_events=god-room/events.json "
+            "room_freeze=god-room/blueprint-freeze.json "
+            "room_lane_dag=god-room/lane-dag.json "
+            "room_memory=god-room/memory-trace.json "
+            "room_tui=god-room/tui-projection.json "
+            "room_closure_output=god-room/closure-evidence.json"
+        )
+        input_widget.post_message(input_widget.Submitted(input_widget, input_widget.value))
+        await pilot.pause()
+
+    assert calls == [
+        (
+            "capture_release_evidence_pack",
+            "conv-user",
+            {
+                "god_room_participants": "god-room/participants.json",
+                "god_room_events": "god-room/events.json",
+                "god_room_blueprint_freeze": "god-room/blueprint-freeze.json",
+                "god_room_lane_dag": "god-room/lane-dag.json",
+                "god_room_memory_trace": "god-room/memory-trace.json",
+                "god_room_tui_projection": "god-room/tui-projection.json",
+                "god_room_runtime_closure_evidence_output": (
+                    "god-room/closure-evidence.json"
+                ),
+            },
+        )
+    ]
+    assert "Operator action: capture_release_evidence_pack" in appended[-1]["content"]
+
+
 async def test_chat_screen_release_refresh_runs_operator_control_action(
     app: XmuseTUI,
 ) -> None:
