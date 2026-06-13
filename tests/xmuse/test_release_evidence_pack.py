@@ -640,6 +640,24 @@ def test_release_evidence_pack_attaches_production_baseline_truth_map(
             "memoryos_lite_live_environment_missing",
         ],
     }
+    assert {
+        "source": "production_baseline",
+        "kind": "production_resource",
+        "id": "github",
+        "owner": "operator",
+        "reason": "github_server_truth_capture_pending",
+        "next_action": "Resolve or record S0 blockers.",
+        "artifact": str(baseline),
+    } in pack["recovery_queue"]
+    assert {
+        "source": "production_baseline",
+        "kind": "production_resource",
+        "id": "memoryos_lite",
+        "owner": "operator",
+        "reason": "memoryos_lite_live_environment_missing",
+        "next_action": "Resolve or record S0 blockers.",
+        "artifact": str(baseline),
+    } in pack["recovery_queue"]
     assert pack["decision"] == "blocked"
     assert pack["release_readiness_decision"] == "ready"
 

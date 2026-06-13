@@ -497,10 +497,11 @@ Current implementation status:
   source refs can be supplied through the pack command, but the pack remains an
   aggregation surface and does not upgrade release or replay proof.
 - The release evidence pack now emits a top-level `recovery_queue` that merges
-  release-readiness blockers and overnight replay blockers into operator
-  recovery items with source report artifacts and `next_action` guidance. The
-  TUI proof cockpit projects and renders the same queue as read-only recovery
-  guidance; it does not complete release gates or upgrade replay proof.
+  S0 production baseline blockers, release-readiness blockers, and overnight
+  replay blockers into operator recovery items with source report artifacts and
+  `next_action` guidance. The TUI proof cockpit projects and renders the same
+  queue as read-only recovery guidance; it does not complete release gates or
+  upgrade replay proof.
 - `uv run xmuse-release-evidence-pack --supervisor-snapshot <snapshot>` now
   converts an `xmuse.overnight_supervisor.v1` snapshot into replay-ready
   supervisor production evidence before assembling the nested replay bundle.

@@ -150,6 +150,7 @@ def capture_release_evidence_pack(
         replay=replay,
         readiness_path=readiness_path,
         replay_path=replay_path,
+        production_baseline=production_baseline,
     )
 
     pack = {
@@ -454,9 +455,15 @@ def _recovery_queue(
     replay: dict[str, Any],
     readiness_path: Path,
     replay_path: Path,
+    production_baseline: str | Path | None,
 ) -> list[dict[str, str | None]]:
     queue: list[dict[str, str | None]] = []
     seen: set[tuple[str | None, ...]] = set()
+    _append_production_baseline_recovery_items(
+        queue,
+        seen=seen,
+        production_baseline=production_baseline,
+    )
     for blocker in _dicts(readiness.get("blockers")):
         _append_recovery_item(
             queue,
@@ -482,6 +489,39 @@ def _recovery_queue(
             artifact=str(replay_path),
         )
     return queue
+
+
+def _append_production_baseline_recovery_items(
+    queue: list[dict[str, str | None]],
+    *,
+    seen: set[tuple[str | None, ...]],
+    production_baseline: str | Path | None,
+) -> None:
+    if production_baseline is None:
+        return
+    baseline_path = Path(production_baseline)
+    payload = _load_json_object(baseline_path, label="production baseline")
+    live_resources = payload.get("live_resources")
+    if not isinstance(live_resources, dict):
+        return
+    owner = _text(payload.get("owner")) or "operator"
+    default_next_action = _text(payload.get("next_action"))
+    for resource_id, resource in live_resources.items():
+        if not isinstance(resource_id, str) or not isinstance(resource, dict):
+            continue
+        next_action = _text(resource.get("next_action")) or default_next_action
+        for blocker in _string_list(resource.get("blockers")):
+            _append_recovery_item(
+                queue,
+                seen=seen,
+                source="production_baseline",
+                kind="production_resource",
+                identifier=resource_id,
+                owner=owner,
+                reason=blocker,
+                next_action=next_action,
+                artifact=str(baseline_path),
+            )
 
 
 def _append_recovery_item(
