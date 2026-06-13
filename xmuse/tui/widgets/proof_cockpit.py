@@ -53,6 +53,7 @@ def render_proof_cockpit(vision: dict[str, Any] | None) -> Panel:
     if section_statuses:
         lines.append("Sections:")
         lines.extend(f"  {_section_line(section)}" for section in section_statuses[:6])
+    _append_memory_governance(lines, cockpit)
     _append_feature_lineage(lines, cockpit)
     stage_results = _dicts(cockpit.get("stage_results"))
     if stage_results:
@@ -149,6 +150,41 @@ def _stage_result_line(stage_result: dict[str, Any]) -> str:
     next_stage_id = _text(stage_result.get("next_stage_id"))
     if next_stage_id is not None:
         line += f" -> {next_stage_id}"
+    return line
+
+
+def _append_memory_governance(lines: list[str], cockpit: dict[str, Any]) -> None:
+    governance = cockpit.get("memory_governance")
+    if not isinstance(governance, dict):
+        return
+    lines.append(
+        "Memory governance: "
+        f"plans={_number(governance.get('plan_count'))}; "
+        f"ingest={_number(governance.get('ingest_count'))}; "
+        f"promote={_number(governance.get('promote_to_shared_count'))}; "
+        "provider_binding="
+        f"{_number(governance.get('provider_session_binding_only_count'))}; "
+        f"blocked={_number(governance.get('blocked_count'))}; "
+        f"live_trace={_yes_no(governance.get('live_trace_proof'))}"
+    )
+    for plan in _dicts(governance.get("plans"))[:4]:
+        lines.append(f"  {_memory_governance_plan_line(plan)}")
+        blocked_reason = _text(plan.get("blocked_reason"))
+        if blocked_reason is not None:
+            lines.append(f"    reason={blocked_reason}")
+
+
+def _memory_governance_plan_line(plan: dict[str, Any]) -> str:
+    plan_id = _text(plan.get("plan_id")) or "unknown"
+    scope = _text(plan.get("scope")) or "task"
+    decision = _text(plan.get("decision")) or "blocked"
+    status = _text(plan.get("status")) or "manual_gap"
+    write = _yes_no(plan.get("write_request_allowed"))
+    target = _text(plan.get("target_namespace_uri")) or "memory://unknown"
+    line = f"{plan_id} {scope} {decision} {status} write={write} -> {target}"
+    shared = _text(plan.get("shared_namespace_uri"))
+    if shared is not None:
+        line += f" shared={shared}"
     return line
 
 
@@ -310,6 +346,10 @@ def _strings(value: Any) -> list[str]:
 
 def _number(value: Any) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
+def _yes_no(value: Any) -> str:
+    return "yes" if value is True else "no"
 
 
 def _text(value: Any) -> str | None:

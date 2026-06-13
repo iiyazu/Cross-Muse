@@ -746,6 +746,133 @@ def test_tui_vision_read_model_projects_feature_lineage_lane_details() -> None:
     }
 
 
+def test_tui_vision_read_model_projects_memory_governance_details() -> None:
+    model = build_tui_vision_read_model(
+        replay_bundle={
+            "schema_version": "xmuse.overnight_replay_bundle.v1",
+            "decision": "blocked",
+            "authority": "replay_index_only",
+            "proof_level_summary": {"contract_proof": 1},
+            "sections": [
+                {
+                    "section_id": "memory_governance",
+                    "status": "manual_gap",
+                    "proof_level": "manual_gap",
+                    "source_authority": "memoryos_governance_policy",
+                    "source_refs": ["memory-governance:plan:blocked-shared"],
+                    "artifacts": ["artifact://memory-governance.json"],
+                    "details": {
+                        "memory_governance": {
+                            "authority": "memoryos_governance_policy",
+                            "plan_count": 2,
+                            "ingest_count": 1,
+                            "promote_to_shared_count": 0,
+                            "provider_session_binding_only_count": 0,
+                            "blocked_count": 1,
+                            "live_trace_proof": False,
+                            "write_policy": "governed_rest_ingest_only",
+                            "plans": [
+                                {
+                                    "plan_id": "task-write",
+                                    "scope": "task",
+                                    "event_kind": "blueprint_frozen",
+                                    "status": "ok",
+                                    "decision": "ingest",
+                                    "proof_level": "contract_proof",
+                                    "target_namespace_uri": (
+                                        "memory://conversation/conv-1"
+                                    ),
+                                    "shared_namespace_uri": None,
+                                    "memory_layer": "task_state",
+                                    "reviewed": False,
+                                    "write_request_allowed": True,
+                                    "source_refs": ["blueprint:bp-1"],
+                                    "blocked_reason": None,
+                                    "next_action": None,
+                                },
+                                {
+                                    "plan_id": "blocked-shared",
+                                    "scope": "shared",
+                                    "event_kind": "decision_rationale",
+                                    "status": "blocked",
+                                    "decision": "blocked",
+                                    "proof_level": "manual_gap",
+                                    "target_namespace_uri": (
+                                        "memory://conversation/conv-1"
+                                    ),
+                                    "shared_namespace_uri": (
+                                        "memory://global/shared/iiyazu/Cross-Muse"
+                                    ),
+                                    "memory_layer": "task_state",
+                                    "reviewed": False,
+                                    "write_request_allowed": False,
+                                    "source_refs": ["message:m1"],
+                                    "blocked_reason": (
+                                        "shared promotion requires explicit review"
+                                    ),
+                                    "next_action": (
+                                        "Attach review evidence before promoting "
+                                        "memory beyond task scope."
+                                    ),
+                                },
+                            ],
+                        }
+                    },
+                }
+            ],
+            "blockers": [],
+        },
+    )
+
+    cockpit = model["proof_cockpit"]
+    assert cockpit["memory_governance"] == {
+        "authority": "memoryos_governance_policy",
+        "plan_count": 2,
+        "ingest_count": 1,
+        "promote_to_shared_count": 0,
+        "provider_session_binding_only_count": 0,
+        "blocked_count": 1,
+        "live_trace_proof": False,
+        "write_policy": "governed_rest_ingest_only",
+        "plans": [
+            {
+                "plan_id": "task-write",
+                "scope": "task",
+                "event_kind": "blueprint_frozen",
+                "status": "ok",
+                "decision": "ingest",
+                "proof_level": "contract_proof",
+                "target_namespace_uri": "memory://conversation/conv-1",
+                "shared_namespace_uri": None,
+                "memory_layer": "task_state",
+                "reviewed": False,
+                "write_request_allowed": True,
+                "source_refs": ["blueprint:bp-1"],
+                "blocked_reason": None,
+                "next_action": None,
+            },
+            {
+                "plan_id": "blocked-shared",
+                "scope": "shared",
+                "event_kind": "decision_rationale",
+                "status": "blocked",
+                "decision": "blocked",
+                "proof_level": "manual_gap",
+                "target_namespace_uri": "memory://conversation/conv-1",
+                "shared_namespace_uri": "memory://global/shared/iiyazu/Cross-Muse",
+                "memory_layer": "task_state",
+                "reviewed": False,
+                "write_request_allowed": False,
+                "source_refs": ["message:m1"],
+                "blocked_reason": "shared promotion requires explicit review",
+                "next_action": (
+                    "Attach review evidence before promoting memory beyond task scope."
+                ),
+            },
+        ],
+    }
+
+
 def test_tui_vision_read_model_projects_supervisor_goal_stage_results() -> None:
     model = build_tui_vision_read_model(
         overnight_supervisor={

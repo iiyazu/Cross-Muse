@@ -577,6 +577,7 @@ def _build_proof_cockpit(
     latest_virtual_soak: dict[str, Any] | None = None
     recovery_queue: list[dict[str, Any]] = []
     feature_lineage: dict[str, Any] | None = None
+    memory_governance: dict[str, Any] | None = None
 
     if isinstance(overnight_supervisor, dict):
         _append_unique(
@@ -648,6 +649,8 @@ def _build_proof_cockpit(
         for section in sections:
             if feature_lineage is None:
                 feature_lineage = _feature_lineage_from_replay_section(section)
+            if memory_governance is None:
+                memory_governance = _memory_governance_from_replay_section(section)
             section_statuses.append(
                 {
                     "section_id": _text(section.get("section_id")) or "unknown",
@@ -758,6 +761,11 @@ def _build_proof_cockpit(
         "latest_virtual_soak": latest_virtual_soak,
         "recovery_queue": recovery_queue,
         **({"feature_lineage": feature_lineage} if feature_lineage is not None else {}),
+        **(
+            {"memory_governance": memory_governance}
+            if memory_governance is not None
+            else {}
+        ),
     }
 
 
@@ -866,6 +874,65 @@ def _feature_lineage_from_replay_section(
     if not isinstance(feature_lineage, dict):
         return None
     return _feature_lineage_projection(feature_lineage)
+
+
+def _memory_governance_from_replay_section(
+    section: dict[str, Any],
+) -> dict[str, Any] | None:
+    if _text(section.get("section_id")) != "memory_governance":
+        return None
+    details = section.get("details")
+    if not isinstance(details, dict):
+        return None
+    memory_governance = details.get("memory_governance")
+    if not isinstance(memory_governance, dict):
+        return None
+    return _memory_governance_projection(memory_governance)
+
+
+def _memory_governance_projection(
+    memory_governance: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "authority": _text(memory_governance.get("authority"))
+        or "memoryos_governance_policy",
+        "plan_count": _int(memory_governance.get("plan_count")),
+        "ingest_count": _int(memory_governance.get("ingest_count")),
+        "promote_to_shared_count": _int(
+            memory_governance.get("promote_to_shared_count")
+        ),
+        "provider_session_binding_only_count": _int(
+            memory_governance.get("provider_session_binding_only_count")
+        ),
+        "blocked_count": _int(memory_governance.get("blocked_count")),
+        "live_trace_proof": memory_governance.get("live_trace_proof") is True,
+        "write_policy": _text(memory_governance.get("write_policy"))
+        or "governed_rest_ingest_only",
+        "plans": [
+            _memory_governance_plan_projection(plan)
+            for plan in _dicts(memory_governance.get("plans"))
+        ],
+    }
+
+
+def _memory_governance_plan_projection(plan: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "plan_id": _text(plan.get("plan_id")) or "unknown",
+        "scope": _text(plan.get("scope")) or "task",
+        "event_kind": _text(plan.get("event_kind")) or "unknown",
+        "status": _text(plan.get("status")) or "manual_gap",
+        "decision": _text(plan.get("decision")) or "blocked",
+        "proof_level": _normalize_proof_level(plan.get("proof_level")),
+        "target_namespace_uri": _text(plan.get("target_namespace_uri"))
+        or "memory://unknown",
+        "shared_namespace_uri": _text(plan.get("shared_namespace_uri")),
+        "memory_layer": _text(plan.get("memory_layer")) or "task_state",
+        "reviewed": plan.get("reviewed") is True,
+        "write_request_allowed": plan.get("write_request_allowed") is True,
+        "source_refs": _list_refs(plan.get("source_refs")),
+        "blocked_reason": _text(plan.get("blocked_reason")),
+        "next_action": _text(plan.get("next_action")),
+    }
 
 
 def _feature_lineage_projection(feature_lineage: dict[str, Any]) -> dict[str, Any]:

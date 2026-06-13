@@ -543,6 +543,67 @@ def test_proof_cockpit_renders_feature_lineage_lane_details() -> None:
     assert "lane-replay dependency_unsatisfied lane:lane-heartbeat status=pending" in rendered
 
 
+def test_proof_cockpit_renders_memory_governance_details() -> None:
+    panel = render_proof_cockpit(
+        {
+            "proof_cockpit": {
+                "proof_level": "contract_proof",
+                "fact_state": "blocked",
+                "memory_governance": {
+                    "authority": "memoryos_governance_policy",
+                    "plan_count": 2,
+                    "ingest_count": 1,
+                    "promote_to_shared_count": 0,
+                    "provider_session_binding_only_count": 0,
+                    "blocked_count": 1,
+                    "live_trace_proof": False,
+                    "write_policy": "governed_rest_ingest_only",
+                    "plans": [
+                        {
+                            "plan_id": "task-write",
+                            "scope": "task",
+                            "event_kind": "blueprint_frozen",
+                            "status": "ok",
+                            "decision": "ingest",
+                            "target_namespace_uri": "memory://conversation/conv-1",
+                            "write_request_allowed": True,
+                        },
+                        {
+                            "plan_id": "blocked-shared",
+                            "scope": "shared",
+                            "event_kind": "decision_rationale",
+                            "status": "blocked",
+                            "decision": "blocked",
+                            "target_namespace_uri": "memory://conversation/conv-1",
+                            "shared_namespace_uri": (
+                                "memory://global/shared/iiyazu/Cross-Muse"
+                            ),
+                            "write_request_allowed": False,
+                            "blocked_reason": (
+                                "shared promotion requires explicit review"
+                            ),
+                        },
+                    ],
+                },
+                "blockers": [],
+                "manual_gap_reason": None,
+            }
+        }
+    )
+
+    rendered = panel.renderable.plain
+    assert (
+        "Memory governance: plans=2; ingest=1; promote=0; "
+        "provider_binding=0; blocked=1; live_trace=no"
+    ) in rendered
+    assert "task-write task ingest ok write=yes -> memory://conversation/conv-1" in rendered
+    assert (
+        "blocked-shared shared blocked blocked write=no -> "
+        "memory://conversation/conv-1 shared=memory://global/shared/iiyazu/Cross-Muse"
+    ) in rendered
+    assert "reason=shared promotion requires explicit review" in rendered
+
+
 def test_proof_cockpit_renders_god_runtime_heartbeat_freshness() -> None:
     panel = render_proof_cockpit(
         {

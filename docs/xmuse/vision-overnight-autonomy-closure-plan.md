@@ -543,6 +543,12 @@ Current implementation status:
   `xmuse.production_evidence.v1` artifact for the `memory_governance` section.
   It reuses the existing policy, preserves blocked shared-promotion decisions as
   `manual_gap`, and does not claim live MemoryOS trace proof.
+- The generated MemoryOS governance evidence now carries structured
+  `memory_governance` details: decision counts, per-plan scope/event/namespace,
+  review state, write-request eligibility, source refs, blockers, and next
+  action. Replay bundles preserve those details as section `details`, and the
+  TUI proof cockpit renders them as read-only operator context without writing
+  MemoryOS state or upgrading live trace proof.
 - `uv run xmuse-frozen-blueprint-evidence-capture` exports a frozen
   `mission_blueprint.v1` artifact into replay-ready
   `xmuse.production_evidence.v1` for the `frozen_blueprint` section. Draft or

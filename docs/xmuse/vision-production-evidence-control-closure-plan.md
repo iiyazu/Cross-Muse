@@ -685,7 +685,11 @@ Current implementation status:
   generated artifact as the replay bundle's `memory_governance` section. This
   reduces handoff friction after governed MemoryOS writes, but remains
   contract-level governance evidence and does not create live MemoryOS trace
-  proof.
+  proof. The generated artifact now also includes structured
+  `memory_governance` details with decision counts, per-plan scope/event,
+  namespace targets, review state, write-request eligibility, blockers, and
+  next action. Replay bundles and the TUI proof cockpit can project those
+  details as read-only operator context without writing MemoryOS state.
 - The same release pack command can accept `--deliberation-transcript` and
   `--god-runtime`, convert them through
   `xmuse-deliberation-transcript-evidence-capture`, and attach the generated

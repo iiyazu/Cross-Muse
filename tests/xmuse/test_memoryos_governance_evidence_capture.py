@@ -82,6 +82,58 @@ def test_capture_memoryos_governance_evidence_from_writeback_events(
         "MemoryOS governance evaluated 2 plan(s): "
         "1 ingest, 1 promote_to_shared, 0 provider_session_binding_only, 0 blocked."
     )
+    assert artifact["memory_governance"] == {
+        "authority": "memoryos_governance_policy",
+        "plan_count": 2,
+        "ingest_count": 1,
+        "promote_to_shared_count": 1,
+        "provider_session_binding_only_count": 0,
+        "blocked_count": 0,
+        "live_trace_proof": False,
+        "write_policy": "governed_rest_ingest_only",
+        "plans": [
+            {
+                "plan_id": "blueprint-event",
+                "scope": "task",
+                "event_kind": "blueprint_frozen",
+                "status": "ok",
+                "decision": "ingest",
+                "proof_level": "contract_proof",
+                "target_namespace_uri": "memory://conversation/conv-1",
+                "shared_namespace_uri": None,
+                "memory_layer": "task_state",
+                "reviewed": False,
+                "write_request_allowed": True,
+                "source_refs": [
+                    "memory://conversation/conv-1/commits/abc123/events/blueprint_frozen/bp-1",
+                    "message:proposal-1",
+                    "blueprint:bp-1",
+                ],
+                "blocked_reason": None,
+                "next_action": None,
+            },
+            {
+                "plan_id": "merge-event",
+                "scope": "shared",
+                "event_kind": "pr_merged",
+                "status": "ok",
+                "decision": "promote_to_shared",
+                "proof_level": "contract_proof",
+                "target_namespace_uri": "memory://conversation/conv-1",
+                "shared_namespace_uri": "memory://global/shared/iiyazu/Cross-Muse",
+                "memory_layer": "task_state",
+                "reviewed": True,
+                "write_request_allowed": True,
+                "source_refs": [
+                    "memory://conversation/conv-1/events/pr_merged/43",
+                    "github:pr:43",
+                    "review:rv-1",
+                ],
+                "blocked_reason": None,
+                "next_action": None,
+            },
+        ],
+    }
 
     replay_bundle = capture_overnight_replay_bundle(
         run_id="overnight-memory",
@@ -95,6 +147,9 @@ def test_capture_memoryos_governance_evidence_from_writeback_events(
     assert sections["memory_governance"]["source_authority"] == (
         "memoryos_governance_policy"
     )
+    assert sections["memory_governance"]["details"]["memory_governance"][
+        "promote_to_shared_count"
+    ] == 1
 
 
 def test_capture_memoryos_governance_evidence_reports_blocked_plan(

@@ -80,7 +80,9 @@ def build_memoryos_governance_evidence(
         next_action=next_action,
         summary=_summary(plans),
     )
-    return envelope.model_dump()
+    evidence = envelope.model_dump()
+    evidence["memory_governance"] = _memory_governance_details(plans)
+    return evidence
 
 
 def _plans_from_artifacts(
@@ -179,6 +181,64 @@ def _summary(
         f"{counts['provider_session_binding_only']} provider_session_binding_only, "
         f"{counts['blocked']} blocked."
     )
+
+
+def _memory_governance_details(
+    plans: Sequence[tuple[str, Path, MemoryOSGovernedWritePlan]],
+) -> dict[str, object]:
+    counts = _decision_counts(plans)
+    return {
+        "authority": MEMORYOS_GOVERNANCE_AUTHORITY,
+        "plan_count": len(plans),
+        "ingest_count": counts["ingest"],
+        "promote_to_shared_count": counts["promote_to_shared"],
+        "provider_session_binding_only_count": counts[
+            "provider_session_binding_only"
+        ],
+        "blocked_count": counts["blocked"],
+        "live_trace_proof": False,
+        "write_policy": "governed_rest_ingest_only",
+        "plans": [
+            _memory_governance_plan_details(plan_id, plan)
+            for plan_id, _path, plan in plans
+        ],
+    }
+
+
+def _memory_governance_plan_details(
+    plan_id: str,
+    plan: MemoryOSGovernedWritePlan,
+) -> dict[str, object]:
+    return {
+        "plan_id": plan_id,
+        "scope": plan.scope.value,
+        "event_kind": plan.event_kind,
+        "status": plan.status,
+        "decision": plan.decision,
+        "proof_level": plan.proof_level,
+        "target_namespace_uri": plan.target_namespace_uri,
+        "shared_namespace_uri": plan.shared_namespace_uri,
+        "memory_layer": plan.memory_layer.value,
+        "reviewed": plan.metadata.get("xmuse_memory_reviewed") is True,
+        "write_request_allowed": plan.to_ingest_request() is not None,
+        "source_refs": list(plan.source_refs),
+        "blocked_reason": plan.blocked_reason,
+        "next_action": plan.next_action,
+    }
+
+
+def _decision_counts(
+    plans: Sequence[tuple[str, Path, MemoryOSGovernedWritePlan]],
+) -> dict[str, int]:
+    counts = {
+        "ingest": 0,
+        "promote_to_shared": 0,
+        "provider_session_binding_only": 0,
+        "blocked": 0,
+    }
+    for _plan_id, _path, plan in plans:
+        counts[plan.decision] += 1
+    return counts
 
 
 def _dedupe(values: Sequence[str | None]) -> list[str]:
