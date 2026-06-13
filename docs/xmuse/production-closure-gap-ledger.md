@@ -40,8 +40,8 @@ runtime、provider invocation、lane authority、review truth 完成。后续生
 不是自动更新状态。
 
 - Branch: `vision-closure-deliberation-tui`
-- Local base head before L2 clowder-ai reference annotation:
-  `c6a0ac9f812a2298d5e4895e5abae13387fe5968`
+- Local base head before L11 native CLI cockpit annotation:
+  `b5ebad9563c611e2e136e336c3180216966d1010`
 - PR: <https://github.com/iiyazu/Cross-Muse/pull/43>
 - PR state last checked: draft/open/unmerged
 - PR merge state last checked: `CLEAN`
@@ -531,10 +531,35 @@ Use these as implementation references, not as xmuse package dependencies:
   - Goal-stage harness, worker delegation policy, RIGR-V, anti-TDD-abuse rules,
     and repeated-failure refactor policy are documented.
   - Evidence/control surfaces exist for many stages.
+- Target native CLI cockpit architecture:
+  - `NativeCliSessionBridge` starts the real selected CLI from the L2
+    `RoomSelectedGodBinding`, preserving native slash commands, ANSI/progress
+    rendering, tool-process output, and interactive terminal semantics.
+  - `MachineEventBridge` consumes the same CLI run through a separate structured
+    stream or raw archive and produces L4 provider invocation artifacts. For
+    non-structured output it may preserve raw terminal evidence, but it must
+    downgrade structured proof instead of inventing a `speak` event.
+  - `GodRoomProjectionBridge` renders the run as if Codex, OpenCode, and other
+    selected GODs are in one group room, but room truth still comes only from L3
+    durable events and L5 artifact-backed capture.
+  - A pane/session registry may expose running native CLI panes to the TUI, but
+    it is discovery/projection state, not durable authority.
+- Native command-routing rule:
+  - Room-level slash commands such as `/freeze`, `/dispatch`, and `/review`
+    route through xmuse contracts.
+  - Explicit target commands such as `@opencode /models` or `@codex /status`
+    may route to the selected native CLI when the L2 binding authorizes it.
+  - Focused native-pane input may pass raw bytes to the CLI, but each operator
+    input must be recorded as an operator action/source ref.
+  - `//` is reserved as an escape hatch to force raw CLI input when a leading
+    slash would otherwise be interpreted by xmuse.
 - Missing production closure:
   - The cockpit is not yet a complete live operations console for provider
     invocation, review queue decisions, live MemoryOS trace, GitHub truth, and
     overnight continuation/stop decisions.
+  - The native CLI cockpit bridge does not yet exist. TUI cannot yet preserve
+    full Codex/OpenCode native TUI behavior while simultaneously producing L4/L5
+    proof artifacts.
   - No 8-10 hour live GOD room runtime soak has proven natural discussion,
     provider speech, freeze, lane execution, review, MemoryOS trace, and
     GitHub truth together.
@@ -542,6 +567,15 @@ Use these as implementation references, not as xmuse package dependencies:
   - Operator can run a complete live session through room discussion,
     provider-backed speech, freeze, laneDAG, execution/review, evidence pack,
     and stop/continue decision without bypassing contracts.
+  - Native CLI session evidence includes `room_id`, `invocation_id`, `god_id`,
+    `binding_revision`, `account_ref`, `cli_command`, `model`, `variant`,
+    `pane_id` or `session_id`, `raw_archive_ref`, `stdout_ref`, `stderr_ref`,
+    `started_at`, `completed_at`, `exit_code`, `status`, operator input refs,
+    L4 artifact ref, L5 `speak_event_id` when captured, and `proof_level`.
+  - Read-only observer panes and raw terminal views remain separate from
+    authority. A visible native CLI response is not a GOD room `speak` event
+    until it is captured through L4/L5 with matching digest and actor/binding
+    lineage.
   - A live overnight run with budget ledger, recovery decisions, replay bundle,
     review evidence, and honest blockers.
 - Current risk:
@@ -549,15 +583,86 @@ Use these as implementation references, not as xmuse package dependencies:
     is not clearly separated from projection proof.
   - Long `/goal` progress reports can become optimistic if not tied to replay
     artifacts and server truth.
+  - Native CLI interactivity can mutate provider/session state invisibly unless
+    every operator input and raw archive ref is attached to the invocation.
 - Next production slice:
   - After L2-L5 provider speech closes, expose provider invocation as an
-    operator control. After L8-L10 close, run bounded soak and cockpit proof.
+    operator control through a native CLI bridge. After L8-L10 close, run
+    bounded soak and cockpit proof.
 - Downstream blocked until:
   - This is the terminal integration layer; it should not be used to justify
     upstream shortcuts.
 - Do not claim yet:
   - Do not claim TUI is a complete autonomous operations cockpit.
   - Do not claim overnight autonomous production readiness.
+  - Do not claim raw terminal output, pane registry state, or a provider process
+    session is durable GOD room speech.
+
+### L11 clowder-ai reference sources
+
+Use these as implementation references, not as xmuse package dependencies:
+
+- Single-source dual consumer and tmux-backed provider execution:
+  - `/home/iiyatu/clowder-ai/packages/api/src/domains/terminal/tmux-agent-spawner.ts:1`
+    documents the `tmux pane -> FIFO machine stream + PTY human stream` shape.
+  - `/home/iiyatu/clowder-ai/packages/api/src/domains/terminal/tmux-agent-spawner.ts:54`
+    builds the CLI command with `tee` and exit-code capture.
+  - `/home/iiyatu/clowder-ai/packages/api/src/domains/terminal/tmux-agent-spawner.ts:90`
+    keeps tmux execution on the same event contract as normal CLI spawning.
+  - `/home/iiyatu/clowder-ai/packages/api/src/domains/terminal/tmux-agent-spawner.ts:104`
+    creates per-invocation temp/FIFO/stdin/exit/stderr paths.
+  - `/home/iiyatu/clowder-ai/packages/api/src/domains/terminal/tmux-agent-spawner.ts:141`
+    starts the command and then makes the pane read-only.
+  - `/home/iiyatu/clowder-ai/packages/api/src/domains/terminal/tmux-agent-spawner.ts:317`
+    consumes FIFO output as plain text or NDJSON.
+  - `/home/iiyatu/clowder-ai/packages/api/src/domains/terminal/tmux-agent-spawner.ts:382`
+    captures exit/stderr/diagnostic evidence.
+  - `/home/iiyatu/clowder-ai/packages/api/src/domains/terminal/tmux-agent-spawner.ts:480`
+    exposes a spawn override so callers remain execution-mode agnostic.
+- Tmux gateway and pane lifecycle:
+  - `/home/iiyatu/clowder-ai/packages/api/src/domains/terminal/tmux-gateway.ts:51`
+    manages one tmux server per worktree.
+  - `/home/iiyatu/clowder-ai/packages/api/src/domains/terminal/tmux-gateway.ts:106`
+    creates panes with stable pane ids.
+  - `/home/iiyatu/clowder-ai/packages/api/src/domains/terminal/tmux-gateway.ts:166`
+    supports resize for terminal UI fidelity.
+  - `/home/iiyatu/clowder-ai/packages/api/src/domains/terminal/tmux-gateway.ts:185`
+    creates agent panes with remain-on-exit.
+  - `/home/iiyatu/clowder-ai/packages/api/src/domains/terminal/tmux-gateway.ts:203`
+    toggles read-only pane mode.
+- Pane discovery and terminal routes:
+  - `/home/iiyatu/clowder-ai/packages/api/src/domains/terminal/agent-pane-registry.ts:1`
+    tracks invocation-to-pane discovery state as in-memory projection only.
+  - `/home/iiyatu/clowder-ai/packages/api/src/domains/terminal/agent-pane-registry.ts:39`
+    registers an invocation pane.
+  - `/home/iiyatu/clowder-ai/packages/api/src/domains/terminal/agent-pane-registry.ts:75`
+    records completion status.
+  - `/home/iiyatu/clowder-ai/packages/api/src/routes/terminal.ts:27`
+    guards terminal WebSocket upgrades by origin.
+  - `/home/iiyatu/clowder-ai/packages/api/src/routes/terminal.ts:56`
+    creates or reconnects terminal sessions.
+  - `/home/iiyatu/clowder-ai/packages/api/src/routes/terminal.ts:104`
+    attaches PTY output/input over WebSocket for ordinary terminal sessions.
+  - `/home/iiyatu/clowder-ai/packages/api/src/routes/terminal.ts:227`
+    lists agent panes for a user/worktree.
+  - `/home/iiyatu/clowder-ai/packages/api/src/routes/terminal.ts:243`
+    attaches to agent panes read-only.
+- Event, diagnostics, and UI projection:
+  - `/home/iiyatu/clowder-ai/packages/api/src/domains/cats/services/types.ts:75`
+    records provider/model/session metadata and CLI diagnostics.
+  - `/home/iiyatu/clowder-ai/packages/api/src/domains/cats/services/types.ts:112`
+    enumerates stream message kinds including text, tool use, errors, status,
+    provider signals, and liveness signals.
+  - `/home/iiyatu/clowder-ai/packages/api/src/domains/cats/services/types.ts:129`
+    defines the streaming agent message envelope.
+  - `/home/iiyatu/clowder-ai/packages/api/src/domains/cats/services/types.ts:216`
+    defines the spawn override contract.
+  - `/home/iiyatu/clowder-ai/packages/api/src/domains/cats/services/session/CliRawArchive.ts:12`
+    stores per-invocation raw CLI archive.
+  - `/home/iiyatu/clowder-ai/packages/api/src/domains/cats/services/session/CliRawArchive.ts:27`
+    appends timestamped raw events.
+  - `/home/iiyatu/clowder-ai/packages/web/src/components/workspace/AgentPaneViewer.tsx:16`
+    displays a read-only xterm.js view of a native agent pane.
 
 ## Maintenance Rules
 
