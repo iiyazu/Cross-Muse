@@ -206,6 +206,11 @@ Current implementation status:
 - TUI `/god register <key=value...>` and `/god select <cli_id>` route through
   the Chat API operator action endpoint first, then local contract fallback only
   when Chat API is unavailable.
+- `uv run xmuse-operator-action` exposes the same `OperatorActionService`
+  contract as a headless CLI for long /goal runs and non-interactive operators.
+  It writes the same audit rows and durable GOD CLI registration/selection
+  stores, requires explicit capabilities, and returns non-zero for denied or
+  blocked actions. It does not upgrade selected CLIs into live peer-GOD proof.
 - Provider Board merges manual GOD CLI registrations into its projection with
   `manual_gap` heartbeat and `registration_kind=manual`.
 - This status does not create live provider proof. `proof_refs` are recorded

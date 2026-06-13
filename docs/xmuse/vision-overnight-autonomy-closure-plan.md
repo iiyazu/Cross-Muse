@@ -291,6 +291,14 @@ Current implementation status:
   envelope, and blocks without mutating the session when guards mismatch.
   This is session-continuity metadata only; it does not create provider,
   natural transcript, MemoryOS, GitHub, or release proof by itself.
+- `uv run xmuse-operator-action` is the headless production operator action
+  entrypoint for long /goal runs and non-interactive operations. It reuses
+  `OperatorActionService` with the same durable registration/selection stores,
+  audit directory, capability checks, and release-evidence handlers as the TUI
+  local fallback. It can execute `select_god_cli`, `register_god_cli`, and
+  release export actions without a running Chat API, but it cannot synthesize
+  GOD session heartbeat, live provider proof, natural transcript proof, GitHub
+  truth, or release readiness.
 - `uv run xmuse-god-runtime-continuity-capture` exports the selected-GOD
   runtime continuity artifact from durable `god_cli_selections.json`,
   `god_cli_registrations.json`, and `god_sessions.json`. This makes the

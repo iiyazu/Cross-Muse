@@ -218,6 +218,23 @@ From TUI, use the same contract through slash commands:
 /god select custom.peer
 ```
 
+For headless or overnight-goal operation, use the same contract through the
+operator action CLI:
+
+```bash
+uv run xmuse-operator-action \
+  --action select_god_cli \
+  --conversation-id <conversation-id> \
+  --capability select_god_cli \
+  --actor-id operator \
+  --payload-json '{"cli_id": "codex.god"}' \
+  --output xmuse/work/operator_actions/select-god-cli.json
+```
+
+The CLI uses `OperatorActionService`, writes the same audit and durable stores
+as Chat API/TUI fallback, and exits non-zero for denied, blocked, or manual-gap
+results. It does not record session heartbeats or create live provider proof.
+
 Manual `peer_god` registration requires `real_provider_proof`, at least one
 proof ref, persistent sessions, MCP writeback, and state-write permission. The
 registration file (`god_cli_registrations.json`) is ignored runtime state and
