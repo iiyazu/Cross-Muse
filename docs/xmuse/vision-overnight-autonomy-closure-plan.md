@@ -810,7 +810,10 @@ Tasks:
   `uv run xmuse-release-evidence-pack --real-provider-runtime RUNTIME` for the
   final handoff pack. The pack writes `real-provider-runtime.json` under
   `--artifacts-dir` through the same real-provider gate validator and blocks
-  fake/local/stdout fallback artifacts.
+  fake/local/stdout fallback artifacts. The pack also projects
+  `real_provider_runtime` provider/session/writeback/restart-resume details for
+  proof cockpit audit, but release readiness still comes from the real-provider
+  gate status and `real_provider_proof`.
 - When a raw GitHub server truth snapshot exists, prefer
   `uv run xmuse-release-evidence-pack --github-server-truth SNAPSHOT --github-expected-head-sha HEAD`
   for the final handoff pack. The pack writes `github-server-truth.json` under

@@ -582,6 +582,7 @@ def _build_proof_cockpit(
     feature_lineage: dict[str, Any] | None = None
     memory_governance: dict[str, Any] | None = None
     deliberation_transcript: dict[str, Any] | None = None
+    real_provider_runtime: dict[str, Any] | None = None
     github_truth_detail = (
         _github_truth_detail_projection(github_truth)
         if isinstance(github_truth, dict)
@@ -716,6 +717,11 @@ def _build_proof_cockpit(
             artifact = _text(release_evidence_pack.get(key))
             if artifact is not None:
                 _append_unique(artifacts, artifact)
+        real_provider_pack_detail = release_evidence_pack.get("real_provider_runtime")
+        if isinstance(real_provider_pack_detail, dict):
+            real_provider_runtime = _real_provider_runtime_projection(
+                real_provider_pack_detail
+            )
         pack_recovery_queue = _dicts(release_evidence_pack.get("recovery_queue"))
         if pack_recovery_queue:
             for item in pack_recovery_queue:
@@ -798,6 +804,11 @@ def _build_proof_cockpit(
         **(
             {"deliberation_transcript": deliberation_transcript}
             if deliberation_transcript is not None
+            else {}
+        ),
+        **(
+            {"real_provider_runtime": real_provider_runtime}
+            if real_provider_runtime is not None
             else {}
         ),
     }
@@ -962,6 +973,36 @@ def _deliberation_transcript_projection(
             transcript.get("missing_provider_session_god_ids")
         ),
         "blocker_count": _int(transcript.get("blocker_count")),
+    }
+
+
+def _real_provider_runtime_projection(
+    runtime: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "authority": _text(runtime.get("authority"))
+        or "real_provider_runtime_release_gate",
+        "status": _text(runtime.get("status")) or "not_evaluated",
+        "proof_level": _normalize_proof_level(runtime.get("proof_level")),
+        "gate_artifact": _text(runtime.get("gate_artifact")),
+        "runtime_artifact": _text(runtime.get("runtime_artifact")),
+        "run_id": _text(runtime.get("run_id")),
+        "conversation_id": _text(runtime.get("conversation_id")),
+        "provider_id": _text(runtime.get("provider_id")),
+        "runtime_backend": _text(runtime.get("runtime_backend")),
+        "transport": _text(runtime.get("transport")),
+        "provider_session_id": _text(runtime.get("provider_session_id")),
+        "mcp_writeback": runtime.get("mcp_writeback") is True,
+        "provider_session_reused": runtime.get("provider_session_reused") is True,
+        "fresh_provider_session_id": _text(runtime.get("fresh_provider_session_id")),
+        "resumed_provider_session_id": _text(
+            runtime.get("resumed_provider_session_id")
+        ),
+        "turn_count": _int(runtime.get("turn_count")),
+        "phases": _list_refs(runtime.get("phases")),
+        "mcp_writeback_turn_count": _int(runtime.get("mcp_writeback_turn_count")),
+        "degraded_turn_count": _int(runtime.get("degraded_turn_count")),
+        "blocker_count": _int(runtime.get("blocker_count")),
     }
 
 

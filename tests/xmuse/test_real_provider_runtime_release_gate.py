@@ -99,6 +99,24 @@ def test_real_provider_runtime_gate_accepts_live_soak_artifact(
         "provider:codex",
         "provider_session:codex-thread-1",
     ]
+    assert gate["real_provider_runtime"] == {
+        "authority": "real_provider_runtime_release_gate",
+        "run_id": "real-soak-pr43-ecbcf9d",
+        "conversation_id": "conv-real-1",
+        "provider_id": "codex",
+        "runtime_backend": "ray",
+        "transport": "codex-app-server",
+        "provider_session_id": "codex-thread-1",
+        "mcp_writeback": True,
+        "provider_session_reused": True,
+        "fresh_provider_session_id": "codex-thread-1",
+        "resumed_provider_session_id": "codex-thread-1",
+        "turn_count": 2,
+        "phases": ["fresh", "resume"],
+        "mcp_writeback_turn_count": 2,
+        "degraded_turn_count": 0,
+        "blocker_count": 0,
+    }
     report = capture_release_readiness(
         artifacts_dir=tmp_path / "gates",
         output_path=tmp_path / "release-readiness.json",

@@ -407,6 +407,11 @@ Current implementation status:
   release gate. It requires `real_provider_proof`, MCP writeback, real
   non-fake transport/backend metadata, ordered stage timings, and
   restart/resume provider-session reuse.
+  The gate artifact also carries a read-only `real_provider_runtime` detail
+  projection with provider id, runtime backend, transport, provider session id,
+  MCP writeback, restart/resume, turn phases, degraded-turn count, and blocker
+  count. This detail is for replay/TUI auditability only; it does not replace
+  the release gate status/proof-level checks.
 - `uv run xmuse-memoryos-live-gate-capture` converts an explicit
   `xmuse.memoryos_lite_trace.v1` artifact into the `live_memoryos` release gate.
   It requires `live_service_proof`, a `memory://` namespace, session id,
@@ -592,6 +597,9 @@ Current implementation status:
   runtime soak artifact into the `real_provider` release gate. It blocks
   contract/fake proof, stdout fallback, missing MCP writeback, missing ordered
   stage timings, and missing restart/resume evidence.
+  Release evidence packs now summarize the generated/attached
+  `real_provider_runtime` detail so the TUI proof cockpit can display runtime
+  provider/session continuity without treating the projection as authority.
 - `uv run xmuse-real-provider-runtime-soak-capture` is the production path for
   producing that runtime artifact from durable peer latency traces and
   `god_sessions.json` provider session metadata. It requires operator-selected

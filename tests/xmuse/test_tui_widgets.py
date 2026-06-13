@@ -697,6 +697,56 @@ def test_proof_cockpit_renders_deliberation_transcript_details() -> None:
     assert "blockers=1" in rendered
 
 
+def test_proof_cockpit_renders_real_provider_runtime_details() -> None:
+    panel = render_proof_cockpit(
+        {
+            "proof_cockpit": {
+                "proof_level": "contract_proof",
+                "fact_state": "blocked",
+                "real_provider_runtime": {
+                    "authority": "real_provider_runtime_release_gate",
+                    "status": "blocked",
+                    "proof_level": "real_provider_proof",
+                    "gate_artifact": "artifact://real-provider-runtime-gate.json",
+                    "runtime_artifact": "artifact://real-provider-runtime.json",
+                    "run_id": "real-soak-pr43",
+                    "conversation_id": "conv-prod-1",
+                    "provider_id": "codex",
+                    "runtime_backend": "ray",
+                    "transport": "codex-app-server",
+                    "provider_session_id": "codex-thread-prod-1",
+                    "mcp_writeback": True,
+                    "provider_session_reused": True,
+                    "fresh_provider_session_id": "codex-thread-prod-1",
+                    "resumed_provider_session_id": "codex-thread-prod-1",
+                    "turn_count": 2,
+                    "phases": ["fresh", "resume"],
+                    "mcp_writeback_turn_count": 2,
+                    "degraded_turn_count": 0,
+                    "blocker_count": 1,
+                },
+                "blockers": [],
+                "manual_gap_reason": None,
+            }
+        }
+    )
+
+    rendered = panel.renderable.plain
+    assert (
+        "Real provider runtime: codex ray/codex-app-server "
+        "blocked/real_provider_proof run=real-soak-pr43"
+    ) in rendered
+    assert (
+        "session=codex-thread-prod-1; mcp_writeback=yes; "
+        "restart_resume=yes; turns=2"
+    ) in rendered
+    assert "phases=fresh, resume; degraded=0; blockers=1" in rendered
+    assert (
+        "artifacts gate=artifact://real-provider-runtime-gate.json "
+        "runtime=artifact://real-provider-runtime.json"
+    ) in rendered
+
+
 def test_proof_cockpit_renders_god_runtime_heartbeat_freshness() -> None:
     panel = render_proof_cockpit(
         {

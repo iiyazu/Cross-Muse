@@ -165,6 +165,7 @@ def build_real_provider_runtime_release_gate(
             source_refs=source_refs,
             proof_level="real_provider_proof",
             next_action="Resolve real provider runtime blockers before release readiness.",
+            real_provider_runtime=_runtime_detail(runtime_artifact),
         )
 
     return _ok_gate(
@@ -174,6 +175,7 @@ def build_real_provider_runtime_release_gate(
         ),
         artifact_path=artifact,
         source_refs=source_refs,
+        real_provider_runtime=_runtime_detail(runtime_artifact),
     )
 
 
@@ -241,6 +243,7 @@ def _ok_gate(
     summary: str,
     artifact_path: Path,
     source_refs: list[str],
+    real_provider_runtime: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return _gate(
         status="ok",
@@ -249,6 +252,7 @@ def _ok_gate(
         artifact_path=artifact_path,
         source_refs=source_refs,
         next_action="Attach this real provider runtime gate to release readiness.",
+        real_provider_runtime=real_provider_runtime,
     )
 
 
@@ -259,6 +263,7 @@ def _blocked_gate(
     source_refs: list[str],
     proof_level: str,
     next_action: str | None = None,
+    real_provider_runtime: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return _gate(
         status="blocked",
@@ -271,6 +276,7 @@ def _blocked_gate(
             "Run the configured real provider/Ray/Codex/OpenCode soak and capture "
             "a real-provider runtime artifact."
         ),
+        real_provider_runtime=real_provider_runtime,
     )
 
 
@@ -282,8 +288,9 @@ def _gate(
     artifact_path: Path,
     source_refs: list[str],
     next_action: str,
+    real_provider_runtime: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return {
+    gate: dict[str, Any] = {
         "schema_version": "xmuse.production_evidence.v1",
         "gate_id": "real-provider-runtime",
         "kind": "real_provider",
@@ -298,6 +305,51 @@ def _gate(
         "source_refs": source_refs,
         "artifacts": [str(artifact_path)],
         "generated_at": _utc_now(),
+    }
+    if real_provider_runtime is not None:
+        gate["real_provider_runtime"] = real_provider_runtime
+    return gate
+
+
+def _runtime_detail(runtime_artifact: dict[str, Any]) -> dict[str, Any]:
+    provider_runtime = _dict(runtime_artifact.get("provider_runtime"))
+    restart_resume = _dict(runtime_artifact.get("restart_resume"))
+    turns = _dicts(runtime_artifact.get("turns"))
+    phases: list[str] = []
+    for turn in turns:
+        phase = _text(turn.get("phase"))
+        if phase is not None and phase not in phases:
+            phases.append(phase)
+    return {
+        "authority": "real_provider_runtime_release_gate",
+        "run_id": _text(runtime_artifact.get("run_id")),
+        "conversation_id": _text(runtime_artifact.get("conversation_id")),
+        "provider_id": _text(provider_runtime.get("provider_id")),
+        "runtime_backend": _text(provider_runtime.get("runtime_backend")),
+        "transport": _text(provider_runtime.get("transport")),
+        "provider_session_id": _text(provider_runtime.get("provider_session_id")),
+        "mcp_writeback": provider_runtime.get("mcp_writeback") is True,
+        "provider_session_reused": (
+            restart_resume.get("provider_session_reused") is True
+        ),
+        "fresh_provider_session_id": _text(
+            restart_resume.get("fresh_provider_session_id")
+        ),
+        "resumed_provider_session_id": _text(
+            restart_resume.get("resumed_provider_session_id")
+        ),
+        "turn_count": len(turns),
+        "phases": phases,
+        "mcp_writeback_turn_count": sum(
+            1 for turn in turns if _text(turn.get("delivery_mode")) == "mcp_writeback"
+        ),
+        "degraded_turn_count": sum(
+            1
+            for turn in turns
+            if turn.get("degraded_reason") is not None
+            or _text(turn.get("delivery_mode")) != "mcp_writeback"
+        ),
+        "blocker_count": len(_dicts(runtime_artifact.get("blockers"))),
     }
 
 

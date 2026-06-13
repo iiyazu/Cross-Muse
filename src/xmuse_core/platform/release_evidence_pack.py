@@ -125,6 +125,10 @@ def capture_release_evidence_pack(
         internal_review_artifact=internal_review_artifact,
         internal_review_expected_head_sha=internal_review_expected_head_sha,
     )
+    real_provider_runtime_summary = _real_provider_runtime_summary(
+        artifacts_dir=Path(artifacts_dir),
+        source_reports=release_gate_source_reports,
+    )
     baseline_summary = _production_baseline_summary(production_baseline)
 
     readiness = capture_release_readiness(
@@ -191,6 +195,8 @@ def capture_release_evidence_pack(
     }
     if baseline_summary is not None:
         pack["production_baseline"] = baseline_summary
+    if real_provider_runtime_summary is not None:
+        pack["real_provider_runtime"] = real_provider_runtime_summary
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(pack, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return pack
@@ -424,6 +430,78 @@ def _load_json_object(path: Path, *, label: str) -> dict[str, Any]:
     return payload
 
 
+def _real_provider_runtime_summary(
+    *,
+    artifacts_dir: Path,
+    source_reports: Mapping[str, str],
+) -> dict[str, Any] | None:
+    paths: list[Path] = []
+    report = _text(source_reports.get("real_provider_runtime_gate"))
+    if report is not None:
+        paths.append(Path(report))
+    if artifacts_dir.exists():
+        paths.extend(sorted(artifacts_dir.rglob("*.json")))
+
+    seen: set[Path] = set()
+    for path in paths:
+        if path in seen:
+            continue
+        seen.add(path)
+        payload = _try_load_json_object(path)
+        if payload is None or _text(payload.get("gate_id")) != "real-provider-runtime":
+            continue
+        details = payload.get("real_provider_runtime")
+        if isinstance(details, dict):
+            return _real_provider_runtime_pack_projection(
+                payload,
+                details,
+                gate_artifact=path,
+            )
+    return None
+
+
+def _try_load_json_object(path: Path) -> dict[str, Any] | None:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _real_provider_runtime_pack_projection(
+    gate: dict[str, Any],
+    details: dict[str, Any],
+    *,
+    gate_artifact: Path,
+) -> dict[str, Any]:
+    runtime_artifacts = _string_list(gate.get("artifacts"))
+    return {
+        "authority": _text(details.get("authority"))
+        or "real_provider_runtime_release_gate",
+        "status": _text(gate.get("status")) or "not_evaluated",
+        "proof_level": _text(gate.get("proof_level")) or "manual_gap",
+        "gate_artifact": str(gate_artifact),
+        "runtime_artifact": runtime_artifacts[0] if runtime_artifacts else None,
+        "run_id": _text(details.get("run_id")),
+        "conversation_id": _text(details.get("conversation_id")),
+        "provider_id": _text(details.get("provider_id")),
+        "runtime_backend": _text(details.get("runtime_backend")),
+        "transport": _text(details.get("transport")),
+        "provider_session_id": _text(details.get("provider_session_id")),
+        "mcp_writeback": details.get("mcp_writeback") is True,
+        "provider_session_reused": details.get("provider_session_reused") is True,
+        "fresh_provider_session_id": _text(details.get("fresh_provider_session_id")),
+        "resumed_provider_session_id": _text(
+            details.get("resumed_provider_session_id")
+        ),
+        "turn_count": _int(details.get("turn_count")),
+        "phases": _string_list(details.get("phases")),
+        "mcp_writeback_turn_count": _int(details.get("mcp_writeback_turn_count")),
+        "degraded_turn_count": _int(details.get("degraded_turn_count")),
+        "blocker_count": _int(details.get("blocker_count")),
+    }
+
+
 def _production_baseline_summary(path: str | Path | None) -> dict[str, Any] | None:
     if path is None:
         return None
@@ -607,6 +685,10 @@ def _string_list(value: object) -> list[str]:
     if not isinstance(value, list):
         return []
     return [item for item in value if isinstance(item, str)]
+
+
+def _int(value: object) -> int:
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
 
 
 def _pack_decision(

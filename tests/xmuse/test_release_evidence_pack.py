@@ -850,6 +850,28 @@ def test_release_evidence_pack_converts_real_provider_runtime_into_release_gate(
     assert gate["proof_level"] == "real_provider_proof"
     assert gate["artifacts"] == [str(runtime)]
     assert pack["source_reports"]["real_provider_runtime_gate"] == str(gate_path)
+    assert pack["real_provider_runtime"] == {
+        "authority": "real_provider_runtime_release_gate",
+        "status": "ok",
+        "proof_level": "real_provider_proof",
+        "gate_artifact": str(gate_path),
+        "runtime_artifact": str(runtime),
+        "run_id": "real-provider-pack-run",
+        "conversation_id": "conv-prod-1",
+        "provider_id": "codex",
+        "runtime_backend": "ray",
+        "transport": "codex-app-server",
+        "provider_session_id": "codex-thread-prod-1",
+        "mcp_writeback": True,
+        "provider_session_reused": True,
+        "fresh_provider_session_id": "codex-thread-prod-1",
+        "resumed_provider_session_id": "codex-thread-prod-1",
+        "turn_count": 2,
+        "phases": ["fresh", "resume"],
+        "mcp_writeback_turn_count": 2,
+        "degraded_turn_count": 0,
+        "blocker_count": 0,
+    }
     assert pack["artifact_count"] == 1
     assert pack["release_readiness_decision"] == "ready"
     assert pack["proof_contamination_decision"] == "clean"

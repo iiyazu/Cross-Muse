@@ -54,6 +54,7 @@ def render_proof_cockpit(vision: dict[str, Any] | None) -> Panel:
         lines.append("Sections:")
         lines.extend(f"  {_section_line(section)}" for section in section_statuses[:6])
     _append_github_truth(lines, cockpit)
+    _append_real_provider_runtime(lines, cockpit)
     _append_deliberation_transcript(lines, cockpit)
     _append_memory_governance(lines, cockpit)
     _append_feature_lineage(lines, cockpit)
@@ -231,6 +232,48 @@ def _append_deliberation_transcript(
     blocker_count = _number(transcript.get("blocker_count"))
     if blocker_count:
         lines.append(f"  blockers={blocker_count}")
+
+
+def _append_real_provider_runtime(
+    lines: list[str],
+    cockpit: dict[str, Any],
+) -> None:
+    runtime = cockpit.get("real_provider_runtime")
+    if not isinstance(runtime, dict):
+        return
+    provider_id = _text(runtime.get("provider_id")) or "unknown"
+    runtime_backend = _text(runtime.get("runtime_backend")) or "unknown"
+    transport = _text(runtime.get("transport")) or "unknown"
+    status = _text(runtime.get("status")) or "not_evaluated"
+    proof_level = _text(runtime.get("proof_level")) or "manual_gap"
+    run_id = _text(runtime.get("run_id")) or "unknown"
+    lines.append(
+        "Real provider runtime: "
+        f"{provider_id} {runtime_backend}/{transport} "
+        f"{status}/{proof_level} run={run_id}"
+    )
+    lines.append(
+        "  "
+        f"session={_text(runtime.get('provider_session_id')) or '-'}; "
+        f"mcp_writeback={_yes_no(runtime.get('mcp_writeback'))}; "
+        f"restart_resume={_yes_no(runtime.get('provider_session_reused'))}; "
+        f"turns={_number(runtime.get('turn_count'))}"
+    )
+    phases = _strings(runtime.get("phases"))
+    lines.append(
+        "  "
+        f"phases={_compact(phases) if phases else '-'}; "
+        f"degraded={_number(runtime.get('degraded_turn_count'))}; "
+        f"blockers={_number(runtime.get('blocker_count'))}"
+    )
+    gate_artifact = _text(runtime.get("gate_artifact"))
+    runtime_artifact = _text(runtime.get("runtime_artifact"))
+    if gate_artifact is not None or runtime_artifact is not None:
+        lines.append(
+            "  "
+            f"artifacts gate={gate_artifact or '-'} "
+            f"runtime={runtime_artifact or '-'}"
+        )
 
 
 def _append_memory_governance(lines: list[str], cockpit: dict[str, Any]) -> None:

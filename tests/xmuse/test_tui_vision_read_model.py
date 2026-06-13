@@ -718,6 +718,65 @@ def test_tui_vision_read_model_projects_release_pack_recovery_queue() -> None:
     ]
 
 
+def test_tui_vision_read_model_projects_real_provider_runtime_details() -> None:
+    model = build_tui_vision_read_model(
+        release_evidence_pack={
+            "schema_version": "xmuse.release_evidence_pack.v1",
+            "decision": "blocked",
+            "release_readiness_decision": "blocked",
+            "proof_contamination_decision": "clean",
+            "artifact_count": 1,
+            "finding_count": 0,
+            "real_provider_runtime": {
+                "authority": "real_provider_runtime_release_gate",
+                "status": "blocked",
+                "proof_level": "real_provider_proof",
+                "gate_artifact": "artifact://real-provider-runtime-gate.json",
+                "runtime_artifact": "artifact://real-provider-runtime.json",
+                "run_id": "real-soak-pr43",
+                "conversation_id": "conv-prod-1",
+                "provider_id": "codex",
+                "runtime_backend": "ray",
+                "transport": "codex-app-server",
+                "provider_session_id": "codex-thread-prod-1",
+                "mcp_writeback": True,
+                "provider_session_reused": True,
+                "fresh_provider_session_id": "codex-thread-prod-1",
+                "resumed_provider_session_id": "codex-thread-prod-1",
+                "turn_count": 2,
+                "phases": ["fresh", "resume"],
+                "mcp_writeback_turn_count": 2,
+                "degraded_turn_count": 0,
+                "blocker_count": 1,
+            },
+        },
+    )
+
+    cockpit = model["proof_cockpit"]
+    assert cockpit["real_provider_runtime"] == {
+        "authority": "real_provider_runtime_release_gate",
+        "status": "blocked",
+        "proof_level": "real_provider_proof",
+        "gate_artifact": "artifact://real-provider-runtime-gate.json",
+        "runtime_artifact": "artifact://real-provider-runtime.json",
+        "run_id": "real-soak-pr43",
+        "conversation_id": "conv-prod-1",
+        "provider_id": "codex",
+        "runtime_backend": "ray",
+        "transport": "codex-app-server",
+        "provider_session_id": "codex-thread-prod-1",
+        "mcp_writeback": True,
+        "provider_session_reused": True,
+        "fresh_provider_session_id": "codex-thread-prod-1",
+        "resumed_provider_session_id": "codex-thread-prod-1",
+        "turn_count": 2,
+        "phases": ["fresh", "resume"],
+        "mcp_writeback_turn_count": 2,
+        "degraded_turn_count": 0,
+        "blocker_count": 1,
+    }
+
+
 def test_tui_vision_read_model_projects_feature_lineage_lane_details() -> None:
     model = build_tui_vision_read_model(
         replay_bundle={

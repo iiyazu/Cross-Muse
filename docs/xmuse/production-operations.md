@@ -1033,6 +1033,12 @@ artifact schema `xmuse.real_provider_runtime.v1`, required proof
 `attempt_release_evidence` payload hints. The TUI summary prints provider
 `next=` guidance so the operator can move from candidate inspection to an
 authorized capture action without mistaking the candidate for release proof.
+After a real-provider runtime gate is captured, the release evidence pack and
+proof cockpit can display provider id, runtime backend, transport, provider
+session id, MCP writeback, restart/resume reuse, turn phases, degraded-turn
+count, and blocker count. These fields are read-only audit details; they do not
+upgrade fake/manual-gap evidence or replace the gate's status/proof-level
+checks.
 MemoryOS candidate rows use
 `proof_boundary=candidate_report_is_not_live_memoryos_proof`, required schema
 `xmuse.memoryos_lite_trace.v1`, required proof `live_service_proof`, redacted
