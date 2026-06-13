@@ -561,6 +561,28 @@ def test_release_evidence_pack_writes_readiness_audit_and_summary(
     assert pack["artifact_count"] == 2
     assert pack["blocker_count"] == 1
     assert pack["replay_blocker_count"] >= 1
+    assert pack["recovery_queue_count"] == len(pack["recovery_queue"])
+    assert {
+        "source": "release_readiness",
+        "kind": "release_gate",
+        "id": "real-provider-runtime",
+        "owner": "operator",
+        "reason": (
+            "real-provider-runtime status is manual_gap: "
+            "Ray/Codex runtime was not started."
+        ),
+        "next_action": "Start the configured production provider bundle.",
+        "artifact": str(readiness_output),
+    } in pack["recovery_queue"]
+    assert {
+        "source": "overnight_replay_bundle",
+        "kind": "replay_section",
+        "id": "stage_evidence",
+        "owner": "operator",
+        "reason": "stage_evidence replay evidence was not attached.",
+        "next_action": "Attach or capture stage_evidence production evidence.",
+        "artifact": str(replay_output),
+    } in pack["recovery_queue"]
     assert pack["finding_count"] == 0
     assert pack["readiness_report"] == str(readiness_output)
     assert pack["proof_contamination_audit"] == str(audit_output)

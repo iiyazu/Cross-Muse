@@ -575,6 +575,7 @@ def _build_proof_cockpit(
         "total": 0,
     }
     latest_virtual_soak: dict[str, Any] | None = None
+    recovery_queue: list[dict[str, Any]] = []
 
     if isinstance(overnight_supervisor, dict):
         _append_unique(
@@ -657,7 +658,8 @@ def _build_proof_cockpit(
             for artifact in _list_refs(section.get("artifacts")):
                 _append_unique(artifacts, artifact)
         for blocker in _dicts(replay_bundle.get("blockers")):
-            blockers.append(
+            _append_cockpit_blocker(
+                blockers,
                 {
                     "kind": "replay_section",
                     "id": _text(blocker.get("section_id")) or "unknown",
@@ -684,16 +686,43 @@ def _build_proof_cockpit(
             artifact = _text(release_evidence_pack.get(key))
             if artifact is not None:
                 _append_unique(artifacts, artifact)
-        for blocker in _dicts(release_evidence_pack.get("blockers")):
-            blockers.append(
-                {
-                    "kind": "release_gate",
-                    "id": _text(blocker.get("gate_id")) or "unknown",
-                    "reason": _text(blocker.get("reason")) or "blocked",
-                    "owner": _text(blocker.get("owner")) or "operator",
-                    "next_action": _text(blocker.get("next_action")),
+        pack_recovery_queue = _dicts(release_evidence_pack.get("recovery_queue"))
+        if pack_recovery_queue:
+            for item in pack_recovery_queue:
+                recovery_item = {
+                    "source": _text(item.get("source")) or "release_evidence_pack",
+                    "kind": _text(item.get("kind")) or "recovery_item",
+                    "id": _text(item.get("id")) or "unknown",
+                    "owner": _text(item.get("owner")) or "operator",
+                    "reason": _text(item.get("reason")) or "blocked",
+                    "next_action": _text(item.get("next_action")),
+                    "artifact": _text(item.get("artifact")),
                 }
-            )
+                recovery_queue.append(recovery_item)
+                if recovery_item["artifact"] is not None:
+                    _append_unique(artifacts, recovery_item["artifact"])
+                _append_cockpit_blocker(
+                    blockers,
+                    {
+                        "kind": recovery_item["kind"],
+                        "id": recovery_item["id"],
+                        "reason": recovery_item["reason"],
+                        "owner": recovery_item["owner"],
+                        "next_action": recovery_item["next_action"],
+                    },
+                )
+        else:
+            for blocker in _dicts(release_evidence_pack.get("blockers")):
+                _append_cockpit_blocker(
+                    blockers,
+                    {
+                        "kind": "release_gate",
+                        "id": _text(blocker.get("gate_id")) or "unknown",
+                        "reason": _text(blocker.get("reason")) or "blocked",
+                        "owner": _text(blocker.get("owner")) or "operator",
+                        "next_action": _text(blocker.get("next_action")),
+                    },
+                )
 
     fact_state = "observed"
     if blockers or replay_decision == "blocked" or release_decision == "blocked":
@@ -724,6 +753,7 @@ def _build_proof_cockpit(
         "stage_results": stage_results,
         "virtual_soak_summary": virtual_soak_summary,
         "latest_virtual_soak": latest_virtual_soak,
+        "recovery_queue": recovery_queue,
     }
 
 
@@ -818,6 +848,27 @@ def _goal_stage_next_action(stage_result: dict[str, Any]) -> str | None:
     if next_stage_id is not None:
         return f"Continue via dependency-aware fallback to {next_stage_id}."
     return None
+
+
+def _append_cockpit_blocker(
+    blockers: list[dict[str, Any]],
+    blocker: dict[str, Any],
+) -> None:
+    key = (
+        _text(blocker.get("kind")),
+        _text(blocker.get("id")),
+        _text(blocker.get("reason")),
+        _text(blocker.get("next_action")),
+    )
+    for existing in blockers:
+        if key == (
+            _text(existing.get("kind")),
+            _text(existing.get("id")),
+            _text(existing.get("reason")),
+            _text(existing.get("next_action")),
+        ):
+            return
+    blockers.append(blocker)
 
 
 def _virtual_soak_projection(soak: dict[str, Any]) -> dict[str, Any]:

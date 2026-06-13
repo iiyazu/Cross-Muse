@@ -577,6 +577,82 @@ def test_tui_vision_read_model_summarizes_proof_cockpit_without_authority_upgrad
     ]
 
 
+def test_tui_vision_read_model_projects_release_pack_recovery_queue() -> None:
+    model = build_tui_vision_read_model(
+        release_evidence_pack={
+            "schema_version": "xmuse.release_evidence_pack.v1",
+            "decision": "blocked",
+            "release_readiness_decision": "blocked",
+            "proof_contamination_decision": "clean",
+            "artifact_count": 2,
+            "blocker_count": 1,
+            "recovery_queue_count": 2,
+            "finding_count": 0,
+            "recovery_queue": [
+                {
+                    "source": "release_readiness",
+                    "kind": "release_gate",
+                    "id": "real-provider-runtime",
+                    "owner": "operator",
+                    "reason": "real provider runtime soak was not captured",
+                    "next_action": "Run provider soak.",
+                    "artifact": "artifact://release-readiness.json",
+                },
+                {
+                    "source": "overnight_replay_bundle",
+                    "kind": "replay_section",
+                    "id": "memoryos_trace",
+                    "owner": "operator",
+                    "reason": "MemoryOS Lite was not configured",
+                    "next_action": "Enable MemoryOS Lite.",
+                    "artifact": "artifact://overnight-replay-bundle.json",
+                },
+            ],
+            "readiness_report": "artifact://release-readiness.json",
+            "proof_contamination_audit": "artifact://proof-contamination-audit.json",
+        },
+    )
+
+    cockpit = model["proof_cockpit"]
+    assert cockpit["fact_state"] == "blocked"
+    assert cockpit["recovery_queue"] == [
+        {
+            "source": "release_readiness",
+            "kind": "release_gate",
+            "id": "real-provider-runtime",
+            "owner": "operator",
+            "reason": "real provider runtime soak was not captured",
+            "next_action": "Run provider soak.",
+            "artifact": "artifact://release-readiness.json",
+        },
+        {
+            "source": "overnight_replay_bundle",
+            "kind": "replay_section",
+            "id": "memoryos_trace",
+            "owner": "operator",
+            "reason": "MemoryOS Lite was not configured",
+            "next_action": "Enable MemoryOS Lite.",
+            "artifact": "artifact://overnight-replay-bundle.json",
+        },
+    ]
+    assert cockpit["blockers"] == [
+        {
+            "kind": "release_gate",
+            "id": "real-provider-runtime",
+            "reason": "real provider runtime soak was not captured",
+            "owner": "operator",
+            "next_action": "Run provider soak.",
+        },
+        {
+            "kind": "replay_section",
+            "id": "memoryos_trace",
+            "reason": "MemoryOS Lite was not configured",
+            "owner": "operator",
+            "next_action": "Enable MemoryOS Lite.",
+        },
+    ]
+
+
 def test_tui_vision_read_model_projects_supervisor_goal_stage_results() -> None:
     model = build_tui_vision_read_model(
         overnight_supervisor={

@@ -145,6 +145,12 @@ def capture_release_evidence_pack(
     replay_blockers = replay.get("blockers")
     if not isinstance(replay_blockers, list):
         replay_blockers = []
+    recovery_queue = _recovery_queue(
+        readiness=readiness,
+        replay=replay,
+        readiness_path=readiness_path,
+        replay_path=replay_path,
+    )
 
     pack = {
         "schema_version": "xmuse.release_evidence_pack.v1",
@@ -161,9 +167,11 @@ def capture_release_evidence_pack(
         "artifact_count": readiness["artifact_count"],
         "blocker_count": len(readiness["blockers"]),
         "replay_blocker_count": len(replay_blockers),
+        "recovery_queue_count": len(recovery_queue),
         "finding_count": audit["finding_count"],
         "blockers": readiness["blockers"],
         "replay_blockers": replay_blockers,
+        "recovery_queue": recovery_queue,
         "findings": audit["findings"],
         "source_reports": {
             "release_readiness": str(readiness_path),
@@ -438,6 +446,84 @@ def _production_baseline_summary(path: str | Path | None) -> dict[str, Any] | No
         "xmuse_init_absent": package_boundary.get("xmuse_init_absent"),
         "blockers": _string_list(payload.get("blockers")),
     }
+
+
+def _recovery_queue(
+    *,
+    readiness: dict[str, Any],
+    replay: dict[str, Any],
+    readiness_path: Path,
+    replay_path: Path,
+) -> list[dict[str, str | None]]:
+    queue: list[dict[str, str | None]] = []
+    seen: set[tuple[str | None, ...]] = set()
+    for blocker in _dicts(readiness.get("blockers")):
+        _append_recovery_item(
+            queue,
+            seen=seen,
+            source="release_readiness",
+            kind="release_gate",
+            identifier=_text(blocker.get("gate_id")) or "unknown",
+            owner=_text(blocker.get("owner")) or "operator",
+            reason=_text(blocker.get("reason")) or "blocked",
+            next_action=_text(blocker.get("next_action")),
+            artifact=str(readiness_path),
+        )
+    for blocker in _dicts(replay.get("blockers")):
+        _append_recovery_item(
+            queue,
+            seen=seen,
+            source="overnight_replay_bundle",
+            kind="replay_section",
+            identifier=_text(blocker.get("section_id")) or "unknown",
+            owner=_text(blocker.get("owner")) or "operator",
+            reason=_text(blocker.get("reason")) or "blocked",
+            next_action=_text(blocker.get("next_action")),
+            artifact=str(replay_path),
+        )
+    return queue
+
+
+def _append_recovery_item(
+    queue: list[dict[str, str | None]],
+    *,
+    seen: set[tuple[str | None, ...]],
+    source: str,
+    kind: str,
+    identifier: str,
+    owner: str,
+    reason: str,
+    next_action: str | None,
+    artifact: str,
+) -> None:
+    key = (source, kind, identifier, reason, next_action, artifact)
+    if key in seen:
+        return
+    seen.add(key)
+    queue.append(
+        {
+            "source": source,
+            "kind": kind,
+            "id": identifier,
+            "owner": owner,
+            "reason": reason,
+            "next_action": next_action,
+            "artifact": artifact,
+        }
+    )
+
+
+def _dicts(value: object) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
+
+
+def _text(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    return value or None
 
 
 def _string_list(value: object) -> list[str]:

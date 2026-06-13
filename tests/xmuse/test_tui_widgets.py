@@ -455,6 +455,50 @@ def test_proof_cockpit_renders_virtual_soak_slo() -> None:
     ) in rendered
 
 
+def test_proof_cockpit_renders_recovery_queue() -> None:
+    panel = render_proof_cockpit(
+        {
+            "proof_cockpit": {
+                "proof_level": "contract_proof",
+                "fact_state": "blocked",
+                "recovery_queue": [
+                    {
+                        "source": "release_readiness",
+                        "kind": "release_gate",
+                        "id": "real-provider-runtime",
+                        "reason": "real provider runtime soak was not captured",
+                        "next_action": "Run provider soak.",
+                        "artifact": "artifact://release-readiness.json",
+                    },
+                    {
+                        "source": "overnight_replay_bundle",
+                        "kind": "replay_section",
+                        "id": "memoryos_trace",
+                        "reason": "MemoryOS Lite was not configured",
+                        "next_action": "Enable MemoryOS Lite.",
+                        "artifact": "artifact://overnight-replay-bundle.json",
+                    },
+                ],
+                "blockers": [],
+                "manual_gap_reason": None,
+            }
+        }
+    )
+
+    rendered = panel.renderable.plain
+    assert "Recovery queue:" in rendered
+    assert (
+        "release_readiness release_gate real-provider-runtime: real provider "
+        "runtime soak was not captured next=Run provider soak. "
+        "artifact=artifact://release-readiness.json"
+    ) in rendered
+    assert (
+        "overnight_replay_bundle replay_section memoryos_trace: MemoryOS Lite "
+        "was not configured next=Enable MemoryOS Lite. "
+        "artifact=artifact://overnight-replay-bundle.json"
+    ) in rendered
+
+
 def test_proof_cockpit_renders_god_runtime_heartbeat_freshness() -> None:
     panel = render_proof_cockpit(
         {

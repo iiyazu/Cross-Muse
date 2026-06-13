@@ -70,6 +70,10 @@ def render_proof_cockpit(vision: dict[str, Any] | None) -> Panel:
             for stage_result in stage_results[:6]
         )
     _append_god_runtime(lines, vision)
+    recovery_queue = _dicts(cockpit.get("recovery_queue"))
+    if recovery_queue:
+        lines.append("Recovery queue:")
+        lines.extend(f"  {_recovery_line(item)}" for item in recovery_queue[:5])
     blockers = _dicts(cockpit.get("blockers"))
     if blockers:
         lines.append("Blockers:")
@@ -105,6 +109,21 @@ def _blocker_line(blocker: dict[str, Any]) -> str:
     next_action = _text(blocker.get("next_action"))
     if next_action is not None:
         line += f" next={next_action}"
+    return line
+
+
+def _recovery_line(item: dict[str, Any]) -> str:
+    source = _text(item.get("source")) or "release_evidence_pack"
+    kind = _text(item.get("kind")) or "recovery_item"
+    identifier = _text(item.get("id")) or "unknown"
+    reason = _text(item.get("reason")) or "blocked"
+    line = f"{source} {kind} {identifier}: {reason}"
+    next_action = _text(item.get("next_action"))
+    if next_action is not None:
+        line += f" next={next_action}"
+    artifact = _text(item.get("artifact"))
+    if artifact is not None:
+        line += f" artifact={artifact}"
     return line
 
 
