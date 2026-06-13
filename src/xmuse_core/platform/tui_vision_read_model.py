@@ -569,6 +569,12 @@ def _build_proof_cockpit(
         "retry": 0,
         "total": 0,
     }
+    virtual_soak_summary = {
+        "ok": 0,
+        "violated": 0,
+        "total": 0,
+    }
+    latest_virtual_soak: dict[str, Any] | None = None
 
     if isinstance(overnight_supervisor, dict):
         _append_unique(
@@ -576,6 +582,31 @@ def _build_proof_cockpit(
             _text(overnight_supervisor.get("schema_version"))
             or "xmuse.overnight_supervisor.v1",
         )
+        for soak in _dicts(overnight_supervisor.get("virtual_soaks")):
+            projected_soak = _virtual_soak_projection(soak)
+            latest_virtual_soak = projected_soak
+            status = projected_soak["slo_status"]
+            if status in virtual_soak_summary:
+                virtual_soak_summary[status] += 1
+            virtual_soak_summary["total"] += 1
+            _append_unique(
+                source_refs,
+                f"overnight_virtual_soak:{projected_soak['run_id']}",
+            )
+            if status == "violated":
+                blockers.append(
+                    {
+                        "kind": "virtual_soak",
+                        "id": projected_soak["run_id"],
+                        "reason": _virtual_soak_blocked_reason(projected_soak),
+                        "owner": "codex",
+                        "next_action": (
+                            "Reduce heartbeat/self-review intervals or fix "
+                            "supervisor scheduling, then rerun the overnight "
+                            "virtual soak."
+                        ),
+                    }
+                )
         for result in _dicts(overnight_supervisor.get("goal_stage_results")):
             stage_result = _goal_stage_result_projection(result)
             stage_results.append(stage_result)
@@ -691,6 +722,8 @@ def _build_proof_cockpit(
         "artifacts": artifacts,
         "stage_result_summary": stage_result_summary,
         "stage_results": stage_results,
+        "virtual_soak_summary": virtual_soak_summary,
+        "latest_virtual_soak": latest_virtual_soak,
     }
 
 
@@ -785,6 +818,20 @@ def _goal_stage_next_action(stage_result: dict[str, Any]) -> str | None:
     if next_stage_id is not None:
         return f"Continue via dependency-aware fallback to {next_stage_id}."
     return None
+
+
+def _virtual_soak_projection(soak: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "run_id": _text(soak.get("run_id")) or "unknown",
+        "total_minutes": _int(soak.get("total_minutes")),
+        "slo_status": _text(soak.get("slo_status")) or "not_evaluated",
+        "slo_violations": _list_refs(soak.get("slo_violations")),
+    }
+
+
+def _virtual_soak_blocked_reason(soak: dict[str, Any]) -> str:
+    violations = _list_refs(soak.get("slo_violations"))
+    return "; ".join(violations) if violations else "virtual soak SLO violated"
 
 
 def _memory_context_count(

@@ -786,6 +786,7 @@ def test_overnight_supervisor_virtual_soak_simulates_8h_and_blocked_fallback(
     }
     assert snapshot["checkpoints"][-1]["stage_id"] == "S5"
     assert snapshot["checkpoints"][-1]["logical_minute"] == 480
+    assert snapshot["virtual_soaks"] == [result]
     assert snapshot["issue_queue"][0]["severity"] == "blocked"
     assert snapshot["failure_classifications"][0]["failure_class"] == (
         "github_review_truth_unavailable"
@@ -829,6 +830,11 @@ def test_overnight_supervisor_virtual_soak_reports_slo_violations(
     assert result["max_heartbeat_gap_minutes"] == 20
     assert result["max_self_review_gap_minutes"] == 75
     assert result["slo_violations"] == [
+        "heartbeat gap 20m exceeds 15m",
+        "self-review gap 75m exceeds 60m",
+    ]
+    assert supervisor.snapshot()["virtual_soaks"][0]["slo_status"] == "violated"
+    assert supervisor.snapshot()["virtual_soaks"][0]["slo_violations"] == [
         "heartbeat gap 20m exceeds 15m",
         "self-review gap 75m exceeds 60m",
     ]

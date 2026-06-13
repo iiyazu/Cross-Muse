@@ -5,6 +5,8 @@ import tomllib
 from pathlib import Path
 
 from xmuse_core.platform.overnight_operator_supervisor import (
+    OvernightSimulationConfig,
+    OvernightSimulationFailure,
     OvernightSupervisor,
     OvernightSupervisorConfig,
     OvernightSupervisorStage,
@@ -166,6 +168,62 @@ def test_capture_overnight_supervisor_evidence_summarizes_reviews_and_blockers(
         "gh api repos/iiyazu/Cross-Muse/pulls/43/reviews"
     ]
     assert fallback["artifact_path"] in artifact["artifacts"]
+
+
+def test_capture_overnight_supervisor_evidence_includes_virtual_soak_slo(
+    tmp_path: Path,
+) -> None:
+    supervisor = OvernightSupervisor(
+        OvernightSupervisorConfig(
+            run_id="overnight-virtual-slo",
+            artifact_dir=tmp_path,
+            stages=[
+                OvernightSupervisorStage(stage_id="S4", objective="live gates"),
+                OvernightSupervisorStage(stage_id="S7", objective="proof cockpit"),
+            ],
+        )
+    )
+    simulation = supervisor.simulate_virtual_soak(
+        OvernightSimulationConfig(
+            total_minutes=180,
+            heartbeat_interval_minutes=20,
+            self_review_interval_minutes=75,
+            checkpoint_interval_minutes=90,
+            max_heartbeat_gap_minutes=15,
+            max_self_review_gap_minutes=60,
+            failures=[
+                OvernightSimulationFailure(
+                    minute=60,
+                    stage_id="S4",
+                    reason="MemoryOS Lite is configured but unavailable.",
+                    failure_class="memoryos_live_unavailable",
+                    attempted_command="uv run xmuse-memoryos-live-trace-capture",
+                )
+            ],
+        )
+    )
+
+    artifact = capture_overnight_supervisor_evidence(
+        snapshot_path=tmp_path / "overnight-supervisor-overnight-virtual-slo.json",
+        output_path=tmp_path / "supervisor-production-evidence.json",
+    )
+
+    assert simulation["slo_status"] == "violated"
+    assert artifact["status"] == "manual_gap"
+    assert artifact["proof_level"] == "manual_gap"
+    assert artifact["summary"] == (
+        "Supervisor captured 10 heartbeat(s), 2 checkpoint(s), "
+        "0 manual gap(s), 2 self-review(s), 1 blocked fallback(s), and "
+        "1 virtual soak(s); latest virtual soak SLO=violated."
+    )
+    assert artifact["blocked_reason"] == (
+        "latest overnight virtual soak SLO violated: heartbeat gap 20m exceeds "
+        "15m; self-review gap 75m exceeds 60m"
+    )
+    assert artifact["next_action"] == (
+        "Reduce heartbeat/self-review intervals or fix supervisor scheduling, "
+        "then rerun the overnight virtual soak."
+    )
 
 
 def test_capture_overnight_supervisor_evidence_cli_writes_artifact(tmp_path: Path) -> None:

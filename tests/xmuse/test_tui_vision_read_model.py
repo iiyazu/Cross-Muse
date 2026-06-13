@@ -582,6 +582,17 @@ def test_tui_vision_read_model_projects_supervisor_goal_stage_results() -> None:
         overnight_supervisor={
             "schema_version": "xmuse.overnight_supervisor.v1",
             "run_id": "overnight-stage-spine",
+            "virtual_soaks": [
+                {
+                    "schema_version": "xmuse.overnight_virtual_soak.v1",
+                    "run_id": "overnight-stage-spine",
+                    "total_minutes": 480,
+                    "slo_status": "violated",
+                    "slo_violations": [
+                        "heartbeat gap 20m exceeds 15m",
+                    ],
+                }
+            ],
             "goal_stage_results": [
                 {
                     "stage_id": "S1",
@@ -616,6 +627,36 @@ def test_tui_vision_read_model_projects_supervisor_goal_stage_results() -> None:
         "retry": 0,
         "total": 2,
     }
+    assert cockpit["virtual_soak_summary"] == {
+        "ok": 0,
+        "violated": 1,
+        "total": 1,
+    }
+    assert cockpit["latest_virtual_soak"] == {
+        "run_id": "overnight-stage-spine",
+        "total_minutes": 480,
+        "slo_status": "violated",
+        "slo_violations": ["heartbeat gap 20m exceeds 15m"],
+    }
+    assert cockpit["blockers"] == [
+        {
+            "kind": "virtual_soak",
+            "id": "overnight-stage-spine",
+            "reason": "heartbeat gap 20m exceeds 15m",
+            "owner": "codex",
+            "next_action": (
+                "Reduce heartbeat/self-review intervals or fix supervisor "
+                "scheduling, then rerun the overnight virtual soak."
+            ),
+        },
+        {
+            "kind": "goal_stage_result",
+            "id": "S4",
+            "reason": "goal stage result is blocked: GitHub review truth missing",
+            "owner": "codex",
+            "next_action": "Continue via dependency-aware fallback to S7.",
+        },
+    ]
     assert cockpit["stage_results"] == [
         {
             "stage_id": "S1",
@@ -638,20 +679,12 @@ def test_tui_vision_read_model_projects_supervisor_goal_stage_results() -> None:
             "next_stage_id": "S7",
         },
     ]
-    assert cockpit["blockers"] == [
-        {
-            "kind": "goal_stage_result",
-            "id": "S4",
-            "reason": "goal stage result is blocked: GitHub review truth missing",
-            "owner": "codex",
-            "next_action": "Continue via dependency-aware fallback to S7.",
-        }
-    ]
     assert cockpit["artifacts"] == [
         "/tmp/goal-runs/S1/result.json",
         "/tmp/goal-runs/S4/result.json",
     ]
     assert cockpit["source_refs"] == [
+        "overnight_virtual_soak:overnight-stage-spine",
         "goal_stage:S1",
         "goal_stage_result:/tmp/goal-runs/S1/result.json",
         "goal_stage:S4",

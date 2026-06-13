@@ -706,6 +706,28 @@ and the next ready independent stage was started. Stages declared with
 `--stage-priority` and declaration order. This does not mean the blocked release
 evidence became acceptable.
 
+For no-secrets long-run simulation, use virtual time instead of sleeping:
+
+```bash
+uv run xmuse-overnight-supervisor \
+  --run-id <run-id> \
+  --artifact-dir xmuse/work/release_readiness/overnight_supervisor \
+  --stage S4="live gates" \
+  --stage S7="TUI proof cockpit" \
+  simulate \
+  --total-minutes 480 \
+  --heartbeat-interval-minutes 15 \
+  --self-review-interval-minutes 60 \
+  --checkpoint-interval-minutes 120
+```
+
+The supervisor snapshot persists `virtual_soaks` with SLO status, max heartbeat
+gap, max self-review gap, and violations. Supervisor replay evidence includes
+the latest virtual-soak SLO in its summary; a violated SLO becomes
+`manual_gap` with a scheduling next action. The TUI proof cockpit projects the
+same virtual-soak summary and blocker without treating the simulation as live
+provider, MemoryOS, or GitHub proof.
+
 Repeated failures on the same stage/function boundary are not treated as an
 open-ended retry loop. The third matching failure classification marks the
 stage blocked with `refactor_required`, writes a supervisor issue queue row,

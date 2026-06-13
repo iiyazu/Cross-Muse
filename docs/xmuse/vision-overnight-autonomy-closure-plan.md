@@ -413,7 +413,12 @@ Current implementation status:
   8 hours into logical minutes, emit heartbeat/checkpoint/self-review rows with
   `logical_minute`, inject configured blockers, verify heartbeat and
   self-review SLOs, and continue to the next pending stage without sleeping or
-  using live credentials.
+  using live credentials. The durable supervisor snapshot now persists
+  `virtual_soaks`, and `uv run xmuse-overnight-supervisor-evidence-capture`
+  carries the latest virtual-soak SLO into replay-ready supervisor evidence. A
+  violated virtual-soak SLO remains `manual_gap` with scheduling next action;
+  the TUI proof cockpit renders the same virtual-soak summary and blocker
+  without treating the simulation as live/runtime proof.
 - The same supervisor can import `scripts/goal_stage_runner.py` outputs through
   `OvernightSupervisor.import_goal_stage_result(...)` and
   `uv run xmuse-overnight-supervisor --resume import-stage-result RESULT.json`.

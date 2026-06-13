@@ -48,6 +48,7 @@ def render_proof_cockpit(vision: dict[str, Any] | None) -> Panel:
     proof_summary = cockpit.get("proof_level_summary")
     if isinstance(proof_summary, dict) and proof_summary:
         lines.append(f"Proof summary: {_format_mapping(proof_summary)}")
+    _append_virtual_soak(lines, cockpit)
     section_statuses = _dicts(cockpit.get("section_statuses"))
     if section_statuses:
         lines.append("Sections:")
@@ -125,6 +126,28 @@ def _stage_result_line(stage_result: dict[str, Any]) -> str:
     if next_stage_id is not None:
         line += f" -> {next_stage_id}"
     return line
+
+
+def _append_virtual_soak(lines: list[str], cockpit: dict[str, Any]) -> None:
+    summary = cockpit.get("virtual_soak_summary")
+    if isinstance(summary, dict) and _number(summary.get("total")):
+        lines.append(
+            "Virtual soak: "
+            f"ok={_number(summary.get('ok'))}; "
+            f"violated={_number(summary.get('violated'))}; "
+            f"total={_number(summary.get('total'))}"
+        )
+    latest = cockpit.get("latest_virtual_soak")
+    if not isinstance(latest, dict):
+        return
+    run_id = _text(latest.get("run_id")) or "unknown"
+    total_minutes = _number(latest.get("total_minutes"))
+    status = _text(latest.get("slo_status")) or "not_evaluated"
+    line = f"Latest soak: {run_id} {total_minutes}m SLO={status}"
+    violations = _strings(latest.get("slo_violations"))
+    if violations:
+        line += f": {_compact(violations)}"
+    lines.append(line)
 
 
 def _append_god_runtime(

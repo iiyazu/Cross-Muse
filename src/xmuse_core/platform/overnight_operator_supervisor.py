@@ -85,6 +85,7 @@ class OvernightSupervisor:
         self._self_reviews: list[dict[str, Any]] = []
         self._production_evidence: list[dict[str, Any]] = []
         self._goal_stage_results: list[dict[str, Any]] = []
+        self._virtual_soaks: list[dict[str, Any]] = []
         self._persist()
 
     @classmethod
@@ -128,6 +129,7 @@ class OvernightSupervisor:
         supervisor._self_reviews = _dict_rows(snapshot.get("self_reviews"))
         supervisor._production_evidence = _dict_rows(snapshot.get("production_evidence"))
         supervisor._goal_stage_results = _dict_rows(snapshot.get("goal_stage_results"))
+        supervisor._virtual_soaks = _dict_rows(snapshot.get("virtual_soaks"))
         return supervisor
 
     def start_stage(self, stage_id: str) -> None:
@@ -551,6 +553,7 @@ class OvernightSupervisor:
             "slo_violations": violations,
             "final_stage_id": self._current_stage_id,
         }
+        self._virtual_soaks.append(result)
         self._journal(
             "virtual_soak_completed",
             total_minutes=config.total_minutes,
@@ -823,6 +826,7 @@ class OvernightSupervisor:
             "self_reviews": list(self._self_reviews),
             "production_evidence": list(self._production_evidence),
             "goal_stage_results": list(self._goal_stage_results),
+            "virtual_soaks": list(self._virtual_soaks),
         }
 
     def _stage(self, stage_id: str) -> dict[str, Any]:

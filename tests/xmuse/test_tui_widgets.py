@@ -408,6 +408,44 @@ def test_proof_cockpit_renders_goal_stage_results() -> None:
     ) in rendered
 
 
+def test_proof_cockpit_renders_virtual_soak_slo() -> None:
+    panel = render_proof_cockpit(
+        {
+            "proof_cockpit": {
+                "proof_level": "contract_proof",
+                "fact_state": "blocked",
+                "virtual_soak_summary": {
+                    "ok": 0,
+                    "violated": 1,
+                    "total": 1,
+                },
+                "latest_virtual_soak": {
+                    "run_id": "overnight-stage-spine",
+                    "total_minutes": 480,
+                    "slo_status": "violated",
+                    "slo_violations": ["heartbeat gap 20m exceeds 15m"],
+                },
+                "blockers": [
+                    {
+                        "kind": "virtual_soak",
+                        "id": "overnight-stage-spine",
+                        "reason": "heartbeat gap 20m exceeds 15m",
+                    }
+                ],
+                "manual_gap_reason": None,
+            }
+        }
+    )
+
+    rendered = panel.renderable.plain
+    assert "Virtual soak: ok=0; violated=1; total=1" in rendered
+    assert (
+        "Latest soak: overnight-stage-spine 480m SLO=violated: "
+        "heartbeat gap 20m exceeds 15m"
+    ) in rendered
+    assert "virtual_soak overnight-stage-spine: heartbeat gap 20m exceeds 15m" in rendered
+
+
 def test_proof_cockpit_renders_god_runtime_heartbeat_freshness() -> None:
     panel = render_proof_cockpit(
         {

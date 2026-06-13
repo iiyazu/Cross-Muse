@@ -46,6 +46,7 @@ def build_overnight_supervisor_evidence(
     manual_gaps = _dict_rows(snapshot.get("manual_gaps"))
     self_reviews = _dict_rows(snapshot.get("self_reviews"))
     production_evidence = _dict_rows(snapshot.get("production_evidence"))
+    virtual_soaks = _dict_rows(snapshot.get("virtual_soaks"))
     stage_id = _selected_stage_id(
         checkpoints=checkpoints,
         stages=stages,
@@ -54,6 +55,7 @@ def build_overnight_supervisor_evidence(
     blocked_reason = _supervisor_blocked_reason(
         heartbeats=heartbeats,
         checkpoints=checkpoints,
+        virtual_soaks=virtual_soaks,
     )
     if blocked_reason is None:
         status: ProductionEvidenceStatus = "ok"
@@ -63,6 +65,7 @@ def build_overnight_supervisor_evidence(
         status = "manual_gap"
         proof_level = "manual_gap"
         next_action = _supervisor_next_action(blocked_reason)
+    latest_virtual_soak = _latest_virtual_soak(virtual_soaks)
     envelope = ProductionEvidenceEnvelope(
         run_id=run_id,
         stage_id=stage_id,
@@ -99,6 +102,8 @@ def build_overnight_supervisor_evidence(
             manual_gap_count=len(manual_gaps),
             self_review_count=len(self_reviews),
             blocked_fallback_count=_blocked_fallback_count(production_evidence),
+            virtual_soak_count=len(virtual_soaks),
+            latest_virtual_soak=latest_virtual_soak,
         ),
     )
     return envelope.model_dump()
@@ -136,15 +141,29 @@ def _supervisor_blocked_reason(
     *,
     heartbeats: list[dict[str, Any]],
     checkpoints: list[dict[str, Any]],
+    virtual_soaks: list[dict[str, Any]],
 ) -> str | None:
     if not checkpoints:
         return "overnight supervisor snapshot has no checkpoint evidence"
     if not heartbeats:
         return "overnight supervisor snapshot has no heartbeat evidence"
+    latest_virtual_soak = _latest_virtual_soak(virtual_soaks)
+    if latest_virtual_soak and latest_virtual_soak.get("slo_status") == "violated":
+        violations = _string_list(latest_virtual_soak.get("slo_violations"))
+        if violations:
+            return "latest overnight virtual soak SLO violated: " + "; ".join(
+                violations
+            )
+        return "latest overnight virtual soak SLO violated"
     return None
 
 
 def _supervisor_next_action(blocked_reason: str) -> str:
+    if "virtual soak SLO" in blocked_reason:
+        return (
+            "Reduce heartbeat/self-review intervals or fix supervisor scheduling, "
+            "then rerun the overnight virtual soak."
+        )
     if "heartbeat" in blocked_reason:
         return "Record a supervisor heartbeat and regenerate supervisor replay evidence."
     return "Record a supervisor checkpoint and regenerate supervisor replay evidence."
@@ -188,8 +207,10 @@ def _summary(
     manual_gap_count: int,
     self_review_count: int,
     blocked_fallback_count: int,
+    virtual_soak_count: int,
+    latest_virtual_soak: dict[str, Any] | None,
 ) -> str:
-    return (
+    summary = (
         "Supervisor captured "
         f"{heartbeat_count} heartbeat(s), "
         f"{checkpoint_count} checkpoint(s), "
@@ -197,6 +218,18 @@ def _summary(
         f"{self_review_count} self-review(s), and "
         f"{blocked_fallback_count} blocked fallback(s)."
     )
+    if virtual_soak_count:
+        status = _text((latest_virtual_soak or {}).get("slo_status")) or "unknown"
+        summary = (
+            "Supervisor captured "
+            f"{heartbeat_count} heartbeat(s), "
+            f"{checkpoint_count} checkpoint(s), "
+            f"{manual_gap_count} manual gap(s), "
+            f"{self_review_count} self-review(s), "
+            f"{blocked_fallback_count} blocked fallback(s), and "
+            f"{virtual_soak_count} virtual soak(s); latest virtual soak SLO={status}."
+        )
+    return summary
 
 
 def _blocked_fallback_count(production_evidence: list[dict[str, Any]]) -> int:
@@ -205,6 +238,10 @@ def _blocked_fallback_count(production_evidence: list[dict[str, Any]]) -> int:
         for evidence in production_evidence
         if evidence.get("action") == "blocked_fallback"
     )
+
+
+def _latest_virtual_soak(virtual_soaks: list[dict[str, Any]]) -> dict[str, Any] | None:
+    return virtual_soaks[-1] if virtual_soaks else None
 
 
 def _dict_rows(value: Any) -> list[dict[str, Any]]:

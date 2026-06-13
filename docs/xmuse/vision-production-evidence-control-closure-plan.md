@@ -645,6 +645,12 @@ Current implementation status:
   stages to start; the supervisor journals skipped/waiting dependencies and
   starts the highest-priority ready independent stage. This keeps release
   blockers intact while allowing independent overnight work to continue.
+- The supervisor virtual-time soak now persists `virtual_soaks` in the durable
+  snapshot. `xmuse-overnight-supervisor-evidence-capture` includes the latest
+  virtual-soak SLO in replay-ready supervisor evidence; violated heartbeat or
+  self-review SLOs remain `manual_gap` with scheduling next action. The TUI
+  proof cockpit projects the same virtual-soak summary and blocker as read-only
+  operator evidence.
 - The supervisor now treats repeated failure at the same stage/function boundary
   as refactor evidence, not as an invitation to keep stacking retries. The
   third matching failure classification writes a `refactor_required` issue,
