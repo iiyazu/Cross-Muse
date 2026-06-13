@@ -49,6 +49,7 @@ def render_proof_cockpit(vision: dict[str, Any] | None) -> Panel:
     if isinstance(proof_summary, dict) and proof_summary:
         lines.append(f"Proof summary: {_format_mapping(proof_summary)}")
     _append_virtual_soak(lines, cockpit)
+    _append_supervisor(lines, cockpit)
     section_statuses = _dicts(cockpit.get("section_statuses"))
     if section_statuses:
         lines.append("Sections:")
@@ -275,6 +276,39 @@ def _append_real_provider_runtime(
             f"artifacts gate={gate_artifact or '-'} "
             f"runtime={runtime_artifact or '-'}"
         )
+
+
+def _append_supervisor(lines: list[str], cockpit: dict[str, Any]) -> None:
+    supervisor = cockpit.get("supervisor")
+    if not isinstance(supervisor, dict):
+        return
+    run_id = _text(supervisor.get("run_id")) or "unknown"
+    lines.append(
+        "Supervisor: "
+        f"{run_id} "
+        f"stages={_number(supervisor.get('stage_count'))}; "
+        f"heartbeats={_number(supervisor.get('heartbeat_count'))}; "
+        f"checkpoints={_number(supervisor.get('checkpoint_count'))}; "
+        f"manual_gaps={_number(supervisor.get('manual_gap_count'))}"
+    )
+    lines.append(
+        "  "
+        f"current={_text(supervisor.get('current_stage_id')) or '-'}; "
+        f"selected={_text(supervisor.get('selected_stage_id')) or '-'}; "
+        f"self_reviews={_number(supervisor.get('self_review_count'))}; "
+        "blocked_fallbacks="
+        f"{_number(supervisor.get('blocked_fallback_count'))}; "
+        f"virtual_soaks={_number(supervisor.get('virtual_soak_count'))}"
+    )
+    lines.append(
+        "  latest "
+        f"heartbeat={_text(supervisor.get('latest_heartbeat_stage_id')) or '-'}; "
+        f"checkpoint={_text(supervisor.get('latest_checkpoint_stage_id')) or '-'}; "
+        f"blocked={_text(supervisor.get('latest_blocked_stage_id')) or '-'}; "
+        "soak="
+        f"{_text(supervisor.get('latest_virtual_soak_run_id')) or '-'}/"
+        f"{_text(supervisor.get('latest_virtual_soak_slo_status')) or '-'}"
+    )
 
 
 def _append_memory_governance(lines: list[str], cockpit: dict[str, Any]) -> None:

@@ -80,6 +80,24 @@ def test_capture_overnight_supervisor_evidence_exports_replay_ready_artifact(
     assert str(tmp_path / "manual-gap-S4.json") in artifact["artifacts"]
     assert artifact["blocked_reason"] is None
     assert artifact["next_action"] is None
+    assert artifact["supervisor"] == {
+        "authority": "overnight_operator_supervisor",
+        "run_id": "overnight-supervised",
+        "current_stage_id": None,
+        "selected_stage_id": "S3",
+        "stage_count": 2,
+        "heartbeat_count": 1,
+        "checkpoint_count": 1,
+        "manual_gap_count": 1,
+        "self_review_count": 0,
+        "blocked_fallback_count": 0,
+        "virtual_soak_count": 0,
+        "latest_heartbeat_stage_id": "S3",
+        "latest_checkpoint_stage_id": "S3",
+        "latest_blocked_stage_id": None,
+        "latest_virtual_soak_run_id": None,
+        "latest_virtual_soak_slo_status": None,
+    }
 
     replay_bundle = capture_overnight_replay_bundle(
         run_id="overnight-supervised",
@@ -91,6 +109,9 @@ def test_capture_overnight_supervisor_evidence_exports_replay_ready_artifact(
     assert sections["supervisor"]["status"] == "ok"
     assert sections["supervisor"]["proof_level"] == "contract_proof"
     assert sections["supervisor"]["source_authority"] == "overnight_operator_supervisor"
+    assert sections["supervisor"]["details"] == {
+        "supervisor": artifact["supervisor"],
+    }
 
 
 def test_capture_overnight_supervisor_evidence_reports_manual_gap_without_checkpoint(

@@ -584,6 +584,7 @@ def _build_proof_cockpit(
     memoryos_trace: dict[str, Any] | None = None
     deliberation_transcript: dict[str, Any] | None = None
     real_provider_runtime: dict[str, Any] | None = None
+    supervisor: dict[str, Any] | None = None
     github_truth_detail = (
         _github_truth_detail_projection(github_truth)
         if isinstance(github_truth, dict)
@@ -677,6 +678,8 @@ def _build_proof_cockpit(
                 deliberation_transcript = (
                     _deliberation_transcript_from_replay_section(section)
                 )
+            if supervisor is None:
+                supervisor = _supervisor_from_replay_section(section)
             if github_truth_detail is None:
                 github_truth_detail = _github_truth_from_replay_section(section)
             section_statuses.append(
@@ -815,6 +818,7 @@ def _build_proof_cockpit(
             if real_provider_runtime is not None
             else {}
         ),
+        **({"supervisor": supervisor} if supervisor is not None else {}),
     }
 
 
@@ -1035,6 +1039,50 @@ def _real_provider_runtime_projection(
         "mcp_writeback_turn_count": _int(runtime.get("mcp_writeback_turn_count")),
         "degraded_turn_count": _int(runtime.get("degraded_turn_count")),
         "blocker_count": _int(runtime.get("blocker_count")),
+    }
+
+
+def _supervisor_from_replay_section(
+    section: dict[str, Any],
+) -> dict[str, Any] | None:
+    if _text(section.get("section_id")) != "supervisor":
+        return None
+    details = section.get("details")
+    if not isinstance(details, dict):
+        return None
+    supervisor = details.get("supervisor")
+    if not isinstance(supervisor, dict):
+        return None
+    return _supervisor_projection(supervisor)
+
+
+def _supervisor_projection(supervisor: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "authority": _text(supervisor.get("authority"))
+        or "overnight_operator_supervisor",
+        "run_id": _text(supervisor.get("run_id")),
+        "current_stage_id": _text(supervisor.get("current_stage_id")),
+        "selected_stage_id": _text(supervisor.get("selected_stage_id")),
+        "stage_count": _int(supervisor.get("stage_count")),
+        "heartbeat_count": _int(supervisor.get("heartbeat_count")),
+        "checkpoint_count": _int(supervisor.get("checkpoint_count")),
+        "manual_gap_count": _int(supervisor.get("manual_gap_count")),
+        "self_review_count": _int(supervisor.get("self_review_count")),
+        "blocked_fallback_count": _int(supervisor.get("blocked_fallback_count")),
+        "virtual_soak_count": _int(supervisor.get("virtual_soak_count")),
+        "latest_heartbeat_stage_id": _text(
+            supervisor.get("latest_heartbeat_stage_id")
+        ),
+        "latest_checkpoint_stage_id": _text(
+            supervisor.get("latest_checkpoint_stage_id")
+        ),
+        "latest_blocked_stage_id": _text(supervisor.get("latest_blocked_stage_id")),
+        "latest_virtual_soak_run_id": _text(
+            supervisor.get("latest_virtual_soak_run_id")
+        ),
+        "latest_virtual_soak_slo_status": _text(
+            supervisor.get("latest_virtual_soak_slo_status")
+        ),
     }
 
 

@@ -778,6 +778,13 @@ fallback target when present. This is a projection of supervisor evidence only:
 rendering the stage spine does not mutate the supervisor, satisfy release
 readiness, or promote a bounded worker to peer-GOD status.
 
+When supervisor production evidence is attached to the replay bundle, the proof
+cockpit can also render the replay section's structured `supervisor` detail:
+run/stage ids, heartbeat/checkpoint/manual-gap counts, self-review and
+blocked-fallback counts, latest stage pointers, and virtual-soak status. These
+lines are audit context from the supervisor evidence contract; they are not
+durable lane status, release readiness, or live runtime proof.
+
 For CI or local no-secrets rehearsal, use virtual time instead of sleeping for
 8 hours. Failure injection is JSON so long `/goal` scripts can record exact
 stage, minute, command, and source refs without shell-specific parsing:

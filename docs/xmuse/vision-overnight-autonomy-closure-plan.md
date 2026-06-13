@@ -594,6 +594,12 @@ Current implementation status:
   can satisfy the replay bundle's `supervisor` section with contract-level
   heartbeat/checkpoint evidence while preserving any live gate `manual_gap`
   artifacts as separate blockers.
+- The supervisor evidence artifact now also carries a structured `supervisor`
+  detail block with run/stage ids, heartbeat/checkpoint/manual-gap counts,
+  self-review and blocked-fallback counts, latest stage pointers, and virtual
+  soak status. Replay preserves the block as section `details`, and the TUI
+  proof cockpit renders it as read-only audit context; it is not durable state
+  authority and does not upgrade live gate readiness.
 - Existing redaction, tombstone filtering, REST-first MemoryOS Lite interop,
   and no-`memoryos_lite` package boundary rules remain in force. Live MemoryOS
   trace capture is still a configured live gate: when it is not configured, the

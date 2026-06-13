@@ -1110,6 +1110,66 @@ def test_tui_vision_read_model_projects_deliberation_transcript_details() -> Non
     }
 
 
+def test_tui_vision_read_model_projects_supervisor_details() -> None:
+    model = build_tui_vision_read_model(
+        replay_bundle={
+            "schema_version": "xmuse.overnight_replay_bundle.v1",
+            "decision": "blocked",
+            "authority": "replay_index_only",
+            "sections": [
+                {
+                    "section_id": "supervisor",
+                    "status": "ok",
+                    "proof_level": "contract_proof",
+                    "source_authority": "overnight_operator_supervisor",
+                    "source_refs": ["overnight_supervisor:overnight-prod"],
+                    "artifacts": ["artifact://supervisor-production-evidence.json"],
+                    "details": {
+                        "supervisor": {
+                            "authority": "overnight_operator_supervisor",
+                            "run_id": "overnight-prod",
+                            "current_stage_id": "S7",
+                            "selected_stage_id": "S6",
+                            "stage_count": 7,
+                            "heartbeat_count": 9,
+                            "checkpoint_count": 4,
+                            "manual_gap_count": 1,
+                            "self_review_count": 3,
+                            "blocked_fallback_count": 2,
+                            "virtual_soak_count": 1,
+                            "latest_heartbeat_stage_id": "S7",
+                            "latest_checkpoint_stage_id": "S6",
+                            "latest_blocked_stage_id": "S4",
+                            "latest_virtual_soak_run_id": "overnight-prod-soak",
+                            "latest_virtual_soak_slo_status": "violated",
+                        }
+                    },
+                }
+            ],
+            "blockers": [],
+        },
+    )
+
+    assert model["proof_cockpit"]["supervisor"] == {
+        "authority": "overnight_operator_supervisor",
+        "run_id": "overnight-prod",
+        "current_stage_id": "S7",
+        "selected_stage_id": "S6",
+        "stage_count": 7,
+        "heartbeat_count": 9,
+        "checkpoint_count": 4,
+        "manual_gap_count": 1,
+        "self_review_count": 3,
+        "blocked_fallback_count": 2,
+        "virtual_soak_count": 1,
+        "latest_heartbeat_stage_id": "S7",
+        "latest_checkpoint_stage_id": "S6",
+        "latest_blocked_stage_id": "S4",
+        "latest_virtual_soak_run_id": "overnight-prod-soak",
+        "latest_virtual_soak_slo_status": "violated",
+    }
+
+
 def test_tui_vision_read_model_projects_supervisor_goal_stage_results() -> None:
     model = build_tui_vision_read_model(
         overnight_supervisor={

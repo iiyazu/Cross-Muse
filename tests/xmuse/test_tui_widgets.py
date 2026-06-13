@@ -783,6 +783,51 @@ def test_proof_cockpit_renders_real_provider_runtime_details() -> None:
     ) in rendered
 
 
+def test_proof_cockpit_renders_supervisor_details() -> None:
+    panel = render_proof_cockpit(
+        {
+            "proof_cockpit": {
+                "proof_level": "contract_proof",
+                "fact_state": "blocked",
+                "supervisor": {
+                    "authority": "overnight_operator_supervisor",
+                    "run_id": "overnight-prod",
+                    "current_stage_id": "S7",
+                    "selected_stage_id": "S6",
+                    "stage_count": 7,
+                    "heartbeat_count": 9,
+                    "checkpoint_count": 4,
+                    "manual_gap_count": 1,
+                    "self_review_count": 3,
+                    "blocked_fallback_count": 2,
+                    "virtual_soak_count": 1,
+                    "latest_heartbeat_stage_id": "S7",
+                    "latest_checkpoint_stage_id": "S6",
+                    "latest_blocked_stage_id": "S4",
+                    "latest_virtual_soak_run_id": "overnight-prod-soak",
+                    "latest_virtual_soak_slo_status": "violated",
+                },
+                "blockers": [],
+                "manual_gap_reason": None,
+            }
+        }
+    )
+
+    rendered = panel.renderable.plain
+    assert (
+        "Supervisor: overnight-prod stages=7; heartbeats=9; checkpoints=4; "
+        "manual_gaps=1"
+    ) in rendered
+    assert (
+        "current=S7; selected=S6; self_reviews=3; "
+        "blocked_fallbacks=2; virtual_soaks=1"
+    ) in rendered
+    assert (
+        "latest heartbeat=S7; checkpoint=S6; blocked=S4; "
+        "soak=overnight-prod-soak/violated"
+    ) in rendered
+
+
 def test_proof_cockpit_renders_god_runtime_heartbeat_freshness() -> None:
     panel = render_proof_cockpit(
         {

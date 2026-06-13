@@ -106,7 +106,20 @@ def build_overnight_supervisor_evidence(
             latest_virtual_soak=latest_virtual_soak,
         ),
     )
-    return envelope.model_dump()
+    payload = envelope.model_dump()
+    payload["supervisor"] = _supervisor_details(
+        run_id=run_id,
+        current_stage_id=_text(snapshot.get("current_stage_id")),
+        selected_stage_id=stage_id,
+        stages=stages,
+        heartbeats=heartbeats,
+        checkpoints=checkpoints,
+        manual_gaps=manual_gaps,
+        self_reviews=self_reviews,
+        production_evidence=production_evidence,
+        virtual_soaks=virtual_soaks,
+    )
+    return payload
 
 
 def _load_supervisor_snapshot(path: Path) -> dict[str, Any]:
@@ -238,6 +251,62 @@ def _blocked_fallback_count(production_evidence: list[dict[str, Any]]) -> int:
         for evidence in production_evidence
         if evidence.get("action") == "blocked_fallback"
     )
+
+
+def _supervisor_details(
+    *,
+    run_id: str,
+    current_stage_id: str | None,
+    selected_stage_id: str,
+    stages: list[dict[str, Any]],
+    heartbeats: list[dict[str, Any]],
+    checkpoints: list[dict[str, Any]],
+    manual_gaps: list[dict[str, Any]],
+    self_reviews: list[dict[str, Any]],
+    production_evidence: list[dict[str, Any]],
+    virtual_soaks: list[dict[str, Any]],
+) -> dict[str, object]:
+    latest_virtual_soak = _latest_virtual_soak(virtual_soaks)
+    return {
+        "authority": SUPERVISOR_EVIDENCE_AUTHORITY,
+        "run_id": run_id,
+        "current_stage_id": current_stage_id,
+        "selected_stage_id": selected_stage_id,
+        "stage_count": len(stages),
+        "heartbeat_count": len(heartbeats),
+        "checkpoint_count": len(checkpoints),
+        "manual_gap_count": len(manual_gaps),
+        "self_review_count": len(self_reviews),
+        "blocked_fallback_count": _blocked_fallback_count(production_evidence),
+        "virtual_soak_count": len(virtual_soaks),
+        "latest_heartbeat_stage_id": _latest_stage_id(heartbeats),
+        "latest_checkpoint_stage_id": _latest_stage_id(checkpoints),
+        "latest_blocked_stage_id": _latest_blocked_stage_id(production_evidence),
+        "latest_virtual_soak_run_id": (
+            _text(latest_virtual_soak.get("run_id")) if latest_virtual_soak else None
+        ),
+        "latest_virtual_soak_slo_status": (
+            _text(latest_virtual_soak.get("slo_status")) if latest_virtual_soak else None
+        ),
+    }
+
+
+def _latest_stage_id(rows: list[dict[str, Any]]) -> str | None:
+    for row in reversed(rows):
+        stage_id = _text(row.get("stage_id"))
+        if stage_id is not None:
+            return stage_id
+    return None
+
+
+def _latest_blocked_stage_id(production_evidence: list[dict[str, Any]]) -> str | None:
+    for evidence in reversed(production_evidence):
+        if evidence.get("action") != "blocked_fallback":
+            continue
+        stage_id = _text(evidence.get("stage_id"))
+        if stage_id is not None:
+            return stage_id
+    return None
 
 
 def _latest_virtual_soak(virtual_soaks: list[dict[str, Any]]) -> dict[str, Any] | None:
