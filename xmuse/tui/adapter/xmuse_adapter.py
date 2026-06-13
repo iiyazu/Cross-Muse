@@ -505,6 +505,164 @@ class XmuseAdapter:
         )
         return service.handle(request).model_dump()
 
+    def ensure_god_room(self, conv_id: str) -> dict[str, Any] | None:
+        return self._post_god_room_contract(
+            action="ensure_god_room",
+            conv_id=conv_id,
+            suffix="",
+            payload=None,
+        )
+
+    def get_god_room(self, conv_id: str) -> dict[str, Any] | None:
+        return self._get_god_room_contract(
+            conv_id=conv_id,
+            suffix="",
+        )
+
+    def get_god_room_snapshot(self, conv_id: str) -> dict[str, Any] | None:
+        return self._get_god_room_contract(
+            conv_id=conv_id,
+            suffix="/snapshot",
+        )
+
+    def append_god_room_event(
+        self,
+        conv_id: str,
+        event: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        return self._post_god_room_contract(
+            action="append_god_room_event",
+            conv_id=conv_id,
+            suffix="/events",
+            payload=dict(event),
+        )
+
+    def freeze_god_room_blueprint(
+        self,
+        conv_id: str,
+        *,
+        blueprint_id: str,
+        revision: int = 1,
+    ) -> dict[str, Any] | None:
+        return self._post_god_room_contract(
+            action="freeze_god_room_blueprint",
+            conv_id=conv_id,
+            suffix="/freeze-blueprint",
+            payload={
+                "blueprint_id": blueprint_id,
+                "revision": revision,
+            },
+        )
+
+    def build_god_room_lane_dag(
+        self,
+        conv_id: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        return self._post_god_room_contract(
+            action="build_god_room_lane_dag",
+            conv_id=conv_id,
+            suffix="/lane-dag",
+            payload=dict(payload),
+        )
+
+    def evaluate_god_room_lane_recovery(
+        self,
+        conv_id: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        return self._post_god_room_contract(
+            action="evaluate_god_room_lane_recovery",
+            conv_id=conv_id,
+            suffix="/lane-dag/recovery",
+            payload=dict(payload),
+        )
+
+    def build_god_room_memoryos_plan(
+        self,
+        conv_id: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        return self._post_god_room_contract(
+            action="build_god_room_memoryos_plan",
+            conv_id=conv_id,
+            suffix="/memoryos-plan",
+            payload=dict(payload),
+        )
+
+    def _post_god_room_contract(
+        self,
+        *,
+        action: str,
+        conv_id: str,
+        suffix: str,
+        payload: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        clean_conv_id = conv_id.strip()
+        headers = _chat_api_write_headers()
+        if not clean_conv_id:
+            return _operator_api_error_result(
+                action=action,
+                actor_id=headers["X-XMuse-Operator-Id"],
+                status_code=0,
+                detail={
+                    "code": "missing_conversation_id",
+                    "message": "GOD room contract action requires conversation_id",
+                },
+            )
+        try:
+            with self._chat_api_client(10.0) as client:
+                response = client.post(
+                    (
+                        f"{self._chat_api_base_url}/api/chat/conversations/"
+                        f"{clean_conv_id}/god-room{suffix}"
+                    ),
+                    json=payload,
+                    headers=headers,
+                )
+                status_code = int(getattr(response, "status_code", 200) or 200)
+                if status_code >= 400:
+                    detail = _response_detail(response)
+                    return _operator_api_error_result(
+                        action=action,
+                        actor_id=headers["X-XMuse-Operator-Id"],
+                        status_code=status_code,
+                        detail=detail,
+                    )
+                response.raise_for_status()
+                data = response.json()
+            return data if isinstance(data, dict) else None
+        except Exception as exc:
+            return _operator_api_error_result(
+                action=action,
+                actor_id=headers["X-XMuse-Operator-Id"],
+                status_code=0,
+                detail={"code": "request_failed", "message": str(exc)},
+            )
+
+    def _get_god_room_contract(
+        self,
+        *,
+        conv_id: str,
+        suffix: str,
+    ) -> dict[str, Any] | None:
+        clean_conv_id = conv_id.strip()
+        if not clean_conv_id:
+            return None
+        try:
+            with self._chat_api_client(10.0) as client:
+                response = client.get(
+                    (
+                        f"{self._chat_api_base_url}/api/chat/conversations/"
+                        f"{clean_conv_id}/god-room{suffix}"
+                    ),
+                )
+                response.raise_for_status()
+                data = response.json()
+            return data if isinstance(data, dict) else None
+        except Exception:
+            return None
+
     def _operator_vision_snapshot(self, conv_id: str) -> dict[str, Any]:
         inspector = self.get_conversation_inspector(conv_id)
         return build_tui_vision_read_model(
@@ -1946,6 +2104,16 @@ def _operator_api_error_result(
     }
 
 
+def _response_detail(response: Any) -> Any:
+    try:
+        data = response.json()
+    except Exception:
+        return getattr(response, "text", None)
+    if isinstance(data, dict) and "detail" in data:
+        return data["detail"]
+    return data
+
+
 def _read_json_file(path: Path, *, default: Any) -> Any:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
@@ -1965,6 +2133,7 @@ def _normalize_tui_command_event(event: dict[str, Any]) -> dict[str, Any] | None
         "dashboard_runtime_timeline",
         "operator_action_contract",
         "operator_evidence_action",
+        "god_room_chat_api",
     }:
         return None
     normalized = {

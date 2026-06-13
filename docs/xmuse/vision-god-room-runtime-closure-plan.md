@@ -571,8 +571,19 @@ Current implementation status:
 - `xmuse/tui/widgets/execution_cockpit.py` renders lane contract owner/checks
   and recovery decisions. `xmuse/tui/widgets/memory_trace_drawer.py` renders
   MemoryOS trace anchors.
+- `xmuse/tui/adapter/xmuse_adapter.py` now exposes GOD room contract actions
+  for `ensure_god_room`, `append_god_room_event`, `freeze_god_room_blueprint`,
+  `build_god_room_lane_dag`, `evaluate_god_room_lane_recovery`, and
+  `build_god_room_memoryos_plan`. These methods call the Chat API GOD room
+  endpoints with operator auth headers and do not fall back to local store,
+  lane queue, or projection writes after API rejection.
+- `xmuse/tui/slash_commands.py` now exposes `/room ensure`, `/room event`,
+  `/room freeze`, and `/room memoryos-plan` as TUI operator commands backed by
+  those Chat API contracts. Command events are recorded with
+  `read_surface_authority = god_room_chat_api` for operator replay.
 - This remains a projection/control-surface slice. TUI code does not write
-  lane status, MemoryOS truth, `feature_lanes.json`, or runner state.
+  lane status, MemoryOS truth, `feature_lanes.json`, GOD room event stores,
+  laneDAG artifacts, or runner state directly.
 
 ## S8 - Evidence, Soak, Validation, Docs, PR
 

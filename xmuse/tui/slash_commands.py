@@ -3,7 +3,9 @@ from __future__ import annotations
 import os
 import shlex
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
+from uuid import uuid4
 
 
 @dataclass(frozen=True)
@@ -65,6 +67,8 @@ class SlashCommandRouter:
             return self._freeze(rest, context)
         if command == "god":
             return self._god(rest, context)
+        if command == "room":
+            return self._room(rest, context)
         if command == "archive":
             context.screen.action_toggle_archive()
             return SlashCommandResult(True)
@@ -511,6 +515,81 @@ class SlashCommandRouter:
             message=_operator_action_block(result if isinstance(result, dict) else {}),
         )
 
+    def _room(self, rest: str, context: SlashCommandContext) -> SlashCommandResult:
+        conv_id = _active_conversation_id(context)
+        if not conv_id:
+            return SlashCommandResult(True, message="No active group.")
+        try:
+            parts = shlex.split(rest)
+        except ValueError as exc:
+            return SlashCommandResult(True, message=f"Invalid /room command: {exc}")
+        if not parts:
+            return SlashCommandResult(True, message=_room_usage())
+        subcommand = parts[0].strip().lower().replace("_", "-")
+        try:
+            action_label, result = self._run_room_subcommand(
+                subcommand,
+                parts[1:],
+                conv_id,
+                context,
+            )
+        except ValueError as exc:
+            return SlashCommandResult(True, message=str(exc))
+        if isinstance(result, dict):
+            _record_official_tui_command_event(
+                context,
+                command=f"/room {action_label}",
+                conversation_id=conv_id,
+                read_surface_authority="god_room_chat_api",
+            )
+        return SlashCommandResult(
+            True,
+            refresh=True,
+            message=_god_room_action_block(
+                action_label,
+                result if isinstance(result, dict) else {},
+            ),
+        )
+
+    def _run_room_subcommand(
+        self,
+        subcommand: str,
+        args: list[str],
+        conv_id: str,
+        context: SlashCommandContext,
+    ) -> tuple[str, dict[str, Any] | None]:
+        if subcommand == "ensure":
+            runner = getattr(context.app.adapter, "ensure_god_room", None)
+            if not callable(runner):
+                raise ValueError("GOD room contract actions unavailable for this adapter.")
+            return "ensure", runner(conv_id)
+        if subcommand == "snapshot":
+            runner = getattr(context.app.adapter, "get_god_room_snapshot", None)
+            if not callable(runner):
+                raise ValueError("GOD room contract actions unavailable for this adapter.")
+            return "snapshot", runner(conv_id)
+        if subcommand == "event":
+            runner = getattr(context.app.adapter, "append_god_room_event", None)
+            if not callable(runner):
+                raise ValueError("GOD room contract actions unavailable for this adapter.")
+            return "event", runner(conv_id, _room_event_payload(args, conv_id))
+        if subcommand == "freeze":
+            runner = getattr(context.app.adapter, "freeze_god_room_blueprint", None)
+            if not callable(runner):
+                raise ValueError("GOD room contract actions unavailable for this adapter.")
+            payload = _room_freeze_payload(args)
+            return "freeze", runner(
+                conv_id,
+                blueprint_id=str(payload["blueprint_id"]),
+                revision=int(payload["revision"]),
+            )
+        if subcommand in {"memoryos", "memory", "memoryos-plan"}:
+            runner = getattr(context.app.adapter, "build_god_room_memoryos_plan", None)
+            if not callable(runner):
+                raise ValueError("GOD room contract actions unavailable for this adapter.")
+            return "memoryos-plan", runner(conv_id, _room_memoryos_plan_payload(args))
+        raise ValueError(_room_usage())
+
     def _god(self, rest: str, context: SlashCommandContext) -> SlashCommandResult:
         try:
             parts = shlex.split(rest)
@@ -642,6 +721,161 @@ class SlashCommandRouter:
             refresh=True,
             message=_operator_action_block(result if isinstance(result, dict) else {}),
         )
+
+
+def _room_usage() -> str:
+    return (
+        "Usage: /room <ensure|snapshot|event|freeze|memoryos-plan> "
+        "[key=value...]"
+    )
+
+
+def _room_event_payload(args: list[str], conv_id: str) -> dict[str, Any]:
+    raw = _key_value_args(args, usage=_room_event_usage())
+    aliases = {
+        "type": "event_type",
+        "source": "source_refs",
+        "source_ref": "source_refs",
+        "sources": "source_refs",
+        "target": "target_participant_ids",
+        "targets": "target_participant_ids",
+        "target_participant": "target_participant_ids",
+        "target_participant_id": "target_participant_ids",
+        "timestamp": "timestamp_utc",
+        "parent": "causal_parent_id",
+    }
+    list_keys = {"source_refs", "target_participant_ids"}
+    payload: dict[str, Any] = {
+        "schema_version": "xmuse.god_room_event.v1",
+        "event_id": f"tui-room-event-{uuid4().hex}",
+        "room_id": f"god-room:{conv_id}",
+        "conversation_id": conv_id,
+        "actor_kind": "operator",
+        "timestamp_utc": _room_utc_now(),
+    }
+    for key, value in raw.items():
+        normalized_key = aliases.get(key, key)
+        if normalized_key in list_keys:
+            payload[normalized_key] = _comma_values(value)
+        else:
+            payload[normalized_key] = value
+    required = ("participant_id", "god_id", "event_type", "content", "source_refs")
+    missing = [
+        key
+        for key in required
+        if not payload.get(key)
+    ]
+    if missing:
+        raise ValueError(f"{_room_event_usage()} Missing: {', '.join(missing)}")
+    return payload
+
+
+def _room_event_usage() -> str:
+    return (
+        "Usage: /room event participant_id=<id> god_id=<id> type=<speak|question|"
+        "challenge|handoff|freeze_requested> content=<text> source_ref=<ref> "
+        "[event_id=<id>] [target=<participant_ids>] [timestamp=<utc>]"
+    )
+
+
+def _room_freeze_payload(args: list[str]) -> dict[str, Any]:
+    raw = _key_value_args(
+        args,
+        usage="Usage: /room freeze blueprint_id=<id> [revision=<n>]",
+    )
+    blueprint_id = raw.get("blueprint_id") or raw.get("id")
+    if not blueprint_id:
+        raise ValueError("Usage: /room freeze blueprint_id=<id> [revision=<n>]")
+    return {
+        "blueprint_id": blueprint_id,
+        "revision": int(raw.get("revision", "1")),
+    }
+
+
+def _room_memoryos_plan_payload(args: list[str]) -> dict[str, Any]:
+    raw = _key_value_args(
+        args,
+        usage=(
+            "Usage: /room memoryos-plan graph_id=<id> repo_id=<repo> "
+            "workspace_id=<id> [context_budget=<n>]"
+        ),
+    )
+    aliases = {
+        "graph": "graph_id",
+        "repo": "repo_id",
+        "workspace": "workspace_id",
+        "budget": "context_budget",
+    }
+    payload: dict[str, Any] = {}
+    for key, value in raw.items():
+        normalized_key = aliases.get(key, key)
+        if normalized_key == "context_budget":
+            payload[normalized_key] = int(value)
+        else:
+            payload[normalized_key] = value
+    required = ("graph_id", "repo_id", "workspace_id")
+    missing = [key for key in required if not payload.get(key)]
+    if missing:
+        raise ValueError(
+            "Usage: /room memoryos-plan graph_id=<id> repo_id=<repo> "
+            "workspace_id=<id> [context_budget=<n>]"
+        )
+    return payload
+
+
+def _god_room_action_block(action: str, result: dict) -> str:
+    if "status" in result and "proof_level" in result:
+        return _operator_action_block(result)
+    lines = [f"GOD room action: {action}"]
+    authority = _god_room_source_authority(result)
+    if authority:
+        lines.append(f"authority={authority}")
+    append_status = str(result.get("append_status") or "").strip()
+    if append_status:
+        lines.append(f"append_status={append_status}")
+    event = result.get("event")
+    if isinstance(event, dict) and event.get("event_id"):
+        lines.append(f"event={event['event_id']}")
+    room = result.get("room")
+    if isinstance(room, dict):
+        event_count = room.get("event_count")
+        if event_count is not None:
+            lines.append(f"room_events={event_count}")
+    blueprint = result.get("blueprint")
+    if isinstance(blueprint, dict) and blueprint.get("blueprint_id"):
+        lines.append(f"blueprint={blueprint['blueprint_id']}")
+    memoryos_plan = result.get("memoryos_plan")
+    if isinstance(memoryos_plan, dict):
+        live_trace = memoryos_plan.get("live_trace")
+        if isinstance(live_trace, dict) and live_trace.get("status"):
+            lines.append(f"memoryos_live_trace={live_trace['status']}")
+    artifacts = result.get("artifacts")
+    if isinstance(artifacts, dict):
+        artifact_refs = [
+            str(value)
+            for value in artifacts.values()
+            if isinstance(value, str) and value.strip()
+        ]
+        if artifact_refs:
+            lines.append(f"artifacts={', '.join(artifact_refs[:4])}")
+    return "\n".join(lines)
+
+
+def _god_room_source_authority(result: dict) -> str:
+    direct = str(result.get("source_authority") or "").strip()
+    if direct:
+        return direct
+    for key in ("room", "snapshot", "memoryos_plan"):
+        value = result.get(key)
+        if isinstance(value, dict):
+            authority = str(value.get("source_authority") or "").strip()
+            if authority:
+                return authority
+    return ""
+
+
+def _room_utc_now() -> str:
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 def _session_rows(app: Any) -> list[dict]:
@@ -1732,6 +1966,11 @@ def _help_text() -> str:
             "/release export <natural|provider|memoryos|github|god-runtime> <key=value...>",
             "/lane retry <lane_id> <current_status> [reason]",
             "/lane abort <lane_id> <current_status> [reason]",
+            "/room ensure",
+            "/room event participant_id=<id> god_id=<id> "
+            "type=<event> content=<text> source_ref=<ref>",
+            "/room freeze blueprint_id=<id> [revision=<n>]",
+            "/room memoryos-plan graph_id=<id> repo_id=<repo> workspace_id=<id>",
             "/freeze target_ref=<ref> blueprint_id=<id> goal=<goal> "
             "scope=<items> acceptance=<items>",
             "/discussion",

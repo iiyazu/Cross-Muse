@@ -522,6 +522,211 @@ def test_adapter_operator_control_action_does_not_fallback_after_api_rejection(
     assert not (tmp_path / "god_cli_selections.json").exists()
 
 
+def test_adapter_god_room_control_actions_use_chat_api_contracts(
+    monkeypatch,
+    tmp_path,
+):
+    calls = []
+
+    class _Response:
+        status_code = 201
+
+        def __init__(self, payload):
+            self._payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._payload
+
+    class _Client:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return None
+
+        def post(self, url, json=None, headers=None):
+            calls.append({"url": url, "json": json, "headers": headers})
+            return _Response({"source_authority": "god_room_event_store", "url": url})
+
+    monkeypatch.setenv("XMUSE_TUI_OPERATOR_ID", "operator-tui")
+    monkeypatch.setenv("XMUSE_TUI_OPERATOR_ROLE", "operator")
+    monkeypatch.setenv("XMUSE_TUI_OPERATOR_CAPABILITIES", "chat_god_room")
+    monkeypatch.setenv("XMUSE_CHAT_API_KEY", "secret")
+    monkeypatch.setattr("xmuse.tui.adapter.xmuse_adapter.httpx.Client", _Client)
+    adapter = XmuseAdapter(tmp_path, chat_api_base_url="http://chat-api")
+    event_payload = {
+        "schema_version": "xmuse.god_room_event.v1",
+        "event_id": "evt-tui-1",
+        "room_id": "god-room:conv-1",
+        "conversation_id": "conv-1",
+        "participant_id": "participant-architect",
+        "god_id": "god-architect",
+        "actor_kind": "operator",
+        "event_type": "speak",
+        "timestamp_utc": "2026-06-13T13:40:00Z",
+        "content": "Operator routes a GOD room event from TUI.",
+        "source_refs": ["tui-command:evt-tui-1"],
+    }
+    lane_dag_payload = {
+        "resolution_id": "res-freeze",
+        "graph_id": "graph-tui",
+        "features": [{"feature_id": "feature-1"}],
+        "lanes": [{"lane_id": "lane-1"}],
+        "source_refs": ["tui:lane-dag"],
+    }
+    recovery_payload = {
+        "graph_id": "graph-tui",
+        "lane_id": "lane-1",
+        "failures": [],
+    }
+    memory_payload = {
+        "graph_id": "graph-tui",
+        "repo_id": "iiyazu/Cross-Muse",
+        "workspace_id": "xmuse",
+    }
+
+    assert adapter.ensure_god_room("conv-1")["source_authority"] == (
+        "god_room_event_store"
+    )
+    assert adapter.append_god_room_event("conv-1", event_payload)["url"].endswith(
+        "/god-room/events"
+    )
+    assert adapter.freeze_god_room_blueprint(
+        "conv-1",
+        blueprint_id="bp-tui",
+        revision=2,
+    )["url"].endswith("/god-room/freeze-blueprint")
+    assert adapter.build_god_room_lane_dag("conv-1", lane_dag_payload)["url"].endswith(
+        "/god-room/lane-dag"
+    )
+    assert adapter.evaluate_god_room_lane_recovery(
+        "conv-1",
+        recovery_payload,
+    )["url"].endswith("/god-room/lane-dag/recovery")
+    assert adapter.build_god_room_memoryos_plan(
+        "conv-1",
+        memory_payload,
+    )["url"].endswith("/god-room/memoryos-plan")
+
+    expected_headers = {
+        "X-XMUSE-API-Key": "secret",
+        "X-XMuse-Operator-Id": "operator-tui",
+        "X-XMuse-Operator-Role": "operator",
+        "X-XMuse-Operator-Capabilities": "chat_god_room",
+    }
+    assert calls == [
+        {
+            "url": "http://chat-api/api/chat/conversations/conv-1/god-room",
+            "json": None,
+            "headers": expected_headers,
+        },
+        {
+            "url": "http://chat-api/api/chat/conversations/conv-1/god-room/events",
+            "json": event_payload,
+            "headers": expected_headers,
+        },
+        {
+            "url": (
+                "http://chat-api/api/chat/conversations/conv-1/"
+                "god-room/freeze-blueprint"
+            ),
+            "json": {"blueprint_id": "bp-tui", "revision": 2},
+            "headers": expected_headers,
+        },
+        {
+            "url": "http://chat-api/api/chat/conversations/conv-1/god-room/lane-dag",
+            "json": lane_dag_payload,
+            "headers": expected_headers,
+        },
+        {
+            "url": (
+                "http://chat-api/api/chat/conversations/conv-1/"
+                "god-room/lane-dag/recovery"
+            ),
+            "json": recovery_payload,
+            "headers": expected_headers,
+        },
+        {
+            "url": (
+                "http://chat-api/api/chat/conversations/conv-1/"
+                "god-room/memoryos-plan"
+            ),
+            "json": memory_payload,
+            "headers": expected_headers,
+        },
+    ]
+
+
+def test_adapter_god_room_action_does_not_fallback_after_api_rejection(
+    monkeypatch,
+    tmp_path,
+):
+    class _Response:
+        status_code = 409
+
+        def raise_for_status(self):
+            raise RuntimeError("api rejected request")
+
+        def json(self):
+            return {
+                "detail": {
+                    "code": "god_room_membership_error",
+                    "message": "unknown participant",
+                }
+            }
+
+    class _Client:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return None
+
+        def post(self, url, json=None, headers=None):
+            return _Response()
+
+    monkeypatch.setenv("XMUSE_TUI_OPERATOR_CAPABILITIES", "chat_god_room")
+    monkeypatch.setattr("xmuse.tui.adapter.xmuse_adapter.httpx.Client", _Client)
+
+    result = XmuseAdapter(
+        tmp_path,
+        chat_api_base_url="http://chat-api",
+    ).append_god_room_event(
+        "conv-1",
+        {
+            "event_id": "evt-rejected",
+            "room_id": "god-room:conv-1",
+            "conversation_id": "conv-1",
+            "participant_id": "missing",
+            "god_id": "missing",
+            "actor_kind": "operator",
+            "event_type": "speak",
+            "timestamp_utc": "2026-06-13T13:41:00Z",
+            "content": "must be rejected by Chat API",
+            "source_refs": ["tui-command:evt-rejected"],
+        },
+    )
+
+    assert result["action"] == "append_god_room_event"
+    assert result["status"] == "blocked"
+    assert result["fact_state"] == "blocked"
+    assert result["payload"]["api_status_code"] == 409
+    assert result["payload"]["api_detail"]["code"] == "god_room_membership_error"
+    assert not (tmp_path / "god_room_events.sqlite3").exists()
+    assert not (tmp_path / "feature_lanes.json").exists()
+    assert not (tmp_path / "lane_graphs").exists()
+    assert not (tmp_path / "reports").exists()
+
+
 def test_adapter_operator_control_action_denies_without_capability(tmp_path):
     result = XmuseAdapter(tmp_path).run_operator_control_action(
         "select_god_cli",

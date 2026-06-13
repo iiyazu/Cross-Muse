@@ -424,6 +424,125 @@ async def test_chat_screen_god_select_runs_operator_control_action(app: XmuseTUI
         assert "Selected GOD CLI codex.god." in content
 
 
+async def test_chat_screen_room_commands_call_god_room_contracts(
+    app: XmuseTUI,
+) -> None:
+    app.adapter.list_group_conversations = lambda: [
+        {"id": "conv-user", "title": "User group", "created_at": "2026-06-01T00:00:00Z"},
+    ]
+    calls = []
+
+    def _ensure_god_room(conv_id: str):
+        calls.append(("ensure", conv_id, None))
+        return {"room": {"source_authority": "god_room_event_store", "event_count": 0}}
+
+    def _append_god_room_event(conv_id: str, payload: dict):
+        calls.append(("event", conv_id, payload))
+        return {
+            "append_status": "created",
+            "event": {"event_id": payload["event_id"]},
+            "room": {"source_authority": "god_room_event_store", "event_count": 1},
+        }
+
+    def _freeze_god_room_blueprint(
+        conv_id: str,
+        *,
+        blueprint_id: str,
+        revision: int = 1,
+    ):
+        calls.append(("freeze", conv_id, {"blueprint_id": blueprint_id, "revision": revision}))
+        return {
+            "source_authority": "god_room_event_store",
+            "artifact": {"status": "frozen"},
+            "blueprint": {"blueprint_id": blueprint_id},
+        }
+
+    def _build_god_room_memoryos_plan(conv_id: str, payload: dict):
+        calls.append(("memoryos", conv_id, payload))
+        return {
+            "source_authority": "god_room_memoryos_plan_contract",
+            "memoryos_plan": {
+                "schema_version": "xmuse.god_room_memoryos_plan.v1",
+                "live_trace": {"status": "manual_gap"},
+            },
+            "artifacts": {
+                "memoryos_plan": "reports/god_room_memoryos/graph-room.memoryos-plan.json"
+            },
+        }
+
+    app.adapter.ensure_god_room = _ensure_god_room
+    app.adapter.append_god_room_event = _append_god_room_event
+    app.adapter.freeze_god_room_blueprint = _freeze_god_room_blueprint
+    app.adapter.build_god_room_memoryos_plan = _build_god_room_memoryos_plan
+
+    async with app.run_test() as pilot:
+        appended = []
+        log = app.screen.query_one("#message-log")
+        log.append_message = lambda **kwargs: appended.append(kwargs)
+        input_widget = app.screen.query_one("#message-input")
+        for command in (
+            "/room ensure",
+            (
+                "/room event event_id=evt-room-1 participant_id=participant-architect "
+                "god_id=god-architect type=speak "
+                "timestamp=2026-06-13T13:50:00Z content='Ship S7 room command' "
+                "source_ref=tui-command:evt-room-1"
+            ),
+            "/room freeze blueprint_id=bp-room revision=2",
+            (
+                "/room memoryos-plan graph_id=graph-room repo_id=iiyazu/Cross-Muse "
+                "workspace_id=xmuse context_budget=1024"
+            ),
+        ):
+            input_widget.value = command
+            input_widget.post_message(input_widget.Submitted(input_widget, input_widget.value))
+            await pilot.pause()
+
+    assert calls == [
+        ("ensure", "conv-user", None),
+        (
+            "event",
+            "conv-user",
+            {
+                "schema_version": "xmuse.god_room_event.v1",
+                "event_id": "evt-room-1",
+                "room_id": "god-room:conv-user",
+                "conversation_id": "conv-user",
+                "participant_id": "participant-architect",
+                "god_id": "god-architect",
+                "actor_kind": "operator",
+                "event_type": "speak",
+                "timestamp_utc": "2026-06-13T13:50:00Z",
+                "content": "Ship S7 room command",
+                "source_refs": ["tui-command:evt-room-1"],
+            },
+        ),
+        ("freeze", "conv-user", {"blueprint_id": "bp-room", "revision": 2}),
+        (
+            "memoryos",
+            "conv-user",
+            {
+                "graph_id": "graph-room",
+                "repo_id": "iiyazu/Cross-Muse",
+                "workspace_id": "xmuse",
+                "context_budget": 1024,
+            },
+        ),
+    ]
+    assert "GOD room action: memoryos-plan" in appended[-1]["content"]
+    assert "authority=god_room_memoryos_plan_contract" in appended[-1]["content"]
+    events = app.adapter.list_tui_command_events("conv-user")
+    assert [event["command"] for event in events] == [
+        "/room ensure",
+        "/room event",
+        "/room freeze",
+        "/room memoryos-plan",
+    ]
+    assert {event["read_surface_authority"] for event in events} == {
+        "god_room_chat_api"
+    }
+
+
 async def test_chat_screen_god_register_runs_operator_control_action(
     app: XmuseTUI,
 ) -> None:
