@@ -1235,6 +1235,7 @@ def _operator_action_block(result: dict) -> str:
         blockers = _gate_blocker_summary(payload.get("blockers"))
         if blockers:
             lines.append(f"blockers={blockers}")
+        lines.extend(_release_candidate_summary(payload.get("candidates")))
     summary = str(result.get("summary") or "").strip()
     if summary:
         lines.append(summary)
@@ -1265,6 +1266,80 @@ def _gate_blocker_summary(value: object) -> str:
         if isinstance(item, dict) and str(item.get("gate_id") or "").strip()
     ]
     return ", ".join(gate_ids)
+
+
+def _release_candidate_summary(value: object) -> list[str]:
+    if not isinstance(value, dict):
+        return []
+    lines: list[str] = []
+    natural = value.get("natural_deliberation")
+    if isinstance(natural, dict):
+        conversations = natural.get("conversations")
+        if isinstance(conversations, list):
+            for conversation in conversations[:3]:
+                if not isinstance(conversation, dict):
+                    continue
+                lines.append(_natural_candidate_line(conversation))
+    provider = _candidate_section_line(
+        "provider",
+        value.get("real_provider_runtime"),
+    )
+    if provider:
+        lines.append(provider)
+    memoryos = _candidate_section_line("memoryos", value.get("live_memoryos"))
+    if memoryos:
+        lines.append(memoryos)
+    return lines
+
+
+def _natural_candidate_line(candidate: dict) -> str:
+    conversation_id = str(candidate.get("conversation_id") or "?").strip() or "?"
+    export_state = _ready_state(candidate.get("export_ready"))
+    transcript_state = _ready_state(candidate.get("transcript_export_ready"))
+    runtime = candidate.get("selected_god_runtime")
+    runtime_state = "unknown"
+    peer_gods = "?"
+    runtime_blockers: list[str] = []
+    if isinstance(runtime, dict):
+        runtime_blockers = _string_items(runtime.get("blockers"), limit=6)
+        runtime_state = "blocked" if runtime_blockers else "ready"
+        peer_gods_value = runtime.get("peer_god_ready_count")
+        if peer_gods_value is not None:
+            peer_gods = str(peer_gods_value).strip() or "?"
+    blockers = _string_items(candidate.get("blockers"), limit=6) or runtime_blockers
+    line = (
+        f"natural[{conversation_id}]={export_state} "
+        f"transcript={transcript_state} runtime={runtime_state} "
+        f"peer_gods={peer_gods}"
+    )
+    if blockers:
+        line = f"{line} blockers={', '.join(blockers)}"
+    return line
+
+
+def _candidate_section_line(label: str, value: object) -> str:
+    if not isinstance(value, dict):
+        return ""
+    state = _ready_state(value.get("export_ready"))
+    blockers = _string_items(value.get("blockers"), limit=6)
+    line = f"{label}={state}"
+    if blockers:
+        line = f"{line} blockers={', '.join(blockers)}"
+    return line
+
+
+def _ready_state(value: object) -> str:
+    if value is True:
+        return "ready"
+    if value is False:
+        return "blocked"
+    return "unknown"
+
+
+def _string_items(value: object, *, limit: int) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value[:limit] if str(item).strip()]
 
 
 def _inline_refs(value: object) -> str:

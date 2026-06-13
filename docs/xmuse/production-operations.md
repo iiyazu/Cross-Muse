@@ -928,7 +928,15 @@ candidates separately report transcript export readiness and selected-GOD
 runtime readiness; `export_ready` is true only when both are ready. Missing
 selected runtime rows, stale/non-peer GOD sessions, or transcript GODs absent
 from selected runtime continuity are visible before `/release attempt` runs. It
-does not create artifacts. `/release attempt` calls
+does not create artifacts. The TUI action result also renders compact candidate
+readiness lines such as:
+
+```text
+natural[<conversation-id>]=blocked transcript=ready runtime=blocked peer_gods=0 blockers=selected_god_runtime_missing
+```
+
+The action result also shows provider and MemoryOS candidate readiness; these
+lines are read-model feedback, not durable state writes. `/release attempt` calls
 `attempt_release_evidence`, reuses the candidate report, and then invokes the
 same release evidence export actions only for candidate inputs that are
 export-ready. It writes `release-evidence-attempt.json` under

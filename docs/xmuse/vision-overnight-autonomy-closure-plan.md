@@ -694,7 +694,10 @@ Tasks:
   selected-GOD runtime readiness separately. Its natural `export_ready` requires
   both, so missing selected runtime continuity, transcript GODs absent from the
   selected runtime view, stale heartbeats, or bounded/non-peer GOD sessions are
-  visible before `/release attempt natural` starts.
+  visible before `/release attempt natural` starts. The TUI operator result
+  prints compact candidate lines for natural transcript/runtime readiness,
+  provider readiness, MemoryOS readiness, and selected-GOD runtime blockers
+  without writing durable state.
 - When the same natural transcript should participate in release readiness,
   also pass `--natural-deliberation-transcript TRANSCRIPT` plus
   `--natural-deliberation-god-runtime RUNTIME`. This writes

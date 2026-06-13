@@ -1141,7 +1141,21 @@ async def test_chat_screen_release_candidates_runs_operator_control_action(
             "payload": {
                 "candidates": {
                     "natural_deliberation": {
-                        "conversations": [{"conversation_id": conv_id, "export_ready": False}]
+                        "conversations": [
+                            {
+                                "conversation_id": conv_id,
+                                "export_ready": False,
+                                "transcript_export_ready": True,
+                                "selected_god_runtime": {
+                                    "peer_god_ready_count": 0,
+                                    "blockers": ["selected_god_runtime_missing"],
+                                    "manual_gap_reason": (
+                                        "selected GOD CLI unavailable"
+                                    ),
+                                },
+                                "blockers": ["selected_god_runtime_missing"],
+                            }
+                        ]
                     },
                     "real_provider_runtime": {"export_ready": False},
                     "live_memoryos": {"export_ready": False},
@@ -1188,6 +1202,10 @@ async def test_chat_screen_release_candidates_runs_operator_control_action(
         assert (
             "status=ok proof=contract_proof "
             "fact=release_evidence_candidates_inspected"
+        ) in content
+        assert (
+            "natural[conv-user]=blocked transcript=ready runtime=blocked "
+            "peer_gods=0 blockers=selected_god_runtime_missing"
         ) in content
         assert "Inspected release evidence candidates." in content
 
