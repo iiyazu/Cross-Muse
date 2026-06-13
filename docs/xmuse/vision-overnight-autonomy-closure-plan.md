@@ -285,6 +285,11 @@ Current implementation status:
   runtime view reports heartbeat freshness against an explicit TTL. Fresh
   heartbeats keep otherwise-ready selected GODs usable; stale or invalid
   heartbeats become `manual_gap` blockers and make `peer_god_ready=false`.
+- The selected-GOD runtime view now separates raw `session_status` from
+  `effective_session_status`. Durable provider binding
+  (`provider_binding_status=active` plus provider session metadata) makes a raw
+  `starting` session `provider_bound_active` for readiness without mutating the
+  lifecycle field or relying on Ray actor memory.
 - `uv run xmuse-god-session-heartbeat` is the guarded runtime/control path for
   recording that heartbeat. It requires a GOD session id, can guard by
   conversation and participant, writes a `xmuse.god_session_heartbeat.v1`

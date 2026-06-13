@@ -133,6 +133,10 @@ def _build_item(
     provider_session_ready = bool(session.provider_session_id)
     if session.provider_session_id:
         source_refs.append(f"provider_session:{session.provider_session_id}")
+    effective_session_status = _effective_session_status(
+        session,
+        provider_session_ready=provider_session_ready,
+    )
     heartbeat_freshness = _heartbeat_freshness(
         session.last_heartbeat_at_utc,
         now=now,
@@ -143,6 +147,7 @@ def _build_item(
     waiting_reason = _waiting_reason(
         registration=registration,
         session=session,
+        effective_session_status=effective_session_status,
         provider_session_ready=provider_session_ready,
         heartbeat_freshness=heartbeat_freshness,
     )
@@ -169,6 +174,7 @@ def _build_item(
         if registration is not None
         else [],
         "session_status": session.status,
+        "effective_session_status": effective_session_status,
         "heartbeat_freshness": heartbeat_freshness,
         "last_heartbeat_at_utc": session.last_heartbeat_at_utc,
         "waiting_reason": waiting_reason,
@@ -213,6 +219,7 @@ def _missing_session_item(
         if registration is not None
         else [],
         "session_status": "missing",
+        "effective_session_status": "missing",
         "heartbeat_freshness": "unknown",
         "waiting_reason": reason,
         "proof_level": "manual_gap",
@@ -259,12 +266,18 @@ def _waiting_reason(
     *,
     registration: GodCliRegistration | None,
     session: GodSessionRecord,
+    effective_session_status: str,
     provider_session_ready: bool,
     heartbeat_freshness: str,
 ) -> str | None:
     if registration is None:
         return "selected GOD CLI registration unavailable"
-    if session.status not in {"active", "ready", "running"}:
+    if effective_session_status not in {
+        "active",
+        "ready",
+        "running",
+        "provider_bound_active",
+    }:
         return f"GOD session status is {session.status}"
     if not provider_session_ready:
         return "provider session metadata unavailable"
@@ -275,6 +288,20 @@ def _waiting_reason(
     if GodCliCapability.PEER_GOD not in registration.capabilities:
         return "selected CLI lacks peer_god capability"
     return None
+
+
+def _effective_session_status(
+    session: GodSessionRecord,
+    *,
+    provider_session_ready: bool,
+) -> str:
+    if (
+        session.status == "starting"
+        and provider_session_ready
+        and session.provider_binding_status == "active"
+    ):
+        return "provider_bound_active"
+    return session.status
 
 
 def _item_proof_level(

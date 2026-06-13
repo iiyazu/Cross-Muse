@@ -523,6 +523,11 @@ heartbeat freshness from that timestamp; stale or invalid heartbeats block
 `peer_god_ready` and remain `manual_gap` until a fresh heartbeat is recorded.
 This proves only session-continuity metadata. It does not create live provider
 proof, natural transcript proof, GitHub truth, or release readiness by itself.
+The continuity view preserves raw `session_status` but also reports an
+`effective_session_status`. A raw `starting` session with durable
+`provider_binding_status=active` and provider session metadata is treated as
+`provider_bound_active` for selected-GOD readiness; this reflects durable
+provider binding without rewriting the underlying session lifecycle state.
 Live GOD runtimes can record that heartbeat through the guarded CLI path:
 
 ```bash

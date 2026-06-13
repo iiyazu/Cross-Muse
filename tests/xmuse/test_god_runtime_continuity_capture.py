@@ -141,7 +141,7 @@ def test_capture_selected_god_runtime_continuity_reports_missing_selection(
     ]
 
 
-def test_god_session_heartbeat_cli_restores_selected_runtime_continuity(
+def test_god_session_heartbeat_cli_records_fresh_selected_runtime_continuity(
     tmp_path: Path,
 ) -> None:
     from xmuse.god_session_heartbeat import main as heartbeat_main
@@ -177,7 +177,7 @@ def test_god_session_heartbeat_cli_restores_selected_runtime_continuity(
         provider_binding_failure_reason=None,
     )
 
-    blocked = capture_selected_god_runtime_continuity_artifact(
+    provider_bound = capture_selected_god_runtime_continuity_artifact(
         conversation_id="conv-prod-1",
         selection_store_path=selection_store,
         registration_store_path=registration_store,
@@ -186,8 +186,15 @@ def test_god_session_heartbeat_cli_restores_selected_runtime_continuity(
         now_utc="2026-06-13T00:05:00Z",
         heartbeat_ttl_seconds=120,
     )
-    assert blocked["fact_state"] == "blocked"
-    assert blocked["items"][0]["waiting_reason"] == "GOD session status is starting"
+    assert provider_bound["fact_state"] == "observed"
+    assert provider_bound["blockers"] == []
+    assert provider_bound["items"][0]["session_status"] == "starting"
+    assert (
+        provider_bound["items"][0]["effective_session_status"]
+        == "provider_bound_active"
+    )
+    assert provider_bound["items"][0]["heartbeat_freshness"] == "unknown"
+    assert provider_bound["items"][0]["peer_god_ready"] is True
 
     heartbeat_output = tmp_path / "heartbeat.json"
     assert (

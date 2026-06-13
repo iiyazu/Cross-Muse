@@ -211,6 +211,10 @@ Current implementation status:
   It writes the same audit rows and durable GOD CLI registration/selection
   stores, requires explicit capabilities, and returns non-zero for denied or
   blocked actions. It does not upgrade selected CLIs into live peer-GOD proof.
+- Selected-GOD runtime continuity preserves raw `session_status` while exposing
+  `effective_session_status`; durable active provider binding can make a raw
+  `starting` session `provider_bound_active` for readiness without rewriting
+  the session lifecycle field or relying on runtime actor memory.
 - Provider Board merges manual GOD CLI registrations into its projection with
   `manual_gap` heartbeat and `registration_kind=manual`.
 - This status does not create live provider proof. `proof_refs` are recorded

@@ -27,6 +27,7 @@ def _session(
     provider_session_id: str | None = "provider-thread-1",
     provider_binding_status: str | None = "active",
     last_heartbeat_at_utc: str | None = None,
+    status: str = "active",
 ) -> GodSessionRecord:
     return GodSessionRecord(
         god_session_id="god-session-1",
@@ -37,7 +38,7 @@ def _session(
         session_inbox_id="inbox-architect",
         conversation_id="conv-1",
         participant_id="participant-architect",
-        status="active",
+        status=status,
         model="production-model",
         feature_scope_id="feature:lane-a",
         provider_session_id=provider_session_id,
@@ -97,6 +98,7 @@ def test_selected_god_runtime_view_joins_selection_registration_and_session() ->
                 "retract",
             ],
             "session_status": "active",
+            "effective_session_status": "active",
             "heartbeat_freshness": "unknown",
             "last_heartbeat_at_utc": None,
             "waiting_reason": None,
@@ -217,6 +219,31 @@ def test_runtime_view_reports_fresh_heartbeat_when_within_ttl() -> None:
     assert item["last_heartbeat_at_utc"] == "2026-06-13T00:04:30Z"
     assert item["peer_god_ready"] is True
     assert "god_session_heartbeat:god-session-1" in item["source_refs"]
+
+
+def test_runtime_view_treats_active_provider_binding_as_effective_ready() -> None:
+    view = build_selected_god_runtime_continuity_view(
+        conversation_id="conv-1",
+        selections=[_selection("codex.god")],
+        sessions=[
+            _session(
+                agent_name="Release Architect GOD",
+                runtime="codex",
+                status="starting",
+                provider_session_id="provider-thread-1",
+                provider_binding_status="active",
+            )
+        ],
+        god_cli_registry=build_default_god_cli_registry(),
+    )
+
+    assert view["fact_state"] == "observed"
+    assert view["blockers"] == []
+    item = view["items"][0]
+    assert item["session_status"] == "starting"
+    assert item["effective_session_status"] == "provider_bound_active"
+    assert item["waiting_reason"] is None
+    assert item["peer_god_ready"] is True
 
 
 def test_runtime_view_blocks_stale_heartbeat_without_upgrading_proof() -> None:
