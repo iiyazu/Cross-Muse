@@ -252,6 +252,78 @@ def test_release_evidence_candidates_report_current_gaps_without_secrets(
     assert "token=secret-token" not in str(report)
 
 
+def test_release_evidence_candidates_surface_existing_memoryos_trace_artifact(
+    tmp_path: Path,
+) -> None:
+    trace_artifact = _write_memoryos_trace_artifact(tmp_path / "memoryos-trace.json")
+
+    report = build_release_evidence_candidate_report(
+        tmp_path,
+        conversation_id="conv-1",
+        env={"XMUSE_MEMORYOS_LIVE_TRACE_ARTIFACT": str(trace_artifact)},
+        memoryos_payload={
+            "repo_id": "iiyazu/Cross-Muse",
+            "workspace_id": "xmuse",
+            "god_id": "review",
+            "conversation_id": "conv-1",
+            "thread_id": "thread-1",
+            "blueprint_id": "bp-1",
+            "feature_id": "feature-1",
+            "lane_id": "lane-1",
+            "content": "live evidence",
+            "query": "production evidence",
+        },
+    )
+
+    memoryos = report["live_memoryos"]
+    assert memoryos["configured"] is True
+    assert memoryos["export_ready"] is False
+    assert memoryos["missing_env_keys"] == [
+        "XMUSE_LIVE_MEMORYOS_LITE",
+        "XMUSE_MEMORYOS_LITE_URL",
+    ]
+    assert memoryos["missing_payload_keys"] == []
+    assert memoryos["artifact_configured"] is True
+    assert memoryos["artifact_gate_ready"] is True
+    assert memoryos["artifact_path"] == str(trace_artifact)
+    assert memoryos["artifact_gate_status"] == "ok"
+    assert memoryos["artifact_proof_level"] == "live_service_proof"
+    assert memoryos["artifact_trace_event_count"] == 1
+    assert memoryos["artifact_source_ref_count"] == 4
+    assert memoryos["source_authority"] == [
+        "redacted_environment_presence",
+        "operator_release_candidate_payload",
+        "memoryos_live_trace_artifact",
+        "memoryos_live_release_gate",
+    ]
+    assert memoryos["suggested_existing_artifact_action"] == {
+        "action": "capture_release_evidence_pack",
+        "kind": "live_memoryos",
+        "payload_hints": {"memoryos_live_trace": str(trace_artifact)},
+    }
+
+
+def test_release_evidence_candidates_cli_reports_existing_memoryos_artifact_ready(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    from xmuse.release_evidence_candidates import main
+
+    trace_artifact = _write_memoryos_trace_artifact(tmp_path / "memoryos-trace.json")
+    output = tmp_path / "candidates.json"
+    monkeypatch.setenv("XMUSE_MEMORYOS_LIVE_TRACE_ARTIFACT", str(trace_artifact))
+
+    exit_code = main(["--xmuse-root", str(tmp_path), "--output", str(output)])
+
+    assert exit_code == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["memoryos_export_ready"] is False
+    assert summary["memoryos_artifact_ready"] is True
+    report = json.loads(output.read_text(encoding="utf-8"))
+    assert report["live_memoryos"]["artifact_gate_ready"] is True
+
+
 def test_release_evidence_candidates_cli_writes_operator_candidate_report(
     tmp_path: Path,
     monkeypatch,
@@ -498,3 +570,32 @@ def _speech(
 
 def _utcnow() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _write_memoryos_trace_artifact(path: Path) -> Path:
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "xmuse.memoryos_lite_trace.v1",
+                "proof_level": "live_service_proof",
+                "fact_state": "observed",
+                "namespace_uri": "memory://repo/iiyazu/Cross-Muse/workspace/xmuse",
+                "session_id": "ses-live",
+                "trace_events": [
+                    {
+                        "kind": "ingest",
+                        "source": "memoryos-lite",
+                        "metadata": {"xmuse_source_refs": ["github:pr:43"]},
+                    }
+                ],
+                "source_refs": ["conversation:conv-1"],
+                "estimated_tokens": 128,
+                "blockers": [],
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return path

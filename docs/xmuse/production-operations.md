@@ -1076,6 +1076,13 @@ MemoryOS candidate rows use
 env/payload source authority, and `attempt_release_evidence` hints. They do not
 include env values or task `content`/`query` text in payload hints, and they do
 not prove the live MemoryOS service responded.
+When `XMUSE_MEMORYOS_LIVE_TRACE_ARTIFACT` points at an existing trace, the
+candidate report also validates that artifact through the live MemoryOS release
+gate builder and exposes `artifact_gate_ready`, `artifact_gate_status`,
+`artifact_proof_level`, trace/source-ref counts, and a
+`capture_release_evidence_pack` payload hint. This is handoff context only: the
+candidate report still is not release proof, and the gate/pack must validate
+the artifact before readiness can use it.
 After a live MemoryOS gate is captured, replay/proof cockpit can display
 namespace, session id, trace-event count, event kinds, estimated tokens,
 source-ref count, blocker count, and live-service proof flag. These fields are

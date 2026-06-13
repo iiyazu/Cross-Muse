@@ -532,6 +532,11 @@ Current implementation status:
   `xmuse.memoryos_lite_trace.v1`, required proof `live_service_proof`,
   redacted source authority, and `attempt_release_evidence` hints without
   leaking env values or task content/query text into the candidate report.
+  When `XMUSE_MEMORYOS_LIVE_TRACE_ARTIFACT` points at an existing trace, the
+  candidate report also runs the trace through the live MemoryOS release-gate
+  builder and exposes `artifact_gate_ready`, gate status/proof, trace/source
+  counts, and a `capture_release_evidence_pack` hint. This keeps artifact reuse
+  visible without treating the candidate report itself as release proof.
   GitHub server-truth candidates include
   `proof_boundary=candidate_report_is_not_github_server_truth_proof`, required
   gate kind `github_server_truth`, required `server_side_enforcement_proof`,

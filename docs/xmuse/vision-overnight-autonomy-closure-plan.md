@@ -799,7 +799,11 @@ Tasks:
   bounded the same way with
   `proof_boundary=candidate_report_is_not_live_memoryos_proof`; env presence
   and operator payload completeness are only capture prerequisites, not
-  `live_service_proof`. GitHub server-truth candidate guidance is bounded by
+  `live_service_proof`. If `XMUSE_MEMORYOS_LIVE_TRACE_ARTIFACT` points at an
+  existing trace, the candidate report can surface artifact gate readiness,
+  status/proof level, trace/source counts, and a release-pack payload hint, but
+  the candidate remains handoff context until the release gate/pack validates
+  the artifact. GitHub server-truth candidate guidance is bounded by
   `proof_boundary=candidate_report_is_not_github_server_truth_proof`; repo/PR
   target completeness and optional expected-head/check hints are only
   prerequisites for `attempt_release_evidence github`, not GitHub server truth,

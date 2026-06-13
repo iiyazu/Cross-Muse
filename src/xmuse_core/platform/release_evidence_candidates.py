@@ -11,6 +11,9 @@ from xmuse_core.agents.god_session_registry import GodSessionRecord, GodSessionR
 from xmuse_core.platform.god_runtime_continuity import (
     build_selected_god_runtime_continuity_view,
 )
+from xmuse_core.platform.memoryos_live_release_gate import (
+    build_memoryos_live_release_gate,
+)
 from xmuse_core.providers.god_cli_registration_store import GodCliRegistrationStore
 from xmuse_core.providers.god_cli_registry import (
     GodCliRegistry,
@@ -22,6 +25,7 @@ from xmuse_core.providers.god_cli_selection_store import (
 )
 
 _MEMORYOS_REQUIRED_ENV = ("XMUSE_LIVE_MEMORYOS_LITE", "XMUSE_MEMORYOS_LITE_URL")
+_MEMORYOS_LIVE_TRACE_ARTIFACT_ENV = "XMUSE_MEMORYOS_LIVE_TRACE_ARTIFACT"
 _MEMORYOS_REQUIRED_PAYLOAD = (
     "repo_id",
     "workspace_id",
@@ -321,6 +325,7 @@ def _memoryos_candidates(
     env: Mapping[str, str],
     payload: Mapping[str, Any],
 ) -> dict[str, Any]:
+    artifact = _memoryos_trace_artifact_candidate(env)
     missing_env = [
         key
         for key in _MEMORYOS_REQUIRED_ENV
@@ -330,10 +335,19 @@ def _memoryos_candidates(
     missing_payload = [
         key for key in _MEMORYOS_REQUIRED_PAYLOAD if not _text(payload.get(key))
     ]
+    artifact_blockers = (
+        []
+        if not artifact["artifact_configured"] or artifact["artifact_gate_ready"]
+        else ["memoryos_live_trace_artifact_not_ready"]
+    )
     return {
-        "configured": not missing_env,
+        "configured": not missing_env or artifact["artifact_configured"],
         "export_ready": not missing_env and not missing_payload,
-        "env_keys_present": sorted(key for key in _MEMORYOS_REQUIRED_ENV if key in env),
+        "env_keys_present": sorted(
+            key
+            for key in (*_MEMORYOS_REQUIRED_ENV, _MEMORYOS_LIVE_TRACE_ARTIFACT_ENV)
+            if key in env
+        ),
         "missing_env_keys": missing_env,
         "missing_payload_keys": missing_payload,
         "blockers": [
@@ -347,25 +361,78 @@ def _memoryos_candidates(
                 if missing_payload
                 else []
             ),
+            *artifact_blockers,
         ],
-        **_memoryos_candidate_guidance(payload),
+        **artifact,
+        **_memoryos_candidate_guidance(payload, artifact=artifact),
     }
 
 
-def _memoryos_candidate_guidance(payload: Mapping[str, Any]) -> dict[str, Any]:
+def _memoryos_trace_artifact_candidate(env: Mapping[str, str]) -> dict[str, Any]:
+    artifact_path = _text(env.get(_MEMORYOS_LIVE_TRACE_ARTIFACT_ENV))
+    base = {
+        "artifact_configured": artifact_path is not None,
+        "artifact_path": artifact_path,
+        "artifact_gate_ready": False,
+        "artifact_gate_status": None,
+        "artifact_proof_level": None,
+        "artifact_summary": None,
+        "artifact_trace_event_count": 0,
+        "artifact_source_ref_count": 0,
+    }
+    if artifact_path is None:
+        return base
+    payload, load_error = _json_file(Path(artifact_path))
+    gate = build_memoryos_live_release_gate(
+        payload,
+        artifact_path=artifact_path,
+        load_error=load_error,
+    )
+    trace_detail = gate.get("memoryos_trace")
+    if not isinstance(trace_detail, dict):
+        trace_detail = {}
+    return {
+        **base,
+        "artifact_gate_ready": gate.get("status") == "ok",
+        "artifact_gate_status": _text(gate.get("status")),
+        "artifact_proof_level": _text(gate.get("proof_level")),
+        "artifact_summary": _text(gate.get("summary")),
+        "artifact_trace_event_count": _non_negative_int(
+            trace_detail.get("trace_event_count")
+        ),
+        "artifact_source_ref_count": _non_negative_int(
+            trace_detail.get("source_ref_count")
+        ),
+    }
+
+
+def _memoryos_candidate_guidance(
+    payload: Mapping[str, Any],
+    *,
+    artifact: Mapping[str, Any],
+) -> dict[str, Any]:
     payload_hints = {
         key: text
         for key in _MEMORYOS_PAYLOAD_HINT_KEYS
         if (text := _text(payload.get(key))) is not None
     }
-    return {
+    source_authority = [
+        "redacted_environment_presence",
+        "operator_release_candidate_payload",
+    ]
+    artifact_path = _text(artifact.get("artifact_path"))
+    if artifact_path is not None:
+        source_authority.extend(
+            [
+                "memoryos_live_trace_artifact",
+                "memoryos_live_release_gate",
+            ]
+        )
+    guidance: dict[str, Any] = {
         "proof_boundary": "candidate_report_is_not_live_memoryos_proof",
         "required_artifact_schema": "xmuse.memoryos_lite_trace.v1",
         "required_proof_level": "live_service_proof",
-        "source_authority": [
-            "redacted_environment_presence",
-            "operator_release_candidate_payload",
-        ],
+        "source_authority": source_authority,
         "next_action": _MEMORYOS_NEXT_ACTION,
         "suggested_operator_action": {
             "action": "attempt_release_evidence",
@@ -374,6 +441,13 @@ def _memoryos_candidate_guidance(payload: Mapping[str, Any]) -> dict[str, Any]:
             "payload_hints": payload_hints,
         },
     }
+    if artifact_path is not None:
+        guidance["suggested_existing_artifact_action"] = {
+            "action": "capture_release_evidence_pack",
+            "kind": "live_memoryos",
+            "payload_hints": {"memoryos_live_trace": artifact_path},
+        }
+    return guidance
 
 
 def _github_candidates(*, payload: Mapping[str, Any]) -> dict[str, Any]:
@@ -623,6 +697,18 @@ def _json_object(value: Any) -> dict[str, Any]:
     return loaded if isinstance(loaded, dict) else {}
 
 
+def _json_file(path: Path) -> tuple[dict[str, Any] | None, str | None]:
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None, f"MemoryOS Lite trace artifact does not exist: {path}."
+    except (OSError, json.JSONDecodeError) as exc:
+        return None, f"MemoryOS Lite trace artifact could not be read: {exc}."
+    if not isinstance(loaded, dict):
+        return None, "MemoryOS Lite trace artifact must be a JSON object."
+    return loaded, None
+
+
 def _text(value: Any) -> str | None:
     if isinstance(value, str):
         cleaned = value.strip()
@@ -642,6 +728,14 @@ def _positive_int(value: Any) -> int | None:
             return None
         return parsed if parsed > 0 else None
     return None
+
+
+def _non_negative_int(value: Any) -> int:
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, int) and value >= 0:
+        return value
+    return 0
 
 
 def _ordered_unique(values: Any) -> list[str]:

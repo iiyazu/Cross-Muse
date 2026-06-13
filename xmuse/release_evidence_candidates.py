@@ -70,6 +70,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "real_provider_runtime",
                 ),
                 "memoryos_export_ready": _export_ready(report, "live_memoryos"),
+                "memoryos_artifact_ready": _artifact_ready(report, "live_memoryos"),
                 "github_export_ready": _export_ready(report, "github_server_truth"),
             },
             sort_keys=True,
@@ -108,6 +109,11 @@ def _set_if_present(payload: dict[str, Any], key: str, value: str | None) -> Non
 def _export_ready(report: dict[str, Any], key: str) -> bool:
     section = report.get(key)
     return bool(isinstance(section, dict) and section.get("export_ready") is True)
+
+
+def _artifact_ready(report: dict[str, Any], key: str) -> bool:
+    section = report.get(key)
+    return bool(isinstance(section, dict) and section.get("artifact_gate_ready") is True)
 
 
 if __name__ == "__main__":
