@@ -417,7 +417,9 @@ Current implementation status:
   snapshot: prompt/manifest/result/engine-output paths become replayable
   supervisor evidence, while non-`ok` stage results remain blockers or retry
   requests and do not become lane status, review truth, GitHub truth, release
-  readiness proof, or live runtime proof.
+  readiness proof, or live runtime proof. Repeated imported retry results for
+  the same stage now escalate through `goal_stage_retry` to
+  `refactor_required` on the third occurrence.
 - `.github/workflows/xmuse-ci.yml` includes
   `tests/xmuse/test_overnight_operator_supervisor.py` in the contract smoke
   gate, so the no-secrets virtual soak state machine is exercised by CI.

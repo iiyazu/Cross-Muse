@@ -707,9 +707,20 @@ class OvernightSupervisor:
             if self._current_stage_id == stage_id:
                 self._current_stage_id = None
         elif status == "retry":
-            stage["status"] = "running"
-            stage["retry_hint"] = row.get("retry_hint")
-            self._current_stage_id = stage_id
+            retry_failure = self.classify_failure(
+                stage_id=stage_id,
+                failure_class=_GOAL_STAGE_RETRY_FAILURE_CLASS,
+                reason=blocked_reason or "goal stage result is retry",
+                retryable=True,
+            )
+            if retry_failure.get("escalation") == "refactor_required":
+                stage_result["escalation"] = retry_failure["escalation"]
+                stage_result["next_action"] = retry_failure["recommended_action"]
+                next_action = str(retry_failure["recommended_action"])
+            else:
+                stage["status"] = "running"
+                stage["retry_hint"] = row.get("retry_hint")
+                self._current_stage_id = stage_id
         else:
             stage["status"] = "blocked"
             stage["blocked_reason"] = blocked_reason
@@ -979,6 +990,7 @@ _REFACTOR_FAILURE_REPEAT_THRESHOLD = 3
 _REFACTOR_FAILURE_NEXT_ACTION = (
     "refactor the failing function boundary before retrying"
 )
+_GOAL_STAGE_RETRY_FAILURE_CLASS = "goal_stage_retry"
 
 
 def _review_slo_status(minutes_since_previous_review: int | None) -> str:

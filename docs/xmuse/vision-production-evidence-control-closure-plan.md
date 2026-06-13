@@ -631,6 +631,10 @@ Current implementation status:
   with dependency-aware fallback. This makes stage-harness output replayable in
   the supervisor snapshot without making `result.json` authoritative for lane
   status, review truth, GitHub truth, release readiness, or live runtime proof.
+- Imported `retry` goal-stage results now feed the same repeated-failure policy:
+  the third retry import for the same stage records `goal_stage_retry` as
+  refactor evidence, blocks the stage, and requires boundary refactor before
+  another retry.
 - The TUI proof cockpit can now project the same supervisor `goal_stage_results`
   as read-only operator evidence, including summary counts, per-stage status,
   proof level, engine, result artifact refs, blocker reason, and fallback target.

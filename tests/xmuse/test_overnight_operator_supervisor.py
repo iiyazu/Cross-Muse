@@ -588,6 +588,68 @@ def test_overnight_supervisor_imports_goal_stage_runner_result_evidence(
     assert snapshot["stage_journal"][-1]["event"] == "stage_started"
 
 
+def test_overnight_supervisor_imported_repeated_retry_result_requires_refactor(
+    tmp_path: Path,
+) -> None:
+    retry_results = [
+        tmp_path / "goal" / f"S4.retry-{attempt}.json"
+        for attempt in (1, 2, 3)
+    ]
+    for attempt, result_path in enumerate(retry_results, start=1):
+        _write_goal_stage_runner_result(
+            result_path,
+            stage_id="S4",
+            status="retry",
+            engine="opencode",
+            command=[
+                "opencode",
+                "run",
+                "--model",
+                "opencode-go/deepseek-v4-flash",
+                "--variant",
+                "max",
+            ],
+            issues=[{"message": "same stage boundary still needs retry"}],
+            attempt=attempt,
+        )
+
+    supervisor = OvernightSupervisor(
+        OvernightSupervisorConfig(
+            run_id="run-stage-retry-refactor",
+            artifact_dir=tmp_path,
+            stages=[
+                OvernightSupervisorStage(stage_id="S4", objective="live evidence gates"),
+            ],
+        )
+    )
+
+    first = supervisor.import_goal_stage_result(retry_results[0])
+    second = supervisor.import_goal_stage_result(retry_results[1])
+    third = supervisor.import_goal_stage_result(retry_results[2])
+
+    snapshot = supervisor.snapshot()
+    assert first["status"] == "retry"
+    assert second["status"] == "retry"
+    assert third["status"] == "retry"
+    assert third["escalation"] == "refactor_required"
+    assert third["next_action"] == (
+        "refactor the failing function boundary before retrying"
+    )
+    assert snapshot["stages"][0]["status"] == "blocked"
+    assert snapshot["stages"][0]["refactor_required"] is True
+    assert snapshot["current_stage_id"] is None
+    assert snapshot["failure_classifications"][-1]["failure_class"] == (
+        "goal_stage_retry"
+    )
+    assert snapshot["failure_classifications"][-1]["repeat_count"] == 3
+    assert snapshot["issue_queue"][0]["severity"] == "refactor_required"
+    assert any(
+        evidence["action"] == "failure_refactor_escalation"
+        and evidence["kind"] == "supervisor_failure_policy"
+        for evidence in snapshot["production_evidence"]
+    )
+
+
 def test_overnight_supervisor_can_resume_from_persisted_snapshot(tmp_path: Path) -> None:
     config = OvernightSupervisorConfig(
         run_id="run-resume",
@@ -1212,6 +1274,7 @@ def _write_goal_stage_runner_result(
     engine: str,
     command: list[str],
     issues: list[dict[str, str]] | None = None,
+    attempt: int = 1,
 ) -> None:
     evidence_dir = path.parent / f"{path.name}.evidence"
     evidence_dir.mkdir(parents=True, exist_ok=True)
@@ -1228,7 +1291,7 @@ def _write_goal_stage_runner_result(
         "command": command,
         "agent_stdout_path": str(evidence_dir / "engine_output.txt"),
         "returncode": 0 if status == "ok" else 2,
-        "attempt": 1,
+        "attempt": attempt,
         "timestamp_utc": "2026-06-12T00:00:00Z",
     }
     path.write_text(

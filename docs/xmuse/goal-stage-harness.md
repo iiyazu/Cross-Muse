@@ -24,6 +24,9 @@ uv run python scripts/goal_stage_runner.py \
   - `ok`：可推进下一阶段。
   - `retry`：先由同一阶段做有限收敛重试（同一脚本再次运行），次数受 manifest `max_retries` 限制。
   - `blocked`：阻塞并上报，等待人工处理。
+- 当 goal-stage `retry` 结果被导入 overnight supervisor 时，重复导入同一阶段的
+  `retry` 结果会进入 supervisor 的 repeated-failure policy；第三次同类 retry
+  import 会标记 `refactor_required`，要求先重构失败边界再重试。
 - 脚本会同时输出：
   - `result.json`（阶段产物）
   - `<output-path>.manifest.jsonl`（追加审计日志，例如 `result.json.manifest.jsonl`）

@@ -743,8 +743,11 @@ with `source_authority=goal_stage_harness`, indexes the result, prompt,
 manifest, and engine-output artifacts when present, and updates only the
 supervisor stage state. `ok` results are `contract_proof`; blocked stage
 results remain `manual_gap` blockers and may start the next ready independent
-stage. This is not lane status authority, review truth, GitHub truth, release
-readiness proof, or live runtime proof.
+stage. Repeated imported `retry` results for the same stage feed the same
+failure classification policy; the third retry import writes
+`refactor_required` escalation evidence instead of keeping the stage in an
+open-ended retry loop. This is not lane status authority, review truth, GitHub
+truth, release readiness proof, or live runtime proof.
 
 The TUI proof cockpit read model can project the supervisor snapshot's
 `goal_stage_results` as an operator-visible stage spine. It shows per-stage
