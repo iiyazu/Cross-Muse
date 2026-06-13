@@ -2,13 +2,17 @@
 
 更新日期: 2026-06-13
 
-本文档是 Codex 开发 xmuse 时使用 `/goal` 的固定行为规范。它约束的是
-**开发过程中的 worker 委派方式**，不是 xmuse 产品运行时的 provider 权限模型。
+本文档是 Codex 开发 xmuse 时使用 `/goal` 的 worker 委派规范。通用 goal 行为、
+L1-L11 dependency-first closure、proof level、anti-false-closure 和 anti-TDD-abuse
+规则以 `docs/xmuse/goal-behavior-contract.md` 为准。本文只补充 worker 委派边界。
+它约束的是 **开发过程中的 worker 委派方式**，不是 xmuse 产品运行时的 provider
+权限模型。
 产品内 Codex/OpenCode/GOD 权限仍以 `provider-matrix.md`、`mainline-contracts.md`
 和具体实现合同为准。
 
-后续 `/goal` prompt 应引用本文档，不需要重复展开本文件的行为规范；只有改变
-委派策略时才更新本文档。
+后续 `/goal` prompt 应同时引用
+`docs/xmuse/goal-behavior-contract.md` 和本文档，不需要重复展开这两个文件的行为
+规范；只有改变 goal 行为或委派策略时才更新对应文档。
 
 ## Roles
 
@@ -17,9 +21,13 @@
 - OpenCode 不能作为架构裁决者、状态权威、release truth、merge truth 或最终 reviewer。
 - OpenCode 的自报完成不构成证据；必须由 Codex 独立审查和验证。
 
-## Core Workflow: Single Writer, Multiple Verifiers
+## Core Workflow: Dependency-First, Single Writer, Multiple Verifiers
 
 长 `/goal` 的稳定组织原则是 **单 writer，多 verifier**。
+
+主 Codex 必须先读 `production-closure-gap-ledger.md`，锁定目标 L 层、上游依赖、
+authority owner、proof level 和 forbidden claims。Worker 不得把测试、TUI 投影、
+provider inventory、release pack 字段、local CI 或自报完成当作 closure proof。
 
 | Role | Permissions | Task |
 |------|-------------|------|
@@ -29,14 +37,27 @@
 | reviewer subagent | 只读 | 审查最终 diff 的过拟合、特判、架构破坏、安全/并发风险和遗漏测试 |
 | docs/api subagent | 只读 + 文档工具 | 核查框架/API 行为，防止凭记忆编码 |
 
-不要让同一个 worker context 同时负责“写测试、写实现、宣布通过”。主 Codex 可以执行
-TDD，但必须接受 subagent 或最终 review 对测试真实性、过拟合风险和行为证据的审查。
-OpenCode 如被委派，默认只产生 candidate patch/artifact/audit，不能自证完成。
+不要让同一个 worker context 同时负责“定义测试世界、写实现、宣布通过”。主 Codex
+可以添加测试，但测试只能验证已经明确的 authority/proof path。OpenCode 如被委派，
+默认只产生 candidate patch/artifact/audit，不能自证完成。
 
-## RIGR-V Development Loop
+## Dependency-First Closure Loop
 
-默认流程是 Read → Invariant → Green-by-fix → Refactor → Verify，而不是机械的
-Red → Green。
+默认流程是:
+
+```text
+Truth refresh
+-> Layer targeting
+-> Authority design
+-> Production slice implementation
+-> Targeted tests
+-> Evidence export
+-> Self-review / anti-false-closure audit
+-> Ledger update and claim boundary
+```
+
+RIGR-V 仍可作为单个代码切片内部的工程节奏，但不得替代 L 层依赖、authority owner、
+proof level 和 ledger boundary。Red-first 测试不是架构来源。
 
 ### Read
 
@@ -48,7 +69,8 @@ Red → Green。
   - Existing tests that already cover nearby behavior
   - Risk surface
 
-禁止一上来写测试。先证明理解了需求、路径和风险，再决定是否需要 red-first 测试。
+禁止一上来写测试。先证明理解了目标 L 层、authority owner、现有生产路径和风险，
+再决定是否需要 targeted tests。
 
 ### Invariant
 
@@ -63,11 +85,11 @@ Red → Green。
   - Do not bypass existing abstraction or authority boundaries.
   - Do not add special cases for test fixtures.
 
-### Red When Appropriate
+### Tests When Appropriate
 
-TDD 只在行为可判定的场景强制使用:
+Targeted tests 只在行为可判定的场景强制使用:
 
-| Task type | Red requirement | Correct evidence |
+| Task type | Test requirement | Correct evidence |
 |-----------|-----------------|------------------|
 | Bug fix | Required | Reproduce the bug first, then fix |
 | Pure function / algorithm / parser | Required | Unit tests with boundaries; property/fuzz optional |
@@ -89,21 +111,26 @@ A failing test is acceptable only if:
   low-level internal unit.
 - It includes boundary or negative coverage when relevant.
 
-### Green
+### Green-By-Production-Slice
 
-Green-by-fix 禁止:
+Green-by-production-slice 禁止:
 
 - 修改测试预期来通过。
 - 删除、skip、xfail、only 或放宽断言。
 - 增加无意义 timeout。
 - 特判测试 fixture、文件名、样例值或 test-only input。
 - mock 掉真正该验证的业务路径。
+- 用 mock 绕过 selected GOD binding、provider invocation、recovery enforcement
+  或 review truth。
+- 给 evidence pack 增加字段但没有上游 producer。
+- 先扩展 TUI/dashboard/read model 再把它描述成 upstream closure。
 - 吞异常或绕过 auth/persistence/validation。
 - 改 public API 但不更新调用方和契约。
 
 允许:
 
-- 最小且诚实的生产代码改动。
+- 最小且诚实的生产代码改动，包括 contract/schema、store/resolver、runtime/API hook、
+  fail-closed behavior、evidence artifact 和 ledger update。
 - 清晰错误处理、真实边界修复、类型/校验补充。
 - 复用已有项目模式或抽出已有模式中的局部复用逻辑。
 
@@ -132,6 +159,7 @@ Codex 最终报告或 PR notes 需要回答:
 3. 有没有修改、删除、放宽、跳过测试？
 4. 有没有 mock 掉真正该验证的路径？
 5. 除了测试绿，还有什么证据表明行为正确？
+6. 本轮 target layer、proof level、manual gaps 和 forbidden claims 是什么？
 
 ## Repeated Failure And Demo-Grade Refactor Rule
 
@@ -251,6 +279,8 @@ OpenCode 返回后，Codex 必须完成独立审查:
 后续长 `/goal` prompt 可只写:
 
 ```text
+Read and follow docs/xmuse/goal-behavior-contract.md for dependency-first
+closure behavior, proof levels, anti-false-closure review, and anti-TDD-abuse.
 Read and follow docs/xmuse/development-goal-worker-delegation-policy.md for
 OpenCode worker delegation. Do not repeat the policy unless changing it.
 ```

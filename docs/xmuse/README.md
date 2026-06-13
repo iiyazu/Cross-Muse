@@ -1,6 +1,6 @@
 # xmuse 文档入口
 
-更新日期: 2026-06-13
+更新日期: 2026-06-14
 
 本目录是 xmuse 当前阶段的文档入口。旧的 `docs/superpowers/specs/` 和
 `docs/superpowers/plans/` 仍保留原路径，因为测试、lane graph 和历史记录会引用
@@ -32,6 +32,9 @@ GOD groupchat deliberation
 |---|---|
 | `docs/xmuse/mainline-contracts.md` | 当前产品主线合同：GOD 群聊、blueprint freeze、laneDAG、review/GitHub gate、REST-first MemoryOS |
 | `docs/xmuse/production-closure-gap-ledger.md` | 从用户视角维护生产机闭环缺口台账，逐层记录已有证据、缺口、所需 proof、下一步生产切片和不能声称的能力 |
+| `docs/xmuse/goal-behavior-contract.md` | 长 `/goal` 的 dependency-first / authority-first / evidence-first 行为契约，定义 L1-L11 阶段、proof level、anti-false-closure 和 anti-TDD-abuse |
+| `docs/xmuse/code-review.md` | 生产闭环 review 契约，专门审查 projection authority、proof-level inflation、worker truth、GitHub truth 和 TDD abuse |
+| `docs/xmuse/dependency-first-closure-goal-prompt.md` | 可直接用于下一轮长 `/goal` 的简洁 dependency-first closure prompt |
 | `docs/xmuse/deep-research-02-next-goal.md` | 第二轮深度研究转化目标，定义 #13-#19 的下一阶段任务 |
 | `docs/xmuse/contract-smoke-gates.md` | #19 合同 smoke CI：无 secrets 的 lint、format、typecheck、主线合约测试和 SLO smoke |
 | `docs/xmuse/deep-research-03-next-goal.md` | 第三轮真实运行层目标：GitHub 服务器 gate、MemoryOS Lite 互操作、provider/runtime soak 分层和 broad-suite 债务 |

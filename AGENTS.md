@@ -66,6 +66,60 @@ Always use `uv run` — never bare `pytest` or `ruff`. The `.venv` is managed by
 
 ## Development Workflow
 
+### XMuse Closure Behavior Rules
+
+xmuse development is not test-driven-first. It is dependency-first,
+contract-first, authority-first, and evidence-first. Tests are verification,
+not architecture authority.
+
+Before changing code in any `/goal` task, identify:
+
+1. Target closure layer(s), L1-L11, from
+   `docs/xmuse/production-closure-gap-ledger.md`.
+2. Required upstream layers and blockers.
+3. The authority object, durable store, or server truth source that owns truth.
+4. The proof level the task can produce:
+   `contract_proof`, `local_runtime_proof`, `opt_in_live_proof`,
+   `server_side_truth`, or `manual_gap`.
+5. Claims that remain forbidden after the change.
+
+Do not start by writing broad tests against imagined behavior. First inspect
+current contracts, stores, APIs, docs, runtime paths, and evidence artifacts.
+Then implement the smallest production slice: contract/schema, store or
+authority resolver, runtime/API/operator hook, fail-closed handling, evidence
+artifact, and ledger update. Add targeted regression or contract tests only
+after the authority/proof path is clear.
+
+Never claim:
+
+- TUI/dashboard/read model state is durable authority.
+- Provider inventory means a CLI is a peer-GOD.
+- Capture proof equals live provider invocation proof.
+- Fixture deliberation equals natural multi-GOD deliberation.
+- `feature_lanes.json` is execution authority.
+- Local tests or worker self-report are review truth.
+- CI success is GitHub review or merge truth.
+- MemoryOS plan artifact is live MemoryOS trace.
+- `ready_for_replay` means `ready_to_merge` or `pr_merged`.
+
+Before declaring completion, self-review:
+
+1. Did this change only modify downstream projection while upstream authority
+   remains missing?
+2. Did tests pass by mocking away the real production gap?
+3. Did any missing live/server proof get downgraded into contract proof?
+4. Is `manual_gap` preserved when live proof is unavailable?
+5. Was the closure ledger updated with current branch/head/PR/CI facts where
+   claims changed?
+
+Test budget gate: a `/goal` is TDD-abusive if tests define closure before
+production authority is identified, tests construct artifacts that production
+runtime should produce, mocks bypass selected GOD binding/provider invocation/
+recovery enforcement/review truth, fields are added to evidence packs without
+upstream producers, or TUI/read models expand without fail-closed authority
+checks. If detected, stop adding tests, identify the missing production
+producer, and implement or document the smallest real path/manual gap.
+
 ### Completion Definition
 
 A task is complete only when:
@@ -150,7 +204,7 @@ bounded implementation work.
 
 Before claiming completion, answer these checks in the final review:
 
-1. What real requirement did the new failing test prove?
+1. What real requirement did any new targeted test prove?
 2. Could the implementation be fitting only the test example?
 3. Were any tests modified, deleted, weakened, skipped, or xfailed?
 4. Was the real path under test mocked away?
@@ -181,6 +235,11 @@ Before claiming completion, answer these checks in the final review:
 ## Docs
 
 Current authoritative docs are in `docs/xmuse/`. Old `docs/superpowers/` specs/plans remain on disk for test/legacy references but are not the current entry point. Start with `docs/xmuse/README.md`.
+
+For long `/goal` work, read `docs/xmuse/goal-behavior-contract.md`,
+`docs/xmuse/code-review.md`, `docs/xmuse/production-closure-gap-ledger.md`,
+`docs/xmuse/development-goal-worker-delegation-policy.md`, and
+`docs/xmuse/goal-stage-harness.md`.
 
 ## OpenCode Orchestration
 
@@ -218,10 +277,10 @@ prompt; reference it unless the policy itself is being changed.
 
 ### Orchestration Rules
 
-1. Coder and Codex must follow the RIGR-V policy above. TDD is required for
-   bug fixes, public contracts, and behavior changes, but must not be forced
-   onto docs-only, config-only, pure refactor, performance, or architecture
-   migration work where other evidence is more appropriate
+1. Coder and Codex must follow the XMuse closure behavior rules above and
+   `docs/xmuse/goal-behavior-contract.md`. Targeted tests are required for bug
+   fixes, public contracts, and behavior changes, but tests must not define
+   architecture or substitute for authority/proof producers
 2. Orchestrator validates independently (never trust subagent self-reports)
 3. Adversarial reviewer is always a FRESH instance
 4. Repeated failures require direct refactor: after two same-class failures on
