@@ -653,6 +653,99 @@ def test_tui_vision_read_model_projects_release_pack_recovery_queue() -> None:
     ]
 
 
+def test_tui_vision_read_model_projects_feature_lineage_lane_details() -> None:
+    model = build_tui_vision_read_model(
+        replay_bundle={
+            "schema_version": "xmuse.overnight_replay_bundle.v1",
+            "decision": "blocked",
+            "authority": "replay_index_only",
+            "proof_level_summary": {"contract_proof": 1},
+            "sections": [
+                {
+                    "section_id": "feature_lineage",
+                    "status": "ok",
+                    "proof_level": "contract_proof",
+                    "source_authority": "feature_owner_execution_contract",
+                    "source_refs": ["feature-owner:feature-runtime-loop"],
+                    "artifacts": ["artifact://feature-lineage.json"],
+                    "details": {
+                        "feature_lineage": {
+                            "authority": "feature_owner_execution_contract",
+                            "contract_count": 1,
+                            "lane_count": 3,
+                            "ready_lane_count": 1,
+                            "blocked_lane_count": 1,
+                            "completed_lane_count": 1,
+                            "blocker_count": 1,
+                            "projection_authority": False,
+                            "status_write_policy": (
+                                "read_only_contract_no_status_writes"
+                            ),
+                            "features": [
+                                {
+                                    "feature_id": "feature-runtime-loop",
+                                    "objective": (
+                                        "Run the overnight supervisor with "
+                                        "replayable evidence."
+                                    ),
+                                    "graph_set_id": "graph-set-1",
+                                    "feature_graph_id": "graph-runtime",
+                                    "ready_lane_ids": ["lane-heartbeat"],
+                                    "blocked_lane_ids": ["lane-replay"],
+                                    "completed_lane_ids": ["lane-docs"],
+                                    "lane_blockers": [
+                                        {
+                                            "lane_id": "lane-replay",
+                                            "blocker_type": (
+                                                "dependency_unsatisfied"
+                                            ),
+                                            "blocker_ref": "lane:lane-heartbeat",
+                                            "blocker_status": "pending",
+                                        }
+                                    ],
+                                }
+                            ],
+                        }
+                    },
+                }
+            ],
+            "blockers": [],
+        },
+    )
+
+    cockpit = model["proof_cockpit"]
+    assert cockpit["feature_lineage"] == {
+        "authority": "feature_owner_execution_contract",
+        "contract_count": 1,
+        "lane_count": 3,
+        "ready_lane_count": 1,
+        "blocked_lane_count": 1,
+        "completed_lane_count": 1,
+        "blocker_count": 1,
+        "projection_authority": False,
+        "status_write_policy": "read_only_contract_no_status_writes",
+        "features": [
+            {
+                "feature_id": "feature-runtime-loop",
+                "objective": "Run the overnight supervisor with replayable evidence.",
+                "graph_set_id": "graph-set-1",
+                "feature_graph_id": "graph-runtime",
+                "ready_lane_ids": ["lane-heartbeat"],
+                "blocked_lane_ids": ["lane-replay"],
+                "completed_lane_ids": ["lane-docs"],
+                "lane_blockers": [
+                    {
+                        "lane_id": "lane-replay",
+                        "blocker_type": "dependency_unsatisfied",
+                        "blocker_ref": "lane:lane-heartbeat",
+                        "blocker_status": "pending",
+                    }
+                ],
+            }
+        ],
+    }
+
+
 def test_tui_vision_read_model_projects_supervisor_goal_stage_results() -> None:
     model = build_tui_vision_read_model(
         overnight_supervisor={

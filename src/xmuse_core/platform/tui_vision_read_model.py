@@ -576,6 +576,7 @@ def _build_proof_cockpit(
     }
     latest_virtual_soak: dict[str, Any] | None = None
     recovery_queue: list[dict[str, Any]] = []
+    feature_lineage: dict[str, Any] | None = None
 
     if isinstance(overnight_supervisor, dict):
         _append_unique(
@@ -645,6 +646,8 @@ def _build_proof_cockpit(
         section_count = len(sections)
         proof_level_summary.update(_proof_summary(replay_bundle.get("proof_level_summary")))
         for section in sections:
+            if feature_lineage is None:
+                feature_lineage = _feature_lineage_from_replay_section(section)
             section_statuses.append(
                 {
                     "section_id": _text(section.get("section_id")) or "unknown",
@@ -754,6 +757,7 @@ def _build_proof_cockpit(
         "virtual_soak_summary": virtual_soak_summary,
         "latest_virtual_soak": latest_virtual_soak,
         "recovery_queue": recovery_queue,
+        **({"feature_lineage": feature_lineage} if feature_lineage is not None else {}),
     }
 
 
@@ -848,6 +852,65 @@ def _goal_stage_next_action(stage_result: dict[str, Any]) -> str | None:
     if next_stage_id is not None:
         return f"Continue via dependency-aware fallback to {next_stage_id}."
     return None
+
+
+def _feature_lineage_from_replay_section(
+    section: dict[str, Any],
+) -> dict[str, Any] | None:
+    if _text(section.get("section_id")) != "feature_lineage":
+        return None
+    details = section.get("details")
+    if not isinstance(details, dict):
+        return None
+    feature_lineage = details.get("feature_lineage")
+    if not isinstance(feature_lineage, dict):
+        return None
+    return _feature_lineage_projection(feature_lineage)
+
+
+def _feature_lineage_projection(feature_lineage: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "authority": _text(feature_lineage.get("authority"))
+        or "feature_owner_execution_contract",
+        "contract_count": _int(feature_lineage.get("contract_count")),
+        "lane_count": _int(feature_lineage.get("lane_count")),
+        "ready_lane_count": _int(feature_lineage.get("ready_lane_count")),
+        "blocked_lane_count": _int(feature_lineage.get("blocked_lane_count")),
+        "completed_lane_count": _int(feature_lineage.get("completed_lane_count")),
+        "blocker_count": _int(feature_lineage.get("blocker_count")),
+        "projection_authority": feature_lineage.get("projection_authority") is True,
+        "status_write_policy": _text(feature_lineage.get("status_write_policy"))
+        or "read_only_contract_no_status_writes",
+        "features": [
+            _feature_lineage_feature_projection(feature)
+            for feature in _dicts(feature_lineage.get("features"))
+        ],
+    }
+
+
+def _feature_lineage_feature_projection(feature: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "feature_id": _text(feature.get("feature_id")) or "unknown",
+        "objective": _text(feature.get("objective")),
+        "graph_set_id": _text(feature.get("graph_set_id")) or "unknown",
+        "feature_graph_id": _text(feature.get("feature_graph_id")) or "unknown",
+        "ready_lane_ids": _list_refs(feature.get("ready_lane_ids")),
+        "blocked_lane_ids": _list_refs(feature.get("blocked_lane_ids")),
+        "completed_lane_ids": _list_refs(feature.get("completed_lane_ids")),
+        "lane_blockers": [
+            _feature_lineage_blocker_projection(blocker)
+            for blocker in _dicts(feature.get("lane_blockers"))
+        ],
+    }
+
+
+def _feature_lineage_blocker_projection(blocker: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "lane_id": _text(blocker.get("lane_id")) or "unknown",
+        "blocker_type": _text(blocker.get("blocker_type")) or "blocked",
+        "blocker_ref": _text(blocker.get("blocker_ref")) or "unknown",
+        "blocker_status": _text(blocker.get("blocker_status")) or "unknown",
+    }
 
 
 def _append_cockpit_blocker(

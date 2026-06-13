@@ -571,6 +571,10 @@ Current implementation status:
   preserve that block as section `details`, so the overnight operator can see
   the next graph-native ready lane without reading `feature_lanes.json` or
   writing lane status from the replay surface.
+- The TUI proof cockpit now projects the same feature-lineage `details` as
+  read-only operator context: contract/lane counts, per-feature ready and
+  blocked lane ids, and blocker reasons. This makes graph-native next work
+  visible in the cockpit while keeping replay/TUI output non-authoritative.
 - `uv run xmuse-overnight-supervisor-evidence-capture` exports a supervisor
   snapshot into a replay-ready `xmuse.production_evidence.v1` artifact. This
   can satisfy the replay bundle's `supervisor` section with contract-level

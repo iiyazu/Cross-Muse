@@ -53,6 +53,7 @@ def render_proof_cockpit(vision: dict[str, Any] | None) -> Panel:
     if section_statuses:
         lines.append("Sections:")
         lines.extend(f"  {_section_line(section)}" for section in section_statuses[:6])
+    _append_feature_lineage(lines, cockpit)
     stage_results = _dicts(cockpit.get("stage_results"))
     if stage_results:
         summary = cockpit.get("stage_result_summary")
@@ -149,6 +150,44 @@ def _stage_result_line(stage_result: dict[str, Any]) -> str:
     if next_stage_id is not None:
         line += f" -> {next_stage_id}"
     return line
+
+
+def _append_feature_lineage(lines: list[str], cockpit: dict[str, Any]) -> None:
+    lineage = cockpit.get("feature_lineage")
+    if not isinstance(lineage, dict):
+        return
+    lines.append(
+        "Feature lineage: "
+        f"contracts={_number(lineage.get('contract_count'))}; "
+        f"lanes={_number(lineage.get('lane_count'))}; "
+        f"ready={_number(lineage.get('ready_lane_count'))}; "
+        f"blocked={_number(lineage.get('blocked_lane_count'))}; "
+        f"completed={_number(lineage.get('completed_lane_count'))}"
+    )
+    for feature in _dicts(lineage.get("features"))[:4]:
+        lines.append(f"  {_feature_lineage_feature_line(feature)}")
+        for blocker in _dicts(feature.get("lane_blockers"))[:3]:
+            lines.append(f"    {_feature_lineage_blocker_line(blocker)}")
+
+
+def _feature_lineage_feature_line(feature: dict[str, Any]) -> str:
+    feature_id = _text(feature.get("feature_id")) or "unknown"
+    graph_id = _text(feature.get("feature_graph_id")) or "unknown"
+    ready = _compact_or_none(_strings(feature.get("ready_lane_ids")))
+    blocked = _compact_or_none(_strings(feature.get("blocked_lane_ids")))
+    return f"{feature_id} {graph_id} ready={ready} blocked={blocked}"
+
+
+def _feature_lineage_blocker_line(blocker: dict[str, Any]) -> str:
+    lane_id = _text(blocker.get("lane_id")) or "unknown"
+    blocker_type = _text(blocker.get("blocker_type")) or "blocked"
+    blocker_ref = _text(blocker.get("blocker_ref")) or "unknown"
+    blocker_status = _text(blocker.get("blocker_status")) or "unknown"
+    return f"{lane_id} {blocker_type} {blocker_ref} status={blocker_status}"
+
+
+def _compact_or_none(values: list[str]) -> str:
+    return _compact(values) if values else "-"
 
 
 def _append_virtual_soak(lines: list[str], cockpit: dict[str, Any]) -> None:

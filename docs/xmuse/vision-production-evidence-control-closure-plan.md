@@ -720,7 +720,8 @@ Current implementation status:
   rendering, `feature_lanes.json`, or lane projections authoritative. The
   generated feature-lineage evidence includes structured lane-set and blocker
   details for operator scheduling; replay bundles preserve those details but
-  still cannot write graph or lane status.
+  still cannot write graph or lane status. The TUI proof cockpit projects the
+  same details as read-only operator context, not as graph/lane authority.
 - The same release pack command can accept `--memoryos-live-trace` and
   `--real-provider-runtime`, convert those raw live/provider artifacts through
   the existing `xmuse-memoryos-live-gate-capture` and

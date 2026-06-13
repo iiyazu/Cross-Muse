@@ -499,6 +499,50 @@ def test_proof_cockpit_renders_recovery_queue() -> None:
     ) in rendered
 
 
+def test_proof_cockpit_renders_feature_lineage_lane_details() -> None:
+    panel = render_proof_cockpit(
+        {
+            "proof_cockpit": {
+                "proof_level": "contract_proof",
+                "fact_state": "blocked",
+                "feature_lineage": {
+                    "authority": "feature_owner_execution_contract",
+                    "contract_count": 1,
+                    "lane_count": 3,
+                    "ready_lane_count": 1,
+                    "blocked_lane_count": 1,
+                    "completed_lane_count": 1,
+                    "blocker_count": 1,
+                    "features": [
+                        {
+                            "feature_id": "feature-runtime-loop",
+                            "feature_graph_id": "graph-runtime",
+                            "ready_lane_ids": ["lane-heartbeat"],
+                            "blocked_lane_ids": ["lane-replay"],
+                            "completed_lane_ids": ["lane-docs"],
+                            "lane_blockers": [
+                                {
+                                    "lane_id": "lane-replay",
+                                    "blocker_type": "dependency_unsatisfied",
+                                    "blocker_ref": "lane:lane-heartbeat",
+                                    "blocker_status": "pending",
+                                }
+                            ],
+                        }
+                    ],
+                },
+                "blockers": [],
+                "manual_gap_reason": None,
+            }
+        }
+    )
+
+    rendered = panel.renderable.plain
+    assert "Feature lineage: contracts=1; lanes=3; ready=1; blocked=1; completed=1" in rendered
+    assert "feature-runtime-loop graph-runtime ready=lane-heartbeat blocked=lane-replay" in rendered
+    assert "lane-replay dependency_unsatisfied lane:lane-heartbeat status=pending" in rendered
+
+
 def test_proof_cockpit_renders_god_runtime_heartbeat_freshness() -> None:
     panel = render_proof_cockpit(
         {
