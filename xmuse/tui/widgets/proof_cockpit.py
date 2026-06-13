@@ -53,6 +53,7 @@ def render_proof_cockpit(vision: dict[str, Any] | None) -> Panel:
     if section_statuses:
         lines.append("Sections:")
         lines.extend(f"  {_section_line(section)}" for section in section_statuses[:6])
+    _append_github_truth(lines, cockpit)
     _append_memory_governance(lines, cockpit)
     _append_feature_lineage(lines, cockpit)
     stage_results = _dicts(cockpit.get("stage_results"))
@@ -151,6 +152,49 @@ def _stage_result_line(stage_result: dict[str, Any]) -> str:
     if next_stage_id is not None:
         line += f" -> {next_stage_id}"
     return line
+
+
+def _append_github_truth(lines: list[str], cockpit: dict[str, Any]) -> None:
+    github_truth = cockpit.get("github_truth")
+    if not isinstance(github_truth, dict):
+        return
+    repo = _text(github_truth.get("repo")) or "unknown"
+    pull_request_number = _number(github_truth.get("pull_request_number"))
+    target = f"{repo}#{pull_request_number}" if pull_request_number else repo
+    proof_level = _text(github_truth.get("proof_level")) or "manual_gap"
+    head_sha = _text(github_truth.get("head_sha")) or "-"
+    expected_head_sha = _text(github_truth.get("expected_head_sha")) or "-"
+    lines.append(
+        "GitHub truth: "
+        f"{target} {proof_level} head={head_sha} "
+        f"expected={expected_head_sha} "
+        f"match={_yes_no(github_truth.get('head_sha_matches_expected'))}"
+    )
+    lines.append(
+        "  "
+        f"checks={_number(github_truth.get('required_check_count'))}; "
+        f"check_runs={_number(github_truth.get('check_run_count'))}; "
+        f"app={_text(github_truth.get('expected_source_app')) or '-'}; "
+        f"enforcement={_text(github_truth.get('server_enforcement')) or 'missing'}"
+    )
+    lines.append(
+        "  "
+        f"review={_text(github_truth.get('review_truth')) or 'missing'}; "
+        f"merge={_text(github_truth.get('merge_truth')) or 'missing'}; "
+        f"can_emit_pr_merged={_yes_no(github_truth.get('can_emit_pr_merged'))}; "
+        f"merged={_yes_no(github_truth.get('merged'))}"
+    )
+    workflow_run_id = _text(github_truth.get("workflow_run_id"))
+    capture_mode = _text(github_truth.get("capture_mode"))
+    if workflow_run_id is not None or capture_mode is not None:
+        lines.append(
+            "  "
+            f"workflow={workflow_run_id or '-'}; "
+            f"capture={capture_mode or '-'}"
+        )
+    gap_reason = _text(github_truth.get("gap_reason"))
+    if gap_reason is not None:
+        lines.append(f"  gap={gap_reason}")
 
 
 def _append_memory_governance(lines: list[str], cockpit: dict[str, Any]) -> None:

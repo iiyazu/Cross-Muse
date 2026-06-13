@@ -362,6 +362,53 @@ def test_proof_cockpit_renders_section_statuses_and_god_runtime() -> None:
     ) in rendered
 
 
+def test_proof_cockpit_renders_github_truth_details() -> None:
+    panel = render_proof_cockpit(
+        {
+            "proof_cockpit": {
+                "proof_level": "contract_proof",
+                "fact_state": "blocked",
+                "github_truth": {
+                    "repo": "iiyazu/Cross-Muse",
+                    "pull_request_number": 43,
+                    "proof_level": "manual_gap",
+                    "head_sha": "head-current",
+                    "expected_head_sha": "head-current",
+                    "head_sha_matches_expected": True,
+                    "workflow_run_id": "27457543932",
+                    "required_check_count": 3,
+                    "check_run_count": 3,
+                    "expected_source_app": "github-actions",
+                    "server_enforcement": "branch_protection",
+                    "review_truth": "missing",
+                    "merge_truth": "missing",
+                    "merged": False,
+                    "can_emit_pr_merged": False,
+                    "gap_reason": (
+                        "missing server-side truth: review_truth, merge_truth"
+                    ),
+                    "capture_mode": "opt_in_read_only_gh_api",
+                },
+                "blockers": [],
+                "manual_gap_reason": None,
+            }
+        }
+    )
+
+    rendered = panel.renderable.plain
+    assert (
+        "GitHub truth: iiyazu/Cross-Muse#43 manual_gap head=head-current "
+        "expected=head-current match=yes"
+    ) in rendered
+    assert (
+        "checks=3; check_runs=3; app=github-actions; "
+        "enforcement=branch_protection"
+    ) in rendered
+    assert "review=missing; merge=missing; can_emit_pr_merged=no; merged=no" in rendered
+    assert "workflow=27457543932; capture=opt_in_read_only_gh_api" in rendered
+    assert "gap=missing server-side truth: review_truth, merge_truth" in rendered
+
+
 def test_proof_cockpit_renders_goal_stage_results() -> None:
     panel = render_proof_cockpit(
         {

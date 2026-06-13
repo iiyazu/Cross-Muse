@@ -32,6 +32,7 @@ def build_tui_vision_read_model(
 ) -> dict[str, Any]:
     """Build a provider-agnostic TUI read model from read-only inputs."""
     inspector_evidence = _inspector_evidence(inspector)
+    github_evidence = github_truth or inspector_evidence["github_truth"]
     deliberation = _build_deliberation(conversation_id, messages or [])
     return {
         "schema_version": "1",
@@ -41,7 +42,7 @@ def build_tui_vision_read_model(
         "blueprint_freeze": _build_blueprint_freeze(deliberation, inspector),
         "execution": _build_execution(worklist_envelope),
         "memory": _build_memory(memory_trace or inspector_evidence["memory_trace"]),
-        "github": _build_github(github_truth or inspector_evidence["github_truth"]),
+        "github": _build_github(github_evidence),
         "providers": _build_providers(
             provider_runtime or inspector_evidence["provider_runtime"]
         ),
@@ -52,6 +53,7 @@ def build_tui_vision_read_model(
             replay_bundle or inspector_evidence["replay_bundle"],
             release_evidence_pack or inspector_evidence["release_evidence_pack"],
             overnight_supervisor or inspector_evidence["overnight_supervisor"],
+            github_truth=github_evidence,
         ),
     }
 
@@ -396,11 +398,7 @@ def _build_github(github_truth: dict | None) -> dict[str, Any]:
         return section
 
     proof_level = _normalize_proof_level(github_truth.get("proof_level"))
-    required_checks = (
-        github_truth.get("required_checks")
-        if isinstance(github_truth.get("required_checks"), dict)
-        else {}
-    )
+    required_checks = _github_required_checks(github_truth.get("required_checks"))
     review_truth = (
         github_truth.get("review_truth")
         if isinstance(github_truth.get("review_truth"), dict)
@@ -539,11 +537,16 @@ def _build_proof_cockpit(
     replay_bundle: dict | None,
     release_evidence_pack: dict | None,
     overnight_supervisor: dict | None,
+    *,
+    github_truth: dict | None = None,
 ) -> dict[str, Any]:
     if not isinstance(replay_bundle, dict) and not isinstance(
         release_evidence_pack,
         dict,
-    ) and not isinstance(overnight_supervisor, dict):
+    ) and not isinstance(overnight_supervisor, dict) and not isinstance(
+        github_truth,
+        dict,
+    ):
         return _manual_gap_section(
             "overnight replay bundle and release evidence pack unavailable"
         )
@@ -578,6 +581,20 @@ def _build_proof_cockpit(
     recovery_queue: list[dict[str, Any]] = []
     feature_lineage: dict[str, Any] | None = None
     memory_governance: dict[str, Any] | None = None
+    github_truth_detail = (
+        _github_truth_detail_projection(github_truth)
+        if isinstance(github_truth, dict)
+        else None
+    )
+
+    if github_truth_detail is not None:
+        _append_unique(
+            source_authority,
+            github_truth_detail["schema_version"]
+            or "github_server_side_truth_capture.v1",
+        )
+        for ref in _list_refs(github_truth_detail.get("source_refs")):
+            _append_unique(source_refs, ref)
 
     if isinstance(overnight_supervisor, dict):
         _append_unique(
@@ -651,6 +668,8 @@ def _build_proof_cockpit(
                 feature_lineage = _feature_lineage_from_replay_section(section)
             if memory_governance is None:
                 memory_governance = _memory_governance_from_replay_section(section)
+            if github_truth_detail is None:
+                github_truth_detail = _github_truth_from_replay_section(section)
             section_statuses.append(
                 {
                     "section_id": _text(section.get("section_id")) or "unknown",
@@ -764,6 +783,11 @@ def _build_proof_cockpit(
         **(
             {"memory_governance": memory_governance}
             if memory_governance is not None
+            else {}
+        ),
+        **(
+            {"github_truth": github_truth_detail}
+            if github_truth_detail is not None
             else {}
         ),
     }
@@ -888,6 +912,149 @@ def _memory_governance_from_replay_section(
     if not isinstance(memory_governance, dict):
         return None
     return _memory_governance_projection(memory_governance)
+
+
+def _github_truth_from_replay_section(
+    section: dict[str, Any],
+) -> dict[str, Any] | None:
+    if _text(section.get("section_id")) != "github_truth":
+        return None
+    details = section.get("details")
+    if not isinstance(details, dict):
+        return None
+    github_truth = details.get("github_truth")
+    if not isinstance(github_truth, dict):
+        github_truth = details.get("github_server_truth")
+    if not isinstance(github_truth, dict):
+        return None
+    return _github_truth_detail_projection(github_truth)
+
+
+def _github_truth_detail_projection(github_truth: dict[str, Any]) -> dict[str, Any]:
+    required_checks = _github_required_check_names(github_truth.get("required_checks"))
+    check_run_ids = (
+        github_truth.get("check_run_ids")
+        if isinstance(github_truth.get("check_run_ids"), list)
+        else []
+    )
+    merge = _github_merge_fields(github_truth)
+    proof_level = _normalize_proof_level(github_truth.get("proof_level"))
+    can_emit_pr_merged = github_truth.get("can_emit_pr_merged") is True
+    return {
+        "repo": _text(github_truth.get("repo")),
+        "pull_request_number": _optional_int(github_truth.get("pull_request_number")),
+        "proof_level": proof_level,
+        "schema_version": _text(github_truth.get("schema_version"))
+        or "github_server_side_truth_capture.v1",
+        "head_sha": _text(github_truth.get("head_sha")),
+        "expected_head_sha": _text(github_truth.get("expected_head_sha")),
+        "head_sha_matches_expected": _github_head_matches_expected(github_truth),
+        "workflow_run_id": _scalar_text(github_truth.get("workflow_run_id")),
+        "required_check_count": len(required_checks),
+        "check_run_count": len(check_run_ids),
+        "expected_source_app": _text(github_truth.get("expected_source_app")),
+        "server_enforcement": _github_server_enforcement(github_truth),
+        "review_truth": _github_review_truth_state(github_truth),
+        "merge_truth": _github_merge_truth_state(
+            proof_level=proof_level,
+            can_emit_pr_merged=can_emit_pr_merged,
+            merge=merge,
+        ),
+        "merged": merge.get("merged") is True,
+        "can_emit_pr_merged": can_emit_pr_merged,
+        "gap_reason": _text(
+            github_truth.get("gap_reason") or github_truth.get("manual_gap_reason")
+        ),
+        "capture_mode": _text(github_truth.get("capture_mode")),
+        "source_refs": _list_refs(github_truth.get("source_refs")),
+    }
+
+
+def _github_required_checks(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return dict(value)
+    names = _github_required_check_names(value)
+    return {"checks": names, "count": len(names)} if names else {}
+
+
+def _github_required_check_names(value: Any) -> list[str]:
+    if isinstance(value, list):
+        names: list[str] = []
+        for item in value:
+            if isinstance(item, str):
+                _append_unique(names, item)
+            elif isinstance(item, dict):
+                name = _text(item.get("context") or item.get("name"))
+                if name is not None:
+                    _append_unique(names, name)
+        return names
+    if not isinstance(value, dict):
+        return []
+    for key in ("checks", "contexts", "required_checks"):
+        names = _github_required_check_names(value.get(key))
+        if names:
+            return names
+    return []
+
+
+def _github_head_matches_expected(github_truth: dict[str, Any]) -> bool:
+    if github_truth.get("head_sha_matches_expected") is True:
+        return True
+    head_sha = _text(github_truth.get("head_sha"))
+    expected_head_sha = _text(github_truth.get("expected_head_sha"))
+    return bool(head_sha is not None and head_sha == expected_head_sha)
+
+
+def _github_server_enforcement(github_truth: dict[str, Any]) -> str:
+    if isinstance(github_truth.get("branch_protection_snapshot"), dict):
+        return "branch_protection"
+    if isinstance(github_truth.get("ruleset_snapshot"), dict):
+        return "ruleset"
+    return "missing"
+
+
+def _github_review_truth_state(github_truth: dict[str, Any]) -> str:
+    if (
+        _text(github_truth.get("review_event_id")) is not None
+        or _text(github_truth.get("reviewer_login")) is not None
+        or github_truth.get("code_owner_review_verified") is True
+    ):
+        return "github_review"
+    if (
+        github_truth.get("internal_review_verified") is True
+        or _text(github_truth.get("internal_review_artifact")) is not None
+    ):
+        return "internal_review"
+    return "missing"
+
+
+def _github_merge_truth_state(
+    *,
+    proof_level: str,
+    can_emit_pr_merged: bool,
+    merge: dict[str, Any],
+) -> str:
+    if _can_render_pr_merged(
+        proof_level=proof_level,
+        can_emit_pr_merged=can_emit_pr_merged,
+        merge=merge,
+    ):
+        return "pr_merged"
+    return "missing"
+
+
+def _scalar_text(value: Any) -> str | None:
+    if isinstance(value, str):
+        return _text(value)
+    if isinstance(value, int) and not isinstance(value, bool):
+        return str(value)
+    return None
+
+
+def _optional_int(value: Any) -> int | None:
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    return None
 
 
 def _memory_governance_projection(

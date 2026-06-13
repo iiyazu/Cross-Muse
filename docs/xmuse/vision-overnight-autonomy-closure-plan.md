@@ -644,6 +644,13 @@ Current implementation status:
   action. It performs the same read-only GitHub capture, writes a raw snapshot
   and `github-server-truth` gate under the release readiness root, and preserves
   `can_emit_pr_merged=false` unless full server-side merge proof exists.
+- The TUI proof cockpit now also projects GitHub server truth details as
+  read-only operator context: repo/PR, current and expected head SHA, required
+  check count, check-run count, expected source app, server enforcement source,
+  review truth state, merge truth state, `can_emit_pr_merged`, merged flag,
+  capture mode, and gap reason. This projection does not create review truth,
+  merge truth, or `pr_merged`; it only makes the raw capture boundary visible
+  beside replay and release evidence.
 - `/release attempt github` and `/release attempt all` include GitHub server
   truth in the attempt report. Missing repo/PR target fields become
   `manual_gap` blockers; present targets invoke the same read-only export path.

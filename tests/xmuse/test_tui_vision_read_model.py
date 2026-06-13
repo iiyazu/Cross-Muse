@@ -444,6 +444,71 @@ def test_tui_vision_read_model_requires_server_side_proof_for_pr_merged() -> Non
     assert model["github"]["manual_gap_reason"] == "server-side merge proof is missing"
 
 
+def test_tui_vision_read_model_projects_github_truth_into_proof_cockpit() -> None:
+    model = build_tui_vision_read_model(
+        github_truth={
+            "repo": "iiyazu/Cross-Muse",
+            "pull_request_number": 43,
+            "required_checks": [
+                "quality-gates",
+                "contract-smoke-gates",
+                "real-runtime-integration-gate",
+            ],
+            "proof_level": "manual_gap",
+            "head_sha": "head-current",
+            "workflow_run_id": 27457543932,
+            "check_run_ids": [101, 102, 103],
+            "expected_source_app": "github-actions",
+            "branch_protection_snapshot": {"required_status_checks": {"strict": True}},
+            "ruleset_snapshot": None,
+            "review_event_id": None,
+            "internal_review_verified": False,
+            "merge_commit_sha": "merge-candidate",
+            "merged_at": None,
+            "merge_event_id": None,
+            "gap_reason": "missing server-side truth: review_truth, merge_truth",
+            "schema_version": "github_server_side_truth_capture.v1",
+            "expected_head_sha": "head-current",
+            "head_sha_matches_expected": True,
+            "can_emit_pr_merged": False,
+            "merged": False,
+            "capture_mode": "opt_in_read_only_gh_api",
+            "source_refs": [
+                "github:pr:43",
+                "github:head:head-current",
+                "github:expected-head:head-current",
+            ],
+        },
+    )
+
+    cockpit = model["proof_cockpit"]
+    assert cockpit["github_truth"] == {
+        "repo": "iiyazu/Cross-Muse",
+        "pull_request_number": 43,
+        "proof_level": "manual_gap",
+        "schema_version": "github_server_side_truth_capture.v1",
+        "head_sha": "head-current",
+        "expected_head_sha": "head-current",
+        "head_sha_matches_expected": True,
+        "workflow_run_id": "27457543932",
+        "required_check_count": 3,
+        "check_run_count": 3,
+        "expected_source_app": "github-actions",
+        "server_enforcement": "branch_protection",
+        "review_truth": "missing",
+        "merge_truth": "missing",
+        "merged": False,
+        "can_emit_pr_merged": False,
+        "gap_reason": "missing server-side truth: review_truth, merge_truth",
+        "capture_mode": "opt_in_read_only_gh_api",
+        "source_refs": [
+            "github:pr:43",
+            "github:head:head-current",
+            "github:expected-head:head-current",
+        ],
+    }
+
+
 def test_tui_vision_read_model_summarizes_proof_cockpit_without_authority_upgrade() -> None:
     model = build_tui_vision_read_model(
         replay_bundle={
