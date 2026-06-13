@@ -65,6 +65,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "schema_version": report["schema_version"],
                 "output": str(args.output),
                 "natural_export_ready": _export_ready(report, "natural_deliberation"),
+                "natural_artifact_ready": _artifact_ready(
+                    report,
+                    "natural_deliberation",
+                ),
                 "provider_export_ready": _export_ready(
                     report,
                     "real_provider_runtime",

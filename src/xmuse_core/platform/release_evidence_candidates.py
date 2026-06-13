@@ -14,6 +14,9 @@ from xmuse_core.platform.god_runtime_continuity import (
 from xmuse_core.platform.memoryos_live_release_gate import (
     build_memoryos_live_release_gate,
 )
+from xmuse_core.platform.natural_deliberation_release_gate import (
+    build_natural_deliberation_release_gate,
+)
 from xmuse_core.providers.god_cli_registration_store import GodCliRegistrationStore
 from xmuse_core.providers.god_cli_registry import (
     GodCliRegistry,
@@ -26,6 +29,8 @@ from xmuse_core.providers.god_cli_selection_store import (
 
 _MEMORYOS_REQUIRED_ENV = ("XMUSE_LIVE_MEMORYOS_LITE", "XMUSE_MEMORYOS_LITE_URL")
 _MEMORYOS_LIVE_TRACE_ARTIFACT_ENV = "XMUSE_MEMORYOS_LIVE_TRACE_ARTIFACT"
+_NATURAL_TRANSCRIPT_ARTIFACT_ENV = "XMUSE_NATURAL_GOD_TRANSCRIPT_PATH"
+_NATURAL_RUNTIME_ARTIFACT_ENV = "XMUSE_NATURAL_GOD_RUNTIME_ARTIFACT"
 _MEMORYOS_REQUIRED_PAYLOAD = (
     "repo_id",
     "workspace_id",
@@ -77,6 +82,7 @@ def build_release_evidence_candidate_report(
 ) -> dict[str, Any]:
     root = Path(xmuse_root)
     chat_db_path = root / "chat.db"
+    environment = dict(env or {})
     session_records = _session_records(root / "god_sessions.json")
     sessions = _session_index(session_records)
     god_cli_registry = _god_cli_registry(root)
@@ -90,6 +96,7 @@ def build_release_evidence_candidate_report(
         "conversation_id": conversation_id,
         "natural_deliberation": _natural_candidates(
             chat_db_path,
+            env=environment,
             sessions=sessions,
             session_records=session_records,
             god_cli_registry=god_cli_registry,
@@ -103,7 +110,7 @@ def build_release_evidence_candidate_report(
             trace_limit=trace_limit,
         ),
         "live_memoryos": _memoryos_candidates(
-            env=dict(env or {}),
+            env=environment,
             payload=memoryos_inputs,
         ),
         "github_server_truth": _github_candidates(payload=memoryos_inputs),
@@ -113,18 +120,22 @@ def build_release_evidence_candidate_report(
 def _natural_candidates(
     chat_db_path: Path,
     *,
+    env: Mapping[str, str],
     sessions: Mapping[tuple[str, str], GodSessionRecord],
     session_records: list[GodSessionRecord],
     god_cli_registry: GodCliRegistry,
     god_cli_selections: list[GodCliSelectionRecord],
     conversation_id: str | None,
 ) -> dict[str, Any]:
+    artifact = _natural_artifact_candidate(env)
     conversations = []
     if not chat_db_path.exists():
         return {
             "conversation_count": 0,
             "conversations": [],
+            "export_ready": False,
             "blockers": ["chat_db_missing"],
+            **artifact,
         }
     with _connect(chat_db_path) as conn:
         for conversation in _conversation_rows(conn, conversation_id=conversation_id):
@@ -193,6 +204,99 @@ def _natural_candidates(
         "conversation_count": len(conversations),
         "conversations": conversations,
         "export_ready": any(item["export_ready"] for item in conversations),
+        **artifact,
+    }
+
+
+def _natural_artifact_candidate(env: Mapping[str, str]) -> dict[str, Any]:
+    transcript_path = _text(env.get(_NATURAL_TRANSCRIPT_ARTIFACT_ENV))
+    runtime_path = _text(env.get(_NATURAL_RUNTIME_ARTIFACT_ENV))
+    base = {
+        "artifact_configured": transcript_path is not None,
+        "artifact_path": transcript_path,
+        "runtime_artifact_configured": runtime_path is not None,
+        "runtime_artifact_path": runtime_path,
+        "artifact_gate_ready": False,
+        "artifact_gate_status": None,
+        "artifact_proof_level": None,
+        "artifact_summary": None,
+        "artifact_message_count": 0,
+        "artifact_distinct_god_count": 0,
+        "artifact_runtime_peer_god_ready_count": 0,
+    }
+    if transcript_path is None:
+        return base
+    transcript, transcript_error = _json_file(
+        Path(transcript_path),
+        subject="Natural deliberation transcript",
+    )
+    runtime = None
+    runtime_error = None
+    if runtime_path is not None:
+        runtime, runtime_error = _json_file(
+            Path(runtime_path),
+            subject="Selected GOD runtime continuity",
+        )
+    gate = build_natural_deliberation_release_gate(
+        transcript,
+        artifact_path=transcript_path,
+        load_error=transcript_error,
+        god_runtime_continuity=runtime,
+        god_runtime_path=runtime_path,
+        god_runtime_load_error=runtime_error,
+    )
+    detail = gate.get("deliberation_transcript")
+    if not isinstance(detail, dict):
+        detail = {}
+    result = {
+        **base,
+        "artifact_gate_ready": gate.get("status") == "ok",
+        "artifact_gate_status": _text(gate.get("status")),
+        "artifact_proof_level": _text(gate.get("proof_level")),
+        "artifact_summary": _text(gate.get("summary")),
+        "artifact_message_count": _non_negative_int(detail.get("message_count")),
+        "artifact_distinct_god_count": _non_negative_int(
+            detail.get("distinct_god_count")
+        ),
+        "artifact_runtime_peer_god_ready_count": _non_negative_int(
+            detail.get("runtime_peer_god_ready_count")
+        ),
+        "source_authority": _natural_artifact_source_authority(
+            transcript_path=transcript_path,
+            runtime_path=runtime_path,
+        ),
+        "suggested_existing_artifact_action": _natural_existing_artifact_action(
+            transcript_path=transcript_path,
+            runtime_path=runtime_path,
+        ),
+    }
+    return result
+
+
+def _natural_artifact_source_authority(
+    *,
+    transcript_path: str,
+    runtime_path: str | None,
+) -> list[str]:
+    authority = ["natural_deliberation_transcript_artifact"]
+    if runtime_path is not None:
+        authority.append("selected_god_runtime_artifact")
+    authority.append("natural_deliberation_release_gate")
+    return authority
+
+
+def _natural_existing_artifact_action(
+    *,
+    transcript_path: str,
+    runtime_path: str | None,
+) -> dict[str, Any]:
+    payload_hints = {"natural_deliberation_transcript": transcript_path}
+    if runtime_path is not None:
+        payload_hints["natural_deliberation_god_runtime"] = runtime_path
+    return {
+        "action": "capture_release_evidence_pack",
+        "kind": "natural_deliberation",
+        "payload_hints": payload_hints,
     }
 
 
@@ -382,7 +486,10 @@ def _memoryos_trace_artifact_candidate(env: Mapping[str, str]) -> dict[str, Any]
     }
     if artifact_path is None:
         return base
-    payload, load_error = _json_file(Path(artifact_path))
+    payload, load_error = _json_file(
+        Path(artifact_path),
+        subject="MemoryOS Lite trace artifact",
+    )
     gate = build_memoryos_live_release_gate(
         payload,
         artifact_path=artifact_path,
@@ -697,15 +804,15 @@ def _json_object(value: Any) -> dict[str, Any]:
     return loaded if isinstance(loaded, dict) else {}
 
 
-def _json_file(path: Path) -> tuple[dict[str, Any] | None, str | None]:
+def _json_file(path: Path, *, subject: str) -> tuple[dict[str, Any] | None, str | None]:
     try:
         loaded = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
-        return None, f"MemoryOS Lite trace artifact does not exist: {path}."
+        return None, f"{subject} does not exist: {path}."
     except (OSError, json.JSONDecodeError) as exc:
-        return None, f"MemoryOS Lite trace artifact could not be read: {exc}."
+        return None, f"{subject} could not be read: {exc}."
     if not isinstance(loaded, dict):
-        return None, "MemoryOS Lite trace artifact must be a JSON object."
+        return None, f"{subject} must be a JSON object."
     return loaded, None
 
 

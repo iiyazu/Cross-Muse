@@ -324,6 +324,72 @@ def test_release_evidence_candidates_cli_reports_existing_memoryos_artifact_read
     assert report["live_memoryos"]["artifact_gate_ready"] is True
 
 
+def test_release_evidence_candidates_surface_existing_natural_artifacts(
+    tmp_path: Path,
+) -> None:
+    transcript = _write_natural_transcript_artifact(tmp_path / "natural-transcript.json")
+    runtime = _write_god_runtime_artifact(tmp_path / "god-runtime.json")
+
+    report = build_release_evidence_candidate_report(
+        tmp_path,
+        conversation_id="conv-prod-1",
+        env={
+            "XMUSE_NATURAL_GOD_TRANSCRIPT_PATH": str(transcript),
+            "XMUSE_NATURAL_GOD_RUNTIME_ARTIFACT": str(runtime),
+        },
+        memoryos_payload={},
+    )
+
+    natural = report["natural_deliberation"]
+    assert natural["export_ready"] is False
+    assert natural["artifact_configured"] is True
+    assert natural["runtime_artifact_configured"] is True
+    assert natural["artifact_gate_ready"] is True
+    assert natural["artifact_gate_status"] == "ok"
+    assert natural["artifact_proof_level"] == "real_provider_proof"
+    assert natural["artifact_message_count"] == 2
+    assert natural["artifact_distinct_god_count"] == 2
+    assert natural["artifact_runtime_peer_god_ready_count"] == 2
+    assert natural["artifact_path"] == str(transcript)
+    assert natural["runtime_artifact_path"] == str(runtime)
+    assert natural["source_authority"] == [
+        "natural_deliberation_transcript_artifact",
+        "selected_god_runtime_artifact",
+        "natural_deliberation_release_gate",
+    ]
+    assert natural["suggested_existing_artifact_action"] == {
+        "action": "capture_release_evidence_pack",
+        "kind": "natural_deliberation",
+        "payload_hints": {
+            "natural_deliberation_transcript": str(transcript),
+            "natural_deliberation_god_runtime": str(runtime),
+        },
+    }
+
+
+def test_release_evidence_candidates_cli_reports_existing_natural_artifact_ready(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    from xmuse.release_evidence_candidates import main
+
+    transcript = _write_natural_transcript_artifact(tmp_path / "natural-transcript.json")
+    runtime = _write_god_runtime_artifact(tmp_path / "god-runtime.json")
+    output = tmp_path / "candidates.json"
+    monkeypatch.setenv("XMUSE_NATURAL_GOD_TRANSCRIPT_PATH", str(transcript))
+    monkeypatch.setenv("XMUSE_NATURAL_GOD_RUNTIME_ARTIFACT", str(runtime))
+
+    exit_code = main(["--xmuse-root", str(tmp_path), "--output", str(output)])
+
+    assert exit_code == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["natural_export_ready"] is False
+    assert summary["natural_artifact_ready"] is True
+    report = json.loads(output.read_text(encoding="utf-8"))
+    assert report["natural_deliberation"]["artifact_gate_ready"] is True
+
+
 def test_release_evidence_candidates_cli_writes_operator_candidate_report(
     tmp_path: Path,
     monkeypatch,
@@ -591,6 +657,95 @@ def _write_memoryos_trace_artifact(path: Path) -> Path:
                 "source_refs": ["conversation:conv-1"],
                 "estimated_tokens": 128,
                 "blockers": [],
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def _write_natural_transcript_artifact(path: Path) -> Path:
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "xmuse.operator_transcript.v1",
+                "conversation_id": "conv-prod-1",
+                "proof_level": "real_provider_proof",
+                "fact_state": "observed",
+                "natural_deliberation": True,
+                "source_refs": ["memory://conversation/conv-prod-1/transcript"],
+                "target_refs": ["blueprint:prod:1"],
+                "messages": [
+                    {
+                        "message_id": "msg-1",
+                        "conversation_id": "conv-prod-1",
+                        "god_id": "architect-god",
+                        "provider_id": "codex",
+                        "provider_profile": "codex-prod",
+                        "session_id": "codex-session-1",
+                        "speech_act": "propose",
+                        "decision_scope": "blueprint.freeze",
+                        "source_refs": ["memory://conversation/conv-prod-1/source"],
+                        "target_refs": ["blueprint:prod:1"],
+                        "blocking": False,
+                    },
+                    {
+                        "message_id": "msg-2",
+                        "conversation_id": "conv-prod-1",
+                        "god_id": "review-god",
+                        "provider_id": "codex",
+                        "provider_profile": "codex-prod",
+                        "session_id": "codex-session-2",
+                        "speech_act": "vote",
+                        "decision_scope": "blueprint.freeze",
+                        "source_refs": ["message:msg-1"],
+                        "target_refs": ["blueprint:prod:1"],
+                        "blocking": False,
+                    },
+                ],
+                "blockers": [],
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def _write_god_runtime_artifact(path: Path) -> Path:
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "xmuse.god_runtime_continuity.v1",
+                "conversation_id": "conv-prod-1",
+                "proof_level": "real_provider_proof",
+                "fact_state": "observed",
+                "source_refs": ["god_cli_selection:conv-prod-1"],
+                "items": [
+                    {
+                        "god_id": "architect-god",
+                        "cli_id": "codex.god",
+                        "peer_god_ready": True,
+                        "bounded": False,
+                        "provider_session_ready": True,
+                        "proof_level": "real_provider_proof",
+                        "source_refs": ["god_session:architect"],
+                    },
+                    {
+                        "god_id": "review-god",
+                        "cli_id": "codex.god",
+                        "peer_god_ready": True,
+                        "bounded": False,
+                        "provider_session_ready": True,
+                        "proof_level": "real_provider_proof",
+                        "source_refs": ["god_session:review"],
+                    },
+                ],
             },
             indent=2,
             sort_keys=True,

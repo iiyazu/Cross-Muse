@@ -792,7 +792,12 @@ Tasks:
   readiness plus selected-GOD runtime readiness are only capture prerequisites,
   and the natural release gate still requires both
   `xmuse.operator_transcript.v1` and `xmuse.god_runtime_continuity.v1` artifacts
-  with `real_provider_proof`. Provider candidate guidance is bounded by
+  with `real_provider_proof`. If `XMUSE_NATURAL_GOD_TRANSCRIPT_PATH` and
+  optionally `XMUSE_NATURAL_GOD_RUNTIME_ARTIFACT` point at existing artifacts,
+  the candidate report can surface natural artifact gate readiness,
+  status/proof level, transcript/runtime counts, and a release-pack payload
+  hint, but the candidate remains handoff context until the natural gate/pack
+  validates the artifacts. Provider candidate guidance is bounded by
   `proof_boundary=candidate_report_is_not_release_proof`; only a validated
   `xmuse.real_provider_runtime.v1` artifact with `real_provider_proof` can
   satisfy the real-provider release gate. Live-MemoryOS candidate guidance is

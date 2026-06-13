@@ -1057,9 +1057,17 @@ and selected-runtime readiness are prerequisites for capture; they do not prove
 the natural release gate passed. After the natural release gate is captured, its
 artifact can display message/GOD counts, speech-act counts, selected-runtime
 presence/readiness, missing session GOD ids, and blocker count in replay/proof
-cockpit. Those fields remain read-only audit details. Provider candidate
-rows include `proof_boundary=candidate_report_is_not_release_proof`, required
-artifact schema `xmuse.real_provider_runtime.v1`, required proof
+cockpit. Those fields remain read-only audit details.
+When `XMUSE_NATURAL_GOD_TRANSCRIPT_PATH` and optionally
+`XMUSE_NATURAL_GOD_RUNTIME_ARTIFACT` point at existing artifacts, the candidate
+report also validates them through the natural release-gate builder and exposes
+`artifact_gate_ready`, gate status/proof, transcript/runtime counts, and a
+`capture_release_evidence_pack` payload hint. This is handoff context only; the
+generated natural release gate and selected-GOD runtime continuity artifact
+remain the readiness authority.
+Provider candidate rows include
+`proof_boundary=candidate_report_is_not_release_proof`, required artifact
+schema `xmuse.real_provider_runtime.v1`, required proof
 `real_provider_proof`, source authority, and suggested
 `attempt_release_evidence` payload hints. The TUI summary prints provider
 `next=` guidance so the operator can move from candidate inspection to an

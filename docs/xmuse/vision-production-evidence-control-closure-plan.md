@@ -521,6 +521,12 @@ Current implementation status:
   authority, and the suggested `attempt_release_evidence` operator action.
   This makes the next action visible without treating transcript readiness,
   selected-runtime readiness, or TUI rendering as natural release proof.
+  When `XMUSE_NATURAL_GOD_TRANSCRIPT_PATH` and optionally
+  `XMUSE_NATURAL_GOD_RUNTIME_ARTIFACT` point at existing artifacts, the
+  candidate report also runs them through the natural release-gate builder and
+  exposes `artifact_gate_ready`, gate status/proof, transcript/runtime counts,
+  and a `capture_release_evidence_pack` hint. This keeps existing natural
+  artifacts visible without treating the candidate report as release proof.
   Real-provider candidates now include
   `proof_boundary=candidate_report_is_not_release_proof`, the required
   `xmuse.real_provider_runtime.v1` schema, required `real_provider_proof`,
