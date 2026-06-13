@@ -68,6 +68,17 @@ def test_memoryos_live_gate_accepts_live_trace_artifact(tmp_path: Path) -> None:
         "memoryos:namespace:memory://conversation/conv-live/god-review/thread-1",
         "memoryos:session:ses-live-1",
     ]
+    assert gate["memoryos_trace"] == {
+        "authority": "memoryos_live_release_gate",
+        "namespace_uri": "memory://conversation/conv-live/god-review/thread-1",
+        "session_id": "ses-live-1",
+        "trace_event_count": 3,
+        "event_kinds": ["session_created", "ingest", "context_built"],
+        "estimated_tokens": 96,
+        "source_ref_count": 5,
+        "blocker_count": 0,
+        "live_service_proof": True,
+    }
     report = capture_release_readiness(
         artifacts_dir=tmp_path / "gates",
         output_path=tmp_path / "release-readiness.json",

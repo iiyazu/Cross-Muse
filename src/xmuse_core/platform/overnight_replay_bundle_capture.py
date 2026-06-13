@@ -107,6 +107,10 @@ def _section_from_gate(
     blocked_reason = None
     if gate.status != "ok":
         blocked_reason = f"{gate.gate_id} status is {gate.status}: {gate.summary}"
+    details = _section_details_from_artifacts(
+        section_id=section_id,
+        artifact_paths=gate_artifact_paths.get(gate.gate_id, ()),
+    )
     return ReplayBundleSection(
         section_id=section_id,
         status=gate.status,
@@ -118,6 +122,7 @@ def _section_from_gate(
         blocked_reason=blocked_reason,
         owner=gate.owner,
         next_action=gate.next_action,
+        details=details,
     )
 
 
@@ -266,6 +271,24 @@ def _section_details(
     details = payload.get(section_id)
     if isinstance(details, dict):
         return {section_id: details}
+    return None
+
+
+def _section_details_from_artifacts(
+    *,
+    section_id: str,
+    artifact_paths: tuple[str, ...],
+) -> dict[str, object] | None:
+    for artifact_path in artifact_paths:
+        try:
+            payload = json.loads(Path(artifact_path).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        details = _section_details(section_id=section_id, payload=payload)
+        if details is not None:
+            return details
     return None
 
 

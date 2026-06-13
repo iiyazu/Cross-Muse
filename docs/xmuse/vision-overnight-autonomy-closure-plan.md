@@ -806,6 +806,9 @@ Tasks:
   `uv run xmuse-release-evidence-pack --memoryos-live-trace TRACE` for the final
   handoff pack. The pack writes `live-memoryos.json` under `--artifacts-dir`
   through the same live gate validator and blocks contract/fake/empty traces.
+  Replay preserves the gate's `memoryos_trace` namespace/session/event/token
+  details for proof cockpit audit, but live MemoryOS readiness still comes from
+  the `live_memoryos` gate and `live_service_proof`.
 - When a real provider runtime artifact exists, prefer
   `uv run xmuse-release-evidence-pack --real-provider-runtime RUNTIME` for the
   final handoff pack. The pack writes `real-provider-runtime.json` under

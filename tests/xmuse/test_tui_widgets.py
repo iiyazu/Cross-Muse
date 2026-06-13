@@ -651,6 +651,42 @@ def test_proof_cockpit_renders_memory_governance_details() -> None:
     assert "reason=shared promotion requires explicit review" in rendered
 
 
+def test_proof_cockpit_renders_memoryos_trace_details() -> None:
+    panel = render_proof_cockpit(
+        {
+            "proof_cockpit": {
+                "proof_level": "contract_proof",
+                "fact_state": "blocked",
+                "memoryos_trace": {
+                    "authority": "memoryos_live_release_gate",
+                    "namespace_uri": "memory://conversation/conv-live/god-review/thread-1",
+                    "session_id": "ses-live-1",
+                    "trace_event_count": 3,
+                    "event_kinds": [
+                        "session_created",
+                        "ingest",
+                        "context_built",
+                    ],
+                    "estimated_tokens": 96,
+                    "source_ref_count": 5,
+                    "blocker_count": 1,
+                    "live_service_proof": True,
+                },
+                "blockers": [],
+                "manual_gap_reason": None,
+            }
+        }
+    )
+
+    rendered = panel.renderable.plain
+    assert (
+        "MemoryOS trace: ses-live-1 live=yes events=3; tokens=96; "
+        "source_refs=5; blockers=1"
+    ) in rendered
+    assert "namespace=memory://conversation/conv-live/god-review/thread-1" in rendered
+    assert "events=session_created, ingest, context_built" in rendered
+
+
 def test_proof_cockpit_renders_deliberation_transcript_details() -> None:
     panel = render_proof_cockpit(
         {

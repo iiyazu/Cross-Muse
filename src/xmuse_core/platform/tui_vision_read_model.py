@@ -581,6 +581,7 @@ def _build_proof_cockpit(
     recovery_queue: list[dict[str, Any]] = []
     feature_lineage: dict[str, Any] | None = None
     memory_governance: dict[str, Any] | None = None
+    memoryos_trace: dict[str, Any] | None = None
     deliberation_transcript: dict[str, Any] | None = None
     real_provider_runtime: dict[str, Any] | None = None
     github_truth_detail = (
@@ -670,6 +671,8 @@ def _build_proof_cockpit(
                 feature_lineage = _feature_lineage_from_replay_section(section)
             if memory_governance is None:
                 memory_governance = _memory_governance_from_replay_section(section)
+            if memoryos_trace is None:
+                memoryos_trace = _memoryos_trace_from_replay_section(section)
             if deliberation_transcript is None:
                 deliberation_transcript = (
                     _deliberation_transcript_from_replay_section(section)
@@ -796,6 +799,7 @@ def _build_proof_cockpit(
             if memory_governance is not None
             else {}
         ),
+        **({"memoryos_trace": memoryos_trace} if memoryos_trace is not None else {}),
         **(
             {"github_truth": github_truth_detail}
             if github_truth_detail is not None
@@ -933,6 +937,34 @@ def _memory_governance_from_replay_section(
     if not isinstance(memory_governance, dict):
         return None
     return _memory_governance_projection(memory_governance)
+
+
+def _memoryos_trace_from_replay_section(
+    section: dict[str, Any],
+) -> dict[str, Any] | None:
+    if _text(section.get("section_id")) != "memoryos_trace":
+        return None
+    details = section.get("details")
+    if not isinstance(details, dict):
+        return None
+    memoryos_trace = details.get("memoryos_trace")
+    if not isinstance(memoryos_trace, dict):
+        return None
+    return _memoryos_trace_projection(memoryos_trace)
+
+
+def _memoryos_trace_projection(trace: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "authority": _text(trace.get("authority")) or "memoryos_live_release_gate",
+        "namespace_uri": _text(trace.get("namespace_uri")),
+        "session_id": _text(trace.get("session_id")),
+        "trace_event_count": _int(trace.get("trace_event_count")),
+        "event_kinds": _list_refs(trace.get("event_kinds")),
+        "estimated_tokens": _int(trace.get("estimated_tokens")),
+        "source_ref_count": _int(trace.get("source_ref_count")),
+        "blocker_count": _int(trace.get("blocker_count")),
+        "live_service_proof": trace.get("live_service_proof") is True,
+    }
 
 
 def _deliberation_transcript_from_replay_section(

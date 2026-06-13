@@ -777,6 +777,62 @@ def test_tui_vision_read_model_projects_real_provider_runtime_details() -> None:
     }
 
 
+def test_tui_vision_read_model_projects_memoryos_trace_details() -> None:
+    model = build_tui_vision_read_model(
+        replay_bundle={
+            "schema_version": "xmuse.overnight_replay_bundle.v1",
+            "decision": "blocked",
+            "authority": "replay_index_only",
+            "proof_level_summary": {"live_service_proof": 1},
+            "sections": [
+                {
+                    "section_id": "memoryos_trace",
+                    "status": "ok",
+                    "proof_level": "live_service_proof",
+                    "source_authority": "memoryos_live_release_gate",
+                    "source_refs": [
+                        "conversation:conv-live",
+                        "memoryos:session:ses-live-1",
+                    ],
+                    "artifacts": ["artifact://memoryos-trace.json"],
+                    "details": {
+                        "memoryos_trace": {
+                            "authority": "memoryos_live_release_gate",
+                            "namespace_uri": (
+                                "memory://conversation/conv-live/god-review/thread-1"
+                            ),
+                            "session_id": "ses-live-1",
+                            "trace_event_count": 3,
+                            "event_kinds": [
+                                "session_created",
+                                "ingest",
+                                "context_built",
+                            ],
+                            "estimated_tokens": 96,
+                            "source_ref_count": 5,
+                            "blocker_count": 1,
+                            "live_service_proof": True,
+                        }
+                    },
+                }
+            ],
+        },
+    )
+
+    cockpit = model["proof_cockpit"]
+    assert cockpit["memoryos_trace"] == {
+        "authority": "memoryos_live_release_gate",
+        "namespace_uri": "memory://conversation/conv-live/god-review/thread-1",
+        "session_id": "ses-live-1",
+        "trace_event_count": 3,
+        "event_kinds": ["session_created", "ingest", "context_built"],
+        "estimated_tokens": 96,
+        "source_ref_count": 5,
+        "blocker_count": 1,
+        "live_service_proof": True,
+    }
+
+
 def test_tui_vision_read_model_projects_feature_lineage_lane_details() -> None:
     model = build_tui_vision_read_model(
         replay_bundle={

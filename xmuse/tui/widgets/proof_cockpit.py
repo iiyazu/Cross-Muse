@@ -56,6 +56,7 @@ def render_proof_cockpit(vision: dict[str, Any] | None) -> Panel:
     _append_github_truth(lines, cockpit)
     _append_real_provider_runtime(lines, cockpit)
     _append_deliberation_transcript(lines, cockpit)
+    _append_memoryos_trace(lines, cockpit)
     _append_memory_governance(lines, cockpit)
     _append_feature_lineage(lines, cockpit)
     stage_results = _dicts(cockpit.get("stage_results"))
@@ -295,6 +296,27 @@ def _append_memory_governance(lines: list[str], cockpit: dict[str, Any]) -> None
         blocked_reason = _text(plan.get("blocked_reason"))
         if blocked_reason is not None:
             lines.append(f"    reason={blocked_reason}")
+
+
+def _append_memoryos_trace(lines: list[str], cockpit: dict[str, Any]) -> None:
+    trace = cockpit.get("memoryos_trace")
+    if not isinstance(trace, dict):
+        return
+    session_id = _text(trace.get("session_id")) or "unknown"
+    lines.append(
+        "MemoryOS trace: "
+        f"{session_id} live={_yes_no(trace.get('live_service_proof'))} "
+        f"events={_number(trace.get('trace_event_count'))}; "
+        f"tokens={_number(trace.get('estimated_tokens'))}; "
+        f"source_refs={_number(trace.get('source_ref_count'))}; "
+        f"blockers={_number(trace.get('blocker_count'))}"
+    )
+    namespace_uri = _text(trace.get("namespace_uri"))
+    if namespace_uri is not None:
+        lines.append(f"  namespace={namespace_uri}")
+    event_kinds = _strings(trace.get("event_kinds"))
+    if event_kinds:
+        lines.append(f"  events={_compact(event_kinds)}")
 
 
 def _memory_governance_plan_line(plan: dict[str, Any]) -> str:

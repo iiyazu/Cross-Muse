@@ -84,6 +84,56 @@ def test_capture_overnight_replay_bundle_indexes_release_gate_artifacts(
     assert json.loads(output.read_text(encoding="utf-8")) == bundle
 
 
+def test_capture_overnight_replay_bundle_preserves_memoryos_trace_details(
+    tmp_path: Path,
+) -> None:
+    artifacts = tmp_path / "artifacts"
+    _write_gate(
+        artifacts / "live-memoryos.json",
+        gate_id="live-memoryos",
+        kind="live_memoryos",
+        status="ok",
+        proof_level="live_service_proof",
+        summary="MemoryOS Lite live trace captured.",
+        source_refs=["conversation:conv-live", "memoryos:session:ses-live-1"],
+        artifacts=["memoryos-trace.json"],
+        details={
+            "memoryos_trace": {
+                "authority": "memoryos_live_release_gate",
+                "namespace_uri": "memory://conversation/conv-live/god-review/thread-1",
+                "session_id": "ses-live-1",
+                "trace_event_count": 3,
+                "event_kinds": ["session_created", "ingest", "context_built"],
+                "estimated_tokens": 96,
+                "source_ref_count": 5,
+                "blocker_count": 0,
+                "live_service_proof": True,
+            }
+        },
+    )
+
+    bundle = capture_overnight_replay_bundle(
+        run_id="overnight-memoryos-trace",
+        artifacts_dir=artifacts,
+        output_path=tmp_path / "bundle.json",
+    )
+
+    sections = {section["section_id"]: section for section in bundle["sections"]}
+    assert sections["memoryos_trace"]["details"] == {
+        "memoryos_trace": {
+            "authority": "memoryos_live_release_gate",
+            "namespace_uri": "memory://conversation/conv-live/god-review/thread-1",
+            "session_id": "ses-live-1",
+            "trace_event_count": 3,
+            "event_kinds": ["session_created", "ingest", "context_built"],
+            "estimated_tokens": 96,
+            "source_ref_count": 5,
+            "blocker_count": 0,
+            "live_service_proof": True,
+        }
+    }
+
+
 def test_capture_overnight_replay_bundle_accepts_explicit_section_artifacts(
     tmp_path: Path,
 ) -> None:
@@ -198,6 +248,7 @@ def _write_gate(
     source_refs: list[str] | None = None,
     artifacts: list[str] | None = None,
     next_action: str | None = None,
+    details: dict[str, object] | None = None,
 ) -> None:
     payload = {
         "schema_version": "xmuse.production_evidence.v1",
@@ -214,6 +265,8 @@ def _write_gate(
         "source_refs": source_refs or [],
         "artifacts": artifacts or [],
     }
+    if details is not None:
+        payload.update(details)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 

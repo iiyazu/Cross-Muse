@@ -121,6 +121,7 @@ def build_memoryos_live_release_gate(
             source_refs=source_refs,
             proof_level="live_service_proof",
             next_action="Resolve MemoryOS Lite trace blockers before release readiness.",
+            memoryos_trace=_trace_detail(trace_artifact, source_refs=source_refs),
         )
 
     return _ok_gate(
@@ -130,6 +131,7 @@ def build_memoryos_live_release_gate(
         ),
         artifact_path=artifact,
         source_refs=source_refs,
+        memoryos_trace=_trace_detail(trace_artifact, source_refs=source_refs),
     )
 
 
@@ -150,6 +152,7 @@ def _ok_gate(
     summary: str,
     artifact_path: Path,
     source_refs: list[str],
+    memoryos_trace: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return _gate(
         status="ok",
@@ -158,6 +161,7 @@ def _ok_gate(
         artifact_path=artifact_path,
         source_refs=source_refs,
         next_action="Attach this MemoryOS Lite live gate to release readiness.",
+        memoryos_trace=memoryos_trace,
     )
 
 
@@ -168,6 +172,7 @@ def _blocked_gate(
     source_refs: list[str],
     proof_level: str,
     next_action: str | None = None,
+    memoryos_trace: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return _gate(
         status="blocked",
@@ -180,6 +185,7 @@ def _blocked_gate(
             "Run a live MemoryOS Lite create/ingest/build-context/trace capture "
             "and write a live trace artifact."
         ),
+        memoryos_trace=memoryos_trace,
     )
 
 
@@ -191,8 +197,9 @@ def _gate(
     artifact_path: Path,
     source_refs: list[str],
     next_action: str,
+    memoryos_trace: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return {
+    gate: dict[str, Any] = {
         "schema_version": "xmuse.production_evidence.v1",
         "gate_id": "live-memoryos",
         "kind": "live_memoryos",
@@ -207,6 +214,40 @@ def _gate(
         "source_refs": source_refs,
         "artifacts": [str(artifact_path)],
         "generated_at": _utc_now(),
+    }
+    if memoryos_trace is not None:
+        gate["memoryos_trace"] = memoryos_trace
+    return gate
+
+
+def _trace_detail(
+    trace_artifact: dict[str, Any],
+    *,
+    source_refs: list[str],
+) -> dict[str, Any]:
+    trace_events = _dicts(trace_artifact.get("trace_events"))
+    event_kinds: list[str] = []
+    for event in trace_events:
+        kind = _text(event.get("kind"))
+        if kind is not None and kind not in event_kinds:
+            event_kinds.append(kind)
+    estimated_tokens = trace_artifact.get("estimated_tokens")
+    normalized_tokens = (
+        estimated_tokens
+        if isinstance(estimated_tokens, int) and not isinstance(estimated_tokens, bool)
+        else 0
+    )
+    return {
+        "authority": "memoryos_live_release_gate",
+        "namespace_uri": _text(trace_artifact.get("namespace_uri")),
+        "session_id": _text(trace_artifact.get("session_id")),
+        "trace_event_count": len(trace_events),
+        "event_kinds": event_kinds,
+        "estimated_tokens": normalized_tokens,
+        "source_ref_count": len(source_refs),
+        "blocker_count": len(_dicts(trace_artifact.get("blockers"))),
+        "live_service_proof": _text(trace_artifact.get("proof_level"))
+        == "live_service_proof",
     }
 
 

@@ -416,6 +416,10 @@ Current implementation status:
   `xmuse.memoryos_lite_trace.v1` artifact into the `live_memoryos` release gate.
   It requires `live_service_proof`, a `memory://` namespace, session id,
   non-empty trace events, source refs, and no unresolved blockers.
+  The gate artifact carries read-only `memoryos_trace` details for namespace,
+  session id, trace-event count, event kinds, estimated tokens, source-ref
+  count, blocker count, and live-service proof flag. Replay bundles preserve
+  those details for the proof cockpit without replacing the live gate.
 
 ## S5 - Natural GOD Transcript And Freeze Path
 
@@ -610,6 +614,9 @@ Current implementation status:
   artifact into the `live_memoryos` release gate. It blocks contract/fake proof,
   empty trace events, invalid namespace/session evidence, and unresolved
   blockers.
+  Overnight replay bundles preserve the gate's `memoryos_trace` detail so the
+  proof cockpit can show namespace/session/event/token context while keeping
+  release readiness tied to the live gate.
 - `uv run xmuse-memoryos-live-trace-capture` is the production path for
   producing that trace artifact from a configured MemoryOS Lite service. It
   performs create/ingest/build-context/trace through REST when configured and

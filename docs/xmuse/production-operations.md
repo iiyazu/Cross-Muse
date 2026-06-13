@@ -1045,6 +1045,10 @@ MemoryOS candidate rows use
 env/payload source authority, and `attempt_release_evidence` hints. They do not
 include env values or task `content`/`query` text in payload hints, and they do
 not prove the live MemoryOS service responded.
+After a live MemoryOS gate is captured, replay/proof cockpit can display
+namespace, session id, trace-event count, event kinds, estimated tokens,
+source-ref count, blocker count, and live-service proof flag. These fields are
+read-only audit details and cannot upgrade contract/fake/manual-gap traces.
 GitHub candidate rows use
 `proof_boundary=candidate_report_is_not_github_server_truth_proof`, required
 gate kind `github_server_truth`, required proof
