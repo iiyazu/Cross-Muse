@@ -25,7 +25,7 @@ truth capture, Ray/Codex/OpenCode provider probes, pytest, ruff, uv.
 
 ---
 
-Updated: 2026-06-12
+Updated: 2026-06-13
 
 Source reports:
 
@@ -498,6 +498,11 @@ Current implementation status:
   `frozen_blueprint` production evidence before assembling the nested replay
   bundle. Draft or otherwise unfrozen blueprints remain `manual_gap`, so the
   pack cannot turn readiness or a rendered blueprint into freeze proof.
+- `uv run xmuse-frozen-blueprint-export` now exports a
+  `mission_blueprint.v1` artifact from durable `chat.db` resolution authority.
+  It accepts either an explicit approved freeze resolution id or the latest
+  frozen blueprint for a conversation, and rejects non-`deliberation_freeze`
+  approvals, non-blueprint content, or non-frozen blueprint status.
 - `uv run xmuse-release-evidence-pack --feature-contract <contract>` now
   converts serialized `xmuse.feature_owner_execution_contract.v2` artifacts
   into replay-ready `feature_lineage` production evidence before assembling the
@@ -661,6 +666,9 @@ Tasks:
 - Use `uv run xmuse-memoryos-governance-evidence-capture --writeback-event ...`
   or `--plan ...` to turn MemoryOS governance decisions into explicit replay
   section evidence.
+- Use `uv run xmuse-frozen-blueprint-export --chat-db ... --conversation-id ...`
+  or `--resolution-id ...` to export the frozen `mission_blueprint.v1` artifact
+  from durable chat resolution authority.
 - Use `uv run xmuse-frozen-blueprint-evidence-capture --blueprint ...` to turn
   a frozen mission blueprint artifact into explicit replay section evidence.
 - Use `uv run xmuse-deliberation-transcript-evidence-capture --transcript ...`

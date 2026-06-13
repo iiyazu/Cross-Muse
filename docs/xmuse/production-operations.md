@@ -138,6 +138,22 @@ deliberation freeze contract as `/api/chat/conversations/{id}/freeze-blueprint`.
 Unresolved blocking objections still block freeze, and the TUI only displays
 the audited result.
 
+After a blueprint is frozen, export the replay artifact from durable
+`chat.db` resolution authority:
+
+```bash
+uv run xmuse-frozen-blueprint-export \
+  --chat-db xmuse/chat.db \
+  --conversation-id <conversation-id> \
+  --output xmuse/work/release_readiness/mission-blueprint.json
+```
+
+Use `--resolution-id <resolution-id>` when the exact approved freeze resolution
+is known. The exporter only reads approved `deliberation_freeze` resolutions
+with embedded frozen `mission_blueprint.v1` content. It does not read
+`feature_lanes.json`, does not write lane status, and does not upgrade draft or
+ordinary manual approvals into freeze proof.
+
 Lane workflow control is also an operator action, not a projection edit:
 
 ```text
@@ -846,8 +862,11 @@ review truth, GitHub truth, release readiness proof, or live runtime proof.
 `xmuse.overnight_supervisor.v1` snapshot. `--deliberation-transcript` generates
 the replay `deliberation_transcript` section from an
 `xmuse.operator_transcript.v1` artifact, optionally validated with
-`--god-runtime` selected-GOD continuity. `--frozen-blueprint` generates the
-replay `frozen_blueprint` section from a `mission_blueprint.v1` artifact.
+`--god-runtime` selected-GOD continuity. `uv run
+xmuse-frozen-blueprint-export --chat-db xmuse/chat.db --conversation-id
+CONVERSATION --output BLUEPRINT` exports the frozen blueprint artifact from
+chat resolution authority; `--frozen-blueprint` then generates the replay
+`frozen_blueprint` section from that `mission_blueprint.v1` artifact.
 Repeated `--feature-contract` inputs generate the replay `feature_lineage`
 section from graph-native `xmuse.feature_owner_execution_contract.v2`
 contracts. The v2 contract carries ready-set provenance, explicit lane blocker
