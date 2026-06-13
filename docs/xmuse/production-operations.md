@@ -706,6 +706,24 @@ and the next ready independent stage was started. Stages declared with
 `--stage-priority` and declaration order. This does not mean the blocked release
 evidence became acceptable.
 
+Repeated failures on the same stage/function boundary are not treated as an
+open-ended retry loop. The third matching failure classification marks the
+stage blocked with `refactor_required`, writes a supervisor issue queue row,
+and emits `failure_refactor_escalation` production evidence. Refactor that
+boundary before retrying the same function again.
+
+```bash
+uv run xmuse-overnight-supervisor \
+  --run-id <run-id> \
+  --artifact-dir xmuse/work/release_readiness/overnight_supervisor \
+  --stage S6="fresh GitHub truth" \
+  --resume \
+  classify-failure S6 \
+  --failure-class github_review_truth_unavailable \
+  --reason "same GitHub review truth path failed again" \
+  --retryable
+```
+
 When a bounded `/goal` stage was executed through `scripts/goal_stage_runner.py`,
 import its `result.json` into the supervisor snapshot instead of summarizing it
 only in prose:

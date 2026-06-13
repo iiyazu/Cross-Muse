@@ -618,6 +618,11 @@ Current implementation status:
   stages to start; the supervisor journals skipped/waiting dependencies and
   starts the highest-priority ready independent stage. This keeps release
   blockers intact while allowing independent overnight work to continue.
+- The supervisor now treats repeated failure at the same stage/function boundary
+  as refactor evidence, not as an invitation to keep stacking retries. The
+  third matching failure classification writes a `refactor_required` issue,
+  blocks the running stage, and emits `failure_refactor_escalation` production
+  evidence with the next action to refactor before retrying.
 - The same supervisor can import a goal-stage runner `result.json` through
   `uv run xmuse-overnight-supervisor --resume import-stage-result RESULT.json`.
   It records `goal_stage_results`, writes a
@@ -745,6 +750,9 @@ Completion:
 - Treat configured live gate failures as release blockers.
 - Treat unconfigured external dependencies as `manual_gap` only when the gap
   records owner, next action, and exact missing prerequisite.
+- Treat repeated failure of the same function or stage boundary as a
+  `refactor_required` supervisor issue; stop local retry loops until the
+  boundary has been refactored and revalidated.
 - Never use fake/local/contract evidence as release proof.
 - Never render readiness as completed fact.
 - Never auto-merge.

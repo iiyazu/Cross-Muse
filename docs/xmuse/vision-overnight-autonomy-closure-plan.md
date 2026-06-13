@@ -357,6 +357,9 @@ Tasks:
   stage `max_retries`.
 - Add rules that a configured-but-failing live gate is a release blocker, while
   unconfigured optional resources become `manual_gap` with owner/next action.
+- Add a repeated-failure rule: if the same stage/function boundary fails three
+  times, stop retrying local fixes and emit a `refactor_required` issue plus
+  production evidence before another attempt.
 
 Acceptance:
 
@@ -387,6 +390,11 @@ Current implementation status:
   records a failure classification, writes an `xmuse.stage_fallback.v1`
   artifact, and can start the next pending independent stage. This preserves
   release blockers while allowing the overnight run to keep useful momentum.
+- Repeated failure classification now escalates to refactor policy. On the
+  third matching failure for the same stage and failure class, the supervisor
+  marks the stage blocked, writes a `refactor_required` issue queue row, and
+  emits `failure_refactor_escalation` production evidence with the next action
+  to refactor the failing boundary before retrying.
 - Supervisor stages can now carry priority and dependency metadata. The Python
   API accepts `OvernightSupervisorStage(priority=..., depends_on=(...))`, and
   the CLI accepts `--stage-priority STAGE=INT` plus

@@ -219,6 +219,80 @@ def test_overnight_supervisor_tracks_issue_queue_and_failure_classification(
     assert failure["failure_class"] == "auth_unavailable"
 
 
+def test_overnight_supervisor_escalates_repeated_failure_to_refactor(
+    tmp_path: Path,
+) -> None:
+    supervisor = OvernightSupervisor(
+        OvernightSupervisorConfig(
+            run_id="run-refactor-escalation",
+            artifact_dir=tmp_path,
+            stages=[
+                OvernightSupervisorStage(
+                    stage_id="S4",
+                    objective="stabilize release evidence export",
+                ),
+            ],
+        )
+    )
+
+    supervisor.start_stage("S4")
+    first = supervisor.classify_failure(
+        stage_id="S4",
+        failure_class="release_export_failed",
+        reason="memoryos export raised before writing a replay artifact",
+        retryable=True,
+    )
+    second = supervisor.classify_failure(
+        stage_id="S4",
+        failure_class="release_export_failed",
+        reason="memoryos export still raised after a local fix",
+        retryable=True,
+    )
+    third = supervisor.classify_failure(
+        stage_id="S4",
+        failure_class="release_export_failed",
+        reason="memoryos export failed a third time on the same boundary",
+        retryable=True,
+    )
+
+    snapshot = supervisor.snapshot()
+    assert first["repeat_count"] == 1
+    assert second["repeat_count"] == 2
+    assert third["repeat_count"] == 3
+    assert third["retryable"] is False
+    assert third["escalation"] == "refactor_required"
+    assert third["recommended_action"] == (
+        "refactor the failing function boundary before retrying"
+    )
+    assert snapshot["stages"][0]["status"] == "blocked"
+    assert snapshot["stages"][0]["blocked_reason"] == (
+        "Repeated failure requires refactor: release_export_failed"
+    )
+    assert snapshot["current_stage_id"] is None
+    assert snapshot["issue_queue"] == [
+        {
+            "run_id": "run-refactor-escalation",
+            "stage_id": "S4",
+            "title": "Repeated failure requires refactor: release_export_failed",
+            "severity": "refactor_required",
+            "source_ref": "failure_class:S4:release_export_failed",
+            "status": "open",
+            "timestamp_utc": snapshot["issue_queue"][0]["timestamp_utc"],
+        }
+    ]
+    evidence = snapshot["production_evidence"][0]
+    assert evidence["action"] == "failure_refactor_escalation"
+    assert evidence["status"] == "blocked"
+    assert evidence["proof_level"] == "manual_gap"
+    assert evidence["blocked_reason"] == (
+        "Repeated failure requires refactor: release_export_failed"
+    )
+    assert evidence["next_action"] == (
+        "refactor the failing function boundary before retrying"
+    )
+    assert evidence["kind"] == "supervisor_failure_policy"
+
+
 def test_overnight_supervisor_records_self_review_checkpoint_and_evidence(
     tmp_path: Path,
 ) -> None:
@@ -817,6 +891,56 @@ def test_overnight_supervisor_cli_can_move_to_next_stage(
     )
     assert snapshot["current_stage_id"] == "S4"
     assert snapshot["stages"][1]["status"] == "running"
+
+
+def test_overnight_supervisor_cli_escalates_repeated_failure_to_refactor(
+    tmp_path: Path,
+) -> None:
+    from xmuse.overnight_operator_supervisor import main
+
+    common = [
+        "--run-id",
+        "overnight-cli-refactor",
+        "--artifact-dir",
+        str(tmp_path),
+        "--stage",
+        "S4=release export stability",
+    ]
+
+    assert main([*common, "start-stage", "S4"]) == 0
+    for reason in [
+        "memoryos export failed before writing replay input",
+        "memoryos export failed again after local patch",
+        "memoryos export failed a third time on same boundary",
+    ]:
+        assert (
+            main(
+                [
+                    *common,
+                    "--resume",
+                    "classify-failure",
+                    "S4",
+                    "--failure-class",
+                    "release_export_failed",
+                    "--reason",
+                    reason,
+                    "--retryable",
+                ]
+            )
+            == 0
+        )
+
+    snapshot = json.loads(
+        (tmp_path / "overnight-supervisor-overnight-cli-refactor.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert snapshot["stages"][0]["status"] == "blocked"
+    assert snapshot["stages"][0]["refactor_required"] is True
+    assert snapshot["failure_classifications"][-1]["escalation"] == (
+        "refactor_required"
+    )
+    assert snapshot["issue_queue"][0]["severity"] == "refactor_required"
 
 
 def test_overnight_supervisor_cli_accepts_stage_priority_and_dependencies(

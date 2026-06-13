@@ -91,6 +91,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             start_next=not args.no_start_next,
         )
         result = {"status": fallback["status"], "fallback": fallback}
+    elif args.command == "classify-failure":
+        failure = supervisor.classify_failure(
+            stage_id=args.stage_id,
+            failure_class=args.failure_class,
+            reason=args.reason,
+            retryable=args.retryable,
+        )
+        result = {"status": "ok", "failure": failure}
     elif args.command == "import-stage-result":
         stage_result = supervisor.import_goal_stage_result(
             args.result_path,
@@ -266,6 +274,15 @@ def _parser() -> argparse.ArgumentParser:
     blocked_fallback.add_argument("--source-ref", action="append", default=[])
     blocked_fallback.add_argument("--target-ref", action="append", default=[])
     blocked_fallback.add_argument("--artifact", action="append", default=[])
+
+    classify_failure = subparsers.add_parser(
+        "classify-failure",
+        help="Record a retryable or terminal failure classification.",
+    )
+    classify_failure.add_argument("stage_id")
+    classify_failure.add_argument("--failure-class", required=True)
+    classify_failure.add_argument("--reason", required=True)
+    classify_failure.add_argument("--retryable", action="store_true")
 
     import_stage_result = subparsers.add_parser(
         "import-stage-result",

@@ -245,19 +245,38 @@ class OvernightSupervisor:
         reason: str,
         retryable: bool,
     ) -> dict[str, Any]:
+        self._stage(stage_id)
+        repeat_count = self._failure_repeat_count(
+            stage_id=stage_id,
+            failure_class=failure_class,
+        )
+        refactor_required = repeat_count >= _REFACTOR_FAILURE_REPEAT_THRESHOLD
+        if refactor_required:
+            retryable = False
         failure = {
             "run_id": self._config.run_id,
             "stage_id": stage_id,
             "failure_class": failure_class,
             "reason": reason,
             "retryable": retryable,
+            "repeat_count": repeat_count,
             "timestamp_utc": _utcnow(),
         }
+        if refactor_required:
+            failure["escalation"] = "refactor_required"
+            failure["recommended_action"] = _REFACTOR_FAILURE_NEXT_ACTION
         self._failure_classifications.append(failure)
+        if repeat_count == _REFACTOR_FAILURE_REPEAT_THRESHOLD:
+            self._record_refactor_escalation(
+                stage_id=stage_id,
+                failure_class=failure_class,
+                reason=reason,
+            )
         self._journal(
             "failure_classified",
             stage_id=stage_id,
             failure_class=failure_class,
+            repeat_count=repeat_count,
         )
         self._persist()
         return failure
@@ -801,6 +820,67 @@ class OvernightSupervisor:
                 return stage
         raise ValueError(f"unknown supervisor stage: {stage_id}")
 
+    def _failure_repeat_count(self, *, stage_id: str, failure_class: str) -> int:
+        return 1 + sum(
+            1
+            for failure in self._failure_classifications
+            if failure.get("stage_id") == stage_id
+            and failure.get("failure_class") == failure_class
+        )
+
+    def _record_refactor_escalation(
+        self,
+        *,
+        stage_id: str,
+        failure_class: str,
+        reason: str,
+    ) -> None:
+        stage = self._stage(stage_id)
+        title = f"Repeated failure requires refactor: {failure_class}"
+        now = _utcnow()
+        stage["status"] = "blocked"
+        stage["blocked_reason"] = title
+        stage["refactor_required"] = True
+        stage["refactor_failure_class"] = failure_class
+        stage["completed_at"] = now
+        if self._current_stage_id == stage_id:
+            self._current_stage_id = None
+        self._issue_queue.append(
+            {
+                "run_id": self._config.run_id,
+                "stage_id": stage_id,
+                "title": title,
+                "severity": "refactor_required",
+                "source_ref": f"failure_class:{stage_id}:{failure_class}",
+                "status": "open",
+                "timestamp_utc": now,
+            }
+        )
+        self._record_production_evidence(
+            stage_id=stage_id,
+            action="failure_refactor_escalation",
+            status="blocked",
+            proof_level="manual_gap",
+            source_refs=[f"failure_class:{stage_id}:{failure_class}"],
+            target_refs=[f"overnight_supervisor_stage:{stage_id}"],
+            commands=[],
+            test_results=[],
+            artifacts=[],
+            blocked_reason=title,
+            owner="codex",
+            next_action=_REFACTOR_FAILURE_NEXT_ACTION,
+            summary=reason,
+            gate_id=f"goal-stage-{stage_id}-refactor-required",
+            kind="supervisor_failure_policy",
+            configured=True,
+            required=True,
+        )
+        self._journal(
+            "refactor_required",
+            stage_id=stage_id,
+            failure_class=failure_class,
+        )
+
     def _journal(self, event: str, **fields: Any) -> None:
         self._stage_journal.append(
             {"event": event, "timestamp_utc": _utcnow(), **fields}
@@ -894,6 +974,11 @@ _SELF_REVIEW_DECISIONS = {
     "blocked",
     "patch_forward",
 }
+
+_REFACTOR_FAILURE_REPEAT_THRESHOLD = 3
+_REFACTOR_FAILURE_NEXT_ACTION = (
+    "refactor the failing function boundary before retrying"
+)
 
 
 def _review_slo_status(minutes_since_previous_review: int | None) -> str:
