@@ -625,11 +625,11 @@ Current implementation status:
   and tombstoned source refs, but remains an aggregation command only; it does
   not create live proof or replace the underlying authorities.
 - The release evidence pack now includes a top-level `recovery_queue` built
-  from the S0 production baseline blockers, release-readiness blockers, and
-  overnight replay blockers. Each item records source, kind, id, owner, reason,
-  next action, and the source report artifact so the overnight operator can
-  continue recovery work without treating the pack as release, lane, review,
-  GitHub, or MemoryOS authority.
+  from the S0 production baseline blockers, proof-contamination findings,
+  release-readiness blockers, and overnight replay blockers. Each item records
+  source, kind, id, owner, reason, next action, and the source report artifact
+  so the overnight operator can continue recovery work without treating the
+  pack as release, lane, review, GitHub, or MemoryOS authority.
 - The same release pack command can accept `--production-baseline` and attach a
   redacted `xmuse.production_baseline.v1` S0 truth map to the top-level pack
   summary and `source_reports`. This keeps the starting git/env/resource/blocker

@@ -147,8 +147,10 @@ def capture_release_evidence_pack(
         replay_blockers = []
     recovery_queue = _recovery_queue(
         readiness=readiness,
+        audit=audit,
         replay=replay,
         readiness_path=readiness_path,
+        audit_path=audit_path,
         replay_path=replay_path,
         production_baseline=production_baseline,
     )
@@ -452,8 +454,10 @@ def _production_baseline_summary(path: str | Path | None) -> dict[str, Any] | No
 def _recovery_queue(
     *,
     readiness: dict[str, Any],
+    audit: dict[str, Any],
     replay: dict[str, Any],
     readiness_path: Path,
+    audit_path: Path,
     replay_path: Path,
     production_baseline: str | Path | None,
 ) -> list[dict[str, str | None]]:
@@ -464,6 +468,20 @@ def _recovery_queue(
         seen=seen,
         production_baseline=production_baseline,
     )
+    for finding in _dicts(audit.get("findings")):
+        code = _text(finding.get("code")) or "proof_contamination"
+        summary = _text(finding.get("summary")) or "proof contamination finding"
+        _append_recovery_item(
+            queue,
+            seen=seen,
+            source="proof_contamination_audit",
+            kind="proof_finding",
+            identifier=_text(finding.get("gate_id")) or "unknown",
+            owner="operator",
+            reason=f"{code}: {summary}",
+            next_action=_proof_contamination_next_action(code),
+            artifact=str(audit_path),
+        )
     for blocker in _dicts(readiness.get("blockers")):
         _append_recovery_item(
             queue,
@@ -522,6 +540,25 @@ def _append_production_baseline_recovery_items(
                 next_action=next_action,
                 artifact=str(baseline_path),
             )
+
+
+def _proof_contamination_next_action(code: str) -> str:
+    if code == "fake_marker_in_production_proof":
+        return (
+            "Replace the contaminated artifact with live/server-side evidence "
+            "and remove fake/local/stdout fallback sources."
+        )
+    if code == "weak_proof_for_production_gate":
+        return (
+            "Regenerate the gate artifact with the required production proof "
+            "level; do not relabel weaker evidence."
+        )
+    if code == "pr_merged_without_merge_truth":
+        return (
+            "Capture server-side merge truth with can_emit_pr_merged=true "
+            "before claiming pr_merged."
+        )
+    return "Replace or regenerate the contaminated production proof artifact."
 
 
 def _append_recovery_item(

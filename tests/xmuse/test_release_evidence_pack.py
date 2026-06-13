@@ -1351,6 +1351,21 @@ def test_release_evidence_pack_marks_contaminated_audit_as_terminal(
     assert pack["proof_contamination_decision"] == "contaminated"
     assert pack["finding_count"] == 1
     assert pack["findings"][0]["code"] == "fake_marker_in_production_proof"
+    assert {
+        "source": "proof_contamination_audit",
+        "kind": "proof_finding",
+        "id": "real-provider-runtime",
+        "owner": "operator",
+        "reason": (
+            "fake_marker_in_production_proof: Production proof contains "
+            "fake/local/stdout contamination marker: fake."
+        ),
+        "next_action": (
+            "Replace the contaminated artifact with live/server-side evidence "
+            "and remove fake/local/stdout fallback sources."
+        ),
+        "artifact": str(tmp_path / "proof-contamination-audit.json"),
+    } in pack["recovery_queue"]
 
 
 def test_release_evidence_pack_reports_not_evaluated_without_artifacts(
