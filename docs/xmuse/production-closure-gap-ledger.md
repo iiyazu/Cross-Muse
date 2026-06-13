@@ -40,8 +40,8 @@ runtime、provider invocation、lane authority、review truth 完成。后续生
 不是自动更新状态。
 
 - Branch: `vision-closure-deliberation-tui`
-- Local base head before L11 native CLI cockpit annotation:
-  `b5ebad9563c611e2e136e336c3180216966d1010`
+- Local base head before audit reinforcement annotation:
+  `2cfc9e3016ff1671758bd78b3b69f8ca922307c1`
 - PR: <https://github.com/iiyazu/Cross-Muse/pull/43>
 - PR state last checked: draft/open/unmerged
 - PR merge state last checked: `CLEAN`
@@ -51,6 +51,24 @@ runtime、provider invocation、lane authority、review truth 完成。后续生
   `27470910514`, success
 - Local documentation commits after the remote head must not be treated as
   CI-verified until pushed and checked again.
+
+Machine-readable snapshot for gates and future `/goal` setup:
+
+```yaml
+truth_snapshot:
+  branch: vision-closure-deliberation-tui
+  base_head: 2cfc9e3016ff1671758bd78b3b69f8ca922307c1
+  pr: 43
+  pr_url: https://github.com/iiyazu/Cross-Muse/pull/43
+  pr_state: draft_open_unmerged
+  merge_state: CLEAN
+  review_decision: empty
+  verified_ci_head: 1a244285c6e9b287f9c32acb640b0bc68087d90b
+  verified_ci_run: 27470910514
+  ci_verified_for_verified_head: true
+  local_docs_after_verified_head: true
+  pr_merged_claim_allowed: false
+```
 
 Evidence boundaries:
 
@@ -69,19 +87,30 @@ Evidence boundaries:
 
 ## Dependency-First Layer Map
 
-| Layer | Name | Dependency role | Closure state |
-|---|---|---|---|
-| L1 | Authority / Boundary Model | Defines what can write truth | Partly documented; enforcement still uneven |
-| L2 | GOD Identity / Provider Binding | Defines selectable GOD/provider actors and account/CLI bindings | Registry slice exists; production selection proof incomplete |
-| L3 | GOD Room Durable Event Runtime | Stores durable deliberation events | Durable contract/store slice exists |
-| L4 | Speaker Selection / Provider Invocation | Produces live provider response artifacts | Selection/capture slices exist; invocation missing |
-| L5 | Speaker Response Capture / Replay Proof | Converts provider artifacts into durable speech | Artifact-backed capture exists |
-| L6 | Blueprint Freeze Authority | Turns deliberation into executable blueprint | Typed freeze slice exists |
-| L7 | Feature / LaneDAG Authority | Turns blueprint into execution authority | Contract artifact slice exists |
-| L8 | Lane Runtime Enforcement / Recovery | Enforces budgets, retries, suspend, refactor | Recovery contract/API slice exists; full enforcement incomplete |
-| L9 | Execution / Review / Patch-Forward | Executes bounded work and records review truth | Review plane exists; GOD-room-to-review chain incomplete |
-| L10 | MemoryOS / Release Evidence / GitHub Truth | Builds cross-stage memory, replay, and server truth | Evidence slices exist; live/server truth gaps remain |
-| L11 | Operator Cockpit / TUI / Overnight Soak | Exposes only closed upstream controls and proves long-run closure | TUI/control slices exist; complete cockpit/soak incomplete |
+| Layer | Name | Contract state | Runtime state | Server truth state | Allowed claim |
+|---|---|---|---|---|---|
+| L1 | Authority / Boundary Model | Partly documented | Enforcement uneven | Not server-bound | Boundary policy exists, not global enforcement |
+| L2 | GOD Identity / Provider Binding | Provider registry/projection exists | Durable GOD/account/room binding missing | Not server-bound | Current first blocker; bounded worker/provider inventory only |
+| L3 | GOD Room Durable Event Runtime | Durable event contract/store exists | Live multi-GOD proof missing | Not server-bound | Durable room contract proof |
+| L4 | Speaker Selection / Provider Invocation | Selection/attempt evidence exists | Provider invocation artifact path missing | Not server-bound | Speaker selection/attempt proof only |
+| L5 | Speaker Response Capture / Replay Proof | Artifact-backed capture exists | Depends on L4 invocation proof | Not server-bound | Capture contract proof only |
+| L6 | Blueprint Freeze Authority | Typed freeze artifact exists | Fresh live deliberation freeze missing | Not server-bound | Freeze contract proof |
+| L7 | Feature / LaneDAG Authority | LaneDAG/contract artifact exists | Dispatch/review authority not unified | Not server-bound | LaneDAG contract proof |
+| L8 | Lane Runtime Enforcement / Recovery | Recovery contract/API exists | Runner/supervisor enforcement incomplete | Not server-bound | Recovery policy proof |
+| L9 | Execution / Review / Patch-Forward | Review plane exists | GOD-room-originated lane chain missing | Not server-bound | Review artifact/read-model proof |
+| L10 | MemoryOS / Release Evidence / GitHub Truth | Evidence bundle semantics exist | Live MemoryOS trace missing | PR open/unmerged; CI truth only for verified remote head | Replay/readiness proof with explicit gaps |
+| L11 | Operator Cockpit / TUI / Overnight Soak | TUI/control slices exist | Complete cockpit/soak missing | Depends on L10 | Operator projection/control proof only |
+
+Current closure audit:
+
+- Overall ledger verdict: valid as a gap ledger, not valid as closure proof.
+- Most mature areas: control surfaces, read models, evidence envelopes, and
+  claim-boundary governance.
+- Least closed areas: durable GOD/account/binding authority, provider-backed
+  speech invocation, natural multi-GOD deliberation, GOD-room-originated
+  execution/review, live MemoryOS trace, and GitHub merge truth.
+- Next production priority: close L2-L5 real GOD/provider speech chain before
+  expanding L11 cockpit surface area.
 
 ## L1 - Authority / Boundary Model
 
@@ -157,6 +186,9 @@ Evidence boundaries:
     identity.
   - Provider inventory/runtime evidence is not yet sufficient to upgrade a CLI
     into a peer-GOD role.
+  - This is the current first priority blocker for production GOD speech. Without
+    this layer, L3-L6 can only claim contract or imported-artifact proof for who
+    spoke, not production peer-GOD speech proof.
 - Proof required to close:
   - Durable account/profile/selection artifacts exist and are consumed by GOD
     room speaker selection and provider invocation.
@@ -169,6 +201,19 @@ Evidence boundaries:
     - `model = opencode-go/deepseek-v4-flash`
     - `variant = max`
     - Never encode `max` into the model id.
+- Proof escalation policy:
+  - A CLI/provider can be promoted from `bounded_worker` to `peer_god` only when
+    all of these are true:
+    - `GodProfile` exists with explicit `proof_policy`.
+    - `RoomSelectedGodBinding` resolves fail-closed to a `ProviderAccount`.
+    - L4 emits a provider speech artifact from that selected binding.
+    - L5 captures the artifact into a durable L3 `speak` event.
+    - L3 replay proves authored speech with GOD identity and binding revision.
+    - At least one `question`, `challenge`, or `handoff` event is produced under
+      that identity in the same room lineage.
+    - Release evidence records `proof_level=live_provider_god_speech`.
+  - Until every condition passes, the CLI/provider remains a bounded worker or
+    provider inventory entry, even if it is configured and callable.
 - Current risk:
   - Treating a configured worker provider as a selectable GOD without explicit
     role contract and live proof.
@@ -300,6 +345,22 @@ Use these as implementation references, not as xmuse package dependencies:
     `xmuse.god_room_provider_speech_response.v1` from a real configured
     provider session with actor identity, command/model/variant, prompt refs,
     output refs, timing, exit status, and proof level.
+- Negative proof matrix:
+  - These outcomes must be enforced by the L4 invocation path and the L4/L5
+    capture boundary:
+
+| Condition | Required outcome | Claim boundary |
+|---|---|---|
+| Missing `account_ref` | `manual_gap` | No provider speech artifact |
+| Unknown `god_id` | `manual_gap` | No provider speech artifact |
+| Unsupported provider/model/variant | `manual_gap` or `refactor_required` | No fallback model/provider |
+| Missing CLI binary | `manual_gap` | No live invocation proof |
+| Nonzero CLI exit | `invocation_failed` | Artifact records failure only |
+| Timeout | `invocation_timeout` | Artifact records timeout only |
+| Non-structured output | `raw_archive_only` | No automatic `speak` event |
+| Digest mismatch at capture | `capture_rejected` | No durable `speak` event |
+| Operator raw input without `source_ref` | `capture_rejected` | No durable `speak` event |
+
 - Current risk:
   - Treating an imported artifact as equivalent to the live invocation that
     produced it.
@@ -602,6 +663,12 @@ Use these as implementation references, not as xmuse package dependencies:
 
 Use these as implementation references, not as xmuse package dependencies:
 
+- Reference boundary for every group below:
+  - `reference_status: local_reference_only`
+  - `must_not_gate_ci: true`
+  - `must_not_claim_external_proof: true`
+  - These paths are design references from a sibling local checkout. They are not
+    durable xmuse evidence, release proof, package dependencies, or CI gates.
 - Single-source dual consumer and tmux-backed provider execution:
   - `/home/iiyatu/clowder-ai/packages/api/src/domains/terminal/tmux-agent-spawner.ts:1`
     documents the `tmux pane -> FIFO machine stream + PTY human stream` shape.
@@ -672,6 +739,8 @@ Use these as implementation references, not as xmuse package dependencies:
 - If a live/server proof is missing, record `manual_gap` and the next artifact
   required to close it.
 - Do not downgrade evidence boundaries to make a layer look complete.
+- Do not treat local reference paths outside this repository as release proof,
+  CI gates, or externally reproducible evidence.
 - Maintain dependency order: downstream UI, evidence, or soak work may expose
   partial views, but it must not claim closure before upstream authority and
   runtime proof exist.
