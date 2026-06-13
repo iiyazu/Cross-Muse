@@ -148,6 +148,7 @@ def _attempt_kind(
             root=root,
             release_root=release_root,
             env=env,
+            candidates=candidates,
         )
     return _blocked_attempt(
         kind=kind,
@@ -170,6 +171,7 @@ def _attempt_natural(
             kind="natural_deliberation",
             blockers=_natural_blockers(candidates),
             summary="Natural GOD transcript inputs are not export-ready.",
+            next_action=_natural_next_action(candidates),
         )
     payload = {
         **_export_payload(request.payload),
@@ -201,6 +203,7 @@ def _attempt_provider(
             kind="real_provider_runtime",
             blockers=blockers or ["provider_runtime_candidate_not_ready"],
             summary="Real provider runtime inputs are not export-ready.",
+            next_action=_text(provider.get("next_action")),
         )
     runtime_backend = _text(request.payload.get("runtime_backend"))
     transport = _text(request.payload.get("transport"))
@@ -214,6 +217,7 @@ def _attempt_provider(
             kind="real_provider_runtime",
             blockers=missing,
             summary="Real provider runtime attempt requires runtime_backend and transport.",
+            next_action=_text(provider.get("next_action")),
         )
     payload = {
         **_export_payload(request.payload),
@@ -249,6 +253,7 @@ def _attempt_memoryos(
             blockers=list(_string_list(memoryos.get("blockers")))
             or ["memoryos_candidate_not_ready"],
             summary="Live MemoryOS inputs are not export-ready.",
+            next_action=_text(memoryos.get("next_action")),
         )
     return _execute_export(
         kind="live_memoryos",
@@ -267,6 +272,7 @@ def _attempt_github(
     root: Path,
     release_root: Path,
     env: Mapping[str, str],
+    candidates: Mapping[str, Any],
 ) -> dict[str, Any]:
     missing: list[str] = []
     if _text(request.payload.get("repo")) is None:
@@ -282,6 +288,7 @@ def _attempt_github(
             kind="github_server_truth",
             blockers=missing,
             summary="GitHub server truth attempt requires repo and pull request target.",
+            next_action=_github_next_action(candidates),
         )
     return _execute_export(
         kind="github_server_truth",
@@ -352,8 +359,9 @@ def _blocked_attempt(
     summary: str,
     payload: Mapping[str, Any] | None = None,
     proof_level: str = "manual_gap",
+    next_action: str | None = None,
 ) -> dict[str, Any]:
-    return {
+    result = {
         "kind": kind,
         "status": "blocked",
         "proof_level": proof_level,
@@ -362,6 +370,9 @@ def _blocked_attempt(
         "blockers": _dedupe([str(blocker) for blocker in blockers if str(blocker).strip()]),
         "payload": dict(payload or {}),
     }
+    if next_action:
+        result["next_action"] = next_action
+    return result
 
 
 def _attempt_ok(attempt: Mapping[str, Any]) -> bool:
@@ -390,6 +401,23 @@ def _natural_blockers(candidates: Mapping[str, Any]) -> list[str]:
     return blockers or _string_list(natural.get("blockers")) or [
         "natural_deliberation_candidate_not_ready"
     ]
+
+
+def _natural_next_action(candidates: Mapping[str, Any]) -> str | None:
+    natural = _mapping(candidates.get("natural_deliberation"))
+    conversations = natural.get("conversations")
+    if isinstance(conversations, Sequence) and not isinstance(conversations, (str, bytes)):
+        for conversation in conversations:
+            if isinstance(conversation, Mapping):
+                next_action = _text(conversation.get("next_action"))
+                if next_action is not None:
+                    return next_action
+    return _text(natural.get("next_action"))
+
+
+def _github_next_action(candidates: Mapping[str, Any]) -> str | None:
+    github = _mapping(candidates.get("github_server_truth"))
+    return _text(github.get("next_action"))
 
 
 def _requested_kinds(payload: Mapping[str, Any]) -> tuple[str, ...]:

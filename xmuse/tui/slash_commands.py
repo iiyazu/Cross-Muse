@@ -1245,6 +1245,7 @@ def _operator_action_block(result: dict) -> str:
         if blockers:
             lines.append(f"blockers={blockers}")
         lines.extend(_release_candidate_summary(payload.get("candidates")))
+        lines.extend(_release_attempt_summary(payload.get("attempt")))
     summary = str(result.get("summary") or "").strip()
     if summary:
         lines.append(summary)
@@ -1301,6 +1302,33 @@ def _release_candidate_summary(value: object) -> list[str]:
     github = _candidate_section_line("github", value.get("github_server_truth"))
     if github:
         lines.append(github)
+    return lines
+
+
+def _release_attempt_summary(value: object) -> list[str]:
+    if not isinstance(value, dict):
+        return []
+    attempts = value.get("attempts")
+    if not isinstance(attempts, list):
+        return []
+    lines: list[str] = []
+    for attempt in attempts[:6]:
+        if not isinstance(attempt, dict):
+            continue
+        kind = str(attempt.get("kind") or "?").strip() or "?"
+        status = str(attempt.get("status") or "?").strip() or "?"
+        line = f"attempt[{kind}]={status}"
+        gate_status = str(attempt.get("gate_status") or "").strip()
+        gate_proof = str(attempt.get("gate_proof_level") or "").strip()
+        if gate_status or gate_proof:
+            line = f"{line} gate={gate_status or '?'} proof={gate_proof or '?'}"
+        next_action = str(attempt.get("next_action") or "").strip()
+        if next_action:
+            line = f"{line} next={next_action}"
+        blockers = _string_items(attempt.get("blockers"), limit=6)
+        if blockers:
+            line = f"{line} blockers={', '.join(blockers)}"
+        lines.append(line)
     return lines
 
 

@@ -357,6 +357,10 @@ Tasks:
   stage `max_retries`.
 - Add rules that a configured-but-failing live gate is a release blocker, while
   unconfigured optional resources become `manual_gap` with owner/next action.
+- Keep blocked `/release attempt` rows actionable by carrying candidate
+  `next_action` guidance into the attempt report and TUI compact output. This
+  supports recovery and next-task fallback without upgrading blocked evidence
+  into release proof.
 - Add a repeated-failure rule: if the same stage/function boundary fails three
   times, stop retrying local fixes and emit a `refactor_required` issue plus
   production evidence before another attempt.

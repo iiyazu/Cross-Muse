@@ -1035,6 +1035,10 @@ natural GOD speech acts, missing selected GOD runtime continuity, missing
 GitHub target fields, missing runtime metadata, fake/local labels, and blocked
 live captures remain blocked `manual_gap` attempt rows; the attempt action does
 not start absent services or upgrade weak evidence.
+Blocked attempt rows carry the candidate `next_action`, and the TUI renders
+compact lines such as `attempt[live_memoryos]=blocked next=... blockers=...`.
+This is operator guidance only; it does not change the gate status or proof
+level.
 `/release export natural`, `/release export god-runtime`,
 `/release export provider`, `/release export memoryos`, and
 `/release export github` call the matching release evidence export

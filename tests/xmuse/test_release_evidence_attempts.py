@@ -85,12 +85,30 @@ def test_release_evidence_attempt_blocks_when_candidates_are_missing(
     assert attempts["natural_deliberation"]["status"] == "blocked"
     assert attempts["real_provider_runtime"]["status"] == "blocked"
     assert attempts["live_memoryos"]["status"] == "blocked"
+    assert attempts["github_server_truth"]["status"] == "blocked"
     assert "natural_god_speech_act_messages_missing" in attempts["natural_deliberation"][
         "blockers"
     ]
     assert "peer_turn_latency_traces_table_missing" in attempts["real_provider_runtime"][
         "blockers"
     ]
+    assert attempts["natural_deliberation"]["next_action"] == (
+        "Capture a natural multi-GOD transcript and selected GOD runtime "
+        "continuity, then run attempt_release_evidence for natural_deliberation."
+    )
+    assert attempts["real_provider_runtime"]["next_action"] == (
+        "Capture fresh and resume MCP writeback provider turns, then run "
+        "attempt_release_evidence for real_provider_runtime with real "
+        "runtime_backend and transport labels."
+    )
+    assert attempts["live_memoryos"]["next_action"] == (
+        "Configure live MemoryOS Lite and provide a complete task payload, then "
+        "run attempt_release_evidence for live_memoryos to capture a live trace."
+    )
+    assert attempts["github_server_truth"]["next_action"] == (
+        "Provide repo and pull_request_number, then run attempt_release_evidence "
+        "for github_server_truth to capture read-only GitHub server truth."
+    )
     assert result["report_path"] == str(expected_report.resolve(strict=False))
     assert not (tmp_path / "work" / "release_readiness" / "natural-transcript.json").exists()
     assert not (tmp_path / "work" / "release_readiness" / "real-provider-runtime.json").exists()

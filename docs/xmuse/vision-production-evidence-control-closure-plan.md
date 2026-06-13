@@ -536,6 +536,10 @@ Current implementation status:
   rows and do not satisfy release readiness. When the GitHub target is present,
   the attempt action invokes `export_github_server_truth` and records the
   resulting gate status without converting it into merge truth.
+  Blocked attempt rows now carry candidate `next_action` guidance, and the TUI
+  renders compact `attempt[kind]=blocked next=... blockers=...` lines. This
+  improves operator recovery without changing the attempt proof level or gate
+  status.
 - `uv run python scripts/github_server_truth_capture.py --release-gate-output`
   can write a `github_server_truth` release gate artifact from the raw GitHub
   server truth snapshot. This can satisfy `server_side_enforcement_proof`

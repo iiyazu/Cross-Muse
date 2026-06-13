@@ -1275,7 +1275,15 @@ async def test_chat_screen_release_attempt_runs_operator_control_action(
                 "attempt": {
                     "decision": "blocked",
                     "attempts": [
-                        {"kind": "live_memoryos", "status": "blocked"},
+                        {
+                            "kind": "live_memoryos",
+                            "status": "blocked",
+                            "blockers": ["memoryos_lite_live_environment_missing"],
+                            "next_action": (
+                                "Configure live MemoryOS Lite and provide a "
+                                "complete task payload."
+                            ),
+                        },
                     ],
                 }
             },
@@ -1322,6 +1330,11 @@ async def test_chat_screen_release_attempt_runs_operator_control_action(
         content = appended[-1]["content"]
         assert "Operator action: attempt_release_evidence" in content
         assert "status=ok proof=contract_proof fact=release_evidence_attempted" in content
+        assert (
+            "attempt[live_memoryos]=blocked next=Configure live MemoryOS Lite "
+            "and provide a complete task payload. "
+            "blockers=memoryos_lite_live_environment_missing"
+        ) in content
         assert "Attempted configured release evidence." in content
 
 
