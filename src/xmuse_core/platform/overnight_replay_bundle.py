@@ -26,6 +26,8 @@ REQUIRED_REPLAY_SECTIONS = (
     "release_readiness",
 )
 
+OPTIONAL_REPLAY_SECTIONS = ("god_room_runtime_closure",)
+
 
 @dataclass(frozen=True)
 class ReplayBundleSection:

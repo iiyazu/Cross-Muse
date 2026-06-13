@@ -19,6 +19,10 @@ from xmuse_core.platform.github_truth_release_gate import (
     write_github_server_truth_release_gate,
 )
 from xmuse_core.platform.goal_stage_evidence_capture import capture_goal_stage_evidence
+from xmuse_core.platform.god_room_runtime_closure_evidence_capture import (
+    GOD_ROOM_RUNTIME_CLOSURE_SECTION,
+    capture_god_room_runtime_closure_evidence,
+)
 from xmuse_core.platform.internal_review_release_gate import (
     capture_internal_review_release_gate,
 )
@@ -62,6 +66,13 @@ def capture_release_evidence_pack(
     deliberation_transcript_evidence_output: str | Path | None = None,
     frozen_blueprint: str | Path | None = None,
     frozen_blueprint_evidence_output: str | Path | None = None,
+    god_room_participants: str | Path | None = None,
+    god_room_events: str | Path | None = None,
+    god_room_blueprint_freeze: str | Path | None = None,
+    god_room_lane_dag: str | Path | None = None,
+    god_room_memory_trace: str | Path | None = None,
+    god_room_tui_projection: str | Path | None = None,
+    god_room_runtime_closure_evidence_output: str | Path | None = None,
     feature_contracts: tuple[str | Path, ...] = (),
     feature_lineage_evidence_output: str | Path | None = None,
     memoryos_governance_plans: tuple[str | Path, ...] = (),
@@ -143,6 +154,23 @@ def capture_release_evidence_pack(
         artifacts_dir=artifacts_dir,
         output_path=audit_path,
     )
+    replay_section_artifacts, god_room_source_reports = (
+        _with_god_room_runtime_closure_evidence(
+            report_dir=report_dir,
+            run_id=run_id,
+            section_artifacts=replay_section_artifacts,
+            participants_artifact=god_room_participants,
+            events_artifact=god_room_events,
+            blueprint_freeze_artifact=god_room_blueprint_freeze,
+            lane_dag_artifact=god_room_lane_dag,
+            memory_trace_artifact=god_room_memory_trace,
+            tui_projection_artifact=god_room_tui_projection,
+            github_truth_artifact=github_server_truth,
+            release_readiness_artifact=readiness_path,
+            evidence_output=god_room_runtime_closure_evidence_output,
+        )
+    )
+    generated_source_reports.update(god_room_source_reports)
     replay = capture_overnight_replay_bundle(
         run_id=run_id,
         artifacts_dir=artifacts_dir,
@@ -348,6 +376,64 @@ def _replay_section_artifacts(
         artifacts["memory_governance"] = memoryos_governance_path
         source_reports["memoryos_governance_evidence"] = str(memoryos_governance_path)
     return (artifacts or None), source_reports
+
+
+def _with_god_room_runtime_closure_evidence(
+    *,
+    report_dir: Path,
+    run_id: str,
+    section_artifacts: Mapping[str, str | Path] | None,
+    participants_artifact: str | Path | None,
+    events_artifact: str | Path | None,
+    blueprint_freeze_artifact: str | Path | None,
+    lane_dag_artifact: str | Path | None,
+    memory_trace_artifact: str | Path | None,
+    tui_projection_artifact: str | Path | None,
+    github_truth_artifact: str | Path | None,
+    release_readiness_artifact: str | Path,
+    evidence_output: str | Path | None,
+) -> tuple[dict[str, str | Path] | None, dict[str, str]]:
+    artifacts = dict(section_artifacts or {})
+    source_reports: dict[str, str] = {}
+    has_inputs = any(
+        value is not None
+        for value in (
+            participants_artifact,
+            events_artifact,
+            blueprint_freeze_artifact,
+            lane_dag_artifact,
+            memory_trace_artifact,
+            tui_projection_artifact,
+        )
+    )
+    if not has_inputs:
+        return (artifacts or None), source_reports
+    if GOD_ROOM_RUNTIME_CLOSURE_SECTION in artifacts:
+        raise ValueError(
+            "god_room_runtime_closure evidence source is ambiguous: pass either "
+            "section_artifacts['god_room_runtime_closure'] or GOD room runtime "
+            "closure inputs, not both"
+        )
+    closure_evidence_path = (
+        Path(evidence_output)
+        if evidence_output is not None
+        else report_dir / "god-room-runtime-closure-production-evidence.json"
+    )
+    capture_god_room_runtime_closure_evidence(
+        run_id=run_id,
+        output_path=closure_evidence_path,
+        participants_artifact=participants_artifact,
+        events_artifact=events_artifact,
+        blueprint_freeze_artifact=blueprint_freeze_artifact,
+        lane_dag_artifact=lane_dag_artifact,
+        memory_trace_artifact=memory_trace_artifact,
+        tui_projection_artifact=tui_projection_artifact,
+        github_truth_artifact=github_truth_artifact,
+        release_readiness_artifact=release_readiness_artifact,
+    )
+    artifacts[GOD_ROOM_RUNTIME_CLOSURE_SECTION] = closure_evidence_path
+    source_reports["god_room_runtime_closure_evidence"] = str(closure_evidence_path)
+    return artifacts, source_reports
 
 
 def _release_gate_artifacts(

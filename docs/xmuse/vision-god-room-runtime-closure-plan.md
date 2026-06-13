@@ -432,6 +432,24 @@ Acceptance:
 - Final report lists stages completed/blocked, files changed, validation
   results, live/server proof, remaining blockers, and PR #43 state.
 
+Current implementation status:
+
+- `src/xmuse_core/platform/god_room_runtime_closure_evidence_capture.py` now
+  writes a `god_room_runtime_closure` production evidence envelope for S8. It
+  indexes GOD room participants/events, replay decisions, blueprint freeze,
+  laneDAG runtime contracts/recovery decisions, MemoryOS trace anchors, TUI
+  projection, GitHub truth, and release readiness.
+- `capture_release_evidence_pack(...)` can generate that evidence from
+  explicit GOD room closure inputs after release readiness is captured and
+  before the overnight replay bundle is written. The CLI exposes matching
+  `--god-room-*` inputs.
+- `capture_overnight_replay_bundle(...)` accepts `god_room_runtime_closure` as
+  an optional replay section while leaving required replay sections unchanged.
+- Missing GitHub truth, release readiness, live MemoryOS, or other configured
+  inputs stay `manual_gap`/blocker evidence. The closure section does not emit
+  `pr_merged`, does not upgrade OpenCode to peer-GOD proof, and does not make
+  TUI/read models durable authority.
+
 ## Required Validation
 
 Use `uv run`, never bare `pytest` or `ruff`.

@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from xmuse_core.platform.overnight_replay_bundle import (
+    OPTIONAL_REPLAY_SECTIONS,
     REQUIRED_REPLAY_SECTIONS,
     ReplayBundleSection,
     ReplaySectionStatus,
@@ -18,6 +19,8 @@ from xmuse_core.platform.release_readiness import (
     evaluate_release_readiness,
 )
 from xmuse_core.platform.release_readiness_capture import load_release_gate_artifacts
+
+_KNOWN_REPLAY_SECTIONS = (*REQUIRED_REPLAY_SECTIONS, *OPTIONAL_REPLAY_SECTIONS)
 
 _GATE_SECTION_AUTHORITY = {
     ReleaseGateKind.NATURAL_DELIBERATION: (
@@ -63,7 +66,7 @@ def capture_overnight_replay_bundle(
     )
     for section_id, artifact_path in (section_artifacts or {}).items():
         normalized_section_id = _clean_text(section_id)
-        if normalized_section_id not in REQUIRED_REPLAY_SECTIONS:
+        if normalized_section_id not in _KNOWN_REPLAY_SECTIONS:
             continue
         sections[normalized_section_id] = _section_from_production_evidence(
             normalized_section_id,
@@ -72,7 +75,11 @@ def capture_overnight_replay_bundle(
 
     bundle = build_overnight_replay_bundle(
         run_id=run_id,
-        sections=[sections[section_id] for section_id in REQUIRED_REPLAY_SECTIONS],
+        sections=[
+            sections[section_id]
+            for section_id in _KNOWN_REPLAY_SECTIONS
+            if section_id in sections
+        ],
         tombstoned_source_refs=tombstoned_source_refs,
     )
     write_overnight_replay_bundle(bundle=bundle, output_path=output_path)

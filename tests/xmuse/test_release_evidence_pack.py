@@ -4,6 +4,12 @@ import json
 import tomllib
 from pathlib import Path
 
+from xmuse_core.chat.god_room_runtime import (
+    GodRoomActorKind,
+    GodRoomEventKind,
+    GodRoomEventV1,
+    GodRoomParticipant,
+)
 from xmuse_core.integrations.memoryos_events import MemoryOSWritebackEvent
 from xmuse_core.integrations.memoryos_namespace import conversation_namespace
 from xmuse_core.platform.overnight_operator_supervisor import (
@@ -14,6 +20,9 @@ from xmuse_core.platform.overnight_operator_supervisor import (
 from xmuse_core.platform.release_evidence_pack import capture_release_evidence_pack
 from xmuse_core.structuring.feature_owner_contract import (
     build_feature_owner_execution_contract,
+)
+from xmuse_core.structuring.god_room_blueprint_freeze import (
+    compile_blueprint_freeze_from_god_room_events,
 )
 from xmuse_core.structuring.mission_blueprint_v1 import (
     MissionBlueprintStatus,
@@ -1262,6 +1271,121 @@ def test_release_evidence_pack_converts_feature_contracts_into_replay_section(
     ]
 
 
+def test_release_evidence_pack_converts_god_room_runtime_closure_into_replay_section(
+    tmp_path: Path,
+) -> None:
+    participants = tmp_path / "god-room-participants.json"
+    _write_json(
+        participants,
+        {
+            "participants": [
+                GodRoomParticipant(
+                    participant_id="part-architect",
+                    god_id="god-architect",
+                    cli_id="codex",
+                ).model_dump(mode="json"),
+                GodRoomParticipant(
+                    participant_id="part-review",
+                    god_id="god-review",
+                    cli_id="opencode",
+                ).model_dump(mode="json"),
+            ]
+        },
+    )
+    events = [
+        _god_room_event("evt-propose"),
+        _god_room_event(
+            "evt-freeze",
+            event_type=GodRoomEventKind.FREEZE_REQUESTED,
+            participant_id="part-review",
+            god_id="god-review",
+            causal_parent_id="evt-propose",
+            payload={
+                "freeze_target_ref": "blueprint:bp-runtime:1",
+                "goal": "Close runtime evidence.",
+                "scope": ["release evidence pack"],
+                "acceptance_contracts": ["Runtime closure is indexed."],
+            },
+        ),
+    ]
+    events_path = tmp_path / "god-room-events.json"
+    _write_json(
+        events_path,
+        {"events": [event.model_dump(mode="json") for event in events]},
+    )
+    freeze = compile_blueprint_freeze_from_god_room_events(
+        blueprint_id="bp-runtime",
+        revision=1,
+        events=events,
+    )
+    freeze_path = tmp_path / "god-room-blueprint-freeze.json"
+    _write_json(freeze_path, freeze.model_dump(mode="json"))
+    lane_dag = tmp_path / "lane-dag.json"
+    _write_json(
+        lane_dag,
+        {
+            "blueprint_ref": "blueprint:bp-runtime:1",
+            "lane_contracts": [
+                {
+                    "lane_id": "lane-runtime-evidence",
+                    "feature_id": "feature-runtime",
+                    "owner": "codex",
+                    "required_checks": [
+                        "uv run pytest tests/xmuse/test_release_evidence_pack.py -q"
+                    ],
+                }
+            ],
+            "recovery_decisions": [],
+        },
+    )
+    trace = tmp_path / "memory-trace.json"
+    _write_json(
+        trace,
+        {
+            "trace_anchors": [
+                {
+                    "anchor_uri": "memory://conversation/conv-1/traces/trace-1",
+                    "source_refs": ["blueprint:bp-runtime:1"],
+                }
+            ]
+        },
+    )
+    tui = tmp_path / "tui-vision.json"
+    _write_json(
+        tui,
+        {
+            "execution": {"lane_contracts": [{"lane_id": "lane-runtime-evidence"}]},
+            "memory": {"trace_anchors": [{"trace_id": "trace-1"}]},
+        },
+    )
+
+    pack = capture_release_evidence_pack(
+        artifacts_dir=tmp_path / "artifacts",
+        output_path=tmp_path / "pack.json",
+        run_id="runtime-closure-pack",
+        god_room_participants=participants,
+        god_room_events=events_path,
+        god_room_blueprint_freeze=freeze_path,
+        god_room_lane_dag=lane_dag,
+        god_room_memory_trace=trace,
+        god_room_tui_projection=tui,
+    )
+
+    replay = json.loads(Path(pack["overnight_replay_bundle"]).read_text(encoding="utf-8"))
+    sections = {section["section_id"]: section for section in replay["sections"]}
+    closure = sections["god_room_runtime_closure"]
+    assert pack["source_reports"]["god_room_runtime_closure_evidence"].endswith(
+        "god-room-runtime-closure-production-evidence.json"
+    )
+    assert closure["status"] == "manual_gap"
+    assert closure["proof_level"] == "manual_gap"
+    assert "github truth artifact is missing" in closure["blocked_reason"]
+    assert closure["details"]["god_room_runtime_closure"]["room_replay"]["status"] == "ok"
+    assert closure["details"]["god_room_runtime_closure"]["lane_dag"][
+        "lane_contract_count"
+    ] == 1
+
+
 def test_release_evidence_pack_rejects_ambiguous_supervisor_sources(
     tmp_path: Path,
 ) -> None:
@@ -2076,4 +2200,31 @@ def test_release_evidence_pack_cli_script_is_registered() -> None:
     assert (
         pyproject["project"]["scripts"]["xmuse-release-evidence-pack"]
         == "xmuse.release_evidence_pack:main"
+    )
+
+
+def _god_room_event(
+    event_id: str,
+    *,
+    event_type: GodRoomEventKind = GodRoomEventKind.SPEAK,
+    participant_id: str = "part-architect",
+    god_id: str = "god-architect",
+    causal_parent_id: str | None = None,
+    payload: dict[str, object] | None = None,
+) -> GodRoomEventV1:
+    return GodRoomEventV1(
+        event_id=event_id,
+        room_id="room-1",
+        conversation_id="conv-1",
+        participant_id=participant_id,
+        god_id=god_id,
+        actor_kind=GodRoomActorKind.GOD,
+        event_type=event_type,
+        timestamp_utc="2026-06-13T10:00:00Z",
+        content=str((payload or {}).get("goal") or "Close runtime evidence."),
+        causal_parent_id=causal_parent_id,
+        source_refs=[f"message:{event_id}"],
+        cli_id="codex",
+        provider_profile="codex",
+        payload=payload or {"body": "Close runtime evidence."},
     )

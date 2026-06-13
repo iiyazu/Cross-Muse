@@ -288,6 +288,49 @@ def test_capture_overnight_replay_bundle_accepts_stage_evidence_section(
     assert str(stage_evidence) in sections["stage_evidence"]["artifacts"]
 
 
+def test_capture_overnight_replay_bundle_accepts_runtime_closure_section(
+    tmp_path: Path,
+) -> None:
+    artifacts = tmp_path / "artifacts"
+    closure = tmp_path / "god-room-runtime-closure.json"
+    _write_production_evidence(
+        closure,
+        stage_id="S8",
+        action="god_room_runtime_closure_indexed",
+        status="ok",
+        proof_level="contract_proof",
+        source_authority="god_room_runtime_closure_contract",
+        source_refs=["god-room-event:evt-freeze", "blueprint:bp-runtime:1"],
+        summary="GOD room runtime closure evidence indexed.",
+        details={
+            "room_replay": {"status": "ok", "event_count": 2},
+            "github_truth": {"merged": False, "can_emit_pr_merged": False},
+        },
+    )
+
+    bundle = capture_overnight_replay_bundle(
+        run_id="overnight-with-runtime-closure",
+        artifacts_dir=artifacts,
+        output_path=tmp_path / "bundle.json",
+        section_artifacts={"god_room_runtime_closure": closure},
+    )
+
+    section_ids = [section["section_id"] for section in bundle["sections"]]
+    sections = {section["section_id"]: section for section in bundle["sections"]}
+    assert section_ids[-1] == "god_room_runtime_closure"
+    assert "god_room_runtime_closure" not in REQUIRED_REPLAY_SECTIONS
+    assert sections["god_room_runtime_closure"]["status"] == "ok"
+    assert sections["god_room_runtime_closure"]["source_authority"] == (
+        "god_room_runtime_closure_contract"
+    )
+    assert sections["god_room_runtime_closure"]["details"] == {
+        "god_room_runtime_closure": {
+            "room_replay": {"status": "ok", "event_count": 2},
+            "github_truth": {"merged": False, "can_emit_pr_merged": False},
+        }
+    }
+
+
 def test_overnight_replay_bundle_capture_cli_script_is_registered() -> None:
     pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
 
@@ -341,6 +384,7 @@ def _write_production_evidence(
     source_authority: str,
     source_refs: list[str],
     summary: str,
+    details: dict[str, object] | None = None,
 ) -> None:
     payload = {
         "schema_version": "xmuse.production_evidence.v1",
@@ -359,4 +403,6 @@ def _write_production_evidence(
         "next_action": None,
         "summary": summary,
     }
+    if details is not None:
+        payload["god_room_runtime_closure"] = details
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")

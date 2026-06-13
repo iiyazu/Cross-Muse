@@ -147,6 +147,60 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--god-room-participants",
+        type=Path,
+        default=None,
+        help=(
+            "Optional GOD room participants artifact to index in the runtime "
+            "closure replay section."
+        ),
+    )
+    parser.add_argument(
+        "--god-room-events",
+        type=Path,
+        default=None,
+        help=(
+            "Optional xmuse.god_room_event.v1 list/envelope to index in the "
+            "runtime closure replay section."
+        ),
+    )
+    parser.add_argument(
+        "--god-room-blueprint-freeze",
+        type=Path,
+        default=None,
+        help=(
+            "Optional xmuse.god_room_blueprint_freeze.v1 artifact to index in "
+            "the runtime closure replay section."
+        ),
+    )
+    parser.add_argument(
+        "--god-room-lane-dag",
+        type=Path,
+        default=None,
+        help="Optional laneDAG artifact with lane runtime contracts.",
+    )
+    parser.add_argument(
+        "--god-room-memory-trace",
+        type=Path,
+        default=None,
+        help="Optional MemoryOS trace-anchor projection for runtime closure.",
+    )
+    parser.add_argument(
+        "--god-room-tui-projection",
+        type=Path,
+        default=None,
+        help="Optional TUI/read-model projection for runtime closure.",
+    )
+    parser.add_argument(
+        "--god-room-runtime-closure-evidence-output",
+        type=Path,
+        default=None,
+        help=(
+            "Optional path for the generated GOD room runtime closure production "
+            "evidence."
+        ),
+    )
+    parser.add_argument(
         "--feature-contract",
         type=Path,
         action="append",
@@ -303,6 +357,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
         frozen_blueprint=args.frozen_blueprint,
         frozen_blueprint_evidence_output=args.frozen_blueprint_evidence_output,
+        god_room_participants=args.god_room_participants,
+        god_room_events=args.god_room_events,
+        god_room_blueprint_freeze=args.god_room_blueprint_freeze,
+        god_room_lane_dag=args.god_room_lane_dag,
+        god_room_memory_trace=args.god_room_memory_trace,
+        god_room_tui_projection=args.god_room_tui_projection,
+        god_room_runtime_closure_evidence_output=(
+            args.god_room_runtime_closure_evidence_output
+        ),
         feature_contracts=tuple(args.feature_contract),
         feature_lineage_evidence_output=args.feature_lineage_evidence_output,
         memoryos_governance_plans=tuple(args.memoryos_governance_plan),
