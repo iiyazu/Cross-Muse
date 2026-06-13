@@ -296,11 +296,11 @@ Current implementation status:
   gives the overnight operator console a write path for the supporting runtime
   artifact while preserving durable-store authority and `release_gate`
   capability checks.
-- `xmuse-natural-deliberation-gate-capture` accepts an optional
-  `--god-runtime` artifact. When supplied, the natural-deliberation release
-  gate requires every transcript GOD to have a peer-GOD-ready selected runtime
-  row. Bounded OpenCode workers, missing runtime rows, or provider-session gaps
-  block the gate as `manual_gap`.
+- `xmuse-natural-deliberation-gate-capture` now requires a
+  `--god-runtime` artifact for an ok production gate. The natural-deliberation
+  release gate requires every transcript GOD to have a peer-GOD-ready selected
+  runtime row. Missing runtime evidence, bounded OpenCode workers, missing
+  runtime rows, or provider-session gaps block the gate as `manual_gap`.
 - Natural transcript export still reads durable chat/session state and never
   scrapes TUI rendering. The TUI/operator natural export path now captures
   selected-GOD runtime continuity by default and binds it into the natural
@@ -488,13 +488,14 @@ Current implementation status:
   governed writeback events while keeping MemoryOS governance separate from
   live MemoryOS trace proof.
 - `uv run xmuse-release-evidence-pack --deliberation-transcript <transcript>`
-  and optional `--god-runtime <runtime>` now convert an
+  and `--god-runtime <runtime>` now convert an
   `xmuse.operator_transcript.v1` artifact into replay-ready
   `deliberation_transcript` production evidence before assembling the nested
-  replay bundle. The conversion reuses the natural deliberation release-gate
-  rules, so deterministic replay, single-GOD transcripts, missing provider
-  session metadata, bounded selected runtime, or unresolved blockers remain
-  weak/blocked evidence.
+  replay bundle. Missing selected-GOD runtime continuity remains
+  blocked/manual-gap evidence. The conversion reuses the natural deliberation
+  release-gate rules, so deterministic replay, single-GOD transcripts, missing
+  provider session metadata, bounded selected runtime, or unresolved blockers
+  remain weak/blocked evidence.
 - `uv run xmuse-release-evidence-pack --frozen-blueprint <blueprint>` now
   converts a `mission_blueprint.v1` artifact into replay-ready
   `frozen_blueprint` production evidence before assembling the nested replay

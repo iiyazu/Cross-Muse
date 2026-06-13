@@ -58,7 +58,39 @@ def _transcript(**overrides: object) -> dict[str, object]:
     return payload
 
 
-def test_natural_deliberation_gate_accepts_real_multi_god_transcript(
+def _runtime(**overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "schema_version": "xmuse.god_runtime_continuity.v1",
+        "conversation_id": "conv-prod-1",
+        "proof_level": "real_provider_proof",
+        "fact_state": "observed",
+        "source_refs": ["god_cli_selection:conv-prod-1"],
+        "items": [
+            {
+                "god_id": "architect-god",
+                "cli_id": "codex.god",
+                "peer_god_ready": True,
+                "bounded": False,
+                "provider_session_ready": True,
+                "proof_level": "real_provider_proof",
+                "source_refs": ["god_session:architect"],
+            },
+            {
+                "god_id": "review-god",
+                "cli_id": "review.peer",
+                "peer_god_ready": True,
+                "bounded": False,
+                "provider_session_ready": True,
+                "proof_level": "real_provider_proof",
+                "source_refs": ["god_session:review"],
+            },
+        ],
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_natural_deliberation_gate_blocks_real_transcript_without_selected_runtime(
     tmp_path: Path,
 ) -> None:
     artifact = tmp_path / "natural-transcript.json"
@@ -68,6 +100,43 @@ def test_natural_deliberation_gate_accepts_real_multi_god_transcript(
     gate = capture_natural_deliberation_release_gate(
         artifact_path=artifact,
         output_path=gate_output,
+    )
+
+    assert gate_output.exists()
+    assert gate["schema_version"] == "xmuse.production_evidence.v1"
+    assert gate["gate_id"] == "natural-god-deliberation"
+    assert gate["kind"] == "natural_deliberation"
+    assert gate["status"] == "blocked"
+    assert gate["proof_level"] == "manual_gap"
+    assert "requires selected GOD runtime continuity" in gate["summary"]
+    assert gate["source_refs"] == [
+        "memory://conversation/conv-prod-1/transcript",
+        "conversation:conv-prod-1",
+        "god:architect-god",
+        "god:review-god",
+        "provider:codex",
+        "provider:opencode",
+    ]
+    report = capture_release_readiness(
+        artifacts_dir=tmp_path / "gates",
+        output_path=tmp_path / "release-readiness.json",
+    )
+    assert report["decision"] == "blocked"
+
+
+def test_natural_deliberation_gate_accepts_real_multi_god_transcript_with_selected_runtime(
+    tmp_path: Path,
+) -> None:
+    artifact = tmp_path / "natural-transcript.json"
+    runtime = tmp_path / "god-runtime.json"
+    gate_output = tmp_path / "gates" / "natural-deliberation.json"
+    _write_json(artifact, _transcript())
+    _write_json(runtime, _runtime())
+
+    gate = capture_natural_deliberation_release_gate(
+        artifact_path=artifact,
+        output_path=gate_output,
+        god_runtime_path=runtime,
     )
 
     assert gate_output.exists()
@@ -84,6 +153,7 @@ def test_natural_deliberation_gate_accepts_real_multi_god_transcript(
         "provider:codex",
         "provider:opencode",
     ]
+    assert str(runtime) in gate["artifacts"]
     report = capture_release_readiness(
         artifacts_dir=tmp_path / "gates",
         output_path=tmp_path / "release-readiness.json",
@@ -138,6 +208,7 @@ def test_natural_deliberation_gate_blocks_unresolved_blockers(
     tmp_path: Path,
 ) -> None:
     artifact = tmp_path / "blocked-transcript.json"
+    runtime = tmp_path / "god-runtime.json"
     _write_json(
         artifact,
         _transcript(
@@ -151,10 +222,12 @@ def test_natural_deliberation_gate_blocks_unresolved_blockers(
             ],
         ),
     )
+    _write_json(runtime, _runtime())
 
     gate = capture_natural_deliberation_release_gate(
         artifact_path=artifact,
         output_path=tmp_path / "gate.json",
+        god_runtime_path=runtime,
     )
 
     assert gate["status"] == "blocked"

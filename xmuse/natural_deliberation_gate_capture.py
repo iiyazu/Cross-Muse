@@ -38,7 +38,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--god-runtime",
         type=Path,
         default=None,
-        help="Optional xmuse.god_runtime_continuity.v1 JSON artifact.",
+        help=(
+            "xmuse.god_runtime_continuity.v1 JSON artifact. Omitting it keeps "
+            "the production gate blocked/manual_gap."
+        ),
     )
     args = parser.parse_args(argv)
     gate = capture_natural_deliberation_release_gate(

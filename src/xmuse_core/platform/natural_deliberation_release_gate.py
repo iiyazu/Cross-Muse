@@ -247,7 +247,18 @@ def _selected_god_runtime_gate(
     load_error: str | None,
 ) -> dict[str, Any] | None:
     if runtime_artifact is None:
-        return None
+        return {
+            "summary": (
+                "Natural GOD deliberation requires selected GOD runtime continuity "
+                "before release readiness can accept the transcript."
+            ),
+            "source_refs": [],
+            "next_action": (
+                "Capture selected GOD runtime continuity with "
+                "xmuse-god-runtime-continuity-capture and rerun the natural "
+                "deliberation release gate."
+            ),
+        }
     if runtime is None:
         return {
             "summary": load_error or "Selected GOD runtime continuity artifact is unavailable.",

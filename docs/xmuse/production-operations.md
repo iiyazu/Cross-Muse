@@ -862,8 +862,9 @@ review truth, GitHub truth, release readiness proof, or live runtime proof.
 `--supervisor-snapshot` generates the replay `supervisor` section from a durable
 `xmuse.overnight_supervisor.v1` snapshot. `--deliberation-transcript` generates
 the replay `deliberation_transcript` section from an
-`xmuse.operator_transcript.v1` artifact, optionally validated with
-`--god-runtime` selected-GOD continuity. `uv run
+`xmuse.operator_transcript.v1` artifact and needs `--god-runtime` selected-GOD
+continuity before it can become ok production evidence. Omitting that runtime
+artifact leaves the replay evidence blocked/manual_gap. `uv run
 xmuse-frozen-blueprint-export --chat-db xmuse/chat.db --conversation-id
 CONVERSATION --output BLUEPRINT` exports the frozen blueprint artifact from
 chat resolution authority; `--frozen-blueprint` then generates the replay

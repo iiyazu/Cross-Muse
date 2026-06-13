@@ -16,12 +16,15 @@ def test_capture_deliberation_transcript_evidence_exports_replay_ready_artifact(
     tmp_path: Path,
 ) -> None:
     transcript = tmp_path / "natural-transcript.json"
+    runtime = tmp_path / "god-runtime.json"
     _write_json(transcript, _transcript())
+    _write_json(runtime, _runtime())
     output = tmp_path / "deliberation-transcript-production-evidence.json"
 
     artifact = capture_deliberation_transcript_evidence(
         run_id="overnight-transcript",
         transcript_artifact=transcript,
+        god_runtime_artifact=runtime,
         output_path=output,
     )
 
@@ -45,7 +48,7 @@ def test_capture_deliberation_transcript_evidence_exports_replay_ready_artifact(
         "blueprint:prod:1",
         "lane:prod-a",
     ]
-    assert artifact["artifacts"] == [str(transcript)]
+    assert artifact["artifacts"] == [str(transcript), str(runtime)]
     assert artifact["blocked_reason"] is None
     assert artifact["summary"] == (
         "Natural GOD deliberation transcript captured real provider proof from "
@@ -63,6 +66,28 @@ def test_capture_deliberation_transcript_evidence_exports_replay_ready_artifact(
     assert sections["deliberation_transcript"]["proof_level"] == "real_provider_proof"
     assert sections["deliberation_transcript"]["source_authority"] == (
         "operator_transcript_v1"
+    )
+
+
+def test_capture_deliberation_transcript_evidence_blocks_without_selected_runtime(
+    tmp_path: Path,
+) -> None:
+    transcript = tmp_path / "natural-transcript.json"
+    _write_json(transcript, _transcript())
+
+    artifact = capture_deliberation_transcript_evidence(
+        run_id="overnight-transcript",
+        transcript_artifact=transcript,
+        output_path=tmp_path / "deliberation-transcript-production-evidence.json",
+    )
+
+    assert artifact["status"] == "manual_gap"
+    assert artifact["proof_level"] == "manual_gap"
+    assert "requires selected GOD runtime continuity" in artifact["blocked_reason"]
+    assert artifact["next_action"] == (
+        "Capture selected GOD runtime continuity with "
+        "xmuse-god-runtime-continuity-capture and rerun the natural "
+        "deliberation release gate."
     )
 
 
@@ -94,6 +119,7 @@ def test_capture_deliberation_transcript_evidence_preserves_blocked_real_transcr
     tmp_path: Path,
 ) -> None:
     transcript = tmp_path / "blocked-transcript.json"
+    runtime = tmp_path / "god-runtime.json"
     _write_json(
         transcript,
         _transcript(
@@ -107,10 +133,12 @@ def test_capture_deliberation_transcript_evidence_preserves_blocked_real_transcr
             ],
         ),
     )
+    _write_json(runtime, _runtime())
 
     artifact = capture_deliberation_transcript_evidence(
         run_id="overnight-transcript",
         transcript_artifact=transcript,
+        god_runtime_artifact=runtime,
         output_path=tmp_path / "deliberation-transcript-production-evidence.json",
     )
 
@@ -127,7 +155,9 @@ def test_deliberation_transcript_evidence_capture_cli_writes_artifact(
     from xmuse.deliberation_transcript_evidence_capture import main
 
     transcript = tmp_path / "natural-transcript.json"
+    runtime = tmp_path / "god-runtime.json"
     _write_json(transcript, _transcript())
+    _write_json(runtime, _runtime())
     output = tmp_path / "deliberation-transcript-production-evidence.json"
 
     assert (
@@ -137,6 +167,8 @@ def test_deliberation_transcript_evidence_capture_cli_writes_artifact(
                 "overnight-transcript",
                 "--transcript",
                 str(transcript),
+                "--god-runtime",
+                str(runtime),
                 "--output",
                 str(output),
             ]
@@ -196,6 +228,38 @@ def _transcript(**overrides: object) -> dict[str, object]:
             },
         ],
         "blockers": [],
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _runtime(**overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "schema_version": "xmuse.god_runtime_continuity.v1",
+        "conversation_id": "conv-prod-1",
+        "proof_level": "real_provider_proof",
+        "fact_state": "observed",
+        "source_refs": ["god_cli_selection:conv-prod-1"],
+        "items": [
+            {
+                "god_id": "architect-god",
+                "cli_id": "codex.god",
+                "peer_god_ready": True,
+                "bounded": False,
+                "provider_session_ready": True,
+                "proof_level": "real_provider_proof",
+                "source_refs": ["god_session:architect"],
+            },
+            {
+                "god_id": "review-god",
+                "cli_id": "review.peer",
+                "peer_god_ready": True,
+                "bounded": False,
+                "provider_session_ready": True,
+                "proof_level": "real_provider_proof",
+                "source_refs": ["god_session:review"],
+            },
+        ],
     }
     payload.update(overrides)
     return payload

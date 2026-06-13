@@ -114,8 +114,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         type=Path,
         default=None,
         help=(
-            "Optional xmuse.god_runtime_continuity.v1 artifact to validate "
-            "alongside --deliberation-transcript."
+            "xmuse.god_runtime_continuity.v1 artifact to validate alongside "
+            "--deliberation-transcript. Omitting it keeps that replay evidence "
+            "blocked/manual_gap."
         ),
     )
     parser.add_argument(

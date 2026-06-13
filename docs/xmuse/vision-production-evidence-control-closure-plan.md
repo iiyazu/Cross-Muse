@@ -530,8 +530,9 @@ Current implementation status:
   not create GitHub server-side review enforcement or merge truth.
 - `uv run xmuse-natural-deliberation-gate-capture` converts an explicit natural
   GOD transcript artifact into the `natural_deliberation` release gate. It
-  blocks deterministic replay, missing session metadata, single-GOD transcript
-  evidence, and unresolved blockers.
+  requires selected-GOD runtime continuity and blocks deterministic replay,
+  missing session metadata, single-GOD transcript evidence, bounded or missing
+  selected runtime, and unresolved blockers.
 - `uv run xmuse-natural-deliberation-transcript-capture` is the production path
   for producing that transcript artifact from durable chat/session state. It
   does not synthesize live GOD messages; the conversation must already have
@@ -635,11 +636,12 @@ Current implementation status:
   contract-level governance evidence and does not create live MemoryOS trace
   proof.
 - The same release pack command can accept `--deliberation-transcript` and
-  optional `--god-runtime`, convert them through
+  `--god-runtime`, convert them through
   `xmuse-deliberation-transcript-evidence-capture`, and attach the generated
   artifact as the replay bundle's `deliberation_transcript` section. This
-  reduces handoff friction after natural transcript export, but the existing
-  natural deliberation gate rules still block deterministic replay, single-GOD
+  reduces handoff friction after natural transcript export, but missing runtime
+  continuity remains blocked/manual-gap evidence. The existing natural
+  deliberation gate rules also block deterministic replay, single-GOD
   transcripts, missing provider session metadata, bounded selected runtime, and
   unresolved blockers.
 - The same release pack command can separately accept
