@@ -598,6 +598,11 @@ class SlashCommandRouter:
             if not callable(runner):
                 raise ValueError("GOD room contract actions unavailable for this adapter.")
             return "memoryos-plan", runner(conv_id, _room_memoryos_plan_payload(args))
+        if subcommand in {"speaker-attempt", "speak-attempt", "speaker"}:
+            runner = getattr(context.app.adapter, "build_god_room_speaker_attempt", None)
+            if not callable(runner):
+                raise ValueError("GOD room contract actions unavailable for this adapter.")
+            return "speaker-attempt", runner(conv_id, _room_speaker_attempt_payload(args))
         raise ValueError(_room_usage())
 
     def _god(self, rest: str, context: SlashCommandContext) -> SlashCommandResult:
@@ -735,8 +740,8 @@ class SlashCommandRouter:
 
 def _room_usage() -> str:
     return (
-        "Usage: /room <ensure|snapshot|event|freeze|lane-dag|recovery|memoryos-plan> "
-        "[key=value...]"
+        "Usage: /room <ensure|snapshot|event|freeze|lane-dag|recovery|"
+        "memoryos-plan|speaker-attempt> [key=value...]"
     )
 
 
@@ -981,6 +986,22 @@ def _room_memoryos_plan_payload(args: list[str]) -> dict[str, Any]:
     return payload
 
 
+def _room_speaker_attempt_payload(args: list[str]) -> dict[str, Any]:
+    raw = _key_value_args(
+        args,
+        usage="Usage: /room speaker-attempt [after_event_id=<event_id>]",
+    )
+    aliases = {
+        "event": "after_event_id",
+        "event_id": "after_event_id",
+        "after": "after_event_id",
+    }
+    payload: dict[str, Any] = {}
+    for key, value in raw.items():
+        payload[aliases.get(key, key)] = value
+    return payload
+
+
 def _god_room_action_block(action: str, result: dict) -> str:
     if "status" in result and "proof_level" in result:
         return _operator_action_block(result)
@@ -1023,6 +1044,20 @@ def _god_room_action_block(action: str, result: dict) -> str:
         live_trace = memoryos_plan.get("live_trace")
         if isinstance(live_trace, dict) and live_trace.get("status"):
             lines.append(f"memoryos_live_trace={live_trace['status']}")
+    speaker_attempt = result.get("speaker_attempt")
+    if isinstance(speaker_attempt, dict):
+        status = str(speaker_attempt.get("status") or "").strip()
+        if status:
+            lines.append(f"speaker_attempt={status}")
+        target = str(speaker_attempt.get("target_participant_id") or "").strip()
+        if target:
+            lines.append(f"target={target}")
+        provider_session = str(speaker_attempt.get("provider_session_id") or "").strip()
+        if provider_session:
+            lines.append(f"provider_session={provider_session}")
+        blocked_reason = str(speaker_attempt.get("blocked_reason") or "").strip()
+        if blocked_reason:
+            lines.append(f"blocked_reason={blocked_reason}")
     artifacts = result.get("artifacts")
     if isinstance(artifacts, dict):
         artifact_refs = [
@@ -1039,7 +1074,7 @@ def _god_room_source_authority(result: dict) -> str:
     direct = str(result.get("source_authority") or "").strip()
     if direct:
         return direct
-    for key in ("room", "snapshot", "memoryos_plan"):
+    for key in ("room", "snapshot", "memoryos_plan", "speaker_attempt"):
         value = result.get(key)
         if isinstance(value, dict):
             authority = str(value.get("source_authority") or "").strip()
@@ -1434,6 +1469,9 @@ def _release_pack_payload(args: list[str]) -> dict[str, Any]:
             "room_tui": "god_room_tui_projection",
             "room_tui_projection": "god_room_tui_projection",
             "god_room_tui_projection": "god_room_tui_projection",
+            "room_speaker_attempt": "god_room_speaker_attempt",
+            "room_speaker": "god_room_speaker_attempt",
+            "god_room_speaker_attempt": "god_room_speaker_attempt",
             "room_closure_output": "god_room_runtime_closure_evidence_output",
             "god_room_closure_output": "god_room_runtime_closure_evidence_output",
             "god_room_runtime_closure_evidence_output": (
@@ -2167,6 +2205,7 @@ def _help_text() -> str:
             "/room lane-dag resolution_id=<id> graph_id=<id> feature_id=<id> lane_id=<id> ...",
             "/room recovery graph_id=<id> lane_id=<id> [failure fields...]",
             "/room memoryos-plan graph_id=<id> repo_id=<repo> workspace_id=<id>",
+            "/room speaker-attempt [after_event_id=<event_id>]",
             "/freeze target_ref=<ref> blueprint_id=<id> goal=<goal> "
             "scope=<items> acceptance=<items>",
             "/discussion",

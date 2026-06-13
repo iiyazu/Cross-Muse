@@ -934,6 +934,9 @@ class OperatorActionService:
             god_room_tui_projection = self._release_optional_path(
                 request.payload.get("god_room_tui_projection")
             )
+            god_room_speaker_attempt = self._release_optional_path(
+                request.payload.get("god_room_speaker_attempt")
+            )
             god_room_runtime_closure_evidence_output = self._release_optional_path(
                 request.payload.get("god_room_runtime_closure_evidence_output")
             )
@@ -973,6 +976,7 @@ class OperatorActionService:
                 god_room_lane_dag=god_room_lane_dag,
                 god_room_memory_trace=god_room_memory_trace,
                 god_room_tui_projection=god_room_tui_projection,
+                god_room_speaker_attempt=god_room_speaker_attempt,
                 god_room_runtime_closure_evidence_output=(
                     god_room_runtime_closure_evidence_output
                 ),

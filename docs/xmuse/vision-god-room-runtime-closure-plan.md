@@ -309,6 +309,21 @@ Current implementation status:
   `xmuse.god_room_snapshot.v1` with participants, events, and replay decisions,
   so replay/release evidence can reference a durable room snapshot instead of
   ad hoc transcript fixtures.
+- `build_god_room_speaker_attempt(...)` now joins durable room replay decisions
+  to selected-GOD runtime continuity. It emits
+  `xmuse.god_room_speaker_attempt.v1` evidence with
+  `ready_for_provider_attempt` only when the target participant has a selected,
+  provider-bound peer-GOD session; otherwise it returns `manual_gap` with the
+  selected runtime blocker. This does not invoke a provider or append a fake
+  speak event, so it remains `contract_proof` until a fresh provider response
+  is captured.
+- `xmuse/chat_api.py` exposes
+  `POST /api/chat/conversations/{conversation_id}/god-room/speaker-attempt`.
+  The endpoint reads `GodRoomEventStore`, `god_cli_selections.json`,
+  `god_cli_registrations.json`, and `god_sessions.json`, writes a replayable
+  `reports/god_room_speaker_attempts/*.speaker-attempt.json` artifact, and
+  does not mutate room events, lane status, `feature_lanes.json`, or provider
+  subprocess state.
 
 ## S3 - Blueprint Freeze Compiler
 
@@ -579,11 +594,14 @@ Current implementation status:
   lane queue, or projection writes after API rejection.
 - `xmuse/tui/slash_commands.py` now exposes `/room ensure`, `/room event`,
   `/room freeze`, `/room lane-dag`, `/room recovery`, and
-  `/room memoryos-plan` as TUI operator commands backed by those Chat API
-  contracts. `/room lane-dag` builds an explicit one-lane feature/lane contract
-  request from operator key/value input; `/room recovery` imports failure
-  evidence for lane recovery/refactor decisions. Command events are recorded
-  with `read_surface_authority = god_room_chat_api` for operator replay.
+  `/room memoryos-plan` and `/room speaker-attempt` as TUI operator commands
+  backed by those Chat API contracts. `/room speaker-attempt` calls the Chat API
+  speaker-attempt contract and surfaces `ready_for_provider_attempt` or
+  `manual_gap` without writing local state. `/room lane-dag` builds an explicit
+  one-lane feature/lane contract request from operator key/value input;
+  `/room recovery` imports failure evidence for lane recovery/refactor
+  decisions. Command events are recorded with
+  `read_surface_authority = god_room_chat_api` for operator replay.
 - This remains a projection/control-surface slice. TUI code does not write
   lane status, MemoryOS truth, `feature_lanes.json`, GOD room event stores,
   laneDAG artifacts, or runner state directly.
@@ -636,8 +654,13 @@ Current implementation status:
   fresh `god_room_runtime_closure` evidence envelope and include it as an
   optional overnight replay section. `/release pack` accepts concise
   `room_participants`, `room_events`, `room_freeze`, `room_lane_dag`,
-  `room_memory`, `room_tui`, and `room_closure_output` aliases for those
-  artifact paths.
+  `room_memory`, `room_tui`, `room_speaker_attempt`, and
+  `room_closure_output` aliases for those artifact paths.
+- `god_room_runtime_closure` evidence can now optionally index
+  `xmuse.god_room_speaker_attempt.v1` artifacts. A ready speaker attempt is
+  recorded as provider-bound readiness evidence; a manual-gap speaker attempt
+  remains a closure blocker. The release pack passthrough preserves that
+  distinction in the overnight replay bundle.
 - `capture_overnight_replay_bundle(...)` accepts `god_room_runtime_closure` as
   an optional replay section while leaving required replay sections unchanged.
 - Missing GitHub truth, release readiness, live MemoryOS, or other configured

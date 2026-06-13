@@ -1342,6 +1342,29 @@ def test_operator_action_captures_release_pack_with_god_room_runtime_inputs(
             "memory": {"trace_anchors": [{"trace_id": "trace-room"}]},
         },
     )
+    _write_json(
+        release_dir / "god-room" / "speaker-attempt.json",
+        {
+            "schema_version": "xmuse.god_room_speaker_attempt.v1",
+            "status": "ready_for_provider_attempt",
+            "proof_level": "contract_proof",
+            "source_authority": (
+                "god_room_event_store+selected_god_runtime_continuity"
+            ),
+            "conversation_id": "conv-pack",
+            "room_id": "god-room:conv-pack",
+            "selected_event_id": "evt-propose",
+            "decision_reason": "round_robin",
+            "target_participant_id": "part-review",
+            "target_god_id": "god-review",
+            "provider_profile_ref": "codex.god",
+            "provider_session_id": "provider-thread-review",
+            "source_refs": [
+                "god-room-event:evt-propose",
+                "provider_session:provider-thread-review",
+            ],
+        },
+    )
     _write_github_server_truth(release_dir / "artifacts" / "github-truth.json")
     service = OperatorActionService(
         god_cli_registry=build_default_god_cli_registry(),
@@ -1364,6 +1387,7 @@ def test_operator_action_captures_release_pack_with_god_room_runtime_inputs(
                 "god_room_lane_dag": "god-room/lane-dag.json",
                 "god_room_memory_trace": "god-room/memory-trace.json",
                 "god_room_tui_projection": "god-room/tui-projection.json",
+                "god_room_speaker_attempt": "god-room/speaker-attempt.json",
             },
             source="tui",
         )
@@ -1381,6 +1405,9 @@ def test_operator_action_captures_release_pack_with_god_room_runtime_inputs(
     assert closure["god_room_runtime_closure"]["lane_dag"][
         "refactor_required_count"
     ] == 1
+    assert closure["god_room_runtime_closure"]["speaker_attempt"]["status"] == (
+        "ready_for_provider_attempt"
+    )
     assert "god_room_runtime_closure" in sections
     assert sections["god_room_runtime_closure"]["source_authority"] == (
         "god_room_runtime_closure_contract"

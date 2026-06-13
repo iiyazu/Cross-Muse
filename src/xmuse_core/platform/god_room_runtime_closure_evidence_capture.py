@@ -12,6 +12,7 @@ from xmuse_core.chat.god_room_runtime import (
     GodRoomParticipant,
     replay_god_room_turns,
 )
+from xmuse_core.chat.god_room_speaker_runtime import GodRoomSpeakerAttemptV1
 from xmuse_core.platform.production_evidence import (
     ProductionEvidenceEnvelope,
     ProductionEvidenceStatus,
@@ -37,6 +38,7 @@ def capture_god_room_runtime_closure_evidence(
     lane_dag_artifact: str | Path | None = None,
     memory_trace_artifact: str | Path | None = None,
     tui_projection_artifact: str | Path | None = None,
+    speaker_attempt_artifact: str | Path | None = None,
     github_truth_artifact: str | Path | None = None,
     release_readiness_artifact: str | Path | None = None,
     stage_id: str = "S8",
@@ -50,6 +52,7 @@ def capture_god_room_runtime_closure_evidence(
         lane_dag_artifact=lane_dag_artifact,
         memory_trace_artifact=memory_trace_artifact,
         tui_projection_artifact=tui_projection_artifact,
+        speaker_attempt_artifact=speaker_attempt_artifact,
         github_truth_artifact=github_truth_artifact,
         release_readiness_artifact=release_readiness_artifact,
     )
@@ -72,6 +75,7 @@ def build_god_room_runtime_closure_evidence(
     lane_dag_artifact: str | Path | None = None,
     memory_trace_artifact: str | Path | None = None,
     tui_projection_artifact: str | Path | None = None,
+    speaker_attempt_artifact: str | Path | None = None,
     github_truth_artifact: str | Path | None = None,
     release_readiness_artifact: str | Path | None = None,
 ) -> dict[str, object]:
@@ -119,6 +123,10 @@ def build_god_room_runtime_closure_evidence(
         tui_projection_artifact,
         issues=issues,
     )
+    speaker_details, speaker_refs, speaker_targets = _speaker_attempt_details(
+        speaker_attempt_artifact,
+        issues=issues,
+    )
     github_details, github_refs, github_targets = _github_truth_details(
         github_truth_artifact,
         issues=issues,
@@ -147,6 +155,7 @@ def build_god_room_runtime_closure_evidence(
                     *lane_refs,
                     *trace_refs,
                     *tui_refs,
+                    *speaker_refs,
                     *github_refs,
                     *readiness_refs,
                 ]
@@ -158,6 +167,7 @@ def build_god_room_runtime_closure_evidence(
                     *blueprint_targets,
                     *lane_targets,
                     *trace_targets,
+                    *speaker_targets,
                     *github_targets,
                 ]
             )
@@ -170,6 +180,7 @@ def build_god_room_runtime_closure_evidence(
                 lane_dag_artifact,
                 memory_trace_artifact,
                 tui_projection_artifact,
+                speaker_attempt_artifact,
                 github_truth_artifact,
                 release_readiness_artifact,
             )
@@ -181,6 +192,7 @@ def build_god_room_runtime_closure_evidence(
             room_replay=room_replay_details,
             lane_dag=lane_details,
             trace=trace_details,
+            speaker=speaker_details,
             readiness=readiness_details,
         ),
     )
@@ -193,6 +205,7 @@ def build_god_room_runtime_closure_evidence(
         "lane_dag": lane_details,
         "memory_trace": trace_details,
         "tui_projection": tui_details,
+        "speaker_attempt": speaker_details,
         "github_truth": github_details,
         "release_readiness": readiness_details,
     }
@@ -461,6 +474,57 @@ def _tui_projection_details(
     )
 
 
+def _speaker_attempt_details(
+    path: str | Path | None,
+    *,
+    issues: list[str],
+) -> tuple[dict[str, object], list[str], list[str]]:
+    if path is None:
+        return {
+            "status": "not_provided",
+            "proof_level": "manual_gap",
+            "optional": True,
+        }, [], []
+    payload = _load_json(path, label="speaker attempt", issues=issues)
+    if not isinstance(payload, dict):
+        return _manual_gap_details("speaker attempt artifact is missing"), [], []
+    try:
+        attempt = GodRoomSpeakerAttemptV1.model_validate(payload)
+    except ValidationError as exc:
+        issues.append(f"speaker attempt artifact is invalid: {_one_line(str(exc))}")
+        return _manual_gap_details("speaker attempt artifact is invalid"), [], []
+    if attempt.status == "manual_gap":
+        reason = attempt.blocked_reason or "speaker attempt is blocked"
+        issues.append(f"speaker attempt blocked: {reason}")
+    targets = _dedupe(
+        [
+            f"god-room-participant:{attempt.target_participant_id}"
+            if attempt.target_participant_id
+            else None,
+            f"provider_session:{attempt.provider_session_id}"
+            if attempt.provider_session_id
+            else None,
+        ]
+    )
+    return (
+        {
+            "status": attempt.status,
+            "proof_level": attempt.proof_level,
+            "selected_event_id": attempt.selected_event_id,
+            "decision_reason": attempt.decision_reason,
+            "target_participant_id": attempt.target_participant_id,
+            "target_god_id": attempt.target_god_id,
+            "provider_profile_ref": attempt.provider_profile_ref,
+            "provider_session_id": attempt.provider_session_id,
+            "provider_binding_status": attempt.provider_binding_status,
+            "effective_session_status": attempt.effective_session_status,
+            "blocked_reason": attempt.blocked_reason,
+        },
+        list(attempt.source_refs),
+        targets,
+    )
+
+
 def _github_truth_details(
     path: str | Path | None,
     *,
@@ -626,6 +690,7 @@ def _summary(
     room_replay: Mapping[str, object],
     lane_dag: Mapping[str, object],
     trace: Mapping[str, object],
+    speaker: Mapping[str, object],
     readiness: Mapping[str, object],
 ) -> str:
     return (
@@ -633,6 +698,7 @@ def _summary(
         f"{_int(room_replay.get('event_count'))} room event(s), "
         f"{_int(lane_dag.get('lane_contract_count'))} lane contract(s), "
         f"{_int(trace.get('trace_anchor_count'))} MemoryOS trace anchor(s); "
+        f"speaker attempt is {_text(speaker.get('status')) or 'not_provided'}; "
         f"release readiness is {_text(readiness.get('decision')) or 'not_evaluated'}."
     )
 

@@ -590,6 +590,7 @@ def test_adapter_god_room_control_actions_use_chat_api_contracts(
         "repo_id": "iiyazu/Cross-Muse",
         "workspace_id": "xmuse",
     }
+    speaker_payload = {"after_event_id": "evt-tui-1"}
 
     assert adapter.ensure_god_room("conv-1")["source_authority"] == (
         "god_room_event_store"
@@ -613,6 +614,10 @@ def test_adapter_god_room_control_actions_use_chat_api_contracts(
         "conv-1",
         memory_payload,
     )["url"].endswith("/god-room/memoryos-plan")
+    assert adapter.build_god_room_speaker_attempt(
+        "conv-1",
+        speaker_payload,
+    )["url"].endswith("/god-room/speaker-attempt")
 
     expected_headers = {
         "X-XMUSE-API-Key": "secret",
@@ -658,6 +663,14 @@ def test_adapter_god_room_control_actions_use_chat_api_contracts(
                 "god-room/memoryos-plan"
             ),
             "json": memory_payload,
+            "headers": expected_headers,
+        },
+        {
+            "url": (
+                "http://chat-api/api/chat/conversations/conv-1/"
+                "god-room/speaker-attempt"
+            ),
+            "json": speaker_payload,
             "headers": expected_headers,
         },
     ]

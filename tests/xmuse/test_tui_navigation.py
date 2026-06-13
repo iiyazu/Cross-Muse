@@ -470,10 +470,28 @@ async def test_chat_screen_room_commands_call_god_room_contracts(
             },
         }
 
+    def _build_god_room_speaker_attempt(conv_id: str, payload: dict):
+        calls.append(("speaker-attempt", conv_id, payload))
+        return {
+            "source_authority": "god_room_event_store+selected_god_runtime_continuity",
+            "speaker_attempt": {
+                "status": "ready_for_provider_attempt",
+                "target_participant_id": "participant-review",
+                "provider_session_id": "provider-thread-review",
+            },
+            "artifacts": {
+                "speaker_attempt": (
+                    "reports/god_room_speaker_attempts/"
+                    "conv-user.evt-room-1.speaker-attempt.json"
+                )
+            },
+        }
+
     app.adapter.ensure_god_room = _ensure_god_room
     app.adapter.append_god_room_event = _append_god_room_event
     app.adapter.freeze_god_room_blueprint = _freeze_god_room_blueprint
     app.adapter.build_god_room_memoryos_plan = _build_god_room_memoryos_plan
+    app.adapter.build_god_room_speaker_attempt = _build_god_room_speaker_attempt
 
     async with app.run_test() as pilot:
         appended = []
@@ -493,6 +511,7 @@ async def test_chat_screen_room_commands_call_god_room_contracts(
                 "/room memoryos-plan graph_id=graph-room repo_id=iiyazu/Cross-Muse "
                 "workspace_id=xmuse context_budget=1024"
             ),
+            "/room speaker-attempt after_event_id=evt-room-1",
         ):
             input_widget.value = command
             input_widget.post_message(input_widget.Submitted(input_widget, input_widget.value))
@@ -528,15 +547,21 @@ async def test_chat_screen_room_commands_call_god_room_contracts(
                 "context_budget": 1024,
             },
         ),
+        (
+            "speaker-attempt",
+            "conv-user",
+            {"after_event_id": "evt-room-1"},
+        ),
     ]
-    assert "GOD room action: memoryos-plan" in appended[-1]["content"]
-    assert "authority=god_room_memoryos_plan_contract" in appended[-1]["content"]
+    assert "GOD room action: speaker-attempt" in appended[-1]["content"]
+    assert "speaker_attempt=ready_for_provider_attempt" in appended[-1]["content"]
     events = app.adapter.list_tui_command_events("conv-user")
     assert [event["command"] for event in events] == [
         "/room ensure",
         "/room event",
         "/room freeze",
         "/room memoryos-plan",
+        "/room speaker-attempt",
     ]
     assert {event["read_surface_authority"] for event in events} == {
         "god_room_chat_api"
@@ -1002,6 +1027,7 @@ async def test_chat_screen_release_pack_accepts_god_room_runtime_payload(
             "room_lane_dag=god-room/lane-dag.json "
             "room_memory=god-room/memory-trace.json "
             "room_tui=god-room/tui-projection.json "
+            "room_speaker_attempt=god-room/speaker-attempt.json "
             "room_closure_output=god-room/closure-evidence.json"
         )
         input_widget.post_message(input_widget.Submitted(input_widget, input_widget.value))
@@ -1018,6 +1044,7 @@ async def test_chat_screen_release_pack_accepts_god_room_runtime_payload(
                 "god_room_lane_dag": "god-room/lane-dag.json",
                 "god_room_memory_trace": "god-room/memory-trace.json",
                 "god_room_tui_projection": "god-room/tui-projection.json",
+                "god_room_speaker_attempt": "god-room/speaker-attempt.json",
                 "god_room_runtime_closure_evidence_output": (
                     "god-room/closure-evidence.json"
                 ),

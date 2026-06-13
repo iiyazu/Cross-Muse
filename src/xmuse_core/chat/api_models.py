@@ -289,6 +289,15 @@ class GodRoomMemoryPlanRequest(BaseModel):
         return _strip_required_string(value)
 
 
+class GodRoomSpeakerAttemptRequest(BaseModel):
+    after_event_id: str | None = Field(default=None, min_length=1)
+
+    @field_validator("after_event_id", mode="before")
+    @classmethod
+    def _strip_optional_text(cls, value: object) -> object:
+        return _strip_optional_string(value)
+
+
 class RoleTemplateCreate(BaseModel):
     slug: str = Field(min_length=1)
     display_name: str = Field(min_length=1)

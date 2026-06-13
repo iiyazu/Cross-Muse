@@ -124,6 +124,39 @@ def test_god_room_runtime_closure_evidence_indexes_contracts_without_merge_upgra
             },
         },
     )
+    speaker_attempt_path = _write_json(
+        tmp_path / "speaker-attempt.json",
+        {
+            "schema_version": "xmuse.god_room_speaker_attempt.v1",
+            "status": "ready_for_provider_attempt",
+            "proof_level": "contract_proof",
+            "source_authority": (
+                "god_room_event_store+selected_god_runtime_continuity"
+            ),
+            "conversation_id": "conv-1",
+            "room_id": "room-1",
+            "selected_event_id": "evt-propose",
+            "decision_reason": "round_robin",
+            "target_participant_id": "part-review",
+            "target_god_id": "god-review",
+            "provider_profile_ref": "codex.god",
+            "provider_session_id": "provider-thread-review",
+            "provider_session_kind": "provider_thread",
+            "provider_binding_status": "active",
+            "effective_session_status": "provider_bound_active",
+            "blocked_reason": None,
+            "source_refs": [
+                "god-room-event:evt-propose",
+                "god_cli_selection:conv-1",
+                "provider_session:provider-thread-review",
+            ],
+            "provider_attempt": {
+                "prompt_contract": "god_room_next_speaker",
+                "delivery_mode": "provider_session_resume",
+                "requires_fresh_provider_response": True,
+            },
+        },
+    )
     github_path = _write_json(
         tmp_path / "github-truth.json",
         {
@@ -151,6 +184,7 @@ def test_god_room_runtime_closure_evidence_indexes_contracts_without_merge_upgra
         lane_dag_artifact=lane_dag_path,
         memory_trace_artifact=trace_path,
         tui_projection_artifact=tui_path,
+        speaker_attempt_artifact=speaker_attempt_path,
         github_truth_artifact=github_path,
         release_readiness_artifact=readiness_path,
     )
@@ -169,6 +203,10 @@ def test_god_room_runtime_closure_evidence_indexes_contracts_without_merge_upgra
     assert details["lane_dag"]["refactor_required_count"] == 1
     assert details["memory_trace"]["trace_anchor_count"] == 1
     assert details["tui_projection"]["lane_contract_count"] == 1
+    assert details["speaker_attempt"]["status"] == "ready_for_provider_attempt"
+    assert details["speaker_attempt"]["provider_session_id"] == (
+        "provider-thread-review"
+    )
     assert details["github_truth"]["merged"] is False
     assert details["github_truth"]["can_emit_pr_merged"] is False
     assert details["github_truth"]["merge_truth"] == "missing"

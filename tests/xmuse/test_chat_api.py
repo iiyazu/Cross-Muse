@@ -9,6 +9,7 @@ from xmuse_core.agents.god_session_registry import GodSessionRegistry
 from xmuse_core.chat.execution_cards import ChatExecutionCardEmitter
 from xmuse_core.chat.inbox_store import ChatInboxStore
 from xmuse_core.chat.store import ChatStore
+from xmuse_core.providers.god_cli_selection_store import GodCliSelectionStore
 from xmuse_core.structuring.blueprint_execution.approval_events import (
     build_blueprint_approval_dedupe_key,
 )
@@ -357,6 +358,126 @@ def test_chat_api_god_room_persists_events_and_replays_turns(
     assert snapshot["schema_version"] == "xmuse.god_room_snapshot.v1"
     assert snapshot["source_authority"] == "god_room_event_store"
     assert snapshot["events"][0]["event_id"] == "evt-propose"
+
+
+def test_chat_api_god_room_speaker_attempt_uses_selected_provider_bound_god(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    conversation = client.post(
+        "/api/chat/conversations",
+        json={"title": "GOD room speaker attempt"},
+    ).json()
+    conv_id = conversation["id"]
+    room = client.post(f"/api/chat/conversations/{conv_id}/god-room").json()["room"]
+    participants = {participant["role"]: participant for participant in room["participants"]}
+    GodCliSelectionStore(tmp_path / "god_cli_selections.json").record_selection(
+        conversation_id=conv_id,
+        cli_id="codex.god",
+        selected_by="operator",
+        audit_id="audit-select-speaker",
+        idempotency_key="select-speaker",
+    )
+    session_registry = GodSessionRegistry(tmp_path / "god_sessions.json")
+    session = session_registry.find_by_conversation_participant(
+        conv_id,
+        participants["review"]["participant_id"],
+    )
+    session_registry.update_provider_binding(
+        session.god_session_id,
+        provider_session_id="provider-thread-review",
+        provider_session_kind="provider_thread",
+        provider_binding_status="active",
+        provider_binding_failure_reason=None,
+    )
+    event = {
+        "event_id": "evt-propose",
+        "room_id": room["room_id"],
+        "conversation_id": conv_id,
+        "participant_id": participants["architect"]["participant_id"],
+        "god_id": participants["architect"]["god_id"],
+        "actor_kind": "god",
+        "event_type": "speak",
+        "timestamp_utc": "2026-06-13T10:00:00Z",
+        "content": "I propose routing speaker attempts through selected GOD runtime.",
+        "source_refs": [f"conversation:{conv_id}"],
+        "cli_id": participants["architect"]["cli_id"],
+        "provider_profile": "codex.god",
+        "payload": {"body": "I propose routing speaker attempts."},
+    }
+    client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/events",
+        json=event,
+    )
+
+    response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/speaker-attempt",
+        json={"after_event_id": "evt-propose"},
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    attempt = payload["speaker_attempt"]
+    assert attempt["status"] == "ready_for_provider_attempt"
+    assert attempt["proof_level"] == "contract_proof"
+    assert attempt["selected_event_id"] == "evt-propose"
+    assert attempt["target_participant_id"] == participants["review"]["participant_id"]
+    assert attempt["target_god_id"] == participants["review"]["god_id"]
+    assert attempt["provider_profile_ref"] == "codex.god"
+    assert attempt["provider_session_id"] == "provider-thread-review"
+    assert payload["artifacts"]["speaker_attempt"].startswith(
+        "reports/god_room_speaker_attempts/"
+    )
+    assert (
+        len(
+            client.get(f"/api/chat/conversations/{conv_id}/god-room")
+            .json()["room"]["events"]
+        )
+        == 1
+    )
+
+
+def test_chat_api_god_room_speaker_attempt_reports_manual_gap_without_selection(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    conversation = client.post(
+        "/api/chat/conversations",
+        json={"title": "GOD room speaker gap"},
+    ).json()
+    conv_id = conversation["id"]
+    room = client.post(f"/api/chat/conversations/{conv_id}/god-room").json()["room"]
+    participants = {participant["role"]: participant for participant in room["participants"]}
+    client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/events",
+        json={
+            "event_id": "evt-propose",
+            "room_id": room["room_id"],
+            "conversation_id": conv_id,
+            "participant_id": participants["architect"]["participant_id"],
+            "god_id": participants["architect"]["god_id"],
+            "actor_kind": "god",
+            "event_type": "speak",
+            "timestamp_utc": "2026-06-13T10:00:00Z",
+            "content": "I propose asking the review GOD to speak next.",
+            "source_refs": [f"conversation:{conv_id}"],
+            "cli_id": participants["architect"]["cli_id"],
+            "provider_profile": "codex.god",
+            "payload": {"body": "I propose asking the review GOD to speak next."},
+        },
+    )
+
+    response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/speaker-attempt",
+        json={"after_event_id": "evt-propose"},
+    )
+
+    assert response.status_code == 201
+    attempt = response.json()["speaker_attempt"]
+    assert attempt["status"] == "manual_gap"
+    assert attempt["proof_level"] == "manual_gap"
+    assert attempt["target_participant_id"] == participants["review"]["participant_id"]
+    assert attempt["blocked_reason"] == "selected GOD CLI unavailable"
 
 
 def test_chat_api_god_room_rejects_unknown_target_without_writing(

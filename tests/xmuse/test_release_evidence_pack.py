@@ -1358,6 +1358,30 @@ def test_release_evidence_pack_converts_god_room_runtime_closure_into_replay_sec
             "memory": {"trace_anchors": [{"trace_id": "trace-1"}]},
         },
     )
+    speaker_attempt = tmp_path / "speaker-attempt.json"
+    _write_json(
+        speaker_attempt,
+        {
+            "schema_version": "xmuse.god_room_speaker_attempt.v1",
+            "status": "ready_for_provider_attempt",
+            "proof_level": "contract_proof",
+            "source_authority": (
+                "god_room_event_store+selected_god_runtime_continuity"
+            ),
+            "conversation_id": "conv-1",
+            "room_id": "room-1",
+            "selected_event_id": "evt-propose",
+            "decision_reason": "round_robin",
+            "target_participant_id": "part-review",
+            "target_god_id": "god-review",
+            "provider_profile_ref": "codex.god",
+            "provider_session_id": "provider-thread-review",
+            "source_refs": [
+                "god-room-event:evt-propose",
+                "provider_session:provider-thread-review",
+            ],
+        },
+    )
 
     pack = capture_release_evidence_pack(
         artifacts_dir=tmp_path / "artifacts",
@@ -1369,6 +1393,7 @@ def test_release_evidence_pack_converts_god_room_runtime_closure_into_replay_sec
         god_room_lane_dag=lane_dag,
         god_room_memory_trace=trace,
         god_room_tui_projection=tui,
+        god_room_speaker_attempt=speaker_attempt,
     )
 
     replay = json.loads(Path(pack["overnight_replay_bundle"]).read_text(encoding="utf-8"))
@@ -1384,6 +1409,9 @@ def test_release_evidence_pack_converts_god_room_runtime_closure_into_replay_sec
     assert closure["details"]["god_room_runtime_closure"]["lane_dag"][
         "lane_contract_count"
     ] == 1
+    assert closure["details"]["god_room_runtime_closure"]["speaker_attempt"][
+        "status"
+    ] == "ready_for_provider_attempt"
 
 
 def test_release_evidence_pack_rejects_ambiguous_supervisor_sources(

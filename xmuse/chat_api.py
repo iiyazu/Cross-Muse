@@ -14,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
+from xmuse_core.agents.god_session_registry import GodSessionRegistry
 from xmuse_core.chat.api_models import (
     BlueprintFreezeRequest,
     BootstrapApplyCreate,
@@ -32,6 +33,7 @@ from xmuse_core.chat.api_models import (
     GodRoomLaneDagRequest,
     GodRoomLaneRecoveryRequest,
     GodRoomMemoryPlanRequest,
+    GodRoomSpeakerAttemptRequest,
     MessageCreate,
     OperatorActionCreate,
     ParticipantInit,
@@ -55,6 +57,7 @@ from xmuse_core.chat.god_room_event_store import (
     GodRoomMembershipError,
 )
 from xmuse_core.chat.god_room_runtime import GodRoomEventV1, GodRoomParticipant
+from xmuse_core.chat.god_room_speaker_runtime import build_god_room_speaker_attempt
 from xmuse_core.chat.health_cards import build_run_health_chat_card
 from xmuse_core.chat.inbox_store import ChatInboxStore
 from xmuse_core.chat.participant_store import (
@@ -73,6 +76,9 @@ from xmuse_core.integrations.god_room_memoryos_plan import (
     build_god_room_memoryos_plan,
 )
 from xmuse_core.integrations.memoryos_lite_interop import live_memoryos_lite_enabled
+from xmuse_core.platform.god_runtime_continuity import (
+    build_selected_god_runtime_continuity_view,
+)
 from xmuse_core.platform.http_auth import (
     authorize_chat_api_write,
     require_production_write_auth_token,
@@ -246,6 +252,10 @@ def _god_cli_registration_store(base_dir: Path) -> GodCliRegistrationStore:
 
 def _god_cli_selection_store(base_dir: Path) -> GodCliSelectionStore:
     return GodCliSelectionStore(base_dir / "god_cli_selections.json")
+
+
+def _god_session_registry(base_dir: Path) -> GodSessionRegistry:
+    return GodSessionRegistry(base_dir / "god_sessions.json")
 
 
 def _operator_actor_id(request: Request) -> str:
@@ -1026,6 +1036,57 @@ def _build_god_room_memoryos_plan(
     }
 
 
+def _build_god_room_speaker_attempt_from_runtime(
+    base_dir: Path,
+    *,
+    conversation_id: str,
+    request: GodRoomSpeakerAttemptRequest,
+) -> dict[str, object]:
+    if not _conversation_exists(_store(base_dir), conversation_id):
+        raise HTTPException(status_code=404, detail="conversation not found")
+    event_store = _god_room_event_store(base_dir)
+    room_id = _default_god_room_id(conversation_id)
+    try:
+        snapshot = event_store.load_room(room_id)
+    except GodRoomMembershipError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "god_room_not_found", "message": str(exc)},
+        ) from exc
+    god_cli_registry = build_default_god_cli_registry(
+        extra_registrations=_god_cli_registration_store(base_dir).list_registrations()
+    )
+    runtime_continuity = build_selected_god_runtime_continuity_view(
+        conversation_id=conversation_id,
+        selections=_god_cli_selection_store(base_dir).list_records(),
+        sessions=_god_session_registry(base_dir).list(),
+        god_cli_registry=god_cli_registry,
+    )
+    attempt = build_god_room_speaker_attempt(
+        conversation_id=conversation_id,
+        room_id=room_id,
+        participants=snapshot.participants,
+        events=snapshot.events,
+        runtime_continuity=runtime_continuity,
+        after_event_id=request.after_event_id,
+    )
+    attempt_payload = attempt.model_dump(mode="json")
+    artifact_path = _write_god_room_speaker_attempt_artifact(
+        base_dir,
+        conversation_id=conversation_id,
+        after_event_id=request.after_event_id,
+        payload=attempt_payload,
+    )
+    return {
+        "source_authority": attempt.source_authority,
+        "conversation_id": conversation_id,
+        "room_id": room_id,
+        "speaker_attempt": attempt_payload,
+        "runtime_continuity": runtime_continuity,
+        "artifacts": {"speaker_attempt": str(artifact_path.relative_to(base_dir))},
+    }
+
+
 def _load_lane_dag_plan(base_dir: Path, graph_id: str) -> BlueprintLaneDagPlan:
     try:
         path = _lane_dag_artifact_path(base_dir, graph_id)
@@ -1219,6 +1280,31 @@ def _write_god_room_memoryos_plan_artifact(
         / "reports"
         / "god_room_memoryos"
         / f"{_artifact_path_id(graph_id)}.memoryos-plan.json"
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def _write_god_room_speaker_attempt_artifact(
+    base_dir: Path,
+    *,
+    conversation_id: str,
+    after_event_id: str | None,
+    payload: dict[str, object],
+) -> Path:
+    event_id = after_event_id or "latest"
+    path = (
+        base_dir
+        / "reports"
+        / "god_room_speaker_attempts"
+        / (
+            f"{_artifact_safe_id(conversation_id)}."
+            f"{_artifact_safe_id(event_id)}.speaker-attempt.json"
+        )
     )
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -2070,6 +2156,20 @@ def create_app(
                 status_code=404,
                 detail={"code": "god_room_not_found", "message": str(exc)},
             ) from exc
+
+    @app.post(
+        "/api/chat/conversations/{conversation_id}/god-room/speaker-attempt",
+        status_code=status.HTTP_201_CREATED,
+    )
+    def build_god_room_speaker_attempt(
+        conversation_id: str,
+        request: GodRoomSpeakerAttemptRequest,
+    ) -> dict[str, object]:
+        return _build_god_room_speaker_attempt_from_runtime(
+            root,
+            conversation_id=conversation_id,
+            request=request,
+        )
 
     @app.post(
         "/api/chat/conversations/{conversation_id}/god-room/freeze-blueprint",

@@ -590,6 +590,18 @@ class XmuseAdapter:
             payload=dict(payload),
         )
 
+    def build_god_room_speaker_attempt(
+        self,
+        conv_id: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        return self._post_god_room_contract(
+            action="build_god_room_speaker_attempt",
+            conv_id=conv_id,
+            suffix="/speaker-attempt",
+            payload=dict(payload),
+        )
+
     def _post_god_room_contract(
         self,
         *,
