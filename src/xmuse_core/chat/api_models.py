@@ -226,6 +226,16 @@ class BlueprintFreezeRequest(BaseModel):
         return _strip_required_string(value)
 
 
+class GodRoomBlueprintFreezeRequest(BaseModel):
+    blueprint_id: str = Field(min_length=1)
+    revision: int = Field(default=1, ge=1)
+
+    @field_validator("blueprint_id", mode="before")
+    @classmethod
+    def _strip_required_text(cls, value: object) -> object:
+        return _strip_required_string(value)
+
+
 class RoleTemplateCreate(BaseModel):
     slug: str = Field(min_length=1)
     display_name: str = Field(min_length=1)

@@ -28,6 +28,7 @@ from xmuse_core.chat.api_models import (
     DispatchClaimRequest,
     DispatchDispatchedRequest,
     DispatchFailedRequest,
+    GodRoomBlueprintFreezeRequest,
     MessageCreate,
     OperatorActionCreate,
     ParticipantInit,
@@ -98,6 +99,10 @@ from xmuse_core.structuring.feature_plan_store import (
     build_feature_plan_proposal,
     read_approved_mission_blueprint,
     save_approved_feature_plan_artifacts,
+)
+from xmuse_core.structuring.god_room_blueprint_freeze import (
+    GodRoomBlueprintFreezeStatus,
+    compile_blueprint_freeze_from_god_room_events,
 )
 from xmuse_core.structuring.graph_store import LaneGraphStore
 from xmuse_core.structuring.mission_blueprint_v1 import (
@@ -470,6 +475,67 @@ def _blueprint_resolution_content(
     }
 
 
+def _persist_blueprint_resolution(
+    base_dir: Path,
+    *,
+    conversation_id: str,
+    blueprint: MissionBlueprintV1,
+    decision_payload: dict[str, Any],
+    author: str,
+    approval_mode: str,
+    envelope_type: str,
+    target_ref: str,
+    content_extra: dict[str, Any] | None = None,
+    envelope_extra: dict[str, Any] | None = None,
+) -> dict[str, object]:
+    store = _store(base_dir)
+    content = _blueprint_resolution_content(blueprint, decision_payload)
+    if content_extra:
+        content.update(content_extra)
+    proposal = store.create_proposal(
+        conversation_id=conversation_id,
+        author=author,
+        proposal_type="mission_blueprint",
+        content=json.dumps(content, ensure_ascii=False, sort_keys=True),
+        references=blueprint.source_refs,
+    )
+    resolution = store.approve_proposal(
+        proposal.id,
+        approved_by=blueprint.approved_by,
+        approval_mode=approval_mode,
+        goal_summary=blueprint.goal,
+        content=content,
+    )
+    resolution_payload = resolution.model_dump(mode="json")
+    _append_resolution_read_model(base_dir, resolution_payload)
+    produce_blueprint_approval_event(base_dir, resolution)
+    envelope_json: dict[str, Any] = {
+        "type": envelope_type,
+        "target_ref": target_ref,
+        "proposal_id": proposal.id,
+        "resolution_id": resolution.id,
+        "blueprint": blueprint.model_dump(mode="json"),
+        "decision": decision_payload,
+    }
+    if envelope_extra:
+        envelope_json.update(envelope_extra)
+    message = store.add_message(
+        conversation_id=conversation_id,
+        author=author,
+        role="assistant",
+        content=f"Frozen mission blueprint: {blueprint.goal}",
+        envelope_type=envelope_type,
+        envelope_json=envelope_json,
+    )
+    return {
+        "decision": decision_payload,
+        "blueprint": blueprint.model_dump(mode="json"),
+        "proposal": proposal.model_dump(mode="json"),
+        "resolution": resolution_payload,
+        "message": message.model_dump(mode="json"),
+    }
+
+
 def _operator_freeze_blueprint(
     base_dir: Path,
     request: OperatorActionRequest,
@@ -552,46 +618,16 @@ def _freeze_blueprint_for_request(
         )
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail=exc.errors()) from exc
-    content = _blueprint_resolution_content(blueprint, decision_payload)
-    proposal = store.create_proposal(
+    return _persist_blueprint_resolution(
+        base_dir,
         conversation_id=conversation_id,
         author="xmuse-deliberation",
-        proposal_type="mission_blueprint",
-        content=json.dumps(content, ensure_ascii=False, sort_keys=True),
-        references=blueprint.source_refs,
-    )
-    resolution = store.approve_proposal(
-        proposal.id,
-        approved_by=blueprint.approved_by,
         approval_mode="deliberation_freeze",
-        goal_summary=blueprint.goal,
-        content=content,
-    )
-    resolution_payload = resolution.model_dump(mode="json")
-    _append_resolution_read_model(base_dir, resolution_payload)
-    produce_blueprint_approval_event(base_dir, resolution)
-    message = store.add_message(
-        conversation_id=conversation_id,
-        author="xmuse-deliberation",
-        role="assistant",
-        content=f"Frozen mission blueprint: {blueprint.goal}",
         envelope_type="blueprint_freeze",
-        envelope_json={
-            "type": "blueprint_freeze",
-            "target_ref": request.target_ref,
-            "proposal_id": proposal.id,
-            "resolution_id": resolution.id,
-            "blueprint": blueprint.model_dump(mode="json"),
-            "decision": decision_payload,
-        },
+        target_ref=request.target_ref,
+        blueprint=blueprint,
+        decision_payload=decision_payload,
     )
-    return {
-        "decision": decision_payload,
-        "blueprint": blueprint.model_dump(mode="json"),
-        "proposal": proposal.model_dump(mode="json"),
-        "resolution": resolution_payload,
-        "message": message.model_dump(mode="json"),
-    }
 
 
 def _dedupe_text(values: list[str]) -> list[str]:
@@ -694,6 +730,89 @@ def _god_room_payload(
         "events": [event.model_dump(mode="json") for event in snapshot.events],
         "replay": replay.model_dump(mode="json"),
     }
+
+
+def _freeze_blueprint_from_god_room(
+    base_dir: Path,
+    *,
+    conversation_id: str,
+    request: GodRoomBlueprintFreezeRequest,
+) -> dict[str, object]:
+    chat_store = _store(base_dir)
+    if not _conversation_exists(chat_store, conversation_id):
+        raise HTTPException(status_code=404, detail="conversation not found")
+    event_store = _god_room_event_store(base_dir)
+    room_id = _default_god_room_id(conversation_id)
+    try:
+        room = event_store.load_room(room_id)
+    except GodRoomMembershipError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "god_room_not_found", "message": str(exc)},
+        ) from exc
+    try:
+        artifact = compile_blueprint_freeze_from_god_room_events(
+            blueprint_id=request.blueprint_id,
+            revision=request.revision,
+            events=room.events,
+        )
+    except (ValidationError, ValueError) as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "god_room_blueprint_freeze_invalid",
+                "message": str(exc),
+                "source_authority": "god_room_event_store",
+                "room_id": room_id,
+            },
+        ) from exc
+    artifact_payload = artifact.model_dump(mode="json")
+    if (
+        artifact.status is not GodRoomBlueprintFreezeStatus.FROZEN
+        or artifact.blueprint is None
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "god_room_blueprint_freeze_blocked",
+                "source_authority": "god_room_event_store",
+                "room_id": room_id,
+                "artifact": artifact_payload,
+                "blocked_reason": artifact.blocked_reason,
+            },
+        )
+    blueprint = artifact.blueprint
+    target_ref = f"blueprint:{blueprint.blueprint_id}:{blueprint.revision}"
+    decision_payload = {
+        "status": "allowed",
+        "reason": "god_room_freeze_requested",
+        "source_authority": "god_room_event_store",
+        "room_id": room_id,
+        "decision_event_id": artifact.decision_event_id,
+        "source_refs": artifact.source_refs,
+    }
+    result = _persist_blueprint_resolution(
+        base_dir,
+        conversation_id=conversation_id,
+        blueprint=blueprint,
+        decision_payload=decision_payload,
+        author="xmuse-god-room",
+        approval_mode="god_room_blueprint_freeze",
+        envelope_type="god_room_blueprint_freeze",
+        target_ref=target_ref,
+        content_extra={
+            "source_authority": "god_room_event_store",
+            "god_room_blueprint_freeze": artifact_payload,
+        },
+        envelope_extra={
+            "room_id": room_id,
+            "god_room_blueprint_freeze": artifact_payload,
+        },
+    )
+    result["source_authority"] = "god_room_event_store"
+    result["artifact"] = artifact_payload
+    result["room"] = _god_room_payload(event_store, room_id)
+    return result
 
 
 def _default_participant_inits(role_templates: RoleTemplateStore) -> list[ParticipantInit]:
@@ -1513,6 +1632,20 @@ def create_app(
                 status_code=404,
                 detail={"code": "god_room_not_found", "message": str(exc)},
             ) from exc
+
+    @app.post(
+        "/api/chat/conversations/{conversation_id}/god-room/freeze-blueprint",
+        status_code=status.HTTP_201_CREATED,
+    )
+    def freeze_god_room_blueprint(
+        conversation_id: str,
+        request: GodRoomBlueprintFreezeRequest,
+    ) -> dict[str, object]:
+        return _freeze_blueprint_from_god_room(
+            root,
+            conversation_id=conversation_id,
+            request=request,
+        )
 
     @app.get("/api/chat/conversations/{conversation_id}/inspector")
     def inspect_conversation(conversation_id: str) -> dict[str, object]:

@@ -358,6 +358,18 @@ Current implementation status:
 - The compiler is pure contract logic. It does not write lane status, mutate
   chat state, call providers, or make replay/read-model artifacts
   authoritative.
+- `xmuse/chat_api.py` now exposes
+  `POST /api/chat/conversations/{conversation_id}/god-room/freeze-blueprint`.
+  The endpoint compiles a durable `GodRoomEventStore` room snapshot into
+  `xmuse.god_room_blueprint_freeze.v1`; successful freezes are persisted
+  through the existing mission blueprint proposal/resolution/read-model path
+  with `approval_mode = god_room_blueprint_freeze`.
+- Unresolved challenges, missing freeze events, or invalid transcript-derived
+  blueprint fields return `409` with a `manual_gap`/invalid artifact or detail.
+  The blocked path does not write a mission blueprint card, TUI projection,
+  lane status, or `feature_lanes.json`.
+- This runtime action is contract/store proof. It is not live provider proof,
+  not MemoryOS live proof, and not GitHub merge truth.
 
 ## S4 - Feature/LaneDAG Runtime Contracts
 

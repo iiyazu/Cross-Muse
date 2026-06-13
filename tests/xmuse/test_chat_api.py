@@ -402,6 +402,197 @@ def test_chat_api_god_room_rejects_unknown_target_without_writing(
     assert read_response.json()["room"]["events"] == []
 
 
+def test_chat_api_god_room_freeze_blueprint_persists_resolution_from_room_events(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    conversation = client.post(
+        "/api/chat/conversations",
+        json={"title": "GOD room blueprint freeze"},
+    ).json()
+    conv_id = conversation["id"]
+    room = client.post(f"/api/chat/conversations/{conv_id}/god-room").json()["room"]
+    participants = {participant["role"]: participant for participant in room["participants"]}
+
+    for event in [
+        {
+            "event_id": "evt-propose",
+            "room_id": room["room_id"],
+            "conversation_id": conv_id,
+            "participant_id": participants["architect"]["participant_id"],
+            "god_id": participants["architect"]["god_id"],
+            "actor_kind": "god",
+            "event_type": "speak",
+            "timestamp_utc": "2026-06-13T10:00:00Z",
+            "content": "Build the GOD room runtime from durable events.",
+            "source_refs": [f"conversation:{conv_id}", "message:evt-propose"],
+            "cli_id": participants["architect"]["cli_id"],
+            "provider_profile": "codex",
+            "payload": {
+                "goal": "Build the GOD room runtime from durable events.",
+                "scope": ["GOD room runtime action", "Blueprint freeze artifact"],
+                "acceptance_contracts": [
+                    "Durable GOD room snapshot compiles to frozen blueprint."
+                ],
+                "assumptions": ["Provider responses may be unavailable in CI."],
+                "rejected_alternatives": [
+                    "Let the TUI mutate blueprint state directly."
+                ],
+            },
+        },
+        {
+            "event_id": "evt-freeze",
+            "room_id": room["room_id"],
+            "conversation_id": conv_id,
+            "participant_id": participants["review"]["participant_id"],
+            "god_id": participants["review"]["god_id"],
+            "actor_kind": "god",
+            "event_type": "freeze_requested",
+            "timestamp_utc": "2026-06-13T10:03:00Z",
+            "content": "Freeze this GOD room blueprint.",
+            "source_refs": [f"conversation:{conv_id}", "message:evt-freeze"],
+            "causal_parent_id": "evt-propose",
+            "cli_id": participants["review"]["cli_id"],
+            "provider_profile": "codex",
+            "payload": {
+                "freeze_target_ref": "blueprint:bp-god-room:1",
+                "goal": "Build the GOD room runtime from durable events.",
+                "scope": ["GOD room runtime action", "Blueprint freeze artifact"],
+                "constraints": ["Use durable GOD room snapshot authority."],
+                "non_goals": ["Do not claim pr_merged."],
+                "acceptance_contracts": [
+                    "Durable GOD room snapshot compiles to frozen blueprint."
+                ],
+                "repo_areas": ["xmuse/chat_api.py", "src/xmuse_core/chat"],
+            },
+        },
+    ]:
+        assert client.post(
+            f"/api/chat/conversations/{conv_id}/god-room/events",
+            json=event,
+        ).status_code in {200, 201}
+
+    response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/freeze-blueprint",
+        json={"blueprint_id": "bp-god-room", "revision": 1},
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["source_authority"] == "god_room_event_store"
+    assert payload["artifact"]["version"] == "xmuse.god_room_blueprint_freeze.v1"
+    assert payload["artifact"]["status"] == "frozen"
+    assert payload["artifact"]["decision_event_id"] == "evt-freeze"
+    assert payload["blueprint"]["blueprint_id"] == "bp-god-room"
+    assert payload["blueprint"]["status"] == "frozen"
+    assert payload["blueprint"]["approved_by"] == [participants["review"]["god_id"]]
+    assert payload["resolution"]["approval_mode"] == "god_room_blueprint_freeze"
+
+    stored = ChatStore(tmp_path / "chat.db").get_resolution(payload["resolution"]["id"])
+    assert stored.content["blueprint_v1"]["source_refs"] == payload["blueprint"]["source_refs"]
+    assert stored.content["god_room_blueprint_freeze"]["decision_event_id"] == "evt-freeze"
+
+    timeline = client.get(f"/api/chat/conversations/{conv_id}/messages").json()
+    card = next(card for card in timeline["cards"] if card["card_type"] == "mission_blueprint")
+    assert card["source_id"] == payload["resolution"]["id"]
+
+    read_model = json.loads((tmp_path / "read_models" / "resolutions.json").read_text())
+    assert read_model["resolutions"][-1]["resolution_id"] == payload["resolution"]["id"]
+
+
+def test_chat_api_god_room_freeze_blueprint_blocks_unresolved_challenge(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    conversation = client.post(
+        "/api/chat/conversations",
+        json={"title": "GOD room blocked freeze"},
+    ).json()
+    conv_id = conversation["id"]
+    room = client.post(f"/api/chat/conversations/{conv_id}/god-room").json()["room"]
+    participants = {participant["role"]: participant for participant in room["participants"]}
+
+    for event in [
+        {
+            "event_id": "evt-propose",
+            "room_id": room["room_id"],
+            "conversation_id": conv_id,
+            "participant_id": participants["architect"]["participant_id"],
+            "god_id": participants["architect"]["god_id"],
+            "actor_kind": "god",
+            "event_type": "speak",
+            "timestamp_utc": "2026-06-13T10:00:00Z",
+            "content": "Freeze a risky blueprint.",
+            "source_refs": [f"conversation:{conv_id}", "message:evt-propose"],
+            "cli_id": participants["architect"]["cli_id"],
+            "provider_profile": "codex",
+            "payload": {
+                "goal": "Freeze a risky blueprint.",
+                "scope": ["GOD room runtime action"],
+                "acceptance_contracts": ["All challenges are resolved."],
+            },
+        },
+        {
+            "event_id": "evt-challenge",
+            "room_id": room["room_id"],
+            "conversation_id": conv_id,
+            "participant_id": participants["review"]["participant_id"],
+            "god_id": participants["review"]["god_id"],
+            "actor_kind": "god",
+            "event_type": "challenge",
+            "timestamp_utc": "2026-06-13T10:01:00Z",
+            "content": "The freeze lacks evidence.",
+            "target_participant_ids": [participants["architect"]["participant_id"]],
+            "source_refs": [f"conversation:{conv_id}", "message:evt-challenge"],
+            "causal_parent_id": "evt-propose",
+            "cli_id": participants["review"]["cli_id"],
+            "provider_profile": "codex",
+            "payload": {
+                "conflict": "The freeze lacks evidence.",
+                "resolved": False,
+            },
+        },
+        {
+            "event_id": "evt-freeze",
+            "room_id": room["room_id"],
+            "conversation_id": conv_id,
+            "participant_id": participants["execute"]["participant_id"],
+            "god_id": participants["execute"]["god_id"],
+            "actor_kind": "god",
+            "event_type": "freeze_requested",
+            "timestamp_utc": "2026-06-13T10:03:00Z",
+            "content": "Freeze despite unresolved challenge.",
+            "source_refs": [f"conversation:{conv_id}", "message:evt-freeze"],
+            "causal_parent_id": "evt-propose",
+            "cli_id": participants["execute"]["cli_id"],
+            "provider_profile": "codex",
+            "payload": {
+                "freeze_target_ref": "blueprint:bp-blocked:1",
+                "goal": "Freeze a risky blueprint.",
+                "scope": ["GOD room runtime action"],
+                "acceptance_contracts": ["All challenges are resolved."],
+            },
+        },
+    ]:
+        assert client.post(
+            f"/api/chat/conversations/{conv_id}/god-room/events",
+            json=event,
+        ).status_code in {200, 201}
+
+    response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/freeze-blueprint",
+        json={"blueprint_id": "bp-blocked", "revision": 1},
+    )
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["code"] == "god_room_blueprint_freeze_blocked"
+    assert detail["artifact"]["status"] == "manual_gap"
+    assert detail["artifact"]["blockers"] == ["unresolved challenge evt-challenge"]
+    timeline = client.get(f"/api/chat/conversations/{conv_id}/messages").json()
+    assert not any(card["card_type"] == "mission_blueprint" for card in timeline["cards"])
+
+
 def test_chat_api_operator_action_denies_missing_capability(tmp_path: Path) -> None:
     client = _client(tmp_path)
     conversation = client.post("/api/chat/conversations", json={"title": "Mission"}).json()

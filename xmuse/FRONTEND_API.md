@@ -703,6 +703,7 @@ WebSocket、worklist endpoint、proposal narrow/reject endpoint 仍未落地。
 | `GET /api/chat/conversations/{conversation_id}/god-room` | 读取 room participants、events 和 replay |
 | `POST /api/chat/conversations/{conversation_id}/god-room/events` | append `xmuse.god_room_event.v1` event，返回 append status 和最新 replay |
 | `GET /api/chat/conversations/{conversation_id}/god-room/snapshot` | 返回 `xmuse.god_room_snapshot.v1` replay artifact |
+| `POST /api/chat/conversations/{conversation_id}/god-room/freeze-blueprint` | 从 durable room events 编译 `xmuse.god_room_blueprint_freeze.v1`，成功时写入 mission blueprint proposal/resolution/read model |
 
 事件写入请求体使用 `GodRoomEventV1`：
 
@@ -722,10 +723,24 @@ WebSocket、worklist endpoint、proposal narrow/reject endpoint 仍未落地。
 }
 ```
 
+Blueprint freeze 请求体只声明目标 blueprint identity；blueprint 内容来自 durable
+room events，不由前端 projection 提供：
+
+```json
+{
+  "blueprint_id": "bp-god-room",
+  "revision": 1
+}
+```
+
 前端注意：
 
 - `POST /god-room/events` 是 idempotent；重复相同事件返回
   `append_status = "duplicate"`。
+- `POST /god-room/freeze-blueprint` 成功时返回 `source_authority =
+  "god_room_event_store"`、freeze artifact、frozen blueprint、proposal、
+  resolution、message 和最新 room replay；未解 challenge 或缺少 freeze event 时返回
+  `409`，detail 中保留 `manual_gap` artifact，不写 mission blueprint card。
 - unknown participant、unknown target、conversation/room mismatch 和 event id
   conflict 会被后端拒绝，前端不得本地修改 projection 来绕过。
 - `replay.proof_level = "contract_proof"` 只证明 durable replay contract，不是
