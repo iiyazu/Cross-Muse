@@ -46,7 +46,8 @@
 
 以下情况不再继续做局部补丁，应直接重构或替换失败边界:
 
-- 同一测试簇、stage、功能或 runtime path 两次出现同类失败。
+- 同一测试簇、stage、功能或 runtime path 两次出现同类失败；下一步必须是有边界的
+  root-cause/refactor 或 replacement work，而不是第三次同路径 patch。
 - goal-stage harness 或 overnight supervisor 标记 `refactor_required`。
 - demo/local/fake 实现被生产路径依赖，且无法通过小改动满足 production contract。
 - 为了修一个问题需要同时改动多个无关层，说明当前边界已经失效。
@@ -56,6 +57,7 @@
 直接重构要求:
 
 - 先写明失败边界、替代边界、迁移方式和保留的兼容面。
+- 第三次同边界执行必须等上述重构/替换说明和 focused tests 就绪后再开始。
 - 只重构与失败边界直接相关的文件；无关清理另开任务。
 - 用 focused tests 证明新边界行为，再删除或隔离 demo/legacy path。
 - 若旧 path 仍有调用者，放入 adapter/legacy 过渡并写清删除条件。

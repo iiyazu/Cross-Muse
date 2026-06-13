@@ -689,6 +689,48 @@ WebSocket、worklist endpoint、proposal narrow/reject endpoint 仍未落地。
 - 从已有 peer fork 新参与者，支持 prompt delta、inherited refs、model policy、
   feature scope 等字段。
 
+### GOD Room Runtime Endpoints
+
+用途：
+
+- 为 TUI/operator cockpit 提供 durable GOD room 控制面。
+- 后端 authority 是 `god_room_event_store`，不是 TUI/dashboard/read model。
+- 写入接口在启用 Chat API auth 时要求 `chat_god_room` capability。
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /api/chat/conversations/{conversation_id}/god-room` | 创建或确保 conversation-scoped GOD room，并从 active 非 init participants 建 roster |
+| `GET /api/chat/conversations/{conversation_id}/god-room` | 读取 room participants、events 和 replay |
+| `POST /api/chat/conversations/{conversation_id}/god-room/events` | append `xmuse.god_room_event.v1` event，返回 append status 和最新 replay |
+| `GET /api/chat/conversations/{conversation_id}/god-room/snapshot` | 返回 `xmuse.god_room_snapshot.v1` replay artifact |
+
+事件写入请求体使用 `GodRoomEventV1`：
+
+```json
+{
+  "event_id": "evt-propose",
+  "room_id": "god-room:conv-1",
+  "conversation_id": "conv-1",
+  "participant_id": "part-architect",
+  "god_id": "architect-god",
+  "actor_kind": "god",
+  "event_type": "speak",
+  "timestamp_utc": "2026-06-13T10:00:00Z",
+  "content": "I propose the next production slice.",
+  "source_refs": ["conversation:conv-1"],
+  "payload": {"body": "I propose the next production slice."}
+}
+```
+
+前端注意：
+
+- `POST /god-room/events` 是 idempotent；重复相同事件返回
+  `append_status = "duplicate"`。
+- unknown participant、unknown target、conversation/room mismatch 和 event id
+  conflict 会被后端拒绝，前端不得本地修改 projection 来绕过。
+- `replay.proof_level = "contract_proof"` 只证明 durable replay contract，不是
+  live provider proof。
+
 ### `GET /api/chat/role-templates`
 
 用途：

@@ -129,10 +129,12 @@ prompt; reference it unless the policy itself is being changed.
 1. Coder must follow TDD (test first, then implement)
 2. Orchestrator validates independently (never trust subagent self-reports)
 3. Adversarial reviewer is always a FRESH instance
-4. Repeated failures require refactor: after two same-class failures on a
-   feature/stage/test cluster/runtime path, stop patch stacking and identify the
-   failed boundary; if a third retry would be needed, refactor or replace that
-   boundary before retrying
+4. Repeated failures require direct refactor: after two same-class failures on
+   a feature/stage/test cluster/runtime path, stop patch stacking and make the
+   next action a bounded root-cause/refactor or replacement of the failed
+   boundary. A third same-boundary retry is allowed only after that refactor
+   artifact exists with migration, focused tests, and rollback/compatibility
+   notes
 5. Quality gates are BLOCKING — no skipping
 6. Demo-grade implementations on the production path must be isolated or
    replaced with contract-backed production implementations, not wrapped to make

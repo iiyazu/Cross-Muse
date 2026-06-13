@@ -28,9 +28,9 @@ Read first:
 Runtime target:
 - Run as an 8-10 hour production-grade long goal.
 - If full closure does not fit, land the strongest validated production slice:
-  GOD room event contract, speaker runtime, blueprint freeze compiler,
-  lane budget/recovery, MemoryOS trace anchors, TUI operator cockpit, and
-  replay evidence.
+  GOD room control surface, provider-bound speaker runtime, freeze-to-laneDAG
+  authority wiring, lane runtime/recovery enforcement, MemoryOS trace plans,
+  TUI operator actuation, and fresh replay evidence.
 - If blocked by auth, live services, provider availability, GitHub admin state,
   or unavailable credentials, emit a manual_gap/blocker artifact and continue
   only to independent stages.
@@ -42,30 +42,41 @@ speaker selection, typed blueprint freeze artifact, feature/laneDAG execution
 contracts with budget and suspend reasons, MemoryOS trace anchors, TUI operator
 cockpit, and honest release/replay evidence.
 
+Current production direction:
+- The branch already has contract/store slices for GOD room events, deterministic
+  replay, blueprint freeze compilation, lane runtime contracts, lane recovery,
+  MemoryOS trace anchors, TUI projections, closure evidence, and a durable GOD
+  room event store. Do not reimplement these as parallel demos.
+- Promote the existing contracts into runtime paths: Chat API/MCP/platform
+  operator actions, selected GOD/provider execution attempts, graph-set/laneDAG
+  authority, supervisor/recovery enforcement, MemoryOS REST plans, TUI
+  actuation, and fresh replay evidence.
+
 Priority order:
 1. Establish current truth: git status, current head, PR #43 state, latest CI,
    xmuse/__init__.py absence, configured live resources, and proof map. Do not
    assume report_11, mession_01, or old walkthrough facts are current server
    truth.
-2. Implement/advance the durable GOD room event contract for speak, question,
-   challenge, handoff, and freeze_requested. Events need identity, causality,
-   source refs, timestamp, and redaction-safe content.
-3. Build the smallest replayable speaker runtime slice with at least three
-   GOD participants, one challenge, one handoff, and one freeze request.
-4. Build/advance the blueprint freeze compiler from GOD transcript evidence to
-   a typed immutable freeze artifact with assumptions, conflicts, rejected
+2. Wire durable GOD room events into Chat API/MCP/platform operator actions:
+   create room, append/import event, replay, snapshot, and freeze request.
+3. Connect replayable speaker decisions to selected GOD/provider bindings.
+   Capture real provider proof only from real configured responses; otherwise
+   emit manual_gap without inventing fake speech.
+4. Expose blueprint freeze compilation from durable GOD room snapshots to typed
+   immutable freeze artifacts, preserving assumptions, conflicts, rejected
    alternatives, blockers, source refs, and revision behavior.
-5. Advance feature/laneDAG runtime contracts from frozen blueprint/graph-set
-   authority. Lanes need owner, input, output, dependencies, checks, allowed
-   files, rollback constraints, memory anchors, and budget.
-6. Add lane/stage budget and recovery behavior: retry budget, suspend reason,
-   failure class, review triggers, and refactor_required for repeated failures.
-7. Advance MemoryOS multi-GOD trace anchors while preserving REST-first
-   governance, redaction, tombstones, and manual_gap when live service is not
-   configured.
-8. Advance TUI operator cockpit read models/widgets for room, blueprint,
-   laneDAG, review queue, MemoryOS trace, replay bundle, and readiness. TUI
-   mutations must go through Chat API/MCP/platform operator contracts.
+5. Wire freeze artifacts into graph-set/laneDAG authority. Lanes need owner,
+   input, output, dependencies, checks, allowed files, rollback constraints,
+   memory anchors, and budget before dispatch.
+6. Enforce lane/stage budget and recovery decisions in supervisor/execution
+   paths: retry budget, suspend reason, failure class, review triggers, and
+   refactor_required for repeated failures.
+7. Build MemoryOS multi-GOD trace/context/write plans while preserving
+   REST-first governance, redaction, tombstones, and manual_gap when live
+   service is not configured.
+8. Advance TUI operator cockpit controls for room, blueprint, laneDAG, review
+   queue, MemoryOS trace, replay bundle, and readiness. TUI mutations must go
+   through Chat API/MCP/platform operator contracts.
 9. Rebuild replay/release evidence and re-capture GitHub truth for the current
    head when auth allows. Keep review truth, enforcement truth, merge truth,
    and pr_merged separate.
@@ -75,9 +86,11 @@ Priority order:
 Direct refactor rule:
 - Repeated failure and demo-grade implementation are production blockers.
 - If the same feature/stage/test cluster/runtime path fails twice with the same
-  failure class, stop patch stacking and do root-cause analysis.
-- If a third retry would be required, or supervisor/stage harness marks
-  refactor_required, restructure or replace the failing boundary before retry.
+  failure class, stop patch stacking, write the failed boundary, and move to a
+  bounded refactor/replacement.
+- A third same-boundary retry is allowed only after the refactor/replacement
+  artifact exists with migration behavior, focused tests, and rollback or
+  compatibility notes.
 - If production mainline depends on demo-grade code, do not wrap the demo path
   to make gates green. Isolate/archive it and build the contract-backed
   production path with tests.
@@ -112,6 +125,13 @@ Evidence protocol:
 - Never label old artifacts, configured inventory, or successful rendering as
   fresh live/server/provider proof.
 - Run proof contamination audit before claiming readiness.
+
+Pre-goal smoke:
+- Before delegating to OpenCode, verify the configured DeepSeek path with the
+  only accepted invocation:
+  opencode run --model opencode-go/deepseek-v4-flash --variant max \
+    "Return exactly xmuse-opencode-smoke-ok"
+- Do not use model ids with `:max` or `-max`; `max` is a variant argument.
 
 Validation:
 - Run focused pytest for every changed surface.

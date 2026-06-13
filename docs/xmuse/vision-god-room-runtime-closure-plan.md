@@ -1,7 +1,7 @@
 # Vision GOD Room Runtime Closure Plan
 
 > **For agentic workers:** This is the next long `/goal` handoff after the
-> overnight autonomy closure wave. Use stage manifests, TDD, focused
+> initial GOD room contract/store slices. Use stage manifests, TDD, focused
 > validation, proof discipline, and independent Codex review. This plan is not
 > evidence that the xmuse vision is already closed.
 
@@ -48,20 +48,24 @@ The source reports converge on the same conclusion: the current branch has a
 strong evidence/control closure, but xmuse cannot honestly claim vision
 closure, mainline merge closure, or natural peer-GOD runtime closure yet.
 
-Known planning facts from the previous validated run:
+Verified planning facts for this update, checked on 2026-06-13:
 
 - Branch: `vision-closure-deliberation-tui`.
-- Latest validated head before this planning document:
-  `940bf9179cff282c8f72db7cdfde702d68199157`.
+- Local and remote head:
+  `45a3d920e268c02c2309c5ffa56f11bb78c211b2`.
+- Latest local commit: `45a3d92 Add durable GOD room event store`.
 - PR #43 remains draft/open/unmerged.
-- GitHub Actions run `27462667689` succeeded for that head with
+- GitHub PR merge state was `CLEAN`; review decision was empty.
+- GitHub Actions run `27465828379` succeeded for that head with
   `quality-gates`, `contract-smoke-gates`, and
   `real-runtime-integration-gate`.
-- The local release evidence pack was rebuilt as `decision=ready` and
-  `overnight_replay_decision=ready_for_replay`, but this is not merge truth.
-- Raw GitHub truth still had `merged=false`, `draft=true`, and
-  `can_emit_pr_merged=false`.
 - No `pr_merged` event may be emitted until server-side merge proof exists.
+- Since the source reports, the branch has added durable GOD room event
+  contracts, deterministic replay, blueprint freeze compilation, lane runtime
+  contracts, lane recovery decisions, MemoryOS trace anchors, TUI projections,
+  a GOD room runtime closure evidence section, and a SQLite-backed GOD room
+  event store. These are production contract/store slices, not live peer-GOD
+  provider proof.
 
 The next `/goal` runner must re-check every current fact in S0. This document
 is a task plan, not a durable truth source.
@@ -82,6 +86,23 @@ fresh truth map
 -> TUI operator cockpit for room, blueprint, laneDAG, queue, trace, replay
 -> evidence pack / GitHub truth / review boundary
 ```
+
+Because several contract slices now exist, the next run must not spend its
+budget re-creating them as parallel implementations. It should promote the
+existing contracts into the runtime path:
+
+1. GOD room mutations go through Chat API/MCP/platform operator contracts and
+   persist to the durable room event store.
+2. Speaker runtime attempts real configured provider/GOD bindings when
+   available and records `manual_gap` when they are not.
+3. Blueprint freeze consumes durable room snapshots and emits immutable typed
+   artifacts that can feed graph-set/laneDAG authority.
+4. Lane budget/recovery decisions are enforced by supervisor/orchestrator
+   paths, not only tested as pure evaluators.
+5. MemoryOS trace anchors become REST-first write/context plans with live proof
+   only when a configured service responds.
+6. TUI becomes an operator cockpit by invoking contracts; it must not write
+   internal state or treat projections as authority.
 
 The reports' useful external pressure is operational:
 
@@ -146,14 +167,14 @@ trace anchors, TUI operator projection, evidence pack.
 | Window | Stage | Expected output |
 | --- | --- | --- |
 | 0:00-0:30 | S0 Baseline Truth | Current branch/head/PR/CI/env/proof map, no edits. |
-| 0:30-1:30 | S1 GOD Room Event Contract | Durable event model for speak/question/challenge/handoff/freeze. |
-| 1:30-2:30 | S2 Speaker Runtime Slice | Deterministic room runtime and speaker selector fixture/replay. |
-| 2:30-3:45 | S3 Blueprint Freeze Compiler | Typed freeze artifact with assumptions, conflicts, rejected alternatives, blockers. |
-| 3:45-5:00 | S4 Feature/LaneDAG Runtime Contracts | Feature/lane output with owner, budget, lease, checks, rollback, memory anchors. |
-| 5:00-6:00 | S5 Lane Budget And Recovery | Suspend/retry/backoff/refactor-required policy through durable evidence. |
-| 6:00-7:00 | S6 MemoryOS Trace Anchors | God-private, task, shared, blueprint, review, and operator memory refs. |
-| 7:00-8:00 | S7 TUI Operator Cockpit | Room, blueprint, laneDAG, review queue, trace, replay/readiness projections. |
-| 8:00-10:00 | S8 Evidence, Soak, Docs, PR | Replay bundle, review/GitHub truth, focused tests, docs, PR update. |
+| 0:30-1:30 | S1 GOD Room Control Surface | Chat API/MCP/operator actions write durable room events through contracts. |
+| 1:30-2:30 | S2 Speaker Runtime Integration | Provider-bound speaker attempts, deterministic fallback, and honest proof labels. |
+| 2:30-3:45 | S3 Freeze-To-LaneDAG Authority | Durable room snapshot -> freeze artifact -> graph-set/laneDAG authority. |
+| 3:45-5:00 | S4 Lane Runtime Enforcement | Owner, budget, lease, checks, rollback, memory anchors enforced in runtime paths. |
+| 5:00-6:00 | S5 Recovery And Refactor Policy | Retry/suspend/refactor-required decisions enforced by stage/supervisor paths. |
+| 6:00-7:00 | S6 MemoryOS Live Trace Plans | Multi-GOD context/write plans and opt-in live MemoryOS trace proof. |
+| 7:00-8:00 | S7 TUI Operator Actuation | Room, blueprint, laneDAG, review queue, trace, replay/readiness controls. |
+| 8:00-10:00 | S8 Evidence, Soak, Docs, PR | Fresh replay bundle, review/GitHub truth, focused tests, docs, PR update. |
 
 ## S0 - Baseline Truth
 
@@ -185,7 +206,7 @@ Acceptance:
 
 ## S1 - GOD Room Event Contract
 
-Goal: define the production event vocabulary for natural GOD collaboration.
+Goal: put the production event vocabulary on the runtime control path.
 
 Tasks:
 
@@ -205,6 +226,16 @@ Acceptance:
   of missing identity/source refs.
 - The contract does not make TUI or `feature_lanes.json` an authority.
 
+Next-round advancement:
+
+- Wire `GodRoomEventStore` into Chat API, MCP, or platform operator-action
+  surfaces for room creation, event append, replay, and snapshot export.
+- TUI controls may call those surfaces, but must not write the room store
+  directly.
+- Event append must be idempotent and must reject mismatched conversation,
+  unknown participant, unknown target, missing source refs, and conflicting
+  event identity before any projection is updated.
+
 Current implementation status:
 
 - `src/xmuse_core/chat/god_room_runtime.py` now defines
@@ -220,13 +251,23 @@ Current implementation status:
   are explicit roster authority, event append is idempotent, conflicting event
   identity reuse is rejected, unknown participants/targets are blocked, and
   room state can be reloaded after restart.
+- `xmuse/chat_api.py` now exposes a contract-backed GOD room control surface:
+  `POST/GET /api/chat/conversations/{conversation_id}/god-room`,
+  `POST /api/chat/conversations/{conversation_id}/god-room/events`, and
+  `GET /api/chat/conversations/{conversation_id}/god-room/snapshot`.
+  The API builds room rosters from active non-init chat participants, writes
+  through `GodRoomEventStore`, returns replay/snapshot payloads, and maps
+  membership/conflict failures to HTTP errors without updating projections.
+- Auth-enabled Chat API deployments require explicit `chat_god_room`
+  capability for mutating GOD room routes; generic `chat_write` is not enough.
 - This is durable contract/store infrastructure, not live peer-provider proof.
   It does not make TUI, dashboard, `feature_lanes.json`, Ray actor memory, or
   provider subprocess state authoritative.
 
 ## S2 - Speaker Runtime Slice
 
-Goal: make GOD room turn-taking replayable before adding broader autonomy.
+Goal: make GOD room turn-taking replayable and ready for provider-bound runtime
+attempts before adding broader autonomy.
 
 Tasks:
 
@@ -244,6 +285,15 @@ Acceptance:
 - Focused tests replay the room and recover the same next-speaker sequence.
 - The runtime can emit a blocked/manual_gap result instead of inventing a
   provider response when a provider is unavailable.
+
+Next-round advancement:
+
+- Connect speaker decisions to the selected GOD/provider registry path without
+  hard-coding a provider in business logic.
+- When a selected provider is configured, capture a fresh provider-bound speak
+  attempt as `real_provider_proof` only if the provider actually responds.
+- When no provider is configured, emit `manual_gap` with provider, owner, and
+  next action; do not downgrade to fake speech and label it live.
 
 Current implementation status:
 
@@ -283,6 +333,16 @@ Acceptance:
 - The compiler reads transcript/contract sources and does not write lane
   status directly.
 
+Next-round advancement:
+
+- Expose freeze compilation as a contract-backed runtime action from a durable
+  GOD room snapshot.
+- Persist or export the freeze artifact through the existing blueprint
+  authority path; follow-up changes require a new revision or patch-forward
+  lineage.
+- Reject freeze when the room has unresolved challenges, missing quorum, missing
+  acceptance contracts, or stale source refs.
+
 Current implementation status:
 
 - `src/xmuse_core/structuring/god_room_blueprint_freeze.py` now provides
@@ -319,6 +379,15 @@ Acceptance:
   graph/blueprint inputs.
 - No LangGraph node, TUI action, or Ray actor writes lane status directly.
 
+Next-round advancement:
+
+- Feed frozen GOD room blueprint artifacts into graph-set/laneDAG planning
+  without using read-model projections as inputs.
+- Ensure lane runtime contracts are carried into dispatch/review evidence, not
+  only generated as detached artifacts.
+- Missing owner, budget, rollback, memory anchors, or review profile must block
+  dispatch with an actionable gap.
+
 Current implementation status:
 
 - `src/xmuse_core/structuring/blueprint_execution/lane_dag_service.py` now
@@ -348,6 +417,16 @@ Acceptance:
 - Tests cover retry, suspend, manual_gap, and refactor-required transitions.
 - A fourth same-path retry is impossible without a refactor artifact.
 
+Next-round advancement:
+
+- Wire `evaluate_lane_recovery(...)` or an equivalent contract into
+  goal-stage import, overnight supervisor, and execution/review paths.
+- Two same-class failures on the same feature/stage/test cluster/runtime path
+  must stop local patch stacking and create a bounded refactor action.
+- A third attempt is allowed only after a refactor/replacement artifact defines
+  failed boundary, replacement boundary, migration behavior, focused tests, and
+  rollback/compatibility plan.
+
 Current implementation status:
 
 - `LaneRuntimeBudget`, `LaneFailureEvidence`, `LaneRecoveryDecision`, and
@@ -376,6 +455,15 @@ Acceptance:
 - Contract/fake tests prove MemoryOS write plans carry source refs and correct
   governance decisions.
 - Live MemoryOS proof remains `manual_gap` when no service/config is present.
+
+Next-round advancement:
+
+- Build multi-GOD MemoryOS write/context plans from room events, freeze
+  artifacts, lane runtime contracts, and review results.
+- Keep namespace, redaction, tombstone, and REST-first governance explicit in
+  every write plan.
+- Attempt live MemoryOS Lite trace capture only when configured; otherwise keep
+  `manual_gap` evidence instead of claiming live service proof.
 
 Current implementation status:
 
@@ -409,6 +497,17 @@ Acceptance:
   envelopes/contracts.
 - No TUI code directly writes internal state.
 
+Next-round advancement:
+
+- Add or advance operator controls for room event append/import, freeze
+  compile, lane budget/recovery inspection, MemoryOS trace drill-down, replay
+  export, and release readiness refresh.
+- Every mutating control must route through Chat API, MCP, or platform
+  operator-action contracts and return proof level, source authority, artifact
+  refs, and gap reason.
+- Rendering successful controls is not evidence of live provider, live
+  MemoryOS, GitHub enforcement, or merge truth.
+
 Current implementation status:
 
 - `src/xmuse_core/platform/tui_vision_read_model.py` now projects lane runtime
@@ -440,6 +539,16 @@ Acceptance:
 - Evidence pack distinguishes `ready_for_replay` from `pr_merged`.
 - Final report lists stages completed/blocked, files changed, validation
   results, live/server proof, remaining blockers, and PR #43 state.
+
+Next-round advancement:
+
+- Rebuild the GOD room closure evidence from fresh artifacts created in this
+  run, not stale samples.
+- Re-capture GitHub PR/check/review/merge truth for the current head before
+  updating PR #43.
+- If OpenCode is delegated any bounded worker task, Codex must independently
+  audit the diff, runtime state, package boundary, tests, and proof claims
+  before accepting it.
 
 Current implementation status:
 
@@ -477,6 +586,13 @@ If OpenCode is used, first verify the configured DeepSeek path with:
 
 ```bash
 opencode run --model opencode-go/deepseek-v4-flash --variant max ...
+```
+
+Recommended pre-goal smoke:
+
+```bash
+opencode run --model opencode-go/deepseek-v4-flash --variant max \
+  "Return exactly xmuse-opencode-smoke-ok"
 ```
 
 Do not use `deepseek-v4-flash:max`,

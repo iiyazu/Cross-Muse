@@ -28,7 +28,8 @@ uv run python scripts/goal_stage_runner.py \
   `retry` 结果会进入 supervisor 的 repeated-failure policy；第三次同类 retry
   import 会标记 `refactor_required`，要求先重构失败边界再重试。
 - 同一功能、stage、测试簇或 runtime path 出现两次同类失败后，后续 manifest
-  必须把下一步声明为 root-cause/refactor work，而不是继续同路径修补。
+  必须把下一步声明为 root-cause/refactor 或 replacement work，而不是继续同路径
+  修补。第三次同边界执行只有在重构/替换 artifact 已产生后才允许。
 - 一旦出现 `refactor_required`，不得发起第四次同类重试；必须先产出重构说明、
   失败边界、迁移策略和 focused validation。
 - demo 级实现不得作为生产 stage 的通过证据。若 stage 发现生产主线依赖 demo

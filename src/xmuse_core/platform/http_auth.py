@@ -185,6 +185,8 @@ def required_chat_api_capabilities(*, method: str, path: str) -> tuple[str, ...]
         return tuple(sorted(OPERATOR_ACTION_CAPABILITIES))
     if path.startswith("/api/chat/role-templates"):
         return ("admin_operator",)
+    if "/god-room" in path:
+        return ("chat_god_room",)
     if path.endswith("/messages") and (
         path.startswith("/api/chat/conversations/")
         or path.startswith("/api/chat/threads/")

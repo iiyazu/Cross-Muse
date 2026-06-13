@@ -279,6 +279,129 @@ def test_chat_api_operator_action_selects_god_cli_and_persists_selection(
     assert selection["audit_id"] == payload["audit_id"]
 
 
+def test_chat_api_god_room_persists_events_and_replays_turns(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    conversation = client.post(
+        "/api/chat/conversations",
+        json={"title": "GOD room runtime"},
+    ).json()
+    conv_id = conversation["id"]
+
+    room_response = client.post(f"/api/chat/conversations/{conv_id}/god-room")
+
+    assert room_response.status_code == 201
+    room = room_response.json()["room"]
+    assert room["conversation_id"] == conv_id
+    assert room["source_authority"] == "god_room_event_store"
+    assert [participant["role"] for participant in room["participants"]] == [
+        "architect",
+        "review",
+        "execute",
+    ]
+    assert [participant["god_id"] for participant in room["participants"]] == [
+        "architect-god",
+        "review-god",
+        "execute-god",
+    ]
+    assert room["events"] == []
+    assert room["replay"]["status"] == "ok"
+
+    participants = {participant["role"]: participant for participant in room["participants"]}
+    event = {
+        "event_id": "evt-propose",
+        "room_id": room["room_id"],
+        "conversation_id": conv_id,
+        "participant_id": participants["architect"]["participant_id"],
+        "god_id": participants["architect"]["god_id"],
+        "actor_kind": "god",
+        "event_type": "speak",
+        "timestamp_utc": "2026-06-13T10:00:00Z",
+        "content": "I propose routing GOD room events through the Chat API.",
+        "source_refs": [f"conversation:{conv_id}"],
+        "cli_id": participants["architect"]["cli_id"],
+        "provider_profile": "codex",
+        "payload": {"body": "I propose routing GOD room events through the Chat API."},
+    }
+
+    append_response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/events",
+        json=event,
+    )
+    duplicate_response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/events",
+        json=event,
+    )
+    read_response = client.get(f"/api/chat/conversations/{conv_id}/god-room")
+    snapshot_response = client.get(
+        f"/api/chat/conversations/{conv_id}/god-room/snapshot"
+    )
+
+    assert append_response.status_code == 201
+    assert append_response.json()["append_status"] == "created"
+    assert append_response.json()["room"]["replay"]["decisions"][0] == {
+        "event_id": "evt-propose",
+        "next_participant_id": participants["review"]["participant_id"],
+        "reason": "round_robin",
+        "source_refs": ["god-room-event:evt-propose", f"conversation:{conv_id}"],
+    }
+    assert duplicate_response.status_code == 200
+    assert duplicate_response.json()["append_status"] == "duplicate"
+    assert read_response.status_code == 200
+    assert [event["event_id"] for event in read_response.json()["room"]["events"]] == [
+        "evt-propose"
+    ]
+    assert snapshot_response.status_code == 200
+    snapshot = snapshot_response.json()["snapshot"]
+    assert snapshot["schema_version"] == "xmuse.god_room_snapshot.v1"
+    assert snapshot["source_authority"] == "god_room_event_store"
+    assert snapshot["events"][0]["event_id"] == "evt-propose"
+
+
+def test_chat_api_god_room_rejects_unknown_target_without_writing(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    conversation = client.post(
+        "/api/chat/conversations",
+        json={"title": "GOD room target guard"},
+    ).json()
+    conv_id = conversation["id"]
+    room = client.post(f"/api/chat/conversations/{conv_id}/god-room").json()["room"]
+    architect = next(
+        participant for participant in room["participants"]
+        if participant["role"] == "architect"
+    )
+
+    response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/events",
+        json={
+            "event_id": "evt-question",
+            "room_id": room["room_id"],
+            "conversation_id": conv_id,
+            "participant_id": architect["participant_id"],
+            "god_id": architect["god_id"],
+            "actor_kind": "god",
+            "event_type": "question",
+            "timestamp_utc": "2026-06-13T10:01:00Z",
+            "content": "Can the missing GOD answer this?",
+            "target_participant_ids": ["part-missing"],
+            "source_refs": [f"conversation:{conv_id}"],
+            "cli_id": architect["cli_id"],
+            "provider_profile": "codex",
+            "payload": {"body": "Can the missing GOD answer this?"},
+        },
+    )
+    read_response = client.get(f"/api/chat/conversations/{conv_id}/god-room")
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "god_room_membership_error"
+    assert "target participant part-missing" in response.json()["detail"]["message"]
+    assert read_response.status_code == 200
+    assert read_response.json()["room"]["events"] == []
+
+
 def test_chat_api_operator_action_denies_missing_capability(tmp_path: Path) -> None:
     client = _client(tmp_path)
     conversation = client.post("/api/chat/conversations", json={"title": "Mission"}).json()

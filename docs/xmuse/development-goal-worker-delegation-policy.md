@@ -21,10 +21,12 @@
 
 反复失败和 demo 级实现不是继续叠补丁的信号，而是重构边界的信号。
 
-- 同一功能、stage、测试簇或 runtime path 出现两次同类失败后，Codex 必须先做
-  root-cause 记录，停止继续叠加局部 patch。
-- 若需要第三次重试，或 goal-stage / supervisor 已标记 `refactor_required`，
-  必须先重构或替换失败边界，再允许继续执行。
+- 同一功能、stage、测试簇或 runtime path 出现两次同类失败后，Codex 必须停止继续
+  叠加局部 patch，并把下一步改为有边界的 root-cause/refactor 或替换失败边界。
+- 第三次同边界重试只允许在重构/替换 artifact 已存在后进行；该 artifact 必须写清
+  失败边界、替代边界、迁移行为、focused tests 和回滚/兼容策略。
+- goal-stage / supervisor 已标记 `refactor_required` 时，不得继续同路径修补；
+  必须先重构或替换失败边界，再允许执行。
 - 如果生产主线依赖 demo 级实现，不得通过包 adapter、UI 文案或 evidence 标签把
   demo 包装成生产能力。应隔离或归档 demo path，并以 contract-backed production
   path 替换。

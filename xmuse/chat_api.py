@@ -45,9 +45,16 @@ from xmuse_core.chat.collaboration_contracts import (
 from xmuse_core.chat.collaboration_store import ChatCollaborationStore
 from xmuse_core.chat.deliberation_engine import DeliberationFreezeGuard
 from xmuse_core.chat.dispatch_queue import ChatDispatchQueueStore
+from xmuse_core.chat.god_room_event_store import (
+    GodRoomEventConflictError,
+    GodRoomEventStore,
+    GodRoomMembershipError,
+)
+from xmuse_core.chat.god_room_runtime import GodRoomEventV1, GodRoomParticipant
 from xmuse_core.chat.health_cards import build_run_health_chat_card
 from xmuse_core.chat.inbox_store import ChatInboxStore
 from xmuse_core.chat.participant_store import (
+    INIT_GOD_ROLE,
     ParticipantStore,
     RoleTemplate,
     RoleTemplateStore,
@@ -175,6 +182,10 @@ def _collaboration_store(base_dir: Path) -> ChatCollaborationStore:
 
 def _dispatch_queue_store(base_dir: Path) -> ChatDispatchQueueStore:
     return ChatDispatchQueueStore(base_dir / "chat.db")
+
+
+def _god_room_event_store(base_dir: Path) -> GodRoomEventStore:
+    return GodRoomEventStore(base_dir / "god_room_events.sqlite3")
 
 
 def _operator_action_service(base_dir: Path) -> OperatorActionService:
@@ -646,6 +657,43 @@ def _public_peer_participants(payload: dict[str, object]) -> list[dict[str, obje
         for participant in participants
         if isinstance(participant, dict) and participant.get("role") != "init"
     ]
+
+
+def _default_god_room_id(conversation_id: str) -> str:
+    return f"god-room:{conversation_id}"
+
+
+def _god_room_participants(base_dir: Path, conversation_id: str) -> list[GodRoomParticipant]:
+    participants = _participant_store(base_dir).list_by_conversation(conversation_id)
+    return [
+        GodRoomParticipant(
+            participant_id=participant.participant_id,
+            god_id=participant.display_name,
+            cli_id=participant.cli_kind,
+            role=participant.role,
+        )
+        for participant in participants
+        if participant.status == "active" and participant.role != INIT_GOD_ROLE
+    ]
+
+
+def _god_room_payload(
+    store: GodRoomEventStore,
+    room_id: str,
+) -> dict[str, object]:
+    snapshot = store.load_room(room_id)
+    replay = store.replay_room(room_id)
+    return {
+        "source_authority": "god_room_event_store",
+        "room_id": snapshot.room_id,
+        "conversation_id": snapshot.conversation_id,
+        "participants": [
+            participant.model_dump(mode="json")
+            for participant in snapshot.participants
+        ],
+        "events": [event.model_dump(mode="json") for event in snapshot.events],
+        "replay": replay.model_dump(mode="json"),
+    }
 
 
 def _default_participant_inits(role_templates: RoleTemplateStore) -> list[ParticipantInit]:
@@ -1357,6 +1405,113 @@ def create_app(
             raise HTTPException(
                 status_code=404 if exc.code == "unknown_conversation" else 400,
                 detail={"code": exc.code, "message": exc.message},
+            ) from exc
+
+    @app.post(
+        "/api/chat/conversations/{conversation_id}/god-room",
+        status_code=status.HTTP_201_CREATED,
+    )
+    def ensure_god_room(conversation_id: str) -> dict[str, object]:
+        if not _conversation_exists(_store(root), conversation_id):
+            raise HTTPException(status_code=404, detail="conversation not found")
+        participants = _god_room_participants(root, conversation_id)
+        if not participants:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "god_room_requires_participants",
+                    "message": "god room requires active non-init participants",
+                },
+            )
+        store = _god_room_event_store(root)
+        room_id = _default_god_room_id(conversation_id)
+        try:
+            store.ensure_room(
+                room_id=room_id,
+                conversation_id=conversation_id,
+                participants=participants,
+            )
+        except GodRoomMembershipError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "god_room_membership_error", "message": str(exc)},
+            ) from exc
+        return {"room": _god_room_payload(store, room_id)}
+
+    @app.get("/api/chat/conversations/{conversation_id}/god-room")
+    def get_god_room(conversation_id: str) -> dict[str, object]:
+        if not _conversation_exists(_store(root), conversation_id):
+            raise HTTPException(status_code=404, detail="conversation not found")
+        store = _god_room_event_store(root)
+        room_id = _default_god_room_id(conversation_id)
+        try:
+            return {"room": _god_room_payload(store, room_id)}
+        except GodRoomMembershipError as exc:
+            raise HTTPException(
+                status_code=404,
+                detail={"code": "god_room_not_found", "message": str(exc)},
+            ) from exc
+
+    @app.post("/api/chat/conversations/{conversation_id}/god-room/events")
+    def append_god_room_event(
+        conversation_id: str,
+        request: GodRoomEventV1,
+    ) -> JSONResponse:
+        if not _conversation_exists(_store(root), conversation_id):
+            raise HTTPException(status_code=404, detail="conversation not found")
+        expected_room_id = _default_god_room_id(conversation_id)
+        if request.conversation_id != conversation_id or request.room_id != expected_room_id:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "god_room_event_scope_mismatch",
+                    "message": (
+                        "event conversation_id and room_id must match the "
+                        "conversation GOD room"
+                    ),
+                },
+            )
+        store = _god_room_event_store(root)
+        try:
+            result = store.append_event(request)
+        except GodRoomMembershipError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "god_room_membership_error", "message": str(exc)},
+            ) from exc
+        except GodRoomEventConflictError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "god_room_event_conflict", "message": str(exc)},
+            ) from exc
+        return JSONResponse(
+            status_code=(
+                status.HTTP_201_CREATED
+                if result.status == "created"
+                else status.HTTP_200_OK
+            ),
+            content={
+                "append_status": result.status,
+                "event": result.event.model_dump(mode="json"),
+                "room": _god_room_payload(store, expected_room_id),
+            },
+        )
+
+    @app.get("/api/chat/conversations/{conversation_id}/god-room/snapshot")
+    def get_god_room_snapshot(conversation_id: str) -> dict[str, object]:
+        if not _conversation_exists(_store(root), conversation_id):
+            raise HTTPException(status_code=404, detail="conversation not found")
+        store = _god_room_event_store(root)
+        try:
+            return {
+                "snapshot": store.build_room_snapshot_artifact(
+                    _default_god_room_id(conversation_id)
+                )
+            }
+        except GodRoomMembershipError as exc:
+            raise HTTPException(
+                status_code=404,
+                detail={"code": "god_room_not_found", "message": str(exc)},
             ) from exc
 
     @app.get("/api/chat/conversations/{conversation_id}/inspector")

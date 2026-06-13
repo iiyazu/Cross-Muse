@@ -166,6 +166,46 @@ def test_chat_api_operator_action_keeps_action_capability_when_auth_enabled(
     assert response.json()["status"] == "ok"
 
 
+def test_chat_api_god_room_write_requires_god_room_capability_when_auth_enabled(
+    tmp_path: Path,
+) -> None:
+    client = TestClient(create_app(tmp_path, auth_token="secret"))
+    conversation = client.post(
+        "/api/chat/conversations",
+        json={"title": "GOD room auth"},
+        headers={
+            "X-XMUSE-API-Key": "secret",
+            "X-XMuse-Operator-Role": "operator",
+            "X-XMuse-Operator-Capabilities": "chat_create_conversation",
+        },
+    ).json()
+
+    rejected = client.post(
+        f"/api/chat/conversations/{conversation['id']}/god-room",
+        headers={
+            "X-XMUSE-API-Key": "secret",
+            "X-XMuse-Operator-Role": "operator",
+            "X-XMuse-Operator-Capabilities": "chat_write",
+        },
+    )
+    accepted = client.post(
+        f"/api/chat/conversations/{conversation['id']}/god-room",
+        headers={
+            "X-XMUSE-API-Key": "secret",
+            "X-XMuse-Operator-Role": "operator",
+            "X-XMuse-Operator-Capabilities": "chat_god_room",
+        },
+    )
+
+    assert rejected.status_code == 403
+    assert rejected.json()["detail"] == {
+        "code": "missing_capability",
+        "message": "missing capability chat_god_room",
+        "required_capability": "chat_god_room",
+    }
+    assert accepted.status_code == 201
+
+
 def test_chat_api_release_gate_operator_action_when_auth_enabled(
     tmp_path: Path,
 ) -> None:
