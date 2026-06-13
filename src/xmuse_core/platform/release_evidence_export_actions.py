@@ -154,17 +154,37 @@ def _export_natural(
         source_refs=_string_list(request.payload.get("source_refs")),
         target_refs=_string_list(request.payload.get("target_refs")),
     )
+    god_runtime_path = _natural_god_runtime_path(request.payload, release_root=release_root)
+    god_runtime = None
+    if god_runtime_path is not None:
+        god_runtime = capture_selected_god_runtime_continuity_artifact(
+            conversation_id=conversation_id,
+            selection_store_path=root / "god_cli_selections.json",
+            registration_store_path=root / "god_cli_registrations.json",
+            registry_path=root / "god_sessions.json",
+            output_path=god_runtime_path,
+            now_utc=_text(request.payload.get("now_utc")),
+            heartbeat_ttl_seconds=_int_value(
+                request.payload.get("heartbeat_ttl_seconds"),
+                default=300,
+            ),
+        )
     gate = capture_natural_deliberation_release_gate(
         artifact_path=artifact_path,
         output_path=gate_path,
+        god_runtime_path=god_runtime_path,
     )
-    return _export_result(
+    result = _export_result(
         kind="natural_deliberation",
         artifact_path=artifact_path,
         gate_path=gate_path,
         artifact=artifact,
         gate=gate,
     )
+    if god_runtime_path is not None:
+        result["god_runtime_path"] = str(god_runtime_path.resolve(strict=False))
+        result["god_runtime"] = god_runtime
+    return result
 
 
 def _export_provider(
@@ -393,6 +413,32 @@ def _export_god_runtime(
         "artifact_path": str(artifact_path.resolve(strict=False)),
         "artifact": artifact,
     }
+
+
+def _natural_god_runtime_path(payload: Mapping[str, Any], *, release_root: Path) -> Path | None:
+    runtime_value = (
+        payload.get("god_runtime")
+        or payload.get("god_runtime_path")
+        or payload.get("selected_god_runtime")
+    )
+    runtime_text = _text(runtime_value)
+    if runtime_text is not None:
+        normalized = runtime_text.strip().lower().replace("-", "_")
+        if normalized in {"skip", "none", "false", "0", "off", "disabled"}:
+            return None
+        if normalized not in {"auto", "capture", "default", "true", "1", "on"}:
+            return _release_path(runtime_text, release_root=release_root, default=release_root)
+    output_value = (
+        payload.get("god_runtime_output_path")
+        or payload.get("god_runtime_output")
+        or payload.get("runtime_output_path")
+        or payload.get("runtime_output")
+    )
+    return _release_path(
+        output_value,
+        release_root=release_root,
+        default=release_root / "god-runtime-continuity.json",
+    )
 
 
 def _export_result(

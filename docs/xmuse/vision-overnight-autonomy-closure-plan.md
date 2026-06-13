@@ -302,9 +302,11 @@ Current implementation status:
   row. Bounded OpenCode workers, missing runtime rows, or provider-session gaps
   block the gate as `manual_gap`.
 - Natural transcript export still reads durable chat/session state and never
-  scrapes TUI rendering. The old no-runtime-artifact gate path remains for
-  compatibility, but production overnight evidence should attach runtime
-  continuity before treating a transcript as release evidence.
+  scrapes TUI rendering. The TUI/operator natural export path now captures
+  selected-GOD runtime continuity by default and binds it into the natural
+  release gate. `god_runtime=skip` remains for compatibility-only replay, but
+  production overnight evidence should keep the default runtime binding before
+  treating a transcript as release evidence.
 
 ## S3 - Feature-Graph-First Execution Owner
 
@@ -683,6 +685,11 @@ Tasks:
   plus `--god-runtime RUNTIME` for the final handoff pack; do not pass those
   inputs together with an explicit
   `--section-artifact deliberation_transcript=...`.
+- When using the TUI/operator export path, `/release export natural
+  target_ref=blueprint:<id> ttl=<seconds>` already captures the default
+  selected-GOD runtime artifact under the release readiness root and passes it
+  to the natural gate. Use `god_runtime=skip` only for compatibility tests, not
+  for production release evidence.
 - When the same natural transcript should participate in release readiness,
   also pass `--natural-deliberation-transcript TRANSCRIPT` plus
   `--natural-deliberation-god-runtime RUNTIME`. This writes

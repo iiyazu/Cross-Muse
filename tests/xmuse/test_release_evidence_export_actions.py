@@ -81,10 +81,55 @@ def test_release_export_action_writes_natural_transcript_and_gate(
         "xmuse.operator_transcript.v1"
     )
     gate = json.loads(gate_path.read_text(encoding="utf-8"))
+    runtime_path = release_dir / "god-runtime-continuity.json"
+    runtime = json.loads(runtime_path.read_text(encoding="utf-8"))
     assert gate["gate_id"] == "natural-god-deliberation"
     assert gate["status"] == "blocked"
     assert gate["proof_level"] == "manual_gap"
+    assert runtime["schema_version"] == "xmuse.god_runtime_continuity.v1"
+    assert runtime["conversation_id"] == conversation.id
+    assert str(runtime_path) in gate["artifacts"]
+    assert result["god_runtime_path"] == str(runtime_path.resolve(strict=False))
+    assert result["god_runtime"] == runtime
     assert result["gate"] == gate
+
+
+def test_release_export_action_can_skip_natural_god_runtime_compatibility(
+    tmp_path: Path,
+) -> None:
+    conversation = ChatStore(tmp_path / "chat.db").create_conversation(
+        "Natural export compatibility",
+    )
+    release_dir = tmp_path / "work" / "release_readiness"
+    request = OperatorActionRequest(
+        action="export_natural_deliberation_transcript",
+        actor_id="operator-1",
+        capabilities=("release_gate",),
+        idempotency_key="idem-natural-export-skip-runtime",
+        payload={
+            "conversation_id": conversation.id,
+            "target_refs": ["blueprint:bp-1"],
+            "god_runtime": "skip",
+        },
+        source="chat_api",
+    )
+
+    result = run_release_evidence_export_action(
+        request,
+        xmuse_root=tmp_path,
+        release_readiness_dir=release_dir,
+        env={},
+    )
+
+    assert result["kind"] == "natural_deliberation"
+    assert "god_runtime_path" not in result
+    assert not (release_dir / "god-runtime-continuity.json").exists()
+    gate = json.loads(
+        (release_dir / "artifacts" / "natural-deliberation.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert str(release_dir / "god-runtime-continuity.json") not in gate["artifacts"]
 
 
 def test_release_export_action_writes_provider_soak_and_gate(

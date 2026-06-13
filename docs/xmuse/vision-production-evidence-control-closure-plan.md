@@ -543,6 +543,12 @@ Current implementation status:
   `export_god_runtime_continuity` operator action and the same durable-store
   capture helper. The TUI path requires `release_gate`, writes under release
   readiness, and does not allow alternate projection/session paths.
+- TUI/operator `export_natural_deliberation_transcript` now captures the same
+  selected-GOD runtime continuity artifact by default and passes it to the
+  natural deliberation release gate. Operators can still pass
+  `god_runtime=skip` for compatibility-only replay, but production release
+  evidence should keep the default selected-runtime binding so bounded workers,
+  stale heartbeats, or missing selected runtime rows remain gate blockers.
 - Selected-GOD runtime continuity now includes durable session heartbeat
   metadata from `god_sessions.json`. Stale or invalid heartbeats keep the
   runtime row blocked/manual-gap and prevent `peer_god_ready`, so natural

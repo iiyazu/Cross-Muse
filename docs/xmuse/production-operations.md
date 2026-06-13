@@ -540,10 +540,20 @@ operator action surface:
 
 The action is `export_natural_deliberation_transcript`, requires
 `release_gate`, reads durable `chat.db` and `god_sessions.json`, writes
-`xmuse/work/release_readiness/natural-transcript.json`, then writes
+`xmuse/work/release_readiness/natural-transcript.json`, captures selected-GOD
+runtime continuity from the durable GOD CLI selection, registration, and session
+stores to `xmuse/work/release_readiness/god-runtime-continuity.json`, then writes
 `xmuse/work/release_readiness/artifacts/natural-deliberation.json`. It does not
 synthesize GOD messages or provider sessions; weak evidence remains a blocked
 gate.
+
+The default TUI/operator path therefore binds natural transcript export to the
+same selected-GOD runtime continuity input required by the release gate. Operators
+can pass `ttl=<seconds>` / `heartbeat_ttl=<seconds>` to control heartbeat
+freshness and `runtime_output=<path>` to choose a release-root-scoped runtime
+artifact path. `god_runtime=skip` is available only for compatibility or replay
+debugging; it keeps the older no-runtime gate conversion path and must not be
+treated as production release evidence.
 
 ## Real Provider Runtime Release Gate
 
@@ -887,7 +897,8 @@ uv run xmuse-tui
   feature_id=<feature-id> lane_id=<lane-id> actor_id=<actor-id> \
   content='<content>' query='<query>' repo=iiyazu/Cross-Muse pr=<pr-number> \
   expected_head=<current-head-sha>
-/release export natural target_ref=blueprint:<blueprint-id>
+/release export natural target_ref=blueprint:<blueprint-id> ttl=300
+/release export god-runtime ttl=300 output=xmuse/work/release_readiness/god-runtime-continuity.json
 /release export provider fresh_inbox=<fresh-inbox-id> resume_inbox=<resume-inbox-id> runtime_backend=ray transport=codex-app-server
 /release export memoryos repo_id=iiyazu/Cross-Muse workspace_id=xmuse god_id=<god-id> thread_id=<thread-id> blueprint_id=<blueprint-id> feature_id=<feature-id> lane_id=<lane-id> actor_id=<actor-id> content='<content>' query='<query>'
 /release export github repo=iiyazu/Cross-Muse pr=<pr-number> \
@@ -918,13 +929,13 @@ same release evidence export actions only for candidate inputs that are
 export-ready. It writes `release-evidence-attempt.json` under
 `xmuse/work/release_readiness` and may write the raw evidence plus matching gate
 artifacts for successful export attempts. Missing MemoryOS configuration,
-missing peer latency traces, missing natural GOD speech acts, missing GitHub
-target fields, missing runtime metadata, fake/local labels, and blocked live
-captures remain blocked
-`manual_gap` attempt rows; the attempt action does not start absent services or
-upgrade weak evidence. `/release export natural`, `/release export provider`,
-`/release export memoryos`, and `/release export github` call the matching
-release evidence export
+missing peer latency traces, missing natural GOD speech acts, missing selected
+GOD runtime continuity, missing GitHub target fields, missing runtime metadata,
+fake/local labels, and blocked live captures remain blocked `manual_gap` attempt
+rows; the attempt action does not start absent services or upgrade weak evidence.
+`/release export natural`, `/release export god-runtime`,
+`/release export provider`, `/release export memoryos`, and
+`/release export github` call the matching release evidence export
 operator actions and write both the raw evidence artifact and the corresponding
 release gate artifact under `xmuse/work/release_readiness`. These TUI paths go
 through the Chat API operator action endpoint when available, or the same local

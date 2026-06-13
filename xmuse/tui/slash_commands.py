@@ -874,8 +874,14 @@ def _release_export_action(args: list[str]) -> tuple[str, dict[str, Any]]:
                     "source_ref": "source_refs",
                     "target_ref": "target_refs",
                     "target": "target_refs",
+                    "runtime": "god_runtime",
+                    "runtime_output": "god_runtime_output_path",
+                    "god_runtime_output": "god_runtime_output_path",
+                    "ttl": "heartbeat_ttl_seconds",
+                    "heartbeat_ttl": "heartbeat_ttl_seconds",
                 },
                 list_keys={"source_refs", "target_refs"},
+                int_keys={"heartbeat_ttl_seconds"},
             ),
         )
     if target in {"provider", "real_provider", "runtime", "soak"}:

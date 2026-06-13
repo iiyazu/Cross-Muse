@@ -835,7 +835,8 @@ async def test_chat_screen_release_export_natural_runs_operator_control_action(
         input_widget = app.screen.query_one("#message-input")
         input_widget.value = (
             "/release export natural target_ref=blueprint:bp-1 "
-            "output_path=xmuse/work/release_readiness/natural-transcript.json"
+            "output_path=xmuse/work/release_readiness/natural-transcript.json "
+            "runtime=skip ttl=120"
         )
         input_widget.post_message(input_widget.Submitted(input_widget, input_widget.value))
         await pilot.pause()
@@ -847,6 +848,8 @@ async def test_chat_screen_release_export_natural_runs_operator_control_action(
                 {
                     "target_refs": ["blueprint:bp-1"],
                     "output_path": "xmuse/work/release_readiness/natural-transcript.json",
+                    "god_runtime": "skip",
+                    "heartbeat_ttl_seconds": 120,
                 },
             ),
         ]
