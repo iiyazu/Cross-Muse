@@ -501,7 +501,13 @@ Current implementation status:
   before an operator attempts a live evidence capture. Natural candidates now
   expose transcript readiness and selected-GOD runtime readiness separately;
   combined natural `export_ready` requires both, so missing selected runtime
-  continuity is visible before `/release attempt natural`.
+  continuity is visible before `/release attempt natural`. Real-provider
+  candidates now include `proof_boundary=candidate_report_is_not_release_proof`,
+  the required `xmuse.real_provider_runtime.v1` schema, required
+  `real_provider_proof`, source authority, and the suggested
+  `attempt_release_evidence` operator action payload hints. This makes the next
+  action visible without treating peer-latency traces, provider inventory, or
+  TUI rendering as release proof.
 - TUI `/release attempt [natural|provider|memoryos|github|all]` now routes through
   `attempt_release_evidence` with `release_gate`. The action writes a
   `release-evidence-attempt.json` attempt report under

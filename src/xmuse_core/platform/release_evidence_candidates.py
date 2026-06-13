@@ -34,6 +34,11 @@ _MEMORYOS_REQUIRED_PAYLOAD = (
     "content",
     "query",
 )
+_PROVIDER_NEXT_ACTION = (
+    "Capture fresh and resume MCP writeback provider turns, then run "
+    "attempt_release_evidence for real_provider_runtime with real "
+    "runtime_backend and transport labels."
+)
 
 
 def build_release_evidence_candidate_report(
@@ -258,6 +263,10 @@ def _provider_candidates(
         "suggested_fresh_inbox_item_id": suggested[0] if suggested else None,
         "suggested_resume_inbox_item_id": suggested[1] if suggested else None,
         "blockers": [] if export_ready else blockers,
+        **_provider_candidate_guidance(
+            conversation_id=conversation_id,
+            suggested=suggested,
+        ),
     }
 
 
@@ -410,6 +419,40 @@ def _provider_gap(reason: str, *, trace_table_present: bool) -> dict[str, Any]:
         "suggested_fresh_inbox_item_id": None,
         "suggested_resume_inbox_item_id": None,
         "blockers": [reason],
+        **_provider_candidate_guidance(conversation_id=None, suggested=None),
+    }
+
+
+def _provider_candidate_guidance(
+    *,
+    conversation_id: str | None,
+    suggested: tuple[str, str] | None,
+) -> dict[str, Any]:
+    payload_hints: dict[str, str] = {}
+    if conversation_id:
+        payload_hints["conversation_id"] = conversation_id
+    if suggested is not None:
+        payload_hints["fresh_inbox_item_id"] = suggested[0]
+        payload_hints["resume_inbox_item_id"] = suggested[1]
+    return {
+        "proof_boundary": "candidate_report_is_not_release_proof",
+        "required_artifact_schema": "xmuse.real_provider_runtime.v1",
+        "required_proof_level": "real_provider_proof",
+        "source_authority": [
+            "chat_store.peer_turn_latency_traces",
+            "god_session_registry.provider_session_bindings",
+        ],
+        "next_action": _PROVIDER_NEXT_ACTION,
+        "suggested_operator_action": {
+            "action": "attempt_release_evidence",
+            "kind": "real_provider_runtime",
+            "required_payload_keys": [
+                "conversation_id",
+                "runtime_backend",
+                "transport",
+            ],
+            "payload_hints": payload_hints,
+        },
     }
 
 

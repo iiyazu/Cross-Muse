@@ -722,8 +722,12 @@ Tasks:
   selected runtime view, stale heartbeats, or bounded/non-peer GOD sessions are
   visible before `/release attempt natural` starts. The TUI operator result
   prints compact candidate lines for natural transcript/runtime readiness,
-  provider readiness, MemoryOS readiness, and selected-GOD runtime blockers
-  without writing durable state.
+  provider readiness, MemoryOS readiness, selected-GOD runtime blockers, and
+  provider next-action guidance without writing durable state. Provider
+  candidate guidance is explicitly bounded by
+  `proof_boundary=candidate_report_is_not_release_proof`; only a validated
+  `xmuse.real_provider_runtime.v1` artifact with `real_provider_proof` can
+  satisfy the real-provider release gate.
 - When the same natural transcript should participate in release readiness,
   also pass `--natural-deliberation-transcript TRANSCRIPT` plus
   `--natural-deliberation-god-runtime RUNTIME`. This writes

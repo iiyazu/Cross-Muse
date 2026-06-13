@@ -993,16 +993,23 @@ natural[<conversation-id>]=blocked transcript=ready runtime=blocked peer_gods=0 
 ```
 
 The action result also shows provider and MemoryOS candidate readiness; these
-lines are read-model feedback, not durable state writes. `/release attempt` calls
-`attempt_release_evidence`, reuses the candidate report, and then invokes the
-same release evidence export actions only for candidate inputs that are
-export-ready. It writes `release-evidence-attempt.json` under
-`xmuse/work/release_readiness` and may write the raw evidence plus matching gate
-artifacts for successful export attempts. Missing MemoryOS configuration,
-missing peer latency traces, missing natural GOD speech acts, missing selected
-GOD runtime continuity, missing GitHub target fields, missing runtime metadata,
-fake/local labels, and blocked live captures remain blocked `manual_gap` attempt
-rows; the attempt action does not start absent services or upgrade weak evidence.
+lines are read-model feedback, not durable state writes. Provider candidate
+rows include `proof_boundary=candidate_report_is_not_release_proof`, required
+artifact schema `xmuse.real_provider_runtime.v1`, required proof
+`real_provider_proof`, source authority, and suggested
+`attempt_release_evidence` payload hints. The TUI summary prints provider
+`next=` guidance so the operator can move from candidate inspection to an
+authorized capture action without mistaking the candidate for release proof.
+`/release attempt` calls `attempt_release_evidence`, reuses the candidate
+report, and then invokes the same release evidence export actions only for
+candidate inputs that are export-ready. It writes
+`release-evidence-attempt.json` under `xmuse/work/release_readiness` and may
+write the raw evidence plus matching gate artifacts for successful export
+attempts. Missing MemoryOS configuration, missing peer latency traces, missing
+natural GOD speech acts, missing selected GOD runtime continuity, missing
+GitHub target fields, missing runtime metadata, fake/local labels, and blocked
+live captures remain blocked `manual_gap` attempt rows; the attempt action does
+not start absent services or upgrade weak evidence.
 `/release export natural`, `/release export god-runtime`,
 `/release export provider`, `/release export memoryos`, and
 `/release export github` call the matching release evidence export

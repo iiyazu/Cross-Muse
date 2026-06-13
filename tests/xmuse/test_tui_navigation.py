@@ -1157,7 +1157,10 @@ async def test_chat_screen_release_candidates_runs_operator_control_action(
                             }
                         ]
                     },
-                    "real_provider_runtime": {"export_ready": False},
+                    "real_provider_runtime": {
+                        "export_ready": False,
+                        "next_action": "Capture fresh and resume MCP writeback provider turns.",
+                    },
                     "live_memoryos": {"export_ready": False},
                 }
             },
@@ -1206,6 +1209,9 @@ async def test_chat_screen_release_candidates_runs_operator_control_action(
         assert (
             "natural[conv-user]=blocked transcript=ready runtime=blocked "
             "peer_gods=0 blockers=selected_god_runtime_missing"
+        ) in content
+        assert (
+            "provider=blocked next=Capture fresh and resume MCP writeback provider turns."
         ) in content
         assert "Inspected release evidence candidates." in content
 

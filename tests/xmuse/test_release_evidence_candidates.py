@@ -57,6 +57,27 @@ def test_release_evidence_candidates_identify_ready_natural_and_provider_inputs(
     assert provider["export_ready"] is True
     assert provider["suggested_fresh_inbox_item_id"] == "inbox-fresh"
     assert provider["suggested_resume_inbox_item_id"] == "inbox-resume"
+    assert provider["proof_boundary"] == "candidate_report_is_not_release_proof"
+    assert provider["required_artifact_schema"] == "xmuse.real_provider_runtime.v1"
+    assert provider["required_proof_level"] == "real_provider_proof"
+    assert provider["source_authority"] == [
+        "chat_store.peer_turn_latency_traces",
+        "god_session_registry.provider_session_bindings",
+    ]
+    assert provider["suggested_operator_action"] == {
+        "action": "attempt_release_evidence",
+        "kind": "real_provider_runtime",
+        "required_payload_keys": [
+            "conversation_id",
+            "runtime_backend",
+            "transport",
+        ],
+        "payload_hints": {
+            "conversation_id": conversation_id,
+            "fresh_inbox_item_id": "inbox-fresh",
+            "resume_inbox_item_id": "inbox-resume",
+        },
+    }
     assert memoryos["export_ready"] is True
     assert memoryos["configured"] is True
     assert memoryos["missing_env_keys"] == []
@@ -104,6 +125,14 @@ def test_release_evidence_candidates_report_current_gaps_without_secrets(
     assert provider["trace_table_present"] is False
     assert provider["export_ready"] is False
     assert "peer_turn_latency_traces_table_missing" in provider["blockers"]
+    assert provider["proof_boundary"] == "candidate_report_is_not_release_proof"
+    assert provider["required_artifact_schema"] == "xmuse.real_provider_runtime.v1"
+    assert provider["required_proof_level"] == "real_provider_proof"
+    assert provider["next_action"] == (
+        "Capture fresh and resume MCP writeback provider turns, then run "
+        "attempt_release_evidence for real_provider_runtime with real "
+        "runtime_backend and transport labels."
+    )
     assert memoryos["configured"] is False
     assert "XMUSE_LIVE_MEMORYOS_LITE" in memoryos["missing_env_keys"]
     assert "token=secret-token" not in str(report)

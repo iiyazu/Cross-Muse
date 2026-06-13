@@ -1322,7 +1322,10 @@ def _candidate_section_line(label: str, value: object) -> str:
         return ""
     state = _ready_state(value.get("export_ready"))
     blockers = _string_items(value.get("blockers"), limit=6)
+    next_action = str(value.get("next_action") or "").strip()
     line = f"{label}={state}"
+    if next_action:
+        line = f"{line} next={next_action}"
     if blockers:
         line = f"{line} blockers={', '.join(blockers)}"
     return line
