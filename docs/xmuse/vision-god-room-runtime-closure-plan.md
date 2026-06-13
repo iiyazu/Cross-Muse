@@ -215,9 +215,14 @@ Current implementation status:
   source refs, optional CLI/provider profile, and payload. Missing identity,
   empty content, missing source refs, invalid challenge routing, and incomplete
   freeze requests are rejected by the contract.
-- This is contract/replay infrastructure only. It does not make TUI,
-  dashboard, `feature_lanes.json`, Ray actor memory, or provider subprocess
-  state authoritative.
+- `src/xmuse_core/chat/god_room_event_store.py` now provides a durable
+  SQLite-backed GOD room event store. Rooms bind to a conversation, participants
+  are explicit roster authority, event append is idempotent, conflicting event
+  identity reuse is rejected, unknown participants/targets are blocked, and
+  room state can be reloaded after restart.
+- This is durable contract/store infrastructure, not live peer-provider proof.
+  It does not make TUI, dashboard, `feature_lanes.json`, Ray actor memory, or
+  provider subprocess state authoritative.
 
 ## S2 - Speaker Runtime Slice
 
@@ -250,6 +255,10 @@ Current implementation status:
 - Missing participants or missing target participants produce
   `manual_gap/manual_gap` replay results with a concrete blocked reason instead
   of inventing a provider response.
+- `GodRoomEventStore.write_room_snapshot(...)` exports
+  `xmuse.god_room_snapshot.v1` with participants, events, and replay decisions,
+  so replay/release evidence can reference a durable room snapshot instead of
+  ad hoc transcript fixtures.
 
 ## S3 - Blueprint Freeze Compiler
 
