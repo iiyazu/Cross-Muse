@@ -22,6 +22,7 @@ dependencies = [
 xmuse-chat-api = "xmuse.chat_api:main"
 xmuse-deliberation-transcript-evidence-capture = "xmuse.deliberation_transcript_evidence_capture:main"
 xmuse-feature-lineage-evidence-capture = "xmuse.feature_lineage_evidence_capture:main"
+xmuse-feature-owner-contract-export = "xmuse.feature_owner_contract_export:main"
 xmuse-frozen-blueprint-evidence-capture = "xmuse.frozen_blueprint_evidence_capture:main"
 xmuse-goal-stage-evidence-capture = "xmuse.goal_stage_evidence_capture:main"
 xmuse-god-runtime-continuity-capture = "xmuse.god_runtime_continuity_capture:main"

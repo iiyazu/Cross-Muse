@@ -853,6 +853,11 @@ section from graph-native `xmuse.feature_owner_execution_contract.v2`
 contracts. The v2 contract carries ready-set provenance, explicit lane blocker
 refs, and `read_only_contract_no_status_writes`; it is replay evidence, not a
 lane status writer.
+`uv run xmuse-feature-owner-contract-export --graph-set GRAPH_SET --output-dir DIR`
+exports those v2 contracts directly from graph-set JSON authority. It does not
+read `feature_lanes.json`, does not write lane status, and requires graph/lane
+allowed-file evidence either from graph-set `expected_touched_areas` or explicit
+`--allowed-file` arguments.
 `--memoryos-governance-plan` and `--memoryos-writeback-event` generate the
 replay `memory_governance` section from governed MemoryOS policy inputs.
 These replay-section conversions are contract-level handoff evidence only and

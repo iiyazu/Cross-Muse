@@ -520,8 +520,13 @@ Current implementation status:
   reuses the natural deliberation release-gate rules, so deterministic replay,
   single-GOD transcripts, missing provider session metadata, bounded selected
   runtime, or unresolved blockers cannot be upgraded by replay indexing.
+- `uv run xmuse-feature-owner-contract-export` exports serialized
+  `xmuse.feature_owner_execution_contract.v2` artifacts directly from graph-set
+  JSON authority. It does not read `feature_lanes.json`, does not write lane
+  status, and requires allowed-file evidence from graph-set
+  `expected_touched_areas` or explicit `--allowed-file` arguments.
 - `uv run xmuse-feature-lineage-evidence-capture` exports serialized
-  `xmuse.feature_owner_execution_contract.v1` artifacts into replay-ready
+  `xmuse.feature_owner_execution_contract.v2` artifacts into replay-ready
   `xmuse.production_evidence.v1` for the `feature_lineage` section. It keeps
   feature owner and graph-native ready-set contracts as authority, preserves
   lane lineage refs, and leaves missing or rejected contracts as `manual_gap`.
