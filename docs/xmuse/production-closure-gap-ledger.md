@@ -1,6 +1,6 @@
 # xmuse Production Closure Gap Ledger
 
-更新日期: 2026-06-13
+更新日期: 2026-06-14
 
 本文档是 xmuse 生产闭环缺口台账。它用于把“用户最终看到的体验”和
 “生产实现必须遵守的依赖顺序”分开记录。
@@ -40,8 +40,8 @@ runtime、provider invocation、lane authority、review truth 完成。后续生
 不是自动更新状态。
 
 - Branch: `vision-closure-deliberation-tui`
-- Local base head before dependency-order rewrite:
-  `3929a1256ff516c5de7b4d9dcafb3d7a92c52c68`
+- Local base head before L2 clowder-ai reference annotation:
+  `c6a0ac9f812a2298d5e4895e5abae13387fe5968`
 - PR: <https://github.com/iiyazu/Cross-Muse/pull/43>
 - PR state last checked: draft/open/unmerged
 - PR merge state last checked: `CLEAN`
@@ -72,7 +72,7 @@ Evidence boundaries:
 | Layer | Name | Dependency role | Closure state |
 |---|---|---|---|
 | L1 | Authority / Boundary Model | Defines what can write truth | Partly documented; enforcement still uneven |
-| L2 | GOD Identity / Provider Registry | Defines selectable GOD/provider actors | Registry slice exists; production selection proof incomplete |
+| L2 | GOD Identity / Provider Binding | Defines selectable GOD/provider actors and account/CLI bindings | Registry slice exists; production selection proof incomplete |
 | L3 | GOD Room Durable Event Runtime | Stores durable deliberation events | Durable contract/store slice exists |
 | L4 | Speaker Selection / Provider Invocation | Produces live provider response artifacts | Selection/capture slices exist; invocation missing |
 | L5 | Speaker Response Capture / Replay Proof | Converts provider artifacts into durable speech | Artifact-backed capture exists |
@@ -117,41 +117,130 @@ Evidence boundaries:
 - Do not claim yet:
   - Do not claim all runtime status authority is fully centralized.
 
-## L2 - GOD Identity / Provider Registry
+## L2 - GOD Identity / Provider Binding
 
 - Dependency role:
-  - Real GOD room runtime requires registered, selectable GOD/provider actors
-    before any natural deliberation or speaker invocation can be production
-    proof.
+  - Real GOD room runtime requires registered GOD identities, registered
+    provider/account profiles, and room-level selected-GOD bindings before any
+    natural deliberation or speaker invocation can be production proof.
 - User-visible promise unlocked:
   - The operator can register and choose which CLI/provider acts as a GOD, and
     later evidence can prove which actor produced which response.
+- Required authority objects:
+  - `ProviderAccount` / `ProviderProfile`:
+    - Records usable provider/CLI/account metadata such as `account_ref`,
+      `provider_kind`, `auth_type`, `base_url`, `models`, `env_vars_ref`, and
+      `credential_ref`.
+    - It is provider availability and credential binding metadata. It is not a
+      GOD identity and must not be used directly as room speaker truth.
+  - `GodProfile`:
+    - Records GOD identity and role metadata such as `god_id`, `display_name`,
+      `role`, `capabilities`, `constraints`, and `proof_policy`.
+    - It does not store secrets and does not directly invoke providers.
+  - `RoomSelectedGodBinding`:
+    - Records which GODs are selected for a room/session and how each selected
+      GOD resolves to an account/CLI/model.
+    - Required fields include `room_id`, `binding_revision`, `god_id`,
+      `account_ref`, `cli_command`, `model`, `variant`, `proof_level`,
+      `selected_by`, and `selected_at`.
+    - L3 event authorship and L4 provider invocation must reference this
+      binding, not provider inventory, raw environment discovery, naked CLI
+      command strings, or TUI temporary state.
 - Current implemented evidence:
   - Provider inventory and provider board projections exist.
   - Provider policy/registry modules exist for Codex, OpenCode, and fake
     providers.
   - Current evidence correctly keeps OpenCode as bounded worker, not peer-GOD.
 - Missing production closure:
-  - Manual GOD registration/selection is not yet the production authority for
-    GOD room speaker identity.
+  - Durable `ProviderAccount`, `GodProfile`, and `RoomSelectedGodBinding`
+    contracts are not yet the production authority for GOD room speaker
+    identity.
   - Provider inventory/runtime evidence is not yet sufficient to upgrade a CLI
     into a peer-GOD role.
 - Proof required to close:
-  - A durable GOD/provider registration contract with actor id, provider kind,
-    CLI command, model/variant, capabilities, proof level, and selection
-    lineage consumed by GOD room speaker selection.
+  - Durable account/profile/selection artifacts exist and are consumed by GOD
+    room speaker selection and provider invocation.
+  - Explicit binding resolution is fail-closed: unresolved `account_ref`,
+    incompatible provider/model, missing CLI, or missing proof config produces
+    `manual_gap` or `refactor_required`, not fallback environment scanning.
+  - For OpenCode/DeepSeek, invocation metadata preserves model and variant as
+    separate fields:
+    - `cli_command = opencode`
+    - `model = opencode-go/deepseek-v4-flash`
+    - `variant = max`
+    - Never encode `max` into the model id.
 - Current risk:
   - Treating a configured worker provider as a selectable GOD without explicit
     role contract and live proof.
+  - Letting provider inventory or TUI-selected strings bypass durable selected
+    GOD binding.
 - Next production slice:
-  - Build the durable GOD/provider registry and selected-GOD binding used by
-    speaker runtime.
+  - Implement durable `ProviderAccount` + `GodProfile` +
+    `RoomSelectedGodBinding`, then require L3/L4 to resolve speaker identity
+    through the selected binding.
 - Downstream blocked until:
   - L3 can store events, but L4 cannot claim live GOD/provider speech without a
     selected actor from this layer.
 - Do not claim yet:
   - Do not claim OpenCode or any CLI is a peer-GOD solely because it appears in
     provider inventory.
+
+### L2 clowder-ai reference sources
+
+Use these as implementation references, not as xmuse package dependencies:
+
+- Account binding authority:
+  - `/home/iiyatu/clowder-ai/packages/api/src/config/cat-account-binding.ts:9`
+    shows that `accountRef` becomes authoritative once written to runtime
+    catalog and bootstrap/template state must not reinterpret it.
+- Provider/account resolver:
+  - `/home/iiyatu/clowder-ai/packages/api/src/config/account-resolver.ts:23`
+    defines `RuntimeProviderProfile` without mixing it with member identity.
+  - `/home/iiyatu/clowder-ai/packages/api/src/config/account-resolver.ts:88`
+    maps well-known builtin account refs to client families.
+  - `/home/iiyatu/clowder-ai/packages/api/src/config/account-resolver.ts:119`
+    resolves a single `accountRef`.
+  - `/home/iiyatu/clowder-ai/packages/api/src/config/account-resolver.ts:159`
+    fails closed when an explicit preferred account ref cannot resolve.
+- Identity/member config:
+  - `/home/iiyatu/clowder-ai/packages/shared/src/types/cat.ts:15`
+    defines CLI client identity separately from provider account metadata.
+  - `/home/iiyatu/clowder-ai/packages/shared/src/types/cat.ts:58`
+    shows member identity/config fields including `accountRef`, `clientId`,
+    `defaultModel`, `cli`, `roleDescription`, and `provider`.
+  - `/home/iiyatu/clowder-ai/packages/shared/src/types/cat-breed.ts:34`
+    defines reusable CLI invocation config.
+  - `/home/iiyatu/clowder-ai/packages/shared/src/types/cat-breed.ts:56`
+    shows variant-level account/model/CLI binding.
+  - `/home/iiyatu/clowder-ai/packages/shared/src/types/cat-breed.ts:217`
+    defines account metadata without secrets.
+- Account and member mutation validation:
+  - `/home/iiyatu/clowder-ai/packages/api/src/routes/accounts.ts:254`
+    creates account metadata and writes credentials separately.
+  - `/home/iiyatu/clowder-ai/packages/api/src/routes/cats.ts:312`
+    validates account binding, provider/model compatibility, and API-key model
+    requirements.
+  - `/home/iiyatu/clowder-ai/packages/api/src/routes/cats.ts:510`
+    validates binding before creating a runtime member.
+  - `/home/iiyatu/clowder-ai/packages/api/src/routes/cats.ts:645`
+    resolves effective binding during member updates and validates provider
+    config changes.
+- Runtime invocation and OpenCode reference:
+  - `/home/iiyatu/clowder-ai/docs/decisions/001-agent-invocation-approach.md:24`
+    records CLI subprocess + MCP callback as the default agent invocation path.
+  - `/home/iiyatu/clowder-ai/docs/decisions/001-agent-invocation-approach.md:64`
+    records account-binding fail-closed and governance gates for native
+    provider opt-in.
+  - `/home/iiyatu/clowder-ai/packages/api/src/domains/cats/services/agents/providers/OpenCodeAgentService.ts:115`
+    resolves and invokes the OpenCode CLI as an agent service.
+  - `/home/iiyatu/clowder-ai/packages/api/src/domains/cats/services/agents/providers/opencode-config-template.ts:84`
+    treats provider name as runtime routing authority for OpenCode API type.
+  - `/home/iiyatu/clowder-ai/packages/api/src/domains/cats/services/agents/providers/opencode-config-template.ts:124`
+    parses OpenCode `provider/model` format.
+- Runtime config boundary:
+  - `/home/iiyatu/clowder-ai/docs/decisions/017-no-runtime-home-overwrite.md:23`
+    forbids runtime dispatch/invocation from overwriting provider home
+    directory config files.
 
 ## L3 - GOD Room Durable Event Runtime
 
