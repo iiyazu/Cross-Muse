@@ -4,6 +4,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from xmuse_core.chat.god_room_speaker_response import GodRoomProviderSpeechResponseV1
 from xmuse_core.providers.models import ProviderId, ProviderProfileId
 from xmuse_core.structuring.blueprint_execution.lane_dag_service import (
     BlueprintFeatureSpec,
@@ -293,6 +294,25 @@ class GodRoomSpeakerAttemptRequest(BaseModel):
     after_event_id: str | None = Field(default=None, min_length=1)
 
     @field_validator("after_event_id", mode="before")
+    @classmethod
+    def _strip_optional_text(cls, value: object) -> object:
+        return _strip_optional_string(value)
+
+
+class GodRoomSpeakerResponseRequest(BaseModel):
+    after_event_id: str | None = Field(default=None, min_length=1)
+    event_id: str | None = Field(default=None, min_length=1)
+    timestamp_utc: str | None = Field(default=None, min_length=1)
+    provider_response_artifact: str | None = Field(default=None, min_length=1)
+    provider_response: GodRoomProviderSpeechResponseV1 | None = None
+
+    @field_validator(
+        "after_event_id",
+        "event_id",
+        "timestamp_utc",
+        "provider_response_artifact",
+        mode="before",
+    )
     @classmethod
     def _strip_optional_text(cls, value: object) -> object:
         return _strip_optional_string(value)

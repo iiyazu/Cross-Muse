@@ -603,6 +603,18 @@ class SlashCommandRouter:
             if not callable(runner):
                 raise ValueError("GOD room contract actions unavailable for this adapter.")
             return "speaker-attempt", runner(conv_id, _room_speaker_attempt_payload(args))
+        if subcommand in {"speaker-response", "speak-response", "response"}:
+            runner = getattr(
+                context.app.adapter,
+                "capture_god_room_speaker_response",
+                None,
+            )
+            if not callable(runner):
+                raise ValueError("GOD room contract actions unavailable for this adapter.")
+            return "speaker-response", runner(
+                conv_id,
+                _room_speaker_response_payload(args),
+            )
         raise ValueError(_room_usage())
 
     def _god(self, rest: str, context: SlashCommandContext) -> SlashCommandResult:
@@ -741,7 +753,7 @@ class SlashCommandRouter:
 def _room_usage() -> str:
     return (
         "Usage: /room <ensure|snapshot|event|freeze|lane-dag|recovery|"
-        "memoryos-plan|speaker-attempt> [key=value...]"
+        "memoryos-plan|speaker-attempt|speaker-response> [key=value...]"
     )
 
 
@@ -1002,6 +1014,67 @@ def _room_speaker_attempt_payload(args: list[str]) -> dict[str, Any]:
     return payload
 
 
+def _room_speaker_response_payload(args: list[str]) -> dict[str, Any]:
+    usage = (
+        "Usage: /room speaker-response after_event_id=<event_id> "
+        "event_id=<event_id> response_id=<id> target=<participant_id> "
+        "provider_profile=<ref> provider_session=<id> content=<text> "
+        "source_ref=<ref> proof_level=<proof_level> "
+        "provider_response_artifact=<path> [status=completed]"
+    )
+    raw = _key_value_args(args, usage=usage)
+    aliases = {
+        "event": "after_event_id",
+        "after": "after_event_id",
+        "timestamp": "timestamp_utc",
+        "response": "response_id",
+        "target": "target_participant_id",
+        "provider_profile": "provider_profile_ref",
+        "profile": "provider_profile_ref",
+        "provider_session": "provider_session_id",
+        "session": "provider_session_id",
+        "session_kind": "provider_session_kind",
+        "artifact": "provider_response_artifact",
+        "response_artifact": "provider_response_artifact",
+        "source": "source_refs",
+        "source_ref": "source_refs",
+    }
+    payload: dict[str, Any] = {}
+    provider_response: dict[str, Any] = {
+        "status": "completed",
+    }
+    for key, value in raw.items():
+        normalized_key = aliases.get(key, key)
+        if normalized_key in {
+            "after_event_id",
+            "event_id",
+            "timestamp_utc",
+            "provider_response_artifact",
+        }:
+            payload[normalized_key] = value
+            continue
+        if normalized_key == "source_refs":
+            provider_response[normalized_key] = _comma_values(value)
+            continue
+        provider_response[normalized_key] = value
+    required = (
+        "response_id",
+        "target_participant_id",
+        "provider_profile_ref",
+        "provider_session_id",
+        "content",
+        "source_refs",
+        "proof_level",
+    )
+    missing = [key for key in required if not provider_response.get(key)]
+    if not payload.get("provider_response_artifact"):
+        missing.append("provider_response_artifact")
+    if missing:
+        raise ValueError(usage)
+    payload["provider_response"] = provider_response
+    return payload
+
+
 def _god_room_action_block(action: str, result: dict) -> str:
     if "status" in result and "proof_level" in result:
         return _operator_action_block(result)
@@ -1058,6 +1131,27 @@ def _god_room_action_block(action: str, result: dict) -> str:
         blocked_reason = str(speaker_attempt.get("blocked_reason") or "").strip()
         if blocked_reason:
             lines.append(f"blocked_reason={blocked_reason}")
+    speaker_response = result.get("speaker_response")
+    if isinstance(speaker_response, dict):
+        status = str(speaker_response.get("status") or "").strip()
+        if status:
+            lines.append(f"speaker_response={status}")
+        append_status = str(speaker_response.get("append_status") or "").strip()
+        if append_status:
+            lines.append(f"append_status={append_status}")
+        speak_event = speaker_response.get("speak_event")
+        if isinstance(speak_event, dict):
+            speak_event_id = str(speak_event.get("event_id") or "").strip()
+            if speak_event_id:
+                lines.append(f"speak_event={speak_event_id}")
+        provider_response = speaker_response.get("provider_response")
+        if isinstance(provider_response, dict):
+            response_id = str(provider_response.get("response_id") or "").strip()
+            if response_id:
+                lines.append(f"provider_response={response_id}")
+        blocked_reason = str(speaker_response.get("blocked_reason") or "").strip()
+        if blocked_reason:
+            lines.append(f"blocked_reason={blocked_reason}")
     artifacts = result.get("artifacts")
     if isinstance(artifacts, dict):
         artifact_refs = [
@@ -1074,7 +1168,7 @@ def _god_room_source_authority(result: dict) -> str:
     direct = str(result.get("source_authority") or "").strip()
     if direct:
         return direct
-    for key in ("room", "snapshot", "memoryos_plan", "speaker_attempt"):
+    for key in ("room", "snapshot", "memoryos_plan", "speaker_attempt", "speaker_response"):
         value = result.get(key)
         if isinstance(value, dict):
             authority = str(value.get("source_authority") or "").strip()
@@ -1472,6 +1566,9 @@ def _release_pack_payload(args: list[str]) -> dict[str, Any]:
             "room_speaker_attempt": "god_room_speaker_attempt",
             "room_speaker": "god_room_speaker_attempt",
             "god_room_speaker_attempt": "god_room_speaker_attempt",
+            "room_speaker_response": "god_room_speaker_response",
+            "room_response": "god_room_speaker_response",
+            "god_room_speaker_response": "god_room_speaker_response",
             "room_closure_output": "god_room_runtime_closure_evidence_output",
             "god_room_closure_output": "god_room_runtime_closure_evidence_output",
             "god_room_runtime_closure_evidence_output": (
@@ -2206,6 +2303,9 @@ def _help_text() -> str:
             "/room recovery graph_id=<id> lane_id=<id> [failure fields...]",
             "/room memoryos-plan graph_id=<id> repo_id=<repo> workspace_id=<id>",
             "/room speaker-attempt [after_event_id=<event_id>]",
+            "/room speaker-response response_id=<id> target=<participant_id> "
+            "provider_session=<id> content=<text> source_ref=<ref> "
+            "proof_level=<proof_level> provider_response_artifact=<path>",
             "/freeze target_ref=<ref> blueprint_id=<id> goal=<goal> "
             "scope=<items> acceptance=<items>",
             "/discussion",

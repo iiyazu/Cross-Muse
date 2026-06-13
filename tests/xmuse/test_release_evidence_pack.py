@@ -1295,11 +1295,17 @@ def test_release_evidence_pack_converts_god_room_runtime_closure_into_replay_sec
     events = [
         _god_room_event("evt-propose"),
         _god_room_event(
+            "evt-review-provider-speak",
+            participant_id="part-review",
+            god_id="god-review",
+            causal_parent_id="evt-propose",
+        ),
+        _god_room_event(
             "evt-freeze",
             event_type=GodRoomEventKind.FREEZE_REQUESTED,
             participant_id="part-review",
             god_id="god-review",
-            causal_parent_id="evt-propose",
+            causal_parent_id="evt-review-provider-speak",
             payload={
                 "freeze_target_ref": "blueprint:bp-runtime:1",
                 "goal": "Close runtime evidence.",
@@ -1382,6 +1388,65 @@ def test_release_evidence_pack_converts_god_room_runtime_closure_into_replay_sec
             ],
         },
     )
+    speaker_response = tmp_path / "speaker-response.json"
+    _write_json(
+        speaker_response,
+        {
+            "schema_version": "xmuse.god_room_speaker_response.v1",
+            "status": "speak_event_appended",
+            "proof_level": "real_provider_proof",
+            "source_authority": (
+                "god_room_event_store+selected_god_runtime_continuity+"
+                "provider_response"
+            ),
+            "conversation_id": "conv-1",
+            "room_id": "room-1",
+            "selected_event_id": "evt-propose",
+            "target_participant_id": "part-review",
+            "target_god_id": "god-review",
+            "provider_profile_ref": "codex.god",
+            "provider_session_id": "provider-thread-review",
+            "provider_response_artifact_ref": (
+                "reports/provider-responses/provider-response-1.json"
+            ),
+            "append_status": "created",
+            "source_refs": [
+                "god-room-event:evt-propose",
+                "provider_session:provider-thread-review",
+                "provider-run:codex:provider-response-1",
+            ],
+            "speaker_attempt": json.loads(speaker_attempt.read_text(encoding="utf-8")),
+            "provider_response": {
+                "schema_version": "xmuse.god_room_provider_speech_response.v1",
+                "response_id": "provider-response-1",
+                "status": "completed",
+                "proof_level": "real_provider_proof",
+                "target_participant_id": "part-review",
+                "provider_profile_ref": "codex.god",
+                "provider_session_id": "provider-thread-review",
+                "content": "Review GOD responded.",
+                "source_refs": ["provider-run:codex:provider-response-1"],
+            },
+            "speak_event": {
+                "version": "xmuse.god_room_event.v1",
+                "event_id": "evt-review-provider-speak",
+                "room_id": "room-1",
+                "conversation_id": "conv-1",
+                "participant_id": "part-review",
+                "god_id": "god-review",
+                "actor_kind": "god",
+                "event_type": "speak",
+                "timestamp_utc": "2026-06-13T10:02:00Z",
+                "content": "Review GOD responded.",
+                "target_participant_ids": [],
+                "causal_parent_id": "evt-propose",
+                "source_refs": ["provider-run:codex:provider-response-1"],
+                "cli_id": "codex",
+                "provider_profile": "codex.god",
+                "payload": {"body": "Review GOD responded."},
+            },
+        },
+    )
 
     pack = capture_release_evidence_pack(
         artifacts_dir=tmp_path / "artifacts",
@@ -1394,6 +1459,7 @@ def test_release_evidence_pack_converts_god_room_runtime_closure_into_replay_sec
         god_room_memory_trace=trace,
         god_room_tui_projection=tui,
         god_room_speaker_attempt=speaker_attempt,
+        god_room_speaker_response=speaker_response,
     )
 
     replay = json.loads(Path(pack["overnight_replay_bundle"]).read_text(encoding="utf-8"))
@@ -1412,6 +1478,9 @@ def test_release_evidence_pack_converts_god_room_runtime_closure_into_replay_sec
     assert closure["details"]["god_room_runtime_closure"]["speaker_attempt"][
         "status"
     ] == "ready_for_provider_attempt"
+    assert closure["details"]["god_room_runtime_closure"]["speaker_response"][
+        "status"
+    ] == "speak_event_appended"
 
 
 def test_release_evidence_pack_rejects_ambiguous_supervisor_sources(

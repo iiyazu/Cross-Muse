@@ -5,8 +5,9 @@ import json
 import os
 import sqlite3
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request, status
@@ -34,6 +35,7 @@ from xmuse_core.chat.api_models import (
     GodRoomLaneRecoveryRequest,
     GodRoomMemoryPlanRequest,
     GodRoomSpeakerAttemptRequest,
+    GodRoomSpeakerResponseRequest,
     MessageCreate,
     OperatorActionCreate,
     ParticipantInit,
@@ -57,6 +59,10 @@ from xmuse_core.chat.god_room_event_store import (
     GodRoomMembershipError,
 )
 from xmuse_core.chat.god_room_runtime import GodRoomEventV1, GodRoomParticipant
+from xmuse_core.chat.god_room_speaker_response import (
+    GodRoomProviderSpeechResponseV1,
+    capture_god_room_speaker_response,
+)
 from xmuse_core.chat.god_room_speaker_runtime import build_god_room_speaker_attempt
 from xmuse_core.chat.health_cards import build_run_health_chat_card
 from xmuse_core.chat.inbox_store import ChatInboxStore
@@ -1087,6 +1093,160 @@ def _build_god_room_speaker_attempt_from_runtime(
     }
 
 
+def _capture_god_room_speaker_response_from_runtime(
+    base_dir: Path,
+    *,
+    conversation_id: str,
+    request: GodRoomSpeakerResponseRequest,
+) -> dict[str, object]:
+    if not _conversation_exists(_store(base_dir), conversation_id):
+        raise HTTPException(status_code=404, detail="conversation not found")
+    event_store = _god_room_event_store(base_dir)
+    room_id = _default_god_room_id(conversation_id)
+    try:
+        snapshot = event_store.load_room(room_id)
+    except GodRoomMembershipError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "god_room_not_found", "message": str(exc)},
+        ) from exc
+    god_cli_registry = build_default_god_cli_registry(
+        extra_registrations=_god_cli_registration_store(base_dir).list_registrations()
+    )
+    runtime_continuity = build_selected_god_runtime_continuity_view(
+        conversation_id=conversation_id,
+        selections=_god_cli_selection_store(base_dir).list_records(),
+        sessions=_god_session_registry(base_dir).list(),
+        god_cli_registry=god_cli_registry,
+    )
+    provider_response, provider_response_artifact_ref = (
+        _load_god_room_provider_response_artifact(base_dir, request)
+    )
+
+    def append_event(event: GodRoomEventV1) -> Literal["created", "duplicate"]:
+        return event_store.append_event(event).status
+
+    try:
+        capture = capture_god_room_speaker_response(
+            conversation_id=conversation_id,
+            room_id=room_id,
+            participants=snapshot.participants,
+            events=snapshot.events,
+            runtime_continuity=runtime_continuity,
+            provider_response=provider_response,
+            provider_response_artifact_ref=provider_response_artifact_ref,
+            after_event_id=request.after_event_id,
+            event_id=request.event_id,
+            timestamp_utc=request.timestamp_utc or _utc_now(),
+            append_event=append_event,
+        )
+    except GodRoomMembershipError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "god_room_membership_error", "message": str(exc)},
+        ) from exc
+    except GodRoomEventConflictError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "god_room_event_conflict", "message": str(exc)},
+        ) from exc
+
+    capture_payload = capture.model_dump(mode="json")
+    artifact_path = _write_god_room_speaker_response_artifact(
+        base_dir,
+        conversation_id=conversation_id,
+        after_event_id=request.after_event_id,
+        event_id=request.event_id,
+        payload=capture_payload,
+    )
+    return {
+        "source_authority": capture.source_authority,
+        "conversation_id": conversation_id,
+        "room_id": room_id,
+        "speaker_response": capture_payload,
+        "runtime_continuity": runtime_continuity,
+        "artifacts": {"speaker_response": str(artifact_path.relative_to(base_dir))},
+        "room": _god_room_payload(event_store, room_id),
+    }
+
+
+def _load_god_room_provider_response_artifact(
+    base_dir: Path,
+    request: GodRoomSpeakerResponseRequest,
+) -> tuple[GodRoomProviderSpeechResponseV1 | None, str | None]:
+    artifact_ref = request.provider_response_artifact
+    if artifact_ref is None:
+        return request.provider_response, None
+    artifact_path = _resolve_runtime_artifact_path(base_dir, artifact_ref)
+    try:
+        payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "provider_response_artifact_missing",
+                "message": f"provider response artifact does not exist: {artifact_ref}",
+            },
+        ) from exc
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "provider_response_artifact_invalid_json",
+                "message": f"provider response artifact is not valid JSON: {exc}",
+            },
+        ) from exc
+    except OSError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "provider_response_artifact_unreadable",
+                "message": str(exc),
+            },
+        ) from exc
+    try:
+        provider_response = GodRoomProviderSpeechResponseV1.model_validate(payload)
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "provider_response_artifact_invalid",
+                "message": str(exc),
+            },
+        ) from exc
+    if (
+        request.provider_response is not None
+        and request.provider_response.model_dump(mode="json")
+        != provider_response.model_dump(mode="json")
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "provider_response_artifact_mismatch",
+                "message": "provider_response must match provider_response_artifact",
+            },
+        )
+    return provider_response, str(artifact_path.relative_to(base_dir.resolve()))
+
+
+def _resolve_runtime_artifact_path(base_dir: Path, artifact_ref: str) -> Path:
+    root = base_dir.resolve()
+    path = Path(artifact_ref)
+    candidate = path if path.is_absolute() else root / path
+    resolved = candidate.resolve()
+    try:
+        resolved.relative_to(root)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "runtime_artifact_outside_root",
+                "message": "artifact path must stay under xmuse root",
+            },
+        ) from exc
+    return resolved
+
+
 def _load_lane_dag_plan(base_dir: Path, graph_id: str) -> BlueprintLaneDagPlan:
     try:
         path = _lane_dag_artifact_path(base_dir, graph_id)
@@ -1314,6 +1474,34 @@ def _write_god_room_speaker_attempt_artifact(
     return path
 
 
+def _write_god_room_speaker_response_artifact(
+    base_dir: Path,
+    *,
+    conversation_id: str,
+    after_event_id: str | None,
+    event_id: str | None,
+    payload: dict[str, object],
+) -> Path:
+    replay_event_id = after_event_id or "latest"
+    response_event_id = event_id or "generated"
+    path = (
+        base_dir
+        / "reports"
+        / "god_room_speaker_responses"
+        / (
+            f"{_artifact_safe_id(conversation_id)}."
+            f"{_artifact_safe_id(replay_event_id)}."
+            f"{_artifact_safe_id(response_event_id)}.speaker-response.json"
+        )
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
 def _lane_dag_artifact_path(base_dir: Path, graph_id: str) -> Path:
     return base_dir / "lane_graphs" / f"{_artifact_path_id(graph_id)}.lane-dag.json"
 
@@ -1337,6 +1525,10 @@ def _artifact_safe_id(value: str) -> str:
     return "".join(
         char if char.isalnum() or char in {"-", "_", "."} else "_" for char in value
     )
+
+
+def _utc_now() -> str:
+    return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
 def _default_participant_inits(role_templates: RoleTemplateStore) -> list[ParticipantInit]:
@@ -2166,6 +2358,20 @@ def create_app(
         request: GodRoomSpeakerAttemptRequest,
     ) -> dict[str, object]:
         return _build_god_room_speaker_attempt_from_runtime(
+            root,
+            conversation_id=conversation_id,
+            request=request,
+        )
+
+    @app.post(
+        "/api/chat/conversations/{conversation_id}/god-room/speaker-response",
+        status_code=status.HTTP_201_CREATED,
+    )
+    def capture_god_room_speaker_response(
+        conversation_id: str,
+        request: GodRoomSpeakerResponseRequest,
+    ) -> dict[str, object]:
+        return _capture_god_room_speaker_response_from_runtime(
             root,
             conversation_id=conversation_id,
             request=request,

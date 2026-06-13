@@ -7,6 +7,10 @@ from xmuse_core.chat.god_room_runtime import (
     GodRoomEventV1,
     GodRoomParticipant,
 )
+from xmuse_core.chat.god_room_speaker_response import (
+    GodRoomProviderSpeechResponseV1,
+    capture_god_room_speaker_response,
+)
 from xmuse_core.chat.god_room_speaker_runtime import build_god_room_speaker_attempt
 from xmuse_core.platform.god_runtime_continuity import (
     build_selected_god_runtime_continuity_view,
@@ -96,6 +100,128 @@ def test_speaker_attempt_reports_manual_gap_without_matching_provider_ready_god(
     assert attempt.provider_session_id is None
     assert attempt.blocked_reason == "provider session metadata unavailable"
     assert "provider_session:" not in " ".join(attempt.source_refs)
+
+
+def test_speaker_response_appends_real_provider_speak_event() -> None:
+    participants = [
+        GodRoomParticipant(participant_id="part-architect", god_id="architect-god"),
+        GodRoomParticipant(
+            participant_id="part-review",
+            god_id="review-god",
+            cli_id="codex",
+        ),
+    ]
+    events = [
+        _event(
+            "evt-propose",
+            participant_id="part-architect",
+            god_id="architect-god",
+        )
+    ]
+    appended: list[GodRoomEventV1] = []
+
+    capture = capture_god_room_speaker_response(
+        conversation_id="conv-1",
+        room_id="god-room:conv-1",
+        participants=participants,
+        events=events,
+        runtime_continuity=_runtime_view(
+            participant_id="part-review",
+            provider_session_id="provider-thread-review",
+        ),
+        provider_response=GodRoomProviderSpeechResponseV1(
+            response_id="provider-response-1",
+            status="completed",
+            proof_level="real_provider_proof",
+            target_participant_id="part-review",
+            provider_profile_ref="codex.god",
+            provider_session_id="provider-thread-review",
+            provider_session_kind="provider_thread",
+            content="I challenge this path until the provider response is durable.",
+            source_refs=["provider-run:codex:provider-response-1"],
+        ),
+        provider_response_artifact_ref="reports/provider-responses/provider-response-1.json",
+        after_event_id="evt-propose",
+        event_id="evt-review-provider-speak",
+        timestamp_utc="2026-06-13T10:02:00Z",
+        append_event=lambda event: appended.append(event) or "created",
+    )
+
+    assert capture.status == "speak_event_appended"
+    assert capture.proof_level == "real_provider_proof"
+    assert capture.append_status == "created"
+    assert capture.blocked_reason is None
+    assert capture.speak_event is not None
+    assert capture.speak_event.event_id == "evt-review-provider-speak"
+    assert capture.speak_event.event_type is GodRoomEventKind.SPEAK
+    assert capture.speak_event.actor_kind is GodRoomActorKind.GOD
+    assert capture.speak_event.participant_id == "part-review"
+    assert capture.speak_event.god_id == "review-god"
+    assert capture.speak_event.provider_profile == "codex.god"
+    assert capture.speak_event.causal_parent_id == "evt-propose"
+    assert capture.speak_event.content == (
+        "I challenge this path until the provider response is durable."
+    )
+    assert capture.speak_event.source_refs == [
+        "god-room-event:evt-propose",
+        "message:evt-propose",
+        "god-room-participant:part-review",
+        "god_cli_selection:conv-1",
+        "god_cli_registration:codex.god",
+        "god_session:god-session-review",
+        "provider_session:provider-thread-review",
+        "provider-run:codex:provider-response-1",
+        "provider_response_artifact:reports/provider-responses/provider-response-1.json",
+    ]
+    assert appended == [capture.speak_event]
+
+
+def test_speaker_response_keeps_manual_gap_without_structured_provider_speech() -> None:
+    participants = [
+        GodRoomParticipant(participant_id="part-architect", god_id="architect-god"),
+        GodRoomParticipant(participant_id="part-review", god_id="review-god"),
+    ]
+    events = [
+        _event(
+            "evt-propose",
+            participant_id="part-architect",
+            god_id="architect-god",
+        )
+    ]
+    appended: list[GodRoomEventV1] = []
+
+    capture = capture_god_room_speaker_response(
+        conversation_id="conv-1",
+        room_id="god-room:conv-1",
+        participants=participants,
+        events=events,
+        runtime_continuity=_runtime_view(
+            participant_id="part-review",
+            provider_session_id="provider-thread-review",
+        ),
+        provider_response=GodRoomProviderSpeechResponseV1(
+            response_id="provider-response-1",
+            status="completed",
+            proof_level="real_provider_proof",
+            target_participant_id="part-review",
+            provider_profile_ref="codex.god",
+            provider_session_id="provider-thread-review",
+            provider_session_kind="provider_thread",
+            content=None,
+            source_refs=["provider-run:codex:provider-response-1"],
+        ),
+        provider_response_artifact_ref="reports/provider-responses/provider-response-1.json",
+        after_event_id="evt-propose",
+        event_id="evt-review-provider-speak",
+        timestamp_utc="2026-06-13T10:02:00Z",
+        append_event=lambda event: appended.append(event) or "created",
+    )
+
+    assert capture.status == "manual_gap"
+    assert capture.proof_level == "manual_gap"
+    assert capture.blocked_reason == "provider response content missing"
+    assert capture.speak_event is None
+    assert appended == []
 
 
 def _runtime_view(

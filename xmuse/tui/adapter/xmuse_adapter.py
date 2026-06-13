@@ -602,6 +602,18 @@ class XmuseAdapter:
             payload=dict(payload),
         )
 
+    def capture_god_room_speaker_response(
+        self,
+        conv_id: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        return self._post_god_room_contract(
+            action="capture_god_room_speaker_response",
+            conv_id=conv_id,
+            suffix="/speaker-response",
+            payload=dict(payload),
+        )
+
     def _post_god_room_contract(
         self,
         *,

@@ -10,6 +10,7 @@ from xmuse.tui.adapter.xmuse_adapter import StateDelta, XmuseAdapter
 from xmuse.tui.app import XmuseTUI
 from xmuse.tui.screens.lane_detail import LaneDetailScreen
 from xmuse.tui.screens.provider_board import ProviderBoardScreen
+from xmuse.tui.slash_commands import _room_speaker_response_payload
 from xmuse.tui.state import StateUpdated
 from xmuse.tui.widgets.blueprint_freeze_panel import BlueprintFreezePanel
 from xmuse.tui.widgets.deliberation_cockpit import DeliberationCockpit
@@ -487,11 +488,37 @@ async def test_chat_screen_room_commands_call_god_room_contracts(
             },
         }
 
+    def _capture_god_room_speaker_response(conv_id: str, payload: dict):
+        calls.append(("speaker-response", conv_id, payload))
+        return {
+            "source_authority": (
+                "god_room_event_store+selected_god_runtime_continuity+"
+                "provider_response"
+            ),
+            "speaker_response": {
+                "status": "speak_event_appended",
+                "proof_level": "real_provider_proof",
+                "target_participant_id": "participant-review",
+                "provider_session_id": "provider-thread-review",
+                "append_status": "created",
+                "provider_response": {"response_id": "provider-response-1"},
+                "speak_event": {"event_id": "evt-review-provider-speak"},
+            },
+            "artifacts": {
+                "speaker_response": (
+                    "reports/god_room_speaker_responses/"
+                    "conv-user.evt-room-1.evt-review-provider-speak."
+                    "speaker-response.json"
+                )
+            },
+        }
+
     app.adapter.ensure_god_room = _ensure_god_room
     app.adapter.append_god_room_event = _append_god_room_event
     app.adapter.freeze_god_room_blueprint = _freeze_god_room_blueprint
     app.adapter.build_god_room_memoryos_plan = _build_god_room_memoryos_plan
     app.adapter.build_god_room_speaker_attempt = _build_god_room_speaker_attempt
+    app.adapter.capture_god_room_speaker_response = _capture_god_room_speaker_response
 
     async with app.run_test() as pilot:
         appended = []
@@ -512,6 +539,17 @@ async def test_chat_screen_room_commands_call_god_room_contracts(
                 "workspace_id=xmuse context_budget=1024"
             ),
             "/room speaker-attempt after_event_id=evt-room-1",
+            (
+                "/room speaker-response after_event_id=evt-room-1 "
+                "event_id=evt-review-provider-speak "
+                "response_id=provider-response-1 status=completed "
+                "proof_level=real_provider_proof target=participant-review "
+                "provider_profile=codex.god provider_session=provider-thread-review "
+                "content='Review GOD responded from provider' "
+                "source_ref=provider-run:codex:provider-response-1 "
+                "provider_response_artifact=reports/provider-responses/"
+                "provider-response-1.json"
+            ),
         ):
             input_widget.value = command
             input_widget.post_message(input_widget.Submitted(input_widget, input_widget.value))
@@ -552,9 +590,33 @@ async def test_chat_screen_room_commands_call_god_room_contracts(
             "conv-user",
             {"after_event_id": "evt-room-1"},
         ),
+        (
+            "speaker-response",
+            "conv-user",
+            {
+                "after_event_id": "evt-room-1",
+                "event_id": "evt-review-provider-speak",
+                "provider_response_artifact": (
+                    "reports/provider-responses/provider-response-1.json"
+                ),
+                "provider_response": {
+                    "response_id": "provider-response-1",
+                    "status": "completed",
+                    "proof_level": "real_provider_proof",
+                    "target_participant_id": "participant-review",
+                    "provider_profile_ref": "codex.god",
+                    "provider_session_id": "provider-thread-review",
+                    "content": "Review GOD responded from provider",
+                    "source_refs": ["provider-run:codex:provider-response-1"],
+                },
+            },
+        ),
     ]
-    assert "GOD room action: speaker-attempt" in appended[-1]["content"]
-    assert "speaker_attempt=ready_for_provider_attempt" in appended[-1]["content"]
+    assert "GOD room action: speaker-attempt" in appended[-2]["content"]
+    assert "speaker_attempt=ready_for_provider_attempt" in appended[-2]["content"]
+    assert "GOD room action: speaker-response" in appended[-1]["content"]
+    assert "speaker_response=speak_event_appended" in appended[-1]["content"]
+    assert "speak_event=evt-review-provider-speak" in appended[-1]["content"]
     events = app.adapter.list_tui_command_events("conv-user")
     assert [event["command"] for event in events] == [
         "/room ensure",
@@ -562,10 +624,29 @@ async def test_chat_screen_room_commands_call_god_room_contracts(
         "/room freeze",
         "/room memoryos-plan",
         "/room speaker-attempt",
+        "/room speaker-response",
     ]
     assert {event["read_surface_authority"] for event in events} == {
         "god_room_chat_api"
     }
+
+
+async def test_room_speaker_response_requires_explicit_proof_level() -> None:
+    with pytest.raises(ValueError):
+        _room_speaker_response_payload(
+            [
+                "after_event_id=evt-room-1",
+                "event_id=evt-review-provider-speak",
+                "response_id=provider-response-1",
+                "target=participant-review",
+                "provider_profile=codex.god",
+                "provider_session=provider-thread-review",
+                "content=Review",
+                "source_ref=provider-run:codex:provider-response-1",
+                "provider_response_artifact=reports/provider-responses/"
+                "provider-response-1.json",
+            ]
+        )
 
 
 async def test_chat_screen_room_lane_dag_and_recovery_commands_call_contracts(
@@ -1028,6 +1109,7 @@ async def test_chat_screen_release_pack_accepts_god_room_runtime_payload(
             "room_memory=god-room/memory-trace.json "
             "room_tui=god-room/tui-projection.json "
             "room_speaker_attempt=god-room/speaker-attempt.json "
+            "room_speaker_response=god-room/speaker-response.json "
             "room_closure_output=god-room/closure-evidence.json"
         )
         input_widget.post_message(input_widget.Submitted(input_widget, input_widget.value))
@@ -1045,6 +1127,7 @@ async def test_chat_screen_release_pack_accepts_god_room_runtime_payload(
                 "god_room_memory_trace": "god-room/memory-trace.json",
                 "god_room_tui_projection": "god-room/tui-projection.json",
                 "god_room_speaker_attempt": "god-room/speaker-attempt.json",
+                "god_room_speaker_response": "god-room/speaker-response.json",
                 "god_room_runtime_closure_evidence_output": (
                     "god-room/closure-evidence.json"
                 ),

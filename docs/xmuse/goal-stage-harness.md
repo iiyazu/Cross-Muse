@@ -24,6 +24,18 @@ uv run python scripts/goal_stage_runner.py \
   - `ok`：可推进下一阶段。
   - `retry`：先由同一阶段做有限收敛重试（同一脚本再次运行），次数受 manifest `max_retries` 限制。
   - `blocked`：阻塞并上报，等待人工处理。
+- 阶段执行必须遵循 RIGR-V：Read → Invariant → Green-by-fix →
+  Refactor → Verify。阶段 prompt/result 应能追溯 task understanding、相关
+  code path、已有覆盖、风险面、不变量、验证命令和剩余风险。
+- TDD 只在 bug fix、public/API contract、可判定行为变更、parser/serializer
+  等场景强制。docs/config/pure refactor/performance/architecture migration 不得
+  为了满足 red-first 形式而添加低价值测试。
+- 新 failing test 只有在测试外部行为、public contract、真实 bug 或低层库契约时
+  才能作为 stage evidence；不得断言临时变量、特判样例、mock 掉真实业务路径或只
+  证明“不会抛异常”。
+- 单 writer，多 verifier：主 Codex 是最终 production-code writer；explorer、
+  test-designer、reviewer、docs/api subagent 默认只读或 tests-only。worker 自报
+  passing 不构成 stage 通过证据，必须由 Codex 独立审查 diff 和风险面。
 - 当 goal-stage `retry` 结果被导入 overnight supervisor 时，重复导入同一阶段的
   `retry` 结果会进入 supervisor 的 repeated-failure policy；第三次同类 retry
   import 会标记 `refactor_required`，要求先重构失败边界再重试。
@@ -59,13 +71,37 @@ uv run python scripts/goal_stage_runner.py \
   "max_retries": 2,
   "risk": "medium",
   "constraints": ["do-not-write-runtime-state"],
+  "task_understanding": {
+    "user_visible_behavior": "...",
+    "existing_code_path": ["src/..."],
+    "existing_tests": ["tests/..."],
+    "risk_surface": ["..."]
+  },
+  "invariants": {
+    "behavior": ["existing valid behavior remains unchanged"],
+    "architecture": ["do not bypass contract boundaries"]
+  },
+  "verification": {
+    "red_required": true,
+    "red_evidence": "behavior/API/bug contract the failing test proves",
+    "commands": ["uv run pytest tests/xmuse/test_foo.py -q"],
+    "review_questions": [
+      "What real requirement did the new failing test prove?",
+      "Could the implementation be fitting only the test example?",
+      "Were any tests modified, deleted, weakened, skipped, or xfailed?",
+      "Was the real path under test mocked away?",
+      "What evidence besides green tests shows the behavior is correct?"
+    ]
+  },
   "escalation_triggers": ["provider unavailable", "policy miss"],
   "prompt": "Optional additional task-specific prompt fragment.",
   "engine": "opencode"
 }
 ```
 
-`engine` 是可选，未提供时使用 `/goal` 默认 `codex`。
+`engine`、`task_understanding`、`invariants` 和 `verification` 是可选字段；缺省时
+执行器仍必须在 prompt/result 中记录同等信息。未提供 `engine` 时使用 `/goal`
+默认 `codex`。
 
 ## 为什么要这样约束
 

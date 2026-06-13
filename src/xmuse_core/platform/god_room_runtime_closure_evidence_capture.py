@@ -12,6 +12,7 @@ from xmuse_core.chat.god_room_runtime import (
     GodRoomParticipant,
     replay_god_room_turns,
 )
+from xmuse_core.chat.god_room_speaker_response import GodRoomSpeakerResponseCaptureV1
 from xmuse_core.chat.god_room_speaker_runtime import GodRoomSpeakerAttemptV1
 from xmuse_core.platform.production_evidence import (
     ProductionEvidenceEnvelope,
@@ -39,6 +40,7 @@ def capture_god_room_runtime_closure_evidence(
     memory_trace_artifact: str | Path | None = None,
     tui_projection_artifact: str | Path | None = None,
     speaker_attempt_artifact: str | Path | None = None,
+    speaker_response_artifact: str | Path | None = None,
     github_truth_artifact: str | Path | None = None,
     release_readiness_artifact: str | Path | None = None,
     stage_id: str = "S8",
@@ -53,6 +55,7 @@ def capture_god_room_runtime_closure_evidence(
         memory_trace_artifact=memory_trace_artifact,
         tui_projection_artifact=tui_projection_artifact,
         speaker_attempt_artifact=speaker_attempt_artifact,
+        speaker_response_artifact=speaker_response_artifact,
         github_truth_artifact=github_truth_artifact,
         release_readiness_artifact=release_readiness_artifact,
     )
@@ -76,6 +79,7 @@ def build_god_room_runtime_closure_evidence(
     memory_trace_artifact: str | Path | None = None,
     tui_projection_artifact: str | Path | None = None,
     speaker_attempt_artifact: str | Path | None = None,
+    speaker_response_artifact: str | Path | None = None,
     github_truth_artifact: str | Path | None = None,
     release_readiness_artifact: str | Path | None = None,
 ) -> dict[str, object]:
@@ -127,6 +131,13 @@ def build_god_room_runtime_closure_evidence(
         speaker_attempt_artifact,
         issues=issues,
     )
+    speaker_response_details, speaker_response_refs, speaker_response_targets = (
+        _speaker_response_details(
+            speaker_response_artifact,
+            event_ids={event.event_id for event in events},
+            issues=issues,
+        )
+    )
     github_details, github_refs, github_targets = _github_truth_details(
         github_truth_artifact,
         issues=issues,
@@ -156,6 +167,7 @@ def build_god_room_runtime_closure_evidence(
                     *trace_refs,
                     *tui_refs,
                     *speaker_refs,
+                    *speaker_response_refs,
                     *github_refs,
                     *readiness_refs,
                 ]
@@ -168,6 +180,7 @@ def build_god_room_runtime_closure_evidence(
                     *lane_targets,
                     *trace_targets,
                     *speaker_targets,
+                    *speaker_response_targets,
                     *github_targets,
                 ]
             )
@@ -181,6 +194,7 @@ def build_god_room_runtime_closure_evidence(
                 memory_trace_artifact,
                 tui_projection_artifact,
                 speaker_attempt_artifact,
+                speaker_response_artifact,
                 github_truth_artifact,
                 release_readiness_artifact,
             )
@@ -193,6 +207,7 @@ def build_god_room_runtime_closure_evidence(
             lane_dag=lane_details,
             trace=trace_details,
             speaker=speaker_details,
+            speaker_response=speaker_response_details,
             readiness=readiness_details,
         ),
     )
@@ -206,6 +221,7 @@ def build_god_room_runtime_closure_evidence(
         "memory_trace": trace_details,
         "tui_projection": tui_details,
         "speaker_attempt": speaker_details,
+        "speaker_response": speaker_response_details,
         "github_truth": github_details,
         "release_readiness": readiness_details,
     }
@@ -525,6 +541,84 @@ def _speaker_attempt_details(
     )
 
 
+def _speaker_response_details(
+    path: str | Path | None,
+    *,
+    event_ids: set[str],
+    issues: list[str],
+) -> tuple[dict[str, object], list[str], list[str]]:
+    if path is None:
+        return {
+            "status": "not_provided",
+            "proof_level": "manual_gap",
+            "optional": True,
+        }, [], []
+    payload = _load_json(path, label="speaker response", issues=issues)
+    if not isinstance(payload, dict):
+        return _manual_gap_details("speaker response artifact is missing"), [], []
+    try:
+        capture = GodRoomSpeakerResponseCaptureV1.model_validate(payload)
+    except ValidationError as exc:
+        issues.append(f"speaker response artifact is invalid: {_one_line(str(exc))}")
+        return _manual_gap_details("speaker response artifact is invalid"), [], []
+    if capture.status == "manual_gap":
+        reason = capture.blocked_reason or "speaker response is blocked"
+        issues.append(f"speaker response blocked: {reason}")
+    provider_response_id = (
+        capture.provider_response.response_id
+        if capture.provider_response is not None
+        else None
+    )
+    speak_event_id = capture.speak_event.event_id if capture.speak_event else None
+    blocked_reason = capture.blocked_reason
+    status = capture.status
+    proof_level = capture.proof_level
+    if capture.status == "speak_event_appended" and not str(
+        capture.provider_response_artifact_ref or ""
+    ).strip():
+        blocked_reason = "provider response artifact missing"
+        issues.append(f"speaker response blocked: {blocked_reason}")
+        status = "manual_gap"
+        proof_level = "manual_gap"
+    elif capture.status == "speak_event_appended" and (
+        speak_event_id is None or speak_event_id not in event_ids
+    ):
+        blocked_reason = "speaker response speak event is missing from god room events"
+        issues.append(f"speaker response blocked: {blocked_reason}")
+        status = "manual_gap"
+        proof_level = "manual_gap"
+    targets = _dedupe(
+        [
+            f"god-room-participant:{capture.target_participant_id}"
+            if capture.target_participant_id
+            else None,
+            f"provider_session:{capture.provider_session_id}"
+            if capture.provider_session_id
+            else None,
+            f"god-room-event:{speak_event_id}" if speak_event_id else None,
+        ]
+    )
+    return (
+        {
+            "status": status,
+            "proof_level": proof_level,
+            "selected_event_id": capture.selected_event_id,
+            "target_participant_id": capture.target_participant_id,
+            "target_god_id": capture.target_god_id,
+            "provider_profile_ref": capture.provider_profile_ref,
+            "provider_session_id": capture.provider_session_id,
+            "provider_session_kind": capture.provider_session_kind,
+            "provider_response_artifact_ref": capture.provider_response_artifact_ref,
+            "append_status": capture.append_status,
+            "blocked_reason": blocked_reason,
+            "provider_response_id": provider_response_id,
+            "speak_event_id": speak_event_id,
+        },
+        list(capture.source_refs),
+        targets,
+    )
+
+
 def _github_truth_details(
     path: str | Path | None,
     *,
@@ -691,6 +785,7 @@ def _summary(
     lane_dag: Mapping[str, object],
     trace: Mapping[str, object],
     speaker: Mapping[str, object],
+    speaker_response: Mapping[str, object],
     readiness: Mapping[str, object],
 ) -> str:
     return (
@@ -699,6 +794,8 @@ def _summary(
         f"{_int(lane_dag.get('lane_contract_count'))} lane contract(s), "
         f"{_int(trace.get('trace_anchor_count'))} MemoryOS trace anchor(s); "
         f"speaker attempt is {_text(speaker.get('status')) or 'not_provided'}; "
+        "speaker response is "
+        f"{_text(speaker_response.get('status')) or 'not_provided'}; "
         f"release readiness is {_text(readiness.get('decision')) or 'not_evaluated'}."
     )
 

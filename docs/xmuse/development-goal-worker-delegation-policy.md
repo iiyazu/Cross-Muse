@@ -17,6 +17,122 @@
 - OpenCode 不能作为架构裁决者、状态权威、release truth、merge truth 或最终 reviewer。
 - OpenCode 的自报完成不构成证据；必须由 Codex 独立审查和验证。
 
+## Core Workflow: Single Writer, Multiple Verifiers
+
+长 `/goal` 的稳定组织原则是 **单 writer，多 verifier**。
+
+| Role | Permissions | Task |
+|------|-------------|------|
+| 主 Codex | 可写 | 最终设计、生产代码修改、最终 diff、提交、推送、PR 更新和最终事实判断 |
+| explorer subagent | 只读 | 梳理相关调用链、现有测试、业务不变量和风险文件 |
+| test-designer subagent | 只读或仅测试目录可写 | 设计行为级测试意图，指出过拟合风险，不碰生产实现 |
+| reviewer subagent | 只读 | 审查最终 diff 的过拟合、特判、架构破坏、安全/并发风险和遗漏测试 |
+| docs/api subagent | 只读 + 文档工具 | 核查框架/API 行为，防止凭记忆编码 |
+
+不要让同一个 worker context 同时负责“写测试、写实现、宣布通过”。主 Codex 可以执行
+TDD，但必须接受 subagent 或最终 review 对测试真实性、过拟合风险和行为证据的审查。
+OpenCode 如被委派，默认只产生 candidate patch/artifact/audit，不能自证完成。
+
+## RIGR-V Development Loop
+
+默认流程是 Read → Invariant → Green-by-fix → Refactor → Verify，而不是机械的
+Red → Green。
+
+### Read
+
+编码前必须明确:
+
+- Task understanding:
+  - User-visible behavior to change
+  - Existing code path
+  - Existing tests that already cover nearby behavior
+  - Risk surface
+
+禁止一上来写测试。先证明理解了需求、路径和风险，再决定是否需要 red-first 测试。
+
+### Invariant
+
+每个任务至少声明两类不变量:
+
+- Behavior invariants:
+  - Existing valid behavior must remain unchanged.
+  - Error handling, auth, persistence, compatibility, and contract semantics
+    remain unchanged unless explicitly requested.
+- Architecture invariants:
+  - Do not change public API unless explicitly required.
+  - Do not bypass existing abstraction or authority boundaries.
+  - Do not add special cases for test fixtures.
+
+### Red When Appropriate
+
+TDD 只在行为可判定的场景强制使用:
+
+| Task type | Red requirement | Correct evidence |
+|-----------|-----------------|------------------|
+| Bug fix | Required | Reproduce the bug first, then fix |
+| Pure function / algorithm / parser | Required | Unit tests with boundaries; property/fuzz optional |
+| API contract | Required | Contract or integration test |
+| Refactor | Not normally required | Existing tests first; add characterization tests only when needed |
+| UI bug | Semi-required | Steps, screenshots, browser evidence, and targeted tests where useful |
+| Performance | Not ordinary TDD | Benchmark/profile/regression guard |
+| Security / permissions | TDD is not enough | Negative/abuse tests plus review |
+| Architecture migration | Not red-first by default | Plan, phased migration, compatibility tests |
+| Docs/comments | Not needed | Lint/build docs if available |
+
+A failing test is acceptable only if:
+
+- It fails before implementation.
+- It describes external behavior, public contract, reproduced bug, or a
+  low-level library contract.
+- It would remain valuable under a different correct implementation.
+- It does not assert private implementation details unless the task is a
+  low-level internal unit.
+- It includes boundary or negative coverage when relevant.
+
+### Green
+
+Green-by-fix 禁止:
+
+- 修改测试预期来通过。
+- 删除、skip、xfail、only 或放宽断言。
+- 增加无意义 timeout。
+- 特判测试 fixture、文件名、样例值或 test-only input。
+- mock 掉真正该验证的业务路径。
+- 吞异常或绕过 auth/persistence/validation。
+- 改 public API 但不更新调用方和契约。
+
+允许:
+
+- 最小且诚实的生产代码改动。
+- 清晰错误处理、真实边界修复、类型/校验补充。
+- 复用已有项目模式或抽出已有模式中的局部复用逻辑。
+
+### Refactor
+
+Refactor 必须服务清晰性和边界收敛，不能借机改变语义。允许删除重复、收紧命名、
+移动到合适模块、降低耦合、保持 public contract 不变。若 refactor 需要改变设计，
+必须回到 plan/stage，不准混在 green 阶段里做。
+
+### Verify
+
+完成定义不能是 “tests pass”。Done when:
+
+- 新 failing test 如果存在，确实先失败、后通过，并证明真实需求。
+- Relevant existing tests pass.
+- Lint/type/format/check commands pass where available.
+- Diff review finds no test weakening, fixture special-casing, unrelated edits,
+  public API breakage, excessive mocks, swallowed errors, or boundary violation.
+- Final behavior matches the user request.
+- Remaining risk is explicitly reported.
+
+Codex 最终报告或 PR notes 需要回答:
+
+1. 新测试失败时证明了什么真实需求？
+2. 实现是否可能只是在拟合测试样例？
+3. 有没有修改、删除、放宽、跳过测试？
+4. 有没有 mock 掉真正该验证的路径？
+5. 除了测试绿，还有什么证据表明行为正确？
+
 ## Repeated Failure And Demo-Grade Refactor Rule
 
 反复失败和 demo 级实现不是继续叠补丁的信号，而是重构边界的信号。

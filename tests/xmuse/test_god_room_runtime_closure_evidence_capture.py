@@ -42,11 +42,17 @@ def test_god_room_runtime_closure_evidence_indexes_contracts_without_merge_upgra
     events = [
         _event("evt-propose"),
         _event(
+            "evt-review-provider-speak",
+            participant_id="part-review",
+            god_id="god-review",
+            causal_parent_id="evt-propose",
+        ),
+        _event(
             "evt-freeze",
             event_type=GodRoomEventKind.FREEZE_REQUESTED,
             participant_id="part-review",
             god_id="god-review",
-            causal_parent_id="evt-propose",
+            causal_parent_id="evt-review-provider-speak",
             payload={
                 "freeze_target_ref": "blueprint:bp-god-room-runtime:1",
                 "goal": "Close GOD room runtime evidence.",
@@ -157,6 +163,75 @@ def test_god_room_runtime_closure_evidence_indexes_contracts_without_merge_upgra
             },
         },
     )
+    speaker_response_path = _write_json(
+        tmp_path / "speaker-response.json",
+        {
+            "schema_version": "xmuse.god_room_speaker_response.v1",
+            "status": "speak_event_appended",
+            "proof_level": "real_provider_proof",
+            "source_authority": (
+                "god_room_event_store+selected_god_runtime_continuity+"
+                "provider_response"
+            ),
+            "conversation_id": "conv-1",
+            "room_id": "room-1",
+            "selected_event_id": "evt-propose",
+            "target_participant_id": "part-review",
+            "target_god_id": "god-review",
+            "provider_profile_ref": "codex.god",
+            "provider_session_id": "provider-thread-review",
+            "provider_session_kind": "provider_thread",
+            "provider_response_artifact_ref": (
+                "reports/provider-responses/provider-response-1.json"
+            ),
+            "append_status": "created",
+            "blocked_reason": None,
+            "source_refs": [
+                "god-room-event:evt-propose",
+                "provider_session:provider-thread-review",
+                "provider-run:codex:provider-response-1",
+            ],
+            "speaker_attempt": json.loads(
+                speaker_attempt_path.read_text(encoding="utf-8")
+            ),
+            "provider_response": {
+                "schema_version": "xmuse.god_room_provider_speech_response.v1",
+                "response_id": "provider-response-1",
+                "status": "completed",
+                "proof_level": "real_provider_proof",
+                "target_participant_id": "part-review",
+                "provider_profile_ref": "codex.god",
+                "provider_session_id": "provider-thread-review",
+                "provider_session_kind": "provider_thread",
+                "content": "Review GOD responded from the selected provider session.",
+                "source_refs": ["provider-run:codex:provider-response-1"],
+            },
+            "speak_event": {
+                "version": "xmuse.god_room_event.v1",
+                "event_id": "evt-review-provider-speak",
+                "room_id": "room-1",
+                "conversation_id": "conv-1",
+                "participant_id": "part-review",
+                "god_id": "god-review",
+                "actor_kind": "god",
+                "event_type": "speak",
+                "timestamp_utc": "2026-06-13T10:02:00Z",
+                "content": "Review GOD responded from the selected provider session.",
+                "target_participant_ids": [],
+                "causal_parent_id": "evt-propose",
+                "source_refs": [
+                    "god-room-event:evt-propose",
+                    "provider-run:codex:provider-response-1",
+                ],
+                "cli_id": "codex",
+                "provider_profile": "codex.god",
+                "payload": {
+                    "body": "Review GOD responded from the selected provider session.",
+                    "provider_response_id": "provider-response-1",
+                },
+            },
+        },
+    )
     github_path = _write_json(
         tmp_path / "github-truth.json",
         {
@@ -185,6 +260,7 @@ def test_god_room_runtime_closure_evidence_indexes_contracts_without_merge_upgra
         memory_trace_artifact=trace_path,
         tui_projection_artifact=tui_path,
         speaker_attempt_artifact=speaker_attempt_path,
+        speaker_response_artifact=speaker_response_path,
         github_truth_artifact=github_path,
         release_readiness_artifact=readiness_path,
     )
@@ -197,7 +273,7 @@ def test_god_room_runtime_closure_evidence_indexes_contracts_without_merge_upgra
     assert evidence["proof_level"] == "contract_proof"
     assert evidence["source_authority"] == "god_room_runtime_closure_contract"
     assert details["room_replay"]["status"] == "ok"
-    assert details["room_replay"]["event_count"] == 2
+    assert details["room_replay"]["event_count"] == 3
     assert details["blueprint_freeze"]["status"] == "frozen"
     assert details["lane_dag"]["lane_contract_count"] == 1
     assert details["lane_dag"]["refactor_required_count"] == 1
@@ -206,6 +282,14 @@ def test_god_room_runtime_closure_evidence_indexes_contracts_without_merge_upgra
     assert details["speaker_attempt"]["status"] == "ready_for_provider_attempt"
     assert details["speaker_attempt"]["provider_session_id"] == (
         "provider-thread-review"
+    )
+    assert details["speaker_response"]["status"] == "speak_event_appended"
+    assert details["speaker_response"]["proof_level"] == "real_provider_proof"
+    assert details["speaker_response"]["speak_event_id"] == (
+        "evt-review-provider-speak"
+    )
+    assert details["speaker_response"]["provider_response_id"] == (
+        "provider-response-1"
     )
     assert details["github_truth"]["merged"] is False
     assert details["github_truth"]["can_emit_pr_merged"] is False
@@ -259,6 +343,97 @@ def test_god_room_runtime_closure_evidence_blocks_empty_room_artifacts(
     ]
     assert evidence["god_room_runtime_closure"]["room_replay"]["status"] == (
         "manual_gap"
+    )
+
+
+def test_god_room_runtime_closure_evidence_rejects_unreplayed_speaker_response(
+    tmp_path: Path,
+) -> None:
+    participants_path = _write_json(
+        tmp_path / "participants.json",
+        {
+            "participants": [
+                GodRoomParticipant(
+                    participant_id="part-architect",
+                    god_id="god-architect",
+                ).model_dump(mode="json"),
+                GodRoomParticipant(
+                    participant_id="part-review",
+                    god_id="god-review",
+                ).model_dump(mode="json"),
+            ]
+        },
+    )
+    events_path = _write_json(
+        tmp_path / "events.json",
+        {"events": [_event("evt-propose").model_dump(mode="json")]},
+    )
+    speaker_attempt = {
+        "schema_version": "xmuse.god_room_speaker_attempt.v1",
+        "status": "ready_for_provider_attempt",
+        "proof_level": "contract_proof",
+        "source_authority": "god_room_event_store+selected_god_runtime_continuity",
+        "conversation_id": "conv-1",
+        "room_id": "room-1",
+        "selected_event_id": "evt-propose",
+        "decision_reason": "round_robin",
+        "target_participant_id": "part-review",
+        "target_god_id": "god-review",
+        "provider_profile_ref": "codex.god",
+        "provider_session_id": "provider-thread-review",
+        "source_refs": ["god-room-event:evt-propose"],
+    }
+    speaker_response_path = _write_json(
+        tmp_path / "speaker-response.json",
+        {
+            "schema_version": "xmuse.god_room_speaker_response.v1",
+            "status": "speak_event_appended",
+            "proof_level": "real_provider_proof",
+            "conversation_id": "conv-1",
+            "room_id": "room-1",
+            "selected_event_id": "evt-propose",
+            "target_participant_id": "part-review",
+            "target_god_id": "god-review",
+            "provider_profile_ref": "codex.god",
+            "provider_session_id": "provider-thread-review",
+            "provider_response_artifact_ref": "reports/provider-response.json",
+            "append_status": "created",
+            "source_refs": ["god-room-event:evt-propose"],
+            "speaker_attempt": speaker_attempt,
+            "provider_response": {
+                "schema_version": "xmuse.god_room_provider_speech_response.v1",
+                "response_id": "provider-response-1",
+                "status": "completed",
+                "proof_level": "real_provider_proof",
+                "target_participant_id": "part-review",
+                "provider_profile_ref": "codex.god",
+                "provider_session_id": "provider-thread-review",
+                "content": "Review GOD responded.",
+                "source_refs": ["provider-run:codex:provider-response-1"],
+            },
+            "speak_event": _event(
+                "evt-review-provider-speak",
+                participant_id="part-review",
+                god_id="god-review",
+                causal_parent_id="evt-propose",
+            ).model_dump(mode="json"),
+        },
+    )
+
+    evidence = capture_god_room_runtime_closure_evidence(
+        run_id="overnight-runtime-closure",
+        output_path=tmp_path / "closure-evidence.json",
+        participants_artifact=participants_path,
+        events_artifact=events_path,
+        speaker_response_artifact=speaker_response_path,
+    )
+
+    details = evidence["god_room_runtime_closure"]["speaker_response"]
+    assert details["status"] == "manual_gap"
+    assert details["proof_level"] == "manual_gap"
+    assert details["speak_event_id"] == "evt-review-provider-speak"
+    assert details["blocked_reason"] == (
+        "speaker response speak event is missing from god room events"
     )
 
 

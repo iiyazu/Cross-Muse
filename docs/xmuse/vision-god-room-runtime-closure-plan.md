@@ -1,8 +1,9 @@
 # Vision GOD Room Runtime Closure Plan
 
 > **For agentic workers:** This is the next long `/goal` handoff after the
-> initial GOD room contract/store slices. Use stage manifests, TDD, focused
-> validation, proof discipline, and independent Codex review. This plan is not
+> initial GOD room contract/store slices. Use stage manifests, the RIGR-V
+> development loop, focused validation, proof discipline, and independent Codex
+> review. This plan is not
 > evidence that the xmuse vision is already closed.
 
 **Goal:** Turn the current evidence/control-ready branch into a production
@@ -324,6 +325,23 @@ Current implementation status:
   `reports/god_room_speaker_attempts/*.speaker-attempt.json` artifact, and
   does not mutate room events, lane status, `feature_lanes.json`, or provider
   subprocess state.
+- `capture_god_room_speaker_response(...)` now consumes a ready speaker
+  attempt plus a structured `xmuse.god_room_provider_speech_response.v1`
+  provider response loaded from a runtime artifact. Only `completed` responses
+  with `real_provider_proof`, matching participant/profile/session, non-empty
+  content, source refs, and a provider response artifact ref are allowed to
+  append a durable GOD room `speak` event. Missing, blocked, mismatched,
+  non-real, contentless, or request-body-only provider responses remain
+  `manual_gap` and do not append fake speech.
+- `xmuse/chat_api.py` exposes
+  `POST /api/chat/conversations/{conversation_id}/god-room/speaker-response`.
+  The endpoint writes
+  `reports/god_room_speaker_responses/*.speaker-response.json` artifacts and
+  appends through `GodRoomEventStore` only after the response capture contract
+  passes. This is real-provider response capture evidence only when the server
+  loads a provider response artifact under xmuse root and that artifact is
+  itself real-provider proof; it is not stdout fallback proof and does not call
+  a provider by itself.
 
 ## S3 - Blueprint Freeze Compiler
 
@@ -594,10 +612,14 @@ Current implementation status:
   lane queue, or projection writes after API rejection.
 - `xmuse/tui/slash_commands.py` now exposes `/room ensure`, `/room event`,
   `/room freeze`, `/room lane-dag`, `/room recovery`, and
-  `/room memoryos-plan` and `/room speaker-attempt` as TUI operator commands
-  backed by those Chat API contracts. `/room speaker-attempt` calls the Chat API
-  speaker-attempt contract and surfaces `ready_for_provider_attempt` or
-  `manual_gap` without writing local state. `/room lane-dag` builds an explicit
+  `/room memoryos-plan`, `/room speaker-attempt`, and
+  `/room speaker-response` as TUI operator commands backed by those Chat API
+  contracts. `/room speaker-attempt` calls the Chat API speaker-attempt
+  contract and surfaces `ready_for_provider_attempt` or `manual_gap` without
+  writing local state. `/room speaker-response` posts a structured provider
+  response capture payload, requires an explicit proof level instead of
+  defaulting to live proof, and surfaces whether a durable `speak` event was
+  appended or a `manual_gap` was preserved. `/room lane-dag` builds an explicit
   one-lane feature/lane contract request from operator key/value input;
   `/room recovery` imports failure evidence for lane recovery/refactor
   decisions. Command events are recorded with
@@ -659,8 +681,13 @@ Current implementation status:
 - `god_room_runtime_closure` evidence can now optionally index
   `xmuse.god_room_speaker_attempt.v1` artifacts. A ready speaker attempt is
   recorded as provider-bound readiness evidence; a manual-gap speaker attempt
-  remains a closure blocker. The release pack passthrough preserves that
-  distinction in the overnight replay bundle.
+  remains a closure blocker. It can also index
+  `xmuse.god_room_speaker_response.v1` artifacts. An appended speaker response
+  records real-provider response capture only when it carries a provider
+  response artifact ref and its durable `speak` event id is present in the GOD
+  room events artifact; missing event replay or a manual-gap speaker response
+  remains a closure blocker. The release pack passthrough preserves those
+  distinctions in the overnight replay bundle.
 - `capture_overnight_replay_bundle(...)` accepts `god_room_runtime_closure` as
   an optional replay section while leaving required replay sections unchanged.
 - Missing GitHub truth, release readiness, live MemoryOS, or other configured

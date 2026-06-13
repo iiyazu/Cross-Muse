@@ -591,6 +591,21 @@ def test_adapter_god_room_control_actions_use_chat_api_contracts(
         "workspace_id": "xmuse",
     }
     speaker_payload = {"after_event_id": "evt-tui-1"}
+    speaker_response_payload = {
+        "after_event_id": "evt-tui-1",
+        "event_id": "evt-provider-speak",
+        "provider_response_artifact": "reports/provider-responses/provider-response-1.json",
+        "provider_response": {
+            "response_id": "provider-response-1",
+            "status": "completed",
+            "proof_level": "real_provider_proof",
+            "target_participant_id": "participant-review",
+            "provider_profile_ref": "codex.god",
+            "provider_session_id": "provider-thread-review",
+            "content": "Review GOD responded.",
+            "source_refs": ["provider-run:codex:provider-response-1"],
+        },
+    }
 
     assert adapter.ensure_god_room("conv-1")["source_authority"] == (
         "god_room_event_store"
@@ -618,6 +633,10 @@ def test_adapter_god_room_control_actions_use_chat_api_contracts(
         "conv-1",
         speaker_payload,
     )["url"].endswith("/god-room/speaker-attempt")
+    assert adapter.capture_god_room_speaker_response(
+        "conv-1",
+        speaker_response_payload,
+    )["url"].endswith("/god-room/speaker-response")
 
     expected_headers = {
         "X-XMUSE-API-Key": "secret",
@@ -671,6 +690,14 @@ def test_adapter_god_room_control_actions_use_chat_api_contracts(
                 "god-room/speaker-attempt"
             ),
             "json": speaker_payload,
+            "headers": expected_headers,
+        },
+        {
+            "url": (
+                "http://chat-api/api/chat/conversations/conv-1/"
+                "god-room/speaker-response"
+            ),
+            "json": speaker_response_payload,
             "headers": expected_headers,
         },
     ]

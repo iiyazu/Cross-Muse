@@ -64,6 +64,98 @@ uv run ruff check <file>                # Lint single file
 
 Always use `uv run` — never bare `pytest` or `ruff`. The `.venv` is managed by `uv`.
 
+## Development Workflow
+
+### Completion Definition
+
+A task is complete only when:
+
+1. The requested behavior is implemented.
+2. Relevant tests pass.
+3. Existing nearby behavior remains protected.
+4. The diff has been reviewed for regressions, risky patterns, architecture
+   boundary violations, and unrelated changes.
+5. Any remaining risk or unverified area is reported.
+
+Passing tests alone is not sufficient completion evidence.
+
+### RIGR-V Policy
+
+Use Read → Invariant → Green-by-fix → Refactor → Verify as the default
+development loop. Do not start by writing tests before understanding the
+system.
+
+Before changing code, state or record:
+
+- Task understanding:
+  - User-visible behavior to change
+  - Existing code path
+  - Existing tests that already cover nearby behavior
+  - Risk surface
+- Behavior invariants:
+  - Existing valid behavior must remain unchanged
+  - Error handling, auth, persistence, and compatibility semantics remain
+    unchanged unless explicitly requested
+- Architecture invariants:
+  - Do not change public API unless explicitly required
+  - Do not bypass existing abstractions or contract boundaries
+  - Do not add special cases for test fixtures
+
+Use TDD when the task changes observable behavior, fixes a bug, or defines a
+public contract. Do not force red-first tests for pure docs, comments, config,
+mechanical refactors, architecture migration planning, or performance work that
+requires benchmarks/profiles instead.
+
+A new failing test is acceptable only when it:
+
+- Fails before the implementation.
+- Tests external behavior, public contract, reproduced bug, or a low-level
+  library contract.
+- Would remain valuable under a different correct implementation.
+- Includes boundary or negative coverage when relevant.
+
+### Anti-TDD-Abuse Rules
+
+- Do not modify tests merely to make them pass.
+- Do not delete, skip, xfail, or loosen tests without explaining why the old
+  test was invalid.
+- Do not special-case test fixtures, exact sample values, filenames, or
+  test-only inputs in production code.
+- Do not mock the behavior under test unless the boundary is external, slow,
+  nondeterministic, or unsafe.
+- Do not assert private implementation details unless working on a low-level
+  internal unit.
+- Do not update snapshots without semantic justification.
+- Do not add broad integration mocks that bypass authentication,
+  authorization, persistence, validation, or contract paths.
+- If a test and implementation are both authored in the task, explain why the
+  test would catch an alternative wrong implementation.
+
+### Subagent Policy
+
+Use single writer, multiple verifiers:
+
+| Role | Permissions | Task |
+|------|-------------|------|
+| Main Codex | May write | Final design, production-code changes, final diff, commit, push, PR update |
+| explorer subagent | Read-only | Map code paths, existing tests, invariants, and risky files |
+| test-designer subagent | Read-only or tests-only | Propose behavior-level tests and overfitting risks |
+| reviewer subagent | Read-only | Review final diff for regressions, overfitting, public API breakage, architecture boundary violations, excessive mocks, swallowed errors, missing negative tests, and unrelated edits |
+| docs/api subagent | Read-only + docs tools | Verify framework/API behavior from primary docs instead of memory |
+
+Do not let the same worker context write tests, write production implementation,
+and self-certify completion without independent review. The main Codex remains
+the only final production-code writer unless the user explicitly delegates
+bounded implementation work.
+
+Before claiming completion, answer these checks in the final review:
+
+1. What real requirement did the new failing test prove?
+2. Could the implementation be fitting only the test example?
+3. Were any tests modified, deleted, weakened, skipped, or xfailed?
+4. Was the real path under test mocked away?
+5. What evidence besides green tests shows the behavior is correct?
+
 ## Architecture Facts
 
 - **GOD 群聊**: `src/xmuse_core/chat/` + `xmuse/chat_api.py`. `chat.db` (sqlite) holds conversations/messages/participants.
@@ -126,7 +218,10 @@ prompt; reference it unless the policy itself is being changed.
 
 ### Orchestration Rules
 
-1. Coder must follow TDD (test first, then implement)
+1. Coder and Codex must follow the RIGR-V policy above. TDD is required for
+   bug fixes, public contracts, and behavior changes, but must not be forced
+   onto docs-only, config-only, pure refactor, performance, or architecture
+   migration work where other evidence is more appropriate
 2. Orchestrator validates independently (never trust subagent self-reports)
 3. Adversarial reviewer is always a FRESH instance
 4. Repeated failures require direct refactor: after two same-class failures on
