@@ -339,15 +339,23 @@ def _release_gate_artifacts(
     internal_review_expected_head_sha: str | None,
 ) -> dict[str, str]:
     source_reports: dict[str, str] = {}
-    if internal_review_artifact is not None:
+    if (
+        internal_review_artifact is not None
+        or internal_review_expected_head_sha is not None
+    ):
         if internal_review_expected_head_sha is None:
             raise ValueError(
                 "internal_review_expected_head_sha is required when "
                 "internal_review_artifact is supplied for a release gate"
             )
         internal_review_gate_path = artifacts_dir / "internal-review.json"
+        review_artifact = (
+            internal_review_artifact
+            if internal_review_artifact is not None
+            else artifacts_dir / "internal-review-input.json"
+        )
         capture_internal_review_release_gate(
-            artifact_path=internal_review_artifact,
+            artifact_path=review_artifact,
             output_path=internal_review_gate_path,
             expected_head_sha=internal_review_expected_head_sha,
         )

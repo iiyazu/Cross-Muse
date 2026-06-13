@@ -732,6 +732,10 @@ Tasks:
   `--artifacts-dir` through the same internal review gate validator. This can
   satisfy the `internal_review` release gate as `internal_review_proof`, but it
   does not create GitHub server-side review enforcement or merge truth.
+- If the structured current-head review artifact is still missing, pass
+  `--internal-review-expected-head-sha HEAD` without
+  `--internal-review-artifact` to make the pack write a blocked
+  `internal-review` `manual_gap` gate instead of omitting the review gap.
 - When a frozen mission blueprint artifact exists, prefer
   `uv run xmuse-release-evidence-pack --frozen-blueprint BLUEPRINT` for the
   final handoff pack; do not pass it together with an explicit

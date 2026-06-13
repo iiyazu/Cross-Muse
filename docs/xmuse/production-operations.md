@@ -451,6 +451,13 @@ a reviewer, and contains no open critical/important findings. Latest-commit or
 partial-scope reviews remain `manual_gap`. It is internal review truth only; it
 is not GitHub server-side enforcement.
 
+When assembling a release evidence pack, pass
+`--internal-review-expected-head-sha <current-head-sha>` even before the
+structured review artifact exists if the handoff must make the missing current
+head review explicit. Without `--internal-review-artifact`, the pack writes a
+blocked `internal-review` `manual_gap` gate pointing at the expected
+`internal-review-input.json` path instead of silently omitting the review gate.
+
 ## Natural GOD Deliberation Release Gate
 
 After a real selected-GOD conversation has produced durable GOD speech-act

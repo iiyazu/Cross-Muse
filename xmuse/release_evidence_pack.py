@@ -264,7 +264,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--internal-review-expected-head-sha",
         default=None,
         help=(
-            "Expected current head SHA that --internal-review-artifact must cover."
+            "Expected current head SHA that --internal-review-artifact must cover. "
+            "When supplied without --internal-review-artifact, writes a blocked "
+            "internal-review manual_gap gate."
         ),
     )
     parser.add_argument(

@@ -960,6 +960,29 @@ def test_release_evidence_pack_keeps_stale_internal_review_as_blocker(
     assert pack["blockers"][0]["gate_id"] == "internal-review"
 
 
+def test_release_evidence_pack_can_require_missing_internal_review_as_blocker(
+    tmp_path: Path,
+) -> None:
+    artifacts = tmp_path / "artifacts"
+
+    pack = capture_release_evidence_pack(
+        artifacts_dir=artifacts,
+        output_path=tmp_path / "pack.json",
+        internal_review_expected_head_sha="fresh-head",
+    )
+
+    gate_path = artifacts / "internal-review.json"
+    gate = json.loads(gate_path.read_text(encoding="utf-8"))
+    assert gate["gate_id"] == "internal-review"
+    assert gate["status"] == "blocked"
+    assert gate["proof_level"] == "manual_gap"
+    assert "Internal review artifact does not exist" in gate["summary"]
+    assert gate["artifacts"] == [str(artifacts / "internal-review-input.json")]
+    assert pack["source_reports"]["internal_review_gate"] == str(gate_path)
+    assert pack["release_readiness_decision"] == "blocked"
+    assert pack["blockers"][0]["gate_id"] == "internal-review"
+
+
 def test_release_evidence_pack_requires_runtime_for_natural_release_gate(
     tmp_path: Path,
 ) -> None:
@@ -1727,6 +1750,39 @@ def test_release_evidence_pack_cli_accepts_internal_review_input(
         artifacts / "internal-review.json"
     )
     assert pack["release_readiness_decision"] == "ready"
+
+
+def test_release_evidence_pack_cli_can_require_missing_internal_review(
+    tmp_path: Path,
+) -> None:
+    from xmuse.release_evidence_pack import main
+
+    artifacts = tmp_path / "artifacts"
+    output = tmp_path / "pack.json"
+
+    assert (
+        main(
+            [
+                "--artifacts-dir",
+                str(artifacts),
+                "--output",
+                str(output),
+                "--internal-review-expected-head-sha",
+                "head-pack-1",
+            ]
+        )
+        == 0
+    )
+
+    pack = json.loads(output.read_text(encoding="utf-8"))
+    gate = json.loads((artifacts / "internal-review.json").read_text(encoding="utf-8"))
+    assert gate["status"] == "blocked"
+    assert gate["proof_level"] == "manual_gap"
+    assert "Internal review artifact does not exist" in gate["summary"]
+    assert pack["source_reports"]["internal_review_gate"] == str(
+        artifacts / "internal-review.json"
+    )
+    assert pack["release_readiness_decision"] == "blocked"
 
 
 def test_release_evidence_pack_cli_accepts_deliberation_transcript(
