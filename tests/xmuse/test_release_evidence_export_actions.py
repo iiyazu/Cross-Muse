@@ -4,14 +4,9 @@ import json
 import subprocess
 from pathlib import Path
 
-import pytest
-
 from xmuse_core.agents.god_session_registry import GodSessionRegistry
 from xmuse_core.chat.store import ChatStore
-from xmuse_core.platform.operator_actions import (
-    OperatorActionBlockedError,
-    OperatorActionRequest,
-)
+from xmuse_core.platform.operator_actions import OperatorActionRequest
 from xmuse_core.platform.release_evidence_export_actions import (
     run_release_evidence_export_action,
 )
@@ -175,9 +170,10 @@ def test_release_export_action_writes_provider_soak_and_gate(
     assert gate["proof_level"] == "manual_gap"
 
 
-def test_release_export_action_blocks_memoryos_without_live_configuration(
+def test_release_export_action_writes_memoryos_manual_gap_without_live_configuration(
     tmp_path: Path,
 ) -> None:
+    release_dir = tmp_path / "work" / "release_readiness"
     request = OperatorActionRequest(
         action="export_memoryos_live_trace",
         actor_id="operator-1",
@@ -199,15 +195,36 @@ def test_release_export_action_blocks_memoryos_without_live_configuration(
         source="chat_api",
     )
 
-    with pytest.raises(OperatorActionBlockedError) as exc_info:
-        run_release_evidence_export_action(
-            request,
-            xmuse_root=tmp_path,
-            release_readiness_dir=tmp_path / "work" / "release_readiness",
-            env={},
-        )
+    result = run_release_evidence_export_action(
+        request,
+        xmuse_root=tmp_path,
+        release_readiness_dir=release_dir,
+        env={},
+    )
 
-    assert "XMUSE_LIVE_MEMORYOS_LITE=1" in exc_info.value.summary
+    artifact_path = release_dir / "memoryos-trace.json"
+    gate_path = release_dir / "artifacts" / "live-memoryos.json"
+    artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
+    gate = json.loads(gate_path.read_text(encoding="utf-8"))
+    assert result["kind"] == "live_memoryos"
+    assert result["artifact_path"] == str(artifact_path.resolve(strict=False))
+    assert result["gate_path"] == str(gate_path.resolve(strict=False))
+    assert artifact["schema_version"] == "xmuse.memoryos_lite_trace.v1"
+    assert artifact["proof_level"] == "manual_gap"
+    assert artifact["fact_state"] == "blocked"
+    assert artifact["session_id"] == ""
+    assert artifact["trace_events"] == []
+    assert artifact["blockers"] == [
+        {
+            "reason": "memoryos_lite_live_environment_missing",
+            "source_refs": [],
+        }
+    ]
+    assert gate["gate_id"] == "live-memoryos"
+    assert gate["status"] == "blocked"
+    assert gate["proof_level"] == "manual_gap"
+    assert result["artifact"] == artifact
+    assert result["gate"] == gate
 
 
 def test_release_export_action_writes_github_truth_snapshot_and_gate(

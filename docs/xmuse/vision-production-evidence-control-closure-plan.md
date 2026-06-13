@@ -488,9 +488,12 @@ Current implementation status:
   `export_real_provider_runtime_soak`, `export_memoryos_live_trace`, and
   `export_github_server_truth` actions write both raw evidence artifacts and
   release gate artifacts under `xmuse/work/release_readiness`; weak inputs
-  remain blocked/manual-gap proof. GitHub export captures read-only server
-  truth and may satisfy `server_side_enforcement_proof`, but it still cannot
-  synthesize review truth, merge truth, or `pr_merged`.
+  remain blocked/manual-gap proof. MemoryOS export writes the blocked
+  `xmuse.memoryos_lite_trace.v1` manual-gap trace when the live REST environment
+  is unconfigured, so release replay keeps an explicit missing-prerequisite
+  input. GitHub export captures read-only server truth and may satisfy
+  `server_side_enforcement_proof`, but it still cannot synthesize review truth,
+  merge truth, or `pr_merged`.
 - TUI `/release candidates` now routes through
   `inspect_release_evidence_candidates` with `release_gate`, reads durable
   chat/session/GOD selection/GOD registration/peer-latency state plus redacted

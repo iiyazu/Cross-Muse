@@ -28,6 +28,7 @@ from xmuse_core.platform.memoryos_live_release_gate import (
 )
 from xmuse_core.platform.memoryos_live_trace_capture import (
     capture_memoryos_lite_live_trace_artifact,
+    capture_memoryos_lite_live_trace_manual_gap_artifact,
 )
 from xmuse_core.platform.natural_deliberation_release_gate import (
     capture_natural_deliberation_release_gate,
@@ -236,13 +237,6 @@ def _export_memoryos(
     release_root: Path,
     env: Mapping[str, str],
 ) -> dict[str, Any]:
-    if not live_memoryos_lite_enabled(env):
-        raise OperatorActionBlockedError(
-            "set XMUSE_LIVE_MEMORYOS_LITE=1 and XMUSE_MEMORYOS_LITE_URL to run "
-            "live MemoryOS Lite trace capture",
-            proof_level="manual_gap",
-        )
-    _ensure_no_running_event_loop()
     conversation_id = _required_text(request.payload, "conversation_id")
     artifact_path = _release_path(
         request.payload.get("output_path") or request.payload.get("artifact_path"),
@@ -269,20 +263,28 @@ def _export_memoryos(
         feature_id=_required_text(request.payload, "feature_id"),
         lane_id=_required_text(request.payload, "lane_id"),
     )
-    artifact = asyncio.run(
-        capture_memoryos_lite_live_trace_artifact(
-            base_url=env[MEMORYOS_LITE_BASE_URL_ENV],
+    if live_memoryos_lite_enabled(env):
+        _ensure_no_running_event_loop()
+        artifact = asyncio.run(
+            capture_memoryos_lite_live_trace_artifact(
+                base_url=env[MEMORYOS_LITE_BASE_URL_ENV],
+                namespace=namespace,
+                actor_id=_text(request.payload.get("actor_id")) or request.actor_id,
+                content=_required_text(request.payload, "content"),
+                query=_required_text(request.payload, "query"),
+                output_path=artifact_path,
+                source_refs=_string_list(request.payload.get("source_refs")),
+                metadata=_mapping(request.payload.get("metadata")),
+                budget=_int_value(request.payload.get("budget"), default=4096),
+                binding_store_path=binding_store_path,
+            )
+        )
+    else:
+        artifact = capture_memoryos_lite_live_trace_manual_gap_artifact(
             namespace=namespace,
-            actor_id=_text(request.payload.get("actor_id")) or request.actor_id,
-            content=_required_text(request.payload, "content"),
-            query=_required_text(request.payload, "query"),
             output_path=artifact_path,
             source_refs=_string_list(request.payload.get("source_refs")),
-            metadata=_mapping(request.payload.get("metadata")),
-            budget=_int_value(request.payload.get("budget"), default=4096),
-            binding_store_path=binding_store_path,
         )
-    )
     gate = capture_memoryos_live_release_gate(
         artifact_path=artifact_path,
         output_path=gate_path,

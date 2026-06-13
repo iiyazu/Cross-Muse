@@ -389,11 +389,14 @@ configured:
 /release export memoryos repo_id=iiyazu/Cross-Muse workspace_id=xmuse god_id=<god-id> thread_id=<thread-id> blueprint_id=<blueprint-id> feature_id=<feature-id> lane_id=<lane-id> actor_id=<actor-id> content='<content>' query='<query>'
 ```
 
-The action is `export_memoryos_live_trace`, requires `release_gate`, requires
-`XMUSE_LIVE_MEMORYOS_LITE=1` and `XMUSE_MEMORYOS_LITE_URL`, writes
+The action is `export_memoryos_live_trace`, requires `release_gate`, writes
 `xmuse/work/release_readiness/memoryos-trace.json`, then writes
-`xmuse/work/release_readiness/artifacts/live-memoryos.json`. It uses the same
-REST-only adapter as the CLI command and does not import `memoryos_lite`.
+`xmuse/work/release_readiness/artifacts/live-memoryos.json`. When
+`XMUSE_LIVE_MEMORYOS_LITE=1` and `XMUSE_MEMORYOS_LITE_URL` are configured, it
+uses the same REST-only adapter as the CLI command and does not import
+`memoryos_lite`. When the live environment is not configured, it still writes a
+blocked `xmuse.memoryos_lite_trace.v1` `manual_gap` artifact and a blocked
+`live-memoryos` gate so release replay can cite the exact missing prerequisite.
 
 The gate command does not start MemoryOS Lite. It only validates and converts an
 existing live trace artifact.
