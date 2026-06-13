@@ -704,6 +704,7 @@ WebSocket、worklist endpoint、proposal narrow/reject endpoint 仍未落地。
 | `POST /api/chat/conversations/{conversation_id}/god-room/events` | append `xmuse.god_room_event.v1` event，返回 append status 和最新 replay |
 | `GET /api/chat/conversations/{conversation_id}/god-room/snapshot` | 返回 `xmuse.god_room_snapshot.v1` replay artifact |
 | `POST /api/chat/conversations/{conversation_id}/god-room/freeze-blueprint` | 从 durable room events 编译 `xmuse.god_room_blueprint_freeze.v1`，成功时写入 mission blueprint proposal/resolution/read model |
+| `POST /api/chat/conversations/{conversation_id}/god-room/lane-dag` | 从 GOD room freeze resolution 生成 `BlueprintLaneDagPlan`，保存 lane graph 和 laneDAG artifacts，不写 live projection queue |
 
 事件写入请求体使用 `GodRoomEventV1`：
 
@@ -741,6 +742,12 @@ room events，不由前端 projection 提供：
   "god_room_event_store"`、freeze artifact、frozen blueprint、proposal、
   resolution、message 和最新 room replay；未解 challenge 或缺少 freeze event 时返回
   `409`，detail 中保留 `manual_gap` artifact，不写 mission blueprint card。
+- `POST /god-room/lane-dag` 必须引用 `approval_mode =
+  "god_room_blueprint_freeze"` 的 mission blueprint resolution；非 GOD room
+  freeze resolution 会被拒绝。成功时返回 `source_authority =
+  "mission_blueprint_resolution"`、`lane_dag` 和 artifact refs。该 endpoint
+  只写 `lane_graphs/*.json` / `lane_graphs/*.lane-dag.json` artifacts，不写
+  `feature_lanes.json`。
 - unknown participant、unknown target、conversation/room mismatch 和 event id
   conflict 会被后端拒绝，前端不得本地修改 projection 来绕过。
 - `replay.proof_level = "contract_proof"` 只证明 durable replay contract，不是

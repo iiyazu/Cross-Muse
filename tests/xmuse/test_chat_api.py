@@ -593,6 +593,224 @@ def test_chat_api_god_room_freeze_blueprint_blocks_unresolved_challenge(
     assert not any(card["card_type"] == "mission_blueprint" for card in timeline["cards"])
 
 
+def test_chat_api_god_room_lane_dag_builds_from_freeze_resolution_without_projection_write(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    conversation = client.post(
+        "/api/chat/conversations",
+        json={"title": "GOD room laneDAG"},
+    ).json()
+    conv_id = conversation["id"]
+    room = client.post(f"/api/chat/conversations/{conv_id}/god-room").json()["room"]
+    participants = {participant["role"]: participant for participant in room["participants"]}
+    blueprint_ref = "blueprint:bp-god-room:1"
+
+    for event in [
+        {
+            "event_id": "evt-propose",
+            "room_id": room["room_id"],
+            "conversation_id": conv_id,
+            "participant_id": participants["architect"]["participant_id"],
+            "god_id": participants["architect"]["god_id"],
+            "actor_kind": "god",
+            "event_type": "speak",
+            "timestamp_utc": "2026-06-13T10:00:00Z",
+            "content": "Build the laneDAG from frozen GOD room evidence.",
+            "source_refs": [f"conversation:{conv_id}", "message:evt-propose"],
+            "cli_id": participants["architect"]["cli_id"],
+            "provider_profile": "codex",
+            "payload": {
+                "goal": "Build the laneDAG from frozen GOD room evidence.",
+                "scope": ["GOD room laneDAG runtime action"],
+                "acceptance_contracts": ["LaneDAG artifacts preserve runtime contracts."],
+            },
+        },
+        {
+            "event_id": "evt-freeze",
+            "room_id": room["room_id"],
+            "conversation_id": conv_id,
+            "participant_id": participants["review"]["participant_id"],
+            "god_id": participants["review"]["god_id"],
+            "actor_kind": "god",
+            "event_type": "freeze_requested",
+            "timestamp_utc": "2026-06-13T10:03:00Z",
+            "content": "Freeze for laneDAG planning.",
+            "source_refs": [f"conversation:{conv_id}", "message:evt-freeze"],
+            "causal_parent_id": "evt-propose",
+            "cli_id": participants["review"]["cli_id"],
+            "provider_profile": "codex",
+            "payload": {
+                "freeze_target_ref": blueprint_ref,
+                "goal": "Build the laneDAG from frozen GOD room evidence.",
+                "scope": ["GOD room laneDAG runtime action"],
+                "acceptance_contracts": ["LaneDAG artifacts preserve runtime contracts."],
+                "repo_areas": ["xmuse/chat_api.py", "src/xmuse_core/structuring"],
+            },
+        },
+    ]:
+        assert client.post(
+            f"/api/chat/conversations/{conv_id}/god-room/events",
+            json=event,
+        ).status_code in {200, 201}
+    freeze = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/freeze-blueprint",
+        json={"blueprint_id": "bp-god-room", "revision": 1},
+    ).json()
+
+    response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag",
+        json={
+            "resolution_id": freeze["resolution"]["id"],
+            "graph_id": "graph-bp-god-room",
+            "graph_version": 1,
+            "source_refs": ["god-room-freeze:evt-freeze"],
+            "features": [
+                {
+                    "feature_id": "feature-runtime",
+                    "title": "Runtime wiring",
+                    "goal": "Wire GOD room freeze into laneDAG authority.",
+                    "acceptance_criteria": ["Runtime contracts are persisted."],
+                    "blueprint_refs": [blueprint_ref],
+                    "memory_refs": [f"memory://conversation/{conv_id}/blueprint/bp-god-room"],
+                }
+            ],
+            "lanes": [
+                {
+                    "lane_id": "lane-runtime-api",
+                    "feature_id": "feature-runtime",
+                    "title": "Expose laneDAG runtime API",
+                    "prompt": "Build the laneDAG runtime action from the frozen blueprint.",
+                    "acceptance_criteria": ["Focused tests cover laneDAG persistence."],
+                    "blueprint_refs": [blueprint_ref],
+                    "owner": "execute-god",
+                    "inputs": [blueprint_ref],
+                    "outputs": ["artifact://lane-runtime-api/lane-dag.json"],
+                    "required_checks": ["focused-pytest", "ruff"],
+                    "allowed_files": [
+                        "xmuse/chat_api.py",
+                        "src/xmuse_core/structuring/blueprint_execution",
+                    ],
+                    "rollback_constraints": ["preserve GOD room freeze resolution"],
+                    "review_profile": "runtime-contract-review",
+                    "budget": {
+                        "max_attempts": 3,
+                        "max_consecutive_same_failure": 2,
+                        "max_runtime_seconds": 1800,
+                        "retry_backoff_seconds": 30,
+                        "source_refs": ["budget:lane-runtime-api"],
+                    },
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["source_authority"] == "mission_blueprint_resolution"
+    assert payload["resolution_id"] == freeze["resolution"]["id"]
+    assert payload["lane_dag"]["blueprint_ref"] == blueprint_ref
+    assert payload["lane_dag"]["lane_contracts"][0]["lane_id"] == "lane-runtime-api"
+    assert payload["lane_dag"]["lane_contracts"][0]["owner"] == "execute-god"
+    assert payload["lane_dag"]["lane_contracts"][0]["budget"]["max_runtime_seconds"] == 1800
+    assert payload["artifacts"]["lane_graph"].endswith("graph-bp-god-room.json")
+    assert payload["artifacts"]["lane_dag"].endswith("graph-bp-god-room.lane-dag.json")
+    assert (tmp_path / payload["artifacts"]["lane_graph"]).exists()
+    assert (tmp_path / payload["artifacts"]["lane_dag"]).exists()
+    assert not (tmp_path / "feature_lanes.json").exists()
+
+
+def test_chat_api_god_room_lane_dag_rejects_non_god_room_freeze_resolution(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    conversation = client.post(
+        "/api/chat/conversations",
+        json={"title": "Deliberation freeze only"},
+    ).json()
+    conv_id = conversation["id"]
+    target_ref = "blueprint:bp-deliberation:1"
+    for event in [
+        _deliberation(
+            conv_id,
+            msg_id="msg-proposal",
+            kind="proposal",
+            target_ref=target_ref,
+            payload={"summary": "Freeze through deliberation."},
+        ),
+        _deliberation(
+            conv_id,
+            msg_id="msg-review",
+            kind="challenge",
+            target_ref=target_ref,
+            parent_id="msg-proposal",
+            objection_level="non_blocking",
+            payload={"question": "Is this only a deliberation freeze?"},
+        ),
+        _deliberation(
+            conv_id,
+            msg_id="msg-commit",
+            kind="commit",
+            target_ref=target_ref,
+            agent_id="god-review",
+            payload={"commitment": "ready_to_freeze"},
+        ),
+    ]:
+        response = client.post(
+            f"/api/chat/conversations/{conv_id}/deliberations",
+            json=event,
+        )
+        assert response.status_code == 201
+    freeze = client.post(
+        f"/api/chat/conversations/{conv_id}/freeze-blueprint",
+        json={
+            "target_ref": target_ref,
+            "blueprint": {
+                "blueprint_id": "bp-deliberation",
+                "revision": 1,
+                "goal": "Freeze through deliberation.",
+                "scope": ["Deliberation freeze"],
+                "acceptance_contracts": ["Resolution exists."],
+                "source_refs": ["message:msg-proposal"],
+            },
+        },
+    )
+    assert freeze.status_code == 201
+    freeze_payload = freeze.json()
+
+    response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag",
+        json={
+            "resolution_id": freeze_payload["resolution"]["id"],
+            "graph_id": "graph-rejected",
+            "features": [
+                {
+                    "feature_id": "feature-a",
+                    "title": "Feature A",
+                    "goal": "Should be rejected.",
+                    "acceptance_criteria": ["No laneDAG is created."],
+                    "blueprint_refs": [target_ref],
+                }
+            ],
+            "lanes": [
+                {
+                    "lane_id": "lane-a",
+                    "feature_id": "feature-a",
+                    "title": "Lane A",
+                    "prompt": "This should not run.",
+                    "acceptance_criteria": ["No artifact is written."],
+                    "blueprint_refs": [target_ref],
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "god_room_lane_dag_requires_god_room_freeze"
+    assert not (tmp_path / "lane_graphs" / "graph-rejected.json").exists()
+    assert not (tmp_path / "feature_lanes.json").exists()
+
+
 def test_chat_api_operator_action_denies_missing_capability(tmp_path: Path) -> None:
     client = _client(tmp_path)
     conversation = client.post("/api/chat/conversations", json={"title": "Mission"}).json()

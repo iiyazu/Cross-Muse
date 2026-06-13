@@ -29,6 +29,7 @@ from xmuse_core.chat.api_models import (
     DispatchDispatchedRequest,
     DispatchFailedRequest,
     GodRoomBlueprintFreezeRequest,
+    GodRoomLaneDagRequest,
     MessageCreate,
     OperatorActionCreate,
     ParticipantInit,
@@ -94,6 +95,11 @@ from xmuse_core.providers.god_cli_selection_store import GodCliSelectionStore
 from xmuse_core.runtime.paths import default_xmuse_root
 from xmuse_core.structuring.blueprint_execution.approval_events import (
     produce_blueprint_approval_event,
+)
+from xmuse_core.structuring.blueprint_execution.lane_dag_service import (
+    BlueprintLaneDagPlan,
+    BlueprintLaneDagRequest,
+    BlueprintLaneDagService,
 )
 from xmuse_core.structuring.feature_plan_store import (
     build_feature_plan_proposal,
@@ -813,6 +819,131 @@ def _freeze_blueprint_from_god_room(
     result["artifact"] = artifact_payload
     result["room"] = _god_room_payload(event_store, room_id)
     return result
+
+
+def _build_lane_dag_from_god_room_freeze(
+    base_dir: Path,
+    *,
+    conversation_id: str,
+    request: GodRoomLaneDagRequest,
+) -> dict[str, object]:
+    store = _store(base_dir)
+    if not _conversation_exists(store, conversation_id):
+        raise HTTPException(status_code=404, detail="conversation not found")
+    try:
+        resolution = store.get_resolution(request.resolution_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="resolution not found") from exc
+    if resolution.conversation_id != conversation_id:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "god_room_lane_dag_resolution_mismatch",
+                "message": "resolution does not belong to the conversation",
+            },
+        )
+    blueprint = _blueprint_from_god_room_freeze_resolution(resolution)
+    try:
+        plan = BlueprintLaneDagService().build_plan(
+            BlueprintLaneDagRequest(
+                graph_id=request.graph_id,
+                resolution_id=resolution.id,
+                graph_version=request.graph_version,
+                blueprint=blueprint,
+                features=request.features,
+                lanes=request.lanes,
+                source_refs=[
+                    f"resolution:{resolution.id}",
+                    *request.source_refs,
+                ],
+            )
+        )
+    except (ValidationError, ValueError) as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "god_room_lane_dag_invalid",
+                "message": str(exc),
+                "source_authority": "mission_blueprint_resolution",
+                "resolution_id": resolution.id,
+            },
+        ) from exc
+    artifacts = _write_lane_dag_artifacts(base_dir, plan)
+    return {
+        "source_authority": "mission_blueprint_resolution",
+        "resolution_id": resolution.id,
+        "blueprint_ref": plan.blueprint_ref,
+        "lane_dag": plan.model_dump(mode="json"),
+        "artifacts": artifacts,
+    }
+
+
+def _blueprint_from_god_room_freeze_resolution(resolution: object) -> MissionBlueprintV1:
+    approval_mode = str(getattr(resolution, "approval_mode", "") or "")
+    content = getattr(resolution, "content", None)
+    if approval_mode != "god_room_blueprint_freeze" or not isinstance(content, dict):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "god_room_lane_dag_requires_god_room_freeze",
+                "message": "laneDAG planning requires a GOD room blueprint freeze resolution",
+            },
+        )
+    freeze_artifact = content.get("god_room_blueprint_freeze")
+    if (
+        not isinstance(freeze_artifact, dict)
+        or freeze_artifact.get("status") != "frozen"
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "god_room_lane_dag_requires_frozen_blueprint",
+                "message": "GOD room blueprint freeze artifact is missing or not frozen",
+            },
+        )
+    blueprint_payload = content.get("blueprint_v1")
+    if not isinstance(blueprint_payload, dict):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "god_room_lane_dag_missing_blueprint",
+                "message": "GOD room freeze resolution does not carry blueprint_v1",
+            },
+        )
+    try:
+        return MissionBlueprintV1.model_validate(blueprint_payload)
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "god_room_lane_dag_invalid_blueprint",
+                "message": str(exc),
+            },
+        ) from exc
+
+
+def _write_lane_dag_artifacts(
+    base_dir: Path,
+    plan: BlueprintLaneDagPlan,
+) -> dict[str, str]:
+    lane_graph = plan.lane_graph
+    graph_path = LaneGraphStore(base_dir / "lane_graphs").save(lane_graph)
+    lane_dag_path = base_dir / "lane_graphs" / f"{lane_graph.id}.lane-dag.json"
+    lane_dag_path.parent.mkdir(parents=True, exist_ok=True)
+    lane_dag_path.write_text(
+        json.dumps(
+            plan.model_dump(mode="json"),
+            indent=2,
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return {
+        "lane_graph": str(graph_path.relative_to(base_dir)),
+        "lane_dag": str(lane_dag_path.relative_to(base_dir)),
+    }
 
 
 def _default_participant_inits(role_templates: RoleTemplateStore) -> list[ParticipantInit]:
@@ -1642,6 +1773,20 @@ def create_app(
         request: GodRoomBlueprintFreezeRequest,
     ) -> dict[str, object]:
         return _freeze_blueprint_from_god_room(
+            root,
+            conversation_id=conversation_id,
+            request=request,
+        )
+
+    @app.post(
+        "/api/chat/conversations/{conversation_id}/god-room/lane-dag",
+        status_code=status.HTTP_201_CREATED,
+    )
+    def build_god_room_lane_dag(
+        conversation_id: str,
+        request: GodRoomLaneDagRequest,
+    ) -> dict[str, object]:
+        return _build_lane_dag_from_god_room_freeze(
             root,
             conversation_id=conversation_id,
             request=request,

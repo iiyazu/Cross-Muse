@@ -410,6 +410,19 @@ Current implementation status:
   and lane spec inputs.
 - The lane graph remains graph structure; `feature_lanes.json`, TUI/dashboard,
   Ray actors, and LangGraph nodes are still not state authorities.
+- `xmuse/chat_api.py` now exposes
+  `POST /api/chat/conversations/{conversation_id}/god-room/lane-dag`. The
+  endpoint requires a mission blueprint resolution produced by
+  `approval_mode = god_room_blueprint_freeze`, reads `blueprint_v1` from that
+  resolution, and builds a `BlueprintLaneDagPlan` with
+  `BlueprintLaneDagService`.
+- Successful laneDAG builds persist only runtime artifacts under
+  `lane_graphs/{graph_id}.json` and `lane_graphs/{graph_id}.lane-dag.json`.
+  They do not write `feature_lanes.json`, dispatch lanes, mutate TUI/read
+  projections, or treat request payload blueprint data as authority.
+- Non-GOD-room freeze resolutions, missing frozen artifacts, invalid blueprint
+  payloads, invalid refs, cycles, or missing acceptance criteria are rejected
+  before artifacts are written.
 
 ## S5 - Lane Budget And Recovery
 

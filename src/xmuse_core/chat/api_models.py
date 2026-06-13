@@ -5,6 +5,10 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, field_validator
 
 from xmuse_core.providers.models import ProviderId, ProviderProfileId
+from xmuse_core.structuring.blueprint_execution.lane_dag_service import (
+    BlueprintFeatureSpec,
+    BlueprintLaneSpec,
+)
 
 
 class ParticipantInit(BaseModel):
@@ -231,6 +235,20 @@ class GodRoomBlueprintFreezeRequest(BaseModel):
     revision: int = Field(default=1, ge=1)
 
     @field_validator("blueprint_id", mode="before")
+    @classmethod
+    def _strip_required_text(cls, value: object) -> object:
+        return _strip_required_string(value)
+
+
+class GodRoomLaneDagRequest(BaseModel):
+    resolution_id: str = Field(min_length=1)
+    graph_id: str = Field(min_length=1)
+    graph_version: int = Field(default=1, ge=1)
+    features: list[BlueprintFeatureSpec] = Field(min_length=1)
+    lanes: list[BlueprintLaneSpec] = Field(min_length=1)
+    source_refs: list[str] = Field(default_factory=list)
+
+    @field_validator("resolution_id", "graph_id", mode="before")
     @classmethod
     def _strip_required_text(cls, value: object) -> object:
         return _strip_required_string(value)
