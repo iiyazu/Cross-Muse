@@ -501,15 +501,21 @@ Current implementation status:
   before an operator attempts a live evidence capture. Natural candidates now
   expose transcript readiness and selected-GOD runtime readiness separately;
   combined natural `export_ready` requires both, so missing selected runtime
-  continuity is visible before `/release attempt natural`. Real-provider
-  candidates now include `proof_boundary=candidate_report_is_not_release_proof`,
-  the required `xmuse.real_provider_runtime.v1` schema, required
-  `real_provider_proof`, source authority, and the suggested
-  `attempt_release_evidence` operator action payload hints. This makes the next
-  action visible without treating peer-latency traces, provider inventory, or
-  TUI rendering as release proof. Live-MemoryOS candidates similarly include
-  `proof_boundary=candidate_report_is_not_live_memoryos_proof`, required
-  schema `xmuse.memoryos_lite_trace.v1`, required proof `live_service_proof`,
+  continuity is visible before `/release attempt natural`. Natural candidates
+  also include `proof_boundary=candidate_report_is_not_natural_deliberation_proof`,
+  required transcript/runtime schemas, required `real_provider_proof`, source
+  authority, and the suggested `attempt_release_evidence` operator action.
+  This makes the next action visible without treating transcript readiness,
+  selected-runtime readiness, or TUI rendering as natural release proof.
+  Real-provider candidates now include
+  `proof_boundary=candidate_report_is_not_release_proof`, the required
+  `xmuse.real_provider_runtime.v1` schema, required `real_provider_proof`,
+  source authority, and the suggested `attempt_release_evidence` operator
+  action payload hints. This makes the next action visible without treating
+  peer-latency traces, provider inventory, or TUI rendering as release proof.
+  Live-MemoryOS candidates similarly include
+  `proof_boundary=candidate_report_is_not_live_memoryos_proof`, required schema
+  `xmuse.memoryos_lite_trace.v1`, required proof `live_service_proof`,
   redacted source authority, and `attempt_release_evidence` hints without
   leaking env values or task content/query text into the candidate report.
 - TUI `/release attempt [natural|provider|memoryos|github|all]` now routes through

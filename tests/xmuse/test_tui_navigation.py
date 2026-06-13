@@ -1154,6 +1154,10 @@ async def test_chat_screen_release_candidates_runs_operator_control_action(
                                     ),
                                 },
                                 "blockers": ["selected_god_runtime_missing"],
+                                "next_action": (
+                                    "Capture a natural multi-GOD transcript and "
+                                    "selected GOD runtime continuity."
+                                ),
                             }
                         ]
                     },
@@ -1215,6 +1219,10 @@ async def test_chat_screen_release_candidates_runs_operator_control_action(
         assert (
             "natural[conv-user]=blocked transcript=ready runtime=blocked "
             "peer_gods=0 blockers=selected_god_runtime_missing"
+        ) in content
+        assert (
+            "next=Capture a natural multi-GOD transcript and selected GOD "
+            "runtime continuity."
         ) in content
         assert (
             "provider=blocked next=Capture fresh and resume MCP writeback provider turns."

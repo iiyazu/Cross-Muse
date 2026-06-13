@@ -53,6 +53,24 @@ def test_release_evidence_candidates_identify_ready_natural_and_provider_inputs(
     assert natural["god_speech_act_count"] == 2
     assert natural["distinct_god_count"] == 2
     assert natural["blockers"] == []
+    assert natural["proof_boundary"] == (
+        "candidate_report_is_not_natural_deliberation_proof"
+    )
+    assert natural["required_transcript_schema"] == "xmuse.operator_transcript.v1"
+    assert natural["required_runtime_schema"] == "xmuse.god_runtime_continuity.v1"
+    assert natural["required_proof_level"] == "real_provider_proof"
+    assert natural["source_authority"] == [
+        "chat_store.messages.god_speech_act",
+        "god_session_registry.provider_session_bindings",
+        "god_cli_selection_store",
+        "god_cli_registry",
+    ]
+    assert natural["suggested_operator_action"] == {
+        "action": "attempt_release_evidence",
+        "kind": "natural_deliberation",
+        "required_payload_keys": ["conversation_id"],
+        "payload_hints": {"conversation_id": conversation_id},
+    }
     assert provider["trace_table_present"] is True
     assert provider["export_ready"] is True
     assert provider["suggested_fresh_inbox_item_id"] == "inbox-fresh"
@@ -132,6 +150,16 @@ def test_release_evidence_candidates_require_selected_runtime_for_natural_export
     assert natural["transcript_export_ready"] is True
     assert natural["export_ready"] is False
     assert "selected_god_runtime_missing" in natural["blockers"]
+    assert natural["proof_boundary"] == (
+        "candidate_report_is_not_natural_deliberation_proof"
+    )
+    assert natural["required_transcript_schema"] == "xmuse.operator_transcript.v1"
+    assert natural["required_runtime_schema"] == "xmuse.god_runtime_continuity.v1"
+    assert natural["required_proof_level"] == "real_provider_proof"
+    assert natural["next_action"] == (
+        "Capture a natural multi-GOD transcript and selected GOD runtime "
+        "continuity, then run attempt_release_evidence for natural_deliberation."
+    )
     assert natural["selected_god_runtime"]["fact_state"] == "manual_gap"
     assert natural["selected_god_runtime"]["manual_gap_reason"] == (
         "selected GOD CLI unavailable"

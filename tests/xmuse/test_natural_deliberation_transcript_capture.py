@@ -201,9 +201,44 @@ def test_natural_transcript_export_accepts_real_multi_god_speech_acts(
     ]
     assert artifact["blockers"] == []
 
-    gate = build_natural_deliberation_release_gate(artifact, artifact_path=output)
+    runtime_artifact = tmp_path / "god-runtime.json"
+    runtime_payload = {
+        "schema_version": "xmuse.god_runtime_continuity.v1",
+        "conversation_id": conversation.id,
+        "proof_level": "real_provider_proof",
+        "fact_state": "observed",
+        "source_refs": [f"god_cli_selection:{conversation.id}"],
+        "items": [
+            {
+                "god_id": "architect-god",
+                "cli_id": "codex.god",
+                "peer_god_ready": True,
+                "bounded": False,
+                "provider_session_ready": True,
+                "proof_level": "real_provider_proof",
+                "source_refs": [f"god_session:{architect_session.god_session_id}"],
+            },
+            {
+                "god_id": "review-god",
+                "cli_id": "review.peer",
+                "peer_god_ready": True,
+                "bounded": False,
+                "provider_session_ready": True,
+                "proof_level": "real_provider_proof",
+                "source_refs": [f"god_session:{reviewer_session.god_session_id}"],
+            },
+        ],
+    }
+
+    gate = build_natural_deliberation_release_gate(
+        artifact,
+        artifact_path=output,
+        god_runtime_continuity=runtime_payload,
+        god_runtime_path=runtime_artifact,
+    )
     assert gate["status"] == "ok"
     assert gate["proof_level"] == "real_provider_proof"
+    assert str(runtime_artifact) in gate["artifacts"]
 
 
 def test_natural_transcript_export_rejects_deterministic_deliberation_replay(

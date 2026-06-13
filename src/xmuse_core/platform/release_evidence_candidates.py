@@ -43,6 +43,10 @@ _MEMORYOS_NEXT_ACTION = (
     "Configure live MemoryOS Lite and provide a complete task payload, then "
     "run attempt_release_evidence for live_memoryos to capture a live trace."
 )
+_NATURAL_NEXT_ACTION = (
+    "Capture a natural multi-GOD transcript and selected GOD runtime "
+    "continuity, then run attempt_release_evidence for natural_deliberation."
+)
 _MEMORYOS_PAYLOAD_HINT_KEYS = (
     "conversation_id",
     "repo_id",
@@ -173,12 +177,35 @@ def _natural_candidates(
                     "selected_god_runtime": runtime,
                     "export_ready": not blockers,
                     "blockers": blockers,
+                    **_natural_candidate_guidance(conversation_id=conversation["id"]),
                 }
             )
     return {
         "conversation_count": len(conversations),
         "conversations": conversations,
         "export_ready": any(item["export_ready"] for item in conversations),
+    }
+
+
+def _natural_candidate_guidance(conversation_id: str) -> dict[str, Any]:
+    return {
+        "proof_boundary": "candidate_report_is_not_natural_deliberation_proof",
+        "required_transcript_schema": "xmuse.operator_transcript.v1",
+        "required_runtime_schema": "xmuse.god_runtime_continuity.v1",
+        "required_proof_level": "real_provider_proof",
+        "source_authority": [
+            "chat_store.messages.god_speech_act",
+            "god_session_registry.provider_session_bindings",
+            "god_cli_selection_store",
+            "god_cli_registry",
+        ],
+        "next_action": _NATURAL_NEXT_ACTION,
+        "suggested_operator_action": {
+            "action": "attempt_release_evidence",
+            "kind": "natural_deliberation",
+            "required_payload_keys": ["conversation_id"],
+            "payload_hints": {"conversation_id": conversation_id},
+        },
     }
 
 

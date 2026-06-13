@@ -993,7 +993,14 @@ natural[<conversation-id>]=blocked transcript=ready runtime=blocked peer_gods=0 
 ```
 
 The action result also shows provider and MemoryOS candidate readiness; these
-lines are read-model feedback, not durable state writes. Provider candidate
+lines are read-model feedback, not durable state writes. Natural candidate
+rows include
+`proof_boundary=candidate_report_is_not_natural_deliberation_proof`, required
+transcript schema `xmuse.operator_transcript.v1`, required runtime schema
+`xmuse.god_runtime_continuity.v1`, required proof `real_provider_proof`, source
+authority, and suggested `attempt_release_evidence` hints. Transcript readiness
+and selected-runtime readiness are prerequisites for capture; they do not prove
+the natural release gate passed. Provider candidate
 rows include `proof_boundary=candidate_report_is_not_release_proof`, required
 artifact schema `xmuse.real_provider_runtime.v1`, required proof
 `real_provider_proof`, source authority, and suggested

@@ -723,8 +723,13 @@ Tasks:
   visible before `/release attempt natural` starts. The TUI operator result
   prints compact candidate lines for natural transcript/runtime readiness,
   provider readiness, MemoryOS readiness, selected-GOD runtime blockers, and
-  provider next-action guidance without writing durable state. Provider
-  candidate guidance is explicitly bounded by
+  natural/provider/MemoryOS next-action guidance without writing durable state.
+  Natural candidate guidance is explicitly bounded by
+  `proof_boundary=candidate_report_is_not_natural_deliberation_proof`; transcript
+  readiness plus selected-GOD runtime readiness are only capture prerequisites,
+  and the natural release gate still requires both
+  `xmuse.operator_transcript.v1` and `xmuse.god_runtime_continuity.v1` artifacts
+  with `real_provider_proof`. Provider candidate guidance is bounded by
   `proof_boundary=candidate_report_is_not_release_proof`; only a validated
   `xmuse.real_provider_runtime.v1` artifact with `real_provider_proof` can
   satisfy the real-provider release gate. Live-MemoryOS candidate guidance is

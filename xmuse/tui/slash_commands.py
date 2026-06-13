@@ -1314,6 +1314,9 @@ def _natural_candidate_line(candidate: dict) -> str:
     )
     if blockers:
         line = f"{line} blockers={', '.join(blockers)}"
+    next_action = str(candidate.get("next_action") or "").strip()
+    if next_action:
+        line = f"{line} next={next_action}"
     return line
 
 
