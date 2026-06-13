@@ -8,6 +8,18 @@ from pathlib import Path
 from typing import Any
 
 from xmuse_core.agents.god_session_registry import GodSessionRecord, GodSessionRegistry
+from xmuse_core.platform.god_runtime_continuity import (
+    build_selected_god_runtime_continuity_view,
+)
+from xmuse_core.providers.god_cli_registration_store import GodCliRegistrationStore
+from xmuse_core.providers.god_cli_registry import (
+    GodCliRegistry,
+    build_default_god_cli_registry,
+)
+from xmuse_core.providers.god_cli_selection_store import (
+    GodCliSelectionRecord,
+    GodCliSelectionStore,
+)
 
 _MEMORYOS_REQUIRED_ENV = ("XMUSE_LIVE_MEMORYOS_LITE", "XMUSE_MEMORYOS_LITE_URL")
 _MEMORYOS_REQUIRED_PAYLOAD = (
@@ -34,7 +46,10 @@ def build_release_evidence_candidate_report(
 ) -> dict[str, Any]:
     root = Path(xmuse_root)
     chat_db_path = root / "chat.db"
-    sessions = _session_index(root / "god_sessions.json")
+    session_records = _session_records(root / "god_sessions.json")
+    sessions = _session_index(session_records)
+    god_cli_registry = _god_cli_registry(root)
+    god_cli_selections = GodCliSelectionStore(root / "god_cli_selections.json").list_records()
     memoryos_inputs = dict(memoryos_payload or {})
     if conversation_id and not _text(memoryos_inputs.get("conversation_id")):
         memoryos_inputs["conversation_id"] = conversation_id
@@ -45,6 +60,9 @@ def build_release_evidence_candidate_report(
         "natural_deliberation": _natural_candidates(
             chat_db_path,
             sessions=sessions,
+            session_records=session_records,
+            god_cli_registry=god_cli_registry,
+            god_cli_selections=god_cli_selections,
             conversation_id=conversation_id,
         ),
         "real_provider_runtime": _provider_candidates(
@@ -64,6 +82,9 @@ def _natural_candidates(
     chat_db_path: Path,
     *,
     sessions: Mapping[tuple[str, str], GodSessionRecord],
+    session_records: list[GodSessionRecord],
+    god_cli_registry: GodCliRegistry,
+    god_cli_selections: list[GodCliSelectionRecord],
     conversation_id: str | None,
 ) -> dict[str, Any]:
     conversations = []
@@ -102,13 +123,24 @@ def _natural_candidates(
                     sessions.get((conversation["id"], participant_id))
                 )
             ]
-            blockers = []
+            transcript_blockers = []
             if not messages:
-                blockers.append("natural_god_speech_act_messages_missing")
+                transcript_blockers.append("natural_god_speech_act_messages_missing")
             if messages and len(god_ids) < 2:
-                blockers.append("natural_deliberation_requires_two_gods")
+                transcript_blockers.append("natural_deliberation_requires_two_gods")
             if missing_sessions:
-                blockers.append("provider_session_metadata_missing")
+                transcript_blockers.append("provider_session_metadata_missing")
+            runtime = _selected_runtime_candidate(
+                conversation_id=conversation["id"],
+                god_ids=god_ids,
+                sessions=session_records,
+                god_cli_registry=god_cli_registry,
+                selections=god_cli_selections,
+            )
+            blockers = [
+                *transcript_blockers,
+                *_string_list(runtime.get("blockers")),
+            ]
             conversations.append(
                 {
                     "conversation_id": conversation["id"],
@@ -118,6 +150,8 @@ def _natural_candidates(
                     "god_ids": god_ids,
                     "participant_ids": participant_ids,
                     "missing_provider_session_participant_ids": missing_sessions,
+                    "transcript_export_ready": not transcript_blockers,
+                    "selected_god_runtime": runtime,
                     "export_ready": not blockers,
                     "blockers": blockers,
                 }
@@ -126,6 +160,52 @@ def _natural_candidates(
         "conversation_count": len(conversations),
         "conversations": conversations,
         "export_ready": any(item["export_ready"] for item in conversations),
+    }
+
+
+def _selected_runtime_candidate(
+    *,
+    conversation_id: str,
+    god_ids: list[str],
+    sessions: list[GodSessionRecord],
+    god_cli_registry: GodCliRegistry,
+    selections: list[GodCliSelectionRecord],
+) -> dict[str, Any]:
+    runtime = build_selected_god_runtime_continuity_view(
+        conversation_id=conversation_id,
+        selections=selections,
+        sessions=sessions,
+        god_cli_registry=god_cli_registry,
+    )
+    items = _dicts(runtime.get("items"))
+    present_god_ids = _ordered_unique(_text(item.get("god_id")) for item in items)
+    missing_god_ids = [god_id for god_id in god_ids if god_id not in present_god_ids]
+    not_ready_god_ids = [
+        _text(item.get("god_id")) or _text(item.get("cli_id")) or "unknown"
+        for item in items
+        if item.get("peer_god_ready") is not True
+    ]
+    blockers: list[str] = []
+    if not items:
+        blockers.append("selected_god_runtime_missing")
+    if missing_god_ids:
+        blockers.append("selected_god_runtime_missing_transcript_gods")
+    if not_ready_god_ids:
+        blockers.append("selected_god_runtime_not_peer_god_ready")
+    return {
+        "schema_version": runtime.get("schema_version"),
+        "fact_state": runtime.get("fact_state"),
+        "proof_level": runtime.get("proof_level"),
+        "manual_gap_reason": runtime.get("manual_gap_reason"),
+        "peer_god_ready_count": sum(
+            1 for item in items if item.get("peer_god_ready") is True
+        ),
+        "required_god_ids": god_ids,
+        "present_god_ids": present_god_ids,
+        "missing_god_ids": missing_god_ids,
+        "not_ready_god_ids": not_ready_god_ids,
+        "source_refs": _string_list(runtime.get("source_refs")),
+        "blockers": blockers,
     }
 
 
@@ -216,14 +296,39 @@ def _memoryos_candidates(
     }
 
 
-def _session_index(registry_path: Path) -> dict[tuple[str, str], GodSessionRecord]:
+def _session_records(registry_path: Path) -> list[GodSessionRecord]:
     if not registry_path.exists():
-        return {}
+        return []
+    return GodSessionRegistry(registry_path).list()
+
+
+def _session_index(
+    session_records: list[GodSessionRecord],
+) -> dict[tuple[str, str], GodSessionRecord]:
     sessions: dict[tuple[str, str], GodSessionRecord] = {}
-    for session in GodSessionRegistry(registry_path).list():
+    for session in session_records:
         if session.conversation_id and session.participant_id:
             sessions[(session.conversation_id, session.participant_id)] = session
     return sessions
+
+
+def _god_cli_registry(root: Path) -> GodCliRegistry:
+    registrations = GodCliRegistrationStore(
+        root / "god_cli_registrations.json"
+    ).list_registrations()
+    return build_default_god_cli_registry(extra_registrations=registrations)
+
+
+def _dicts(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
+
+
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [item.strip() for item in value if isinstance(item, str) and item.strip()]
 
 
 def _conversation_rows(

@@ -493,9 +493,12 @@ Current implementation status:
   synthesize review truth, merge truth, or `pr_merged`.
 - TUI `/release candidates` now routes through
   `inspect_release_evidence_candidates` with `release_gate`, reads durable
-  chat/session/peer-latency state plus redacted MemoryOS env presence, and
-  reports which export inputs are ready or missing before an operator attempts
-  a live evidence capture.
+  chat/session/GOD selection/GOD registration/peer-latency state plus redacted
+  MemoryOS env presence, and reports which export inputs are ready or missing
+  before an operator attempts a live evidence capture. Natural candidates now
+  expose transcript readiness and selected-GOD runtime readiness separately;
+  combined natural `export_ready` requires both, so missing selected runtime
+  continuity is visible before `/release attempt natural`.
 - TUI `/release attempt [natural|provider|memoryos|github|all]` now routes through
   `attempt_release_evidence` with `release_gate`. The action writes a
   `release-evidence-attempt.json` attempt report under

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 from xmuse_core.agents.god_session_registry import GodSessionRegistry
@@ -10,12 +11,14 @@ from xmuse_core.chat.stream_store import PeerTurnLatencyTraceStore
 from xmuse_core.platform.release_evidence_candidates import (
     build_release_evidence_candidate_report,
 )
+from xmuse_core.providers.god_cli_selection_store import GodCliSelectionStore
 
 
 def test_release_evidence_candidates_identify_ready_natural_and_provider_inputs(
     tmp_path: Path,
 ) -> None:
     conversation_id = _seed_natural_conversation(tmp_path)
+    _seed_selected_god_runtime(tmp_path, conversation_id)
     _seed_provider_traces(tmp_path, conversation_id)
 
     report = build_release_evidence_candidate_report(
@@ -44,6 +47,9 @@ def test_release_evidence_candidates_identify_ready_natural_and_provider_inputs(
     assert report["schema_version"] == "xmuse.release_evidence_candidates.v1"
     assert natural["conversation_id"] == conversation_id
     assert natural["export_ready"] is True
+    assert natural["transcript_export_ready"] is True
+    assert natural["selected_god_runtime"]["peer_god_ready_count"] == 2
+    assert natural["selected_god_runtime"]["blockers"] == []
     assert natural["god_speech_act_count"] == 2
     assert natural["distinct_god_count"] == 2
     assert natural["blockers"] == []
@@ -54,6 +60,28 @@ def test_release_evidence_candidates_identify_ready_natural_and_provider_inputs(
     assert memoryos["export_ready"] is True
     assert memoryos["configured"] is True
     assert memoryos["missing_env_keys"] == []
+
+
+def test_release_evidence_candidates_require_selected_runtime_for_natural_export(
+    tmp_path: Path,
+) -> None:
+    conversation_id = _seed_natural_conversation(tmp_path)
+
+    report = build_release_evidence_candidate_report(
+        tmp_path,
+        conversation_id=conversation_id,
+        env={},
+        memoryos_payload={},
+    )
+
+    natural = report["natural_deliberation"]["conversations"][0]
+    assert natural["transcript_export_ready"] is True
+    assert natural["export_ready"] is False
+    assert "selected_god_runtime_missing" in natural["blockers"]
+    assert natural["selected_god_runtime"]["fact_state"] == "manual_gap"
+    assert natural["selected_god_runtime"]["manual_gap_reason"] == (
+        "selected GOD CLI unavailable"
+    )
 
 
 def test_release_evidence_candidates_report_current_gaps_without_secrets(
@@ -79,6 +107,17 @@ def test_release_evidence_candidates_report_current_gaps_without_secrets(
     assert memoryos["configured"] is False
     assert "XMUSE_LIVE_MEMORYOS_LITE" in memoryos["missing_env_keys"]
     assert "token=secret-token" not in str(report)
+
+
+def _seed_selected_god_runtime(tmp_path: Path, conversation_id: str) -> None:
+    GodCliSelectionStore(tmp_path / "god_cli_selections.json").record_selection(
+        conversation_id=conversation_id,
+        cli_id="codex.god",
+        selected_by="operator",
+        audit_id="operator-action:select-codex",
+        idempotency_key=f"select:{conversation_id}:codex.god",
+        selected_at_utc="2026-06-13T00:00:00Z",
+    )
 
 
 def _seed_natural_conversation(tmp_path: Path) -> str:
@@ -114,12 +153,12 @@ def _seed_natural_conversation(tmp_path: Path) -> str:
     reviewer_session = registry.create(
         role="review",
         agent_name="review-god",
-        runtime="opencode",
+        runtime="codex",
         session_address="@review",
         session_inbox_id="inbox-review",
         conversation_id=conversation.id,
         participant_id=reviewer.participant_id,
-        model="opencode-prod",
+        model="gpt-5.5-review",
     )
     registry.update_provider_binding(
         architect_session.god_session_id,
@@ -128,12 +167,22 @@ def _seed_natural_conversation(tmp_path: Path) -> str:
         provider_binding_status="active",
         provider_binding_failure_reason=None,
     )
+    registry.record_heartbeat(
+        architect_session.god_session_id,
+        heartbeat_at_utc=_utcnow(),
+        status="active",
+    )
     registry.update_provider_binding(
         reviewer_session.god_session_id,
         provider_session_id="opencode-thread-1",
         provider_session_kind="opencode_session",
         provider_binding_status="active",
         provider_binding_failure_reason=None,
+    )
+    registry.record_heartbeat(
+        reviewer_session.god_session_id,
+        heartbeat_at_utc=_utcnow(),
+        status="active",
     )
     chat.add_message(
         conversation_id=conversation.id,
@@ -214,3 +263,7 @@ def _speech(
         "type": "god_speech_act",
         "message": message.model_dump(mode="json"),
     }
+
+
+def _utcnow() -> str:
+    return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")

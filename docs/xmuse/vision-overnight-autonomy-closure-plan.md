@@ -690,6 +690,11 @@ Tasks:
   selected-GOD runtime artifact under the release readiness root and passes it
   to the natural gate. Use `god_runtime=skip` only for compatibility tests, not
   for production release evidence.
+- `/release candidates` now exposes natural transcript readiness and
+  selected-GOD runtime readiness separately. Its natural `export_ready` requires
+  both, so missing selected runtime continuity, transcript GODs absent from the
+  selected runtime view, stale heartbeats, or bounded/non-peer GOD sessions are
+  visible before `/release attempt natural` starts.
 - When the same natural transcript should participate in release readiness,
   also pass `--natural-deliberation-transcript TRANSCRIPT` plus
   `--natural-deliberation-god-runtime RUNTIME`. This writes

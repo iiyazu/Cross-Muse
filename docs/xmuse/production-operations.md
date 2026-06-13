@@ -921,9 +921,14 @@ through the replay `stage_evidence` section, again using only release-root
 scoped paths and the audited operator action path.
 `/release candidates` calls
 `inspect_release_evidence_candidates` and reads durable `chat.db`,
-`god_sessions.json`, the peer latency trace table, and redacted MemoryOS env
-presence to show whether the operator has enough inputs for the export actions.
-It does not create artifacts. `/release attempt` calls
+`god_sessions.json`, `god_cli_selections.json`, `god_cli_registrations.json`,
+the peer latency trace table, and redacted MemoryOS env presence to show whether
+the operator has enough inputs for the export actions. Natural transcript
+candidates separately report transcript export readiness and selected-GOD
+runtime readiness; `export_ready` is true only when both are ready. Missing
+selected runtime rows, stale/non-peer GOD sessions, or transcript GODs absent
+from selected runtime continuity are visible before `/release attempt` runs. It
+does not create artifacts. `/release attempt` calls
 `attempt_release_evidence`, reuses the candidate report, and then invokes the
 same release evidence export actions only for candidate inputs that are
 export-ready. It writes `release-evidence-attempt.json` under
