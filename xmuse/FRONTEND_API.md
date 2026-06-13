@@ -706,6 +706,7 @@ WebSocket、worklist endpoint、proposal narrow/reject endpoint 仍未落地。
 | `POST /api/chat/conversations/{conversation_id}/god-room/freeze-blueprint` | 从 durable room events 编译 `xmuse.god_room_blueprint_freeze.v1`，成功时写入 mission blueprint proposal/resolution/read model |
 | `POST /api/chat/conversations/{conversation_id}/god-room/lane-dag` | 从 GOD room freeze resolution 生成 `BlueprintLaneDagPlan`，保存 lane graph 和 laneDAG artifacts，不写 live projection queue |
 | `POST /api/chat/conversations/{conversation_id}/god-room/lane-dag/recovery` | 从 laneDAG artifact 读取 lane budget，导入 failure evidence，保存 `xmuse.god_room_lane_recovery.v1` recovery artifact |
+| `POST /api/chat/conversations/{conversation_id}/god-room/memoryos-plan` | 从 GOD room events、freeze resolution、laneDAG 和 recovery artifacts 生成 `xmuse.god_room_memoryos_plan.v1` governed write/context plan |
 
 事件写入请求体使用 `GodRoomEventV1`：
 
@@ -754,6 +755,12 @@ room events，不由前端 projection 提供：
   budget，并基于提交的 `LaneFailureEvidence` 生成 retry/suspended/manual_gap/
   refactor_required decision。它只写 `lane_graphs/*.recovery.json` artifact，
   不直接改变 lane status。
+- `POST /god-room/memoryos-plan` 使用 GOD room event store、GOD room freeze
+  resolution、laneDAG artifact 和 recovery sidecar 作为输入，生成
+  `source_authority = "god_room_memoryos_plan_contract"` 的 governed
+  MemoryOS write/context plan。它只写
+  `reports/god_room_memoryos/*.memoryos-plan.json` artifact；不会调用 live
+  MemoryOS、不会写 MemoryOS state、不会把 `manual_gap` 升级成 live proof。
 - unknown participant、unknown target、conversation/room mismatch 和 event id
   conflict 会被后端拒绝，前端不得本地修改 projection 来绕过。
 - `replay.proof_level = "contract_proof"` 只证明 durable replay contract，不是

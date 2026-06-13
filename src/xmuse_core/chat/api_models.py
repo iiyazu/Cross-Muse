@@ -272,6 +272,23 @@ class GodRoomLaneRecoveryRequest(BaseModel):
         return _strip_required_storage_id(value)
 
 
+class GodRoomMemoryPlanRequest(BaseModel):
+    graph_id: str = Field(min_length=1)
+    repo_id: str = Field(min_length=1)
+    workspace_id: str = Field(min_length=1)
+    context_budget: int = Field(default=2048, ge=1)
+
+    @field_validator("graph_id", mode="before")
+    @classmethod
+    def _strip_graph_id(cls, value: object) -> object:
+        return _strip_required_storage_id(value)
+
+    @field_validator("repo_id", "workspace_id", mode="before")
+    @classmethod
+    def _strip_required_text(cls, value: object) -> object:
+        return _strip_required_string(value)
+
+
 class RoleTemplateCreate(BaseModel):
     slug: str = Field(min_length=1)
     display_name: str = Field(min_length=1)

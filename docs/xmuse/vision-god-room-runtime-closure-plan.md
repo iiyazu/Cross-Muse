@@ -510,6 +510,27 @@ Current implementation status:
 - Governance write-plan tests cover using review trace anchors as durable
   source refs. This is contract proof; no live MemoryOS service proof is
   claimed by this stage.
+- `src/xmuse_core/integrations/god_room_memoryos_plan.py` now builds
+  `xmuse.god_room_memoryos_plan.v1` artifacts from GOD room events, a GOD room
+  blueprint freeze artifact, laneDAG runtime contracts, and lane recovery
+  decisions. The builder reuses `MemoryOSGovernedWritePlan`, produces
+  god-private, blueprint, lane runtime, and lane recovery governed write plans,
+  and emits REST-first context plans without importing or calling
+  `memoryos_lite`.
+- `xmuse/chat_api.py` now exposes
+  `POST /api/chat/conversations/{conversation_id}/god-room/memoryos-plan`.
+  The endpoint reads durable GOD room state, the freeze resolution, saved
+  laneDAG artifact, and lane recovery sidecars, then writes only
+  `reports/god_room_memoryos/*.memoryos-plan.json`.
+- `xmuse-memoryos-governance-evidence-capture` can now expand this aggregate
+  GOD room MemoryOS plan artifact into individual governed write plans, so the
+  S6 artifact can flow into replay/release memory-governance evidence without
+  creating a second evidence authority.
+- When live MemoryOS Lite is not configured, the plan artifact preserves
+  `live_trace.status = manual_gap` with
+  `memoryos_lite_live_environment_missing`. This is governance/context plan
+  proof, not live MemoryOS service proof, and it does not write MemoryOS state,
+  lane status, `feature_lanes.json`, or TUI/read projections.
 
 ## S7 - TUI Operator Cockpit
 

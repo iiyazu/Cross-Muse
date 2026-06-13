@@ -185,6 +185,62 @@ def test_capture_memoryos_governance_evidence_reports_blocked_plan(
     )
 
 
+def test_capture_memoryos_governance_evidence_accepts_god_room_memoryos_plan_artifact(
+    tmp_path: Path,
+) -> None:
+    blueprint_plan = MemoryOSWritebackEvent(
+        kind="blueprint_frozen",
+        namespace=conversation_namespace("conv-1"),
+        actor_id="god-architect",
+        event_id="bp-1",
+        summary="Blueprint bp-1 was frozen.",
+        source_refs=["god-room-event:evt-freeze", "blueprint:bp-1:1"],
+    ).to_governed_write_plan()
+    review_plan = MemoryOSWritebackEvent(
+        kind="review_verdict_finalized",
+        namespace=conversation_namespace("conv-1"),
+        actor_id="god-review",
+        event_id="rv-1",
+        summary="Review finalized lane memory plan.",
+        source_refs=["lane:lane-memory", "review:rv-1"],
+    ).to_governed_write_plan()
+    plan_artifact = tmp_path / "god-room-memoryos-plan.json"
+    plan_artifact.write_text(
+        json.dumps(
+            {
+                "schema_version": "xmuse.god_room_memoryos_plan.v1",
+                "plans": [
+                    blueprint_plan.model_dump(mode="json"),
+                    review_plan.model_dump(mode="json"),
+                ],
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    artifact = capture_memoryos_governance_evidence(
+        run_id="god-room-memory",
+        plan_artifacts=[plan_artifact],
+        output_path=tmp_path / "memory-governance-production-evidence.json",
+        stage_id="S6",
+    )
+
+    assert artifact["status"] == "ok"
+    assert artifact["stage_id"] == "S6"
+    assert artifact["memory_governance"]["plan_count"] == 2
+    assert artifact["memory_governance"]["ingest_count"] == 2
+    event_kinds = [
+        plan["event_kind"]
+        for plan in artifact["memory_governance"]["plans"]
+    ]
+    assert event_kinds == ["blueprint_frozen", "review_verdict_finalized"]
+    assert "god-room-event:evt-freeze" in artifact["source_refs"]
+    assert "review:rv-1" in artifact["source_refs"]
+
+
 def test_memoryos_governance_evidence_capture_cli_writes_artifact(
     tmp_path: Path,
 ) -> None:

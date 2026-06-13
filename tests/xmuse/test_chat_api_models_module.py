@@ -69,3 +69,4 @@ def test_chat_api_preserves_api_model_compat_exports() -> None:
     assert chat_api.PeerForkCreate is api_models.PeerForkCreate
     assert chat_api.GodRoomLaneDagRequest is api_models.GodRoomLaneDagRequest
     assert chat_api.GodRoomLaneRecoveryRequest is api_models.GodRoomLaneRecoveryRequest
+    assert chat_api.GodRoomMemoryPlanRequest is api_models.GodRoomMemoryPlanRequest

@@ -31,6 +31,7 @@ from xmuse_core.chat.api_models import (
     GodRoomBlueprintFreezeRequest,
     GodRoomLaneDagRequest,
     GodRoomLaneRecoveryRequest,
+    GodRoomMemoryPlanRequest,
     MessageCreate,
     OperatorActionCreate,
     ParticipantInit,
@@ -68,6 +69,10 @@ from xmuse_core.chat.peer_proposals import classify_structured_proposal
 from xmuse_core.chat.peer_service import PeerChatError, PeerChatService
 from xmuse_core.chat.protocol_v2 import DeliberationMessageV1
 from xmuse_core.chat.store import ChatStore
+from xmuse_core.integrations.god_room_memoryos_plan import (
+    build_god_room_memoryos_plan,
+)
+from xmuse_core.integrations.memoryos_lite_interop import live_memoryos_lite_enabled
 from xmuse_core.platform.http_auth import (
     authorize_chat_api_write,
     require_production_write_auth_token,
@@ -101,6 +106,7 @@ from xmuse_core.structuring.blueprint_execution.lane_dag_service import (
     BlueprintLaneDagPlan,
     BlueprintLaneDagRequest,
     BlueprintLaneDagService,
+    LaneRecoveryDecision,
     evaluate_lane_recovery,
 )
 from xmuse_core.structuring.feature_plan_store import (
@@ -109,6 +115,7 @@ from xmuse_core.structuring.feature_plan_store import (
     save_approved_feature_plan_artifacts,
 )
 from xmuse_core.structuring.god_room_blueprint_freeze import (
+    GodRoomBlueprintFreezeArtifactV1,
     GodRoomBlueprintFreezeStatus,
     compile_blueprint_freeze_from_god_room_events,
 )
@@ -947,6 +954,78 @@ def _evaluate_god_room_lane_recovery(
     }
 
 
+def _build_god_room_memoryos_plan(
+    base_dir: Path,
+    *,
+    conversation_id: str,
+    request: GodRoomMemoryPlanRequest,
+) -> dict[str, object]:
+    store = _store(base_dir)
+    if not _conversation_exists(store, conversation_id):
+        raise HTTPException(status_code=404, detail="conversation not found")
+    lane_dag = _load_lane_dag_plan(base_dir, request.graph_id)
+    if str(lane_dag.lane_graph.conversation_id) != conversation_id:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "god_room_memoryos_plan_conversation_mismatch",
+                "message": "laneDAG artifact does not belong to the conversation",
+            },
+        )
+    try:
+        resolution = store.get_resolution(lane_dag.lane_graph.resolution_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="resolution not found") from exc
+    blueprint_freeze = _god_room_blueprint_freeze_artifact_from_resolution(resolution)
+    event_store = _god_room_event_store(base_dir)
+    room_id = _default_god_room_id(conversation_id)
+    try:
+        snapshot = event_store.load_room(room_id)
+    except GodRoomMembershipError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "god_room_not_found", "message": str(exc)},
+        ) from exc
+    recovery_decisions = _load_lane_recovery_decisions(
+        base_dir,
+        graph_id=request.graph_id,
+        lane_ids=[contract.lane_id for contract in lane_dag.lane_contracts],
+    )
+    try:
+        artifact = build_god_room_memoryos_plan(
+            repo_id=request.repo_id,
+            workspace_id=request.workspace_id,
+            participants=snapshot.participants,
+            events=snapshot.events,
+            blueprint_freeze=blueprint_freeze,
+            lane_dag=lane_dag,
+            recovery_decisions=recovery_decisions,
+            context_budget=request.context_budget,
+            live_memoryos_configured=live_memoryos_lite_enabled(os.environ),
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "god_room_memoryos_plan_invalid",
+                "message": str(exc),
+                "source_authority": "god_room_memoryos_plan_contract",
+            },
+        ) from exc
+    artifact_path = _write_god_room_memoryos_plan_artifact(
+        base_dir,
+        graph_id=request.graph_id,
+        payload=artifact.model_dump(mode="json"),
+    )
+    return {
+        "source_authority": "god_room_memoryos_plan_contract",
+        "conversation_id": conversation_id,
+        "graph_id": request.graph_id,
+        "memoryos_plan": artifact.model_dump(mode="json"),
+        "artifacts": {"memoryos_plan": str(artifact_path.relative_to(base_dir))},
+    }
+
+
 def _load_lane_dag_plan(base_dir: Path, graph_id: str) -> BlueprintLaneDagPlan:
     try:
         path = _lane_dag_artifact_path(base_dir, graph_id)
@@ -976,6 +1055,73 @@ def _load_lane_dag_plan(base_dir: Path, graph_id: str) -> BlueprintLaneDagPlan:
                 "message": str(exc),
             },
         ) from exc
+
+
+def _god_room_blueprint_freeze_artifact_from_resolution(
+    resolution: object,
+) -> GodRoomBlueprintFreezeArtifactV1:
+    approval_mode = str(getattr(resolution, "approval_mode", "") or "")
+    content = getattr(resolution, "content", None)
+    if approval_mode != "god_room_blueprint_freeze" or not isinstance(content, dict):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "god_room_memoryos_plan_requires_god_room_freeze",
+                "message": "MemoryOS planning requires a GOD room blueprint freeze resolution",
+            },
+        )
+    freeze_artifact = content.get("god_room_blueprint_freeze")
+    if not isinstance(freeze_artifact, dict):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "god_room_memoryos_plan_missing_freeze",
+                "message": "GOD room freeze artifact is missing",
+            },
+        )
+    try:
+        return GodRoomBlueprintFreezeArtifactV1.model_validate(freeze_artifact)
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "god_room_memoryos_plan_invalid_freeze",
+                "message": str(exc),
+            },
+        ) from exc
+
+
+def _load_lane_recovery_decisions(
+    base_dir: Path,
+    *,
+    graph_id: str,
+    lane_ids: list[str],
+) -> list[LaneRecoveryDecision]:
+    decisions: list[LaneRecoveryDecision] = []
+    for lane_id in lane_ids:
+        path = _lane_recovery_artifact_path(base_dir, graph_id=graph_id, lane_id=lane_id)
+        if not path.exists():
+            continue
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict) or not isinstance(payload.get("decision"), dict):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "god_room_lane_recovery_invalid_artifact",
+                    "message": f"lane recovery artifact is invalid: {path.name}",
+                },
+            )
+        try:
+            decisions.append(LaneRecoveryDecision.model_validate(payload["decision"]))
+        except ValidationError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "god_room_lane_recovery_invalid_artifact",
+                    "message": str(exc),
+                },
+            ) from exc
+    return decisions
 
 
 def _blueprint_from_god_room_freeze_resolution(resolution: object) -> MissionBlueprintV1:
@@ -1053,10 +1199,26 @@ def _write_lane_recovery_artifact(
     lane_id: str,
     payload: dict[str, object],
 ) -> Path:
+    path = _lane_recovery_artifact_path(base_dir, graph_id=graph_id, lane_id=lane_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def _write_god_room_memoryos_plan_artifact(
+    base_dir: Path,
+    *,
+    graph_id: str,
+    payload: dict[str, object],
+) -> Path:
     path = (
         base_dir
-        / "lane_graphs"
-        / f"{_artifact_path_id(graph_id)}.{_artifact_path_id(lane_id)}.recovery.json"
+        / "reports"
+        / "god_room_memoryos"
+        / f"{_artifact_path_id(graph_id)}.memoryos-plan.json"
     )
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -1068,6 +1230,14 @@ def _write_lane_recovery_artifact(
 
 def _lane_dag_artifact_path(base_dir: Path, graph_id: str) -> Path:
     return base_dir / "lane_graphs" / f"{_artifact_path_id(graph_id)}.lane-dag.json"
+
+
+def _lane_recovery_artifact_path(base_dir: Path, *, graph_id: str, lane_id: str) -> Path:
+    return (
+        base_dir
+        / "lane_graphs"
+        / f"{_artifact_path_id(graph_id)}.{_artifact_path_id(lane_id)}.recovery.json"
+    )
 
 
 def _artifact_path_id(value: str) -> str:
@@ -1938,6 +2108,20 @@ def create_app(
         request: GodRoomLaneRecoveryRequest,
     ) -> dict[str, object]:
         return _evaluate_god_room_lane_recovery(
+            root,
+            conversation_id=conversation_id,
+            request=request,
+        )
+
+    @app.post(
+        "/api/chat/conversations/{conversation_id}/god-room/memoryos-plan",
+        status_code=status.HTTP_201_CREATED,
+    )
+    def build_god_room_memoryos_plan(
+        conversation_id: str,
+        request: GodRoomMemoryPlanRequest,
+    ) -> dict[str, object]:
+        return _build_god_room_memoryos_plan(
             root,
             conversation_id=conversation_id,
             request=request,

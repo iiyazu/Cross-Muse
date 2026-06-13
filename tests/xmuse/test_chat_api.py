@@ -914,6 +914,70 @@ def test_chat_api_god_room_lane_recovery_rejects_graph_path_escape(
     assert not (tmp_path / "feature_lanes.json").exists()
 
 
+def test_chat_api_god_room_memoryos_plan_builds_from_room_and_lane_artifacts(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    conv_id = _create_god_room_lane_dag(client, graph_id="graph-memoryos")
+    recovery = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/recovery",
+        json={
+            "graph_id": "graph-memoryos",
+            "lane_id": "lane-runtime-api",
+            "failures": [
+                {
+                    "lane_id": "lane-runtime-api",
+                    "attempt": 1,
+                    "failure_class": "memory_governance_gap",
+                    "reason": "MemoryOS plan artifact was missing.",
+                    "source_refs": ["pytest:memory-plan-gap"],
+                }
+            ],
+        },
+    )
+    assert recovery.status_code == 201
+
+    response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/memoryos-plan",
+        json={
+            "graph_id": "graph-memoryos",
+            "repo_id": "iiyazu/Cross-Muse",
+            "workspace_id": "xmuse",
+            "context_budget": 1024,
+        },
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["source_authority"] == "god_room_memoryos_plan_contract"
+    plan = payload["memoryos_plan"]
+    assert plan["schema_version"] == "xmuse.god_room_memoryos_plan.v1"
+    assert plan["conversation_id"] == conv_id
+    assert plan["graph_id"] == "graph-memoryos"
+    assert plan["proof_level"] == "contract_proof"
+    assert plan["live_trace"]["status"] == "manual_gap"
+    assert plan["live_trace"]["blocked_reason"] == (
+        "memoryos_lite_live_environment_missing"
+    )
+    assert plan["ingest_request_count"] == plan["plan_count"]
+    assert any(
+        item["event_kind"] == "blueprint_frozen"
+        and item["target_namespace_uri"].endswith("/blueprint/bp-god-room")
+        for item in plan["plans"]
+    )
+    assert any(
+        item["event_kind"] == "lane_recovery_decision"
+        and "pytest:memory-plan-gap" in item["source_refs"]
+        for item in plan["plans"]
+    )
+    assert plan["context_plans"][0]["budget"] == 1024
+    assert payload["artifacts"]["memoryos_plan"].endswith(
+        "reports/god_room_memoryos/graph-memoryos.memoryos-plan.json"
+    )
+    assert (tmp_path / payload["artifacts"]["memoryos_plan"]).exists()
+    assert not (tmp_path / "feature_lanes.json").exists()
+
+
 def _create_god_room_lane_dag(client: TestClient, *, graph_id: str) -> str:
     conversation = client.post(
         "/api/chat/conversations",

@@ -92,6 +92,16 @@ def _plans_from_artifacts(
     for artifact in artifacts:
         path = Path(artifact)
         payload = _read_json(path)
+        if payload.get("schema_version") == "xmuse.god_room_memoryos_plan.v1":
+            rows = payload.get("plans")
+            if not isinstance(rows, list):
+                raise ValueError(f"{path}: GOD room MemoryOS plan artifact has no plans")
+            for index, row in enumerate(rows, start=1):
+                if not isinstance(row, dict):
+                    raise ValueError(f"{path}: MemoryOS plan row {index} must be an object")
+                plan = MemoryOSGovernedWritePlan.model_validate(row)
+                plans.append((f"{path.stem}.{index}.{plan.event_kind}", path, plan))
+            continue
         plans.append((path.stem, path, MemoryOSGovernedWritePlan.model_validate(payload)))
     return plans
 
