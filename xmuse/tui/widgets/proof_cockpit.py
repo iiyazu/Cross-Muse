@@ -181,6 +181,23 @@ def _append_github_truth(lines: list[str], cockpit: dict[str, Any]) -> None:
         f"app={_text(github_truth.get('expected_source_app')) or '-'}; "
         f"enforcement={_text(github_truth.get('server_enforcement')) or 'missing'}"
     )
+    pr_state = _text(github_truth.get("pull_request_state"))
+    draft = github_truth.get("draft")
+    mergeable = github_truth.get("mergeable")
+    mergeable_state = _text(github_truth.get("mergeable_state"))
+    if (
+        pr_state is not None
+        or isinstance(draft, bool)
+        or isinstance(mergeable, bool)
+        or mergeable_state is not None
+    ):
+        lines.append(
+            "  "
+            f"pr={pr_state or '-'} "
+            f"draft={_yes_no_or_unknown(draft)}; "
+            f"mergeable={_yes_no_or_unknown(mergeable)}; "
+            f"merge_state={mergeable_state or '-'}"
+        )
     lines.append(
         "  "
         f"review={_text(github_truth.get('review_truth')) or 'missing'}; "
@@ -529,6 +546,12 @@ def _number(value: Any) -> int:
 
 def _yes_no(value: Any) -> str:
     return "yes" if value is True else "no"
+
+
+def _yes_no_or_unknown(value: Any) -> str:
+    if isinstance(value, bool):
+        return "yes" if value else "no"
+    return "-"
 
 
 def _text(value: Any) -> str | None:

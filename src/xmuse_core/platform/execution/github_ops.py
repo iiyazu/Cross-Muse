@@ -116,6 +116,10 @@ class GitHubServerSideTruthEvidence(BaseModel):
     proof_level: Literal["manual_gap", "contract_proof", "server_side_merge_proof"] = (
         "manual_gap"
     )
+    pull_request_state: str | None = None
+    draft: bool | None = None
+    mergeable: bool | None = None
+    mergeable_state: str | None = None
     head_sha: str | None = None
     workflow_run_id: int | None = None
     check_suite_id: int | None = None
@@ -162,6 +166,8 @@ class GitHubServerSideTruthEvidence(BaseModel):
         "merge_commit_sha",
         "merged_at",
         "gap_reason",
+        "pull_request_state",
+        "mergeable_state",
     )
     @classmethod
     def _validate_optional_text(cls, value: str | None) -> str | None:
@@ -257,6 +263,10 @@ class GitHubServerSideTruthEvidence(BaseModel):
 class GitHubServerSideTruthSnapshot(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
+    pull_request_state: str | None = None
+    draft: bool | None = None
+    mergeable: bool | None = None
+    mergeable_state: str | None = None
     workflow_run_id: int | None = None
     check_suite_id: int | None = None
     check_run_ids: list[int] = Field(default_factory=list)
@@ -386,6 +396,10 @@ class GitHubCliServerSideTruthClient:
         review_event_id, reviewer_login = _approved_review_identity(reviews_payload)
         internal_review_verified = self._internal_review_verified(head_sha)
         return GitHubServerSideTruthSnapshot(
+            pull_request_state=_optional_str(pr_payload.get("state")),
+            draft=_optional_bool(pr_payload.get("draft")),
+            mergeable=_optional_bool(pr_payload.get("mergeable")),
+            mergeable_state=_optional_str(pr_payload.get("mergeable_state")),
             head_sha=head_sha,
             workflow_run_id=check_run_ids[0] if check_run_ids else None,
             check_run_ids=check_run_ids,
@@ -625,6 +639,10 @@ def build_github_server_side_truth_from_snapshot(
         pull_request_number=pull_request_number,
         required_checks=required_checks,
         proof_level="server_side_merge_proof",
+        pull_request_state=snapshot.pull_request_state,
+        draft=snapshot.draft,
+        mergeable=snapshot.mergeable,
+        mergeable_state=snapshot.mergeable_state,
         head_sha=snapshot.head_sha,
         workflow_run_id=snapshot.workflow_run_id,
         check_suite_id=snapshot.check_suite_id,
@@ -650,6 +668,10 @@ def build_github_server_side_truth_from_snapshot(
             pull_request_number=pull_request_number,
             required_checks=required_checks,
             proof_level="server_side_merge_proof",
+            pull_request_state=snapshot.pull_request_state,
+            draft=snapshot.draft,
+            mergeable=snapshot.mergeable,
+            mergeable_state=snapshot.mergeable_state,
             head_sha=snapshot.head_sha,
             workflow_run_id=snapshot.workflow_run_id,
             check_suite_id=snapshot.check_suite_id,
@@ -673,6 +695,10 @@ def build_github_server_side_truth_from_snapshot(
         pull_request_number=pull_request_number,
         required_checks=required_checks,
         proof_level="manual_gap",
+        pull_request_state=snapshot.pull_request_state,
+        draft=snapshot.draft,
+        mergeable=snapshot.mergeable,
+        mergeable_state=snapshot.mergeable_state,
         head_sha=snapshot.head_sha,
         workflow_run_id=snapshot.workflow_run_id,
         check_suite_id=snapshot.check_suite_id,
@@ -920,6 +946,10 @@ def _optional_str(value: Any) -> str | None:
         return None
     text = value.strip()
     return text or None
+
+
+def _optional_bool(value: Any) -> bool | None:
+    return value if isinstance(value, bool) else None
 
 
 def apply_worker_outcome(lane: dict[str, object], outcome: WorkerOutcome) -> dict[str, object]:

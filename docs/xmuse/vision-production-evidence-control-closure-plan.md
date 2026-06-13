@@ -774,9 +774,9 @@ Current implementation status:
 - The TUI proof cockpit can project the same raw GitHub server truth boundary
   as read-only operator context. It shows repo/PR, current and expected head,
   check/check-run counts, expected source app, branch-protection/ruleset source,
-  review truth state, merge truth state, `can_emit_pr_merged`, merged flag,
-  capture mode, and gap reason, without upgrading the release gate or emitting
-  `pr_merged`.
+  PR state, draft flag, mergeability, merge state, review truth state, merge
+  truth state, `can_emit_pr_merged`, merged flag, capture mode, and gap reason,
+  without upgrading the release gate or emitting `pr_merged`.
 - The same release pack command can accept `--internal-review-artifact`,
   convert the explicit structured internal review artifact through the existing
   internal review gate validator, and write `internal-review.json` under

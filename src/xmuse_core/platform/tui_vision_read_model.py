@@ -1118,6 +1118,10 @@ def _github_truth_detail_projection(github_truth: dict[str, Any]) -> dict[str, A
         "proof_level": proof_level,
         "schema_version": _text(github_truth.get("schema_version"))
         or "github_server_side_truth_capture.v1",
+        "pull_request_state": _text(github_truth.get("pull_request_state")),
+        "draft": _optional_bool(github_truth.get("draft")),
+        "mergeable": _optional_bool(github_truth.get("mergeable")),
+        "mergeable_state": _text(github_truth.get("mergeable_state")),
         "head_sha": _text(github_truth.get("head_sha")),
         "expected_head_sha": _text(github_truth.get("expected_head_sha")),
         "head_sha_matches_expected": _github_head_matches_expected(github_truth),
@@ -1227,6 +1231,10 @@ def _optional_int(value: Any) -> int | None:
     if isinstance(value, int) and not isinstance(value, bool):
         return value
     return None
+
+
+def _optional_bool(value: Any) -> bool | None:
+    return value if isinstance(value, bool) else None
 
 
 def _memory_governance_projection(

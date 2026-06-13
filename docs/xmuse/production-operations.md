@@ -1067,6 +1067,10 @@ gate kind `github_server_truth`, required proof
 required checks. They only prove target payload completeness; they do not call
 GitHub, do not write a server-truth artifact, and cannot emit `pr_merged` or
 merge truth.
+Fresh GitHub server-truth captures also preserve PR state, draft flag,
+mergeability, and merge-state values from the read-only PR API. The proof
+cockpit renders these fields as operator context so a draft/open PR cannot be
+confused with merge truth.
 `/release attempt` calls `attempt_release_evidence`, reuses the candidate
 report, and then invokes the same release evidence export actions only for
 candidate inputs that are export-ready. It writes

@@ -372,6 +372,10 @@ def test_proof_cockpit_renders_github_truth_details() -> None:
                     "repo": "iiyazu/Cross-Muse",
                     "pull_request_number": 43,
                     "proof_level": "manual_gap",
+                    "pull_request_state": "open",
+                    "draft": True,
+                    "mergeable": True,
+                    "mergeable_state": "clean",
                     "head_sha": "head-current",
                     "expected_head_sha": "head-current",
                     "head_sha_matches_expected": True,
@@ -404,6 +408,7 @@ def test_proof_cockpit_renders_github_truth_details() -> None:
         "checks=3; check_runs=3; app=github-actions; "
         "enforcement=branch_protection"
     ) in rendered
+    assert "pr=open draft=yes; mergeable=yes; merge_state=clean" in rendered
     assert "review=missing; merge=missing; can_emit_pr_merged=no; merged=no" in rendered
     assert "workflow=27457543932; capture=opt_in_read_only_gh_api" in rendered
     assert "gap=missing server-side truth: review_truth, merge_truth" in rendered

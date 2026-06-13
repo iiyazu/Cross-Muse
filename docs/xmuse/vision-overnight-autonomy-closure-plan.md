@@ -661,8 +661,9 @@ Current implementation status:
 - The TUI proof cockpit now also projects GitHub server truth details as
   read-only operator context: repo/PR, current and expected head SHA, required
   check count, check-run count, expected source app, server enforcement source,
-  review truth state, merge truth state, `can_emit_pr_merged`, merged flag,
-  capture mode, and gap reason. This projection does not create review truth,
+  PR state, draft flag, mergeability, merge state, review truth state, merge
+  truth state, `can_emit_pr_merged`, merged flag, capture mode, and gap reason.
+  This projection does not create review truth,
   merge truth, or `pr_merged`; it only makes the raw capture boundary visible
   beside replay and release evidence.
 - `/release attempt github` and `/release attempt all` include GitHub server
