@@ -129,13 +129,22 @@ prompt; reference it unless the policy itself is being changed.
 1. Coder must follow TDD (test first, then implement)
 2. Orchestrator validates independently (never trust subagent self-reports)
 3. Adversarial reviewer is always a FRESH instance
-4. Max 3 retries per work unit, then escalate to human
+4. Repeated failures require refactor: after two same-class failures on a
+   feature/stage/test cluster/runtime path, stop patch stacking and identify the
+   failed boundary; if a third retry would be needed, refactor or replace that
+   boundary before retrying
 5. Quality gates are BLOCKING — no skipping
+6. Demo-grade implementations on the production path must be isolated or
+   replaced with contract-backed production implementations, not wrapped to make
+   gates appear green
 
 ## Git Conventions
 
-- Local git worktree development (not yet pushed to GitHub)
-- No CI/GitHub Actions configured
+- This worktree may already be pushed and may have an open PR; verify current
+  branch, remote, PR, and CI state with `git status`, `git branch -vv`, `gh pr
+  view`, and `gh run list` instead of relying on this file for live facts
+- GitHub Actions may be configured; if pushing, update the PR body and inspect
+  the latest Actions run for the pushed head
 - Avoid committing runtime state: `*.db`, `*.sqlite3`, `*.jsonl`, `feature_lanes.json`, `xmuse/work/`, `xmuse/history/`, `xmuse/logs/` (all in `.gitignore`)
 - Don't `git reset --hard` — worktree may have user goal dirtiness
 - 78MB old blobs in history; full cleanup needs `git filter-repo` (confirm with user first)

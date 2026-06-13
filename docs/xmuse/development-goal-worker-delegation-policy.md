@@ -1,6 +1,6 @@
 # Development Goal Worker Delegation Policy
 
-更新日期: 2026-06-12
+更新日期: 2026-06-13
 
 本文档是 Codex 开发 xmuse 时使用 `/goal` 的固定行为规范。它约束的是
 **开发过程中的 worker 委派方式**，不是 xmuse 产品运行时的 provider 权限模型。
@@ -16,6 +16,22 @@
 - OpenCode 是 bounded worker，只提交候选 patch、候选 artifact 或候选审计摘要。
 - OpenCode 不能作为架构裁决者、状态权威、release truth、merge truth 或最终 reviewer。
 - OpenCode 的自报完成不构成证据；必须由 Codex 独立审查和验证。
+
+## Repeated Failure And Demo-Grade Refactor Rule
+
+反复失败和 demo 级实现不是继续叠补丁的信号，而是重构边界的信号。
+
+- 同一功能、stage、测试簇或 runtime path 出现两次同类失败后，Codex 必须先做
+  root-cause 记录，停止继续叠加局部 patch。
+- 若需要第三次重试，或 goal-stage / supervisor 已标记 `refactor_required`，
+  必须先重构或替换失败边界，再允许继续执行。
+- 如果生产主线依赖 demo 级实现，不得通过包 adapter、UI 文案或 evidence 标签把
+  demo 包装成生产能力。应隔离或归档 demo path，并以 contract-backed production
+  path 替换。
+- 重构必须有明确 owner、allowed files、迁移/兼容策略、focused tests 和回滚边界；
+  不允许以“重构”为名扩大成无边界重写。
+- OpenCode 只能在 Codex 已定义重构边界、验收合同和 gate 后承担机械子任务；
+  OpenCode 不能决定是否接受架构重构，也不能自证完成。
 
 ## When To Delegate To OpenCode
 

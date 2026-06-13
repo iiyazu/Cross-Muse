@@ -1,6 +1,6 @@
 # xmuse 代码质量与归档策略
 
-更新日期: 2026-06-02
+更新日期: 2026-06-13
 
 ## 目标
 
@@ -37,8 +37,29 @@
 - 旧代码直接手写 `feature_lanes.json`，绕过 state machine。
 - 旧代码依赖已废弃的 browser frontend 或 master_loop 路径。
 - 旧代码行为不可复现、无测试、无清晰调用者。
+- 同一功能或 runtime path 已经两次同类失败，继续 patch 只会扩大耦合。
+- 当前生产主线依赖 demo 级实现，且 demo path 无法满足合同、权限、证据或测试边界。
 
 重写必须给出理由，并保留必要迁移证据。
+
+### 直接重构触发条件
+
+以下情况不再继续做局部补丁，应直接重构或替换失败边界:
+
+- 同一测试簇、stage、功能或 runtime path 两次出现同类失败。
+- goal-stage harness 或 overnight supervisor 标记 `refactor_required`。
+- demo/local/fake 实现被生产路径依赖，且无法通过小改动满足 production contract。
+- 为了修一个问题需要同时改动多个无关层，说明当前边界已经失效。
+- 修复需要 TUI/dashboard/read model 直接写内部状态、直接写 `feature_lanes.json`
+  或绕过 durable contract。
+
+直接重构要求:
+
+- 先写明失败边界、替代边界、迁移方式和保留的兼容面。
+- 只重构与失败边界直接相关的文件；无关清理另开任务。
+- 用 focused tests 证明新边界行为，再删除或隔离 demo/legacy path。
+- 若旧 path 仍有调用者，放入 adapter/legacy 过渡并写清删除条件。
+- 不允许通过改 proof label、UI 文案或 release evidence 解释来掩盖 demo 级实现。
 
 ## 隔离规则
 

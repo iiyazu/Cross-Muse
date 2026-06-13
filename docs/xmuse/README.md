@@ -1,6 +1,6 @@
 # xmuse 文档入口
 
-更新日期: 2026-06-12
+更新日期: 2026-06-13
 
 本目录是 xmuse 当前阶段的文档入口。旧的 `docs/superpowers/specs/` 和
 `docs/superpowers/plans/` 仍保留原路径，因为测试、lane graph 和历史记录会引用
@@ -59,6 +59,8 @@ GOD groupchat deliberation
 | `docs/xmuse/vision-production-evidence-control-closure-walkthrough.md` | 生产级 evidence/control closure 首个实现切片走读，记录 GOD/CLI registry、operator action audit、release readiness 和当前 live blocker |
 | `docs/xmuse/vision-overnight-autonomy-closure-plan.md` | 根据 deep-research-report_10 和 outer-muse 灵感制定的下一轮 overnight autonomy closure 长 `/goal` 任务，聚焦自然多 GOD、feature graph owner、supervisor、MemoryOS governance、GitHub fresh truth 和 TUI proof cockpit |
 | `docs/xmuse/vision-overnight-autonomy-closure-goal-prompt.md` | 可直接用于 `/goal` 的简洁 overnight autonomy closure prompt，详细任务引用 plan 文档 |
+| `docs/xmuse/vision-god-room-runtime-closure-plan.md` | 根据 deep-research-report_11 和 mession_01 制定的下一轮 GOD room runtime closure 长 `/goal` 任务，聚焦真实 GOD room 事件、speaker runtime、blueprint freeze compiler、lane budget/recovery、MemoryOS trace 和 TUI operator cockpit |
+| `docs/xmuse/vision-god-room-runtime-closure-goal-prompt.md` | 可直接用于 `/goal` 的简洁 GOD room runtime closure prompt，详细任务引用 plan 文档 |
 | `docs/xmuse/opencode-in-long-runtime-evidence-plan.md` | 下一轮 OpenCode-in 长执行证据闭环的详细任务、授权边界和行为规范 |
 | `docs/xmuse/opencode-in-long-runtime-evidence-goal-prompt.md` | 可直接用于 `/goal` 的简洁 OpenCode-in 长执行 prompt，详细任务引用 plan 文档 |
 | `docs/xmuse/opencode-in-long-runtime-evidence-closure.md` | OpenCode-in 长执行证据闭环的当前审计报告、stage evidence、proof-level 变化和剩余 GitHub manual gap |
