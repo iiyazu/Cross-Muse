@@ -186,6 +186,40 @@ def test_execution_cockpit_renders_lane_dag_and_blockers() -> None:
     assert "lane-b -> lane-c" in rendered
 
 
+def test_execution_cockpit_renders_lane_contracts_and_recovery_decisions() -> None:
+    panel = render_execution_cockpit(
+        {
+            "execution": {
+                "proof_level": "contract_proof",
+                "fact_state": "blocked",
+                "lane_count": 1,
+                "lane_contracts": [
+                    {
+                        "lane_id": "lane-a",
+                        "owner": "god-executor",
+                        "required_checks": ["focused-pytest", "ruff"],
+                        "review_profile": "runtime-contract-review",
+                    }
+                ],
+                "recovery_decisions": [
+                    {
+                        "lane_id": "lane-a",
+                        "decision": "refactor_required",
+                        "next_action": "refactor failing boundary",
+                    }
+                ],
+            }
+        }
+    )
+
+    rendered = panel.renderable.plain
+    assert "Contracts:" in rendered
+    assert "lane-a owner=god-executor checks=focused-pytest, ruff" in rendered
+    assert "review=runtime-contract-review" in rendered
+    assert "Recovery:" in rendered
+    assert "lane-a refactor_required: refactor failing boundary" in rendered
+
+
 def test_memory_trace_drawer_renders_trace_and_manual_gap() -> None:
     panel = render_memory_trace_drawer(
         {
@@ -222,6 +256,29 @@ def test_memory_trace_drawer_renders_trace_and_manual_gap() -> None:
     assert "Retrieved pages: 4" in rendered
     assert "Dropped pages: 5" in rendered
     assert "Tokens: 321" in rendered
+
+
+def test_memory_trace_drawer_renders_trace_anchors() -> None:
+    panel = render_memory_trace_drawer(
+        {
+            "memory": {
+                "proof_level": "contract_proof",
+                "fact_state": "observed",
+                "trace_anchors": [
+                    {
+                        "kind": "blueprint",
+                        "uri": "memory://repo/iiyazu/Cross-Muse/blueprint/bp-1/traces/t1",
+                        "trace_id": "t1",
+                    }
+                ],
+            }
+        }
+    )
+
+    rendered = panel.renderable.plain
+    assert "Trace anchors:" in rendered
+    assert "blueprint t1" in rendered
+    assert "memory://repo/iiyazu/Cross-Muse/blueprint/bp-1/traces/t1" in rendered
 
 
 def test_github_truth_panel_separates_readiness_from_merged_fact() -> None:

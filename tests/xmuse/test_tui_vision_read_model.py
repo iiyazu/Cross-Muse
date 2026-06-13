@@ -191,6 +191,80 @@ def test_tui_vision_read_model_summarizes_lane_dag_projection() -> None:
     ]
 
 
+def test_tui_vision_read_model_projects_lane_contracts_and_recovery_decisions() -> None:
+    model = build_tui_vision_read_model(
+        worklist_envelope={
+            "source_authority": "blueprint_lane_dag_plan",
+            "projection_revision": 8,
+            "items": [{"lane_id": "lane-a", "ready": False, "blocked": True}],
+            "lane_contracts": [
+                {
+                    "lane_id": "lane-a",
+                    "owner": "god-executor",
+                    "required_checks": ["focused-pytest", "ruff"],
+                    "allowed_files": ["src/xmuse_core/structuring"],
+                    "review_profile": "runtime-contract-review",
+                    "memory_refs": ["memory://repo/iiyazu/Cross-Muse/.../lane/lane-a"],
+                    "budget": {
+                        "max_attempts": 3,
+                        "max_consecutive_same_failure": 2,
+                        "max_runtime_seconds": 1800,
+                    },
+                    "source_refs": ["blueprint:bp-1:1"],
+                }
+            ],
+            "recovery_decisions": [
+                {
+                    "lane_id": "lane-a",
+                    "decision": "refactor_required",
+                    "retry_allowed": False,
+                    "refactor_required_reason": (
+                        "failure_class contract_boundary_leak repeated 2 times"
+                    ),
+                    "next_action": (
+                        "refactor or replace the failing lane boundary before retrying"
+                    ),
+                    "source_refs": ["pytest:test_tui_contract"],
+                }
+            ],
+        },
+    )
+
+    execution = model["execution"]
+
+    assert execution["lane_contracts"] == [
+        {
+            "lane_id": "lane-a",
+            "owner": "god-executor",
+            "required_checks": ["focused-pytest", "ruff"],
+            "allowed_files": ["src/xmuse_core/structuring"],
+            "review_profile": "runtime-contract-review",
+            "memory_refs": ["memory://repo/iiyazu/Cross-Muse/.../lane/lane-a"],
+            "budget": {
+                "max_attempts": 3,
+                "max_consecutive_same_failure": 2,
+                "max_runtime_seconds": 1800,
+            },
+            "source_refs": ["blueprint:bp-1:1"],
+        }
+    ]
+    assert execution["recovery_decisions"] == [
+        {
+            "lane_id": "lane-a",
+            "decision": "refactor_required",
+            "retry_allowed": False,
+            "suspend_reason": None,
+            "refactor_required_reason": (
+                "failure_class contract_boundary_leak repeated 2 times"
+            ),
+            "next_action": (
+                "refactor or replace the failing lane boundary before retrying"
+            ),
+            "source_refs": ["pytest:test_tui_contract"],
+        }
+    ]
+
+
 def test_tui_vision_read_model_keeps_review_verdict_refs_without_decision() -> None:
     model = build_tui_vision_read_model(
         worklist_envelope={
@@ -259,6 +333,49 @@ def test_tui_vision_read_model_summarizes_memory_trace_and_manual_gap() -> None:
     assert without_trace["memory"]["proof_level"] == "manual_gap"
     assert without_trace["memory"]["fact_state"] == "manual_gap"
     assert without_trace["memory"]["manual_gap_reason"] == "memory trace unavailable"
+
+
+def test_tui_vision_read_model_projects_memory_trace_anchors() -> None:
+    model = build_tui_vision_read_model(
+        memory_trace={
+            "session_id": "mem-session-1",
+            "namespace_uri": "memory://conversation/conv-1",
+            "trace_events": [{"event": "retrieve"}],
+            "source_refs": ["memory://conversation/conv-1/session/mem-session-1"],
+            "trace_anchors": [
+                {
+                    "kind": "blueprint",
+                    "uri": (
+                        "memory://repo/iiyazu/Cross-Muse/workspace/xmuse"
+                        "/conversation/conv-1/blueprint/bp-1/traces/trace-bp-1"
+                    ),
+                    "trace_id": "trace-bp-1",
+                    "source_refs": ["god-room-event:freeze-1"],
+                    "proof_level": "contract_proof",
+                }
+            ],
+        }
+    )
+
+    memory = model["memory"]
+
+    assert memory["trace_anchors"] == [
+        {
+            "kind": "blueprint",
+            "uri": (
+                "memory://repo/iiyazu/Cross-Muse/workspace/xmuse"
+                "/conversation/conv-1/blueprint/bp-1/traces/trace-bp-1"
+            ),
+            "trace_id": "trace-bp-1",
+            "source_refs": ["god-room-event:freeze-1"],
+            "proof_level": "contract_proof",
+        }
+    ]
+    assert (
+        "memory://repo/iiyazu/Cross-Muse/workspace/xmuse"
+        "/conversation/conv-1/blueprint/bp-1/traces/trace-bp-1"
+        in memory["target_refs"]
+    )
 
 
 def test_tui_vision_read_model_accepts_memoryos_lite_trace_evidence_shape() -> None:

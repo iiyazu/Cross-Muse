@@ -38,6 +38,10 @@ def render_memory_trace_drawer(vision: dict[str, Any] | None) -> Panel:
     namespace = memory.get("namespace")
     if isinstance(namespace, dict) and namespace:
         lines.append(f"Namespace: {_format_mapping(namespace)}")
+    trace_anchors = _dicts(memory.get("trace_anchors"))
+    if trace_anchors:
+        lines.append("Trace anchors:")
+        lines.extend(f"  {_trace_anchor_line(anchor)}" for anchor in trace_anchors[:4])
     _append_refs(lines, "Targets", memory.get("target_refs"))
     _append_refs(lines, "Sources", memory.get("source_refs"))
     gap = _text(memory.get("manual_gap_reason"))
@@ -81,6 +85,17 @@ def _format_mapping(value: dict[str, Any]) -> str:
             continue
         parts.append(f"{key}={item}")
     return "; ".join(parts) or "none"
+
+
+def _trace_anchor_line(anchor: dict[str, Any]) -> str:
+    kind = _text(anchor.get("kind")) or "trace"
+    trace_id = _text(anchor.get("trace_id")) or "unknown"
+    uri = _text(anchor.get("uri"))
+    return f"{kind} {trace_id}: {uri}" if uri is not None else f"{kind} {trace_id}"
+
+
+def _dicts(value: Any) -> list[dict[str, Any]]:
+    return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
 
 
 def _strings(value: Any) -> list[str]:

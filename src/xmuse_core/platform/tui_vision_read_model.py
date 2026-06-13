@@ -230,6 +230,8 @@ def _build_execution(worklist_envelope: dict | None) -> dict[str, Any]:
     blockers: list[dict[str, Any]] = []
     review_items: list[dict[str, Any]] = []
     patch_forward_lineage: list[dict[str, Any]] = []
+    lane_contracts = _lane_contract_projections(worklist_envelope)
+    recovery_decisions = _lane_recovery_decision_projections(worklist_envelope)
 
     for item in items:
         lane_id = _lane_id(item)
@@ -297,6 +299,8 @@ def _build_execution(worklist_envelope: dict | None) -> dict[str, Any]:
         "dependency_edges": dependency_edges,
         "review_items": review_items,
         "patch_forward_lineage": patch_forward_lineage,
+        "lane_contracts": lane_contracts,
+        "recovery_decisions": recovery_decisions,
         "graph_lineage": graph_lineage,
     }
 
@@ -339,6 +343,11 @@ def _build_memory(memory_trace: dict | None) -> dict[str, Any]:
     target_refs: list[str] = []
     if session_id is not None:
         target_refs.append(f"memory_session:{session_id}")
+    trace_anchors = _memory_trace_anchor_projections(memory_trace)
+    for anchor in trace_anchors:
+        uri = _text(anchor.get("uri"))
+        if uri is not None:
+            _append_unique(target_refs, uri)
     context_package = (
         memory_trace.get("context_package")
         if isinstance(memory_trace.get("context_package"), dict)
@@ -381,6 +390,7 @@ def _build_memory(memory_trace: dict | None) -> dict[str, Any]:
             "dropped_pages",
         ),
         "token_estimate": token_estimate,
+        "trace_anchors": trace_anchors,
     }
 
 
@@ -1616,6 +1626,71 @@ def _source_lane_id(item: dict[str, Any]) -> str | None:
         or item.get("patch_forward_source_lane_id")
         or item.get("failed_lane_id")
     )
+
+
+def _lane_contract_projections(envelope: dict[str, Any]) -> list[dict[str, Any]]:
+    projections: list[dict[str, Any]] = []
+    for contract in _dicts(envelope.get("lane_contracts")):
+        lane_id = _text(contract.get("lane_id"))
+        if lane_id is None:
+            continue
+        budget = contract.get("budget") if isinstance(contract.get("budget"), dict) else {}
+        projections.append(
+            {
+                "lane_id": lane_id,
+                "owner": _text(contract.get("owner")),
+                "required_checks": _list_refs(contract.get("required_checks")),
+                "allowed_files": _list_refs(contract.get("allowed_files")),
+                "review_profile": _text(contract.get("review_profile")),
+                "memory_refs": _list_refs(contract.get("memory_refs")),
+                "budget": dict(budget),
+                "source_refs": _list_refs(contract.get("source_refs")),
+            }
+        )
+    return projections
+
+
+def _lane_recovery_decision_projections(
+    envelope: dict[str, Any],
+) -> list[dict[str, Any]]:
+    projections: list[dict[str, Any]] = []
+    for decision in _dicts(envelope.get("recovery_decisions")):
+        lane_id = _text(decision.get("lane_id"))
+        if lane_id is None:
+            continue
+        projections.append(
+            {
+                "lane_id": lane_id,
+                "decision": _text(decision.get("decision")) or "observed",
+                "retry_allowed": decision.get("retry_allowed") is True,
+                "suspend_reason": _text(decision.get("suspend_reason")),
+                "refactor_required_reason": _text(
+                    decision.get("refactor_required_reason")
+                ),
+                "next_action": _text(decision.get("next_action")),
+                "source_refs": _list_refs(decision.get("source_refs")),
+            }
+        )
+    return projections
+
+
+def _memory_trace_anchor_projections(memory_trace: dict[str, Any]) -> list[dict[str, Any]]:
+    projections: list[dict[str, Any]] = []
+    for anchor in _dicts(memory_trace.get("trace_anchors")):
+        uri = _text(anchor.get("uri") or anchor.get("anchor_uri"))
+        trace_id = _text(anchor.get("trace_id"))
+        if uri is None and trace_id is None:
+            continue
+        projections.append(
+            {
+                "kind": _text(anchor.get("kind")) or "trace",
+                "uri": uri,
+                "trace_id": trace_id,
+                "source_refs": _list_refs(anchor.get("source_refs")),
+                "proof_level": _normalize_proof_level(anchor.get("proof_level")),
+            }
+        )
+    return projections
 
 
 def _github_blockers(

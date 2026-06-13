@@ -310,6 +310,17 @@ Acceptance:
   graph/blueprint inputs.
 - No LangGraph node, TUI action, or Ray actor writes lane status directly.
 
+Current implementation status:
+
+- `src/xmuse_core/structuring/blueprint_execution/lane_dag_service.py` now
+  attaches typed `LaneRuntimeContract` records to `BlueprintLaneDagPlan`.
+- Each runtime contract carries lane/feature identity, owner, inputs, outputs,
+  dependency refs, required checks, allowed files, rollback constraints, review
+  profile, MemoryOS refs, budget, and source refs derived from frozen blueprint
+  and lane spec inputs.
+- The lane graph remains graph structure; `feature_lanes.json`, TUI/dashboard,
+  Ray actors, and LangGraph nodes are still not state authorities.
+
 ## S5 - Lane Budget And Recovery
 
 Goal: prevent long-run loops from repeatedly patching the same failed design.
@@ -327,6 +338,16 @@ Acceptance:
 
 - Tests cover retry, suspend, manual_gap, and refactor-required transitions.
 - A fourth same-path retry is impossible without a refactor artifact.
+
+Current implementation status:
+
+- `LaneRuntimeBudget`, `LaneFailureEvidence`, `LaneRecoveryDecision`, and
+  `evaluate_lane_recovery(...)` provide a pure recovery decision contract.
+- Missing failure evidence returns `manual_gap`; retry budget exhaustion returns
+  `suspended`; repeated same-class failure returns `refactor_required` with
+  `retry_allowed=false` and a concrete refactor next action.
+- This is contract/evaluator infrastructure only. It does not yet wire recovery
+  decisions into every runner or operator action path.
 
 ## S6 - MemoryOS Trace Anchors
 
@@ -347,6 +368,18 @@ Acceptance:
   governance decisions.
 - Live MemoryOS proof remains `manual_gap` when no service/config is present.
 
+Current implementation status:
+
+- `src/xmuse_core/integrations/memoryos_namespace.py` now names explicit
+  `god_private`, `blueprint`, `review`, and `operator` namespaces in addition
+  to existing repo/workspace/conversation/participant/shared/task namespaces.
+- `MemoryOSTraceAnchor` links a namespace, trace id, source refs, proof level,
+  and metadata. Trace anchors require source refs and expose deterministic
+  `memory://.../traces/<trace_id>` URIs.
+- Governance write-plan tests cover using review trace anchors as durable
+  source refs. This is contract proof; no live MemoryOS service proof is
+  claimed by this stage.
+
 ## S7 - TUI Operator Cockpit
 
 Goal: expose the production loop to an operator without making the TUI
@@ -366,6 +399,17 @@ Acceptance:
 - Widget/read-model tests prove the TUI renders the new projections from
   envelopes/contracts.
 - No TUI code directly writes internal state.
+
+Current implementation status:
+
+- `src/xmuse_core/platform/tui_vision_read_model.py` now projects lane runtime
+  contracts, lane recovery decisions, and MemoryOS trace anchors from read-only
+  envelopes into the vision read model.
+- `xmuse/tui/widgets/execution_cockpit.py` renders lane contract owner/checks
+  and recovery decisions. `xmuse/tui/widgets/memory_trace_drawer.py` renders
+  MemoryOS trace anchors.
+- This remains a projection/control-surface slice. TUI code does not write
+  lane status, MemoryOS truth, `feature_lanes.json`, or runner state.
 
 ## S8 - Evidence, Soak, Validation, Docs, PR
 

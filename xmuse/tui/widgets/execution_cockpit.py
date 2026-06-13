@@ -49,6 +49,14 @@ def render_execution_cockpit(vision: dict[str, Any] | None) -> Panel:
     if patch_lineage:
         lines.append("Patch-forward:")
         lines.extend(f"  {_patch_forward_line(item)}" for item in patch_lineage[:4])
+    lane_contracts = _dicts(execution.get("lane_contracts"))
+    if lane_contracts:
+        lines.append("Contracts:")
+        lines.extend(f"  {_contract_line(item)}" for item in lane_contracts[:4])
+    recovery_decisions = _dicts(execution.get("recovery_decisions"))
+    if recovery_decisions:
+        lines.append("Recovery:")
+        lines.extend(f"  {_recovery_line(item)}" for item in recovery_decisions[:4])
     _append_refs(lines, "Targets", execution.get("target_refs"))
     _append_refs(lines, "Sources", execution.get("source_refs"))
     gap = _text(execution.get("manual_gap_reason"))
@@ -102,6 +110,28 @@ def _patch_forward_line(item: dict[str, Any]) -> str:
     source = _text(item.get("source_lane_id")) or "source"
     patch = _text(item.get("patch_lane_id")) or "patch"
     return f"{source} -> {patch}"
+
+
+def _contract_line(item: dict[str, Any]) -> str:
+    lane_id = _text(item.get("lane_id")) or "lane"
+    parts = [lane_id]
+    owner = _text(item.get("owner"))
+    if owner is not None:
+        parts.append(f"owner={owner}")
+    checks = _strings(item.get("required_checks"))
+    if checks:
+        parts.append(f"checks={_compact(checks)}")
+    review = _text(item.get("review_profile"))
+    if review is not None:
+        parts.append(f"review={review}")
+    return " ".join(parts)
+
+
+def _recovery_line(item: dict[str, Any]) -> str:
+    lane_id = _text(item.get("lane_id")) or "lane"
+    decision = _text(item.get("decision")) or "observed"
+    next_action = _text(item.get("next_action"))
+    return f"{lane_id} {decision}: {next_action}" if next_action else f"{lane_id} {decision}"
 
 
 def _append_refs(lines: list[str], label: str, value: Any) -> None:

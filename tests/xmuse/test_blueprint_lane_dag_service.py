@@ -10,6 +10,10 @@ from xmuse_core.structuring.blueprint_execution.lane_dag_service import (
     LaneDependencyEdge,
     LaneDependencyType,
     LaneExecutionStatus,
+    LaneFailureEvidence,
+    LaneRecoveryDecisionType,
+    LaneRuntimeBudget,
+    evaluate_lane_recovery,
 )
 from xmuse_core.structuring.lane_planner_v2 import LanePlannerV2ValidationError
 from xmuse_core.structuring.mission_blueprint_v1 import (
@@ -56,6 +60,48 @@ def test_frozen_blueprint_builds_feature_lane_dag_with_typed_edges() -> None:
         LaneDependencyType.REVIEW_DEP,
     }
     assert plan.memory_refs == ["memory://conversation/conv-1/decision/1"]
+
+
+def test_lane_dag_plan_preserves_runtime_contracts_from_frozen_blueprint() -> None:
+    plan = BlueprintLaneDagService().build_plan(
+        _request(
+            lanes=[
+                _lane(
+                    "lane-a",
+                    owner="god-executor",
+                    inputs=["blueprint:bp-1:1#acceptance"],
+                    outputs=["artifact://lane-a/runtime-contract.json"],
+                    required_checks=["focused-pytest", "ruff"],
+                    allowed_files=["src/xmuse_core/structuring/lane_runtime_contracts.py"],
+                    rollback_constraints=["preserve graph-set authority"],
+                    review_profile="runtime-contract-review",
+                    budget=LaneRuntimeBudget(
+                        max_attempts=3,
+                        max_consecutive_same_failure=2,
+                        max_runtime_seconds=1800,
+                        retry_backoff_seconds=30,
+                        source_refs=["budget:lane-a"],
+                    ),
+                )
+            ]
+        )
+    )
+
+    contract = plan.lane_contracts[0]
+
+    assert contract.lane_id == "lane-a"
+    assert contract.owner == "god-executor"
+    assert contract.inputs == ["blueprint:bp-1:1#acceptance"]
+    assert contract.outputs == ["artifact://lane-a/runtime-contract.json"]
+    assert contract.dependency_refs == []
+    assert contract.required_checks == ["focused-pytest", "ruff"]
+    assert contract.allowed_files == [
+        "src/xmuse_core/structuring/lane_runtime_contracts.py"
+    ]
+    assert contract.rollback_constraints == ["preserve graph-set authority"]
+    assert contract.review_profile == "runtime-contract-review"
+    assert contract.memory_refs == ["memory://conversation/conv-1/decision/1"]
+    assert contract.budget.max_consecutive_same_failure == 2
 
 
 def test_lane_dag_rejects_invalid_blueprint_refs_and_missing_acceptance() -> None:
@@ -158,6 +204,65 @@ def test_dispatch_readiness_blocks_dependents_until_dependency_is_approved() -> 
     assert approved_by_lane["lane-b"].blockers == []
 
 
+def test_lane_recovery_requires_refactor_after_repeated_same_failure() -> None:
+    decision = evaluate_lane_recovery(
+        lane_id="lane-a",
+        budget=LaneRuntimeBudget(max_attempts=4, max_consecutive_same_failure=2),
+        failures=[
+            LaneFailureEvidence(
+                lane_id="lane-a",
+                attempt=1,
+                failure_class="contract_boundary_leak",
+                reason="TUI wrote lane status directly.",
+                source_refs=["pytest:test_tui_contract"],
+            ),
+            LaneFailureEvidence(
+                lane_id="lane-a",
+                attempt=2,
+                failure_class="contract_boundary_leak",
+                reason="Dashboard wrote lane status directly.",
+                source_refs=["pytest:test_dashboard_contract"],
+            ),
+        ],
+    )
+
+    assert decision.decision is LaneRecoveryDecisionType.REFACTOR_REQUIRED
+    assert decision.retry_allowed is False
+    assert decision.refactor_required_reason == (
+        "failure_class contract_boundary_leak repeated 2 times"
+    )
+    assert decision.next_action == (
+        "refactor or replace the failing lane boundary before retrying"
+    )
+
+
+def test_lane_recovery_suspends_when_retry_budget_is_exhausted() -> None:
+    decision = evaluate_lane_recovery(
+        lane_id="lane-a",
+        budget=LaneRuntimeBudget(max_attempts=2, max_consecutive_same_failure=2),
+        failures=[
+            LaneFailureEvidence(
+                lane_id="lane-a",
+                attempt=1,
+                failure_class="provider_unavailable",
+                reason="provider unavailable",
+                source_refs=["provider:deepseek"],
+            ),
+            LaneFailureEvidence(
+                lane_id="lane-a",
+                attempt=2,
+                failure_class="ci_timeout",
+                reason="CI timed out",
+                source_refs=["github:run:1"],
+            ),
+        ],
+    )
+
+    assert decision.decision is LaneRecoveryDecisionType.SUSPENDED
+    assert decision.retry_allowed is False
+    assert decision.suspend_reason == "retry_budget_exhausted"
+
+
 def test_patch_forward_creates_auditable_patch_lane_link() -> None:
     service = BlueprintLaneDagService()
     plan = service.build_plan(_request(lanes=[_lane("lane-a")]))
@@ -249,6 +354,14 @@ def _lane(
     acceptance_criteria: list[str] | None = None,
     blueprint_refs: list[str] | None = None,
     dependency_edges: list[LaneDependencyEdge] | None = None,
+    owner: str = "codex",
+    inputs: list[str] | None = None,
+    outputs: list[str] | None = None,
+    required_checks: list[str] | None = None,
+    allowed_files: list[str] | None = None,
+    rollback_constraints: list[str] | None = None,
+    review_profile: str = "standard",
+    budget: LaneRuntimeBudget | None = None,
 ) -> BlueprintLaneSpec:
     return BlueprintLaneSpec(
         lane_id=lane_id,
@@ -263,4 +376,12 @@ def _lane(
         blueprint_refs=blueprint_refs or ["blueprint:bp-1:1"],
         dependency_edges=dependency_edges or [],
         expected_touched_areas=["src/xmuse_core/structuring"],
+        owner=owner,
+        inputs=inputs or ["blueprint:bp-1:1"],
+        outputs=outputs or [f"artifact://{lane_id}/evidence.json"],
+        required_checks=required_checks or ["focused-pytest"],
+        allowed_files=allowed_files or ["src/xmuse_core/structuring"],
+        rollback_constraints=rollback_constraints or ["preserve frozen blueprint"],
+        review_profile=review_profile,
+        budget=budget or LaneRuntimeBudget(),
     )
