@@ -564,6 +564,13 @@ Current implementation status:
   `xmuse.production_evidence.v1` for the `feature_lineage` section. It keeps
   feature owner and graph-native ready-set contracts as authority, preserves
   lane lineage refs, and leaves missing or rejected contracts as `manual_gap`.
+  The evidence now also carries a structured `feature_lineage` block with
+  feature ids, lane sets, ready lanes, blocked lanes, blocker reasons,
+  ready-set provenance, required checks, review profile, patch-forward policy,
+  rollback constraints, and the read-only status write policy. Replay bundles
+  preserve that block as section `details`, so the overnight operator can see
+  the next graph-native ready lane without reading `feature_lanes.json` or
+  writing lane status from the replay surface.
 - `uv run xmuse-overnight-supervisor-evidence-capture` exports a supervisor
   snapshot into a replay-ready `xmuse.production_evidence.v1` artifact. This
   can satisfy the replay bundle's `supervisor` section with contract-level
@@ -705,7 +712,9 @@ Tasks:
   replay section evidence.
 - Use `uv run xmuse-feature-lineage-evidence-capture --contract ...` to turn
   feature owner execution contracts into explicit feature/lane lineage replay
-  section evidence.
+  section evidence. The artifact includes structured lane-set and blocker
+  details for operator scheduling, but remains replay evidence only and must not
+  write graph/lane status.
 - Use `uv run xmuse-overnight-replay-bundle-capture` to assemble the replay
   index from release gate artifacts and attached section evidence.
 - Or use `uv run xmuse-release-evidence-pack --section-artifact SECTION=PATH`

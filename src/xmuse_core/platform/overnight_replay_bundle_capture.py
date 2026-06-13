@@ -195,6 +195,7 @@ def _section_from_production_evidence(
         blocked_reason=_clean_text(payload.get("blocked_reason")),
         owner=_clean_text(payload.get("owner")) or "operator",
         next_action=_clean_text(payload.get("next_action")),
+        details=_section_details(section_id=section_id, payload=payload),
     )
 
 
@@ -255,6 +256,17 @@ def _proof_level(value: object) -> ProofLevel:
     }:
         return value  # type: ignore[return-value]
     return "manual_gap"
+
+
+def _section_details(
+    *,
+    section_id: str,
+    payload: dict[str, object],
+) -> dict[str, object] | None:
+    details = payload.get(section_id)
+    if isinstance(details, dict):
+        return {section_id: details}
+    return None
 
 
 def _string_list(value: object) -> list[str]:

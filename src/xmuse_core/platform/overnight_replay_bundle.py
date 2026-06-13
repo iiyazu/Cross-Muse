@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -38,6 +39,7 @@ class ReplayBundleSection:
     blocked_reason: str | None = None
     owner: str = "operator"
     next_action: str | None = None
+    details: Mapping[str, object] | None = None
 
     def model_dump(
         self,
@@ -47,7 +49,7 @@ class ReplayBundleSection:
         active_source_refs = [
             ref for ref in self.source_refs if ref not in tombstoned_source_refs
         ]
-        return {
+        payload: dict[str, object] = {
             "section_id": self.section_id,
             "status": self.status,
             "proof_level": self.proof_level,
@@ -60,6 +62,9 @@ class ReplayBundleSection:
             "owner": self.owner,
             "next_action": self.next_action,
         }
+        if self.details:
+            payload["details"] = dict(self.details)
+        return payload
 
 
 def build_overnight_replay_bundle(

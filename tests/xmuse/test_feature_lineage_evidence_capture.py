@@ -61,6 +61,57 @@ def test_capture_feature_lineage_evidence_exports_replay_ready_artifact(
         "Feature lineage captured 1 feature owner contract(s), 3 lane(s): "
         "1 ready, 1 blocked, 1 completed, 1 blocker reason(s)."
     )
+    assert artifact["feature_lineage"] == {
+        "authority": "feature_owner_execution_contract",
+        "contract_count": 1,
+        "lane_count": 3,
+        "ready_lane_count": 1,
+        "blocked_lane_count": 1,
+        "completed_lane_count": 1,
+        "blocker_count": 1,
+        "projection_authority": False,
+        "status_write_policy": "read_only_contract_no_status_writes",
+        "features": [
+            {
+                "feature_id": "feature-runtime-loop",
+                "objective": "Run the overnight supervisor with replayable evidence.",
+                "graph_set_id": "graph-set-1",
+                "feature_graph_id": "graph-runtime",
+                "lane_ids": ["lane-heartbeat", "lane-replay", "lane-docs"],
+                "ready_lane_ids": ["lane-heartbeat"],
+                "blocked_lane_ids": ["lane-replay"],
+                "completed_lane_ids": ["lane-docs"],
+                "lane_blockers": [
+                    {
+                        "lane_id": "lane-replay",
+                        "blocker_type": "dependency_unsatisfied",
+                        "blocker_ref": "lane:lane-heartbeat",
+                        "blocker_status": "pending",
+                        "dispatch_blocking": True,
+                        "source_authority": "graph_native_ready_set",
+                    }
+                ],
+                "ready_set_provenance": {
+                    "authority": "graph_native_ready_set",
+                    "computed_from": "graph_set_store",
+                    "feature_graph_id": "graph-runtime",
+                    "graph_set_id": "graph-set-1",
+                    "projection_authority": False,
+                    "source_refs": ["graph-set:graph-set-1", "blueprint:bp-1"],
+                    "status_write_policy": "read_only_contract_no_status_writes",
+                },
+                "allowed_files": [
+                    "src/xmuse_core/platform/overnight_operator_supervisor.py"
+                ],
+                "required_checks": [
+                    "uv run pytest tests/xmuse/test_overnight_operator_supervisor.py -q"
+                ],
+                "review_profile": "internal-adversarial",
+                "patch_forward_policy": "review_failures_spawn_patch_forward_lane",
+                "rollback_constraints": ["do not mutate feature_lanes.json"],
+            }
+        ],
+    }
 
     replay_bundle = capture_overnight_replay_bundle(
         run_id="overnight-feature-lineage",
@@ -73,6 +124,9 @@ def test_capture_feature_lineage_evidence_exports_replay_ready_artifact(
     assert sections["feature_lineage"]["proof_level"] == "contract_proof"
     assert sections["feature_lineage"]["source_authority"] == (
         "feature_owner_execution_contract"
+    )
+    assert sections["feature_lineage"]["details"]["feature_lineage"] == (
+        artifact["feature_lineage"]
     )
 
 

@@ -77,7 +77,9 @@ def build_feature_lineage_evidence(
         next_action=next_action,
         summary=_summary(contracts),
     )
-    return envelope.model_dump()
+    evidence = envelope.model_dump()
+    evidence["feature_lineage"] = _feature_lineage_details(contracts)
+    return evidence
 
 
 def _contracts_from_artifacts(
@@ -206,6 +208,60 @@ def _summary(
         f"{lane_count} lane(s): {ready_count} ready, {blocked_count} blocked, "
         f"{completed_count} completed, {blocker_count} blocker reason(s)."
     )
+
+
+def _feature_lineage_details(
+    contracts: Sequence[tuple[Path, FeatureOwnerExecutionContract]],
+) -> dict[str, object]:
+    return {
+        "authority": FEATURE_LINEAGE_AUTHORITY,
+        "contract_count": len(contracts),
+        "lane_count": sum(contract.lane_count for _path, contract in contracts),
+        "ready_lane_count": sum(
+            len(contract.ready_lane_ids) for _path, contract in contracts
+        ),
+        "blocked_lane_count": sum(
+            len(contract.blocked_lane_ids) for _path, contract in contracts
+        ),
+        "completed_lane_count": sum(
+            len(contract.completed_lane_ids) for _path, contract in contracts
+        ),
+        "blocker_count": sum(len(contract.lane_blockers) for _path, contract in contracts),
+        "projection_authority": False,
+        "status_write_policy": "read_only_contract_no_status_writes",
+        "features": [
+            _feature_lineage_contract_details(contract)
+            for _path, contract in contracts
+        ],
+    }
+
+
+def _feature_lineage_contract_details(
+    contract: FeatureOwnerExecutionContract,
+) -> dict[str, object]:
+    return {
+        "feature_id": contract.feature_id,
+        "objective": contract.objective,
+        "graph_set_id": contract.graph_set_id,
+        "feature_graph_id": contract.feature_graph_id,
+        "lane_ids": list(contract.lane_ids),
+        "ready_lane_ids": list(contract.ready_lane_ids),
+        "blocked_lane_ids": list(contract.blocked_lane_ids),
+        "completed_lane_ids": list(contract.completed_lane_ids),
+        "lane_blockers": [
+            blocker.model_dump(mode="json") for blocker in contract.lane_blockers
+        ],
+        "ready_set_provenance": (
+            contract.ready_set_provenance.model_dump(mode="json")
+            if contract.ready_set_provenance is not None
+            else None
+        ),
+        "allowed_files": list(contract.allowed_files),
+        "required_checks": list(contract.required_checks),
+        "review_profile": contract.review_profile,
+        "patch_forward_policy": contract.patch_forward_policy,
+        "rollback_constraints": list(contract.rollback_constraints),
+    }
 
 
 def _ready_set_ref(contract: FeatureOwnerExecutionContract) -> str:
