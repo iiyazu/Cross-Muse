@@ -162,6 +162,9 @@ def _release_gate_line(gate: dict[str, Any]) -> str:
     summary = _text(gate.get("summary"))
     if status != "ok" and summary is not None:
         line += f": {summary}"
+    attempted_command = _text(gate.get("attempted_command"))
+    if attempted_command is not None:
+        line += f" cmd={attempted_command}"
     next_action = _text(gate.get("next_action"))
     if next_action is not None:
         line += f" next={next_action}"

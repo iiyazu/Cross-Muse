@@ -653,6 +653,7 @@ def _release_gate_digests(readiness: dict[str, Any]) -> list[dict[str, Any]]:
                 "required": gate.get("required") is True,
                 "owner": _text(gate.get("owner")) or "operator",
                 "summary": _text(gate.get("summary")) or "release gate evidence",
+                "attempted_command": _text(gate.get("attempted_command")),
                 "next_action": _text(gate.get("next_action")),
                 "source_ref_count": len(_string_list(gate.get("source_refs"))),
                 "artifact_count": len(_string_list(gate.get("artifacts"))),

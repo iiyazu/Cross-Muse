@@ -277,6 +277,7 @@ def test_proof_cockpit_renders_replay_and_release_blockers() -> None:
                         "required": True,
                         "owner": "github",
                         "summary": "GitHub checks and branch protection captured.",
+                        "attempted_command": None,
                         "next_action": None,
                         "source_ref_count": 2,
                         "artifact_count": 1,
@@ -290,6 +291,9 @@ def test_proof_cockpit_renders_replay_and_release_blockers() -> None:
                         "required": True,
                         "owner": "operator",
                         "summary": "provider soak missing",
+                        "attempted_command": (
+                            "uv run xmuse-real-provider-runtime-gate-capture"
+                        ),
                         "next_action": "Run provider soak.",
                         "source_ref_count": 1,
                         "artifact_count": 1,
@@ -330,6 +334,7 @@ def test_proof_cockpit_renders_replay_and_release_blockers() -> None:
     assert (
         "real-provider-runtime manual_gap/manual_gap required=yes "
         "configured=yes refs=1 artifacts=1: provider soak missing "
+        "cmd=uv run xmuse-real-provider-runtime-gate-capture "
         "next=Run provider soak."
     ) in rendered
     assert "replay_section memoryos_trace: MemoryOS Lite was not configured" in rendered

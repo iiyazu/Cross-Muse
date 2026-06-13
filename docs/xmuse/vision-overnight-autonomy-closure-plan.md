@@ -839,8 +839,9 @@ Tasks:
   release proof.
 - The release pack also carries a normalized `release_gates` digest plus
   `proof_level_summary` copied from the readiness report. The TUI proof cockpit
-  can render those gate statuses directly from the pack, but the readiness
-  report and underlying gate artifacts remain authoritative.
+  can render those gate statuses, attempted command, and next action directly
+  from the pack, but the readiness report and underlying gate artifacts remain
+  authoritative.
 - When a structured internal review artifact exists for the current head,
   prefer
   `uv run xmuse-release-evidence-pack --internal-review-artifact REVIEW --internal-review-expected-head-sha HEAD`

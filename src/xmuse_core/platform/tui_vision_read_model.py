@@ -929,6 +929,7 @@ def _release_gate_status_projection(gate: dict[str, Any]) -> dict[str, Any]:
         "required": gate.get("required") is True,
         "owner": _text(gate.get("owner")) or "operator",
         "summary": _text(gate.get("summary")) or "release gate evidence",
+        "attempted_command": _text(gate.get("attempted_command")),
         "next_action": _text(gate.get("next_action")),
         "source_ref_count": _int(gate.get("source_ref_count")),
         "artifact_count": _int(gate.get("artifact_count")),

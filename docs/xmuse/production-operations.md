@@ -1079,8 +1079,9 @@ still comes from the generated GitHub gate and the server-side merge proof
 requirements.
 The pack also includes a `release_gates` digest and `proof_level_summary`
 derived from the release readiness report. The proof cockpit can render this
-digest so operators can scan gate status without opening the readiness JSON,
-but the digest is not a replacement authority.
+digest, including attempted command and next-action recovery fields, so
+operators can scan gate status without opening the readiness JSON, but the
+digest is not a replacement authority.
 `/release attempt` calls `attempt_release_evidence`, reuses the candidate
 report, and then invokes the same release evidence export actions only for
 candidate inputs that are export-ready. It writes

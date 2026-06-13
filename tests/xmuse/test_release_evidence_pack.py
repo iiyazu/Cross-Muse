@@ -528,6 +528,7 @@ def test_release_evidence_pack_writes_readiness_audit_and_summary(
             status="manual_gap",
             proof_level="manual_gap",
             summary="Ray/Codex runtime was not started.",
+            attempted_command="uv run xmuse-real-provider-runtime-gate-capture",
             next_action="Start the configured production provider bundle.",
         ),
     )
@@ -579,6 +580,7 @@ def test_release_evidence_pack_writes_readiness_audit_and_summary(
             "required": True,
             "owner": "operator",
             "summary": "github-server-truth evidence",
+            "attempted_command": None,
             "next_action": None,
             "source_ref_count": 2,
             "artifact_count": 1,
@@ -592,6 +594,7 @@ def test_release_evidence_pack_writes_readiness_audit_and_summary(
             "required": True,
             "owner": "operator",
             "summary": "Ray/Codex runtime was not started.",
+            "attempted_command": "uv run xmuse-real-provider-runtime-gate-capture",
             "next_action": "Start the configured production provider bundle.",
             "source_ref_count": 1,
             "artifact_count": 1,
