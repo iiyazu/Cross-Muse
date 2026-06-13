@@ -1161,7 +1161,13 @@ async def test_chat_screen_release_candidates_runs_operator_control_action(
                         "export_ready": False,
                         "next_action": "Capture fresh and resume MCP writeback provider turns.",
                     },
-                    "live_memoryos": {"export_ready": False},
+                    "live_memoryos": {
+                        "export_ready": False,
+                        "next_action": (
+                            "Configure live MemoryOS Lite and provide a complete "
+                            "task payload."
+                        ),
+                    },
                 }
             },
         }
@@ -1212,6 +1218,10 @@ async def test_chat_screen_release_candidates_runs_operator_control_action(
         ) in content
         assert (
             "provider=blocked next=Capture fresh and resume MCP writeback provider turns."
+        ) in content
+        assert (
+            "memoryos=blocked next=Configure live MemoryOS Lite and provide a "
+            "complete task payload."
         ) in content
         assert "Inspected release evidence candidates." in content
 

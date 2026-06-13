@@ -1000,6 +1000,12 @@ artifact schema `xmuse.real_provider_runtime.v1`, required proof
 `attempt_release_evidence` payload hints. The TUI summary prints provider
 `next=` guidance so the operator can move from candidate inspection to an
 authorized capture action without mistaking the candidate for release proof.
+MemoryOS candidate rows use
+`proof_boundary=candidate_report_is_not_live_memoryos_proof`, required schema
+`xmuse.memoryos_lite_trace.v1`, required proof `live_service_proof`, redacted
+env/payload source authority, and `attempt_release_evidence` hints. They do not
+include env values or task `content`/`query` text in payload hints, and they do
+not prove the live MemoryOS service responded.
 `/release attempt` calls `attempt_release_evidence`, reuses the candidate
 report, and then invokes the same release evidence export actions only for
 candidate inputs that are export-ready. It writes

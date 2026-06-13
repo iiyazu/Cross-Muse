@@ -39,6 +39,20 @@ _PROVIDER_NEXT_ACTION = (
     "attempt_release_evidence for real_provider_runtime with real "
     "runtime_backend and transport labels."
 )
+_MEMORYOS_NEXT_ACTION = (
+    "Configure live MemoryOS Lite and provide a complete task payload, then "
+    "run attempt_release_evidence for live_memoryos to capture a live trace."
+)
+_MEMORYOS_PAYLOAD_HINT_KEYS = (
+    "conversation_id",
+    "repo_id",
+    "workspace_id",
+    "god_id",
+    "thread_id",
+    "blueprint_id",
+    "feature_id",
+    "lane_id",
+)
 
 
 def build_release_evidence_candidate_report(
@@ -302,6 +316,31 @@ def _memoryos_candidates(
                 else []
             ),
         ],
+        **_memoryos_candidate_guidance(payload),
+    }
+
+
+def _memoryos_candidate_guidance(payload: Mapping[str, Any]) -> dict[str, Any]:
+    payload_hints = {
+        key: text
+        for key in _MEMORYOS_PAYLOAD_HINT_KEYS
+        if (text := _text(payload.get(key))) is not None
+    }
+    return {
+        "proof_boundary": "candidate_report_is_not_live_memoryos_proof",
+        "required_artifact_schema": "xmuse.memoryos_lite_trace.v1",
+        "required_proof_level": "live_service_proof",
+        "source_authority": [
+            "redacted_environment_presence",
+            "operator_release_candidate_payload",
+        ],
+        "next_action": _MEMORYOS_NEXT_ACTION,
+        "suggested_operator_action": {
+            "action": "attempt_release_evidence",
+            "kind": "live_memoryos",
+            "required_payload_keys": list(_MEMORYOS_REQUIRED_PAYLOAD),
+            "payload_hints": payload_hints,
+        },
     }
 
 

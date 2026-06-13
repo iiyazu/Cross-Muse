@@ -727,7 +727,11 @@ Tasks:
   candidate guidance is explicitly bounded by
   `proof_boundary=candidate_report_is_not_release_proof`; only a validated
   `xmuse.real_provider_runtime.v1` artifact with `real_provider_proof` can
-  satisfy the real-provider release gate.
+  satisfy the real-provider release gate. Live-MemoryOS candidate guidance is
+  bounded the same way with
+  `proof_boundary=candidate_report_is_not_live_memoryos_proof`; env presence
+  and operator payload completeness are only capture prerequisites, not
+  `live_service_proof`.
 - When the same natural transcript should participate in release readiness,
   also pass `--natural-deliberation-transcript TRANSCRIPT` plus
   `--natural-deliberation-god-runtime RUNTIME`. This writes

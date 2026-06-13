@@ -81,6 +81,39 @@ def test_release_evidence_candidates_identify_ready_natural_and_provider_inputs(
     assert memoryos["export_ready"] is True
     assert memoryos["configured"] is True
     assert memoryos["missing_env_keys"] == []
+    assert memoryos["proof_boundary"] == "candidate_report_is_not_live_memoryos_proof"
+    assert memoryos["required_artifact_schema"] == "xmuse.memoryos_lite_trace.v1"
+    assert memoryos["required_proof_level"] == "live_service_proof"
+    assert memoryos["source_authority"] == [
+        "redacted_environment_presence",
+        "operator_release_candidate_payload",
+    ]
+    assert memoryos["suggested_operator_action"] == {
+        "action": "attempt_release_evidence",
+        "kind": "live_memoryos",
+        "required_payload_keys": [
+            "repo_id",
+            "workspace_id",
+            "god_id",
+            "conversation_id",
+            "thread_id",
+            "blueprint_id",
+            "feature_id",
+            "lane_id",
+            "content",
+            "query",
+        ],
+        "payload_hints": {
+            "conversation_id": conversation_id,
+            "repo_id": "iiyazu/Cross-Muse",
+            "workspace_id": "xmuse",
+            "god_id": "review",
+            "thread_id": "thread-1",
+            "blueprint_id": "bp-1",
+            "feature_id": "feature-1",
+            "lane_id": "lane-1",
+        },
+    }
 
 
 def test_release_evidence_candidates_require_selected_runtime_for_natural_export(
@@ -135,6 +168,13 @@ def test_release_evidence_candidates_report_current_gaps_without_secrets(
     )
     assert memoryos["configured"] is False
     assert "XMUSE_LIVE_MEMORYOS_LITE" in memoryos["missing_env_keys"]
+    assert memoryos["proof_boundary"] == "candidate_report_is_not_live_memoryos_proof"
+    assert memoryos["required_artifact_schema"] == "xmuse.memoryos_lite_trace.v1"
+    assert memoryos["required_proof_level"] == "live_service_proof"
+    assert memoryos["next_action"] == (
+        "Configure live MemoryOS Lite and provide a complete task payload, then "
+        "run attempt_release_evidence for live_memoryos to capture a live trace."
+    )
     assert "token=secret-token" not in str(report)
 
 

@@ -507,7 +507,11 @@ Current implementation status:
   `real_provider_proof`, source authority, and the suggested
   `attempt_release_evidence` operator action payload hints. This makes the next
   action visible without treating peer-latency traces, provider inventory, or
-  TUI rendering as release proof.
+  TUI rendering as release proof. Live-MemoryOS candidates similarly include
+  `proof_boundary=candidate_report_is_not_live_memoryos_proof`, required
+  schema `xmuse.memoryos_lite_trace.v1`, required proof `live_service_proof`,
+  redacted source authority, and `attempt_release_evidence` hints without
+  leaking env values or task content/query text into the candidate report.
 - TUI `/release attempt [natural|provider|memoryos|github|all]` now routes through
   `attempt_release_evidence` with `release_gate`. The action writes a
   `release-evidence-attempt.json` attempt report under
