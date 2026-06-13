@@ -705,6 +705,7 @@ WebSocket、worklist endpoint、proposal narrow/reject endpoint 仍未落地。
 | `GET /api/chat/conversations/{conversation_id}/god-room/snapshot` | 返回 `xmuse.god_room_snapshot.v1` replay artifact |
 | `POST /api/chat/conversations/{conversation_id}/god-room/freeze-blueprint` | 从 durable room events 编译 `xmuse.god_room_blueprint_freeze.v1`，成功时写入 mission blueprint proposal/resolution/read model |
 | `POST /api/chat/conversations/{conversation_id}/god-room/lane-dag` | 从 GOD room freeze resolution 生成 `BlueprintLaneDagPlan`，保存 lane graph 和 laneDAG artifacts，不写 live projection queue |
+| `POST /api/chat/conversations/{conversation_id}/god-room/lane-dag/recovery` | 从 laneDAG artifact 读取 lane budget，导入 failure evidence，保存 `xmuse.god_room_lane_recovery.v1` recovery artifact |
 
 事件写入请求体使用 `GodRoomEventV1`：
 
@@ -748,6 +749,11 @@ room events，不由前端 projection 提供：
   "mission_blueprint_resolution"`、`lane_dag` 和 artifact refs。该 endpoint
   只写 `lane_graphs/*.json` / `lane_graphs/*.lane-dag.json` artifacts，不写
   `feature_lanes.json`。
+- `POST /god-room/lane-dag/recovery` 使用已保存 laneDAG artifact 作为
+  `source_authority = "lane_dag_artifact"`，从 lane runtime contract 读取
+  budget，并基于提交的 `LaneFailureEvidence` 生成 retry/suspended/manual_gap/
+  refactor_required decision。它只写 `lane_graphs/*.recovery.json` artifact，
+  不直接改变 lane status。
 - unknown participant、unknown target、conversation/room mismatch 和 event id
   conflict 会被后端拒绝，前端不得本地修改 projection 来绕过。
 - `replay.proof_level = "contract_proof"` 只证明 durable replay contract，不是

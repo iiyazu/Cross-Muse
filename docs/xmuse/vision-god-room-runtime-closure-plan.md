@@ -459,8 +459,17 @@ Current implementation status:
 - Missing failure evidence returns `manual_gap`; retry budget exhaustion returns
   `suspended`; repeated same-class failure returns `refactor_required` with
   `retry_allowed=false` and a concrete refactor next action.
-- This is contract/evaluator infrastructure only. It does not yet wire recovery
-  decisions into every runner or operator action path.
+- `xmuse/chat_api.py` now exposes
+  `POST /api/chat/conversations/{conversation_id}/god-room/lane-dag/recovery`.
+  The endpoint loads a previously saved `BlueprintLaneDagPlan` artifact, reads
+  the target lane's `LaneRuntimeContract.budget`, imports submitted
+  `LaneFailureEvidence`, evaluates recovery, and writes
+  `xmuse.god_room_lane_recovery.v1` under `lane_graphs/*.recovery.json`.
+- Recovery artifacts preserve `retry`, `suspended`, `manual_gap`, and
+  `refactor_required` decisions without writing lane status,
+  `feature_lanes.json`, TUI/read projections, or runner state.
+- This is now a Chat API runtime/control-surface slice. Recovery decisions are
+  still not wired into every runner, supervisor, dispatch, and review path.
 
 ## S6 - MemoryOS Trace Anchors
 

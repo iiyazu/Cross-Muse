@@ -8,6 +8,7 @@ from xmuse_core.providers.models import ProviderId, ProviderProfileId
 from xmuse_core.structuring.blueprint_execution.lane_dag_service import (
     BlueprintFeatureSpec,
     BlueprintLaneSpec,
+    LaneFailureEvidence,
 )
 
 
@@ -248,10 +249,27 @@ class GodRoomLaneDagRequest(BaseModel):
     lanes: list[BlueprintLaneSpec] = Field(min_length=1)
     source_refs: list[str] = Field(default_factory=list)
 
-    @field_validator("resolution_id", "graph_id", mode="before")
+    @field_validator("resolution_id", mode="before")
     @classmethod
     def _strip_required_text(cls, value: object) -> object:
         return _strip_required_string(value)
+
+    @field_validator("graph_id", mode="before")
+    @classmethod
+    def _strip_storage_id(cls, value: object) -> object:
+        return _strip_required_storage_id(value)
+
+
+class GodRoomLaneRecoveryRequest(BaseModel):
+    graph_id: str = Field(min_length=1)
+    lane_id: str = Field(min_length=1)
+    failures: list[LaneFailureEvidence] = Field(default_factory=list)
+    runtime_seconds: int | None = Field(default=None, ge=1)
+
+    @field_validator("graph_id", "lane_id", mode="before")
+    @classmethod
+    def _strip_storage_id(cls, value: object) -> object:
+        return _strip_required_storage_id(value)
 
 
 class RoleTemplateCreate(BaseModel):
@@ -368,6 +386,26 @@ def _strip_required_string(value: object) -> object:
     if not stripped:
         raise ValueError("must not be blank")
     return stripped
+
+
+def _strip_required_storage_id(value: object) -> object:
+    stripped = _strip_required_string(value)
+    if not isinstance(stripped, str):
+        return stripped
+    if (
+        stripped in {".", ".."}
+        or "/" in stripped
+        or "\\" in stripped
+        or _artifact_safe_id(stripped) != stripped
+    ):
+        raise ValueError("must be a safe storage id")
+    return stripped
+
+
+def _artifact_safe_id(value: str) -> str:
+    return "".join(
+        char if char.isalnum() or char in {"-", "_", "."} else "_" for char in value
+    )
 
 
 def _strip_optional_string(value: object) -> object:

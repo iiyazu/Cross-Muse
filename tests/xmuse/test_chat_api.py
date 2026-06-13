@@ -811,6 +811,216 @@ def test_chat_api_god_room_lane_dag_rejects_non_god_room_freeze_resolution(
     assert not (tmp_path / "feature_lanes.json").exists()
 
 
+def test_chat_api_god_room_lane_recovery_requires_refactor_from_lane_budget(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    conv_id = _create_god_room_lane_dag(client, graph_id="graph-recovery")
+
+    response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/recovery",
+        json={
+            "graph_id": "graph-recovery",
+            "lane_id": "lane-runtime-api",
+            "failures": [
+                {
+                    "lane_id": "lane-runtime-api",
+                    "attempt": 1,
+                    "failure_class": "contract_boundary_leak",
+                    "reason": "TUI attempted to mutate projection state.",
+                    "source_refs": ["pytest:test_tui_authority"],
+                },
+                {
+                    "lane_id": "lane-runtime-api",
+                    "attempt": 2,
+                    "failure_class": "contract_boundary_leak",
+                    "reason": "Dashboard attempted to mutate projection state.",
+                    "source_refs": ["pytest:test_dashboard_authority"],
+                },
+            ],
+        },
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["source_authority"] == "lane_dag_artifact"
+    assert payload["decision"]["decision"] == "refactor_required"
+    assert payload["decision"]["retry_allowed"] is False
+    assert payload["decision"]["failure_class"] == "contract_boundary_leak"
+    assert payload["decision"]["refactor_required_reason"] == (
+        "failure_class contract_boundary_leak repeated 2 times"
+    )
+    assert "budget:lane-runtime-api" in payload["decision"]["source_refs"]
+    assert "pytest:test_tui_authority" in payload["decision"]["source_refs"]
+    assert "pytest:test_dashboard_authority" in payload["decision"]["source_refs"]
+    assert payload["artifacts"]["recovery"].endswith(
+        "graph-recovery.lane-runtime-api.recovery.json"
+    )
+    assert (tmp_path / payload["artifacts"]["recovery"]).exists()
+    assert not (tmp_path / "feature_lanes.json").exists()
+
+
+def test_chat_api_god_room_lane_recovery_records_manual_gap_without_failures(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    conv_id = _create_god_room_lane_dag(client, graph_id="graph-manual-gap")
+
+    response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/recovery",
+        json={
+            "graph_id": "graph-manual-gap",
+            "lane_id": "lane-runtime-api",
+            "failures": [],
+        },
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["decision"]["decision"] == "manual_gap"
+    assert payload["decision"]["retry_allowed"] is False
+    assert payload["decision"]["suspend_reason"] == "missing_failure_evidence"
+    assert payload["artifacts"]["recovery"].endswith(
+        "graph-manual-gap.lane-runtime-api.recovery.json"
+    )
+    assert (tmp_path / payload["artifacts"]["recovery"]).exists()
+    assert not (tmp_path / "feature_lanes.json").exists()
+
+
+def test_chat_api_god_room_lane_recovery_rejects_graph_path_escape(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    conv_id = _create_god_room_lane_dag(client, graph_id="graph-safe")
+    escaped = tmp_path / "escaped.lane-dag.json"
+    escaped.write_text(
+        (tmp_path / "lane_graphs" / "graph-safe.lane-dag.json").read_text(
+            encoding="utf-8"
+        ),
+        encoding="utf-8",
+    )
+
+    response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/recovery",
+        json={
+            "graph_id": "../escaped",
+            "lane_id": "lane-runtime-api",
+            "failures": [],
+        },
+    )
+
+    assert response.status_code == 422
+    assert not (tmp_path / "lane_graphs" / ".._escaped.lane-runtime-api.recovery.json").exists()
+    assert not (tmp_path / "feature_lanes.json").exists()
+
+
+def _create_god_room_lane_dag(client: TestClient, *, graph_id: str) -> str:
+    conversation = client.post(
+        "/api/chat/conversations",
+        json={"title": f"GOD room recovery {graph_id}"},
+    ).json()
+    conv_id = conversation["id"]
+    room = client.post(f"/api/chat/conversations/{conv_id}/god-room").json()["room"]
+    participants = {participant["role"]: participant for participant in room["participants"]}
+    blueprint_ref = "blueprint:bp-god-room:1"
+
+    for event in [
+        {
+            "event_id": f"evt-propose-{graph_id}",
+            "room_id": room["room_id"],
+            "conversation_id": conv_id,
+            "participant_id": participants["architect"]["participant_id"],
+            "god_id": participants["architect"]["god_id"],
+            "actor_kind": "god",
+            "event_type": "speak",
+            "timestamp_utc": "2026-06-13T10:00:00Z",
+            "content": "Build lane recovery from laneDAG budget.",
+            "source_refs": [f"conversation:{conv_id}", f"message:evt-propose-{graph_id}"],
+            "cli_id": participants["architect"]["cli_id"],
+            "provider_profile": "codex",
+            "payload": {
+                "goal": "Build lane recovery from laneDAG budget.",
+                "scope": ["GOD room lane recovery runtime action"],
+                "acceptance_contracts": ["Recovery decisions use lane runtime budgets."],
+            },
+        },
+        {
+            "event_id": f"evt-freeze-{graph_id}",
+            "room_id": room["room_id"],
+            "conversation_id": conv_id,
+            "participant_id": participants["review"]["participant_id"],
+            "god_id": participants["review"]["god_id"],
+            "actor_kind": "god",
+            "event_type": "freeze_requested",
+            "timestamp_utc": "2026-06-13T10:03:00Z",
+            "content": "Freeze for recovery planning.",
+            "source_refs": [f"conversation:{conv_id}", f"message:evt-freeze-{graph_id}"],
+            "causal_parent_id": f"evt-propose-{graph_id}",
+            "cli_id": participants["review"]["cli_id"],
+            "provider_profile": "codex",
+            "payload": {
+                "freeze_target_ref": blueprint_ref,
+                "goal": "Build lane recovery from laneDAG budget.",
+                "scope": ["GOD room lane recovery runtime action"],
+                "acceptance_contracts": ["Recovery decisions use lane runtime budgets."],
+            },
+        },
+    ]:
+        response = client.post(
+            f"/api/chat/conversations/{conv_id}/god-room/events",
+            json=event,
+        )
+        assert response.status_code in {200, 201}
+    freeze = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/freeze-blueprint",
+        json={"blueprint_id": "bp-god-room", "revision": 1},
+    )
+    assert freeze.status_code == 201
+    lane_dag = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag",
+        json={
+            "resolution_id": freeze.json()["resolution"]["id"],
+            "graph_id": graph_id,
+            "source_refs": [f"god-room-freeze:evt-freeze-{graph_id}"],
+            "features": [
+                {
+                    "feature_id": "feature-runtime",
+                    "title": "Runtime recovery",
+                    "goal": "Evaluate recovery from lane runtime budgets.",
+                    "acceptance_criteria": ["Recovery artifacts are persisted."],
+                    "blueprint_refs": [blueprint_ref],
+                }
+            ],
+            "lanes": [
+                {
+                    "lane_id": "lane-runtime-api",
+                    "feature_id": "feature-runtime",
+                    "title": "Expose lane recovery runtime API",
+                    "prompt": "Build the lane recovery runtime action.",
+                    "acceptance_criteria": ["Focused tests cover recovery decisions."],
+                    "blueprint_refs": [blueprint_ref],
+                    "owner": "execute-god",
+                    "inputs": [blueprint_ref],
+                    "outputs": ["artifact://lane-runtime-api/recovery.json"],
+                    "required_checks": ["focused-pytest", "ruff"],
+                    "allowed_files": ["xmuse/chat_api.py"],
+                    "rollback_constraints": ["preserve lane failure evidence"],
+                    "review_profile": "runtime-recovery-review",
+                    "budget": {
+                        "max_attempts": 4,
+                        "max_consecutive_same_failure": 2,
+                        "max_runtime_seconds": 1800,
+                        "retry_backoff_seconds": 30,
+                        "source_refs": ["budget:lane-runtime-api"],
+                    },
+                }
+            ],
+        },
+    )
+    assert lane_dag.status_code == 201
+    return conv_id
+
+
 def test_chat_api_operator_action_denies_missing_capability(tmp_path: Path) -> None:
     client = _client(tmp_path)
     conversation = client.post("/api/chat/conversations", json={"title": "Mission"}).json()

@@ -30,6 +30,7 @@ from xmuse_core.chat.api_models import (
     DispatchFailedRequest,
     GodRoomBlueprintFreezeRequest,
     GodRoomLaneDagRequest,
+    GodRoomLaneRecoveryRequest,
     MessageCreate,
     OperatorActionCreate,
     ParticipantInit,
@@ -100,6 +101,7 @@ from xmuse_core.structuring.blueprint_execution.lane_dag_service import (
     BlueprintLaneDagPlan,
     BlueprintLaneDagRequest,
     BlueprintLaneDagService,
+    evaluate_lane_recovery,
 )
 from xmuse_core.structuring.feature_plan_store import (
     build_feature_plan_proposal,
@@ -878,6 +880,104 @@ def _build_lane_dag_from_god_room_freeze(
     }
 
 
+def _evaluate_god_room_lane_recovery(
+    base_dir: Path,
+    *,
+    conversation_id: str,
+    request: GodRoomLaneRecoveryRequest,
+) -> dict[str, object]:
+    if not _conversation_exists(_store(base_dir), conversation_id):
+        raise HTTPException(status_code=404, detail="conversation not found")
+    plan = _load_lane_dag_plan(base_dir, request.graph_id)
+    plan_conversation_id = str(plan.lane_graph.conversation_id)
+    if plan_conversation_id != conversation_id:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "god_room_lane_recovery_conversation_mismatch",
+                "message": "laneDAG artifact does not belong to the conversation",
+            },
+        )
+    contract = next(
+        (
+            lane_contract
+            for lane_contract in plan.lane_contracts
+            if lane_contract.lane_id == request.lane_id
+        ),
+        None,
+    )
+    if contract is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "god_room_lane_recovery_unknown_lane",
+                "message": f"lane runtime contract not found: {request.lane_id}",
+            },
+        )
+    decision = evaluate_lane_recovery(
+        lane_id=request.lane_id,
+        budget=contract.budget,
+        failures=request.failures,
+        runtime_seconds=request.runtime_seconds,
+    )
+    recovery_payload = {
+        "schema_version": "xmuse.god_room_lane_recovery.v1",
+        "source_authority": "lane_dag_artifact",
+        "conversation_id": conversation_id,
+        "graph_id": request.graph_id,
+        "lane_id": request.lane_id,
+        "decision": decision.model_dump(mode="json"),
+        "lane_contract": contract.model_dump(mode="json"),
+        "failure_count": len(request.failures),
+    }
+    recovery_path = _write_lane_recovery_artifact(
+        base_dir,
+        graph_id=request.graph_id,
+        lane_id=request.lane_id,
+        payload=recovery_payload,
+    )
+    return {
+        "source_authority": "lane_dag_artifact",
+        "conversation_id": conversation_id,
+        "graph_id": request.graph_id,
+        "lane_id": request.lane_id,
+        "decision": decision.model_dump(mode="json"),
+        "lane_dag": plan.model_dump(mode="json"),
+        "artifacts": {"recovery": str(recovery_path.relative_to(base_dir))},
+    }
+
+
+def _load_lane_dag_plan(base_dir: Path, graph_id: str) -> BlueprintLaneDagPlan:
+    try:
+        path = _lane_dag_artifact_path(base_dir, graph_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "god_room_lane_dag_not_found",
+                "message": f"laneDAG artifact not found: {graph_id}",
+            },
+        ) from exc
+    if not path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "god_room_lane_dag_not_found",
+                "message": f"laneDAG artifact not found: {graph_id}",
+            },
+        )
+    try:
+        return BlueprintLaneDagPlan.model_validate_json(path.read_text(encoding="utf-8"))
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "god_room_lane_dag_invalid_artifact",
+                "message": str(exc),
+            },
+        ) from exc
+
+
 def _blueprint_from_god_room_freeze_resolution(resolution: object) -> MissionBlueprintV1:
     approval_mode = str(getattr(resolution, "approval_mode", "") or "")
     content = getattr(resolution, "content", None)
@@ -927,8 +1027,8 @@ def _write_lane_dag_artifacts(
     plan: BlueprintLaneDagPlan,
 ) -> dict[str, str]:
     lane_graph = plan.lane_graph
+    lane_dag_path = _lane_dag_artifact_path(base_dir, lane_graph.id)
     graph_path = LaneGraphStore(base_dir / "lane_graphs").save(lane_graph)
-    lane_dag_path = base_dir / "lane_graphs" / f"{lane_graph.id}.lane-dag.json"
     lane_dag_path.parent.mkdir(parents=True, exist_ok=True)
     lane_dag_path.write_text(
         json.dumps(
@@ -944,6 +1044,43 @@ def _write_lane_dag_artifacts(
         "lane_graph": str(graph_path.relative_to(base_dir)),
         "lane_dag": str(lane_dag_path.relative_to(base_dir)),
     }
+
+
+def _write_lane_recovery_artifact(
+    base_dir: Path,
+    *,
+    graph_id: str,
+    lane_id: str,
+    payload: dict[str, object],
+) -> Path:
+    path = (
+        base_dir
+        / "lane_graphs"
+        / f"{_artifact_path_id(graph_id)}.{_artifact_path_id(lane_id)}.recovery.json"
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def _lane_dag_artifact_path(base_dir: Path, graph_id: str) -> Path:
+    return base_dir / "lane_graphs" / f"{_artifact_path_id(graph_id)}.lane-dag.json"
+
+
+def _artifact_path_id(value: str) -> str:
+    safe_id = _artifact_safe_id(value)
+    if not value.strip() or safe_id != value or value in {".", ".."}:
+        raise ValueError(f"unsafe artifact id: {value}")
+    return safe_id
+
+
+def _artifact_safe_id(value: str) -> str:
+    return "".join(
+        char if char.isalnum() or char in {"-", "_", "."} else "_" for char in value
+    )
 
 
 def _default_participant_inits(role_templates: RoleTemplateStore) -> list[ParticipantInit]:
@@ -1787,6 +1924,20 @@ def create_app(
         request: GodRoomLaneDagRequest,
     ) -> dict[str, object]:
         return _build_lane_dag_from_god_room_freeze(
+            root,
+            conversation_id=conversation_id,
+            request=request,
+        )
+
+    @app.post(
+        "/api/chat/conversations/{conversation_id}/god-room/lane-dag/recovery",
+        status_code=status.HTTP_201_CREATED,
+    )
+    def evaluate_god_room_lane_recovery(
+        conversation_id: str,
+        request: GodRoomLaneRecoveryRequest,
+    ) -> dict[str, object]:
+        return _evaluate_god_room_lane_recovery(
             root,
             conversation_id=conversation_id,
             request=request,
