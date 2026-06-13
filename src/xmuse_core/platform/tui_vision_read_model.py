@@ -728,6 +728,9 @@ def _build_proof_cockpit(
             real_provider_runtime = _real_provider_runtime_projection(
                 real_provider_pack_detail
             )
+        github_pack_detail = release_evidence_pack.get("github_truth")
+        if github_truth_detail is None and isinstance(github_pack_detail, dict):
+            github_truth_detail = _github_truth_detail_projection(github_pack_detail)
         pack_recovery_queue = _dicts(release_evidence_pack.get("recovery_queue"))
         if pack_recovery_queue:
             for item in pack_recovery_queue:
@@ -1126,12 +1129,22 @@ def _github_truth_detail_projection(github_truth: dict[str, Any]) -> dict[str, A
         "expected_head_sha": _text(github_truth.get("expected_head_sha")),
         "head_sha_matches_expected": _github_head_matches_expected(github_truth),
         "workflow_run_id": _scalar_text(github_truth.get("workflow_run_id")),
-        "required_check_count": len(required_checks),
-        "check_run_count": len(check_run_ids),
+        "required_check_count": (
+            len(required_checks)
+            if required_checks
+            else _int(github_truth.get("required_check_count"))
+        ),
+        "check_run_count": (
+            len(check_run_ids)
+            if check_run_ids
+            else _int(github_truth.get("check_run_count"))
+        ),
         "expected_source_app": _text(github_truth.get("expected_source_app")),
         "server_enforcement": _github_server_enforcement(github_truth),
-        "review_truth": _github_review_truth_state(github_truth),
-        "merge_truth": _github_merge_truth_state(
+        "review_truth": _text(github_truth.get("review_truth"))
+        or _github_review_truth_state(github_truth),
+        "merge_truth": _text(github_truth.get("merge_truth"))
+        or _github_merge_truth_state(
             proof_level=proof_level,
             can_emit_pr_merged=can_emit_pr_merged,
             merge=merge,
@@ -1182,6 +1195,9 @@ def _github_head_matches_expected(github_truth: dict[str, Any]) -> bool:
 
 
 def _github_server_enforcement(github_truth: dict[str, Any]) -> str:
+    direct = _text(github_truth.get("server_enforcement"))
+    if direct is not None:
+        return direct
     if isinstance(github_truth.get("branch_protection_snapshot"), dict):
         return "branch_protection"
     if isinstance(github_truth.get("ruleset_snapshot"), dict):

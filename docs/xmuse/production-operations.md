@@ -1071,6 +1071,12 @@ Fresh GitHub server-truth captures also preserve PR state, draft flag,
 mergeability, and merge-state values from the read-only PR API. The proof
 cockpit renders these fields as operator context so a draft/open PR cannot be
 confused with merge truth.
+When `xmuse-release-evidence-pack` converts a raw GitHub snapshot, the pack
+also includes a top-level `github_truth` summary with gate/raw artifact refs,
+head match, PR state, check counts, enforcement source, review/merge truth
+state, and gap reason. This summary is handoff context only; release readiness
+still comes from the generated GitHub gate and the server-side merge proof
+requirements.
 `/release attempt` calls `attempt_release_evidence`, reuses the candidate
 report, and then invokes the same release evidence export actions only for
 candidate inputs that are export-ready. It writes

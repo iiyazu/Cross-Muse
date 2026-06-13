@@ -129,6 +129,10 @@ def capture_release_evidence_pack(
         artifacts_dir=Path(artifacts_dir),
         source_reports=release_gate_source_reports,
     )
+    github_truth_summary = _github_truth_summary(
+        artifacts_dir=Path(artifacts_dir),
+        source_reports=release_gate_source_reports,
+    )
     baseline_summary = _production_baseline_summary(production_baseline)
 
     readiness = capture_release_readiness(
@@ -197,6 +201,8 @@ def capture_release_evidence_pack(
         pack["production_baseline"] = baseline_summary
     if real_provider_runtime_summary is not None:
         pack["real_provider_runtime"] = real_provider_runtime_summary
+    if github_truth_summary is not None:
+        pack["github_truth"] = github_truth_summary
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(pack, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return pack
@@ -502,6 +508,98 @@ def _real_provider_runtime_pack_projection(
     }
 
 
+def _github_truth_summary(
+    *,
+    artifacts_dir: Path,
+    source_reports: Mapping[str, str],
+) -> dict[str, Any] | None:
+    paths: list[Path] = []
+    report = _text(source_reports.get("github_server_truth_gate"))
+    if report is not None:
+        paths.append(Path(report))
+    if artifacts_dir.exists():
+        paths.extend(sorted(artifacts_dir.rglob("*.json")))
+
+    seen: set[Path] = set()
+    for path in paths:
+        if path in seen:
+            continue
+        seen.add(path)
+        gate = _try_load_json_object(path)
+        if gate is None or _text(gate.get("gate_id")) != "github-server-truth":
+            continue
+        truth = _first_json_artifact(gate)
+        if truth is None:
+            continue
+        return _github_truth_pack_projection(gate, truth, gate_artifact=path)
+    return None
+
+
+def _first_json_artifact(gate: dict[str, Any]) -> dict[str, Any] | None:
+    for artifact in _string_list(gate.get("artifacts")):
+        payload = _try_load_json_object(Path(artifact))
+        if payload is not None:
+            return payload
+    return None
+
+
+def _github_truth_pack_projection(
+    gate: dict[str, Any],
+    truth: dict[str, Any],
+    *,
+    gate_artifact: Path,
+) -> dict[str, Any]:
+    truth_artifacts = _string_list(gate.get("artifacts"))
+    return {
+        "authority": "github_truth_release_gate",
+        "status": _text(gate.get("status")) or "not_evaluated",
+        "proof_level": _text(gate.get("proof_level")) or "manual_gap",
+        "gate_artifact": str(gate_artifact),
+        "truth_artifact": truth_artifacts[0] if truth_artifacts else None,
+        "repo": _text(truth.get("repo")),
+        "pull_request_number": _optional_int(truth.get("pull_request_number")),
+        "pull_request_state": _text(truth.get("pull_request_state")),
+        "draft": _optional_bool(truth.get("draft")),
+        "mergeable": _optional_bool(truth.get("mergeable")),
+        "mergeable_state": _text(truth.get("mergeable_state")),
+        "head_sha": _text(truth.get("head_sha")),
+        "expected_head_sha": _text(truth.get("expected_head_sha")),
+        "head_sha_matches_expected": truth.get("head_sha_matches_expected") is True,
+        "required_check_count": len(_string_list(truth.get("required_checks"))),
+        "check_run_count": len(_list_value(truth.get("check_run_ids"))),
+        "expected_source_app": _text(truth.get("expected_source_app")),
+        "server_enforcement": _github_server_enforcement(truth),
+        "review_truth": _github_review_truth(truth),
+        "merge_truth": _github_merge_truth(truth),
+        "merged": truth.get("merged") is True,
+        "can_emit_pr_merged": truth.get("can_emit_pr_merged") is True,
+        "gap_reason": _text(truth.get("gap_reason")),
+        "capture_mode": _text(truth.get("capture_mode")),
+    }
+
+
+def _github_server_enforcement(truth: dict[str, Any]) -> str:
+    if isinstance(truth.get("branch_protection_snapshot"), dict):
+        return "branch_protection"
+    if isinstance(truth.get("ruleset_snapshot"), dict):
+        return "ruleset"
+    return "missing"
+
+
+def _github_review_truth(truth: dict[str, Any]) -> str:
+    if truth.get("review_event_id") is not None:
+        return "github_review"
+    if truth.get("internal_review_verified") is True:
+        return "internal_review"
+    return "missing"
+
+
+def _github_merge_truth(truth: dict[str, Any]) -> str:
+    if truth.get("can_emit_pr_merged") is True and truth.get("merged") is True:
+        return "pr_merged"
+    return "missing"
+
+
 def _production_baseline_summary(path: str | Path | None) -> dict[str, Any] | None:
     if path is None:
         return None
@@ -689,6 +787,18 @@ def _string_list(value: object) -> list[str]:
 
 def _int(value: object) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
+def _optional_int(value: object) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _optional_bool(value: object) -> bool | None:
+    return value if isinstance(value, bool) else None
+
+
+def _list_value(value: object) -> list[object]:
+    return value if isinstance(value, list) else []
 
 
 def _pack_decision(

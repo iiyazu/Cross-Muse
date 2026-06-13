@@ -196,6 +196,10 @@ def _write_github_server_truth(path: Path, **overrides: object) -> Path:
         "schema_version": "github_server_side_truth_capture.v1",
         "repo": "iiyazu/Cross-Muse",
         "pull_request_number": 43,
+        "pull_request_state": "open",
+        "draft": True,
+        "mergeable": True,
+        "mergeable_state": "clean",
         "head_sha": "head-pack-1",
         "expected_head_sha": "head-pack-1",
         "head_sha_matches_expected": True,
@@ -936,6 +940,32 @@ def test_release_evidence_pack_converts_github_truth_into_release_gate(
         "github:expected-head:head-pack-1",
     ]
     assert pack["source_reports"]["github_server_truth_gate"] == str(gate_path)
+    assert pack["github_truth"] == {
+        "authority": "github_truth_release_gate",
+        "status": "ok",
+        "proof_level": "server_side_enforcement_proof",
+        "gate_artifact": str(gate_path),
+        "truth_artifact": str(truth),
+        "repo": "iiyazu/Cross-Muse",
+        "pull_request_number": 43,
+        "pull_request_state": "open",
+        "draft": True,
+        "mergeable": True,
+        "mergeable_state": "clean",
+        "head_sha": "head-pack-1",
+        "expected_head_sha": "head-pack-1",
+        "head_sha_matches_expected": True,
+        "required_check_count": 3,
+        "check_run_count": 3,
+        "expected_source_app": "github-actions",
+        "server_enforcement": "branch_protection",
+        "review_truth": "missing",
+        "merge_truth": "missing",
+        "merged": False,
+        "can_emit_pr_merged": False,
+        "gap_reason": "missing server-side truth: review_truth, merge_truth",
+        "capture_mode": "opt_in_read_only_gh_api",
+    }
     assert pack["artifact_count"] == 1
     assert pack["release_readiness_decision"] == "ready"
     assert pack["proof_contamination_decision"] == "clean"

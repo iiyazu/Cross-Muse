@@ -770,7 +770,10 @@ Current implementation status:
   builder, and write `github-server-truth.json` under `--artifacts-dir` before
   readiness/audit. This reduces handoff friction after a fresh capture, but the
   pack does not perform GitHub API calls and does not create review truth, merge
-  truth, or `pr_merged`.
+  truth, or `pr_merged`. The pack now also carries a top-level `github_truth`
+  audit summary with the gate/raw artifact refs, current/expected head, PR
+  state, check counts, enforcement source, review/merge truth state, and
+  remaining gap reason.
 - The TUI proof cockpit can project the same raw GitHub server truth boundary
   as read-only operator context. It shows repo/PR, current and expected head,
   check/check-run counts, expected source app, branch-protection/ruleset source,

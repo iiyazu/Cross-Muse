@@ -517,6 +517,71 @@ def test_tui_vision_read_model_projects_github_truth_into_proof_cockpit() -> Non
     }
 
 
+def test_tui_vision_read_model_projects_github_truth_from_release_pack() -> None:
+    model = build_tui_vision_read_model(
+        release_evidence_pack={
+            "schema_version": "xmuse.release_evidence_pack.v1",
+            "decision": "blocked",
+            "release_readiness_decision": "blocked",
+            "proof_contamination_decision": "clean",
+            "artifact_count": 1,
+            "finding_count": 0,
+            "github_truth": {
+                "authority": "github_truth_release_gate",
+                "status": "ok",
+                "proof_level": "server_side_enforcement_proof",
+                "gate_artifact": "artifact://github-server-truth.json",
+                "truth_artifact": "artifact://github-truth.json",
+                "repo": "iiyazu/Cross-Muse",
+                "pull_request_number": 43,
+                "pull_request_state": "open",
+                "draft": True,
+                "mergeable": True,
+                "mergeable_state": "clean",
+                "head_sha": "head-pack-1",
+                "expected_head_sha": "head-pack-1",
+                "head_sha_matches_expected": True,
+                "required_check_count": 3,
+                "check_run_count": 3,
+                "expected_source_app": "github-actions",
+                "server_enforcement": "branch_protection",
+                "review_truth": "missing",
+                "merge_truth": "missing",
+                "merged": False,
+                "can_emit_pr_merged": False,
+                "gap_reason": "missing server-side truth: review_truth, merge_truth",
+                "capture_mode": "opt_in_read_only_gh_api",
+            },
+        },
+    )
+
+    assert model["proof_cockpit"]["github_truth"] == {
+        "repo": "iiyazu/Cross-Muse",
+        "pull_request_number": 43,
+        "proof_level": "server_side_enforcement_proof",
+        "schema_version": "github_server_side_truth_capture.v1",
+        "pull_request_state": "open",
+        "draft": True,
+        "mergeable": True,
+        "mergeable_state": "clean",
+        "head_sha": "head-pack-1",
+        "expected_head_sha": "head-pack-1",
+        "head_sha_matches_expected": True,
+        "workflow_run_id": None,
+        "required_check_count": 3,
+        "check_run_count": 3,
+        "expected_source_app": "github-actions",
+        "server_enforcement": "branch_protection",
+        "review_truth": "missing",
+        "merge_truth": "missing",
+        "merged": False,
+        "can_emit_pr_merged": False,
+        "gap_reason": "missing server-side truth: review_truth, merge_truth",
+        "capture_mode": "opt_in_read_only_gh_api",
+        "source_refs": [],
+    }
+
+
 def test_tui_vision_read_model_summarizes_proof_cockpit_without_authority_upgrade() -> None:
     model = build_tui_vision_read_model(
         replay_bundle={

@@ -832,7 +832,11 @@ Tasks:
   `--artifacts-dir` through the same GitHub server-truth gate builder, but it
   does not call GitHub itself. A stale head remains `manual_gap`, and
   `server_side_enforcement_proof` still does not create review truth, merge
-  truth, or `pr_merged`.
+  truth, or `pr_merged`. The pack also projects a top-level `github_truth`
+  summary with gate/raw artifact refs, head match, PR state/draft/mergeability,
+  check counts, enforcement source, review/merge truth state, and gap reason so
+  the final handoff pack can be inspected without treating those fields as
+  release proof.
 - When a structured internal review artifact exists for the current head,
   prefer
   `uv run xmuse-release-evidence-pack --internal-review-artifact REVIEW --internal-review-expected-head-sha HEAD`
