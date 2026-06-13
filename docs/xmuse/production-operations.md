@@ -1065,6 +1065,9 @@ report also validates them through the natural release-gate builder and exposes
 `capture_release_evidence_pack` payload hint. This is handoff context only; the
 generated natural release gate and selected-GOD runtime continuity artifact
 remain the readiness authority.
+The natural gate matches transcript GOD identities against selected runtime
+items by `god_id` or `participant_id`, so transcripts whose `god_id` is the chat
+participant id can still validate against durable GOD session continuity.
 Provider candidate rows include
 `proof_boundary=candidate_report_is_not_release_proof`, required artifact
 schema `xmuse.real_provider_runtime.v1`, required proof

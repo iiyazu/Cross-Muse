@@ -527,6 +527,9 @@ Current implementation status:
   exposes `artifact_gate_ready`, gate status/proof, transcript/runtime counts,
   and a `capture_release_evidence_pack` hint. This keeps existing natural
   artifacts visible without treating the candidate report as release proof.
+  The natural gate matches transcript GOD identities against runtime `god_id`
+  or `participant_id` so chat participant ids in natural transcripts can align
+  with durable GOD session continuity.
   Real-provider candidates now include
   `proof_boundary=candidate_report_is_not_release_proof`, the required
   `xmuse.real_provider_runtime.v1` schema, required `real_provider_proof`,

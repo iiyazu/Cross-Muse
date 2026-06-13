@@ -177,6 +177,61 @@ def test_natural_deliberation_gate_accepts_real_multi_god_transcript_with_select
     assert report["decision"] == "ready"
 
 
+def test_natural_deliberation_gate_matches_runtime_by_participant_id(
+    tmp_path: Path,
+) -> None:
+    artifact = tmp_path / "natural-transcript.json"
+    runtime = tmp_path / "god-runtime.json"
+    gate_output = tmp_path / "gates" / "natural-deliberation.json"
+    transcript = _transcript()
+    messages = transcript["messages"]
+    assert isinstance(messages, list)
+    messages[0]["god_id"] = "part-architect"
+    messages[1]["god_id"] = "part-review"
+    _write_json(artifact, transcript)
+    _write_json(
+        runtime,
+        _runtime(
+            items=[
+                {
+                    "god_id": "Release Architect GOD",
+                    "participant_id": "part-architect",
+                    "cli_id": "codex.god",
+                    "peer_god_ready": True,
+                    "bounded": False,
+                    "provider_session_ready": True,
+                    "proof_level": "real_provider_proof",
+                    "source_refs": ["god_session:architect"],
+                },
+                {
+                    "god_id": "Release Review GOD",
+                    "participant_id": "part-review",
+                    "cli_id": "codex.god",
+                    "peer_god_ready": True,
+                    "bounded": False,
+                    "provider_session_ready": True,
+                    "proof_level": "real_provider_proof",
+                    "source_refs": ["god_session:review"],
+                },
+            ]
+        ),
+    )
+
+    gate = capture_natural_deliberation_release_gate(
+        artifact_path=artifact,
+        output_path=gate_output,
+        god_runtime_path=runtime,
+    )
+
+    assert gate["status"] == "ok"
+    assert gate["proof_level"] == "real_provider_proof"
+    assert gate["deliberation_transcript"]["god_ids"] == [
+        "part-architect",
+        "part-review",
+    ]
+    assert gate["deliberation_transcript"]["runtime_peer_god_ready_count"] == 2
+
+
 def test_natural_deliberation_gate_blocks_contract_replay(tmp_path: Path) -> None:
     artifact = tmp_path / "replay-transcript.json"
     _write_json(

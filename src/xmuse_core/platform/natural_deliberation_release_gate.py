@@ -275,7 +275,9 @@ def _transcript_detail(
     runtime_items = _messages(runtime.get("items")) if isinstance(runtime, dict) else []
     god_id_set = set(god_ids)
     selected_runtime = [
-        item for item in runtime_items if _text(item.get("god_id")) in god_id_set
+        item
+        for item in runtime_items
+        if any(identity in god_id_set for identity in _runtime_item_identities(item))
     ]
     speech_act_counts: dict[str, int] = {}
     for message in messages:
@@ -345,7 +347,7 @@ def _selected_god_runtime_gate(
         }
     source_refs = _god_runtime_source_refs(runtime)
     items = _messages(runtime.get("items"))
-    by_god = {_text(item.get("god_id")): item for item in items if _text(item.get("god_id"))}
+    by_god = _runtime_items_by_transcript_identity(items)
     missing = [god_id for god_id in god_ids if god_id not in by_god]
     if missing:
         return {
@@ -379,6 +381,26 @@ def _selected_god_runtime_gate(
             ),
         }
     return None
+
+
+def _runtime_items_by_transcript_identity(
+    items: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    by_identity: dict[str, dict[str, Any]] = {}
+    for item in items:
+        for identity in _runtime_item_identities(item):
+            by_identity.setdefault(identity, item)
+    return by_identity
+
+
+def _runtime_item_identities(item: dict[str, Any]) -> list[str]:
+    return _ordered_unique(
+        _text(value)
+        for value in (
+            item.get("god_id"),
+            item.get("participant_id"),
+        )
+    )
 
 
 def _god_runtime_source_refs(runtime: dict[str, Any]) -> list[str]:

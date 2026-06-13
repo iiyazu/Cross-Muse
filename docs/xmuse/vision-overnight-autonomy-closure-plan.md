@@ -797,7 +797,10 @@ Tasks:
   the candidate report can surface natural artifact gate readiness,
   status/proof level, transcript/runtime counts, and a release-pack payload
   hint, but the candidate remains handoff context until the natural gate/pack
-  validates the artifacts. Provider candidate guidance is bounded by
+  validates the artifacts. The natural gate accepts runtime identity matches by
+  `god_id` or `participant_id`, so transcript GOD ids that are chat participant
+  ids can still align with durable GOD session continuity. Provider candidate
+  guidance is bounded by
   `proof_boundary=candidate_report_is_not_release_proof`; only a validated
   `xmuse.real_provider_runtime.v1` artifact with `real_provider_proof` can
   satisfy the real-provider release gate. Live-MemoryOS candidate guidance is
