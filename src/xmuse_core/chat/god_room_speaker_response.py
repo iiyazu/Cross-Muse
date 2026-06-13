@@ -15,6 +15,7 @@ from xmuse_core.chat.god_room_runtime import (
 )
 from xmuse_core.chat.god_room_speaker_runtime import (
     GodRoomSpeakerAttemptV1,
+    SelectedBindingResolver,
     build_god_room_speaker_attempt,
 )
 
@@ -86,6 +87,11 @@ class GodRoomSpeakerResponseCaptureV1(BaseModel):
     selected_event_id: str | None = None
     target_participant_id: str | None = None
     target_god_id: str | None = None
+    binding_revision: str | None = None
+    account_ref: str | None = None
+    cli_command: str | None = None
+    model: str | None = None
+    variant: str | None = None
     provider_profile_ref: str | None = None
     provider_session_id: str | None = None
     provider_session_kind: str | None = None
@@ -110,6 +116,7 @@ def capture_god_room_speaker_response(
     append_event: Callable[[GodRoomEventV1], AppendStatus],
     after_event_id: str | None = None,
     event_id: str | None = None,
+    selected_binding_resolver: SelectedBindingResolver | None = None,
     timestamp_utc: str,
 ) -> GodRoomSpeakerResponseCaptureV1:
     attempt = build_god_room_speaker_attempt(
@@ -119,6 +126,7 @@ def capture_god_room_speaker_response(
         events=events,
         runtime_continuity=runtime_continuity,
         after_event_id=after_event_id,
+        selected_binding_resolver=selected_binding_resolver,
     )
     if attempt.status != "ready_for_provider_attempt":
         return _manual_gap(
@@ -174,6 +182,11 @@ def capture_god_room_speaker_response(
         selected_event_id=attempt.selected_event_id,
         target_participant_id=attempt.target_participant_id,
         target_god_id=attempt.target_god_id,
+        binding_revision=attempt.binding_revision,
+        account_ref=attempt.account_ref,
+        cli_command=attempt.cli_command,
+        model=attempt.model,
+        variant=attempt.variant,
         provider_profile_ref=attempt.provider_profile_ref,
         provider_session_id=attempt.provider_session_id,
         provider_session_kind=attempt.provider_session_kind,
@@ -257,6 +270,11 @@ def _build_speak_event(
             "provider_session_id": provider_response.provider_session_id,
             "provider_session_kind": provider_response.provider_session_kind,
             "provider_profile_ref": provider_response.provider_profile_ref,
+            "binding_revision": attempt.binding_revision,
+            "account_ref": attempt.account_ref,
+            "cli_command": attempt.cli_command,
+            "model": attempt.model,
+            "variant": attempt.variant,
             "proof_level": provider_response.proof_level,
             "speaker_attempt_event_id": attempt.selected_event_id,
         },
@@ -280,6 +298,11 @@ def _manual_gap(
         selected_event_id=attempt.selected_event_id,
         target_participant_id=attempt.target_participant_id,
         target_god_id=attempt.target_god_id,
+        binding_revision=attempt.binding_revision,
+        account_ref=attempt.account_ref,
+        cli_command=attempt.cli_command,
+        model=attempt.model,
+        variant=attempt.variant,
         provider_profile_ref=attempt.provider_profile_ref,
         provider_session_id=attempt.provider_session_id,
         provider_session_kind=attempt.provider_session_kind,

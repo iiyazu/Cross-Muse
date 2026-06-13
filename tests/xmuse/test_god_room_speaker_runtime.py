@@ -17,6 +17,7 @@ from xmuse_core.platform.god_runtime_continuity import (
 )
 from xmuse_core.providers.god_cli_registry import build_default_god_cli_registry
 from xmuse_core.providers.god_cli_selection_store import GodCliSelectionRecord
+from xmuse_core.providers.god_identity_binding import build_operator_selected_god_binding
 
 
 def test_speaker_attempt_joins_replay_decision_to_provider_bound_selected_god() -> None:
@@ -100,6 +101,181 @@ def test_speaker_attempt_reports_manual_gap_without_matching_provider_ready_god(
     assert attempt.provider_session_id is None
     assert attempt.blocked_reason == "provider session metadata unavailable"
     assert "provider_session:" not in " ".join(attempt.source_refs)
+
+
+def test_speaker_attempt_requires_selected_room_binding_when_resolver_is_present() -> None:
+    participants = [
+        GodRoomParticipant(participant_id="part-architect", god_id="architect-god"),
+        GodRoomParticipant(participant_id="part-review", god_id="review-god"),
+    ]
+    events = [
+        _event(
+            "evt-propose",
+            participant_id="part-architect",
+            god_id="architect-god",
+        )
+    ]
+
+    attempt = build_god_room_speaker_attempt(
+        conversation_id="conv-1",
+        room_id="god-room:conv-1",
+        participants=participants,
+        events=events,
+        runtime_continuity=_runtime_view(
+            participant_id="part-review",
+            provider_session_id="provider-thread-review",
+        ),
+        after_event_id="evt-propose",
+        selected_binding_resolver=lambda participant: {
+            "status": "manual_gap",
+            "proof_level": "manual_gap",
+            "room_id": "god-room:conv-1",
+            "participant_id": participant.participant_id,
+            "god_id": participant.god_id,
+            "blocked_reason": "room selected GOD binding unavailable",
+            "source_refs": [f"god-room-participant:{participant.participant_id}"],
+        },
+    )
+
+    assert attempt.status == "manual_gap"
+    assert attempt.proof_level == "manual_gap"
+    assert attempt.source_authority == (
+        "god_room_event_store+room_selected_god_binding+selected_god_runtime_continuity"
+    )
+    assert attempt.provider_session_id is None
+    assert attempt.blocked_reason == "room selected GOD binding unavailable"
+
+
+def test_speaker_attempt_includes_selected_room_binding_lineage() -> None:
+    participants = [
+        GodRoomParticipant(participant_id="part-architect", god_id="architect-god"),
+        GodRoomParticipant(participant_id="part-review", god_id="review-god"),
+    ]
+    events = [
+        _event(
+            "evt-propose",
+            participant_id="part-architect",
+            god_id="architect-god",
+        )
+    ]
+    account, profile, binding = build_operator_selected_god_binding(
+        room_id="god-room:conv-1",
+        participant_id="part-review",
+        god_id="review-god",
+        account_ref="codex.god",
+        cli_command="codex",
+        model="gpt-5.4",
+        selected_by="operator",
+        selected_at="2026-06-14T00:00:00Z",
+        capabilities=("peer_god", "review"),
+        role="review",
+    )
+
+    attempt = build_god_room_speaker_attempt(
+        conversation_id="conv-1",
+        room_id="god-room:conv-1",
+        participants=participants,
+        events=events,
+        runtime_continuity=_runtime_view(
+            participant_id="part-review",
+            provider_session_id="provider-thread-review",
+        ),
+        after_event_id="evt-propose",
+        selected_binding_resolver=lambda _participant: {
+            "status": "resolved",
+            "proof_level": "contract_proof",
+            "room_id": binding.room_id,
+            "participant_id": binding.participant_id,
+            "god_id": binding.god_id,
+            "binding_revision": binding.binding_revision,
+            "account_ref": binding.account_ref,
+            "cli_command": binding.cli_command,
+            "model": binding.model,
+            "variant": binding.variant,
+            "source_refs": [
+                binding.binding_ref,
+                f"provider_account:{account.account_ref}",
+                f"god_profile:{profile.god_id}",
+            ],
+        },
+    )
+
+    assert attempt.status == "ready_for_provider_attempt"
+    assert attempt.source_authority == (
+        "god_room_event_store+room_selected_god_binding+selected_god_runtime_continuity"
+    )
+    assert attempt.binding_revision == binding.binding_revision
+    assert attempt.account_ref == "codex.god"
+    assert attempt.cli_command == "codex"
+    assert attempt.model == "gpt-5.4"
+    assert binding.binding_ref in attempt.source_refs
+    assert "provider_account:codex.god" in attempt.source_refs
+    assert "god_profile:review-god" in attempt.source_refs
+
+
+def test_speaker_attempt_rejects_binding_that_does_not_match_replay_target() -> None:
+    participants = [
+        GodRoomParticipant(participant_id="part-architect", god_id="architect-god"),
+        GodRoomParticipant(participant_id="part-review", god_id="review-god"),
+    ]
+    events = [
+        _event(
+            "evt-propose",
+            participant_id="part-architect",
+            god_id="architect-god",
+        )
+    ]
+    account, profile, binding = build_operator_selected_god_binding(
+        room_id="god-room:conv-1",
+        participant_id="part-review",
+        god_id="other-god",
+        account_ref="codex.god",
+        cli_command="codex",
+        model="gpt-5.4",
+        selected_by="operator",
+        selected_at="2026-06-14T00:00:00Z",
+        capabilities=("peer_god", "review"),
+        role="review",
+    )
+
+    attempt = build_god_room_speaker_attempt(
+        conversation_id="conv-1",
+        room_id="god-room:conv-1",
+        participants=participants,
+        events=events,
+        runtime_continuity=_runtime_view(
+            participant_id="part-review",
+            provider_session_id="provider-thread-review",
+        ),
+        after_event_id="evt-propose",
+        selected_binding_resolver=lambda _participant: {
+            "status": "resolved",
+            "proof_level": "contract_proof",
+            "room_id": binding.room_id,
+            "participant_id": binding.participant_id,
+            "god_id": binding.god_id,
+            "binding_revision": binding.binding_revision,
+            "account_ref": binding.account_ref,
+            "cli_command": binding.cli_command,
+            "model": binding.model,
+            "source_refs": [
+                binding.binding_ref,
+                f"provider_account:{account.account_ref}",
+                f"god_profile:{profile.god_id}",
+            ],
+        },
+    )
+
+    assert attempt.status == "manual_gap"
+    assert attempt.source_authority == (
+        "god_room_event_store+room_selected_god_binding+selected_god_runtime_continuity"
+    )
+    assert attempt.blocked_reason == (
+        "room selected GOD binding does not match replay target"
+    )
+    assert attempt.target_god_id == "review-god"
+    assert attempt.account_ref == "codex.god"
+    assert binding.binding_ref in attempt.source_refs
 
 
 def test_speaker_response_appends_real_provider_speak_event() -> None:

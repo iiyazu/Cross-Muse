@@ -30,6 +30,13 @@ from xmuse_core.providers.god_cli_registry import (
     ProofLevel as GodCliProofLevel,
 )
 from xmuse_core.providers.god_cli_selection_store import GodCliSelectionStore
+from xmuse_core.providers.god_identity_binding import (
+    GodIdentityBindingStore,
+    GodProfile,
+    ProviderAccount,
+    RoomSelectedGodBinding,
+    build_operator_selected_god_binding,
+)
 
 ActionStatus = Literal["ok", "denied", "blocked", "manual_gap"]
 ProofLevel = Literal["contract_proof", "manual_gap"]
@@ -128,6 +135,7 @@ class OperatorActionService:
         audit_dir: Path,
         registration_store: GodCliRegistrationStore | None = None,
         selection_store: GodCliSelectionStore | None = None,
+        god_identity_binding_store: GodIdentityBindingStore | None = None,
         lane_state_machine: LaneStateMachine | None = None,
         release_readiness_dir: Path | None = None,
         live_gate_env: Mapping[str, str] | None = None,
@@ -148,6 +156,7 @@ class OperatorActionService:
         self._audit_dir = audit_dir
         self._registration_store = registration_store
         self._selection_store = selection_store
+        self._god_identity_binding_store = god_identity_binding_store
         self._lane_state_machine = lane_state_machine
         self._release_readiness_dir = release_readiness_dir or (
             audit_dir.parent / "release_readiness"
@@ -344,13 +353,21 @@ class OperatorActionService:
                     "selection": selection.model_dump(),
                 },
             )
+        registration_payload = (
+            selection.registration.model_dump() if selection.registration is not None else None
+        )
+        binding_plan = self._build_room_selected_god_binding(
+            request=request,
+            audit_id=audit_id,
+            registration=registration_payload,
+        )
+        if isinstance(binding_plan, OperatorActionResult):
+            return binding_plan
         selection_payload = {
             "cli_id": cli_id,
             "conversation_id": conversation_id,
             "source_authority": "operator_action_contract",
-            "registration": selection.registration.model_dump()
-            if selection.registration is not None
-            else None,
+            "registration": registration_payload,
         }
         if self._selection_store is not None and conversation_id is not None:
             record = self._selection_store.record_selection(
@@ -362,6 +379,21 @@ class OperatorActionService:
             )
             selection_payload["durable_state_ref"] = f"god_cli_selection:{conversation_id}"
             selection_payload["record"] = record.model_dump()
+        if binding_plan is not None:
+            provider_account, god_profile, room_binding = binding_plan
+            resolution = self._god_identity_binding_store.upsert_selection(
+                provider_account=provider_account,
+                god_profile=god_profile,
+                room_binding=room_binding,
+            )
+            selection_payload["room_selected_god_binding"] = {
+                "durable_state_ref": room_binding.binding_ref,
+                "provider_account_ref": f"provider_account:{provider_account.account_ref}",
+                "god_profile_ref": f"god_profile:{god_profile.god_id}",
+                "resolution": resolution.model_dump(mode="json"),
+            }
+            selection_payload["durable_room_binding_ref"] = room_binding.binding_ref
+            selection_payload["cli_id"] = cli_id
         return OperatorActionResult(
             action="select_god_cli",
             status="ok",
@@ -372,6 +404,110 @@ class OperatorActionService:
             summary=f"Selected GOD CLI {cli_id}.",
             payload={"selection": selection_payload},
         )
+
+    def _build_room_selected_god_binding(
+        self,
+        *,
+        request: OperatorActionRequest,
+        audit_id: str,
+        registration: dict[str, Any] | None,
+    ) -> (
+        tuple[ProviderAccount, GodProfile, RoomSelectedGodBinding]
+        | OperatorActionResult
+        | None
+    ):
+        room_fields = ("room_id", "participant_id", "god_id", "model")
+        has_room_binding_payload = any(_text(request.payload.get(field)) for field in room_fields)
+        if not has_room_binding_payload:
+            return None
+        missing = [field for field in room_fields if _text(request.payload.get(field)) is None]
+        if missing:
+            return OperatorActionResult(
+                action="select_god_cli",
+                status="blocked",
+                proof_level="manual_gap",
+                fact_state="blocked",
+                actor_id=request.actor_id,
+                audit_id=audit_id,
+                summary=(
+                    "room selected GOD binding requires payload."
+                    + ", payload.".join(missing)
+                ),
+                payload={"selection_allowed": False, "missing_binding_fields": missing},
+            )
+        if self._god_identity_binding_store is None:
+            return OperatorActionResult(
+                action="select_god_cli",
+                status="blocked",
+                proof_level="manual_gap",
+                fact_state="blocked",
+                actor_id=request.actor_id,
+                audit_id=audit_id,
+                summary="room selected GOD binding requires a durable binding store",
+                payload={"selection_allowed": False},
+            )
+        if not isinstance(registration, dict):
+            return OperatorActionResult(
+                action="select_god_cli",
+                status="blocked",
+                proof_level="manual_gap",
+                fact_state="blocked",
+                actor_id=request.actor_id,
+                audit_id=audit_id,
+                summary="room selected GOD binding requires a resolved registration",
+                payload={"selection_allowed": False},
+            )
+        model = _text(request.payload.get("model"))
+        room_id = _text(request.payload.get("room_id"))
+        participant_id = _text(request.payload.get("participant_id"))
+        god_id = _text(request.payload.get("god_id"))
+        if model is None or room_id is None or participant_id is None or god_id is None:
+            return None
+        account_ref = _text(request.payload.get("account_ref")) or _text(
+            registration.get("provider_profile_ref")
+        )
+        cli_command = _text(request.payload.get("cli_command")) or _text(
+            registration.get("command_family")
+        )
+        if account_ref is None or cli_command is None:
+            return OperatorActionResult(
+                action="select_god_cli",
+                status="blocked",
+                proof_level="manual_gap",
+                fact_state="blocked",
+                actor_id=request.actor_id,
+                audit_id=audit_id,
+                summary="room selected GOD binding requires account_ref and cli_command",
+                payload={"selection_allowed": False},
+            )
+        capabilities = tuple(
+            item
+            for item in _string_list(registration.get("capabilities"))
+            if isinstance(item, str)
+        )
+        provider_account, god_profile, room_binding = build_operator_selected_god_binding(
+            room_id=room_id,
+            participant_id=participant_id,
+            god_id=god_id,
+            account_ref=account_ref,
+            cli_command=cli_command,
+            model=model,
+            variant=_text(request.payload.get("variant")),
+            selected_by=request.actor_id,
+            binding_revision=_text(request.payload.get("binding_revision")),
+            provider_kind=_text(request.payload.get("provider_kind")) or cli_command,
+            auth_type=_text(request.payload.get("auth_type")) or "env_ref",
+            base_url=_text(request.payload.get("base_url")),
+            env_vars_ref=tuple(_string_list(request.payload.get("env_vars_ref"))),
+            credential_ref=_text(request.payload.get("credential_ref")),
+            display_name=_text(request.payload.get("display_name")) or god_id,
+            role=_text(request.payload.get("role")),
+            capabilities=capabilities,
+            constraints=tuple(_string_list(request.payload.get("constraints"))),
+            proof_policy=_text(request.payload.get("proof_policy"))
+            or "contract_proof_until_live_provider_speech",
+        )
+        return provider_account, god_profile, room_binding
 
     def _handle_retry_lane(
         self,
@@ -1185,6 +1321,14 @@ def _text(value: Any) -> str | None:
         cleaned = value.strip()
         return cleaned or None
     return None
+
+
+def _string_list(value: Any) -> list[str]:
+    if isinstance(value, list | tuple):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, str):
+        return [part.strip() for part in value.split(",") if part.strip()]
+    return []
 
 
 def _blocked_missing_lane_field(

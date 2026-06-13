@@ -110,6 +110,7 @@ from xmuse_core.platform.state_machine import LaneStateMachine
 from xmuse_core.providers.god_cli_registration_store import GodCliRegistrationStore
 from xmuse_core.providers.god_cli_registry import build_default_god_cli_registry
 from xmuse_core.providers.god_cli_selection_store import GodCliSelectionStore
+from xmuse_core.providers.god_identity_binding import GodIdentityBindingStore
 from xmuse_core.runtime.paths import default_xmuse_root
 from xmuse_core.structuring.blueprint_execution.approval_events import (
     produce_blueprint_approval_event,
@@ -228,6 +229,9 @@ def _operator_action_service(base_dir: Path) -> OperatorActionService:
             base_dir / "god_cli_registrations.json"
         ),
         selection_store=GodCliSelectionStore(base_dir / "god_cli_selections.json"),
+        god_identity_binding_store=GodIdentityBindingStore(
+            base_dir / "god_identity_bindings.json"
+        ),
         lane_state_machine=LaneStateMachine(
             base_dir / "feature_lanes.json",
             history_path=base_dir / "state_history.json",
@@ -260,8 +264,25 @@ def _god_cli_selection_store(base_dir: Path) -> GodCliSelectionStore:
     return GodCliSelectionStore(base_dir / "god_cli_selections.json")
 
 
+def _god_identity_binding_store(base_dir: Path) -> GodIdentityBindingStore:
+    return GodIdentityBindingStore(base_dir / "god_identity_bindings.json")
+
+
 def _god_session_registry(base_dir: Path) -> GodSessionRegistry:
     return GodSessionRegistry(base_dir / "god_sessions.json")
+
+
+def _selected_god_binding_resolver(base_dir: Path, room_id: str):
+    store = _god_identity_binding_store(base_dir)
+
+    def resolve(participant: GodRoomParticipant) -> dict[str, object]:
+        return store.resolve(
+            room_id=room_id,
+            participant_id=participant.participant_id,
+            god_id=participant.god_id,
+        ).model_dump(mode="json")
+
+    return resolve
 
 
 def _operator_actor_id(request: Request) -> str:
@@ -1075,6 +1096,7 @@ def _build_god_room_speaker_attempt_from_runtime(
         events=snapshot.events,
         runtime_continuity=runtime_continuity,
         after_event_id=request.after_event_id,
+        selected_binding_resolver=_selected_god_binding_resolver(base_dir, room_id),
     )
     attempt_payload = attempt.model_dump(mode="json")
     artifact_path = _write_god_room_speaker_attempt_artifact(
@@ -1137,6 +1159,7 @@ def _capture_god_room_speaker_response_from_runtime(
             provider_response_artifact_ref=provider_response_artifact_ref,
             after_event_id=request.after_event_id,
             event_id=request.event_id,
+            selected_binding_resolver=_selected_god_binding_resolver(base_dir, room_id),
             timestamp_utc=request.timestamp_utc or _utc_now(),
             append_event=append_event,
         )

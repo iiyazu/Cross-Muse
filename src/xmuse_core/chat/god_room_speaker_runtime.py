@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -14,7 +14,11 @@ from xmuse_core.chat.god_room_runtime import (
 
 Status = Literal["ready_for_provider_attempt", "manual_gap"]
 ProofLevel = Literal["contract_proof", "manual_gap"]
-SourceAuthority = Literal["god_room_event_store+selected_god_runtime_continuity"]
+SourceAuthority = Literal[
+    "god_room_event_store+selected_god_runtime_continuity",
+    "god_room_event_store+room_selected_god_binding+selected_god_runtime_continuity",
+]
+SelectedBindingResolver = Callable[[GodRoomParticipant], Mapping[str, Any]]
 
 
 class GodRoomSpeakerAttemptV1(BaseModel):
@@ -35,6 +39,11 @@ class GodRoomSpeakerAttemptV1(BaseModel):
     target_participant_id: str | None = None
     target_god_id: str | None = None
     target_cli_id: str | None = None
+    binding_revision: str | None = None
+    account_ref: str | None = None
+    cli_command: str | None = None
+    model: str | None = None
+    variant: str | None = None
     provider_profile_ref: str | None = None
     provider_session_id: str | None = None
     provider_session_kind: str | None = None
@@ -53,6 +62,7 @@ def build_god_room_speaker_attempt(
     events: Sequence[GodRoomEventV1],
     runtime_continuity: Mapping[str, Any],
     after_event_id: str | None = None,
+    selected_binding_resolver: SelectedBindingResolver | None = None,
 ) -> GodRoomSpeakerAttemptV1:
     """Build replayable evidence for the next GOD speaker provider attempt.
 
@@ -92,6 +102,7 @@ def build_god_room_speaker_attempt(
         return _manual_gap(
             conversation_id=conversation_id,
             room_id=room_id,
+            source_authority=_source_authority(selected_binding_resolver),
             selected_event_id=decision.event_id,
             decision_reason=decision.reason,
             blocked_reason=f"replay decision has no next speaker: {decision.reason}",
@@ -103,6 +114,7 @@ def build_god_room_speaker_attempt(
         return _manual_gap(
             conversation_id=conversation_id,
             room_id=room_id,
+            source_authority=_source_authority(selected_binding_resolver),
             selected_event_id=decision.event_id,
             decision_reason=decision.reason,
             target_participant_id=decision.next_participant_id,
@@ -118,34 +130,91 @@ def build_god_room_speaker_attempt(
         target.participant_id,
     )
     participant_ref = f"god-room-participant:{target.participant_id}"
-    if runtime_item is None:
+    binding_resolution = _resolve_selected_binding(
+        target,
+        selected_binding_resolver=selected_binding_resolver,
+    )
+    binding_source_refs = _string_list(binding_resolution.get("source_refs"))
+    if binding_resolution.get("status") == "manual_gap":
         return _manual_gap(
             conversation_id=conversation_id,
             room_id=room_id,
+            source_authority=_source_authority(selected_binding_resolver),
             selected_event_id=decision.event_id,
             decision_reason=decision.reason,
             target_participant_id=target.participant_id,
             target_god_id=target.god_id,
             target_cli_id=target.cli_id,
+            binding_revision=_optional_text(binding_resolution.get("binding_revision")),
+            account_ref=_optional_text(binding_resolution.get("account_ref")),
+            cli_command=_optional_text(binding_resolution.get("cli_command")),
+            model=_optional_text(binding_resolution.get("model")),
+            variant=_optional_text(binding_resolution.get("variant")),
+            blocked_reason=_optional_text(binding_resolution.get("blocked_reason"))
+            or "room selected GOD binding unavailable",
+            source_refs=_unique([*decision.source_refs, participant_ref, *binding_source_refs]),
+        )
+    if _binding_mismatch(target, binding_resolution):
+        return _manual_gap(
+            conversation_id=conversation_id,
+            room_id=room_id,
+            source_authority=_source_authority(selected_binding_resolver),
+            selected_event_id=decision.event_id,
+            decision_reason=decision.reason,
+            target_participant_id=target.participant_id,
+            target_god_id=target.god_id,
+            target_cli_id=target.cli_id,
+            binding_revision=_optional_text(binding_resolution.get("binding_revision")),
+            account_ref=_optional_text(binding_resolution.get("account_ref")),
+            cli_command=_optional_text(binding_resolution.get("cli_command")),
+            model=_optional_text(binding_resolution.get("model")),
+            variant=_optional_text(binding_resolution.get("variant")),
+            blocked_reason="room selected GOD binding does not match replay target",
+            source_refs=_unique([*decision.source_refs, participant_ref, *binding_source_refs]),
+        )
+
+    if runtime_item is None:
+        return _manual_gap(
+            conversation_id=conversation_id,
+            room_id=room_id,
+            source_authority=_source_authority(selected_binding_resolver),
+            selected_event_id=decision.event_id,
+            decision_reason=decision.reason,
+            target_participant_id=target.participant_id,
+            target_god_id=target.god_id,
+            target_cli_id=target.cli_id,
+            binding_revision=_optional_text(binding_resolution.get("binding_revision")),
+            account_ref=_optional_text(binding_resolution.get("account_ref")),
+            cli_command=_optional_text(binding_resolution.get("cli_command")),
+            model=_optional_text(binding_resolution.get("model")),
+            variant=_optional_text(binding_resolution.get("variant")),
             blocked_reason=_runtime_gap_reason(
                 runtime_continuity,
                 target_participant_id=target.participant_id,
             ),
-            source_refs=_unique([*decision.source_refs, participant_ref]),
+            source_refs=_unique([*decision.source_refs, participant_ref, *binding_source_refs]),
         )
 
     item_sources = _string_list(runtime_item.get("source_refs"))
-    source_refs = _unique([*decision.source_refs, participant_ref, *item_sources])
+    source_refs = _unique(
+        [*decision.source_refs, participant_ref, *binding_source_refs, *item_sources]
+    )
     waiting_reason = _optional_text(runtime_item.get("waiting_reason"))
     if waiting_reason or runtime_item.get("peer_god_ready") is not True:
         return _manual_gap(
             conversation_id=conversation_id,
             room_id=room_id,
+            source_authority=_source_authority(selected_binding_resolver),
             selected_event_id=decision.event_id,
             decision_reason=decision.reason,
             target_participant_id=target.participant_id,
             target_god_id=target.god_id,
             target_cli_id=target.cli_id,
+            binding_revision=_optional_text(binding_resolution.get("binding_revision")),
+            account_ref=_optional_text(binding_resolution.get("account_ref")),
+            cli_command=_optional_text(binding_resolution.get("cli_command")),
+            model=_optional_text(binding_resolution.get("model")),
+            variant=_optional_text(binding_resolution.get("variant")),
             provider_profile_ref=_optional_text(runtime_item.get("provider_profile_ref")),
             provider_session_id=_optional_text(runtime_item.get("provider_session_id")),
             provider_session_kind=_optional_text(
@@ -164,6 +233,7 @@ def build_god_room_speaker_attempt(
     return GodRoomSpeakerAttemptV1(
         status="ready_for_provider_attempt",
         proof_level="contract_proof",
+        source_authority=_source_authority(selected_binding_resolver),
         conversation_id=conversation_id,
         room_id=room_id,
         selected_event_id=decision.event_id,
@@ -171,6 +241,11 @@ def build_god_room_speaker_attempt(
         target_participant_id=target.participant_id,
         target_god_id=target.god_id,
         target_cli_id=target.cli_id,
+        binding_revision=_optional_text(binding_resolution.get("binding_revision")),
+        account_ref=_optional_text(binding_resolution.get("account_ref")),
+        cli_command=_optional_text(binding_resolution.get("cli_command")),
+        model=_optional_text(binding_resolution.get("model")),
+        variant=_optional_text(binding_resolution.get("variant")),
         provider_profile_ref=_optional_text(runtime_item.get("provider_profile_ref")),
         provider_session_id=_optional_text(runtime_item.get("provider_session_id")),
         provider_session_kind=_optional_text(runtime_item.get("provider_session_kind")),
@@ -224,6 +299,37 @@ def _runtime_item_for_participant(
     return None
 
 
+def _resolve_selected_binding(
+    target: GodRoomParticipant,
+    *,
+    selected_binding_resolver: SelectedBindingResolver | None,
+) -> Mapping[str, Any]:
+    if selected_binding_resolver is None:
+        return {"status": "not_required", "source_refs": []}
+    return selected_binding_resolver(target)
+
+
+def _binding_mismatch(
+    target: GodRoomParticipant,
+    binding_resolution: Mapping[str, Any],
+) -> bool:
+    if binding_resolution.get("status") != "resolved":
+        return False
+    participant_id = _optional_text(binding_resolution.get("participant_id"))
+    god_id = _optional_text(binding_resolution.get("god_id"))
+    if participant_id is not None and participant_id != target.participant_id:
+        return True
+    return god_id is not None and god_id != target.god_id
+
+
+def _source_authority(
+    selected_binding_resolver: SelectedBindingResolver | None,
+) -> SourceAuthority:
+    if selected_binding_resolver is None:
+        return "god_room_event_store+selected_god_runtime_continuity"
+    return "god_room_event_store+room_selected_god_binding+selected_god_runtime_continuity"
+
+
 def _runtime_gap_reason(
     runtime_continuity: Mapping[str, Any],
     *,
@@ -248,11 +354,17 @@ def _manual_gap(
     conversation_id: str,
     room_id: str,
     blocked_reason: str,
+    source_authority: SourceAuthority = "god_room_event_store+selected_god_runtime_continuity",
     selected_event_id: str | None = None,
     decision_reason: str | None = None,
     target_participant_id: str | None = None,
     target_god_id: str | None = None,
     target_cli_id: str | None = None,
+    binding_revision: str | None = None,
+    account_ref: str | None = None,
+    cli_command: str | None = None,
+    model: str | None = None,
+    variant: str | None = None,
     provider_profile_ref: str | None = None,
     provider_session_id: str | None = None,
     provider_session_kind: str | None = None,
@@ -263,6 +375,7 @@ def _manual_gap(
     return GodRoomSpeakerAttemptV1(
         status="manual_gap",
         proof_level="manual_gap",
+        source_authority=source_authority,
         conversation_id=conversation_id,
         room_id=room_id,
         selected_event_id=selected_event_id,
@@ -270,6 +383,11 @@ def _manual_gap(
         target_participant_id=target_participant_id,
         target_god_id=target_god_id,
         target_cli_id=target_cli_id,
+        binding_revision=binding_revision,
+        account_ref=account_ref,
+        cli_command=cli_command,
+        model=model,
+        variant=variant,
         provider_profile_ref=provider_profile_ref,
         provider_session_id=provider_session_id,
         provider_session_kind=provider_session_kind,

@@ -90,7 +90,7 @@ Evidence boundaries:
 | Layer | Name | Contract state | Runtime state | Server truth state | Allowed claim |
 |---|---|---|---|---|---|
 | L1 | Authority / Boundary Model | Partly documented | Enforcement uneven | Not server-bound | Boundary policy exists, not global enforcement |
-| L2 | GOD Identity / Provider Binding | Provider registry/projection exists | Durable GOD/account/room binding missing | Not server-bound | Current first blocker; bounded worker/provider inventory only |
+| L2 | GOD Identity / Provider Binding | Durable account/profile/room binding contract and store exist | Speaker attempt/capture consume binding fail-closed; live provider invocation still missing | Not server-bound | L2 contract proof; bounded worker/provider inventory only |
 | L3 | GOD Room Durable Event Runtime | Durable event contract/store exists | Live multi-GOD proof missing | Not server-bound | Durable room contract proof |
 | L4 | Speaker Selection / Provider Invocation | Selection/attempt evidence exists | Provider invocation artifact path missing | Not server-bound | Speaker selection/attempt proof only |
 | L5 | Speaker Response Capture / Replay Proof | Artifact-backed capture exists | Depends on L4 invocation proof | Not server-bound | Capture contract proof only |
@@ -106,11 +106,11 @@ Current closure audit:
 - Overall ledger verdict: valid as a gap ledger, not valid as closure proof.
 - Most mature areas: control surfaces, read models, evidence envelopes, and
   claim-boundary governance.
-- Least closed areas: durable GOD/account/binding authority, provider-backed
-  speech invocation, natural multi-GOD deliberation, GOD-room-originated
-  execution/review, live MemoryOS trace, and GitHub merge truth.
-- Next production priority: close L2-L5 real GOD/provider speech chain before
-  expanding L11 cockpit surface area.
+- Least closed areas: provider-backed speech invocation, natural multi-GOD
+  deliberation, GOD-room-originated execution/review, live MemoryOS trace, and
+  GitHub merge truth.
+- Next production priority: close L4-L5 real GOD/provider speech artifact
+  production and capture lineage before expanding L11 cockpit surface area.
 
 ## L1 - Authority / Boundary Model
 
@@ -180,18 +180,31 @@ Current closure audit:
   - Provider policy/registry modules exist for Codex, OpenCode, and fake
     providers.
   - Current evidence correctly keeps OpenCode as bounded worker, not peer-GOD.
+  - `src/xmuse_core/providers/god_identity_binding.py` defines durable
+    `ProviderAccount`, `GodProfile`, and `RoomSelectedGodBinding` contracts plus
+    `GodIdentityBindingStore` and fail-closed binding resolution.
+  - `select_god_cli` can now persist a room-scoped selected-GOD binding through
+    operator action contract when `room_id`, `participant_id`, `god_id`, and
+    `model` are supplied.
+  - Chat API speaker attempt/response paths pass a selected binding resolver, so
+    L4 attempt and L5 capture cannot proceed from selected runtime projection
+    alone when the room binding is missing or mismatched.
+  - L5-generated durable `speak` events now carry binding lineage fields such as
+    `binding_revision`, `account_ref`, `cli_command`, `model`, and `variant`.
 - Missing production closure:
-  - Durable `ProviderAccount`, `GodProfile`, and `RoomSelectedGodBinding`
-    contracts are not yet the production authority for GOD room speaker
-    identity.
+  - Durable binding authority is currently proven at `contract_proof` through
+    JSON store, operator action, resolver, speaker attempt, and capture paths;
+    it is not yet proven by a live provider invocation.
   - Provider inventory/runtime evidence is not yet sufficient to upgrade a CLI
     into a peer-GOD role.
-  - This is the current first priority blocker for production GOD speech. Without
-    this layer, L3-L6 can only claim contract or imported-artifact proof for who
-    spoke, not production peer-GOD speech proof.
+  - Full closure still requires the L4 provider invocation artifact producer and
+    live/server evidence before any production peer-GOD speech proof can be
+    claimed.
 - Proof required to close:
   - Durable account/profile/selection artifacts exist and are consumed by GOD
-    room speaker selection and provider invocation.
+    room speaker selection and provider invocation. The current slice proves
+    selection/attempt/capture consumption at `contract_proof`; L4 live
+    invocation remains a gap.
   - Explicit binding resolution is fail-closed: unresolved `account_ref`,
     incompatible provider/model, missing CLI, or missing proof config produces
     `manual_gap` or `refactor_required`, not fallback environment scanning.
@@ -218,17 +231,22 @@ Current closure audit:
   - Treating a configured worker provider as a selectable GOD without explicit
     role contract and live proof.
   - Letting provider inventory or TUI-selected strings bypass durable selected
-    GOD binding.
+    GOD binding in paths not yet audited.
+  - Treating L2 `contract_proof` as L4 provider invocation proof.
 - Next production slice:
-  - Implement durable `ProviderAccount` + `GodProfile` +
-    `RoomSelectedGodBinding`, then require L3/L4 to resolve speaker identity
-    through the selected binding.
+  - Implement the L4 provider invocation producer for
+    `xmuse.god_room_provider_speech_response.v1`, using
+    `RoomSelectedGodBinding` for actor/account/model/variant resolution and
+    preserving `manual_gap` for missing CLI/config/live proof.
 - Downstream blocked until:
-  - L3 can store events, but L4 cannot claim live GOD/provider speech without a
-    selected actor from this layer.
+  - L3 can store events and L4/L5 can consume selected binding, but L4 cannot
+    claim live GOD/provider speech until provider invocation artifacts are
+    produced by the selected binding path.
 - Do not claim yet:
   - Do not claim OpenCode or any CLI is a peer-GOD solely because it appears in
     provider inventory.
+  - Do not claim L2 `contract_proof` as live provider speech or natural GOD room
+    closure.
 
 ### L2 clowder-ai reference sources
 
@@ -333,6 +351,8 @@ Use these as implementation references, not as xmuse package dependencies:
   - Speaker replay decisions are deterministic and recoverable.
   - Speaker attempt evidence joins room replay to selected GOD runtime
     continuity.
+  - Speaker attempt/response capture now fail closed through
+    `RoomSelectedGodBinding` resolution when the Chat API runtime hook is used.
   - Correct OpenCode/DeepSeek invocation format is documented:
     `opencode run --model opencode-go/deepseek-v4-flash --variant max ...`.
 - Missing production closure:

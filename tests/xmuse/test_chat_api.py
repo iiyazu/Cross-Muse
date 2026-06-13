@@ -10,6 +10,10 @@ from xmuse_core.chat.execution_cards import ChatExecutionCardEmitter
 from xmuse_core.chat.inbox_store import ChatInboxStore
 from xmuse_core.chat.store import ChatStore
 from xmuse_core.providers.god_cli_selection_store import GodCliSelectionStore
+from xmuse_core.providers.god_identity_binding import (
+    GodIdentityBindingStore,
+    build_operator_selected_god_binding,
+)
 from xmuse_core.structuring.blueprint_execution.approval_events import (
     build_blueprint_approval_dedupe_key,
 )
@@ -51,6 +55,33 @@ def _client(tmp_path: Path) -> TestClient:
 def _write_json(path: Path, payload: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def _seed_room_selected_god_binding(
+    tmp_path: Path,
+    *,
+    room_id: str,
+    participant: dict[str, object],
+    selected_by: str = "operator",
+) -> str:
+    account, profile, binding = build_operator_selected_god_binding(
+        room_id=room_id,
+        participant_id=str(participant["participant_id"]),
+        god_id=str(participant["god_id"]),
+        account_ref="codex.god",
+        cli_command="codex",
+        model="gpt-5.4",
+        selected_by=selected_by,
+        selected_at="2026-06-14T00:00:00Z",
+        role=str(participant.get("role") or "god"),
+        capabilities=("peer_god", "review"),
+    )
+    GodIdentityBindingStore(tmp_path / "god_identity_bindings.json").upsert_selection(
+        provider_account=account,
+        god_profile=profile,
+        room_binding=binding,
+    )
+    return binding.binding_ref
 
 
 def _manual_god_cli_registration_payload() -> dict[str, object]:
@@ -280,6 +311,86 @@ def test_chat_api_operator_action_selects_god_cli_and_persists_selection(
     assert selection["audit_id"] == payload["audit_id"]
 
 
+def test_chat_api_operator_action_selects_room_bound_god_identity(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    conversation = client.post("/api/chat/conversations", json={"title": "Mission"}).json()
+    room = client.post(f"/api/chat/conversations/{conversation['id']}/god-room").json()[
+        "room"
+    ]
+    review = next(
+        participant for participant in room["participants"]
+        if participant["role"] == "review"
+    )
+
+    response = client.post(
+        "/api/chat/operator/actions",
+        headers={
+            "X-XMuse-Operator-Id": "operator-1",
+            "X-XMuse-Operator-Capabilities": "select_god_cli",
+        },
+        json={
+            "action": "select_god_cli",
+            "idempotency_key": "idem-chat-room-binding-1",
+            "payload": {
+                "conversation_id": conversation["id"],
+                "cli_id": "codex.god",
+                "room_id": room["room_id"],
+                "participant_id": review["participant_id"],
+                "god_id": review["god_id"],
+                "model": "gpt-5.4",
+                "role": "review",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    binding = payload["payload"]["selection"]["room_selected_god_binding"]
+    assert binding["durable_state_ref"].startswith(
+        f"room_selected_god_binding:{room['room_id']}:{review['participant_id']}:"
+    )
+    resolution = binding["resolution"]
+    assert resolution["status"] == "resolved"
+    assert resolution["account_ref"] == "codex.god"
+    assert resolution["god_id"] == review["god_id"]
+    assert (tmp_path / "god_identity_bindings.json").exists()
+
+
+def test_chat_api_operator_action_partial_room_binding_fails_without_side_effect(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    conversation = client.post("/api/chat/conversations", json={"title": "Mission"}).json()
+
+    response = client.post(
+        "/api/chat/operator/actions",
+        headers={
+            "X-XMuse-Operator-Id": "operator-1",
+            "X-XMuse-Operator-Capabilities": "select_god_cli",
+        },
+        json={
+            "action": "select_god_cli",
+            "idempotency_key": "idem-chat-room-binding-partial",
+            "payload": {
+                "conversation_id": conversation["id"],
+                "cli_id": "codex.god",
+                "room_id": f"god-room:{conversation['id']}",
+                "model": "gpt-5.4",
+            },
+        },
+    )
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["status"] == "blocked"
+    assert detail["proof_level"] == "manual_gap"
+    assert detail["payload"]["missing_binding_fields"] == ["participant_id", "god_id"]
+    assert not (tmp_path / "god_cli_selections.json").exists()
+    assert not (tmp_path / "god_identity_bindings.json").exists()
+
+
 def test_chat_api_god_room_persists_events_and_replays_turns(
     tmp_path: Path,
 ) -> None:
@@ -378,6 +489,11 @@ def test_chat_api_god_room_speaker_attempt_uses_selected_provider_bound_god(
         audit_id="audit-select-speaker",
         idempotency_key="select-speaker",
     )
+    binding_ref = _seed_room_selected_god_binding(
+        tmp_path,
+        room_id=room["room_id"],
+        participant=participants["review"],
+    )
     session_registry = GodSessionRegistry(tmp_path / "god_sessions.json")
     session = session_registry.find_by_conversation_participant(
         conv_id,
@@ -423,8 +539,13 @@ def test_chat_api_god_room_speaker_attempt_uses_selected_provider_bound_god(
     assert attempt["selected_event_id"] == "evt-propose"
     assert attempt["target_participant_id"] == participants["review"]["participant_id"]
     assert attempt["target_god_id"] == participants["review"]["god_id"]
+    assert attempt["account_ref"] == "codex.god"
+    assert attempt["binding_revision"] == (
+        f"binding:god-room:{conv_id}:{participants['review']['participant_id']}:1"
+    )
     assert attempt["provider_profile_ref"] == "codex.god"
     assert attempt["provider_session_id"] == "provider-thread-review"
+    assert binding_ref in attempt["source_refs"]
     assert payload["artifacts"]["speaker_attempt"].startswith(
         "reports/god_room_speaker_attempts/"
     )
@@ -477,7 +598,7 @@ def test_chat_api_god_room_speaker_attempt_reports_manual_gap_without_selection(
     assert attempt["status"] == "manual_gap"
     assert attempt["proof_level"] == "manual_gap"
     assert attempt["target_participant_id"] == participants["review"]["participant_id"]
-    assert attempt["blocked_reason"] == "selected GOD CLI unavailable"
+    assert attempt["blocked_reason"] == "room selected GOD binding unavailable"
 
 
 def test_chat_api_god_room_speaker_response_appends_provider_speech(
@@ -497,6 +618,11 @@ def test_chat_api_god_room_speaker_response_appends_provider_speech(
         selected_by="operator",
         audit_id="audit-select-speaker-response",
         idempotency_key="select-speaker-response",
+    )
+    binding_ref = _seed_room_selected_god_binding(
+        tmp_path,
+        room_id=room["room_id"],
+        participant=participants["review"],
     )
     session_registry = GodSessionRegistry(tmp_path / "god_sessions.json")
     session = session_registry.find_by_conversation_participant(
@@ -567,6 +693,9 @@ def test_chat_api_god_room_speaker_response_appends_provider_speech(
     assert capture["speak_event"]["participant_id"] == (
         participants["review"]["participant_id"]
     )
+    assert capture["account_ref"] == "codex.god"
+    assert capture["binding_revision"] is not None
+    assert binding_ref in capture["source_refs"]
     assert payload["artifacts"]["speaker_response"].startswith(
         "reports/god_room_speaker_responses/"
     )
@@ -578,6 +707,8 @@ def test_chat_api_god_room_speaker_response_appends_provider_speech(
     ]
     assert events[1]["causal_parent_id"] == "evt-propose"
     assert events[1]["payload"]["provider_response_id"] == "provider-response-1"
+    assert events[1]["payload"]["account_ref"] == "codex.god"
+    assert events[1]["payload"]["binding_revision"] == capture["binding_revision"]
     assert (
         events[1]["payload"]["provider_response_artifact_ref"]
         == "reports/provider-responses/provider-response-1.json"
@@ -601,6 +732,11 @@ def test_chat_api_god_room_speaker_response_manual_gap_does_not_append_event(
         selected_by="operator",
         audit_id="audit-select-speaker-response-gap",
         idempotency_key="select-speaker-response-gap",
+    )
+    _seed_room_selected_god_binding(
+        tmp_path,
+        room_id=room["room_id"],
+        participant=participants["review"],
     )
     session_registry = GodSessionRegistry(tmp_path / "god_sessions.json")
     session = session_registry.find_by_conversation_participant(
