@@ -141,6 +141,144 @@ def test_capture_selected_god_runtime_continuity_reports_missing_selection(
     ]
 
 
+def test_god_session_heartbeat_cli_restores_selected_runtime_continuity(
+    tmp_path: Path,
+) -> None:
+    from xmuse.god_session_heartbeat import main as heartbeat_main
+
+    selection_store = tmp_path / "god_cli_selections.json"
+    session_registry = tmp_path / "god_sessions.json"
+    registration_store = tmp_path / "god_cli_registrations.json"
+
+    GodCliSelectionStore(selection_store).record_selection(
+        conversation_id="conv-prod-1",
+        cli_id="codex.god",
+        selected_by="operator",
+        audit_id="operator-action:select-1",
+        idempotency_key="select:conv-prod-1:codex.god",
+        selected_at_utc="2026-06-13T00:00:00Z",
+    )
+    registry = GodSessionRegistry(session_registry)
+    session = registry.create(
+        role="architect",
+        agent_name="codex.god",
+        runtime="codex",
+        session_address="@architect",
+        session_inbox_id="inbox-architect",
+        conversation_id="conv-prod-1",
+        participant_id="participant-architect",
+        model="gpt-5.5",
+    )
+    registry.update_provider_binding(
+        session.god_session_id,
+        provider_session_id="codex-thread-1",
+        provider_session_kind="codex_app_server_thread",
+        provider_binding_status="active",
+        provider_binding_failure_reason=None,
+    )
+
+    blocked = capture_selected_god_runtime_continuity_artifact(
+        conversation_id="conv-prod-1",
+        selection_store_path=selection_store,
+        registration_store_path=registration_store,
+        registry_path=session_registry,
+        output_path=tmp_path / "blocked-runtime.json",
+        now_utc="2026-06-13T00:05:00Z",
+        heartbeat_ttl_seconds=120,
+    )
+    assert blocked["fact_state"] == "blocked"
+    assert blocked["items"][0]["waiting_reason"] == "GOD session status is starting"
+
+    heartbeat_output = tmp_path / "heartbeat.json"
+    assert (
+        heartbeat_main(
+            [
+                "--registry",
+                str(session_registry),
+                "--god-session-id",
+                session.god_session_id,
+                "--conversation-id",
+                "conv-prod-1",
+                "--participant-id",
+                "participant-architect",
+                "--heartbeat-at-utc",
+                "2026-06-13T00:04:30Z",
+                "--status",
+                "active",
+                "--output",
+                str(heartbeat_output),
+            ]
+        )
+        == 0
+    )
+    heartbeat = json.loads(heartbeat_output.read_text(encoding="utf-8"))
+    assert heartbeat["schema_version"] == "xmuse.god_session_heartbeat.v1"
+    assert heartbeat["status"] == "ok"
+    assert heartbeat["proof_level"] == "contract_proof"
+    assert heartbeat["source_refs"] == [
+        f"god_session:{session.god_session_id}",
+        "conversation:conv-prod-1",
+        "participant:participant-architect",
+    ]
+
+    observed = capture_selected_god_runtime_continuity_artifact(
+        conversation_id="conv-prod-1",
+        selection_store_path=selection_store,
+        registration_store_path=registration_store,
+        registry_path=session_registry,
+        output_path=tmp_path / "observed-runtime.json",
+        now_utc="2026-06-13T00:05:00Z",
+        heartbeat_ttl_seconds=120,
+    )
+    assert observed["fact_state"] == "observed"
+    assert observed["blockers"] == []
+    assert observed["items"][0]["peer_god_ready"] is True
+    assert observed["items"][0]["heartbeat_freshness"] == "fresh"
+
+
+def test_god_session_heartbeat_cli_blocks_guard_mismatch(tmp_path: Path) -> None:
+    from xmuse.god_session_heartbeat import main as heartbeat_main
+
+    session_registry = tmp_path / "god_sessions.json"
+    registry = GodSessionRegistry(session_registry)
+    session = registry.create(
+        role="architect",
+        agent_name="codex.god",
+        runtime="codex",
+        session_address="@architect",
+        session_inbox_id="inbox-architect",
+        conversation_id="conv-prod-1",
+        participant_id="participant-architect",
+    )
+    output = tmp_path / "heartbeat.json"
+
+    assert (
+        heartbeat_main(
+            [
+                "--registry",
+                str(session_registry),
+                "--god-session-id",
+                session.god_session_id,
+                "--conversation-id",
+                "conv-other",
+                "--heartbeat-at-utc",
+                "2026-06-13T00:04:30Z",
+                "--output",
+                str(output),
+            ]
+        )
+        == 2
+    )
+
+    envelope = json.loads(output.read_text(encoding="utf-8"))
+    assert envelope["status"] == "blocked"
+    assert envelope["proof_level"] == "manual_gap"
+    assert envelope["blocked_reason"] == "conversation_guard_mismatch"
+    unchanged = GodSessionRegistry(session_registry).get(session.god_session_id)
+    assert unchanged.status == "starting"
+    assert unchanged.last_heartbeat_at_utc is None
+
+
 def test_god_runtime_continuity_capture_cli_script_is_registered() -> None:
     pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
 
@@ -155,3 +293,7 @@ def test_god_runtime_continuity_capture_cli_script_is_registered() -> None:
     assert "--registration-store" in script
     assert "--registry" in script
     assert "--heartbeat-ttl-seconds" in script
+    assert (
+        pyproject["project"]["scripts"]["xmuse-god-session-heartbeat"]
+        == "xmuse.god_session_heartbeat:main"
+    )

@@ -609,6 +609,12 @@ Current implementation status:
   runtime row blocked/manual-gap and prevent `peer_god_ready`, so natural
   deliberation release evidence cannot rely on a selected GOD whose session has
   gone stale.
+- `uv run xmuse-god-session-heartbeat` records guarded runtime heartbeats into
+  `god_sessions.json` and writes a `xmuse.god_session_heartbeat.v1` envelope.
+  Conversation/participant guard mismatches block without mutating the session.
+  This is the standard runtime self-report path for continuity metadata; it is
+  not release proof and cannot replace provider, natural transcript, MemoryOS,
+  or GitHub gates.
 - `uv run xmuse-real-provider-runtime-gate-capture` converts a real provider
   runtime soak artifact into the `real_provider` release gate. It blocks
   contract/fake proof, stdout fallback, missing MCP writeback, missing ordered

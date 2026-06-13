@@ -285,6 +285,12 @@ Current implementation status:
   runtime view reports heartbeat freshness against an explicit TTL. Fresh
   heartbeats keep otherwise-ready selected GODs usable; stale or invalid
   heartbeats become `manual_gap` blockers and make `peer_god_ready=false`.
+- `uv run xmuse-god-session-heartbeat` is the guarded runtime/control path for
+  recording that heartbeat. It requires a GOD session id, can guard by
+  conversation and participant, writes a `xmuse.god_session_heartbeat.v1`
+  envelope, and blocks without mutating the session when guards mismatch.
+  This is session-continuity metadata only; it does not create provider,
+  natural transcript, MemoryOS, GitHub, or release proof by itself.
 - `uv run xmuse-god-runtime-continuity-capture` exports the selected-GOD
   runtime continuity artifact from durable `god_cli_selections.json`,
   `god_cli_registrations.json`, and `god_sessions.json`. This makes the

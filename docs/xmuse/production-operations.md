@@ -506,6 +506,22 @@ heartbeat freshness from that timestamp; stale or invalid heartbeats block
 `peer_god_ready` and remain `manual_gap` until a fresh heartbeat is recorded.
 This proves only session-continuity metadata. It does not create live provider
 proof, natural transcript proof, GitHub truth, or release readiness by itself.
+Live GOD runtimes can record that heartbeat through the guarded CLI path:
+
+```bash
+uv run xmuse-god-session-heartbeat \
+  --god-session-id <god-session-id> \
+  --conversation-id <conversation-id> \
+  --participant-id <participant-id> \
+  --status active \
+  --registry xmuse/god_sessions.json \
+  --output xmuse/work/release_readiness/god-session-heartbeat.json
+```
+
+The conversation and participant flags are guards. A mismatch writes a blocked
+`xmuse.god_session_heartbeat.v1` envelope and does not update the session.
+Operators should treat this as a runtime self-report/control action; it is not
+a substitute for real provider soak, natural transcript, or live release gates.
 
 Export that selected-GOD runtime continuity artifact from durable local stores
 before converting the transcript gate:
