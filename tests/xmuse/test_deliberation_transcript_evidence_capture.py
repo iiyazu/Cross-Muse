@@ -54,6 +54,22 @@ def test_capture_deliberation_transcript_evidence_exports_replay_ready_artifact(
         "Natural GOD deliberation transcript captured real provider proof from "
         "2 GOD participants."
     )
+    assert artifact["deliberation_transcript"] == {
+        "authority": "operator_transcript_v1",
+        "conversation_id": "conv-prod-1",
+        "message_count": 2,
+        "distinct_god_count": 2,
+        "god_ids": ["architect-god", "review-god"],
+        "speech_act_counts": {"propose": 1, "vote": 1},
+        "natural_deliberation": True,
+        "real_provider_proof": True,
+        "runtime_required": True,
+        "runtime_artifact_attached": True,
+        "runtime_peer_god_ready_count": 2,
+        "runtime_blocked_count": 0,
+        "missing_provider_session_god_ids": [],
+        "blocker_count": 0,
+    }
 
     replay_bundle = capture_overnight_replay_bundle(
         run_id="overnight-transcript",
@@ -67,6 +83,9 @@ def test_capture_deliberation_transcript_evidence_exports_replay_ready_artifact(
     assert sections["deliberation_transcript"]["source_authority"] == (
         "operator_transcript_v1"
     )
+    assert sections["deliberation_transcript"]["details"] == {
+        "deliberation_transcript": artifact["deliberation_transcript"],
+    }
 
 
 def test_capture_deliberation_transcript_evidence_blocks_without_selected_runtime(

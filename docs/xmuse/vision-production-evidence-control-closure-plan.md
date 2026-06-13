@@ -698,7 +698,13 @@ Current implementation status:
   continuity remains blocked/manual-gap evidence. The existing natural
   deliberation gate rules also block deterministic replay, single-GOD
   transcripts, missing provider session metadata, bounded selected runtime, and
-  unresolved blockers.
+  unresolved blockers. The generated replay evidence now includes structured
+  `deliberation_transcript` details for message/GOD counts, speech-act counts,
+  natural/real-provider flags, selected-runtime artifact presence, peer-GOD
+  readiness, missing provider-session GOD ids, and blocker count. The proof
+  cockpit may render those details as operator context, but they cannot replace
+  selected-GOD runtime continuity or satisfy the natural release gate by
+  themselves.
 - The same release pack command can separately accept
   `--natural-deliberation-transcript` and
   `--natural-deliberation-god-runtime`, convert them through

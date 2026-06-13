@@ -938,6 +938,63 @@ def test_tui_vision_read_model_projects_memory_governance_details() -> None:
     }
 
 
+def test_tui_vision_read_model_projects_deliberation_transcript_details() -> None:
+    model = build_tui_vision_read_model(
+        replay_bundle={
+            "schema_version": "xmuse.overnight_replay_bundle.v1",
+            "decision": "blocked",
+            "authority": "replay_index_only",
+            "sections": [
+                {
+                    "section_id": "deliberation_transcript",
+                    "status": "manual_gap",
+                    "proof_level": "manual_gap",
+                    "source_authority": "operator_transcript_v1",
+                    "source_refs": ["conversation:conv-prod-1"],
+                    "artifacts": ["artifact://deliberation-transcript.json"],
+                    "details": {
+                        "deliberation_transcript": {
+                            "authority": "operator_transcript_v1",
+                            "conversation_id": "conv-prod-1",
+                            "message_count": 2,
+                            "distinct_god_count": 2,
+                            "god_ids": ["architect-god", "review-god"],
+                            "speech_act_counts": {"challenge": 1, "propose": 1},
+                            "natural_deliberation": True,
+                            "real_provider_proof": True,
+                            "runtime_required": True,
+                            "runtime_artifact_attached": False,
+                            "runtime_peer_god_ready_count": 0,
+                            "runtime_blocked_count": 2,
+                            "missing_provider_session_god_ids": ["review-god"],
+                            "blocker_count": 1,
+                        }
+                    },
+                }
+            ],
+            "blockers": [],
+        },
+    )
+
+    cockpit = model["proof_cockpit"]
+    assert cockpit["deliberation_transcript"] == {
+        "authority": "operator_transcript_v1",
+        "conversation_id": "conv-prod-1",
+        "message_count": 2,
+        "distinct_god_count": 2,
+        "god_ids": ["architect-god", "review-god"],
+        "speech_act_counts": {"challenge": 1, "propose": 1},
+        "natural_deliberation": True,
+        "real_provider_proof": True,
+        "runtime_required": True,
+        "runtime_artifact_attached": False,
+        "runtime_peer_god_ready_count": 0,
+        "runtime_blocked_count": 2,
+        "missing_provider_session_god_ids": ["review-god"],
+        "blocker_count": 1,
+    }
+
+
 def test_tui_vision_read_model_projects_supervisor_goal_stage_results() -> None:
     model = build_tui_vision_read_model(
         overnight_supervisor={

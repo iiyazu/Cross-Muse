@@ -651,6 +651,52 @@ def test_proof_cockpit_renders_memory_governance_details() -> None:
     assert "reason=shared promotion requires explicit review" in rendered
 
 
+def test_proof_cockpit_renders_deliberation_transcript_details() -> None:
+    panel = render_proof_cockpit(
+        {
+            "proof_cockpit": {
+                "proof_level": "contract_proof",
+                "fact_state": "blocked",
+                "deliberation_transcript": {
+                    "authority": "operator_transcript_v1",
+                    "conversation_id": "conv-prod-1",
+                    "message_count": 3,
+                    "distinct_god_count": 2,
+                    "god_ids": ["architect-god", "review-god"],
+                    "speech_act_counts": {
+                        "challenge": 1,
+                        "evidence": 1,
+                        "propose": 1,
+                    },
+                    "natural_deliberation": True,
+                    "real_provider_proof": True,
+                    "runtime_required": True,
+                    "runtime_artifact_attached": False,
+                    "runtime_peer_god_ready_count": 0,
+                    "runtime_blocked_count": 2,
+                    "missing_provider_session_god_ids": ["review-god"],
+                    "blocker_count": 1,
+                },
+                "blockers": [],
+                "manual_gap_reason": None,
+            }
+        }
+    )
+
+    rendered = panel.renderable.plain
+    assert (
+        "Deliberation transcript: conv-prod-1 messages=3; gods=2; "
+        "natural=yes; real_provider=yes"
+    ) in rendered
+    assert (
+        "runtime_required=yes; runtime_artifact=no; runtime_ready=0; "
+        "runtime_blocked=2"
+    ) in rendered
+    assert "acts=challenge=1; evidence=1; propose=1" in rendered
+    assert "missing_sessions=review-god" in rendered
+    assert "blockers=1" in rendered
+
+
 def test_proof_cockpit_renders_god_runtime_heartbeat_freshness() -> None:
     panel = render_proof_cockpit(
         {

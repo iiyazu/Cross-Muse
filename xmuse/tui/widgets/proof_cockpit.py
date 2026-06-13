@@ -54,6 +54,7 @@ def render_proof_cockpit(vision: dict[str, Any] | None) -> Panel:
         lines.append("Sections:")
         lines.extend(f"  {_section_line(section)}" for section in section_statuses[:6])
     _append_github_truth(lines, cockpit)
+    _append_deliberation_transcript(lines, cockpit)
     _append_memory_governance(lines, cockpit)
     _append_feature_lineage(lines, cockpit)
     stage_results = _dicts(cockpit.get("stage_results"))
@@ -195,6 +196,41 @@ def _append_github_truth(lines: list[str], cockpit: dict[str, Any]) -> None:
     gap_reason = _text(github_truth.get("gap_reason"))
     if gap_reason is not None:
         lines.append(f"  gap={gap_reason}")
+
+
+def _append_deliberation_transcript(
+    lines: list[str],
+    cockpit: dict[str, Any],
+) -> None:
+    transcript = cockpit.get("deliberation_transcript")
+    if not isinstance(transcript, dict):
+        return
+    conversation_id = _text(transcript.get("conversation_id")) or "unknown"
+    lines.append(
+        "Deliberation transcript: "
+        f"{conversation_id} "
+        f"messages={_number(transcript.get('message_count'))}; "
+        f"gods={_number(transcript.get('distinct_god_count'))}; "
+        f"natural={_yes_no(transcript.get('natural_deliberation'))}; "
+        f"real_provider={_yes_no(transcript.get('real_provider_proof'))}"
+    )
+    lines.append(
+        "  "
+        f"runtime_required={_yes_no(transcript.get('runtime_required'))}; "
+        f"runtime_artifact={_yes_no(transcript.get('runtime_artifact_attached'))}; "
+        "runtime_ready="
+        f"{_number(transcript.get('runtime_peer_god_ready_count'))}; "
+        f"runtime_blocked={_number(transcript.get('runtime_blocked_count'))}"
+    )
+    speech_acts = transcript.get("speech_act_counts")
+    if isinstance(speech_acts, dict) and speech_acts:
+        lines.append(f"  acts={_format_mapping(speech_acts)}")
+    missing = _strings(transcript.get("missing_provider_session_god_ids"))
+    if missing:
+        lines.append(f"  missing_sessions={_compact(missing)}")
+    blocker_count = _number(transcript.get("blocker_count"))
+    if blocker_count:
+        lines.append(f"  blockers={blocker_count}")
 
 
 def _append_memory_governance(lines: list[str], cockpit: dict[str, Any]) -> None:

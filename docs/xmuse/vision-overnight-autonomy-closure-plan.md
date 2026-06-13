@@ -560,6 +560,14 @@ Current implementation status:
   reuses the natural deliberation release-gate rules, so deterministic replay,
   single-GOD transcripts, missing provider session metadata, bounded selected
   runtime, or unresolved blockers cannot be upgraded by replay indexing.
+  The generated evidence now also carries structured
+  `deliberation_transcript` details: conversation id, message/GOD counts,
+  GOD ids, speech-act counts, natural/real-provider flags, selected-runtime
+  requirement, runtime artifact presence, peer-GOD-ready count, blocked runtime
+  count, missing provider-session GOD ids, and transcript blocker count. Replay
+  bundles preserve these details and the TUI proof cockpit renders them as
+  read-only operator context; they do not replace the natural release gate or
+  selected-GOD runtime continuity proof.
 - `uv run xmuse-feature-owner-contract-export` exports serialized
   `xmuse.feature_owner_execution_contract.v2` artifacts directly from graph-set
   JSON authority. It does not read `feature_lanes.json`, does not write lane

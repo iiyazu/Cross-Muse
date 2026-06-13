@@ -27,13 +27,14 @@ def capture_deliberation_transcript_evidence(
 ) -> dict[str, object]:
     transcript_path = Path(transcript_artifact)
     transcript, load_error = _load_transcript(transcript_path)
+    god_runtime, god_runtime_load_error = _load_runtime_artifact(god_runtime_artifact)
     gate = build_natural_deliberation_release_gate(
         transcript,
         artifact_path=transcript_path,
         load_error=load_error,
-        god_runtime_continuity=_load_runtime(god_runtime_artifact),
+        god_runtime_continuity=god_runtime,
         god_runtime_path=god_runtime_artifact,
-        god_runtime_load_error=_runtime_load_error(god_runtime_artifact),
+        god_runtime_load_error=god_runtime_load_error,
     )
     evidence = build_deliberation_transcript_evidence(
         run_id=run_id,
@@ -41,6 +42,8 @@ def capture_deliberation_transcript_evidence(
         gate=gate,
         transcript_artifact=transcript_path,
         transcript=transcript,
+        god_runtime_continuity=god_runtime,
+        god_runtime_artifact=god_runtime_artifact,
     )
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -58,6 +61,8 @@ def build_deliberation_transcript_evidence(
     gate: dict[str, Any],
     transcript_artifact: str | Path,
     transcript: dict[str, Any] | None,
+    god_runtime_continuity: dict[str, Any] | None = None,
+    god_runtime_artifact: str | Path | None = None,
 ) -> dict[str, object]:
     gate_status = _text(gate.get("status"))
     proof_level = _proof_level(gate.get("proof_level"))
@@ -78,7 +83,13 @@ def build_deliberation_transcript_evidence(
         next_action=_text(gate.get("next_action")) if status != "ok" else None,
         summary=_text(gate.get("summary")),
     )
-    return envelope.model_dump()
+    evidence = envelope.model_dump()
+    evidence["deliberation_transcript"] = _deliberation_transcript_details(
+        transcript=transcript,
+        god_runtime_continuity=god_runtime_continuity,
+        god_runtime_artifact=god_runtime_artifact,
+    )
+    return evidence
 
 
 def _load_transcript(path: Path) -> tuple[dict[str, Any] | None, str | None]:
@@ -93,18 +104,93 @@ def _load_transcript(path: Path) -> tuple[dict[str, Any] | None, str | None]:
     return payload, None
 
 
-def _load_runtime(path: str | Path | None) -> dict[str, Any] | None:
+def _load_runtime_artifact(
+    path: str | Path | None,
+) -> tuple[dict[str, Any] | None, str | None]:
     if path is None:
-        return None
-    payload, _error = _load_transcript(Path(path))
-    return payload
+        return None, None
+    return _load_transcript(Path(path))
 
 
-def _runtime_load_error(path: str | Path | None) -> str | None:
-    if path is None:
-        return None
-    _payload, error = _load_transcript(Path(path))
-    return error
+def _deliberation_transcript_details(
+    *,
+    transcript: dict[str, Any] | None,
+    god_runtime_continuity: dict[str, Any] | None,
+    god_runtime_artifact: str | Path | None,
+) -> dict[str, object]:
+    messages = _dict_rows(transcript.get("messages")) if transcript is not None else []
+    god_ids = _dedupe(
+        [
+            god_id
+            for god_id in (_text(message.get("god_id")) for message in messages)
+            if god_id is not None
+        ]
+    )
+    runtime_items = (
+        _dict_rows(god_runtime_continuity.get("items"))
+        if god_runtime_continuity is not None
+        else []
+    )
+    return {
+        "authority": DELIBERATION_TRANSCRIPT_AUTHORITY,
+        "conversation_id": _text(transcript.get("conversation_id"))
+        if transcript is not None
+        else None,
+        "message_count": len(messages),
+        "distinct_god_count": len(god_ids),
+        "god_ids": god_ids,
+        "speech_act_counts": _speech_act_counts(messages),
+        "natural_deliberation": (
+            transcript is not None and transcript.get("natural_deliberation") is True
+        ),
+        "real_provider_proof": (
+            transcript is not None
+            and _text(transcript.get("proof_level")) == "real_provider_proof"
+        ),
+        "runtime_required": True,
+        "runtime_artifact_attached": god_runtime_artifact is not None,
+        "runtime_peer_god_ready_count": sum(
+            1 for item in runtime_items if item.get("peer_god_ready") is True
+        ),
+        "runtime_blocked_count": sum(
+            1 for item in runtime_items if item.get("peer_god_ready") is not True
+        ),
+        "missing_provider_session_god_ids": _missing_provider_session_god_ids(
+            messages=messages,
+            god_ids=god_ids,
+        ),
+        "blocker_count": len(_blockers(transcript.get("blockers")))
+        if transcript is not None
+        else 0,
+    }
+
+
+def _speech_act_counts(messages: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for message in messages:
+        speech_act = _text(message.get("speech_act") or message.get("act"))
+        if speech_act is None:
+            continue
+        counts[speech_act] = counts.get(speech_act, 0) + 1
+    return dict(sorted(counts.items()))
+
+
+def _missing_provider_session_god_ids(
+    *,
+    messages: list[dict[str, Any]],
+    god_ids: list[str],
+) -> list[str]:
+    missing: list[str] = []
+    for god_id in god_ids:
+        god_messages = [
+            message for message in messages if _text(message.get("god_id")) == god_id
+        ]
+        if not any(_text(message.get("provider_id")) for message in god_messages):
+            missing.append(god_id)
+            continue
+        if not any(_text(message.get("session_id")) for message in god_messages):
+            missing.append(god_id)
+    return missing
 
 
 def _evidence_status(
@@ -161,6 +247,12 @@ def _string_list(value: object) -> list[str]:
     if not isinstance(value, list):
         return []
     return [item.strip() for item in value if isinstance(item, str) and item.strip()]
+
+
+def _blockers(value: object) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
 
 
 def _text(value: object) -> str | None:

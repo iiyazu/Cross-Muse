@@ -581,6 +581,7 @@ def _build_proof_cockpit(
     recovery_queue: list[dict[str, Any]] = []
     feature_lineage: dict[str, Any] | None = None
     memory_governance: dict[str, Any] | None = None
+    deliberation_transcript: dict[str, Any] | None = None
     github_truth_detail = (
         _github_truth_detail_projection(github_truth)
         if isinstance(github_truth, dict)
@@ -668,6 +669,10 @@ def _build_proof_cockpit(
                 feature_lineage = _feature_lineage_from_replay_section(section)
             if memory_governance is None:
                 memory_governance = _memory_governance_from_replay_section(section)
+            if deliberation_transcript is None:
+                deliberation_transcript = (
+                    _deliberation_transcript_from_replay_section(section)
+                )
             if github_truth_detail is None:
                 github_truth_detail = _github_truth_from_replay_section(section)
             section_statuses.append(
@@ -788,6 +793,11 @@ def _build_proof_cockpit(
         **(
             {"github_truth": github_truth_detail}
             if github_truth_detail is not None
+            else {}
+        ),
+        **(
+            {"deliberation_transcript": deliberation_transcript}
+            if deliberation_transcript is not None
             else {}
         ),
     }
@@ -912,6 +922,47 @@ def _memory_governance_from_replay_section(
     if not isinstance(memory_governance, dict):
         return None
     return _memory_governance_projection(memory_governance)
+
+
+def _deliberation_transcript_from_replay_section(
+    section: dict[str, Any],
+) -> dict[str, Any] | None:
+    if _text(section.get("section_id")) != "deliberation_transcript":
+        return None
+    details = section.get("details")
+    if not isinstance(details, dict):
+        return None
+    transcript = details.get("deliberation_transcript")
+    if not isinstance(transcript, dict):
+        return None
+    return _deliberation_transcript_projection(transcript)
+
+
+def _deliberation_transcript_projection(
+    transcript: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "authority": _text(transcript.get("authority")) or "operator_transcript_v1",
+        "conversation_id": _text(transcript.get("conversation_id")),
+        "message_count": _int(transcript.get("message_count")),
+        "distinct_god_count": _int(transcript.get("distinct_god_count")),
+        "god_ids": _list_refs(transcript.get("god_ids")),
+        "speech_act_counts": _count_mapping(transcript.get("speech_act_counts")),
+        "natural_deliberation": transcript.get("natural_deliberation") is True,
+        "real_provider_proof": transcript.get("real_provider_proof") is True,
+        "runtime_required": transcript.get("runtime_required") is True,
+        "runtime_artifact_attached": (
+            transcript.get("runtime_artifact_attached") is True
+        ),
+        "runtime_peer_god_ready_count": _int(
+            transcript.get("runtime_peer_god_ready_count")
+        ),
+        "runtime_blocked_count": _int(transcript.get("runtime_blocked_count")),
+        "missing_provider_session_god_ids": _list_refs(
+            transcript.get("missing_provider_session_god_ids")
+        ),
+        "blocker_count": _int(transcript.get("blocker_count")),
+    }
 
 
 def _github_truth_from_replay_section(
@@ -1219,6 +1270,18 @@ def _proof_summary(value: Any) -> dict[str, int]:
         if normalized_count:
             summary[proof_level] = summary.get(proof_level, 0) + normalized_count
     return dict(sorted(summary.items()))
+
+
+def _count_mapping(value: Any) -> dict[str, int]:
+    if not isinstance(value, dict):
+        return {}
+    counts: dict[str, int] = {}
+    for key, count in value.items():
+        name = _text(key)
+        normalized_count = _int(count)
+        if name is not None and normalized_count:
+            counts[name] = counts.get(name, 0) + normalized_count
+    return dict(sorted(counts.items()))
 
 
 def _int(value: Any) -> int:
