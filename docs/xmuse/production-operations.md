@@ -358,9 +358,10 @@ uv run xmuse-memoryos-live-trace-capture \
 The command uses the REST-only MemoryOS Lite adapter. It creates or reuses the
 durable namespace/session binding, ingests source-attributed evidence, builds
 context, fetches `/sessions/{session_id}/trace`, and writes an
-`xmuse.memoryos_lite_trace.v1` artifact. If trace fetch is unavailable, it
-writes a blocked `manual_gap` artifact rather than relabeling a partial run as
-`live_service_proof`.
+`xmuse.memoryos_lite_trace.v1` artifact. If the live environment is not
+configured, or trace fetch is unavailable after an opt-in run, it still writes a
+blocked `manual_gap` artifact rather than leaving replay evidence unattached or
+relabeling a partial run as `live_service_proof`.
 
 After that live artifact exists, convert it to a release gate artifact:
 

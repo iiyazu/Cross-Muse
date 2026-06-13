@@ -14,6 +14,7 @@ from xmuse_core.integrations.memoryos_lite_interop import (
 from xmuse_core.integrations.memoryos_namespace import task_namespace
 from xmuse_core.platform.memoryos_live_trace_capture import (
     capture_memoryos_lite_live_trace_artifact,
+    capture_memoryos_lite_live_trace_manual_gap_artifact,
 )
 from xmuse_core.runtime.paths import default_xmuse_root
 
@@ -52,23 +53,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    env = os.environ
-    if not live_memoryos_lite_enabled(env):
-        print(
-            json.dumps(
-                {
-                    "status": "blocked",
-                    "reason": (
-                        "set XMUSE_LIVE_MEMORYOS_LITE=1 and "
-                        "XMUSE_MEMORYOS_LITE_URL to run live capture"
-                    ),
-                    "output": str(args.output),
-                },
-                sort_keys=True,
-            )
-        )
-        return 2
-
     namespace = task_namespace(
         repo_id=args.repo_id,
         workspace_id=args.workspace_id,
@@ -79,6 +63,26 @@ def main(argv: Sequence[str] | None = None) -> int:
         feature_id=args.feature_id,
         lane_id=args.lane_id,
     )
+    env = os.environ
+    if not live_memoryos_lite_enabled(env):
+        artifact = capture_memoryos_lite_live_trace_manual_gap_artifact(
+            namespace=namespace,
+            output_path=args.output,
+            source_refs=args.source_ref,
+        )
+        print(
+            json.dumps(
+                {
+                    "status": "blocked",
+                    "proof_level": artifact["proof_level"],
+                    "reason": "memoryos_lite_live_environment_missing",
+                    "output": str(args.output),
+                },
+                sort_keys=True,
+            )
+        )
+        return 2
+
     artifact = asyncio.run(
         capture_memoryos_lite_live_trace_artifact(
             base_url=env[MEMORYOS_LITE_BASE_URL_ENV],

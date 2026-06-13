@@ -434,8 +434,10 @@ Tasks:
 - Build or extend a replay bundle that links deliberation transcript, frozen
   blueprint, feature/lane lineage, MemoryOS trace, GitHub truth, long-run
   heartbeat summary, and release readiness artifacts.
-- If live MemoryOS is configured, attempt `xmuse-memoryos-live-trace-capture`;
-  otherwise produce a precise `manual_gap`.
+- Attempt `xmuse-memoryos-live-trace-capture` for the current namespace. When
+  live MemoryOS is unconfigured, the command still writes a blocked
+  `xmuse.memoryos_lite_trace.v1` `manual_gap` artifact so replay can cite the
+  exact missing prerequisite instead of omitting the section input.
 
 Acceptance:
 

@@ -112,6 +112,30 @@ async def capture_memoryos_lite_live_trace_artifact(
     return artifact
 
 
+def capture_memoryos_lite_live_trace_manual_gap_artifact(
+    *,
+    namespace: MemoryOSNamespace,
+    output_path: str | Path,
+    reason: str = "memoryos_lite_live_environment_missing",
+    source_refs: Sequence[str] = (),
+) -> dict[str, Any]:
+    refs = _dedupe([str(ref) for ref in source_refs if str(ref).strip()])
+    artifact: dict[str, Any] = {
+        "schema_version": "xmuse.memoryos_lite_trace.v1",
+        "proof_level": "manual_gap",
+        "fact_state": "blocked",
+        "namespace_uri": namespace.uri,
+        "session_id": "",
+        "trace_events": [],
+        "source_refs": refs,
+        "estimated_tokens": None,
+        "blockers": [_blocker(reason, source_refs=refs)],
+        "captured_at": _utc_now(),
+    }
+    _write_json(Path(output_path), artifact)
+    return artifact
+
+
 def _blocker(reason: str, *, source_refs: Sequence[str]) -> dict[str, object]:
     return {
         "reason": reason,
@@ -145,4 +169,7 @@ def _utc_now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
-__all__ = ["capture_memoryos_lite_live_trace_artifact"]
+__all__ = [
+    "capture_memoryos_lite_live_trace_artifact",
+    "capture_memoryos_lite_live_trace_manual_gap_artifact",
+]

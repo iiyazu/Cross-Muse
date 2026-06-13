@@ -371,7 +371,7 @@ Current implementation status:
   MemoryOS Lite REST capture path: namespace/session binding, ingest,
   build-context, trace fetch, and `xmuse.memoryos_lite_trace.v1` artifact
   writing. It does not import `memoryos_lite` and it writes `manual_gap` when
-  trace evidence is unavailable.
+  the live environment is unconfigured or trace evidence is unavailable.
 - It emits `manual_gap` proof for uncaptured gates. When
   `XMUSE_GITHUB_TRUTH_REPO` and `XMUSE_GITHUB_TRUTH_PULL_REQUEST` are set, it
   runs the opt-in read-only GitHub server truth collector and can write a
@@ -573,8 +573,9 @@ Current implementation status:
   blockers.
 - `uv run xmuse-memoryos-live-trace-capture` is the production path for
   producing that trace artifact from a configured MemoryOS Lite service. It
-  performs create/ingest/build-context/trace through REST and keeps failed
-  trace capture as blocked `manual_gap`, not fake live evidence.
+  performs create/ingest/build-context/trace through REST when configured and
+  keeps unconfigured or failed trace capture as blocked `manual_gap`, not fake
+  live evidence.
 - `uv run xmuse-release-readiness-capture` reads JSON release gate artifacts
   from an artifact directory, writes a redacted report, and evaluates the gates
   with the same proof-level rules as `evaluate_release_readiness`.
