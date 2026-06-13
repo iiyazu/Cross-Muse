@@ -1024,6 +1024,11 @@ TUI action result also renders compact candidate readiness lines such as:
 natural[<conversation-id>]=blocked transcript=ready runtime=blocked peer_gods=0 blockers=selected_god_runtime_missing
 ```
 
+For non-interactive handoffs, `uv run xmuse-release-evidence-candidates` writes
+the same read-only `xmuse.release_evidence_candidates.v1` report to JSON. It
+accepts explicit MemoryOS task hints and GitHub target/check hints, reads the
+same durable stores, and does not create release artifacts or mutate state.
+
 The action result also shows provider, MemoryOS, and GitHub candidate
 readiness; these lines are read-model feedback, not durable state writes.
 Natural candidate

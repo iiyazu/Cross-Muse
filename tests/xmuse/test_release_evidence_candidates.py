@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import tomllib
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -248,6 +250,94 @@ def test_release_evidence_candidates_report_current_gaps_without_secrets(
         "for github_server_truth to capture read-only GitHub server truth."
     )
     assert "token=secret-token" not in str(report)
+
+
+def test_release_evidence_candidates_cli_writes_operator_candidate_report(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from xmuse.release_evidence_candidates import main
+
+    conversation = ChatStore(tmp_path / "chat.db").create_conversation("CLI candidates")
+    output = tmp_path / "candidates.json"
+    monkeypatch.setenv("XMUSE_LIVE_MEMORYOS_LITE", "1")
+    monkeypatch.setenv("XMUSE_MEMORYOS_LITE_URL", "http://memoryos-lite.example")
+
+    exit_code = main(
+        [
+            "--xmuse-root",
+            str(tmp_path),
+            "--conversation-id",
+            conversation.id,
+            "--repo-id",
+            "iiyazu/Cross-Muse",
+            "--workspace-id",
+            "xmuse",
+            "--god-id",
+            "review",
+            "--thread-id",
+            "thread-1",
+            "--blueprint-id",
+            "bp-1",
+            "--feature-id",
+            "feature-1",
+            "--lane-id",
+            "lane-1",
+            "--content",
+            "live evidence",
+            "--query",
+            "production evidence",
+            "--github-repo",
+            "iiyazu/Cross-Muse",
+            "--github-pull-request",
+            "43",
+            "--github-base-branch",
+            "main",
+            "--github-expected-head-sha",
+            "1c1b3eb5fb1c970c12f4f5dc0607b656ea2b6045",
+            "--github-required-check",
+            "quality-gates",
+            "--github-required-check",
+            "contract-smoke-gates",
+            "--output",
+            str(output),
+        ]
+    )
+
+    assert exit_code == 0
+    report = json.loads(output.read_text(encoding="utf-8"))
+    assert report["schema_version"] == "xmuse.release_evidence_candidates.v1"
+    assert report["conversation_id"] == conversation.id
+    assert report["live_memoryos"]["configured"] is True
+    assert report["live_memoryos"]["suggested_operator_action"]["payload_hints"] == {
+        "conversation_id": conversation.id,
+        "repo_id": "iiyazu/Cross-Muse",
+        "workspace_id": "xmuse",
+        "god_id": "review",
+        "thread_id": "thread-1",
+        "blueprint_id": "bp-1",
+        "feature_id": "feature-1",
+        "lane_id": "lane-1",
+    }
+    assert report["github_server_truth"]["export_ready"] is True
+    assert report["github_server_truth"]["suggested_operator_action"][
+        "payload_hints"
+    ] == {
+        "repo": "iiyazu/Cross-Muse",
+        "pull_request_number": 43,
+        "expected_head_sha": "1c1b3eb5fb1c970c12f4f5dc0607b656ea2b6045",
+        "base_branch": "main",
+        "required_checks": ["quality-gates", "contract-smoke-gates"],
+    }
+
+
+def test_release_evidence_candidates_cli_script_is_registered() -> None:
+    pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+
+    assert (
+        pyproject["project"]["scripts"]["xmuse-release-evidence-candidates"]
+        == "xmuse.release_evidence_candidates:main"
+    )
 
 
 def _seed_selected_god_runtime(tmp_path: Path, conversation_id: str) -> None:

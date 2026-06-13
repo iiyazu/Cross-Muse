@@ -798,6 +798,10 @@ Tasks:
   target completeness and optional expected-head/check hints are only
   prerequisites for `attempt_release_evidence github`, not GitHub server truth,
   merge truth, or `pr_merged`.
+- `uv run xmuse-release-evidence-candidates` exposes the same read-only
+  candidate report for non-interactive handoff/automation. It writes
+  `xmuse.release_evidence_candidates.v1`, reads durable stores and redacted env
+  presence, and does not create release artifacts or mutate authority.
 - When the same natural transcript should participate in release readiness,
   also pass `--natural-deliberation-transcript TRANSCRIPT` plus
   `--natural-deliberation-god-runtime RUNTIME`. This writes

@@ -539,6 +539,10 @@ Current implementation status:
   for repo, PR number, optional expected head, base branch, and required checks.
   This makes the next action visible without calling GitHub, writing a
   server-truth artifact, or treating candidate readiness as `pr_merged`.
+- `uv run xmuse-release-evidence-candidates` writes the same read-only
+  `xmuse.release_evidence_candidates.v1` candidate report for non-interactive
+  runs. It preserves the same proof-boundary fields and does not create release
+  artifacts or mutate durable authority.
 - TUI `/release attempt [natural|provider|memoryos|github|all]` now routes through
   `attempt_release_evidence` with `release_gate`. The action writes a
   `release-evidence-attempt.json` attempt report under
