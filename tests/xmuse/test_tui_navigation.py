@@ -543,6 +543,134 @@ async def test_chat_screen_room_commands_call_god_room_contracts(
     }
 
 
+async def test_chat_screen_room_lane_dag_and_recovery_commands_call_contracts(
+    app: XmuseTUI,
+) -> None:
+    app.adapter.list_group_conversations = lambda: [
+        {"id": "conv-user", "title": "User group", "created_at": "2026-06-01T00:00:00Z"},
+    ]
+    calls = []
+
+    def _build_god_room_lane_dag(conv_id: str, payload: dict):
+        calls.append(("lane-dag", conv_id, payload))
+        return {
+            "source_authority": "god_room_blueprint_freeze",
+            "lane_dag": {"graph_id": payload["graph_id"], "lane_contracts": [payload["lanes"][0]]},
+            "artifacts": {"lane_dag": "lane_graphs/graph-room.lane-dag.json"},
+        }
+
+    def _evaluate_god_room_lane_recovery(conv_id: str, payload: dict):
+        calls.append(("recovery", conv_id, payload))
+        return {
+            "source_authority": "lane_dag_artifact",
+            "decision": {
+                "lane_id": payload["lane_id"],
+                "decision": "refactor_required",
+                "retry_allowed": False,
+            },
+            "artifacts": {"recovery": "lane_graphs/graph-room.lane-room.recovery.json"},
+        }
+
+    app.adapter.build_god_room_lane_dag = _build_god_room_lane_dag
+    app.adapter.evaluate_god_room_lane_recovery = _evaluate_god_room_lane_recovery
+
+    async with app.run_test() as pilot:
+        appended = []
+        log = app.screen.query_one("#message-log")
+        log.append_message = lambda **kwargs: appended.append(kwargs)
+        input_widget = app.screen.query_one("#message-input")
+        for command in (
+            (
+                "/room lane-dag resolution_id=res-freeze graph_id=graph-room "
+                "feature_id=feature-room feature_title='Room laneDAG' "
+                "feature_goal='Build laneDAG from TUI' "
+                "feature_acceptance='LaneDAG artifact exists' "
+                "blueprint_ref=blueprint:bp-room:2 lane_id=lane-room "
+                "lane_title='Build room lane' prompt='Implement room laneDAG' "
+                "lane_acceptance='Runtime contract exists' owner=execute-god "
+                "input=blueprint:bp-room:2 output=artifact://lane-room/lane-dag.json "
+                "check=focused-pytest allowed_file=xmuse/tui/slash_commands.py "
+                "rollback='do not write projections' review_profile=runtime-review "
+                "source_ref=tui-command:lane-dag"
+            ),
+            (
+                "/room recovery graph_id=graph-room lane_id=lane-room attempt=2 "
+                "failure_class=repeat_contract_failure reason='same boundary failed twice' "
+                "source_ref=pytest:lane-room runtime_seconds=120"
+            ),
+        ):
+            input_widget.value = command
+            input_widget.post_message(input_widget.Submitted(input_widget, input_widget.value))
+            await pilot.pause()
+
+    assert calls == [
+        (
+            "lane-dag",
+            "conv-user",
+            {
+                "resolution_id": "res-freeze",
+                "graph_id": "graph-room",
+                "features": [
+                    {
+                        "feature_id": "feature-room",
+                        "title": "Room laneDAG",
+                        "goal": "Build laneDAG from TUI",
+                        "acceptance_criteria": ["LaneDAG artifact exists"],
+                        "blueprint_refs": ["blueprint:bp-room:2"],
+                    }
+                ],
+                "lanes": [
+                    {
+                        "lane_id": "lane-room",
+                        "feature_id": "feature-room",
+                        "title": "Build room lane",
+                        "prompt": "Implement room laneDAG",
+                        "acceptance_criteria": ["Runtime contract exists"],
+                        "blueprint_refs": ["blueprint:bp-room:2"],
+                        "owner": "execute-god",
+                        "inputs": ["blueprint:bp-room:2"],
+                        "outputs": ["artifact://lane-room/lane-dag.json"],
+                        "required_checks": ["focused-pytest"],
+                        "allowed_files": ["xmuse/tui/slash_commands.py"],
+                        "rollback_constraints": ["do not write projections"],
+                        "review_profile": "runtime-review",
+                    }
+                ],
+                "source_refs": ["tui-command:lane-dag"],
+            },
+        ),
+        (
+            "recovery",
+            "conv-user",
+            {
+                "graph_id": "graph-room",
+                "lane_id": "lane-room",
+                "runtime_seconds": 120,
+                "failures": [
+                    {
+                        "lane_id": "lane-room",
+                        "attempt": 2,
+                        "failure_class": "repeat_contract_failure",
+                        "reason": "same boundary failed twice",
+                        "source_refs": ["pytest:lane-room"],
+                    }
+                ],
+            },
+        ),
+    ]
+    assert "GOD room action: recovery" in appended[-1]["content"]
+    assert "authority=lane_dag_artifact" in appended[-1]["content"]
+    assert "decision=refactor_required" in appended[-1]["content"]
+    events = app.adapter.list_tui_command_events("conv-user")
+    assert [event["command"] for event in events] == [
+        "/room lane-dag",
+        "/room recovery",
+    ]
+    assert {event["read_surface_authority"] for event in events} == {
+        "god_room_chat_api"
+    }
+
+
 async def test_chat_screen_god_register_runs_operator_control_action(
     app: XmuseTUI,
 ) -> None:

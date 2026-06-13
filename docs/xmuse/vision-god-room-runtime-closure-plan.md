@@ -578,9 +578,12 @@ Current implementation status:
   endpoints with operator auth headers and do not fall back to local store,
   lane queue, or projection writes after API rejection.
 - `xmuse/tui/slash_commands.py` now exposes `/room ensure`, `/room event`,
-  `/room freeze`, and `/room memoryos-plan` as TUI operator commands backed by
-  those Chat API contracts. Command events are recorded with
-  `read_surface_authority = god_room_chat_api` for operator replay.
+  `/room freeze`, `/room lane-dag`, `/room recovery`, and
+  `/room memoryos-plan` as TUI operator commands backed by those Chat API
+  contracts. `/room lane-dag` builds an explicit one-lane feature/lane contract
+  request from operator key/value input; `/room recovery` imports failure
+  evidence for lane recovery/refactor decisions. Command events are recorded
+  with `read_surface_authority = god_room_chat_api` for operator replay.
 - This remains a projection/control-surface slice. TUI code does not write
   lane status, MemoryOS truth, `feature_lanes.json`, GOD room event stores,
   laneDAG artifacts, or runner state directly.

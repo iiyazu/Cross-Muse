@@ -583,6 +583,16 @@ class SlashCommandRouter:
                 blueprint_id=str(payload["blueprint_id"]),
                 revision=int(payload["revision"]),
             )
+        if subcommand in {"lane-dag", "lanedag"}:
+            runner = getattr(context.app.adapter, "build_god_room_lane_dag", None)
+            if not callable(runner):
+                raise ValueError("GOD room contract actions unavailable for this adapter.")
+            return "lane-dag", runner(conv_id, _room_lane_dag_payload(args))
+        if subcommand in {"recovery", "lane-recovery"}:
+            runner = getattr(context.app.adapter, "evaluate_god_room_lane_recovery", None)
+            if not callable(runner):
+                raise ValueError("GOD room contract actions unavailable for this adapter.")
+            return "recovery", runner(conv_id, _room_recovery_payload(args))
         if subcommand in {"memoryos", "memory", "memoryos-plan"}:
             runner = getattr(context.app.adapter, "build_god_room_memoryos_plan", None)
             if not callable(runner):
@@ -725,7 +735,7 @@ class SlashCommandRouter:
 
 def _room_usage() -> str:
     return (
-        "Usage: /room <ensure|snapshot|event|freeze|memoryos-plan> "
+        "Usage: /room <ensure|snapshot|event|freeze|lane-dag|recovery|memoryos-plan> "
         "[key=value...]"
     )
 
@@ -792,6 +802,154 @@ def _room_freeze_payload(args: list[str]) -> dict[str, Any]:
     }
 
 
+def _room_lane_dag_payload(args: list[str]) -> dict[str, Any]:
+    raw = _key_value_args(args, usage=_room_lane_dag_usage())
+    blueprint_refs = _comma_values(raw.get("blueprint_ref") or raw.get("blueprint_refs") or "")
+    source_refs = _comma_values(raw.get("source_ref") or raw.get("source_refs") or "")
+    payload: dict[str, Any] = {
+        "resolution_id": raw.get("resolution_id") or raw.get("resolution") or "",
+        "graph_id": raw.get("graph_id") or raw.get("graph") or "",
+        "features": [
+            {
+                "feature_id": raw.get("feature_id") or "",
+                "title": raw.get("feature_title") or raw.get("title") or "",
+                "goal": raw.get("feature_goal") or raw.get("goal") or "",
+                "acceptance_criteria": _comma_values(
+                    raw.get("feature_acceptance")
+                    or raw.get("feature_acceptance_criteria")
+                    or ""
+                ),
+                "blueprint_refs": blueprint_refs,
+            }
+        ],
+        "lanes": [
+            {
+                "lane_id": raw.get("lane_id") or "",
+                "feature_id": raw.get("feature_id") or "",
+                "title": raw.get("lane_title") or "",
+                "prompt": raw.get("prompt") or "",
+                "acceptance_criteria": _comma_values(
+                    raw.get("lane_acceptance")
+                    or raw.get("lane_acceptance_criteria")
+                    or ""
+                ),
+                "blueprint_refs": blueprint_refs,
+                "owner": raw.get("owner") or "codex",
+                "inputs": _comma_values(raw.get("input") or raw.get("inputs") or ""),
+                "outputs": _comma_values(raw.get("output") or raw.get("outputs") or ""),
+                "required_checks": _comma_values(
+                    raw.get("check") or raw.get("required_checks") or ""
+                ),
+                "allowed_files": _comma_values(
+                    raw.get("allowed_file") or raw.get("allowed_files") or ""
+                ),
+                "rollback_constraints": _comma_values(
+                    raw.get("rollback") or raw.get("rollback_constraints") or ""
+                ),
+                "review_profile": raw.get("review_profile") or "standard",
+            }
+        ],
+        "source_refs": source_refs,
+    }
+    if raw.get("graph_version"):
+        payload["graph_version"] = int(raw["graph_version"])
+    missing = _missing_room_lane_dag_fields(payload)
+    if missing:
+        raise ValueError(f"{_room_lane_dag_usage()} Missing: {', '.join(missing)}")
+    return payload
+
+
+def _room_lane_dag_usage() -> str:
+    return (
+        "Usage: /room lane-dag resolution_id=<id> graph_id=<id> "
+        "feature_id=<id> feature_title=<title> feature_goal=<goal> "
+        "feature_acceptance=<items> blueprint_ref=<ref> lane_id=<id> "
+        "lane_title=<title> prompt=<prompt> lane_acceptance=<items> "
+        "owner=<god> output=<artifact> check=<command> "
+        "allowed_file=<path> rollback=<constraint> source_ref=<ref>"
+    )
+
+
+def _missing_room_lane_dag_fields(payload: dict[str, Any]) -> list[str]:
+    missing: list[str] = []
+    for key in ("resolution_id", "graph_id", "source_refs"):
+        if not payload.get(key):
+            missing.append(key)
+    feature = payload["features"][0]
+    for key in ("feature_id", "title", "goal", "acceptance_criteria", "blueprint_refs"):
+        if not feature.get(key):
+            missing.append(f"feature.{key}")
+    lane = payload["lanes"][0]
+    for key in (
+        "lane_id",
+        "feature_id",
+        "title",
+        "prompt",
+        "acceptance_criteria",
+        "blueprint_refs",
+        "owner",
+        "outputs",
+        "required_checks",
+        "allowed_files",
+        "rollback_constraints",
+        "review_profile",
+    ):
+        if not lane.get(key):
+            missing.append(f"lane.{key}")
+    return missing
+
+
+def _room_recovery_payload(args: list[str]) -> dict[str, Any]:
+    raw = _key_value_args(args, usage=_room_recovery_usage())
+    graph_id = raw.get("graph_id") or raw.get("graph") or ""
+    lane_id = raw.get("lane_id") or raw.get("lane") or ""
+    payload: dict[str, Any] = {
+        "graph_id": graph_id,
+        "lane_id": lane_id,
+        "failures": [],
+    }
+    if raw.get("runtime_seconds"):
+        payload["runtime_seconds"] = int(raw["runtime_seconds"])
+    failure_class = raw.get("failure_class") or raw.get("class")
+    reason = raw.get("reason")
+    source_refs = _comma_values(raw.get("source_ref") or raw.get("source_refs") or "")
+    if failure_class or reason or source_refs:
+        failure = {
+            "lane_id": lane_id,
+            "attempt": int(raw.get("attempt", "1")),
+            "failure_class": failure_class or "",
+            "reason": reason or "",
+            "source_refs": source_refs,
+        }
+        if raw.get("occurred_at_utc") or raw.get("occurred"):
+            failure["occurred_at_utc"] = raw.get("occurred_at_utc") or raw.get("occurred")
+        payload["failures"] = [failure]
+    missing = _missing_room_recovery_fields(payload)
+    if missing:
+        raise ValueError(f"{_room_recovery_usage()} Missing: {', '.join(missing)}")
+    return payload
+
+
+def _room_recovery_usage() -> str:
+    return (
+        "Usage: /room recovery graph_id=<id> lane_id=<id> "
+        "[attempt=<n> failure_class=<class> reason=<reason> source_ref=<ref>] "
+        "[runtime_seconds=<n>]"
+    )
+
+
+def _missing_room_recovery_fields(payload: dict[str, Any]) -> list[str]:
+    missing = [key for key in ("graph_id", "lane_id") if not payload.get(key)]
+    failures = payload.get("failures")
+    if isinstance(failures, list) and failures:
+        failure = failures[0]
+        if isinstance(failure, dict):
+            for key in ("attempt", "failure_class", "reason", "source_refs"):
+                if not failure.get(key):
+                    missing.append(f"failure.{key}")
+    return missing
+
+
 def _room_memoryos_plan_payload(args: list[str]) -> dict[str, Any]:
     raw = _key_value_args(
         args,
@@ -844,6 +1002,22 @@ def _god_room_action_block(action: str, result: dict) -> str:
     blueprint = result.get("blueprint")
     if isinstance(blueprint, dict) and blueprint.get("blueprint_id"):
         lines.append(f"blueprint={blueprint['blueprint_id']}")
+    lane_dag = result.get("lane_dag")
+    if isinstance(lane_dag, dict):
+        graph_id = str(lane_dag.get("graph_id") or lane_dag.get("id") or "").strip()
+        lane_graph = lane_dag.get("lane_graph")
+        if not graph_id and isinstance(lane_graph, dict):
+            graph_id = str(lane_graph.get("id") or "").strip()
+        if graph_id:
+            lines.append(f"graph={graph_id}")
+        contracts = lane_dag.get("lane_contracts")
+        if isinstance(contracts, list):
+            lines.append(f"lane_contracts={len(contracts)}")
+    decision = result.get("decision")
+    if isinstance(decision, dict) and decision.get("decision"):
+        lines.append(f"decision={decision['decision']}")
+        if decision.get("retry_allowed") is not None:
+            lines.append(f"retry_allowed={decision['retry_allowed']}")
     memoryos_plan = result.get("memoryos_plan")
     if isinstance(memoryos_plan, dict):
         live_trace = memoryos_plan.get("live_trace")
@@ -1970,6 +2144,8 @@ def _help_text() -> str:
             "/room event participant_id=<id> god_id=<id> "
             "type=<event> content=<text> source_ref=<ref>",
             "/room freeze blueprint_id=<id> [revision=<n>]",
+            "/room lane-dag resolution_id=<id> graph_id=<id> feature_id=<id> lane_id=<id> ...",
+            "/room recovery graph_id=<id> lane_id=<id> [failure fields...]",
             "/room memoryos-plan graph_id=<id> repo_id=<repo> workspace_id=<id>",
             "/freeze target_ref=<ref> blueprint_id=<id> goal=<goal> "
             "scope=<items> acceptance=<items>",
