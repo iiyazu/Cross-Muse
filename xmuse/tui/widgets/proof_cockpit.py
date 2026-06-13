@@ -54,6 +54,12 @@ def render_proof_cockpit(vision: dict[str, Any] | None) -> Panel:
     if section_statuses:
         lines.append("Sections:")
         lines.extend(f"  {_section_line(section)}" for section in section_statuses[:6])
+    release_gate_statuses = _dicts(cockpit.get("release_gate_statuses"))
+    if release_gate_statuses:
+        lines.append("Release gates:")
+        lines.extend(
+            f"  {_release_gate_line(gate)}" for gate in release_gate_statuses[:6]
+        )
     _append_github_truth(lines, cockpit)
     _append_real_provider_runtime(lines, cockpit)
     _append_deliberation_transcript(lines, cockpit)
@@ -140,6 +146,26 @@ def _section_line(section: dict[str, Any]) -> str:
     proof_level = _text(section.get("proof_level")) or "manual_gap"
     authority = _text(section.get("source_authority")) or "unknown"
     return f"{section_id} {status}/{proof_level} via {authority}"
+
+
+def _release_gate_line(gate: dict[str, Any]) -> str:
+    gate_id = _text(gate.get("gate_id")) or "unknown"
+    status = _text(gate.get("status")) or "not_evaluated"
+    proof_level = _text(gate.get("proof_level")) or "manual_gap"
+    line = (
+        f"{gate_id} {status}/{proof_level} "
+        f"required={_yes_no(gate.get('required'))} "
+        f"configured={_yes_no(gate.get('configured'))} "
+        f"refs={_number(gate.get('source_ref_count'))} "
+        f"artifacts={_number(gate.get('artifact_count'))}"
+    )
+    summary = _text(gate.get("summary"))
+    if status != "ok" and summary is not None:
+        line += f": {summary}"
+    next_action = _text(gate.get("next_action"))
+    if next_action is not None:
+        line += f" next={next_action}"
+    return line
 
 
 def _stage_result_line(stage_result: dict[str, Any]) -> str:

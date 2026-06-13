@@ -175,6 +175,8 @@ def capture_release_evidence_pack(
         "proof_contamination_decision": audit["decision"],
         "overnight_replay_decision": replay["decision"],
         "overnight_replay_authority": replay["authority"],
+        "proof_level_summary": _proof_level_summary(readiness),
+        "release_gates": _release_gate_digests(readiness),
         "artifact_count": readiness["artifact_count"],
         "blocker_count": len(readiness["blockers"]),
         "replay_blocker_count": len(replay_blockers),
@@ -625,6 +627,38 @@ def _production_baseline_summary(path: str | Path | None) -> dict[str, Any] | No
         "xmuse_init_absent": package_boundary.get("xmuse_init_absent"),
         "blockers": _string_list(payload.get("blockers")),
     }
+
+
+def _proof_level_summary(readiness: dict[str, Any]) -> dict[str, int]:
+    summary = readiness.get("proof_level_summary")
+    if not isinstance(summary, dict):
+        return {}
+    return {
+        key: value
+        for key, value in summary.items()
+        if isinstance(key, str) and isinstance(value, int) and not isinstance(value, bool)
+    }
+
+
+def _release_gate_digests(readiness: dict[str, Any]) -> list[dict[str, Any]]:
+    digests: list[dict[str, Any]] = []
+    for gate in _dicts(readiness.get("gates")):
+        digests.append(
+            {
+                "gate_id": _text(gate.get("gate_id")) or "unknown",
+                "kind": _text(gate.get("kind")) or "unknown",
+                "status": _text(gate.get("status")) or "not_evaluated",
+                "proof_level": _text(gate.get("proof_level")) or "manual_gap",
+                "configured": gate.get("configured") is True,
+                "required": gate.get("required") is True,
+                "owner": _text(gate.get("owner")) or "operator",
+                "summary": _text(gate.get("summary")) or "release gate evidence",
+                "next_action": _text(gate.get("next_action")),
+                "source_ref_count": len(_string_list(gate.get("source_refs"))),
+                "artifact_count": len(_string_list(gate.get("artifacts"))),
+            }
+        )
+    return digests
 
 
 def _recovery_queue(

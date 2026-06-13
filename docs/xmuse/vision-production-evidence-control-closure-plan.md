@@ -773,7 +773,9 @@ Current implementation status:
   truth, or `pr_merged`. The pack now also carries a top-level `github_truth`
   audit summary with the gate/raw artifact refs, current/expected head, PR
   state, check counts, enforcement source, review/merge truth state, and
-  remaining gap reason.
+  remaining gap reason. It also carries a normalized `release_gates` digest and
+  `proof_level_summary` from the readiness report for handoff inspection; this
+  does not replace the readiness report or gate artifacts.
 - The TUI proof cockpit can project the same raw GitHub server truth boundary
   as read-only operator context. It shows repo/PR, current and expected head,
   check/check-run counts, expected source app, branch-protection/ruleset source,

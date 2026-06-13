@@ -267,6 +267,34 @@ def test_proof_cockpit_renders_replay_and_release_blockers() -> None:
                     "contract_proof": 3,
                     "manual_gap": 1,
                 },
+                "release_gate_statuses": [
+                    {
+                        "gate_id": "github-server-truth",
+                        "kind": "github_server_truth",
+                        "status": "ok",
+                        "proof_level": "server_side_enforcement_proof",
+                        "configured": True,
+                        "required": True,
+                        "owner": "github",
+                        "summary": "GitHub checks and branch protection captured.",
+                        "next_action": None,
+                        "source_ref_count": 2,
+                        "artifact_count": 1,
+                    },
+                    {
+                        "gate_id": "real-provider-runtime",
+                        "kind": "real_provider",
+                        "status": "manual_gap",
+                        "proof_level": "manual_gap",
+                        "configured": True,
+                        "required": True,
+                        "owner": "operator",
+                        "summary": "provider soak missing",
+                        "next_action": "Run provider soak.",
+                        "source_ref_count": 1,
+                        "artifact_count": 1,
+                    },
+                ],
                 "blockers": [
                     {
                         "kind": "replay_section",
@@ -294,6 +322,16 @@ def test_proof_cockpit_renders_replay_and_release_blockers() -> None:
     assert "Proof contamination: clean" in rendered
     assert "contract_proof=3" in rendered
     assert "manual_gap=1" in rendered
+    assert "Release gates:" in rendered
+    assert (
+        "github-server-truth ok/server_side_enforcement_proof "
+        "required=yes configured=yes refs=2 artifacts=1"
+    ) in rendered
+    assert (
+        "real-provider-runtime manual_gap/manual_gap required=yes "
+        "configured=yes refs=1 artifacts=1: provider soak missing "
+        "next=Run provider soak."
+    ) in rendered
     assert "replay_section memoryos_trace: MemoryOS Lite was not configured" in rendered
     assert "release_gate real-provider-runtime: provider soak missing" in rendered
     assert "artifact://release-readiness.json" in rendered

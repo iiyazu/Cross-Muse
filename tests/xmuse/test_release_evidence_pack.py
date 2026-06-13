@@ -565,6 +565,38 @@ def test_release_evidence_pack_writes_readiness_audit_and_summary(
     assert pack["artifact_count"] == 2
     assert pack["blocker_count"] == 1
     assert pack["replay_blocker_count"] >= 1
+    assert pack["proof_level_summary"] == {
+        "manual_gap": 1,
+        "server_side_enforcement_proof": 1,
+    }
+    assert pack["release_gates"] == [
+        {
+            "gate_id": "github-server-truth",
+            "kind": "github_server_truth",
+            "status": "ok",
+            "proof_level": "server_side_enforcement_proof",
+            "configured": True,
+            "required": True,
+            "owner": "operator",
+            "summary": "github-server-truth evidence",
+            "next_action": None,
+            "source_ref_count": 2,
+            "artifact_count": 1,
+        },
+        {
+            "gate_id": "real-provider-runtime",
+            "kind": "real_provider",
+            "status": "manual_gap",
+            "proof_level": "manual_gap",
+            "configured": True,
+            "required": True,
+            "owner": "operator",
+            "summary": "Ray/Codex runtime was not started.",
+            "next_action": "Start the configured production provider bundle.",
+            "source_ref_count": 1,
+            "artifact_count": 1,
+        },
+    ]
     assert pack["recovery_queue_count"] == len(pack["recovery_queue"])
     assert {
         "source": "release_readiness",

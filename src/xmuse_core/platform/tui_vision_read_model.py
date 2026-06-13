@@ -557,6 +557,7 @@ def _build_proof_cockpit(
     source_refs: list[str] = []
     proof_level_summary: dict[str, int] = {}
     section_statuses: list[dict[str, str]] = []
+    release_gate_statuses: list[dict[str, Any]] = []
     section_count = 0
     artifact_count = 0
     finding_count = 0
@@ -719,6 +720,12 @@ def _build_proof_cockpit(
         )
         artifact_count = _int(release_evidence_pack.get("artifact_count"))
         finding_count = _int(release_evidence_pack.get("finding_count"))
+        _merge_count_summary(
+            proof_level_summary,
+            _proof_summary(release_evidence_pack.get("proof_level_summary")),
+        )
+        for gate in _dicts(release_evidence_pack.get("release_gates")):
+            release_gate_statuses.append(_release_gate_status_projection(gate))
         for key in ("readiness_report", "proof_contamination_audit"):
             artifact = _text(release_evidence_pack.get(key))
             if artifact is not None:
@@ -789,6 +796,7 @@ def _build_proof_cockpit(
         "proof_contamination_decision": proof_contamination_decision,
         "proof_level_summary": proof_level_summary,
         "section_statuses": section_statuses,
+        "release_gate_statuses": release_gate_statuses,
         "section_count": section_count,
         "artifact_count": artifact_count,
         "blocker_count": len(blockers),
@@ -908,6 +916,22 @@ def _goal_stage_result_projection(result: dict[str, Any]) -> dict[str, Any]:
         "result_path": _text(result.get("result_path")),
         "blocked_reason": _text(result.get("blocked_reason")),
         "next_stage_id": _text(result.get("next_stage_id")),
+    }
+
+
+def _release_gate_status_projection(gate: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "gate_id": _text(gate.get("gate_id")) or "unknown",
+        "kind": _text(gate.get("kind")) or "unknown",
+        "status": _text(gate.get("status")) or "not_evaluated",
+        "proof_level": _normalize_proof_level(gate.get("proof_level")),
+        "configured": gate.get("configured") is True,
+        "required": gate.get("required") is True,
+        "owner": _text(gate.get("owner")) or "operator",
+        "summary": _text(gate.get("summary")) or "release gate evidence",
+        "next_action": _text(gate.get("next_action")),
+        "source_ref_count": _int(gate.get("source_ref_count")),
+        "artifact_count": _int(gate.get("artifact_count")),
     }
 
 
@@ -1415,6 +1439,11 @@ def _proof_summary(value: Any) -> dict[str, int]:
         if normalized_count:
             summary[proof_level] = summary.get(proof_level, 0) + normalized_count
     return dict(sorted(summary.items()))
+
+
+def _merge_count_summary(target: dict[str, int], source: dict[str, int]) -> None:
+    for key, count in source.items():
+        target[key] = target.get(key, 0) + count
 
 
 def _count_mapping(value: Any) -> dict[str, int]:

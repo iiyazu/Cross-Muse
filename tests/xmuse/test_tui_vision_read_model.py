@@ -636,6 +636,38 @@ def test_tui_vision_read_model_summarizes_proof_cockpit_without_authority_upgrad
             "artifact_count": 4,
             "blocker_count": 1,
             "finding_count": 0,
+            "proof_level_summary": {
+                "manual_gap": 1,
+                "server_side_enforcement_proof": 1,
+            },
+            "release_gates": [
+                {
+                    "gate_id": "github-server-truth",
+                    "kind": "github_server_truth",
+                    "status": "ok",
+                    "proof_level": "server_side_enforcement_proof",
+                    "configured": True,
+                    "required": True,
+                    "owner": "github",
+                    "summary": "GitHub checks and branch protection captured.",
+                    "next_action": None,
+                    "source_ref_count": 2,
+                    "artifact_count": 1,
+                },
+                {
+                    "gate_id": "real-provider-runtime",
+                    "kind": "real_provider",
+                    "status": "manual_gap",
+                    "proof_level": "manual_gap",
+                    "configured": True,
+                    "required": True,
+                    "owner": "operator",
+                    "summary": "real provider runtime soak was not captured",
+                    "next_action": "Run provider soak.",
+                    "source_ref_count": 1,
+                    "artifact_count": 1,
+                },
+            ],
             "blockers": [
                 {
                     "gate_id": "real-provider-runtime",
@@ -663,9 +695,37 @@ def test_tui_vision_read_model_summarizes_proof_cockpit_without_authority_upgrad
     assert cockpit["authority"] == "replay_index_only"
     assert cockpit["proof_level_summary"] == {
         "contract_proof": 4,
-        "manual_gap": 1,
-        "server_side_enforcement_proof": 1,
+        "manual_gap": 2,
+        "server_side_enforcement_proof": 2,
     }
+    assert cockpit["release_gate_statuses"] == [
+        {
+            "gate_id": "github-server-truth",
+            "kind": "github_server_truth",
+            "status": "ok",
+            "proof_level": "server_side_enforcement_proof",
+            "configured": True,
+            "required": True,
+            "owner": "github",
+            "summary": "GitHub checks and branch protection captured.",
+            "next_action": None,
+            "source_ref_count": 2,
+            "artifact_count": 1,
+        },
+        {
+            "gate_id": "real-provider-runtime",
+            "kind": "real_provider",
+            "status": "manual_gap",
+            "proof_level": "manual_gap",
+            "configured": True,
+            "required": True,
+            "owner": "operator",
+            "summary": "real provider runtime soak was not captured",
+            "next_action": "Run provider soak.",
+            "source_ref_count": 1,
+            "artifact_count": 1,
+        },
+    ]
     assert cockpit["section_count"] == 3
     assert cockpit["section_statuses"] == [
         {
