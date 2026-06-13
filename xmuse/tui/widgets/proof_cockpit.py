@@ -101,7 +101,11 @@ def _blocker_line(blocker: dict[str, Any]) -> str:
     kind = _text(blocker.get("kind")) or "blocker"
     identifier = _text(blocker.get("id")) or "unknown"
     reason = _text(blocker.get("reason")) or "blocked"
-    return f"{kind} {identifier}: {reason}"
+    line = f"{kind} {identifier}: {reason}"
+    next_action = _text(blocker.get("next_action"))
+    if next_action is not None:
+        line += f" next={next_action}"
+    return line
 
 
 def _section_line(section: dict[str, Any]) -> str:

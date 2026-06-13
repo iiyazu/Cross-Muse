@@ -417,8 +417,9 @@ Current implementation status:
   `virtual_soaks`, and `uv run xmuse-overnight-supervisor-evidence-capture`
   carries the latest virtual-soak SLO into replay-ready supervisor evidence. A
   violated virtual-soak SLO remains `manual_gap` with scheduling next action;
-  the TUI proof cockpit renders the same virtual-soak summary and blocker
-  without treating the simulation as live/runtime proof.
+  the TUI proof cockpit renders the same virtual-soak summary, blocker, and
+  `next=` recovery guidance without treating the simulation as live/runtime
+  proof.
 - The same supervisor can import `scripts/goal_stage_runner.py` outputs through
   `OvernightSupervisor.import_goal_stage_result(...)` and
   `uv run xmuse-overnight-supervisor --resume import-stage-result RESULT.json`.

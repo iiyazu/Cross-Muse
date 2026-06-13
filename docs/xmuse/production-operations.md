@@ -725,8 +725,8 @@ The supervisor snapshot persists `virtual_soaks` with SLO status, max heartbeat
 gap, max self-review gap, and violations. Supervisor replay evidence includes
 the latest virtual-soak SLO in its summary; a violated SLO becomes
 `manual_gap` with a scheduling next action. The TUI proof cockpit projects the
-same virtual-soak summary and blocker without treating the simulation as live
-provider, MemoryOS, or GitHub proof.
+same virtual-soak summary and blocker, including `next=` recovery guidance,
+without treating the simulation as live provider, MemoryOS, or GitHub proof.
 
 Repeated failures on the same stage/function boundary are not treated as an
 open-ended retry loop. The third matching failure classification marks the

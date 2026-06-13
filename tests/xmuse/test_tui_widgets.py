@@ -430,6 +430,11 @@ def test_proof_cockpit_renders_virtual_soak_slo() -> None:
                         "kind": "virtual_soak",
                         "id": "overnight-stage-spine",
                         "reason": "heartbeat gap 20m exceeds 15m",
+                        "next_action": (
+                            "Reduce heartbeat/self-review intervals or fix "
+                            "supervisor scheduling, then rerun the overnight "
+                            "virtual soak."
+                        ),
                     }
                 ],
                 "manual_gap_reason": None,
@@ -443,7 +448,11 @@ def test_proof_cockpit_renders_virtual_soak_slo() -> None:
         "Latest soak: overnight-stage-spine 480m SLO=violated: "
         "heartbeat gap 20m exceeds 15m"
     ) in rendered
-    assert "virtual_soak overnight-stage-spine: heartbeat gap 20m exceeds 15m" in rendered
+    assert (
+        "virtual_soak overnight-stage-spine: heartbeat gap 20m exceeds 15m "
+        "next=Reduce heartbeat/self-review intervals or fix supervisor "
+        "scheduling, then rerun the overnight virtual soak."
+    ) in rendered
 
 
 def test_proof_cockpit_renders_god_runtime_heartbeat_freshness() -> None:
