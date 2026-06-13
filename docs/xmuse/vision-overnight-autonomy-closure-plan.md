@@ -736,7 +736,11 @@ Tasks:
   bounded the same way with
   `proof_boundary=candidate_report_is_not_live_memoryos_proof`; env presence
   and operator payload completeness are only capture prerequisites, not
-  `live_service_proof`.
+  `live_service_proof`. GitHub server-truth candidate guidance is bounded by
+  `proof_boundary=candidate_report_is_not_github_server_truth_proof`; repo/PR
+  target completeness and optional expected-head/check hints are only
+  prerequisites for `attempt_release_evidence github`, not GitHub server truth,
+  merge truth, or `pr_merged`.
 - When the same natural transcript should participate in release readiness,
   also pass `--natural-deliberation-transcript TRANSCRIPT` plus
   `--natural-deliberation-god-runtime RUNTIME`. This writes

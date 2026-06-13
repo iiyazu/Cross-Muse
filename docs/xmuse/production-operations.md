@@ -947,7 +947,9 @@ uv run xmuse-tui
 /release pack stage=goal/S1.result.json
 /release pack github=artifacts/github-truth.json github_head=<current-head-sha>
 /release pack review=internal-review.json review_head=<current-head-sha>
-/release candidates
+/release candidates repository=iiyazu/Cross-Muse pr=<pr-number> \
+  expected_head=<current-head-sha> base=main \
+  check=quality-gates,contract-smoke-gates,real-runtime-integration-gate
 /release attempt natural provider memoryos github runtime_backend=ray \
   transport=codex-app-server repo_id=iiyazu/Cross-Muse workspace_id=xmuse \
   god_id=<god-id> thread_id=<thread-id> blueprint_id=<blueprint-id> \
@@ -979,21 +981,23 @@ scoped paths and the audited operator action path.
 `/release candidates` calls
 `inspect_release_evidence_candidates` and reads durable `chat.db`,
 `god_sessions.json`, `god_cli_selections.json`, `god_cli_registrations.json`,
-the peer latency trace table, and redacted MemoryOS env presence to show whether
-the operator has enough inputs for the export actions. Natural transcript
-candidates separately report transcript export readiness and selected-GOD
-runtime readiness; `export_ready` is true only when both are ready. Missing
-selected runtime rows, stale/non-peer GOD sessions, or transcript GODs absent
-from selected runtime continuity are visible before `/release attempt` runs. It
-does not create artifacts. The TUI action result also renders compact candidate
-readiness lines such as:
+the peer latency trace table, redacted MemoryOS env presence, and
+operator-supplied GitHub target fields to show whether the operator has enough
+inputs for the export actions. Natural transcript candidates separately report
+transcript export readiness and selected-GOD runtime readiness; `export_ready`
+is true only when both are ready. Missing selected runtime rows, stale/non-peer
+GOD sessions, transcript GODs absent from selected runtime continuity, missing
+MemoryOS task inputs, and missing GitHub `repo`/`pull_request_number` fields
+are visible before `/release attempt` runs. It does not create artifacts. The
+TUI action result also renders compact candidate readiness lines such as:
 
 ```text
 natural[<conversation-id>]=blocked transcript=ready runtime=blocked peer_gods=0 blockers=selected_god_runtime_missing
 ```
 
-The action result also shows provider and MemoryOS candidate readiness; these
-lines are read-model feedback, not durable state writes. Natural candidate
+The action result also shows provider, MemoryOS, and GitHub candidate
+readiness; these lines are read-model feedback, not durable state writes.
+Natural candidate
 rows include
 `proof_boundary=candidate_report_is_not_natural_deliberation_proof`, required
 transcript schema `xmuse.operator_transcript.v1`, required runtime schema
@@ -1013,6 +1017,14 @@ MemoryOS candidate rows use
 env/payload source authority, and `attempt_release_evidence` hints. They do not
 include env values or task `content`/`query` text in payload hints, and they do
 not prove the live MemoryOS service responded.
+GitHub candidate rows use
+`proof_boundary=candidate_report_is_not_github_server_truth_proof`, required
+gate kind `github_server_truth`, required proof
+`server_side_enforcement_proof`, and `attempt_release_evidence` hints for
+`repo`, `pull_request_number`, optional expected head, base branch, and
+required checks. They only prove target payload completeness; they do not call
+GitHub, do not write a server-truth artifact, and cannot emit `pr_merged` or
+merge truth.
 `/release attempt` calls `attempt_release_evidence`, reuses the candidate
 report, and then invokes the same release evidence export actions only for
 candidate inputs that are export-ready. It writes

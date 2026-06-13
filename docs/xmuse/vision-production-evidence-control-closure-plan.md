@@ -518,6 +518,13 @@ Current implementation status:
   `xmuse.memoryos_lite_trace.v1`, required proof `live_service_proof`,
   redacted source authority, and `attempt_release_evidence` hints without
   leaking env values or task content/query text into the candidate report.
+  GitHub server-truth candidates include
+  `proof_boundary=candidate_report_is_not_github_server_truth_proof`, required
+  gate kind `github_server_truth`, required `server_side_enforcement_proof`,
+  source authority, and the suggested `attempt_release_evidence` payload hints
+  for repo, PR number, optional expected head, base branch, and required checks.
+  This makes the next action visible without calling GitHub, writing a
+  server-truth artifact, or treating candidate readiness as `pr_merged`.
 - TUI `/release attempt [natural|provider|memoryos|github|all]` now routes through
   `attempt_release_evidence` with `release_gate`. The action writes a
   `release-evidence-attempt.json` attempt report under

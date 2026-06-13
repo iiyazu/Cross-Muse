@@ -47,6 +47,10 @@ _NATURAL_NEXT_ACTION = (
     "Capture a natural multi-GOD transcript and selected GOD runtime "
     "continuity, then run attempt_release_evidence for natural_deliberation."
 )
+_GITHUB_NEXT_ACTION = (
+    "Provide repo and pull_request_number, then run attempt_release_evidence "
+    "for github_server_truth to capture read-only GitHub server truth."
+)
 _MEMORYOS_PAYLOAD_HINT_KEYS = (
     "conversation_id",
     "repo_id",
@@ -98,6 +102,7 @@ def build_release_evidence_candidate_report(
             env=dict(env or {}),
             payload=memoryos_inputs,
         ),
+        "github_server_truth": _github_candidates(payload=memoryos_inputs),
     }
 
 
@@ -371,6 +376,70 @@ def _memoryos_candidate_guidance(payload: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _github_candidates(*, payload: Mapping[str, Any]) -> dict[str, Any]:
+    repo = _text(payload.get("repo"))
+    pull_request_number = _positive_int(
+        payload.get("pull_request_number")
+        or payload.get("pull_request")
+        or payload.get("pr")
+    )
+    missing_payload_keys = []
+    if repo is None:
+        missing_payload_keys.append("repo")
+    if pull_request_number is None:
+        missing_payload_keys.append("pull_request_number")
+    export_ready = not missing_payload_keys
+    return {
+        "target_configured": export_ready,
+        "export_ready": export_ready,
+        "repo": repo,
+        "pull_request_number": pull_request_number,
+        "missing_payload_keys": missing_payload_keys,
+        "blockers": [] if export_ready else ["github_server_truth_target_missing"],
+        "can_emit_pr_merged": False,
+        **_github_candidate_guidance(
+            payload,
+            repo=repo,
+            pull_request_number=pull_request_number,
+        ),
+    }
+
+
+def _github_candidate_guidance(
+    payload: Mapping[str, Any],
+    *,
+    repo: str | None,
+    pull_request_number: int | None,
+) -> dict[str, Any]:
+    payload_hints: dict[str, Any] = {}
+    if repo is not None:
+        payload_hints["repo"] = repo
+    if pull_request_number is not None:
+        payload_hints["pull_request_number"] = pull_request_number
+    if (expected_head := _text(payload.get("expected_head_sha"))) is not None:
+        payload_hints["expected_head_sha"] = expected_head
+    if (base_branch := _text(payload.get("base_branch"))) is not None:
+        payload_hints["base_branch"] = base_branch
+    if required_checks := _string_list(payload.get("required_checks")):
+        payload_hints["required_checks"] = required_checks
+    return {
+        "proof_boundary": "candidate_report_is_not_github_server_truth_proof",
+        "required_gate_kind": "github_server_truth",
+        "required_proof_level": "server_side_enforcement_proof",
+        "source_authority": [
+            "operator_release_candidate_payload",
+            "github_server_truth_export_action",
+        ],
+        "next_action": _GITHUB_NEXT_ACTION,
+        "suggested_operator_action": {
+            "action": "attempt_release_evidence",
+            "kind": "github_server_truth",
+            "required_payload_keys": ["repo", "pull_request_number"],
+            "payload_hints": payload_hints,
+        },
+    }
+
+
 def _session_records(registry_path: Path) -> list[GodSessionRecord]:
     if not registry_path.exists():
         return []
@@ -558,6 +627,20 @@ def _text(value: Any) -> str | None:
     if isinstance(value, str):
         cleaned = value.strip()
         return cleaned or None
+    return None
+
+
+def _positive_int(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int) and value > 0:
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = int(value.strip())
+        except ValueError:
+            return None
+        return parsed if parsed > 0 else None
     return None
 
 

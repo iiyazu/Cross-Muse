@@ -1172,6 +1172,14 @@ async def test_chat_screen_release_candidates_runs_operator_control_action(
                             "task payload."
                         ),
                     },
+                    "github_server_truth": {
+                        "export_ready": False,
+                        "blockers": ["github_server_truth_target_missing"],
+                        "next_action": (
+                            "Provide repo and pull_request_number, then run "
+                            "attempt_release_evidence for github_server_truth."
+                        ),
+                    },
                 }
             },
         }
@@ -1188,7 +1196,9 @@ async def test_chat_screen_release_candidates_runs_operator_control_action(
             "/release candidates repo_id=iiyazu/Cross-Muse workspace_id=xmuse "
             "god_id=review thread_id=thread-1 blueprint_id=bp-1 "
             "feature_id=feature-1 lane_id=lane-1 content='live evidence' "
-            "query='production evidence'"
+            "query='production evidence' repository=iiyazu/Cross-Muse pr=43 "
+            "expected_head=4ed83bc82ae66b23e4c3d0613933b6f908739e12 "
+            "base=main check=quality-gates"
         )
         input_widget.post_message(input_widget.Submitted(input_widget, input_widget.value))
         await pilot.pause()
@@ -1207,6 +1217,11 @@ async def test_chat_screen_release_candidates_runs_operator_control_action(
                     "lane_id": "lane-1",
                     "content": "live evidence",
                     "query": "production evidence",
+                    "repo": "iiyazu/Cross-Muse",
+                    "pull_request_number": 43,
+                    "expected_head_sha": "4ed83bc82ae66b23e4c3d0613933b6f908739e12",
+                    "base_branch": "main",
+                    "required_checks": ["quality-gates"],
                 },
             ),
         ]
@@ -1230,6 +1245,11 @@ async def test_chat_screen_release_candidates_runs_operator_control_action(
         assert (
             "memoryos=blocked next=Configure live MemoryOS Lite and provide a "
             "complete task payload."
+        ) in content
+        assert (
+            "github=blocked next=Provide repo and pull_request_number, then run "
+            "attempt_release_evidence for github_server_truth. "
+            "blockers=github_server_truth_target_missing"
         ) in content
         assert "Inspected release evidence candidates." in content
 

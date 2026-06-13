@@ -30,8 +30,13 @@ def test_release_evidence_candidates_identify_ready_natural_and_provider_inputs(
         },
         memoryos_payload={
             "repo_id": "iiyazu/Cross-Muse",
+            "repo": "iiyazu/Cross-Muse",
             "workspace_id": "xmuse",
             "god_id": "review",
+            "pull_request_number": 43,
+            "expected_head_sha": "4ed83bc82ae66b23e4c3d0613933b6f908739e12",
+            "base_branch": "main",
+            "required_checks": ["xmuse CI"],
             "thread_id": "thread-1",
             "blueprint_id": "bp-1",
             "feature_id": "feature-1",
@@ -44,6 +49,7 @@ def test_release_evidence_candidates_identify_ready_natural_and_provider_inputs(
     natural = report["natural_deliberation"]["conversations"][0]
     provider = report["real_provider_runtime"]
     memoryos = report["live_memoryos"]
+    github = report["github_server_truth"]
     assert report["schema_version"] == "xmuse.release_evidence_candidates.v1"
     assert natural["conversation_id"] == conversation_id
     assert natural["export_ready"] is True
@@ -132,6 +138,31 @@ def test_release_evidence_candidates_identify_ready_natural_and_provider_inputs(
             "lane_id": "lane-1",
         },
     }
+    assert github["export_ready"] is True
+    assert github["proof_boundary"] == (
+        "candidate_report_is_not_github_server_truth_proof"
+    )
+    assert github["required_gate_kind"] == "github_server_truth"
+    assert github["required_proof_level"] == "server_side_enforcement_proof"
+    assert github["source_authority"] == [
+        "operator_release_candidate_payload",
+        "github_server_truth_export_action",
+    ]
+    assert github["missing_payload_keys"] == []
+    assert github["blockers"] == []
+    assert github["can_emit_pr_merged"] is False
+    assert github["suggested_operator_action"] == {
+        "action": "attempt_release_evidence",
+        "kind": "github_server_truth",
+        "required_payload_keys": ["repo", "pull_request_number"],
+        "payload_hints": {
+            "repo": "iiyazu/Cross-Muse",
+            "pull_request_number": 43,
+            "expected_head_sha": "4ed83bc82ae66b23e4c3d0613933b6f908739e12",
+            "base_branch": "main",
+            "required_checks": ["xmuse CI"],
+        },
+    }
 
 
 def test_release_evidence_candidates_require_selected_runtime_for_natural_export(
@@ -181,6 +212,7 @@ def test_release_evidence_candidates_report_current_gaps_without_secrets(
     natural = report["natural_deliberation"]["conversations"][0]
     provider = report["real_provider_runtime"]
     memoryos = report["live_memoryos"]
+    github = report["github_server_truth"]
     assert natural["export_ready"] is False
     assert "natural_god_speech_act_messages_missing" in natural["blockers"]
     assert provider["trace_table_present"] is False
@@ -202,6 +234,18 @@ def test_release_evidence_candidates_report_current_gaps_without_secrets(
     assert memoryos["next_action"] == (
         "Configure live MemoryOS Lite and provide a complete task payload, then "
         "run attempt_release_evidence for live_memoryos to capture a live trace."
+    )
+    assert github["export_ready"] is False
+    assert github["missing_payload_keys"] == ["repo", "pull_request_number"]
+    assert github["blockers"] == ["github_server_truth_target_missing"]
+    assert github["proof_boundary"] == (
+        "candidate_report_is_not_github_server_truth_proof"
+    )
+    assert github["required_gate_kind"] == "github_server_truth"
+    assert github["required_proof_level"] == "server_side_enforcement_proof"
+    assert github["next_action"] == (
+        "Provide repo and pull_request_number, then run attempt_release_evidence "
+        "for github_server_truth to capture read-only GitHub server truth."
     )
     assert "token=secret-token" not in str(report)
 

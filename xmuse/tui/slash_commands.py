@@ -1027,9 +1027,18 @@ def _release_candidates_payload(args: list[str]) -> dict[str, Any]:
             "source_ref": "source_refs",
             "target_ref": "target_refs",
             "target": "target_refs",
+            "repository": "repo",
+            "pull_request": "pull_request_number",
+            "pr": "pull_request_number",
+            "check": "required_checks",
+            "required_check": "required_checks",
+            "expected_head": "expected_head_sha",
+            "head": "expected_head_sha",
+            "base": "base_branch",
+            "branch": "base_branch",
         },
-        list_keys={"source_refs", "target_refs"},
-        int_keys={"trace_limit", "budget"},
+        list_keys={"source_refs", "target_refs", "required_checks"},
+        int_keys={"trace_limit", "budget", "pull_request_number"},
     )
 
 
@@ -1289,6 +1298,9 @@ def _release_candidate_summary(value: object) -> list[str]:
     memoryos = _candidate_section_line("memoryos", value.get("live_memoryos"))
     if memoryos:
         lines.append(memoryos)
+    github = _candidate_section_line("github", value.get("github_server_truth"))
+    if github:
+        lines.append(github)
     return lines
 
 
