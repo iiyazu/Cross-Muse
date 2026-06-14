@@ -82,7 +82,7 @@ runtime、provider invocation、lane authority、review truth 完成。后续生
 - PR state last checked: draft/open/unmerged
 - PR merge state last checked: `CLEAN`
 - PR review decision last checked: empty
-- Latest verified GitHub Actions truth applies to remote head
+- Verified GitHub Actions truth at the start of this slice applied to remote head
   `515f1817e8c7fabf9c594b96ed044018eaefbc6f`: run
   `27491335024`, success
 - Local documentation commits after the remote head must not be treated as
@@ -117,9 +117,9 @@ truth_snapshot:
   pr_state: draft_open_unmerged
   merge_state: CLEAN
   review_decision: empty
-  verified_ci_head: 515f1817e8c7fabf9c594b96ed044018eaefbc6f
-  verified_ci_run: 27491335024
-  ci_verified_for_verified_head: true
+  verified_ci_head_at_slice_start: 515f1817e8c7fabf9c594b96ed044018eaefbc6f
+  verified_ci_run_at_slice_start: 27491335024
+  ci_verified_for_slice_start_head: true
   local_docs_after_verified_head: true
   pr_merged_claim_allowed: false
 ```
