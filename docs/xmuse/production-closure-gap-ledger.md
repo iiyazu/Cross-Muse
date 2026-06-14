@@ -96,14 +96,16 @@ runtime、provider invocation、lane authority、review truth 完成。后续生
   `e2596cbbb6111b4d2c00523956fe878d5369ea04`
 - Local head at start of L9 review-closure graph-status gate slice:
   `1431e64b78dacbca0a3cec224a1cd047c857b35b`
+- Local head at start of L10 multi-turn provider speech release-lineage slice:
+  `1284b3d1c52042e5cf82d892b07323aad96c1bc3`
 - PR: <https://github.com/iiyazu/Cross-Muse/pull/43>
 - PR state last checked: draft/open/unmerged
 - PR merge state last checked: `CLEAN`
 - PR review decision last checked: empty
 - Verified GitHub Actions truth at the start of this slice applied to remote head
-  `1431e64b78dacbca0a3cec224a1cd047c857b35b`: run
-  `27496459203`, success
-- Local changes after `1431e64b78dacbca0a3cec224a1cd047c857b35b` must not be
+  `1284b3d1c52042e5cf82d892b07323aad96c1bc3`: run
+  `27496891481`, success
+- Local changes after `1284b3d1c52042e5cf82d892b07323aad96c1bc3` must not be
   treated as CI-verified until pushed and checked again.
 
 Machine-readable snapshot for gates and future `/goal` setup:
@@ -139,13 +141,14 @@ truth_snapshot:
   local_head_at_l9_review_intake_graph_status_gate_slice: 60d233c5758c63a2a31a2c2b3d78e62559971a29
   local_head_at_l9_review_verdict_graph_status_sync_slice: e2596cbbb6111b4d2c00523956fe878d5369ea04
   local_head_at_l9_review_closure_graph_status_gate_slice: 1431e64b78dacbca0a3cec224a1cd047c857b35b
+  local_head_at_l10_multi_turn_provider_speech_release_lineage_slice: 1284b3d1c52042e5cf82d892b07323aad96c1bc3
   pr: 43
   pr_url: https://github.com/iiyazu/Cross-Muse/pull/43
   pr_state: draft_open_unmerged
   merge_state: CLEAN
   review_decision: empty
-  verified_ci_head_at_slice_start: 1431e64b78dacbca0a3cec224a1cd047c857b35b
-  verified_ci_run_at_slice_start: 27496459203
+  verified_ci_head_at_slice_start: 1284b3d1c52042e5cf82d892b07323aad96c1bc3
+  verified_ci_run_at_slice_start: 27496891481
   ci_verified_for_slice_start_head: true
   local_changes_after_verified_head: true
   pr_merged_claim_allowed: false
@@ -179,7 +182,7 @@ Evidence boundaries:
 | L7 | Feature / LaneDAG Authority | LaneDAG/contract artifact exists with upstream freeze proof metadata and graph-set/status initialization contract | Live L4/L5/L6 proof metadata can flow into laneDAG without writing `feature_lanes.json`; laneDAG route now derives graph-set artifacts and initializes graph-native status records with inherited `blueprint_proof_level`; `graph_set_id`-backed orchestrator dispatch/review/reprojection now fail closed when durable graph-native status is missing; full dispatch/review authority still not unified | Not server-bound | LaneDAG contract proof plus isolated opt-in live upstream-proof propagation, graph-native proof-lineage carrier proof, laneDAG-to-status initialization proof, and graph-native missing-status fail-closed proof |
 | L8 | Lane Runtime Enforcement / Recovery | Recovery contract/API exists and recovery artifacts carry laneDAG proof lineage | Recovery API consumes laneDAG contract/budget and preserves blueprint proof/source refs; GOD-room review intake and orchestrator dispatch now fail-close non-retry recovery decisions; review intake now also requires graph-native `REVIEWING` status from `FeatureGraphStatusStore`; broader supervisor/live runner enforcement still incomplete | Not server-bound | Recovery policy proof plus laneDAG-lineage evidence proof plus review-intake/dispatch enforcement proof |
 | L9 | Execution / Review / Patch-Forward | Review plane plus GOD-room review intake/verdict/patch-forward/closure artifact contracts exist | GOD-room lane contracts/recovery/candidate evidence can be packaged for independent review only after graph-native status is `REVIEWING`; merge/rework/blocked verdicts now consume graph-native review coordinator authority and update `FeatureGraphStatusStore`; patch-forward verdicts record graph-native gate plans without writing lane status; patch-forward can append a laneDAG patch lane; reviewed patch-lane closure now requires `FeatureGraphStatusStore` `MERGED` authority before producing a release-evidence handoff candidate; live execution proof and server truth still missing | Not server-bound | GOD-room review/patch-forward closure contract proof plus graph-status-gated review-intake/verdict/closure proof and review-plane store lineage proof, not server/GitHub truth |
-| L10 | MemoryOS / Release Evidence / GitHub Truth | Evidence bundle semantics exist and can index GOD-room review closure handoff; release candidates can seed MemoryOS source refs from that handoff | Live MemoryOS trace and live execution/server truth missing | PR open/unmerged; CI truth only for verified remote head | Replay/readiness proof with explicit gaps |
+| L10 | MemoryOS / Release Evidence / GitHub Truth | Evidence bundle semantics exist and can index GOD-room review closure handoff plus bounded multi-turn provider speech lineage; release candidates can seed MemoryOS source refs from that handoff | Runtime closure evidence preserves per-turn L4/L5 refs and appended speak ids as contract lineage; live MemoryOS trace and live execution/server truth missing | PR open/unmerged; CI truth only for verified remote head | Replay/readiness proof with explicit gaps |
 | L11 | Operator Cockpit / TUI / Overnight Soak | TUI/control slices exist | Complete cockpit/soak missing | Depends on L10 | Operator projection/control proof only |
 
 Current closure audit:
@@ -190,9 +193,8 @@ Current closure audit:
 - Least closed areas: natural multi-GOD deliberation, GOD-room-originated
   execution/review, live MemoryOS trace, and GitHub merge truth.
 - Next production priority: carry bounded multi-turn L3-L5 speech lineage into
-  L6 freeze and L10 release evidence where appropriate, then enforce L7-L9
-  runtime/review consumption of authoritative laneDAG contracts without
-  claiming natural multi-GOD closure.
+  L10 release evidence without inflating it to live/server truth, then add
+  opt-in live MemoryOS trace capture after upstream artifacts exist.
 
 ## L1 - Authority / Boundary Model
 
@@ -435,6 +437,10 @@ Use these as implementation references, not as xmuse package dependencies:
     durable GOD room state between turns and writing a
     `xmuse.god_room_multi_turn_provider_speech_run.v1` evidence artifact under
     `reports/god_room_provider_speech_runs/`.
+  - Runtime closure evidence can now index a supplied
+    `xmuse.god_room_multi_turn_provider_speech_run.v1` artifact, preserving
+    per-turn appended `speak` event ids plus L4 provider-response and L5
+    speaker-response artifact refs as lineage only.
 - Missing production closure:
   - Natural multi-GOD live runtime has not been proven over a long session.
   - The multi-turn provider speech route is bounded sequential orchestration,
@@ -454,8 +460,8 @@ Use these as implementation references, not as xmuse package dependencies:
   - Direct public append remains contract/manual proof only unless backed by
     the L4/L5 provider-capture route.
 - Next production slice:
-  - Use bounded multi-turn provider-backed speech as input for L6 freeze and
-    L10 release-evidence lineage while preserving the natural peer-GOD
+  - Use bounded multi-turn provider-backed speech as input for L10
+    MemoryOS/source-ref candidate flow while preserving the natural peer-GOD
     groupchat and live/server proof gaps.
 - Downstream blocked until:
   - L6 blueprint freeze cannot claim live deliberation closure without fresh
@@ -889,6 +895,12 @@ Use these as implementation references, not as xmuse package dependencies:
   - Release evidence pack indexes GOD room closure inputs, speaker attempt,
     artifact-backed speaker response, laneDAG, MemoryOS plan, TUI projection,
     GitHub truth, and readiness.
+  - Release evidence pack and CLI can now pass a bounded
+    `xmuse.god_room_multi_turn_provider_speech_run.v1` artifact into the GOD
+    room runtime closure section. The section validates schema/status, room and
+    conversation lineage, appended event presence in durable room events, and
+    per-turn L4/L5 artifact refs. Invalid or unreplayed runs keep the section
+    `manual_gap`; valid runs remain contract/runtime lineage, not server truth.
   - Release evidence pack and operator action can now index
     `xmuse.god_room_lane_review_closure.v1` as GOD-room runtime closure
     handoff input while preserving `server_truth_status = not_server_truth`.
@@ -902,8 +914,8 @@ Use these as implementation references, not as xmuse package dependencies:
   - No current live MemoryOS Lite trace proof is established for this branch
     head.
   - The release pack still depends on missing live execution proof, live
-    MemoryOS trace, review-plane/lane-status integration, and merge truth for
-    full production closure.
+    MemoryOS trace, broad live execution/review proof, and merge truth for full
+    production closure.
   - PR #43 is still draft/open/unmerged and has no review decision.
 - Proof required to close:
   - Configured MemoryOS Lite service accepts writes/context requests and

@@ -41,6 +41,7 @@ def capture_god_room_runtime_closure_evidence(
     tui_projection_artifact: str | Path | None = None,
     speaker_attempt_artifact: str | Path | None = None,
     speaker_response_artifact: str | Path | None = None,
+    multi_turn_provider_speech_run_artifact: str | Path | None = None,
     review_closure_artifact: str | Path | None = None,
     github_truth_artifact: str | Path | None = None,
     release_readiness_artifact: str | Path | None = None,
@@ -57,6 +58,7 @@ def capture_god_room_runtime_closure_evidence(
         tui_projection_artifact=tui_projection_artifact,
         speaker_attempt_artifact=speaker_attempt_artifact,
         speaker_response_artifact=speaker_response_artifact,
+        multi_turn_provider_speech_run_artifact=multi_turn_provider_speech_run_artifact,
         review_closure_artifact=review_closure_artifact,
         github_truth_artifact=github_truth_artifact,
         release_readiness_artifact=release_readiness_artifact,
@@ -82,6 +84,7 @@ def build_god_room_runtime_closure_evidence(
     tui_projection_artifact: str | Path | None = None,
     speaker_attempt_artifact: str | Path | None = None,
     speaker_response_artifact: str | Path | None = None,
+    multi_turn_provider_speech_run_artifact: str | Path | None = None,
     review_closure_artifact: str | Path | None = None,
     github_truth_artifact: str | Path | None = None,
     release_readiness_artifact: str | Path | None = None,
@@ -141,6 +144,15 @@ def build_god_room_runtime_closure_evidence(
             issues=issues,
         )
     )
+    multi_turn_details, multi_turn_refs, multi_turn_targets = (
+        _multi_turn_provider_speech_run_details(
+            multi_turn_provider_speech_run_artifact,
+            event_ids={event.event_id for event in events},
+            conversation_ids={event.conversation_id for event in events},
+            room_ids={event.room_id for event in events},
+            issues=issues,
+        )
+    )
     review_closure_details, review_closure_refs, review_closure_targets = (
         _review_closure_details(
             review_closure_artifact,
@@ -177,6 +189,7 @@ def build_god_room_runtime_closure_evidence(
                     *tui_refs,
                     *speaker_refs,
                     *speaker_response_refs,
+                    *multi_turn_refs,
                     *review_closure_refs,
                     *github_refs,
                     *readiness_refs,
@@ -191,6 +204,7 @@ def build_god_room_runtime_closure_evidence(
                     *trace_targets,
                     *speaker_targets,
                     *speaker_response_targets,
+                    *multi_turn_targets,
                     *review_closure_targets,
                     *github_targets,
                 ]
@@ -206,6 +220,7 @@ def build_god_room_runtime_closure_evidence(
                 tui_projection_artifact,
                 speaker_attempt_artifact,
                 speaker_response_artifact,
+                multi_turn_provider_speech_run_artifact,
                 review_closure_artifact,
                 github_truth_artifact,
                 release_readiness_artifact,
@@ -220,6 +235,7 @@ def build_god_room_runtime_closure_evidence(
             trace=trace_details,
             speaker=speaker_details,
             speaker_response=speaker_response_details,
+            multi_turn_provider_speech=multi_turn_details,
             review_closure=review_closure_details,
             readiness=readiness_details,
         ),
@@ -235,6 +251,7 @@ def build_god_room_runtime_closure_evidence(
         "tui_projection": tui_details,
         "speaker_attempt": speaker_details,
         "speaker_response": speaker_response_details,
+        "multi_turn_provider_speech": multi_turn_details,
         "review_closure": review_closure_details,
         "github_truth": github_details,
         "release_readiness": readiness_details,
@@ -633,6 +650,119 @@ def _speaker_response_details(
     )
 
 
+def _multi_turn_provider_speech_run_details(
+    path: str | Path | None,
+    *,
+    event_ids: set[str],
+    conversation_ids: set[str],
+    room_ids: set[str],
+    issues: list[str],
+) -> tuple[dict[str, object], list[str], list[str]]:
+    if path is None:
+        return {
+            "status": "not_provided",
+            "proof_level": "manual_gap",
+            "optional": True,
+        }, [], []
+    payload = _load_json(path, label="multi-turn provider speech run", issues=issues)
+    if not isinstance(payload, dict):
+        return (
+            _manual_gap_details("multi-turn provider speech run artifact is missing"),
+            [],
+            [],
+        )
+    schema_version = _text(payload.get("schema_version"))
+    status = _text(payload.get("status")) or "manual_gap"
+    proof_level = _text(payload.get("proof_level")) or "manual_gap"
+    conversation_id = _text(payload.get("conversation_id"))
+    room_id = _text(payload.get("room_id"))
+    if schema_version != "xmuse.god_room_multi_turn_provider_speech_run.v1":
+        issues.append("multi-turn provider speech run artifact has unexpected schema")
+    if conversation_id is not None and conversation_id not in conversation_ids:
+        issues.append("multi-turn provider speech run conversation does not match room events")
+    if room_id is not None and room_id not in room_ids:
+        issues.append("multi-turn provider speech run room does not match room events")
+    if status != "completed":
+        issues.append("multi-turn provider speech run is not completed")
+    if proof_level == "manual_gap":
+        issues.append("multi-turn provider speech run is manual_gap")
+    turns = payload.get("turns")
+    if not isinstance(turns, list) or not turns:
+        issues.append("multi-turn provider speech run has no turns")
+        turns = []
+    appended_event_ids: list[str] = []
+    provider_response_artifacts: list[str] = []
+    speaker_response_artifacts: list[str] = []
+    provider_response_ids: list[str] = []
+    speaker_response_statuses: list[str] = []
+    refs: list[str] = [f"multi_turn_provider_speech_run_artifact:{Path(path)}"]
+    targets: list[str] = []
+    for index, turn in enumerate(turns, start=1):
+        if not isinstance(turn, dict):
+            issues.append(f"multi-turn provider speech run turn {index} is invalid")
+            continue
+        event_id = _text(turn.get("appended_event_id"))
+        if event_id is None:
+            issues.append(
+                f"multi-turn provider speech run turn {index} lacks appended_event_id"
+            )
+        else:
+            appended_event_ids.append(event_id)
+            refs.append(f"god-room-event:{event_id}")
+            targets.append(f"god-room-event:{event_id}")
+            if event_id not in event_ids:
+                issues.append(
+                    "multi-turn provider speech run appended event is missing "
+                    f"from god room events: {event_id}"
+                )
+        artifacts = turn.get("artifacts")
+        if isinstance(artifacts, dict):
+            provider_response = _text(artifacts.get("provider_response"))
+            speaker_response = _text(artifacts.get("speaker_response"))
+            if provider_response is not None:
+                provider_response_artifacts.append(provider_response)
+                refs.append(f"provider_response_artifact:{provider_response}")
+            if speaker_response is not None:
+                speaker_response_artifacts.append(speaker_response)
+                refs.append(f"speaker_response_artifact:{speaker_response}")
+        speaker_response_payload = turn.get("speaker_response")
+        if isinstance(speaker_response_payload, dict):
+            speaker_status = _text(speaker_response_payload.get("status"))
+            if speaker_status is not None:
+                speaker_response_statuses.append(speaker_status)
+            if speaker_status and speaker_status != "speak_event_appended":
+                issues.append(
+                    "multi-turn provider speech run turn "
+                    f"{index} speaker response is {speaker_status}"
+                )
+        provider_response_payload = turn.get("provider_response")
+        if isinstance(provider_response_payload, dict):
+            response_id = _text(provider_response_payload.get("response_id"))
+            if response_id is not None:
+                provider_response_ids.append(response_id)
+    return (
+        {
+            "status": status,
+            "proof_level": proof_level,
+            "source_authority": _text(payload.get("source_authority")),
+            "conversation_id": conversation_id,
+            "room_id": room_id,
+            "turn_count": _int(payload.get("turn_count")) or len(turns),
+            "indexed_turn_count": len(appended_event_ids),
+            "appended_event_ids": _dedupe(appended_event_ids),
+            "provider_response_artifacts": _dedupe(provider_response_artifacts),
+            "speaker_response_artifacts": _dedupe(speaker_response_artifacts),
+            "provider_response_ids": _dedupe(provider_response_ids),
+            "speaker_response_statuses": _counts(speaker_response_statuses),
+            "manual_gaps": _string_list(payload.get("manual_gaps")),
+            "forbidden_claims": _string_list(payload.get("forbidden_claims")),
+            "blocked_reason": _text(payload.get("blocked_reason")),
+        },
+        _dedupe(refs),
+        _dedupe(targets),
+    )
+
+
 def _review_closure_details(
     path: str | Path | None,
     *,
@@ -884,6 +1014,7 @@ def _summary(
     trace: Mapping[str, object],
     speaker: Mapping[str, object],
     speaker_response: Mapping[str, object],
+    multi_turn_provider_speech: Mapping[str, object],
     review_closure: Mapping[str, object],
     readiness: Mapping[str, object],
 ) -> str:
@@ -895,6 +1026,8 @@ def _summary(
         f"speaker attempt is {_text(speaker.get('status')) or 'not_provided'}; "
         "speaker response is "
         f"{_text(speaker_response.get('status')) or 'not_provided'}; "
+        "multi-turn provider speech is "
+        f"{_text(multi_turn_provider_speech.get('status')) or 'not_provided'}; "
         "review closure is "
         f"{_text(review_closure.get('status')) or 'not_provided'}; "
         f"release readiness is {_text(readiness.get('decision')) or 'not_evaluated'}."

@@ -232,6 +232,60 @@ def test_god_room_runtime_closure_evidence_indexes_contracts_without_merge_upgra
             },
         },
     )
+    multi_turn_path = _write_json(
+        tmp_path / "multi-turn-provider-speech-run.json",
+        {
+            "schema_version": "xmuse.god_room_multi_turn_provider_speech_run.v1",
+            "status": "completed",
+            "proof_level": "opt_in_live_proof",
+            "source_authority": (
+                "god_room_event_store+room_selected_god_binding+"
+                "provider_invocation+provider_response_capture"
+            ),
+            "conversation_id": "conv-1",
+            "room_id": "room-1",
+            "max_turns": 1,
+            "turn_count": 1,
+            "initial_after_event_id": "evt-propose",
+            "final_after_event_id": "evt-review-provider-speak",
+            "blocked_reason": None,
+            "manual_gaps": [
+                "natural_multi_god_groupchat_not_proven",
+                "peer_god_live_proof_not_proven",
+            ],
+            "forbidden_claims": [
+                "peer_god_live_proof",
+                "natural_groupchat_closure",
+                "autonomous_provider_speech_closure",
+                "ready_to_merge",
+                "pr_merged",
+                "provider_invocation_live_proof_beyond_returned_turn_artifacts",
+            ],
+            "turns": [
+                {
+                    "turn_number": 1,
+                    "after_event_id": "evt-propose",
+                    "appended_event_id": "evt-review-provider-speak",
+                    "artifacts": {
+                        "provider_response": (
+                            "reports/provider-responses/provider-response-1.json"
+                        ),
+                        "speaker_response": (
+                            "reports/god_room_speaker_responses/"
+                            "speaker-response-1.json"
+                        ),
+                    },
+                    "provider_response": {
+                        "response_id": "provider-response-1",
+                        "status": "completed",
+                    },
+                    "speaker_response": json.loads(
+                        speaker_response_path.read_text(encoding="utf-8")
+                    ),
+                }
+            ],
+        },
+    )
     github_path = _write_json(
         tmp_path / "github-truth.json",
         {
@@ -261,6 +315,7 @@ def test_god_room_runtime_closure_evidence_indexes_contracts_without_merge_upgra
         tui_projection_artifact=tui_path,
         speaker_attempt_artifact=speaker_attempt_path,
         speaker_response_artifact=speaker_response_path,
+        multi_turn_provider_speech_run_artifact=multi_turn_path,
         github_truth_artifact=github_path,
         release_readiness_artifact=readiness_path,
     )
@@ -290,6 +345,18 @@ def test_god_room_runtime_closure_evidence_indexes_contracts_without_merge_upgra
     )
     assert details["speaker_response"]["provider_response_id"] == (
         "provider-response-1"
+    )
+    assert details["multi_turn_provider_speech"]["status"] == "completed"
+    assert details["multi_turn_provider_speech"]["proof_level"] == "opt_in_live_proof"
+    assert details["multi_turn_provider_speech"]["indexed_turn_count"] == 1
+    assert details["multi_turn_provider_speech"]["appended_event_ids"] == [
+        "evt-review-provider-speak"
+    ]
+    assert details["multi_turn_provider_speech"]["provider_response_artifacts"] == [
+        "reports/provider-responses/provider-response-1.json"
+    ]
+    assert "provider_response_artifact:reports/provider-responses/provider-response-1.json" in (
+        evidence["source_refs"]
     )
     assert details["github_truth"]["merged"] is False
     assert details["github_truth"]["can_emit_pr_merged"] is False
@@ -435,6 +502,92 @@ def test_god_room_runtime_closure_evidence_rejects_unreplayed_speaker_response(
     assert details["blocked_reason"] == (
         "speaker response speak event is missing from god room events"
     )
+
+
+def test_god_room_runtime_closure_evidence_rejects_unreplayed_multi_turn_event(
+    tmp_path: Path,
+) -> None:
+    participants_path = _write_json(
+        tmp_path / "participants.json",
+        {
+            "participants": [
+                GodRoomParticipant(
+                    participant_id="part-architect",
+                    god_id="god-architect",
+                ).model_dump(mode="json"),
+                GodRoomParticipant(
+                    participant_id="part-review",
+                    god_id="god-review",
+                ).model_dump(mode="json"),
+            ]
+        },
+    )
+    events_path = _write_json(
+        tmp_path / "events.json",
+        {"events": [_event("evt-propose").model_dump(mode="json")]},
+    )
+    multi_turn_path = _write_json(
+        tmp_path / "multi-turn-provider-speech-run.json",
+        {
+            "schema_version": "xmuse.god_room_multi_turn_provider_speech_run.v1",
+            "status": "completed",
+            "proof_level": "opt_in_live_proof",
+            "source_authority": (
+                "god_room_event_store+room_selected_god_binding+"
+                "provider_invocation+provider_response_capture"
+            ),
+            "conversation_id": "conv-1",
+            "room_id": "room-1",
+            "turn_count": 1,
+            "turns": [
+                {
+                    "turn_number": 1,
+                    "after_event_id": "evt-propose",
+                    "appended_event_id": "evt-missing-provider-speak",
+                    "artifacts": {
+                        "provider_response": (
+                            "reports/provider-responses/provider-response-1.json"
+                        ),
+                        "speaker_response": (
+                            "reports/god_room_speaker_responses/"
+                            "speaker-response-1.json"
+                        ),
+                    },
+                    "speaker_response": {"status": "speak_event_appended"},
+                    "provider_response": {"response_id": "provider-response-1"},
+                }
+            ],
+            "manual_gaps": [
+                "natural_multi_god_groupchat_not_proven",
+                "peer_god_live_proof_not_proven",
+            ],
+            "forbidden_claims": [
+                "peer_god_live_proof",
+                "natural_groupchat_closure",
+                "ready_to_merge",
+                "pr_merged",
+            ],
+        },
+    )
+
+    evidence = capture_god_room_runtime_closure_evidence(
+        run_id="overnight-runtime-closure",
+        output_path=tmp_path / "closure-evidence.json",
+        participants_artifact=participants_path,
+        events_artifact=events_path,
+        multi_turn_provider_speech_run_artifact=multi_turn_path,
+    )
+
+    details = evidence["god_room_runtime_closure"]["multi_turn_provider_speech"]
+    assert evidence["status"] == "manual_gap"
+    assert evidence["proof_level"] == "manual_gap"
+    assert (
+        "multi-turn provider speech run appended event is missing "
+        "from god room events: evt-missing-provider-speak"
+    ) in evidence["blocked_reason"]
+    assert details["status"] == "completed"
+    assert details["proof_level"] == "opt_in_live_proof"
+    assert details["appended_event_ids"] == ["evt-missing-provider-speak"]
 
 
 def _event(

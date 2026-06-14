@@ -1447,6 +1447,55 @@ def test_release_evidence_pack_converts_god_room_runtime_closure_into_replay_sec
             },
         },
     )
+    multi_turn_run = tmp_path / "multi-turn-provider-speech-run.json"
+    _write_json(
+        multi_turn_run,
+        {
+            "schema_version": "xmuse.god_room_multi_turn_provider_speech_run.v1",
+            "status": "completed",
+            "proof_level": "opt_in_live_proof",
+            "source_authority": (
+                "god_room_event_store+room_selected_god_binding+"
+                "provider_invocation+provider_response_capture"
+            ),
+            "conversation_id": "conv-1",
+            "room_id": "room-1",
+            "max_turns": 1,
+            "turn_count": 1,
+            "initial_after_event_id": "evt-propose",
+            "final_after_event_id": "evt-review-provider-speak",
+            "turns": [
+                {
+                    "turn_number": 1,
+                    "after_event_id": "evt-propose",
+                    "appended_event_id": "evt-review-provider-speak",
+                    "artifacts": {
+                        "provider_response": (
+                            "reports/provider-responses/provider-response-1.json"
+                        ),
+                        "speaker_response": (
+                            "reports/god_room_speaker_responses/"
+                            "speaker-response-1.json"
+                        ),
+                    },
+                    "speaker_response": {"status": "speak_event_appended"},
+                    "provider_response": {"response_id": "provider-response-1"},
+                }
+            ],
+            "manual_gaps": [
+                "natural_multi_god_groupchat_not_proven",
+                "peer_god_live_proof_not_proven",
+            ],
+            "forbidden_claims": [
+                "peer_god_live_proof",
+                "natural_groupchat_closure",
+                "autonomous_provider_speech_closure",
+                "ready_to_merge",
+                "pr_merged",
+                "provider_invocation_live_proof_beyond_returned_turn_artifacts",
+            ],
+        },
+    )
     review_closure = tmp_path / "review-closure.json"
     _write_json(
         review_closure,
@@ -1509,6 +1558,7 @@ def test_release_evidence_pack_converts_god_room_runtime_closure_into_replay_sec
         god_room_tui_projection=tui,
         god_room_speaker_attempt=speaker_attempt,
         god_room_speaker_response=speaker_response,
+        god_room_multi_turn_provider_speech_run=multi_turn_run,
         god_room_review_closure=review_closure,
     )
 
@@ -1531,6 +1581,16 @@ def test_release_evidence_pack_converts_god_room_runtime_closure_into_replay_sec
     assert closure["details"]["god_room_runtime_closure"]["speaker_response"][
         "status"
     ] == "speak_event_appended"
+    assert closure["details"]["god_room_runtime_closure"][
+        "multi_turn_provider_speech"
+    ]["status"] == "completed"
+    assert closure["details"]["god_room_runtime_closure"][
+        "multi_turn_provider_speech"
+    ]["appended_event_ids"] == ["evt-review-provider-speak"]
+    assert (
+        "provider_response_artifact:reports/provider-responses/provider-response-1.json"
+        in closure["source_refs"]
+    )
     assert closure["details"]["god_room_runtime_closure"]["review_closure"][
         "status"
     ] == "candidate_input_ready"
@@ -2097,6 +2157,65 @@ def test_release_evidence_pack_cli_accepts_god_room_review_closure(
             ],
         },
     )
+    events_path = tmp_path / "god-room" / "events.json"
+    _write_json(
+        events_path,
+        {
+            "events": [
+                _god_room_event("evt-propose").model_dump(mode="json"),
+                _god_room_event(
+                    "evt-provider-speak",
+                    participant_id="part-review",
+                    god_id="god-review",
+                    causal_parent_id="evt-propose",
+                ).model_dump(mode="json"),
+            ]
+        },
+    )
+    multi_turn_run = tmp_path / "god-room" / "multi-turn-provider-speech-run.json"
+    _write_json(
+        multi_turn_run,
+        {
+            "schema_version": "xmuse.god_room_multi_turn_provider_speech_run.v1",
+            "status": "completed",
+            "proof_level": "opt_in_live_proof",
+            "source_authority": (
+                "god_room_event_store+room_selected_god_binding+"
+                "provider_invocation+provider_response_capture"
+            ),
+            "conversation_id": "conv-1",
+            "room_id": "room-1",
+            "turn_count": 1,
+            "turns": [
+                {
+                    "turn_number": 1,
+                    "after_event_id": "evt-propose",
+                    "appended_event_id": "evt-provider-speak",
+                    "artifacts": {
+                        "provider_response": (
+                            "reports/provider-responses/provider-response-1.json"
+                        ),
+                        "speaker_response": (
+                            "reports/god_room_speaker_responses/"
+                            "speaker-response-1.json"
+                        ),
+                    },
+                    "speaker_response": {"status": "speak_event_appended"},
+                    "provider_response": {"response_id": "provider-response-1"},
+                }
+            ],
+            "manual_gaps": [
+                "natural_multi_god_groupchat_not_proven",
+                "peer_god_live_proof_not_proven",
+            ],
+            "forbidden_claims": [
+                "peer_god_live_proof",
+                "natural_groupchat_closure",
+                "ready_to_merge",
+                "pr_merged",
+            ],
+        },
+    )
 
     assert (
         main(
@@ -2107,6 +2226,10 @@ def test_release_evidence_pack_cli_accepts_god_room_review_closure(
                 str(output),
                 "--run-id",
                 "review-closure-cli-pack",
+                "--god-room-events",
+                str(events_path),
+                "--god-room-multi-turn-provider-speech-run",
+                str(multi_turn_run),
                 "--god-room-review-closure",
                 str(review_closure),
             ]
@@ -2120,7 +2243,8 @@ def test_release_evidence_pack_cli_accepts_god_room_review_closure(
     )
     sections = {section["section_id"]: section for section in replay["sections"]}
     closure = sections["god_room_runtime_closure"]
-    details = closure["details"]["god_room_runtime_closure"]["review_closure"]
+    runtime_details = closure["details"]["god_room_runtime_closure"]
+    details = runtime_details["review_closure"]
     assert pack["source_reports"]["god_room_runtime_closure_evidence"] == str(
         output.parent / "god-room-runtime-closure-production-evidence.json"
     )
@@ -2130,6 +2254,10 @@ def test_release_evidence_pack_cli_accepts_god_room_review_closure(
     assert details["proof_level"] == "contract_proof"
     assert details["server_truth_status"] == "not_server_truth"
     assert "ready_to_merge" in details["forbidden_claims"]
+    assert runtime_details["multi_turn_provider_speech"]["status"] == "completed"
+    assert runtime_details["multi_turn_provider_speech"]["appended_event_ids"] == [
+        "evt-provider-speak"
+    ]
     assert "worker-candidate:patch-reviewed" in closure["source_refs"]
 
 

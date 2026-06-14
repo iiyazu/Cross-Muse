@@ -201,6 +201,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--god-room-multi-turn-provider-speech-run",
+        type=Path,
+        default=None,
+        help=(
+            "Optional xmuse.god_room_multi_turn_provider_speech_run.v1 artifact "
+            "to index in the runtime closure replay section."
+        ),
+    )
+    parser.add_argument(
         "--god-room-runtime-closure-evidence-output",
         type=Path,
         default=None,
@@ -372,6 +381,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         god_room_lane_dag=args.god_room_lane_dag,
         god_room_memory_trace=args.god_room_memory_trace,
         god_room_tui_projection=args.god_room_tui_projection,
+        god_room_multi_turn_provider_speech_run=(
+            args.god_room_multi_turn_provider_speech_run
+        ),
         god_room_review_closure=args.god_room_review_closure,
         god_room_runtime_closure_evidence_output=(
             args.god_room_runtime_closure_evidence_output

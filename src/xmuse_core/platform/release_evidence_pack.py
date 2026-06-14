@@ -74,6 +74,7 @@ def capture_release_evidence_pack(
     god_room_tui_projection: str | Path | None = None,
     god_room_speaker_attempt: str | Path | None = None,
     god_room_speaker_response: str | Path | None = None,
+    god_room_multi_turn_provider_speech_run: str | Path | None = None,
     god_room_review_closure: str | Path | None = None,
     god_room_runtime_closure_evidence_output: str | Path | None = None,
     feature_contracts: tuple[str | Path, ...] = (),
@@ -170,6 +171,9 @@ def capture_release_evidence_pack(
             tui_projection_artifact=god_room_tui_projection,
             speaker_attempt_artifact=god_room_speaker_attempt,
             speaker_response_artifact=god_room_speaker_response,
+            multi_turn_provider_speech_run_artifact=(
+                god_room_multi_turn_provider_speech_run
+            ),
             review_closure_artifact=god_room_review_closure,
             github_truth_artifact=github_server_truth,
             release_readiness_artifact=readiness_path,
@@ -397,6 +401,7 @@ def _with_god_room_runtime_closure_evidence(
     tui_projection_artifact: str | Path | None,
     speaker_attempt_artifact: str | Path | None,
     speaker_response_artifact: str | Path | None,
+    multi_turn_provider_speech_run_artifact: str | Path | None,
     review_closure_artifact: str | Path | None,
     github_truth_artifact: str | Path | None,
     release_readiness_artifact: str | Path,
@@ -415,6 +420,7 @@ def _with_god_room_runtime_closure_evidence(
             tui_projection_artifact,
             speaker_attempt_artifact,
             speaker_response_artifact,
+            multi_turn_provider_speech_run_artifact,
             review_closure_artifact,
         )
     )
@@ -442,6 +448,7 @@ def _with_god_room_runtime_closure_evidence(
         tui_projection_artifact=tui_projection_artifact,
         speaker_attempt_artifact=speaker_attempt_artifact,
         speaker_response_artifact=speaker_response_artifact,
+        multi_turn_provider_speech_run_artifact=multi_turn_provider_speech_run_artifact,
         review_closure_artifact=review_closure_artifact,
         github_truth_artifact=github_truth_artifact,
         release_readiness_artifact=release_readiness_artifact,
