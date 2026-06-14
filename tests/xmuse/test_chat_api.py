@@ -3088,8 +3088,20 @@ def test_chat_api_god_room_lane_review_verdict_requires_independent_evidence(
     assert artifact["review_plane_sync_status"] == "review_plane_store_updated"
     assert artifact["review_plane_task_ref"].startswith("review_plane_task:")
     assert artifact["review_plane_verdict_ref"].startswith("review_plane_verdict:")
+    assert artifact["graph_status_sync_status"] == "feature_graph_status_store_updated"
+    assert artifact["graph_status_source_authority"] == "feature_graph_status_store"
+    assert artifact["feature_graph_evidence_bundle"]["bundle_id"].startswith(
+        "god_room_evidence_graph-review-verdict_lane-runtime-api"
+    )
+    assert artifact["feature_graph_review_verdict"]["decision"] == "merge"
+    assert artifact["feature_graph_review_transition_plan"]["target_status"] == (
+        "merged"
+    )
+    assert artifact["feature_graph_status"]["status"] == "merged"
+    assert artifact["feature_graph_patch_forward_plan"] is None
     assert "review_plane_store_not_updated" not in artifact["manual_gaps"]
-    assert "patch_forward_lane_dag_not_linked" in artifact["manual_gaps"]
+    assert "patch_forward_lane_dag_not_linked" not in artifact["manual_gaps"]
+    assert "lane_status_not_updated" not in artifact["manual_gaps"]
     assert "end_to_end_execution_review_closure" in artifact["forbidden_claims"]
     assert "ready_to_merge" in artifact["forbidden_claims"]
     verdict_artifact = tmp_path / payload["artifacts"]["review_verdict"]
@@ -3103,6 +3115,20 @@ def test_chat_api_god_room_lane_review_verdict_requires_independent_evidence(
     assert review_plane["review_verdicts"][0]["summary"] == (
         "Candidate output matches the lane contract."
     )
+    graph_status = FeatureGraphStatusStore(
+        tmp_path / "feature_graph_statuses.json"
+    ).get(
+        graph_set_id="graph-review-verdict-graph-set",
+        feature_graph_id="graph-review-verdict-feature-runtime",
+    )
+    assert graph_status.status is FeatureGraphExecutionStatus.MERGED
+    feature_graph_artifacts = json.loads(
+        (tmp_path / "feature_graph_artifacts.json").read_text(encoding="utf-8")
+    )
+    assert feature_graph_artifacts["evidence_bundles"][0]["bundle_id"] == (
+        artifact["feature_graph_evidence_bundle"]["bundle_id"]
+    )
+    assert feature_graph_artifacts["review_verdicts"][0]["decision"] == "merge"
     assert not (tmp_path / "feature_lanes.json").exists()
 
 
@@ -3131,6 +3157,66 @@ def test_chat_api_god_room_lane_review_verdict_rejects_missing_intake(
         / "reports"
         / "god_room_review_verdicts"
         / "graph-verdict-no-intake.lane-runtime-api.review-verdict.json"
+    ).exists()
+
+
+def test_chat_api_god_room_lane_review_verdict_rejects_stale_graph_status(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    conv_id = _create_god_room_lane_dag(client, graph_id="graph-verdict-stale")
+    _mark_god_room_lane_reviewing(
+        tmp_path,
+        graph_id="graph-verdict-stale",
+        lane_id="lane-runtime-api",
+    )
+    assert client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-intake",
+        json={
+            "graph_id": "graph-verdict-stale",
+            "lane_id": "lane-runtime-api",
+            "worker_candidate_refs": ["worker-candidate:run-1"],
+        },
+    ).status_code == 201
+    store = FeatureGraphStatusStore(tmp_path / "feature_graph_statuses.json")
+    current = store.get(
+        graph_set_id="graph-verdict-stale-graph-set",
+        feature_graph_id="graph-verdict-stale-feature-runtime",
+    )
+    store.transition(
+        current.model_copy(
+            update={
+                "status_id": f"{current.status_id}-blocked",
+                "status": FeatureGraphExecutionStatus.BLOCKED,
+                "updated_at": "2026-06-15T01:06:00Z",
+            }
+        ),
+        expected_status=FeatureGraphExecutionStatus.REVIEWING,
+    )
+
+    response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-verdict",
+        json={
+            "graph_id": "graph-verdict-stale",
+            "lane_id": "lane-runtime-api",
+            "reviewer_id": "review-god",
+            "decision": "merge",
+            "summary": "Intake no longer matches durable graph status.",
+            "evidence_refs": ["worker-candidate:run-1"],
+        },
+    )
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["code"] == "god_room_lane_review_graph_status_sync_failed"
+    assert detail["source_authority"] == "feature_graph_status_store"
+    assert "feature_graph_review_status_sync_failed" in detail["manual_gaps"]
+    assert not (tmp_path / "review_plane.json").exists()
+    assert not (
+        tmp_path
+        / "reports"
+        / "god_room_review_verdicts"
+        / "graph-verdict-stale.lane-runtime-api.review-verdict.json"
     ).exists()
 
 
@@ -3224,6 +3310,123 @@ def test_chat_api_god_room_lane_review_verdict_requires_decision_details(
     ).exists()
 
 
+def test_chat_api_god_room_lane_review_verdict_rework_updates_graph_status(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    conv_id = _create_god_room_lane_dag(client, graph_id="graph-verdict-rework")
+    _mark_god_room_lane_reviewing(
+        tmp_path,
+        graph_id="graph-verdict-rework",
+        lane_id="lane-runtime-api",
+    )
+    assert client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-intake",
+        json={
+            "graph_id": "graph-verdict-rework",
+            "lane_id": "lane-runtime-api",
+            "worker_candidate_refs": ["worker-candidate:rework-run-1"],
+            "execution_artifact_refs": ["artifacts/lane-runtime-api/result.json"],
+        },
+    ).status_code == 201
+
+    response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-verdict",
+        json={
+            "graph_id": "graph-verdict-rework",
+            "lane_id": "lane-runtime-api",
+            "reviewer_id": "review-god",
+            "decision": "rework",
+            "summary": "Candidate misses recovery evidence lineage.",
+            "evidence_refs": [
+                "worker-candidate:rework-run-1",
+                "artifacts/lane-runtime-api/result.json",
+            ],
+        },
+    )
+
+    assert response.status_code == 201
+    artifact = response.json()["review_verdict"]
+    assert artifact["graph_status_sync_status"] == "feature_graph_status_store_updated"
+    assert artifact["feature_graph_review_verdict"]["decision"] == "rework"
+    assert artifact["feature_graph_review_transition_plan"]["target_status"] == (
+        "reworking"
+    )
+    assert artifact["feature_graph_status"]["status"] == "reworking"
+    graph_status = FeatureGraphStatusStore(
+        tmp_path / "feature_graph_statuses.json"
+    ).get(
+        graph_set_id="graph-verdict-rework-graph-set",
+        feature_graph_id="graph-verdict-rework-feature-runtime",
+    )
+    assert graph_status.status is FeatureGraphExecutionStatus.REWORKING
+    feature_graph_artifacts = json.loads(
+        (tmp_path / "feature_graph_artifacts.json").read_text(encoding="utf-8")
+    )
+    assert feature_graph_artifacts["review_verdicts"][0]["decision"] == "rework"
+    assert feature_graph_artifacts["rework_packets"][0]["source_verdict_id"] == (
+        artifact["feature_graph_review_verdict"]["verdict_id"]
+    )
+    assert not (tmp_path / "feature_lanes.json").exists()
+
+
+def test_chat_api_god_room_lane_review_verdict_terminate_updates_graph_status(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    conv_id = _create_god_room_lane_dag(client, graph_id="graph-verdict-blocked")
+    _mark_god_room_lane_reviewing(
+        tmp_path,
+        graph_id="graph-verdict-blocked",
+        lane_id="lane-runtime-api",
+    )
+    assert client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-intake",
+        json={
+            "graph_id": "graph-verdict-blocked",
+            "lane_id": "lane-runtime-api",
+            "worker_candidate_refs": ["worker-candidate:block-run-1"],
+        },
+    ).status_code == 201
+
+    response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-verdict",
+        json={
+            "graph_id": "graph-verdict-blocked",
+            "lane_id": "lane-runtime-api",
+            "reviewer_id": "review-god",
+            "decision": "terminate",
+            "summary": "Required runtime evidence is unavailable.",
+            "evidence_refs": ["worker-candidate:block-run-1"],
+            "terminate_reason": "provider execution evidence missing",
+        },
+    )
+
+    assert response.status_code == 201
+    artifact = response.json()["review_verdict"]
+    assert artifact["graph_status_sync_status"] == "feature_graph_status_store_updated"
+    assert artifact["feature_graph_review_verdict"]["decision"] == "blocked"
+    assert artifact["feature_graph_review_transition_plan"]["target_status"] == (
+        "blocked"
+    )
+    assert artifact["feature_graph_status"]["status"] == "blocked"
+    graph_status = FeatureGraphStatusStore(
+        tmp_path / "feature_graph_statuses.json"
+    ).get(
+        graph_set_id="graph-verdict-blocked-graph-set",
+        feature_graph_id="graph-verdict-blocked-feature-runtime",
+    )
+    assert graph_status.status is FeatureGraphExecutionStatus.BLOCKED
+    feature_graph_artifacts = json.loads(
+        (tmp_path / "feature_graph_artifacts.json").read_text(encoding="utf-8")
+    )
+    assert feature_graph_artifacts["review_verdicts"][0]["decision"] == "blocked"
+    assert feature_graph_artifacts["blocked_review_plans"][0]["verdict_id"] == (
+        artifact["feature_graph_review_verdict"]["verdict_id"]
+    )
+    assert not (tmp_path / "feature_lanes.json").exists()
+
+
 def test_chat_api_god_room_lane_patch_forward_appends_lanedag_lane(
     tmp_path: Path,
 ) -> None:
@@ -3259,6 +3462,23 @@ def test_chat_api_god_room_lane_patch_forward_appends_lanedag_lane(
         },
     )
     assert verdict.status_code == 201
+    verdict_artifact = verdict.json()["review_verdict"]
+    assert verdict_artifact["graph_status_sync_status"] == (
+        "feature_graph_review_gate_recorded"
+    )
+    assert verdict_artifact["feature_graph_status"] is None
+    assert verdict_artifact["feature_graph_patch_forward_plan"]["expected_status"] == (
+        "reviewing"
+    )
+    assert "patch_forward_gate_plan_created" in verdict_artifact["manual_gaps"]
+    assert "lane_status_not_updated" in verdict_artifact["manual_gaps"]
+    graph_status = FeatureGraphStatusStore(
+        tmp_path / "feature_graph_statuses.json"
+    ).get(
+        graph_set_id="graph-patch-forward-graph-set",
+        feature_graph_id="graph-patch-forward-feature-runtime",
+    )
+    assert graph_status.status is FeatureGraphExecutionStatus.REVIEWING
 
     response = client.post(
         f"/api/chat/conversations/{conv_id}/god-room/lane-dag/patch-forward",

@@ -97,6 +97,9 @@ from xmuse_core.integrations.god_room_memoryos_plan import (
     build_god_room_memoryos_plan,
 )
 from xmuse_core.integrations.memoryos_lite_interop import live_memoryos_lite_enabled
+from xmuse_core.platform.feature_graph_review_coordinator import (
+    submit_feature_graph_review_verdict,
+)
 from xmuse_core.platform.god_runtime_continuity import (
     build_selected_god_runtime_continuity_view,
 )
@@ -144,6 +147,7 @@ from xmuse_core.structuring.blueprint_execution.lane_recovery_artifacts import (
     lane_recovery_artifact_path,
     load_lane_recovery_decisions,
 )
+from xmuse_core.structuring.feature_graph_artifact_store import FeatureGraphArtifactStore
 from xmuse_core.structuring.feature_graph_status_store import FeatureGraphStatusStore
 from xmuse_core.structuring.feature_plan_store import (
     FeatureGraphSetStore,
@@ -152,8 +156,21 @@ from xmuse_core.structuring.feature_plan_store import (
     save_approved_feature_plan_artifacts,
 )
 from xmuse_core.structuring.feature_review_contracts import (
+    AcceptanceCoverageItem,
+    CommandEvidence,
+    FeatureEvidenceBundle,
     FeatureGraphExecutionStatus,
     FeatureGraphExecutionStatusRecord,
+    FeatureGraphReviewCoordinatorAction,
+    FeatureReviewDecision,
+    FeatureReviewVerdict,
+    FeatureVerificationEvidence,
+    FeatureWorkerNotes,
+    LaneGraphEvidenceSummary,
+    MergeGateEvidence,
+    PatchForwardGate,
+    ReviewFinding,
+    ReviewScopeAssessment,
 )
 from xmuse_core.structuring.god_room_blueprint_freeze import (
     GodRoomBlueprintFreezeArtifactV1,
@@ -1384,6 +1401,7 @@ def _build_god_room_lane_review_verdict(
                 "message": "review intake artifact does not match request scope",
             },
         )
+    intake["review_intake_artifact"] = str(intake_path.relative_to(base_dir))
     reviewer_inputs = set(_string_list(intake.get("reviewer_input_refs")))
     cited_inputs = [ref for ref in request.evidence_refs if ref in reviewer_inputs]
     if not cited_inputs:
@@ -1422,6 +1440,15 @@ def _build_god_room_lane_review_verdict(
         patch_instructions=request.patch_instructions,
         terminate_reason=request.terminate_reason,
     )
+    graph_review_sync = _sync_god_room_review_verdict_to_feature_graph_status(
+        base_dir,
+        conversation_id=conversation_id,
+        graph_id=request.graph_id,
+        lane_id=request.lane_id,
+        intake=intake,
+        verdict=verdict,
+        request=request,
+    )
     review_plane_sync = _sync_god_room_review_verdict_to_review_plane(
         base_dir,
         graph_id=request.graph_id,
@@ -1438,6 +1465,21 @@ def _build_god_room_lane_review_verdict(
         "review_plane_sync_status": "review_plane_store_updated",
         "review_plane_task_ref": review_plane_sync["task_ref"],
         "review_plane_verdict_ref": review_plane_sync["verdict_ref"],
+        "graph_status_sync_status": graph_review_sync["sync_status"],
+        "graph_status_source_authority": "feature_graph_status_store",
+        "feature_graph_evidence_bundle": graph_review_sync[
+            "feature_graph_evidence_bundle"
+        ],
+        "feature_graph_review_verdict": graph_review_sync[
+            "feature_graph_review_verdict"
+        ],
+        "feature_graph_review_transition_plan": graph_review_sync[
+            "feature_graph_review_transition_plan"
+        ],
+        "feature_graph_status": graph_review_sync["feature_graph_status"],
+        "feature_graph_patch_forward_plan": graph_review_sync[
+            "feature_graph_patch_forward_plan"
+        ],
         "server_truth_status": "not_server_truth",
         "conversation_id": conversation_id,
         "graph_id": request.graph_id,
@@ -1452,11 +1494,7 @@ def _build_god_room_lane_review_verdict(
             if request.decision == "patch-forward"
             else "release_evidence_link"
         ),
-        "manual_gaps": [
-            "lane_status_not_updated",
-            "patch_forward_lane_dag_not_linked",
-            "release_evidence_not_linked",
-        ],
+        "manual_gaps": graph_review_sync["manual_gaps"],
         "forbidden_claims": [
             "end_to_end_execution_review_closure",
             "ready_to_merge",
@@ -3018,6 +3056,353 @@ def _sync_god_room_review_verdict_to_review_plane(
     }
 
 
+def _sync_god_room_review_verdict_to_feature_graph_status(
+    base_dir: Path,
+    *,
+    conversation_id: str,
+    graph_id: str,
+    lane_id: str,
+    intake: dict[str, object],
+    verdict: ReviewVerdict,
+    request: GodRoomLaneReviewVerdictRequest,
+) -> dict[str, object]:
+    lane_contract = intake.get("lane_contract")
+    if not isinstance(lane_contract, dict):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "god_room_lane_review_intake_missing_lane_contract",
+                "message": "review verdict requires lane contract from review intake",
+                "source_authority": "god_room_lane_review_intake_artifact",
+            },
+        )
+    try:
+        status_snapshot = FeatureGraphExecutionStatusRecord.model_validate(
+            intake.get("feature_graph_status")
+        )
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "god_room_lane_review_intake_missing_graph_status",
+                "message": str(exc),
+                "source_authority": "god_room_lane_review_intake_artifact",
+            },
+        ) from exc
+    evidence_bundle = _feature_evidence_bundle_from_god_room_review_intake(
+        conversation_id=conversation_id,
+        graph_id=graph_id,
+        lane_id=lane_id,
+        lane_contract=lane_contract,
+        intake=intake,
+        status_snapshot=status_snapshot,
+    )
+    feature_verdict = _feature_review_verdict_from_god_room_review(
+        evidence_bundle=evidence_bundle,
+        lane_contract=lane_contract,
+        intake=intake,
+        verdict=verdict,
+        request=request,
+    )
+    artifact_store = FeatureGraphArtifactStore(
+        base_dir / "feature_graph_artifacts.json"
+    )
+    try:
+        updated_at = _non_stale_utc_now(status_snapshot.updated_at)
+        outcome = submit_feature_graph_review_verdict(
+            store=FeatureGraphStatusStore(base_dir / "feature_graph_statuses.json"),
+            evidence_bundle=evidence_bundle,
+            verdict=feature_verdict,
+            updated_at=updated_at,
+            artifact_store=artifact_store,
+        )
+        artifact_store.save_evidence_bundle(evidence_bundle)
+    except (KeyError, ValueError) as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "god_room_lane_review_graph_status_sync_failed",
+                "message": str(exc),
+                "source_authority": "feature_graph_status_store",
+                "graph_id": graph_id,
+                "graph_set_id": evidence_bundle.graph_set_id,
+                "feature_graph_id": evidence_bundle.feature_graph_id,
+                "lane_id": lane_id,
+                "manual_gaps": [
+                    "feature_graph_review_status_sync_failed",
+                    "live_execution_review_transition_not_proven",
+                ],
+                "forbidden_claims": [
+                    "worker_output_is_review_truth",
+                    "end_to_end_execution_review_closure",
+                    "ready_to_merge",
+                    "pr_merged",
+                ],
+            },
+        ) from exc
+    manual_gaps = [
+        "live_execution_not_proven",
+        "release_evidence_not_linked",
+        "github_truth_not_checked",
+    ]
+    if (
+        outcome.plan.coordinator_action
+        is FeatureGraphReviewCoordinatorAction.PATCH_FORWARD_GATE
+    ):
+        manual_gaps.extend(
+            [
+                "patch_forward_gate_plan_created",
+                "patch_forward_lane_dag_not_linked",
+            ]
+        )
+    if outcome.status is None:
+        manual_gaps.append("lane_status_not_updated")
+    return {
+        "sync_status": (
+            "feature_graph_status_store_updated"
+            if outcome.status is not None
+            else "feature_graph_review_gate_recorded"
+        ),
+        "feature_graph_evidence_bundle": evidence_bundle.model_dump(mode="json"),
+        "feature_graph_review_verdict": feature_verdict.model_dump(mode="json"),
+        "feature_graph_review_transition_plan": outcome.plan.model_dump(mode="json"),
+        "feature_graph_status": (
+            outcome.status.model_dump(mode="json")
+            if outcome.status is not None
+            else None
+        ),
+        "feature_graph_patch_forward_plan": (
+            outcome.patch_forward_plan.model_dump(mode="json")
+            if outcome.patch_forward_plan is not None
+            else None
+        ),
+        "manual_gaps": manual_gaps,
+    }
+
+
+def _feature_evidence_bundle_from_god_room_review_intake(
+    *,
+    conversation_id: str,
+    graph_id: str,
+    lane_id: str,
+    lane_contract: dict[str, object],
+    intake: dict[str, object],
+    status_snapshot: FeatureGraphExecutionStatusRecord,
+) -> FeatureEvidenceBundle:
+    candidate_refs = _dedupe_text(
+        [
+            *_string_list(intake.get("worker_candidate_refs")),
+            *_string_list(intake.get("execution_artifact_refs")),
+        ]
+    )
+    required_checks = _string_list(lane_contract.get("required_checks"))
+    allowed_files = _string_list(lane_contract.get("allowed_files"))
+    source_refs = _string_list(lane_contract.get("source_refs"))
+    acceptance_criteria = _dedupe_text(
+        [
+            "Independent review must cite candidate evidence.",
+            *required_checks,
+        ]
+    )
+    return FeatureEvidenceBundle(
+        bundle_id=(
+            f"god_room_evidence_{_artifact_path_id(graph_id)}_"
+            f"{_artifact_path_id(lane_id)}"
+        ),
+        conversation_id=conversation_id,
+        planning_run_id=status_snapshot.planning_run_id or f"god-room:{graph_id}",
+        feature_plan_id=status_snapshot.feature_plan_id,
+        feature_plan_version=status_snapshot.feature_plan_version,
+        graph_set_id=status_snapshot.graph_set_id,
+        graph_set_version=status_snapshot.graph_set_version,
+        feature_id=status_snapshot.feature_id,
+        feature_graph_id=status_snapshot.feature_graph_id,
+        worker_session_id=(
+            status_snapshot.active_worker_session_id
+            or f"manual_gap:worker_session:{graph_id}:{lane_id}"
+        ),
+        provider_session_binding_ref=(
+            status_snapshot.active_provider_session_binding_ref
+            or f"manual_gap:provider_session_binding:{graph_id}:{lane_id}"
+        ),
+        blueprint_refs=_dedupe_text(
+            [
+                *_string_list(lane_contract.get("inputs")),
+                *_string_list(intake.get("reviewer_input_refs")),
+                *source_refs,
+            ]
+        ),
+        blueprint_proof_level=status_snapshot.blueprint_proof_level,
+        feature_goal=str(lane_contract.get("review_profile") or lane_id),
+        acceptance_criteria=acceptance_criteria,
+        lane_graph_summary=LaneGraphEvidenceSummary(
+            feature_graph_id=status_snapshot.feature_graph_id,
+            lane_count=1,
+            completed_lane_ids=[lane_id],
+            blocked_lane_ids=list(status_snapshot.blocked_lane_ids),
+        ),
+        touched_files=allowed_files,
+        changed_files=allowed_files,
+        diff_ref=candidate_refs[0] if candidate_refs else None,
+        patch_ref=candidate_refs[-1] if candidate_refs else None,
+        dependency_changes=[],
+        verification=FeatureVerificationEvidence(
+            commands_run=required_checks or ["manual_gap:required_checks_missing"],
+            test_results=[
+                CommandEvidence(
+                    command=ref,
+                    status="candidate_reported",
+                    evidence_ref=ref,
+                )
+                for ref in candidate_refs
+            ],
+            known_failures=_string_list(intake.get("manual_gaps")),
+        ),
+        worker_notes=FeatureWorkerNotes(
+            implementation_summary=(
+                "GOD-room worker candidate evidence prepared for independent review."
+            ),
+            decisions_made=[
+                "Worker output remains candidate evidence until review verdict."
+            ],
+            risks_or_open_questions=[
+                "Live worker execution and GitHub truth remain unproven."
+            ],
+        ),
+        created_at=_utc_now(),
+    )
+
+
+def _feature_review_verdict_from_god_room_review(
+    *,
+    evidence_bundle: FeatureEvidenceBundle,
+    lane_contract: dict[str, object],
+    intake: dict[str, object],
+    verdict: ReviewVerdict,
+    request: GodRoomLaneReviewVerdictRequest,
+) -> FeatureReviewVerdict:
+    decision = _feature_review_decision_from_god_room_decision(request.decision)
+    evidence_refs = _dedupe_text(
+        [
+            str(intake.get("review_intake_artifact") or ""),
+            *verdict.evidence_refs,
+            *request.evidence_refs,
+        ]
+    )
+    if not evidence_refs:
+        evidence_refs = [f"manual_gap:review_evidence:{verdict.id}"]
+    acceptance_coverage = [
+        AcceptanceCoverageItem(
+            criterion=criterion,
+            status="reviewed_by_god_room_contract",
+            evidence_refs=evidence_refs,
+        )
+        for criterion in evidence_bundle.acceptance_criteria
+    ]
+    blocking_findings = (
+        [
+            ReviewFinding(
+                finding_id=f"god_room_review:{_artifact_path_id(verdict.id)}",
+                severity="blocking",
+                summary=verdict.summary,
+                evidence_refs=evidence_refs,
+            )
+        ]
+        if decision is FeatureReviewDecision.REWORK
+        else []
+    )
+    return FeatureReviewVerdict(
+        verdict_id=f"god_room_feature_review_{_artifact_path_id(verdict.id)}",
+        evidence_bundle_id=evidence_bundle.bundle_id,
+        decision=decision,
+        summary=verdict.summary,
+        blocking_findings=blocking_findings,
+        non_blocking_findings=[],
+        evidence_refs=evidence_refs,
+        acceptance_coverage=acceptance_coverage,
+        scope_assessment=ReviewScopeAssessment(
+            diff_scope="god_room_candidate_refs",
+            touched_files=_string_list(lane_contract.get("allowed_files")),
+            unexpected_files=[],
+            public_contract_changed=False,
+            new_dependency_added=False,
+        ),
+        required_gates_before_merge=(
+            _string_list(lane_contract.get("required_checks"))
+            if decision is FeatureReviewDecision.MERGE
+            else []
+        ),
+        merge_gate_evidence=(
+            MergeGateEvidence(
+                acceptance_coverage_ref=(
+                    f"god_room_feature_review:{verdict.id}#acceptance_coverage"
+                ),
+                diff_scope_ref=f"god_room_feature_review:{verdict.id}#scope_assessment",
+                verification_ref=evidence_refs[-1],
+                merge_guard_ref="manual_gap:github_merge_guard_not_checked",
+            )
+            if decision is FeatureReviewDecision.MERGE
+            else None
+        ),
+        patch_forward_gate=(
+            PatchForwardGate(
+                risk="low",
+                reason_not_rework=(
+                    "GOD-room review requested bounded patch-forward handling."
+                ),
+                allowed_file_refs=(
+                    _string_list(lane_contract.get("allowed_files"))
+                    or ["manual_gap:allowed_files_missing"]
+                ),
+                max_files_changed=max(
+                    1,
+                    len(_string_list(lane_contract.get("allowed_files"))),
+                ),
+                max_lines_changed=200,
+                focused_gates_to_rerun=(
+                    _string_list(lane_contract.get("required_checks"))
+                    or ["manual_gap:required_checks_missing"]
+                ),
+                disallow_new_dependencies=True,
+                disallow_public_contract_changes=True,
+            )
+            if decision is FeatureReviewDecision.PATCH_FORWARD
+            else None
+        ),
+        reviewer_session_id=request.reviewer_id or "god-room-reviewer",
+        blocked_missing_inputs=(
+            [request.terminate_reason or verdict.summary]
+            if decision is FeatureReviewDecision.BLOCKED
+            else []
+        ),
+        blocked_reason=(
+            request.terminate_reason or verdict.summary
+            if decision is FeatureReviewDecision.BLOCKED
+            else None
+        ),
+        blocked_owner=(
+            request.reviewer_id or "god-room-reviewer"
+            if decision is FeatureReviewDecision.BLOCKED
+            else None
+        ),
+        created_at=_utc_now(),
+    )
+
+
+def _feature_review_decision_from_god_room_decision(
+    decision: str,
+) -> FeatureReviewDecision:
+    if decision == "merge":
+        return FeatureReviewDecision.MERGE
+    if decision == "rework":
+        return FeatureReviewDecision.REWORK
+    if decision == "patch-forward":
+        return FeatureReviewDecision.PATCH_FORWARD
+    if decision == "terminate":
+        return FeatureReviewDecision.BLOCKED
+    raise ValueError(f"unsupported GOD-room review decision: {decision}")
+
+
 def _review_plane_verdict_ref_if_synced(
     base_dir: Path,
     *,
@@ -3599,6 +3984,13 @@ def _artifact_safe_id(value: str) -> str:
 
 def _utc_now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _non_stale_utc_now(existing_updated_at: str) -> str:
+    now = _utc_now()
+    existing = datetime.fromisoformat(existing_updated_at.replace("Z", "+00:00"))
+    candidate = datetime.fromisoformat(now.replace("Z", "+00:00"))
+    return existing_updated_at if candidate < existing else now
 
 
 def _default_participant_inits(role_templates: RoleTemplateStore) -> list[ParticipantInit]:

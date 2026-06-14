@@ -92,14 +92,16 @@ runtime、provider invocation、lane authority、review truth 完成。后续生
   `a9644c58fd3b0ef1b7d02cd95b703fd1a3344938`
 - Local head at start of L9 review-intake graph-status gate slice:
   `60d233c5758c63a2a31a2c2b3d78e62559971a29`
+- Local head at start of L9 review-verdict graph-status sync slice:
+  `e2596cbbb6111b4d2c00523956fe878d5369ea04`
 - PR: <https://github.com/iiyazu/Cross-Muse/pull/43>
 - PR state last checked: draft/open/unmerged
 - PR merge state last checked: `CLEAN`
 - PR review decision last checked: empty
 - Verified GitHub Actions truth at the start of this slice applied to remote head
-  `a9644c58fd3b0ef1b7d02cd95b703fd1a3344938`: run
-  `27494551576`, success
-- Local changes after `a9644c58fd3b0ef1b7d02cd95b703fd1a3344938` must not be
+  `e2596cbbb6111b4d2c00523956fe878d5369ea04`: run
+  `27495703394`, success
+- Local changes after `e2596cbbb6111b4d2c00523956fe878d5369ea04` must not be
   treated as CI-verified until pushed and checked again.
 
 Machine-readable snapshot for gates and future `/goal` setup:
@@ -133,13 +135,14 @@ truth_snapshot:
   local_head_at_l7_blueprint_proof_status_lineage_slice: 3251134b63f886758559a27d80393e9543ac3c80
   local_head_at_l7_lanedag_graph_set_status_bridge_slice: a9644c58fd3b0ef1b7d02cd95b703fd1a3344938
   local_head_at_l9_review_intake_graph_status_gate_slice: 60d233c5758c63a2a31a2c2b3d78e62559971a29
+  local_head_at_l9_review_verdict_graph_status_sync_slice: e2596cbbb6111b4d2c00523956fe878d5369ea04
   pr: 43
   pr_url: https://github.com/iiyazu/Cross-Muse/pull/43
   pr_state: draft_open_unmerged
   merge_state: CLEAN
   review_decision: empty
-  verified_ci_head_at_slice_start: a9644c58fd3b0ef1b7d02cd95b703fd1a3344938
-  verified_ci_run_at_slice_start: 27494551576
+  verified_ci_head_at_slice_start: e2596cbbb6111b4d2c00523956fe878d5369ea04
+  verified_ci_run_at_slice_start: 27495703394
   ci_verified_for_slice_start_head: true
   local_changes_after_verified_head: true
   pr_merged_claim_allowed: false
@@ -172,7 +175,7 @@ Evidence boundaries:
 | L6 | Blueprint Freeze Authority | Typed freeze artifact exists with proof-level classification | Single-turn provider-backed Codex speech and bounded multi-turn L3-L5 run lineage can feed freeze artifacts while preserving durable event authority; fresh natural multi-GOD freeze still missing | Not server-bound | Freeze contract proof plus isolated opt-in live freeze proof plus bounded multi-turn lineage proof |
 | L7 | Feature / LaneDAG Authority | LaneDAG/contract artifact exists with upstream freeze proof metadata and graph-set/status initialization contract | Live L4/L5/L6 proof metadata can flow into laneDAG without writing `feature_lanes.json`; laneDAG route now derives graph-set artifacts and initializes graph-native status records with inherited `blueprint_proof_level`; `graph_set_id`-backed orchestrator dispatch/review/reprojection now fail closed when durable graph-native status is missing; full dispatch/review authority still not unified | Not server-bound | LaneDAG contract proof plus isolated opt-in live upstream-proof propagation, graph-native proof-lineage carrier proof, laneDAG-to-status initialization proof, and graph-native missing-status fail-closed proof |
 | L8 | Lane Runtime Enforcement / Recovery | Recovery contract/API exists and recovery artifacts carry laneDAG proof lineage | Recovery API consumes laneDAG contract/budget and preserves blueprint proof/source refs; GOD-room review intake and orchestrator dispatch now fail-close non-retry recovery decisions; review intake now also requires graph-native `REVIEWING` status from `FeatureGraphStatusStore`; broader supervisor/live runner enforcement still incomplete | Not server-bound | Recovery policy proof plus laneDAG-lineage evidence proof plus review-intake/dispatch enforcement proof |
-| L9 | Execution / Review / Patch-Forward | Review plane plus GOD-room review intake/verdict/patch-forward/closure artifact contracts exist | GOD-room lane contracts/recovery/candidate evidence can be packaged for independent review only after graph-native status is `REVIEWING`; review verdicts sync task/verdict lineage into `review_plane.json`; patch-forward verdicts can append a laneDAG patch lane and reviewed patch-lane merge verdicts can produce a release-evidence handoff; live execution proof and server truth still missing | Not server-bound | GOD-room review/patch-forward closure contract proof plus graph-status-gated review-intake proof and review-plane store lineage proof, not server/GitHub truth |
+| L9 | Execution / Review / Patch-Forward | Review plane plus GOD-room review intake/verdict/patch-forward/closure artifact contracts exist | GOD-room lane contracts/recovery/candidate evidence can be packaged for independent review only after graph-native status is `REVIEWING`; merge/rework/blocked verdicts now consume graph-native review coordinator authority and update `FeatureGraphStatusStore`; patch-forward verdicts record graph-native gate plans without writing lane status; patch-forward can append a laneDAG patch lane and reviewed patch-lane merge verdicts can produce a release-evidence handoff; live execution proof and server truth still missing | Not server-bound | GOD-room review/patch-forward closure contract proof plus graph-status-gated review-intake/verdict proof and review-plane store lineage proof, not server/GitHub truth |
 | L10 | MemoryOS / Release Evidence / GitHub Truth | Evidence bundle semantics exist and can index GOD-room review closure handoff; release candidates can seed MemoryOS source refs from that handoff | Live MemoryOS trace and live execution/server truth missing | PR open/unmerged; CI truth only for verified remote head | Replay/readiness proof with explicit gaps |
 | L11 | Operator Cockpit / TUI / Overnight Soak | TUI/control slices exist | Complete cockpit/soak missing | Depends on L10 | Operator projection/control proof only |
 
@@ -822,6 +825,15 @@ Use these as implementation references, not as xmuse package dependencies:
     `ReviewVerdict` into `review_plane.json` through `VerdictStore`, and review
     closure requires the terminal patch-lane merge verdict to be present in
     that review plane store before producing the handoff artifact.
+  - GOD-room lane review verdict artifacts also build graph-native
+    `FeatureEvidenceBundle` and `FeatureReviewVerdict` records from the review
+    intake, submit them through the graph-native review coordinator, and update
+    `FeatureGraphStatusStore` for merge/rework/blocked verdicts. Stale or
+    non-`REVIEWING` graph status returns 409 before review-plane or verdict
+    artifacts are written.
+  - GOD-room patch-forward verdicts produce graph-native patch-forward gate
+    plans and preserve `lane_status_not_updated`; they do not write durable
+    lane status until the patch-forward laneDAG/review path runs.
   - GOD-room lane patch-forward artifact requires a patch-forward review verdict
     and saved laneDAG artifact, then uses `BlueprintLaneDagService` to append a
     patch lane, dependency edge, runtime contract, and patch-forward link.
@@ -832,8 +844,8 @@ Use these as implementation references, not as xmuse package dependencies:
 - Missing production closure:
   - A GOD-room-originated lane has not yet been proven through live execution,
     review, patch-forward, and release evidence in one chain.
-  - Review intake/patch-forward/closure artifacts still do not execute live
-    worker runtime or assert GitHub truth; release
+  - Review intake/review-verdict/patch-forward/closure artifacts still do not
+    execute live worker runtime or assert GitHub truth; release
     evidence linkage exists only as contract/candidate handoff, not as
     server-side readiness.
 - Proof required to close:
@@ -842,10 +854,10 @@ Use these as implementation references, not as xmuse package dependencies:
 - Current risk:
   - Worker self-report or local test results can be mistaken for review truth.
 - Next production slice:
-  - Continue graph-status authority consumption through review verdict,
-    patch-forward, and closure decisions, then connect accepted/reworked
-    review outcomes back to graph-native lane status without treating worker
-    candidate refs as review truth.
+  - Continue graph-status authority consumption through patch-forward and
+    closure decisions, then link reviewed patch-forward closure into L10
+    release evidence without treating worker candidate refs, local tests, or
+    GitHub CI success as review/merge truth.
 - Downstream blocked until:
   - L10 release evidence cannot claim end-to-end closure without execution and
     review truth from this layer.
