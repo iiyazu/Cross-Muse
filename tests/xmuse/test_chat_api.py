@@ -19,7 +19,9 @@ from xmuse_core.providers.god_identity_binding import (
 from xmuse_core.structuring.blueprint_execution.approval_events import (
     build_blueprint_approval_dedupe_key,
 )
+from xmuse_core.structuring.feature_graph_status_store import FeatureGraphStatusStore
 from xmuse_core.structuring.feature_plan_store import FeaturePlanStore
+from xmuse_core.structuring.feature_review_contracts import FeatureGraphExecutionStatus
 from xmuse_core.structuring.models import (
     ApprovedMissionBlueprint,
     FeatureGraphSet,
@@ -2729,6 +2731,11 @@ def test_chat_api_god_room_lane_review_intake_keeps_worker_output_candidate_only
         },
     )
     assert recovery.status_code == 201
+    _mark_god_room_lane_reviewing(
+        tmp_path,
+        graph_id="graph-review-intake",
+        lane_id="lane-runtime-api",
+    )
 
     response = client.post(
         f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-intake",
@@ -2744,12 +2751,20 @@ def test_chat_api_god_room_lane_review_intake_keeps_worker_output_candidate_only
     assert response.status_code == 201
     payload = response.json()
     intake = payload["review_intake"]
-    assert payload["source_authority"] == "lane_dag_artifact+lane_recovery_artifact"
+    assert payload["source_authority"] == (
+        "feature_graph_status_store+lane_dag_artifact+lane_recovery_artifact"
+    )
     assert intake["schema_version"] == "xmuse.god_room_lane_review_intake.v1"
+    assert intake["source_authority"] == (
+        "feature_graph_status_store+lane_dag_artifact+lane_recovery_artifact"
+    )
     assert intake["proof_level"] == "contract_proof"
     assert intake["review_truth_status"] == "pending_independent_review"
     assert intake["candidate_truth_status"] == "candidate_only"
     assert intake["blueprint_proof_level"] == "contract_proof"
+    assert intake["graph_set_id"] == "graph-review-intake-graph-set"
+    assert intake["feature_graph_id"] == "graph-review-intake-feature-runtime"
+    assert intake["feature_graph_status"]["status"] == "reviewing"
     assert intake["manual_gaps"] == []
     assert "worker_output_is_review_truth" in intake["forbidden_claims"]
     assert "end_to_end_execution_review_closure" in intake["forbidden_claims"]
@@ -2926,6 +2941,11 @@ def test_chat_api_god_room_lane_review_intake_preserves_manual_gap_without_candi
 ) -> None:
     client = _client(tmp_path)
     conv_id = _create_god_room_lane_dag(client, graph_id="graph-review-gap")
+    _mark_god_room_lane_reviewing(
+        tmp_path,
+        graph_id="graph-review-gap",
+        lane_id="lane-runtime-api",
+    )
 
     response = client.post(
         f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-intake",
@@ -2937,9 +2957,10 @@ def test_chat_api_god_room_lane_review_intake_preserves_manual_gap_without_candi
 
     assert response.status_code == 201
     payload = response.json()
-    assert payload["source_authority"] == "lane_dag_artifact"
+    assert payload["source_authority"] == "feature_graph_status_store+lane_dag_artifact"
     intake = payload["review_intake"]
-    assert intake["source_authority"] == "lane_dag_artifact"
+    assert intake["source_authority"] == "feature_graph_status_store+lane_dag_artifact"
+    assert intake["feature_graph_status"]["status"] == "reviewing"
     assert intake["review_truth_status"] == "pending_independent_review"
     assert intake["candidate_truth_status"] == "candidate_only"
     assert intake["recovery_decision"] is None
@@ -2948,6 +2969,42 @@ def test_chat_api_god_room_lane_review_intake_preserves_manual_gap_without_candi
         "lane_recovery_decision_missing",
     ]
     assert "worker_output_is_review_truth" in intake["forbidden_claims"]
+
+
+def test_chat_api_god_room_lane_review_intake_rejects_non_reviewing_graph_status(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    conv_id = _create_god_room_lane_dag(client, graph_id="graph-review-ready-block")
+
+    response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-intake",
+        json={
+            "graph_id": "graph-review-ready-block",
+            "lane_id": "lane-runtime-api",
+            "worker_candidate_refs": ["worker-candidate:run-ready"],
+            "execution_artifact_refs": ["artifacts/lane-runtime-api/result.json"],
+            "reviewer_id": "review-god",
+        },
+    )
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["code"] == "god_room_lane_review_requires_reviewing_graph_status"
+    assert detail["source_authority"] == "feature_graph_status_store"
+    assert detail["graph_set_id"] == "graph-review-ready-block-graph-set"
+    assert detail["feature_graph_id"] == "graph-review-ready-block-feature-runtime"
+    assert detail["feature_graph_status"]["status"] == "ready"
+    assert "feature_graph_status_not_reviewing" in detail["manual_gaps"]
+    assert "worker_output_is_review_truth" in detail["forbidden_claims"]
+    assert not (
+        tmp_path
+        / "reports"
+        / "god_room_review_intake"
+        / "graph-review-ready-block.lane-runtime-api.review-intake.json"
+    ).exists()
+    assert not (tmp_path / "review_plane.json").exists()
+    assert not (tmp_path / "feature_lanes.json").exists()
 
 
 def test_chat_api_god_room_lane_review_intake_rejects_unknown_lane(
@@ -2980,6 +3037,11 @@ def test_chat_api_god_room_lane_review_verdict_requires_independent_evidence(
 ) -> None:
     client = _client(tmp_path)
     conv_id = _create_god_room_lane_dag(client, graph_id="graph-review-verdict")
+    _mark_god_room_lane_reviewing(
+        tmp_path,
+        graph_id="graph-review-verdict",
+        lane_id="lane-runtime-api",
+    )
     assert client.post(
         f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-intake",
         json={
@@ -3077,6 +3139,11 @@ def test_chat_api_god_room_lane_review_verdict_rejects_uncited_evidence(
 ) -> None:
     client = _client(tmp_path)
     conv_id = _create_god_room_lane_dag(client, graph_id="graph-verdict-uncited")
+    _mark_god_room_lane_reviewing(
+        tmp_path,
+        graph_id="graph-verdict-uncited",
+        lane_id="lane-runtime-api",
+    )
     assert client.post(
         f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-intake",
         json={
@@ -3121,6 +3188,11 @@ def test_chat_api_god_room_lane_review_verdict_requires_decision_details(
 ) -> None:
     client = _client(tmp_path)
     conv_id = _create_god_room_lane_dag(client, graph_id=f"graph-verdict-{decision}")
+    _mark_god_room_lane_reviewing(
+        tmp_path,
+        graph_id=f"graph-verdict-{decision}",
+        lane_id="lane-runtime-api",
+    )
     assert client.post(
         f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-intake",
         json={
@@ -3157,6 +3229,11 @@ def test_chat_api_god_room_lane_patch_forward_appends_lanedag_lane(
 ) -> None:
     client = _client(tmp_path)
     conv_id = _create_god_room_lane_dag(client, graph_id="graph-patch-forward")
+    _mark_god_room_lane_reviewing(
+        tmp_path,
+        graph_id="graph-patch-forward",
+        lane_id="lane-runtime-api",
+    )
     assert client.post(
         f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-intake",
         json={
@@ -3241,6 +3318,11 @@ def test_chat_api_god_room_lane_patch_forward_requires_patch_verdict(
 ) -> None:
     client = _client(tmp_path)
     conv_id = _create_god_room_lane_dag(client, graph_id="graph-patch-reject")
+    _mark_god_room_lane_reviewing(
+        tmp_path,
+        graph_id="graph-patch-reject",
+        lane_id="lane-runtime-api",
+    )
     assert client.post(
         f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-intake",
         json={
@@ -3410,6 +3492,11 @@ def test_chat_api_god_room_lane_review_closure_requires_patch_lane_verdict(
         client,
         graph_id="graph-closure-missing-verdict",
         patch_lane_id="lane-runtime-api-patch-unreviewed",
+    )
+    _mark_god_room_lane_reviewing(
+        tmp_path,
+        graph_id="graph-closure-missing-verdict",
+        lane_id="lane-runtime-api-patch-unreviewed",
     )
     assert client.post(
         f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-intake",
@@ -3673,6 +3760,55 @@ def _create_god_room_lane_dag(client: TestClient, *, graph_id: str) -> str:
     return conv_id
 
 
+def _mark_god_room_lane_reviewing(
+    tmp_path: Path,
+    *,
+    graph_id: str,
+    lane_id: str,
+) -> None:
+    lane_dag_path = tmp_path / "lane_graphs" / f"{graph_id}.lane-dag.json"
+    lane_dag = json.loads(lane_dag_path.read_text(encoding="utf-8"))
+    contract = next(
+        item for item in lane_dag["lane_contracts"] if item["lane_id"] == lane_id
+    )
+    graph_set_id = f"{graph_id}-graph-set"
+    feature_graph_id = f"{graph_id}-{contract['feature_id']}"
+    store = FeatureGraphStatusStore(tmp_path / "feature_graph_statuses.json")
+    ready = store.get(
+        graph_set_id=graph_set_id,
+        feature_graph_id=feature_graph_id,
+    )
+    if ready.status is FeatureGraphExecutionStatus.READY:
+        running = ready.model_copy(
+            update={
+                "status_id": f"{ready.status_id}-running-for-review",
+                "status": FeatureGraphExecutionStatus.RUNNING,
+                "ready_lane_ids": [],
+                "active_lane_ids": [lane_id],
+                "active_worker_session_id": f"worker-session-{lane_id}",
+                "updated_at": "2026-06-15T01:00:00Z",
+            }
+        )
+        ready = store.transition(
+            running,
+            expected_status=FeatureGraphExecutionStatus.READY,
+        )
+    if ready.status is FeatureGraphExecutionStatus.RUNNING:
+        reviewing = ready.model_copy(
+            update={
+                "status_id": f"{ready.status_id}-reviewing",
+                "status": FeatureGraphExecutionStatus.REVIEWING,
+                "active_lane_ids": [],
+                "completed_lane_ids": [lane_id],
+                "updated_at": "2026-06-15T01:05:00Z",
+            }
+        )
+        store.transition(
+            reviewing,
+            expected_status=FeatureGraphExecutionStatus.RUNNING,
+        )
+
+
 def _create_patch_forward_lane(
     client: TestClient,
     *,
@@ -3680,6 +3816,11 @@ def _create_patch_forward_lane(
     patch_lane_id: str,
 ) -> str:
     conv_id = _create_god_room_lane_dag(client, graph_id=graph_id)
+    _mark_god_room_lane_reviewing(
+        client.app.state.test_base_dir,
+        graph_id=graph_id,
+        lane_id="lane-runtime-api",
+    )
     assert client.post(
         f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-intake",
         json={
@@ -3729,6 +3870,11 @@ def _create_reviewed_patch_forward_lane(
     )
     candidate_ref = "worker-candidate:patch-reviewed"
     execution_ref = f"artifacts/{patch_lane_id}/result.json"
+    _mark_god_room_lane_reviewing(
+        client.app.state.test_base_dir,
+        graph_id=graph_id,
+        lane_id=patch_lane_id,
+    )
     assert client.post(
         f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-intake",
         json={

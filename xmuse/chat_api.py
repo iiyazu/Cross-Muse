@@ -151,6 +151,10 @@ from xmuse_core.structuring.feature_plan_store import (
     read_approved_mission_blueprint,
     save_approved_feature_plan_artifacts,
 )
+from xmuse_core.structuring.feature_review_contracts import (
+    FeatureGraphExecutionStatus,
+    FeatureGraphExecutionStatusRecord,
+)
 from xmuse_core.structuring.god_room_blueprint_freeze import (
     GodRoomBlueprintFreezeArtifactV1,
     GodRoomBlueprintFreezeStatus,
@@ -1236,6 +1240,13 @@ def _build_god_room_lane_review_intake(
                 ],
             },
         )
+    status_record = _require_god_room_lane_review_status_authority(
+        base_dir,
+        conversation_id=conversation_id,
+        graph_id=request.graph_id,
+        lane_id=request.lane_id,
+        feature_id=contract.feature_id,
+    )
     candidate_refs = _dedupe_text(
         [*request.worker_candidate_refs, *request.execution_artifact_refs]
     )
@@ -1244,11 +1255,10 @@ def _build_god_room_lane_review_intake(
         manual_gaps.append("worker_candidate_evidence_missing")
     if recovery_decision is None:
         manual_gaps.append("lane_recovery_decision_missing")
-    source_authority = (
-        "lane_dag_artifact+lane_recovery_artifact"
-        if recovery_decision is not None
-        else "lane_dag_artifact"
-    )
+    source_authority_parts = ["feature_graph_status_store", "lane_dag_artifact"]
+    if recovery_decision is not None:
+        source_authority_parts.append("lane_recovery_artifact")
+    source_authority = "+".join(source_authority_parts)
     reviewer_input_refs = _dedupe_text(
         [
             f"lane_dag:{request.graph_id}",
@@ -1271,6 +1281,9 @@ def _build_god_room_lane_review_intake(
         "review_truth_status": "pending_independent_review",
         "conversation_id": conversation_id,
         "graph_id": request.graph_id,
+        "graph_set_id": status_record.graph_set_id,
+        "feature_graph_id": status_record.feature_graph_id,
+        "feature_graph_status": status_record.model_dump(mode="json"),
         "lane_id": request.lane_id,
         "blueprint_proof_level": plan.blueprint_proof_level,
         "reviewer_id": request.reviewer_id,
@@ -1310,6 +1323,8 @@ def _build_god_room_lane_review_intake(
         "source_authority": source_authority,
         "conversation_id": conversation_id,
         "graph_id": request.graph_id,
+        "graph_set_id": status_record.graph_set_id,
+        "feature_graph_id": status_record.feature_graph_id,
         "lane_id": request.lane_id,
         "review_intake": intake_payload,
         "artifacts": {
@@ -3092,7 +3107,7 @@ def _feature_graph_set_from_lane_dag_plan(
         for feature in request.features
     ]
     return FeatureGraphSet(
-        id=f"{plan.lane_graph.id}-graph-set",
+        id=_lane_dag_graph_set_id(plan.lane_graph.id),
         version=plan.lane_graph.version,
         source_refs=[
             f"lane_dag:{plan.lane_graph.id}",
@@ -3183,6 +3198,104 @@ def _lane_dag_node_feature_id(
 
 def _lane_dag_feature_graph_id(graph_id: str, feature_id: str) -> str:
     return f"{graph_id}-{feature_id}"
+
+
+def _lane_dag_graph_set_id(graph_id: str) -> str:
+    return f"{graph_id}-graph-set"
+
+
+def _require_god_room_lane_review_status_authority(
+    base_dir: Path,
+    *,
+    conversation_id: str,
+    graph_id: str,
+    lane_id: str,
+    feature_id: str,
+) -> FeatureGraphExecutionStatusRecord:
+    graph_set_id = _lane_dag_graph_set_id(graph_id)
+    feature_graph_id = _lane_dag_feature_graph_id(graph_id, feature_id)
+    try:
+        record = FeatureGraphStatusStore(base_dir / "feature_graph_statuses.json").get(
+            graph_set_id=graph_set_id,
+            feature_graph_id=feature_graph_id,
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "god_room_lane_review_missing_graph_status",
+                "message": (
+                    "review intake requires durable graph-native status authority"
+                ),
+                "source_authority": "feature_graph_status_store",
+                "graph_id": graph_id,
+                "graph_set_id": graph_set_id,
+                "feature_graph_id": feature_graph_id,
+                "lane_id": lane_id,
+                "manual_gaps": [
+                    "feature_graph_status_missing",
+                    "live_execution_review_transition_not_proven",
+                ],
+                "forbidden_claims": [
+                    "worker_output_is_review_truth",
+                    "end_to_end_execution_review_closure",
+                    "ready_to_merge",
+                    "pr_merged",
+                ],
+            },
+        ) from exc
+    if record.conversation_id != conversation_id:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "god_room_lane_review_graph_status_conversation_mismatch",
+                "message": "feature graph status belongs to a different conversation",
+                "source_authority": "feature_graph_status_store",
+                "graph_id": graph_id,
+                "graph_set_id": graph_set_id,
+                "feature_graph_id": feature_graph_id,
+                "lane_id": lane_id,
+                "status_conversation_id": record.conversation_id,
+                "conversation_id": conversation_id,
+                "manual_gaps": [
+                    "feature_graph_status_conversation_mismatch",
+                ],
+                "forbidden_claims": [
+                    "worker_output_is_review_truth",
+                    "end_to_end_execution_review_closure",
+                    "ready_to_merge",
+                    "pr_merged",
+                ],
+            },
+        )
+    if record.status is not FeatureGraphExecutionStatus.REVIEWING:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "god_room_lane_review_requires_reviewing_graph_status",
+                "message": (
+                    "review intake requires feature graph status to be reviewing; "
+                    f"found {record.status.value}"
+                ),
+                "source_authority": "feature_graph_status_store",
+                "graph_id": graph_id,
+                "graph_set_id": graph_set_id,
+                "feature_graph_id": feature_graph_id,
+                "lane_id": lane_id,
+                "feature_graph_status": record.model_dump(mode="json"),
+                "manual_gaps": [
+                    "feature_graph_status_not_reviewing",
+                    "live_execution_review_transition_not_proven",
+                ],
+                "forbidden_claims": [
+                    "worker_output_is_review_truth",
+                    "end_to_end_execution_review_closure",
+                    "ready_to_merge",
+                    "pr_merged",
+                ],
+            },
+        )
+    return record
 
 
 def _write_lane_recovery_artifact(

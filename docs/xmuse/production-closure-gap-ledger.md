@@ -90,6 +90,8 @@ runtime、provider invocation、lane authority、review truth 完成。后续生
   `3251134b63f886758559a27d80393e9543ac3c80`
 - Local head at start of L7 laneDAG graph-set/status bridge slice:
   `a9644c58fd3b0ef1b7d02cd95b703fd1a3344938`
+- Local head at start of L9 review-intake graph-status gate slice:
+  `60d233c5758c63a2a31a2c2b3d78e62559971a29`
 - PR: <https://github.com/iiyazu/Cross-Muse/pull/43>
 - PR state last checked: draft/open/unmerged
 - PR merge state last checked: `CLEAN`
@@ -130,6 +132,7 @@ truth_snapshot:
   local_head_at_l7_graph_native_dispatch_authority_slice: 91500e4d852e07bacf4ed4ff00e9aa7ef0bd2f71
   local_head_at_l7_blueprint_proof_status_lineage_slice: 3251134b63f886758559a27d80393e9543ac3c80
   local_head_at_l7_lanedag_graph_set_status_bridge_slice: a9644c58fd3b0ef1b7d02cd95b703fd1a3344938
+  local_head_at_l9_review_intake_graph_status_gate_slice: 60d233c5758c63a2a31a2c2b3d78e62559971a29
   pr: 43
   pr_url: https://github.com/iiyazu/Cross-Muse/pull/43
   pr_state: draft_open_unmerged
@@ -168,8 +171,8 @@ Evidence boundaries:
 | L5 | Speaker Response Capture / Replay Proof | Artifact-backed capture plus composed L4-to-L5 route exists | Rejects contract-only L4 artifacts; appends/replays only server-written real-proof artifacts; one local opt-in live Codex artifact was captured into durable replay; bounded multi-turn route stops on manual_gap and preserves prior durable events | Not server-bound | Capture/replay contract proof plus isolated Codex opt-in live capture proof and bounded multi-turn capture orchestration proof |
 | L6 | Blueprint Freeze Authority | Typed freeze artifact exists with proof-level classification | Single-turn provider-backed Codex speech and bounded multi-turn L3-L5 run lineage can feed freeze artifacts while preserving durable event authority; fresh natural multi-GOD freeze still missing | Not server-bound | Freeze contract proof plus isolated opt-in live freeze proof plus bounded multi-turn lineage proof |
 | L7 | Feature / LaneDAG Authority | LaneDAG/contract artifact exists with upstream freeze proof metadata and graph-set/status initialization contract | Live L4/L5/L6 proof metadata can flow into laneDAG without writing `feature_lanes.json`; laneDAG route now derives graph-set artifacts and initializes graph-native status records with inherited `blueprint_proof_level`; `graph_set_id`-backed orchestrator dispatch/review/reprojection now fail closed when durable graph-native status is missing; full dispatch/review authority still not unified | Not server-bound | LaneDAG contract proof plus isolated opt-in live upstream-proof propagation, graph-native proof-lineage carrier proof, laneDAG-to-status initialization proof, and graph-native missing-status fail-closed proof |
-| L8 | Lane Runtime Enforcement / Recovery | Recovery contract/API exists and recovery artifacts carry laneDAG proof lineage | Recovery API consumes laneDAG contract/budget and preserves blueprint proof/source refs; GOD-room review intake and orchestrator dispatch now fail-close non-retry recovery decisions; broader supervisor/live runner enforcement still incomplete | Not server-bound | Recovery policy proof plus laneDAG-lineage evidence proof plus review-intake/dispatch enforcement proof |
-| L9 | Execution / Review / Patch-Forward | Review plane plus GOD-room review intake/verdict/patch-forward/closure artifact contracts exist | GOD-room lane contracts/recovery/candidate evidence can be packaged for independent review; review verdicts sync task/verdict lineage into `review_plane.json`; patch-forward verdicts can append a laneDAG patch lane and reviewed patch-lane merge verdicts can produce a release-evidence handoff; lane status, live execution proof, and server truth still missing | Not server-bound | GOD-room review/patch-forward closure contract proof plus review-plane store lineage proof, not server/GitHub truth |
+| L8 | Lane Runtime Enforcement / Recovery | Recovery contract/API exists and recovery artifacts carry laneDAG proof lineage | Recovery API consumes laneDAG contract/budget and preserves blueprint proof/source refs; GOD-room review intake and orchestrator dispatch now fail-close non-retry recovery decisions; review intake now also requires graph-native `REVIEWING` status from `FeatureGraphStatusStore`; broader supervisor/live runner enforcement still incomplete | Not server-bound | Recovery policy proof plus laneDAG-lineage evidence proof plus review-intake/dispatch enforcement proof |
+| L9 | Execution / Review / Patch-Forward | Review plane plus GOD-room review intake/verdict/patch-forward/closure artifact contracts exist | GOD-room lane contracts/recovery/candidate evidence can be packaged for independent review only after graph-native status is `REVIEWING`; review verdicts sync task/verdict lineage into `review_plane.json`; patch-forward verdicts can append a laneDAG patch lane and reviewed patch-lane merge verdicts can produce a release-evidence handoff; live execution proof and server truth still missing | Not server-bound | GOD-room review/patch-forward closure contract proof plus graph-status-gated review-intake proof and review-plane store lineage proof, not server/GitHub truth |
 | L10 | MemoryOS / Release Evidence / GitHub Truth | Evidence bundle semantics exist and can index GOD-room review closure handoff; release candidates can seed MemoryOS source refs from that handoff | Live MemoryOS trace and live execution/server truth missing | PR open/unmerged; CI truth only for verified remote head | Replay/readiness proof with explicit gaps |
 | L11 | Operator Cockpit / TUI / Overnight Soak | TUI/control slices exist | Complete cockpit/soak missing | Depends on L10 | Operator projection/control proof only |
 
@@ -762,6 +765,10 @@ Use these as implementation references, not as xmuse package dependencies:
     as a gate: `retry_allowed=false` decisions (`manual_gap`, `suspended`, or
     `refactor_required`) return 409 and do not write review-intake, review-plane,
     or `feature_lanes.json` artifacts.
+  - GOD-room lane review intake also consumes `FeatureGraphStatusStore` and
+    fails closed unless the lane's graph-native feature status is `REVIEWING`.
+    A laneDAG artifact, recovery artifact, worker candidate ref, or
+    `feature_lanes.json` projection cannot by itself authorize review intake.
   - Orchestrator dispatch now consumes the durable lane recovery artifact before
     dispatch CAS. A latest `retry_allowed=false` decision blocks same-path
     dispatch, records recovery block metadata, and does not invoke the execution
@@ -770,8 +777,8 @@ Use these as implementation references, not as xmuse package dependencies:
     failure/demo-grade production paths.
 - Missing production closure:
   - Recovery is not yet enforced through every supervisor/runner path; current
-    enforcement is proven at the GOD-room review-intake and orchestrator
-    dispatch boundaries.
+    enforcement is proven at the GOD-room review-intake, graph-status intake,
+    and orchestrator dispatch boundaries.
   - No live runner proof yet shows a blocked retry after refactor_required.
 - Proof required to close:
   - A real lane failure sequence enters recovery/refactor_required and blocks
@@ -801,8 +808,13 @@ Use these as implementation references, not as xmuse package dependencies:
     contracts exist.
   - OpenCode delegation policy treats worker output as candidate evidence only.
   - GOD-room lane review intake artifact consumes laneDAG authority, optional
-    recovery decision, and worker/execution candidate refs while preserving
+    recovery decision, `FeatureGraphStatusStore` `REVIEWING` authority, and
+    worker/execution candidate refs while preserving
     `review_truth_status = pending_independent_review`.
+  - Review intake now records `graph_set_id`, `feature_graph_id`, and the
+    graph-native status snapshot in its artifact. Non-`REVIEWING` or missing
+    graph status returns 409 and does not write review-intake, review-plane, or
+    `feature_lanes.json` artifacts.
   - GOD-room lane review verdict artifact requires an existing review intake
     artifact and evidence refs that cite reviewer inputs before recording an
     explicit reviewer decision.
@@ -820,8 +832,8 @@ Use these as implementation references, not as xmuse package dependencies:
 - Missing production closure:
   - A GOD-room-originated lane has not yet been proven through live execution,
     review, patch-forward, and release evidence in one chain.
-  - Review intake/patch-forward/closure artifacts still do not update lane
-    status, execute live worker runtime, or assert GitHub truth; release
+  - Review intake/patch-forward/closure artifacts still do not execute live
+    worker runtime or assert GitHub truth; release
     evidence linkage exists only as contract/candidate handoff, not as
     server-side readiness.
 - Proof required to close:
@@ -830,8 +842,10 @@ Use these as implementation references, not as xmuse package dependencies:
 - Current risk:
   - Worker self-report or local test results can be mistaken for review truth.
 - Next production slice:
-  - Connect GOD-room review-plane lineage to lane status or L8 recovery
-    enforcement without treating worker candidate refs as review truth.
+  - Continue graph-status authority consumption through review verdict,
+    patch-forward, and closure decisions, then connect accepted/reworked
+    review outcomes back to graph-native lane status without treating worker
+    candidate refs as review truth.
 - Downstream blocked until:
   - L10 release evidence cannot claim end-to-end closure without execution and
     review truth from this layer.
