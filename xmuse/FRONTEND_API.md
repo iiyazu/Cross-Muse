@@ -709,6 +709,7 @@ WebSocket、worklist endpoint、proposal narrow/reject endpoint 仍未落地。
 | `POST /api/chat/conversations/{conversation_id}/god-room/lane-dag/review-intake` | 从 laneDAG/recovery/candidate refs 生成 pending independent review intake artifact |
 | `POST /api/chat/conversations/{conversation_id}/god-room/lane-dag/review-verdict` | 从 review intake 生成 independent reviewer verdict artifact，不写 review plane 或 GitHub truth |
 | `POST /api/chat/conversations/{conversation_id}/god-room/lane-dag/patch-forward` | 从 patch-forward verdict 和 laneDAG artifact 追加 patch lane sidecar，不执行 patch lane |
+| `POST /api/chat/conversations/{conversation_id}/god-room/lane-dag/review-closure` | 从 patch-forward sidecar、patch lane intake 和 patch lane merge verdict 生成 L10 handoff artifact |
 | `POST /api/chat/conversations/{conversation_id}/god-room/memoryos-plan` | 从 GOD room events、freeze resolution、laneDAG 和 recovery artifacts 生成 `xmuse.god_room_memoryos_plan.v1` governed write/context plan |
 
 事件写入请求体使用 `GodRoomEventV1`：
@@ -777,6 +778,13 @@ room events，不由前端 projection 提供：
   `reports/god_room_patch_forward/*.patch-forward.json`。它不执行 patch lane，
   不写 `review_plane.json` / `feature_lanes.json`，不链接 release evidence，
   不代表 ready 或 merge truth。
+- `POST /god-room/lane-dag/review-closure` 要求已存在 patch-forward sidecar、
+  patch lane review intake、以及 patch lane 的 `merge` review verdict。成功时写
+  `reports/god_room_review_closure/*.review-closure.json`，其中
+  `execution_truth_status = "candidate_reviewed"`、
+  `server_truth_status = "not_server_truth"`。它只是 L10 release evidence 的
+  handoff input，不写 `review_plane.json` / `feature_lanes.json`，不改变 lane
+  status，不代表 live execution、ready_to_merge 或 GitHub truth。
 - `POST /god-room/memoryos-plan` 使用 GOD room event store、GOD room freeze
   resolution、laneDAG artifact 和 recovery sidecar 作为输入，生成
   `source_authority = "god_room_memoryos_plan_contract"` 的 governed

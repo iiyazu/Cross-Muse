@@ -355,6 +355,16 @@ class GodRoomLanePatchForwardRequest(BaseModel):
         return _strip_required_storage_id(value)
 
 
+class GodRoomLaneReviewClosureRequest(BaseModel):
+    graph_id: str = Field(min_length=1)
+    lane_id: str = Field(min_length=1)
+
+    @field_validator("graph_id", "lane_id", mode="before")
+    @classmethod
+    def _strip_storage_id(cls, value: object) -> object:
+        return _strip_required_storage_id(value)
+
+
 class GodRoomMemoryPlanRequest(BaseModel):
     graph_id: str = Field(min_length=1)
     repo_id: str = Field(min_length=1)

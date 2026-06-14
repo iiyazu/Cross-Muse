@@ -2133,6 +2133,134 @@ def test_chat_api_god_room_lane_patch_forward_requires_verdict_artifact(
     ).exists()
 
 
+def test_chat_api_god_room_lane_review_closure_links_reviewed_patch_lane(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    conv_id = _create_reviewed_patch_forward_lane(
+        client,
+        graph_id="graph-review-closure",
+        patch_lane_id="lane-runtime-api-patch-reviewed",
+        patch_decision="merge",
+    )
+
+    response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-closure",
+        json={
+            "graph_id": "graph-review-closure",
+            "lane_id": "lane-runtime-api",
+        },
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["source_authority"] == (
+        "god_room_lane_patch_forward_artifact+patch_lane_review_verdict_artifact"
+    )
+    closure = payload["review_closure"]
+    assert closure["schema_version"] == "xmuse.god_room_lane_review_closure.v1"
+    assert closure["proof_level"] == "contract_proof"
+    assert closure["review_truth_status"] == "independent_review_artifact"
+    assert closure["execution_truth_status"] == "candidate_reviewed"
+    assert closure["server_truth_status"] == "not_server_truth"
+    assert closure["release_evidence_handoff_status"] == "candidate_input_ready"
+    assert closure["failed_lane_id"] == "lane-runtime-api"
+    assert closure["terminal_lane_id"] == "lane-runtime-api-patch-reviewed"
+    assert closure["patch_lane_contract"]["lane_id"] == (
+        "lane-runtime-api-patch-reviewed"
+    )
+    assert "worker-candidate:patch-reviewed" in closure["candidate_refs"]
+    assert "artifacts/lane-runtime-api-patch-reviewed/result.json" in closure[
+        "candidate_refs"
+    ]
+    assert "worker-candidate:patch-reviewed" in closure["cited_candidate_refs"]
+    assert closure["terminal_review_verdict"]["decision"] == "merge"
+    assert "review_plane_store_not_updated" in closure["manual_gaps"]
+    assert "lane_status_not_updated" in closure["manual_gaps"]
+    assert "release_evidence_not_linked" in closure["manual_gaps"]
+    assert "github_truth_not_checked" in closure["manual_gaps"]
+    assert "worker_output_is_review_truth" in closure["forbidden_claims"]
+    assert "end_to_end_execution_review_closure" in closure["forbidden_claims"]
+    assert "ready_to_merge" in closure["forbidden_claims"]
+    assert "pr_merged" in closure["forbidden_claims"]
+    assert "github_review_truth" in closure["forbidden_claims"]
+    assert (tmp_path / payload["artifacts"]["review_closure"]).exists()
+    assert not (tmp_path / "review_plane.json").exists()
+    assert not (tmp_path / "feature_lanes.json").exists()
+
+
+def test_chat_api_god_room_lane_review_closure_requires_patch_lane_verdict(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    conv_id = _create_patch_forward_lane(
+        client,
+        graph_id="graph-closure-missing-verdict",
+        patch_lane_id="lane-runtime-api-patch-unreviewed",
+    )
+    assert client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-intake",
+        json={
+            "graph_id": "graph-closure-missing-verdict",
+            "lane_id": "lane-runtime-api-patch-unreviewed",
+            "worker_candidate_refs": ["worker-candidate:patch-unreviewed"],
+            "execution_artifact_refs": [
+                "artifacts/lane-runtime-api-patch-unreviewed/result.json"
+            ],
+        },
+    ).status_code == 201
+
+    response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-closure",
+        json={
+            "graph_id": "graph-closure-missing-verdict",
+            "lane_id": "lane-runtime-api",
+        },
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"]["code"] == (
+        "god_room_patch_lane_review_verdict_not_found"
+    )
+    assert not (
+        tmp_path
+        / "reports"
+        / "god_room_review_closure"
+        / "graph-closure-missing-verdict.lane-runtime-api.review-closure.json"
+    ).exists()
+
+
+def test_chat_api_god_room_lane_review_closure_requires_patch_lane_merge_verdict(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    conv_id = _create_reviewed_patch_forward_lane(
+        client,
+        graph_id="graph-closure-rework-verdict",
+        patch_lane_id="lane-runtime-api-patch-rework",
+        patch_decision="rework",
+    )
+
+    response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-closure",
+        json={
+            "graph_id": "graph-closure-rework-verdict",
+            "lane_id": "lane-runtime-api",
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == (
+        "god_room_lane_review_closure_requires_merge_verdict"
+    )
+    assert not (
+        tmp_path
+        / "reports"
+        / "god_room_review_closure"
+        / "graph-closure-rework-verdict.lane-runtime-api.review-closure.json"
+    ).exists()
+
+
 def test_chat_api_god_room_lane_recovery_rejects_graph_path_escape(
     tmp_path: Path,
 ) -> None:
@@ -2328,6 +2456,85 @@ def _create_god_room_lane_dag(client: TestClient, *, graph_id: str) -> str:
         },
     )
     assert lane_dag.status_code == 201
+    return conv_id
+
+
+def _create_patch_forward_lane(
+    client: TestClient,
+    *,
+    graph_id: str,
+    patch_lane_id: str,
+) -> str:
+    conv_id = _create_god_room_lane_dag(client, graph_id=graph_id)
+    assert client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-intake",
+        json={
+            "graph_id": graph_id,
+            "lane_id": "lane-runtime-api",
+            "worker_candidate_refs": ["worker-candidate:root-patch"],
+            "execution_artifact_refs": ["artifacts/lane-runtime-api/result.json"],
+        },
+    ).status_code == 201
+    assert client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-verdict",
+        json={
+            "graph_id": graph_id,
+            "lane_id": "lane-runtime-api",
+            "reviewer_id": "review-god",
+            "decision": "patch-forward",
+            "summary": "Root lane needs a patch-forward lane.",
+            "evidence_refs": [
+                "worker-candidate:root-patch",
+                "artifacts/lane-runtime-api/result.json",
+            ],
+            "patch_instructions": "Apply a bounded patch-forward repair.",
+        },
+    ).status_code == 201
+    assert client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/patch-forward",
+        json={
+            "graph_id": graph_id,
+            "lane_id": "lane-runtime-api",
+            "patch_lane_id": patch_lane_id,
+        },
+    ).status_code == 201
+    return conv_id
+
+
+def _create_reviewed_patch_forward_lane(
+    client: TestClient,
+    *,
+    graph_id: str,
+    patch_lane_id: str,
+    patch_decision: str,
+) -> str:
+    conv_id = _create_patch_forward_lane(
+        client,
+        graph_id=graph_id,
+        patch_lane_id=patch_lane_id,
+    )
+    candidate_ref = "worker-candidate:patch-reviewed"
+    execution_ref = f"artifacts/{patch_lane_id}/result.json"
+    assert client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-intake",
+        json={
+            "graph_id": graph_id,
+            "lane_id": patch_lane_id,
+            "worker_candidate_refs": [candidate_ref],
+            "execution_artifact_refs": [execution_ref],
+        },
+    ).status_code == 201
+    assert client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-verdict",
+        json={
+            "graph_id": graph_id,
+            "lane_id": patch_lane_id,
+            "reviewer_id": "review-god",
+            "decision": patch_decision,
+            "summary": "Patch lane candidate was independently reviewed.",
+            "evidence_refs": [candidate_ref, execution_ref],
+        },
+    ).status_code == 201
     return conv_id
 
 
