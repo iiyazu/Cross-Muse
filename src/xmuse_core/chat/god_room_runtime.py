@@ -375,7 +375,13 @@ def _event_proof(event: GodRoomEventV1) -> GodRoomEventProof:
     payload_proof_level = _text(event.payload.get("proof_level"))
     if (
         event.actor_kind is GodRoomActorKind.GOD
-        and event.event_type is GodRoomEventKind.SPEAK
+        and event.event_type
+        in {
+            GodRoomEventKind.SPEAK,
+            GodRoomEventKind.QUESTION,
+            GodRoomEventKind.CHALLENGE,
+            GodRoomEventKind.HANDOFF,
+        }
         and payload_proof_level == "real_provider_proof"
         and provider_response_artifact_ref is not None
         and f"provider_response_artifact:{provider_response_artifact_ref}" in event.source_refs

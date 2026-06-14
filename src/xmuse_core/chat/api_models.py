@@ -4,6 +4,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from xmuse_core.chat.god_room_runtime import GodRoomEventKind
 from xmuse_core.chat.god_room_speaker_response import GodRoomProviderSpeechResponseV1
 from xmuse_core.providers.models import ProviderId, ProviderProfileId
 from xmuse_core.structuring.blueprint_execution.lane_dag_service import (
@@ -414,12 +415,19 @@ class GodRoomProviderInvocationRequest(BaseModel):
 
 class GodRoomProviderInvocationCaptureRequest(GodRoomProviderInvocationRequest):
     event_id: str | None = Field(default=None, min_length=1)
+    event_type: GodRoomEventKind = GodRoomEventKind.SPEAK
+    target_participant_ids: list[str] = Field(default_factory=list)
     timestamp_utc: str | None = Field(default=None, min_length=1)
 
     @field_validator("event_id", "timestamp_utc", mode="before")
     @classmethod
     def _strip_capture_optional_text(cls, value: object) -> object:
         return _strip_optional_string(value)
+
+    @field_validator("target_participant_ids", mode="before")
+    @classmethod
+    def _strip_capture_target_ids(cls, value: object) -> object:
+        return _strip_optional_string_list(value)
 
 
 class GodRoomMultiTurnProviderSpeechRequest(BaseModel):
@@ -440,6 +448,8 @@ class GodRoomMultiTurnProviderSpeechRequest(BaseModel):
 class GodRoomSpeakerResponseRequest(BaseModel):
     after_event_id: str | None = Field(default=None, min_length=1)
     event_id: str | None = Field(default=None, min_length=1)
+    event_type: GodRoomEventKind = GodRoomEventKind.SPEAK
+    target_participant_ids: list[str] = Field(default_factory=list)
     timestamp_utc: str | None = Field(default=None, min_length=1)
     provider_response_artifact: str | None = Field(default=None, min_length=1)
     provider_response: GodRoomProviderSpeechResponseV1 | None = None
@@ -454,6 +464,11 @@ class GodRoomSpeakerResponseRequest(BaseModel):
     @classmethod
     def _strip_optional_text(cls, value: object) -> object:
         return _strip_optional_string(value)
+
+    @field_validator("target_participant_ids", mode="before")
+    @classmethod
+    def _strip_target_ids(cls, value: object) -> object:
+        return _strip_optional_string_list(value)
 
 
 class RoleTemplateCreate(BaseModel):
@@ -599,3 +614,11 @@ def _strip_optional_string(value: object) -> object:
     if not stripped:
         raise ValueError("must not be blank")
     return stripped
+
+
+def _strip_optional_string_list(value: object) -> object:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [_strip_required_string(item) for item in value]
+    return value

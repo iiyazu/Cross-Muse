@@ -106,14 +106,16 @@ runtime、provider invocation、lane authority、review truth 完成。后续生
   `48c49906d3493b91790d9f85cf8fab020e0e5dce`
 - Local head at start of L8 runner loop recovery local proof slice:
   `6c9cb329ff5a839b7632d324982073b64ce51491`
+- Local head at start of L3/L5 provider-backed deliberation event capture slice:
+  `4badeb6b4764e5633bbd68b4cbfe385dc8e98943`
 - PR: <https://github.com/iiyazu/Cross-Muse/pull/43>
 - PR state last checked: draft/open/unmerged
 - PR merge state last checked: `CLEAN`
 - PR review decision last checked: empty
 - Verified GitHub Actions truth at the start of this slice applied to remote head
-  `6c9cb329ff5a839b7632d324982073b64ce51491`: run
-  `27498351838`, success
-- Local changes after `6c9cb329ff5a839b7632d324982073b64ce51491` must not be
+  `4badeb6b4764e5633bbd68b4cbfe385dc8e98943`: run
+  `27498670924`, success
+- Local changes after `4badeb6b4764e5633bbd68b4cbfe385dc8e98943` must not be
   treated as CI-verified until pushed and checked again.
 
 Machine-readable snapshot for gates and future `/goal` setup:
@@ -154,13 +156,14 @@ truth_snapshot:
   local_head_at_l8_runner_candidate_recovery_gate_slice: 2007e7e42370881245adaf7a8fb351cf04d2df29
   local_head_at_l8_runner_supervisor_recovery_projection_slice: 48c49906d3493b91790d9f85cf8fab020e0e5dce
   local_head_at_l8_runner_loop_recovery_local_proof_slice: 6c9cb329ff5a839b7632d324982073b64ce51491
+  local_head_at_l3_l5_provider_backed_deliberation_event_capture_slice: 4badeb6b4764e5633bbd68b4cbfe385dc8e98943
   pr: 43
   pr_url: https://github.com/iiyazu/Cross-Muse/pull/43
   pr_state: draft_open_unmerged
   merge_state: CLEAN
   review_decision: empty
-  verified_ci_head_at_slice_start: 6c9cb329ff5a839b7632d324982073b64ce51491
-  verified_ci_run_at_slice_start: 27498351838
+  verified_ci_head_at_slice_start: 4badeb6b4764e5633bbd68b4cbfe385dc8e98943
+  verified_ci_run_at_slice_start: 27498670924
   ci_verified_for_slice_start_head: true
   local_changes_after_verified_head: true
   pr_merged_claim_allowed: false
@@ -453,6 +456,12 @@ Use these as implementation references, not as xmuse package dependencies:
     `xmuse.god_room_multi_turn_provider_speech_run.v1` artifact, preserving
     per-turn appended `speak` event ids plus L4 provider-response and L5
     speaker-response artifact refs as lineage only.
+  - L5 capture can now append provider-backed `question`, `challenge`, and
+    `handoff` deliberation events, not only `speak` events, when a server-loaded
+    L4 provider response artifact is `real_provider_proof` and the requested
+    event shape is valid. Replay event proof projection classifies these
+    provider-backed deliberation events as `opt_in_live_proof` lineage while
+    preserving `natural_groupchat_closure` as a forbidden claim.
 - Missing production closure:
   - Natural multi-GOD live runtime has not been proven over a long session.
   - The multi-turn provider speech route is bounded sequential orchestration,
@@ -472,9 +481,9 @@ Use these as implementation references, not as xmuse package dependencies:
   - Direct public append remains contract/manual proof only unless backed by
     the L4/L5 provider-capture route.
 - Next production slice:
-  - Use bounded multi-turn provider-backed speech as input for L10
-    MemoryOS/source-ref candidate flow while preserving the natural peer-GOD
-    groupchat and live/server proof gaps.
+  - Carry provider-backed non-`speak` deliberation events into bounded
+    multi-turn/run lineage and freeze/release evidence while preserving the
+    natural peer-GOD groupchat and live/server proof gaps.
 - Downstream blocked until:
   - L6 blueprint freeze cannot claim live deliberation closure without fresh
     durable room event proof.
@@ -572,14 +581,14 @@ Use these as implementation references, not as xmuse package dependencies:
 ## L5 - Speaker Response Capture / Replay Proof
 
 - Dependency role:
-  - This layer converts L4 provider response artifacts into durable L3 `speak`
-    events and proves the result by replay.
+  - This layer converts L4 provider response artifacts into durable L3
+    provider-backed room events and proves the result by replay.
 - User-visible promise unlocked:
   - Provider output becomes auditable GOD room speech instead of a loose log or
     manually pasted response.
 - Current implemented evidence:
-  - Speaker response capture appends a durable `speak` event only when backed
-    by a server-loaded provider response artifact.
+  - Speaker response capture appends a durable provider-backed room event only
+    when backed by a server-loaded provider response artifact.
   - Request-body-only/direct response becomes `manual_gap` when provider
     response artifact proof is missing.
   - Contract-only L4 provider invocation artifacts remain `manual_gap` at the
@@ -603,6 +612,11 @@ Use these as implementation references, not as xmuse package dependencies:
   - Focused tests prove that contract/manual L4 artifacts do not append speech,
     while a server-produced `real_provider_proof` artifact is captured into a
     durable `speak` event and appears in replay with binding lineage.
+  - The same L5 capture boundary can now append provider-backed
+    `question`/`challenge`/`handoff` events when the request supplies valid
+    target participants and the event has server-loaded L4 artifact lineage.
+    Missing targets or invalid event shapes remain `manual_gap` and do not
+    write durable events.
   - A local opt-in live Codex route produced L5
     `status=speak_event_appended`, `proof_level=real_provider_proof`, matching
     provider session id `019ec42d-b245-7d10-b3f8-f511fdceff5f`, events
@@ -616,14 +630,17 @@ Use these as implementation references, not as xmuse package dependencies:
     production release proof.
 - Proof required to close:
   - A fresh L4 invocation artifact is captured into L3 room events, then replay
-    evidence confirms the appended `speak` event and lineage.
+    evidence confirms the appended provider-backed event and lineage.
 - Current risk:
   - Capture proof can be overread as invocation proof.
+  - A provider-backed `question`, `challenge`, or `handoff` can be overread as
+    natural peer-GOD deliberation if the bounded capture path and forbidden
+    claims are not preserved.
 - Next production slice:
-  - Preserve the bounded multi-turn appended `speak_event_id` values, L4
+  - Preserve bounded provider-backed deliberation event ids, event types, L4
     artifact refs, L5 artifact refs, and replay evidence in L6/L10 lineage,
-    then use the durable speech as input for freeze without claiming natural
-    deliberation.
+    then use the durable transcript as input for freeze without claiming
+    natural deliberation.
 - Downstream blocked until:
   - L6 cannot claim real deliberation freeze if room speech was not captured
     through L4/L5 proof.
