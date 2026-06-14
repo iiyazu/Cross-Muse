@@ -66,6 +66,8 @@ runtime、provider invocation、lane authority、review truth 完成。后续生
   `31f9a96195d8194f6b0fcd5a4464fb340ecc7f85`
 - Local head at start of L10 review-closure MemoryOS candidate source-ref slice:
   `112d410334ebf8ae702dc5582297aedc57cd223d`
+- Local head at start of L9 review-plane store sync slice:
+  `b9b94acbdf8748bbc5fcd56bd40c5a93b702aded`
 - PR: <https://github.com/iiyazu/Cross-Muse/pull/43>
 - PR state last checked: draft/open/unmerged
 - PR merge state last checked: `CLEAN`
@@ -94,6 +96,7 @@ truth_snapshot:
   local_head_at_l9_reviewed_patch_lane_closure_handoff_slice: 734a410a181dd5e6d880f68e248c945e0668f76a
   local_head_at_l10_review_closure_release_evidence_linkage_slice: 31f9a96195d8194f6b0fcd5a4464fb340ecc7f85
   local_head_at_l10_review_closure_memoryos_candidate_source_ref_slice: 112d410334ebf8ae702dc5582297aedc57cd223d
+  local_head_at_l9_review_plane_store_sync_slice: b9b94acbdf8748bbc5fcd56bd40c5a93b702aded
   pr: 43
   pr_url: https://github.com/iiyazu/Cross-Muse/pull/43
   pr_state: draft_open_unmerged
@@ -133,7 +136,7 @@ Evidence boundaries:
 | L6 | Blueprint Freeze Authority | Typed freeze artifact exists with proof-level classification | Single-turn provider-backed Codex speech can produce an opt-in live freeze artifact; fresh natural multi-GOD freeze still missing | Not server-bound | Freeze contract proof plus isolated opt-in live freeze proof |
 | L7 | Feature / LaneDAG Authority | LaneDAG/contract artifact exists with upstream freeze proof metadata | Live L4/L5/L6 proof metadata can flow into laneDAG without writing `feature_lanes.json`; dispatch/review authority still not unified | Not server-bound | LaneDAG contract proof plus isolated opt-in live upstream-proof propagation |
 | L8 | Lane Runtime Enforcement / Recovery | Recovery contract/API exists and recovery artifacts carry laneDAG proof lineage | Recovery API consumes laneDAG contract/budget and preserves blueprint proof/source refs; runner/supervisor enforcement still incomplete | Not server-bound | Recovery policy proof plus laneDAG-lineage evidence proof |
-| L9 | Execution / Review / Patch-Forward | Review plane plus GOD-room review intake/verdict/patch-forward/closure artifact contracts exist | GOD-room lane contracts/recovery/candidate evidence can be packaged for independent review; patch-forward verdicts can append a laneDAG patch lane and reviewed patch-lane merge verdicts can produce a release-evidence handoff; review plane store, lane status, release linkage, and live execution proof still missing | Not server-bound | GOD-room review/patch-forward closure contract proof only, not server/GitHub truth |
+| L9 | Execution / Review / Patch-Forward | Review plane plus GOD-room review intake/verdict/patch-forward/closure artifact contracts exist | GOD-room lane contracts/recovery/candidate evidence can be packaged for independent review; review verdicts sync task/verdict lineage into `review_plane.json`; patch-forward verdicts can append a laneDAG patch lane and reviewed patch-lane merge verdicts can produce a release-evidence handoff; lane status, live execution proof, and server truth still missing | Not server-bound | GOD-room review/patch-forward closure contract proof plus review-plane store lineage proof, not server/GitHub truth |
 | L10 | MemoryOS / Release Evidence / GitHub Truth | Evidence bundle semantics exist and can index GOD-room review closure handoff; release candidates can seed MemoryOS source refs from that handoff | Live MemoryOS trace and live execution/server truth missing | PR open/unmerged; CI truth only for verified remote head | Replay/readiness proof with explicit gaps |
 | L11 | Operator Cockpit / TUI / Overnight Soak | TUI/control slices exist | Complete cockpit/soak missing | Depends on L10 | Operator projection/control proof only |
 
@@ -661,6 +664,10 @@ Use these as implementation references, not as xmuse package dependencies:
   - GOD-room lane review verdict artifact requires an existing review intake
     artifact and evidence refs that cite reviewer inputs before recording an
     explicit reviewer decision.
+  - GOD-room lane review verdict artifacts now write a `ReviewTask` and
+    `ReviewVerdict` into `review_plane.json` through `VerdictStore`, and review
+    closure requires the terminal patch-lane merge verdict to be present in
+    that review plane store before producing the handoff artifact.
   - GOD-room lane patch-forward artifact requires a patch-forward review verdict
     and saved laneDAG artifact, then uses `BlueprintLaneDagService` to append a
     patch lane, dependency edge, runtime contract, and patch-forward link.
@@ -671,17 +678,18 @@ Use these as implementation references, not as xmuse package dependencies:
 - Missing production closure:
   - A GOD-room-originated lane has not yet been proven through live execution,
     review, patch-forward, and release evidence in one chain.
-  - Review intake/verdict/patch-forward/closure artifacts do not update the
-    review plane store, lane status, execute live worker runtime, link release
-    evidence, or assert GitHub truth.
+  - Review intake/patch-forward/closure artifacts still do not update lane
+    status, execute live worker runtime, or assert GitHub truth; release
+    evidence linkage exists only as contract/candidate handoff, not as
+    server-side readiness.
 - Proof required to close:
   - A lane from GOD room freeze is executed, reviewed, accepted/reworked, and
     linked into release evidence with lineage.
 - Current risk:
   - Worker self-report or local test results can be mistaken for review truth.
 - Next production slice:
-  - Link `xmuse.god_room_lane_review_closure.v1` into L10 release evidence
-    without treating candidate refs as server truth or GitHub merge truth.
+  - Connect GOD-room review-plane lineage to lane status or L8 recovery
+    enforcement without treating worker candidate refs as review truth.
 - Downstream blocked until:
   - L10 release evidence cannot claim end-to-end closure without execution and
     review truth from this layer.

@@ -1863,14 +1863,24 @@ def test_chat_api_god_room_lane_review_verdict_requires_independent_evidence(
         "graph-review-verdict.lane-runtime-api.review-intake.json"
     )
     assert "worker-candidate:run-1" in artifact["review_verdict"]["evidence_refs"]
-    assert "review_plane_store_not_updated" in artifact["manual_gaps"]
+    assert artifact["review_plane_sync_status"] == "review_plane_store_updated"
+    assert artifact["review_plane_task_ref"].startswith("review_plane_task:")
+    assert artifact["review_plane_verdict_ref"].startswith("review_plane_verdict:")
+    assert "review_plane_store_not_updated" not in artifact["manual_gaps"]
     assert "patch_forward_lane_dag_not_linked" in artifact["manual_gaps"]
     assert "end_to_end_execution_review_closure" in artifact["forbidden_claims"]
     assert "ready_to_merge" in artifact["forbidden_claims"]
     verdict_artifact = tmp_path / payload["artifacts"]["review_verdict"]
     assert verdict_artifact.exists()
     assert json.loads(verdict_artifact.read_text(encoding="utf-8")) == artifact
-    assert not (tmp_path / "review_plane.json").exists()
+    review_plane = json.loads((tmp_path / "review_plane.json").read_text())
+    assert review_plane["review_tasks"][0]["lane_id"] == "lane-runtime-api"
+    assert review_plane["review_tasks"][0]["status"] == "verdict_emitted"
+    assert review_plane["review_verdicts"][0]["lane_id"] == "lane-runtime-api"
+    assert review_plane["review_verdicts"][0]["decision"] == "merge"
+    assert review_plane["review_verdicts"][0]["summary"] == (
+        "Candidate output matches the lane contract."
+    )
     assert not (tmp_path / "feature_lanes.json").exists()
 
 
@@ -2060,7 +2070,9 @@ def test_chat_api_god_room_lane_patch_forward_appends_lanedag_lane(
     )
     assert (tmp_path / payload["artifacts"]["lane_dag"]).exists()
     assert (tmp_path / payload["artifacts"]["patch_forward"]).exists()
-    assert not (tmp_path / "review_plane.json").exists()
+    review_plane = json.loads((tmp_path / "review_plane.json").read_text())
+    assert review_plane["review_verdicts"][0]["lane_id"] == "lane-runtime-api"
+    assert review_plane["review_verdicts"][0]["decision"] == "patch-forward"
     assert not (tmp_path / "feature_lanes.json").exists()
 
 
@@ -2175,7 +2187,9 @@ def test_chat_api_god_room_lane_review_closure_links_reviewed_patch_lane(
     ]
     assert "worker-candidate:patch-reviewed" in closure["cited_candidate_refs"]
     assert closure["terminal_review_verdict"]["decision"] == "merge"
-    assert "review_plane_store_not_updated" in closure["manual_gaps"]
+    assert closure["review_plane_sync_status"] == "review_plane_store_updated"
+    assert closure["review_plane_verdict_ref"].startswith("review_plane_verdict:")
+    assert "review_plane_store_not_updated" not in closure["manual_gaps"]
     assert "lane_status_not_updated" in closure["manual_gaps"]
     assert "release_evidence_not_linked" in closure["manual_gaps"]
     assert "github_truth_not_checked" in closure["manual_gaps"]
@@ -2185,7 +2199,46 @@ def test_chat_api_god_room_lane_review_closure_links_reviewed_patch_lane(
     assert "pr_merged" in closure["forbidden_claims"]
     assert "github_review_truth" in closure["forbidden_claims"]
     assert (tmp_path / payload["artifacts"]["review_closure"]).exists()
-    assert not (tmp_path / "review_plane.json").exists()
+    review_plane = json.loads((tmp_path / "review_plane.json").read_text())
+    assert {
+        row["lane_id"]: row["decision"] for row in review_plane["review_verdicts"]
+    } == {
+        "lane-runtime-api": "patch-forward",
+        "lane-runtime-api-patch-reviewed": "merge",
+    }
+    assert not (tmp_path / "feature_lanes.json").exists()
+
+
+def test_chat_api_god_room_lane_review_closure_requires_review_plane_verdict(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    conv_id = _create_reviewed_patch_forward_lane(
+        client,
+        graph_id="graph-review-closure-no-plane",
+        patch_lane_id="lane-runtime-api-patch-no-plane",
+        patch_decision="merge",
+    )
+    (tmp_path / "review_plane.json").unlink()
+
+    response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-closure",
+        json={
+            "graph_id": "graph-review-closure-no-plane",
+            "lane_id": "lane-runtime-api",
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == (
+        "god_room_lane_review_closure_missing_review_plane_verdict"
+    )
+    assert not (
+        tmp_path
+        / "reports"
+        / "god_room_review_closure"
+        / "graph-review-closure-no-plane.lane-runtime-api.review-closure.json"
+    ).exists()
     assert not (tmp_path / "feature_lanes.json").exists()
 
 

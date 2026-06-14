@@ -152,10 +152,12 @@ from xmuse_core.structuring.models import (
     FeaturePlanFeature,
     FeaturePlanProposalApproval,
     ReviewDecision,
+    ReviewTask,
     ReviewVerdict,
 )
 from xmuse_core.structuring.planner import build_lane_graph
 from xmuse_core.structuring.projection import project_ready_lanes
+from xmuse_core.structuring.verdict_store import VerdictStore
 
 DEFAULT_PORT = 8201
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -1244,11 +1246,22 @@ def _build_god_room_lane_review_verdict(
         patch_instructions=request.patch_instructions,
         terminate_reason=request.terminate_reason,
     )
+    review_plane_sync = _sync_god_room_review_verdict_to_review_plane(
+        base_dir,
+        graph_id=request.graph_id,
+        lane_id=request.lane_id,
+        lane_contract=intake.get("lane_contract"),
+        review_intake_artifact=str(intake_path.relative_to(base_dir)),
+        verdict=verdict,
+    )
     verdict_payload: dict[str, object] = {
         "schema_version": "xmuse.god_room_lane_review_verdict.v1",
         "source_authority": "god_room_lane_review_intake_artifact",
         "proof_level": "contract_proof",
         "review_truth_status": "independent_review_artifact",
+        "review_plane_sync_status": "review_plane_store_updated",
+        "review_plane_task_ref": review_plane_sync["task_ref"],
+        "review_plane_verdict_ref": review_plane_sync["verdict_ref"],
         "server_truth_status": "not_server_truth",
         "conversation_id": conversation_id,
         "graph_id": request.graph_id,
@@ -1257,14 +1270,13 @@ def _build_god_room_lane_review_verdict(
         "review_intake_artifact": str(intake_path.relative_to(base_dir)),
         "review_intake_source_authority": intake.get("source_authority"),
         "candidate_truth_status": intake.get("candidate_truth_status"),
-        "review_verdict": verdict.model_dump(mode="json"),
+        "review_verdict": review_plane_sync["review_verdict"],
         "required_follow_up": (
             "append_patch_forward_lane"
             if request.decision == "patch-forward"
             else "release_evidence_link"
         ),
         "manual_gaps": [
-            "review_plane_store_not_updated",
             "lane_status_not_updated",
             "patch_forward_lane_dag_not_linked",
             "release_evidence_not_linked",
@@ -1672,6 +1684,19 @@ def _build_god_room_lane_review_closure(
                 "message": "review closure requires a merge verdict for the patch lane",
             },
         )
+    review_plane_verdict_ref = _review_plane_verdict_ref_if_synced(
+        base_dir,
+        lane_id=patch_lane_id,
+        verdict_id=patch_verdict.id,
+    )
+    if review_plane_verdict_ref is None:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "god_room_lane_review_closure_missing_review_plane_verdict",
+                "message": "review closure requires the patch lane verdict in review_plane.json",
+            },
+        )
     cited_candidates = [
         ref for ref in candidate_refs if ref in patch_verdict.evidence_refs
     ]
@@ -1709,8 +1734,9 @@ def _build_god_room_lane_review_closure(
         "candidate_refs": candidate_refs,
         "cited_candidate_refs": cited_candidates,
         "terminal_review_verdict": patch_verdict.model_dump(mode="json"),
+        "review_plane_sync_status": "review_plane_store_updated",
+        "review_plane_verdict_ref": review_plane_verdict_ref,
         "manual_gaps": [
-            "review_plane_store_not_updated",
             "lane_status_not_updated",
             "release_evidence_not_linked",
             "github_truth_not_checked",
@@ -2417,6 +2443,71 @@ def _god_room_blueprint_freeze_artifact_for_lane_dag(
             },
         )
     return artifact
+
+
+def _sync_god_room_review_verdict_to_review_plane(
+    base_dir: Path,
+    *,
+    graph_id: str,
+    lane_id: str,
+    lane_contract: object,
+    review_intake_artifact: str,
+    verdict: ReviewVerdict,
+) -> dict[str, object]:
+    prompt = ""
+    if isinstance(lane_contract, dict):
+        prompt = str(lane_contract.get("prompt") or "")
+    task_id = (
+        f"god_room_review_task_"
+        f"{_artifact_path_id(graph_id)}_{_artifact_path_id(lane_id)}"
+    )
+    now = _utc_now()
+    task = ReviewTask(
+        task_id=task_id,
+        lane_id=lane_id,
+        graph_id=graph_id,
+        lane_prompt=prompt,
+        gate_report_ref=review_intake_artifact,
+        created_at=now,
+        updated_at=now,
+    )
+    persisted_verdict = verdict.model_copy(
+        update={"task_id": task_id, "created_at": now}
+    )
+    try:
+        VerdictStore(base_dir / "review_plane.json").save_task_and_verdict(
+            task,
+            persisted_verdict,
+        )
+    except (OSError, ValueError) as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "god_room_lane_review_plane_sync_failed",
+                "message": str(exc),
+                "source_authority": "review_plane_store",
+            },
+        ) from exc
+    return {
+        "task_ref": f"review_plane_task:{task_id}",
+        "verdict_ref": f"review_plane_verdict:{persisted_verdict.id}",
+        "review_verdict": persisted_verdict.model_dump(mode="json"),
+    }
+
+
+def _review_plane_verdict_ref_if_synced(
+    base_dir: Path,
+    *,
+    lane_id: str,
+    verdict_id: str,
+) -> str | None:
+    try:
+        verdict = VerdictStore(base_dir / "review_plane.json").get_verdict(verdict_id)
+    except KeyError:
+        return None
+    if verdict.lane_id != lane_id:
+        return None
+    return f"review_plane_verdict:{verdict.id}"
 
 
 def _write_lane_dag_artifacts(
