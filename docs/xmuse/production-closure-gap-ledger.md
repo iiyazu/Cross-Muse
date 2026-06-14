@@ -74,13 +74,15 @@ runtime、provider invocation、lane authority、review truth 完成。后续生
   `9befbc8709585df60072ffef26b26cbc0b61c6ee`
 - Local head at start of L3 public event append proof-boundary slice:
   `9190723d7da2580fed392829f3367c32b52f82a9`
+- Local head at start of L3 public event append authorship classification slice:
+  `2ac5eebeb0226324e3bba5a3e62b73c7c27e3124`
 - PR: <https://github.com/iiyazu/Cross-Muse/pull/43>
 - PR state last checked: draft/open/unmerged
 - PR merge state last checked: `CLEAN`
 - PR review decision last checked: empty
 - Latest verified GitHub Actions truth applies to remote head
-  `9befbc8709585df60072ffef26b26cbc0b61c6ee`: run
-  `27490170887`, success
+  `2ac5eebeb0226324e3bba5a3e62b73c7c27e3124`: run
+  `27490935910`, success
 - Local documentation commits after the remote head must not be treated as
   CI-verified until pushed and checked again.
 
@@ -106,13 +108,14 @@ truth_snapshot:
   local_head_at_l8_review_intake_recovery_enforcement_slice: d8e268c2a70ffc1e2fe83fe3d51850cc93a2ed1d
   local_head_at_l8_dispatch_recovery_enforcement_slice: 9befbc8709585df60072ffef26b26cbc0b61c6ee
   local_head_at_l3_public_event_append_proof_boundary_slice: 9190723d7da2580fed392829f3367c32b52f82a9
+  local_head_at_l3_public_event_append_authorship_classification_slice: 2ac5eebeb0226324e3bba5a3e62b73c7c27e3124
   pr: 43
   pr_url: https://github.com/iiyazu/Cross-Muse/pull/43
   pr_state: draft_open_unmerged
   merge_state: CLEAN
   review_decision: empty
-  verified_ci_head: 9befbc8709585df60072ffef26b26cbc0b61c6ee
-  verified_ci_run: 27490170887
+  verified_ci_head: 2ac5eebeb0226324e3bba5a3e62b73c7c27e3124
+  verified_ci_run: 27490935910
   ci_verified_for_verified_head: true
   local_docs_after_verified_head: true
   pr_merged_claim_allowed: false
@@ -376,15 +379,23 @@ Use these as implementation references, not as xmuse package dependencies:
     `proof_level=manual_gap` and do not write a durable event; provider-backed
     `speak` remains writable only through the L5 capture path that loads the
     L4 artifact server-side.
+  - Public Chat API direct append now writes a server-owned
+    `public_append_authority` payload for GOD-authored direct events. If
+    `RoomSelectedGodBinding` resolves, the payload records
+    `proof_level=contract_proof`, binding revision, account/model metadata, and
+    binding source refs. If resolution fails, the event remains a
+    contract/manual transcript but records `proof_level=manual_gap`,
+    `room_selected_god_binding_unresolved`, and forbidden live-proof claims.
+    Client-supplied `public_append_authority` is rejected as a reserved proof
+    field.
   - A local opt-in live Codex composed route run appended one provider-backed
     `speak` event and returned room replay `ok` from a temp runtime root:
     `/tmp/xmuse-live-l4-l5-uynpv_gj`.
 - Missing production closure:
   - Natural multi-GOD live runtime has not been proven over a long session.
-  - Event append controls still need to prove full L2 actor identity and L1
-    authority boundaries consistently for all direct manual/contract events;
-    the current slice only blocks provider-proof spoofing through the public
-    append writer.
+  - Public direct append now classifies GOD event authorship through L2 binding
+    resolution or explicit `manual_gap`, but this still does not prove fresh
+    provider-backed natural deliberation or every non-HTTP writer path.
 - Proof required to close:
   - A fresh transcript where multiple configured GODs produce durable
     question/challenge/handoff/freeze events through provider-backed runtime.
@@ -393,9 +404,9 @@ Use these as implementation references, not as xmuse package dependencies:
   - Direct public append remains contract/manual proof only unless backed by
     the L4/L5 provider-capture route.
 - Next production slice:
-  - Bind remaining direct room event authorship to selected GOD/operator
-    authority without breaking contract/manual transcripts, then drive
-    provider-backed room speech through the durable event store.
+  - Extend the same authorship classification to remaining GOD room writer
+    paths and then drive fresh provider-backed multi-GOD speech through the
+    durable event store.
 - Downstream blocked until:
   - L6 blueprint freeze cannot claim live deliberation closure without fresh
     durable room event proof.

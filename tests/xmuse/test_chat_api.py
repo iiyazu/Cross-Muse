@@ -454,6 +454,23 @@ def test_chat_api_god_room_persists_events_and_replays_turns(
 
     assert append_response.status_code == 201
     assert append_response.json()["append_status"] == "created"
+    appended_event = append_response.json()["event"]
+    public_authority = appended_event["payload"]["public_append_authority"]
+    assert public_authority["schema_version"] == (
+        "xmuse.god_room_public_append_authority.v1"
+    )
+    assert public_authority["source_authority"] == (
+        "chat_api_public_event_append+room_selected_god_binding_manual_gap"
+    )
+    assert public_authority["status"] == "manual_gap"
+    assert public_authority["proof_level"] == "manual_gap"
+    assert public_authority["blocked_reason"] == (
+        "room selected GOD binding unavailable"
+    )
+    assert public_authority["manual_gaps"] == [
+        "room_selected_god_binding_unresolved"
+    ]
+    assert "provider_invocation_live_proof" in public_authority["forbidden_claims"]
     assert append_response.json()["room"]["replay"]["decisions"][0] == {
         "event_id": "evt-propose",
         "next_participant_id": participants["review"]["participant_id"],
@@ -471,6 +488,65 @@ def test_chat_api_god_room_persists_events_and_replays_turns(
     assert snapshot["schema_version"] == "xmuse.god_room_snapshot.v1"
     assert snapshot["source_authority"] == "god_room_event_store"
     assert snapshot["events"][0]["event_id"] == "evt-propose"
+
+
+def test_chat_api_god_room_public_append_records_binding_lineage(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    conversation = client.post(
+        "/api/chat/conversations",
+        json={"title": "GOD room bound public append"},
+    ).json()
+    conv_id = conversation["id"]
+    room = client.post(f"/api/chat/conversations/{conv_id}/god-room").json()["room"]
+    participants = {participant["role"]: participant for participant in room["participants"]}
+    binding_ref = _seed_room_selected_god_binding(
+        tmp_path,
+        room_id=room["room_id"],
+        participant=participants["architect"],
+    )
+
+    response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/events",
+        json={
+            "event_id": "evt-bound-propose",
+            "room_id": room["room_id"],
+            "conversation_id": conv_id,
+            "participant_id": participants["architect"]["participant_id"],
+            "god_id": participants["architect"]["god_id"],
+            "actor_kind": "god",
+            "event_type": "speak",
+            "timestamp_utc": "2026-06-13T10:00:00Z",
+            "content": "This contract event is authored by a selected room GOD.",
+            "source_refs": [f"conversation:{conv_id}"],
+            "cli_id": participants["architect"]["cli_id"],
+            "provider_profile": "codex.god",
+            "payload": {"body": "Selected room GOD contract authorship."},
+        },
+    )
+
+    assert response.status_code == 201
+    event = response.json()["event"]
+    public_authority = event["payload"]["public_append_authority"]
+    assert public_authority["source_authority"] == (
+        "chat_api_public_event_append+room_selected_god_binding"
+    )
+    assert public_authority["status"] == "resolved"
+    assert public_authority["proof_level"] == "contract_proof"
+    assert public_authority["binding_revision"] == (
+        f"binding:god-room:{conv_id}:{participants['architect']['participant_id']}:1"
+    )
+    assert public_authority["account_ref"] == "codex.god"
+    assert public_authority["cli_command"] == "codex"
+    assert public_authority["model"] == "gpt-5.4"
+    assert public_authority["manual_gaps"] == []
+    assert binding_ref in public_authority["source_refs"]
+
+    stored_event = client.get(f"/api/chat/conversations/{conv_id}/god-room").json()[
+        "room"
+    ]["events"][0]
+    assert stored_event["payload"]["public_append_authority"] == public_authority
 
 
 def test_chat_api_god_room_public_append_rejects_provider_proof_spoof(
@@ -510,6 +586,10 @@ def test_chat_api_god_room_public_append_rejects_provider_proof_spoof(
                     "reports/provider-responses/fake.json"
                 ),
                 "binding_revision": "binding:spoof",
+                "public_append_authority": {
+                    "proof_level": "contract_proof",
+                    "binding_revision": "binding:spoof",
+                },
             },
         },
     )
@@ -526,6 +606,7 @@ def test_chat_api_god_room_public_append_rejects_provider_proof_spoof(
         "binding_revision",
         "proof_level",
         "provider_response_artifact_ref",
+        "public_append_authority",
     ]
 
     events = client.get(f"/api/chat/conversations/{conv_id}/god-room").json()["room"][

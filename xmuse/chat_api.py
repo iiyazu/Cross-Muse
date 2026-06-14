@@ -69,7 +69,6 @@ from xmuse_core.chat.god_room_provider_invocation import (
 )
 from xmuse_core.chat.god_room_runtime import (
     GodRoomActorKind,
-    GodRoomEventKind,
     GodRoomEventV1,
     GodRoomParticipant,
 )
@@ -790,6 +789,7 @@ _PUBLIC_APPEND_FORBIDDEN_PROVIDER_SPEAK_PAYLOAD_KEYS = frozenset(
         "cli_command",
         "model",
         "proof_level",
+        "public_append_authority",
         "provider_response_artifact_ref",
         "provider_response_id",
         "provider_profile_ref",
@@ -802,10 +802,7 @@ _PUBLIC_APPEND_FORBIDDEN_PROVIDER_SPEAK_PAYLOAD_KEYS = frozenset(
 
 
 def _validate_public_god_room_event_append(event: GodRoomEventV1) -> None:
-    if (
-        event.actor_kind is not GodRoomActorKind.GOD
-        or event.event_type is not GodRoomEventKind.SPEAK
-    ):
+    if event.actor_kind is not GodRoomActorKind.GOD:
         return
 
     forbidden_refs = [
@@ -847,6 +844,52 @@ def _validate_public_god_room_event_append(event: GodRoomEventV1) -> None:
             ],
         },
     )
+
+
+def _classify_public_god_room_event_append(
+    base_dir: Path,
+    event: GodRoomEventV1,
+) -> GodRoomEventV1:
+    if event.actor_kind is not GodRoomActorKind.GOD:
+        return event
+
+    resolution = _god_identity_binding_store(base_dir).resolve(
+        room_id=event.room_id,
+        participant_id=event.participant_id,
+        god_id=event.god_id,
+    )
+    manual_gaps: list[str] = []
+    if resolution.status == "manual_gap":
+        manual_gaps.append("room_selected_god_binding_unresolved")
+    source_authority = (
+        "chat_api_public_event_append+room_selected_god_binding"
+        if resolution.status == "resolved"
+        else "chat_api_public_event_append+room_selected_god_binding_manual_gap"
+    )
+    payload = dict(event.payload)
+    payload["public_append_authority"] = {
+        "schema_version": "xmuse.god_room_public_append_authority.v1",
+        "source_authority": source_authority,
+        "status": resolution.status,
+        "proof_level": resolution.proof_level,
+        "room_id": event.room_id,
+        "participant_id": event.participant_id,
+        "god_id": event.god_id,
+        "binding_revision": resolution.binding_revision,
+        "account_ref": resolution.account_ref,
+        "cli_command": resolution.cli_command,
+        "model": resolution.model,
+        "variant": resolution.variant,
+        "blocked_reason": resolution.blocked_reason,
+        "source_refs": resolution.source_refs,
+        "manual_gaps": manual_gaps,
+        "forbidden_claims": [
+            "provider_invocation_live_proof",
+            "capture_equals_invocation_proof",
+            "natural_groupchat_closure",
+        ],
+    }
+    return event.model_copy(update={"payload": payload})
 
 
 def _god_room_participants(base_dir: Path, conversation_id: str) -> list[GodRoomParticipant]:
@@ -3678,7 +3721,8 @@ def create_app(
         store = _god_room_event_store(root)
         try:
             _validate_public_god_room_event_append(request)
-            result = store.append_event(request)
+            event = _classify_public_god_room_event_append(root, request)
+            result = store.append_event(event)
         except GodRoomMembershipError as exc:
             raise HTTPException(
                 status_code=400,
