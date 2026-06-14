@@ -10,6 +10,9 @@ from xmuse_core.platform.execution.github_ops import (
     ReadOnlyGitHubServerSideTruthCollector,
     can_emit_pr_merged,
 )
+from xmuse_core.platform.github_truth_release_gate import (
+    write_github_server_truth_release_gate,
+)
 
 DEFAULT_REQUIRED_CHECKS = [
     "quality-gates",
@@ -29,6 +32,8 @@ def capture_github_server_truth(
     internal_review_artifact: Path | None = None,
     internal_reviewer: str | None = None,
     internal_reviewed_head_sha: str | None = None,
+    release_gate_output: Path | None = None,
+    expected_head_sha: str | None = None,
 ) -> int:
     client = GitHubCliServerSideTruthClient(
         base_branch=base_branch,
@@ -44,11 +49,27 @@ def capture_github_server_truth(
         required_checks=required_checks,
     )
     payload = evidence.model_dump(mode="json")
+    head_sha_matches_expected = (
+        True if expected_head_sha is None else payload.get("head_sha") == expected_head_sha
+    )
     payload["schema_version"] = "github_server_side_truth_capture.v1"
-    payload["can_emit_pr_merged"] = can_emit_pr_merged(evidence)
+    payload["expected_head_sha"] = expected_head_sha
+    payload["head_sha_matches_expected"] = head_sha_matches_expected
+    payload["can_emit_pr_merged"] = (
+        can_emit_pr_merged(evidence) and head_sha_matches_expected
+    )
+    payload["merged"] = payload["can_emit_pr_merged"] is True
     payload["capture_mode"] = "opt_in_read_only_gh_api"
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    if release_gate_output is not None:
+        write_github_server_truth_release_gate(
+            payload,
+            artifact_path=output,
+            output_path=release_gate_output,
+            base_branch=base_branch,
+            expected_head_sha=expected_head_sha,
+        )
     return 0 if payload["can_emit_pr_merged"] else 2
 
 
@@ -59,6 +80,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--repo", required=True, help="GitHub repository, e.g. owner/name.")
     parser.add_argument("--pull-request", required=True, type=int, help="Pull request number.")
     parser.add_argument("--output", required=True, type=Path, help="Output evidence JSON path.")
+    parser.add_argument(
+        "--release-gate-output",
+        type=Path,
+        default=None,
+        help="Optional xmuse.production_evidence.v1 GitHub server-truth gate output.",
+    )
     parser.add_argument("--base-branch", default="main")
     parser.add_argument(
         "--internal-review-artifact",
@@ -83,6 +110,14 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Required check name. May be repeated.",
     )
+    parser.add_argument(
+        "--expected-head-sha",
+        default=None,
+        help=(
+            "Optional current PR head SHA expected by this run. A mismatch keeps "
+            "the release gate at manual_gap."
+        ),
+    )
     args = parser.parse_args(argv)
     return capture_github_server_truth(
         repo=args.repo,
@@ -93,6 +128,8 @@ def main(argv: list[str] | None = None) -> int:
         internal_review_artifact=args.internal_review_artifact,
         internal_reviewer=args.internal_reviewer,
         internal_reviewed_head_sha=args.internal_reviewed_head_sha,
+        release_gate_output=args.release_gate_output,
+        expected_head_sha=args.expected_head_sha,
     )
 
 

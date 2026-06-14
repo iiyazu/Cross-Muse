@@ -36,6 +36,17 @@ class StageManifest:
     escalation_triggers: list[str] | None = None
     prompt: str | None = None
     engine_hint: str | None = None
+    worker_kind: str | None = None
+    candidate_patch: bool = False
+    allowed_files: list[str] | None = None
+    forbidden_paths: list[str] | None = None
+    allowed_actions: list[str] | None = None
+    forbidden_actions: list[str] | None = None
+    closure: dict[str, Any] | None = None
+    task_understanding: dict[str, Any] | None = None
+    invariants: dict[str, Any] | None = None
+    verification: dict[str, Any] | None = None
+    evidence_summary: dict[str, Any] | None = None
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> StageManifest:
@@ -53,6 +64,21 @@ class StageManifest:
             escalation_triggers=_normalize_optional_list(payload.get("escalation_triggers")),
             prompt=_normalize_optional_str(payload.get("prompt")),
             engine_hint=_normalize_optional_str(payload.get("engine")),
+            worker_kind=_normalize_optional_str(payload.get("worker_kind")),
+            candidate_patch=_normalize_bool(payload.get("candidate_patch")),
+            allowed_files=_normalize_optional_list(payload.get("allowed_files")),
+            forbidden_paths=_normalize_optional_list(payload.get("forbidden_paths")),
+            allowed_actions=_normalize_optional_list(payload.get("allowed_actions")),
+            forbidden_actions=_normalize_optional_list(payload.get("forbidden_actions")),
+            closure=_normalize_optional_mapping(payload.get("closure"), "closure"),
+            task_understanding=_normalize_optional_mapping(
+                payload.get("task_understanding"), "task_understanding"
+            ),
+            invariants=_normalize_optional_mapping(payload.get("invariants"), "invariants"),
+            verification=_normalize_optional_mapping(payload.get("verification"), "verification"),
+            evidence_summary=_normalize_optional_mapping(
+                payload.get("evidence_summary"), "evidence_summary"
+            ),
         )
 
 
@@ -89,12 +115,32 @@ def _normalize_optional_str(value: Any, *, default: str | None = None) -> str | 
     return text
 
 
+def _normalize_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+    if value is None:
+        return False
+    return bool(value)
+
+
+def _normalize_optional_mapping(value: Any, field_name: str) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError(f"{field_name} must be an object")
+    return dict(value)
+
+
 def _validate_manifest(manifest: StageManifest) -> list[str]:
     issues: list[str] = []
     if not manifest.stage_id:
         issues.append("stage_manifest is missing required field: stage_id")
     if not manifest.objective:
         issues.append("stage_manifest is missing required field: objective")
+    if manifest.candidate_patch and not (manifest.allowed_files or manifest.scope):
+        issues.append("candidate_patch stages require allowed_files or scope")
     return issues
 
 
@@ -105,6 +151,11 @@ def _build_prompt(manifest: StageManifest, evidence_dir: Path) -> str:
     )
     constraint_lines = _join_bullets(manifest.constraints)
     escalation_lines = _join_bullets(manifest.escalation_triggers)
+    allowed_file_lines = _join_bullets(manifest.allowed_files or manifest.scope)
+    forbidden_path_lines = _join_bullets(_default_forbidden_paths(manifest))
+    allowed_action_lines = _join_bullets(manifest.allowed_actions)
+    forbidden_action_lines = _join_bullets(_default_forbidden_actions(manifest))
+    structured_sections = _structured_prompt_sections(manifest)
 
     base_prompt = manifest.prompt or ""
     if base_prompt:
@@ -122,7 +173,25 @@ def _build_prompt(manifest: StageManifest, evidence_dir: Path) -> str:
         f"Evidence directory: {evidence_dir}\n"
         f"Constraints:\n{constraint_lines}\n"
         f"Escalation triggers:\n{escalation_lines}\n"
-        "Output requirement: produce only structured evidence updates, no direct state writes."
+        "\nOpenCode Candidate Patch Gate:\n"
+        f"Worker kind: {manifest.worker_kind or 'unspecified'}\n"
+        f"Candidate patch: {str(manifest.candidate_patch).lower()}\n"
+        "Allowed files:\n"
+        f"{allowed_file_lines}\n"
+        "Forbidden paths:\n"
+        f"{forbidden_path_lines}\n"
+        "Allowed actions:\n"
+        f"{allowed_action_lines}\n"
+        "Forbidden actions:\n"
+        f"{forbidden_action_lines}\n"
+        "Candidate patch rules:\n"
+        "- Treat any edits as candidate patch only.\n"
+        "- Stay inside allowed files and scope.\n"
+        "- Do not commit, push, write runtime state, or claim completion.\n"
+        "- Do not change proof levels or delete manual_gap without explicit evidence.\n"
+        "- Report changed files, tests attempted, blockers, and residual risk.\n"
+        f"{structured_sections}"
+        f"{_output_requirement(manifest)}"
     )
 
 
@@ -130,6 +199,82 @@ def _join_bullets(items: list[str] | None) -> str:
     if not items:
         return "- (none)"
     return "\n".join(f"- {item}" for item in items)
+
+
+def _default_forbidden_paths(manifest: StageManifest) -> list[str]:
+    defaults = [
+        "xmuse/__init__.py",
+        "feature_lanes.json",
+        "xmuse/work/",
+        "xmuse/history/",
+        "xmuse/logs/",
+        "*.db",
+        "*.sqlite3",
+        "*.jsonl",
+    ]
+    return [*defaults, *(manifest.forbidden_paths or [])]
+
+
+def _default_forbidden_actions(manifest: StageManifest) -> list[str]:
+    defaults = [
+        "commit",
+        "push",
+        "write_runtime_state",
+        "read_or_write_secrets",
+        "bypass_authority_contracts",
+        "expand_scope",
+    ]
+    return [*defaults, *(manifest.forbidden_actions or [])]
+
+
+def _structured_prompt_sections(manifest: StageManifest) -> str:
+    sections = [
+        ("Closure contract", manifest.closure),
+        ("Task understanding", manifest.task_understanding),
+        ("Invariants", manifest.invariants),
+        ("Verification", manifest.verification),
+        ("Evidence summary expectation", manifest.evidence_summary),
+    ]
+    rendered = ""
+    for title, payload in sections:
+        if payload is None:
+            continue
+        rendered += f"\n{title}:\n{_json_block(payload)}\n"
+    return rendered
+
+
+def _json_block(payload: dict[str, Any]) -> str:
+    return json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
+
+
+def _output_requirement(manifest: StageManifest) -> str:
+    if manifest.candidate_patch:
+        return (
+            "\nOutput requirement: produce a bounded candidate patch or audit summary, "
+            "then explain changed files, validation attempted, blockers, and residual risk."
+        )
+    return "\nOutput requirement: produce only structured evidence updates, no direct state writes."
+
+
+def _manifest_metadata(manifest: StageManifest) -> dict[str, Any]:
+    return {
+        "worker_kind": manifest.worker_kind,
+        "candidate_patch": manifest.candidate_patch,
+        "allowed_files": manifest.allowed_files,
+        "forbidden_paths": manifest.forbidden_paths,
+        "allowed_actions": manifest.allowed_actions,
+        "forbidden_actions": manifest.forbidden_actions,
+        "closure": manifest.closure,
+        "evidence_summary": manifest.evidence_summary,
+    }
+
+
+def _with_manifest_metadata(result: dict[str, Any], manifest: StageManifest) -> dict[str, Any]:
+    enriched = dict(result)
+    for key, value in _manifest_metadata(manifest).items():
+        if value is not None:
+            enriched[key] = value
+    return enriched
 
 
 @dataclass(frozen=True)
@@ -320,17 +465,20 @@ def run_stage(
 
     if issues:
         issue_message = "; ".join(issues)
-        result: dict[str, Any] = {
-            "stage_id": manifest.stage_id,
-            "status": "blocked",
-            "engine": chosen_engine,
-            "issues": _as_issue_list(issue_message),
-            "review_decision": "blocked",
-            "retry_hint": "Fix stage manifest fields before rerun.",
-            "evidence_dir": str(paths.evidence_dir),
-            "agent_output_path": str(output),
-            "command": [],
-        }
+        result = _with_manifest_metadata(
+            {
+                "stage_id": manifest.stage_id,
+                "status": "blocked",
+                "engine": chosen_engine,
+                "issues": _as_issue_list(issue_message),
+                "review_decision": "blocked",
+                "retry_hint": "Fix stage manifest fields before rerun.",
+                "evidence_dir": str(paths.evidence_dir),
+                "agent_output_path": str(output),
+                "command": [],
+            },
+            manifest,
+        )
         paths.runner_log.write_text(issue_message + "\n", encoding="utf-8")
         _write_result(output, result)
         _append_manifest_line(paths.manifest_log, result)
@@ -341,18 +489,21 @@ def run_stage(
 
     if dry_run:
         dry_run_message = "Dry run generated prompt and command but did not execute stage."
-        result = {
-            "stage_id": manifest.stage_id,
-            "status": "blocked",
-            "engine": chosen_engine,
-            "issues": _as_issue_list(dry_run_message),
-            "review_decision": "dry_run",
-            "retry_hint": "Run the same stage without --dry-run before advancing.",
-            "evidence_dir": str(paths.evidence_dir),
-            "agent_output_path": str(output),
-            "command": command,
-            "agent_stdout_path": str(paths.runner_log),
-        }
+        result = _with_manifest_metadata(
+            {
+                "stage_id": manifest.stage_id,
+                "status": "blocked",
+                "engine": chosen_engine,
+                "issues": _as_issue_list(dry_run_message),
+                "review_decision": "dry_run",
+                "retry_hint": "Run the same stage without --dry-run before advancing.",
+                "evidence_dir": str(paths.evidence_dir),
+                "agent_output_path": str(output),
+                "command": command,
+                "agent_stdout_path": str(paths.runner_log),
+            },
+            manifest,
+        )
         paths.runner_log.write_text(dry_run_message + "\n", encoding="utf-8")
         _write_result(output, result)
         _append_manifest_line(paths.manifest_log, result)
@@ -369,43 +520,49 @@ def run_stage(
             check=False,
         )
     except FileNotFoundError as exc:
-        result = {
-            "stage_id": manifest.stage_id,
-            "status": "blocked",
-            "engine": chosen_engine,
-            "issues": _as_issue_list(
-                f"Command not found: {exc}",
-                {"command": command_repr},
-            ),
-            "review_decision": "blocked",
-            "retry_hint": "Install command and retry; otherwise switch engine explicitly.",
-            "evidence_dir": str(paths.evidence_dir),
-            "agent_output_path": str(output),
-            "command": command,
-            "agent_stdout_path": str(paths.runner_log),
-        }
+        result = _with_manifest_metadata(
+            {
+                "stage_id": manifest.stage_id,
+                "status": "blocked",
+                "engine": chosen_engine,
+                "issues": _as_issue_list(
+                    f"Command not found: {exc}",
+                    {"command": command_repr},
+                ),
+                "review_decision": "blocked",
+                "retry_hint": "Install command and retry; otherwise switch engine explicitly.",
+                "evidence_dir": str(paths.evidence_dir),
+                "agent_output_path": str(output),
+                "command": command,
+                "agent_stdout_path": str(paths.runner_log),
+            },
+            manifest,
+        )
         _write_result(output, result)
         _append_manifest_line(paths.manifest_log, result)
         return 2
     except subprocess.TimeoutExpired as exc:
         previous_retries = _count_previous_retries(paths.manifest_log, manifest.stage_id)
         status = "blocked" if previous_retries >= manifest.max_retries else "retry"
-        result = {
-            "stage_id": manifest.stage_id,
-            "status": status,
-            "engine": chosen_engine,
-            "issues": _as_issue_list(
-                f"Engine invocation timed out: {exc}",
-                {"command": command_repr},
-            ),
-            "review_decision": status,
-            "retry_hint": _build_retry_hint(124, "timeout"),
-            "evidence_dir": str(paths.evidence_dir),
-            "agent_output_path": str(output),
-            "command": command,
-            "agent_stdout_path": str(paths.runner_log),
-            "attempt": previous_retries + 1,
-        }
+        result = _with_manifest_metadata(
+            {
+                "stage_id": manifest.stage_id,
+                "status": status,
+                "engine": chosen_engine,
+                "issues": _as_issue_list(
+                    f"Engine invocation timed out: {exc}",
+                    {"command": command_repr},
+                ),
+                "review_decision": status,
+                "retry_hint": _build_retry_hint(124, "timeout"),
+                "evidence_dir": str(paths.evidence_dir),
+                "agent_output_path": str(output),
+                "command": command,
+                "agent_stdout_path": str(paths.runner_log),
+                "attempt": previous_retries + 1,
+            },
+            manifest,
+        )
         paths.runner_log.write_text(
             _timeout_output(exc),
             encoding="utf-8",
@@ -431,25 +588,28 @@ def run_stage(
         }
     ]
 
-    result = {
-        "stage_id": manifest.stage_id,
-        "status": status,
-        "engine": chosen_engine,
-        "issues": issues_out,
-        "review_decision": "pass" if status == "ok" else status,
-        "retry_hint": _build_retry_hint(
-            completed.returncode,
-            completed.stdout + "\n" + completed.stderr,
-        )
-        if status != "ok"
-        else None,
-        "evidence_dir": str(paths.evidence_dir),
-        "agent_output_path": str(output),
-        "command": command,
-        "agent_stdout_path": str(paths.runner_log),
-        "returncode": completed.returncode,
-        "attempt": previous_retries + 1,
-    }
+    result = _with_manifest_metadata(
+        {
+            "stage_id": manifest.stage_id,
+            "status": status,
+            "engine": chosen_engine,
+            "issues": issues_out,
+            "review_decision": "pass" if status == "ok" else status,
+            "retry_hint": _build_retry_hint(
+                completed.returncode,
+                completed.stdout + "\n" + completed.stderr,
+            )
+            if status != "ok"
+            else None,
+            "evidence_dir": str(paths.evidence_dir),
+            "agent_output_path": str(output),
+            "command": command,
+            "agent_stdout_path": str(paths.runner_log),
+            "returncode": completed.returncode,
+            "attempt": previous_retries + 1,
+        },
+        manifest,
+    )
     _write_result(output, result)
     _append_manifest_line(paths.manifest_log, result)
     return 0 if status == "ok" else 1 if status == "retry" else 2

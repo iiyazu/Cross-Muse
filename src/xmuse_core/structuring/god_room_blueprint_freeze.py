@@ -1,0 +1,345 @@
+from __future__ import annotations
+
+from enum import StrEnum
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from xmuse_core.chat.god_room_runtime import (
+    GodRoomEventKind,
+    GodRoomEventProof,
+    GodRoomEventV1,
+    project_god_room_event_proofs,
+    sort_god_room_events,
+)
+from xmuse_core.structuring.mission_blueprint_v1 import (
+    MissionBlueprintDecisionLogEntry,
+    MissionBlueprintStatus,
+    MissionBlueprintV1,
+)
+
+
+class GodRoomBlueprintFreezeStatus(StrEnum):
+    FROZEN = "frozen"
+    MANUAL_GAP = "manual_gap"
+
+
+ProofLevel = Literal["contract_proof", "opt_in_live_proof", "manual_gap"]
+
+
+class GodRoomBlueprintFreezeEventLineageV1(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    event_id: str
+    event_type: GodRoomEventKind
+    participant_id: str
+    god_id: str
+    proof_level: ProofLevel
+    source_authority: str
+    provider_response_artifact_ref: str | None = None
+    binding_revision: str | None = None
+    account_ref: str | None = None
+    cli_command: str | None = None
+    model: str | None = None
+    variant: str | None = None
+    target_participant_ids: list[str] = Field(default_factory=list)
+    source_refs: list[str] = Field(default_factory=list)
+    forbidden_claims: list[str] = Field(default_factory=list)
+
+    @field_validator("target_participant_ids", "source_refs", "forbidden_claims")
+    @classmethod
+    def _clean_lineage_text_list(cls, value: list[str]) -> list[str]:
+        return _dedupe([item.strip() for item in value if item.strip()])
+
+
+class GodRoomBlueprintFreezeArtifactV1(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    version: Literal["xmuse.god_room_blueprint_freeze.v1"] = (
+        "xmuse.god_room_blueprint_freeze.v1"
+    )
+    status: GodRoomBlueprintFreezeStatus
+    proof_level: ProofLevel
+    blueprint: MissionBlueprintV1 | None = None
+    decision_event_id: str | None = None
+    assumptions: list[str] = Field(default_factory=list)
+    conflicts: list[str] = Field(default_factory=list)
+    rejected_alternatives: list[str] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    source_refs: list[str] = Field(default_factory=list)
+    source_event_lineage: list[GodRoomBlueprintFreezeEventLineageV1] = Field(
+        default_factory=list
+    )
+    blocked_reason: str | None = None
+
+    @field_validator(
+        "assumptions",
+        "conflicts",
+        "rejected_alternatives",
+        "blockers",
+        "source_refs",
+    )
+    @classmethod
+    def _clean_text_list(cls, value: list[str]) -> list[str]:
+        return _dedupe([item.strip() for item in value if item.strip()])
+
+    @model_validator(mode="before")
+    @classmethod
+    def _default_legacy_proof_level(cls, value: object) -> object:
+        if not isinstance(value, dict) or "proof_level" in value:
+            return value
+        payload = dict(value)
+        payload["proof_level"] = (
+            "manual_gap"
+            if payload.get("status") == GodRoomBlueprintFreezeStatus.MANUAL_GAP
+            or payload.get("status") == GodRoomBlueprintFreezeStatus.MANUAL_GAP.value
+            else "contract_proof"
+        )
+        return payload
+
+
+def compile_blueprint_freeze_from_god_room_events(
+    *,
+    blueprint_id: str,
+    revision: int,
+    events: list[GodRoomEventV1],
+    lineage_source_refs: list[str] | None = None,
+) -> GodRoomBlueprintFreezeArtifactV1:
+    ordered_events = sort_god_room_events(events)
+    source_refs = _dedupe(
+        [*_source_refs(ordered_events), *(lineage_source_refs or [])]
+    )
+    event_proofs = project_god_room_event_proofs(ordered_events)
+    source_event_lineage = _source_event_lineage(ordered_events, event_proofs)
+    manual_gap_proofs = _manual_gap_event_proofs(event_proofs)
+    if manual_gap_proofs:
+        return GodRoomBlueprintFreezeArtifactV1(
+            status=GodRoomBlueprintFreezeStatus.MANUAL_GAP,
+            proof_level="manual_gap",
+            blueprint=None,
+            decision_event_id=_latest_freeze_event_id(ordered_events),
+            assumptions=_payload_texts(ordered_events, "assumptions"),
+            conflicts=[],
+            rejected_alternatives=_payload_texts(
+                ordered_events,
+                "rejected_alternatives",
+            ),
+            blockers=[
+                f"manual-gap event proof {proof.event_id}: {proof.source_authority}"
+                for proof in manual_gap_proofs
+            ],
+            source_refs=_dedupe(
+                [
+                    *source_refs,
+                    *[
+                        ref
+                        for proof in manual_gap_proofs
+                        for ref in proof.source_refs
+                    ],
+                ]
+            ),
+            source_event_lineage=source_event_lineage,
+            blocked_reason="GOD room transcript contains manual-gap event proof",
+        )
+    unresolved = _unresolved_challenges(ordered_events)
+    conflicts = [_challenge_conflict(event) for event in unresolved]
+    if unresolved:
+        return GodRoomBlueprintFreezeArtifactV1(
+            status=GodRoomBlueprintFreezeStatus.MANUAL_GAP,
+            proof_level="manual_gap",
+            blueprint=None,
+            decision_event_id=_latest_freeze_event_id(ordered_events),
+            assumptions=_payload_texts(ordered_events, "assumptions"),
+            conflicts=conflicts,
+            rejected_alternatives=_payload_texts(
+                ordered_events,
+                "rejected_alternatives",
+            ),
+            blockers=[f"unresolved challenge {event.event_id}" for event in unresolved],
+            source_refs=source_refs,
+            source_event_lineage=source_event_lineage,
+            blocked_reason="unresolved GOD room challenges block blueprint freeze",
+        )
+
+    freeze_event = _latest_freeze_event(ordered_events)
+    if freeze_event is None:
+        return GodRoomBlueprintFreezeArtifactV1(
+            status=GodRoomBlueprintFreezeStatus.MANUAL_GAP,
+            proof_level="manual_gap",
+            blueprint=None,
+            assumptions=_payload_texts(ordered_events, "assumptions"),
+            conflicts=[],
+            rejected_alternatives=_payload_texts(
+                ordered_events,
+                "rejected_alternatives",
+            ),
+            blockers=["missing freeze_requested event"],
+            source_refs=source_refs,
+            source_event_lineage=source_event_lineage,
+            blocked_reason="GOD room transcript has no freeze_requested event",
+        )
+
+    payload = freeze_event.payload
+    blueprint = MissionBlueprintV1(
+        blueprint_id=blueprint_id,
+        conversation_id=freeze_event.conversation_id,
+        revision=revision,
+        goal=_payload_text(payload, "goal", fallback=freeze_event.content),
+        scope=_payload_text_list(payload, "scope"),
+        constraints=_payload_text_list(payload, "constraints"),
+        non_goals=_payload_text_list(payload, "non_goals"),
+        acceptance_contracts=_payload_text_list(payload, "acceptance_contracts"),
+        repo_areas=_payload_text_list(payload, "repo_areas"),
+        open_questions=_payload_text_list(payload, "open_questions"),
+        decision_log=[
+            MissionBlueprintDecisionLogEntry(
+                decision=f"Freeze requested by {freeze_event.god_id}.",
+                source_refs=[f"god-room-event:{freeze_event.event_id}", *freeze_event.source_refs],
+            )
+        ],
+        source_refs=source_refs,
+        status=MissionBlueprintStatus.FROZEN,
+        approved_by=[freeze_event.god_id],
+    )
+    return GodRoomBlueprintFreezeArtifactV1(
+        status=GodRoomBlueprintFreezeStatus.FROZEN,
+        proof_level=_freeze_proof_level(event_proofs),
+        blueprint=blueprint,
+        decision_event_id=freeze_event.event_id,
+        assumptions=_payload_texts(ordered_events, "assumptions"),
+        conflicts=[],
+        rejected_alternatives=_payload_texts(ordered_events, "rejected_alternatives"),
+        blockers=[],
+        source_refs=source_refs,
+        source_event_lineage=source_event_lineage,
+        blocked_reason=None,
+    )
+
+
+def _latest_freeze_event(events: list[GodRoomEventV1]) -> GodRoomEventV1 | None:
+    for event in reversed(events):
+        if event.event_type is GodRoomEventKind.FREEZE_REQUESTED:
+            return event
+    return None
+
+
+def _latest_freeze_event_id(events: list[GodRoomEventV1]) -> str | None:
+    event = _latest_freeze_event(events)
+    return event.event_id if event is not None else None
+
+
+def _unresolved_challenges(events: list[GodRoomEventV1]) -> list[GodRoomEventV1]:
+    return [
+        event
+        for event in events
+        if event.event_type is GodRoomEventKind.CHALLENGE
+        and event.payload.get("resolved") is not True
+    ]
+
+
+def _challenge_conflict(event: GodRoomEventV1) -> str:
+    conflict = event.payload.get("conflict") or event.payload.get("question")
+    if isinstance(conflict, str) and conflict.strip():
+        return conflict.strip()
+    return event.content
+
+
+def _source_refs(events: list[GodRoomEventV1]) -> list[str]:
+    refs: list[str] = []
+    for event in events:
+        refs.append(f"god-room-event:{event.event_id}")
+        refs.extend(event.source_refs)
+    return _dedupe(refs)
+
+
+def _manual_gap_event_proofs(
+    event_proofs: list[GodRoomEventProof],
+) -> list[GodRoomEventProof]:
+    return [
+        proof
+        for proof in event_proofs
+        if proof.proof_level == "manual_gap"
+    ]
+
+
+def _freeze_proof_level(event_proofs: list[GodRoomEventProof]) -> ProofLevel:
+    for proof in event_proofs:
+        if proof.proof_level == "opt_in_live_proof":
+            return "opt_in_live_proof"
+    return "contract_proof"
+
+
+def _source_event_lineage(
+    events: list[GodRoomEventV1],
+    event_proofs: list[GodRoomEventProof],
+) -> list[GodRoomBlueprintFreezeEventLineageV1]:
+    events_by_id = {event.event_id: event for event in events}
+    lineage: list[GodRoomBlueprintFreezeEventLineageV1] = []
+    for proof in event_proofs:
+        event = events_by_id.get(proof.event_id)
+        lineage.append(
+            GodRoomBlueprintFreezeEventLineageV1(
+                event_id=proof.event_id,
+                event_type=proof.event_type,
+                participant_id=proof.participant_id,
+                god_id=proof.god_id,
+                proof_level=proof.proof_level,
+                source_authority=proof.source_authority,
+                provider_response_artifact_ref=proof.provider_response_artifact_ref,
+                binding_revision=proof.binding_revision,
+                account_ref=proof.account_ref,
+                cli_command=proof.cli_command,
+                model=proof.model,
+                variant=proof.variant,
+                target_participant_ids=(
+                    list(event.target_participant_ids) if event is not None else []
+                ),
+                source_refs=proof.source_refs,
+                forbidden_claims=proof.forbidden_claims,
+            )
+        )
+    return lineage
+
+
+def _payload_texts(events: list[GodRoomEventV1], key: str) -> list[str]:
+    values: list[str] = []
+    for event in events:
+        values.extend(_payload_text_list(event.payload, key))
+    return _dedupe(values)
+
+
+def _payload_text_list(payload: dict[str, Any], key: str) -> list[str]:
+    value = payload.get(key)
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value.strip()] if value.strip() else []
+    if isinstance(value, list):
+        return [item.strip() for item in value if isinstance(item, str) and item.strip()]
+    return []
+
+
+def _payload_text(payload: dict[str, Any], key: str, *, fallback: str) -> str:
+    value = payload.get(key)
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return fallback.strip()
+
+
+def _dedupe(values: list[str]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        result.append(value)
+    return result
+
+
+__all__ = [
+    "GodRoomBlueprintFreezeArtifactV1",
+    "GodRoomBlueprintFreezeEventLineageV1",
+    "GodRoomBlueprintFreezeStatus",
+    "compile_blueprint_freeze_from_god_room_events",
+]

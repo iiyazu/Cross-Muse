@@ -57,6 +57,11 @@ IDENTITY_BOUND_CHAT_TOOLS = {
     "chat_mark_inbox",
     "chat_mention",
     "chat_emit_proposal",
+    "chat_create_collaboration_request",
+    "chat_record_collaboration_response",
+    "chat_raise_collaboration_blocker",
+    "chat_resolve_collaboration_blocker",
+    "chat_evaluate_dispatch_gate",
     "chat_emit_blueprint_proposal",
 }
 
@@ -133,7 +138,14 @@ def test_mcp_permission_metadata_covers_every_registered_tool() -> None:
         PermissionCategory,
     )
 
-    assert set(MCP_TOOL_PERMISSIONS) == _all_mcp_tool_names()
+    exposed_tool_names = _all_mcp_tool_names()
+    metadata_tool_names = set(MCP_TOOL_PERMISSIONS)
+    assert exposed_tool_names <= metadata_tool_names
+    assert metadata_tool_names - exposed_tool_names == {
+        "memory_build_context",
+        "memory_ingest",
+        "memory_search",
+    }
     assert IDENTITY_BOUND_CHAT_TOOL_NAMES == IDENTITY_BOUND_CHAT_TOOLS
 
     categories = {metadata.permission_category for metadata in MCP_TOOL_PERMISSIONS.values()}
@@ -161,7 +173,7 @@ def test_mcp_permission_doc_matches_metadata_and_separates_auth_from_identity() 
     content = _read(PERMISSION_DOC)
 
     for phrase in (
-        "API authentication is not implemented",
+        "MCP write authentication is opt-in",
         "identity verification is not API authentication",
         "audit guard is not authorization",
         "permission category is declarative",
@@ -217,6 +229,42 @@ def _identity_tool_args(
                 }
             ],
         }
+    if tool_name == "chat_create_collaboration_request":
+        return {
+            **base,
+            "client_request_id": "req-collab",
+            "goal": "verify identity",
+            "targets": ["review"],
+            "callback_target": "architect",
+            "question": "Can this identity act?",
+        }
+    if tool_name == "chat_record_collaboration_response":
+        return {
+            **base,
+            "run_id": "collab-missing",
+            "content": "response",
+        }
+    if tool_name == "chat_raise_collaboration_blocker":
+        return {
+            **base,
+            "run_id": "collab-missing",
+            "severity": "blocker",
+            "reason": "identity mismatch",
+            "affected_ref": "proposal:missing",
+            "suggested_fix": "use the bound session",
+            "blocks_dispatch": True,
+        }
+    if tool_name == "chat_resolve_collaboration_blocker":
+        return {
+            **base,
+            "blocker_id": "blocker-missing",
+            "resolution_evidence": "identity verified",
+        }
+    if tool_name == "chat_evaluate_dispatch_gate":
+        return {
+            **base,
+            "run_id": "collab-missing",
+        }
     if tool_name == "chat_emit_blueprint_proposal":
         return {
             **base,
@@ -248,15 +296,11 @@ def test_identity_bound_chat_mcp_tools_reject_wrong_conversation_participant_and
         participant for participant in created["participants"] if participant["role"] == "review"
     )
     registry = GodSessionRegistry(xmuse_root / "god_sessions.json")
-    session = registry.create(
-        role="architect",
-        agent_name=architect["display_name"],
-        runtime="codex",
-        session_address=f"@{conversation_id}:{architect['participant_id']}",
-        session_inbox_id=f"inbox-{conversation_id}-{architect['participant_id']}",
+    session = registry.find_by_conversation_participant(
         conversation_id=conversation_id,
         participant_id=architect["participant_id"],
     )
+    assert session is not None
 
     for tool_name in sorted(IDENTITY_BOUND_CHAT_TOOLS):
         wrong_conversation = _mcp_call(

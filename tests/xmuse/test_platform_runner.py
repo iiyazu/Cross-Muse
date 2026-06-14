@@ -10,6 +10,11 @@ import pytest
 from xmuse_core.chat.dispatch_queue import ChatDispatchQueueStore
 from xmuse_core.chat.store import ChatStore
 from xmuse_core.platform.run_health import build_process_inventory
+from xmuse_core.platform.runner_recovery_proof import build_runner_recovery_proof
+from xmuse_core.platform.runner_supervisor import RunnerSupervisorConfig, runner_status
+from xmuse_core.structuring.blueprint_execution.lane_recovery_artifacts import (
+    lane_recovery_artifact_path,
+)
 from xmuse_core.structuring.models import (
     FeatureGraphSet,
     FeaturePlan,
@@ -43,6 +48,61 @@ class _FakeStateMachine:
         if status is None:
             return list(self._lanes)
         return [lane for lane in self._lanes if lane.get("status") == status]
+
+    def update_metadata(self, lane_id: str, metadata: dict):
+        for lane in self._lanes:
+            if lane.get("feature_id") == lane_id:
+                lane.update(metadata)
+                return dict(lane)
+        raise KeyError(lane_id)
+
+
+def test_runner_recovery_proof_without_block_remains_manual_gap(tmp_path: Path) -> None:
+    artifact = build_runner_recovery_proof(
+        run_id="run-no-block",
+        runner_id="runner-test",
+        lanes=[
+            {
+                "feature_id": "lane-ready",
+                "status": "pending",
+                "graph_id": "graph-a",
+            }
+        ],
+        candidate_lanes=[
+            {
+                "feature_id": "lane-ready",
+                "status": "pending",
+                "graph_id": "graph-a",
+            }
+        ],
+        runner_status={
+            "health": {
+                "recovery": {
+                    "source_authority": "lane_recovery_artifact",
+                    "proof_level": "contract_proof",
+                    "counts": {
+                        "blocked": 0,
+                        "non_retry_decision": 0,
+                        "invalid_artifact": 0,
+                        "retry_allowed": 0,
+                    },
+                    "blocked_lanes": [],
+                    "invalid_artifacts": [],
+                }
+            }
+        },
+        lanes_path=tmp_path / "feature_lanes.json",
+        xmuse_root=tmp_path / "xmuse",
+    )
+
+    assert artifact["status"] == "manual_gap"
+    assert artifact["proof_level"] == "manual_gap"
+    assert "no_durable_recovery_block_observed" in artifact["manual_gaps"]
+    assert "overnight_safe_recovery" in artifact["forbidden_claims"]
+    assert "end_to_end_execution_review_closure" in artifact["forbidden_claims"]
+    assert "worker_output_is_review_truth" in artifact["forbidden_claims"]
+    assert "ready_to_merge" in artifact["forbidden_claims"]
+    assert "pr_merged" in artifact["forbidden_claims"]
 
 
 @pytest.mark.asyncio
@@ -817,6 +877,165 @@ async def test_runner_ticks_blueprint_automation_without_blocking_dispatch(
     assert captured["planning_base_dir"] == tmp_path / "xmuse"
     assert captured["planning_worker_ids"] == ["platform-runner"]
     assert captured["dispatches"] == ["lane-1"]
+
+
+@pytest.mark.asyncio
+async def test_runner_loop_blocks_refactor_required_and_status_reports_recovery(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    xmuse_root = tmp_path / "xmuse"
+    lanes_path = xmuse_root / "feature_lanes.json"
+    lanes_path.parent.mkdir(parents=True)
+    lanes_path.write_text(
+        json.dumps(
+            {
+                "lanes": [
+                    {
+                        "feature_id": "lane-refactor",
+                        "status": "reworking",
+                        "priority": 5,
+                        "graph_id": "graph-a",
+                    }
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    _write_recovery_artifact(
+        xmuse_root,
+        graph_id="graph-a",
+        lane_id="lane-refactor",
+        decision="refactor_required",
+        retry_allowed=False,
+    )
+    captured: dict[str, object] = {"dispatches": []}
+    orchestrator_holder: dict[str, object] = {}
+
+    class FakeLoop:
+        def __init__(self) -> None:
+            self._times = iter((0.0, 0.0, 3601.0))
+
+        def add_signal_handler(self, *args, **kwargs) -> None:
+            return None
+
+        def time(self) -> float:
+            return next(self._times)
+
+    class FakeOrchestrator:
+        def __init__(self, **kwargs) -> None:
+            self._root = kwargs["xmuse_root"]
+            self._sm = _FakeStateMachine(
+                [
+                    {
+                        "feature_id": "lane-refactor",
+                        "status": "reworking",
+                        "priority": 5,
+                        "graph_id": "graph-a",
+                    }
+                ]
+            )
+            orchestrator_holder["orch"] = self
+
+        async def reconcile_status_changes(
+            self, *, dispatch_reworking: bool = True
+        ) -> None:
+            captured["reconcile_dispatch_reworking"] = dispatch_reworking
+
+        async def dispatch_lane(self, lane_id: str) -> None:
+            captured["dispatches"].append(lane_id)
+
+    class FakeBlueprintAutomationService:
+        def __init__(self, *, base_dir: Path, **kwargs) -> None:
+            captured["planning_base_dir"] = base_dir
+
+        def tick(self, *, worker_id: str):
+            captured["planning_worker_id"] = worker_id
+            return None
+
+    async def _instant_idle_wait(awaitable, *, timeout: float):
+        awaitable.close()
+        raise TimeoutError
+
+    monkeypatch.setattr(platform_runner, "PlatformOrchestrator", FakeOrchestrator)
+    monkeypatch.setattr(
+        platform_runner,
+        "BlueprintAutomationService",
+        FakeBlueprintAutomationService,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        platform_runner,
+        "_writer_lease_heartbeat_loop",
+        lambda *args, **kwargs: asyncio.Event().wait(),
+    )
+    monkeypatch.setattr(platform_runner.asyncio, "get_running_loop", lambda: FakeLoop())
+    monkeypatch.setattr(platform_runner.asyncio, "wait_for", _instant_idle_wait)
+
+    await platform_runner.run(
+        lanes_path=lanes_path,
+        xmuse_root=xmuse_root,
+        mcp_port=8100,
+        max_hours=1,
+        max_concurrent=1,
+        runner_recovery_proof_output=xmuse_root / "reports" / "runner-recovery.json",
+    )
+
+    assert captured["planning_base_dir"] == xmuse_root
+    assert captured["planning_worker_id"] == "platform-runner"
+    assert captured["dispatches"] == []
+    blocked_lane = orchestrator_holder["orch"]._sm.get_lanes()[0]
+    assert blocked_lane["dispatch_blocked_by_recovery"] is True
+    assert blocked_lane["recovery_dispatch_block_reason"] == "refactor_required"
+    assert blocked_lane["recovery_source_authority"] == "lane_recovery_artifact"
+    assert blocked_lane["recovery_decision"]["retry_allowed"] is False
+    assert "dispatch_attempt_id" not in blocked_lane
+
+    status = runner_status(
+        RunnerSupervisorConfig(
+            repo_root=tmp_path,
+            pid_file=xmuse_root / "runner.pid.json",
+            lanes_path=lanes_path,
+        ),
+        runner_pids=[1234],
+        mcp_pids=[],
+        live_pids={1234},
+    )
+    recovery = status["health"]["recovery"]
+    assert recovery["source_authority"] == "lane_recovery_artifact"
+    assert recovery["proof_level"] == "contract_proof"
+    assert recovery["counts"] == {
+        "blocked": 1,
+        "non_retry_decision": 1,
+        "invalid_artifact": 0,
+        "retry_allowed": 0,
+    }
+    assert recovery["blocked_lanes"][0]["lane_id"] == "lane-refactor"
+    assert recovery["blocked_lanes"][0]["decision"] == "refactor_required"
+    assert "live_runner_recovery_enforcement_not_proven" in recovery["manual_gaps"]
+    assert "ready_to_merge" in recovery["forbidden_claims"]
+
+    proof_artifact = json.loads(
+        (xmuse_root / "reports" / "runner-recovery.json").read_text(encoding="utf-8")
+    )
+    assert proof_artifact["schema_version"] == "xmuse.local_runner_recovery_proof.v1"
+    assert proof_artifact["status"] == "ok"
+    assert proof_artifact["proof_level"] == "local_runtime_proof"
+    assert proof_artifact["source_authority"] == (
+        "platform_runner_candidate_selection"
+        "+shared_runner_health_model"
+        "+lane_recovery_artifact"
+    )
+    assert proof_artifact["candidate_selection"][
+        "excluded_recovery_blocked_lane_ids"
+    ] == ["lane-refactor"]
+    assert proof_artifact["runner_supervisor"]["recovery"]["blocked_lanes"][0][
+        "decision"
+    ] == "refactor_required"
+    assert "review_truth_not_proven" in proof_artifact["manual_gaps"]
+    assert "overnight_safe_recovery" in proof_artifact["forbidden_claims"]
+    assert "ready_to_merge" in proof_artifact["forbidden_claims"]
 
 
 @pytest.mark.asyncio
@@ -2167,6 +2386,111 @@ def test_candidate_lanes_waits_for_unmerged_dependencies() -> None:
     assert [lane["feature_id"] for lane in lanes] == ["lane-1", "lane-3"]
 
 
+def test_candidate_lanes_excludes_non_retry_recovery_decision(tmp_path: Path) -> None:
+    class FakeOrchestrator:
+        def __init__(self) -> None:
+            self._root = tmp_path
+            self._sm = _FakeStateMachine(
+                [
+                    {
+                        "feature_id": "lane-refactor",
+                        "status": "reworking",
+                        "graph_id": "graph-a",
+                    },
+                    {
+                        "feature_id": "lane-retry",
+                        "status": "reworking",
+                        "graph_id": "graph-a",
+                    },
+                ]
+            )
+
+    _write_recovery_artifact(
+        tmp_path,
+        graph_id="graph-a",
+        lane_id="lane-refactor",
+        decision="refactor_required",
+        retry_allowed=False,
+    )
+    _write_recovery_artifact(
+        tmp_path,
+        graph_id="graph-a",
+        lane_id="lane-retry",
+        decision="retry",
+        retry_allowed=True,
+    )
+    orch = FakeOrchestrator()
+
+    lanes = platform_runner._candidate_lanes(
+        orch,
+        graph_id="graph-a",
+        resolution_id=None,
+    )
+
+    assert [lane["feature_id"] for lane in lanes] == ["lane-retry"]
+    assert lanes[0]["ready_set_parity"] == {
+        "matches": False,
+        "runner_source": "legacy_projection",
+        "ready_set_source": "graph_native",
+        "graph_id": "graph-a",
+        "resolution_id": None,
+        "legacy_candidate_lane_ids": ["lane-retry"],
+        "ready_set_lane_ids": ["lane-refactor", "lane-retry"],
+        "legacy_only_lane_ids": [],
+        "ready_set_only_lane_ids": ["lane-refactor"],
+    }
+    blocked = orch._sm.get_lanes()[0]
+    assert blocked["dispatch_blocked_by_recovery"] is True
+    assert blocked["recovery_dispatch_block_reason"] == "refactor_required"
+    assert blocked["recovery_source_authority"] == "lane_recovery_artifact"
+    assert blocked["recovery_decision"]["retry_allowed"] is False
+    assert "live_runner_recovery_enforcement_not_proven" in blocked["manual_gaps"]
+    assert "ready_to_merge" in blocked["forbidden_claims"]
+    assert "dispatch_attempt_id" not in blocked
+
+
+def test_candidate_lanes_excludes_invalid_recovery_artifact(tmp_path: Path) -> None:
+    class FakeOrchestrator:
+        def __init__(self) -> None:
+            self._root = tmp_path
+            self._sm = _FakeStateMachine(
+                [
+                    {
+                        "feature_id": "lane-invalid-recovery",
+                        "status": "reworking",
+                        "graph_id": "graph-a",
+                    }
+                ]
+            )
+
+    recovery_path = lane_recovery_artifact_path(
+        tmp_path,
+        graph_id="graph-a",
+        lane_id="lane-invalid-recovery",
+    )
+    recovery_path.parent.mkdir(parents=True, exist_ok=True)
+    recovery_path.write_text(
+        json.dumps({"schema_version": "xmuse.god_room_lane_recovery.v1"}) + "\n",
+        encoding="utf-8",
+    )
+    orch = FakeOrchestrator()
+
+    lanes = platform_runner._candidate_lanes(
+        orch,
+        graph_id="graph-a",
+        resolution_id=None,
+    )
+
+    assert lanes == []
+    blocked = orch._sm.get_lanes()[0]
+    assert blocked["dispatch_blocked_by_recovery"] is True
+    assert blocked["recovery_dispatch_block_reason"] == "invalid_recovery_artifact"
+    assert blocked["recovery_source_authority"] == "lane_recovery_artifact"
+    assert "lane_recovery_artifact_invalid" in blocked["manual_gaps"]
+    assert "ready_to_merge" in blocked["forbidden_claims"]
+    assert "dispatch_attempt_id" not in blocked
+
+
 def test_candidate_lanes_matches_graph_native_ready_set_parity(
     tmp_path: Path,
 ) -> None:
@@ -2291,6 +2615,42 @@ def test_candidate_lanes_matches_graph_native_ready_set_parity(
         "legacy_only_lane_ids": [],
         "ready_set_only_lane_ids": [],
     }
+
+
+def _write_recovery_artifact(
+    base_dir: Path,
+    *,
+    graph_id: str,
+    lane_id: str,
+    decision: str,
+    retry_allowed: bool,
+) -> None:
+    recovery_path = lane_recovery_artifact_path(
+        base_dir,
+        graph_id=graph_id,
+        lane_id=lane_id,
+    )
+    recovery_path.parent.mkdir(parents=True, exist_ok=True)
+    recovery_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "xmuse.god_room_lane_recovery.v1",
+                "decision": {
+                    "lane_id": lane_id,
+                    "decision": decision,
+                    "retry_allowed": retry_allowed,
+                    "failure_class": "demo_grade_boundary",
+                    "attempt": 2,
+                    "next_action": (
+                        "refactor or replace the failing lane boundary before retrying"
+                    ),
+                    "source_refs": ["pytest:runner-recovery-gate"],
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
 
 def test_repair_stale_dispatched_lanes_marks_dead_worker_exec_failed(monkeypatch) -> None:

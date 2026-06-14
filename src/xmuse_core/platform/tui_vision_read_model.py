@@ -1,0 +1,1769 @@
+from __future__ import annotations
+
+import json
+from typing import Any
+
+SPEECH_ACTS = {
+    "propose",
+    "ask",
+    "challenge",
+    "object",
+    "vote",
+    "decide",
+    "handoff",
+    "evidence",
+    "retract",
+}
+
+
+def build_tui_vision_read_model(
+    *,
+    conversation_id: str | None = None,
+    messages: list[dict] | None = None,
+    worklist_envelope: dict | None = None,
+    inspector: dict | None = None,
+    memory_trace: dict | None = None,
+    github_truth: dict | None = None,
+    provider_runtime: list[dict] | None = None,
+    god_runtime: dict | None = None,
+    overnight_supervisor: dict | None = None,
+    replay_bundle: dict | None = None,
+    release_evidence_pack: dict | None = None,
+) -> dict[str, Any]:
+    """Build a provider-agnostic TUI read model from read-only inputs."""
+    inspector_evidence = _inspector_evidence(inspector)
+    github_evidence = github_truth or inspector_evidence["github_truth"]
+    deliberation = _build_deliberation(conversation_id, messages or [])
+    return {
+        "schema_version": "1",
+        "read_model_version": "1",
+        "conversation_id": conversation_id,
+        "deliberation": deliberation,
+        "blueprint_freeze": _build_blueprint_freeze(deliberation, inspector),
+        "execution": _build_execution(worklist_envelope),
+        "memory": _build_memory(memory_trace or inspector_evidence["memory_trace"]),
+        "github": _build_github(github_evidence),
+        "providers": _build_providers(
+            provider_runtime or inspector_evidence["provider_runtime"]
+        ),
+        "god_runtime": _build_god_runtime(
+            god_runtime or inspector_evidence["god_runtime"]
+        ),
+        "proof_cockpit": _build_proof_cockpit(
+            replay_bundle or inspector_evidence["replay_bundle"],
+            release_evidence_pack or inspector_evidence["release_evidence_pack"],
+            overnight_supervisor or inspector_evidence["overnight_supervisor"],
+            github_truth=github_evidence,
+        ),
+    }
+
+
+def _build_deliberation(
+    conversation_id: str | None,
+    messages: list[dict],
+) -> dict[str, Any]:
+    source_refs: list[str] = []
+    target_refs: list[str] = []
+    blockers: list[dict[str, Any]] = []
+    speech_acts: list[dict[str, Any]] = []
+    counts: dict[str, int] = {}
+
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        envelope = _message_envelope(message)
+        speech_act = _speech_act(envelope)
+        if speech_act is None:
+            continue
+        message_id = _text(message.get("id") or message.get("message_id"))
+        message_ref = f"message:{message_id}" if message_id is not None else None
+        if message_ref is not None:
+            _append_unique(source_refs, message_ref)
+        envelope_source_refs = _refs(envelope, "source_refs", "source_ref")
+        envelope_target_refs = _refs(envelope, "target_refs", "target_ref")
+        for ref in envelope_source_refs:
+            _append_unique(source_refs, ref)
+        for ref in envelope_target_refs:
+            _append_unique(target_refs, ref)
+
+        act = {
+            "message_id": message_id,
+            "conversation_id": _text(message.get("conversation_id")) or conversation_id,
+            "author": _text(message.get("author")),
+            "speech_act": speech_act,
+            "decision_scope": _text(envelope.get("decision_scope")),
+            "source_refs": envelope_source_refs,
+            "target_refs": envelope_target_refs,
+            "payload": envelope.get("payload") if isinstance(envelope.get("payload"), dict) else {},
+        }
+        speech_acts.append(act)
+        counts[speech_act] = counts.get(speech_act, 0) + 1
+
+        if _is_blocking(envelope):
+            blockers.append(
+                {
+                    "message_id": message_id,
+                    "speech_act": speech_act,
+                    "reason": _blocker_reason(envelope, message),
+                    "source_refs": envelope_source_refs,
+                    "target_refs": envelope_target_refs,
+                }
+            )
+
+    fact_state = "manual_gap"
+    proof_level = "manual_gap"
+    manual_gap_reason = "structured deliberation messages unavailable"
+    if speech_acts:
+        proof_level = "contract_proof"
+        fact_state = "blocked" if blockers else "observed"
+        manual_gap_reason = None
+
+    return {
+        "proof_level": proof_level,
+        "fact_state": fact_state,
+        "source_refs": source_refs,
+        "blockers": blockers,
+        "target_refs": target_refs,
+        "manual_gap_reason": manual_gap_reason,
+        "speech_acts": speech_acts,
+        "speech_act_counts": dict(sorted(counts.items())),
+    }
+
+
+def _build_blueprint_freeze(
+    deliberation: dict[str, Any],
+    inspector: dict | None,
+) -> dict[str, Any]:
+    source_refs: list[str] = []
+    target_refs: list[str] = []
+    blockers = list(deliberation.get("blockers") or [])
+    relevant_acts = [
+        act
+        for act in deliberation.get("speech_acts", [])
+        if isinstance(act, dict)
+        and _is_blueprint_freeze_act(act)
+    ]
+    for act in relevant_acts:
+        message_id = _text(act.get("message_id"))
+        if message_id is not None:
+            _append_unique(source_refs, f"message:{message_id}")
+        for ref in _list_refs(act.get("source_refs")):
+            _append_unique(source_refs, ref)
+        for ref in _list_refs(act.get("target_refs")):
+            _append_unique(target_refs, ref)
+
+    inspector_freeze = _inspector_freeze(inspector)
+    if inspector_freeze is not None:
+        for ref in _list_refs(inspector_freeze.get("source_refs")):
+            _append_unique(source_refs, ref)
+        for ref in _list_refs(inspector_freeze.get("target_refs")):
+            _append_unique(target_refs, ref)
+        freeze_blockers = inspector_freeze.get("blockers")
+        if isinstance(freeze_blockers, list):
+            blockers.extend(
+                blocker
+                for blocker in freeze_blockers
+                if isinstance(blocker, dict)
+            )
+
+    frozen = bool(
+        inspector_freeze
+        and (
+            inspector_freeze.get("frozen") is True
+            or _text(inspector_freeze.get("status")) == "frozen"
+            or _text(inspector_freeze.get("fact_state")) == "frozen"
+            or _text(inspector_freeze.get("frozen_at")) is not None
+        )
+    )
+    ready_to_freeze = bool(
+        not frozen
+        and not blockers
+        and any(act.get("speech_act") in {"decide", "vote"} for act in relevant_acts)
+    )
+
+    proof_level = "manual_gap"
+    fact_state = "manual_gap"
+    manual_gap_reason = "blueprint freeze readiness unavailable"
+    if frozen:
+        proof_level = _normalize_proof_level(inspector_freeze.get("proof_level"))  # type: ignore[union-attr]
+        fact_state = "frozen"
+        manual_gap_reason = None
+    elif blockers:
+        proof_level = "contract_proof"
+        fact_state = "blocked"
+        manual_gap_reason = None
+    elif relevant_acts:
+        proof_level = "contract_proof"
+        fact_state = "ready_to_freeze" if ready_to_freeze else "observed"
+        manual_gap_reason = None
+
+    return {
+        "proof_level": proof_level,
+        "fact_state": fact_state,
+        "source_refs": source_refs,
+        "blockers": blockers,
+        "target_refs": target_refs,
+        "manual_gap_reason": manual_gap_reason,
+        "ready_to_freeze": ready_to_freeze,
+        "frozen": frozen,
+        "freeze_state": fact_state,
+    }
+
+
+def _build_execution(worklist_envelope: dict | None) -> dict[str, Any]:
+    if not isinstance(worklist_envelope, dict):
+        return _manual_gap_section("laneDAG projection unavailable")
+
+    source_authority = _text(worklist_envelope.get("source_authority")) or "tui_worklist_envelope"
+    projection_revision = worklist_envelope.get("projection_revision")
+    source_ref = (
+        f"{source_authority}#projection_revision={projection_revision}"
+        if isinstance(projection_revision, int) and not isinstance(projection_revision, bool)
+        else source_authority
+    )
+    items = _worklist_items(worklist_envelope)
+    source_refs = [source_ref]
+    target_refs: list[str] = []
+    ready_lane_ids: list[str] = []
+    blocked_lane_ids: list[str] = []
+    dependency_edges: list[dict[str, Any]] = []
+    blockers: list[dict[str, Any]] = []
+    review_items: list[dict[str, Any]] = []
+    patch_forward_lineage: list[dict[str, Any]] = []
+    lane_contracts = _lane_contract_projections(worklist_envelope)
+    recovery_decisions = _lane_recovery_decision_projections(worklist_envelope)
+
+    for item in items:
+        lane_id = _lane_id(item)
+        if lane_id is None:
+            continue
+        _append_unique(target_refs, f"lane:{lane_id}")
+        if _lane_ready(item):
+            ready_lane_ids.append(lane_id)
+        if _lane_blocked(item):
+            blocked_lane_ids.append(lane_id)
+            blockers.append(
+                {
+                    "lane_id": lane_id,
+                    "reason": _lane_blocker_reason(item),
+                    "source_refs": [source_ref],
+                    "target_refs": [f"lane:{lane_id}"],
+                }
+            )
+        deps = _dependency_ids(item)
+        if deps:
+            dependency_edges.append({"lane_id": lane_id, "depends_on": deps})
+        review_item = _review_item(item, lane_id=lane_id, source_ref=source_ref)
+        if review_item is not None:
+            review_items.append(review_item)
+        source_lane_id = _source_lane_id(item)
+        if source_lane_id is not None:
+            patch_forward_lineage.append(
+                {
+                    "source_lane_id": source_lane_id,
+                    "patch_lane_id": lane_id,
+                    "source_refs": [source_ref],
+                    "target_refs": [f"lane:{source_lane_id}", f"lane:{lane_id}"],
+                }
+            )
+
+    graph_lineage = (
+        worklist_envelope.get("graph_lineage")
+        if isinstance(worklist_envelope.get("graph_lineage"), dict)
+        else {}
+    )
+    graph_id = _text(graph_lineage.get("authoritative_graph_id")) if graph_lineage else None
+    if graph_id is not None:
+        _append_unique(target_refs, f"graph:{graph_id}")
+
+    fact_state = "observed"
+    if blocked_lane_ids:
+        fact_state = "blocked"
+    elif ready_lane_ids:
+        fact_state = "ready"
+
+    return {
+        "proof_level": "contract_proof",
+        "fact_state": fact_state,
+        "source_refs": source_refs,
+        "blockers": blockers,
+        "target_refs": target_refs,
+        "manual_gap_reason": None,
+        "source_authority": source_authority,
+        "projection_revision": (
+            projection_revision if isinstance(projection_revision, int) else None
+        ),
+        "lane_count": len(items),
+        "ready_lane_ids": ready_lane_ids,
+        "blocked_lane_ids": blocked_lane_ids,
+        "dependency_edges": dependency_edges,
+        "review_items": review_items,
+        "patch_forward_lineage": patch_forward_lineage,
+        "lane_contracts": lane_contracts,
+        "recovery_decisions": recovery_decisions,
+        "graph_lineage": graph_lineage,
+    }
+
+
+def _build_memory(memory_trace: dict | None) -> dict[str, Any]:
+    if not isinstance(memory_trace, dict):
+        section = _manual_gap_section("memory trace unavailable")
+        section.update(
+            {
+                "session_id": None,
+                "namespace_uri": None,
+                "namespace": None,
+                "trace_events_count": 0,
+                "pinned_core_count": 0,
+                "active_task_pages_count": 0,
+                "recent_messages_count": 0,
+                "retrieved_pages_count": 0,
+                "dropped_pages_count": 0,
+                "token_estimate": None,
+            }
+        )
+        return section
+
+    events = memory_trace.get("trace_events")
+    if not isinstance(events, list):
+        events = memory_trace.get("events")
+    if not isinstance(events, list):
+        events = []
+    source_refs = _list_refs(memory_trace.get("source_refs"))
+    session_id = _text(memory_trace.get("session_id"))
+    namespace_uri = _text(memory_trace.get("namespace_uri"))
+    namespace = (
+        memory_trace.get("namespace")
+        if isinstance(memory_trace.get("namespace"), dict)
+        else ({"uri": namespace_uri} if namespace_uri is not None else None)
+    )
+    token_estimate = memory_trace.get("token_estimate")
+    if not isinstance(token_estimate, int) or isinstance(token_estimate, bool):
+        token_estimate = memory_trace.get("estimated_tokens")
+    target_refs: list[str] = []
+    if session_id is not None:
+        target_refs.append(f"memory_session:{session_id}")
+    trace_anchors = _memory_trace_anchor_projections(memory_trace)
+    for anchor in trace_anchors:
+        uri = _text(anchor.get("uri"))
+        if uri is not None:
+            _append_unique(target_refs, uri)
+    context_package = (
+        memory_trace.get("context_package")
+        if isinstance(memory_trace.get("context_package"), dict)
+        else {}
+    )
+    return {
+        "proof_level": _normalize_proof_level(memory_trace.get("proof_level")),
+        "fact_state": "observed",
+        "source_refs": source_refs,
+        "blockers": [],
+        "target_refs": target_refs,
+        "manual_gap_reason": None,
+        "session_id": session_id,
+        "namespace_uri": namespace_uri,
+        "namespace": namespace,
+        "trace_events_count": len(events),
+        "pinned_core_count": _memory_context_count(
+            memory_trace,
+            context_package,
+            "pinned_core",
+        ),
+        "active_task_pages_count": _memory_context_count(
+            memory_trace,
+            context_package,
+            "active_task_pages",
+        ),
+        "recent_messages_count": _memory_context_count(
+            memory_trace,
+            context_package,
+            "recent_messages",
+        ),
+        "retrieved_pages_count": _memory_context_count(
+            memory_trace,
+            context_package,
+            "retrieved_pages",
+        ),
+        "dropped_pages_count": _memory_context_count(
+            memory_trace,
+            context_package,
+            "dropped_pages",
+        ),
+        "token_estimate": token_estimate,
+        "trace_anchors": trace_anchors,
+    }
+
+
+def _build_github(github_truth: dict | None) -> dict[str, Any]:
+    if not isinstance(github_truth, dict):
+        section = _manual_gap_section("GitHub truth unavailable")
+        section.update(
+            {
+                "can_emit_pr_merged": False,
+                "required_checks": {},
+                "review_truth": {},
+                "merge": {},
+            }
+        )
+        return section
+
+    proof_level = _normalize_proof_level(github_truth.get("proof_level"))
+    required_checks = _github_required_checks(github_truth.get("required_checks"))
+    review_truth = (
+        github_truth.get("review_truth")
+        if isinstance(github_truth.get("review_truth"), dict)
+        else {}
+    )
+    merge = _github_merge_fields(github_truth)
+    can_emit_pr_merged = github_truth.get("can_emit_pr_merged") is True
+    blockers = _github_blockers(required_checks, review_truth, github_truth)
+
+    if _can_render_pr_merged(
+        proof_level=proof_level,
+        can_emit_pr_merged=can_emit_pr_merged,
+        merge=merge,
+    ):
+        fact_state = "pr_merged"
+        manual_gap_reason = github_truth.get("manual_gap_reason")
+    elif merge.get("merged") is True:
+        fact_state = "manual_gap"
+        manual_gap_reason = "server-side merge proof is missing"
+    elif can_emit_pr_merged:
+        fact_state = "merge_ready"
+        manual_gap_reason = github_truth.get("manual_gap_reason")
+    elif blockers:
+        fact_state = "blocked"
+        manual_gap_reason = github_truth.get("manual_gap_reason")
+    else:
+        fact_state = "observed"
+        manual_gap_reason = github_truth.get("manual_gap_reason")
+
+    return {
+        "proof_level": proof_level,
+        "fact_state": fact_state,
+        "source_refs": _list_refs(github_truth.get("source_refs")),
+        "blockers": blockers,
+        "target_refs": _list_refs(github_truth.get("target_refs")),
+        "manual_gap_reason": manual_gap_reason,
+        "can_emit_pr_merged": can_emit_pr_merged,
+        "required_checks": required_checks,
+        "review_truth": review_truth,
+        "merge": merge,
+    }
+
+
+def _github_merge_fields(github_truth: dict[str, Any]) -> dict[str, Any]:
+    merge = github_truth.get("merge") if isinstance(github_truth.get("merge"), dict) else {}
+    normalized = dict(merge)
+    for key in ("merged", "merge_commit_sha", "merged_at", "merge_event_id"):
+        if key not in normalized and key in github_truth:
+            normalized[key] = github_truth[key]
+    return normalized
+
+
+def _can_render_pr_merged(
+    *,
+    proof_level: str,
+    can_emit_pr_merged: bool,
+    merge: dict[str, Any],
+) -> bool:
+    return bool(
+        proof_level == "server_side_merge_proof"
+        and can_emit_pr_merged
+        and merge.get("merged") is True
+        and _text(merge.get("merge_commit_sha")) is not None
+        and _text(merge.get("merged_at")) is not None
+        and _text(merge.get("merge_event_id")) is not None
+    )
+
+
+def _build_providers(provider_runtime: list[dict] | None) -> dict[str, Any]:
+    if not isinstance(provider_runtime, list):
+        section = _manual_gap_section("provider runtime unavailable")
+        section.update({"items": []})
+        return section
+    items = [
+        {
+            "provider_id": _text(item.get("provider_id")),
+            "runtime_kind": _text(item.get("runtime_kind") or item.get("runtime")),
+            "transport": _text(item.get("transport")),
+            "session_continuity": _text(
+                item.get("session_continuity") or item.get("provider_binding_status")
+            ),
+            "heartbeat": _text(item.get("heartbeat")),
+            "waiting_reason": _text(item.get("waiting_reason")),
+            "proof_level": _normalize_proof_level(item.get("proof_level")),
+        }
+        for item in provider_runtime
+        if isinstance(item, dict)
+    ]
+    return {
+        "proof_level": "contract_proof",
+        "fact_state": "observed",
+        "source_refs": [],
+        "blockers": [],
+        "target_refs": [],
+        "manual_gap_reason": None,
+        "items": items,
+    }
+
+
+def _build_god_runtime(god_runtime: dict | None) -> dict[str, Any]:
+    if not isinstance(god_runtime, dict):
+        section = _manual_gap_section("selected GOD runtime continuity unavailable")
+        section.update({"read_only": True, "items": []})
+        return section
+    items = [
+        {
+            "god_id": _text(item.get("god_id")),
+            "cli_id": _text(item.get("cli_id")),
+            "provider_profile_ref": _text(item.get("provider_profile_ref")),
+            "provider_session_id": _text(item.get("provider_session_id")),
+            "capability_scope": _list_refs(item.get("capability_scope")),
+            "session_status": _text(item.get("session_status")),
+            "heartbeat_freshness": _text(item.get("heartbeat_freshness")),
+            "waiting_reason": _text(item.get("waiting_reason")),
+            "proof_level": _normalize_proof_level(item.get("proof_level")),
+            "bounded": item.get("bounded") is True,
+            "peer_god_ready": item.get("peer_god_ready") is True,
+            "provider_session_ready": item.get("provider_session_ready") is True,
+        }
+        for item in _dicts(god_runtime.get("items"))
+    ]
+    return {
+        "proof_level": _normalize_proof_level(god_runtime.get("proof_level")),
+        "fact_state": _text(god_runtime.get("fact_state")) or "manual_gap",
+        "source_refs": _list_refs(god_runtime.get("source_refs")),
+        "blockers": _dicts(god_runtime.get("blockers")),
+        "target_refs": [],
+        "manual_gap_reason": _text(god_runtime.get("manual_gap_reason")),
+        "read_only": True,
+        "source_authority": _list_refs(god_runtime.get("source_authority")),
+        "items": items,
+    }
+
+
+def _build_proof_cockpit(
+    replay_bundle: dict | None,
+    release_evidence_pack: dict | None,
+    overnight_supervisor: dict | None,
+    *,
+    github_truth: dict | None = None,
+) -> dict[str, Any]:
+    if not isinstance(replay_bundle, dict) and not isinstance(
+        release_evidence_pack,
+        dict,
+    ) and not isinstance(overnight_supervisor, dict) and not isinstance(
+        github_truth,
+        dict,
+    ):
+        return _manual_gap_section(
+            "overnight replay bundle and release evidence pack unavailable"
+        )
+
+    source_authority: list[str] = []
+    blockers: list[dict[str, Any]] = []
+    artifacts: list[str] = []
+    source_refs: list[str] = []
+    proof_level_summary: dict[str, int] = {}
+    section_statuses: list[dict[str, str]] = []
+    release_gate_statuses: list[dict[str, Any]] = []
+    section_count = 0
+    artifact_count = 0
+    finding_count = 0
+    replay_decision = "not_evaluated"
+    release_decision = "not_evaluated"
+    proof_contamination_decision = "not_evaluated"
+    authority = None
+    stage_results: list[dict[str, Any]] = []
+    stage_result_summary = {
+        "ok": 0,
+        "blocked": 0,
+        "manual_gap": 0,
+        "retry": 0,
+        "total": 0,
+    }
+    virtual_soak_summary = {
+        "ok": 0,
+        "violated": 0,
+        "total": 0,
+    }
+    latest_virtual_soak: dict[str, Any] | None = None
+    recovery_queue: list[dict[str, Any]] = []
+    feature_lineage: dict[str, Any] | None = None
+    memory_governance: dict[str, Any] | None = None
+    memoryos_trace: dict[str, Any] | None = None
+    deliberation_transcript: dict[str, Any] | None = None
+    real_provider_runtime: dict[str, Any] | None = None
+    supervisor: dict[str, Any] | None = None
+    github_truth_detail = (
+        _github_truth_detail_projection(github_truth)
+        if isinstance(github_truth, dict)
+        else None
+    )
+
+    if github_truth_detail is not None:
+        _append_unique(
+            source_authority,
+            github_truth_detail["schema_version"]
+            or "github_server_side_truth_capture.v1",
+        )
+        for ref in _list_refs(github_truth_detail.get("source_refs")):
+            _append_unique(source_refs, ref)
+
+    if isinstance(overnight_supervisor, dict):
+        _append_unique(
+            source_authority,
+            _text(overnight_supervisor.get("schema_version"))
+            or "xmuse.overnight_supervisor.v1",
+        )
+        for soak in _dicts(overnight_supervisor.get("virtual_soaks")):
+            projected_soak = _virtual_soak_projection(soak)
+            latest_virtual_soak = projected_soak
+            status = projected_soak["slo_status"]
+            if status in virtual_soak_summary:
+                virtual_soak_summary[status] += 1
+            virtual_soak_summary["total"] += 1
+            _append_unique(
+                source_refs,
+                f"overnight_virtual_soak:{projected_soak['run_id']}",
+            )
+            if status == "violated":
+                blockers.append(
+                    {
+                        "kind": "virtual_soak",
+                        "id": projected_soak["run_id"],
+                        "reason": _virtual_soak_blocked_reason(projected_soak),
+                        "owner": "codex",
+                        "next_action": (
+                            "Reduce heartbeat/self-review intervals or fix "
+                            "supervisor scheduling, then rerun the overnight "
+                            "virtual soak."
+                        ),
+                    }
+                )
+        for result in _dicts(overnight_supervisor.get("goal_stage_results")):
+            stage_result = _goal_stage_result_projection(result)
+            stage_results.append(stage_result)
+            status = stage_result["status"]
+            if status in stage_result_summary:
+                stage_result_summary[status] += 1
+            stage_result_summary["total"] += 1
+            stage_id = stage_result["stage_id"]
+            result_path = stage_result["result_path"]
+            if stage_id != "unknown":
+                _append_unique(source_refs, f"goal_stage:{stage_id}")
+            if result_path is not None:
+                _append_unique(source_refs, f"goal_stage_result:{result_path}")
+                _append_unique(artifacts, result_path)
+            if status in {"blocked", "manual_gap"}:
+                blockers.append(
+                    {
+                        "kind": "goal_stage_result",
+                        "id": stage_id,
+                        "reason": stage_result["blocked_reason"] or status,
+                        "owner": "codex",
+                        "next_action": _goal_stage_next_action(stage_result),
+                    }
+                )
+
+    if isinstance(replay_bundle, dict):
+        _append_unique(
+            source_authority,
+            _text(replay_bundle.get("schema_version"))
+            or "xmuse.overnight_replay_bundle.v1",
+        )
+        replay_decision = _text(replay_bundle.get("decision")) or "not_evaluated"
+        authority = _text(replay_bundle.get("authority"))
+        sections = _dicts(replay_bundle.get("sections"))
+        section_count = len(sections)
+        proof_level_summary.update(_proof_summary(replay_bundle.get("proof_level_summary")))
+        for section in sections:
+            if feature_lineage is None:
+                feature_lineage = _feature_lineage_from_replay_section(section)
+            if memory_governance is None:
+                memory_governance = _memory_governance_from_replay_section(section)
+            if memoryos_trace is None:
+                memoryos_trace = _memoryos_trace_from_replay_section(section)
+            if deliberation_transcript is None:
+                deliberation_transcript = (
+                    _deliberation_transcript_from_replay_section(section)
+                )
+            if supervisor is None:
+                supervisor = _supervisor_from_replay_section(section)
+            if github_truth_detail is None:
+                github_truth_detail = _github_truth_from_replay_section(section)
+            section_statuses.append(
+                {
+                    "section_id": _text(section.get("section_id")) or "unknown",
+                    "status": _text(section.get("status")) or "not_evaluated",
+                    "proof_level": _normalize_proof_level(section.get("proof_level")),
+                    "source_authority": _text(section.get("source_authority")) or "unknown",
+                }
+            )
+            for ref in _list_refs(section.get("source_refs")):
+                _append_unique(source_refs, ref)
+            for artifact in _list_refs(section.get("artifacts")):
+                _append_unique(artifacts, artifact)
+        for blocker in _dicts(replay_bundle.get("blockers")):
+            _append_cockpit_blocker(
+                blockers,
+                {
+                    "kind": "replay_section",
+                    "id": _text(blocker.get("section_id")) or "unknown",
+                    "reason": _text(blocker.get("reason")) or "blocked",
+                    "owner": _text(blocker.get("owner")) or "operator",
+                    "next_action": _text(blocker.get("next_action")),
+                }
+            )
+
+    if isinstance(release_evidence_pack, dict):
+        _append_unique(
+            source_authority,
+            _text(release_evidence_pack.get("schema_version"))
+            or "xmuse.release_evidence_pack.v1",
+        )
+        release_decision = _text(release_evidence_pack.get("decision")) or "not_evaluated"
+        proof_contamination_decision = (
+            _text(release_evidence_pack.get("proof_contamination_decision"))
+            or "not_evaluated"
+        )
+        artifact_count = _int(release_evidence_pack.get("artifact_count"))
+        finding_count = _int(release_evidence_pack.get("finding_count"))
+        _merge_count_summary(
+            proof_level_summary,
+            _proof_summary(release_evidence_pack.get("proof_level_summary")),
+        )
+        for gate in _dicts(release_evidence_pack.get("release_gates")):
+            release_gate_statuses.append(_release_gate_status_projection(gate))
+        for key in ("readiness_report", "proof_contamination_audit"):
+            artifact = _text(release_evidence_pack.get(key))
+            if artifact is not None:
+                _append_unique(artifacts, artifact)
+        real_provider_pack_detail = release_evidence_pack.get("real_provider_runtime")
+        if isinstance(real_provider_pack_detail, dict):
+            real_provider_runtime = _real_provider_runtime_projection(
+                real_provider_pack_detail
+            )
+        github_pack_detail = release_evidence_pack.get("github_truth")
+        if github_truth_detail is None and isinstance(github_pack_detail, dict):
+            github_truth_detail = _github_truth_detail_projection(github_pack_detail)
+        pack_recovery_queue = _dicts(release_evidence_pack.get("recovery_queue"))
+        if pack_recovery_queue:
+            for item in pack_recovery_queue:
+                recovery_item = {
+                    "source": _text(item.get("source")) or "release_evidence_pack",
+                    "kind": _text(item.get("kind")) or "recovery_item",
+                    "id": _text(item.get("id")) or "unknown",
+                    "owner": _text(item.get("owner")) or "operator",
+                    "reason": _text(item.get("reason")) or "blocked",
+                    "next_action": _text(item.get("next_action")),
+                    "artifact": _text(item.get("artifact")),
+                }
+                recovery_queue.append(recovery_item)
+                if recovery_item["artifact"] is not None:
+                    _append_unique(artifacts, recovery_item["artifact"])
+                _append_cockpit_blocker(
+                    blockers,
+                    {
+                        "kind": recovery_item["kind"],
+                        "id": recovery_item["id"],
+                        "reason": recovery_item["reason"],
+                        "owner": recovery_item["owner"],
+                        "next_action": recovery_item["next_action"],
+                    },
+                )
+        else:
+            for blocker in _dicts(release_evidence_pack.get("blockers")):
+                _append_cockpit_blocker(
+                    blockers,
+                    {
+                        "kind": "release_gate",
+                        "id": _text(blocker.get("gate_id")) or "unknown",
+                        "reason": _text(blocker.get("reason")) or "blocked",
+                        "owner": _text(blocker.get("owner")) or "operator",
+                        "next_action": _text(blocker.get("next_action")),
+                    },
+                )
+
+    fact_state = "observed"
+    if blockers or replay_decision == "blocked" or release_decision == "blocked":
+        fact_state = "blocked"
+    elif replay_decision == "ready_for_replay" or release_decision == "ready":
+        fact_state = "ready"
+
+    return {
+        "proof_level": "contract_proof",
+        "fact_state": fact_state,
+        "source_refs": source_refs,
+        "blockers": blockers,
+        "target_refs": [],
+        "manual_gap_reason": None,
+        "source_authority": source_authority,
+        "authority": authority,
+        "replay_decision": replay_decision,
+        "release_decision": release_decision,
+        "proof_contamination_decision": proof_contamination_decision,
+        "proof_level_summary": proof_level_summary,
+        "section_statuses": section_statuses,
+        "release_gate_statuses": release_gate_statuses,
+        "section_count": section_count,
+        "artifact_count": artifact_count,
+        "blocker_count": len(blockers),
+        "finding_count": finding_count,
+        "artifacts": artifacts,
+        "stage_result_summary": stage_result_summary,
+        "stage_results": stage_results,
+        "virtual_soak_summary": virtual_soak_summary,
+        "latest_virtual_soak": latest_virtual_soak,
+        "recovery_queue": recovery_queue,
+        **({"feature_lineage": feature_lineage} if feature_lineage is not None else {}),
+        **(
+            {"memory_governance": memory_governance}
+            if memory_governance is not None
+            else {}
+        ),
+        **({"memoryos_trace": memoryos_trace} if memoryos_trace is not None else {}),
+        **(
+            {"github_truth": github_truth_detail}
+            if github_truth_detail is not None
+            else {}
+        ),
+        **(
+            {"deliberation_transcript": deliberation_transcript}
+            if deliberation_transcript is not None
+            else {}
+        ),
+        **(
+            {"real_provider_runtime": real_provider_runtime}
+            if real_provider_runtime is not None
+            else {}
+        ),
+        **({"supervisor": supervisor} if supervisor is not None else {}),
+    }
+
+
+def _inspector_evidence(inspector: dict | None) -> dict[str, Any]:
+    if not isinstance(inspector, dict):
+        return {
+            "memory_trace": None,
+            "github_truth": None,
+            "provider_runtime": None,
+            "god_runtime": None,
+            "overnight_supervisor": None,
+            "replay_bundle": None,
+            "release_evidence_pack": None,
+        }
+    return {
+        "memory_trace": _first_dict(
+            inspector,
+            "memory_trace",
+            "memoryos_trace",
+            "memoryos_lite_trace",
+            "memory",
+        ),
+        "github_truth": _first_dict(
+            inspector,
+            "github_truth",
+            "github_server_truth",
+            "github",
+        ),
+        "provider_runtime": _first_list(
+            inspector,
+            "provider_runtime",
+            "provider_sessions",
+            "providers",
+        ),
+        "god_runtime": _first_dict(
+            inspector,
+            "god_runtime",
+            "selected_god_runtime",
+            "god_runtime_continuity",
+        ),
+        "overnight_supervisor": _first_dict(
+            inspector,
+            "overnight_supervisor",
+            "supervisor_snapshot",
+            "supervisor",
+        ),
+        "replay_bundle": _first_dict(
+            inspector,
+            "replay_bundle",
+            "overnight_replay_bundle",
+        ),
+        "release_evidence_pack": _first_dict(
+            inspector,
+            "release_evidence_pack",
+            "release_pack",
+        ),
+    }
+
+
+def _first_dict(data: dict[str, Any], *keys: str) -> dict[str, Any] | None:
+    for key in keys:
+        value = data.get(key)
+        if isinstance(value, dict):
+            return value
+    return None
+
+
+def _first_list(data: dict[str, Any], *keys: str) -> list[dict[str, Any]] | None:
+    for key in keys:
+        value = data.get(key)
+        if isinstance(value, list):
+            return [item for item in value if isinstance(item, dict)]
+    return None
+
+
+def _goal_stage_result_projection(result: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "stage_id": _text(result.get("stage_id")) or "unknown",
+        "status": _text(result.get("status")) or "not_evaluated",
+        "proof_level": _normalize_proof_level(result.get("proof_level")),
+        "engine": _text(result.get("engine")) or "unknown",
+        "source_authority": _text(result.get("source_authority"))
+        or "goal_stage_harness",
+        "result_path": _text(result.get("result_path")),
+        "blocked_reason": _text(result.get("blocked_reason")),
+        "next_stage_id": _text(result.get("next_stage_id")),
+    }
+
+
+def _release_gate_status_projection(gate: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "gate_id": _text(gate.get("gate_id")) or "unknown",
+        "kind": _text(gate.get("kind")) or "unknown",
+        "status": _text(gate.get("status")) or "not_evaluated",
+        "proof_level": _normalize_proof_level(gate.get("proof_level")),
+        "configured": gate.get("configured") is True,
+        "required": gate.get("required") is True,
+        "owner": _text(gate.get("owner")) or "operator",
+        "summary": _text(gate.get("summary")) or "release gate evidence",
+        "attempted_command": _text(gate.get("attempted_command")),
+        "next_action": _text(gate.get("next_action")),
+        "source_ref_count": _int(gate.get("source_ref_count")),
+        "artifact_count": _int(gate.get("artifact_count")),
+    }
+
+
+def _goal_stage_next_action(stage_result: dict[str, Any]) -> str | None:
+    next_stage_id = _text(stage_result.get("next_stage_id"))
+    if next_stage_id is not None:
+        return f"Continue via dependency-aware fallback to {next_stage_id}."
+    return None
+
+
+def _feature_lineage_from_replay_section(
+    section: dict[str, Any],
+) -> dict[str, Any] | None:
+    if _text(section.get("section_id")) != "feature_lineage":
+        return None
+    details = section.get("details")
+    if not isinstance(details, dict):
+        return None
+    feature_lineage = details.get("feature_lineage")
+    if not isinstance(feature_lineage, dict):
+        return None
+    return _feature_lineage_projection(feature_lineage)
+
+
+def _memory_governance_from_replay_section(
+    section: dict[str, Any],
+) -> dict[str, Any] | None:
+    if _text(section.get("section_id")) != "memory_governance":
+        return None
+    details = section.get("details")
+    if not isinstance(details, dict):
+        return None
+    memory_governance = details.get("memory_governance")
+    if not isinstance(memory_governance, dict):
+        return None
+    return _memory_governance_projection(memory_governance)
+
+
+def _memoryos_trace_from_replay_section(
+    section: dict[str, Any],
+) -> dict[str, Any] | None:
+    if _text(section.get("section_id")) != "memoryos_trace":
+        return None
+    details = section.get("details")
+    if not isinstance(details, dict):
+        return None
+    memoryos_trace = details.get("memoryos_trace")
+    if not isinstance(memoryos_trace, dict):
+        return None
+    return _memoryos_trace_projection(memoryos_trace)
+
+
+def _memoryos_trace_projection(trace: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "authority": _text(trace.get("authority")) or "memoryos_live_release_gate",
+        "namespace_uri": _text(trace.get("namespace_uri")),
+        "session_id": _text(trace.get("session_id")),
+        "trace_event_count": _int(trace.get("trace_event_count")),
+        "event_kinds": _list_refs(trace.get("event_kinds")),
+        "estimated_tokens": _int(trace.get("estimated_tokens")),
+        "source_ref_count": _int(trace.get("source_ref_count")),
+        "blocker_count": _int(trace.get("blocker_count")),
+        "live_service_proof": trace.get("live_service_proof") is True,
+    }
+
+
+def _deliberation_transcript_from_replay_section(
+    section: dict[str, Any],
+) -> dict[str, Any] | None:
+    if _text(section.get("section_id")) != "deliberation_transcript":
+        return None
+    details = section.get("details")
+    if not isinstance(details, dict):
+        return None
+    transcript = details.get("deliberation_transcript")
+    if not isinstance(transcript, dict):
+        return None
+    return _deliberation_transcript_projection(transcript)
+
+
+def _deliberation_transcript_projection(
+    transcript: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "authority": _text(transcript.get("authority")) or "operator_transcript_v1",
+        "conversation_id": _text(transcript.get("conversation_id")),
+        "message_count": _int(transcript.get("message_count")),
+        "distinct_god_count": _int(transcript.get("distinct_god_count")),
+        "god_ids": _list_refs(transcript.get("god_ids")),
+        "speech_act_counts": _count_mapping(transcript.get("speech_act_counts")),
+        "natural_deliberation": transcript.get("natural_deliberation") is True,
+        "real_provider_proof": transcript.get("real_provider_proof") is True,
+        "runtime_required": transcript.get("runtime_required") is True,
+        "runtime_artifact_attached": (
+            transcript.get("runtime_artifact_attached") is True
+        ),
+        "runtime_peer_god_ready_count": _int(
+            transcript.get("runtime_peer_god_ready_count")
+        ),
+        "runtime_blocked_count": _int(transcript.get("runtime_blocked_count")),
+        "missing_provider_session_god_ids": _list_refs(
+            transcript.get("missing_provider_session_god_ids")
+        ),
+        "blocker_count": _int(transcript.get("blocker_count")),
+    }
+
+
+def _real_provider_runtime_projection(
+    runtime: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "authority": _text(runtime.get("authority"))
+        or "real_provider_runtime_release_gate",
+        "status": _text(runtime.get("status")) or "not_evaluated",
+        "proof_level": _normalize_proof_level(runtime.get("proof_level")),
+        "gate_artifact": _text(runtime.get("gate_artifact")),
+        "runtime_artifact": _text(runtime.get("runtime_artifact")),
+        "run_id": _text(runtime.get("run_id")),
+        "conversation_id": _text(runtime.get("conversation_id")),
+        "provider_id": _text(runtime.get("provider_id")),
+        "runtime_backend": _text(runtime.get("runtime_backend")),
+        "transport": _text(runtime.get("transport")),
+        "provider_session_id": _text(runtime.get("provider_session_id")),
+        "mcp_writeback": runtime.get("mcp_writeback") is True,
+        "provider_session_reused": runtime.get("provider_session_reused") is True,
+        "fresh_provider_session_id": _text(runtime.get("fresh_provider_session_id")),
+        "resumed_provider_session_id": _text(
+            runtime.get("resumed_provider_session_id")
+        ),
+        "turn_count": _int(runtime.get("turn_count")),
+        "phases": _list_refs(runtime.get("phases")),
+        "mcp_writeback_turn_count": _int(runtime.get("mcp_writeback_turn_count")),
+        "degraded_turn_count": _int(runtime.get("degraded_turn_count")),
+        "blocker_count": _int(runtime.get("blocker_count")),
+    }
+
+
+def _supervisor_from_replay_section(
+    section: dict[str, Any],
+) -> dict[str, Any] | None:
+    if _text(section.get("section_id")) != "supervisor":
+        return None
+    details = section.get("details")
+    if not isinstance(details, dict):
+        return None
+    supervisor = details.get("supervisor")
+    if not isinstance(supervisor, dict):
+        return None
+    return _supervisor_projection(supervisor)
+
+
+def _supervisor_projection(supervisor: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "authority": _text(supervisor.get("authority"))
+        or "overnight_operator_supervisor",
+        "run_id": _text(supervisor.get("run_id")),
+        "current_stage_id": _text(supervisor.get("current_stage_id")),
+        "selected_stage_id": _text(supervisor.get("selected_stage_id")),
+        "stage_count": _int(supervisor.get("stage_count")),
+        "heartbeat_count": _int(supervisor.get("heartbeat_count")),
+        "checkpoint_count": _int(supervisor.get("checkpoint_count")),
+        "manual_gap_count": _int(supervisor.get("manual_gap_count")),
+        "self_review_count": _int(supervisor.get("self_review_count")),
+        "blocked_fallback_count": _int(supervisor.get("blocked_fallback_count")),
+        "virtual_soak_count": _int(supervisor.get("virtual_soak_count")),
+        "latest_heartbeat_stage_id": _text(
+            supervisor.get("latest_heartbeat_stage_id")
+        ),
+        "latest_checkpoint_stage_id": _text(
+            supervisor.get("latest_checkpoint_stage_id")
+        ),
+        "latest_blocked_stage_id": _text(supervisor.get("latest_blocked_stage_id")),
+        "latest_virtual_soak_run_id": _text(
+            supervisor.get("latest_virtual_soak_run_id")
+        ),
+        "latest_virtual_soak_slo_status": _text(
+            supervisor.get("latest_virtual_soak_slo_status")
+        ),
+    }
+
+
+def _github_truth_from_replay_section(
+    section: dict[str, Any],
+) -> dict[str, Any] | None:
+    if _text(section.get("section_id")) != "github_truth":
+        return None
+    details = section.get("details")
+    if not isinstance(details, dict):
+        return None
+    github_truth = details.get("github_truth")
+    if not isinstance(github_truth, dict):
+        github_truth = details.get("github_server_truth")
+    if not isinstance(github_truth, dict):
+        return None
+    return _github_truth_detail_projection(github_truth)
+
+
+def _github_truth_detail_projection(github_truth: dict[str, Any]) -> dict[str, Any]:
+    required_checks = _github_required_check_names(github_truth.get("required_checks"))
+    check_run_ids = (
+        github_truth.get("check_run_ids")
+        if isinstance(github_truth.get("check_run_ids"), list)
+        else []
+    )
+    merge = _github_merge_fields(github_truth)
+    proof_level = _normalize_proof_level(github_truth.get("proof_level"))
+    can_emit_pr_merged = github_truth.get("can_emit_pr_merged") is True
+    return {
+        "repo": _text(github_truth.get("repo")),
+        "pull_request_number": _optional_int(github_truth.get("pull_request_number")),
+        "proof_level": proof_level,
+        "schema_version": _text(github_truth.get("schema_version"))
+        or "github_server_side_truth_capture.v1",
+        "pull_request_state": _text(github_truth.get("pull_request_state")),
+        "draft": _optional_bool(github_truth.get("draft")),
+        "mergeable": _optional_bool(github_truth.get("mergeable")),
+        "mergeable_state": _text(github_truth.get("mergeable_state")),
+        "head_sha": _text(github_truth.get("head_sha")),
+        "expected_head_sha": _text(github_truth.get("expected_head_sha")),
+        "head_sha_matches_expected": _github_head_matches_expected(github_truth),
+        "workflow_run_id": _scalar_text(github_truth.get("workflow_run_id")),
+        "required_check_count": (
+            len(required_checks)
+            if required_checks
+            else _int(github_truth.get("required_check_count"))
+        ),
+        "check_run_count": (
+            len(check_run_ids)
+            if check_run_ids
+            else _int(github_truth.get("check_run_count"))
+        ),
+        "expected_source_app": _text(github_truth.get("expected_source_app")),
+        "server_enforcement": _github_server_enforcement(github_truth),
+        "review_truth": _text(github_truth.get("review_truth"))
+        or _github_review_truth_state(github_truth),
+        "merge_truth": _text(github_truth.get("merge_truth"))
+        or _github_merge_truth_state(
+            proof_level=proof_level,
+            can_emit_pr_merged=can_emit_pr_merged,
+            merge=merge,
+        ),
+        "merged": merge.get("merged") is True,
+        "can_emit_pr_merged": can_emit_pr_merged,
+        "gap_reason": _text(
+            github_truth.get("gap_reason") or github_truth.get("manual_gap_reason")
+        ),
+        "capture_mode": _text(github_truth.get("capture_mode")),
+        "source_refs": _list_refs(github_truth.get("source_refs")),
+    }
+
+
+def _github_required_checks(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return dict(value)
+    names = _github_required_check_names(value)
+    return {"checks": names, "count": len(names)} if names else {}
+
+
+def _github_required_check_names(value: Any) -> list[str]:
+    if isinstance(value, list):
+        names: list[str] = []
+        for item in value:
+            if isinstance(item, str):
+                _append_unique(names, item)
+            elif isinstance(item, dict):
+                name = _text(item.get("context") or item.get("name"))
+                if name is not None:
+                    _append_unique(names, name)
+        return names
+    if not isinstance(value, dict):
+        return []
+    for key in ("checks", "contexts", "required_checks"):
+        names = _github_required_check_names(value.get(key))
+        if names:
+            return names
+    return []
+
+
+def _github_head_matches_expected(github_truth: dict[str, Any]) -> bool:
+    if github_truth.get("head_sha_matches_expected") is True:
+        return True
+    head_sha = _text(github_truth.get("head_sha"))
+    expected_head_sha = _text(github_truth.get("expected_head_sha"))
+    return bool(head_sha is not None and head_sha == expected_head_sha)
+
+
+def _github_server_enforcement(github_truth: dict[str, Any]) -> str:
+    direct = _text(github_truth.get("server_enforcement"))
+    if direct is not None:
+        return direct
+    if isinstance(github_truth.get("branch_protection_snapshot"), dict):
+        return "branch_protection"
+    if isinstance(github_truth.get("ruleset_snapshot"), dict):
+        return "ruleset"
+    return "missing"
+
+
+def _github_review_truth_state(github_truth: dict[str, Any]) -> str:
+    if (
+        _text(github_truth.get("review_event_id")) is not None
+        or _text(github_truth.get("reviewer_login")) is not None
+        or github_truth.get("code_owner_review_verified") is True
+    ):
+        return "github_review"
+    if (
+        github_truth.get("internal_review_verified") is True
+        or _text(github_truth.get("internal_review_artifact")) is not None
+    ):
+        return "internal_review"
+    return "missing"
+
+
+def _github_merge_truth_state(
+    *,
+    proof_level: str,
+    can_emit_pr_merged: bool,
+    merge: dict[str, Any],
+) -> str:
+    if _can_render_pr_merged(
+        proof_level=proof_level,
+        can_emit_pr_merged=can_emit_pr_merged,
+        merge=merge,
+    ):
+        return "pr_merged"
+    return "missing"
+
+
+def _scalar_text(value: Any) -> str | None:
+    if isinstance(value, str):
+        return _text(value)
+    if isinstance(value, int) and not isinstance(value, bool):
+        return str(value)
+    return None
+
+
+def _optional_int(value: Any) -> int | None:
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    return None
+
+
+def _optional_bool(value: Any) -> bool | None:
+    return value if isinstance(value, bool) else None
+
+
+def _memory_governance_projection(
+    memory_governance: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "authority": _text(memory_governance.get("authority"))
+        or "memoryos_governance_policy",
+        "plan_count": _int(memory_governance.get("plan_count")),
+        "ingest_count": _int(memory_governance.get("ingest_count")),
+        "promote_to_shared_count": _int(
+            memory_governance.get("promote_to_shared_count")
+        ),
+        "provider_session_binding_only_count": _int(
+            memory_governance.get("provider_session_binding_only_count")
+        ),
+        "blocked_count": _int(memory_governance.get("blocked_count")),
+        "live_trace_proof": memory_governance.get("live_trace_proof") is True,
+        "write_policy": _text(memory_governance.get("write_policy"))
+        or "governed_rest_ingest_only",
+        "plans": [
+            _memory_governance_plan_projection(plan)
+            for plan in _dicts(memory_governance.get("plans"))
+        ],
+    }
+
+
+def _memory_governance_plan_projection(plan: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "plan_id": _text(plan.get("plan_id")) or "unknown",
+        "scope": _text(plan.get("scope")) or "task",
+        "event_kind": _text(plan.get("event_kind")) or "unknown",
+        "status": _text(plan.get("status")) or "manual_gap",
+        "decision": _text(plan.get("decision")) or "blocked",
+        "proof_level": _normalize_proof_level(plan.get("proof_level")),
+        "target_namespace_uri": _text(plan.get("target_namespace_uri"))
+        or "memory://unknown",
+        "shared_namespace_uri": _text(plan.get("shared_namespace_uri")),
+        "memory_layer": _text(plan.get("memory_layer")) or "task_state",
+        "reviewed": plan.get("reviewed") is True,
+        "write_request_allowed": plan.get("write_request_allowed") is True,
+        "source_refs": _list_refs(plan.get("source_refs")),
+        "blocked_reason": _text(plan.get("blocked_reason")),
+        "next_action": _text(plan.get("next_action")),
+    }
+
+
+def _feature_lineage_projection(feature_lineage: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "authority": _text(feature_lineage.get("authority"))
+        or "feature_owner_execution_contract",
+        "contract_count": _int(feature_lineage.get("contract_count")),
+        "lane_count": _int(feature_lineage.get("lane_count")),
+        "ready_lane_count": _int(feature_lineage.get("ready_lane_count")),
+        "blocked_lane_count": _int(feature_lineage.get("blocked_lane_count")),
+        "completed_lane_count": _int(feature_lineage.get("completed_lane_count")),
+        "blocker_count": _int(feature_lineage.get("blocker_count")),
+        "projection_authority": feature_lineage.get("projection_authority") is True,
+        "status_write_policy": _text(feature_lineage.get("status_write_policy"))
+        or "read_only_contract_no_status_writes",
+        "features": [
+            _feature_lineage_feature_projection(feature)
+            for feature in _dicts(feature_lineage.get("features"))
+        ],
+    }
+
+
+def _feature_lineage_feature_projection(feature: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "feature_id": _text(feature.get("feature_id")) or "unknown",
+        "objective": _text(feature.get("objective")),
+        "graph_set_id": _text(feature.get("graph_set_id")) or "unknown",
+        "feature_graph_id": _text(feature.get("feature_graph_id")) or "unknown",
+        "ready_lane_ids": _list_refs(feature.get("ready_lane_ids")),
+        "blocked_lane_ids": _list_refs(feature.get("blocked_lane_ids")),
+        "completed_lane_ids": _list_refs(feature.get("completed_lane_ids")),
+        "lane_blockers": [
+            _feature_lineage_blocker_projection(blocker)
+            for blocker in _dicts(feature.get("lane_blockers"))
+        ],
+    }
+
+
+def _feature_lineage_blocker_projection(blocker: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "lane_id": _text(blocker.get("lane_id")) or "unknown",
+        "blocker_type": _text(blocker.get("blocker_type")) or "blocked",
+        "blocker_ref": _text(blocker.get("blocker_ref")) or "unknown",
+        "blocker_status": _text(blocker.get("blocker_status")) or "unknown",
+    }
+
+
+def _append_cockpit_blocker(
+    blockers: list[dict[str, Any]],
+    blocker: dict[str, Any],
+) -> None:
+    key = (
+        _text(blocker.get("kind")),
+        _text(blocker.get("id")),
+        _text(blocker.get("reason")),
+        _text(blocker.get("next_action")),
+    )
+    for existing in blockers:
+        if key == (
+            _text(existing.get("kind")),
+            _text(existing.get("id")),
+            _text(existing.get("reason")),
+            _text(existing.get("next_action")),
+        ):
+            return
+    blockers.append(blocker)
+
+
+def _virtual_soak_projection(soak: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "run_id": _text(soak.get("run_id")) or "unknown",
+        "total_minutes": _int(soak.get("total_minutes")),
+        "slo_status": _text(soak.get("slo_status")) or "not_evaluated",
+        "slo_violations": _list_refs(soak.get("slo_violations")),
+    }
+
+
+def _virtual_soak_blocked_reason(soak: dict[str, Any]) -> str:
+    violations = _list_refs(soak.get("slo_violations"))
+    return "; ".join(violations) if violations else "virtual soak SLO violated"
+
+
+def _memory_context_count(
+    memory_trace: dict[str, Any],
+    context_package: dict[str, Any],
+    key: str,
+) -> int:
+    for container in (context_package, memory_trace):
+        value = container.get(key)
+        if isinstance(value, list):
+            return len(value)
+    return 0
+
+
+def _manual_gap_section(reason: str) -> dict[str, Any]:
+    return {
+        "proof_level": "manual_gap",
+        "fact_state": "manual_gap",
+        "source_refs": [],
+        "blockers": [],
+        "target_refs": [],
+        "manual_gap_reason": reason,
+    }
+
+
+def _dicts(value: Any) -> list[dict[str, Any]]:
+    return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
+
+
+def _proof_summary(value: Any) -> dict[str, int]:
+    if not isinstance(value, dict):
+        return {}
+    summary: dict[str, int] = {}
+    for key, count in value.items():
+        proof_level = _normalize_proof_level(key)
+        normalized_count = _int(count)
+        if normalized_count:
+            summary[proof_level] = summary.get(proof_level, 0) + normalized_count
+    return dict(sorted(summary.items()))
+
+
+def _merge_count_summary(target: dict[str, int], source: dict[str, int]) -> None:
+    for key, count in source.items():
+        target[key] = target.get(key, 0) + count
+
+
+def _count_mapping(value: Any) -> dict[str, int]:
+    if not isinstance(value, dict):
+        return {}
+    counts: dict[str, int] = {}
+    for key, count in value.items():
+        name = _text(key)
+        normalized_count = _int(count)
+        if name is not None and normalized_count:
+            counts[name] = counts.get(name, 0) + normalized_count
+    return dict(sorted(counts.items()))
+
+
+def _int(value: Any) -> int:
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
+def _message_envelope(message: dict[str, Any]) -> dict[str, Any]:
+    envelope = message.get("envelope_json")
+    if isinstance(envelope, str):
+        try:
+            parsed = json.loads(envelope)
+        except ValueError:
+            parsed = {}
+        envelope = parsed
+    if not isinstance(envelope, dict):
+        envelope = {}
+    return envelope
+
+
+def _speech_act(envelope: dict[str, Any]) -> str | None:
+    for key in ("speech_act", "act", "type"):
+        value = _text(envelope.get(key))
+        if value is None:
+            continue
+        value = value.lower()
+        if value in SPEECH_ACTS:
+            return value
+    return None
+
+
+def _is_blocking(envelope: dict[str, Any]) -> bool:
+    if envelope.get("blocking") is True or envelope.get("blocked") is True:
+        return True
+    if _text(envelope.get("objection_level")) == "blocking":
+        return True
+    payload = envelope.get("payload")
+    return isinstance(payload, dict) and (
+        payload.get("blocking") is True or payload.get("blocked") is True
+    )
+
+
+def _blocker_reason(envelope: dict[str, Any], message: dict[str, Any]) -> str:
+    payload = envelope.get("payload")
+    if isinstance(payload, dict):
+        for key in ("summary", "reason", "message"):
+            value = _text(payload.get(key))
+            if value is not None:
+                return value
+    for key in ("summary", "reason", "content"):
+        value = _text(envelope.get(key) or message.get(key))
+        if value is not None:
+            return value
+    return "blocking deliberation item"
+
+
+def _is_blueprint_freeze_act(act: dict[str, Any]) -> bool:
+    decision_scope = _text(act.get("decision_scope")) or ""
+    if "blueprint.freeze" in decision_scope:
+        return True
+    return any("blueprint:" in ref for ref in _list_refs(act.get("target_refs")))
+
+
+def _inspector_freeze(inspector: dict | None) -> dict[str, Any] | None:
+    if not isinstance(inspector, dict):
+        return None
+    for key in ("blueprint_freeze", "freeze", "blueprint"):
+        value = inspector.get(key)
+        if isinstance(value, dict):
+            return value
+    return None
+
+
+def _worklist_items(envelope: dict[str, Any]) -> list[dict[str, Any]]:
+    items = envelope.get("items")
+    if isinstance(items, list):
+        return [item for item in items if isinstance(item, dict)]
+    worklist = envelope.get("worklist")
+    if isinstance(worklist, list):
+        return [item for item in worklist if isinstance(item, dict)]
+    return []
+
+
+def _lane_id(item: dict[str, Any]) -> str | None:
+    return _text(
+        item.get("lane_id")
+        or item.get("feature_id")
+        or item.get("lane_local_id")
+    )
+
+
+def _lane_ready(item: dict[str, Any]) -> bool:
+    if item.get("ready") is True:
+        return True
+    status = _text(item.get("effective_status") or item.get("status"))
+    return status == "ready"
+
+
+def _lane_blocked(item: dict[str, Any]) -> bool:
+    if item.get("blocked") is True:
+        return True
+    status = _text(item.get("effective_status") or item.get("status"))
+    return status in {"blocked", "blocked_for_input", "awaiting_final_action"}
+
+
+def _lane_blocker_reason(item: dict[str, Any]) -> str:
+    for key in ("prompt_summary", "blocked_reason", "reason", "summary"):
+        value = _text(item.get(key))
+        if value is not None:
+            return value
+    return "lane is blocked"
+
+
+def _dependency_ids(item: dict[str, Any]) -> list[str]:
+    for key in ("scoped_dependency_ids", "lane_depends_on_ids", "depends_on"):
+        refs = _list_refs(item.get(key))
+        if refs:
+            return refs
+    return []
+
+
+def _review_item(
+    item: dict[str, Any],
+    *,
+    lane_id: str,
+    source_ref: str,
+) -> dict[str, Any] | None:
+    verdict_id = _text(item.get("review_verdict_id") or item.get("verdict_id"))
+    decision_id = _text(item.get("review_decision_id") or item.get("decision_id"))
+    decision = _text(
+        item.get("review_decision")
+        or item.get("review_status")
+        or item.get("review_verdict")
+        or item.get("review_verdict_decision")
+    )
+    summary = _text(item.get("review_summary") or item.get("review_reason"))
+    if decision is None and summary is None and verdict_id is None and decision_id is None:
+        return None
+    review = {
+        "lane_id": lane_id,
+        "decision": decision or "observed",
+        "summary": summary or "",
+        "source_refs": [source_ref],
+        "target_refs": [f"lane:{lane_id}"],
+    }
+    if verdict_id is not None:
+        review["verdict_id"] = verdict_id
+        review["target_refs"].append(f"review_verdict:{verdict_id}")
+    if decision_id is not None:
+        review["decision_id"] = decision_id
+        review["target_refs"].append(f"review_decision:{decision_id}")
+    return review
+
+
+def _source_lane_id(item: dict[str, Any]) -> str | None:
+    return _text(
+        item.get("source_lane_id")
+        or item.get("patch_forward_source_lane_id")
+        or item.get("failed_lane_id")
+    )
+
+
+def _lane_contract_projections(envelope: dict[str, Any]) -> list[dict[str, Any]]:
+    projections: list[dict[str, Any]] = []
+    for contract in _dicts(envelope.get("lane_contracts")):
+        lane_id = _text(contract.get("lane_id"))
+        if lane_id is None:
+            continue
+        budget = contract.get("budget") if isinstance(contract.get("budget"), dict) else {}
+        projections.append(
+            {
+                "lane_id": lane_id,
+                "owner": _text(contract.get("owner")),
+                "required_checks": _list_refs(contract.get("required_checks")),
+                "allowed_files": _list_refs(contract.get("allowed_files")),
+                "review_profile": _text(contract.get("review_profile")),
+                "memory_refs": _list_refs(contract.get("memory_refs")),
+                "budget": dict(budget),
+                "source_refs": _list_refs(contract.get("source_refs")),
+            }
+        )
+    return projections
+
+
+def _lane_recovery_decision_projections(
+    envelope: dict[str, Any],
+) -> list[dict[str, Any]]:
+    projections: list[dict[str, Any]] = []
+    for decision in _dicts(envelope.get("recovery_decisions")):
+        lane_id = _text(decision.get("lane_id"))
+        if lane_id is None:
+            continue
+        projections.append(
+            {
+                "lane_id": lane_id,
+                "decision": _text(decision.get("decision")) or "observed",
+                "retry_allowed": decision.get("retry_allowed") is True,
+                "suspend_reason": _text(decision.get("suspend_reason")),
+                "refactor_required_reason": _text(
+                    decision.get("refactor_required_reason")
+                ),
+                "next_action": _text(decision.get("next_action")),
+                "source_refs": _list_refs(decision.get("source_refs")),
+            }
+        )
+    return projections
+
+
+def _memory_trace_anchor_projections(memory_trace: dict[str, Any]) -> list[dict[str, Any]]:
+    projections: list[dict[str, Any]] = []
+    for anchor in _dicts(memory_trace.get("trace_anchors")):
+        uri = _text(anchor.get("uri") or anchor.get("anchor_uri"))
+        trace_id = _text(anchor.get("trace_id"))
+        if uri is None and trace_id is None:
+            continue
+        projections.append(
+            {
+                "kind": _text(anchor.get("kind")) or "trace",
+                "uri": uri,
+                "trace_id": trace_id,
+                "source_refs": _list_refs(anchor.get("source_refs")),
+                "proof_level": _normalize_proof_level(anchor.get("proof_level")),
+            }
+        )
+    return projections
+
+
+def _github_blockers(
+    required_checks: dict[str, Any],
+    review_truth: dict[str, Any],
+    github_truth: dict[str, Any],
+) -> list[dict[str, Any]]:
+    explicit = github_truth.get("blockers")
+    if isinstance(explicit, list):
+        return [item for item in explicit if isinstance(item, dict)]
+    blockers: list[dict[str, Any]] = []
+    check_state = _text(required_checks.get("state") or required_checks.get("status"))
+    if check_state is not None and check_state not in {"success", "passed"}:
+        blockers.append(
+            {
+                "kind": "required_checks",
+                "reason": check_state,
+                "source_refs": _list_refs(github_truth.get("source_refs")),
+                "target_refs": _list_refs(github_truth.get("target_refs")),
+            }
+        )
+    blocking_reviews = review_truth.get("blocking_reviews")
+    if isinstance(blocking_reviews, list) and blocking_reviews:
+        blockers.append(
+            {
+                "kind": "review_truth",
+                "reason": "blocking reviews present",
+                "source_refs": _list_refs(github_truth.get("source_refs")),
+                "target_refs": _list_refs(github_truth.get("target_refs")),
+            }
+        )
+    return blockers
+
+
+def _refs(data: dict[str, Any], plural_key: str, singular_key: str) -> list[str]:
+    refs = _list_refs(data.get(plural_key))
+    singular = _text(data.get(singular_key))
+    if singular is not None:
+        _append_unique(refs, singular)
+    return refs
+
+
+def _list_refs(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [value] if value else []
+    if not isinstance(value, list):
+        return []
+    refs: list[str] = []
+    for item in value:
+        text = _text(item)
+        if text is not None:
+            _append_unique(refs, text)
+    return refs
+
+
+def _append_unique(items: list[str], value: str) -> None:
+    if value and value not in items:
+        items.append(value)
+
+
+def _normalize_proof_level(value: Any) -> str:
+    text = _text(value)
+    if text is None:
+        return "contract_proof"
+    if text == "contract":
+        return "contract_proof"
+    if text == "live":
+        return "live_service_proof"
+    return text
+
+
+def _text(value: Any) -> str | None:
+    if isinstance(value, str):
+        stripped = value.strip()
+        return stripped or None
+    return None

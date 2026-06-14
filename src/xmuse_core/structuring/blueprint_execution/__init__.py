@@ -19,7 +19,19 @@ from .lane_dag_service import (
     LaneDependencyType,
     LaneDispatchDecision,
     LaneExecutionStatus,
+    LaneFailureEvidence,
+    LaneRecoveryDecision,
+    LaneRecoveryDecisionType,
+    LaneRuntimeBudget,
+    LaneRuntimeContract,
     PatchForwardLink,
+    evaluate_lane_recovery,
+)
+from .lane_recovery_artifacts import (
+    LaneRecoveryArtifactError,
+    lane_recovery_artifact_path,
+    load_lane_recovery_decision,
+    load_lane_recovery_decisions,
 )
 
 __all__ = [
@@ -38,7 +50,17 @@ __all__ = [
     "LaneDependencyType",
     "LaneDispatchDecision",
     "LaneExecutionStatus",
+    "LaneFailureEvidence",
+    "LaneRecoveryDecision",
+    "LaneRecoveryDecisionType",
+    "LaneRecoveryArtifactError",
+    "LaneRuntimeBudget",
+    "LaneRuntimeContract",
     "PatchForwardLink",
     "build_blueprint_approval_dedupe_key",
+    "evaluate_lane_recovery",
+    "lane_recovery_artifact_path",
+    "load_lane_recovery_decision",
+    "load_lane_recovery_decisions",
     "produce_blueprint_approval_event",
 ]

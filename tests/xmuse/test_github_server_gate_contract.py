@@ -548,6 +548,10 @@ def test_gh_cli_truth_client_fetches_read_only_server_snapshot() -> None:
         {
             "repos/iiyazu/Cross-Muse/pulls/42": {
                 "node_id": "PR_node_42",
+                "state": "open",
+                "draft": True,
+                "mergeable": True,
+                "mergeable_state": "clean",
                 "merged": True,
                 "merged_at": "2026-06-10T15:00:00Z",
                 "merge_commit_sha": "abc123",
@@ -599,6 +603,11 @@ def test_gh_cli_truth_client_fetches_read_only_server_snapshot() -> None:
     )
 
     assert snapshot == GitHubServerSideTruthSnapshot(
+        pull_request_state="open",
+        draft=True,
+        mergeable=True,
+        mergeable_state="clean",
+        head_sha="head123",
         workflow_run_id=111,
         check_run_ids=[111, 112, 113],
         expected_source_app="github-actions",

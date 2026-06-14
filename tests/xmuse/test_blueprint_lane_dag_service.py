@@ -10,6 +10,10 @@ from xmuse_core.structuring.blueprint_execution.lane_dag_service import (
     LaneDependencyEdge,
     LaneDependencyType,
     LaneExecutionStatus,
+    LaneFailureEvidence,
+    LaneRecoveryDecisionType,
+    LaneRuntimeBudget,
+    evaluate_lane_recovery,
 )
 from xmuse_core.structuring.lane_planner_v2 import LanePlannerV2ValidationError
 from xmuse_core.structuring.mission_blueprint_v1 import (
@@ -49,6 +53,7 @@ def test_frozen_blueprint_builds_feature_lane_dag_with_typed_edges() -> None:
 
     assert plan.blueprint_id == "bp-1"
     assert plan.blueprint_ref == "blueprint:bp-1:1"
+    assert plan.blueprint_proof_level == "contract_proof"
     assert plan.feature_ids == ["feature-a", "feature-b"]
     assert lane_b.depends_on == ["lane-a"]
     assert {edge.edge_type for edge in plan.dependency_edges} == {
@@ -56,6 +61,99 @@ def test_frozen_blueprint_builds_feature_lane_dag_with_typed_edges() -> None:
         LaneDependencyType.REVIEW_DEP,
     }
     assert plan.memory_refs == ["memory://conversation/conv-1/decision/1"]
+    assert "message:freeze" in plan.source_refs
+
+
+def test_lane_dag_plan_preserves_freeze_proof_level() -> None:
+    plan = BlueprintLaneDagService().build_plan(
+        _request(
+            blueprint_proof_level="opt_in_live_proof",
+            source_refs=["god-room-event:evt-freeze"],
+        )
+    )
+
+    assert plan.blueprint_proof_level == "opt_in_live_proof"
+    assert "god-room-event:evt-freeze" in plan.source_refs
+
+
+def test_lane_dag_plan_preserves_freeze_source_event_lineage() -> None:
+    plan = BlueprintLaneDagService().build_plan(
+        _request(
+            blueprint_proof_level="opt_in_live_proof",
+            source_event_lineage=[
+                {
+                    "event_id": "evt-review-provider-question",
+                    "event_type": "question",
+                    "participant_id": "part-review",
+                    "god_id": "god-review",
+                    "proof_level": "opt_in_live_proof",
+                    "source_authority": "god_room_event_store+provider_response",
+                    "provider_response_artifact_ref": (
+                        "reports/provider-responses/question.json"
+                    ),
+                    "target_participant_ids": ["part-architect"],
+                    "source_refs": [
+                        "god-room-event:evt-propose",
+                        "provider_response_artifact:"
+                        "reports/provider-responses/question.json",
+                    ],
+                    "forbidden_claims": ["natural_groupchat_closure"],
+                }
+            ],
+        )
+    )
+
+    lineage = plan.source_event_lineage[0]
+    assert lineage.event_id == "evt-review-provider-question"
+    assert lineage.event_type == "question"
+    assert lineage.proof_level == "opt_in_live_proof"
+    assert lineage.provider_response_artifact_ref == (
+        "reports/provider-responses/question.json"
+    )
+    assert lineage.target_participant_ids == ["part-architect"]
+    assert "natural_groupchat_closure" in lineage.forbidden_claims
+
+
+def test_lane_dag_plan_preserves_runtime_contracts_from_frozen_blueprint() -> None:
+    plan = BlueprintLaneDagService().build_plan(
+        _request(
+            lanes=[
+                _lane(
+                    "lane-a",
+                    owner="god-executor",
+                    inputs=["blueprint:bp-1:1#acceptance"],
+                    outputs=["artifact://lane-a/runtime-contract.json"],
+                    required_checks=["focused-pytest", "ruff"],
+                    allowed_files=["src/xmuse_core/structuring/lane_runtime_contracts.py"],
+                    rollback_constraints=["preserve graph-set authority"],
+                    review_profile="runtime-contract-review",
+                    budget=LaneRuntimeBudget(
+                        max_attempts=3,
+                        max_consecutive_same_failure=2,
+                        max_runtime_seconds=1800,
+                        retry_backoff_seconds=30,
+                        source_refs=["budget:lane-a"],
+                    ),
+                )
+            ]
+        )
+    )
+
+    contract = plan.lane_contracts[0]
+
+    assert contract.lane_id == "lane-a"
+    assert contract.owner == "god-executor"
+    assert contract.inputs == ["blueprint:bp-1:1#acceptance"]
+    assert contract.outputs == ["artifact://lane-a/runtime-contract.json"]
+    assert contract.dependency_refs == []
+    assert contract.required_checks == ["focused-pytest", "ruff"]
+    assert contract.allowed_files == [
+        "src/xmuse_core/structuring/lane_runtime_contracts.py"
+    ]
+    assert contract.rollback_constraints == ["preserve graph-set authority"]
+    assert contract.review_profile == "runtime-contract-review"
+    assert contract.memory_refs == ["memory://conversation/conv-1/decision/1"]
+    assert contract.budget.max_consecutive_same_failure == 2
 
 
 def test_lane_dag_rejects_invalid_blueprint_refs_and_missing_acceptance() -> None:
@@ -158,6 +256,65 @@ def test_dispatch_readiness_blocks_dependents_until_dependency_is_approved() -> 
     assert approved_by_lane["lane-b"].blockers == []
 
 
+def test_lane_recovery_requires_refactor_after_repeated_same_failure() -> None:
+    decision = evaluate_lane_recovery(
+        lane_id="lane-a",
+        budget=LaneRuntimeBudget(max_attempts=4, max_consecutive_same_failure=2),
+        failures=[
+            LaneFailureEvidence(
+                lane_id="lane-a",
+                attempt=1,
+                failure_class="contract_boundary_leak",
+                reason="TUI wrote lane status directly.",
+                source_refs=["pytest:test_tui_contract"],
+            ),
+            LaneFailureEvidence(
+                lane_id="lane-a",
+                attempt=2,
+                failure_class="contract_boundary_leak",
+                reason="Dashboard wrote lane status directly.",
+                source_refs=["pytest:test_dashboard_contract"],
+            ),
+        ],
+    )
+
+    assert decision.decision is LaneRecoveryDecisionType.REFACTOR_REQUIRED
+    assert decision.retry_allowed is False
+    assert decision.refactor_required_reason == (
+        "failure_class contract_boundary_leak repeated 2 times"
+    )
+    assert decision.next_action == (
+        "refactor or replace the failing lane boundary before retrying"
+    )
+
+
+def test_lane_recovery_suspends_when_retry_budget_is_exhausted() -> None:
+    decision = evaluate_lane_recovery(
+        lane_id="lane-a",
+        budget=LaneRuntimeBudget(max_attempts=2, max_consecutive_same_failure=2),
+        failures=[
+            LaneFailureEvidence(
+                lane_id="lane-a",
+                attempt=1,
+                failure_class="provider_unavailable",
+                reason="provider unavailable",
+                source_refs=["provider:deepseek"],
+            ),
+            LaneFailureEvidence(
+                lane_id="lane-a",
+                attempt=2,
+                failure_class="ci_timeout",
+                reason="CI timed out",
+                source_refs=["github:run:1"],
+            ),
+        ],
+    )
+
+    assert decision.decision is LaneRecoveryDecisionType.SUSPENDED
+    assert decision.retry_allowed is False
+    assert decision.suspend_reason == "retry_budget_exhausted"
+
+
 def test_patch_forward_creates_auditable_patch_lane_link() -> None:
     service = BlueprintLaneDagService()
     plan = service.build_plan(_request(lanes=[_lane("lane-a")]))
@@ -189,15 +346,20 @@ def _request(
     *,
     features: list[BlueprintFeatureSpec] | None = None,
     lanes: list[BlueprintLaneSpec] | None = None,
+    blueprint_proof_level: str = "contract_proof",
+    source_event_lineage: list[dict[str, object]] | None = None,
+    source_refs: list[str] | None = None,
 ) -> BlueprintLaneDagRequest:
     return BlueprintLaneDagRequest(
         graph_id="graph-bp-1",
         resolution_id="resolution-1",
         graph_version=1,
         blueprint=_blueprint(),
+        blueprint_proof_level=blueprint_proof_level,
+        source_event_lineage=source_event_lineage or [],
         features=features or [_feature("feature-a")],
         lanes=lanes or [_lane("lane-a")],
-        source_refs=["message:freeze"],
+        source_refs=source_refs or ["message:freeze"],
     )
 
 
@@ -249,6 +411,14 @@ def _lane(
     acceptance_criteria: list[str] | None = None,
     blueprint_refs: list[str] | None = None,
     dependency_edges: list[LaneDependencyEdge] | None = None,
+    owner: str = "codex",
+    inputs: list[str] | None = None,
+    outputs: list[str] | None = None,
+    required_checks: list[str] | None = None,
+    allowed_files: list[str] | None = None,
+    rollback_constraints: list[str] | None = None,
+    review_profile: str = "standard",
+    budget: LaneRuntimeBudget | None = None,
 ) -> BlueprintLaneSpec:
     return BlueprintLaneSpec(
         lane_id=lane_id,
@@ -263,4 +433,12 @@ def _lane(
         blueprint_refs=blueprint_refs or ["blueprint:bp-1:1"],
         dependency_edges=dependency_edges or [],
         expected_touched_areas=["src/xmuse_core/structuring"],
+        owner=owner,
+        inputs=inputs or ["blueprint:bp-1:1"],
+        outputs=outputs or [f"artifact://{lane_id}/evidence.json"],
+        required_checks=required_checks or ["focused-pytest"],
+        allowed_files=allowed_files or ["src/xmuse_core/structuring"],
+        rollback_constraints=rollback_constraints or ["preserve frozen blueprint"],
+        review_profile=review_profile,
+        budget=budget or LaneRuntimeBudget(),
     )

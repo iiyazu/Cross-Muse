@@ -689,6 +689,113 @@ WebSocket、worklist endpoint、proposal narrow/reject endpoint 仍未落地。
 - 从已有 peer fork 新参与者，支持 prompt delta、inherited refs、model policy、
   feature scope 等字段。
 
+### GOD Room Runtime Endpoints
+
+用途：
+
+- 为 TUI/operator cockpit 提供 durable GOD room 控制面。
+- 后端 authority 是 `god_room_event_store`，不是 TUI/dashboard/read model。
+- 写入接口在启用 Chat API auth 时要求 `chat_god_room` capability。
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /api/chat/conversations/{conversation_id}/god-room` | 创建或确保 conversation-scoped GOD room，并从 active 非 init participants 建 roster |
+| `GET /api/chat/conversations/{conversation_id}/god-room` | 读取 room participants、events 和 replay |
+| `POST /api/chat/conversations/{conversation_id}/god-room/events` | append `xmuse.god_room_event.v1` event，返回 append status 和最新 replay |
+| `GET /api/chat/conversations/{conversation_id}/god-room/snapshot` | 返回 `xmuse.god_room_snapshot.v1` replay artifact |
+| `POST /api/chat/conversations/{conversation_id}/god-room/freeze-blueprint` | 从 durable room events 编译 `xmuse.god_room_blueprint_freeze.v1`，成功时写入 mission blueprint proposal/resolution/read model |
+| `POST /api/chat/conversations/{conversation_id}/god-room/lane-dag` | 从 GOD room freeze resolution 生成 `BlueprintLaneDagPlan`，保存 lane graph 和 laneDAG artifacts，不写 live projection queue |
+| `POST /api/chat/conversations/{conversation_id}/god-room/lane-dag/recovery` | 从 laneDAG artifact 读取 lane budget，导入 failure evidence，保存 `xmuse.god_room_lane_recovery.v1` recovery artifact |
+| `POST /api/chat/conversations/{conversation_id}/god-room/lane-dag/review-intake` | 从 laneDAG/recovery/candidate refs 生成 pending independent review intake artifact |
+| `POST /api/chat/conversations/{conversation_id}/god-room/lane-dag/review-verdict` | 从 review intake 生成 independent reviewer verdict artifact，不写 review plane 或 GitHub truth |
+| `POST /api/chat/conversations/{conversation_id}/god-room/lane-dag/patch-forward` | 从 patch-forward verdict 和 laneDAG artifact 追加 patch lane sidecar，不执行 patch lane |
+| `POST /api/chat/conversations/{conversation_id}/god-room/lane-dag/review-closure` | 从 patch-forward sidecar、patch lane intake 和 patch lane merge verdict 生成 L10 handoff artifact |
+| `POST /api/chat/conversations/{conversation_id}/god-room/memoryos-plan` | 从 GOD room events、freeze resolution、laneDAG 和 recovery artifacts 生成 `xmuse.god_room_memoryos_plan.v1` governed write/context plan |
+
+事件写入请求体使用 `GodRoomEventV1`：
+
+```json
+{
+  "event_id": "evt-propose",
+  "room_id": "god-room:conv-1",
+  "conversation_id": "conv-1",
+  "participant_id": "part-architect",
+  "god_id": "architect-god",
+  "actor_kind": "god",
+  "event_type": "speak",
+  "timestamp_utc": "2026-06-13T10:00:00Z",
+  "content": "I propose the next production slice.",
+  "source_refs": ["conversation:conv-1"],
+  "payload": {"body": "I propose the next production slice."}
+}
+```
+
+Blueprint freeze 请求体只声明目标 blueprint identity；blueprint 内容来自 durable
+room events，不由前端 projection 提供：
+
+```json
+{
+  "blueprint_id": "bp-god-room",
+  "revision": 1
+}
+```
+
+前端注意：
+
+- `POST /god-room/events` 是 idempotent；重复相同事件返回
+  `append_status = "duplicate"`。
+- `POST /god-room/freeze-blueprint` 成功时返回 `source_authority =
+  "god_room_event_store"`、freeze artifact、frozen blueprint、proposal、
+  resolution、message 和最新 room replay；未解 challenge 或缺少 freeze event 时返回
+  `409`，detail 中保留 `manual_gap` artifact，不写 mission blueprint card。
+- `POST /god-room/lane-dag` 必须引用 `approval_mode =
+  "god_room_blueprint_freeze"` 的 mission blueprint resolution；非 GOD room
+  freeze resolution 会被拒绝。成功时返回 `source_authority =
+  "mission_blueprint_resolution"`、`lane_dag` 和 artifact refs。该 endpoint
+  只写 `lane_graphs/*.json` / `lane_graphs/*.lane-dag.json` artifacts，不写
+  `feature_lanes.json`。
+- `POST /god-room/lane-dag/recovery` 使用已保存 laneDAG artifact 作为
+  `source_authority = "lane_dag_artifact"`，从 lane runtime contract 读取
+  budget，并基于提交的 `LaneFailureEvidence` 生成 retry/suspended/manual_gap/
+  refactor_required decision。它只写 `lane_graphs/*.recovery.json` artifact，
+  不直接改变 lane status。
+- `POST /god-room/lane-dag/review-intake` 使用已保存 laneDAG artifact、lane
+  runtime contract、可选 recovery artifact 和 worker/execution candidate refs，
+  生成 review intake artifact。若 recovery artifact 存在，`source_authority`
+  为 `"lane_dag_artifact+lane_recovery_artifact"`；否则为
+  `"lane_dag_artifact"` 并记录 `lane_recovery_decision_missing`。该 artifact
+  的 `review_truth_status` 固定为
+  `pending_independent_review`，worker output 仍是 `candidate_only`；它不写
+  `review_plane.json`，不生成 `ReviewVerdict`，不改变 lane status。
+- `POST /god-room/lane-dag/review-verdict` 要求已存在 review intake artifact，
+  且 `evidence_refs` 必须引用 intake 的 reviewer input refs。成功时写
+  `reports/god_room_review_verdicts/*.review-verdict.json`，其中
+  `server_truth_status = "not_server_truth"`；它不写 `review_plane.json`，
+  不改变 lane status，不代表 GitHub review/merge truth。
+- `POST /god-room/lane-dag/patch-forward` 要求已存在 `patch-forward` review
+  verdict 和 laneDAG artifact。成功时通过 laneDAG service 追加 patch lane、
+  dependency edge、runtime contract 和 patch-forward link，并写
+  `reports/god_room_patch_forward/*.patch-forward.json`。它不执行 patch lane，
+  不写 `review_plane.json` / `feature_lanes.json`，不链接 release evidence，
+  不代表 ready 或 merge truth。
+- `POST /god-room/lane-dag/review-closure` 要求已存在 patch-forward sidecar、
+  patch lane review intake、以及 patch lane 的 `merge` review verdict。成功时写
+  `reports/god_room_review_closure/*.review-closure.json`，其中
+  `execution_truth_status = "candidate_reviewed"`、
+  `server_truth_status = "not_server_truth"`。它只是 L10 release evidence 的
+  handoff input，不写 `review_plane.json` / `feature_lanes.json`，不改变 lane
+  status，不代表 live execution、ready_to_merge 或 GitHub truth。
+- `POST /god-room/memoryos-plan` 使用 GOD room event store、GOD room freeze
+  resolution、laneDAG artifact 和 recovery sidecar 作为输入，生成
+  `source_authority = "god_room_memoryos_plan_contract"` 的 governed
+  MemoryOS write/context plan。它只写
+  `reports/god_room_memoryos/*.memoryos-plan.json` artifact；不会调用 live
+  MemoryOS、不会写 MemoryOS state、不会把 `manual_gap` 升级成 live proof。
+- unknown participant、unknown target、conversation/room mismatch 和 event id
+  conflict 会被后端拒绝，前端不得本地修改 projection 来绕过。
+- `replay.proof_level = "contract_proof"` 只证明 durable replay contract，不是
+  live provider proof。
+
 ### `GET /api/chat/role-templates`
 
 用途：

@@ -63,7 +63,11 @@ class PeerChatCardAssembler:
         cards.extend(self._feature_graph_set_cards(conversation_id))
         cards.extend(self._execution_cards(conversation_id))
         cards.extend(self._peer_request_result_cards(conversation_id))
-        health_eligible = bool(cards)
+        scoped_lanes = self._conversation_scoped_lanes(
+            conversation_id,
+            self._feature_lanes(),
+        )
+        health_eligible = bool(cards) or bool(scoped_lanes)
         worklist_card = self._worklist_summary_card(conversation_id)
         if worklist_card is not None:
             cards.append(worklist_card)

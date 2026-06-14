@@ -18,8 +18,25 @@ from xmuse_core.chat.inbox_store import ChatInboxStore
 from xmuse_core.chat.participant_store import ParticipantStore, RoleTemplateStore
 from xmuse_core.chat.store import ChatStore
 from xmuse_core.chat.stream_store import ChatStreamStore, PeerTurnLatencyTraceStore
+from xmuse_core.providers.god_cli_registration_store import GodCliRegistrationStore
+from xmuse_core.providers.god_cli_registry import GodCliCapability, GodCliRegistration
 
 ROOT = Path(__file__).resolve().parents[2] / "xmuse"
+
+
+def _manual_god_cli_registration_payload() -> dict[str, object]:
+    return {
+        "cli_id": "custom.peer",
+        "display_name": "Custom Peer",
+        "command_family": "custom-cli",
+        "provider_profile_ref": "custom.peer",
+        "capabilities": ["peer_god"],
+        "supports_persistent_sessions": True,
+        "supports_mcp_writeback": True,
+        "state_write_allowed": True,
+        "proof_level": "real_provider_proof",
+        "proof_refs": ["provider-run://custom.peer/live-smoke-1"],
+    }
 
 
 def test_build_features_empty():
@@ -190,10 +207,14 @@ def test_adapter_send_message_posts_human_message_to_chat_api(monkeypatch, tmp_p
         def __exit__(self, exc_type, exc, tb):
             return None
 
-        def post(self, url, json):
-            calls.append({"url": url, "json": json})
+        def post(self, url, json, headers=None):
+            calls.append({"url": url, "json": json, "headers": headers})
             return _Response()
 
+    monkeypatch.setenv("XMUSE_TUI_OPERATOR_ID", "operator-tui")
+    monkeypatch.setenv("XMUSE_TUI_OPERATOR_ROLE", "operator")
+    monkeypatch.setenv("XMUSE_TUI_OPERATOR_CAPABILITIES", "chat_post_message")
+    monkeypatch.setenv("XMUSE_CHAT_API_KEY", "secret")
     monkeypatch.setattr("xmuse.tui.adapter.xmuse_adapter.httpx.Client", _Client)
     adapter = XmuseAdapter(tmp_path, chat_api_base_url="http://chat-api")
 
@@ -207,6 +228,12 @@ def test_adapter_send_message_posts_human_message_to_chat_api(monkeypatch, tmp_p
                 "author": "user",
                 "role": "human",
                 "content": "@architect please improve TUI",
+            },
+            "headers": {
+                "X-XMUSE-API-Key": "secret",
+                "X-XMuse-Operator-Id": "operator-tui",
+                "X-XMuse-Operator-Role": "operator",
+                "X-XMuse-Operator-Capabilities": "chat_post_message",
             },
         }
     ]
@@ -273,6 +300,560 @@ def test_adapter_poll_messages_includes_active_stream_state(tmp_path):
     assert stream_message["content"] == "Drafting..."
 
 
+def test_adapter_operator_evidence_action_exports_transcript_artifact(tmp_path):
+    root = tmp_path
+    chat = ChatStore(root / "chat.db")
+    conversation = chat.create_conversation("Mission")
+    chat.add_message(
+        conversation.id,
+        author="architect",
+        role="assistant",
+        content="Freeze the blueprint.",
+        envelope_json={
+            "speech_act": "decide",
+            "god_id": "architect-god",
+            "provider_id": "codex",
+            "decision_scope": "blueprint.freeze",
+            "target_ref": "blueprint:conv-1:1",
+        },
+    )
+
+    result = XmuseAdapter(root).run_operator_evidence_action(
+        "transcript",
+        conversation.id,
+    )
+
+    assert result["action"] == "transcript_export"
+    assert result["status"] == "ok"
+    assert result["proof_level"] == "contract_proof"
+    assert result["artifact_path"]
+    artifact_path = Path(result["artifact_path"])
+    assert artifact_path.exists()
+    assert root / "work" / "operator_evidence" in artifact_path.parents
+
+
+def test_adapter_operator_evidence_action_loads_github_memory_and_blockers(
+    monkeypatch,
+    tmp_path,
+):
+    adapter = XmuseAdapter(tmp_path)
+    monkeypatch.setattr(adapter, "_message_snapshot", lambda conv_id: [])
+    monkeypatch.setattr(adapter, "_worklist_envelope_snapshot", lambda conv_id: {})
+    monkeypatch.setattr(
+        adapter,
+        "get_conversation_inspector",
+        lambda conv_id: {
+            "memory_trace": {
+                "proof_level": "live_service_proof",
+                "fact_state": "observed",
+                "session_id": "mem-session-1",
+                "source_refs": ["memory://conversation/conv-1/session/mem-session-1"],
+            },
+            "github_truth": {
+                "proof_level": "server_side_enforcement_proof",
+                "fact_state": "merge_ready",
+                "source_refs": ["github://repo/pull/42"],
+            },
+            "blueprint_freeze": {
+                "proof_level": "contract_proof",
+                "fact_state": "blocked",
+                "blockers": [
+                    {
+                        "reason": "needs review evidence",
+                        "source_refs": ["message:msg-review"],
+                        "target_refs": ["blueprint:conv-1:1"],
+                    }
+                ],
+            },
+        },
+    )
+
+    github = adapter.run_operator_evidence_action("github", "conv-1")
+    memory = adapter.run_operator_evidence_action("memory", "conv-1")
+    blockers = adapter.run_operator_evidence_action("blockers", "conv-1")
+
+    assert github["action"] == "github_truth_load"
+    assert github["status"] == "ok"
+    assert github["proof_level"] == "server_side_enforcement_proof"
+    assert memory["action"] == "memory_trace_load"
+    assert memory["proof_level"] == "live_service_proof"
+    assert blockers["action"] == "blocker_navigation"
+    assert blockers["target_refs"] == ["blueprint:conv-1:1"]
+
+
+def test_adapter_operator_control_action_selects_god_cli_with_capability(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setenv("XMUSE_TUI_OPERATOR_CAPABILITIES", "select_god_cli")
+
+    result = XmuseAdapter(tmp_path).run_operator_control_action(
+        "select_god_cli",
+        "conv-1",
+        {"cli_id": "codex.god"},
+    )
+
+    assert result["action"] == "select_god_cli"
+    assert result["status"] == "ok"
+    assert result["fact_state"] == "god_cli_selected"
+    assert result["payload"]["selection"]["cli_id"] == "codex.god"
+    assert result["payload"]["selection"]["conversation_id"] == "conv-1"
+
+
+def test_adapter_operator_control_action_prefers_chat_api_contract(
+    monkeypatch,
+    tmp_path,
+):
+    calls = []
+
+    class _Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "action": "select_god_cli",
+                "status": "ok",
+                "proof_level": "contract_proof",
+                "fact_state": "god_cli_selected",
+                "actor_id": "operator-api",
+                "audit_id": "operator-action:api",
+                "summary": "Selected GOD CLI codex.god.",
+                "payload": {
+                    "selection": {
+                        "cli_id": "codex.god",
+                        "conversation_id": "conv-1",
+                        "durable_state_ref": "god_cli_selection:conv-1",
+                    }
+                },
+            }
+
+    class _Client:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return None
+
+        def post(self, url, json, headers):
+            calls.append({"url": url, "json": json, "headers": headers})
+            return _Response()
+
+    monkeypatch.setenv("XMUSE_TUI_OPERATOR_ID", "operator-api")
+    monkeypatch.setenv("XMUSE_TUI_OPERATOR_CAPABILITIES", "select_god_cli")
+    monkeypatch.setenv("XMUSE_CHAT_API_KEY", "secret")
+    monkeypatch.setattr("xmuse.tui.adapter.xmuse_adapter.httpx.Client", _Client)
+
+    result = XmuseAdapter(
+        tmp_path,
+        chat_api_base_url="http://chat-api",
+    ).run_operator_control_action(
+        "select-god-cli",
+        "conv-1",
+        {"cli_id": "codex.god"},
+    )
+
+    assert result["audit_id"] == "operator-action:api"
+    assert len(calls) == 1
+    assert calls[0]["url"] == "http://chat-api/api/chat/operator/actions"
+    assert calls[0]["json"]["action"] == "select_god_cli"
+    assert calls[0]["json"]["idempotency_key"].startswith("tui:select_god_cli:")
+    assert calls[0]["json"]["payload"] == {
+        "cli_id": "codex.god",
+        "conversation_id": "conv-1",
+    }
+    assert calls[0]["headers"] == {
+        "X-XMUSE-API-Key": "secret",
+        "X-XMuse-Operator-Id": "operator-api",
+        "X-XMuse-Operator-Role": "operator",
+        "X-XMuse-Operator-Capabilities": "select_god_cli",
+    }
+
+
+def test_adapter_operator_control_action_does_not_fallback_after_api_rejection(
+    monkeypatch,
+    tmp_path,
+):
+    class _Response:
+        status_code = 404
+
+        def raise_for_status(self):
+            raise RuntimeError("api rejected request")
+
+        def json(self):
+            return {
+                "detail": {
+                    "code": "unknown_conversation",
+                    "message": "conversation not found",
+                }
+            }
+
+    class _Client:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return None
+
+        def post(self, url, json, headers):
+            return _Response()
+
+    monkeypatch.setenv("XMUSE_TUI_OPERATOR_CAPABILITIES", "select_god_cli")
+    monkeypatch.setattr("xmuse.tui.adapter.xmuse_adapter.httpx.Client", _Client)
+
+    result = XmuseAdapter(
+        tmp_path,
+        chat_api_base_url="http://chat-api",
+    ).run_operator_control_action(
+        "select_god_cli",
+        "missing-conv",
+        {"cli_id": "codex.god"},
+    )
+
+    assert result["status"] == "blocked"
+    assert result["fact_state"] == "blocked"
+    assert result["payload"]["api_status_code"] == 404
+    assert not (tmp_path / "god_cli_selections.json").exists()
+
+
+def test_adapter_god_room_control_actions_use_chat_api_contracts(
+    monkeypatch,
+    tmp_path,
+):
+    calls = []
+
+    class _Response:
+        status_code = 201
+
+        def __init__(self, payload):
+            self._payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._payload
+
+    class _Client:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return None
+
+        def post(self, url, json=None, headers=None):
+            calls.append({"url": url, "json": json, "headers": headers})
+            return _Response({"source_authority": "god_room_event_store", "url": url})
+
+    monkeypatch.setenv("XMUSE_TUI_OPERATOR_ID", "operator-tui")
+    monkeypatch.setenv("XMUSE_TUI_OPERATOR_ROLE", "operator")
+    monkeypatch.setenv("XMUSE_TUI_OPERATOR_CAPABILITIES", "chat_god_room")
+    monkeypatch.setenv("XMUSE_CHAT_API_KEY", "secret")
+    monkeypatch.setattr("xmuse.tui.adapter.xmuse_adapter.httpx.Client", _Client)
+    adapter = XmuseAdapter(tmp_path, chat_api_base_url="http://chat-api")
+    event_payload = {
+        "schema_version": "xmuse.god_room_event.v1",
+        "event_id": "evt-tui-1",
+        "room_id": "god-room:conv-1",
+        "conversation_id": "conv-1",
+        "participant_id": "participant-architect",
+        "god_id": "god-architect",
+        "actor_kind": "operator",
+        "event_type": "speak",
+        "timestamp_utc": "2026-06-13T13:40:00Z",
+        "content": "Operator routes a GOD room event from TUI.",
+        "source_refs": ["tui-command:evt-tui-1"],
+    }
+    lane_dag_payload = {
+        "resolution_id": "res-freeze",
+        "graph_id": "graph-tui",
+        "features": [{"feature_id": "feature-1"}],
+        "lanes": [{"lane_id": "lane-1"}],
+        "source_refs": ["tui:lane-dag"],
+    }
+    recovery_payload = {
+        "graph_id": "graph-tui",
+        "lane_id": "lane-1",
+        "failures": [],
+    }
+    memory_payload = {
+        "graph_id": "graph-tui",
+        "repo_id": "iiyazu/Cross-Muse",
+        "workspace_id": "xmuse",
+    }
+    speaker_payload = {"after_event_id": "evt-tui-1"}
+    speaker_response_payload = {
+        "after_event_id": "evt-tui-1",
+        "event_id": "evt-provider-speak",
+        "provider_response_artifact": "reports/provider-responses/provider-response-1.json",
+        "provider_response": {
+            "response_id": "provider-response-1",
+            "status": "completed",
+            "proof_level": "real_provider_proof",
+            "target_participant_id": "participant-review",
+            "provider_profile_ref": "codex.god",
+            "provider_session_id": "provider-thread-review",
+            "content": "Review GOD responded.",
+            "source_refs": ["provider-run:codex:provider-response-1"],
+        },
+    }
+
+    assert adapter.ensure_god_room("conv-1")["source_authority"] == (
+        "god_room_event_store"
+    )
+    assert adapter.append_god_room_event("conv-1", event_payload)["url"].endswith(
+        "/god-room/events"
+    )
+    assert adapter.freeze_god_room_blueprint(
+        "conv-1",
+        blueprint_id="bp-tui",
+        revision=2,
+    )["url"].endswith("/god-room/freeze-blueprint")
+    assert adapter.build_god_room_lane_dag("conv-1", lane_dag_payload)["url"].endswith(
+        "/god-room/lane-dag"
+    )
+    assert adapter.evaluate_god_room_lane_recovery(
+        "conv-1",
+        recovery_payload,
+    )["url"].endswith("/god-room/lane-dag/recovery")
+    assert adapter.build_god_room_memoryos_plan(
+        "conv-1",
+        memory_payload,
+    )["url"].endswith("/god-room/memoryos-plan")
+    assert adapter.build_god_room_speaker_attempt(
+        "conv-1",
+        speaker_payload,
+    )["url"].endswith("/god-room/speaker-attempt")
+    assert adapter.capture_god_room_speaker_response(
+        "conv-1",
+        speaker_response_payload,
+    )["url"].endswith("/god-room/speaker-response")
+
+    expected_headers = {
+        "X-XMUSE-API-Key": "secret",
+        "X-XMuse-Operator-Id": "operator-tui",
+        "X-XMuse-Operator-Role": "operator",
+        "X-XMuse-Operator-Capabilities": "chat_god_room",
+    }
+    assert calls == [
+        {
+            "url": "http://chat-api/api/chat/conversations/conv-1/god-room",
+            "json": None,
+            "headers": expected_headers,
+        },
+        {
+            "url": "http://chat-api/api/chat/conversations/conv-1/god-room/events",
+            "json": event_payload,
+            "headers": expected_headers,
+        },
+        {
+            "url": (
+                "http://chat-api/api/chat/conversations/conv-1/"
+                "god-room/freeze-blueprint"
+            ),
+            "json": {"blueprint_id": "bp-tui", "revision": 2},
+            "headers": expected_headers,
+        },
+        {
+            "url": "http://chat-api/api/chat/conversations/conv-1/god-room/lane-dag",
+            "json": lane_dag_payload,
+            "headers": expected_headers,
+        },
+        {
+            "url": (
+                "http://chat-api/api/chat/conversations/conv-1/"
+                "god-room/lane-dag/recovery"
+            ),
+            "json": recovery_payload,
+            "headers": expected_headers,
+        },
+        {
+            "url": (
+                "http://chat-api/api/chat/conversations/conv-1/"
+                "god-room/memoryos-plan"
+            ),
+            "json": memory_payload,
+            "headers": expected_headers,
+        },
+        {
+            "url": (
+                "http://chat-api/api/chat/conversations/conv-1/"
+                "god-room/speaker-attempt"
+            ),
+            "json": speaker_payload,
+            "headers": expected_headers,
+        },
+        {
+            "url": (
+                "http://chat-api/api/chat/conversations/conv-1/"
+                "god-room/speaker-response"
+            ),
+            "json": speaker_response_payload,
+            "headers": expected_headers,
+        },
+    ]
+
+
+def test_adapter_god_room_action_does_not_fallback_after_api_rejection(
+    monkeypatch,
+    tmp_path,
+):
+    class _Response:
+        status_code = 409
+
+        def raise_for_status(self):
+            raise RuntimeError("api rejected request")
+
+        def json(self):
+            return {
+                "detail": {
+                    "code": "god_room_membership_error",
+                    "message": "unknown participant",
+                }
+            }
+
+    class _Client:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return None
+
+        def post(self, url, json=None, headers=None):
+            return _Response()
+
+    monkeypatch.setenv("XMUSE_TUI_OPERATOR_CAPABILITIES", "chat_god_room")
+    monkeypatch.setattr("xmuse.tui.adapter.xmuse_adapter.httpx.Client", _Client)
+
+    result = XmuseAdapter(
+        tmp_path,
+        chat_api_base_url="http://chat-api",
+    ).append_god_room_event(
+        "conv-1",
+        {
+            "event_id": "evt-rejected",
+            "room_id": "god-room:conv-1",
+            "conversation_id": "conv-1",
+            "participant_id": "missing",
+            "god_id": "missing",
+            "actor_kind": "operator",
+            "event_type": "speak",
+            "timestamp_utc": "2026-06-13T13:41:00Z",
+            "content": "must be rejected by Chat API",
+            "source_refs": ["tui-command:evt-rejected"],
+        },
+    )
+
+    assert result["action"] == "append_god_room_event"
+    assert result["status"] == "blocked"
+    assert result["fact_state"] == "blocked"
+    assert result["payload"]["api_status_code"] == 409
+    assert result["payload"]["api_detail"]["code"] == "god_room_membership_error"
+    assert not (tmp_path / "god_room_events.sqlite3").exists()
+    assert not (tmp_path / "feature_lanes.json").exists()
+    assert not (tmp_path / "lane_graphs").exists()
+    assert not (tmp_path / "reports").exists()
+
+
+def test_adapter_operator_control_action_denies_without_capability(tmp_path):
+    result = XmuseAdapter(tmp_path).run_operator_control_action(
+        "select_god_cli",
+        "conv-1",
+        {"cli_id": "codex.god"},
+    )
+
+    assert result["status"] == "denied"
+    assert "missing capability select_god_cli" in result["summary"]
+
+
+def test_adapter_operator_control_action_registers_god_cli_locally(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setenv(
+        "XMUSE_TUI_OPERATOR_CAPABILITIES",
+        "register_god_cli,select_god_cli",
+    )
+    adapter = XmuseAdapter(tmp_path)
+
+    register_result = adapter.run_operator_control_action(
+        "register_god_cli",
+        "conv-1",
+        _manual_god_cli_registration_payload(),
+    )
+    select_result = adapter.run_operator_control_action(
+        "select_god_cli",
+        "conv-1",
+        {"cli_id": "custom.peer"},
+    )
+
+    assert register_result["action"] == "register_god_cli"
+    assert register_result["status"] == "ok"
+    assert register_result["payload"]["registration"]["cli_id"] == "custom.peer"
+    assert select_result["status"] == "ok"
+    assert select_result["payload"]["selection"]["cli_id"] == "custom.peer"
+    stored = GodCliRegistrationStore(tmp_path / "god_cli_registrations.json").get(
+        "custom.peer"
+    )
+    assert stored is not None
+    assert stored.registration.proof_refs == ("provider-run://custom.peer/live-smoke-1",)
+
+
+def test_adapter_operator_control_action_exports_natural_release_evidence_locally(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setenv("XMUSE_TUI_OPERATOR_CAPABILITIES", "release_gate")
+    conversation = ChatStore(tmp_path / "chat.db").create_conversation(
+        "Natural export",
+    )
+
+    result = XmuseAdapter(tmp_path).run_operator_control_action(
+        "export_natural_deliberation_transcript",
+        conversation.id,
+        {"target_refs": ["blueprint:bp-1"]},
+    )
+
+    assert result["status"] == "ok"
+    assert result["fact_state"] == "release_evidence_exported"
+    exported = result["payload"]["export"]
+    assert exported["kind"] == "natural_deliberation"
+    assert exported["gate"]["gate_id"] == "natural-god-deliberation"
+    assert (tmp_path / "work" / "release_readiness" / "natural-transcript.json").exists()
+    assert (
+        tmp_path / "work" / "release_readiness" / "artifacts" / "natural-deliberation.json"
+    ).exists()
+
+
+def test_adapter_records_operator_action_tui_command_event(tmp_path):
+    adapter = XmuseAdapter(tmp_path)
+
+    recorded = adapter.record_tui_command_event(
+        {
+            "command": "/god select codex.god",
+            "conversation_id": "conv-1",
+            "read_surface_authority": "operator_action_contract",
+            "surface_ref": "operator_action_contract:conv-1",
+        }
+    )
+
+    assert recorded is not None
+    assert recorded["read_surface_authority"] == "operator_action_contract"
+    assert adapter.list_tui_command_events("conv-1") == [recorded]
+
+
 def test_adapter_create_group_conversation_uses_chat_api(monkeypatch, tmp_path):
     calls = []
 
@@ -301,10 +882,14 @@ def test_adapter_create_group_conversation_uses_chat_api(monkeypatch, tmp_path):
         def __exit__(self, exc_type, exc, tb):
             return None
 
-        def post(self, url, json):
-            calls.append({"url": url, "json": json})
+        def post(self, url, json, headers=None):
+            calls.append({"url": url, "json": json, "headers": headers})
             return _Response()
 
+    monkeypatch.setenv("XMUSE_TUI_OPERATOR_ID", "operator-tui")
+    monkeypatch.setenv("XMUSE_TUI_OPERATOR_ROLE", "operator")
+    monkeypatch.setenv("XMUSE_TUI_OPERATOR_CAPABILITIES", "chat_create_conversation")
+    monkeypatch.setenv("XMUSE_CHAT_API_KEY", "secret")
     monkeypatch.setattr("xmuse.tui.adapter.xmuse_adapter.httpx.Client", _Client)
     adapter = XmuseAdapter(tmp_path, chat_api_base_url="http://chat-api")
 
@@ -318,6 +903,12 @@ def test_adapter_create_group_conversation_uses_chat_api(monkeypatch, tmp_path):
                 "title": "New mission",
                 "preset_id": "architect-review-execute",
                 "init_mode": "proposal_then_approve",
+            },
+            "headers": {
+                "X-XMUSE-API-Key": "secret",
+                "X-XMuse-Operator-Id": "operator-tui",
+                "X-XMuse-Operator-Role": "operator",
+                "X-XMuse-Operator-Capabilities": "chat_create_conversation",
             },
         }
     ]
@@ -370,6 +961,114 @@ def test_adapter_get_bootstrap_status_uses_chat_api_endpoint(monkeypatch, tmp_pa
     ]
 
 
+def test_adapter_create_bootstrap_proposal_uses_chat_api_auth_headers(
+    monkeypatch,
+    tmp_path,
+):
+    calls = []
+
+    class _Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"proposal": {"proposal_id": "bootstrap-proposal:conv-1"}}
+
+    class _Client:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return None
+
+        def post(self, url, json, headers=None):
+            calls.append({"url": url, "json": json, "headers": headers})
+            return _Response()
+
+    monkeypatch.setenv("XMUSE_TUI_OPERATOR_ID", "operator-tui")
+    monkeypatch.setenv("XMUSE_TUI_OPERATOR_ROLE", "operator")
+    monkeypatch.setenv("XMUSE_TUI_OPERATOR_CAPABILITIES", "chat_bootstrap")
+    monkeypatch.setenv("XMUSE_CHAT_API_KEY", "secret")
+    monkeypatch.setattr("xmuse.tui.adapter.xmuse_adapter.httpx.Client", _Client)
+    adapter = XmuseAdapter(tmp_path, chat_api_base_url="http://chat-api")
+
+    proposal = adapter.create_bootstrap_proposal("conv-1")
+
+    assert proposal == {"proposal": {"proposal_id": "bootstrap-proposal:conv-1"}}
+    assert calls == [
+        {
+            "url": (
+                "http://chat-api/api/chat/conversations/conv-1/"
+                "bootstrap/proposals"
+            ),
+            "json": {"source": "deterministic"},
+            "headers": {
+                "X-XMUSE-API-Key": "secret",
+                "X-XMuse-Operator-Id": "operator-tui",
+                "X-XMuse-Operator-Role": "operator",
+                "X-XMuse-Operator-Capabilities": "chat_bootstrap",
+            },
+        }
+    ]
+
+
+def test_adapter_apply_bootstrap_proposal_uses_chat_api_auth_headers(
+    monkeypatch,
+    tmp_path,
+):
+    calls = []
+
+    class _Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"bootstrap": {"status": "applied"}}
+
+    class _Client:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return None
+
+        def post(self, url, json, headers=None):
+            calls.append({"url": url, "json": json, "headers": headers})
+            return _Response()
+
+    monkeypatch.setenv("XMUSE_TUI_OPERATOR_ID", "operator-tui")
+    monkeypatch.setenv("XMUSE_TUI_OPERATOR_ROLE", "operator")
+    monkeypatch.setenv("XMUSE_TUI_OPERATOR_CAPABILITIES", "chat_bootstrap")
+    monkeypatch.setenv("XMUSE_CHAT_API_KEY", "secret")
+    monkeypatch.setattr("xmuse.tui.adapter.xmuse_adapter.httpx.Client", _Client)
+    adapter = XmuseAdapter(tmp_path, chat_api_base_url="http://chat-api")
+
+    applied = adapter.apply_bootstrap_proposal(
+        "conv-1",
+        "bootstrap-proposal:conv-1",
+    )
+
+    assert applied == {"bootstrap": {"status": "applied"}}
+    assert calls == [
+        {
+            "url": "http://chat-api/api/chat/conversations/conv-1/bootstrap/apply",
+            "json": {"proposal_id": "bootstrap-proposal:conv-1"},
+            "headers": {
+                "X-XMUSE-API-Key": "secret",
+                "X-XMuse-Operator-Id": "operator-tui",
+                "X-XMuse-Operator-Role": "operator",
+                "X-XMuse-Operator-Capabilities": "chat_bootstrap",
+            },
+        }
+    ]
+
+
 def test_adapter_approve_proposal_uses_chat_api_endpoint(monkeypatch, tmp_path):
     calls = []
 
@@ -389,10 +1088,14 @@ def test_adapter_approve_proposal_uses_chat_api_endpoint(monkeypatch, tmp_path):
         def __exit__(self, exc_type, exc, tb):
             return None
 
-        def post(self, url, json):
-            calls.append({"url": url, "json": json})
+        def post(self, url, json, headers=None):
+            calls.append({"url": url, "json": json, "headers": headers})
             return _Response()
 
+    monkeypatch.setenv("XMUSE_TUI_OPERATOR_ID", "operator-tui")
+    monkeypatch.setenv("XMUSE_TUI_OPERATOR_ROLE", "operator")
+    monkeypatch.setenv("XMUSE_TUI_OPERATOR_CAPABILITIES", "chat_approve_proposal")
+    monkeypatch.setenv("XMUSE_CHAT_API_KEY", "secret")
     monkeypatch.setattr("xmuse.tui.adapter.xmuse_adapter.httpx.Client", _Client)
     adapter = XmuseAdapter(tmp_path, chat_api_base_url="http://chat-api")
 
@@ -411,6 +1114,12 @@ def test_adapter_approve_proposal_uses_chat_api_endpoint(monkeypatch, tmp_path):
                 "approved_by": ["human"],
                 "approval_mode": "manual",
                 "goal_summary": "Approve from TUI",
+            },
+            "headers": {
+                "X-XMUSE-API-Key": "secret",
+                "X-XMuse-Operator-Id": "operator-tui",
+                "X-XMuse-Operator-Role": "operator",
+                "X-XMuse-Operator-Capabilities": "chat_approve_proposal",
             },
         }
     ]
@@ -538,10 +1247,17 @@ def test_adapter_add_participant_uses_chat_api(monkeypatch, tmp_path):
         def __exit__(self, exc_type, exc, tb):
             return None
 
-        def post(self, url, json):
-            calls.append({"url": url, "json": json})
+        def post(self, url, json, headers=None):
+            calls.append({"url": url, "json": json, "headers": headers})
             return _Response()
 
+    monkeypatch.setenv("XMUSE_TUI_OPERATOR_ID", "operator-tui")
+    monkeypatch.setenv("XMUSE_TUI_OPERATOR_ROLE", "operator")
+    monkeypatch.setenv(
+        "XMUSE_TUI_OPERATOR_CAPABILITIES",
+        "chat_manage_participants",
+    )
+    monkeypatch.setenv("XMUSE_CHAT_API_KEY", "secret")
     monkeypatch.setattr("xmuse.tui.adapter.xmuse_adapter.httpx.Client", _Client)
     adapter = XmuseAdapter(tmp_path, chat_api_base_url="http://chat-api")
 
@@ -560,6 +1276,12 @@ def test_adapter_add_participant_uses_chat_api(monkeypatch, tmp_path):
                 "role": "execute",
                 "display_name": "Execution GOD",
                 "model": "gpt-5.4",
+            },
+            "headers": {
+                "X-XMUSE-API-Key": "secret",
+                "X-XMuse-Operator-Id": "operator-tui",
+                "X-XMuse-Operator-Role": "operator",
+                "X-XMuse-Operator-Capabilities": "chat_manage_participants",
             },
         }
     ]
@@ -585,10 +1307,17 @@ def test_adapter_remove_participant_resolves_unique_role_and_uses_chat_api(
         def __exit__(self, exc_type, exc, tb):
             return None
 
-        def delete(self, url):
-            calls.append({"method": "DELETE", "url": url})
+        def delete(self, url, headers=None):
+            calls.append({"method": "DELETE", "url": url, "headers": headers})
             return _Response()
 
+    monkeypatch.setenv("XMUSE_TUI_OPERATOR_ID", "operator-tui")
+    monkeypatch.setenv("XMUSE_TUI_OPERATOR_ROLE", "operator")
+    monkeypatch.setenv(
+        "XMUSE_TUI_OPERATOR_CAPABILITIES",
+        "chat_manage_participants",
+    )
+    monkeypatch.setenv("XMUSE_CHAT_API_KEY", "secret")
     monkeypatch.setattr("xmuse.tui.adapter.xmuse_adapter.httpx.Client", _Client)
     adapter = XmuseAdapter(tmp_path, chat_api_base_url="http://chat-api")
     adapter.get_participants = lambda conv_id: [
@@ -607,6 +1336,12 @@ def test_adapter_remove_participant_resolves_unique_role_and_uses_chat_api(
                 "http://chat-api/api/chat/conversations/conv-1/"
                 "participants/part-execute"
             ),
+            "headers": {
+                "X-XMUSE-API-Key": "secret",
+                "X-XMuse-Operator-Id": "operator-tui",
+                "X-XMuse-Operator-Role": "operator",
+                "X-XMuse-Operator-Capabilities": "chat_manage_participants",
+            },
         }
     ]
 
@@ -1225,3 +1960,60 @@ def test_adapter_builds_workbench_lane_detail_from_read_models(monkeypatch, tmp_
         "tui_cmd_1",
     ]
     assert detail["execution_log"]["events"][1]["event_type"] == "tui_command"
+
+
+def test_adapter_get_provider_inventory_flattens_provider_read_contract(tmp_path):
+    GodCliRegistrationStore(tmp_path / "god_cli_registrations.json").record_registration(
+        registration=GodCliRegistration(
+            cli_id="custom.peer",
+            display_name="Custom Peer",
+            command_family="custom-cli",
+            provider_profile_ref="custom.peer",
+            capabilities=(GodCliCapability.PEER_GOD,),
+            allowed_speech_acts=("propose", "decide"),
+            supports_persistent_sessions=True,
+            supports_mcp_writeback=True,
+            state_write_allowed=True,
+            proof_level="real_provider_proof",
+            proof_refs=("provider-run://custom.peer/live-smoke-1",),
+        ),
+        registered_by="operator-1",
+        audit_id="operator-action:provider-board",
+        idempotency_key="idem-provider-board",
+    )
+
+    rows = XmuseAdapter(tmp_path).get_provider_inventory()
+
+    codex_god = next(
+        row
+        for row in rows
+        if row["provider_id"] == "codex" and row["profile_id"] == "god"
+    )
+    opencode_worker = next(
+        row
+        for row in rows
+        if row["provider_id"] == "opencode"
+        and row["profile_id"] == "deepseek_flash_worker"
+    )
+    custom_peer = next(
+        row
+        for row in rows
+        if row["provider_profile_ref"] == "custom.peer"
+    )
+
+    assert codex_god["boundary_role"] == "production_groupchat_god"
+    assert codex_god["runtime_kind"] == "codex_cli"
+    assert codex_god["transport"] == "cli"
+    assert codex_god["session_continuity"] == "persistent_supported"
+    assert codex_god["proof_level"] == "contract_proof"
+    assert "bounded_deliberation" in codex_god["capabilities"]
+    assert opencode_worker["boundary_role"] == "bounded_secondary"
+    assert opencode_worker["runtime_kind"] == "opencode_cli"
+    assert opencode_worker["session_continuity"] == "bounded"
+    assert opencode_worker["waiting_reason"] == "secondary bounded worker"
+    assert custom_peer["provider_id"] == "custom-cli"
+    assert custom_peer["boundary_role"] == "manual_registered_peer_god"
+    assert custom_peer["runtime_kind"] == "custom-cli"
+    assert custom_peer["transport"] == "cli"
+    assert custom_peer["proof_level"] == "real_provider_proof"
+    assert custom_peer["registration_kind"] == "manual"

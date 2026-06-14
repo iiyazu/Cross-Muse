@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import fcntl
 import json
+from builtins import list as list_type
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from tempfile import NamedTemporaryFile
+from typing import Any, cast
 from uuid import uuid4
 
 from xmuse_core.chat.participant_store import INIT_GOD_ROLE
@@ -32,6 +34,7 @@ class GodSessionRecord:
     provider_session_kind: str | None = None
     provider_binding_status: str | None = None
     provider_binding_failure_reason: str | None = None
+    last_heartbeat_at_utc: str | None = None
 
 
 class GodSessionRegistry:
@@ -61,6 +64,16 @@ class GodSessionRegistry:
                 if existing.session_inbox_id == session_inbox_id:
                     raise ValueError(f"duplicate session_inbox_id: {session_inbox_id}")
                 if (
+                    conversation_id is not None
+                    and participant_id is not None
+                    and existing.conversation_id == conversation_id
+                    and existing.participant_id == participant_id
+                ):
+                    raise ValueError(
+                        "duplicate conversation participant session: "
+                        f"{conversation_id}:{participant_id}"
+                    )
+                if (
                     role == INIT_GOD_ROLE
                     and conversation_id is not None
                     and existing.conversation_id == conversation_id
@@ -88,7 +101,7 @@ class GodSessionRegistry:
             self._write(sessions)
             return record
 
-    def list(self) -> list[GodSessionRecord]:
+    def list(self) -> list_type[GodSessionRecord]:
         payload = self._read()
         return [GodSessionRecord(**entry) for entry in payload["sessions"]]
 
@@ -200,12 +213,36 @@ class GodSessionRegistry:
                     return updated
             raise KeyError(god_session_id)
 
-    def _read(self) -> dict[str, list[dict[str, object]]]:
+    def record_heartbeat(
+        self,
+        god_session_id: str,
+        *,
+        heartbeat_at_utc: str,
+        status: str | None = None,
+    ) -> GodSessionRecord:
+        with self._locked_file():
+            sessions = self.list()
+            for index, record in enumerate(sessions):
+                if record.god_session_id == god_session_id:
+                    updated = replace(
+                        record,
+                        last_heartbeat_at_utc=heartbeat_at_utc,
+                        status=status or record.status,
+                    )
+                    sessions[index] = updated
+                    self._write(sessions)
+                    return updated
+            raise KeyError(god_session_id)
+
+    def _read(self) -> dict[str, list_type[dict[str, Any]]]:
         if not self.path.exists():
             return {"sessions": []}
-        return json.loads(self.path.read_text())
+        return cast(
+            dict[str, list_type[dict[str, Any]]],
+            json.loads(self.path.read_text()),
+        )
 
-    def _write(self, sessions: list[GodSessionRecord]) -> None:
+    def _write(self, sessions: list_type[GodSessionRecord]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         payload = {"sessions": [asdict(session) for session in sessions]}
         with NamedTemporaryFile(

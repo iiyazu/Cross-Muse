@@ -18,6 +18,7 @@ class AppState:
     features: dict[str, Any] = field(default_factory=dict)
     lanes: list[dict] = field(default_factory=list)
     run_health: dict | None = None
+    vision: dict | None = None
     lanes_changed: bool = False
     consecutive_error_ticks: int = 0
     has_errors: bool = False
@@ -32,6 +33,8 @@ class AppState:
             self.features = delta.features
         if delta.run_health is not None:
             self.run_health = delta.run_health
+        if delta.vision is not None:
+            self.vision = delta.vision
         if delta.participants:
             for cid, participants in delta.participants.items():
                 self.participants[cid] = list(participants)

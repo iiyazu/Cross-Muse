@@ -47,6 +47,7 @@ def test_create_persists_stable_god_session_id(tmp_path):
                 "provider_session_kind": None,
                 "provider_binding_status": None,
                 "provider_binding_failure_reason": None,
+                "last_heartbeat_at_utc": None,
             }
         ]
     }
@@ -122,6 +123,31 @@ def test_update_provider_binding_persists_resume_metadata(tmp_path):
     assert reloaded.provider_session_id == "thread-1"
 
 
+def test_record_heartbeat_persists_timestamp_and_status(tmp_path):
+    path = tmp_path / "god_sessions.json"
+    registry = GodSessionRegistry(path)
+
+    created = registry.create(
+        role="reviewer",
+        agent_name="beta",
+        runtime="codex",
+        session_address="addr://reviewer-1",
+        session_inbox_id="inbox-reviewer-1",
+    )
+
+    updated = registry.record_heartbeat(
+        created.god_session_id,
+        heartbeat_at_utc="2026-06-13T00:04:30Z",
+        status="active",
+    )
+
+    assert updated.last_heartbeat_at_utc == "2026-06-13T00:04:30Z"
+    assert updated.status == "active"
+    reloaded = GodSessionRegistry(path).get(created.god_session_id)
+    assert reloaded.last_heartbeat_at_utc == "2026-06-13T00:04:30Z"
+    assert reloaded.status == "active"
+
+
 def test_create_rejects_duplicate_session_address(tmp_path):
     path = tmp_path / "god_sessions.json"
     registry = GodSessionRegistry(path)
@@ -161,6 +187,31 @@ def test_create_rejects_duplicate_session_inbox_id(tmp_path):
             runtime="claude_code",
             session_address="addr://beta",
             session_inbox_id="inbox-shared",
+        )
+
+
+def test_create_rejects_duplicate_conversation_participant_session(tmp_path):
+    path = tmp_path / "god_sessions.json"
+    registry = GodSessionRegistry(path)
+    registry.create(
+        role="architect",
+        agent_name="architect-god",
+        runtime="codex",
+        session_address="@conv-a:architect",
+        session_inbox_id="inbox-conv-a-architect",
+        conversation_id="conv-a",
+        participant_id="part-architect",
+    )
+
+    with pytest.raises(ValueError, match="duplicate conversation participant session"):
+        registry.create(
+            role="architect",
+            agent_name="architect-god-manual",
+            runtime="codex",
+            session_address="@conv-a:architect-manual",
+            session_inbox_id="inbox-conv-a-architect-manual",
+            conversation_id="conv-a",
+            participant_id="part-architect",
         )
 
 

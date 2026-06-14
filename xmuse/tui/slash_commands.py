@@ -3,7 +3,9 @@ from __future__ import annotations
 import os
 import shlex
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
+from uuid import uuid4
 
 
 @dataclass(frozen=True)
@@ -55,8 +57,18 @@ class SlashCommandRouter:
             return self._overview(context)
         if command == "dashboard":
             return self._overview(context)
+        if command == "evidence":
+            return self._evidence(rest, context)
+        if command == "release":
+            return self._release(rest, context)
+        if command == "lane":
+            return self._lane(rest, context)
+        if command == "freeze":
+            return self._freeze(rest, context)
         if command == "god":
             return self._god(rest, context)
+        if command == "room":
+            return self._room(rest, context)
         if command == "archive":
             context.screen.action_toggle_archive()
             return SlashCommandResult(True)
@@ -333,17 +345,310 @@ class SlashCommandRouter:
             ),
         )
 
+    def _evidence(self, rest: str, context: SlashCommandContext) -> SlashCommandResult:
+        conv_id = _active_conversation_id(context)
+        if not conv_id:
+            return SlashCommandResult(True, message="No active group.")
+        action = rest.strip() or "transcript"
+        if action not in {"transcript", "github", "memory", "blockers"}:
+            return SlashCommandResult(
+                True,
+                message="Usage: /evidence <transcript|github|memory|blockers>",
+            )
+        runner = getattr(context.app.adapter, "run_operator_evidence_action", None)
+        if not callable(runner):
+            return SlashCommandResult(
+                True,
+                message="Evidence actions unavailable for this adapter.",
+            )
+        result = runner(action, conv_id)
+        if isinstance(result, dict):
+            _record_official_tui_command_event(
+                context,
+                command=f"/evidence {action}",
+                conversation_id=conv_id,
+                read_surface_authority="operator_evidence_action",
+            )
+        return SlashCommandResult(
+            True,
+            refresh=True,
+            message=_evidence_action_block(result if isinstance(result, dict) else {}),
+        )
+
+    def _release(self, rest: str, context: SlashCommandContext) -> SlashCommandResult:
+        conv_id = _active_conversation_id(context)
+        if not conv_id:
+            return SlashCommandResult(True, message="No active group.")
+        try:
+            parts = shlex.split(rest)
+        except ValueError as exc:
+            return SlashCommandResult(True, message=f"Invalid /release command: {exc}")
+        payload: dict[str, Any] = {}
+        if parts and parts[0] in {"pack", "evidence-pack", "evidence"}:
+            try:
+                payload = _release_pack_payload(parts[1:])
+            except ValueError as exc:
+                return SlashCommandResult(True, message=str(exc))
+            action = "capture_release_evidence_pack"
+            command = "/release pack"
+        elif parts in (["refresh"], ["status"], ["live-gate-status"]):
+            action = "refresh_live_gate_status"
+            command = "/release refresh"
+        elif parts and parts[0] in {"candidates", "candidate", "inspect"}:
+            try:
+                payload = _release_candidates_payload(parts[1:])
+            except ValueError as exc:
+                return SlashCommandResult(True, message=str(exc))
+            action = "inspect_release_evidence_candidates"
+            command = "/release candidates"
+        elif parts and parts[0] in {"attempt", "run", "try"}:
+            try:
+                payload = _release_attempt_payload(parts[1:])
+            except ValueError as exc:
+                return SlashCommandResult(True, message=str(exc))
+            action = "attempt_release_evidence"
+            command = "/release attempt"
+        elif len(parts) >= 2 and parts[0] == "export":
+            try:
+                action, payload = _release_export_action(parts[1:])
+            except ValueError as exc:
+                return SlashCommandResult(True, message=str(exc))
+            command = f"/release export {parts[1]}"
+        else:
+            return SlashCommandResult(
+                True,
+                message="Usage: /release <refresh|pack|candidates|attempt|export>",
+            )
+        runner = getattr(context.app.adapter, "run_operator_control_action", None)
+        if not callable(runner):
+            return SlashCommandResult(
+                True,
+                message="Operator control actions unavailable for this adapter.",
+            )
+        result = runner(action, conv_id, payload)
+        if isinstance(result, dict):
+            _record_official_tui_command_event(
+                context,
+                command=command,
+                conversation_id=conv_id,
+                read_surface_authority="operator_action_contract",
+            )
+        return SlashCommandResult(
+            True,
+            refresh=True,
+            message=_operator_action_block(result if isinstance(result, dict) else {}),
+        )
+
+    def _lane(self, rest: str, context: SlashCommandContext) -> SlashCommandResult:
+        conv_id = _active_conversation_id(context)
+        if not conv_id:
+            return SlashCommandResult(True, message="No active group.")
+        try:
+            parts = shlex.split(rest)
+        except ValueError as exc:
+            return SlashCommandResult(True, message=f"Invalid /lane command: {exc}")
+        if len(parts) < 3 or parts[0] not in {"retry", "abort"}:
+            return SlashCommandResult(
+                True,
+                message=(
+                    "Usage: /lane retry <lane_id> <current_status> [reason] | "
+                    "/lane abort <lane_id> <current_status> [reason]"
+                ),
+            )
+        runner = getattr(context.app.adapter, "run_operator_control_action", None)
+        if not callable(runner):
+            return SlashCommandResult(
+                True,
+                message="Operator control actions unavailable for this adapter.",
+            )
+        verb = parts[0]
+        lane_id = parts[1]
+        current_status = parts[2]
+        reason = " ".join(parts[3:]).strip()
+        action = "retry_lane" if verb == "retry" else "abort_lane"
+        payload = {
+            "lane_id": lane_id,
+            "current_status": current_status,
+        }
+        if reason:
+            payload["reason"] = reason
+        result = runner(action, conv_id, payload)
+        if isinstance(result, dict):
+            _record_official_tui_command_event(
+                context,
+                command=f"/lane {verb} {lane_id}",
+                conversation_id=conv_id,
+                read_surface_authority="operator_action_contract",
+            )
+        return SlashCommandResult(
+            True,
+            refresh=True,
+            message=_operator_action_block(result if isinstance(result, dict) else {}),
+        )
+
+    def _freeze(self, rest: str, context: SlashCommandContext) -> SlashCommandResult:
+        conv_id = _active_conversation_id(context)
+        if not conv_id:
+            return SlashCommandResult(True, message="No active group.")
+        runner = getattr(context.app.adapter, "run_operator_control_action", None)
+        if not callable(runner):
+            return SlashCommandResult(
+                True,
+                message="Operator control actions unavailable for this adapter.",
+            )
+        try:
+            parts = shlex.split(rest)
+            payload = _freeze_payload(parts)
+        except ValueError as exc:
+            return SlashCommandResult(True, message=str(exc))
+        result = runner("freeze_blueprint", conv_id, payload)
+        if isinstance(result, dict):
+            _record_official_tui_command_event(
+                context,
+                command="/freeze",
+                conversation_id=conv_id,
+                read_surface_authority="operator_action_contract",
+            )
+        return SlashCommandResult(
+            True,
+            refresh=True,
+            message=_operator_action_block(result if isinstance(result, dict) else {}),
+        )
+
+    def _room(self, rest: str, context: SlashCommandContext) -> SlashCommandResult:
+        conv_id = _active_conversation_id(context)
+        if not conv_id:
+            return SlashCommandResult(True, message="No active group.")
+        try:
+            parts = shlex.split(rest)
+        except ValueError as exc:
+            return SlashCommandResult(True, message=f"Invalid /room command: {exc}")
+        if not parts:
+            return SlashCommandResult(True, message=_room_usage())
+        subcommand = parts[0].strip().lower().replace("_", "-")
+        try:
+            action_label, result = self._run_room_subcommand(
+                subcommand,
+                parts[1:],
+                conv_id,
+                context,
+            )
+        except ValueError as exc:
+            return SlashCommandResult(True, message=str(exc))
+        if isinstance(result, dict):
+            _record_official_tui_command_event(
+                context,
+                command=f"/room {action_label}",
+                conversation_id=conv_id,
+                read_surface_authority="god_room_chat_api",
+            )
+        return SlashCommandResult(
+            True,
+            refresh=True,
+            message=_god_room_action_block(
+                action_label,
+                result if isinstance(result, dict) else {},
+            ),
+        )
+
+    def _run_room_subcommand(
+        self,
+        subcommand: str,
+        args: list[str],
+        conv_id: str,
+        context: SlashCommandContext,
+    ) -> tuple[str, dict[str, Any] | None]:
+        if subcommand == "ensure":
+            runner = getattr(context.app.adapter, "ensure_god_room", None)
+            if not callable(runner):
+                raise ValueError("GOD room contract actions unavailable for this adapter.")
+            return "ensure", runner(conv_id)
+        if subcommand == "snapshot":
+            runner = getattr(context.app.adapter, "get_god_room_snapshot", None)
+            if not callable(runner):
+                raise ValueError("GOD room contract actions unavailable for this adapter.")
+            return "snapshot", runner(conv_id)
+        if subcommand == "event":
+            runner = getattr(context.app.adapter, "append_god_room_event", None)
+            if not callable(runner):
+                raise ValueError("GOD room contract actions unavailable for this adapter.")
+            return "event", runner(conv_id, _room_event_payload(args, conv_id))
+        if subcommand == "freeze":
+            runner = getattr(context.app.adapter, "freeze_god_room_blueprint", None)
+            if not callable(runner):
+                raise ValueError("GOD room contract actions unavailable for this adapter.")
+            payload = _room_freeze_payload(args)
+            return "freeze", runner(
+                conv_id,
+                blueprint_id=str(payload["blueprint_id"]),
+                revision=int(payload["revision"]),
+            )
+        if subcommand in {"lane-dag", "lanedag"}:
+            runner = getattr(context.app.adapter, "build_god_room_lane_dag", None)
+            if not callable(runner):
+                raise ValueError("GOD room contract actions unavailable for this adapter.")
+            return "lane-dag", runner(conv_id, _room_lane_dag_payload(args))
+        if subcommand in {"recovery", "lane-recovery"}:
+            runner = getattr(context.app.adapter, "evaluate_god_room_lane_recovery", None)
+            if not callable(runner):
+                raise ValueError("GOD room contract actions unavailable for this adapter.")
+            return "recovery", runner(conv_id, _room_recovery_payload(args))
+        if subcommand in {"memoryos", "memory", "memoryos-plan"}:
+            runner = getattr(context.app.adapter, "build_god_room_memoryos_plan", None)
+            if not callable(runner):
+                raise ValueError("GOD room contract actions unavailable for this adapter.")
+            return "memoryos-plan", runner(conv_id, _room_memoryos_plan_payload(args))
+        if subcommand in {"speaker-attempt", "speak-attempt", "speaker"}:
+            runner = getattr(context.app.adapter, "build_god_room_speaker_attempt", None)
+            if not callable(runner):
+                raise ValueError("GOD room contract actions unavailable for this adapter.")
+            return "speaker-attempt", runner(conv_id, _room_speaker_attempt_payload(args))
+        if subcommand in {"speaker-response", "speak-response", "response"}:
+            runner = getattr(
+                context.app.adapter,
+                "capture_god_room_speaker_response",
+                None,
+            )
+            if not callable(runner):
+                raise ValueError("GOD room contract actions unavailable for this adapter.")
+            return "speaker-response", runner(
+                conv_id,
+                _room_speaker_response_payload(args),
+            )
+        raise ValueError(_room_usage())
+
     def _god(self, rest: str, context: SlashCommandContext) -> SlashCommandResult:
         try:
             parts = shlex.split(rest)
         except ValueError as exc:
             return SlashCommandResult(True, message=f"Invalid /god command: {exc}")
-        if len(parts) < 2 or parts[0] not in {"add", "rm"}:
+        if not parts or parts[0] not in {"add", "rm", "register", "select"}:
             return SlashCommandResult(
                 True,
                 message=(
                     "Usage: /god add <role> [display name] | "
-                    "/god rm <role|participant_id>"
+                    "/god rm <role|participant_id> | /god register <key=value...> | "
+                    "/god select <cli_id>"
+                ),
+            )
+        if parts[0] == "register":
+            if len(parts) < 2:
+                return SlashCommandResult(
+                    True,
+                    message="Usage: /god register <key=value...>",
+                )
+            return self._god_register(parts[1:], context)
+        if parts[0] == "select":
+            if len(parts) < 2:
+                return SlashCommandResult(True, message="Usage: /god select <cli_id>")
+            return self._god_select(parts[1:], context)
+        if len(parts) < 2:
+            return SlashCommandResult(
+                True,
+                message=(
+                    "Usage: /god add <role> [display name] | "
+                    "/god rm <role|participant_id> | /god register <key=value...> | "
+                    "/god select <cli_id>"
                 ),
             )
         if parts[0] == "add":
@@ -385,6 +690,495 @@ class SlashCommandRouter:
             return SlashCommandResult(True, message=f"Could not remove GOD {target}.")
         _refresh_participants(context, conv_id)
         return SlashCommandResult(True, refresh=True, message=f"Removed GOD {target}.")
+
+    def _god_register(
+        self,
+        args: list[str],
+        context: SlashCommandContext,
+    ) -> SlashCommandResult:
+        conv_id = _active_conversation_id(context)
+        if not conv_id:
+            return SlashCommandResult(True, message="No active group.")
+        runner = getattr(context.app.adapter, "run_operator_control_action", None)
+        if not callable(runner):
+            return SlashCommandResult(
+                True,
+                message="Operator control actions unavailable for this adapter.",
+            )
+        try:
+            payload = _god_registration_payload(args)
+        except ValueError as exc:
+            return SlashCommandResult(True, message=str(exc))
+        result = runner("register_god_cli", conv_id, payload)
+        if isinstance(result, dict):
+            cli_id = str(payload.get("cli_id") or "")
+            _record_official_tui_command_event(
+                context,
+                command=f"/god register {cli_id}",
+                conversation_id=conv_id,
+                read_surface_authority="operator_action_contract",
+            )
+        return SlashCommandResult(
+            True,
+            refresh=True,
+            message=_operator_action_block(result if isinstance(result, dict) else {}),
+        )
+
+    def _god_select(self, args: list[str], context: SlashCommandContext) -> SlashCommandResult:
+        conv_id = _active_conversation_id(context)
+        if not conv_id:
+            return SlashCommandResult(True, message="No active group.")
+        runner = getattr(context.app.adapter, "run_operator_control_action", None)
+        if not callable(runner):
+            return SlashCommandResult(
+                True,
+                message="Operator control actions unavailable for this adapter.",
+            )
+        cli_id = args[0]
+        result = runner("select_god_cli", conv_id, {"cli_id": cli_id})
+        if isinstance(result, dict):
+            _record_official_tui_command_event(
+                context,
+                command=f"/god select {cli_id}",
+                conversation_id=conv_id,
+                read_surface_authority="operator_action_contract",
+            )
+        return SlashCommandResult(
+            True,
+            refresh=True,
+            message=_operator_action_block(result if isinstance(result, dict) else {}),
+        )
+
+
+def _room_usage() -> str:
+    return (
+        "Usage: /room <ensure|snapshot|event|freeze|lane-dag|recovery|"
+        "memoryos-plan|speaker-attempt|speaker-response> [key=value...]"
+    )
+
+
+def _room_event_payload(args: list[str], conv_id: str) -> dict[str, Any]:
+    raw = _key_value_args(args, usage=_room_event_usage())
+    aliases = {
+        "type": "event_type",
+        "source": "source_refs",
+        "source_ref": "source_refs",
+        "sources": "source_refs",
+        "target": "target_participant_ids",
+        "targets": "target_participant_ids",
+        "target_participant": "target_participant_ids",
+        "target_participant_id": "target_participant_ids",
+        "timestamp": "timestamp_utc",
+        "parent": "causal_parent_id",
+    }
+    list_keys = {"source_refs", "target_participant_ids"}
+    payload: dict[str, Any] = {
+        "schema_version": "xmuse.god_room_event.v1",
+        "event_id": f"tui-room-event-{uuid4().hex}",
+        "room_id": f"god-room:{conv_id}",
+        "conversation_id": conv_id,
+        "actor_kind": "operator",
+        "timestamp_utc": _room_utc_now(),
+    }
+    for key, value in raw.items():
+        normalized_key = aliases.get(key, key)
+        if normalized_key in list_keys:
+            payload[normalized_key] = _comma_values(value)
+        else:
+            payload[normalized_key] = value
+    required = ("participant_id", "god_id", "event_type", "content", "source_refs")
+    missing = [
+        key
+        for key in required
+        if not payload.get(key)
+    ]
+    if missing:
+        raise ValueError(f"{_room_event_usage()} Missing: {', '.join(missing)}")
+    return payload
+
+
+def _room_event_usage() -> str:
+    return (
+        "Usage: /room event participant_id=<id> god_id=<id> type=<speak|question|"
+        "challenge|handoff|freeze_requested> content=<text> source_ref=<ref> "
+        "[event_id=<id>] [target=<participant_ids>] [timestamp=<utc>]"
+    )
+
+
+def _room_freeze_payload(args: list[str]) -> dict[str, Any]:
+    raw = _key_value_args(
+        args,
+        usage="Usage: /room freeze blueprint_id=<id> [revision=<n>]",
+    )
+    blueprint_id = raw.get("blueprint_id") or raw.get("id")
+    if not blueprint_id:
+        raise ValueError("Usage: /room freeze blueprint_id=<id> [revision=<n>]")
+    return {
+        "blueprint_id": blueprint_id,
+        "revision": int(raw.get("revision", "1")),
+    }
+
+
+def _room_lane_dag_payload(args: list[str]) -> dict[str, Any]:
+    raw = _key_value_args(args, usage=_room_lane_dag_usage())
+    blueprint_refs = _comma_values(raw.get("blueprint_ref") or raw.get("blueprint_refs") or "")
+    source_refs = _comma_values(raw.get("source_ref") or raw.get("source_refs") or "")
+    payload: dict[str, Any] = {
+        "resolution_id": raw.get("resolution_id") or raw.get("resolution") or "",
+        "graph_id": raw.get("graph_id") or raw.get("graph") or "",
+        "features": [
+            {
+                "feature_id": raw.get("feature_id") or "",
+                "title": raw.get("feature_title") or raw.get("title") or "",
+                "goal": raw.get("feature_goal") or raw.get("goal") or "",
+                "acceptance_criteria": _comma_values(
+                    raw.get("feature_acceptance")
+                    or raw.get("feature_acceptance_criteria")
+                    or ""
+                ),
+                "blueprint_refs": blueprint_refs,
+            }
+        ],
+        "lanes": [
+            {
+                "lane_id": raw.get("lane_id") or "",
+                "feature_id": raw.get("feature_id") or "",
+                "title": raw.get("lane_title") or "",
+                "prompt": raw.get("prompt") or "",
+                "acceptance_criteria": _comma_values(
+                    raw.get("lane_acceptance")
+                    or raw.get("lane_acceptance_criteria")
+                    or ""
+                ),
+                "blueprint_refs": blueprint_refs,
+                "owner": raw.get("owner") or "codex",
+                "inputs": _comma_values(raw.get("input") or raw.get("inputs") or ""),
+                "outputs": _comma_values(raw.get("output") or raw.get("outputs") or ""),
+                "required_checks": _comma_values(
+                    raw.get("check") or raw.get("required_checks") or ""
+                ),
+                "allowed_files": _comma_values(
+                    raw.get("allowed_file") or raw.get("allowed_files") or ""
+                ),
+                "rollback_constraints": _comma_values(
+                    raw.get("rollback") or raw.get("rollback_constraints") or ""
+                ),
+                "review_profile": raw.get("review_profile") or "standard",
+            }
+        ],
+        "source_refs": source_refs,
+    }
+    if raw.get("graph_version"):
+        payload["graph_version"] = int(raw["graph_version"])
+    missing = _missing_room_lane_dag_fields(payload)
+    if missing:
+        raise ValueError(f"{_room_lane_dag_usage()} Missing: {', '.join(missing)}")
+    return payload
+
+
+def _room_lane_dag_usage() -> str:
+    return (
+        "Usage: /room lane-dag resolution_id=<id> graph_id=<id> "
+        "feature_id=<id> feature_title=<title> feature_goal=<goal> "
+        "feature_acceptance=<items> blueprint_ref=<ref> lane_id=<id> "
+        "lane_title=<title> prompt=<prompt> lane_acceptance=<items> "
+        "owner=<god> output=<artifact> check=<command> "
+        "allowed_file=<path> rollback=<constraint> source_ref=<ref>"
+    )
+
+
+def _missing_room_lane_dag_fields(payload: dict[str, Any]) -> list[str]:
+    missing: list[str] = []
+    for key in ("resolution_id", "graph_id", "source_refs"):
+        if not payload.get(key):
+            missing.append(key)
+    feature = payload["features"][0]
+    for key in ("feature_id", "title", "goal", "acceptance_criteria", "blueprint_refs"):
+        if not feature.get(key):
+            missing.append(f"feature.{key}")
+    lane = payload["lanes"][0]
+    for key in (
+        "lane_id",
+        "feature_id",
+        "title",
+        "prompt",
+        "acceptance_criteria",
+        "blueprint_refs",
+        "owner",
+        "outputs",
+        "required_checks",
+        "allowed_files",
+        "rollback_constraints",
+        "review_profile",
+    ):
+        if not lane.get(key):
+            missing.append(f"lane.{key}")
+    return missing
+
+
+def _room_recovery_payload(args: list[str]) -> dict[str, Any]:
+    raw = _key_value_args(args, usage=_room_recovery_usage())
+    graph_id = raw.get("graph_id") or raw.get("graph") or ""
+    lane_id = raw.get("lane_id") or raw.get("lane") or ""
+    payload: dict[str, Any] = {
+        "graph_id": graph_id,
+        "lane_id": lane_id,
+        "failures": [],
+    }
+    if raw.get("runtime_seconds"):
+        payload["runtime_seconds"] = int(raw["runtime_seconds"])
+    failure_class = raw.get("failure_class") or raw.get("class")
+    reason = raw.get("reason")
+    source_refs = _comma_values(raw.get("source_ref") or raw.get("source_refs") or "")
+    if failure_class or reason or source_refs:
+        failure = {
+            "lane_id": lane_id,
+            "attempt": int(raw.get("attempt", "1")),
+            "failure_class": failure_class or "",
+            "reason": reason or "",
+            "source_refs": source_refs,
+        }
+        if raw.get("occurred_at_utc") or raw.get("occurred"):
+            failure["occurred_at_utc"] = raw.get("occurred_at_utc") or raw.get("occurred")
+        payload["failures"] = [failure]
+    missing = _missing_room_recovery_fields(payload)
+    if missing:
+        raise ValueError(f"{_room_recovery_usage()} Missing: {', '.join(missing)}")
+    return payload
+
+
+def _room_recovery_usage() -> str:
+    return (
+        "Usage: /room recovery graph_id=<id> lane_id=<id> "
+        "[attempt=<n> failure_class=<class> reason=<reason> source_ref=<ref>] "
+        "[runtime_seconds=<n>]"
+    )
+
+
+def _missing_room_recovery_fields(payload: dict[str, Any]) -> list[str]:
+    missing = [key for key in ("graph_id", "lane_id") if not payload.get(key)]
+    failures = payload.get("failures")
+    if isinstance(failures, list) and failures:
+        failure = failures[0]
+        if isinstance(failure, dict):
+            for key in ("attempt", "failure_class", "reason", "source_refs"):
+                if not failure.get(key):
+                    missing.append(f"failure.{key}")
+    return missing
+
+
+def _room_memoryos_plan_payload(args: list[str]) -> dict[str, Any]:
+    raw = _key_value_args(
+        args,
+        usage=(
+            "Usage: /room memoryos-plan graph_id=<id> repo_id=<repo> "
+            "workspace_id=<id> [context_budget=<n>]"
+        ),
+    )
+    aliases = {
+        "graph": "graph_id",
+        "repo": "repo_id",
+        "workspace": "workspace_id",
+        "budget": "context_budget",
+    }
+    payload: dict[str, Any] = {}
+    for key, value in raw.items():
+        normalized_key = aliases.get(key, key)
+        if normalized_key == "context_budget":
+            payload[normalized_key] = int(value)
+        else:
+            payload[normalized_key] = value
+    required = ("graph_id", "repo_id", "workspace_id")
+    missing = [key for key in required if not payload.get(key)]
+    if missing:
+        raise ValueError(
+            "Usage: /room memoryos-plan graph_id=<id> repo_id=<repo> "
+            "workspace_id=<id> [context_budget=<n>]"
+        )
+    return payload
+
+
+def _room_speaker_attempt_payload(args: list[str]) -> dict[str, Any]:
+    raw = _key_value_args(
+        args,
+        usage="Usage: /room speaker-attempt [after_event_id=<event_id>]",
+    )
+    aliases = {
+        "event": "after_event_id",
+        "event_id": "after_event_id",
+        "after": "after_event_id",
+    }
+    payload: dict[str, Any] = {}
+    for key, value in raw.items():
+        payload[aliases.get(key, key)] = value
+    return payload
+
+
+def _room_speaker_response_payload(args: list[str]) -> dict[str, Any]:
+    usage = (
+        "Usage: /room speaker-response after_event_id=<event_id> "
+        "event_id=<event_id> response_id=<id> target=<participant_id> "
+        "provider_profile=<ref> provider_session=<id> content=<text> "
+        "source_ref=<ref> proof_level=<proof_level> "
+        "provider_response_artifact=<path> [status=completed]"
+    )
+    raw = _key_value_args(args, usage=usage)
+    aliases = {
+        "event": "after_event_id",
+        "after": "after_event_id",
+        "timestamp": "timestamp_utc",
+        "response": "response_id",
+        "target": "target_participant_id",
+        "provider_profile": "provider_profile_ref",
+        "profile": "provider_profile_ref",
+        "provider_session": "provider_session_id",
+        "session": "provider_session_id",
+        "session_kind": "provider_session_kind",
+        "artifact": "provider_response_artifact",
+        "response_artifact": "provider_response_artifact",
+        "source": "source_refs",
+        "source_ref": "source_refs",
+    }
+    payload: dict[str, Any] = {}
+    provider_response: dict[str, Any] = {
+        "status": "completed",
+    }
+    for key, value in raw.items():
+        normalized_key = aliases.get(key, key)
+        if normalized_key in {
+            "after_event_id",
+            "event_id",
+            "timestamp_utc",
+            "provider_response_artifact",
+        }:
+            payload[normalized_key] = value
+            continue
+        if normalized_key == "source_refs":
+            provider_response[normalized_key] = _comma_values(value)
+            continue
+        provider_response[normalized_key] = value
+    required = (
+        "response_id",
+        "target_participant_id",
+        "provider_profile_ref",
+        "provider_session_id",
+        "content",
+        "source_refs",
+        "proof_level",
+    )
+    missing = [key for key in required if not provider_response.get(key)]
+    if not payload.get("provider_response_artifact"):
+        missing.append("provider_response_artifact")
+    if missing:
+        raise ValueError(usage)
+    payload["provider_response"] = provider_response
+    return payload
+
+
+def _god_room_action_block(action: str, result: dict) -> str:
+    if "status" in result and "proof_level" in result:
+        return _operator_action_block(result)
+    lines = [f"GOD room action: {action}"]
+    authority = _god_room_source_authority(result)
+    if authority:
+        lines.append(f"authority={authority}")
+    append_status = str(result.get("append_status") or "").strip()
+    if append_status:
+        lines.append(f"append_status={append_status}")
+    event = result.get("event")
+    if isinstance(event, dict) and event.get("event_id"):
+        lines.append(f"event={event['event_id']}")
+    room = result.get("room")
+    if isinstance(room, dict):
+        event_count = room.get("event_count")
+        if event_count is not None:
+            lines.append(f"room_events={event_count}")
+    blueprint = result.get("blueprint")
+    if isinstance(blueprint, dict) and blueprint.get("blueprint_id"):
+        lines.append(f"blueprint={blueprint['blueprint_id']}")
+    lane_dag = result.get("lane_dag")
+    if isinstance(lane_dag, dict):
+        graph_id = str(lane_dag.get("graph_id") or lane_dag.get("id") or "").strip()
+        lane_graph = lane_dag.get("lane_graph")
+        if not graph_id and isinstance(lane_graph, dict):
+            graph_id = str(lane_graph.get("id") or "").strip()
+        if graph_id:
+            lines.append(f"graph={graph_id}")
+        contracts = lane_dag.get("lane_contracts")
+        if isinstance(contracts, list):
+            lines.append(f"lane_contracts={len(contracts)}")
+    decision = result.get("decision")
+    if isinstance(decision, dict) and decision.get("decision"):
+        lines.append(f"decision={decision['decision']}")
+        if decision.get("retry_allowed") is not None:
+            lines.append(f"retry_allowed={decision['retry_allowed']}")
+    memoryos_plan = result.get("memoryos_plan")
+    if isinstance(memoryos_plan, dict):
+        live_trace = memoryos_plan.get("live_trace")
+        if isinstance(live_trace, dict) and live_trace.get("status"):
+            lines.append(f"memoryos_live_trace={live_trace['status']}")
+    speaker_attempt = result.get("speaker_attempt")
+    if isinstance(speaker_attempt, dict):
+        status = str(speaker_attempt.get("status") or "").strip()
+        if status:
+            lines.append(f"speaker_attempt={status}")
+        target = str(speaker_attempt.get("target_participant_id") or "").strip()
+        if target:
+            lines.append(f"target={target}")
+        provider_session = str(speaker_attempt.get("provider_session_id") or "").strip()
+        if provider_session:
+            lines.append(f"provider_session={provider_session}")
+        blocked_reason = str(speaker_attempt.get("blocked_reason") or "").strip()
+        if blocked_reason:
+            lines.append(f"blocked_reason={blocked_reason}")
+    speaker_response = result.get("speaker_response")
+    if isinstance(speaker_response, dict):
+        status = str(speaker_response.get("status") or "").strip()
+        if status:
+            lines.append(f"speaker_response={status}")
+        append_status = str(speaker_response.get("append_status") or "").strip()
+        if append_status:
+            lines.append(f"append_status={append_status}")
+        speak_event = speaker_response.get("speak_event")
+        if isinstance(speak_event, dict):
+            speak_event_id = str(speak_event.get("event_id") or "").strip()
+            if speak_event_id:
+                lines.append(f"speak_event={speak_event_id}")
+        provider_response = speaker_response.get("provider_response")
+        if isinstance(provider_response, dict):
+            response_id = str(provider_response.get("response_id") or "").strip()
+            if response_id:
+                lines.append(f"provider_response={response_id}")
+        blocked_reason = str(speaker_response.get("blocked_reason") or "").strip()
+        if blocked_reason:
+            lines.append(f"blocked_reason={blocked_reason}")
+    artifacts = result.get("artifacts")
+    if isinstance(artifacts, dict):
+        artifact_refs = [
+            str(value)
+            for value in artifacts.values()
+            if isinstance(value, str) and value.strip()
+        ]
+        if artifact_refs:
+            lines.append(f"artifacts={', '.join(artifact_refs[:4])}")
+    return "\n".join(lines)
+
+
+def _god_room_source_authority(result: dict) -> str:
+    direct = str(result.get("source_authority") or "").strip()
+    if direct:
+        return direct
+    for key in ("room", "snapshot", "memoryos_plan", "speaker_attempt", "speaker_response"):
+        value = result.get(key)
+        if isinstance(value, dict):
+            authority = str(value.get("source_authority") or "").strip()
+            if authority:
+                return authority
+    return ""
+
+
+def _room_utc_now() -> str:
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 def _session_rows(app: Any) -> list[dict]:
@@ -507,6 +1301,404 @@ def _record_resume_command_event_if_available(
         )
 
 
+def _god_registration_payload(args: list[str]) -> dict[str, Any]:
+    raw = _key_value_args(args)
+    if not raw:
+        raise ValueError("Usage: /god register <key=value...>")
+    aliases = {
+        "id": "cli_id",
+        "display": "display_name",
+        "command": "command_family",
+        "family": "command_family",
+        "profile": "provider_profile_ref",
+        "proof": "proof_level",
+        "persistent": "supports_persistent_sessions",
+        "mcp": "supports_mcp_writeback",
+        "mcp_writeback": "supports_mcp_writeback",
+        "state_write": "state_write_allowed",
+        "speech": "allowed_speech_acts",
+        "proof_ref": "proof_refs",
+    }
+    payload: dict[str, Any] = {}
+    list_keys = {"capabilities", "allowed_speech_acts", "proof_refs"}
+    bool_keys = {
+        "supports_persistent_sessions",
+        "supports_mcp_writeback",
+        "state_write_allowed",
+    }
+    for key, value in raw.items():
+        normalized_key = aliases.get(key, key)
+        if normalized_key in list_keys:
+            payload[normalized_key] = _comma_values(value)
+        elif normalized_key in bool_keys:
+            payload[normalized_key] = _bool_arg(value)
+        else:
+            payload[normalized_key] = value
+    return payload
+
+
+def _freeze_payload(args: list[str]) -> dict[str, Any]:
+    raw = _key_value_args(args)
+    if not raw:
+        raise ValueError(
+            "Usage: /freeze target_ref=<ref> blueprint_id=<id> "
+            "goal=<goal> scope=<items> acceptance=<items>"
+        )
+    aliases = {
+        "target": "target_ref",
+        "id": "blueprint_id",
+        "acceptance": "acceptance_contracts",
+        "acceptance_contract": "acceptance_contracts",
+        "repo_area": "repo_areas",
+        "source_ref": "source_refs",
+        "required": "required_commits",
+        "commits": "required_commits",
+        "window": "objection_window_lamports",
+    }
+    list_keys = {
+        "scope",
+        "constraints",
+        "non_goals",
+        "acceptance_contracts",
+        "repo_areas",
+        "open_questions",
+        "source_refs",
+    }
+    int_keys = {"revision", "required_commits", "objection_window_lamports"}
+    top_level_keys = {"target_ref", "required_commits", "objection_window_lamports"}
+    payload: dict[str, Any] = {}
+    blueprint: dict[str, Any] = {}
+    for key, value in raw.items():
+        normalized_key = aliases.get(key, key)
+        if normalized_key in int_keys:
+            parsed: Any = int(value)
+        elif normalized_key in list_keys:
+            parsed = _comma_values(value)
+        else:
+            parsed = value
+        if normalized_key in top_level_keys:
+            payload[normalized_key] = parsed
+        else:
+            blueprint[normalized_key] = parsed
+    if "target_ref" not in payload or not blueprint:
+        raise ValueError(
+            "Usage: /freeze target_ref=<ref> blueprint_id=<id> "
+            "goal=<goal> scope=<items> acceptance=<items>"
+        )
+    payload["blueprint"] = blueprint
+    return payload
+
+
+def _release_export_action(args: list[str]) -> tuple[str, dict[str, Any]]:
+    usage = (
+        "Usage: /release export <natural|provider|memoryos|github|god-runtime> "
+        "<key=value...>"
+    )
+    if not args:
+        raise ValueError(usage)
+    target = args[0].strip().lower().replace("-", "_")
+    raw = _key_value_args(args[1:], usage=usage) if len(args) > 1 else {}
+    if target in {"natural", "transcript", "natural_transcript"}:
+        return (
+            "export_natural_deliberation_transcript",
+            _normalize_release_export_payload(
+                raw,
+                aliases={
+                    "output": "output_path",
+                    "artifact": "output_path",
+                    "gate": "gate_output_path",
+                    "gate_output": "gate_output_path",
+                    "source_ref": "source_refs",
+                    "target_ref": "target_refs",
+                    "target": "target_refs",
+                    "runtime": "god_runtime",
+                    "runtime_output": "god_runtime_output_path",
+                    "god_runtime_output": "god_runtime_output_path",
+                    "ttl": "heartbeat_ttl_seconds",
+                    "heartbeat_ttl": "heartbeat_ttl_seconds",
+                },
+                list_keys={"source_refs", "target_refs"},
+                int_keys={"heartbeat_ttl_seconds"},
+            ),
+        )
+    if target in {"provider", "real_provider", "runtime", "soak"}:
+        if not raw:
+            raise ValueError(usage)
+        return (
+            "export_real_provider_runtime_soak",
+            _normalize_release_export_payload(
+                raw,
+                aliases={
+                    "fresh": "fresh_inbox_item_id",
+                    "fresh_inbox": "fresh_inbox_item_id",
+                    "resume": "resume_inbox_item_id",
+                    "resume_inbox": "resume_inbox_item_id",
+                    "backend": "runtime_backend",
+                    "runtime": "runtime_backend",
+                    "output": "output_path",
+                    "artifact": "output_path",
+                    "gate": "gate_output_path",
+                    "gate_output": "gate_output_path",
+                    "source_ref": "source_refs",
+                },
+                list_keys={"source_refs"},
+            ),
+        )
+    if target in {"memoryos", "memory", "live_memoryos"}:
+        if not raw:
+            raise ValueError(usage)
+        return (
+            "export_memoryos_live_trace",
+            _normalize_release_export_payload(
+                raw,
+                aliases={
+                    "output": "output_path",
+                    "artifact": "output_path",
+                    "gate": "gate_output_path",
+                    "gate_output": "gate_output_path",
+                    "source_ref": "source_refs",
+                    "binding_store": "binding_store_path",
+                },
+                list_keys={"source_refs"},
+                int_keys={"budget"},
+            ),
+        )
+    if target in {"github", "github_truth", "github_server_truth"}:
+        if not raw:
+            raise ValueError(usage)
+        return (
+            "export_github_server_truth",
+            _normalize_release_export_payload(
+                raw,
+                aliases={
+                    "repository": "repo",
+                    "pull_request": "pull_request_number",
+                    "pr": "pull_request_number",
+                    "base": "base_branch",
+                    "branch": "base_branch",
+                    "check": "required_checks",
+                    "required_check": "required_checks",
+                    "expected_head": "expected_head_sha",
+                    "head": "expected_head_sha",
+                    "output": "output_path",
+                    "artifact": "output_path",
+                    "gate": "gate_output_path",
+                    "gate_output": "gate_output_path",
+                    "review": "internal_review_artifact",
+                    "internal_review": "internal_review_artifact",
+                    "reviewer": "internal_reviewer",
+                    "reviewed_head": "internal_reviewed_head_sha",
+                },
+                list_keys={"required_checks"},
+                int_keys={"pull_request_number"},
+            ),
+        )
+    if target in {
+        "god",
+        "god_runtime",
+        "god_runtime_continuity",
+        "selected_god_runtime",
+    }:
+        return (
+            "export_god_runtime_continuity",
+            _normalize_release_export_payload(
+                raw,
+                aliases={
+                    "output": "output_path",
+                    "artifact": "output_path",
+                    "now": "now_utc",
+                    "at": "now_utc",
+                    "ttl": "heartbeat_ttl_seconds",
+                    "heartbeat_ttl": "heartbeat_ttl_seconds",
+                    "heartbeat_ttl_seconds": "heartbeat_ttl_seconds",
+                },
+                list_keys=set(),
+                int_keys={"heartbeat_ttl_seconds"},
+            ),
+        )
+    raise ValueError(usage)
+
+
+def _release_pack_payload(args: list[str]) -> dict[str, Any]:
+    raw = _key_value_args(
+        args,
+        usage="Usage: /release pack [key=value...]",
+    ) if args else {}
+    return _normalize_release_export_payload(
+        raw,
+        aliases={
+            "artifacts": "artifacts_dir",
+            "output": "output_path",
+            "readiness": "readiness_output",
+            "audit": "audit_output",
+            "github": "github_server_truth",
+            "github_truth": "github_server_truth",
+            "github_snapshot": "github_server_truth",
+            "github_head": "github_expected_head_sha",
+            "expected_head": "github_expected_head_sha",
+            "base_branch": "github_base_branch",
+            "review": "internal_review_artifact",
+            "internal_review": "internal_review_artifact",
+            "review_artifact": "internal_review_artifact",
+            "review_head": "internal_review_expected_head_sha",
+            "internal_review_head": "internal_review_expected_head_sha",
+            "baseline": "production_baseline",
+            "production_baseline": "production_baseline",
+            "s0_baseline": "production_baseline",
+            "stage": "goal_stage_result",
+            "stage_result": "goal_stage_result",
+            "goal_stage_result": "goal_stage_result",
+            "room_participants": "god_room_participants",
+            "god_room_participants": "god_room_participants",
+            "room_events": "god_room_events",
+            "god_room_events": "god_room_events",
+            "room_freeze": "god_room_blueprint_freeze",
+            "room_blueprint_freeze": "god_room_blueprint_freeze",
+            "god_room_blueprint_freeze": "god_room_blueprint_freeze",
+            "room_lane_dag": "god_room_lane_dag",
+            "god_room_lane_dag": "god_room_lane_dag",
+            "room_memory": "god_room_memory_trace",
+            "room_memory_trace": "god_room_memory_trace",
+            "god_room_memory_trace": "god_room_memory_trace",
+            "room_tui": "god_room_tui_projection",
+            "room_tui_projection": "god_room_tui_projection",
+            "god_room_tui_projection": "god_room_tui_projection",
+            "room_speaker_attempt": "god_room_speaker_attempt",
+            "room_speaker": "god_room_speaker_attempt",
+            "god_room_speaker_attempt": "god_room_speaker_attempt",
+            "room_speaker_response": "god_room_speaker_response",
+            "room_response": "god_room_speaker_response",
+            "god_room_speaker_response": "god_room_speaker_response",
+            "room_review_closure": "god_room_review_closure",
+            "god_room_review_closure": "god_room_review_closure",
+            "room_closure_output": "god_room_runtime_closure_evidence_output",
+            "god_room_closure_output": "god_room_runtime_closure_evidence_output",
+            "god_room_runtime_closure_evidence_output": (
+                "god_room_runtime_closure_evidence_output"
+            ),
+        },
+        list_keys=set(),
+    )
+
+
+def _release_candidates_payload(args: list[str]) -> dict[str, Any]:
+    raw = _key_value_args(
+        args,
+        usage="Usage: /release candidates [key=value...]",
+    ) if args else {}
+    return _normalize_release_export_payload(
+        raw,
+        aliases={
+            "source_ref": "source_refs",
+            "target_ref": "target_refs",
+            "target": "target_refs",
+            "repository": "repo",
+            "pull_request": "pull_request_number",
+            "pr": "pull_request_number",
+            "check": "required_checks",
+            "required_check": "required_checks",
+            "expected_head": "expected_head_sha",
+            "head": "expected_head_sha",
+            "base": "base_branch",
+            "branch": "base_branch",
+        },
+        list_keys={"source_refs", "target_refs", "required_checks"},
+        int_keys={"trace_limit", "budget", "pull_request_number"},
+    )
+
+
+def _release_attempt_payload(args: list[str]) -> dict[str, Any]:
+    usage = (
+        "Usage: /release attempt [natural|provider|memoryos|github|all] [key=value...]"
+    )
+    kinds: list[str] = []
+    key_values: list[str] = []
+    for arg in args:
+        if "=" in arg:
+            key_values.append(arg)
+        elif arg.strip():
+            kinds.append(arg.strip().lower().replace("-", "_"))
+    raw = _key_value_args(key_values, usage=usage) if key_values else {}
+    payload = _normalize_release_export_payload(
+        raw,
+        aliases={
+            "source_ref": "source_refs",
+            "target_ref": "target_refs",
+            "target": "target_refs",
+            "backend": "runtime_backend",
+            "runtime": "runtime_backend",
+            "output": "output_path",
+            "artifact": "output_path",
+            "gate": "gate_output_path",
+            "gate_output": "gate_output_path",
+            "report": "report_path",
+            "attempt_report": "attempt_report_path",
+            "binding_store": "binding_store_path",
+            "repository": "repo",
+            "pull_request": "pull_request_number",
+            "pr": "pull_request_number",
+            "check": "required_checks",
+            "required_check": "required_checks",
+            "expected_head": "expected_head_sha",
+            "head": "expected_head_sha",
+            "base": "base_branch",
+            "branch": "base_branch",
+            "review": "internal_review_artifact",
+            "internal_review": "internal_review_artifact",
+            "reviewer": "internal_reviewer",
+            "reviewed_head": "internal_reviewed_head_sha",
+        },
+        list_keys={"source_refs", "target_refs", "required_checks"},
+        int_keys={"trace_limit", "budget", "pull_request_number"},
+    )
+    if kinds:
+        payload["kinds"] = kinds
+    return payload
+
+
+def _normalize_release_export_payload(
+    raw: dict[str, str],
+    *,
+    aliases: dict[str, str],
+    list_keys: set[str],
+    int_keys: set[str] | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    int_key_set = int_keys or set()
+    for key, value in raw.items():
+        normalized_key = aliases.get(key, key)
+        if normalized_key in list_keys:
+            payload[normalized_key] = _comma_values(value)
+        elif normalized_key in int_key_set:
+            payload[normalized_key] = int(value)
+        else:
+            payload[normalized_key] = value
+    return payload
+
+
+def _key_value_args(
+    args: list[str],
+    *,
+    usage: str = "Usage: /god register <key=value...>",
+) -> dict[str, str]:
+    parsed: dict[str, str] = {}
+    for arg in args:
+        key, sep, value = arg.partition("=")
+        clean_key = key.strip().lower().replace("-", "_")
+        if not sep or not clean_key:
+            raise ValueError(usage)
+        parsed[clean_key] = value.strip()
+    return parsed
+
+
+def _comma_values(value: str) -> list[str]:
+    return [part.strip() for part in value.split(",") if part.strip()]
+
+
+def _bool_arg(value: str) -> bool:
+    return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
 def _has_read_surface_section(payload: dict | None, section: str) -> bool:
     if not isinstance(payload, dict):
         return False
@@ -568,6 +1760,204 @@ def _participant_block(participants: list[dict]) -> str:
         participant_id = str(participant.get("participant_id") or participant.get("id") or "?")
         lines.append(f"- {role}: {name} [{status}] model={model} id={participant_id}")
     return "\n".join(lines)
+
+
+def _evidence_action_block(result: dict) -> str:
+    action = str(result.get("action") or "unknown")
+    status = str(result.get("status") or "?")
+    proof = str(result.get("proof_level") or "?")
+    fact = str(result.get("fact_state") or "?")
+    lines = [
+        f"Evidence action: {action}",
+        f"status={status} proof={proof} fact={fact}",
+    ]
+    artifact_path = str(result.get("artifact_path") or "").strip()
+    if artifact_path:
+        lines.append(f"artifact={artifact_path}")
+    manual_gap_reason = str(result.get("manual_gap_reason") or "").strip()
+    if manual_gap_reason:
+        lines.append(f"manual_gap={manual_gap_reason}")
+    source_refs = _inline_refs(result.get("source_refs"))
+    target_refs = _inline_refs(result.get("target_refs"))
+    if source_refs:
+        lines.append(f"sources={source_refs}")
+    if target_refs:
+        lines.append(f"targets={target_refs}")
+    summary = str(result.get("summary") or "").strip()
+    if summary:
+        lines.append(summary)
+    return "\n".join(lines)
+
+
+def _operator_action_block(result: dict) -> str:
+    action = str(result.get("action") or "unknown")
+    status = str(result.get("status") or "?")
+    proof = str(result.get("proof_level") or "?")
+    fact = str(result.get("fact_state") or "?")
+    lines = [
+        f"Operator action: {action}",
+        f"status={status} proof={proof} fact={fact}",
+    ]
+    audit_id = str(result.get("audit_id") or "").strip()
+    if audit_id:
+        lines.append(f"audit={audit_id}")
+    payload = result.get("payload")
+    if isinstance(payload, dict):
+        gates = _gate_status_summary(payload.get("gate_statuses"))
+        if gates:
+            lines.append(f"gates={gates}")
+        blockers = _gate_blocker_summary(payload.get("blockers"))
+        if blockers:
+            lines.append(f"blockers={blockers}")
+        lines.extend(_release_candidate_summary(payload.get("candidates")))
+        lines.extend(_release_attempt_summary(payload.get("attempt")))
+    summary = str(result.get("summary") or "").strip()
+    if summary:
+        lines.append(summary)
+    return "\n".join(lines)
+
+
+def _gate_status_summary(value: object) -> str:
+    if not isinstance(value, list):
+        return ""
+    parts: list[str] = []
+    for item in value[:6]:
+        if not isinstance(item, dict):
+            continue
+        gate_id = str(item.get("gate_id") or "").strip()
+        status = str(item.get("status") or "").strip()
+        proof = str(item.get("proof_level") or "").strip()
+        if gate_id and status and proof:
+            parts.append(f"{gate_id}:{status}/{proof}")
+    return ", ".join(parts)
+
+
+def _gate_blocker_summary(value: object) -> str:
+    if not isinstance(value, list):
+        return ""
+    gate_ids = [
+        str(item.get("gate_id") or "").strip()
+        for item in value[:8]
+        if isinstance(item, dict) and str(item.get("gate_id") or "").strip()
+    ]
+    return ", ".join(gate_ids)
+
+
+def _release_candidate_summary(value: object) -> list[str]:
+    if not isinstance(value, dict):
+        return []
+    lines: list[str] = []
+    natural = value.get("natural_deliberation")
+    if isinstance(natural, dict):
+        conversations = natural.get("conversations")
+        if isinstance(conversations, list):
+            for conversation in conversations[:3]:
+                if not isinstance(conversation, dict):
+                    continue
+                lines.append(_natural_candidate_line(conversation))
+    provider = _candidate_section_line(
+        "provider",
+        value.get("real_provider_runtime"),
+    )
+    if provider:
+        lines.append(provider)
+    memoryos = _candidate_section_line("memoryos", value.get("live_memoryos"))
+    if memoryos:
+        lines.append(memoryos)
+    github = _candidate_section_line("github", value.get("github_server_truth"))
+    if github:
+        lines.append(github)
+    return lines
+
+
+def _release_attempt_summary(value: object) -> list[str]:
+    if not isinstance(value, dict):
+        return []
+    attempts = value.get("attempts")
+    if not isinstance(attempts, list):
+        return []
+    lines: list[str] = []
+    for attempt in attempts[:6]:
+        if not isinstance(attempt, dict):
+            continue
+        kind = str(attempt.get("kind") or "?").strip() or "?"
+        status = str(attempt.get("status") or "?").strip() or "?"
+        line = f"attempt[{kind}]={status}"
+        gate_status = str(attempt.get("gate_status") or "").strip()
+        gate_proof = str(attempt.get("gate_proof_level") or "").strip()
+        if gate_status or gate_proof:
+            line = f"{line} gate={gate_status or '?'} proof={gate_proof or '?'}"
+        next_action = str(attempt.get("next_action") or "").strip()
+        if next_action:
+            line = f"{line} next={next_action}"
+        blockers = _string_items(attempt.get("blockers"), limit=6)
+        if blockers:
+            line = f"{line} blockers={', '.join(blockers)}"
+        lines.append(line)
+    return lines
+
+
+def _natural_candidate_line(candidate: dict) -> str:
+    conversation_id = str(candidate.get("conversation_id") or "?").strip() or "?"
+    export_state = _ready_state(candidate.get("export_ready"))
+    transcript_state = _ready_state(candidate.get("transcript_export_ready"))
+    runtime = candidate.get("selected_god_runtime")
+    runtime_state = "unknown"
+    peer_gods = "?"
+    runtime_blockers: list[str] = []
+    if isinstance(runtime, dict):
+        runtime_blockers = _string_items(runtime.get("blockers"), limit=6)
+        runtime_state = "blocked" if runtime_blockers else "ready"
+        peer_gods_value = runtime.get("peer_god_ready_count")
+        if peer_gods_value is not None:
+            peer_gods = str(peer_gods_value).strip() or "?"
+    blockers = _string_items(candidate.get("blockers"), limit=6) or runtime_blockers
+    line = (
+        f"natural[{conversation_id}]={export_state} "
+        f"transcript={transcript_state} runtime={runtime_state} "
+        f"peer_gods={peer_gods}"
+    )
+    if blockers:
+        line = f"{line} blockers={', '.join(blockers)}"
+    next_action = str(candidate.get("next_action") or "").strip()
+    if next_action:
+        line = f"{line} next={next_action}"
+    return line
+
+
+def _candidate_section_line(label: str, value: object) -> str:
+    if not isinstance(value, dict):
+        return ""
+    state = _ready_state(value.get("export_ready"))
+    blockers = _string_items(value.get("blockers"), limit=6)
+    next_action = str(value.get("next_action") or "").strip()
+    line = f"{label}={state}"
+    if next_action:
+        line = f"{line} next={next_action}"
+    if blockers:
+        line = f"{line} blockers={', '.join(blockers)}"
+    return line
+
+
+def _ready_state(value: object) -> str:
+    if value is True:
+        return "ready"
+    if value is False:
+        return "blocked"
+    return "unknown"
+
+
+def _string_items(value: object, *, limit: int) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value[:limit] if str(item).strip()]
+
+
+def _inline_refs(value: object) -> str:
+    if not isinstance(value, list):
+        return ""
+    refs = [str(item).strip() for item in value if str(item).strip()]
+    return ", ".join(refs[:5])
 
 
 def _discussion_block(inspector: dict | None) -> str:
@@ -899,10 +2289,33 @@ def _help_text() -> str:
             "/participants",
             "/overview",
             "/dashboard (alias for /overview)",
+            "/evidence <transcript|github|memory|blockers>",
+            "/release refresh",
+            "/release pack [key=value...]",
+            "/release candidates [key=value...]",
+            "/release attempt [natural|provider|memoryos|github|all] [key=value...]",
+            "/release export <natural|provider|memoryos|github|god-runtime> <key=value...>",
+            "/lane retry <lane_id> <current_status> [reason]",
+            "/lane abort <lane_id> <current_status> [reason]",
+            "/room ensure",
+            "/room event participant_id=<id> god_id=<id> "
+            "type=<event> content=<text> source_ref=<ref>",
+            "/room freeze blueprint_id=<id> [revision=<n>]",
+            "/room lane-dag resolution_id=<id> graph_id=<id> feature_id=<id> lane_id=<id> ...",
+            "/room recovery graph_id=<id> lane_id=<id> [failure fields...]",
+            "/room memoryos-plan graph_id=<id> repo_id=<repo> workspace_id=<id>",
+            "/room speaker-attempt [after_event_id=<event_id>]",
+            "/room speaker-response response_id=<id> target=<participant_id> "
+            "provider_session=<id> content=<text> source_ref=<ref> "
+            "proof_level=<proof_level> provider_response_artifact=<path>",
+            "/freeze target_ref=<ref> blueprint_id=<id> goal=<goal> "
+            "scope=<items> acceptance=<items>",
             "/discussion",
             "/blockers",
             "/god add <role> [display name]",
             "/god rm <role|participant_id>",
+            "/god register <key=value...>",
+            "/god select <cli_id>",
             "/archive",
             "/copy",
             "/resume [number|conversation_id|title] (resume session, default: most recent)",

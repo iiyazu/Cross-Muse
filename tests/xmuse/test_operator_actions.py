@@ -1,0 +1,1722 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from xmuse_core.chat.god_room_runtime import (
+    GodRoomActorKind,
+    GodRoomEventKind,
+    GodRoomEventV1,
+    GodRoomParticipant,
+)
+from xmuse_core.platform.live_gate_status_capture import ProbeResult
+from xmuse_core.platform.operator_actions import (
+    OperatorActionCapability,
+    OperatorActionRequest,
+    OperatorActionService,
+)
+from xmuse_core.platform.state_machine import LaneStateMachine
+from xmuse_core.providers.god_cli_registration_store import GodCliRegistrationStore
+from xmuse_core.providers.god_cli_registry import build_default_god_cli_registry
+from xmuse_core.providers.god_cli_selection_store import GodCliSelectionStore
+from xmuse_core.structuring.god_room_blueprint_freeze import (
+    compile_blueprint_freeze_from_god_room_events,
+)
+
+
+def test_operator_action_denies_god_selection_without_capability(tmp_path: Path) -> None:
+    service = OperatorActionService(
+        god_cli_registry=build_default_god_cli_registry(),
+        audit_dir=tmp_path,
+    )
+    request = OperatorActionRequest(
+        action="select_god_cli",
+        actor_id="operator-1",
+        capabilities=(),
+        idempotency_key="idem-1",
+        payload={"cli_id": "codex.god", "conversation_id": "conv-1"},
+        source="tui",
+    )
+
+    result = service.handle(request)
+
+    assert result.status == "denied"
+    assert result.audit_id is not None
+    assert result.proof_level == "contract_proof"
+    assert "missing capability select_god_cli" in result.summary
+    audit_rows = [
+        json.loads(line)
+        for line in (tmp_path / "operator-actions.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert audit_rows[-1]["status"] == "denied"
+    assert audit_rows[-1]["action"] == "select_god_cli"
+
+
+def test_operator_action_selects_god_cli_with_audited_capability(tmp_path: Path) -> None:
+    selection_store = GodCliSelectionStore(tmp_path / "god_cli_selections.json")
+    service = OperatorActionService(
+        god_cli_registry=build_default_god_cli_registry(),
+        audit_dir=tmp_path,
+        selection_store=selection_store,
+    )
+    request = OperatorActionRequest(
+        action="select_god_cli",
+        actor_id="operator-1",
+        capabilities=(OperatorActionCapability.SELECT_GOD_CLI,),
+        idempotency_key="idem-2",
+        payload={"cli_id": "codex.god", "conversation_id": "conv-1"},
+        source="tui",
+    )
+
+    result = service.handle(request)
+
+    assert result.status == "ok"
+    assert result.fact_state == "god_cli_selected"
+    assert result.payload["selection"]["cli_id"] == "codex.god"
+    assert result.payload["selection"]["conversation_id"] == "conv-1"
+    assert result.payload["selection"]["source_authority"] == "operator_action_contract"
+    assert result.audit_id is not None
+    assert result.payload["selection"]["durable_state_ref"] == "god_cli_selection:conv-1"
+    stored = selection_store.get("conv-1")
+    assert stored is not None
+    assert stored.cli_id == "codex.god"
+    assert stored.audit_id == result.audit_id
+    assert stored.idempotency_key == "idem-2"
+
+
+def test_operator_action_blocks_opencode_peer_god_without_peer_proof(tmp_path: Path) -> None:
+    selection_store = GodCliSelectionStore(tmp_path / "god_cli_selections.json")
+    service = OperatorActionService(
+        god_cli_registry=build_default_god_cli_registry(),
+        audit_dir=tmp_path,
+        selection_store=selection_store,
+    )
+    request = OperatorActionRequest(
+        action="select_god_cli",
+        actor_id="operator-1",
+        capabilities=(OperatorActionCapability.SELECT_GOD_CLI,),
+        idempotency_key="idem-3",
+        payload={
+            "cli_id": "opencode.deepseek_flash_worker",
+            "conversation_id": "conv-1",
+        },
+        source="tui",
+    )
+
+    result = service.handle(request)
+
+    assert result.status == "blocked"
+    assert result.fact_state == "blocked"
+    assert "does not advertise peer_god" in result.summary
+    assert result.payload["selection_allowed"] is False
+    assert selection_store.get("conv-1") is None
+
+
+def test_operator_action_registers_manual_god_cli_with_audited_capability(
+    tmp_path: Path,
+) -> None:
+    registration_store = GodCliRegistrationStore(tmp_path / "god_cli_registrations.json")
+    selection_store = GodCliSelectionStore(tmp_path / "god_cli_selections.json")
+    service = OperatorActionService(
+        god_cli_registry=build_default_god_cli_registry(),
+        audit_dir=tmp_path,
+        registration_store=registration_store,
+        selection_store=selection_store,
+    )
+
+    register_result = service.handle(
+        OperatorActionRequest(
+            action="register_god_cli",
+            actor_id="operator-1",
+            capabilities=(OperatorActionCapability.REGISTER_GOD_CLI,),
+            idempotency_key="idem-register-1",
+            payload=_manual_registration_payload(),
+            source="tui",
+        )
+    )
+    select_result = service.handle(
+        OperatorActionRequest(
+            action="select_god_cli",
+            actor_id="operator-1",
+            capabilities=(OperatorActionCapability.SELECT_GOD_CLI,),
+            idempotency_key="idem-select-registered-1",
+            payload={"cli_id": "custom.peer", "conversation_id": "conv-1"},
+            source="tui",
+        )
+    )
+
+    assert register_result.status == "ok"
+    assert register_result.fact_state == "god_cli_registered"
+    assert register_result.payload["registration"]["cli_id"] == "custom.peer"
+    assert register_result.payload["registration"]["proof_refs"] == [
+        "provider-run://custom.peer/live-smoke-1"
+    ]
+    assert (
+        register_result.payload["durable_state_ref"]
+        == "god_cli_registration:custom.peer"
+    )
+    stored = registration_store.get("custom.peer")
+    assert stored is not None
+    assert stored.audit_id == register_result.audit_id
+    assert stored.registration.cli_id == "custom.peer"
+    assert select_result.status == "ok"
+    assert select_result.payload["selection"]["cli_id"] == "custom.peer"
+    assert selection_store.get("conv-1").cli_id == "custom.peer"
+
+
+def test_operator_action_denies_god_cli_registration_without_capability(
+    tmp_path: Path,
+) -> None:
+    service = OperatorActionService(
+        god_cli_registry=build_default_god_cli_registry(),
+        audit_dir=tmp_path,
+        registration_store=GodCliRegistrationStore(
+            tmp_path / "god_cli_registrations.json"
+        ),
+    )
+
+    result = service.handle(
+        OperatorActionRequest(
+            action="register_god_cli",
+            actor_id="operator-1",
+            capabilities=(),
+            idempotency_key="idem-register-2",
+            payload=_manual_registration_payload(),
+            source="tui",
+        )
+    )
+
+    assert result.status == "denied"
+    assert result.fact_state == "denied"
+    assert "missing capability register_god_cli" in result.summary
+
+
+def test_operator_action_blocks_manual_peer_god_registration_without_proof_ref(
+    tmp_path: Path,
+) -> None:
+    service = OperatorActionService(
+        god_cli_registry=build_default_god_cli_registry(),
+        audit_dir=tmp_path,
+        registration_store=GodCliRegistrationStore(
+            tmp_path / "god_cli_registrations.json"
+        ),
+    )
+    payload = _manual_registration_payload()
+    payload["proof_refs"] = []
+
+    result = service.handle(
+        OperatorActionRequest(
+            action="register_god_cli",
+            actor_id="operator-1",
+            capabilities=(OperatorActionCapability.REGISTER_GOD_CLI,),
+            idempotency_key="idem-register-3",
+            payload=payload,
+            source="tui",
+        )
+    )
+
+    assert result.status == "blocked"
+    assert result.fact_state == "blocked"
+    assert "peer_god requires proof_refs" in result.summary
+
+
+def test_operator_action_retries_lane_with_guarded_workflow_capability(
+    tmp_path: Path,
+) -> None:
+    lanes_path = _write_lanes(
+        tmp_path,
+        [{"feature_id": "lane-1", "status": "failed", "retry_count": 0}],
+    )
+    state_machine = LaneStateMachine(
+        lanes_path,
+        history_path=tmp_path / "state_history.json",
+    )
+    service = OperatorActionService(
+        god_cli_registry=build_default_god_cli_registry(),
+        audit_dir=tmp_path / "operator_actions",
+        lane_state_machine=state_machine,
+    )
+
+    result = service.handle(
+        OperatorActionRequest(
+            action="retry_lane",
+            actor_id="operator-1",
+            capabilities=(OperatorActionCapability.WORKFLOW_WRITE,),
+            idempotency_key="idem-lane-retry-1",
+            payload={
+                "lane_id": "lane-1",
+                "current_status": "failed",
+                "reason": "retry after operator review",
+            },
+            source="tui",
+        )
+    )
+
+    assert result.status == "ok"
+    assert result.fact_state == "lane_retry_requested"
+    assert result.payload["lane"]["feature_id"] == "lane-1"
+    assert result.payload["lane"]["status"] == "reworking"
+    assert result.payload["lane"]["retry_count"] == 1
+    assert result.payload["lane"]["last_mutation_audit"] == {
+        "actor": "operator-1",
+        "reason": "retry after operator review",
+        "request_id": "idem-lane-retry-1",
+        "tool": "retry_lane",
+    }
+    assert state_machine.get_lane("lane-1")["status"] == "reworking"
+    audit_rows = [
+        json.loads(line)
+        for line in (tmp_path / "operator_actions" / "operator-actions.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert audit_rows[-1]["action"] == "retry_lane"
+    assert audit_rows[-1]["status"] == "ok"
+
+
+def test_operator_action_denies_lane_retry_without_workflow_capability(
+    tmp_path: Path,
+) -> None:
+    lanes_path = _write_lanes(
+        tmp_path,
+        [{"feature_id": "lane-1", "status": "failed", "retry_count": 0}],
+    )
+    service = OperatorActionService(
+        god_cli_registry=build_default_god_cli_registry(),
+        audit_dir=tmp_path / "operator_actions",
+        lane_state_machine=LaneStateMachine(lanes_path),
+    )
+
+    result = service.handle(
+        OperatorActionRequest(
+            action="retry_lane",
+            actor_id="operator-1",
+            capabilities=(),
+            idempotency_key="idem-lane-retry-2",
+            payload={"lane_id": "lane-1", "current_status": "failed"},
+            source="tui",
+        )
+    )
+
+    assert result.status == "denied"
+    assert result.fact_state == "denied"
+    assert "missing capability workflow_write" in result.summary
+    assert json.loads(lanes_path.read_text(encoding="utf-8"))["lanes"][0]["status"] == (
+        "failed"
+    )
+
+
+def test_operator_action_aborts_lane_with_guarded_workflow_capability(
+    tmp_path: Path,
+) -> None:
+    lanes_path = _write_lanes(
+        tmp_path,
+        [{"feature_id": "lane-2", "status": "rejected", "retry_count": 1}],
+    )
+    state_machine = LaneStateMachine(lanes_path)
+    service = OperatorActionService(
+        god_cli_registry=build_default_god_cli_registry(),
+        audit_dir=tmp_path / "operator_actions",
+        lane_state_machine=state_machine,
+    )
+
+    result = service.handle(
+        OperatorActionRequest(
+            action="abort_lane",
+            actor_id="operator-1",
+            capabilities=(OperatorActionCapability.WORKFLOW_WRITE,),
+            idempotency_key="idem-lane-abort-1",
+            payload={
+                "lane_id": "lane-2",
+                "current_status": "rejected",
+                "reason": "operator abandoned stale lane",
+            },
+            source="tui",
+        )
+    )
+
+    assert result.status == "ok"
+    assert result.fact_state == "lane_aborted"
+    assert result.payload["lane"]["status"] == "failed"
+    assert result.payload["lane"]["failure_reason"] == "operator abandoned stale lane"
+    assert result.payload["lane"]["last_mutation_audit"] == {
+        "actor": "operator-1",
+        "reason": "operator abandoned stale lane",
+        "request_id": "idem-lane-abort-1",
+        "tool": "abort_lane",
+    }
+
+
+def test_operator_action_blocks_lane_action_when_guard_mismatches(
+    tmp_path: Path,
+) -> None:
+    lanes_path = _write_lanes(
+        tmp_path,
+        [{"feature_id": "lane-1", "status": "failed", "retry_count": 0}],
+    )
+    service = OperatorActionService(
+        god_cli_registry=build_default_god_cli_registry(),
+        audit_dir=tmp_path / "operator_actions",
+        lane_state_machine=LaneStateMachine(lanes_path),
+    )
+
+    result = service.handle(
+        OperatorActionRequest(
+            action="retry_lane",
+            actor_id="operator-1",
+            capabilities=(OperatorActionCapability.WORKFLOW_WRITE,),
+            idempotency_key="idem-lane-retry-3",
+            payload={"lane_id": "lane-1", "current_status": "dispatched"},
+            source="tui",
+        )
+    )
+
+    assert result.status == "blocked"
+    assert result.fact_state == "blocked"
+    assert "state guard mismatch" in result.summary
+    assert LaneStateMachine(lanes_path).get_lane("lane-1")["status"] == "failed"
+
+
+def test_operator_action_freezes_blueprint_with_audited_capability(
+    tmp_path: Path,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    def _freeze_handler(request: OperatorActionRequest) -> dict[str, object]:
+        calls.append(request.payload)
+        return {
+            "decision": {"status": "allowed"},
+            "blueprint": {"blueprint_id": "bp-1", "status": "frozen"},
+            "resolution": {"id": "res-1"},
+        }
+
+    service = OperatorActionService(
+        god_cli_registry=build_default_god_cli_registry(),
+        audit_dir=tmp_path / "operator_actions",
+        blueprint_freeze_handler=_freeze_handler,
+    )
+
+    result = service.handle(
+        OperatorActionRequest(
+            action="freeze_blueprint",
+            actor_id="operator-1",
+            capabilities=("chat_freeze_blueprint",),
+            idempotency_key="idem-freeze-1",
+            payload=_blueprint_freeze_payload(),
+            source="tui",
+        )
+    )
+
+    assert result.status == "ok"
+    assert result.fact_state == "blueprint_frozen"
+    assert result.payload["source_authority"] == "operator_action_contract"
+    assert result.payload["freeze"]["blueprint"]["blueprint_id"] == "bp-1"
+    assert calls == [_blueprint_freeze_payload()]
+    audit_rows = [
+        json.loads(line)
+        for line in (tmp_path / "operator_actions" / "operator-actions.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert audit_rows[-1]["action"] == "freeze_blueprint"
+    assert audit_rows[-1]["status"] == "ok"
+
+
+def test_operator_action_denies_blueprint_freeze_without_capability(
+    tmp_path: Path,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    def _freeze_handler(request: OperatorActionRequest) -> dict[str, object]:
+        calls.append(request.payload)
+        return {"decision": {"status": "allowed"}}
+
+    service = OperatorActionService(
+        god_cli_registry=build_default_god_cli_registry(),
+        audit_dir=tmp_path / "operator_actions",
+        blueprint_freeze_handler=_freeze_handler,
+    )
+
+    result = service.handle(
+        OperatorActionRequest(
+            action="freeze_blueprint",
+            actor_id="operator-1",
+            capabilities=(),
+            idempotency_key="idem-freeze-2",
+            payload=_blueprint_freeze_payload(),
+            source="tui",
+        )
+    )
+
+    assert result.status == "denied"
+    assert result.fact_state == "denied"
+    assert "missing capability chat_freeze_blueprint" in result.summary
+    assert calls == []
+
+
+def test_operator_action_blocks_blueprint_freeze_without_handler(
+    tmp_path: Path,
+) -> None:
+    service = OperatorActionService(
+        god_cli_registry=build_default_god_cli_registry(),
+        audit_dir=tmp_path / "operator_actions",
+    )
+
+    result = service.handle(
+        OperatorActionRequest(
+            action="freeze_blueprint",
+            actor_id="operator-1",
+            capabilities=("chat_freeze_blueprint",),
+            idempotency_key="idem-freeze-3",
+            payload=_blueprint_freeze_payload(),
+            source="tui",
+        )
+    )
+
+    assert result.status == "blocked"
+    assert result.fact_state == "blocked"
+    assert "requires a blueprint freeze handler" in result.summary
+
+
+def test_operator_action_exports_release_evidence_with_audited_capability(
+    tmp_path: Path,
+) -> None:
+    calls: list[OperatorActionRequest] = []
+
+    def _export_handler(request: OperatorActionRequest) -> dict[str, object]:
+        calls.append(request)
+        return {
+            "kind": "natural_deliberation",
+            "artifact_path": str(tmp_path / "natural-transcript.json"),
+            "gate_path": str(tmp_path / "artifacts" / "natural-deliberation.json"),
+            "artifact": {
+                "schema_version": "xmuse.operator_transcript.v1",
+                "proof_level": "manual_gap",
+                "fact_state": "blocked",
+            },
+            "gate": {
+                "gate_id": "natural-god-deliberation",
+                "status": "blocked",
+                "proof_level": "manual_gap",
+            },
+        }
+
+    service = OperatorActionService(
+        god_cli_registry=build_default_god_cli_registry(),
+        audit_dir=tmp_path / "operator_actions",
+        release_evidence_export_handler=_export_handler,
+    )
+
+    result = service.handle(
+        OperatorActionRequest(
+            action="export_natural_deliberation_transcript",
+            actor_id="operator-1",
+            capabilities=(OperatorActionCapability.RELEASE_GATE,),
+            idempotency_key="idem-release-export-1",
+            payload={
+                "conversation_id": "conv-1",
+                "target_refs": ["blueprint:bp-1"],
+            },
+            source="tui",
+        )
+    )
+
+    assert result.status == "ok"
+    assert result.fact_state == "release_evidence_exported"
+    assert result.proof_level == "contract_proof"
+    assert result.payload["source_authority"] == "operator_action_contract"
+    assert result.payload["export"]["kind"] == "natural_deliberation"
+    assert result.payload["export"]["gate"]["gate_id"] == "natural-god-deliberation"
+    assert calls and calls[0].action == "export_natural_deliberation_transcript"
+    audit_rows = [
+        json.loads(line)
+        for line in (tmp_path / "operator_actions" / "operator-actions.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert audit_rows[-1]["action"] == "export_natural_deliberation_transcript"
+    assert audit_rows[-1]["status"] == "ok"
+
+
+def test_operator_action_denies_release_evidence_export_without_capability(
+    tmp_path: Path,
+) -> None:
+    calls: list[OperatorActionRequest] = []
+
+    service = OperatorActionService(
+        god_cli_registry=build_default_god_cli_registry(),
+        audit_dir=tmp_path / "operator_actions",
+        release_evidence_export_handler=lambda request: calls.append(request) or {},
+    )
+
+    result = service.handle(
+        OperatorActionRequest(
+            action="export_real_provider_runtime_soak",
+            actor_id="operator-1",
+            capabilities=(),
+            idempotency_key="idem-release-export-2",
+            payload={"conversation_id": "conv-1"},
+            source="tui",
+        )
+    )
+
+    assert result.status == "denied"
+    assert result.fact_state == "denied"
+    assert "missing capability release_gate" in result.summary
+    assert calls == []
+
+
+def test_operator_action_exports_github_server_truth_with_capability(
+    tmp_path: Path,
+) -> None:
+    calls: list[OperatorActionRequest] = []
+
+    def _export_handler(request: OperatorActionRequest) -> dict[str, object]:
+        calls.append(request)
+        return {
+            "kind": "github_server_truth",
+            "artifact_path": str(tmp_path / "github-server-truth-snapshot.json"),
+            "gate_path": str(tmp_path / "artifacts" / "github-server-truth.json"),
+            "artifact": {
+                "schema_version": "github_server_side_truth_capture.v1",
+                "can_emit_pr_merged": False,
+                "merged": False,
+            },
+            "gate": {
+                "gate_id": "github-server-truth",
+                "status": "ok",
+                "proof_level": "server_side_enforcement_proof",
+            },
+        }
+
+    service = OperatorActionService(
+        god_cli_registry=build_default_god_cli_registry(),
+        audit_dir=tmp_path / "operator_actions",
+        release_evidence_export_handler=_export_handler,
+    )
+
+    result = service.handle(
+        OperatorActionRequest(
+            action="export_github_server_truth",
+            actor_id="operator-1",
+            capabilities=(OperatorActionCapability.RELEASE_GATE,),
+            idempotency_key="idem-release-github-export",
+            payload={
+                "repo": "iiyazu/Cross-Muse",
+                "pull_request_number": 43,
+                "expected_head_sha": "head123",
+            },
+            source="tui",
+        )
+    )
+
+    assert result.status == "ok"
+    assert result.fact_state == "release_evidence_exported"
+    assert result.payload["source_authority"] == "operator_action_contract"
+    assert result.payload["export"]["kind"] == "github_server_truth"
+    assert result.payload["export"]["artifact"]["can_emit_pr_merged"] is False
+    assert calls and calls[0].action == "export_github_server_truth"
+    assert calls[0].payload["expected_head_sha"] == "head123"
+
+
+def test_operator_action_exports_god_runtime_continuity_with_capability(
+    tmp_path: Path,
+) -> None:
+    calls: list[OperatorActionRequest] = []
+
+    def _export_handler(request: OperatorActionRequest) -> dict[str, object]:
+        calls.append(request)
+        return {
+            "kind": "god_runtime_continuity",
+            "artifact_path": str(tmp_path / "god-runtime-continuity.json"),
+            "artifact": {
+                "schema_version": "xmuse.god_runtime_continuity.v1",
+                "proof_level": "contract_proof",
+                "fact_state": "observed",
+            },
+        }
+
+    service = OperatorActionService(
+        god_cli_registry=build_default_god_cli_registry(),
+        audit_dir=tmp_path / "operator_actions",
+        release_evidence_export_handler=_export_handler,
+    )
+
+    result = service.handle(
+        OperatorActionRequest(
+            action="export_god_runtime_continuity",
+            actor_id="operator-1",
+            capabilities=(OperatorActionCapability.RELEASE_GATE,),
+            idempotency_key="idem-release-god-runtime-export",
+            payload={
+                "conversation_id": "conv-prod-1",
+                "heartbeat_ttl_seconds": 120,
+            },
+            source="tui",
+        )
+    )
+
+    assert result.status == "ok"
+    assert result.fact_state == "release_evidence_exported"
+    assert result.payload["source_authority"] == "operator_action_contract"
+    assert result.payload["export"]["kind"] == "god_runtime_continuity"
+    assert calls and calls[0].action == "export_god_runtime_continuity"
+    assert calls[0].payload["heartbeat_ttl_seconds"] == 120
+
+
+def test_operator_action_blocks_release_evidence_export_without_handler(
+    tmp_path: Path,
+) -> None:
+    service = OperatorActionService(
+        god_cli_registry=build_default_god_cli_registry(),
+        audit_dir=tmp_path / "operator_actions",
+    )
+
+    result = service.handle(
+        OperatorActionRequest(
+            action="export_memoryos_live_trace",
+            actor_id="operator-1",
+            capabilities=(OperatorActionCapability.RELEASE_GATE,),
+            idempotency_key="idem-release-export-3",
+            payload={"conversation_id": "conv-1"},
+            source="tui",
+        )
+    )
+
+    assert result.status == "blocked"
+    assert result.proof_level == "manual_gap"
+    assert result.fact_state == "blocked"
+    assert "requires a release evidence export handler" in result.summary
+
+
+def test_operator_action_inspects_release_evidence_candidates_with_capability(
+    tmp_path: Path,
+) -> None:
+    calls: list[OperatorActionRequest] = []
+
+    def _candidate_handler(request: OperatorActionRequest) -> dict[str, object]:
+        calls.append(request)
+        return {
+            "schema_version": "xmuse.release_evidence_candidates.v1",
+            "conversation_id": request.payload["conversation_id"],
+            "natural_deliberation": {"conversations": []},
+            "real_provider_runtime": {"trace_table_present": False},
+            "live_memoryos": {"configured": False},
+        }
+
+    service = OperatorActionService(
+        god_cli_registry=build_default_god_cli_registry(),
+        audit_dir=tmp_path / "operator_actions",
+        release_evidence_candidate_handler=_candidate_handler,
+    )
+
+    result = service.handle(
+        OperatorActionRequest(
+            action="inspect_release_evidence_candidates",
+            actor_id="operator-1",
+            capabilities=(OperatorActionCapability.RELEASE_GATE,),
+            idempotency_key="idem-release-candidates-1",
+            payload={"conversation_id": "conv-1"},
+            source="tui",
+        )
+    )
+
+    assert result.status == "ok"
+    assert result.fact_state == "release_evidence_candidates_inspected"
+    assert result.payload["source_authority"] == "operator_action_contract"
+    assert result.payload["candidates"]["conversation_id"] == "conv-1"
+    assert calls and calls[0].payload == {"conversation_id": "conv-1"}
+    audit_rows = [
+        json.loads(line)
+        for line in (tmp_path / "operator_actions" / "operator-actions.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert audit_rows[-1]["action"] == "inspect_release_evidence_candidates"
+    assert audit_rows[-1]["status"] == "ok"
+
+
+def test_operator_action_denies_release_evidence_candidates_without_capability(
+    tmp_path: Path,
+) -> None:
+    calls: list[OperatorActionRequest] = []
+    service = OperatorActionService(
+        god_cli_registry=build_default_god_cli_registry(),
+        audit_dir=tmp_path / "operator_actions",
+        release_evidence_candidate_handler=lambda request: calls.append(request) or {},
+    )
+
+    result = service.handle(
+        OperatorActionRequest(
+            action="release_evidence_candidates",
+            actor_id="operator-1",
+            capabilities=(),
+            idempotency_key="idem-release-candidates-2",
+            payload={"conversation_id": "conv-1"},
+            source="tui",
+        )
+    )
+
+    assert result.status == "denied"
+    assert result.fact_state == "denied"
+    assert "missing capability release_gate" in result.summary
+    assert calls == []
+
+
+def test_operator_action_attempts_release_evidence_with_capability(
+    tmp_path: Path,
+) -> None:
+    calls: list[OperatorActionRequest] = []
+
+    def _attempt_handler(request: OperatorActionRequest) -> dict[str, object]:
+        calls.append(request)
+        return {
+            "schema_version": "xmuse.release_evidence_attempt.v1",
+            "decision": "blocked",
+            "attempts": [
+                {
+                    "kind": "live_memoryos",
+                    "status": "blocked",
+                    "proof_level": "manual_gap",
+                    "blockers": ["memoryos_lite_live_environment_missing"],
+                }
+            ],
+        }
+
+    service = OperatorActionService(
+        god_cli_registry=build_default_god_cli_registry(),
+        audit_dir=tmp_path / "operator_actions",
+        release_evidence_attempt_handler=_attempt_handler,
+    )
+
+    result = service.handle(
+        OperatorActionRequest(
+            action="attempt_release_evidence",
+            actor_id="operator-1",
+            capabilities=(OperatorActionCapability.RELEASE_GATE,),
+            idempotency_key="idem-release-attempt-1",
+            payload={"conversation_id": "conv-1"},
+            source="tui",
+        )
+    )
+
+    assert result.status == "ok"
+    assert result.fact_state == "release_evidence_attempted"
+    assert result.payload["source_authority"] == "operator_action_contract"
+    assert result.payload["attempt"]["decision"] == "blocked"
+    assert calls and calls[0].payload == {"conversation_id": "conv-1"}
+    audit_rows = [
+        json.loads(line)
+        for line in (tmp_path / "operator_actions" / "operator-actions.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert audit_rows[-1]["action"] == "attempt_release_evidence"
+    assert audit_rows[-1]["status"] == "ok"
+
+
+def test_operator_action_denies_release_evidence_attempt_without_capability(
+    tmp_path: Path,
+) -> None:
+    calls: list[OperatorActionRequest] = []
+    service = OperatorActionService(
+        god_cli_registry=build_default_god_cli_registry(),
+        audit_dir=tmp_path / "operator_actions",
+        release_evidence_attempt_handler=lambda request: calls.append(request) or {},
+    )
+
+    result = service.handle(
+        OperatorActionRequest(
+            action="release_evidence_attempt",
+            actor_id="operator-1",
+            capabilities=(),
+            idempotency_key="idem-release-attempt-2",
+            payload={"conversation_id": "conv-1"},
+            source="tui",
+        )
+    )
+
+    assert result.status == "denied"
+    assert result.fact_state == "denied"
+    assert "missing capability release_gate" in result.summary
+    assert calls == []
+
+
+def _manual_registration_payload() -> dict[str, object]:
+    return {
+        "cli_id": "custom.peer",
+        "display_name": "Custom Peer",
+        "command_family": "custom-cli",
+        "provider_profile_ref": "custom.peer",
+        "capabilities": ["peer_god"],
+        "supports_persistent_sessions": True,
+        "supports_mcp_writeback": True,
+        "state_write_allowed": True,
+        "proof_level": "real_provider_proof",
+        "proof_refs": ["provider-run://custom.peer/live-smoke-1"],
+    }
+
+
+def _blueprint_freeze_payload() -> dict[str, object]:
+    return {
+        "conversation_id": "conv-1",
+        "target_ref": "blueprint:bp-1:1",
+        "blueprint": {
+            "blueprint_id": "bp-1",
+            "revision": 1,
+            "goal": "Ship REST-first deliberation freeze.",
+            "scope": ["Append deliberation events", "Freeze a blueprint"],
+            "acceptance_contracts": ["Frozen blueprint appears as a durable card"],
+            "source_refs": ["memory://conversation/conv-1/message/msg-proposal"],
+        },
+    }
+
+
+def _write_lanes(tmp_path: Path, lanes: list[dict[str, object]]) -> Path:
+    lanes_path = tmp_path / "feature_lanes.json"
+    lanes_path.write_text(
+        json.dumps({"projection_revision": 1, "lanes": lanes}),
+        encoding="utf-8",
+    )
+    return lanes_path
+
+
+def _write_gate(path: Path, *, gate_id: str = "provider-soak") -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "xmuse.production_evidence.v1",
+                "gate_id": gate_id,
+                "kind": "real_provider",
+                "configured": True,
+                "required": True,
+                "status": "manual_gap",
+                "proof_level": "manual_gap",
+                "owner": "operator",
+                "summary": "Provider soak was not supplied.",
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def _write_github_server_truth(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "github_server_side_truth_capture.v1",
+                "repo": "iiyazu/Cross-Muse",
+                "pull_request_number": 43,
+                "head_sha": "head-pack-1",
+                "expected_head_sha": "head-pack-1",
+                "head_sha_matches_expected": True,
+                "required_checks": ["quality-gates"],
+                "check_run_ids": [211],
+                "expected_source_app": "github-actions",
+                "branch_protection_snapshot": {
+                    "required_status_checks": {
+                        "checks": [{"context": "quality-gates"}]
+                    }
+                },
+                "ruleset_snapshot": None,
+                "proof_level": "manual_gap",
+                "gap_reason": "missing server-side truth: review_truth, merge_truth",
+                "can_emit_pr_merged": False,
+                "merged": False,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def _write_json(path: Path, payload: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _god_room_event(
+    event_id: str,
+    *,
+    event_type: GodRoomEventKind = GodRoomEventKind.SPEAK,
+    participant_id: str = "part-architect",
+    god_id: str = "god-architect",
+    causal_parent_id: str | None = None,
+    payload: dict[str, object] | None = None,
+) -> GodRoomEventV1:
+    return GodRoomEventV1(
+        event_id=event_id,
+        room_id="god-room:conv-pack",
+        conversation_id="conv-pack",
+        participant_id=participant_id,
+        god_id=god_id,
+        actor_kind=GodRoomActorKind.GOD,
+        event_type=event_type,
+        timestamp_utc="2026-06-13T13:55:00Z",
+        content=str((payload or {}).get("goal") or "Package closure evidence."),
+        causal_parent_id=causal_parent_id,
+        source_refs=[f"message:{event_id}"],
+        cli_id="codex",
+        provider_profile="codex",
+        payload=payload or {"body": "Package closure evidence."},
+    )
+
+
+def _write_internal_review(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "xmuse.internal_review.v1",
+                "review_id": "review-pr43-head-pack-1",
+                "reviewer": "codex-reviewer",
+                "reviewed_head_sha": "head-pack-1",
+                "review_scope": "full_pr_current_head",
+                "decision": "approved",
+                "summary": "No blocking findings.",
+                "findings": [],
+                "source_refs": ["github:pr:43"],
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def _write_production_baseline(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "xmuse.production_baseline.v1",
+                "stage_id": "S0",
+                "action": "production_baseline_capture",
+                "status": "blocked",
+                "proof_level": "contract_proof",
+                "source_authority": "local_repository_and_environment",
+                "git": {"head_sha": "head-pack-1", "dirty": False},
+                "package_boundary": {"xmuse_init_absent": True},
+                "blockers": ["memoryos_lite_live_environment_missing"],
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def _write_goal_stage_result(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "stage_id": "S1",
+                "status": "ok",
+                "engine": "opencode",
+                "issues": [],
+                "review_decision": "pass",
+                "retry_hint": None,
+                "evidence_dir": str(path.parent / f"{path.name}.evidence"),
+                "agent_output_path": str(path),
+                "command": [
+                    "opencode",
+                    "run",
+                    "--model",
+                    "opencode-go/deepseek-v4-flash",
+                    "--variant",
+                    "max",
+                ],
+                "agent_stdout_path": str(
+                    path.parent / f"{path.name}.evidence" / "engine_output.txt"
+                ),
+                "returncode": 0,
+                "attempt": 1,
+                "timestamp_utc": "2026-06-12T00:00:00Z",
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def test_operator_action_captures_release_evidence_pack_with_capability(
+    tmp_path: Path,
+) -> None:
+    release_dir = tmp_path / "release_readiness"
+    _write_gate(release_dir / "artifacts" / "provider.json")
+    service = OperatorActionService(
+        god_cli_registry=build_default_god_cli_registry(),
+        audit_dir=tmp_path / "operator_actions",
+        release_readiness_dir=release_dir,
+    )
+
+    result = service.handle(
+        OperatorActionRequest(
+            action="capture_release_evidence_pack",
+            actor_id="operator-1",
+            capabilities=(OperatorActionCapability.RELEASE_GATE,),
+            idempotency_key="idem-release-1",
+            payload={},
+            source="tui",
+        )
+    )
+
+    assert result.status == "ok"
+    assert result.fact_state == "release_evidence_pack_captured"
+    assert result.payload["evidence_pack"]["decision"] == "blocked"
+    assert result.payload["evidence_pack"]["blocker_count"] == 1
+    assert (release_dir / "evidence-pack.json").exists()
+    assert (release_dir / "release-readiness.json").exists()
+    assert (release_dir / "proof-contamination-audit.json").exists()
+    audit_rows = [
+        json.loads(line)
+        for line in (tmp_path / "operator_actions" / "operator-actions.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert audit_rows[-1]["action"] == "capture_release_evidence_pack"
+    assert audit_rows[-1]["status"] == "ok"
+    assert audit_rows[-1]["result_payload"]["evidence_pack"]["decision"] == "blocked"
+
+
+def test_operator_action_captures_release_pack_with_github_truth_snapshot(
+    tmp_path: Path,
+) -> None:
+    release_dir = tmp_path / "release_readiness"
+    _write_github_server_truth(release_dir / "artifacts" / "github-truth.json")
+    service = OperatorActionService(
+        god_cli_registry=build_default_god_cli_registry(),
+        audit_dir=tmp_path / "operator_actions",
+        release_readiness_dir=release_dir,
+    )
+
+    result = service.handle(
+        OperatorActionRequest(
+            action="capture_release_evidence_pack",
+            actor_id="operator-1",
+            capabilities=(OperatorActionCapability.RELEASE_GATE,),
+            idempotency_key="idem-release-github-1",
+            payload={
+                "github_server_truth": "artifacts/github-truth.json",
+                "github_expected_head_sha": "head-pack-1",
+                "github_base_branch": "main",
+            },
+            source="tui",
+        )
+    )
+
+    gate = json.loads(
+        (release_dir / "artifacts" / "github-server-truth.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert result.status == "ok"
+    assert gate["status"] == "ok"
+    assert gate["proof_level"] == "server_side_enforcement_proof"
+    assert result.payload["evidence_pack"]["source_reports"][
+        "github_server_truth_gate"
+    ] == str(release_dir / "artifacts" / "github-server-truth.json")
+
+
+def test_operator_action_captures_release_pack_with_internal_review(
+    tmp_path: Path,
+) -> None:
+    release_dir = tmp_path / "release_readiness"
+    _write_internal_review(release_dir / "artifacts" / "internal-review-input.json")
+    service = OperatorActionService(
+        god_cli_registry=build_default_god_cli_registry(),
+        audit_dir=tmp_path / "operator_actions",
+        release_readiness_dir=release_dir,
+    )
+
+    result = service.handle(
+        OperatorActionRequest(
+            action="capture_release_evidence_pack",
+            actor_id="operator-1",
+            capabilities=(OperatorActionCapability.RELEASE_GATE,),
+            idempotency_key="idem-release-review-1",
+            payload={
+                "internal_review_artifact": "artifacts/internal-review-input.json",
+                "internal_review_expected_head_sha": "head-pack-1",
+            },
+            source="tui",
+        )
+    )
+
+    gate = json.loads(
+        (release_dir / "artifacts" / "internal-review.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert result.status == "ok"
+    assert gate["status"] == "ok"
+    assert gate["proof_level"] == "internal_review_proof"
+    assert result.payload["evidence_pack"]["source_reports"][
+        "internal_review_gate"
+    ] == str(release_dir / "artifacts" / "internal-review.json")
+
+
+def test_operator_action_captures_release_pack_with_production_baseline(
+    tmp_path: Path,
+) -> None:
+    release_dir = tmp_path / "release_readiness"
+    _write_production_baseline(release_dir / "production-baseline.json")
+    _write_gate(release_dir / "artifacts" / "provider.json")
+    service = OperatorActionService(
+        god_cli_registry=build_default_god_cli_registry(),
+        audit_dir=tmp_path / "operator_actions",
+        release_readiness_dir=release_dir,
+    )
+
+    result = service.handle(
+        OperatorActionRequest(
+            action="capture_release_evidence_pack",
+            actor_id="operator-1",
+            capabilities=(OperatorActionCapability.RELEASE_GATE,),
+            idempotency_key="idem-release-baseline-1",
+            payload={"production_baseline": "production-baseline.json"},
+            source="tui",
+        )
+    )
+
+    assert result.status == "ok"
+    pack = result.payload["evidence_pack"]
+    assert pack["source_reports"]["production_baseline"] == str(
+        release_dir / "production-baseline.json"
+    )
+    assert pack["production_baseline"]["head_sha"] == "head-pack-1"
+    assert pack["production_baseline"]["blockers"] == [
+        "memoryos_lite_live_environment_missing"
+    ]
+
+
+def test_operator_action_captures_release_pack_with_goal_stage_result(
+    tmp_path: Path,
+) -> None:
+    release_dir = tmp_path / "release_readiness"
+    _write_goal_stage_result(release_dir / "goal" / "S1.result.json")
+    _write_gate(release_dir / "artifacts" / "provider.json")
+    service = OperatorActionService(
+        god_cli_registry=build_default_god_cli_registry(),
+        audit_dir=tmp_path / "operator_actions",
+        release_readiness_dir=release_dir,
+    )
+
+    result = service.handle(
+        OperatorActionRequest(
+            action="capture_release_evidence_pack",
+            actor_id="operator-1",
+            capabilities=(OperatorActionCapability.RELEASE_GATE,),
+            idempotency_key="idem-release-stage-1",
+            payload={"goal_stage_result": "goal/S1.result.json"},
+            source="tui",
+        )
+    )
+
+    assert result.status == "ok"
+    pack = result.payload["evidence_pack"]
+    replay = json.loads(
+        (release_dir / "overnight-replay-bundle.json").read_text(encoding="utf-8")
+    )
+    sections = {section["section_id"]: section for section in replay["sections"]}
+    assert pack["source_reports"]["goal_stage_evidence"] == str(
+        release_dir / "goal-stage-production-evidence.json"
+    )
+    assert sections["stage_evidence"]["status"] == "ok"
+    assert sections["stage_evidence"]["source_refs"] == [
+        "goal_run:release-evidence-pack",
+        "goal_stage:S1",
+        f"goal_stage_result:{release_dir / 'goal' / 'S1.result.json'}",
+    ]
+
+
+def test_operator_action_captures_release_pack_with_god_room_runtime_inputs(
+    tmp_path: Path,
+) -> None:
+    release_dir = tmp_path / "release_readiness"
+    _write_gate(release_dir / "artifacts" / "provider.json")
+    events = [
+        _god_room_event("evt-propose"),
+        _god_room_event(
+            "evt-review-provider-speak",
+            participant_id="part-review",
+            god_id="god-review",
+            causal_parent_id="evt-propose",
+        ),
+        _god_room_event(
+            "evt-freeze",
+            event_type=GodRoomEventKind.FREEZE_REQUESTED,
+            participant_id="part-review",
+            god_id="god-review",
+            causal_parent_id="evt-review-provider-speak",
+            payload={
+                "freeze_target_ref": "blueprint:bp-room-pack:1",
+                "goal": "Package GOD room runtime closure evidence.",
+                "scope": ["GOD room replay", "release evidence"],
+                "acceptance_contracts": ["Closure evidence is in replay bundle."],
+            },
+        ),
+    ]
+    freeze = compile_blueprint_freeze_from_god_room_events(
+        blueprint_id="bp-room-pack",
+        revision=1,
+        events=events,
+    )
+    _write_json(
+        release_dir / "god-room" / "participants.json",
+        {
+            "participants": [
+                GodRoomParticipant(
+                    participant_id="part-architect",
+                    god_id="god-architect",
+                    role="architect",
+                    cli_id="codex",
+                ).model_dump(mode="json"),
+                GodRoomParticipant(
+                    participant_id="part-review",
+                    god_id="god-review",
+                    role="review",
+                    cli_id="codex",
+                ).model_dump(mode="json"),
+            ]
+        },
+    )
+    _write_json(
+        release_dir / "god-room" / "events.json",
+        {"events": [event.model_dump(mode="json") for event in events]},
+    )
+    _write_json(
+        release_dir / "god-room" / "blueprint-freeze.json",
+        freeze.model_dump(mode="json"),
+    )
+    _write_json(
+        release_dir / "god-room" / "lane-dag.json",
+        {
+            "blueprint_ref": "blueprint:bp-room-pack:1",
+            "lane_contracts": [
+                {
+                    "lane_id": "lane-room-pack",
+                    "feature_id": "feature-room-pack",
+                    "owner": "codex",
+                    "required_checks": ["focused-pytest"],
+                    "memory_refs": ["memory://conversation/conv-pack/blueprint/bp-room-pack"],
+                }
+            ],
+            "recovery_decisions": [
+                {
+                    "lane_id": "lane-room-pack",
+                    "decision": "refactor_required",
+                    "retry_allowed": False,
+                }
+            ],
+        },
+    )
+    _write_json(
+        release_dir / "god-room" / "memory-trace.json",
+        {
+            "trace_anchors": [
+                {
+                    "anchor_uri": "memory://conversation/conv-pack/traces/trace-room",
+                    "proof_level": "contract_proof",
+                    "source_refs": ["blueprint:bp-room-pack:1"],
+                }
+            ]
+        },
+    )
+    _write_json(
+        release_dir / "god-room" / "tui-projection.json",
+        {
+            "execution": {
+                "lane_contracts": [{"lane_id": "lane-room-pack"}],
+                "recovery_decisions": [{"lane_id": "lane-room-pack"}],
+            },
+            "memory": {"trace_anchors": [{"trace_id": "trace-room"}]},
+        },
+    )
+    _write_json(
+        release_dir / "god-room" / "speaker-attempt.json",
+        {
+            "schema_version": "xmuse.god_room_speaker_attempt.v1",
+            "status": "ready_for_provider_attempt",
+            "proof_level": "contract_proof",
+            "source_authority": (
+                "god_room_event_store+selected_god_runtime_continuity"
+            ),
+            "conversation_id": "conv-pack",
+            "room_id": "god-room:conv-pack",
+            "selected_event_id": "evt-propose",
+            "decision_reason": "round_robin",
+            "target_participant_id": "part-review",
+            "target_god_id": "god-review",
+            "provider_profile_ref": "codex.god",
+            "provider_session_id": "provider-thread-review",
+            "source_refs": [
+                "god-room-event:evt-propose",
+                "provider_session:provider-thread-review",
+            ],
+        },
+    )
+    _write_json(
+        release_dir / "god-room" / "speaker-response.json",
+        {
+            "schema_version": "xmuse.god_room_speaker_response.v1",
+            "status": "speak_event_appended",
+            "proof_level": "real_provider_proof",
+            "source_authority": (
+                "god_room_event_store+selected_god_runtime_continuity+"
+                "provider_response"
+            ),
+            "conversation_id": "conv-pack",
+            "room_id": "god-room:conv-pack",
+            "selected_event_id": "evt-propose",
+            "target_participant_id": "part-review",
+            "target_god_id": "god-review",
+            "provider_profile_ref": "codex.god",
+            "provider_session_id": "provider-thread-review",
+            "provider_response_artifact_ref": (
+                "reports/provider-responses/provider-response-1.json"
+            ),
+            "append_status": "created",
+            "source_refs": [
+                "god-room-event:evt-propose",
+                "provider_session:provider-thread-review",
+                "provider-run:codex:provider-response-1",
+            ],
+            "speaker_attempt": json.loads(
+                (release_dir / "god-room" / "speaker-attempt.json").read_text(
+                    encoding="utf-8"
+                )
+            ),
+            "provider_response": {
+                "schema_version": "xmuse.god_room_provider_speech_response.v1",
+                "response_id": "provider-response-1",
+                "status": "completed",
+                "proof_level": "real_provider_proof",
+                "target_participant_id": "part-review",
+                "provider_profile_ref": "codex.god",
+                "provider_session_id": "provider-thread-review",
+                "content": "Review GOD responded.",
+                "source_refs": ["provider-run:codex:provider-response-1"],
+            },
+            "speak_event": {
+                "version": "xmuse.god_room_event.v1",
+                "event_id": "evt-review-provider-speak",
+                "room_id": "god-room:conv-pack",
+                "conversation_id": "conv-pack",
+                "participant_id": "part-review",
+                "god_id": "god-review",
+                "actor_kind": "god",
+                "event_type": "speak",
+                "timestamp_utc": "2026-06-13T10:02:00Z",
+                "content": "Review GOD responded.",
+                "target_participant_ids": [],
+                "causal_parent_id": "evt-propose",
+                "source_refs": ["provider-run:codex:provider-response-1"],
+                "cli_id": "codex",
+                "provider_profile": "codex.god",
+                "payload": {"body": "Review GOD responded."},
+            },
+        },
+    )
+    _write_json(
+        release_dir / "god-room" / "review-closure.json",
+        {
+            "schema_version": "xmuse.god_room_lane_review_closure.v1",
+            "source_authority": (
+                "god_room_lane_patch_forward_artifact+"
+                "patch_lane_review_verdict_artifact"
+            ),
+            "proof_level": "contract_proof",
+            "review_truth_status": "independent_review_artifact",
+            "execution_truth_status": "candidate_reviewed",
+            "server_truth_status": "not_server_truth",
+            "release_evidence_handoff_status": "candidate_input_ready",
+            "conversation_id": "conv-pack",
+            "graph_id": "graph-pack",
+            "failed_lane_id": "lane-runtime-pack",
+            "terminal_lane_id": "lane-runtime-pack-patch",
+            "patch_forward_artifact": "god-room/patch-forward.json",
+            "patch_lane_review_intake_artifact": "god-room/patch-intake.json",
+            "patch_lane_review_verdict_artifact": "god-room/patch-verdict.json",
+            "candidate_refs": ["worker-candidate:patch-pack"],
+            "cited_candidate_refs": ["worker-candidate:patch-pack"],
+            "terminal_review_verdict": {
+                "id": "god_room_review_patch_pack_merge",
+                "lane_id": "lane-runtime-pack-patch",
+                "decision": "merge",
+                "summary": "Patch lane reviewed.",
+                "evidence_refs": ["worker-candidate:patch-pack"],
+            },
+            "manual_gaps": [
+                "review_plane_store_not_updated",
+                "lane_status_not_updated",
+                "release_evidence_not_linked",
+                "github_truth_not_checked",
+            ],
+            "forbidden_claims": [
+                "worker_output_is_review_truth",
+                "end_to_end_execution_review_closure",
+                "ready_to_merge",
+                "pr_merged",
+                "github_review_truth",
+            ],
+        },
+    )
+    _write_github_server_truth(release_dir / "artifacts" / "github-truth.json")
+    service = OperatorActionService(
+        god_cli_registry=build_default_god_cli_registry(),
+        audit_dir=tmp_path / "operator_actions",
+        release_readiness_dir=release_dir,
+    )
+
+    result = service.handle(
+        OperatorActionRequest(
+            action="capture_release_evidence_pack",
+            actor_id="operator-1",
+            capabilities=(OperatorActionCapability.RELEASE_GATE,),
+            idempotency_key="idem-release-god-room-1",
+            payload={
+                "github_server_truth": "artifacts/github-truth.json",
+                "github_expected_head_sha": "head-pack-1",
+                "god_room_participants": "god-room/participants.json",
+                "god_room_events": "god-room/events.json",
+                "god_room_blueprint_freeze": "god-room/blueprint-freeze.json",
+                "god_room_lane_dag": "god-room/lane-dag.json",
+                "god_room_memory_trace": "god-room/memory-trace.json",
+                "god_room_tui_projection": "god-room/tui-projection.json",
+                "god_room_speaker_attempt": "god-room/speaker-attempt.json",
+                "god_room_speaker_response": "god-room/speaker-response.json",
+                "god_room_review_closure": "god-room/review-closure.json",
+            },
+            source="tui",
+        )
+    )
+
+    assert result.status == "ok"
+    pack = result.payload["evidence_pack"]
+    closure_path = Path(pack["source_reports"]["god_room_runtime_closure_evidence"])
+    replay_path = Path(pack["overnight_replay_bundle"])
+    closure = json.loads(closure_path.read_text(encoding="utf-8"))
+    replay = json.loads(replay_path.read_text(encoding="utf-8"))
+    sections = {section["section_id"]: section for section in replay["sections"]}
+    assert closure["status"] == "ok"
+    assert closure["god_room_runtime_closure"]["room_replay"]["status"] == "ok"
+    assert closure["god_room_runtime_closure"]["lane_dag"][
+        "refactor_required_count"
+    ] == 1
+    assert closure["god_room_runtime_closure"]["speaker_attempt"]["status"] == (
+        "ready_for_provider_attempt"
+    )
+    assert closure["god_room_runtime_closure"]["speaker_response"]["status"] == (
+        "speak_event_appended"
+    )
+    assert closure["god_room_runtime_closure"]["review_closure"]["status"] == (
+        "candidate_input_ready"
+    )
+    assert closure["god_room_runtime_closure"]["review_closure"][
+        "server_truth_status"
+    ] == "not_server_truth"
+    assert "god_room_runtime_closure" in sections
+    assert sections["god_room_runtime_closure"]["source_authority"] == (
+        "god_room_runtime_closure_contract"
+    )
+
+
+def test_operator_action_denies_release_evidence_pack_without_capability(
+    tmp_path: Path,
+) -> None:
+    release_dir = tmp_path / "release_readiness"
+    _write_gate(release_dir / "artifacts" / "provider.json")
+    service = OperatorActionService(
+        god_cli_registry=build_default_god_cli_registry(),
+        audit_dir=tmp_path / "operator_actions",
+        release_readiness_dir=release_dir,
+    )
+
+    result = service.handle(
+        OperatorActionRequest(
+            action="capture_release_evidence_pack",
+            actor_id="operator-1",
+            capabilities=(),
+            idempotency_key="idem-release-2",
+            payload={},
+            source="tui",
+        )
+    )
+
+    assert result.status == "denied"
+    assert result.fact_state == "denied"
+    assert "missing capability release_gate" in result.summary
+    assert not (release_dir / "evidence-pack.json").exists()
+
+
+def test_operator_action_blocks_release_evidence_pack_paths_outside_release_root(
+    tmp_path: Path,
+) -> None:
+    release_dir = tmp_path / "release_readiness"
+    service = OperatorActionService(
+        god_cli_registry=build_default_god_cli_registry(),
+        audit_dir=tmp_path / "operator_actions",
+        release_readiness_dir=release_dir,
+    )
+
+    result = service.handle(
+        OperatorActionRequest(
+            action="capture_release_evidence_pack",
+            actor_id="operator-1",
+            capabilities=(OperatorActionCapability.RELEASE_GATE,),
+            idempotency_key="idem-release-3",
+            payload={"output_path": str(tmp_path / "outside-pack.json")},
+            source="tui",
+        )
+    )
+
+    assert result.status == "blocked"
+    assert result.fact_state == "blocked"
+    assert "must stay under release readiness root" in result.summary
+    assert not (tmp_path / "outside-pack.json").exists()
+
+
+def test_operator_action_refreshes_live_gate_status_with_capability(
+    tmp_path: Path,
+) -> None:
+    release_dir = tmp_path / "release_readiness"
+    service = OperatorActionService(
+        god_cli_registry=build_default_god_cli_registry(),
+        audit_dir=tmp_path / "operator_actions",
+        release_readiness_dir=release_dir,
+        live_gate_env={"XMUSE_LIVE_MEMORYOS_LITE": "1"},
+        live_gate_command_runner=_fake_probe_runner(),
+    )
+
+    result = service.handle(
+        OperatorActionRequest(
+            action="refresh_live_gate_status",
+            actor_id="operator-1",
+            capabilities=(OperatorActionCapability.RELEASE_GATE,),
+            idempotency_key="idem-refresh-1",
+            payload={},
+            source="tui",
+        )
+    )
+
+    output_dir = release_dir / "artifacts" / "live_gate_status"
+    assert result.status == "ok"
+    assert result.fact_state == "live_gate_status_refreshed"
+    assert result.payload["live_gate_status"]["artifact_count"] == 4
+    assert [
+        (gate["gate_id"], gate["status"], gate["proof_level"])
+        for gate in result.payload["gate_statuses"]
+    ] == [
+        ("github-server-truth", "blocked", "manual_gap"),
+        ("live-memoryos", "blocked", "manual_gap"),
+        ("natural-god-deliberation", "manual_gap", "manual_gap"),
+        ("real-provider-runtime", "blocked", "manual_gap"),
+    ]
+    assert [
+        blocker["gate_id"] for blocker in result.payload["blockers"]
+    ] == [
+        "github-server-truth",
+        "live-memoryos",
+        "natural-god-deliberation",
+        "real-provider-runtime",
+    ]
+    assert result.payload["output_dir"] == str(output_dir.resolve(strict=False))
+    assert sorted(path.name for path in output_dir.glob("*.json")) == [
+        "github-server-truth-status.json",
+        "live-memoryos-status.json",
+        "natural-deliberation-status.json",
+        "real-provider-status.json",
+    ]
+    audit_rows = [
+        json.loads(line)
+        for line in (tmp_path / "operator_actions" / "operator-actions.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert audit_rows[-1]["action"] == "refresh_live_gate_status"
+    assert audit_rows[-1]["status"] == "ok"
+
+
+def test_operator_action_denies_live_gate_status_refresh_without_capability(
+    tmp_path: Path,
+) -> None:
+    release_dir = tmp_path / "release_readiness"
+    service = OperatorActionService(
+        god_cli_registry=build_default_god_cli_registry(),
+        audit_dir=tmp_path / "operator_actions",
+        release_readiness_dir=release_dir,
+        live_gate_command_runner=_fake_probe_runner(),
+    )
+
+    result = service.handle(
+        OperatorActionRequest(
+            action="refresh_live_gate_status",
+            actor_id="operator-1",
+            capabilities=(),
+            idempotency_key="idem-refresh-2",
+            payload={},
+            source="tui",
+        )
+    )
+
+    assert result.status == "denied"
+    assert result.fact_state == "denied"
+    assert "missing capability release_gate" in result.summary
+    assert not (release_dir / "artifacts" / "live_gate_status").exists()
+
+
+def test_operator_action_blocks_live_gate_status_paths_outside_release_root(
+    tmp_path: Path,
+) -> None:
+    release_dir = tmp_path / "release_readiness"
+    service = OperatorActionService(
+        god_cli_registry=build_default_god_cli_registry(),
+        audit_dir=tmp_path / "operator_actions",
+        release_readiness_dir=release_dir,
+        live_gate_command_runner=_fake_probe_runner(),
+    )
+
+    result = service.handle(
+        OperatorActionRequest(
+            action="refresh_live_gate_status",
+            actor_id="operator-1",
+            capabilities=(OperatorActionCapability.RELEASE_GATE,),
+            idempotency_key="idem-refresh-3",
+            payload={"output_dir": str(tmp_path / "outside-live-gates")},
+            source="tui",
+        )
+    )
+
+    assert result.status == "blocked"
+    assert result.fact_state == "blocked"
+    assert "must stay under release readiness root" in result.summary
+    assert not (tmp_path / "outside-live-gates").exists()
+
+
+def _fake_probe_runner():
+    def run(command: tuple[str, ...]) -> ProbeResult:
+        return ProbeResult(
+            name=" ".join(command),
+            command=command,
+            returncode=0,
+            stdout="ok",
+            stderr="",
+        )
+
+    return run

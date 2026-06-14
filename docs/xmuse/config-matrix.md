@@ -44,6 +44,16 @@
 | `XMUSE_RAY_GOD_EFFORT` | optional | `"low"` | `src/xmuse_core/agents/ray_session_layer.py:387` | fallback "low" |
 | `XMUSE_RAY_GOD_MCP` | optional | `"0"` (off) | `src/xmuse_core/agents/ray_session_layer.py:395` | 关闭 |
 
+### Deployment / Auth (production write surfaces)
+
+| 变量 | 分类 | 默认 | 读取位置 | 缺失行为 |
+|------|------|------|----------|----------|
+| `XMUSE_DEPLOYMENT_PROFILE` | optional | unset | `src/xmuse_core/platform/http_auth.py` | unset 时不强制启动 token；`production` 时 Chat API/MCP 缺 write token 直接 fail closed |
+| `XMUSE_CHAT_API_AUTH_TOKEN` | required for production profile | — | `xmuse/chat_api.py` | `XMUSE_DEPLOYMENT_PROFILE=production` 时缺失会阻止 Chat API 启动，除非 `XMUSE_CHAT_API_KEY` 或 explicit `auth_token` 存在 |
+| `XMUSE_CHAT_API_KEY` | required for TUI/operator Chat API writes | — | `xmuse/chat_api.py`, `xmuse/tui/adapter/xmuse_adapter.py` | Chat API 可作为本地 auth token fallback；TUI 缺失时无法授权 Chat API 写操作 |
+| `XMUSE_MCP_AUTH_TOKEN` | required for production profile | — | `xmuse/mcp_server.py` | `XMUSE_DEPLOYMENT_PROFILE=production` 时缺失会阻止 MCP 启动，除非 `XMUSE_MCP_API_KEY` 或 explicit `auth_token` 存在 |
+| `XMUSE_MCP_API_KEY` | optional auth token alias | — | `xmuse/mcp_server.py` | 可作为 MCP auth token fallback |
+
 ### Orchestrator Control (optional)
 
 | 变量 | 分类 | 默认 | 读取位置 | 缺失行为 |
@@ -56,6 +66,9 @@
 | 变量 | 分类 | 默认 | 读取位置 | 缺失行为 |
 |------|------|------|----------|----------|
 | `XMUSE_CHAT_API_URL` | optional | `"http://127.0.0.1:8201"` | `xmuse/tui/adapter/xmuse_adapter.py:32-33` | 硬编码 fallback |
+| `XMUSE_TUI_OPERATOR_ID` | optional | `"local-operator"` | `xmuse/tui/adapter/xmuse_adapter.py` | TUI Chat API 写请求使用默认 operator id；生产环境应显式设置 |
+| `XMUSE_TUI_OPERATOR_ROLE` | optional | `"operator"` | `xmuse/tui/adapter/xmuse_adapter.py` | TUI Chat API 写请求使用 operator role；Auth/RBAC 仍按服务端策略执行 |
+| `XMUSE_TUI_OPERATOR_CAPABILITIES` | required for production TUI writes | — | `xmuse/tui/adapter/xmuse_adapter.py` | 缺失时 TUI 不会伪造 capability；auth-enabled Chat API 会拒绝需要 capability 的写请求 |
 | `XMUSE_SUPERPOWERS` | optional | disabled | `src/xmuse_core/skills/superpowers_bridge.py:17` | 禁用 |
 
 ### Legacy — master_loop + hermes_reporter + scripts (非当前主链)
@@ -120,14 +133,29 @@ XMUSE_REVIEW_GOD_BACKEND=ray
 XMUSE_RAY_GOD_TRANSPORT=app-server
 XMUSE_RAY_GOD_EFFORT=low
 XMUSE_RAY_GOD_MCP=1
-# optional: TUI endpoint
+XMUSE_DEPLOYMENT_PROFILE=production
+# control plane endpoints and write auth
 XMUSE_CHAT_API_URL=http://127.0.0.1:8201
+XMUSE_CHAT_API_AUTH_TOKEN=<server-token>
+XMUSE_CHAT_API_KEY=<same-token-for-tui-client>
+XMUSE_TUI_OPERATOR_ID=operator
+XMUSE_TUI_OPERATOR_ROLE=operator
+XMUSE_TUI_OPERATOR_CAPABILITIES=chat_create_conversation,chat_post_message,chat_bootstrap,chat_approve_proposal,chat_manage_participants,register_god_cli,select_god_cli,release_gate,workflow_write
+XMUSE_MCP_AUTH_TOKEN=<server-token>
+XMUSE_MEMORYOS_LIVE_TRACE_ARTIFACT=xmuse/work/release_readiness/memoryos-trace.json
+XMUSE_NATURAL_GOD_TRANSCRIPT_PATH=xmuse/work/release_readiness/natural-transcript.json
+XMUSE_REAL_PROVIDER_RUNTIME_ARTIFACT=xmuse/work/release_readiness/real-provider-runtime.json
+XMUSE_GITHUB_TRUTH_REPO=iiyazu/Cross-Muse
+XMUSE_GITHUB_TRUTH_PULL_REQUEST=<pr-number>
+XMUSE_GITHUB_TRUTH_BASE_BRANCH=main
+XMUSE_GITHUB_TRUTH_REQUIRED_CHECKS=quality-gates,contract-smoke-gates,real-runtime-integration-gate
 ```
 
 此 bundle 的目的是确保:
 - Ray 作为 GOD 持久 session backend
 - Codex app-server 作为 transport（非 process-json batch）
 - MCP writeback 开启（`XMUSE_RAY_GOD_MCP=1` — 这是真实 MCP writeback gate；默认 off 避免普通 Ray session 意外暴露 MCP）
+- production profile 下 Chat API/MCP 缺 write token 会 fail closed
 - 其余使用各自默认值
 
 ## CLI 参数（platform_runner）
@@ -180,7 +208,7 @@ XMUSE_CHAT_API_URL=http://127.0.0.1:8201
    脚本，许多入口继续直接读取 `os.environ`。
 2. **`python-dotenv` 仍无直接 import** — `.env` 加载当前通过 `pydantic-settings`
    overlay 完成；本矩阵不声明所有 runtime 已迁入该 overlay。
-3. **所有 API 无认证** — Chat API / MCP / Dashboard 无 auth 中间件，CORS 是唯一保护
+3. **写 API 已有 opt-in 认证** — Chat API / MCP mutating writes 支持 token + role/capability gate，并在 `XMUSE_DEPLOYMENT_PROFILE=production` 下 fail closed；read routes 和 Dashboard 仍按当前本地信任边界处理。
 4. **只有 `DEEPSEEK_API_KEY` 是真正的"密钥"** — Codex 不需要 env（只要求 binary 在 PATH）
 5. **多路径模型选择** — env var + CLI args + profile ref 三套机制，优先级未显式文档化
 6. **端口分散** — 8100 作为默认值出现在 6+ 个独立位置

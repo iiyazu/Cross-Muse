@@ -106,7 +106,11 @@ XMUSE_REVIEW_GOD_BACKEND=ray
 XMUSE_RAY_GOD_TRANSPORT=app-server
 XMUSE_RAY_GOD_EFFORT=low
 XMUSE_RAY_GOD_MCP=1
+XMUSE_DEPLOYMENT_PROFILE=production
 XMUSE_CHAT_API_URL=http://127.0.0.1:8201
+XMUSE_CHAT_API_AUTH_TOKEN=<server-token>
+XMUSE_CHAT_API_KEY=<same-token-for-tui-client>
+XMUSE_MCP_AUTH_TOKEN=<server-token>
 ```
 
 `.env.example` must document these names and must not label

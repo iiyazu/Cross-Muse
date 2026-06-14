@@ -4,6 +4,7 @@ import importlib.util
 import json
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from xmuse_core.agents.god_session_registry import GodSessionRegistry
@@ -69,6 +70,134 @@ def mcp_chat_call(client: TestClient, name: str, arguments: dict | None = None) 
     structured = result["structuredContent"]
     assert "error" not in structured, structured
     return structured
+
+
+def mcp_tool_payload(name: str, arguments: dict | None = None) -> dict:
+    return {
+        "jsonrpc": "2.0",
+        "id": f"call-{name}",
+        "method": "tools/call",
+        "params": {"name": name, "arguments": arguments or {}},
+    }
+
+
+def test_mcp_auth_blocks_write_without_token_or_capability(tmp_path: Path) -> None:
+    server = load_mcp_module()
+    client = TestClient(
+        server.create_app(xmuse_root=tmp_path / "xmuse", auth_token="secret")
+    )
+    payload = mcp_tool_payload(
+        "enqueue_lane",
+        {
+            "feature_id": "mcp-auth-lane",
+            "prompt": "Exercise authorized MCP write path.",
+            "capabilities": ["code", "test"],
+            "audit": {
+                "actor": "operator",
+                "reason": "verify MCP auth gate",
+                "request_id": "mcp-auth-1",
+            },
+            "guard": {"expected_revision": 0},
+        },
+    )
+
+    no_token = client.post("/mcp", json=payload)
+    assert no_token.status_code == 401
+    assert no_token.json()["detail"] == "authentication required"
+
+    missing_capability = client.post(
+        "/mcp",
+        json=payload,
+        headers={
+            "X-XMUSE-API-Key": "secret",
+            "X-XMuse-Operator-Role": "operator",
+        },
+    )
+    assert missing_capability.status_code == 403
+    assert missing_capability.json()["detail"] == {
+        "code": "missing_capability",
+        "message": "missing capability for MCP tool enqueue_lane",
+        "required_capability": "enqueue_lane",
+        "tool_name": "enqueue_lane",
+    }
+
+
+def test_mcp_auth_allows_operator_with_tool_capability(tmp_path: Path) -> None:
+    server = load_mcp_module()
+    xmuse_root = tmp_path / "xmuse"
+    client = TestClient(server.create_app(xmuse_root=xmuse_root, auth_token="secret"))
+
+    response = client.post(
+        "/mcp",
+        json=mcp_tool_payload(
+            "enqueue_lane",
+            {
+                "feature_id": "mcp-authorized-lane",
+                "prompt": "Exercise authorized MCP write path.",
+                "capabilities": ["code", "test"],
+                "audit": {
+                    "actor": "operator",
+                    "reason": "verify MCP auth gate",
+                    "request_id": "mcp-auth-2",
+                },
+                "guard": {"expected_revision": 0},
+            },
+        ),
+        headers={
+            "X-XMUSE-API-Key": "secret",
+            "X-XMuse-Operator-Role": "operator",
+            "X-XMuse-Operator-Capabilities": "enqueue_lane",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert "error" not in payload, payload
+    result = payload["result"]
+    assert result["isError"] is False
+    assert result["structuredContent"]["feature_id"] == "mcp-authorized-lane"
+
+
+def test_mcp_auth_allows_read_tool_without_token(tmp_path: Path) -> None:
+    server = load_mcp_module()
+    client = TestClient(
+        server.create_app(xmuse_root=tmp_path / "xmuse", auth_token="secret")
+    )
+
+    response = client.post("/mcp", json=mcp_tool_payload("list_lanes"))
+
+    assert response.status_code == 200
+    result = response.json()["result"]
+    assert result["isError"] is False
+    assert result["structuredContent"] == {"lanes": []}
+
+
+def test_mcp_production_profile_requires_write_auth_token(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("XMUSE_DEPLOYMENT_PROFILE", "production")
+    monkeypatch.delenv("XMUSE_MCP_AUTH_TOKEN", raising=False)
+    monkeypatch.delenv("XMUSE_MCP_API_KEY", raising=False)
+
+    with pytest.raises(RuntimeError, match="XMUSE_MCP_AUTH_TOKEN"):
+        load_mcp_module()
+
+
+def test_mcp_production_profile_uses_env_write_auth_token(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("XMUSE_DEPLOYMENT_PROFILE", "production")
+    monkeypatch.setenv("XMUSE_MCP_AUTH_TOKEN", "server-secret")
+    server = load_mcp_module()
+    client = TestClient(server.create_app(xmuse_root=tmp_path / "xmuse"))
+
+    rejected = client.post("/mcp", json=mcp_tool_payload("enqueue_lane"))
+    allowed_read = client.post("/mcp", json=mcp_tool_payload("list_lanes"))
+
+    assert rejected.status_code == 401
+    assert allowed_read.status_code == 200
 
 
 def test_sse_endpoint_and_tools_list(tmp_path: Path) -> None:
@@ -398,6 +527,10 @@ def test_mcp_health_reports_chat_writeback_endpoint_and_state_files(tmp_path: Pa
             "mcp": "/mcp",
             "mcp_chat": "/mcp/chat",
             "sse": "/sse",
+        },
+        "auth": {
+            "write_auth_enabled": False,
+            "read_tools_require_token": False,
         },
         "state_files": {
             "chat_db": {

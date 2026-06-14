@@ -1,0 +1,290 @@
+from __future__ import annotations
+
+import json
+import tomllib
+from pathlib import Path
+
+from xmuse_core.platform.overnight_operator_supervisor import (
+    OvernightSimulationConfig,
+    OvernightSimulationFailure,
+    OvernightSupervisor,
+    OvernightSupervisorConfig,
+    OvernightSupervisorStage,
+)
+from xmuse_core.platform.overnight_replay_bundle_capture import (
+    capture_overnight_replay_bundle,
+)
+from xmuse_core.platform.overnight_supervisor_evidence_capture import (
+    capture_overnight_supervisor_evidence,
+)
+
+
+def test_capture_overnight_supervisor_evidence_exports_replay_ready_artifact(
+    tmp_path: Path,
+) -> None:
+    config = OvernightSupervisorConfig(
+        run_id="overnight-supervised",
+        artifact_dir=tmp_path,
+        stages=[
+            OvernightSupervisorStage(stage_id="S3", objective="supervise goal loop"),
+            OvernightSupervisorStage(stage_id="S4", objective="live soak gates"),
+        ],
+    )
+    supervisor = OvernightSupervisor(config)
+    supervisor.start_stage("S3")
+    supervisor.record_heartbeat(note="S3 running")
+    supervisor.record_checkpoint(
+        stage_id="S3",
+        summary="supervisor checkpoint captured",
+        validation=["uv run pytest tests/xmuse/test_overnight_operator_supervisor.py -q"],
+        commands=["uv run pytest tests/xmuse/test_overnight_operator_supervisor.py -q"],
+        source_refs=["goal:stage:S3"],
+    )
+    supervisor.start_stage("S4")
+    supervisor.manual_gap(
+        stage_id="S4",
+        reason="MemoryOS Lite live gate is not configured",
+        attempted_command="uv run xmuse-memoryos-live-gate-capture",
+        next_action="Configure MemoryOS Lite and rerun the live trace gate.",
+    )
+
+    output = tmp_path / "supervisor-production-evidence.json"
+    artifact = capture_overnight_supervisor_evidence(
+        snapshot_path=tmp_path / "overnight-supervisor-overnight-supervised.json",
+        output_path=output,
+    )
+
+    assert json.loads(output.read_text(encoding="utf-8")) == artifact
+    assert artifact["schema_version"] == "xmuse.production_evidence.v1"
+    assert artifact["run_id"] == "overnight-supervised"
+    assert artifact["stage_id"] == "S3"
+    assert artifact["action"] == "overnight_supervisor_checkpoint"
+    assert artifact["status"] == "ok"
+    assert artifact["proof_level"] == "contract_proof"
+    assert artifact["source_authority"] == "overnight_operator_supervisor"
+    assert artifact["source_refs"] == [
+        "overnight_supervisor:overnight-supervised",
+        "goal:stage:S3",
+        "goal:stage:S4",
+    ]
+    assert artifact["commands"] == [
+        "uv run pytest tests/xmuse/test_overnight_operator_supervisor.py -q",
+        "uv run xmuse-memoryos-live-gate-capture",
+    ]
+    assert artifact["test_results"] == [
+        "uv run pytest tests/xmuse/test_overnight_operator_supervisor.py -q"
+    ]
+    assert str(tmp_path / "overnight-supervisor-overnight-supervised.json") in artifact[
+        "artifacts"
+    ]
+    assert str(tmp_path / "manual-gap-S4.json") in artifact["artifacts"]
+    assert artifact["blocked_reason"] is None
+    assert artifact["next_action"] is None
+    assert artifact["supervisor"] == {
+        "authority": "overnight_operator_supervisor",
+        "run_id": "overnight-supervised",
+        "current_stage_id": None,
+        "selected_stage_id": "S3",
+        "stage_count": 2,
+        "heartbeat_count": 1,
+        "checkpoint_count": 1,
+        "manual_gap_count": 1,
+        "self_review_count": 0,
+        "blocked_fallback_count": 0,
+        "virtual_soak_count": 0,
+        "latest_heartbeat_stage_id": "S3",
+        "latest_checkpoint_stage_id": "S3",
+        "latest_blocked_stage_id": None,
+        "latest_virtual_soak_run_id": None,
+        "latest_virtual_soak_slo_status": None,
+    }
+
+    replay_bundle = capture_overnight_replay_bundle(
+        run_id="overnight-supervised",
+        artifacts_dir=tmp_path / "empty-release-gates",
+        output_path=tmp_path / "bundle.json",
+        section_artifacts={"supervisor": output},
+    )
+    sections = {section["section_id"]: section for section in replay_bundle["sections"]}
+    assert sections["supervisor"]["status"] == "ok"
+    assert sections["supervisor"]["proof_level"] == "contract_proof"
+    assert sections["supervisor"]["source_authority"] == "overnight_operator_supervisor"
+    assert sections["supervisor"]["details"] == {
+        "supervisor": artifact["supervisor"],
+    }
+
+
+def test_capture_overnight_supervisor_evidence_reports_manual_gap_without_checkpoint(
+    tmp_path: Path,
+) -> None:
+    supervisor = OvernightSupervisor(
+        OvernightSupervisorConfig(
+            run_id="overnight-unsupervised",
+            artifact_dir=tmp_path,
+            stages=[
+                OvernightSupervisorStage(stage_id="S3", objective="supervise goal loop"),
+            ],
+        )
+    )
+    supervisor.start_stage("S3")
+
+    artifact = capture_overnight_supervisor_evidence(
+        snapshot_path=tmp_path / "overnight-supervisor-overnight-unsupervised.json",
+        output_path=tmp_path / "supervisor-production-evidence.json",
+    )
+
+    assert artifact["status"] == "manual_gap"
+    assert artifact["proof_level"] == "manual_gap"
+    assert artifact["blocked_reason"] == (
+        "overnight supervisor snapshot has no checkpoint evidence"
+    )
+    assert artifact["next_action"] == (
+        "Record a supervisor checkpoint and regenerate supervisor replay evidence."
+    )
+
+
+def test_capture_overnight_supervisor_evidence_summarizes_reviews_and_blockers(
+    tmp_path: Path,
+) -> None:
+    supervisor = OvernightSupervisor(
+        OvernightSupervisorConfig(
+            run_id="overnight-review-blocker",
+            artifact_dir=tmp_path,
+            stages=[
+                OvernightSupervisorStage(stage_id="S6", objective="fresh GitHub truth"),
+                OvernightSupervisorStage(stage_id="S7", objective="TUI proof cockpit"),
+            ],
+        )
+    )
+    supervisor.start_stage("S6")
+    supervisor.record_heartbeat(note="S6 running")
+    supervisor.record_checkpoint(stage_id="S6", summary="checkpoint before blocker")
+    supervisor.record_self_review(
+        stage_id="S6",
+        summary="reviewed GitHub proof boundary",
+        decision="continue",
+        findings=["review truth is not merge truth"],
+        minutes_since_previous_review=50,
+    )
+    fallback = supervisor.fallback_blocked_stage(
+        stage_id="S6",
+        reason="GitHub review truth is configured but unavailable.",
+        failure_class="github_review_truth_unavailable",
+        retryable=False,
+        attempted_command="gh api repos/iiyazu/Cross-Muse/pulls/43/reviews",
+    )
+
+    artifact = capture_overnight_supervisor_evidence(
+        snapshot_path=tmp_path / "overnight-supervisor-overnight-review-blocker.json",
+        output_path=tmp_path / "supervisor-production-evidence.json",
+    )
+
+    assert artifact["status"] == "ok"
+    assert artifact["proof_level"] == "contract_proof"
+    assert artifact["summary"] == (
+        "Supervisor captured 1 heartbeat(s), 1 checkpoint(s), "
+        "0 manual gap(s), 1 self-review(s), and 1 blocked fallback(s)."
+    )
+    assert artifact["commands"] == [
+        "gh api repos/iiyazu/Cross-Muse/pulls/43/reviews"
+    ]
+    assert fallback["artifact_path"] in artifact["artifacts"]
+
+
+def test_capture_overnight_supervisor_evidence_includes_virtual_soak_slo(
+    tmp_path: Path,
+) -> None:
+    supervisor = OvernightSupervisor(
+        OvernightSupervisorConfig(
+            run_id="overnight-virtual-slo",
+            artifact_dir=tmp_path,
+            stages=[
+                OvernightSupervisorStage(stage_id="S4", objective="live gates"),
+                OvernightSupervisorStage(stage_id="S7", objective="proof cockpit"),
+            ],
+        )
+    )
+    simulation = supervisor.simulate_virtual_soak(
+        OvernightSimulationConfig(
+            total_minutes=180,
+            heartbeat_interval_minutes=20,
+            self_review_interval_minutes=75,
+            checkpoint_interval_minutes=90,
+            max_heartbeat_gap_minutes=15,
+            max_self_review_gap_minutes=60,
+            failures=[
+                OvernightSimulationFailure(
+                    minute=60,
+                    stage_id="S4",
+                    reason="MemoryOS Lite is configured but unavailable.",
+                    failure_class="memoryos_live_unavailable",
+                    attempted_command="uv run xmuse-memoryos-live-trace-capture",
+                )
+            ],
+        )
+    )
+
+    artifact = capture_overnight_supervisor_evidence(
+        snapshot_path=tmp_path / "overnight-supervisor-overnight-virtual-slo.json",
+        output_path=tmp_path / "supervisor-production-evidence.json",
+    )
+
+    assert simulation["slo_status"] == "violated"
+    assert artifact["status"] == "manual_gap"
+    assert artifact["proof_level"] == "manual_gap"
+    assert artifact["summary"] == (
+        "Supervisor captured 10 heartbeat(s), 2 checkpoint(s), "
+        "0 manual gap(s), 2 self-review(s), 1 blocked fallback(s), and "
+        "1 virtual soak(s); latest virtual soak SLO=violated."
+    )
+    assert artifact["blocked_reason"] == (
+        "latest overnight virtual soak SLO violated: heartbeat gap 20m exceeds "
+        "15m; self-review gap 75m exceeds 60m"
+    )
+    assert artifact["next_action"] == (
+        "Reduce heartbeat/self-review intervals or fix supervisor scheduling, "
+        "then rerun the overnight virtual soak."
+    )
+
+
+def test_capture_overnight_supervisor_evidence_cli_writes_artifact(tmp_path: Path) -> None:
+    from xmuse.overnight_supervisor_evidence_capture import main
+
+    supervisor = OvernightSupervisor(
+        OvernightSupervisorConfig(
+            run_id="overnight-cli",
+            artifact_dir=tmp_path,
+            stages=[
+                OvernightSupervisorStage(stage_id="S3", objective="supervise goal loop"),
+            ],
+        )
+    )
+    supervisor.start_stage("S3")
+    supervisor.record_heartbeat(note="cli heartbeat")
+    supervisor.record_checkpoint(stage_id="S3", summary="cli checkpoint")
+    output = tmp_path / "supervisor-production-evidence.json"
+
+    assert (
+        main(
+            [
+                "--snapshot",
+                str(tmp_path / "overnight-supervisor-overnight-cli.json"),
+                "--output",
+                str(output),
+            ]
+        )
+        == 0
+    )
+
+    artifact = json.loads(output.read_text(encoding="utf-8"))
+    assert artifact["status"] == "ok"
+    assert artifact["action"] == "overnight_supervisor_checkpoint"
+
+
+def test_overnight_supervisor_evidence_capture_cli_script_is_registered() -> None:
+    pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+
+    assert (
+        pyproject["project"]["scripts"]["xmuse-overnight-supervisor-evidence-capture"]
+        == "xmuse.overnight_supervisor_evidence_capture:main"
+    )

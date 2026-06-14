@@ -106,11 +106,36 @@ export XMUSE_REVIEW_GOD_BACKEND=ray
 export XMUSE_RAY_GOD_TRANSPORT=app-server
 export XMUSE_RAY_GOD_EFFORT=low
 export XMUSE_RAY_GOD_MCP=1
+export XMUSE_DEPLOYMENT_PROFILE=production
 export XMUSE_CHAT_API_URL=http://127.0.0.1:8201
+export XMUSE_CHAT_API_AUTH_TOKEN=<server-token>
+export XMUSE_CHAT_API_KEY=<same-token-for-tui-client>
+export XMUSE_MCP_AUTH_TOKEN=<server-token>
 
 uv run python -m xmuse.chat_api
 uv run python -m xmuse.mcp_server --port 8100
 uv run xmuse-platform-runner --peer-chat --mcp-port 8100
+uv run xmuse-live-gate-status-capture \
+  --output-dir xmuse/work/release_readiness/artifacts/live_gate_status
+uv run xmuse-internal-review-gate-capture \
+  --artifact xmuse/work/release_readiness/internal-review.json \
+  --expected-head-sha <current-head-sha> \
+  --output xmuse/work/release_readiness/artifacts/internal-review.json
+uv run xmuse-memoryos-live-gate-capture \
+  --artifact xmuse/work/release_readiness/memoryos-trace.json \
+  --output xmuse/work/release_readiness/artifacts/live-memoryos.json
+uv run xmuse-natural-deliberation-gate-capture \
+  --artifact xmuse/work/release_readiness/natural-transcript.json \
+  --output xmuse/work/release_readiness/artifacts/natural-deliberation.json
+uv run xmuse-real-provider-runtime-gate-capture \
+  --artifact xmuse/work/release_readiness/real-provider-runtime.json \
+  --output xmuse/work/release_readiness/artifacts/real-provider-runtime.json
+uv run xmuse-release-readiness-capture \
+  --artifacts-dir xmuse/work/release_readiness/artifacts \
+  --output xmuse/work/release_readiness/report.json
+uv run xmuse-proof-contamination-audit \
+  --artifacts-dir xmuse/work/release_readiness/artifacts \
+  --output xmuse/work/release_readiness/proof-contamination-audit.json
 ```
 
 Manual verification:

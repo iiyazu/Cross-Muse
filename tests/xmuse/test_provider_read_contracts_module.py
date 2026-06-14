@@ -28,3 +28,18 @@ def test_read_contracts_preserves_provider_inventory_compat_export() -> None:
         legacy_build_provider_inventory
         is provider_read_contracts.build_provider_inventory
     )
+
+
+def test_provider_read_contracts_exposes_god_cli_inventory() -> None:
+    inventory = provider_read_contracts.build_god_cli_inventory()
+
+    assert inventory["kind"] == "god_cli_inventory"
+    assert inventory["read_only"] is True
+    rows = {
+        row["cli_id"]: row
+        for row in inventory["registrations"]
+    }
+    assert "codex.god" in rows
+    assert "peer_god" in rows["codex.god"]["capabilities"]
+    assert "opencode.deepseek_flash_worker" in rows
+    assert "peer_god" not in rows["opencode.deepseek_flash_worker"]["capabilities"]

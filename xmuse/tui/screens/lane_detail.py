@@ -52,10 +52,60 @@ class LaneDetailScreen(Screen):
             f"Source: {payload.get('source_authority', 'tui_worklist_envelope')}",
             f"Feature: {task.get('plan_feature_id', '?')}",
             f"Priority: {task.get('priority', 0)}",
-            "",
-            "--- Prompt Summary ---",
-            str(task.get("prompt_summary") or "")[:500],
         ]
+        dependencies = _text_items(
+            task.get("scoped_dependency_ids")
+            or task.get("lane_depends_on_ids")
+            or task.get("depends_on")
+        )
+        gate_predecessors = _text_items(
+            task.get("gate_predecessors")
+            or task.get("gate_predecessor_ids")
+            or task.get("predecessor_gate_ids")
+        )
+        touched_areas = _text_items(task.get("touched_areas") or task.get("touched_paths"))
+        source_refs = _text_items(task.get("source_refs") or task.get("blueprint_refs"))
+        merge_blockers = _text_items(
+            task.get("merge_blockers")
+            or task.get("merge_blockage")
+            or task.get("merge_blockage_reasons")
+        )
+        if dependencies or gate_predecessors or touched_areas or source_refs:
+            lines.extend(["", "--- LaneDAG ---"])
+            if dependencies:
+                lines.append(f"Depends on: {', '.join(dependencies)}")
+            if gate_predecessors:
+                lines.append(f"Gate predecessors: {', '.join(gate_predecessors)}")
+            if touched_areas:
+                lines.append(f"Touched areas: {', '.join(touched_areas)}")
+            if source_refs:
+                lines.append(f"Source refs: {', '.join(source_refs)}")
+        if merge_blockers:
+            lines.extend(["", "--- Merge blockers ---"])
+            lines.append(f"Merge blockers: {', '.join(merge_blockers)}")
+        review_decision = _text(
+            task.get("review_decision")
+            or task.get("review_status")
+            or task.get("review_verdict")
+            or task.get("review_verdict_decision")
+        )
+        review_verdict_id = _text(task.get("review_verdict_id") or task.get("verdict_id"))
+        if review_decision or review_verdict_id:
+            lines.extend(["", "--- Review ---"])
+            if review_decision:
+                lines.append(f"Review: {review_decision}")
+            if review_verdict_id:
+                lines.append(f"Verdict: {review_verdict_id}")
+        source_lane_id = _text(
+            task.get("source_lane_id")
+            or task.get("patch_forward_source_lane_id")
+            or task.get("failed_lane_id")
+        )
+        target_lane_id = _text(task.get("lane_id") or task.get("feature_id") or self.lane_id)
+        if source_lane_id and target_lane_id:
+            lines.extend(["", "--- Patch-forward ---"])
+            lines.append(f"Patch-forward: {source_lane_id} -> {target_lane_id}")
+        lines.extend(["", "--- Prompt Summary ---", str(task.get("prompt_summary") or "")[:500]])
         execution_log = payload.get("execution_log")
         if isinstance(execution_log, dict) and isinstance(execution_log.get("events"), list):
             lines.extend(["", "--- Execution Log ---"])
@@ -67,3 +117,23 @@ class LaneDetailScreen(Screen):
                 status = str(event.get("status") or "").strip()
                 lines.append(" ".join(part for part in (title, status, summary) if part))
         self.query_one("#lane-content", LaneContentPanel).update(Text("\n".join(lines)))
+
+
+def _text(value) -> str | None:
+    if isinstance(value, str):
+        cleaned = value.strip()
+        return cleaned or None
+    return None
+
+
+def _text_items(value) -> list[str]:
+    if isinstance(value, str):
+        return [value] if value.strip() else []
+    if not isinstance(value, list):
+        return []
+    items: list[str] = []
+    for item in value:
+        text = _text(item)
+        if text:
+            items.append(text)
+    return items

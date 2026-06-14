@@ -7,6 +7,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from xmuse_core.structuring.source_event_lineage import BlueprintSourceEventLineage
+
 
 def _require_text(value: str, field_name: str) -> str:
     cleaned = value.strip()
@@ -292,6 +294,7 @@ class FeatureEvidenceBundle(BaseModel):
     worker_session_id: str
     provider_session_binding_ref: str
     blueprint_refs: list[str]
+    blueprint_proof_level: str | None = None
     feature_goal: str
     acceptance_criteria: list[str]
     lane_graph_summary: LaneGraphEvidenceSummary
@@ -334,7 +337,14 @@ class FeatureEvidenceBundle(BaseModel):
     def _validate_text_lists(cls, value: list[str], info: Any) -> list[str]:
         return _clean_text_list(value, info.field_name)
 
-    @field_validator("base_head_sha", "branch", "worktree", "diff_ref", "patch_ref")
+    @field_validator(
+        "blueprint_proof_level",
+        "base_head_sha",
+        "branch",
+        "worktree",
+        "diff_ref",
+        "patch_ref",
+    )
     @classmethod
     def _validate_optional_text(cls, value: str | None, info: Any) -> str | None:
         return _require_optional_text(value, info.field_name)
@@ -1264,6 +1274,8 @@ class FeatureGraphExecutionStatusRecord(BaseModel):
     feature_plan_version: int = Field(ge=1)
     feature_id: str
     feature_graph_id: str
+    blueprint_proof_level: str | None = None
+    source_event_lineage: list[BlueprintSourceEventLineage] = Field(default_factory=list)
     status: FeatureGraphExecutionStatus
     ready_lane_ids: list[str] = Field(default_factory=list)
     active_lane_ids: list[str] = Field(default_factory=list)
@@ -1303,6 +1315,7 @@ class FeatureGraphExecutionStatusRecord(BaseModel):
 
     @field_validator(
         "planning_run_id",
+        "blueprint_proof_level",
         "active_worker_session_id",
         "active_provider_session_binding_ref",
         "feature_lanes_projection_ref",

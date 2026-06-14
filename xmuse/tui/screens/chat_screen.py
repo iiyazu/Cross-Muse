@@ -16,7 +16,13 @@ from xmuse.tui.adapter.xmuse_adapter import StateDelta
 from xmuse.tui.completion import CompletionCandidate, CompletionEngine
 from xmuse.tui.slash_commands import SlashCommandContext, SlashCommandRouter
 from xmuse.tui.state import StateUpdated
+from xmuse.tui.widgets.blueprint_freeze_panel import BlueprintFreezePanel
+from xmuse.tui.widgets.deliberation_cockpit import DeliberationCockpit
+from xmuse.tui.widgets.execution_cockpit import ExecutionCockpit
+from xmuse.tui.widgets.github_truth_panel import GitHubTruthPanel
+from xmuse.tui.widgets.memory_trace_drawer import MemoryTraceDrawer
 from xmuse.tui.widgets.message_log import MessageLog
+from xmuse.tui.widgets.proof_cockpit import ProofCockpit
 from xmuse.tui.widgets.xmu_header import XmuHeader
 
 
@@ -195,6 +201,24 @@ class ChatScreen(Screen):
         height: 6;
         border: solid $secondary;
     }
+    #deliberation-cockpit {
+        height: 9;
+    }
+    #blueprint-freeze-panel {
+        height: 8;
+    }
+    #execution-cockpit {
+        height: 9;
+    }
+    #memory-trace-drawer {
+        height: 7;
+    }
+    #github-truth-panel {
+        height: 8;
+    }
+    #proof-cockpit {
+        height: 8;
+    }
     #task-detail {
         height: 1fr;
         border: solid $primary-darken-2;
@@ -239,6 +263,18 @@ class ChatScreen(Screen):
             with Vertical(id="pane-right"):
                 yield Label("Inbox", classes="panel-header")
                 yield ListView(id="inbox-list")
+                yield Label("Deliberation", classes="panel-header")
+                yield DeliberationCockpit(id="deliberation-cockpit")
+                yield Label("Blueprint", classes="panel-header")
+                yield BlueprintFreezePanel(id="blueprint-freeze-panel")
+                yield Label("Execution", classes="panel-header")
+                yield ExecutionCockpit(id="execution-cockpit")
+                yield Label("Memory", classes="panel-header")
+                yield MemoryTraceDrawer(id="memory-trace-drawer")
+                yield Label("GitHub", classes="panel-header")
+                yield GitHubTruthPanel(id="github-truth-panel")
+                yield Label("Proof", classes="panel-header")
+                yield ProofCockpit(id="proof-cockpit")
                 yield Label("Task list", classes="panel-header")
                 yield ListView(id="task-list")
                 yield Label("Task detail", classes="panel-header")
@@ -770,6 +806,12 @@ class ChatScreen(Screen):
             self._rendered_fingerprints[conv_id] = fingerprint
         if getattr(self, "_copy_mode", False):
             self._sync_copy_view()
+        self.query_one("#deliberation-cockpit", DeliberationCockpit).load(state.vision)
+        self.query_one("#blueprint-freeze-panel", BlueprintFreezePanel).load(state.vision)
+        self.query_one("#execution-cockpit", ExecutionCockpit).load(state.vision)
+        self.query_one("#memory-trace-drawer", MemoryTraceDrawer).load(state.vision)
+        self.query_one("#github-truth-panel", GitHubTruthPanel).load(state.vision)
+        self.query_one("#proof-cockpit", ProofCockpit).load(state.vision)
         lanes = state.latest_lanes()
         self._refresh_workbench_lists(conv_id, lanes, cards)
 
@@ -1050,6 +1092,33 @@ def _format_lane_detail(detail: dict | None) -> str:
     ]
     if detail.get("priority") is not None:
         lines.append(f"priority: {detail.get('priority')}")
+    dependencies = _text_items(
+        detail.get("scoped_dependency_ids")
+        or detail.get("lane_depends_on_ids")
+        or detail.get("depends_on")
+    )
+    gate_predecessors = _text_items(
+        detail.get("gate_predecessors")
+        or detail.get("gate_predecessor_ids")
+        or detail.get("predecessor_gate_ids")
+    )
+    touched_areas = _text_items(detail.get("touched_areas") or detail.get("touched_paths"))
+    source_refs = _text_items(detail.get("source_refs") or detail.get("blueprint_refs"))
+    merge_blockers = _text_items(
+        detail.get("merge_blockers")
+        or detail.get("merge_blockage")
+        or detail.get("merge_blockage_reasons")
+    )
+    if dependencies:
+        lines.append(f"depends_on: {', '.join(dependencies)}")
+    if gate_predecessors:
+        lines.append(f"gate_predecessors: {', '.join(gate_predecessors)}")
+    if touched_areas:
+        lines.append(f"touched_areas: {', '.join(touched_areas)}")
+    if source_refs:
+        lines.append(f"source_refs: {', '.join(source_refs)}")
+    if merge_blockers:
+        lines.append(f"merge_blockers: {', '.join(merge_blockers)}")
     prompt_summary = str(detail.get("prompt_summary") or "").strip()
     if prompt_summary:
         lines.extend(["", "prompt:", prompt_summary])
@@ -1106,6 +1175,19 @@ def _format_inbox_execution_context(item: dict) -> str:
         if value:
             lines.append(f"{key}: {value}")
     return "\n".join(lines)
+
+
+def _text_items(value) -> list[str]:
+    if isinstance(value, str):
+        return [value] if value.strip() else []
+    if not isinstance(value, list):
+        return []
+    items: list[str] = []
+    for item in value:
+        text = str(item).strip()
+        if text:
+            items.append(text)
+    return items
 
 
 def _message_display_author(message: dict) -> str:

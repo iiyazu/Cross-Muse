@@ -639,6 +639,8 @@ class ChatStore:
             "freeze_decision",
             "open_questions",
             "repo_areas",
+            "source_authority",
+            "god_room_blueprint_freeze",
         ):
             if key in content:
                 blueprint[key] = content[key]

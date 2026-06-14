@@ -190,6 +190,111 @@ def test_goal_stage_runner_opencode_message_does_not_get_consumed_as_file(
     ]
 
 
+def test_goal_stage_runner_prompt_includes_candidate_patch_gate(tmp_path: Path) -> None:
+    manifest = tmp_path / "stage.json"
+    _write_manifest(
+        manifest,
+        {
+            "stage_id": "S-candidate",
+            "objective": "Produce a bounded candidate patch.",
+            "scope": ["scripts/goal_stage_runner.py", "tests/xmuse/test_goal_stage_runner.py"],
+            "acceptance_contracts": ["Candidate patch stays within allowed files."],
+            "worker_kind": "mechanical_patch",
+            "candidate_patch": True,
+            "allowed_files": ["scripts/goal_stage_runner.py"],
+            "forbidden_paths": ["xmuse/__init__.py", "feature_lanes.json", "xmuse/logs/"],
+            "allowed_actions": ["edit_allowed_files", "run_focused_tests"],
+            "forbidden_actions": ["commit", "push", "write_runtime_state"],
+            "closure": {
+                "target_layers": ["L2"],
+                "proof_level": "contract_proof",
+                "forbidden_claims": ["peer_god_live_proof"],
+            },
+            "evidence_summary": {
+                "target_layers": ["L2"],
+                "proof_level": "contract_proof",
+                "candidate_patch": True,
+            },
+        },
+    )
+
+    output = tmp_path / "S-candidate.result.json"
+    rc = module.run_stage(
+        stage_manifest_path=manifest,
+        engine="opencode",
+        repo_root=ROOT,
+        output=output,
+        timeout_seconds=10,
+        dry_run=True,
+    )
+
+    assert rc == 0
+    prompt = (tmp_path / "S-candidate.result.json.prompt.txt").read_text(encoding="utf-8")
+    assert "OpenCode Candidate Patch Gate" in prompt
+    assert "Worker kind: mechanical_patch" in prompt
+    assert "Candidate patch: true" in prompt
+    assert "- scripts/goal_stage_runner.py" in prompt
+    assert "- xmuse/__init__.py" in prompt
+    assert '"target_layers": [' in prompt
+    assert '"L2"' in prompt
+    assert "Do not commit, push, write runtime state, or claim completion." in prompt
+
+
+def test_goal_stage_runner_result_preserves_candidate_patch_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest = tmp_path / "stage.json"
+    _write_manifest(
+        manifest,
+        {
+            "stage_id": "S-candidate-result",
+            "objective": "Run bounded candidate patch stage.",
+            "scope": ["scripts/goal_stage_runner.py"],
+            "acceptance_contracts": ["Candidate metadata is preserved."],
+            "engine": "opencode",
+            "worker_kind": "mechanical_patch",
+            "candidate_patch": True,
+            "allowed_files": ["scripts/goal_stage_runner.py"],
+            "forbidden_paths": ["xmuse/__init__.py"],
+            "closure": {"target_layers": ["L2"], "proof_level": "contract_proof"},
+            "evidence_summary": {"projection_only": False},
+        },
+    )
+    captured: dict[str, Any] = {}
+
+    def fake_run(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        captured["command"] = args[0] if args else kwargs.get("args") or kwargs.get("command")
+        return subprocess.CompletedProcess(
+            args=captured["command"],
+            returncode=0,
+            stdout='{"status":"ok"}',
+            stderr="",
+        )
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+
+    output = tmp_path / "S-candidate-result.result.json"
+    rc = module.run_stage(
+        stage_manifest_path=manifest,
+        engine="auto",
+        repo_root=ROOT,
+        output=output,
+        timeout_seconds=10,
+        dry_run=False,
+    )
+
+    assert rc == 0
+    result = json.loads(output.read_text(encoding="utf-8"))
+    assert result["engine"] == "opencode"
+    assert result["worker_kind"] == "mechanical_patch"
+    assert result["candidate_patch"] is True
+    assert result["allowed_files"] == ["scripts/goal_stage_runner.py"]
+    assert result["forbidden_paths"] == ["xmuse/__init__.py"]
+    assert result["closure"] == {"target_layers": ["L2"], "proof_level": "contract_proof"}
+    assert result["evidence_summary"] == {"projection_only": False}
+
+
 def test_goal_stage_runner_run_stage_pins_opencode_model_with_hostile_env(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

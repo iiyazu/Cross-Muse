@@ -15,6 +15,9 @@ from xmuse_core.platform.runner_supervisor import (
     start_runner,
     write_pid_file,
 )
+from xmuse_core.structuring.blueprint_execution.lane_recovery_artifacts import (
+    lane_recovery_artifact_path,
+)
 
 
 def test_pid_file_round_trips_process_metadata(tmp_path: Path) -> None:
@@ -138,6 +141,146 @@ def test_runner_status_reports_process_counts_and_pid_file(tmp_path: Path) -> No
     assert status["health"]["processes"]["mcp_count"] == 1
 
 
+def test_runner_status_exposes_recovery_block_summary_from_durable_artifacts(
+    tmp_path: Path,
+) -> None:
+    xmuse_root = tmp_path / "xmuse"
+    lanes_path = xmuse_root / "feature_lanes.json"
+    lanes_path.parent.mkdir(parents=True)
+    lanes_path.write_text(
+        json.dumps(
+            {
+                "lanes": [
+                    {
+                        "feature_id": "lane-refactor",
+                        "status": "reworking",
+                        "graph_id": "graph-a",
+                    },
+                    {
+                        "feature_id": "lane-retry",
+                        "status": "reworking",
+                        "graph_id": "graph-a",
+                    },
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    _write_recovery_artifact(
+        xmuse_root,
+        graph_id="graph-a",
+        lane_id="lane-refactor",
+        decision="refactor_required",
+        retry_allowed=False,
+    )
+    _write_recovery_artifact(
+        xmuse_root,
+        graph_id="graph-a",
+        lane_id="lane-retry",
+        decision="retry",
+        retry_allowed=True,
+    )
+
+    status = runner_status(
+        RunnerSupervisorConfig(repo_root=tmp_path, pid_file=xmuse_root / "runner.pid.json"),
+        runner_pids=[444],
+        mcp_pids=[555],
+        live_pids={444, 555},
+    )
+
+    recovery = status["health"]["recovery"]
+    assert recovery["source_authority"] == "lane_recovery_artifact"
+    assert recovery["proof_level"] == "contract_proof"
+    assert recovery["counts"] == {
+        "blocked": 1,
+        "non_retry_decision": 1,
+        "invalid_artifact": 0,
+        "retry_allowed": 1,
+    }
+    assert recovery["blocked_lanes"] == [
+        {
+            "lane_id": "lane-refactor",
+            "graph_id": "graph-a",
+            "status": "reworking",
+            "decision": "refactor_required",
+            "retry_allowed": False,
+            "failure_class": "demo_grade_boundary",
+            "attempt": 2,
+            "reason": "refactor_required",
+            "next_action": (
+                "refactor or replace the failing lane boundary before retrying"
+            ),
+            "source_refs": ["pytest:runner-supervisor-recovery"],
+            "source_authority": "lane_recovery_artifact",
+            "artifact_ref": str(
+                lane_recovery_artifact_path(
+                    xmuse_root,
+                    graph_id="graph-a",
+                    lane_id="lane-refactor",
+                )
+            ),
+        }
+    ]
+    assert recovery["manual_gaps"] == ["live_runner_recovery_enforcement_not_proven"]
+    assert "overnight_safe_recovery" in recovery["forbidden_claims"]
+    assert "ready_to_merge" in recovery["forbidden_claims"]
+
+
+def test_runner_status_fail_closes_invalid_recovery_artifact(tmp_path: Path) -> None:
+    xmuse_root = tmp_path / "xmuse"
+    lanes_path = xmuse_root / "feature_lanes.json"
+    lanes_path.parent.mkdir(parents=True)
+    lanes_path.write_text(
+        json.dumps(
+            {
+                "lanes": [
+                    {
+                        "feature_id": "lane-invalid-recovery",
+                        "status": "reworking",
+                        "graph_id": "graph-a",
+                    }
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    recovery_path = lane_recovery_artifact_path(
+        xmuse_root,
+        graph_id="graph-a",
+        lane_id="lane-invalid-recovery",
+    )
+    recovery_path.parent.mkdir(parents=True, exist_ok=True)
+    recovery_path.write_text(
+        json.dumps({"schema_version": "xmuse.god_room_lane_recovery.v1"}) + "\n",
+        encoding="utf-8",
+    )
+
+    status = runner_status(
+        RunnerSupervisorConfig(repo_root=tmp_path, pid_file=xmuse_root / "runner.pid.json"),
+        runner_pids=[444],
+        mcp_pids=[555],
+        live_pids={444, 555},
+    )
+
+    recovery = status["health"]["recovery"]
+    assert recovery["source_authority"] == "lane_recovery_artifact"
+    assert recovery["proof_level"] == "contract_proof"
+    assert recovery["counts"] == {
+        "blocked": 1,
+        "non_retry_decision": 0,
+        "invalid_artifact": 1,
+        "retry_allowed": 0,
+    }
+    assert recovery["blocked_lanes"][0]["lane_id"] == "lane-invalid-recovery"
+    assert recovery["blocked_lanes"][0]["decision"] == "invalid_recovery_artifact"
+    assert recovery["blocked_lanes"][0]["retry_allowed"] is False
+    assert recovery["invalid_artifacts"][0]["reason"] == "invalid_recovery_artifact"
+    assert "live_runner_recovery_enforcement_not_proven" in recovery["manual_gaps"]
+    assert "pr_merged" in recovery["forbidden_claims"]
+
+
 def test_runner_status_exposes_coordinator_dead_letters_and_degraded_incidents(
     tmp_path: Path,
 ) -> None:
@@ -227,3 +370,39 @@ def test_runner_status_tolerates_unreadable_coordinator_incident_path(
         "lifecycle": 0,
     }
     assert status["health"]["coordinator"]["read_error"]["type"] == "IsADirectoryError"
+
+
+def _write_recovery_artifact(
+    base_dir: Path,
+    *,
+    graph_id: str,
+    lane_id: str,
+    decision: str,
+    retry_allowed: bool,
+) -> None:
+    recovery_path = lane_recovery_artifact_path(
+        base_dir,
+        graph_id=graph_id,
+        lane_id=lane_id,
+    )
+    recovery_path.parent.mkdir(parents=True, exist_ok=True)
+    recovery_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "xmuse.god_room_lane_recovery.v1",
+                "decision": {
+                    "lane_id": lane_id,
+                    "decision": decision,
+                    "retry_allowed": retry_allowed,
+                    "failure_class": "demo_grade_boundary",
+                    "attempt": 2,
+                    "next_action": (
+                        "refactor or replace the failing lane boundary before retrying"
+                    ),
+                    "source_refs": ["pytest:runner-supervisor-recovery"],
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )

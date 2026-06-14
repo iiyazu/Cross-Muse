@@ -1,6 +1,6 @@
 # xmuse 文档入口
 
-更新日期: 2026-06-10
+更新日期: 2026-06-14
 
 本目录是 xmuse 当前阶段的文档入口。旧的 `docs/superpowers/specs/` 和
 `docs/superpowers/plans/` 仍保留原路径，因为测试、lane graph 和历史记录会引用
@@ -26,11 +26,22 @@ GOD groupchat deliberation
 - graph-set / lane graph / review plane / GitHub checks / MemoryOS refs 才是对应阶段的权威，
   `feature_lanes.json`、cards、dashboard/TUI 读模型是投影或视图。
 
+长 `/goal` 的生产闭环推进采用 Wave A-E 顺序，而不是平均推进 L1-L11：
+Wave A=L1-L2 authority root，Wave B=L3-L5 GOD room speech runtime，
+Wave C=L6-L7 deliberation-to-execution authority，Wave D=L8-L9 execution
+safety，Wave E=L10-L11 aggregation/operator surface。具体行为规范见
+`docs/xmuse/goal-behavior-contract.md`，当前 wave cursor 见
+`docs/xmuse/production-closure-gap-ledger.md`。
+
 ## 当前权威文档
 
 | 文档 | 用途 |
 |---|---|
 | `docs/xmuse/mainline-contracts.md` | 当前产品主线合同：GOD 群聊、blueprint freeze、laneDAG、review/GitHub gate、REST-first MemoryOS |
+| `docs/xmuse/production-closure-gap-ledger.md` | 从用户视角维护生产机闭环缺口台账，逐层记录已有证据、缺口、所需 proof、下一步生产切片和不能声称的能力 |
+| `docs/xmuse/goal-behavior-contract.md` | 长 `/goal` 的 dependency-first / authority-first / evidence-first 行为契约，定义 L1-L11 阶段、proof level、anti-false-closure 和 anti-TDD-abuse |
+| `docs/xmuse/code-review.md` | 生产闭环 review 契约，专门审查 projection authority、proof-level inflation、worker truth、GitHub truth 和 TDD abuse |
+| `docs/xmuse/dependency-first-closure-goal-prompt.md` | 可直接用于下一轮长 `/goal` 的简洁 dependency-first closure prompt |
 | `docs/xmuse/deep-research-02-next-goal.md` | 第二轮深度研究转化目标，定义 #13-#19 的下一阶段任务 |
 | `docs/xmuse/contract-smoke-gates.md` | #19 合同 smoke CI：无 secrets 的 lint、format、typecheck、主线合约测试和 SLO smoke |
 | `docs/xmuse/deep-research-03-next-goal.md` | 第三轮真实运行层目标：GitHub 服务器 gate、MemoryOS Lite 互操作、provider/runtime soak 分层和 broad-suite 债务 |
@@ -42,9 +53,25 @@ GOD groupchat deliberation
 | `docs/xmuse/self-iteration-runtime-closure-goal-prompt.md` | 可直接用于 `/goal` 的简洁自迭代闭环 prompt，详细任务引用 plan 文档 |
 | `docs/xmuse/self-iteration-runtime-closure.md` | 自迭代 runtime 闭环 replay artifact，记录 speech-act、blueprint、laneDAG、runtime contract、review、GitHub 和 MemoryOS 证据 |
 | `docs/xmuse/goal-stage-harness.md` | `/goal` 阶段统一执行/证据/失败分类规范与标准 manifest schema |
+| `docs/xmuse/development-goal-worker-delegation-policy.md` | Codex 开发 xmuse 时的 `/goal` worker 委派行为规范：何时把低风险高工作量任务交给 OpenCode、如何调用、如何审查 |
 | `docs/xmuse/vision-runtime-evidence-closure-plan.md` | 2fdb299 之后愿景 runtime evidence closure 的详细任务、验收标准和执行行为规范 |
 | `docs/xmuse/vision-runtime-evidence-closure-goal-prompt.md` | 可直接用于 `/goal` 的简洁愿景 runtime evidence closure prompt，详细任务引用 plan 文档 |
 | `docs/xmuse/vision-runtime-evidence-closure.md` | 愿景 runtime evidence closure 证据 artifact，记录 CI、merge 语义、GitHub server gap、live MemoryOS trace 和 real runtime soak 边界 |
+| `docs/xmuse/vision-closure-wave-deliberation-tui-plan.md` | 根据 deep-research-report_07 制定的 TUI 愿景前门闭环详细任务与行为规范 |
+| `docs/xmuse/vision-closure-wave-deliberation-tui-goal-prompt.md` | 可直接用于 `/goal` 的简洁 TUI 愿景前门闭环 prompt，详细任务引用 plan 文档 |
+| `docs/xmuse/vision-closure-wave-deliberation-tui-walkthrough.md` | TUI 愿景前门闭环实现走读，记录 read-model、面板、proof-level 和剩余 manual gap |
+| `docs/xmuse/vision-galaxy-live-evidence-plan.md` | 下一轮多 GOD 星系 live evidence pack 的详细任务、proof 纪律、OpenCode 调用边界和行为规范 |
+| `docs/xmuse/vision-galaxy-live-evidence-goal-prompt.md` | 可直接用于 `/goal` 的简洁星系证据闭环 prompt，详细任务引用 plan 文档 |
+| `docs/xmuse/vision-operator-closed-overnight-loop-plan.md` | 根据 deep-research-report_08 制定的 8 小时 operator-closed overnight loop 详细任务、proof 纪律和行为规范 |
+| `docs/xmuse/vision-operator-closed-overnight-loop-goal-prompt.md` | 可直接用于 `/goal` 的简洁 8 小时过夜操作闭环 prompt，详细任务引用 plan 文档 |
+| `docs/xmuse/vision-operator-closed-overnight-loop-walkthrough.md` | 过夜操作闭环首个实现切片走读，记录 evidence action、laneDAG drill-down、supervisor harness 和剩余 manual gap |
+| `docs/xmuse/vision-production-evidence-control-closure-plan.md` | 根据 deep-research-report_09 和人工确认决策制定的生产级 evidence/control 闭环任务、GOD CLI 注册/选择、live gate、TUI 操作面和 Auth/RBAC 行为规范 |
+| `docs/xmuse/vision-production-evidence-control-closure-goal-prompt.md` | 可直接用于 `/goal` 的简洁生产级 evidence/control closure prompt，详细任务引用 plan 文档 |
+| `docs/xmuse/vision-production-evidence-control-closure-walkthrough.md` | 生产级 evidence/control closure 首个实现切片走读，记录 GOD/CLI registry、operator action audit、release readiness 和当前 live blocker |
+| `docs/xmuse/vision-overnight-autonomy-closure-plan.md` | 根据 deep-research-report_10 和 outer-muse 灵感制定的下一轮 overnight autonomy closure 长 `/goal` 任务，聚焦自然多 GOD、feature graph owner、supervisor、MemoryOS governance、GitHub fresh truth 和 TUI proof cockpit |
+| `docs/xmuse/vision-overnight-autonomy-closure-goal-prompt.md` | 可直接用于 `/goal` 的简洁 overnight autonomy closure prompt，详细任务引用 plan 文档 |
+| `docs/xmuse/vision-god-room-runtime-closure-plan.md` | 根据 deep-research-report_11 和 mession_01 制定的下一轮 GOD room runtime closure 长 `/goal` 任务，聚焦真实 GOD room 事件、speaker runtime、blueprint freeze compiler、lane budget/recovery、MemoryOS trace 和 TUI operator cockpit |
+| `docs/xmuse/vision-god-room-runtime-closure-goal-prompt.md` | 可直接用于 `/goal` 的简洁 GOD room runtime closure prompt，详细任务引用 plan 文档 |
 | `docs/xmuse/opencode-in-long-runtime-evidence-plan.md` | 下一轮 OpenCode-in 长执行证据闭环的详细任务、授权边界和行为规范 |
 | `docs/xmuse/opencode-in-long-runtime-evidence-goal-prompt.md` | 可直接用于 `/goal` 的简洁 OpenCode-in 长执行 prompt，详细任务引用 plan 文档 |
 | `docs/xmuse/opencode-in-long-runtime-evidence-closure.md` | OpenCode-in 长执行证据闭环的当前审计报告、stage evidence、proof-level 变化和剩余 GitHub manual gap |

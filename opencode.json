@@ -26,15 +26,23 @@
       }
     },
     "orchestrator": {
-      "description": "Main coordinator for long-running tasks. Spawns coder and reviewer subagents. Runs the 4-phase execution loop.",
+      "description": "Bounded coordinator for staged xmuse tasks. Follows dependency-first closure constraints and reports candidate evidence for Codex review.",
       "mode": "subagent"
     },
     "coder": {
-      "description": "Implementation specialist. Writes code following TDD.",
+      "description": "Bounded candidate patch worker. Edits only explicitly allowed files, follows authority/proof contracts, avoids TDD-driven architecture, and never claims final completion.",
+      "mode": "subagent"
+    },
+    "candidate-patcher": {
+      "description": "Mechanical patch worker for scoped xmuse stages. Produces candidate patches only; no commits, pushes, runtime state writes, proof-level inflation, or scope expansion.",
+      "mode": "subagent"
+    },
+    "closure-explorer": {
+      "description": "Read-only explorer for xmuse closure stages. Maps code paths, contracts, existing tests, authority owners, manual gaps, and risks without editing.",
       "mode": "subagent"
     },
     "adversarial-reviewer": {
-      "description": "Adversarial code reviewer. Finds FAILURES in implementation against spec. Binary PASS/FAIL with file:line evidence.",
+      "description": "Read-only adversarial reviewer. Finds false closure, TDD abuse, authority boundary violations, proof-level inflation, and missing negative cases with file:line evidence.",
       "mode": "subagent"
     },
     "planner": {

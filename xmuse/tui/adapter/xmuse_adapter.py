@@ -14,6 +14,30 @@ from typing import Any
 import httpx
 
 from xmuse_core.platform.dashboard_details import _conversation_runtime_timeline_detail
+from xmuse_core.platform.operator_actions import (
+    OperatorActionRequest,
+    OperatorActionService,
+)
+from xmuse_core.platform.operator_evidence_actions import (
+    build_blocker_navigation_action,
+    build_github_truth_action,
+    build_memory_trace_action,
+    export_deliberation_transcript,
+)
+from xmuse_core.platform.release_evidence_attempts import (
+    run_release_evidence_attempt_action,
+)
+from xmuse_core.platform.release_evidence_candidates import (
+    build_release_evidence_candidate_report,
+)
+from xmuse_core.platform.release_evidence_export_actions import (
+    run_release_evidence_export_action,
+)
+from xmuse_core.platform.state_machine import LaneStateMachine
+from xmuse_core.platform.tui_vision_read_model import build_tui_vision_read_model
+from xmuse_core.providers.god_cli_registration_store import GodCliRegistrationStore
+from xmuse_core.providers.god_cli_registry import build_default_god_cli_registry
+from xmuse_core.providers.god_cli_selection_store import GodCliSelectionStore
 
 
 @dataclass
@@ -21,6 +45,7 @@ class StateDelta:
     messages: list[dict] = field(default_factory=list)
     cards: list[dict] = field(default_factory=list)
     participants: dict[str, list[dict]] = field(default_factory=dict)
+    vision: dict | None = None
     replace_peer_status_cards: bool = False
     features: dict[str, Any] = field(default_factory=dict)
     lanes: list[dict] = field(default_factory=list)
@@ -76,6 +101,22 @@ class XmuseAdapter:
             return new, None
         except Exception as exc:
             return [], str(exc)
+
+    def _message_snapshot(self, conv_id: str) -> list[dict]:
+        try:
+            from xmuse_core.chat.store import ChatStore
+
+            store = ChatStore(self._root / "chat.db")
+            raw = store.list_messages(conv_id)
+            dicts = [
+                _display_message_author(self._root, conv_id, m.model_dump(mode="json"))
+                for m in raw
+                if hasattr(m, "model_dump")
+            ]
+            dicts.extend(_active_stream_messages(self._root, conv_id))
+            return dicts
+        except Exception:
+            return []
 
     async def poll_worklist_envelope(
         self,
@@ -157,8 +198,21 @@ class XmuseAdapter:
                     health,
                     _runtime_health_from_inspector(inspector),
                 )
+            vision_messages = self._message_snapshot(conv_id) if conv_id else []
+            if not vision_messages and msgs:
+                vision_messages = msgs
+            vision_envelope = envelope
+            if vision_envelope is None:
+                vision_envelope = self._worklist_envelope_snapshot(conv_id)
+            vision = build_tui_vision_read_model(
+                conversation_id=conv_id,
+                messages=vision_messages,
+                worklist_envelope=vision_envelope,
+                inspector=inspector,
+            )
             return StateDelta(
                 messages=msgs, cards=cards, participants=participants,
+                vision=vision,
                 features=features, lanes=lanes_list,
                 replace_peer_status_cards=bool(conv_id and not card_err),
                 run_health=health, lanes_changed=envelope is not None, errors=errors,
@@ -206,6 +260,7 @@ class XmuseAdapter:
                 response = client.post(
                     f"{self._chat_api_base_url}/api/chat/conversations/{conv_id}/messages",
                     json=payload,
+                    headers=_chat_api_write_headers(),
                 )
                 response.raise_for_status()
                 data = response.json()
@@ -242,6 +297,7 @@ class XmuseAdapter:
                         "preset_id": preset_id,
                         "init_mode": init_mode,
                     },
+                    headers=_chat_api_write_headers(),
                 )
                 response.raise_for_status()
                 data = response.json()
@@ -326,6 +382,324 @@ class XmuseAdapter:
             tui_command_events=self.list_tui_command_events(conv_id or None),
         )
 
+    def run_operator_evidence_action(
+        self,
+        action: str,
+        conv_id: str,
+    ) -> dict[str, Any]:
+        clean_action = action.strip().lower().replace("-", "_")
+        if clean_action in {"transcript", "transcript_export", "export_transcript"}:
+            result = export_deliberation_transcript(
+                conversation_id=conv_id,
+                messages=self._message_snapshot(conv_id),
+                artifact_path=self._operator_evidence_artifact_path(
+                    conv_id,
+                    "transcript.json",
+                ),
+            )
+            return result.model_dump()
+
+        vision = self._operator_vision_snapshot(conv_id)
+        if clean_action in {"github", "github_truth", "github_truth_load"}:
+            return build_github_truth_action(
+                conversation_id=conv_id,
+                github=vision.get("github") if isinstance(vision, dict) else None,
+            ).model_dump()
+        if clean_action in {"memory", "memory_trace", "memory_trace_load"}:
+            return build_memory_trace_action(
+                conversation_id=conv_id,
+                memory=vision.get("memory") if isinstance(vision, dict) else None,
+            ).model_dump()
+        if clean_action in {"blockers", "blocker", "navigation", "blocker_navigation"}:
+            return build_blocker_navigation_action(
+                conversation_id=conv_id,
+                vision=vision,
+            ).model_dump()
+        return {
+            "action": clean_action or "unknown",
+            "status": "manual_gap",
+            "proof_level": "manual_gap",
+            "fact_state": "manual_gap",
+            "conversation_id": conv_id,
+            "source_refs": [],
+            "target_refs": [],
+            "artifact_path": None,
+            "manual_gap_reason": f"unknown evidence action: {action}",
+            "summary": f"Unknown evidence action: {action}",
+            "payload": {},
+        }
+
+    def run_operator_control_action(
+        self,
+        action: str,
+        conv_id: str,
+        payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        clean_action = action.strip().lower().replace("-", "_")
+        action_payload = dict(payload or {})
+        if conv_id and "conversation_id" not in action_payload:
+            action_payload["conversation_id"] = conv_id
+        idempotency_key = f"tui:{clean_action}:{uuid.uuid4().hex}"
+        headers = _chat_api_write_headers()
+        try:
+            with self._chat_api_client(10.0) as client:
+                response = client.post(
+                    f"{self._chat_api_base_url}/api/chat/operator/actions",
+                    json={
+                        "action": clean_action,
+                        "idempotency_key": idempotency_key,
+                        "payload": action_payload,
+                    },
+                    headers=headers,
+                )
+                status_code = getattr(response, "status_code", 200)
+                if isinstance(status_code, int) and status_code >= 400:
+                    data = response.json()
+                    detail = data.get("detail") if isinstance(data, dict) else None
+                    if isinstance(detail, dict) and "status" in detail:
+                        return detail
+                    return _operator_api_error_result(
+                        action=clean_action,
+                        actor_id=headers["X-XMuse-Operator-Id"],
+                        status_code=status_code,
+                        detail=detail,
+                    )
+                response.raise_for_status()
+                data = response.json()
+            if isinstance(data, dict):
+                return data
+        except Exception:
+            pass
+        service = OperatorActionService(
+            god_cli_registry=build_default_god_cli_registry(),
+            audit_dir=self._root / "work" / "operator_actions",
+            registration_store=GodCliRegistrationStore(
+                self._root / "god_cli_registrations.json"
+            ),
+            selection_store=GodCliSelectionStore(self._root / "god_cli_selections.json"),
+            lane_state_machine=LaneStateMachine(
+                self._root / "feature_lanes.json",
+                history_path=self._root / "state_history.json",
+            ),
+            release_evidence_export_handler=lambda request: run_release_evidence_export_action(
+                request,
+                xmuse_root=self._root,
+                release_readiness_dir=self._root / "work" / "release_readiness",
+            ),
+            release_evidence_candidate_handler=lambda request: (
+                _release_evidence_candidate_report(self._root, request)
+            ),
+            release_evidence_attempt_handler=lambda request: run_release_evidence_attempt_action(
+                request,
+                xmuse_root=self._root,
+                release_readiness_dir=self._root / "work" / "release_readiness",
+            ),
+        )
+        request = OperatorActionRequest(
+            action=clean_action,
+            actor_id=_operator_actor_id(),
+            capabilities=_operator_capabilities(),
+            idempotency_key=idempotency_key,
+            payload=action_payload,
+            source="tui",
+        )
+        return service.handle(request).model_dump()
+
+    def ensure_god_room(self, conv_id: str) -> dict[str, Any] | None:
+        return self._post_god_room_contract(
+            action="ensure_god_room",
+            conv_id=conv_id,
+            suffix="",
+            payload=None,
+        )
+
+    def get_god_room(self, conv_id: str) -> dict[str, Any] | None:
+        return self._get_god_room_contract(
+            conv_id=conv_id,
+            suffix="",
+        )
+
+    def get_god_room_snapshot(self, conv_id: str) -> dict[str, Any] | None:
+        return self._get_god_room_contract(
+            conv_id=conv_id,
+            suffix="/snapshot",
+        )
+
+    def append_god_room_event(
+        self,
+        conv_id: str,
+        event: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        return self._post_god_room_contract(
+            action="append_god_room_event",
+            conv_id=conv_id,
+            suffix="/events",
+            payload=dict(event),
+        )
+
+    def freeze_god_room_blueprint(
+        self,
+        conv_id: str,
+        *,
+        blueprint_id: str,
+        revision: int = 1,
+    ) -> dict[str, Any] | None:
+        return self._post_god_room_contract(
+            action="freeze_god_room_blueprint",
+            conv_id=conv_id,
+            suffix="/freeze-blueprint",
+            payload={
+                "blueprint_id": blueprint_id,
+                "revision": revision,
+            },
+        )
+
+    def build_god_room_lane_dag(
+        self,
+        conv_id: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        return self._post_god_room_contract(
+            action="build_god_room_lane_dag",
+            conv_id=conv_id,
+            suffix="/lane-dag",
+            payload=dict(payload),
+        )
+
+    def evaluate_god_room_lane_recovery(
+        self,
+        conv_id: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        return self._post_god_room_contract(
+            action="evaluate_god_room_lane_recovery",
+            conv_id=conv_id,
+            suffix="/lane-dag/recovery",
+            payload=dict(payload),
+        )
+
+    def build_god_room_memoryos_plan(
+        self,
+        conv_id: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        return self._post_god_room_contract(
+            action="build_god_room_memoryos_plan",
+            conv_id=conv_id,
+            suffix="/memoryos-plan",
+            payload=dict(payload),
+        )
+
+    def build_god_room_speaker_attempt(
+        self,
+        conv_id: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        return self._post_god_room_contract(
+            action="build_god_room_speaker_attempt",
+            conv_id=conv_id,
+            suffix="/speaker-attempt",
+            payload=dict(payload),
+        )
+
+    def capture_god_room_speaker_response(
+        self,
+        conv_id: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        return self._post_god_room_contract(
+            action="capture_god_room_speaker_response",
+            conv_id=conv_id,
+            suffix="/speaker-response",
+            payload=dict(payload),
+        )
+
+    def _post_god_room_contract(
+        self,
+        *,
+        action: str,
+        conv_id: str,
+        suffix: str,
+        payload: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        clean_conv_id = conv_id.strip()
+        headers = _chat_api_write_headers()
+        if not clean_conv_id:
+            return _operator_api_error_result(
+                action=action,
+                actor_id=headers["X-XMuse-Operator-Id"],
+                status_code=0,
+                detail={
+                    "code": "missing_conversation_id",
+                    "message": "GOD room contract action requires conversation_id",
+                },
+            )
+        try:
+            with self._chat_api_client(10.0) as client:
+                response = client.post(
+                    (
+                        f"{self._chat_api_base_url}/api/chat/conversations/"
+                        f"{clean_conv_id}/god-room{suffix}"
+                    ),
+                    json=payload,
+                    headers=headers,
+                )
+                status_code = int(getattr(response, "status_code", 200) or 200)
+                if status_code >= 400:
+                    detail = _response_detail(response)
+                    return _operator_api_error_result(
+                        action=action,
+                        actor_id=headers["X-XMuse-Operator-Id"],
+                        status_code=status_code,
+                        detail=detail,
+                    )
+                response.raise_for_status()
+                data = response.json()
+            return data if isinstance(data, dict) else None
+        except Exception as exc:
+            return _operator_api_error_result(
+                action=action,
+                actor_id=headers["X-XMuse-Operator-Id"],
+                status_code=0,
+                detail={"code": "request_failed", "message": str(exc)},
+            )
+
+    def _get_god_room_contract(
+        self,
+        *,
+        conv_id: str,
+        suffix: str,
+    ) -> dict[str, Any] | None:
+        clean_conv_id = conv_id.strip()
+        if not clean_conv_id:
+            return None
+        try:
+            with self._chat_api_client(10.0) as client:
+                response = client.get(
+                    (
+                        f"{self._chat_api_base_url}/api/chat/conversations/"
+                        f"{clean_conv_id}/god-room{suffix}"
+                    ),
+                )
+                response.raise_for_status()
+                data = response.json()
+            return data if isinstance(data, dict) else None
+        except Exception:
+            return None
+
+    def _operator_vision_snapshot(self, conv_id: str) -> dict[str, Any]:
+        inspector = self.get_conversation_inspector(conv_id)
+        return build_tui_vision_read_model(
+            conversation_id=conv_id,
+            messages=self._message_snapshot(conv_id),
+            worklist_envelope=self._worklist_envelope_snapshot(conv_id),
+            inspector=inspector,
+        )
+
+    def _operator_evidence_artifact_path(self, conv_id: str, filename: str) -> Path:
+        safe_conv_id = _safe_path_segment(conv_id)
+        return self._root / "work" / "operator_evidence" / safe_conv_id / filename
+
     def _worklist_envelope_snapshot(self, conv_id: str | None = None) -> dict | None:
         try:
             from xmuse_core.platform.read_envelopes import build_tui_worklist_envelope
@@ -344,6 +718,7 @@ class XmuseAdapter:
                 response = client.post(
                     f"{self._chat_api_base_url}/api/chat/conversations/{conv_id}/bootstrap/proposals",
                     json={"source": "deterministic"},
+                    headers=_chat_api_write_headers(),
                 )
                 response.raise_for_status()
                 data = response.json()
@@ -357,6 +732,7 @@ class XmuseAdapter:
                 response = client.post(
                     f"{self._chat_api_base_url}/api/chat/conversations/{conv_id}/bootstrap/apply",
                     json={"proposal_id": proposal_id},
+                    headers=_chat_api_write_headers(),
                 )
                 response.raise_for_status()
                 data = response.json()
@@ -387,6 +763,7 @@ class XmuseAdapter:
                             or f"Approve xmuse chat proposal {clean_proposal_id}"
                         ),
                     },
+                    headers=_chat_api_write_headers(),
                 )
                 if response.status_code >= 400:
                     try:
@@ -534,6 +911,7 @@ class XmuseAdapter:
                 response = client.post(
                     f"{self._chat_api_base_url}/api/chat/conversations/{conv_id}/participants",
                     json=payload,
+                    headers=_chat_api_write_headers(),
                 )
                 response.raise_for_status()
                 data = response.json()
@@ -553,6 +931,7 @@ class XmuseAdapter:
                 response = client.delete(
                     f"{self._chat_api_base_url}/api/chat/conversations/"
                     f"{conv_id}/participants/{participant_id}",
+                    headers=_chat_api_write_headers(),
                 )
                 response.raise_for_status()
             return True
@@ -642,7 +1021,34 @@ class XmuseAdapter:
         return None
 
     def get_provider_inventory(self) -> list[dict]:
-        return []
+        try:
+            from xmuse_core.platform.provider_read_contracts import build_provider_inventory
+
+            inventory = build_provider_inventory()
+        except Exception:
+            return []
+        providers = inventory.get("providers") if isinstance(inventory, dict) else None
+        if not isinstance(providers, list):
+            return []
+        rows: list[dict] = []
+        for provider in providers:
+            if not isinstance(provider, dict):
+                continue
+            profiles = provider.get("profiles")
+            if not isinstance(profiles, list):
+                continue
+            rows.extend(
+                _provider_inventory_row(profile)
+                for profile in profiles
+                if isinstance(profile, dict)
+            )
+        rows.extend(
+            _god_cli_registration_inventory_row(registration)
+            for registration in GodCliRegistrationStore(
+                self._root / "god_cli_registrations.json"
+            ).list_registrations()
+        )
+        return rows
 
     def _new_envelope_cards(self, scope_key: str, cards: list[dict]) -> list[dict]:
         seen = self._seen_envelope_card_fingerprints.setdefault(scope_key, set())
@@ -745,6 +1151,135 @@ def _build_features(lanes: list[dict]) -> dict[str, Any]:
             features[fid]["merged"] += 1
         features[fid]["lanes"].append(lane)
     return features
+
+
+def _provider_inventory_row(profile: dict[str, Any]) -> dict[str, Any]:
+    provider_id = _clean_text(profile.get("provider_id")) or "unknown"
+    profile_id = _clean_text(profile.get("profile_id")) or "unknown"
+    adapter_kind = _clean_text(profile.get("adapter_kind")) or "unknown"
+    persistent_capability = _clean_text(profile.get("persistent_capability"))
+    return {
+        "provider_id": provider_id,
+        "profile_id": profile_id,
+        "provider_profile_ref": _clean_text(profile.get("ref")),
+        "capabilities": _string_values(profile.get("task_capabilities")),
+        "runtime_kind": adapter_kind,
+        "transport": "cli" if adapter_kind.endswith("_cli") else adapter_kind,
+        "session_continuity": (
+            "persistent_supported"
+            if persistent_capability == "supported"
+            else "bounded"
+        ),
+        "heartbeat": "manual_gap",
+        "waiting_reason": _provider_waiting_reason(provider_id),
+        "proof_level": "contract_proof",
+        "boundary_role": _provider_boundary_role(provider_id, profile_id),
+        "support_level": _clean_text(profile.get("support_level")),
+        "model_id": _clean_text(profile.get("model_id")),
+    }
+
+
+def _god_cli_registration_inventory_row(registration: Any) -> dict[str, Any]:
+    capabilities = [
+        str(getattr(capability, "value", capability))
+        for capability in getattr(registration, "capabilities", ())
+    ]
+    provider_profile_ref = _clean_text(getattr(registration, "provider_profile_ref", None))
+    profile_id = _profile_id_from_ref(provider_profile_ref) or registration.cli_id
+    return {
+        "provider_id": registration.command_family,
+        "profile_id": profile_id,
+        "provider_profile_ref": provider_profile_ref,
+        "capabilities": capabilities,
+        "runtime_kind": registration.command_family,
+        "transport": "cli",
+        "session_continuity": (
+            "persistent_supported"
+            if registration.supports_persistent_sessions
+            else "bounded"
+        ),
+        "heartbeat": "manual_gap",
+        "waiting_reason": "manual GOD CLI registration; runtime heartbeat unavailable",
+        "proof_level": registration.proof_level,
+        "boundary_role": (
+            "manual_registered_peer_god"
+            if "peer_god" in capabilities
+            else "manual_registered_support"
+        ),
+        "support_level": "manual",
+        "model_id": None,
+        "registration_kind": registration.registration_kind,
+        "source_authority": registration.source_authority,
+    }
+
+
+def _provider_boundary_role(provider_id: str, profile_id: str) -> str:
+    if provider_id == "codex" and profile_id in {"default", "god"}:
+        return "production_groupchat_god"
+    if provider_id == "codex":
+        return "production_support"
+    if provider_id == "opencode":
+        return "bounded_secondary"
+    return "manual_gap"
+
+
+def _provider_waiting_reason(provider_id: str) -> str:
+    if provider_id == "opencode":
+        return "secondary bounded worker"
+    return "static provider inventory; runtime heartbeat unavailable"
+
+
+def _profile_id_from_ref(ref: str | None) -> str | None:
+    if not ref:
+        return None
+    _provider, sep, profile = ref.partition(".")
+    return profile if sep and profile else None
+
+
+def _string_values(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, str) and item]
+
+
+def _clean_text(value: Any) -> str | None:
+    if isinstance(value, str):
+        cleaned = value.strip()
+        return cleaned or None
+    return None
+
+
+def _release_evidence_candidate_report(
+    root: Path,
+    request: OperatorActionRequest,
+) -> dict[str, Any]:
+    return build_release_evidence_candidate_report(
+        root,
+        conversation_id=_clean_text(request.payload.get("conversation_id")),
+        memoryos_payload=request.payload,
+        trace_limit=_int_payload(request.payload.get("trace_limit"), default=20),
+    )
+
+
+def _int_payload(value: Any, *, default: int) -> int:
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return default
+    return default
+
+
+def _safe_path_segment(value: str) -> str:
+    cleaned = "".join(
+        char if char.isalnum() or char in {"-", "_", "."} else "_"
+        for char in value.strip()
+    )
+    return cleaned or "unknown"
 
 
 def _worklist_items(envelope: dict[str, Any]) -> list[dict]:
@@ -1534,6 +2069,75 @@ def _utc_now() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
+def _operator_actor_id() -> str:
+    return os.environ.get("XMUSE_TUI_OPERATOR_ID", "local-operator").strip() or "local-operator"
+
+
+def _operator_capabilities() -> tuple[str, ...]:
+    raw = os.environ.get("XMUSE_TUI_OPERATOR_CAPABILITIES", "")
+    return tuple(item.strip() for item in raw.split(",") if item.strip())
+
+
+def _operator_role() -> str:
+    return os.environ.get("XMUSE_TUI_OPERATOR_ROLE", "operator").strip() or "operator"
+
+
+def _chat_api_key() -> str | None:
+    value = os.environ.get("XMUSE_CHAT_API_KEY", "").strip()
+    return value or None
+
+
+def _chat_api_write_headers() -> dict[str, str]:
+    headers = {
+        "X-XMuse-Operator-Id": _operator_actor_id(),
+        "X-XMuse-Operator-Role": _operator_role(),
+    }
+    capabilities = ",".join(_operator_capabilities())
+    if capabilities:
+        headers["X-XMuse-Operator-Capabilities"] = capabilities
+    api_key = _chat_api_key()
+    if api_key:
+        headers["X-XMUSE-API-Key"] = api_key
+    return headers
+
+
+def _operator_api_error_result(
+    *,
+    action: str,
+    actor_id: str,
+    status_code: int,
+    detail: Any,
+) -> dict[str, Any]:
+    if isinstance(detail, dict):
+        summary = str(detail.get("message") or detail.get("code") or detail)
+    else:
+        summary = str(detail or f"operator API rejected request with {status_code}")
+    status = "denied" if status_code in {401, 403} else "blocked"
+    return {
+        "action": action,
+        "status": status,
+        "proof_level": "contract_proof",
+        "fact_state": status,
+        "actor_id": actor_id,
+        "audit_id": None,
+        "summary": summary,
+        "payload": {
+            "api_status_code": status_code,
+            "api_detail": detail,
+        },
+    }
+
+
+def _response_detail(response: Any) -> Any:
+    try:
+        data = response.json()
+    except Exception:
+        return getattr(response, "text", None)
+    if isinstance(data, dict) and "detail" in data:
+        return data["detail"]
+    return data
+
+
 def _read_json_file(path: Path, *, default: Any) -> Any:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
@@ -1548,7 +2152,13 @@ def _normalize_tui_command_event(event: dict[str, Any]) -> dict[str, Any] | None
     surface_ref = str(event.get("surface_ref") or "").strip()
     if not command or not conversation_id or not authority or not surface_ref:
         return None
-    if authority not in {"chat_inspector", "dashboard_runtime_timeline"}:
+    if authority not in {
+        "chat_inspector",
+        "dashboard_runtime_timeline",
+        "operator_action_contract",
+        "operator_evidence_action",
+        "god_room_chat_api",
+    }:
         return None
     normalized = {
         "event_id": str(event.get("event_id") or f"tui_cmd_{uuid.uuid4().hex}"),

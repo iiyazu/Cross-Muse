@@ -9,6 +9,10 @@ from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from xmuse_core.platform.internal_review_release_gate import (
+    build_internal_review_release_gate,
+)
+
 
 class FeatureDraftPRRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -112,6 +116,11 @@ class GitHubServerSideTruthEvidence(BaseModel):
     proof_level: Literal["manual_gap", "contract_proof", "server_side_merge_proof"] = (
         "manual_gap"
     )
+    pull_request_state: str | None = None
+    draft: bool | None = None
+    mergeable: bool | None = None
+    mergeable_state: str | None = None
+    head_sha: str | None = None
     workflow_run_id: int | None = None
     check_suite_id: int | None = None
     check_run_ids: list[int] = Field(default_factory=list)
@@ -149,6 +158,7 @@ class GitHubServerSideTruthEvidence(BaseModel):
 
     @field_validator(
         "expected_source_app",
+        "head_sha",
         "reviewer_login",
         "internal_review_artifact",
         "internal_reviewer",
@@ -156,6 +166,8 @@ class GitHubServerSideTruthEvidence(BaseModel):
         "merge_commit_sha",
         "merged_at",
         "gap_reason",
+        "pull_request_state",
+        "mergeable_state",
     )
     @classmethod
     def _validate_optional_text(cls, value: str | None) -> str | None:
@@ -251,10 +263,15 @@ class GitHubServerSideTruthEvidence(BaseModel):
 class GitHubServerSideTruthSnapshot(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
+    pull_request_state: str | None = None
+    draft: bool | None = None
+    mergeable: bool | None = None
+    mergeable_state: str | None = None
     workflow_run_id: int | None = None
     check_suite_id: int | None = None
     check_run_ids: list[int] = Field(default_factory=list)
     expected_source_app: str | None = None
+    head_sha: str | None = None
     branch_protection_snapshot: dict[str, Any] | None = None
     ruleset_snapshot: dict[str, Any] | None = None
     review_event_id: int | str | None = None
@@ -379,6 +396,11 @@ class GitHubCliServerSideTruthClient:
         review_event_id, reviewer_login = _approved_review_identity(reviews_payload)
         internal_review_verified = self._internal_review_verified(head_sha)
         return GitHubServerSideTruthSnapshot(
+            pull_request_state=_optional_str(pr_payload.get("state")),
+            draft=_optional_bool(pr_payload.get("draft")),
+            mergeable=_optional_bool(pr_payload.get("mergeable")),
+            mergeable_state=_optional_str(pr_payload.get("mergeable_state")),
+            head_sha=head_sha,
             workflow_run_id=check_run_ids[0] if check_run_ids else None,
             check_run_ids=check_run_ids,
             expected_source_app=expected_source_app,
@@ -414,7 +436,11 @@ class GitHubCliServerSideTruthClient:
             return False
         return (
             self._internal_reviewed_head_sha == head_sha
-            and Path(self._internal_review_artifact).is_file()
+            and _internal_review_artifact_verified(
+                artifact_path=self._internal_review_artifact,
+                expected_head_sha=head_sha,
+                expected_reviewer=self._internal_reviewer,
+            )
         )
 
     def _gh_api(self, endpoint: str) -> Any | None:
@@ -434,6 +460,7 @@ class FakeGitHubServerSideTruthCollector(BaseModel):
     check_suite_id: int | None = None
     check_run_ids: list[int] = Field(default_factory=list)
     expected_source_app: str | None = "fake-github"
+    head_sha: str | None = None
     branch_protection_snapshot: dict[str, Any] | None = None
     ruleset_snapshot: dict[str, Any] | None = None
     review_event_id: int | str | None = None
@@ -459,6 +486,7 @@ class FakeGitHubServerSideTruthCollector(BaseModel):
             pull_request_number=pull_request_number,
             required_checks=required_checks,
             proof_level="contract_proof",
+            head_sha=self.head_sha,
             workflow_run_id=self.workflow_run_id,
             check_suite_id=self.check_suite_id,
             check_run_ids=list(self.check_run_ids),
@@ -611,6 +639,11 @@ def build_github_server_side_truth_from_snapshot(
         pull_request_number=pull_request_number,
         required_checks=required_checks,
         proof_level="server_side_merge_proof",
+        pull_request_state=snapshot.pull_request_state,
+        draft=snapshot.draft,
+        mergeable=snapshot.mergeable,
+        mergeable_state=snapshot.mergeable_state,
+        head_sha=snapshot.head_sha,
         workflow_run_id=snapshot.workflow_run_id,
         check_suite_id=snapshot.check_suite_id,
         check_run_ids=list(snapshot.check_run_ids),
@@ -635,6 +668,11 @@ def build_github_server_side_truth_from_snapshot(
             pull_request_number=pull_request_number,
             required_checks=required_checks,
             proof_level="server_side_merge_proof",
+            pull_request_state=snapshot.pull_request_state,
+            draft=snapshot.draft,
+            mergeable=snapshot.mergeable,
+            mergeable_state=snapshot.mergeable_state,
+            head_sha=snapshot.head_sha,
             workflow_run_id=snapshot.workflow_run_id,
             check_suite_id=snapshot.check_suite_id,
             check_run_ids=list(snapshot.check_run_ids),
@@ -657,6 +695,11 @@ def build_github_server_side_truth_from_snapshot(
         pull_request_number=pull_request_number,
         required_checks=required_checks,
         proof_level="manual_gap",
+        pull_request_state=snapshot.pull_request_state,
+        draft=snapshot.draft,
+        mergeable=snapshot.mergeable,
+        mergeable_state=snapshot.mergeable_state,
+        head_sha=snapshot.head_sha,
         workflow_run_id=snapshot.workflow_run_id,
         check_suite_id=snapshot.check_suite_id,
         check_run_ids=list(snapshot.check_run_ids),
@@ -873,11 +916,40 @@ def _nested_str(payload: dict[str, Any], *path: str) -> str | None:
     return _optional_str(current)
 
 
+def _internal_review_artifact_verified(
+    *,
+    artifact_path: str,
+    expected_head_sha: str,
+    expected_reviewer: str,
+) -> bool:
+    path = Path(artifact_path)
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    if _optional_str(payload.get("reviewer")) != expected_reviewer:
+        return False
+    gate = build_internal_review_release_gate(
+        payload,
+        artifact_path=path,
+        expected_head_sha=expected_head_sha,
+    )
+    return gate.get("status") == "ok" and gate.get(
+        "proof_level"
+    ) == "internal_review_proof"
+
+
 def _optional_str(value: Any) -> str | None:
     if not isinstance(value, str):
         return None
     text = value.strip()
     return text or None
+
+
+def _optional_bool(value: Any) -> bool | None:
+    return value if isinstance(value, bool) else None
 
 
 def apply_worker_outcome(lane: dict[str, object], outcome: WorkerOutcome) -> dict[str, object]:

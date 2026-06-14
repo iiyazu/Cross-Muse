@@ -216,7 +216,7 @@ slash parser. If passthrough is added later, use an explicit namespace such as:
 
 ```text
 /codex architect /compact
-/opencode worker /model deepseek-v4-flash /variant max
+/opencode worker /model opencode-go/deepseek-v4-flash /variant max
 ```
 
 That passthrough is optional and not required for this task.

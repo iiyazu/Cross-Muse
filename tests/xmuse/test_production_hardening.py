@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 import time
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
-from xmuse.chat_api import create_app
+from xmuse.chat_api import _auth_token_from_env, create_app
 from xmuse_core.chat.store import ChatStore
 from xmuse_core.platform.mcp_permissions import authorize_mcp_tool
 from xmuse_core.platform.production_readiness import (
@@ -21,15 +23,234 @@ def test_chat_api_auth_rejects_anonymous_write_when_enabled(tmp_path: Path) -> N
     client = TestClient(create_app(tmp_path, auth_token="secret"))
 
     rejected = client.post("/api/chat/conversations", json={"title": "Blocked"})
+    missing_capability = client.post(
+        "/api/chat/conversations",
+        json={"title": "Still blocked"},
+        headers={"X-XMUSE-API-Key": "secret"},
+    )
     accepted = client.post(
         "/api/chat/conversations",
         json={"title": "Allowed"},
-        headers={"X-XMUSE-API-Key": "secret"},
+        headers={
+            "X-XMUSE-API-Key": "secret",
+            "X-XMuse-Operator-Role": "operator",
+            "X-XMuse-Operator-Capabilities": "chat_create_conversation",
+        },
     )
 
     assert rejected.status_code == 401
     assert rejected.json() == {"detail": "authentication required"}
+    assert missing_capability.status_code == 403
+    assert missing_capability.json()["detail"] == {
+        "code": "missing_capability",
+        "message": "missing capability chat_create_conversation",
+        "required_capability": "chat_create_conversation",
+    }
     assert accepted.status_code == 201
+
+
+def test_chat_api_auth_token_can_be_loaded_from_env(monkeypatch) -> None:
+    monkeypatch.setenv("XMUSE_CHAT_API_AUTH_TOKEN", "server-secret")
+    monkeypatch.setenv("XMUSE_CHAT_API_KEY", "client-secret")
+
+    assert _auth_token_from_env() == "server-secret"
+
+    monkeypatch.delenv("XMUSE_CHAT_API_AUTH_TOKEN")
+
+    assert _auth_token_from_env() == "client-secret"
+
+
+def test_chat_api_production_profile_requires_write_auth_token(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("XMUSE_DEPLOYMENT_PROFILE", "production")
+    monkeypatch.delenv("XMUSE_CHAT_API_AUTH_TOKEN", raising=False)
+    monkeypatch.delenv("XMUSE_CHAT_API_KEY", raising=False)
+
+    with pytest.raises(RuntimeError, match="XMUSE_CHAT_API_AUTH_TOKEN"):
+        create_app(tmp_path)
+
+
+def test_chat_api_production_profile_uses_env_write_auth_token(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("XMUSE_DEPLOYMENT_PROFILE", "production")
+    monkeypatch.setenv("XMUSE_CHAT_API_AUTH_TOKEN", "server-secret")
+
+    client = TestClient(create_app(tmp_path))
+    rejected = client.post("/api/chat/conversations", json={"title": "Blocked"})
+    accepted = client.post(
+        "/api/chat/conversations",
+        json={"title": "Allowed"},
+        headers={
+            "X-XMUSE-API-Key": "server-secret",
+            "X-XMuse-Operator-Role": "operator",
+            "X-XMuse-Operator-Capabilities": "chat_create_conversation",
+        },
+    )
+
+    assert rejected.status_code == 401
+    assert accepted.status_code == 201
+
+
+def test_chat_api_auth_blocks_viewer_even_with_write_capability(tmp_path: Path) -> None:
+    client = TestClient(create_app(tmp_path, auth_token="secret"))
+
+    response = client.post(
+        "/api/chat/conversations",
+        json={"title": "Viewer blocked"},
+        headers={
+            "X-XMUSE-API-Key": "secret",
+            "X-XMuse-Operator-Role": "viewer",
+            "X-XMuse-Operator-Capabilities": "chat_create_conversation",
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == {
+        "code": "role_not_authorized",
+        "message": "viewer role cannot mutate Chat API write surface",
+        "required_capability": "chat_create_conversation",
+    }
+
+
+def test_chat_api_auth_allows_admin_without_explicit_capability(tmp_path: Path) -> None:
+    client = TestClient(create_app(tmp_path, auth_token="secret"))
+
+    response = client.post(
+        "/api/chat/conversations",
+        json={"title": "Admin allowed"},
+        headers={
+            "X-XMUSE-API-Key": "secret",
+            "X-XMuse-Operator-Role": "admin",
+        },
+    )
+
+    assert response.status_code == 201
+
+
+def test_chat_api_operator_action_keeps_action_capability_when_auth_enabled(
+    tmp_path: Path,
+) -> None:
+    client = TestClient(create_app(tmp_path, auth_token="secret"))
+    conversation = client.post(
+        "/api/chat/conversations",
+        json={"title": "Mission"},
+        headers={
+            "X-XMUSE-API-Key": "secret",
+            "X-XMuse-Operator-Role": "operator",
+            "X-XMuse-Operator-Capabilities": "chat_create_conversation",
+        },
+    ).json()
+
+    response = client.post(
+        "/api/chat/operator/actions",
+        headers={
+            "X-XMUSE-API-Key": "secret",
+            "X-XMuse-Operator-Id": "operator-1",
+            "X-XMuse-Operator-Role": "operator",
+            "X-XMuse-Operator-Capabilities": "select_god_cli",
+        },
+        json={
+            "action": "select_god_cli",
+            "payload": {
+                "conversation_id": conversation["id"],
+                "cli_id": "codex.god",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
+
+
+def test_chat_api_god_room_write_requires_god_room_capability_when_auth_enabled(
+    tmp_path: Path,
+) -> None:
+    client = TestClient(create_app(tmp_path, auth_token="secret"))
+    conversation = client.post(
+        "/api/chat/conversations",
+        json={"title": "GOD room auth"},
+        headers={
+            "X-XMUSE-API-Key": "secret",
+            "X-XMuse-Operator-Role": "operator",
+            "X-XMuse-Operator-Capabilities": "chat_create_conversation",
+        },
+    ).json()
+
+    rejected = client.post(
+        f"/api/chat/conversations/{conversation['id']}/god-room",
+        headers={
+            "X-XMUSE-API-Key": "secret",
+            "X-XMuse-Operator-Role": "operator",
+            "X-XMuse-Operator-Capabilities": "chat_write",
+        },
+    )
+    accepted = client.post(
+        f"/api/chat/conversations/{conversation['id']}/god-room",
+        headers={
+            "X-XMUSE-API-Key": "secret",
+            "X-XMuse-Operator-Role": "operator",
+            "X-XMuse-Operator-Capabilities": "chat_god_room",
+        },
+    )
+
+    assert rejected.status_code == 403
+    assert rejected.json()["detail"] == {
+        "code": "missing_capability",
+        "message": "missing capability chat_god_room",
+        "required_capability": "chat_god_room",
+    }
+    assert accepted.status_code == 201
+
+
+def test_chat_api_release_gate_operator_action_when_auth_enabled(
+    tmp_path: Path,
+) -> None:
+    client = TestClient(create_app(tmp_path, auth_token="secret"))
+    artifacts_dir = tmp_path / "work" / "release_readiness" / "artifacts"
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+    (artifacts_dir / "provider.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "xmuse.production_evidence.v1",
+                "gate_id": "provider-soak",
+                "kind": "real_provider",
+                "configured": True,
+                "required": True,
+                "status": "manual_gap",
+                "proof_level": "manual_gap",
+                "owner": "operator",
+                "summary": "Provider soak was not supplied.",
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    response = client.post(
+        "/api/chat/operator/actions",
+        headers={
+            "X-XMUSE-API-Key": "secret",
+            "X-XMuse-Operator-Id": "operator-1",
+            "X-XMuse-Operator-Role": "operator",
+            "X-XMuse-Operator-Capabilities": "release_gate",
+        },
+        json={
+            "action": "capture_release_evidence_pack",
+            "idempotency_key": "idem-release-auth",
+            "payload": {},
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "ok"
+    assert payload["payload"]["evidence_pack"]["decision"] == "blocked"
 
 
 def test_mcp_rbac_blocks_viewer_lane_and_memory_mutation() -> None:

@@ -130,6 +130,10 @@ def summarize_run_health(
         lane_dicts,
         xmuse_root=xmuse_root,
     )
+    recovery = summarize_lane_recovery_blocks(
+        lane_dicts,
+        xmuse_root=xmuse_root,
+    )
     groups["degraded_fallback"] = _dedupe_lane_ids(
         [
             item["lane_id"] for item in peer_delivery["degraded_or_fallback_lanes"]
@@ -144,7 +148,134 @@ def summarize_run_health(
         "takeover_context": takeover_context,
         "peer_delivery": peer_delivery,
         "provider_selection": provider_selection,
+        "recovery": recovery,
         "model_policy_summary": summarize_model_policy_selection(lane_dicts),
+    }
+
+
+def summarize_lane_recovery_blocks(
+    lanes: list[dict[str, Any]],
+    *,
+    xmuse_root: Path | None = None,
+    sample_limit: int = 5,
+) -> dict[str, Any]:
+    """Project durable lane recovery blocks without making recovery decisions."""
+    from xmuse_core.structuring.blueprint_execution.lane_recovery_artifacts import (
+        LaneRecoveryArtifactError,
+        lane_recovery_artifact_path,
+        load_lane_recovery_decision,
+    )
+
+    forbidden_claims = [
+        "overnight_safe_recovery",
+        "end_to_end_execution_review_closure",
+        "ready_to_merge",
+        "pr_merged",
+    ]
+    if xmuse_root is None:
+        return {
+            "source_authority": "lane_recovery_artifact",
+            "proof_level": "manual_gap",
+            "counts": _empty_recovery_counts(),
+            "blocked_lanes": [],
+            "invalid_artifacts": [],
+            "manual_gaps": ["lane_recovery_artifact_scan_unavailable"],
+            "forbidden_claims": forbidden_claims,
+        }
+
+    counts = _empty_recovery_counts()
+    blocked_lanes: list[dict[str, Any]] = []
+    invalid_artifacts: list[dict[str, Any]] = []
+    for lane in lanes:
+        lane_id = _optional_text(lane.get("feature_id")) or _optional_text(
+            lane.get("id")
+        )
+        graph_id = _optional_text(lane.get("graph_id"))
+        if lane_id is None or graph_id is None:
+            continue
+        try:
+            decision = load_lane_recovery_decision(
+                xmuse_root,
+                graph_id=graph_id,
+                lane_id=lane_id,
+            )
+        except (LaneRecoveryArtifactError, ValueError) as exc:
+            counts["invalid_artifact"] += 1
+            item = {
+                "lane_id": lane_id,
+                "graph_id": graph_id,
+                "status": str(lane.get("status") or "unknown"),
+                "reason": "invalid_recovery_artifact",
+                "error": str(exc),
+                "source_authority": "lane_recovery_artifact",
+                "artifact_ref": str(
+                    lane_recovery_artifact_path(
+                        xmuse_root,
+                        graph_id=graph_id,
+                        lane_id=lane_id,
+                    )
+                ),
+            }
+            invalid_artifacts.append(item)
+            blocked_lanes.append(
+                item
+                | {
+                    "retry_allowed": False,
+                    "decision": "invalid_recovery_artifact",
+                    "next_action": (
+                        "repair or regenerate the lane recovery artifact before retrying"
+                    ),
+                }
+            )
+            continue
+        if decision is None:
+            continue
+        if decision.retry_allowed:
+            counts["retry_allowed"] += 1
+            continue
+        counts["non_retry_decision"] += 1
+        blocked_lanes.append(
+            {
+                "lane_id": lane_id,
+                "graph_id": graph_id,
+                "status": str(lane.get("status") or "unknown"),
+                "decision": decision.decision.value,
+                "retry_allowed": False,
+                "failure_class": decision.failure_class,
+                "attempt": decision.attempt,
+                "reason": decision.decision.value,
+                "next_action": decision.next_action,
+                "source_refs": list(decision.source_refs),
+                "source_authority": "lane_recovery_artifact",
+                "artifact_ref": str(
+                    lane_recovery_artifact_path(
+                        xmuse_root,
+                        graph_id=graph_id,
+                        lane_id=lane_id,
+                    )
+                ),
+            }
+        )
+
+    counts["blocked"] = counts["non_retry_decision"] + counts["invalid_artifact"]
+    return {
+        "source_authority": "lane_recovery_artifact",
+        "proof_level": "contract_proof",
+        "counts": counts,
+        "blocked_lanes": blocked_lanes[:sample_limit],
+        "invalid_artifacts": invalid_artifacts[:sample_limit],
+        "sample_limit": sample_limit,
+        "manual_gaps": ["live_runner_recovery_enforcement_not_proven"],
+        "forbidden_claims": forbidden_claims,
+    }
+
+
+def _empty_recovery_counts() -> dict[str, int]:
+    return {
+        "blocked": 0,
+        "non_retry_decision": 0,
+        "invalid_artifact": 0,
+        "retry_allowed": 0,
     }
 
 

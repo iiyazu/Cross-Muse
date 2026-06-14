@@ -3,14 +3,25 @@
 Date: 2026-06-04
 
 Scope: Path A Phase 4 contract closure. This document defines declarative MCP
-permission categories and current enforcement boundaries. It does not implement
-API authentication middleware, broad authorization, dashboard admin UI, or rate
-limiting.
+permission categories and current enforcement boundaries. Chat API now has a
+configurable token and role/capability gate for mutating routes; MCP HTTP
+authentication is also available for mutating JSON-RPC tool calls. Dashboard
+admin UI and rate limiting remain outside this document.
 
 ## Vocabulary
 
-- API authentication is not implemented: `/mcp` and `/mcp/chat` currently accept
-  JSON-RPC requests without a token/header gate.
+- MCP write authentication is opt-in: when `xmuse.mcp_server` is started with
+  `XMUSE_MCP_AUTH_TOKEN`, `XMUSE_MCP_API_KEY`, or `create_app(auth_token=...)`,
+  mutating `tools/call` requests require `X-XMUSE-API-Key`,
+  `X-XMuse-Operator-Role`, and `X-XMuse-Operator-Capabilities`.
+- Chat API authentication is opt-in: when started with an auth token, mutating
+  `/api/chat/*` requests require `X-XMUSE-API-Key` plus an allowed
+  `X-XMuse-Operator-Role` and `X-XMuse-Operator-Capabilities` value.
+- production deployment profile is fail-closed: when
+  `XMUSE_DEPLOYMENT_PROFILE=production`, Chat API startup requires
+  `XMUSE_CHAT_API_AUTH_TOKEN`, `XMUSE_CHAT_API_KEY`, or an explicit
+  `auth_token`; MCP startup requires `XMUSE_MCP_AUTH_TOKEN`,
+  `XMUSE_MCP_API_KEY`, or an explicit `auth_token`.
 - identity verification is not API authentication: selected chat tools verify
   `god_session_id`, `conversation_id`, and `participant_id` against
   `god_sessions.json`; this proves session scope, not network caller identity.
@@ -24,10 +35,10 @@ limiting.
 
 | Category | Meaning | Runtime enforcement in V11 |
 | --- | --- | --- |
-| read_only | Tool is non-mutating and returns bounded read models or diagnostics | Metadata + tests only |
-| write | Tool mutates state and requires a write contract such as audit guard or idempotency | Existing write validation where present |
-| identity_bound_god | Chat GOD tool scoped by `god_session_id`, `conversation_id`, and `participant_id` | Existing `_verify_god_identity()` checks |
-| admin_operator | High-privilege operator action requiring future admin authorization | Existing audit/guard only; no auth middleware |
+| read_only | Tool is non-mutating and returns bounded read models or diagnostics | Metadata + tests; read tools remain token-free under local trust policy |
+| write | Tool mutates state and requires a write contract such as audit guard or idempotency | Existing write validation plus opt-in HTTP token/role/capability gate |
+| identity_bound_god | Chat GOD tool scoped by `god_session_id`, `conversation_id`, and `participant_id` | Existing `_verify_god_identity()` checks plus opt-in HTTP token/role/capability gate for mutating tools |
+| admin_operator | High-privilege operator action requiring admin authorization | Existing audit/guard plus opt-in HTTP token/admin-role gate |
 
 ## Tool Matrix
 
@@ -66,10 +77,39 @@ limiting.
 | chat_mark_inbox | identity_bound_god | true | god_session | chat_identity_idempotency | conversation_participant_session |
 | chat_mention | identity_bound_god | true | god_session | chat_identity_idempotency | conversation_participant_session |
 | chat_emit_proposal | identity_bound_god | true | god_session | chat_identity_idempotency | conversation_participant_session |
+| chat_create_collaboration_request | identity_bound_god | true | god_session | chat_identity_idempotency | conversation_participant_session |
+| chat_record_collaboration_response | identity_bound_god | true | god_session | chat_identity_idempotency | conversation_participant_session |
+| chat_raise_collaboration_blocker | identity_bound_god | true | god_session | chat_identity_idempotency | conversation_participant_session |
+| chat_resolve_collaboration_blocker | identity_bound_god | true | god_session | chat_identity_idempotency | conversation_participant_session |
+| chat_evaluate_dispatch_gate | identity_bound_god | true | god_session | chat_identity_idempotency | conversation_participant_session |
 | chat_inspect_conversation | read_only | false | none | none | conversation |
 | chat_emit_blueprint_proposal | identity_bound_god | true | god_session | chat_identity_idempotency | conversation_participant_session |
+| memory_search | read_only | false | none | none | memory_namespace |
+| memory_build_context | read_only | false | none | none | memory_namespace |
+| memory_ingest | write | true | none | audit_guard_required | memory_namespace |
 
-## V11 Runtime Rejection Contract
+## MCP HTTP Runtime Gate
+
+When MCP auth is enabled:
+
+- missing or wrong `X-XMUSE-API-Key` returns `401`;
+- read-only tools stay readable without a token;
+- `viewer` cannot mutate;
+- `admin` may mutate without an explicit tool capability;
+- `operator` may mutate non-admin write tools only when
+  `X-XMuse-Operator-Capabilities` contains the exact MCP tool name, such as
+  `enqueue_lane`;
+- `god` may mutate identity-bound GOD tools only when the exact tool capability
+  is present and the existing `god_session_id` identity check passes;
+- `operator` and `god` cannot use `admin_operator` tools;
+- audit/guard payloads remain required for tools that already require them.
+
+The API key authenticates the HTTP caller. It does not replace GOD identity,
+idempotency, audit guards, or durable authority checks. The MCP `/health`
+response reports whether write auth is enabled and whether read tools require a
+token.
+
+## Runtime Rejection Contract
 
 The identity-bound chat tools must reject:
 
@@ -77,6 +117,21 @@ The identity-bound chat tools must reject:
 - wrong `participant_id` for the `god_session_id`,
 - unknown `god_session_id`.
 
-Read-only tools are classified as non-mutating. They still require future API
-authentication and caller authorization before exposing the MCP server beyond a
-trusted local operator boundary.
+Read-only tools are classified as non-mutating. They remain under the trusted
+local read policy until a broader deployment policy requires read authentication.
+
+## Chat API Runtime Gate
+
+When Chat API auth is enabled:
+
+- missing or wrong `X-XMUSE-API-Key` returns `401`;
+- `viewer` cannot mutate any Chat API write surface;
+- `admin` may mutate without an explicit capability;
+- `operator` and `god` must include the route capability in
+  `X-XMuse-Operator-Capabilities`;
+- `/api/chat/operator/actions` still enforces the action-specific capability,
+  such as `select_god_cli`, inside the operator action contract.
+
+This is `contract_proof` for HTTP write-surface RBAC. It is not live service
+proof until the configured Chat API process is started with the token and
+exercised by a real operator/TUI session.

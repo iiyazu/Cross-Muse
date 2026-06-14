@@ -1,0 +1,342 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+from xmuse_core.platform.production_evidence import (
+    ProductionEvidenceEnvelope,
+    ProductionEvidenceStatus,
+)
+from xmuse_core.platform.release_readiness import ProofLevel
+
+SUPERVISOR_EVIDENCE_ACTION = "overnight_supervisor_checkpoint"
+SUPERVISOR_EVIDENCE_AUTHORITY = "overnight_operator_supervisor"
+
+
+def capture_overnight_supervisor_evidence(
+    *,
+    snapshot_path: str | Path,
+    output_path: str | Path,
+) -> dict[str, object]:
+    snapshot_file = Path(snapshot_path)
+    snapshot = _load_supervisor_snapshot(snapshot_file)
+    evidence = build_overnight_supervisor_evidence(
+        snapshot=snapshot,
+        snapshot_path=snapshot_file,
+    )
+    output = Path(output_path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(
+        json.dumps(evidence, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return evidence
+
+
+def build_overnight_supervisor_evidence(
+    *,
+    snapshot: dict[str, Any],
+    snapshot_path: str | Path,
+) -> dict[str, object]:
+    run_id = _text(snapshot.get("run_id")) or "unknown"
+    stages = _dict_rows(snapshot.get("stages"))
+    heartbeats = _dict_rows(snapshot.get("heartbeats"))
+    checkpoints = _dict_rows(snapshot.get("checkpoints"))
+    manual_gaps = _dict_rows(snapshot.get("manual_gaps"))
+    self_reviews = _dict_rows(snapshot.get("self_reviews"))
+    production_evidence = _dict_rows(snapshot.get("production_evidence"))
+    virtual_soaks = _dict_rows(snapshot.get("virtual_soaks"))
+    stage_id = _selected_stage_id(
+        checkpoints=checkpoints,
+        stages=stages,
+        current_stage_id=_text(snapshot.get("current_stage_id")),
+    )
+    blocked_reason = _supervisor_blocked_reason(
+        heartbeats=heartbeats,
+        checkpoints=checkpoints,
+        virtual_soaks=virtual_soaks,
+    )
+    if blocked_reason is None:
+        status: ProductionEvidenceStatus = "ok"
+        proof_level: ProofLevel = "contract_proof"
+        next_action = None
+    else:
+        status = "manual_gap"
+        proof_level = "manual_gap"
+        next_action = _supervisor_next_action(blocked_reason)
+    latest_virtual_soak = _latest_virtual_soak(virtual_soaks)
+    envelope = ProductionEvidenceEnvelope(
+        run_id=run_id,
+        stage_id=stage_id,
+        action=SUPERVISOR_EVIDENCE_ACTION,
+        status=status,
+        proof_level=proof_level,
+        source_authority=SUPERVISOR_EVIDENCE_AUTHORITY,
+        source_refs=tuple(
+            _dedupe(
+                [
+                    f"overnight_supervisor:{run_id}",
+                    *[
+                        f"goal:stage:{stage['stage_id']}"
+                        for stage in stages
+                        if _text(stage.get("stage_id")) is not None
+                    ],
+                ]
+            )
+        ),
+        commands=tuple(_commands(production_evidence=production_evidence)),
+        test_results=tuple(_test_results(production_evidence=production_evidence)),
+        artifacts=tuple(
+            _artifacts(
+                snapshot_path=Path(snapshot_path),
+                production_evidence=production_evidence,
+            )
+        ),
+        blocked_reason=blocked_reason,
+        owner="codex",
+        next_action=next_action,
+        summary=_summary(
+            heartbeat_count=len(heartbeats),
+            checkpoint_count=len(checkpoints),
+            manual_gap_count=len(manual_gaps),
+            self_review_count=len(self_reviews),
+            blocked_fallback_count=_blocked_fallback_count(production_evidence),
+            virtual_soak_count=len(virtual_soaks),
+            latest_virtual_soak=latest_virtual_soak,
+        ),
+    )
+    payload = envelope.model_dump()
+    payload["supervisor"] = _supervisor_details(
+        run_id=run_id,
+        current_stage_id=_text(snapshot.get("current_stage_id")),
+        selected_stage_id=stage_id,
+        stages=stages,
+        heartbeats=heartbeats,
+        checkpoints=checkpoints,
+        manual_gaps=manual_gaps,
+        self_reviews=self_reviews,
+        production_evidence=production_evidence,
+        virtual_soaks=virtual_soaks,
+    )
+    return payload
+
+
+def _load_supervisor_snapshot(path: Path) -> dict[str, Any]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict) or payload.get("schema_version") != (
+        "xmuse.overnight_supervisor.v1"
+    ):
+        raise ValueError(f"{path}: expected xmuse.overnight_supervisor.v1")
+    return payload
+
+
+def _selected_stage_id(
+    *,
+    checkpoints: list[dict[str, Any]],
+    stages: list[dict[str, Any]],
+    current_stage_id: str | None,
+) -> str:
+    for row in reversed(checkpoints):
+        stage_id = _text(row.get("stage_id"))
+        if stage_id is not None:
+            return stage_id
+    if current_stage_id is not None:
+        return current_stage_id
+    for stage in reversed(stages):
+        stage_id = _text(stage.get("stage_id"))
+        if stage_id is not None:
+            return stage_id
+    return "supervisor"
+
+
+def _supervisor_blocked_reason(
+    *,
+    heartbeats: list[dict[str, Any]],
+    checkpoints: list[dict[str, Any]],
+    virtual_soaks: list[dict[str, Any]],
+) -> str | None:
+    if not checkpoints:
+        return "overnight supervisor snapshot has no checkpoint evidence"
+    if not heartbeats:
+        return "overnight supervisor snapshot has no heartbeat evidence"
+    latest_virtual_soak = _latest_virtual_soak(virtual_soaks)
+    if latest_virtual_soak and latest_virtual_soak.get("slo_status") == "violated":
+        violations = _string_list(latest_virtual_soak.get("slo_violations"))
+        if violations:
+            return "latest overnight virtual soak SLO violated: " + "; ".join(
+                violations
+            )
+        return "latest overnight virtual soak SLO violated"
+    return None
+
+
+def _supervisor_next_action(blocked_reason: str) -> str:
+    if "virtual soak SLO" in blocked_reason:
+        return (
+            "Reduce heartbeat/self-review intervals or fix supervisor scheduling, "
+            "then rerun the overnight virtual soak."
+        )
+    if "heartbeat" in blocked_reason:
+        return "Record a supervisor heartbeat and regenerate supervisor replay evidence."
+    return "Record a supervisor checkpoint and regenerate supervisor replay evidence."
+
+
+def _commands(
+    *,
+    production_evidence: list[dict[str, Any]],
+) -> list[str]:
+    commands: list[str] = []
+    for evidence in production_evidence:
+        commands.extend(_string_list(evidence.get("commands")))
+    return _dedupe(commands)
+
+
+def _test_results(
+    *,
+    production_evidence: list[dict[str, Any]],
+) -> list[str]:
+    results: list[str] = []
+    for evidence in production_evidence:
+        results.extend(_string_list(evidence.get("test_results")))
+    return _dedupe(results)
+
+
+def _artifacts(
+    *,
+    snapshot_path: Path,
+    production_evidence: list[dict[str, Any]],
+) -> list[str]:
+    artifacts = [str(snapshot_path)]
+    for evidence in production_evidence:
+        artifacts.extend(_string_list(evidence.get("artifacts")))
+    return _dedupe(artifacts)
+
+
+def _summary(
+    *,
+    heartbeat_count: int,
+    checkpoint_count: int,
+    manual_gap_count: int,
+    self_review_count: int,
+    blocked_fallback_count: int,
+    virtual_soak_count: int,
+    latest_virtual_soak: dict[str, Any] | None,
+) -> str:
+    summary = (
+        "Supervisor captured "
+        f"{heartbeat_count} heartbeat(s), "
+        f"{checkpoint_count} checkpoint(s), "
+        f"{manual_gap_count} manual gap(s), "
+        f"{self_review_count} self-review(s), and "
+        f"{blocked_fallback_count} blocked fallback(s)."
+    )
+    if virtual_soak_count:
+        status = _text((latest_virtual_soak or {}).get("slo_status")) or "unknown"
+        summary = (
+            "Supervisor captured "
+            f"{heartbeat_count} heartbeat(s), "
+            f"{checkpoint_count} checkpoint(s), "
+            f"{manual_gap_count} manual gap(s), "
+            f"{self_review_count} self-review(s), "
+            f"{blocked_fallback_count} blocked fallback(s), and "
+            f"{virtual_soak_count} virtual soak(s); latest virtual soak SLO={status}."
+        )
+    return summary
+
+
+def _blocked_fallback_count(production_evidence: list[dict[str, Any]]) -> int:
+    return sum(
+        1
+        for evidence in production_evidence
+        if evidence.get("action") == "blocked_fallback"
+    )
+
+
+def _supervisor_details(
+    *,
+    run_id: str,
+    current_stage_id: str | None,
+    selected_stage_id: str,
+    stages: list[dict[str, Any]],
+    heartbeats: list[dict[str, Any]],
+    checkpoints: list[dict[str, Any]],
+    manual_gaps: list[dict[str, Any]],
+    self_reviews: list[dict[str, Any]],
+    production_evidence: list[dict[str, Any]],
+    virtual_soaks: list[dict[str, Any]],
+) -> dict[str, object]:
+    latest_virtual_soak = _latest_virtual_soak(virtual_soaks)
+    return {
+        "authority": SUPERVISOR_EVIDENCE_AUTHORITY,
+        "run_id": run_id,
+        "current_stage_id": current_stage_id,
+        "selected_stage_id": selected_stage_id,
+        "stage_count": len(stages),
+        "heartbeat_count": len(heartbeats),
+        "checkpoint_count": len(checkpoints),
+        "manual_gap_count": len(manual_gaps),
+        "self_review_count": len(self_reviews),
+        "blocked_fallback_count": _blocked_fallback_count(production_evidence),
+        "virtual_soak_count": len(virtual_soaks),
+        "latest_heartbeat_stage_id": _latest_stage_id(heartbeats),
+        "latest_checkpoint_stage_id": _latest_stage_id(checkpoints),
+        "latest_blocked_stage_id": _latest_blocked_stage_id(production_evidence),
+        "latest_virtual_soak_run_id": (
+            _text(latest_virtual_soak.get("run_id")) if latest_virtual_soak else None
+        ),
+        "latest_virtual_soak_slo_status": (
+            _text(latest_virtual_soak.get("slo_status")) if latest_virtual_soak else None
+        ),
+    }
+
+
+def _latest_stage_id(rows: list[dict[str, Any]]) -> str | None:
+    for row in reversed(rows):
+        stage_id = _text(row.get("stage_id"))
+        if stage_id is not None:
+            return stage_id
+    return None
+
+
+def _latest_blocked_stage_id(production_evidence: list[dict[str, Any]]) -> str | None:
+    for evidence in reversed(production_evidence):
+        if evidence.get("action") != "blocked_fallback":
+            continue
+        stage_id = _text(evidence.get("stage_id"))
+        if stage_id is not None:
+            return stage_id
+    return None
+
+
+def _latest_virtual_soak(virtual_soaks: list[dict[str, Any]]) -> dict[str, Any] | None:
+    return virtual_soaks[-1] if virtual_soaks else None
+
+
+def _dict_rows(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [dict(item) for item in value if isinstance(item, dict)]
+
+
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [item.strip() for item in value if isinstance(item, str) and item.strip()]
+
+
+def _text(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    return value or None
+
+
+def _dedupe(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        if value and value not in seen:
+            seen.add(value)
+            result.append(value)
+    return result

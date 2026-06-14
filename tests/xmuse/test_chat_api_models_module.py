@@ -25,6 +25,38 @@ def test_chat_api_models_module_rejects_blank_fork_required_text() -> None:
         )
 
 
+def test_chat_api_models_reject_unsafe_god_room_artifact_ids() -> None:
+    with pytest.raises(ValidationError):
+        api_models.GodRoomLaneRecoveryRequest(
+            graph_id="../escaped",
+            lane_id="lane-runtime-api",
+        )
+    with pytest.raises(ValidationError):
+        api_models.GodRoomLaneDagRequest(
+            resolution_id="resolution-1",
+            graph_id="graph/escaped",
+            features=[
+                {
+                    "feature_id": "feature-runtime",
+                    "title": "Runtime recovery",
+                    "goal": "Evaluate recovery from lane runtime budgets.",
+                    "acceptance_criteria": ["Recovery artifacts are persisted."],
+                    "blueprint_refs": ["blueprint:bp-god-room:1"],
+                }
+            ],
+            lanes=[
+                {
+                    "lane_id": "lane-runtime-api",
+                    "feature_id": "feature-runtime",
+                    "title": "Expose lane recovery runtime API",
+                    "prompt": "Build the lane recovery runtime action.",
+                    "acceptance_criteria": ["Focused tests cover recovery decisions."],
+                    "blueprint_refs": ["blueprint:bp-god-room:1"],
+                }
+            ],
+        )
+
+
 def test_chat_api_preserves_api_model_compat_exports() -> None:
     assert chat_api.ParticipantInit is api_models.ParticipantInit
     assert chat_api.ConversationCreate is api_models.ConversationCreate
@@ -35,3 +67,6 @@ def test_chat_api_preserves_api_model_compat_exports() -> None:
     assert chat_api.ProposalApproval is api_models.ProposalApproval
     assert chat_api.ThreadMessageCreate is api_models.ThreadMessageCreate
     assert chat_api.PeerForkCreate is api_models.PeerForkCreate
+    assert chat_api.GodRoomLaneDagRequest is api_models.GodRoomLaneDagRequest
+    assert chat_api.GodRoomLaneRecoveryRequest is api_models.GodRoomLaneRecoveryRequest
+    assert chat_api.GodRoomMemoryPlanRequest is api_models.GodRoomMemoryPlanRequest

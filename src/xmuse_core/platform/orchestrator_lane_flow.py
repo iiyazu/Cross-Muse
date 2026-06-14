@@ -8,7 +8,7 @@ import sys
 import time
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from xmuse_core.agents.persistent_peer import fingerprint_prompt
 from xmuse_core.observability import log_event, observability_context, timed_core_operation
@@ -37,6 +37,10 @@ from xmuse_core.platform.verdicts.writer import (
     ingest_merge_verdict,
     ingest_rework_verdict,
     stable_verdict_id_for_lane,
+)
+from xmuse_core.structuring.blueprint_execution.lane_recovery_artifacts import (
+    LaneRecoveryArtifactError,
+    load_lane_recovery_decision,
 )
 from xmuse_core.structuring.feature_review_contracts import FeatureGraphExecutionStatus
 
@@ -91,10 +95,14 @@ def _graph_native_status_record(orchestrator, lane: dict[str, Any]) -> Any | Non
         return None
 
 
+def _graph_native_authority_required(lane: dict[str, Any]) -> bool:
+    return _optional_text(lane.get("graph_set_id")) is not None
+
+
 def _graph_native_dispatch_authority_allows_lane(orchestrator, lane: dict[str, Any]) -> bool:
     status = _graph_native_status_record(orchestrator, lane)
     if status is None:
-        return True
+        return not _graph_native_authority_required(lane)
     lane_id = str(lane["feature_id"])
     if status.status is FeatureGraphExecutionStatus.REWORKING:
         return True
@@ -105,17 +113,68 @@ def _graph_native_dispatch_authority_allows_lane(orchestrator, lane: dict[str, A
     return False
 
 
+def _lane_recovery_dispatch_block_metadata(
+    orchestrator,
+    lane: dict[str, Any],
+) -> dict[str, Any] | None:
+    graph_id = _lane_graph_id(lane)
+    lane_id = _optional_text(lane.get("feature_id"))
+    if graph_id is None or lane_id is None:
+        return None
+    try:
+        decision = load_lane_recovery_decision(
+            orchestrator._root,
+            graph_id=graph_id,
+            lane_id=lane_id,
+        )
+    except (LaneRecoveryArtifactError, ValueError) as exc:
+        return {
+            "dispatch_blocked_by_recovery": True,
+            "recovery_dispatch_block_reason": "invalid_recovery_artifact",
+            "recovery_dispatch_block_error": str(exc),
+            "recovery_source_authority": "lane_recovery_artifact",
+            "manual_gaps": [
+                "lane_recovery_artifact_invalid",
+                "live_runner_recovery_enforcement_not_proven",
+            ],
+            "forbidden_claims": [
+                "overnight_safe_recovery",
+                "end_to_end_execution_review_closure",
+                "ready_to_merge",
+                "pr_merged",
+            ],
+        }
+    if decision is None or decision.retry_allowed:
+        return None
+    return {
+        "dispatch_blocked_by_recovery": True,
+        "recovery_dispatch_block_reason": decision.decision.value,
+        "recovery_decision": decision.model_dump(mode="json"),
+        "recovery_source_authority": "lane_recovery_artifact",
+        "manual_gaps": [
+            "lane_status_not_updated_by_durable_authority",
+            "live_runner_recovery_enforcement_not_proven",
+        ],
+        "forbidden_claims": [
+            "overnight_safe_recovery",
+            "end_to_end_execution_review_closure",
+            "ready_to_merge",
+            "pr_merged",
+        ],
+    }
+
+
 def _graph_native_review_authority_allows_lane(orchestrator, lane: dict[str, Any]) -> bool:
     status = _graph_native_status_record(orchestrator, lane)
     if status is None:
-        return True
+        return not _graph_native_authority_required(lane)
     return status.status is FeatureGraphExecutionStatus.REVIEWING
 
 
 def _graph_native_execution_authority_allows_lane(orchestrator, lane: dict[str, Any]) -> bool:
     status = _graph_native_status_record(orchestrator, lane)
     if status is None:
-        return True
+        return not _graph_native_authority_required(lane)
     if status.status is not FeatureGraphExecutionStatus.RUNNING:
         return False
     return str(lane["feature_id"]) in status.active_lane_ids
@@ -129,7 +188,7 @@ def _graph_native_reprojection_authority_allows_lane(
 ) -> bool:
     status = _graph_native_status_record(orchestrator, lane)
     if status is None:
-        return True
+        return not _graph_native_authority_required(lane)
     return status.status is expected_status
 
 
@@ -210,6 +269,18 @@ async def dispatch_lane(orchestrator, lane_id: str) -> None:
                 status=current_status,
             )
             return
+        recovery_block = _lane_recovery_dispatch_block_metadata(orchestrator, lane)
+        if recovery_block is not None:
+            orchestrator._sm.update_metadata(lane_id, recovery_block)
+            log_event(
+                logger,
+                logging.WARNING,
+                "lane_dispatch_blocked_by_recovery_decision",
+                lane_id=lane_id,
+                graph_id=_lane_graph_id(lane),
+                reason=recovery_block["recovery_dispatch_block_reason"],
+            )
+            return
         memory_event = "takeover" if _lane_needs_takeover_memory(lane) else "planning"
         memory_lane = dict(lane)
     with observability_context(
@@ -227,7 +298,7 @@ async def dispatch_lane(orchestrator, lane_id: str) -> None:
             else "pending"
         )
         current_revision = orchestrator._sm.current_projection_revision()
-        metadata = {
+        metadata: dict[str, Any] = {
             "runner_id": orchestrator._runner_id,
             "dispatch_attempt_id": (
                 f"dispatch-{_safe_lane_ref(lane_id)}-{uuid.uuid4().hex[:12]}"
@@ -696,7 +767,7 @@ async def on_lane_reviewed_inner(orchestrator, lane_id: str, lane: dict[str, Any
         log_event(logger, logging.INFO, "lane_merged", lane_id=lane_id)
     else:
         lane = orchestrator._sm.get_lane(lane_id)
-        metadata = {
+        metadata: dict[str, Any] = {
             "failure_reason": str(
                 lane.get("merge_failure_reason") or "merge_failed"
             )
@@ -767,7 +838,7 @@ async def record_lane_memory_event(
     lane_id: str,
     lane: dict[str, Any],
     *,
-    event: str,
+    event: Literal["planning", "review", "takeover"],
 ) -> None:
     if orchestrator._memory_store is None:
         return

@@ -9,7 +9,14 @@ from xmuse.chat_api import create_app
 from xmuse.tui.adapter.xmuse_adapter import StateDelta, XmuseAdapter
 from xmuse.tui.app import XmuseTUI
 from xmuse.tui.screens.lane_detail import LaneDetailScreen
+from xmuse.tui.screens.provider_board import ProviderBoardScreen
+from xmuse.tui.slash_commands import _room_speaker_response_payload
 from xmuse.tui.state import StateUpdated
+from xmuse.tui.widgets.blueprint_freeze_panel import BlueprintFreezePanel
+from xmuse.tui.widgets.deliberation_cockpit import DeliberationCockpit
+from xmuse.tui.widgets.execution_cockpit import ExecutionCockpit
+from xmuse.tui.widgets.github_truth_panel import GitHubTruthPanel
+from xmuse.tui.widgets.memory_trace_drawer import MemoryTraceDrawer
 from xmuse_core.chat.peer_service import PeerChatService
 
 pytestmark = pytest.mark.asyncio
@@ -326,7 +333,1648 @@ async def test_chat_screen_help_command_lists_slash_commands(app: XmuseTUI) -> N
 
         assert "/sessions" in appended[-1]["content"]
         assert "/sessions <number|conversation_id|title>" in appended[-1]["content"]
+        assert "/evidence <transcript|github|memory|blockers>" in appended[-1]["content"]
         assert "/god add <role> [display name]" in appended[-1]["content"]
+        assert "/god register" in appended[-1]["content"]
+        assert "/god select <cli_id>" in appended[-1]["content"]
+
+
+async def test_chat_screen_evidence_command_runs_operator_action(app: XmuseTUI) -> None:
+    app.adapter.list_group_conversations = lambda: [
+        {"id": "conv-user", "title": "User group", "created_at": "2026-06-01T00:00:00Z"},
+    ]
+    calls = []
+
+    def _run_operator_evidence_action(action: str, conv_id: str):
+        calls.append((action, conv_id))
+        return {
+            "action": "transcript_export",
+            "status": "ok",
+            "proof_level": "contract_proof",
+            "fact_state": "observed",
+            "artifact_path": "/tmp/transcript.json",
+            "source_refs": ["message:msg-1"],
+            "target_refs": ["blueprint:conv-user:1"],
+            "manual_gap_reason": None,
+            "summary": "Exported 1 structured deliberation messages.",
+        }
+
+    app.adapter.run_operator_evidence_action = _run_operator_evidence_action
+
+    async with app.run_test() as pilot:
+        appended = []
+        log = app.screen.query_one("#message-log")
+        log.append_message = lambda **kwargs: appended.append(kwargs)
+
+        input_widget = app.screen.query_one("#message-input")
+        input_widget.value = "/evidence transcript"
+        input_widget.post_message(input_widget.Submitted(input_widget, input_widget.value))
+        await pilot.pause()
+
+        assert calls == [("transcript", "conv-user")]
+        content = appended[-1]["content"]
+        assert "Evidence action: transcript_export" in content
+        assert "status=ok proof=contract_proof fact=observed" in content
+        assert "artifact=/tmp/transcript.json" in content
+        assert "sources=message:msg-1" in content
+
+
+async def test_chat_screen_god_select_runs_operator_control_action(app: XmuseTUI) -> None:
+    app.adapter.list_group_conversations = lambda: [
+        {"id": "conv-user", "title": "User group", "created_at": "2026-06-01T00:00:00Z"},
+    ]
+    calls = []
+
+    def _run_operator_control_action(action: str, conv_id: str, payload: dict):
+        calls.append((action, conv_id, payload))
+        return {
+            "action": "select_god_cli",
+            "status": "ok",
+            "proof_level": "contract_proof",
+            "fact_state": "god_cli_selected",
+            "audit_id": "operator-action:1",
+            "summary": "Selected GOD CLI codex.god.",
+            "payload": {
+                "selection": {
+                    "cli_id": "codex.god",
+                    "conversation_id": conv_id,
+                    "source_authority": "operator_action_contract",
+                }
+            },
+        }
+
+    app.adapter.run_operator_control_action = _run_operator_control_action
+
+    async with app.run_test() as pilot:
+        appended = []
+        log = app.screen.query_one("#message-log")
+        log.append_message = lambda **kwargs: appended.append(kwargs)
+
+        input_widget = app.screen.query_one("#message-input")
+        input_widget.value = "/god select codex.god"
+        input_widget.post_message(input_widget.Submitted(input_widget, input_widget.value))
+        await pilot.pause()
+
+        assert calls == [
+            ("select_god_cli", "conv-user", {"cli_id": "codex.god"}),
+        ]
+        content = appended[-1]["content"]
+        assert "Operator action: select_god_cli" in content
+        assert "status=ok proof=contract_proof fact=god_cli_selected" in content
+        assert "audit=operator-action:1" in content
+        assert "Selected GOD CLI codex.god." in content
+
+
+async def test_chat_screen_room_commands_call_god_room_contracts(
+    app: XmuseTUI,
+) -> None:
+    app.adapter.list_group_conversations = lambda: [
+        {"id": "conv-user", "title": "User group", "created_at": "2026-06-01T00:00:00Z"},
+    ]
+    calls = []
+
+    def _ensure_god_room(conv_id: str):
+        calls.append(("ensure", conv_id, None))
+        return {"room": {"source_authority": "god_room_event_store", "event_count": 0}}
+
+    def _append_god_room_event(conv_id: str, payload: dict):
+        calls.append(("event", conv_id, payload))
+        return {
+            "append_status": "created",
+            "event": {"event_id": payload["event_id"]},
+            "room": {"source_authority": "god_room_event_store", "event_count": 1},
+        }
+
+    def _freeze_god_room_blueprint(
+        conv_id: str,
+        *,
+        blueprint_id: str,
+        revision: int = 1,
+    ):
+        calls.append(("freeze", conv_id, {"blueprint_id": blueprint_id, "revision": revision}))
+        return {
+            "source_authority": "god_room_event_store",
+            "artifact": {"status": "frozen"},
+            "blueprint": {"blueprint_id": blueprint_id},
+        }
+
+    def _build_god_room_memoryos_plan(conv_id: str, payload: dict):
+        calls.append(("memoryos", conv_id, payload))
+        return {
+            "source_authority": "god_room_memoryos_plan_contract",
+            "memoryos_plan": {
+                "schema_version": "xmuse.god_room_memoryos_plan.v1",
+                "live_trace": {"status": "manual_gap"},
+            },
+            "artifacts": {
+                "memoryos_plan": "reports/god_room_memoryos/graph-room.memoryos-plan.json"
+            },
+        }
+
+    def _build_god_room_speaker_attempt(conv_id: str, payload: dict):
+        calls.append(("speaker-attempt", conv_id, payload))
+        return {
+            "source_authority": "god_room_event_store+selected_god_runtime_continuity",
+            "speaker_attempt": {
+                "status": "ready_for_provider_attempt",
+                "target_participant_id": "participant-review",
+                "provider_session_id": "provider-thread-review",
+            },
+            "artifacts": {
+                "speaker_attempt": (
+                    "reports/god_room_speaker_attempts/"
+                    "conv-user.evt-room-1.speaker-attempt.json"
+                )
+            },
+        }
+
+    def _capture_god_room_speaker_response(conv_id: str, payload: dict):
+        calls.append(("speaker-response", conv_id, payload))
+        return {
+            "source_authority": (
+                "god_room_event_store+selected_god_runtime_continuity+"
+                "provider_response"
+            ),
+            "speaker_response": {
+                "status": "speak_event_appended",
+                "proof_level": "real_provider_proof",
+                "target_participant_id": "participant-review",
+                "provider_session_id": "provider-thread-review",
+                "append_status": "created",
+                "provider_response": {"response_id": "provider-response-1"},
+                "speak_event": {"event_id": "evt-review-provider-speak"},
+            },
+            "artifacts": {
+                "speaker_response": (
+                    "reports/god_room_speaker_responses/"
+                    "conv-user.evt-room-1.evt-review-provider-speak."
+                    "speaker-response.json"
+                )
+            },
+        }
+
+    app.adapter.ensure_god_room = _ensure_god_room
+    app.adapter.append_god_room_event = _append_god_room_event
+    app.adapter.freeze_god_room_blueprint = _freeze_god_room_blueprint
+    app.adapter.build_god_room_memoryos_plan = _build_god_room_memoryos_plan
+    app.adapter.build_god_room_speaker_attempt = _build_god_room_speaker_attempt
+    app.adapter.capture_god_room_speaker_response = _capture_god_room_speaker_response
+
+    async with app.run_test() as pilot:
+        appended = []
+        log = app.screen.query_one("#message-log")
+        log.append_message = lambda **kwargs: appended.append(kwargs)
+        input_widget = app.screen.query_one("#message-input")
+        for command in (
+            "/room ensure",
+            (
+                "/room event event_id=evt-room-1 participant_id=participant-architect "
+                "god_id=god-architect type=speak "
+                "timestamp=2026-06-13T13:50:00Z content='Ship S7 room command' "
+                "source_ref=tui-command:evt-room-1"
+            ),
+            "/room freeze blueprint_id=bp-room revision=2",
+            (
+                "/room memoryos-plan graph_id=graph-room repo_id=iiyazu/Cross-Muse "
+                "workspace_id=xmuse context_budget=1024"
+            ),
+            "/room speaker-attempt after_event_id=evt-room-1",
+            (
+                "/room speaker-response after_event_id=evt-room-1 "
+                "event_id=evt-review-provider-speak "
+                "response_id=provider-response-1 status=completed "
+                "proof_level=real_provider_proof target=participant-review "
+                "provider_profile=codex.god provider_session=provider-thread-review "
+                "content='Review GOD responded from provider' "
+                "source_ref=provider-run:codex:provider-response-1 "
+                "provider_response_artifact=reports/provider-responses/"
+                "provider-response-1.json"
+            ),
+        ):
+            input_widget.value = command
+            input_widget.post_message(input_widget.Submitted(input_widget, input_widget.value))
+            await pilot.pause()
+
+    assert calls == [
+        ("ensure", "conv-user", None),
+        (
+            "event",
+            "conv-user",
+            {
+                "schema_version": "xmuse.god_room_event.v1",
+                "event_id": "evt-room-1",
+                "room_id": "god-room:conv-user",
+                "conversation_id": "conv-user",
+                "participant_id": "participant-architect",
+                "god_id": "god-architect",
+                "actor_kind": "operator",
+                "event_type": "speak",
+                "timestamp_utc": "2026-06-13T13:50:00Z",
+                "content": "Ship S7 room command",
+                "source_refs": ["tui-command:evt-room-1"],
+            },
+        ),
+        ("freeze", "conv-user", {"blueprint_id": "bp-room", "revision": 2}),
+        (
+            "memoryos",
+            "conv-user",
+            {
+                "graph_id": "graph-room",
+                "repo_id": "iiyazu/Cross-Muse",
+                "workspace_id": "xmuse",
+                "context_budget": 1024,
+            },
+        ),
+        (
+            "speaker-attempt",
+            "conv-user",
+            {"after_event_id": "evt-room-1"},
+        ),
+        (
+            "speaker-response",
+            "conv-user",
+            {
+                "after_event_id": "evt-room-1",
+                "event_id": "evt-review-provider-speak",
+                "provider_response_artifact": (
+                    "reports/provider-responses/provider-response-1.json"
+                ),
+                "provider_response": {
+                    "response_id": "provider-response-1",
+                    "status": "completed",
+                    "proof_level": "real_provider_proof",
+                    "target_participant_id": "participant-review",
+                    "provider_profile_ref": "codex.god",
+                    "provider_session_id": "provider-thread-review",
+                    "content": "Review GOD responded from provider",
+                    "source_refs": ["provider-run:codex:provider-response-1"],
+                },
+            },
+        ),
+    ]
+    assert "GOD room action: speaker-attempt" in appended[-2]["content"]
+    assert "speaker_attempt=ready_for_provider_attempt" in appended[-2]["content"]
+    assert "GOD room action: speaker-response" in appended[-1]["content"]
+    assert "speaker_response=speak_event_appended" in appended[-1]["content"]
+    assert "speak_event=evt-review-provider-speak" in appended[-1]["content"]
+    events = app.adapter.list_tui_command_events("conv-user")
+    assert [event["command"] for event in events] == [
+        "/room ensure",
+        "/room event",
+        "/room freeze",
+        "/room memoryos-plan",
+        "/room speaker-attempt",
+        "/room speaker-response",
+    ]
+    assert {event["read_surface_authority"] for event in events} == {
+        "god_room_chat_api"
+    }
+
+
+async def test_room_speaker_response_requires_explicit_proof_level() -> None:
+    with pytest.raises(ValueError):
+        _room_speaker_response_payload(
+            [
+                "after_event_id=evt-room-1",
+                "event_id=evt-review-provider-speak",
+                "response_id=provider-response-1",
+                "target=participant-review",
+                "provider_profile=codex.god",
+                "provider_session=provider-thread-review",
+                "content=Review",
+                "source_ref=provider-run:codex:provider-response-1",
+                "provider_response_artifact=reports/provider-responses/"
+                "provider-response-1.json",
+            ]
+        )
+
+
+async def test_chat_screen_room_lane_dag_and_recovery_commands_call_contracts(
+    app: XmuseTUI,
+) -> None:
+    app.adapter.list_group_conversations = lambda: [
+        {"id": "conv-user", "title": "User group", "created_at": "2026-06-01T00:00:00Z"},
+    ]
+    calls = []
+
+    def _build_god_room_lane_dag(conv_id: str, payload: dict):
+        calls.append(("lane-dag", conv_id, payload))
+        return {
+            "source_authority": "god_room_blueprint_freeze",
+            "lane_dag": {"graph_id": payload["graph_id"], "lane_contracts": [payload["lanes"][0]]},
+            "artifacts": {"lane_dag": "lane_graphs/graph-room.lane-dag.json"},
+        }
+
+    def _evaluate_god_room_lane_recovery(conv_id: str, payload: dict):
+        calls.append(("recovery", conv_id, payload))
+        return {
+            "source_authority": "lane_dag_artifact",
+            "decision": {
+                "lane_id": payload["lane_id"],
+                "decision": "refactor_required",
+                "retry_allowed": False,
+            },
+            "artifacts": {"recovery": "lane_graphs/graph-room.lane-room.recovery.json"},
+        }
+
+    app.adapter.build_god_room_lane_dag = _build_god_room_lane_dag
+    app.adapter.evaluate_god_room_lane_recovery = _evaluate_god_room_lane_recovery
+
+    async with app.run_test() as pilot:
+        appended = []
+        log = app.screen.query_one("#message-log")
+        log.append_message = lambda **kwargs: appended.append(kwargs)
+        input_widget = app.screen.query_one("#message-input")
+        for command in (
+            (
+                "/room lane-dag resolution_id=res-freeze graph_id=graph-room "
+                "feature_id=feature-room feature_title='Room laneDAG' "
+                "feature_goal='Build laneDAG from TUI' "
+                "feature_acceptance='LaneDAG artifact exists' "
+                "blueprint_ref=blueprint:bp-room:2 lane_id=lane-room "
+                "lane_title='Build room lane' prompt='Implement room laneDAG' "
+                "lane_acceptance='Runtime contract exists' owner=execute-god "
+                "input=blueprint:bp-room:2 output=artifact://lane-room/lane-dag.json "
+                "check=focused-pytest allowed_file=xmuse/tui/slash_commands.py "
+                "rollback='do not write projections' review_profile=runtime-review "
+                "source_ref=tui-command:lane-dag"
+            ),
+            (
+                "/room recovery graph_id=graph-room lane_id=lane-room attempt=2 "
+                "failure_class=repeat_contract_failure reason='same boundary failed twice' "
+                "source_ref=pytest:lane-room runtime_seconds=120"
+            ),
+        ):
+            input_widget.value = command
+            input_widget.post_message(input_widget.Submitted(input_widget, input_widget.value))
+            await pilot.pause()
+
+    assert calls == [
+        (
+            "lane-dag",
+            "conv-user",
+            {
+                "resolution_id": "res-freeze",
+                "graph_id": "graph-room",
+                "features": [
+                    {
+                        "feature_id": "feature-room",
+                        "title": "Room laneDAG",
+                        "goal": "Build laneDAG from TUI",
+                        "acceptance_criteria": ["LaneDAG artifact exists"],
+                        "blueprint_refs": ["blueprint:bp-room:2"],
+                    }
+                ],
+                "lanes": [
+                    {
+                        "lane_id": "lane-room",
+                        "feature_id": "feature-room",
+                        "title": "Build room lane",
+                        "prompt": "Implement room laneDAG",
+                        "acceptance_criteria": ["Runtime contract exists"],
+                        "blueprint_refs": ["blueprint:bp-room:2"],
+                        "owner": "execute-god",
+                        "inputs": ["blueprint:bp-room:2"],
+                        "outputs": ["artifact://lane-room/lane-dag.json"],
+                        "required_checks": ["focused-pytest"],
+                        "allowed_files": ["xmuse/tui/slash_commands.py"],
+                        "rollback_constraints": ["do not write projections"],
+                        "review_profile": "runtime-review",
+                    }
+                ],
+                "source_refs": ["tui-command:lane-dag"],
+            },
+        ),
+        (
+            "recovery",
+            "conv-user",
+            {
+                "graph_id": "graph-room",
+                "lane_id": "lane-room",
+                "runtime_seconds": 120,
+                "failures": [
+                    {
+                        "lane_id": "lane-room",
+                        "attempt": 2,
+                        "failure_class": "repeat_contract_failure",
+                        "reason": "same boundary failed twice",
+                        "source_refs": ["pytest:lane-room"],
+                    }
+                ],
+            },
+        ),
+    ]
+    assert "GOD room action: recovery" in appended[-1]["content"]
+    assert "authority=lane_dag_artifact" in appended[-1]["content"]
+    assert "decision=refactor_required" in appended[-1]["content"]
+    events = app.adapter.list_tui_command_events("conv-user")
+    assert [event["command"] for event in events] == [
+        "/room lane-dag",
+        "/room recovery",
+    ]
+    assert {event["read_surface_authority"] for event in events} == {
+        "god_room_chat_api"
+    }
+
+
+async def test_chat_screen_god_register_runs_operator_control_action(
+    app: XmuseTUI,
+) -> None:
+    app.adapter.list_group_conversations = lambda: [
+        {"id": "conv-user", "title": "User group", "created_at": "2026-06-01T00:00:00Z"},
+    ]
+    calls = []
+
+    def _run_operator_control_action(action: str, conv_id: str, payload: dict):
+        calls.append((action, conv_id, payload))
+        return {
+            "action": "register_god_cli",
+            "status": "ok",
+            "proof_level": "contract_proof",
+            "fact_state": "god_cli_registered",
+            "audit_id": "operator-action:register",
+            "summary": "Registered GOD CLI custom.peer.",
+            "payload": {
+                "registration": {
+                    "cli_id": "custom.peer",
+                    "proof_refs": ["provider-run://custom.peer/live-smoke-1"],
+                }
+            },
+        }
+
+    app.adapter.run_operator_control_action = _run_operator_control_action
+
+    async with app.run_test() as pilot:
+        appended = []
+        log = app.screen.query_one("#message-log")
+        log.append_message = lambda **kwargs: appended.append(kwargs)
+
+        input_widget = app.screen.query_one("#message-input")
+        input_widget.value = (
+            "/god register cli_id=custom.peer display_name='Custom Peer' "
+            "command_family=custom-cli provider_profile_ref=custom.peer "
+            "capabilities=peer_god proof_level=real_provider_proof "
+            "supports_persistent_sessions=true supports_mcp_writeback=true "
+            "state_write_allowed=true "
+            "proof_refs=provider-run://custom.peer/live-smoke-1"
+        )
+        input_widget.post_message(input_widget.Submitted(input_widget, input_widget.value))
+        await pilot.pause()
+
+        assert calls == [
+            (
+                "register_god_cli",
+                "conv-user",
+                {
+                    "cli_id": "custom.peer",
+                    "display_name": "Custom Peer",
+                    "command_family": "custom-cli",
+                    "provider_profile_ref": "custom.peer",
+                    "capabilities": ["peer_god"],
+                    "proof_level": "real_provider_proof",
+                    "supports_persistent_sessions": True,
+                    "supports_mcp_writeback": True,
+                    "state_write_allowed": True,
+                    "proof_refs": ["provider-run://custom.peer/live-smoke-1"],
+                },
+            )
+        ]
+        content = appended[-1]["content"]
+        assert "Operator action: register_god_cli" in content
+        assert "status=ok proof=contract_proof fact=god_cli_registered" in content
+        assert "audit=operator-action:register" in content
+        assert "Registered GOD CLI custom.peer." in content
+
+
+async def test_chat_screen_release_pack_runs_operator_control_action(app: XmuseTUI) -> None:
+    app.adapter.list_group_conversations = lambda: [
+        {"id": "conv-user", "title": "User group", "created_at": "2026-06-01T00:00:00Z"},
+    ]
+    calls = []
+
+    def _run_operator_control_action(action: str, conv_id: str, payload: dict):
+        calls.append((action, conv_id, payload))
+        return {
+            "action": "capture_release_evidence_pack",
+            "status": "ok",
+            "proof_level": "contract_proof",
+            "fact_state": "release_evidence_pack_captured",
+            "audit_id": "operator-action:release",
+            "summary": "Captured release evidence pack: decision=blocked.",
+            "payload": {
+                "evidence_pack": {
+                    "decision": "blocked",
+                    "blocker_count": 1,
+                    "finding_count": 0,
+                }
+            },
+        }
+
+    app.adapter.run_operator_control_action = _run_operator_control_action
+
+    async with app.run_test() as pilot:
+        appended = []
+        log = app.screen.query_one("#message-log")
+        log.append_message = lambda **kwargs: appended.append(kwargs)
+
+        input_widget = app.screen.query_one("#message-input")
+        input_widget.value = "/release pack"
+        input_widget.post_message(input_widget.Submitted(input_widget, input_widget.value))
+        await pilot.pause()
+
+        assert calls == [
+            ("capture_release_evidence_pack", "conv-user", {}),
+        ]
+        content = appended[-1]["content"]
+        assert "Operator action: capture_release_evidence_pack" in content
+        assert (
+            "status=ok proof=contract_proof fact=release_evidence_pack_captured"
+            in content
+        )
+        assert "audit=operator-action:release" in content
+        assert "Captured release evidence pack: decision=blocked." in content
+
+
+async def test_chat_screen_release_pack_accepts_github_truth_payload(
+    app: XmuseTUI,
+) -> None:
+    app.adapter.list_group_conversations = lambda: [
+        {"id": "conv-user", "title": "User group", "created_at": "2026-06-01T00:00:00Z"},
+    ]
+    calls = []
+
+    def _run_operator_control_action(action: str, conv_id: str, payload: dict):
+        calls.append((action, conv_id, payload))
+        return {
+            "action": "capture_release_evidence_pack",
+            "status": "ok",
+            "proof_level": "contract_proof",
+            "fact_state": "release_evidence_pack_captured",
+            "audit_id": "operator-action:release-github",
+            "summary": "Captured release evidence pack: decision=blocked.",
+        }
+
+    app.adapter.run_operator_control_action = _run_operator_control_action
+
+    async with app.run_test() as pilot:
+        appended = []
+        log = app.screen.query_one("#message-log")
+        log.append_message = lambda **kwargs: appended.append(kwargs)
+
+        input_widget = app.screen.query_one("#message-input")
+        input_widget.value = (
+            "/release pack github_server_truth=artifacts/github-truth.json "
+            "github_expected_head_sha=head-pack-1 github_base_branch=main"
+        )
+        input_widget.post_message(input_widget.Submitted(input_widget, input_widget.value))
+        await pilot.pause()
+
+        assert calls == [
+            (
+                "capture_release_evidence_pack",
+                "conv-user",
+                {
+                    "github_server_truth": "artifacts/github-truth.json",
+                    "github_expected_head_sha": "head-pack-1",
+                    "github_base_branch": "main",
+                },
+            )
+        ]
+        assert "Operator action: capture_release_evidence_pack" in appended[-1]["content"]
+
+
+async def test_chat_screen_release_pack_accepts_internal_review_payload(
+    app: XmuseTUI,
+) -> None:
+    app.adapter.list_group_conversations = lambda: [
+        {"id": "conv-user", "title": "User group", "created_at": "2026-06-01T00:00:00Z"},
+    ]
+    calls = []
+
+    def _run_operator_control_action(action: str, conv_id: str, payload: dict):
+        calls.append((action, conv_id, payload))
+        return {
+            "action": "capture_release_evidence_pack",
+            "status": "ok",
+            "proof_level": "contract_proof",
+            "fact_state": "release_evidence_pack_captured",
+            "audit_id": "operator-action:release-review",
+            "summary": "Captured release evidence pack: decision=blocked.",
+        }
+
+    app.adapter.run_operator_control_action = _run_operator_control_action
+
+    async with app.run_test() as pilot:
+        appended = []
+        log = app.screen.query_one("#message-log")
+        log.append_message = lambda **kwargs: appended.append(kwargs)
+
+        input_widget = app.screen.query_one("#message-input")
+        input_widget.value = (
+            "/release pack review=artifacts/internal-review-input.json "
+            "review_head=head-pack-1"
+        )
+        input_widget.post_message(input_widget.Submitted(input_widget, input_widget.value))
+        await pilot.pause()
+
+        assert calls == [
+            (
+                "capture_release_evidence_pack",
+                "conv-user",
+                {
+                    "internal_review_artifact": (
+                        "artifacts/internal-review-input.json"
+                    ),
+                    "internal_review_expected_head_sha": "head-pack-1",
+                },
+            )
+        ]
+        assert "Operator action: capture_release_evidence_pack" in appended[-1]["content"]
+
+
+async def test_chat_screen_release_pack_accepts_production_baseline_payload(
+    app: XmuseTUI,
+) -> None:
+    app.adapter.list_group_conversations = lambda: [
+        {"id": "conv-user", "title": "User group", "created_at": "2026-06-01T00:00:00Z"},
+    ]
+    calls = []
+
+    def _run_operator_control_action(action: str, conv_id: str, payload: dict):
+        calls.append((action, conv_id, payload))
+        return {
+            "action": "capture_release_evidence_pack",
+            "status": "ok",
+            "proof_level": "contract_proof",
+            "fact_state": "release_evidence_pack_captured",
+            "audit_id": "operator-action:release-baseline",
+            "summary": "Captured release evidence pack: decision=blocked.",
+        }
+
+    app.adapter.run_operator_control_action = _run_operator_control_action
+
+    async with app.run_test() as pilot:
+        appended = []
+        log = app.screen.query_one("#message-log")
+        log.append_message = lambda **kwargs: appended.append(kwargs)
+
+        input_widget = app.screen.query_one("#message-input")
+        input_widget.value = "/release pack baseline=production-baseline.json"
+        input_widget.post_message(input_widget.Submitted(input_widget, input_widget.value))
+        await pilot.pause()
+
+        assert calls == [
+            (
+                "capture_release_evidence_pack",
+                "conv-user",
+                {"production_baseline": "production-baseline.json"},
+            )
+        ]
+        assert "Operator action: capture_release_evidence_pack" in appended[-1]["content"]
+
+
+async def test_chat_screen_release_pack_accepts_goal_stage_payload(
+    app: XmuseTUI,
+) -> None:
+    app.adapter.list_group_conversations = lambda: [
+        {"id": "conv-user", "title": "User group", "created_at": "2026-06-01T00:00:00Z"},
+    ]
+    calls = []
+
+    def _run_operator_control_action(action: str, conv_id: str, payload: dict):
+        calls.append((action, conv_id, payload))
+        return {
+            "action": "capture_release_evidence_pack",
+            "status": "ok",
+            "proof_level": "contract_proof",
+            "fact_state": "release_evidence_pack_captured",
+            "audit_id": "operator-action:release-stage",
+            "summary": "Captured release evidence pack: decision=blocked.",
+        }
+
+    app.adapter.run_operator_control_action = _run_operator_control_action
+
+    async with app.run_test() as pilot:
+        appended = []
+        log = app.screen.query_one("#message-log")
+        log.append_message = lambda **kwargs: appended.append(kwargs)
+
+        input_widget = app.screen.query_one("#message-input")
+        input_widget.value = "/release pack stage=goal/S1.result.json"
+        input_widget.post_message(input_widget.Submitted(input_widget, input_widget.value))
+        await pilot.pause()
+
+        assert calls == [
+            (
+                "capture_release_evidence_pack",
+                "conv-user",
+                {"goal_stage_result": "goal/S1.result.json"},
+            )
+        ]
+        assert "Operator action: capture_release_evidence_pack" in appended[-1]["content"]
+
+
+async def test_chat_screen_release_pack_accepts_god_room_runtime_payload(
+    app: XmuseTUI,
+) -> None:
+    app.adapter.list_group_conversations = lambda: [
+        {"id": "conv-user", "title": "User group", "created_at": "2026-06-01T00:00:00Z"},
+    ]
+    calls = []
+
+    def _run_operator_control_action(action: str, conv_id: str, payload: dict):
+        calls.append((action, conv_id, payload))
+        return {
+            "action": "capture_release_evidence_pack",
+            "status": "ok",
+            "proof_level": "contract_proof",
+            "fact_state": "release_evidence_pack_captured",
+            "audit_id": "operator-action:release-god-room",
+            "summary": "Captured release evidence pack: decision=blocked.",
+        }
+
+    app.adapter.run_operator_control_action = _run_operator_control_action
+
+    async with app.run_test() as pilot:
+        appended = []
+        log = app.screen.query_one("#message-log")
+        log.append_message = lambda **kwargs: appended.append(kwargs)
+
+        input_widget = app.screen.query_one("#message-input")
+        input_widget.value = (
+            "/release pack room_participants=god-room/participants.json "
+            "room_events=god-room/events.json "
+            "room_freeze=god-room/blueprint-freeze.json "
+            "room_lane_dag=god-room/lane-dag.json "
+            "room_memory=god-room/memory-trace.json "
+            "room_tui=god-room/tui-projection.json "
+            "room_speaker_attempt=god-room/speaker-attempt.json "
+            "room_speaker_response=god-room/speaker-response.json "
+            "room_review_closure=god-room/review-closure.json "
+            "room_closure_output=god-room/closure-evidence.json"
+        )
+        input_widget.post_message(input_widget.Submitted(input_widget, input_widget.value))
+        await pilot.pause()
+
+    assert calls == [
+        (
+            "capture_release_evidence_pack",
+            "conv-user",
+            {
+                "god_room_participants": "god-room/participants.json",
+                "god_room_events": "god-room/events.json",
+                "god_room_blueprint_freeze": "god-room/blueprint-freeze.json",
+                "god_room_lane_dag": "god-room/lane-dag.json",
+                "god_room_memory_trace": "god-room/memory-trace.json",
+                "god_room_tui_projection": "god-room/tui-projection.json",
+                "god_room_speaker_attempt": "god-room/speaker-attempt.json",
+                "god_room_speaker_response": "god-room/speaker-response.json",
+                "god_room_review_closure": "god-room/review-closure.json",
+                "god_room_runtime_closure_evidence_output": (
+                    "god-room/closure-evidence.json"
+                ),
+            },
+        )
+    ]
+    assert "Operator action: capture_release_evidence_pack" in appended[-1]["content"]
+
+
+async def test_chat_screen_release_refresh_runs_operator_control_action(
+    app: XmuseTUI,
+) -> None:
+    app.adapter.list_group_conversations = lambda: [
+        {"id": "conv-user", "title": "User group", "created_at": "2026-06-01T00:00:00Z"},
+    ]
+    calls = []
+
+    def _run_operator_control_action(action: str, conv_id: str, payload: dict):
+        calls.append((action, conv_id, payload))
+        return {
+            "action": "refresh_live_gate_status",
+            "status": "ok",
+            "proof_level": "contract_proof",
+            "fact_state": "live_gate_status_refreshed",
+            "audit_id": "operator-action:refresh",
+            "summary": "Refreshed live gate status artifacts: artifact_count=4.",
+            "payload": {
+                "live_gate_status": {
+                    "artifact_count": 4,
+                },
+                "gate_statuses": [
+                    {
+                        "gate_id": "github-server-truth",
+                        "status": "ok",
+                        "proof_level": "server_side_enforcement_proof",
+                    },
+                    {
+                        "gate_id": "live-memoryos",
+                        "status": "manual_gap",
+                        "proof_level": "manual_gap",
+                    },
+                ],
+                "blockers": [
+                    {
+                        "gate_id": "live-memoryos",
+                        "status": "manual_gap",
+                        "proof_level": "manual_gap",
+                    }
+                ],
+            },
+        }
+
+    app.adapter.run_operator_control_action = _run_operator_control_action
+
+    async with app.run_test() as pilot:
+        appended = []
+        log = app.screen.query_one("#message-log")
+        log.append_message = lambda **kwargs: appended.append(kwargs)
+
+        input_widget = app.screen.query_one("#message-input")
+        input_widget.value = "/release refresh"
+        input_widget.post_message(input_widget.Submitted(input_widget, input_widget.value))
+        await pilot.pause()
+
+        assert calls == [
+            ("refresh_live_gate_status", "conv-user", {}),
+        ]
+        content = appended[-1]["content"]
+        assert "Operator action: refresh_live_gate_status" in content
+        assert "status=ok proof=contract_proof fact=live_gate_status_refreshed" in content
+        assert "audit=operator-action:refresh" in content
+        assert "Refreshed live gate status artifacts: artifact_count=4." in content
+        assert (
+            "gates=github-server-truth:ok/server_side_enforcement_proof, "
+            "live-memoryos:manual_gap/manual_gap"
+        ) in content
+        assert "blockers=live-memoryos" in content
+
+
+async def test_chat_screen_release_export_natural_runs_operator_control_action(
+    app: XmuseTUI,
+) -> None:
+    app.adapter.list_group_conversations = lambda: [
+        {"id": "conv-user", "title": "User group", "created_at": "2026-06-01T00:00:00Z"},
+    ]
+    calls = []
+
+    def _run_operator_control_action(action: str, conv_id: str, payload: dict):
+        calls.append((action, conv_id, payload))
+        return {
+            "action": "export_natural_deliberation_transcript",
+            "status": "ok",
+            "proof_level": "contract_proof",
+            "fact_state": "release_evidence_exported",
+            "audit_id": "operator-action:natural",
+            "summary": "Exported natural_deliberation release evidence.",
+            "payload": {
+                "export": {
+                    "kind": "natural_deliberation",
+                    "artifact_path": "xmuse/work/release_readiness/natural-transcript.json",
+                    "gate_path": (
+                        "xmuse/work/release_readiness/artifacts/"
+                        "natural-deliberation.json"
+                    ),
+                    "gate": {
+                        "gate_id": "natural-god-deliberation",
+                        "status": "blocked",
+                        "proof_level": "manual_gap",
+                    },
+                }
+            },
+        }
+
+    app.adapter.run_operator_control_action = _run_operator_control_action
+
+    async with app.run_test() as pilot:
+        appended = []
+        log = app.screen.query_one("#message-log")
+        log.append_message = lambda **kwargs: appended.append(kwargs)
+
+        input_widget = app.screen.query_one("#message-input")
+        input_widget.value = (
+            "/release export natural target_ref=blueprint:bp-1 "
+            "output_path=xmuse/work/release_readiness/natural-transcript.json "
+            "runtime=skip ttl=120"
+        )
+        input_widget.post_message(input_widget.Submitted(input_widget, input_widget.value))
+        await pilot.pause()
+
+        assert calls == [
+            (
+                "export_natural_deliberation_transcript",
+                "conv-user",
+                {
+                    "target_refs": ["blueprint:bp-1"],
+                    "output_path": "xmuse/work/release_readiness/natural-transcript.json",
+                    "god_runtime": "skip",
+                    "heartbeat_ttl_seconds": 120,
+                },
+            ),
+        ]
+        content = appended[-1]["content"]
+        assert "Operator action: export_natural_deliberation_transcript" in content
+        assert "status=ok proof=contract_proof fact=release_evidence_exported" in content
+        assert "audit=operator-action:natural" in content
+        assert "Exported natural_deliberation release evidence." in content
+
+
+async def test_chat_screen_release_export_provider_runs_operator_control_action(
+    app: XmuseTUI,
+) -> None:
+    app.adapter.list_group_conversations = lambda: [
+        {"id": "conv-user", "title": "User group", "created_at": "2026-06-01T00:00:00Z"},
+    ]
+    calls = []
+
+    def _run_operator_control_action(action: str, conv_id: str, payload: dict):
+        calls.append((action, conv_id, payload))
+        return {
+            "action": "export_real_provider_runtime_soak",
+            "status": "ok",
+            "proof_level": "contract_proof",
+            "fact_state": "release_evidence_exported",
+            "audit_id": "operator-action:provider",
+            "summary": "Exported real_provider_runtime release evidence.",
+            "payload": {},
+        }
+
+    app.adapter.run_operator_control_action = _run_operator_control_action
+
+    async with app.run_test() as pilot:
+        appended = []
+        log = app.screen.query_one("#message-log")
+        log.append_message = lambda **kwargs: appended.append(kwargs)
+
+        input_widget = app.screen.query_one("#message-input")
+        input_widget.value = (
+            "/release export provider fresh_inbox=inbox-fresh "
+            "resume_inbox=inbox-resume runtime_backend=ray "
+            "transport=codex-app-server run_id=soak-pr43"
+        )
+        input_widget.post_message(input_widget.Submitted(input_widget, input_widget.value))
+        await pilot.pause()
+
+        assert calls == [
+            (
+                "export_real_provider_runtime_soak",
+                "conv-user",
+                {
+                    "fresh_inbox_item_id": "inbox-fresh",
+                    "resume_inbox_item_id": "inbox-resume",
+                    "runtime_backend": "ray",
+                    "transport": "codex-app-server",
+                    "run_id": "soak-pr43",
+                },
+            ),
+        ]
+        content = appended[-1]["content"]
+        assert "Operator action: export_real_provider_runtime_soak" in content
+        assert "status=ok proof=contract_proof fact=release_evidence_exported" in content
+
+
+async def test_chat_screen_release_export_memoryos_runs_operator_control_action(
+    app: XmuseTUI,
+) -> None:
+    app.adapter.list_group_conversations = lambda: [
+        {"id": "conv-user", "title": "User group", "created_at": "2026-06-01T00:00:00Z"},
+    ]
+    calls = []
+
+    def _run_operator_control_action(action: str, conv_id: str, payload: dict):
+        calls.append((action, conv_id, payload))
+        return {
+            "action": "export_memoryos_live_trace",
+            "status": "blocked",
+            "proof_level": "manual_gap",
+            "fact_state": "blocked",
+            "audit_id": "operator-action:memoryos",
+            "summary": "MemoryOS Lite live capture requires configured live service.",
+            "payload": {},
+        }
+
+    app.adapter.run_operator_control_action = _run_operator_control_action
+
+    async with app.run_test() as pilot:
+        appended = []
+        log = app.screen.query_one("#message-log")
+        log.append_message = lambda **kwargs: appended.append(kwargs)
+
+        input_widget = app.screen.query_one("#message-input")
+        input_widget.value = (
+            "/release export memoryos repo_id=iiyazu/Cross-Muse workspace_id=xmuse "
+            "god_id=review thread_id=thread-1 blueprint_id=bp-1 "
+            "feature_id=feature-1 lane_id=lane-1 actor_id=review "
+            "content='live evidence' query='production evidence'"
+        )
+        input_widget.post_message(input_widget.Submitted(input_widget, input_widget.value))
+        await pilot.pause()
+
+        assert calls == [
+            (
+                "export_memoryos_live_trace",
+                "conv-user",
+                {
+                    "repo_id": "iiyazu/Cross-Muse",
+                    "workspace_id": "xmuse",
+                    "god_id": "review",
+                    "thread_id": "thread-1",
+                    "blueprint_id": "bp-1",
+                    "feature_id": "feature-1",
+                    "lane_id": "lane-1",
+                    "actor_id": "review",
+                    "content": "live evidence",
+                    "query": "production evidence",
+                },
+            ),
+        ]
+        content = appended[-1]["content"]
+        assert "Operator action: export_memoryos_live_trace" in content
+        assert "status=blocked proof=manual_gap fact=blocked" in content
+
+
+async def test_chat_screen_release_export_github_runs_operator_control_action(
+    app: XmuseTUI,
+) -> None:
+    app.adapter.list_group_conversations = lambda: [
+        {"id": "conv-user", "title": "User group", "created_at": "2026-06-01T00:00:00Z"},
+    ]
+    calls = []
+
+    def _run_operator_control_action(action: str, conv_id: str, payload: dict):
+        calls.append((action, conv_id, payload))
+        return {
+            "action": "export_github_server_truth",
+            "status": "ok",
+            "proof_level": "contract_proof",
+            "fact_state": "release_evidence_exported",
+            "audit_id": "operator-action:github",
+            "summary": (
+                "Exported github_server_truth release evidence "
+                "gate=ok/server_side_enforcement_proof."
+            ),
+            "payload": {
+                "export": {
+                    "kind": "github_server_truth",
+                    "artifact_path": (
+                        "xmuse/work/release_readiness/"
+                        "github-server-truth-snapshot.json"
+                    ),
+                    "gate_path": (
+                        "xmuse/work/release_readiness/artifacts/"
+                        "github-server-truth.json"
+                    ),
+                    "artifact": {
+                        "can_emit_pr_merged": False,
+                        "merged": False,
+                    },
+                    "gate": {
+                        "gate_id": "github-server-truth",
+                        "status": "ok",
+                        "proof_level": "server_side_enforcement_proof",
+                    },
+                }
+            },
+        }
+
+    app.adapter.run_operator_control_action = _run_operator_control_action
+
+    async with app.run_test() as pilot:
+        appended = []
+        log = app.screen.query_one("#message-log")
+        log.append_message = lambda **kwargs: appended.append(kwargs)
+
+        input_widget = app.screen.query_one("#message-input")
+        input_widget.value = (
+            "/release export github repo=iiyazu/Cross-Muse pr=43 "
+            "expected_head=head123 base=main "
+            "check=quality-gates,contract-smoke-gates"
+        )
+        input_widget.post_message(input_widget.Submitted(input_widget, input_widget.value))
+        await pilot.pause()
+
+        assert calls == [
+            (
+                "export_github_server_truth",
+                "conv-user",
+                {
+                    "repo": "iiyazu/Cross-Muse",
+                    "pull_request_number": 43,
+                    "expected_head_sha": "head123",
+                    "base_branch": "main",
+                    "required_checks": ["quality-gates", "contract-smoke-gates"],
+                },
+            ),
+        ]
+        content = appended[-1]["content"]
+        assert "Operator action: export_github_server_truth" in content
+        assert "status=ok proof=contract_proof fact=release_evidence_exported" in content
+        assert "can_emit_pr_merged" not in content
+
+
+async def test_chat_screen_release_export_god_runtime_runs_operator_control_action(
+    app: XmuseTUI,
+) -> None:
+    app.adapter.list_group_conversations = lambda: [
+        {"id": "conv-user", "title": "User group", "created_at": "2026-06-01T00:00:00Z"},
+    ]
+    calls = []
+
+    def _run_operator_control_action(action: str, conv_id: str, payload: dict):
+        calls.append((action, conv_id, payload))
+        return {
+            "action": "export_god_runtime_continuity",
+            "status": "ok",
+            "proof_level": "contract_proof",
+            "fact_state": "release_evidence_exported",
+            "audit_id": "operator-action:god-runtime",
+            "summary": (
+                "Exported god_runtime_continuity release evidence "
+                "artifact_proof=contract_proof."
+            ),
+            "payload": {
+                "export": {
+                    "kind": "god_runtime_continuity",
+                    "artifact_path": (
+                        "xmuse/work/release_readiness/god-runtime-continuity.json"
+                    ),
+                    "artifact": {
+                        "schema_version": "xmuse.god_runtime_continuity.v1",
+                        "fact_state": "observed",
+                    },
+                }
+            },
+        }
+
+    app.adapter.run_operator_control_action = _run_operator_control_action
+
+    async with app.run_test() as pilot:
+        appended = []
+        log = app.screen.query_one("#message-log")
+        log.append_message = lambda **kwargs: appended.append(kwargs)
+
+        input_widget = app.screen.query_one("#message-input")
+        input_widget.value = (
+            "/release export god-runtime now_utc=2026-06-13T00:05:00Z "
+            "ttl=120 output=xmuse/work/release_readiness/god-runtime-continuity.json"
+        )
+        input_widget.post_message(input_widget.Submitted(input_widget, input_widget.value))
+        await pilot.pause()
+
+        assert calls == [
+            (
+                "export_god_runtime_continuity",
+                "conv-user",
+                {
+                    "now_utc": "2026-06-13T00:05:00Z",
+                    "heartbeat_ttl_seconds": 120,
+                    "output_path": (
+                        "xmuse/work/release_readiness/god-runtime-continuity.json"
+                    ),
+                },
+            ),
+        ]
+        content = appended[-1]["content"]
+        assert "Operator action: export_god_runtime_continuity" in content
+        assert "status=ok proof=contract_proof fact=release_evidence_exported" in content
+        assert "audit=operator-action:god-runtime" in content
+
+
+async def test_chat_screen_release_candidates_runs_operator_control_action(
+    app: XmuseTUI,
+) -> None:
+    app.adapter.list_group_conversations = lambda: [
+        {"id": "conv-user", "title": "User group", "created_at": "2026-06-01T00:00:00Z"},
+    ]
+    calls = []
+
+    def _run_operator_control_action(action: str, conv_id: str, payload: dict):
+        calls.append((action, conv_id, payload))
+        return {
+            "action": "inspect_release_evidence_candidates",
+            "status": "ok",
+            "proof_level": "contract_proof",
+            "fact_state": "release_evidence_candidates_inspected",
+            "audit_id": "operator-action:candidates",
+            "summary": "Inspected release evidence candidates.",
+            "payload": {
+                "candidates": {
+                    "natural_deliberation": {
+                        "conversations": [
+                            {
+                                "conversation_id": conv_id,
+                                "export_ready": False,
+                                "transcript_export_ready": True,
+                                "selected_god_runtime": {
+                                    "peer_god_ready_count": 0,
+                                    "blockers": ["selected_god_runtime_missing"],
+                                    "manual_gap_reason": (
+                                        "selected GOD CLI unavailable"
+                                    ),
+                                },
+                                "blockers": ["selected_god_runtime_missing"],
+                                "next_action": (
+                                    "Capture a natural multi-GOD transcript and "
+                                    "selected GOD runtime continuity."
+                                ),
+                            }
+                        ]
+                    },
+                    "real_provider_runtime": {
+                        "export_ready": False,
+                        "next_action": "Capture fresh and resume MCP writeback provider turns.",
+                    },
+                    "live_memoryos": {
+                        "export_ready": False,
+                        "next_action": (
+                            "Configure live MemoryOS Lite and provide a complete "
+                            "task payload."
+                        ),
+                    },
+                    "github_server_truth": {
+                        "export_ready": False,
+                        "blockers": ["github_server_truth_target_missing"],
+                        "next_action": (
+                            "Provide repo and pull_request_number, then run "
+                            "attempt_release_evidence for github_server_truth."
+                        ),
+                    },
+                }
+            },
+        }
+
+    app.adapter.run_operator_control_action = _run_operator_control_action
+
+    async with app.run_test() as pilot:
+        appended = []
+        log = app.screen.query_one("#message-log")
+        log.append_message = lambda **kwargs: appended.append(kwargs)
+
+        input_widget = app.screen.query_one("#message-input")
+        input_widget.value = (
+            "/release candidates repo_id=iiyazu/Cross-Muse workspace_id=xmuse "
+            "god_id=review thread_id=thread-1 blueprint_id=bp-1 "
+            "feature_id=feature-1 lane_id=lane-1 content='live evidence' "
+            "query='production evidence' repository=iiyazu/Cross-Muse pr=43 "
+            "expected_head=4ed83bc82ae66b23e4c3d0613933b6f908739e12 "
+            "base=main check=quality-gates"
+        )
+        input_widget.post_message(input_widget.Submitted(input_widget, input_widget.value))
+        await pilot.pause()
+
+        assert calls == [
+            (
+                "inspect_release_evidence_candidates",
+                "conv-user",
+                {
+                    "repo_id": "iiyazu/Cross-Muse",
+                    "workspace_id": "xmuse",
+                    "god_id": "review",
+                    "thread_id": "thread-1",
+                    "blueprint_id": "bp-1",
+                    "feature_id": "feature-1",
+                    "lane_id": "lane-1",
+                    "content": "live evidence",
+                    "query": "production evidence",
+                    "repo": "iiyazu/Cross-Muse",
+                    "pull_request_number": 43,
+                    "expected_head_sha": "4ed83bc82ae66b23e4c3d0613933b6f908739e12",
+                    "base_branch": "main",
+                    "required_checks": ["quality-gates"],
+                },
+            ),
+        ]
+        content = appended[-1]["content"]
+        assert "Operator action: inspect_release_evidence_candidates" in content
+        assert (
+            "status=ok proof=contract_proof "
+            "fact=release_evidence_candidates_inspected"
+        ) in content
+        assert (
+            "natural[conv-user]=blocked transcript=ready runtime=blocked "
+            "peer_gods=0 blockers=selected_god_runtime_missing"
+        ) in content
+        assert (
+            "next=Capture a natural multi-GOD transcript and selected GOD "
+            "runtime continuity."
+        ) in content
+        assert (
+            "provider=blocked next=Capture fresh and resume MCP writeback provider turns."
+        ) in content
+        assert (
+            "memoryos=blocked next=Configure live MemoryOS Lite and provide a "
+            "complete task payload."
+        ) in content
+        assert (
+            "github=blocked next=Provide repo and pull_request_number, then run "
+            "attempt_release_evidence for github_server_truth. "
+            "blockers=github_server_truth_target_missing"
+        ) in content
+        assert "Inspected release evidence candidates." in content
+
+
+async def test_chat_screen_release_attempt_runs_operator_control_action(
+    app: XmuseTUI,
+) -> None:
+    app.adapter.list_group_conversations = lambda: [
+        {"id": "conv-user", "title": "User group", "created_at": "2026-06-01T00:00:00Z"},
+    ]
+    calls = []
+
+    def _run_operator_control_action(action: str, conv_id: str, payload: dict):
+        calls.append((action, conv_id, payload))
+        return {
+            "action": "attempt_release_evidence",
+            "status": "ok",
+            "proof_level": "contract_proof",
+            "fact_state": "release_evidence_attempted",
+            "audit_id": "operator-action:attempt",
+            "summary": "Attempted configured release evidence.",
+            "payload": {
+                "attempt": {
+                    "decision": "blocked",
+                    "attempts": [
+                        {
+                            "kind": "live_memoryos",
+                            "status": "blocked",
+                            "blockers": ["memoryos_lite_live_environment_missing"],
+                            "next_action": (
+                                "Configure live MemoryOS Lite and provide a "
+                                "complete task payload."
+                            ),
+                        },
+                    ],
+                }
+            },
+        }
+
+    app.adapter.run_operator_control_action = _run_operator_control_action
+
+    async with app.run_test() as pilot:
+        appended = []
+        log = app.screen.query_one("#message-log")
+        log.append_message = lambda **kwargs: appended.append(kwargs)
+
+        input_widget = app.screen.query_one("#message-input")
+        input_widget.value = (
+            "/release attempt natural provider memoryos "
+            "repo_id=iiyazu/Cross-Muse workspace_id=xmuse god_id=review "
+            "thread_id=thread-1 blueprint_id=bp-1 feature_id=feature-1 "
+            "lane_id=lane-1 runtime_backend=ray transport=codex-app-server "
+            "content='live evidence' query='production evidence'"
+        )
+        input_widget.post_message(input_widget.Submitted(input_widget, input_widget.value))
+        await pilot.pause()
+
+        assert calls == [
+            (
+                "attempt_release_evidence",
+                "conv-user",
+                {
+                    "kinds": ["natural", "provider", "memoryos"],
+                    "repo_id": "iiyazu/Cross-Muse",
+                    "workspace_id": "xmuse",
+                    "god_id": "review",
+                    "thread_id": "thread-1",
+                    "blueprint_id": "bp-1",
+                    "feature_id": "feature-1",
+                    "lane_id": "lane-1",
+                    "runtime_backend": "ray",
+                    "transport": "codex-app-server",
+                    "content": "live evidence",
+                    "query": "production evidence",
+                },
+            ),
+        ]
+        content = appended[-1]["content"]
+        assert "Operator action: attempt_release_evidence" in content
+        assert "status=ok proof=contract_proof fact=release_evidence_attempted" in content
+        assert (
+            "attempt[live_memoryos]=blocked next=Configure live MemoryOS Lite "
+            "and provide a complete task payload. "
+            "blockers=memoryos_lite_live_environment_missing"
+        ) in content
+        assert "Attempted configured release evidence." in content
+
+
+async def test_chat_screen_release_attempt_github_runs_operator_control_action(
+    app: XmuseTUI,
+) -> None:
+    app.adapter.list_group_conversations = lambda: [
+        {"id": "conv-user", "title": "User group", "created_at": "2026-06-01T00:00:00Z"},
+    ]
+    calls = []
+
+    def _run_operator_control_action(action: str, conv_id: str, payload: dict):
+        calls.append((action, conv_id, payload))
+        return {
+            "action": "attempt_release_evidence",
+            "status": "ok",
+            "proof_level": "contract_proof",
+            "fact_state": "release_evidence_attempted",
+            "audit_id": "operator-action:attempt-github",
+            "summary": "Attempted configured release evidence.",
+            "payload": {
+                "attempt": {
+                    "decision": "ok",
+                    "attempted_kinds": ["github_server_truth"],
+                }
+            },
+        }
+
+    app.adapter.run_operator_control_action = _run_operator_control_action
+
+    async with app.run_test() as pilot:
+        appended = []
+        log = app.screen.query_one("#message-log")
+        log.append_message = lambda **kwargs: appended.append(kwargs)
+
+        input_widget = app.screen.query_one("#message-input")
+        input_widget.value = (
+            "/release attempt github repo=iiyazu/Cross-Muse pr=43 "
+            "expected_head=head123 check=quality-gates,contract-smoke-gates"
+        )
+        input_widget.post_message(input_widget.Submitted(input_widget, input_widget.value))
+        await pilot.pause()
+
+        assert calls == [
+            (
+                "attempt_release_evidence",
+                "conv-user",
+                {
+                    "kinds": ["github"],
+                    "repo": "iiyazu/Cross-Muse",
+                    "pull_request_number": 43,
+                    "expected_head_sha": "head123",
+                    "required_checks": ["quality-gates", "contract-smoke-gates"],
+                },
+            ),
+        ]
+        content = appended[-1]["content"]
+        assert "Operator action: attempt_release_evidence" in content
+        assert "Attempted configured release evidence." in content
+
+
+async def test_chat_screen_freeze_runs_operator_control_action(app: XmuseTUI) -> None:
+    app.adapter.list_group_conversations = lambda: [
+        {"id": "conv-user", "title": "User group", "created_at": "2026-06-01T00:00:00Z"},
+    ]
+    calls = []
+
+    def _run_operator_control_action(action: str, conv_id: str, payload: dict):
+        calls.append((action, conv_id, payload))
+        return {
+            "action": "freeze_blueprint",
+            "status": "ok",
+            "proof_level": "contract_proof",
+            "fact_state": "blueprint_frozen",
+            "audit_id": "operator-action:freeze",
+            "summary": "Frozen mission blueprint bp-tui-1.",
+            "payload": {
+                "freeze": {
+                    "decision": {"status": "allowed"},
+                    "blueprint": {"blueprint_id": "bp-tui-1", "status": "frozen"},
+                }
+            },
+        }
+
+    app.adapter.run_operator_control_action = _run_operator_control_action
+
+    async with app.run_test() as pilot:
+        appended = []
+        log = app.screen.query_one("#message-log")
+        log.append_message = lambda **kwargs: appended.append(kwargs)
+
+        input_widget = app.screen.query_one("#message-input")
+        input_widget.value = (
+            "/freeze target_ref=blueprint:bp-tui-1:1 blueprint_id=bp-tui-1 "
+            "goal='Ship TUI freeze action' scope='Route freeze through operator action' "
+            "acceptance='Durable blueprint resolution exists' "
+            "source_ref=memory://conversation/conv-user/message/msg-proposal"
+        )
+        input_widget.post_message(input_widget.Submitted(input_widget, input_widget.value))
+        await pilot.pause()
+
+        assert calls == [
+            (
+                "freeze_blueprint",
+                "conv-user",
+                {
+                    "target_ref": "blueprint:bp-tui-1:1",
+                    "blueprint": {
+                        "blueprint_id": "bp-tui-1",
+                        "goal": "Ship TUI freeze action",
+                        "scope": ["Route freeze through operator action"],
+                        "acceptance_contracts": [
+                            "Durable blueprint resolution exists"
+                        ],
+                        "source_refs": [
+                            "memory://conversation/conv-user/message/msg-proposal"
+                        ],
+                    },
+                },
+            )
+        ]
+        content = appended[-1]["content"]
+        assert "Operator action: freeze_blueprint" in content
+        assert "status=ok proof=contract_proof fact=blueprint_frozen" in content
+        assert "audit=operator-action:freeze" in content
+        assert "Frozen mission blueprint bp-tui-1." in content
+
+
+async def test_chat_screen_lane_retry_runs_operator_control_action(app: XmuseTUI) -> None:
+    app.adapter.list_group_conversations = lambda: [
+        {"id": "conv-user", "title": "User group", "created_at": "2026-06-01T00:00:00Z"},
+    ]
+    calls = []
+
+    def _run_operator_control_action(action: str, conv_id: str, payload: dict):
+        calls.append((action, conv_id, payload))
+        return {
+            "action": "retry_lane",
+            "status": "ok",
+            "proof_level": "contract_proof",
+            "fact_state": "lane_retry_requested",
+            "audit_id": "operator-action:retry",
+            "summary": "Retry requested for lane lane-1.",
+            "payload": {"lane": {"feature_id": "lane-1", "status": "reworking"}},
+        }
+
+    app.adapter.run_operator_control_action = _run_operator_control_action
+
+    async with app.run_test() as pilot:
+        appended = []
+        log = app.screen.query_one("#message-log")
+        log.append_message = lambda **kwargs: appended.append(kwargs)
+
+        input_widget = app.screen.query_one("#message-input")
+        input_widget.value = "/lane retry lane-1 failed retry after review"
+        input_widget.post_message(input_widget.Submitted(input_widget, input_widget.value))
+        await pilot.pause()
+
+        assert calls == [
+            (
+                "retry_lane",
+                "conv-user",
+                {
+                    "lane_id": "lane-1",
+                    "current_status": "failed",
+                    "reason": "retry after review",
+                },
+            )
+        ]
+        content = appended[-1]["content"]
+        assert "Operator action: retry_lane" in content
+        assert "status=ok proof=contract_proof fact=lane_retry_requested" in content
+        assert "audit=operator-action:retry" in content
+        assert "Retry requested for lane lane-1." in content
+
+
+async def test_chat_screen_lane_abort_runs_operator_control_action(app: XmuseTUI) -> None:
+    app.adapter.list_group_conversations = lambda: [
+        {"id": "conv-user", "title": "User group", "created_at": "2026-06-01T00:00:00Z"},
+    ]
+    calls = []
+
+    def _run_operator_control_action(action: str, conv_id: str, payload: dict):
+        calls.append((action, conv_id, payload))
+        return {
+            "action": "abort_lane",
+            "status": "ok",
+            "proof_level": "contract_proof",
+            "fact_state": "lane_aborted",
+            "audit_id": "operator-action:abort",
+            "summary": "Aborted lane lane-2.",
+            "payload": {"lane": {"feature_id": "lane-2", "status": "failed"}},
+        }
+
+    app.adapter.run_operator_control_action = _run_operator_control_action
+
+    async with app.run_test() as pilot:
+        appended = []
+        log = app.screen.query_one("#message-log")
+        log.append_message = lambda **kwargs: appended.append(kwargs)
+
+        input_widget = app.screen.query_one("#message-input")
+        input_widget.value = "/lane abort lane-2 rejected abandoned stale lane"
+        input_widget.post_message(input_widget.Submitted(input_widget, input_widget.value))
+        await pilot.pause()
+
+        assert calls == [
+            (
+                "abort_lane",
+                "conv-user",
+                {
+                    "lane_id": "lane-2",
+                    "current_status": "rejected",
+                    "reason": "abandoned stale lane",
+                },
+            )
+        ]
+        content = appended[-1]["content"]
+        assert "Operator action: abort_lane" in content
+        assert "status=ok proof=contract_proof fact=lane_aborted" in content
+        assert "audit=operator-action:abort" in content
+        assert "Aborted lane lane-2." in content
 
 
 async def test_chat_screen_sessions_matches_id_and_unique_title_fragment(app: XmuseTUI) -> None:
@@ -1400,6 +3048,167 @@ async def test_chat_screen_tick_renders_worklist_summary(app: XmuseTUI) -> None:
         assert "Visible worklist" in str(detail)
 
 
+async def test_chat_screen_renders_deliberation_cockpit_from_vision(
+    app: XmuseTUI,
+) -> None:
+    app.adapter.list_group_conversations = lambda: [
+        {
+            "id": "conv-new",
+            "title": "New conversation",
+            "created_at": "2026-06-02T00:00:00Z",
+        },
+    ]
+
+    async with app.run_test() as pilot:
+        app.state.active_conversation_id = "conv-new"
+        app.state.vision = {
+            "conversation_id": "conv-new",
+            "deliberation": {
+                "proof_level": "contract_proof",
+                "fact_state": "blocked",
+                "speech_act_counts": {"challenge": 1},
+                "blockers": [
+                    {
+                        "message_id": "msg-1",
+                        "speech_act": "challenge",
+                        "reason": "missing rollback plan",
+                        "target_refs": ["blueprint:conv-new:1"],
+                        "source_refs": ["message:msg-0"],
+                    }
+                ],
+                "target_refs": ["blueprint:conv-new:1"],
+                "source_refs": ["message:msg-0", "message:msg-1"],
+                "manual_gap_reason": None,
+            },
+        }
+        app.screen.on_state_updated(StateUpdated(app.state))
+        await pilot.pause()
+
+        cockpit = app.screen.query_one("#deliberation-cockpit", DeliberationCockpit)
+        assert "challenge: 1" in cockpit.renderable_text
+        assert "missing rollback plan" in cockpit.renderable_text
+
+
+async def test_chat_screen_renders_vision_evidence_panels_from_state(
+    app: XmuseTUI,
+) -> None:
+    app.adapter.list_group_conversations = lambda: [
+        {
+            "id": "conv-new",
+            "title": "New conversation",
+            "created_at": "2026-06-02T00:00:00Z",
+        },
+    ]
+
+    async with app.run_test() as pilot:
+        app.state.active_conversation_id = "conv-new"
+        app.state.vision = {
+            "conversation_id": "conv-new",
+            "blueprint_freeze": {
+                "proof_level": "contract_proof",
+                "fact_state": "ready_to_freeze",
+                "ready_to_freeze": True,
+                "frozen": False,
+                "source_refs": ["message:msg-decide"],
+                "target_refs": ["blueprint:conv-new:1"],
+                "blockers": [],
+                "manual_gap_reason": None,
+            },
+            "execution": {
+                "proof_level": "contract_proof",
+                "fact_state": "blocked",
+                "lane_count": 2,
+                "ready_lane_ids": ["lane-a"],
+                "blocked_lane_ids": ["lane-b"],
+                "dependency_edges": [{"lane_id": "lane-b", "depends_on": ["lane-a"]}],
+                "blockers": [{"lane_id": "lane-b", "reason": "needs review evidence"}],
+                "source_refs": ["feature_lanes_projection#projection_revision=9"],
+                "target_refs": ["lane:lane-a", "lane:lane-b"],
+                "manual_gap_reason": None,
+            },
+            "memory": {
+                "proof_level": "live_service_proof",
+                "fact_state": "observed",
+                "session_id": "mem-session-1",
+                "trace_events_count": 2,
+                "token_estimate": 321,
+                "source_refs": ["memory://conversation/conv-new/session/mem-session-1"],
+                "target_refs": ["memory_session:mem-session-1"],
+                "blockers": [],
+                "manual_gap_reason": None,
+            },
+            "github": {
+                "proof_level": "server_side_enforcement_proof",
+                "fact_state": "merge_ready",
+                "can_emit_pr_merged": True,
+                "required_checks": {"state": "success", "checks": ["quality-gates"]},
+                "review_truth": {"approved": True, "blocking_reviews": []},
+                "merge": {"merged": False},
+                "source_refs": ["github://owner/repo/pull/42"],
+                "target_refs": [],
+                "blockers": [],
+                "manual_gap_reason": None,
+            },
+        }
+        app.screen.on_state_updated(StateUpdated(app.state))
+        await pilot.pause()
+
+        assert "ready_to_freeze" in app.screen.query_one(
+            "#blueprint-freeze-panel", BlueprintFreezePanel
+        ).renderable_text
+        assert "lane-b <- lane-a" in app.screen.query_one(
+            "#execution-cockpit", ExecutionCockpit
+        ).renderable_text
+        assert "mem-session-1" in app.screen.query_one(
+            "#memory-trace-drawer", MemoryTraceDrawer
+        ).renderable_text
+        assert "merge_ready" in app.screen.query_one(
+            "#github-truth-panel", GitHubTruthPanel
+        ).renderable_text
+
+
+async def test_provider_board_renders_god_runtime_overview(app: XmuseTUI) -> None:
+    app.adapter.get_provider_inventory = lambda: [
+        {
+            "provider_id": "codex",
+            "profile_id": "god",
+            "capabilities": ["groupchat"],
+            "runtime_kind": "codex_cli",
+            "transport": "cli",
+            "session_continuity": "active",
+            "heartbeat": "fresh",
+            "waiting_reason": "",
+            "proof_level": "contract_proof",
+            "boundary_role": "production_groupchat_god",
+        },
+        {
+            "provider_id": "opencode",
+            "profile_id": "worker",
+            "capabilities": ["bounded_execution"],
+            "runtime_kind": "opencode-go",
+            "transport": "cli",
+            "session_continuity": "bounded",
+            "heartbeat": "manual_gap",
+            "waiting_reason": "secondary bounded worker",
+            "proof_level": "manual_gap",
+            "boundary_role": "bounded_secondary",
+        },
+    ]
+
+    async with app.run_test() as pilot:
+        await app.push_screen("provider_board")
+        await pilot.pause()
+
+        screen = app.screen
+        assert isinstance(screen, ProviderBoardScreen)
+        table = screen.query_one("#provider-table", Static).renderable
+        rendered = str(table)
+        assert "GOD Runtime Overview" in screen.query_one("#provider-header", Static).renderable
+        assert "codex_cli" in rendered
+        assert "production_groupchat_god" in rendered
+        assert "secondary bounded worker" in rendered
+
+
 async def test_chat_screen_right_panel_shows_workbench_lists_and_detail_surfaces(
     app: XmuseTUI,
 ) -> None:
@@ -1416,10 +3225,12 @@ async def test_chat_screen_right_panel_shows_workbench_lists_and_detail_surfaces
             "lane_local_id": "TUI-01",
             "plan_feature_id": "TUI",
             "feature_label": "Closure workbench",
-            "effective_status": "ready",
-            "priority": 2,
-            "scoped_dependency_ids": ["TUI-00"],
-        },
+                "effective_status": "ready",
+                "priority": 2,
+                "scoped_dependency_ids": ["TUI-00"],
+                "source_refs": ["blueprint:conv-new:1"],
+                "merge_blockers": ["review not complete"],
+            },
         "execution_log": {
             "events": [
                 {
@@ -1469,6 +3280,9 @@ async def test_chat_screen_right_panel_shows_workbench_lists_and_detail_surfaces
         assert len(inbox_list.children) == 1
         assert len(task_list.children) == 1
         assert "Closure workbench" in str(task_detail)
+        assert "depends_on: TUI-00" in str(task_detail)
+        assert "source_refs: blueprint:conv-new:1" in str(task_detail)
+        assert "merge_blockers: review not complete" in str(task_detail)
         assert "Queued for execute" in str(execution_log)
 
 
@@ -1800,15 +3614,22 @@ async def test_chat_screen_task_selection_updates_detail_and_execution_log(
 async def test_lane_detail_screen_uses_workbench_detail_contract(app: XmuseTUI) -> None:
     app.adapter.get_lane = lambda lane_id: (_ for _ in ()).throw(AssertionError("legacy get_lane"))
     app.adapter.get_workbench_lane_detail = lambda conv_id, lane_id: {
-        "task": {
-            "lane_id": lane_id,
-            "lane_local_id": "T1-03",
-            "plan_feature_id": "T1",
-            "feature_label": "Authoritative detail",
-            "effective_status": "dispatched",
-            "priority": 4,
-            "scoped_dependency_ids": ["T1-02"],
-        },
+            "task": {
+                "lane_id": lane_id,
+                "lane_local_id": "T1-03",
+                "plan_feature_id": "T1",
+                "feature_label": "Authoritative detail",
+                "effective_status": "dispatched",
+                "priority": 4,
+                "scoped_dependency_ids": ["T1-02"],
+                "gate_predecessors": ["review-gate"],
+                "touched_areas": ["xmuse/tui", "src/xmuse_core/platform"],
+                "source_refs": ["blueprint:conv-1:1", "message:msg-decide"],
+                "merge_blockers": ["required GitHub checks pending"],
+                "review_decision": "rework",
+                "review_verdict_id": "verdict-lane-3",
+                "source_lane_id": "lane-2",
+            },
         "execution_log": {
             "events": [
                 {
@@ -1831,3 +3652,11 @@ async def test_lane_detail_screen_uses_workbench_detail_contract(app: XmuseTUI) 
         content = app.screen.query_one("#lane-content", Static).renderable
         assert "Authoritative detail" in str(content)
         assert "lane-detail -> execute" in str(content)
+        assert "Review: rework" in str(content)
+        assert "Verdict: verdict-lane-3" in str(content)
+        assert "Patch-forward: lane-2 -> lane-3" in str(content)
+        assert "Depends on: T1-02" in str(content)
+        assert "Gate predecessors: review-gate" in str(content)
+        assert "Touched areas: xmuse/tui, src/xmuse_core/platform" in str(content)
+        assert "Source refs: blueprint:conv-1:1, message:msg-decide" in str(content)
+        assert "Merge blockers: required GitHub checks pending" in str(content)

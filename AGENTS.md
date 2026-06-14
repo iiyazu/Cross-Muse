@@ -18,8 +18,19 @@ Two packages, one `pyproject.toml`:
 
 ```bash
 uv run xmuse-chat-api          # REST API (FastAPI)
+uv run xmuse-goal-stage-evidence-capture  # Goal stage result replay evidence
+uv run xmuse-god-runtime-continuity-capture  # Selected-GOD runtime continuity artifact
+uv run xmuse-god-session-heartbeat  # Guarded GOD session heartbeat update
+uv run xmuse-internal-review-gate-capture  # Internal review release gate
+uv run xmuse-memoryos-live-gate-capture  # MemoryOS Lite live release gate
 uv run xmuse-mcp-server        # MCP-over-HTTP server (FastAPI)
 uv run xmuse-platform-runner   # Platform orchestrator
+uv run xmuse-live-gate-status-capture  # Live-gate status artifacts
+uv run xmuse-natural-deliberation-gate-capture  # Natural GOD transcript release gate
+uv run xmuse-overnight-supervisor  # Overnight supervisor snapshot runner
+uv run xmuse-release-readiness-capture  # Redacted release-readiness report
+uv run xmuse-proof-contamination-audit  # Release proof contamination audit
+uv run xmuse-real-provider-runtime-gate-capture  # Real provider runtime release gate
 uv run xmuse-tui               # Textual TUI
 ```
 
@@ -27,7 +38,18 @@ Or directly:
 ```bash
 uv run python xmuse/chat_api.py
 uv run python -m xmuse.tui
+uv run python xmuse/goal_stage_evidence_capture.py
+uv run python xmuse/god_runtime_continuity_capture.py
+uv run python xmuse/god_session_heartbeat.py
 uv run python xmuse/platform_runner.py
+uv run python xmuse/internal_review_gate_capture.py
+uv run python xmuse/memoryos_live_gate_capture.py
+uv run python xmuse/live_gate_status_capture.py
+uv run python xmuse/natural_deliberation_gate_capture.py
+uv run python xmuse/overnight_operator_supervisor.py
+uv run python xmuse/release_readiness_capture.py
+uv run python xmuse/proof_contamination_audit.py
+uv run python xmuse/real_provider_runtime_gate_capture.py
 uv run python xmuse/mcp_server.py
 ```
 
@@ -41,6 +63,152 @@ uv run ruff check <file>                # Lint single file
 ```
 
 Always use `uv run` — never bare `pytest` or `ruff`. The `.venv` is managed by `uv`.
+
+## Development Workflow
+
+### XMuse Closure Behavior Rules
+
+xmuse development is not test-driven-first. It is dependency-first,
+contract-first, authority-first, and evidence-first. Tests are verification,
+not architecture authority.
+
+Before changing code in any `/goal` task, identify:
+
+1. Target closure layer(s), L1-L11, from
+   `docs/xmuse/production-closure-gap-ledger.md`.
+2. Required upstream layers and blockers.
+3. The authority object, durable store, or server truth source that owns truth.
+4. The proof level the task can produce:
+   `contract_proof`, `local_runtime_proof`, `opt_in_live_proof`,
+   `server_side_truth`, or `manual_gap`.
+5. Claims that remain forbidden after the change.
+
+Do not start by writing broad tests against imagined behavior. First inspect
+current contracts, stores, APIs, docs, runtime paths, and evidence artifacts.
+Then implement the smallest production slice: contract/schema, store or
+authority resolver, runtime/API/operator hook, fail-closed handling, evidence
+artifact, and ledger update. Add targeted regression or contract tests only
+after the authority/proof path is clear.
+
+Never claim:
+
+- TUI/dashboard/read model state is durable authority.
+- Provider inventory means a CLI is a peer-GOD.
+- Capture proof equals live provider invocation proof.
+- Fixture deliberation equals natural multi-GOD deliberation.
+- `feature_lanes.json` is execution authority.
+- Local tests or worker self-report are review truth.
+- CI success is GitHub review or merge truth.
+- MemoryOS plan artifact is live MemoryOS trace.
+- `ready_for_replay` means `ready_to_merge` or `pr_merged`.
+
+Before declaring completion, self-review:
+
+1. Did this change only modify downstream projection while upstream authority
+   remains missing?
+2. Did tests pass by mocking away the real production gap?
+3. Did any missing live/server proof get downgraded into contract proof?
+4. Is `manual_gap` preserved when live proof is unavailable?
+5. Was the closure ledger updated with current branch/head/PR/CI facts where
+   claims changed?
+
+Test budget gate: a `/goal` is TDD-abusive if tests define closure before
+production authority is identified, tests construct artifacts that production
+runtime should produce, mocks bypass selected GOD binding/provider invocation/
+recovery enforcement/review truth, fields are added to evidence packs without
+upstream producers, or TUI/read models expand without fail-closed authority
+checks. If detected, stop adding tests, identify the missing production
+producer, and implement or document the smallest real path/manual gap.
+
+### Completion Definition
+
+A task is complete only when:
+
+1. The requested behavior is implemented.
+2. Relevant tests pass.
+3. Existing nearby behavior remains protected.
+4. The diff has been reviewed for regressions, risky patterns, architecture
+   boundary violations, and unrelated changes.
+5. Any remaining risk or unverified area is reported.
+
+Passing tests alone is not sufficient completion evidence.
+
+### RIGR-V Policy
+
+Use Read → Invariant → Green-by-fix → Refactor → Verify as the default
+development loop. Do not start by writing tests before understanding the
+system.
+
+Before changing code, state or record:
+
+- Task understanding:
+  - User-visible behavior to change
+  - Existing code path
+  - Existing tests that already cover nearby behavior
+  - Risk surface
+- Behavior invariants:
+  - Existing valid behavior must remain unchanged
+  - Error handling, auth, persistence, and compatibility semantics remain
+    unchanged unless explicitly requested
+- Architecture invariants:
+  - Do not change public API unless explicitly required
+  - Do not bypass existing abstractions or contract boundaries
+  - Do not add special cases for test fixtures
+
+Use TDD when the task changes observable behavior, fixes a bug, or defines a
+public contract. Do not force red-first tests for pure docs, comments, config,
+mechanical refactors, architecture migration planning, or performance work that
+requires benchmarks/profiles instead.
+
+A new failing test is acceptable only when it:
+
+- Fails before the implementation.
+- Tests external behavior, public contract, reproduced bug, or a low-level
+  library contract.
+- Would remain valuable under a different correct implementation.
+- Includes boundary or negative coverage when relevant.
+
+### Anti-TDD-Abuse Rules
+
+- Do not modify tests merely to make them pass.
+- Do not delete, skip, xfail, or loosen tests without explaining why the old
+  test was invalid.
+- Do not special-case test fixtures, exact sample values, filenames, or
+  test-only inputs in production code.
+- Do not mock the behavior under test unless the boundary is external, slow,
+  nondeterministic, or unsafe.
+- Do not assert private implementation details unless working on a low-level
+  internal unit.
+- Do not update snapshots without semantic justification.
+- Do not add broad integration mocks that bypass authentication,
+  authorization, persistence, validation, or contract paths.
+- If a test and implementation are both authored in the task, explain why the
+  test would catch an alternative wrong implementation.
+
+### Subagent Policy
+
+Use single writer, multiple verifiers:
+
+| Role | Permissions | Task |
+|------|-------------|------|
+| Main Codex | May write | Final design, production-code changes, final diff, commit, push, PR update |
+| explorer subagent | Read-only | Map code paths, existing tests, invariants, and risky files |
+| test-designer subagent | Read-only or tests-only | Propose behavior-level tests and overfitting risks |
+| reviewer subagent | Read-only | Review final diff for regressions, overfitting, public API breakage, architecture boundary violations, excessive mocks, swallowed errors, missing negative tests, and unrelated edits |
+| docs/api subagent | Read-only + docs tools | Verify framework/API behavior from primary docs instead of memory |
+
+Do not let the same worker context write tests, write production implementation,
+and self-certify completion without independent review. The main Codex remains
+the only final production-code writer unless the user explicitly delegates
+bounded implementation work.
+
+Before claiming completion, answer these checks in the final review:
+
+1. What real requirement did any new targeted test prove?
+2. Could the implementation be fitting only the test example?
+3. Were any tests modified, deleted, weakened, skipped, or xfailed?
+4. Was the real path under test mocked away?
+5. What evidence besides green tests shows the behavior is correct?
 
 ## Architecture Facts
 
@@ -68,9 +236,19 @@ Always use `uv run` — never bare `pytest` or `ruff`. The `.venv` is managed by
 
 Current authoritative docs are in `docs/xmuse/`. Old `docs/superpowers/` specs/plans remain on disk for test/legacy references but are not the current entry point. Start with `docs/xmuse/README.md`.
 
+For long `/goal` work, read `docs/xmuse/goal-behavior-contract.md`,
+`docs/xmuse/code-review.md`, `docs/xmuse/production-closure-gap-ledger.md`,
+`docs/xmuse/development-goal-worker-delegation-policy.md`, and
+`docs/xmuse/goal-stage-harness.md`.
+
 ## OpenCode Orchestration
 
 Multi-agent orchestration system for long-running tasks. Configured in `opencode.json`.
+
+For Codex development `/goal` work, use
+`docs/xmuse/development-goal-worker-delegation-policy.md` as the canonical
+OpenCode worker delegation policy. Do not repeat that policy in every goal
+prompt; reference it unless the policy itself is being changed.
 
 ### Subagents (@-mention)
 
@@ -99,16 +277,30 @@ Multi-agent orchestration system for long-running tasks. Configured in `opencode
 
 ### Orchestration Rules
 
-1. Coder must follow TDD (test first, then implement)
+1. Coder and Codex must follow the XMuse closure behavior rules above and
+   `docs/xmuse/goal-behavior-contract.md`. Targeted tests are required for bug
+   fixes, public contracts, and behavior changes, but tests must not define
+   architecture or substitute for authority/proof producers
 2. Orchestrator validates independently (never trust subagent self-reports)
 3. Adversarial reviewer is always a FRESH instance
-4. Max 3 retries per work unit, then escalate to human
+4. Repeated failures require direct refactor: after two same-class failures on
+   a feature/stage/test cluster/runtime path, stop patch stacking and make the
+   next action a bounded root-cause/refactor or replacement of the failed
+   boundary. A third same-boundary retry is allowed only after that refactor
+   artifact exists with migration, focused tests, and rollback/compatibility
+   notes
 5. Quality gates are BLOCKING — no skipping
+6. Demo-grade implementations on the production path must be isolated or
+   replaced with contract-backed production implementations, not wrapped to make
+   gates appear green
 
 ## Git Conventions
 
-- Local git worktree development (not yet pushed to GitHub)
-- No CI/GitHub Actions configured
+- This worktree may already be pushed and may have an open PR; verify current
+  branch, remote, PR, and CI state with `git status`, `git branch -vv`, `gh pr
+  view`, and `gh run list` instead of relying on this file for live facts
+- GitHub Actions may be configured; if pushing, update the PR body and inspect
+  the latest Actions run for the pushed head
 - Avoid committing runtime state: `*.db`, `*.sqlite3`, `*.jsonl`, `feature_lanes.json`, `xmuse/work/`, `xmuse/history/`, `xmuse/logs/` (all in `.gitignore`)
 - Don't `git reset --hard` — worktree may have user goal dirtiness
 - 78MB old blobs in history; full cleanup needs `git filter-repo` (confirm with user first)

@@ -57,6 +57,7 @@ async def test_pr_merged_writeback_can_promote_to_shared_memory() -> None:
             source_refs=["pr:123"],
             promote_to_shared=True,
             shared_namespace=shared,
+            reviewed=True,
         ),
     )
 
@@ -67,6 +68,32 @@ async def test_pr_merged_writeback_can_promote_to_shared_memory() -> None:
         "- memory://conversation/conv-1/events/pr_merged/123\n"
         "- pr:123"
     ]
+
+
+@pytest.mark.asyncio
+async def test_shared_memory_writeback_requires_review_before_ingest() -> None:
+    client = FakeMemoryOSClient()
+    namespace = conversation_namespace("conv-1")
+    shared = shared_namespace("iiyazu/Cross-Muse")
+
+    result = await write_memory_event(
+        client,
+        MemoryOSWritebackEvent(
+            kind="pr_merged",
+            namespace=namespace,
+            actor_id="god-execute",
+            event_id="123",
+            summary="PR 123 merged the feature.",
+            source_refs=["pr:123"],
+            promote_to_shared=True,
+            shared_namespace=shared,
+        ),
+    )
+
+    assert result.ok is False
+    assert result.degraded_reason == "shared promotion requires explicit review"
+    assert await client.search(namespace, query="merged") == []
+    assert await client.search(shared, query="merged") == []
 
 
 @pytest.mark.asyncio

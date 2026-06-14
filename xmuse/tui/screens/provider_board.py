@@ -1,12 +1,20 @@
 # xmuse/tui/screens/provider_board.py
 from __future__ import annotations
 
-from rich import box
-from rich.table import Table
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.screen import Screen
-from textual.widgets import Label, Static
+from textual.widgets import Static
+
+
+class ProviderOverviewStatic(Static):
+    def __init__(self, renderable="", **kwargs) -> None:
+        self.renderable = renderable
+        super().__init__(renderable, **kwargs)
+
+    def update(self, renderable="") -> None:
+        self.renderable = renderable
+        super().update(renderable)
 
 
 class ProviderBoardScreen(Screen):
@@ -24,24 +32,50 @@ class ProviderBoardScreen(Screen):
     """
 
     def compose(self) -> ComposeResult:
-        yield Label("Provider Inventory", id="provider-header")
-        yield Static(id="provider-table")
+        yield ProviderOverviewStatic("GOD Runtime Overview", id="provider-header")
+        yield ProviderOverviewStatic(id="provider-table")
 
     def on_mount(self) -> None:
         inventory = self.app.adapter.get_provider_inventory()
         if not inventory:
-            self.query_one("#provider-table", Static).update(
-                Text("[dim]Provider store not available — waiting for C0a/C0b to land[/dim]")
+            self.query_one("#provider-table", ProviderOverviewStatic).update(
+                Text(
+                    "[dim]Provider runtime evidence unavailable — "
+                    "manual_gap until inventory or runtime rows land[/dim]"
+                )
             )
             return
-        t = Table(box=box.ROUNDED)
-        t.add_column("Provider", style="#88c0d0")
-        t.add_column("Profile", style="#a3be8c")
-        t.add_column("Capability", style="#ebcb8b")
+        rows = [
+            "Provider | Boundary | Profile | Runtime | Transport | Session | "
+            "Heartbeat | Waiting | Proof",
+            "-" * 86,
+        ]
         for item in inventory:
-            t.add_row(
-                item.get("provider_id", "?"),
-                item.get("profile_id", "?"),
-                ", ".join(item.get("capabilities", [])),
+            rows.append(
+                " | ".join(
+                    [
+                        _value(item, "provider_id"),
+                        _value(item, "boundary_role"),
+                        _value(item, "profile_id"),
+                        _value(item, "runtime_kind", "runtime"),
+                        _value(item, "transport"),
+                        _value(item, "session_continuity", "provider_binding_status"),
+                        _value(item, "heartbeat"),
+                        _value(item, "waiting_reason"),
+                        _value(item, "proof_level"),
+                    ]
+                )
             )
-        self.query_one("#provider-table", Static).update(t)
+        self.query_one("#provider-table", ProviderOverviewStatic).update(
+            Text("\n".join(rows))
+        )
+
+
+def _value(item: dict, *keys: str) -> str:
+    for key in keys:
+        value = item.get(key)
+        if isinstance(value, list):
+            return ",".join(str(part) for part in value)
+        if value is not None and value != "":
+            return str(value)
+    return "manual_gap"

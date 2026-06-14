@@ -4,7 +4,14 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from xmuse_core.chat.god_room_runtime import GodRoomEventKind
+from xmuse_core.chat.god_room_speaker_response import GodRoomProviderSpeechResponseV1
 from xmuse_core.providers.models import ProviderId, ProviderProfileId
+from xmuse_core.structuring.blueprint_execution.lane_dag_service import (
+    BlueprintFeatureSpec,
+    BlueprintLaneSpec,
+    LaneFailureEvidence,
+)
 
 
 class ParticipantInit(BaseModel):
@@ -82,6 +89,22 @@ class BootstrapApplyCreate(BaseModel):
     @classmethod
     def _strip_required_text(cls, value: object) -> object:
         return _strip_required_string(value)
+
+
+class OperatorActionCreate(BaseModel):
+    action: str = Field(min_length=1)
+    payload: dict[str, Any] = Field(default_factory=dict)
+    idempotency_key: str | None = None
+
+    @field_validator("action", mode="before")
+    @classmethod
+    def _strip_required_text(cls, value: object) -> object:
+        return _strip_required_string(value)
+
+    @field_validator("idempotency_key", mode="before")
+    @classmethod
+    def _strip_optional_text(cls, value: object) -> object:
+        return _strip_optional_string(value)
 
 
 class CollaborationRequestCreate(BaseModel):
@@ -210,6 +233,244 @@ class BlueprintFreezeRequest(BaseModel):
         return _strip_required_string(value)
 
 
+class GodRoomBlueprintFreezeRequest(BaseModel):
+    blueprint_id: str = Field(min_length=1)
+    revision: int = Field(default=1, ge=1)
+    multi_turn_provider_speech_run_artifact: str | None = Field(
+        default=None,
+        min_length=1,
+    )
+
+    @field_validator("blueprint_id", mode="before")
+    @classmethod
+    def _strip_required_text(cls, value: object) -> object:
+        return _strip_required_string(value)
+
+    @field_validator("multi_turn_provider_speech_run_artifact", mode="before")
+    @classmethod
+    def _strip_optional_text(cls, value: object) -> object:
+        return _strip_optional_string(value)
+
+
+class GodRoomLaneDagRequest(BaseModel):
+    resolution_id: str = Field(min_length=1)
+    graph_id: str = Field(min_length=1)
+    graph_version: int = Field(default=1, ge=1)
+    features: list[BlueprintFeatureSpec] = Field(min_length=1)
+    lanes: list[BlueprintLaneSpec] = Field(min_length=1)
+    source_refs: list[str] = Field(default_factory=list)
+
+    @field_validator("resolution_id", mode="before")
+    @classmethod
+    def _strip_required_text(cls, value: object) -> object:
+        return _strip_required_string(value)
+
+    @field_validator("graph_id", mode="before")
+    @classmethod
+    def _strip_storage_id(cls, value: object) -> object:
+        return _strip_required_storage_id(value)
+
+
+class GodRoomLaneRecoveryRequest(BaseModel):
+    graph_id: str = Field(min_length=1)
+    lane_id: str = Field(min_length=1)
+    failures: list[LaneFailureEvidence] = Field(default_factory=list)
+    runtime_seconds: int | None = Field(default=None, ge=1)
+
+    @field_validator("graph_id", "lane_id", mode="before")
+    @classmethod
+    def _strip_storage_id(cls, value: object) -> object:
+        return _strip_required_storage_id(value)
+
+
+class GodRoomLaneReviewIntakeRequest(BaseModel):
+    graph_id: str = Field(min_length=1)
+    lane_id: str = Field(min_length=1)
+    worker_candidate_refs: list[str] = Field(default_factory=list)
+    execution_artifact_refs: list[str] = Field(default_factory=list)
+    reviewer_id: str | None = None
+
+    @field_validator("graph_id", "lane_id", mode="before")
+    @classmethod
+    def _strip_storage_id(cls, value: object) -> object:
+        return _strip_required_storage_id(value)
+
+    @field_validator("reviewer_id", mode="before")
+    @classmethod
+    def _strip_optional_text(cls, value: object) -> object:
+        return _strip_optional_string(value)
+
+    @field_validator(
+        "worker_candidate_refs",
+        "execution_artifact_refs",
+        mode="before",
+    )
+    @classmethod
+    def _strip_ref_list(cls, value: object) -> object:
+        if value is None:
+            return []
+        if isinstance(value, list):
+            return [_strip_required_string(item) for item in value]
+        return value
+
+
+class GodRoomLaneReviewVerdictRequest(BaseModel):
+    graph_id: str = Field(min_length=1)
+    lane_id: str = Field(min_length=1)
+    reviewer_id: str = Field(min_length=1)
+    decision: Literal["merge", "rework", "patch-forward", "terminate"]
+    summary: str = Field(min_length=1)
+    evidence_refs: list[str] = Field(min_length=1)
+    patch_instructions: str | None = None
+    terminate_reason: str | None = None
+
+    @field_validator("graph_id", "lane_id", mode="before")
+    @classmethod
+    def _strip_storage_id(cls, value: object) -> object:
+        return _strip_required_storage_id(value)
+
+    @field_validator("reviewer_id", "summary", mode="before")
+    @classmethod
+    def _strip_required_text(cls, value: object) -> object:
+        return _strip_required_string(value)
+
+    @field_validator("patch_instructions", "terminate_reason", mode="before")
+    @classmethod
+    def _strip_optional_text(cls, value: object) -> object:
+        return _strip_optional_string(value)
+
+    @field_validator("evidence_refs", mode="before")
+    @classmethod
+    def _strip_evidence_refs(cls, value: object) -> object:
+        if isinstance(value, list):
+            return [_strip_required_string(item) for item in value]
+        return value
+
+
+class GodRoomLanePatchForwardRequest(BaseModel):
+    graph_id: str = Field(min_length=1)
+    lane_id: str = Field(min_length=1)
+    patch_lane_id: str | None = None
+
+    @field_validator("graph_id", "lane_id", mode="before")
+    @classmethod
+    def _strip_storage_id(cls, value: object) -> object:
+        return _strip_required_storage_id(value)
+
+    @field_validator("patch_lane_id", mode="before")
+    @classmethod
+    def _strip_optional_storage_id(cls, value: object) -> object:
+        if value is None:
+            return None
+        return _strip_required_storage_id(value)
+
+
+class GodRoomLaneReviewClosureRequest(BaseModel):
+    graph_id: str = Field(min_length=1)
+    lane_id: str = Field(min_length=1)
+
+    @field_validator("graph_id", "lane_id", mode="before")
+    @classmethod
+    def _strip_storage_id(cls, value: object) -> object:
+        return _strip_required_storage_id(value)
+
+
+class GodRoomMemoryPlanRequest(BaseModel):
+    graph_id: str = Field(min_length=1)
+    repo_id: str = Field(min_length=1)
+    workspace_id: str = Field(min_length=1)
+    context_budget: int = Field(default=2048, ge=1)
+
+    @field_validator("graph_id", mode="before")
+    @classmethod
+    def _strip_graph_id(cls, value: object) -> object:
+        return _strip_required_storage_id(value)
+
+    @field_validator("repo_id", "workspace_id", mode="before")
+    @classmethod
+    def _strip_required_text(cls, value: object) -> object:
+        return _strip_required_string(value)
+
+
+class GodRoomSpeakerAttemptRequest(BaseModel):
+    after_event_id: str | None = Field(default=None, min_length=1)
+
+    @field_validator("after_event_id", mode="before")
+    @classmethod
+    def _strip_optional_text(cls, value: object) -> object:
+        return _strip_optional_string(value)
+
+
+class GodRoomProviderInvocationRequest(BaseModel):
+    after_event_id: str | None = Field(default=None, min_length=1)
+    prompt: str | None = Field(default=None, min_length=1)
+    timeout_seconds: int = Field(default=120, gt=0)
+    allow_live_provider_proof: bool = False
+
+    @field_validator("after_event_id", "prompt", mode="before")
+    @classmethod
+    def _strip_optional_text(cls, value: object) -> object:
+        return _strip_optional_string(value)
+
+
+class GodRoomProviderInvocationCaptureRequest(GodRoomProviderInvocationRequest):
+    event_id: str | None = Field(default=None, min_length=1)
+    event_type: GodRoomEventKind = GodRoomEventKind.SPEAK
+    target_participant_ids: list[str] = Field(default_factory=list)
+    timestamp_utc: str | None = Field(default=None, min_length=1)
+
+    @field_validator("event_id", "timestamp_utc", mode="before")
+    @classmethod
+    def _strip_capture_optional_text(cls, value: object) -> object:
+        return _strip_optional_string(value)
+
+    @field_validator("target_participant_ids", mode="before")
+    @classmethod
+    def _strip_capture_target_ids(cls, value: object) -> object:
+        return _strip_optional_string_list(value)
+
+
+class GodRoomMultiTurnProviderSpeechRequest(BaseModel):
+    max_turns: int = Field(default=3, ge=1, le=10)
+    after_event_id: str | None = Field(default=None, min_length=1)
+    prompt: str | None = Field(default=None, min_length=1)
+    timeout_seconds: int = Field(default=120, gt=0)
+    allow_live_provider_proof: bool = False
+    event_id_prefix: str | None = Field(default=None, min_length=1)
+    stop_on_freeze_requested: bool = True
+
+    @field_validator("after_event_id", "prompt", "event_id_prefix", mode="before")
+    @classmethod
+    def _strip_optional_text(cls, value: object) -> object:
+        return _strip_optional_string(value)
+
+
+class GodRoomSpeakerResponseRequest(BaseModel):
+    after_event_id: str | None = Field(default=None, min_length=1)
+    event_id: str | None = Field(default=None, min_length=1)
+    event_type: GodRoomEventKind = GodRoomEventKind.SPEAK
+    target_participant_ids: list[str] = Field(default_factory=list)
+    timestamp_utc: str | None = Field(default=None, min_length=1)
+    provider_response_artifact: str | None = Field(default=None, min_length=1)
+    provider_response: GodRoomProviderSpeechResponseV1 | None = None
+
+    @field_validator(
+        "after_event_id",
+        "event_id",
+        "timestamp_utc",
+        "provider_response_artifact",
+        mode="before",
+    )
+    @classmethod
+    def _strip_optional_text(cls, value: object) -> object:
+        return _strip_optional_string(value)
+
+    @field_validator("target_participant_ids", mode="before")
+    @classmethod
+    def _strip_target_ids(cls, value: object) -> object:
+        return _strip_optional_string_list(value)
+
+
 class RoleTemplateCreate(BaseModel):
     slug: str = Field(min_length=1)
     display_name: str = Field(min_length=1)
@@ -326,6 +587,26 @@ def _strip_required_string(value: object) -> object:
     return stripped
 
 
+def _strip_required_storage_id(value: object) -> object:
+    stripped = _strip_required_string(value)
+    if not isinstance(stripped, str):
+        return stripped
+    if (
+        stripped in {".", ".."}
+        or "/" in stripped
+        or "\\" in stripped
+        or _artifact_safe_id(stripped) != stripped
+    ):
+        raise ValueError("must be a safe storage id")
+    return stripped
+
+
+def _artifact_safe_id(value: str) -> str:
+    return "".join(
+        char if char.isalnum() or char in {"-", "_", "."} else "_" for char in value
+    )
+
+
 def _strip_optional_string(value: object) -> object:
     if value is None or not isinstance(value, str):
         return value
@@ -333,3 +614,11 @@ def _strip_optional_string(value: object) -> object:
     if not stripped:
         raise ValueError("must not be blank")
     return stripped
+
+
+def _strip_optional_string_list(value: object) -> object:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [_strip_required_string(item) for item in value]
+    return value

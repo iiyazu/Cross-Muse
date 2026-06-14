@@ -1177,21 +1177,31 @@ class PeerChatService:
         )
 
     def _participant_group_summary(self, participants: list[Participant]) -> dict[str, Any]:
+        public_participants = [
+            participant for participant in participants
+            if participant.role != INIT_GOD_ROLE
+        ]
         roles: list[str] = []
-        for participant in participants:
+        for participant in public_participants:
             if participant.role not in roles:
                 roles.append(participant.role)
         return {
-            "total": len(participants),
-            "active": sum(1 for participant in participants if participant.status == "active"),
-            "stopped": sum(1 for participant in participants if participant.status == "stopped"),
+            "total": len(public_participants),
+            "active": sum(
+                1 for participant in public_participants
+                if participant.status == "active"
+            ),
+            "stopped": sum(
+                1 for participant in public_participants
+                if participant.status == "stopped"
+            ),
             "roles": roles,
             "items": [
                 {
                     **participant_summary(participant),
                     "conversation_id": participant.conversation_id,
                 }
-                for participant in participants
+                for participant in public_participants
             ],
         }
 
