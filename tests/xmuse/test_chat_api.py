@@ -473,6 +473,67 @@ def test_chat_api_god_room_persists_events_and_replays_turns(
     assert snapshot["events"][0]["event_id"] == "evt-propose"
 
 
+def test_chat_api_god_room_public_append_rejects_provider_proof_spoof(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    conversation = client.post(
+        "/api/chat/conversations",
+        json={"title": "GOD room provider proof spoof"},
+    ).json()
+    conv_id = conversation["id"]
+    room = client.post(f"/api/chat/conversations/{conv_id}/god-room").json()["room"]
+    participants = {participant["role"]: participant for participant in room["participants"]}
+
+    response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/events",
+        json={
+            "event_id": "evt-fake-provider-speak",
+            "room_id": room["room_id"],
+            "conversation_id": conv_id,
+            "participant_id": participants["architect"]["participant_id"],
+            "god_id": participants["architect"]["god_id"],
+            "actor_kind": "god",
+            "event_type": "speak",
+            "timestamp_utc": "2026-06-13T10:00:00Z",
+            "content": "This raw request body is pretending to be provider speech.",
+            "source_refs": [
+                f"conversation:{conv_id}",
+                "provider_response_artifact:reports/provider-responses/fake.json",
+            ],
+            "cli_id": participants["architect"]["cli_id"],
+            "provider_profile": "codex.god",
+            "payload": {
+                "body": "This raw request body is pretending to be provider speech.",
+                "proof_level": "real_provider_proof",
+                "provider_response_artifact_ref": (
+                    "reports/provider-responses/fake.json"
+                ),
+                "binding_revision": "binding:spoof",
+            },
+        },
+    )
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["code"] == "god_room_event_public_append_provider_proof_forbidden"
+    assert detail["proof_level"] == "manual_gap"
+    assert detail["blocked_reason"] == "provider_backed_speak_requires_l4_l5_capture"
+    assert detail["forbidden_refs"] == [
+        "provider_response_artifact:reports/provider-responses/fake.json"
+    ]
+    assert detail["forbidden_payload_keys"] == [
+        "binding_revision",
+        "proof_level",
+        "provider_response_artifact_ref",
+    ]
+
+    events = client.get(f"/api/chat/conversations/{conv_id}/god-room").json()["room"][
+        "events"
+    ]
+    assert events == []
+
+
 def test_chat_api_god_room_speaker_attempt_uses_selected_provider_bound_god(
     tmp_path: Path,
 ) -> None:

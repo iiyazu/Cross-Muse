@@ -67,7 +67,12 @@ from xmuse_core.chat.god_room_event_store import (
 from xmuse_core.chat.god_room_provider_invocation import (
     invoke_god_room_provider_speech,
 )
-from xmuse_core.chat.god_room_runtime import GodRoomEventV1, GodRoomParticipant
+from xmuse_core.chat.god_room_runtime import (
+    GodRoomActorKind,
+    GodRoomEventKind,
+    GodRoomEventV1,
+    GodRoomParticipant,
+)
 from xmuse_core.chat.god_room_speaker_response import (
     GodRoomProviderSpeechResponseV1,
     capture_god_room_speaker_response,
@@ -776,6 +781,72 @@ def _public_peer_participants(payload: dict[str, object]) -> list[dict[str, obje
 
 def _default_god_room_id(conversation_id: str) -> str:
     return f"god-room:{conversation_id}"
+
+
+_PUBLIC_APPEND_FORBIDDEN_PROVIDER_SPEAK_PAYLOAD_KEYS = frozenset(
+    {
+        "account_ref",
+        "binding_revision",
+        "cli_command",
+        "model",
+        "proof_level",
+        "provider_response_artifact_ref",
+        "provider_response_id",
+        "provider_profile_ref",
+        "provider_session_id",
+        "provider_session_kind",
+        "speaker_attempt_event_id",
+        "variant",
+    }
+)
+
+
+def _validate_public_god_room_event_append(event: GodRoomEventV1) -> None:
+    if (
+        event.actor_kind is not GodRoomActorKind.GOD
+        or event.event_type is not GodRoomEventKind.SPEAK
+    ):
+        return
+
+    forbidden_refs = [
+        ref
+        for ref in event.source_refs
+        if ref.startswith("provider_response_artifact:")
+        or ref.startswith("provider_invocation:")
+        or ref.startswith("provider_raw_output_sha256:")
+    ]
+    forbidden_payload_keys = sorted(
+        _PUBLIC_APPEND_FORBIDDEN_PROVIDER_SPEAK_PAYLOAD_KEYS.intersection(
+            event.payload
+        )
+    )
+    if not forbidden_refs and not forbidden_payload_keys:
+        return
+
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "code": "god_room_event_public_append_provider_proof_forbidden",
+            "message": (
+                "public GOD room event append cannot claim provider-backed "
+                "speech proof; use provider-invocation-capture so L4/L5 "
+                "artifact lineage is loaded server-side"
+            ),
+            "source_authority": "god_room_event_store",
+            "blocked_reason": "provider_backed_speak_requires_l4_l5_capture",
+            "proof_level": "manual_gap",
+            "forbidden_refs": forbidden_refs,
+            "forbidden_payload_keys": forbidden_payload_keys,
+            "manual_gaps": [
+                "provider-backed GOD speech requires server-loaded L4/L5 artifact lineage"
+            ],
+            "forbidden_claims": [
+                "provider_invocation_live_proof",
+                "capture_equals_invocation_proof",
+                "natural_groupchat_closure",
+            ],
+        },
+    )
 
 
 def _god_room_participants(base_dir: Path, conversation_id: str) -> list[GodRoomParticipant]:
@@ -3606,6 +3677,7 @@ def create_app(
             )
         store = _god_room_event_store(root)
         try:
+            _validate_public_god_room_event_append(request)
             result = store.append_event(request)
         except GodRoomMembershipError as exc:
             raise HTTPException(

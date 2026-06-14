@@ -72,6 +72,8 @@ runtime、provider invocation、lane authority、review truth 完成。后续生
   `d8e268c2a70ffc1e2fe83fe3d51850cc93a2ed1d`
 - Local head at start of L8 dispatch recovery enforcement slice:
   `9befbc8709585df60072ffef26b26cbc0b61c6ee`
+- Local head at start of L3 public event append proof-boundary slice:
+  `9190723d7da2580fed392829f3367c32b52f82a9`
 - PR: <https://github.com/iiyazu/Cross-Muse/pull/43>
 - PR state last checked: draft/open/unmerged
 - PR merge state last checked: `CLEAN`
@@ -103,6 +105,7 @@ truth_snapshot:
   local_head_at_l9_review_plane_store_sync_slice: b9b94acbdf8748bbc5fcd56bd40c5a93b702aded
   local_head_at_l8_review_intake_recovery_enforcement_slice: d8e268c2a70ffc1e2fe83fe3d51850cc93a2ed1d
   local_head_at_l8_dispatch_recovery_enforcement_slice: 9befbc8709585df60072ffef26b26cbc0b61c6ee
+  local_head_at_l3_public_event_append_proof_boundary_slice: 9190723d7da2580fed392829f3367c32b52f82a9
   pr: 43
   pr_url: https://github.com/iiyazu/Cross-Muse/pull/43
   pr_state: draft_open_unmerged
@@ -366,20 +369,32 @@ Use these as implementation references, not as xmuse package dependencies:
   - `GodRoomEventStore` persists rooms/events and supports replay/snapshot
     export.
   - Chat API exposes room creation, event append, and snapshot routes.
+  - Public Chat API event append now rejects direct `actor_kind=god` `speak`
+    events that try to carry provider-backed proof markers such as
+    `provider_response_artifact:` source refs, provider invocation refs, or
+    L4/L5 capture payload fields. Such attempts return
+    `proof_level=manual_gap` and do not write a durable event; provider-backed
+    `speak` remains writable only through the L5 capture path that loads the
+    L4 artifact server-side.
   - A local opt-in live Codex composed route run appended one provider-backed
     `speak` event and returned room replay `ok` from a temp runtime root:
     `/tmp/xmuse-live-l4-l5-uynpv_gj`.
 - Missing production closure:
   - Natural multi-GOD live runtime has not been proven over a long session.
-  - Event append controls still need to prove they use L2 actor identity and L1
-    authority boundaries consistently.
+  - Event append controls still need to prove full L2 actor identity and L1
+    authority boundaries consistently for all direct manual/contract events;
+    the current slice only blocks provider-proof spoofing through the public
+    append writer.
 - Proof required to close:
   - A fresh transcript where multiple configured GODs produce durable
     question/challenge/handoff/freeze events through provider-backed runtime.
 - Current risk:
   - Contract proof can be mistaken for natural peer-GOD runtime proof.
+  - Direct public append remains contract/manual proof only unless backed by
+    the L4/L5 provider-capture route.
 - Next production slice:
-  - Bind room event authorship to the selected GOD/provider registry and drive
+  - Bind remaining direct room event authorship to selected GOD/operator
+    authority without breaking contract/manual transcripts, then drive
     provider-backed room speech through the durable event store.
 - Downstream blocked until:
   - L6 blueprint freeze cannot claim live deliberation closure without fresh
