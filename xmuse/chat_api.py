@@ -945,11 +945,19 @@ def _freeze_blueprint_from_god_room(
             status_code=404,
             detail={"code": "god_room_not_found", "message": str(exc)},
         ) from exc
+    lineage_source_refs = _load_multi_turn_provider_speech_run_lineage_refs(
+        base_dir,
+        artifact_ref=request.multi_turn_provider_speech_run_artifact,
+        conversation_id=conversation_id,
+        room_id=room_id,
+        events=room.events,
+    )
     try:
         artifact = compile_blueprint_freeze_from_god_room_events(
             blueprint_id=request.blueprint_id,
             revision=request.revision,
             events=room.events,
+            lineage_source_refs=lineage_source_refs,
         )
     except (ValidationError, ValueError) as exc:
         raise HTTPException(
@@ -2624,6 +2632,167 @@ def _load_god_room_provider_response_artifact(
             },
         )
     return provider_response, str(artifact_path.relative_to(base_dir.resolve()))
+
+
+def _load_multi_turn_provider_speech_run_lineage_refs(
+    base_dir: Path,
+    *,
+    artifact_ref: str | None,
+    conversation_id: str,
+    room_id: str,
+    events: list[GodRoomEventV1],
+) -> list[str]:
+    if artifact_ref is None:
+        return []
+    artifact_path = _resolve_runtime_artifact_path(base_dir, artifact_ref)
+    relative_ref = str(artifact_path.relative_to(base_dir.resolve()))
+    try:
+        payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "multi_turn_provider_speech_run_artifact_missing",
+                "message": (
+                    "multi-turn provider speech run artifact does not exist: "
+                    f"{artifact_ref}"
+                ),
+            },
+        ) from exc
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "multi_turn_provider_speech_run_artifact_invalid_json",
+                "message": (
+                    "multi-turn provider speech run artifact is not valid JSON: "
+                    f"{exc}"
+                ),
+            },
+        ) from exc
+    except OSError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "multi_turn_provider_speech_run_artifact_unreadable",
+                "message": str(exc),
+            },
+        ) from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "multi_turn_provider_speech_run_artifact_invalid",
+                "message": "multi-turn provider speech run artifact must be an object",
+            },
+        )
+    _validate_multi_turn_provider_speech_run_lineage(
+        payload,
+        conversation_id=conversation_id,
+        room_id=room_id,
+        event_ids={event.event_id for event in events},
+    )
+    return _multi_turn_provider_speech_run_lineage_refs(payload, relative_ref)
+
+
+def _validate_multi_turn_provider_speech_run_lineage(
+    payload: dict[str, Any],
+    *,
+    conversation_id: str,
+    room_id: str,
+    event_ids: set[str],
+) -> None:
+    if payload.get("schema_version") != (
+        "xmuse.god_room_multi_turn_provider_speech_run.v1"
+    ):
+        _raise_multi_turn_provider_speech_run_mismatch(
+            "multi_turn_provider_speech_run_schema_mismatch",
+            "artifact is not an xmuse GOD room multi-turn provider speech run",
+        )
+    if payload.get("conversation_id") != conversation_id:
+        _raise_multi_turn_provider_speech_run_mismatch(
+            "multi_turn_provider_speech_run_conversation_mismatch",
+            "multi-turn provider speech run conversation does not match freeze request",
+        )
+    if payload.get("room_id") != room_id:
+        _raise_multi_turn_provider_speech_run_mismatch(
+            "multi_turn_provider_speech_run_room_mismatch",
+            "multi-turn provider speech run room does not match freeze request",
+        )
+    if payload.get("status") != "completed":
+        _raise_multi_turn_provider_speech_run_mismatch(
+            "multi_turn_provider_speech_run_not_completed",
+            "multi-turn provider speech run must be completed before freeze lineage",
+        )
+    if payload.get("proof_level") == "manual_gap":
+        _raise_multi_turn_provider_speech_run_mismatch(
+            "multi_turn_provider_speech_run_manual_gap",
+            "manual-gap provider speech run cannot feed blueprint freeze lineage",
+        )
+    turns = payload.get("turns")
+    if not isinstance(turns, list) or not turns:
+        _raise_multi_turn_provider_speech_run_mismatch(
+            "multi_turn_provider_speech_run_empty",
+            "multi-turn provider speech run must contain appended turns",
+        )
+    for turn in turns:
+        if not isinstance(turn, dict):
+            _raise_multi_turn_provider_speech_run_mismatch(
+                "multi_turn_provider_speech_run_invalid_turn",
+                "multi-turn provider speech run turn must be an object",
+            )
+        event_id = _optional_str(turn.get("appended_event_id"))
+        if event_id is None:
+            _raise_multi_turn_provider_speech_run_mismatch(
+                "multi_turn_provider_speech_run_missing_appended_event",
+                "multi-turn provider speech run turn lacks appended_event_id",
+            )
+        if event_id not in event_ids:
+            _raise_multi_turn_provider_speech_run_mismatch(
+                "multi_turn_provider_speech_run_event_mismatch",
+                (
+                    "multi-turn provider speech run appended event is not present "
+                    f"in durable room events: {event_id}"
+                ),
+            )
+
+
+def _multi_turn_provider_speech_run_lineage_refs(
+    payload: dict[str, Any],
+    artifact_ref: str,
+) -> list[str]:
+    refs = [f"multi_turn_provider_speech_run_artifact:{artifact_ref}"]
+    for turn in payload.get("turns") or []:
+        if not isinstance(turn, dict):
+            continue
+        artifacts = turn.get("artifacts")
+        if not isinstance(artifacts, dict):
+            continue
+        provider_response = _optional_str(artifacts.get("provider_response"))
+        speaker_response = _optional_str(artifacts.get("speaker_response"))
+        if provider_response is not None:
+            refs.append(f"provider_response_artifact:{provider_response}")
+        if speaker_response is not None:
+            refs.append(f"speaker_response_artifact:{speaker_response}")
+    return _dedupe_text(refs)
+
+
+def _raise_multi_turn_provider_speech_run_mismatch(code: str, message: str) -> None:
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "code": code,
+            "message": message,
+            "source_authority": "god_room_event_store",
+            "lineage_source": "multi_turn_provider_speech_run",
+            "proof_level": "manual_gap",
+            "forbidden_claims": [
+                "natural_groupchat_closure",
+                "peer_god_live_proof",
+                "provider_invocation_live_proof",
+            ],
+        },
+    )
 
 
 def _resolve_runtime_artifact_path(base_dir: Path, artifact_ref: str) -> Path:

@@ -127,6 +127,45 @@ def _activate_god_room_sessions(
         )
 
 
+def _fake_real_provider_invocation(calls: list[str]):
+    def fake_provider_invocation(**kwargs):
+        attempt = kwargs["attempt"]
+        calls.append(attempt.target_participant_id)
+        return GodRoomProviderSpeechResponseV1(
+            response_id=f"provider-response-{len(calls)}",
+            status="completed",
+            proof_level="real_provider_proof",
+            target_participant_id=attempt.target_participant_id,
+            provider_profile_ref=attempt.provider_profile_ref,
+            provider_session_id=f"provider-thread-live-{len(calls)}",
+            provider_session_kind=attempt.provider_session_kind,
+            content=f"Provider-backed turn {len(calls)} from {attempt.target_god_id}.",
+            source_refs=[
+                f"provider_invocation:multi-turn-{len(calls)}",
+                f"provider_raw_output_sha256:multi-turn-{len(calls)}",
+            ],
+            conversation_id=attempt.conversation_id,
+            room_id=attempt.room_id,
+            target_god_id=attempt.target_god_id,
+            binding_revision=attempt.binding_revision,
+            account_ref=attempt.account_ref,
+            cli_command=attempt.cli_command,
+            model=attempt.model,
+            variant=attempt.variant,
+            invocation_id=f"provider-invocation-multi-turn-{len(calls)}",
+            invocation_status="completed",
+            prompt_refs=[f"prompt:multi-turn-{len(calls)}"],
+            output_refs=[f"provider_raw_output_sha256:multi-turn-{len(calls)}"],
+            raw_output_digest=f"multi-turn-{len(calls)}",
+            completed_at_utc=f"2026-06-14T10:0{len(calls)}:01Z",
+            started_at_utc=f"2026-06-14T10:0{len(calls)}:00Z",
+            duration_ms=1,
+            exit_code=0,
+        )
+
+    return fake_provider_invocation
+
+
 def _manual_god_cli_registration_payload() -> dict[str, object]:
     return {
         "cli_id": "custom.peer",
@@ -1802,6 +1841,330 @@ def test_chat_api_god_room_freeze_blueprint_persists_resolution_from_room_events
 
     read_model = json.loads((tmp_path / "read_models" / "resolutions.json").read_text())
     assert read_model["resolutions"][-1]["resolution_id"] == payload["resolution"]["id"]
+
+
+def test_chat_api_god_room_freeze_blueprint_preserves_multi_turn_run_lineage(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    calls: list[str] = []
+    monkeypatch.setattr(
+        chat_api,
+        "invoke_god_room_provider_speech",
+        _fake_real_provider_invocation(calls),
+    )
+    client = _client(tmp_path)
+    conversation = client.post(
+        "/api/chat/conversations",
+        json={"title": "GOD room freeze from multi-turn speech"},
+    ).json()
+    conv_id = conversation["id"]
+    room = client.post(f"/api/chat/conversations/{conv_id}/god-room").json()["room"]
+    GodCliSelectionStore(tmp_path / "god_cli_selections.json").record_selection(
+        conversation_id=conv_id,
+        cli_id="codex.god",
+        selected_by="operator",
+        audit_id="audit-select-freeze-multi-turn",
+        idempotency_key="select-freeze-multi-turn",
+    )
+    _seed_room_selected_god_bindings(tmp_path, room=room)
+    _activate_god_room_sessions(tmp_path, conversation_id=conv_id, room=room)
+    participants = {participant["role"]: participant for participant in room["participants"]}
+    assert client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/events",
+        json={
+            "event_id": "evt-propose",
+            "room_id": room["room_id"],
+            "conversation_id": conv_id,
+            "participant_id": participants["architect"]["participant_id"],
+            "god_id": participants["architect"]["god_id"],
+            "actor_kind": "god",
+            "event_type": "speak",
+            "timestamp_utc": "2026-06-14T13:00:00Z",
+            "content": "Start provider-backed blueprint deliberation.",
+            "source_refs": [f"conversation:{conv_id}", "message:evt-propose"],
+            "cli_id": participants["architect"]["cli_id"],
+            "provider_profile": "codex.god",
+            "payload": {
+                "goal": "Freeze a blueprint from provider-backed speech.",
+                "scope": ["GOD room runtime action"],
+                "acceptance_contracts": ["Freeze preserves multi-turn lineage."],
+            },
+        },
+    ).status_code == 201
+    run_response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/multi-turn-provider-speech",
+        json={
+            "after_event_id": "evt-propose",
+            "max_turns": 2,
+            "event_id_prefix": "evt-provider-speak",
+            "prompt": "Return structured GOD speech.",
+            "allow_live_provider_proof": True,
+        },
+    )
+    assert run_response.status_code == 201
+    run_payload = run_response.json()
+    run_artifact = run_payload["artifacts"]["multi_turn_provider_speech_run"]
+    assert client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/events",
+        json={
+            "event_id": "evt-freeze",
+            "room_id": room["room_id"],
+            "conversation_id": conv_id,
+            "participant_id": participants["architect"]["participant_id"],
+            "god_id": participants["architect"]["god_id"],
+            "actor_kind": "god",
+            "event_type": "freeze_requested",
+            "timestamp_utc": "2026-06-14T13:03:00Z",
+            "content": "Freeze this provider-backed blueprint.",
+            "source_refs": [f"conversation:{conv_id}", "message:evt-freeze"],
+            "causal_parent_id": "evt-provider-speak-2",
+            "cli_id": participants["architect"]["cli_id"],
+            "provider_profile": "codex.god",
+            "payload": {
+                "freeze_target_ref": "blueprint:bp-multi-turn:1",
+                "goal": "Freeze a blueprint from provider-backed speech.",
+                "scope": ["GOD room runtime action"],
+                "acceptance_contracts": ["Freeze preserves multi-turn lineage."],
+            },
+        },
+    ).status_code == 201
+
+    response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/freeze-blueprint",
+        json={
+            "blueprint_id": "bp-multi-turn",
+            "revision": 1,
+            "multi_turn_provider_speech_run_artifact": run_artifact,
+        },
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    artifact = payload["artifact"]
+    assert artifact["status"] == "frozen"
+    assert artifact["proof_level"] == "opt_in_live_proof"
+    assert f"multi_turn_provider_speech_run_artifact:{run_artifact}" in (
+        artifact["source_refs"]
+    )
+    assert any(
+        ref.startswith("speaker_response_artifact:reports/god_room_speaker_responses/")
+        for ref in artifact["source_refs"]
+    )
+    assert payload["blueprint"]["source_refs"] == artifact["source_refs"]
+    stored = ChatStore(tmp_path / "chat.db").get_resolution(payload["resolution"]["id"])
+    assert f"multi_turn_provider_speech_run_artifact:{run_artifact}" in (
+        stored.content["blueprint_v1"]["source_refs"]
+    )
+    assert calls == [
+        participants["review"]["participant_id"],
+        participants["execute"]["participant_id"],
+    ]
+
+
+def test_chat_api_god_room_freeze_blueprint_rejects_mismatched_multi_turn_run(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    calls: list[str] = []
+    monkeypatch.setattr(
+        chat_api,
+        "invoke_god_room_provider_speech",
+        _fake_real_provider_invocation(calls),
+    )
+    client = _client(tmp_path)
+    conversation = client.post(
+        "/api/chat/conversations",
+        json={"title": "GOD room freeze mismatched multi-turn speech"},
+    ).json()
+    conv_id = conversation["id"]
+    room = client.post(f"/api/chat/conversations/{conv_id}/god-room").json()["room"]
+    GodCliSelectionStore(tmp_path / "god_cli_selections.json").record_selection(
+        conversation_id=conv_id,
+        cli_id="codex.god",
+        selected_by="operator",
+        audit_id="audit-select-freeze-stale-multi-turn",
+        idempotency_key="select-freeze-stale-multi-turn",
+    )
+    _seed_room_selected_god_bindings(tmp_path, room=room)
+    _activate_god_room_sessions(tmp_path, conversation_id=conv_id, room=room)
+    participants = {participant["role"]: participant for participant in room["participants"]}
+    assert client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/events",
+        json={
+            "event_id": "evt-propose",
+            "room_id": room["room_id"],
+            "conversation_id": conv_id,
+            "participant_id": participants["architect"]["participant_id"],
+            "god_id": participants["architect"]["god_id"],
+            "actor_kind": "god",
+            "event_type": "speak",
+            "timestamp_utc": "2026-06-14T14:00:00Z",
+            "content": "Start provider-backed blueprint deliberation.",
+            "source_refs": [f"conversation:{conv_id}", "message:evt-propose"],
+            "cli_id": participants["architect"]["cli_id"],
+            "provider_profile": "codex.god",
+            "payload": {
+                "goal": "Reject stale multi-turn lineage.",
+                "scope": ["GOD room runtime action"],
+                "acceptance_contracts": ["Stale run artifacts fail closed."],
+            },
+        },
+    ).status_code == 201
+    run_payload = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/multi-turn-provider-speech",
+        json={
+            "after_event_id": "evt-propose",
+            "max_turns": 1,
+            "event_id_prefix": "evt-provider-speak-stale",
+            "prompt": "Return structured GOD speech.",
+            "allow_live_provider_proof": True,
+        },
+    ).json()
+    run_artifact = run_payload["artifacts"]["multi_turn_provider_speech_run"]
+    stale_payload = json.loads((tmp_path / run_artifact).read_text(encoding="utf-8"))
+    stale_payload["room_id"] = "god-room:other"
+    stale_artifact = "reports/god_room_provider_speech_runs/stale-run.json"
+    _write_json(tmp_path / stale_artifact, stale_payload)
+    assert client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/events",
+        json={
+            "event_id": "evt-freeze",
+            "room_id": room["room_id"],
+            "conversation_id": conv_id,
+            "participant_id": participants["review"]["participant_id"],
+            "god_id": participants["review"]["god_id"],
+            "actor_kind": "god",
+            "event_type": "freeze_requested",
+            "timestamp_utc": "2026-06-14T14:03:00Z",
+            "content": "Freeze with stale multi-turn lineage.",
+            "source_refs": [f"conversation:{conv_id}", "message:evt-freeze"],
+            "causal_parent_id": "evt-provider-speak-stale-1",
+            "cli_id": participants["review"]["cli_id"],
+            "provider_profile": "codex.god",
+            "payload": {
+                "freeze_target_ref": "blueprint:bp-stale-run:1",
+                "goal": "Reject stale multi-turn lineage.",
+                "scope": ["GOD room runtime action"],
+                "acceptance_contracts": ["Stale run artifacts fail closed."],
+            },
+        },
+    ).status_code == 201
+
+    response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/freeze-blueprint",
+        json={
+            "blueprint_id": "bp-stale-run",
+            "revision": 1,
+            "multi_turn_provider_speech_run_artifact": stale_artifact,
+        },
+    )
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["code"] == "multi_turn_provider_speech_run_room_mismatch"
+    assert detail["proof_level"] == "manual_gap"
+    assert "natural_groupchat_closure" in detail["forbidden_claims"]
+    assert ChatStore(tmp_path / "chat.db").list_resolutions(conv_id) == []
+
+
+def test_chat_api_god_room_freeze_blueprint_rejects_manual_gap_multi_turn_run(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    conversation = client.post(
+        "/api/chat/conversations",
+        json={"title": "GOD room freeze manual-gap multi-turn run"},
+    ).json()
+    conv_id = conversation["id"]
+    room = client.post(f"/api/chat/conversations/{conv_id}/god-room").json()["room"]
+    participants = {participant["role"]: participant for participant in room["participants"]}
+    for event in [
+        {
+            "event_id": "evt-propose",
+            "room_id": room["room_id"],
+            "conversation_id": conv_id,
+            "participant_id": participants["architect"]["participant_id"],
+            "god_id": participants["architect"]["god_id"],
+            "actor_kind": "god",
+            "event_type": "speak",
+            "timestamp_utc": "2026-06-14T14:30:00Z",
+            "content": "Start blueprint deliberation.",
+            "source_refs": [f"conversation:{conv_id}", "message:evt-propose"],
+            "cli_id": participants["architect"]["cli_id"],
+            "provider_profile": "codex.god",
+            "payload": {
+                "goal": "Reject manual-gap multi-turn lineage.",
+                "scope": ["GOD room runtime action"],
+                "acceptance_contracts": ["Manual-gap run artifacts fail closed."],
+            },
+        },
+        {
+            "event_id": "evt-freeze",
+            "room_id": room["room_id"],
+            "conversation_id": conv_id,
+            "participant_id": participants["review"]["participant_id"],
+            "god_id": participants["review"]["god_id"],
+            "actor_kind": "god",
+            "event_type": "freeze_requested",
+            "timestamp_utc": "2026-06-14T14:33:00Z",
+            "content": "Freeze with manual-gap multi-turn lineage.",
+            "source_refs": [f"conversation:{conv_id}", "message:evt-freeze"],
+            "causal_parent_id": "evt-propose",
+            "cli_id": participants["review"]["cli_id"],
+            "provider_profile": "codex.god",
+            "payload": {
+                "freeze_target_ref": "blueprint:bp-manual-run:1",
+                "goal": "Reject manual-gap multi-turn lineage.",
+                "scope": ["GOD room runtime action"],
+                "acceptance_contracts": ["Manual-gap run artifacts fail closed."],
+            },
+        },
+    ]:
+        assert client.post(
+            f"/api/chat/conversations/{conv_id}/god-room/events",
+            json=event,
+        ).status_code == 201
+    manual_gap_artifact = "reports/god_room_provider_speech_runs/manual-gap-run.json"
+    _write_json(
+        tmp_path / manual_gap_artifact,
+        {
+            "schema_version": "xmuse.god_room_multi_turn_provider_speech_run.v1",
+            "conversation_id": conv_id,
+            "room_id": room["room_id"],
+            "status": "completed",
+            "proof_level": "manual_gap",
+            "turns": [
+                {
+                    "appended_event_id": "evt-propose",
+                    "artifacts": {
+                        "provider_response": (
+                            "reports/god_room_provider_responses/manual-gap.json"
+                        ),
+                        "speaker_response": (
+                            "reports/god_room_speaker_responses/manual-gap.json"
+                        ),
+                    },
+                }
+            ],
+        },
+    )
+
+    response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/freeze-blueprint",
+        json={
+            "blueprint_id": "bp-manual-run",
+            "revision": 1,
+            "multi_turn_provider_speech_run_artifact": manual_gap_artifact,
+        },
+    )
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["code"] == "multi_turn_provider_speech_run_manual_gap"
+    assert detail["proof_level"] == "manual_gap"
+    assert "provider_invocation_live_proof" in detail["forbidden_claims"]
+    assert ChatStore(tmp_path / "chat.db").list_resolutions(conv_id) == []
 
 
 def test_chat_api_god_room_freeze_blueprint_blocks_manual_gap_event_proof(

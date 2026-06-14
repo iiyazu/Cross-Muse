@@ -75,9 +75,12 @@ def compile_blueprint_freeze_from_god_room_events(
     blueprint_id: str,
     revision: int,
     events: list[GodRoomEventV1],
+    lineage_source_refs: list[str] | None = None,
 ) -> GodRoomBlueprintFreezeArtifactV1:
     ordered_events = sort_god_room_events(events)
-    source_refs = _source_refs(ordered_events)
+    source_refs = _dedupe(
+        [*_source_refs(ordered_events), *(lineage_source_refs or [])]
+    )
     manual_gap_proofs = _manual_gap_event_proofs(ordered_events)
     if manual_gap_proofs:
         return GodRoomBlueprintFreezeArtifactV1(

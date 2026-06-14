@@ -235,11 +235,20 @@ class BlueprintFreezeRequest(BaseModel):
 class GodRoomBlueprintFreezeRequest(BaseModel):
     blueprint_id: str = Field(min_length=1)
     revision: int = Field(default=1, ge=1)
+    multi_turn_provider_speech_run_artifact: str | None = Field(
+        default=None,
+        min_length=1,
+    )
 
     @field_validator("blueprint_id", mode="before")
     @classmethod
     def _strip_required_text(cls, value: object) -> object:
         return _strip_required_string(value)
+
+    @field_validator("multi_turn_provider_speech_run_artifact", mode="before")
+    @classmethod
+    def _strip_optional_text(cls, value: object) -> object:
+        return _strip_optional_string(value)
 
 
 class GodRoomLaneDagRequest(BaseModel):
