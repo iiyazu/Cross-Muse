@@ -220,6 +220,98 @@ def test_release_evidence_candidates_seed_memoryos_refs_from_review_closure(
     assert memoryos["proof_boundary"] == "candidate_report_is_not_live_memoryos_proof"
 
 
+def test_release_evidence_candidates_seed_memoryos_refs_from_runtime_closure(
+    tmp_path: Path,
+) -> None:
+    runtime_closure = _write_god_room_runtime_closure_evidence(
+        tmp_path / "runtime-closure.json"
+    )
+
+    report = build_release_evidence_candidate_report(
+        tmp_path,
+        conversation_id="conv-1",
+        env={
+            "XMUSE_LIVE_MEMORYOS_LITE": "1",
+            "XMUSE_MEMORYOS_LITE_URL": "http://memoryos-lite.example",
+        },
+        memoryos_payload={
+            "repo_id": "iiyazu/Cross-Muse",
+            "workspace_id": "xmuse",
+            "god_id": "review",
+            "conversation_id": "conv-1",
+            "thread_id": "thread-1",
+            "blueprint_id": "bp-1",
+            "feature_id": "feature-1",
+            "lane_id": "lane-runtime-evidence-patch",
+            "content": "live evidence",
+            "query": "production evidence",
+            "source_refs": ["operator:manual-context"],
+            "god_room_runtime_closure": str(runtime_closure),
+        },
+    )
+
+    memoryos = report["live_memoryos"]
+    payload_hints = memoryos["suggested_operator_action"]["payload_hints"]
+    assert memoryos["export_ready"] is True
+    assert memoryos["runtime_closure_artifact_configured"] is True
+    assert memoryos["runtime_closure_artifact_gate_ready"] is True
+    assert memoryos["runtime_closure_source_ref_count"] == 4
+    assert "god_room_runtime_closure_evidence" in memoryos["source_authority"]
+    assert payload_hints["source_refs"] == [
+        "operator:manual-context",
+        "god-room-event:evt-provider-speak",
+        "provider_response_artifact:reports/provider-responses/provider-response-1.json",
+        (
+            "speaker_response_artifact:reports/god_room_speaker_responses/"
+            "speaker-response-1.json"
+        ),
+        "lane:lane-runtime-evidence-patch",
+    ]
+    assert memoryos["proof_boundary"] == "candidate_report_is_not_live_memoryos_proof"
+
+
+def test_release_evidence_candidates_reject_runtime_closure_proof_overclaim(
+    tmp_path: Path,
+) -> None:
+    runtime_closure = _write_god_room_runtime_closure_evidence(
+        tmp_path / "runtime-closure.json",
+        proof_level="server_side_truth",
+    )
+
+    report = build_release_evidence_candidate_report(
+        tmp_path,
+        conversation_id="conv-1",
+        env={
+            "XMUSE_LIVE_MEMORYOS_LITE": "1",
+            "XMUSE_MEMORYOS_LITE_URL": "http://memoryos-lite.example",
+        },
+        memoryos_payload={
+            "repo_id": "iiyazu/Cross-Muse",
+            "workspace_id": "xmuse",
+            "god_id": "review",
+            "conversation_id": "conv-1",
+            "thread_id": "thread-1",
+            "blueprint_id": "bp-1",
+            "feature_id": "feature-1",
+            "lane_id": "lane-runtime-evidence-patch",
+            "content": "live evidence",
+            "query": "production evidence",
+            "god_room_runtime_closure": str(runtime_closure),
+        },
+    )
+
+    memoryos = report["live_memoryos"]
+    payload_hints = memoryos["suggested_operator_action"]["payload_hints"]
+    assert memoryos["runtime_closure_artifact_configured"] is True
+    assert memoryos["runtime_closure_artifact_gate_ready"] is False
+    assert memoryos["runtime_closure_artifact_summary"] == (
+        "GOD room runtime closure evidence overclaims proof level."
+    )
+    assert "god_room_runtime_closure_artifact_not_ready" in memoryos["blockers"]
+    assert "god_room_runtime_closure_evidence" not in memoryos["source_authority"]
+    assert "source_refs" not in payload_hints
+
+
 def test_release_evidence_candidates_reject_review_closure_server_truth_overclaim(
     tmp_path: Path,
 ) -> None:
@@ -822,6 +914,69 @@ def _write_god_room_review_closure_artifact(
                     "pr_merged",
                     "github_review_truth",
                 ],
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def _write_god_room_runtime_closure_evidence(
+    path: Path,
+    *,
+    proof_level: str = "contract_proof",
+) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "xmuse.production_evidence.v1",
+                "stage_id": "S8",
+                "action": "god_room_runtime_closure_indexed",
+                "status": "manual_gap",
+                "proof_level": proof_level,
+                "source_authority": "god_room_runtime_closure_contract",
+                "source_refs": [
+                    "god-room-event:evt-provider-speak",
+                    (
+                        "provider_response_artifact:"
+                        "reports/provider-responses/provider-response-1.json"
+                    ),
+                    (
+                        "speaker_response_artifact:"
+                        "reports/god_room_speaker_responses/speaker-response-1.json"
+                    ),
+                    "lane:lane-runtime-evidence-patch",
+                ],
+                "target_refs": ["lane:lane-runtime-evidence-patch"],
+                "commands": [],
+                "test_results": [],
+                "artifacts": ["reports/god-room-runtime-closure.json"],
+                "blocked_reason": "github truth artifact is missing",
+                "owner": "codex",
+                "next_action": "Attach missing server truth when available.",
+                "generated_at": "2026-06-14T11:30:00Z",
+                "god_room_runtime_closure": {
+                    "authority": "god_room_runtime_closure_contract",
+                    "multi_turn_provider_speech": {
+                        "status": "completed",
+                        "proof_level": "opt_in_live_proof",
+                        "manual_gaps": [
+                            "natural_multi_god_groupchat_not_proven",
+                            "peer_god_live_proof_not_proven",
+                        ],
+                        "forbidden_claims": [
+                            "peer_god_live_proof",
+                            "natural_groupchat_closure",
+                            "ready_to_merge",
+                            "pr_merged",
+                        ],
+                    },
+                    "github_truth": {"merge_truth": "missing"},
+                },
             },
             indent=2,
             sort_keys=True,

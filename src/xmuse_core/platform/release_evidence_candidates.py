@@ -30,6 +30,7 @@ from xmuse_core.providers.god_cli_selection_store import (
 _MEMORYOS_REQUIRED_ENV = ("XMUSE_LIVE_MEMORYOS_LITE", "XMUSE_MEMORYOS_LITE_URL")
 _MEMORYOS_LIVE_TRACE_ARTIFACT_ENV = "XMUSE_MEMORYOS_LIVE_TRACE_ARTIFACT"
 _GOD_ROOM_REVIEW_CLOSURE_ARTIFACT_ENV = "XMUSE_GOD_ROOM_REVIEW_CLOSURE_ARTIFACT"
+_GOD_ROOM_RUNTIME_CLOSURE_ARTIFACT_ENV = "XMUSE_GOD_ROOM_RUNTIME_CLOSURE_ARTIFACT"
 _NATURAL_TRANSCRIPT_ARTIFACT_ENV = "XMUSE_NATURAL_GOD_TRANSCRIPT_PATH"
 _NATURAL_RUNTIME_ARTIFACT_ENV = "XMUSE_NATURAL_GOD_RUNTIME_ARTIFACT"
 _MEMORYOS_REQUIRED_PAYLOAD = (
@@ -432,6 +433,7 @@ def _memoryos_candidates(
 ) -> dict[str, Any]:
     artifact = _memoryos_trace_artifact_candidate(env)
     review_closure = _memoryos_review_closure_candidate(env, payload)
+    runtime_closure = _memoryos_runtime_closure_candidate(env, payload)
     missing_env = [
         key
         for key in _MEMORYOS_REQUIRED_ENV
@@ -452,6 +454,12 @@ def _memoryos_candidates(
         or review_closure["artifact_gate_ready"]
         else ["god_room_review_closure_artifact_not_ready"]
     )
+    runtime_closure_blockers = (
+        []
+        if not runtime_closure["artifact_configured"]
+        or runtime_closure["artifact_gate_ready"]
+        else ["god_room_runtime_closure_artifact_not_ready"]
+    )
     return {
         "configured": not missing_env or artifact["artifact_configured"],
         "export_ready": not missing_env and not missing_payload,
@@ -461,6 +469,7 @@ def _memoryos_candidates(
                 *_MEMORYOS_REQUIRED_ENV,
                 _MEMORYOS_LIVE_TRACE_ARTIFACT_ENV,
                 _GOD_ROOM_REVIEW_CLOSURE_ARTIFACT_ENV,
+                _GOD_ROOM_RUNTIME_CLOSURE_ARTIFACT_ENV,
             )
             if key in env
         ),
@@ -479,6 +488,7 @@ def _memoryos_candidates(
             ),
             *artifact_blockers,
             *review_closure_blockers,
+            *runtime_closure_blockers,
         ],
         **artifact,
         "review_closure_artifact_configured": review_closure["artifact_configured"],
@@ -486,10 +496,16 @@ def _memoryos_candidates(
         "review_closure_artifact_gate_ready": review_closure["artifact_gate_ready"],
         "review_closure_artifact_summary": review_closure["artifact_summary"],
         "review_closure_source_ref_count": review_closure["source_ref_count"],
+        "runtime_closure_artifact_configured": runtime_closure["artifact_configured"],
+        "runtime_closure_artifact_path": runtime_closure["artifact_path"],
+        "runtime_closure_artifact_gate_ready": runtime_closure["artifact_gate_ready"],
+        "runtime_closure_artifact_summary": runtime_closure["artifact_summary"],
+        "runtime_closure_source_ref_count": runtime_closure["source_ref_count"],
         **_memoryos_candidate_guidance(
             payload,
             artifact=artifact,
             review_closure=review_closure,
+            runtime_closure=runtime_closure,
         ),
     }
 
@@ -626,11 +642,88 @@ def _review_closure_source_refs(artifact: Mapping[str, Any]) -> list[str]:
     )
 
 
+def _memoryos_runtime_closure_candidate(
+    env: Mapping[str, str],
+    payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    artifact_path = _text(payload.get("god_room_runtime_closure")) or _text(
+        env.get(_GOD_ROOM_RUNTIME_CLOSURE_ARTIFACT_ENV)
+    )
+    base = {
+        "artifact_configured": artifact_path is not None,
+        "artifact_path": artifact_path,
+        "artifact_gate_ready": False,
+        "artifact_summary": None,
+        "source_refs": [],
+        "source_ref_count": 0,
+    }
+    if artifact_path is None:
+        return base
+    artifact, load_error = _json_file(
+        Path(artifact_path),
+        subject="GOD room runtime closure evidence",
+    )
+    if artifact is None:
+        return {
+            **base,
+            "artifact_summary": load_error,
+        }
+    schema_version = _text(artifact.get("schema_version"))
+    action = _text(artifact.get("action"))
+    proof_level = _text(artifact.get("proof_level"))
+    status = _text(artifact.get("status"))
+    source_authority = _text(artifact.get("source_authority"))
+    source_refs = _string_list(artifact.get("source_refs"))
+    if schema_version != "xmuse.production_evidence.v1":
+        return {
+            **base,
+            "artifact_summary": "GOD room runtime closure evidence schema is unsupported.",
+        }
+    if action != "god_room_runtime_closure_indexed":
+        return {
+            **base,
+            "artifact_summary": "GOD room runtime closure evidence action is unsupported.",
+        }
+    if source_authority != "god_room_runtime_closure_contract":
+        return {
+            **base,
+            "artifact_summary": (
+                "GOD room runtime closure evidence source authority is unsupported."
+            ),
+        }
+    if proof_level not in {"contract_proof", "manual_gap"}:
+        return {
+            **base,
+            "artifact_summary": "GOD room runtime closure evidence overclaims proof level.",
+        }
+    if status not in {"ok", "manual_gap"}:
+        return {
+            **base,
+            "artifact_summary": "GOD room runtime closure evidence status is unsupported.",
+        }
+    if not source_refs:
+        return {
+            **base,
+            "artifact_summary": "GOD room runtime closure evidence has no source refs.",
+        }
+    return {
+        **base,
+        "artifact_gate_ready": True,
+        "artifact_summary": (
+            "GOD room runtime closure evidence can seed MemoryOS source refs; "
+            f"closure status is {status}."
+        ),
+        "source_refs": source_refs,
+        "source_ref_count": len(source_refs),
+    }
+
+
 def _memoryos_candidate_guidance(
     payload: Mapping[str, Any],
     *,
     artifact: Mapping[str, Any],
     review_closure: Mapping[str, Any],
+    runtime_closure: Mapping[str, Any],
 ) -> dict[str, Any]:
     payload_hints = {
         key: text
@@ -641,6 +734,7 @@ def _memoryos_candidate_guidance(
         [
             *_string_list(payload.get("source_refs")),
             *_string_list(review_closure.get("source_refs")),
+            *_string_list(runtime_closure.get("source_refs")),
         ]
     )
     if source_refs:
@@ -659,6 +753,8 @@ def _memoryos_candidate_guidance(
         )
     if review_closure.get("artifact_gate_ready") is True:
         source_authority.append("god_room_review_closure_artifact")
+    if runtime_closure.get("artifact_gate_ready") is True:
+        source_authority.append("god_room_runtime_closure_evidence")
     guidance: dict[str, Any] = {
         "proof_boundary": "candidate_report_is_not_live_memoryos_proof",
         "required_artifact_schema": "xmuse.memoryos_lite_trace.v1",
