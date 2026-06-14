@@ -104,6 +104,45 @@ async def test_dispatch_lane_records_cas_metadata(setup):
 
 
 @pytest.mark.asyncio
+async def test_dispatch_graph_backed_lane_requires_durable_graph_authority(
+    tmp_path,
+):
+    lanes_path = tmp_path / "feature_lanes.json"
+    lanes_path.write_text(
+        json.dumps(
+            {
+                "projection_revision": 7,
+                "lanes": [
+                    {
+                        "feature_id": "lane-1",
+                        "status": "pending",
+                        "prompt": "fix bug",
+                        "worktree": str(tmp_path),
+                        "graph_set_id": "graph-set-1",
+                        "graph_id": "graph-feature-a",
+                    }
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    before_projection = lanes_path.read_text(encoding="utf-8")
+    orch = PlatformOrchestrator(
+        lanes_path=lanes_path,
+        xmuse_root=tmp_path,
+        mcp_port=9999,
+    )
+
+    with patch.object(orch, "_run_execution_god", new_callable=AsyncMock) as run_exec:
+        await orch.dispatch_lane("lane-1")
+
+    run_exec.assert_not_awaited()
+    assert lanes_path.read_text(encoding="utf-8") == before_projection
+    assert orch._sm.get_lane("lane-1")["status"] == "pending"
+
+
+@pytest.mark.asyncio
 async def test_dispatch_lane_skips_when_graph_native_ready_membership_excludes_lane(
     tmp_path,
 ):

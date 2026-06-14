@@ -8,7 +8,7 @@ import sys
 import time
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from xmuse_core.agents.persistent_peer import fingerprint_prompt
 from xmuse_core.observability import log_event, observability_context, timed_core_operation
@@ -95,10 +95,14 @@ def _graph_native_status_record(orchestrator, lane: dict[str, Any]) -> Any | Non
         return None
 
 
+def _graph_native_authority_required(lane: dict[str, Any]) -> bool:
+    return _optional_text(lane.get("graph_set_id")) is not None
+
+
 def _graph_native_dispatch_authority_allows_lane(orchestrator, lane: dict[str, Any]) -> bool:
     status = _graph_native_status_record(orchestrator, lane)
     if status is None:
-        return True
+        return not _graph_native_authority_required(lane)
     lane_id = str(lane["feature_id"])
     if status.status is FeatureGraphExecutionStatus.REWORKING:
         return True
@@ -163,14 +167,14 @@ def _lane_recovery_dispatch_block_metadata(
 def _graph_native_review_authority_allows_lane(orchestrator, lane: dict[str, Any]) -> bool:
     status = _graph_native_status_record(orchestrator, lane)
     if status is None:
-        return True
+        return not _graph_native_authority_required(lane)
     return status.status is FeatureGraphExecutionStatus.REVIEWING
 
 
 def _graph_native_execution_authority_allows_lane(orchestrator, lane: dict[str, Any]) -> bool:
     status = _graph_native_status_record(orchestrator, lane)
     if status is None:
-        return True
+        return not _graph_native_authority_required(lane)
     if status.status is not FeatureGraphExecutionStatus.RUNNING:
         return False
     return str(lane["feature_id"]) in status.active_lane_ids
@@ -184,7 +188,7 @@ def _graph_native_reprojection_authority_allows_lane(
 ) -> bool:
     status = _graph_native_status_record(orchestrator, lane)
     if status is None:
-        return True
+        return not _graph_native_authority_required(lane)
     return status.status is expected_status
 
 
@@ -294,7 +298,7 @@ async def dispatch_lane(orchestrator, lane_id: str) -> None:
             else "pending"
         )
         current_revision = orchestrator._sm.current_projection_revision()
-        metadata = {
+        metadata: dict[str, Any] = {
             "runner_id": orchestrator._runner_id,
             "dispatch_attempt_id": (
                 f"dispatch-{_safe_lane_ref(lane_id)}-{uuid.uuid4().hex[:12]}"
@@ -763,7 +767,7 @@ async def on_lane_reviewed_inner(orchestrator, lane_id: str, lane: dict[str, Any
         log_event(logger, logging.INFO, "lane_merged", lane_id=lane_id)
     else:
         lane = orchestrator._sm.get_lane(lane_id)
-        metadata = {
+        metadata: dict[str, Any] = {
             "failure_reason": str(
                 lane.get("merge_failure_reason") or "merge_failed"
             )
@@ -834,7 +838,7 @@ async def record_lane_memory_event(
     lane_id: str,
     lane: dict[str, Any],
     *,
-    event: str,
+    event: Literal["planning", "review", "takeover"],
 ) -> None:
     if orchestrator._memory_store is None:
         return
