@@ -102,14 +102,16 @@ runtime、provider invocation、lane authority、review truth 完成。后续生
   `3f75c0dceca2743de03a1fffb37a032f1aa58784`
 - Local head at start of L8 runner candidate recovery gate slice:
   `2007e7e42370881245adaf7a8fb351cf04d2df29`
+- Local head at start of L8 runner supervisor recovery projection slice:
+  `48c49906d3493b91790d9f85cf8fab020e0e5dce`
 - PR: <https://github.com/iiyazu/Cross-Muse/pull/43>
 - PR state last checked: draft/open/unmerged
 - PR merge state last checked: `CLEAN`
 - PR review decision last checked: empty
 - Verified GitHub Actions truth at the start of this slice applied to remote head
-  `2007e7e42370881245adaf7a8fb351cf04d2df29`: run
-  `27497615457`, success
-- Local changes after `2007e7e42370881245adaf7a8fb351cf04d2df29` must not be
+  `48c49906d3493b91790d9f85cf8fab020e0e5dce`: run
+  `27498033252`, success
+- Local changes after `48c49906d3493b91790d9f85cf8fab020e0e5dce` must not be
   treated as CI-verified until pushed and checked again.
 
 Machine-readable snapshot for gates and future `/goal` setup:
@@ -148,13 +150,14 @@ truth_snapshot:
   local_head_at_l10_multi_turn_provider_speech_release_lineage_slice: 1284b3d1c52042e5cf82d892b07323aad96c1bc3
   local_head_at_l10_runtime_closure_memoryos_candidate_source_ref_slice: 3f75c0dceca2743de03a1fffb37a032f1aa58784
   local_head_at_l8_runner_candidate_recovery_gate_slice: 2007e7e42370881245adaf7a8fb351cf04d2df29
+  local_head_at_l8_runner_supervisor_recovery_projection_slice: 48c49906d3493b91790d9f85cf8fab020e0e5dce
   pr: 43
   pr_url: https://github.com/iiyazu/Cross-Muse/pull/43
   pr_state: draft_open_unmerged
   merge_state: CLEAN
   review_decision: empty
-  verified_ci_head_at_slice_start: 2007e7e42370881245adaf7a8fb351cf04d2df29
-  verified_ci_run_at_slice_start: 27497615457
+  verified_ci_head_at_slice_start: 48c49906d3493b91790d9f85cf8fab020e0e5dce
+  verified_ci_run_at_slice_start: 27498033252
   ci_verified_for_slice_start_head: true
   local_changes_after_verified_head: true
   pr_merged_claim_allowed: false
@@ -796,13 +799,19 @@ Use these as implementation references, not as xmuse package dependencies:
     non-retry recovery decision or invalid recovery artifact is recorded on the
     lane metadata and excluded from runner candidates, so runner scheduling no
     longer repeatedly treats recovery-blocked lanes as dispatchable.
+  - Runner supervisor status now exposes a read-only recovery summary derived
+    from durable `lane_recovery_artifact` files through the shared run-health
+    model. It reports blocked/non-retry counts, invalid artifact counts,
+    retry-allowed counts, latest blocked lane samples, source authority,
+    `contract_proof`, manual gaps, and forbidden claims without mutating lane
+    status or treating process health as recovery authority.
   - Goal-stage and development policy require direct refactor for repeated
     failure/demo-grade production paths.
 - Missing production closure:
-  - Recovery is not yet enforced or surfaced through every supervisor path;
-    current enforcement is proven at the GOD-room review-intake,
-    graph-status intake, platform runner candidate-selection, and orchestrator
-    dispatch boundaries.
+  - Recovery is not yet enforced through every supervisor path; current
+    enforcement/projection is proven at the GOD-room review-intake,
+    graph-status intake, platform runner candidate-selection, orchestrator
+    dispatch, and runner supervisor status boundaries.
   - No live runner proof yet shows a blocked retry after refactor_required.
 - Proof required to close:
   - A real lane failure sequence enters recovery/refactor_required and blocks
@@ -811,9 +820,9 @@ Use these as implementation references, not as xmuse package dependencies:
   - Recovery remains advisory if non-dispatch runner/supervisor paths can bypass
     it.
 - Next production slice:
-  - Surface recovery-blocked lane counts and latest block reasons in runner
-    supervisor status, then produce local runtime proof beyond the
-    dispatch-boundary and candidate-selection contract tests.
+  - Produce local runtime proof that a platform runner loop with a
+    `refactor_required` artifact leaves the lane undispatched while supervisor
+    status reports the recovery block, then continue toward live runner proof.
 - Downstream blocked until:
   - L9 cannot claim trustworthy execution/review if lanes can bypass recovery
     decisions.
