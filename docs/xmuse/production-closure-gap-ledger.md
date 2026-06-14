@@ -100,14 +100,16 @@ runtime、provider invocation、lane authority、review truth 完成。后续生
   `1284b3d1c52042e5cf82d892b07323aad96c1bc3`
 - Local head at start of L10 runtime-closure MemoryOS candidate source-ref slice:
   `3f75c0dceca2743de03a1fffb37a032f1aa58784`
+- Local head at start of L8 runner candidate recovery gate slice:
+  `2007e7e42370881245adaf7a8fb351cf04d2df29`
 - PR: <https://github.com/iiyazu/Cross-Muse/pull/43>
 - PR state last checked: draft/open/unmerged
 - PR merge state last checked: `CLEAN`
 - PR review decision last checked: empty
 - Verified GitHub Actions truth at the start of this slice applied to remote head
-  `3f75c0dceca2743de03a1fffb37a032f1aa58784`: run
-  `27497352516`, success
-- Local changes after `3f75c0dceca2743de03a1fffb37a032f1aa58784` must not be
+  `2007e7e42370881245adaf7a8fb351cf04d2df29`: run
+  `27497615457`, success
+- Local changes after `2007e7e42370881245adaf7a8fb351cf04d2df29` must not be
   treated as CI-verified until pushed and checked again.
 
 Machine-readable snapshot for gates and future `/goal` setup:
@@ -145,13 +147,14 @@ truth_snapshot:
   local_head_at_l9_review_closure_graph_status_gate_slice: 1431e64b78dacbca0a3cec224a1cd047c857b35b
   local_head_at_l10_multi_turn_provider_speech_release_lineage_slice: 1284b3d1c52042e5cf82d892b07323aad96c1bc3
   local_head_at_l10_runtime_closure_memoryos_candidate_source_ref_slice: 3f75c0dceca2743de03a1fffb37a032f1aa58784
+  local_head_at_l8_runner_candidate_recovery_gate_slice: 2007e7e42370881245adaf7a8fb351cf04d2df29
   pr: 43
   pr_url: https://github.com/iiyazu/Cross-Muse/pull/43
   pr_state: draft_open_unmerged
   merge_state: CLEAN
   review_decision: empty
-  verified_ci_head_at_slice_start: 3f75c0dceca2743de03a1fffb37a032f1aa58784
-  verified_ci_run_at_slice_start: 27497352516
+  verified_ci_head_at_slice_start: 2007e7e42370881245adaf7a8fb351cf04d2df29
+  verified_ci_run_at_slice_start: 27497615457
   ci_verified_for_slice_start_head: true
   local_changes_after_verified_head: true
   pr_merged_claim_allowed: false
@@ -788,12 +791,18 @@ Use these as implementation references, not as xmuse package dependencies:
     dispatch CAS. A latest `retry_allowed=false` decision blocks same-path
     dispatch, records recovery block metadata, and does not invoke the execution
     GOD.
+  - Platform runner candidate selection now applies the same durable
+    `lane_recovery_artifact` dispatch block before creating dispatch tasks. A
+    non-retry recovery decision or invalid recovery artifact is recorded on the
+    lane metadata and excluded from runner candidates, so runner scheduling no
+    longer repeatedly treats recovery-blocked lanes as dispatchable.
   - Goal-stage and development policy require direct refactor for repeated
     failure/demo-grade production paths.
 - Missing production closure:
-  - Recovery is not yet enforced through every supervisor/runner path; current
-    enforcement is proven at the GOD-room review-intake, graph-status intake,
-    and orchestrator dispatch boundaries.
+  - Recovery is not yet enforced or surfaced through every supervisor path;
+    current enforcement is proven at the GOD-room review-intake,
+    graph-status intake, platform runner candidate-selection, and orchestrator
+    dispatch boundaries.
   - No live runner proof yet shows a blocked retry after refactor_required.
 - Proof required to close:
   - A real lane failure sequence enters recovery/refactor_required and blocks
@@ -802,8 +811,9 @@ Use these as implementation references, not as xmuse package dependencies:
   - Recovery remains advisory if non-dispatch runner/supervisor paths can bypass
     it.
 - Next production slice:
-  - Enforce recovery decisions in remaining runner/supervisor control flow and
-    produce local runtime proof beyond the dispatch-boundary contract test.
+  - Surface recovery-blocked lane counts and latest block reasons in runner
+    supervisor status, then produce local runtime proof beyond the
+    dispatch-boundary and candidate-selection contract tests.
 - Downstream blocked until:
   - L9 cannot claim trustworthy execution/review if lanes can bypass recovery
     decisions.

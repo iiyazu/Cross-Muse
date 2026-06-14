@@ -26,6 +26,9 @@ from xmuse_core.chat.driver import ChatDriver
 from xmuse_core.platform.coordinator_control import CoordinatorControlService
 from xmuse_core.platform.model_policy import CodexModelPolicy, resolve_codex_model_policy
 from xmuse_core.platform.orchestrator import PlatformOrchestrator
+from xmuse_core.platform.orchestrator_lane_flow import (
+    _lane_recovery_dispatch_block_metadata,
+)
 from xmuse_core.platform.run_health import (
     DEFAULT_STALE_AFTER_S,
     build_run_health_model,
@@ -738,21 +741,53 @@ def _candidate_lanes(
         lane for lane in lanes
         if _dependencies_satisfied(lane, lane_status_by_id)
     ]
+    dispatchable_candidates = [
+        lane
+        for lane in legacy_candidates
+        if _runner_recovery_authority_allows_lane(orch, lane)
+    ]
     ready_set_candidates = build_graph_ready_set(
         all_lanes,
         graph_id=graph_id,
         resolution_id=resolution_id,
     )
     parity_evidence = build_ready_set_parity_evidence(
-        legacy_candidates=legacy_candidates,
+        legacy_candidates=dispatchable_candidates,
         ready_set_candidates=ready_set_candidates,
         graph_id=graph_id,
         resolution_id=resolution_id,
     )
     return [
         {**lane, "ready_set_parity": dict(parity_evidence)}
-        for lane in legacy_candidates
+        for lane in dispatchable_candidates
     ]
+
+
+def _runner_recovery_authority_allows_lane(
+    orch: PlatformOrchestrator,
+    lane: dict[str, Any],
+) -> bool:
+    """Apply durable L8 recovery authority before runner task scheduling."""
+    if not hasattr(orch, "_root"):
+        return True
+    recovery_block = _lane_recovery_dispatch_block_metadata(orch, lane)
+    if recovery_block is None:
+        return True
+
+    lane_id = str(lane.get("feature_id") or "")
+    update_metadata = getattr(getattr(orch, "_sm", None), "update_metadata", None)
+    if lane_id and callable(update_metadata):
+        update_metadata(lane_id, recovery_block)
+    logger.warning(
+        "runner_candidate_blocked_by_recovery_decision",
+        extra={
+            "lane_id": lane_id,
+            "graph_id": lane.get("graph_id"),
+            "reason": recovery_block["recovery_dispatch_block_reason"],
+            "source_authority": "lane_recovery_artifact",
+        },
+    )
+    return False
 
 
 def _live_pids() -> set[int]:

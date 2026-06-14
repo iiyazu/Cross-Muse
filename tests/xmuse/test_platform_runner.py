@@ -10,6 +10,9 @@ import pytest
 from xmuse_core.chat.dispatch_queue import ChatDispatchQueueStore
 from xmuse_core.chat.store import ChatStore
 from xmuse_core.platform.run_health import build_process_inventory
+from xmuse_core.structuring.blueprint_execution.lane_recovery_artifacts import (
+    lane_recovery_artifact_path,
+)
 from xmuse_core.structuring.models import (
     FeatureGraphSet,
     FeaturePlan,
@@ -43,6 +46,13 @@ class _FakeStateMachine:
         if status is None:
             return list(self._lanes)
         return [lane for lane in self._lanes if lane.get("status") == status]
+
+    def update_metadata(self, lane_id: str, metadata: dict):
+        for lane in self._lanes:
+            if lane.get("feature_id") == lane_id:
+                lane.update(metadata)
+                return dict(lane)
+        raise KeyError(lane_id)
 
 
 @pytest.mark.asyncio
@@ -2167,6 +2177,111 @@ def test_candidate_lanes_waits_for_unmerged_dependencies() -> None:
     assert [lane["feature_id"] for lane in lanes] == ["lane-1", "lane-3"]
 
 
+def test_candidate_lanes_excludes_non_retry_recovery_decision(tmp_path: Path) -> None:
+    class FakeOrchestrator:
+        def __init__(self) -> None:
+            self._root = tmp_path
+            self._sm = _FakeStateMachine(
+                [
+                    {
+                        "feature_id": "lane-refactor",
+                        "status": "reworking",
+                        "graph_id": "graph-a",
+                    },
+                    {
+                        "feature_id": "lane-retry",
+                        "status": "reworking",
+                        "graph_id": "graph-a",
+                    },
+                ]
+            )
+
+    _write_recovery_artifact(
+        tmp_path,
+        graph_id="graph-a",
+        lane_id="lane-refactor",
+        decision="refactor_required",
+        retry_allowed=False,
+    )
+    _write_recovery_artifact(
+        tmp_path,
+        graph_id="graph-a",
+        lane_id="lane-retry",
+        decision="retry",
+        retry_allowed=True,
+    )
+    orch = FakeOrchestrator()
+
+    lanes = platform_runner._candidate_lanes(
+        orch,
+        graph_id="graph-a",
+        resolution_id=None,
+    )
+
+    assert [lane["feature_id"] for lane in lanes] == ["lane-retry"]
+    assert lanes[0]["ready_set_parity"] == {
+        "matches": False,
+        "runner_source": "legacy_projection",
+        "ready_set_source": "graph_native",
+        "graph_id": "graph-a",
+        "resolution_id": None,
+        "legacy_candidate_lane_ids": ["lane-retry"],
+        "ready_set_lane_ids": ["lane-refactor", "lane-retry"],
+        "legacy_only_lane_ids": [],
+        "ready_set_only_lane_ids": ["lane-refactor"],
+    }
+    blocked = orch._sm.get_lanes()[0]
+    assert blocked["dispatch_blocked_by_recovery"] is True
+    assert blocked["recovery_dispatch_block_reason"] == "refactor_required"
+    assert blocked["recovery_source_authority"] == "lane_recovery_artifact"
+    assert blocked["recovery_decision"]["retry_allowed"] is False
+    assert "live_runner_recovery_enforcement_not_proven" in blocked["manual_gaps"]
+    assert "ready_to_merge" in blocked["forbidden_claims"]
+    assert "dispatch_attempt_id" not in blocked
+
+
+def test_candidate_lanes_excludes_invalid_recovery_artifact(tmp_path: Path) -> None:
+    class FakeOrchestrator:
+        def __init__(self) -> None:
+            self._root = tmp_path
+            self._sm = _FakeStateMachine(
+                [
+                    {
+                        "feature_id": "lane-invalid-recovery",
+                        "status": "reworking",
+                        "graph_id": "graph-a",
+                    }
+                ]
+            )
+
+    recovery_path = lane_recovery_artifact_path(
+        tmp_path,
+        graph_id="graph-a",
+        lane_id="lane-invalid-recovery",
+    )
+    recovery_path.parent.mkdir(parents=True, exist_ok=True)
+    recovery_path.write_text(
+        json.dumps({"schema_version": "xmuse.god_room_lane_recovery.v1"}) + "\n",
+        encoding="utf-8",
+    )
+    orch = FakeOrchestrator()
+
+    lanes = platform_runner._candidate_lanes(
+        orch,
+        graph_id="graph-a",
+        resolution_id=None,
+    )
+
+    assert lanes == []
+    blocked = orch._sm.get_lanes()[0]
+    assert blocked["dispatch_blocked_by_recovery"] is True
+    assert blocked["recovery_dispatch_block_reason"] == "invalid_recovery_artifact"
+    assert blocked["recovery_source_authority"] == "lane_recovery_artifact"
+    assert "lane_recovery_artifact_invalid" in blocked["manual_gaps"]
+    assert "ready_to_merge" in blocked["forbidden_claims"]
+    assert "dispatch_attempt_id" not in blocked
+
+
 def test_candidate_lanes_matches_graph_native_ready_set_parity(
     tmp_path: Path,
 ) -> None:
@@ -2291,6 +2406,42 @@ def test_candidate_lanes_matches_graph_native_ready_set_parity(
         "legacy_only_lane_ids": [],
         "ready_set_only_lane_ids": [],
     }
+
+
+def _write_recovery_artifact(
+    base_dir: Path,
+    *,
+    graph_id: str,
+    lane_id: str,
+    decision: str,
+    retry_allowed: bool,
+) -> None:
+    recovery_path = lane_recovery_artifact_path(
+        base_dir,
+        graph_id=graph_id,
+        lane_id=lane_id,
+    )
+    recovery_path.parent.mkdir(parents=True, exist_ok=True)
+    recovery_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "xmuse.god_room_lane_recovery.v1",
+                "decision": {
+                    "lane_id": lane_id,
+                    "decision": decision,
+                    "retry_allowed": retry_allowed,
+                    "failure_class": "demo_grade_boundary",
+                    "attempt": 2,
+                    "next_action": (
+                        "refactor or replace the failing lane boundary before retrying"
+                    ),
+                    "source_refs": ["pytest:runner-recovery-gate"],
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
 
 def test_repair_stale_dispatched_lanes_marks_dead_worker_exec_failed(monkeypatch) -> None:
