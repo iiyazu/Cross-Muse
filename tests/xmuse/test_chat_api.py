@@ -3629,7 +3629,8 @@ def test_chat_api_god_room_lane_review_closure_links_reviewed_patch_lane(
     assert response.status_code == 201
     payload = response.json()
     assert payload["source_authority"] == (
-        "god_room_lane_patch_forward_artifact+patch_lane_review_verdict_artifact"
+        "god_room_lane_patch_forward_artifact+patch_lane_review_verdict_artifact+"
+        "feature_graph_status_store"
     )
     closure = payload["review_closure"]
     assert closure["schema_version"] == "xmuse.god_room_lane_review_closure.v1"
@@ -3651,8 +3652,11 @@ def test_chat_api_god_room_lane_review_closure_links_reviewed_patch_lane(
     assert closure["terminal_review_verdict"]["decision"] == "merge"
     assert closure["review_plane_sync_status"] == "review_plane_store_updated"
     assert closure["review_plane_verdict_ref"].startswith("review_plane_verdict:")
+    assert closure["graph_status_source_authority"] == "feature_graph_status_store"
+    assert closure["graph_status_merge_status"] == "verified_merged"
+    assert closure["terminal_feature_graph_status"]["status"] == "merged"
     assert "review_plane_store_not_updated" not in closure["manual_gaps"]
-    assert "lane_status_not_updated" in closure["manual_gaps"]
+    assert "lane_status_not_updated" not in closure["manual_gaps"]
     assert "release_evidence_not_linked" in closure["manual_gaps"]
     assert "github_truth_not_checked" in closure["manual_gaps"]
     assert "worker_output_is_review_truth" in closure["forbidden_claims"]
@@ -3669,6 +3673,90 @@ def test_chat_api_god_room_lane_review_closure_links_reviewed_patch_lane(
         "lane-runtime-api-patch-reviewed": "merge",
     }
     assert not (tmp_path / "feature_lanes.json").exists()
+
+
+def test_chat_api_god_room_lane_review_closure_requires_merged_graph_status(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    conv_id = _create_reviewed_patch_forward_lane(
+        client,
+        graph_id="graph-review-closure-not-merged",
+        patch_lane_id="lane-runtime-api-patch-not-merged",
+        patch_decision="merge",
+    )
+    _force_feature_graph_status(
+        tmp_path,
+        graph_set_id="graph-review-closure-not-merged-graph-set",
+        feature_graph_id="graph-review-closure-not-merged-feature-runtime",
+        status="reviewing",
+        completed_lane_ids=["lane-runtime-api-patch-not-merged"],
+    )
+
+    response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-closure",
+        json={
+            "graph_id": "graph-review-closure-not-merged",
+            "lane_id": "lane-runtime-api",
+        },
+    )
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["code"] == (
+        "god_room_lane_review_closure_missing_merged_graph_status"
+    )
+    assert detail["source_authority"] == "feature_graph_status_store"
+    assert detail["required_status"] == "merged"
+    assert detail["actual_status"] == "reviewing"
+    assert "terminal_patch_lane_not_merged" in detail["manual_gaps"]
+    assert "ready_to_merge" in detail["forbidden_claims"]
+    assert not (
+        tmp_path
+        / "reports"
+        / "god_room_review_closure"
+        / "graph-review-closure-not-merged.lane-runtime-api.review-closure.json"
+    ).exists()
+
+
+def test_chat_api_god_room_lane_review_closure_requires_graph_status_record(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    conv_id = _create_reviewed_patch_forward_lane(
+        client,
+        graph_id="graph-review-closure-missing-status",
+        patch_lane_id="lane-runtime-api-patch-missing-status",
+        patch_decision="merge",
+    )
+    _remove_feature_graph_status(
+        tmp_path,
+        graph_set_id="graph-review-closure-missing-status-graph-set",
+        feature_graph_id="graph-review-closure-missing-status-feature-runtime",
+    )
+
+    response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-closure",
+        json={
+            "graph_id": "graph-review-closure-missing-status",
+            "lane_id": "lane-runtime-api",
+        },
+    )
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["code"] == (
+        "god_room_lane_review_closure_missing_merged_graph_status"
+    )
+    assert detail["source_authority"] == "feature_graph_status_store"
+    assert detail["required_status"] == "merged"
+    assert "feature_graph_status_missing" in detail["manual_gaps"]
+    assert not (
+        tmp_path
+        / "reports"
+        / "god_room_review_closure"
+        / "graph-review-closure-missing-status.lane-runtime-api.review-closure.json"
+    ).exists()
 
 
 def test_chat_api_god_room_lane_review_closure_requires_review_plane_verdict(
@@ -4116,6 +4204,49 @@ def _create_reviewed_patch_forward_lane(
         },
     ).status_code == 201
     return conv_id
+
+
+def _force_feature_graph_status(
+    tmp_path: Path,
+    *,
+    graph_set_id: str,
+    feature_graph_id: str,
+    status: str,
+    completed_lane_ids: list[str],
+) -> None:
+    path = tmp_path / "feature_graph_statuses.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    for row in payload["statuses"]:
+        if (
+            row["graph_set_id"] == graph_set_id
+            and row["feature_graph_id"] == feature_graph_id
+        ):
+            row["status_id"] = f"{row['status_id']}-forced-{status}"
+            row["status"] = status
+            row["completed_lane_ids"] = completed_lane_ids
+            row["updated_at"] = "2026-06-15T01:07:00Z"
+            _write_json(path, payload)
+            return
+    raise AssertionError(f"feature graph status not found: {feature_graph_id}")
+
+
+def _remove_feature_graph_status(
+    tmp_path: Path,
+    *,
+    graph_set_id: str,
+    feature_graph_id: str,
+) -> None:
+    path = tmp_path / "feature_graph_statuses.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["statuses"] = [
+        row
+        for row in payload["statuses"]
+        if not (
+            row["graph_set_id"] == graph_set_id
+            and row["feature_graph_id"] == feature_graph_id
+        )
+    ]
+    _write_json(path, payload)
 
 
 def test_chat_api_operator_action_denies_missing_capability(tmp_path: Path) -> None:

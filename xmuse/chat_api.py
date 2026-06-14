@@ -1922,11 +1922,19 @@ def _build_god_room_lane_review_closure(
                 "message": "patch lane merge verdict must cite candidate evidence",
             },
         )
+    graph_status = _require_god_room_lane_review_closure_merged_status(
+        base_dir,
+        conversation_id=conversation_id,
+        graph_id=request.graph_id,
+        terminal_lane_id=patch_lane_id,
+        patch_contract=patch_contract.model_dump(mode="json"),
+    )
     closure_payload: dict[str, object] = {
         "schema_version": "xmuse.god_room_lane_review_closure.v1",
         "source_authority": (
             "god_room_lane_patch_forward_artifact+"
-            "patch_lane_review_verdict_artifact"
+            "patch_lane_review_verdict_artifact+"
+            "feature_graph_status_store"
         ),
         "proof_level": "contract_proof",
         "review_truth_status": "independent_review_artifact",
@@ -1950,8 +1958,10 @@ def _build_god_room_lane_review_closure(
         "terminal_review_verdict": patch_verdict.model_dump(mode="json"),
         "review_plane_sync_status": "review_plane_store_updated",
         "review_plane_verdict_ref": review_plane_verdict_ref,
+        "graph_status_source_authority": "feature_graph_status_store",
+        "graph_status_merge_status": "verified_merged",
+        "terminal_feature_graph_status": graph_status.model_dump(mode="json"),
         "manual_gaps": [
-            "lane_status_not_updated",
             "release_evidence_not_linked",
             "github_truth_not_checked",
         ],
@@ -3416,6 +3426,81 @@ def _review_plane_verdict_ref_if_synced(
     if verdict.lane_id != lane_id:
         return None
     return f"review_plane_verdict:{verdict.id}"
+
+
+def _require_god_room_lane_review_closure_merged_status(
+    base_dir: Path,
+    *,
+    conversation_id: str,
+    graph_id: str,
+    terminal_lane_id: str,
+    patch_contract: dict[str, object],
+) -> FeatureGraphExecutionStatusRecord:
+    feature_id = str(patch_contract.get("feature_id") or "").strip()
+    if not feature_id:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "god_room_lane_review_closure_missing_graph_identity",
+                "message": "patch lane runtime contract is missing feature_id",
+                "source_authority": "lane_dag_artifact",
+            },
+        )
+    graph_set_id = _lane_dag_graph_set_id(graph_id)
+    feature_graph_id = _lane_dag_feature_graph_id(graph_id, feature_id)
+    try:
+        record = FeatureGraphStatusStore(base_dir / "feature_graph_statuses.json").get(
+            graph_set_id=graph_set_id,
+            feature_graph_id=feature_graph_id,
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "god_room_lane_review_closure_missing_merged_graph_status",
+                "message": str(exc),
+                "source_authority": "feature_graph_status_store",
+                "graph_set_id": graph_set_id,
+                "feature_graph_id": feature_graph_id,
+                "terminal_lane_id": terminal_lane_id,
+                "required_status": FeatureGraphExecutionStatus.MERGED.value,
+                "manual_gaps": ["feature_graph_status_missing"],
+                "forbidden_claims": [
+                    "end_to_end_execution_review_closure",
+                    "ready_to_merge",
+                    "pr_merged",
+                    "github_review_truth",
+                ],
+            },
+        ) from exc
+    if (
+        record.conversation_id != conversation_id
+        or record.status is not FeatureGraphExecutionStatus.MERGED
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "god_room_lane_review_closure_missing_merged_graph_status",
+                "message": (
+                    "review closure requires terminal patch lane MERGED status "
+                    "from FeatureGraphStatusStore"
+                ),
+                "source_authority": "feature_graph_status_store",
+                "graph_set_id": graph_set_id,
+                "feature_graph_id": feature_graph_id,
+                "terminal_lane_id": terminal_lane_id,
+                "required_status": FeatureGraphExecutionStatus.MERGED.value,
+                "actual_status": record.status.value,
+                "manual_gaps": ["terminal_patch_lane_not_merged"],
+                "forbidden_claims": [
+                    "end_to_end_execution_review_closure",
+                    "ready_to_merge",
+                    "pr_merged",
+                    "github_review_truth",
+                ],
+            },
+        )
+    return record
 
 
 def _write_lane_dag_artifacts(
