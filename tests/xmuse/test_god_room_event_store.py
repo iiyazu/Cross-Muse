@@ -205,6 +205,11 @@ def test_god_room_event_store_writes_replay_snapshot_artifact(tmp_path: Path) ->
     assert artifact["replay"]["status"] == "ok"
     assert artifact["replay"]["proof_level"] == "contract_proof"
     assert artifact["replay"]["decisions"][0]["next_participant_id"] == "part-review"
+    assert artifact["replay"]["event_proofs"][0]["event_id"] == "evt-speak"
+    assert artifact["replay"]["event_proofs"][0]["proof_level"] == "contract_proof"
+    assert artifact["replay"]["event_proofs"][0]["source_authority"] == (
+        "god_room_event_contract"
+    )
     assert json.loads(output.read_text(encoding="utf-8")) == artifact
 
 

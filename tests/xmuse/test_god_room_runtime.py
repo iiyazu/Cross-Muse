@@ -140,6 +140,162 @@ def test_replay_god_room_turns_reports_manual_gap_instead_of_inventing_missing_t
         "target participant part-missing for event evt-question is not in the room roster"
     )
     assert replay.decisions == []
+    assert replay.event_proofs[0].proof_level == "contract_proof"
+
+
+def test_replay_god_room_turns_projects_event_proof_lineage_without_upgrading_room_proof() -> None:
+    participants = [
+        GodRoomParticipant(participant_id="part-architect", god_id="god-architect"),
+        GodRoomParticipant(participant_id="part-review", god_id="god-review"),
+    ]
+    events = [
+        _event(
+            "evt-1-public-gap",
+            payload={
+                "body": "Manual transcript when selected binding is unresolved.",
+                "public_append_authority": {
+                    "schema_version": "xmuse.god_room_public_append_authority.v1",
+                    "source_authority": (
+                        "chat_api_public_event_append+room_selected_god_binding_manual_gap"
+                    ),
+                    "status": "manual_gap",
+                    "proof_level": "manual_gap",
+                    "room_id": "room-1",
+                    "participant_id": "part-architect",
+                    "god_id": "god-architect",
+                    "binding_revision": None,
+                    "account_ref": None,
+                    "cli_command": None,
+                    "model": None,
+                    "variant": None,
+                    "blocked_reason": "room selected GOD binding unresolved",
+                    "source_refs": [],
+                    "manual_gaps": ["room_selected_god_binding_unresolved"],
+                    "forbidden_claims": [
+                        "provider_invocation_live_proof",
+                        "capture_equals_invocation_proof",
+                        "natural_groupchat_closure",
+                    ],
+                },
+            },
+        ),
+        _event(
+            "evt-2-public-bound",
+            payload={
+                "body": "Contract transcript from selected room GOD binding.",
+                "public_append_authority": {
+                    "schema_version": "xmuse.god_room_public_append_authority.v1",
+                    "source_authority": (
+                        "chat_api_public_event_append+room_selected_god_binding"
+                    ),
+                    "status": "resolved",
+                    "proof_level": "contract_proof",
+                    "room_id": "room-1",
+                    "participant_id": "part-architect",
+                    "god_id": "god-architect",
+                    "binding_revision": "binding:god-room:conv-1:part-architect:1",
+                    "account_ref": "codex.god",
+                    "cli_command": "codex",
+                    "model": "gpt-5.4",
+                    "variant": None,
+                    "blocked_reason": None,
+                    "source_refs": ["provider-account:codex.god"],
+                    "manual_gaps": [],
+                    "forbidden_claims": [
+                        "provider_invocation_live_proof",
+                        "capture_equals_invocation_proof",
+                        "natural_groupchat_closure",
+                    ],
+                },
+            },
+        ),
+        _event(
+            "evt-3-provider-speak",
+            participant_id="part-review",
+            god_id="god-review",
+            causal_parent_id="evt-2-public-bound",
+            source_refs=[
+                "god-room-speaker-attempt:evt-2-public-bound",
+                "provider-run:codex:provider-response-1",
+                "provider_response_artifact:reports/provider-responses/provider-response-1.json",
+            ],
+            payload={
+                "body": "Provider-backed review speech.",
+                "provider_response_id": "provider-response-1",
+                "provider_response_artifact_ref": (
+                    "reports/provider-responses/provider-response-1.json"
+                ),
+                "provider_session_id": "provider-thread-review",
+                "provider_session_kind": "provider_thread",
+                "provider_profile_ref": "codex.god",
+                "binding_revision": "binding:god-room:conv-1:part-review:1",
+                "account_ref": "codex.god",
+                "cli_command": "codex",
+                "model": "gpt-5.4",
+                "variant": None,
+                "proof_level": "real_provider_proof",
+                "speaker_attempt_event_id": "evt-2-public-bound",
+            },
+        ),
+    ]
+
+    replay = replay_god_room_turns(participants=participants, events=events)
+
+    assert replay.status == "ok"
+    assert replay.proof_level == "contract_proof"
+    assert [
+        (proof.event_id, proof.proof_level, proof.source_authority)
+        for proof in replay.event_proofs
+    ] == [
+        (
+            "evt-1-public-gap",
+            "manual_gap",
+            "chat_api_public_event_append+room_selected_god_binding_manual_gap",
+        ),
+        (
+            "evt-2-public-bound",
+            "contract_proof",
+            "chat_api_public_event_append+room_selected_god_binding",
+        ),
+        (
+            "evt-3-provider-speak",
+            "opt_in_live_proof",
+            "god_room_speaker_response_capture+provider_response_artifact",
+        ),
+    ]
+    provider_proof = replay.event_proofs[2]
+    assert provider_proof.projection_only is True
+    assert provider_proof.provider_response_artifact_ref == (
+        "reports/provider-responses/provider-response-1.json"
+    )
+    assert provider_proof.artifact_proof_level == "real_provider_proof"
+    assert provider_proof.binding_revision == "binding:god-room:conv-1:part-review:1"
+    assert "capture_equals_invocation_proof" in provider_proof.forbidden_claims
+
+
+def test_replay_god_room_turns_treats_empty_public_append_authority_as_manual_gap() -> None:
+    participants = [
+        GodRoomParticipant(participant_id="part-architect", god_id="god-architect"),
+    ]
+    replay = replay_god_room_turns(
+        participants=participants,
+        events=[
+            _event(
+                "evt-empty-authority",
+                payload={
+                    "body": "Malformed authority projection must fail closed.",
+                    "public_append_authority": {},
+                },
+            )
+        ],
+    )
+
+    assert replay.status == "ok"
+    assert replay.proof_level == "contract_proof"
+    assert replay.event_proofs[0].proof_level == "manual_gap"
+    assert replay.event_proofs[0].source_authority == (
+        "chat_api_public_event_append+room_selected_god_binding_manual_gap"
+    )
 
 
 def _event(

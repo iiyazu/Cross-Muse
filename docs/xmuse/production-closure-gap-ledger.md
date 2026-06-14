@@ -76,13 +76,15 @@ runtime、provider invocation、lane authority、review truth 完成。后续生
   `9190723d7da2580fed392829f3367c32b52f82a9`
 - Local head at start of L3 public event append authorship classification slice:
   `2ac5eebeb0226324e3bba5a3e62b73c7c27e3124`
+- Local head at start of L3 replay event proof projection slice:
+  `515f1817e8c7fabf9c594b96ed044018eaefbc6f`
 - PR: <https://github.com/iiyazu/Cross-Muse/pull/43>
 - PR state last checked: draft/open/unmerged
 - PR merge state last checked: `CLEAN`
 - PR review decision last checked: empty
 - Latest verified GitHub Actions truth applies to remote head
-  `2ac5eebeb0226324e3bba5a3e62b73c7c27e3124`: run
-  `27490935910`, success
+  `515f1817e8c7fabf9c594b96ed044018eaefbc6f`: run
+  `27491335024`, success
 - Local documentation commits after the remote head must not be treated as
   CI-verified until pushed and checked again.
 
@@ -109,13 +111,14 @@ truth_snapshot:
   local_head_at_l8_dispatch_recovery_enforcement_slice: 9befbc8709585df60072ffef26b26cbc0b61c6ee
   local_head_at_l3_public_event_append_proof_boundary_slice: 9190723d7da2580fed392829f3367c32b52f82a9
   local_head_at_l3_public_event_append_authorship_classification_slice: 2ac5eebeb0226324e3bba5a3e62b73c7c27e3124
+  local_head_at_l3_replay_event_proof_projection_slice: 515f1817e8c7fabf9c594b96ed044018eaefbc6f
   pr: 43
   pr_url: https://github.com/iiyazu/Cross-Muse/pull/43
   pr_state: draft_open_unmerged
   merge_state: CLEAN
   review_decision: empty
-  verified_ci_head: 2ac5eebeb0226324e3bba5a3e62b73c7c27e3124
-  verified_ci_run: 27490935910
+  verified_ci_head: 515f1817e8c7fabf9c594b96ed044018eaefbc6f
+  verified_ci_run: 27491335024
   ci_verified_for_verified_head: true
   local_docs_after_verified_head: true
   pr_merged_claim_allowed: false
@@ -391,11 +394,21 @@ Use these as implementation references, not as xmuse package dependencies:
   - A local opt-in live Codex composed route run appended one provider-backed
     `speak` event and returned room replay `ok` from a temp runtime root:
     `/tmp/xmuse-live-l4-l5-uynpv_gj`.
+  - `GodRoomReplayResult` now includes `event_proofs`, a projection derived
+    from durable `GodRoomEventV1` payload/source refs. It distinguishes public
+    append `manual_gap`, public append `contract_proof`, and L5
+    provider-backed `opt_in_live_proof` event lineage while keeping the
+    room-level replay `proof_level` at `contract_proof` or `manual_gap`. The
+    original L4/L5 artifact proof label remains available as artifact lineage,
+    not as a room-level closure claim.
 - Missing production closure:
   - Natural multi-GOD live runtime has not been proven over a long session.
   - Public direct append now classifies GOD event authorship through L2 binding
     resolution or explicit `manual_gap`, but this still does not prove fresh
     provider-backed natural deliberation or every non-HTTP writer path.
+  - Event proof projection summarizes existing durable event lineage only; it
+    does not load or re-verify L4 artifacts and must not be treated as new
+    provider invocation proof.
 - Proof required to close:
   - A fresh transcript where multiple configured GODs produce durable
     question/challenge/handoff/freeze events through provider-backed runtime.
@@ -404,9 +417,9 @@ Use these as implementation references, not as xmuse package dependencies:
   - Direct public append remains contract/manual proof only unless backed by
     the L4/L5 provider-capture route.
 - Next production slice:
-  - Extend the same authorship classification to remaining GOD room writer
-    paths and then drive fresh provider-backed multi-GOD speech through the
-    durable event store.
+  - Extend authorship/proof projection to remaining GOD room writer paths where
+    they bypass Chat API classification, then drive fresh provider-backed
+    multi-GOD speech through the durable event store.
 - Downstream blocked until:
   - L6 blueprint freeze cannot claim live deliberation closure without fresh
     durable room event proof.
