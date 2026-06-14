@@ -706,6 +706,9 @@ WebSocket、worklist endpoint、proposal narrow/reject endpoint 仍未落地。
 | `POST /api/chat/conversations/{conversation_id}/god-room/freeze-blueprint` | 从 durable room events 编译 `xmuse.god_room_blueprint_freeze.v1`，成功时写入 mission blueprint proposal/resolution/read model |
 | `POST /api/chat/conversations/{conversation_id}/god-room/lane-dag` | 从 GOD room freeze resolution 生成 `BlueprintLaneDagPlan`，保存 lane graph 和 laneDAG artifacts，不写 live projection queue |
 | `POST /api/chat/conversations/{conversation_id}/god-room/lane-dag/recovery` | 从 laneDAG artifact 读取 lane budget，导入 failure evidence，保存 `xmuse.god_room_lane_recovery.v1` recovery artifact |
+| `POST /api/chat/conversations/{conversation_id}/god-room/lane-dag/review-intake` | 从 laneDAG/recovery/candidate refs 生成 pending independent review intake artifact |
+| `POST /api/chat/conversations/{conversation_id}/god-room/lane-dag/review-verdict` | 从 review intake 生成 independent reviewer verdict artifact，不写 review plane 或 GitHub truth |
+| `POST /api/chat/conversations/{conversation_id}/god-room/lane-dag/patch-forward` | 从 patch-forward verdict 和 laneDAG artifact 追加 patch lane sidecar，不执行 patch lane |
 | `POST /api/chat/conversations/{conversation_id}/god-room/memoryos-plan` | 从 GOD room events、freeze resolution、laneDAG 和 recovery artifacts 生成 `xmuse.god_room_memoryos_plan.v1` governed write/context plan |
 
 事件写入请求体使用 `GodRoomEventV1`：
@@ -768,6 +771,12 @@ room events，不由前端 projection 提供：
   `reports/god_room_review_verdicts/*.review-verdict.json`，其中
   `server_truth_status = "not_server_truth"`；它不写 `review_plane.json`，
   不改变 lane status，不代表 GitHub review/merge truth。
+- `POST /god-room/lane-dag/patch-forward` 要求已存在 `patch-forward` review
+  verdict 和 laneDAG artifact。成功时通过 laneDAG service 追加 patch lane、
+  dependency edge、runtime contract 和 patch-forward link，并写
+  `reports/god_room_patch_forward/*.patch-forward.json`。它不执行 patch lane，
+  不写 `review_plane.json` / `feature_lanes.json`，不链接 release evidence，
+  不代表 ready 或 merge truth。
 - `POST /god-room/memoryos-plan` 使用 GOD room event store、GOD room freeze
   resolution、laneDAG artifact 和 recovery sidecar 作为输入，生成
   `source_authority = "god_room_memoryos_plan_contract"` 的 governed

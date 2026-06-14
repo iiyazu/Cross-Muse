@@ -32,6 +32,7 @@ from xmuse_core.chat.api_models import (
     DispatchFailedRequest,
     GodRoomBlueprintFreezeRequest,
     GodRoomLaneDagRequest,
+    GodRoomLanePatchForwardRequest,
     GodRoomLaneRecoveryRequest,
     GodRoomLaneReviewIntakeRequest,
     GodRoomLaneReviewVerdictRequest,
@@ -1292,6 +1293,175 @@ def _build_god_room_lane_review_verdict(
     }
 
 
+def _apply_god_room_lane_patch_forward(
+    base_dir: Path,
+    *,
+    conversation_id: str,
+    request: GodRoomLanePatchForwardRequest,
+) -> dict[str, object]:
+    if not _conversation_exists(_store(base_dir), conversation_id):
+        raise HTTPException(status_code=404, detail="conversation not found")
+    plan = _load_lane_dag_plan(base_dir, request.graph_id)
+    if str(plan.lane_graph.conversation_id) != conversation_id:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "god_room_lane_patch_forward_conversation_mismatch",
+                "message": "laneDAG artifact does not belong to the conversation",
+            },
+        )
+    verdict_path = _god_room_lane_review_verdict_artifact_path(
+        base_dir,
+        graph_id=request.graph_id,
+        lane_id=request.lane_id,
+    )
+    if not verdict_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "god_room_lane_review_verdict_not_found",
+                "message": "patch-forward requires a review verdict artifact",
+            },
+        )
+    try:
+        verdict_artifact = json.loads(verdict_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "god_room_lane_review_verdict_invalid",
+                "message": str(exc),
+            },
+        ) from exc
+    if not isinstance(verdict_artifact, dict):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "god_room_lane_review_verdict_invalid",
+                "message": "review verdict artifact must be an object",
+            },
+        )
+    if (
+        verdict_artifact.get("conversation_id") != conversation_id
+        or verdict_artifact.get("graph_id") != request.graph_id
+        or verdict_artifact.get("lane_id") != request.lane_id
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "god_room_lane_review_verdict_mismatch",
+                "message": "review verdict artifact does not match request scope",
+            },
+        )
+    try:
+        verdict = ReviewVerdict.model_validate(verdict_artifact.get("review_verdict"))
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "god_room_lane_review_verdict_invalid",
+                "message": str(exc),
+            },
+        ) from exc
+    if verdict.decision is not ReviewDecision.PATCH_FORWARD:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "god_room_lane_patch_forward_requires_patch_verdict",
+                "message": "patch-forward laneDAG update requires patch-forward verdict",
+            },
+        )
+    if not verdict.patch_instructions:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "god_room_lane_patch_forward_missing_instructions",
+                "message": "patch-forward verdict is missing patch instructions",
+            },
+        )
+    patch_lane_id = request.patch_lane_id or (
+        f"{request.lane_id}-patch-forward-{_artifact_path_id(verdict.id)[-8:]}"
+    )
+    evidence_refs = _dedupe_text(
+        [
+            str(verdict_path.relative_to(base_dir)),
+            *verdict.evidence_refs,
+        ]
+    )
+    try:
+        patched_plan = BlueprintLaneDagService().append_patch_forward_lane(
+            plan,
+            failed_lane_id=request.lane_id,
+            patch_lane_id=patch_lane_id,
+            prompt=verdict.patch_instructions,
+            acceptance_criteria=[
+                f"Review verdict {verdict.id} patch-forward instructions are addressed.",
+                "Patch-forward output receives independent review before release.",
+            ],
+            verdict_ref=f"god_room_review_verdict:{verdict.id}",
+            evidence_refs=evidence_refs,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "god_room_lane_patch_forward_invalid",
+                "message": str(exc),
+            },
+        ) from exc
+    artifacts = _write_lane_dag_artifacts(base_dir, patched_plan)
+    patch_link = patched_plan.patch_forward_links[-1].model_dump(mode="json")
+    patch_contract = next(
+        contract
+        for contract in patched_plan.lane_contracts
+        if contract.lane_id == patch_lane_id
+    )
+    patch_forward_payload: dict[str, object] = {
+        "schema_version": "xmuse.god_room_lane_patch_forward.v1",
+        "source_authority": "god_room_lane_review_verdict_artifact+lane_dag_artifact",
+        "proof_level": "contract_proof",
+        "conversation_id": conversation_id,
+        "graph_id": request.graph_id,
+        "failed_lane_id": request.lane_id,
+        "patch_lane_id": patch_lane_id,
+        "blueprint_proof_level": patched_plan.blueprint_proof_level,
+        "review_verdict_artifact": str(verdict_path.relative_to(base_dir)),
+        "patch_forward_link": patch_link,
+        "patch_lane_contract": patch_contract.model_dump(mode="json"),
+        "lane_dag_artifacts": artifacts,
+        "manual_gaps": [
+            "patch_lane_not_executed",
+            "patch_lane_not_reviewed",
+            "release_evidence_not_linked",
+        ],
+        "forbidden_claims": [
+            "end_to_end_execution_review_closure",
+            "ready_to_merge",
+            "pr_merged",
+            "github_review_truth",
+        ],
+    }
+    patch_forward_path = _write_god_room_lane_patch_forward_artifact(
+        base_dir,
+        graph_id=request.graph_id,
+        lane_id=request.lane_id,
+        payload=patch_forward_payload,
+    )
+    return {
+        "source_authority": "god_room_lane_review_verdict_artifact+lane_dag_artifact",
+        "conversation_id": conversation_id,
+        "graph_id": request.graph_id,
+        "failed_lane_id": request.lane_id,
+        "patch_lane_id": patch_lane_id,
+        "lane_dag": patched_plan.model_dump(mode="json"),
+        "patch_forward": patch_forward_payload,
+        "artifacts": {
+            **artifacts,
+            "patch_forward": str(patch_forward_path.relative_to(base_dir)),
+        },
+    }
+
+
 def _build_god_room_memoryos_plan(
     base_dir: Path,
     *,
@@ -2053,13 +2223,50 @@ def _write_god_room_lane_review_verdict_artifact(
     lane_id: str,
     payload: dict[str, object],
 ) -> Path:
-    path = (
+    path = _god_room_lane_review_verdict_artifact_path(
+        base_dir,
+        graph_id=graph_id,
+        lane_id=lane_id,
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def _god_room_lane_review_verdict_artifact_path(
+    base_dir: Path,
+    *,
+    graph_id: str,
+    lane_id: str,
+) -> Path:
+    return (
         base_dir
         / "reports"
         / "god_room_review_verdicts"
         / (
             f"{_artifact_path_id(graph_id)}."
             f"{_artifact_path_id(lane_id)}.review-verdict.json"
+        )
+    )
+
+
+def _write_god_room_lane_patch_forward_artifact(
+    base_dir: Path,
+    *,
+    graph_id: str,
+    lane_id: str,
+    payload: dict[str, object],
+) -> Path:
+    path = (
+        base_dir
+        / "reports"
+        / "god_room_patch_forward"
+        / (
+            f"{_artifact_path_id(graph_id)}."
+            f"{_artifact_path_id(lane_id)}.patch-forward.json"
         )
     )
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -3140,6 +3347,20 @@ def create_app(
         request: GodRoomLaneReviewVerdictRequest,
     ) -> dict[str, object]:
         return _build_god_room_lane_review_verdict(
+            root,
+            conversation_id=conversation_id,
+            request=request,
+        )
+
+    @app.post(
+        "/api/chat/conversations/{conversation_id}/god-room/lane-dag/patch-forward",
+        status_code=status.HTTP_201_CREATED,
+    )
+    def apply_god_room_lane_patch_forward(
+        conversation_id: str,
+        request: GodRoomLanePatchForwardRequest,
+    ) -> dict[str, object]:
+        return _apply_god_room_lane_patch_forward(
             root,
             conversation_id=conversation_id,
             request=request,

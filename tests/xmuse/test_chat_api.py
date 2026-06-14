@@ -1982,6 +1982,157 @@ def test_chat_api_god_room_lane_review_verdict_requires_decision_details(
     ).exists()
 
 
+def test_chat_api_god_room_lane_patch_forward_appends_lanedag_lane(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    conv_id = _create_god_room_lane_dag(client, graph_id="graph-patch-forward")
+    assert client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-intake",
+        json={
+            "graph_id": "graph-patch-forward",
+            "lane_id": "lane-runtime-api",
+            "worker_candidate_refs": ["worker-candidate:patch-run-1"],
+            "execution_artifact_refs": ["artifacts/lane-runtime-api/result.json"],
+        },
+    ).status_code == 201
+    verdict = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-verdict",
+        json={
+            "graph_id": "graph-patch-forward",
+            "lane_id": "lane-runtime-api",
+            "reviewer_id": "review-god",
+            "decision": "patch-forward",
+            "summary": "Candidate needs a bounded patch lane.",
+            "evidence_refs": [
+                "worker-candidate:patch-run-1",
+                "artifacts/lane-runtime-api/result.json",
+            ],
+            "patch_instructions": "Repair recovery evidence lineage.",
+        },
+    )
+    assert verdict.status_code == 201
+
+    response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/patch-forward",
+        json={
+            "graph_id": "graph-patch-forward",
+            "lane_id": "lane-runtime-api",
+            "patch_lane_id": "lane-runtime-api-patch-1",
+        },
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["source_authority"] == (
+        "god_room_lane_review_verdict_artifact+lane_dag_artifact"
+    )
+    assert payload["patch_lane_id"] == "lane-runtime-api-patch-1"
+    patch_forward = payload["patch_forward"]
+    assert patch_forward["schema_version"] == "xmuse.god_room_lane_patch_forward.v1"
+    assert patch_forward["proof_level"] == "contract_proof"
+    assert patch_forward["blueprint_proof_level"] == "contract_proof"
+    assert "patch_lane_not_executed" in patch_forward["manual_gaps"]
+    assert "patch_lane_not_reviewed" in patch_forward["manual_gaps"]
+    assert "release_evidence_not_linked" in patch_forward["manual_gaps"]
+    assert "end_to_end_execution_review_closure" in patch_forward["forbidden_claims"]
+    assert "ready_to_merge" in patch_forward["forbidden_claims"]
+    assert "pr_merged" in patch_forward["forbidden_claims"]
+    assert "github_review_truth" in patch_forward["forbidden_claims"]
+    patch_lane = next(
+        lane
+        for lane in payload["lane_dag"]["lane_graph"]["lanes"]
+        if lane["feature_id"] == "lane-runtime-api-patch-1"
+    )
+    assert patch_lane["task_type"] == "patch_forward"
+    assert patch_lane["source_lane_id"] == "lane-runtime-api"
+    assert patch_lane["prompt"] == "Repair recovery evidence lineage."
+    patch_contract = patch_forward["patch_lane_contract"]
+    assert patch_contract["lane_id"] == "lane-runtime-api-patch-1"
+    assert any(
+        ref.endswith("graph-patch-forward.lane-runtime-api.review-verdict.json")
+        for ref in patch_contract["source_refs"]
+    )
+    assert "worker-candidate:patch-run-1" in patch_contract["source_refs"]
+    assert patch_forward["patch_forward_link"]["failed_lane_id"] == "lane-runtime-api"
+    assert patch_forward["patch_forward_link"]["patch_lane_id"] == (
+        "lane-runtime-api-patch-1"
+    )
+    assert (tmp_path / payload["artifacts"]["lane_dag"]).exists()
+    assert (tmp_path / payload["artifacts"]["patch_forward"]).exists()
+    assert not (tmp_path / "review_plane.json").exists()
+    assert not (tmp_path / "feature_lanes.json").exists()
+
+
+def test_chat_api_god_room_lane_patch_forward_requires_patch_verdict(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    conv_id = _create_god_room_lane_dag(client, graph_id="graph-patch-reject")
+    assert client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-intake",
+        json={
+            "graph_id": "graph-patch-reject",
+            "lane_id": "lane-runtime-api",
+            "worker_candidate_refs": ["worker-candidate:merge-run-1"],
+        },
+    ).status_code == 201
+    assert client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-verdict",
+        json={
+            "graph_id": "graph-patch-reject",
+            "lane_id": "lane-runtime-api",
+            "reviewer_id": "review-god",
+            "decision": "merge",
+            "summary": "Candidate is accepted by independent review.",
+            "evidence_refs": ["worker-candidate:merge-run-1"],
+        },
+    ).status_code == 201
+
+    response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/patch-forward",
+        json={
+            "graph_id": "graph-patch-reject",
+            "lane_id": "lane-runtime-api",
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == (
+        "god_room_lane_patch_forward_requires_patch_verdict"
+    )
+    assert not (
+        tmp_path
+        / "reports"
+        / "god_room_patch_forward"
+        / "graph-patch-reject.lane-runtime-api.patch-forward.json"
+    ).exists()
+
+
+def test_chat_api_god_room_lane_patch_forward_requires_verdict_artifact(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    conv_id = _create_god_room_lane_dag(client, graph_id="graph-patch-missing-verdict")
+
+    response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/patch-forward",
+        json={
+            "graph_id": "graph-patch-missing-verdict",
+            "lane_id": "lane-runtime-api",
+        },
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"]["code"] == "god_room_lane_review_verdict_not_found"
+    assert not (
+        tmp_path
+        / "reports"
+        / "god_room_patch_forward"
+        / "graph-patch-missing-verdict.lane-runtime-api.patch-forward.json"
+    ).exists()
+
+
 def test_chat_api_god_room_lane_recovery_rejects_graph_path_escape(
     tmp_path: Path,
 ) -> None:
