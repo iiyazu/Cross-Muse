@@ -26,6 +26,13 @@ GOD groupchat deliberation
 - graph-set / lane graph / review plane / GitHub checks / MemoryOS refs 才是对应阶段的权威，
   `feature_lanes.json`、cards、dashboard/TUI 读模型是投影或视图。
 
+长 `/goal` 的生产闭环推进采用 Wave A-E 顺序，而不是平均推进 L1-L11：
+Wave A=L1-L2 authority root，Wave B=L3-L5 GOD room speech runtime，
+Wave C=L6-L7 deliberation-to-execution authority，Wave D=L8-L9 execution
+safety，Wave E=L10-L11 aggregation/operator surface。具体行为规范见
+`docs/xmuse/goal-behavior-contract.md`，当前 wave cursor 见
+`docs/xmuse/production-closure-gap-ledger.md`。
+
 ## 当前权威文档
 
 | 文档 | 用途 |

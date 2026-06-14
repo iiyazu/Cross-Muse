@@ -20,13 +20,16 @@ Read and follow:
 - docs/xmuse/goal-stage-harness.md
 
 Target scope:
-- Prioritize Goal A / Wave A: L1-L2 authority root.
-- Close or materially advance durable ProviderAccount, GodProfile, and
-  RoomSelectedGodBinding authority.
-- Prove L3/L4 consume selected binding, or record manual_gap where the runtime
-  path is not yet implemented.
-- Do not expand L11 cockpit/TUI except to preserve explicit manual_gap or
-  contract_proof labels.
+- Use the Wave A-E order in goal-behavior-contract.md and the current wave
+  cursor in production-closure-gap-ledger.md.
+- Do not average effort across L1-L11.
+- Current default: Wave D / L9. Consume `xmuse.local_runner_recovery_proof.v1`
+  as recovery enforcement lineage in the review/release evidence chain.
+- Prove only what the slice produces. Do not upgrade worker output, local tests,
+  recovery artifacts, CI, MemoryOS plans, TUI/read models, or release evidence
+  aggregation into review/server truth.
+- Do not expand Wave E / L10-L11 cockpit or overnight surfaces except to report
+  explicit manual_gap / contract_proof boundaries.
 
 Required process:
 1. Truth refresh: inspect git status, branch, HEAD, recent commits, PR/CI if
@@ -36,12 +39,17 @@ Required process:
    files, tests, and docs.
 3. Production slice: implement the smallest real contract/store/resolver/runtime
    path with fail-closed behavior and evidence output.
-4. Targeted tests: add focused contract/runtime/negative tests after the
+4. OpenCode: use bounded OpenCode/DeepSeek workers only for inventories,
+   mechanical candidate patches, low-intelligence lane execution, or read-only
+   review. Invoke via goal_stage_runner.py using
+   `opencode run --model opencode-go/deepseek-v4-flash --variant max`.
+   Codex must independently review all output and remains final judge.
+5. Targeted tests: add focused contract/runtime/negative tests after the
    authority path is clear. Do not use tests to invent architecture.
-5. Self-review: audit false closure, TDD abuse, projection authority, provider
+6. Self-review: audit false closure, TDD abuse, projection authority, provider
    inventory bypass, capture-vs-invocation proof, worker truth, GitHub truth,
    and repeated-failure refactor needs.
-6. Ledger: update production-closure-gap-ledger.md only for claims actually
+7. Ledger: update production-closure-gap-ledger.md only for claims actually
    changed, with explicit proof_level and forbidden claims preserved.
 
 Validation:

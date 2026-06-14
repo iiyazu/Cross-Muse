@@ -82,20 +82,202 @@ forbidden_claims: ["peer_god_live_proof", "provider_invocation_live_proof"]
 Do not attempt to close L1-L11 in one goal. Choose a bounded target and keep
 downstream work honest.
 
-Recommended wave order:
+Use wave-first closure order. Do not spend equal effort across L1-L11; advance
+the earliest wave whose upstream proof is strong enough and whose next slice
+materially increases production closure.
 
 | Wave | Layers | Purpose |
 |---|---|---|
-| A | L1-L2 | Authority and GOD/provider binding root |
-| B | L3-L5 | Durable GOD room and provider-backed speech |
-| C | L6-L7 | Blueprint freeze and laneDAG authority |
-| D | L8-L9 | Execution, recovery, review, and patch-forward |
-| E | L10 | MemoryOS, release evidence, and GitHub truth |
-| F | L11 | Cockpit and overnight soak after upstream proof |
+| A | L1-L2 | Authority root: who may write truth; who is a GOD; who is only a provider/worker |
+| B | L3-L5 | GOD room speech runtime: selected GOD -> provider invocation -> durable event -> replay |
+| C | L6-L7 | Deliberation-to-execution authority: room events -> blueprint freeze -> authoritative laneDAG |
+| D | L8-L9 | Execution safety: runner/recovery enforcement -> review truth -> patch-forward lineage |
+| E | L10-L11 | Aggregation/operator surface: MemoryOS/GitHub truth -> TUI/cockpit/overnight soak |
 
 L11 is a terminal integration layer. It must not be used to justify upstream
 shortcuts. Provider invocation controls belong in L11 only after L2-L5 are
 honestly closed or explicitly displayed as `manual_gap` / `contract_proof`.
+
+Current wave cursor must be re-evaluated from the ledger at the start of every
+goal. As of the L8 runner recovery proof slice, Wave A has contract proof,
+Wave B has bounded/opt-in provider speech proof, Wave C carries lineage through
+freeze/laneDAG/status contracts, and Wave D is the active production focus. The
+default next target is L9 review/release lineage that consumes L8 recovery
+proof without upgrading worker output, local tests, or recovery artifacts into
+review/server truth.
+
+## Wave Closure Rules
+
+### Wave A - L1-L2 Authority Root
+
+Goal:
+
+- Close who can write truth, which store owns it, which actor is a GOD, and
+  which actor is only a provider or worker.
+
+Minimal next slices:
+
+- L1: `xmuse.authority_boundary_audit.v1` inventory for mutating paths:
+  `path_id`, component, `mutates_state`, `writes_to`,
+  `reads_from_projection`, `projection_used_as_authority`, decision, reason,
+  and source files.
+- L2: `xmuse.selected_god_binding_resolution.v1` proving
+  `RoomSelectedGodBinding` is consumed by L3 authorship and L4 invocation
+  attempts.
+
+OpenCode may produce candidate inventories, grep reports, serializer/test
+boilerplate, and migration lists. Codex must decide authority classification,
+peer-GOD status, and proof level.
+
+Acceptance:
+
+- Every audited mutating path has an owner and decision.
+- Projection-as-authority is marked `manual_gap` or `refactor_required`.
+- Provider inventory never becomes GOD identity.
+- Missing account/model/CLI/proof config fails closed.
+
+Forbidden claims:
+
+- Do not claim all runtime status authority is fully centralized.
+- Do not claim OpenCode or any CLI is peer-GOD because it appears in inventory.
+
+### Wave B - L3-L5 GOD Room Speech Runtime
+
+Goal:
+
+- Close the chain selected GOD -> L4 provider invocation artifact -> L5 durable
+  room event capture -> L3 replay proof.
+
+Minimal next slices:
+
+- L3: authored event binding proof that every room event carries actor,
+  binding/source, and proof-level classification.
+- L4: `xmuse.god_room_provider_speech_response.v1` from selected binding,
+  with command/model/variant, prompt/output refs, timing, exit status, and
+  fail-closed outcomes.
+- L5: L4 artifact -> durable event capture -> replay proof with digest and
+  lineage checks.
+
+OpenCode may build subprocess wrappers, stdout/stderr/raw-archive helpers,
+negative tests, replay lookup helpers, and schema propagation. Codex must decide
+invocation/capture proof semantics and prevent proof inflation.
+
+Acceptance:
+
+- Provider-backed events require L4/L5 lineage.
+- Imported fixtures remain `contract_proof`.
+- L4 artifacts do not directly write durable room events.
+- L5 capture cannot be described as fresh L4 invocation proof.
+
+Forbidden claims:
+
+- Do not claim natural peer-GOD groupchat closure.
+- Do not claim live provider invocation from capture-only evidence.
+
+### Wave C - L6-L7 Deliberation-To-Execution Authority
+
+Goal:
+
+- Close durable room event lineage -> blueprint freeze -> laneDAG/graph-set
+  authority.
+
+Minimal next slices:
+
+- L6: freeze proof classifier so fixture freezes, provider-backed freezes, and
+  future natural multi-GOD freezes are separated.
+- L7: lane authority consumption proof that dispatch/review consumes laneDAG,
+  graph-set, and lane runtime contract instead of projection state.
+
+OpenCode may find fixture freeze call sites, `feature_lanes.json` reads/writes,
+dispatch/review entry points, and mechanical schema propagation. Codex must
+decide whether a path is authoritative or only compatibility/projection.
+
+Acceptance:
+
+- Freeze artifacts include source-event lineage, assumptions, blockers,
+  rejected alternatives, and source refs.
+- Fixture-only freeze is `contract_proof`.
+- `feature_lanes.json` remains projection.
+- Detached laneDAG artifacts do not become execution authority alone.
+
+Forbidden claims:
+
+- Do not claim natural deliberation closure from clean fixtures.
+- Do not claim full blueprint-to-execution authority until dispatch/review
+  consume the authoritative lane contract.
+
+### Wave D - L8-L9 Execution Safety
+
+Goal:
+
+- Close recovery enforcement, review truth, independent verdicts, and
+  patch-forward lineage.
+
+Minimal next slices:
+
+- L8: recovery enforcement path matrix for runner candidate selection,
+  orchestrator dispatch, review intake, patch-forward scheduling, and
+  supervisor loop. Each path must prove blocked lanes cannot proceed, retry
+  budgets are respected, `refactor_required` blocks same-path patching, and
+  `manual_gap` is preserved.
+- L9: `god_room_lane_review_chain_proof`: L6 freeze -> L7 lane contract -> L8
+  recovery decision -> bounded worker candidate -> independent review verdict
+  -> accepted/reworked/rejected state -> patch-forward lineage -> release
+  evidence link.
+
+OpenCode may execute bounded low-intelligence lanes, generate candidate patches,
+produce candidate test/report artifacts, and run read-only reviews. Codex is
+the review owner and final verdict authority.
+
+Acceptance:
+
+- Every execution path reads durable recovery artifacts where required.
+- Worker output is candidate evidence only.
+- Independent review verdict exists before review truth is claimed.
+- Patch-forward artifacts and release evidence cite the lane/recovery/review
+  lineage.
+- Local tests are not review truth.
+
+Forbidden claims:
+
+- Do not claim overnight-safe recovery from local runner proof.
+- Do not claim end-to-end execution/review closure until one GOD-room-originated
+  lane is proven through execution, review, patch-forward, and release evidence.
+
+### Wave E - L10-L11 Aggregation And Operator Surface
+
+Goal:
+
+- Aggregate only upstream proof, then expose it through cockpit/overnight
+  surfaces without inventing truth.
+
+Minimal next slices:
+
+- L10: honest replay bundle refresh containing provider speech or manual gap,
+  freeze, laneDAG, execution/review, MemoryOS trace or governed plan gap,
+  GitHub CI truth, GitHub review truth or blocker, and merge truth or blocker.
+- L11: native CLI bridge contract only: selected L2 binding starts real CLI,
+  raw terminal output is archived, operator input gets source refs, L4/L5
+  lineage is required before durable speech is claimed, and pane registry
+  remains projection.
+
+OpenCode may draft evidence schemas, GitHub truth JSON shape, trace mapping,
+clowder-ai reference summaries, raw archive helpers, and read-only TUI viewers.
+Codex must decide readiness, merge truth, MemoryOS live proof, and authority
+classification.
+
+Acceptance:
+
+- Release evidence only aggregates upstream artifacts.
+- MemoryOS plan is not live MemoryOS trace.
+- CI success is not review/merge truth.
+- Draft/open/unmerged PR state preserves no `pr_merged`.
+- Raw terminal output does not become durable GOD speech without L4/L5 lineage.
+
+Forbidden claims:
+
+- Do not claim `ready_to_merge`, `pr_merged`, live MemoryOS, complete cockpit,
+  or overnight readiness without matching live/server proof.
 
 ### Phase 2 - Authority Design
 
@@ -313,11 +495,12 @@ Anti-abuse rule:
 - Do not only test a recovery classifier. Prove runner/supervisor cannot bypass
   recovery decisions. Local tests or worker self-report are not review truth.
 
-### Goal E - L10 MemoryOS / Release / GitHub Truth
+### Goal E - L10-L11 Aggregation / Operator Surface
 
 Target:
 
-- Aggregate evidence without inventing server truth.
+- Aggregate evidence without inventing server truth, then expose it through
+  cockpit/overnight surfaces without bypassing upstream proof.
 
 Completion definition:
 
@@ -326,20 +509,6 @@ Completion definition:
 - GitHub review, checks, and merge truth are separate.
 - `pr_merged` comes only from server-side merge proof.
 - `ready_for_replay` is not `ready_to_merge`.
-
-Anti-abuse rule:
-
-- Do not set release decision to ready through tests and call it merge
-  readiness. Do not treat MemoryOS plan artifact as live trace.
-
-### Goal F - L11 Cockpit / Overnight Soak
-
-Target:
-
-- Terminal cockpit and soak after upstream proof.
-
-Completion definition:
-
 - `NativeCliSessionBridge` starts real selected CLI from L2 binding.
 - `MachineEventBridge` emits L4 artifact or downgrades to `raw_archive_only`.
 - `GodRoomProjectionBridge` projects only L3/L5 durable speech.
@@ -350,8 +519,10 @@ Completion definition:
 
 Anti-abuse rule:
 
-- Do not first expand TUI panels. Raw terminal output, pane registry state, and
-  provider process session are not durable GOD room speech.
+- Do not set release decision to ready through tests and call it merge
+  readiness. Do not treat MemoryOS plan artifact as live trace. Do not first
+  expand TUI panels. Raw terminal output, pane registry state, and provider
+  process session are not durable GOD room speech.
 
 ## TDD Abuse Detector
 

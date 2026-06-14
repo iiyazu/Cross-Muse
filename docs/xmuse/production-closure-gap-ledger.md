@@ -219,10 +219,24 @@ Current closure audit:
   claim-boundary governance.
 - Least closed areas: natural multi-GOD deliberation, GOD-room-originated
   execution/review, live MemoryOS trace, and GitHub merge truth.
-- Next production priority: prove a GOD-room-originated lane through live
-  runner execution/review and carry graph-status/review-closure lineage into
-  MemoryOS source-ref candidates without inflating it to natural groupchat,
-  review truth, live MemoryOS, or server truth.
+- Wave cursor:
+  - Wave A / L1-L2 has contract proof. Do not redo it unless an authority
+    bypass regression is found.
+  - Wave B / L3-L5 has bounded/opt-in provider-backed speech, capture, and
+    replay proof. Do not overread it as natural peer-GOD groupchat.
+  - Wave C / L6-L7 carries durable event lineage into freeze, laneDAG,
+    graph-set, and graph-native status contracts. Do not overread it as full
+    execution authority.
+  - Wave D / L8-L9 is the current production focus. L8 now has a local runner
+    recovery proof artifact; the next priority is L9 review/release lineage.
+  - Wave E / L10-L11 must wait for honest L8-L9 lineage before claiming
+    release readiness, complete cockpit, or overnight proof.
+- Next production priority: consume `xmuse.local_runner_recovery_proof.v1` in
+  the L9 review/release evidence chain as recovery enforcement lineage only,
+  then prove a graph-native GOD-room-originated lane through local execution,
+  independent review, patch-forward, and release-evidence linkage without
+  inflating worker output, local tests, recovery artifacts, CI, MemoryOS plans,
+  or TUI projections into review/server truth.
 
 ## L1 - Authority / Boundary Model
 
