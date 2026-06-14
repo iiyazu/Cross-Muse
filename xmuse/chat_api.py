@@ -38,6 +38,7 @@ from xmuse_core.chat.api_models import (
     GodRoomLaneReviewIntakeRequest,
     GodRoomLaneReviewVerdictRequest,
     GodRoomMemoryPlanRequest,
+    GodRoomMultiTurnProviderSpeechRequest,
     GodRoomProviderInvocationCaptureRequest,
     GodRoomProviderInvocationRequest,
     GodRoomSpeakerAttemptRequest,
@@ -69,6 +70,7 @@ from xmuse_core.chat.god_room_provider_invocation import (
 )
 from xmuse_core.chat.god_room_runtime import (
     GodRoomActorKind,
+    GodRoomEventKind,
     GodRoomEventV1,
     GodRoomParticipant,
 )
@@ -2145,6 +2147,203 @@ def _invoke_and_capture_god_room_provider_speech_from_runtime(
     }
 
 
+def _run_god_room_multi_turn_provider_speech_from_runtime(
+    base_dir: Path,
+    *,
+    execution_worktree: Path,
+    conversation_id: str,
+    request: GodRoomMultiTurnProviderSpeechRequest,
+) -> dict[str, object]:
+    if not _conversation_exists(_store(base_dir), conversation_id):
+        raise HTTPException(status_code=404, detail="conversation not found")
+    event_store = _god_room_event_store(base_dir)
+    room_id = _default_god_room_id(conversation_id)
+    try:
+        event_store.load_room(room_id)
+    except GodRoomMembershipError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "god_room_not_found", "message": str(exc)},
+        ) from exc
+
+    after_event_id = request.after_event_id
+    turns: list[dict[str, object]] = []
+    status_value = "completed"
+    blocked_reason: str | None = None
+
+    for turn_number in range(1, request.max_turns + 1):
+        if request.stop_on_freeze_requested and _god_room_after_event_is_freeze_requested(
+            event_store,
+            room_id=room_id,
+            event_id=after_event_id,
+        ):
+            status_value = "stopped"
+            blocked_reason = "after_event_id is freeze_requested"
+            break
+
+        event_id = (
+            f"{request.event_id_prefix}-{turn_number}"
+            if request.event_id_prefix is not None
+            else None
+        )
+        turn_result = _invoke_and_capture_god_room_provider_speech_from_runtime(
+            base_dir,
+            execution_worktree=execution_worktree,
+            conversation_id=conversation_id,
+            request=GodRoomProviderInvocationCaptureRequest(
+                after_event_id=after_event_id,
+                event_id=event_id,
+                prompt=request.prompt,
+                timeout_seconds=request.timeout_seconds,
+                allow_live_provider_proof=request.allow_live_provider_proof,
+            ),
+        )
+        speaker_response_obj = turn_result["speaker_response"]
+        if not isinstance(speaker_response_obj, dict):
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "code": "god_room_multi_turn_invalid_speaker_response",
+                    "message": "single-turn provider capture returned invalid payload",
+                },
+            )
+        speaker_response = speaker_response_obj
+        turn_payload: dict[str, object] = {
+            "turn_number": turn_number,
+            "after_event_id": after_event_id,
+            "speaker_attempt": turn_result["speaker_attempt"],
+            "provider_response": turn_result["provider_response"],
+            "speaker_response": speaker_response,
+            "artifacts": turn_result["artifacts"],
+        }
+        speak_event = speaker_response.get("speak_event")
+        if isinstance(speak_event, dict):
+            turn_payload["appended_event_id"] = speak_event.get("event_id")
+        turns.append(turn_payload)
+
+        if speaker_response.get("status") != "speak_event_appended":
+            status_value = "partial"
+            blocked_reason = _optional_str(speaker_response.get("blocked_reason")) or (
+                "speaker response was not appended"
+            )
+            break
+        if not isinstance(speak_event, dict) or not isinstance(
+            speak_event.get("event_id"), str
+        ):
+            status_value = "partial"
+            blocked_reason = "speaker response did not expose appended event id"
+            break
+        after_event_id = speak_event["event_id"]
+
+    room_payload = _god_room_payload(event_store, room_id)
+    proof_level = _multi_turn_provider_speech_proof_level(turns, status_value)
+    run_payload: dict[str, object] = {
+        "schema_version": "xmuse.god_room_multi_turn_provider_speech_run.v1",
+        "status": status_value,
+        "proof_level": proof_level,
+        "source_authority": (
+            "god_room_event_store+room_selected_god_binding+provider_invocation"
+            "+provider_response_capture"
+        ),
+        "conversation_id": conversation_id,
+        "room_id": room_id,
+        "max_turns": request.max_turns,
+        "turn_count": len(turns),
+        "initial_after_event_id": request.after_event_id,
+        "final_after_event_id": after_event_id,
+        "blocked_reason": blocked_reason,
+        "turns": turns,
+        "room": room_payload,
+        "manual_gaps": _multi_turn_provider_speech_manual_gaps(
+            proof_level=proof_level,
+            status_value=status_value,
+            blocked_reason=blocked_reason,
+        ),
+        "forbidden_claims": _multi_turn_provider_speech_forbidden_claims(proof_level),
+    }
+    artifact_path = _write_god_room_multi_turn_provider_speech_run_artifact(
+        base_dir,
+        conversation_id=conversation_id,
+        after_event_id=request.after_event_id,
+        payload=run_payload,
+    )
+    run_payload["artifacts"] = {
+        "multi_turn_provider_speech_run": str(artifact_path.relative_to(base_dir))
+    }
+    return run_payload
+
+
+def _god_room_after_event_is_freeze_requested(
+    event_store: GodRoomEventStore,
+    *,
+    room_id: str,
+    event_id: str | None,
+) -> bool:
+    if event_id is None:
+        return False
+    snapshot = event_store.load_room(room_id)
+    for event in snapshot.events:
+        if event.event_id == event_id:
+            return event.event_type is GodRoomEventKind.FREEZE_REQUESTED
+    return False
+
+
+def _multi_turn_provider_speech_proof_level(
+    turns: list[dict[str, object]],
+    status_value: str,
+) -> Literal["contract_proof", "manual_gap", "opt_in_live_proof"]:
+    for turn in turns:
+        speaker_response = turn.get("speaker_response")
+        if not isinstance(speaker_response, dict):
+            continue
+        if speaker_response.get("proof_level") == "real_provider_proof":
+            return "opt_in_live_proof"
+    if status_value == "partial":
+        return "manual_gap"
+    return "contract_proof"
+
+
+def _multi_turn_provider_speech_manual_gaps(
+    *,
+    proof_level: str,
+    status_value: str,
+    blocked_reason: str | None,
+) -> list[str]:
+    gaps: list[str] = [
+        "natural_multi_god_groupchat_not_proven",
+        "peer_god_live_proof_not_proven",
+    ]
+    if proof_level != "opt_in_live_proof":
+        gaps.append("opt_in_live_provider_speech_not_proven")
+    if status_value == "partial":
+        gaps.append("multi_turn_provider_speech_incomplete")
+    if blocked_reason:
+        gaps.append(f"blocked_reason:{blocked_reason}")
+    return gaps
+
+
+def _multi_turn_provider_speech_forbidden_claims(proof_level: str) -> list[str]:
+    claims = [
+        "peer_god_live_proof",
+        "natural_groupchat_closure",
+        "autonomous_provider_speech_closure",
+        "ready_to_merge",
+        "pr_merged",
+    ]
+    if proof_level == "opt_in_live_proof":
+        claims.append("provider_invocation_live_proof_beyond_returned_turn_artifacts")
+    else:
+        claims.append("provider_invocation_live_proof")
+    return claims
+
+
+def _optional_str(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
 def _build_god_room_provider_invocation_artifact(
     base_dir: Path,
     *,
@@ -2881,6 +3080,33 @@ def _write_god_room_speaker_response_artifact(
             f"{_artifact_safe_id(conversation_id)}."
             f"{_artifact_safe_id(replay_event_id)}."
             f"{_artifact_safe_id(response_event_id)}.speaker-response.json"
+        )
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def _write_god_room_multi_turn_provider_speech_run_artifact(
+    base_dir: Path,
+    *,
+    conversation_id: str,
+    after_event_id: str | None,
+    payload: dict[str, object],
+) -> Path:
+    replay_event_id = after_event_id or "latest"
+    run_id = uuid.uuid4().hex
+    path = (
+        base_dir
+        / "reports"
+        / "god_room_provider_speech_runs"
+        / (
+            f"{_artifact_safe_id(conversation_id)}."
+            f"{_artifact_safe_id(replay_event_id)}."
+            f"{run_id}.multi-turn-provider-speech.json"
         )
     )
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -3801,6 +4027,21 @@ def create_app(
         request: GodRoomProviderInvocationCaptureRequest,
     ) -> dict[str, object]:
         return _invoke_and_capture_god_room_provider_speech_from_runtime(
+            root,
+            execution_worktree=execution_root,
+            conversation_id=conversation_id,
+            request=request,
+        )
+
+    @app.post(
+        "/api/chat/conversations/{conversation_id}/god-room/multi-turn-provider-speech",
+        status_code=status.HTTP_201_CREATED,
+    )
+    def run_god_room_multi_turn_provider_speech(
+        conversation_id: str,
+        request: GodRoomMultiTurnProviderSpeechRequest,
+    ) -> dict[str, object]:
+        return _run_god_room_multi_turn_provider_speech_from_runtime(
             root,
             execution_worktree=execution_root,
             conversation_id=conversation_id,

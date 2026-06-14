@@ -103,6 +103,30 @@ def _seed_room_selected_god_bindings(
         )
 
 
+def _activate_god_room_sessions(
+    tmp_path: Path,
+    *,
+    conversation_id: str,
+    room: dict[str, object],
+    roles: tuple[str, ...] = ("architect", "review", "execute"),
+) -> None:
+    participants = {participant["role"]: participant for participant in room["participants"]}  # type: ignore[index]
+    session_registry = GodSessionRegistry(tmp_path / "god_sessions.json")
+    for role in roles:
+        participant = participants[role]
+        session = session_registry.find_by_conversation_participant(
+            conversation_id,
+            participant["participant_id"],
+        )
+        session_registry.update_provider_binding(
+            session.god_session_id,
+            provider_session_id=f"provider-thread-{role}",
+            provider_session_kind="provider_thread",
+            provider_binding_status="active",
+            provider_binding_failure_reason=None,
+        )
+
+
 def _manual_god_cli_registration_payload() -> dict[str, object]:
     return {
         "cli_id": "custom.peer",
@@ -1315,6 +1339,326 @@ def test_chat_api_god_room_provider_invocation_capture_appends_server_artifact(
     assert events[1]["payload"]["provider_response_artifact_ref"] == provider_artifact_ref
     assert events[1]["payload"]["binding_revision"] == capture["binding_revision"]
     assert payload["room"]["replay"]["status"] == "ok"
+
+
+def test_chat_api_god_room_multi_turn_provider_speech_appends_two_turns(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    calls: list[str] = []
+
+    def fake_provider_invocation(**kwargs):
+        attempt = kwargs["attempt"]
+        calls.append(attempt.target_participant_id)
+        return GodRoomProviderSpeechResponseV1(
+            response_id=f"provider-response-{len(calls)}",
+            status="completed",
+            proof_level="real_provider_proof",
+            target_participant_id=attempt.target_participant_id,
+            provider_profile_ref=attempt.provider_profile_ref,
+            provider_session_id=f"provider-thread-live-{len(calls)}",
+            provider_session_kind=attempt.provider_session_kind,
+            content=f"Provider-backed turn {len(calls)} from {attempt.target_god_id}.",
+            source_refs=[
+                f"provider_invocation:multi-turn-{len(calls)}",
+                f"provider_raw_output_sha256:multi-turn-{len(calls)}",
+            ],
+            conversation_id=attempt.conversation_id,
+            room_id=attempt.room_id,
+            target_god_id=attempt.target_god_id,
+            binding_revision=attempt.binding_revision,
+            account_ref=attempt.account_ref,
+            cli_command=attempt.cli_command,
+            model=attempt.model,
+            variant=attempt.variant,
+            invocation_id=f"provider-invocation-multi-turn-{len(calls)}",
+            invocation_status="completed",
+            prompt_refs=[f"prompt:multi-turn-{len(calls)}"],
+            output_refs=[f"provider_raw_output_sha256:multi-turn-{len(calls)}"],
+            raw_output_digest=f"multi-turn-{len(calls)}",
+            completed_at_utc=f"2026-06-14T10:0{len(calls)}:01Z",
+            started_at_utc=f"2026-06-14T10:0{len(calls)}:00Z",
+            duration_ms=1,
+            exit_code=0,
+        )
+
+    monkeypatch.setattr(
+        chat_api,
+        "invoke_god_room_provider_speech",
+        fake_provider_invocation,
+    )
+    client = _client(tmp_path)
+    conversation = client.post(
+        "/api/chat/conversations",
+        json={"title": "GOD room multi-turn provider speech"},
+    ).json()
+    conv_id = conversation["id"]
+    room = client.post(f"/api/chat/conversations/{conv_id}/god-room").json()["room"]
+    participants = {participant["role"]: participant for participant in room["participants"]}
+    GodCliSelectionStore(tmp_path / "god_cli_selections.json").record_selection(
+        conversation_id=conv_id,
+        cli_id="codex.god",
+        selected_by="operator",
+        audit_id="audit-select-multi-turn-provider-speech",
+        idempotency_key="select-multi-turn-provider-speech",
+    )
+    _seed_room_selected_god_bindings(tmp_path, room=room)
+    _activate_god_room_sessions(tmp_path, conversation_id=conv_id, room=room)
+    initial = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/events",
+        json={
+            "event_id": "evt-propose",
+            "room_id": room["room_id"],
+            "conversation_id": conv_id,
+            "participant_id": participants["architect"]["participant_id"],
+            "god_id": participants["architect"]["god_id"],
+            "actor_kind": "god",
+            "event_type": "speak",
+            "timestamp_utc": "2026-06-14T10:00:00Z",
+            "content": "Please run two provider-backed turns.",
+            "source_refs": [f"conversation:{conv_id}"],
+            "cli_id": participants["architect"]["cli_id"],
+            "provider_profile": "codex.god",
+            "payload": {"body": "Please run two provider-backed turns."},
+        },
+    )
+    assert initial.status_code == 201
+
+    response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/multi-turn-provider-speech",
+        json={
+            "after_event_id": "evt-propose",
+            "max_turns": 2,
+            "event_id_prefix": "evt-provider-speak",
+            "prompt": "Return structured GOD speech.",
+            "allow_live_provider_proof": True,
+        },
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["schema_version"] == (
+        "xmuse.god_room_multi_turn_provider_speech_run.v1"
+    )
+    assert payload["status"] == "completed"
+    assert payload["proof_level"] == "opt_in_live_proof"
+    assert payload["turn_count"] == 2
+    assert payload["final_after_event_id"] == "evt-provider-speak-2"
+    assert "natural_groupchat_closure" in payload["forbidden_claims"]
+    assert "peer_god_live_proof" in payload["forbidden_claims"]
+    assert "provider_invocation_live_proof_beyond_returned_turn_artifacts" in (
+        payload["forbidden_claims"]
+    )
+    run_artifact = payload["artifacts"]["multi_turn_provider_speech_run"]
+    assert run_artifact.startswith("reports/god_room_provider_speech_runs/")
+    assert (tmp_path / run_artifact).exists()
+    events = payload["room"]["events"]
+    assert [event["event_id"] for event in events] == [
+        "evt-propose",
+        "evt-provider-speak-1",
+        "evt-provider-speak-2",
+    ]
+    assert events[1]["participant_id"] == participants["review"]["participant_id"]
+    assert events[2]["participant_id"] == participants["execute"]["participant_id"]
+    assert payload["room"]["replay"]["status"] == "ok"
+    event_proofs = payload["room"]["replay"]["event_proofs"]
+    assert [proof["proof_level"] for proof in event_proofs[-2:]] == [
+        "opt_in_live_proof",
+        "opt_in_live_proof",
+    ]
+    for turn in payload["turns"]:
+        assert turn["speaker_response"]["status"] == "speak_event_appended"
+        assert turn["artifacts"]["provider_response"].startswith(
+            "reports/provider-responses/"
+        )
+        assert turn["artifacts"]["speaker_response"].startswith(
+            "reports/god_room_speaker_responses/"
+        )
+        assert (tmp_path / turn["artifacts"]["provider_response"]).exists()
+        assert (tmp_path / turn["artifacts"]["speaker_response"]).exists()
+    assert calls == [
+        participants["review"]["participant_id"],
+        participants["execute"]["participant_id"],
+    ]
+    assert not (tmp_path / "feature_lanes.json").exists()
+
+
+def test_chat_api_god_room_multi_turn_provider_speech_stops_on_manual_gap(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    calls = 0
+
+    def fake_contract_provider_invocation(**kwargs):
+        nonlocal calls
+        calls += 1
+        attempt = kwargs["attempt"]
+        return GodRoomProviderSpeechResponseV1(
+            response_id=f"provider-response-contract-{calls}",
+            status="completed",
+            proof_level="contract_proof",
+            target_participant_id=attempt.target_participant_id,
+            provider_profile_ref=attempt.provider_profile_ref,
+            provider_session_id=attempt.provider_session_id,
+            provider_session_kind=attempt.provider_session_kind,
+            content="Contract proof must not become durable provider speech.",
+            source_refs=[
+                f"provider_invocation:contract-multi-turn-{calls}",
+                f"provider_raw_output_sha256:contract-multi-turn-{calls}",
+            ],
+            conversation_id=attempt.conversation_id,
+            room_id=attempt.room_id,
+            target_god_id=attempt.target_god_id,
+            binding_revision=attempt.binding_revision,
+            account_ref=attempt.account_ref,
+            cli_command=attempt.cli_command,
+            model=attempt.model,
+            variant=attempt.variant,
+            invocation_id=f"provider-invocation-contract-multi-turn-{calls}",
+            invocation_status="completed",
+            prompt_refs=[f"prompt:contract-multi-turn-{calls}"],
+            output_refs=[f"provider_raw_output_sha256:contract-multi-turn-{calls}"],
+            raw_output_digest=f"contract-multi-turn-{calls}",
+            completed_at_utc="2026-06-14T11:00:01Z",
+            started_at_utc="2026-06-14T11:00:00Z",
+            duration_ms=1,
+            exit_code=0,
+        )
+
+    monkeypatch.setattr(
+        chat_api,
+        "invoke_god_room_provider_speech",
+        fake_contract_provider_invocation,
+    )
+    client = _client(tmp_path)
+    conversation = client.post(
+        "/api/chat/conversations",
+        json={"title": "GOD room multi-turn provider speech manual gap"},
+    ).json()
+    conv_id = conversation["id"]
+    room = client.post(f"/api/chat/conversations/{conv_id}/god-room").json()["room"]
+    participants = {participant["role"]: participant for participant in room["participants"]}
+    GodCliSelectionStore(tmp_path / "god_cli_selections.json").record_selection(
+        conversation_id=conv_id,
+        cli_id="codex.god",
+        selected_by="operator",
+        audit_id="audit-select-multi-turn-provider-speech-gap",
+        idempotency_key="select-multi-turn-provider-speech-gap",
+    )
+    _seed_room_selected_god_bindings(tmp_path, room=room)
+    _activate_god_room_sessions(tmp_path, conversation_id=conv_id, room=room)
+    assert client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/events",
+        json={
+            "event_id": "evt-propose",
+            "room_id": room["room_id"],
+            "conversation_id": conv_id,
+            "participant_id": participants["architect"]["participant_id"],
+            "god_id": participants["architect"]["god_id"],
+            "actor_kind": "god",
+            "event_type": "speak",
+            "timestamp_utc": "2026-06-14T11:00:00Z",
+            "content": "Try a contract-only provider response.",
+            "source_refs": [f"conversation:{conv_id}"],
+            "cli_id": participants["architect"]["cli_id"],
+            "provider_profile": "codex.god",
+            "payload": {"body": "Try a contract-only provider response."},
+        },
+    ).status_code == 201
+
+    response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/multi-turn-provider-speech",
+        json={
+            "after_event_id": "evt-propose",
+            "max_turns": 2,
+            "event_id_prefix": "evt-provider-speak-gap",
+            "prompt": "Return structured GOD speech.",
+        },
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["status"] == "partial"
+    assert payload["proof_level"] == "manual_gap"
+    assert payload["turn_count"] == 1
+    assert payload["blocked_reason"] == "provider response proof level is contract_proof"
+    assert "multi_turn_provider_speech_incomplete" in payload["manual_gaps"]
+    assert "provider_invocation_live_proof" in payload["forbidden_claims"]
+    assert payload["turns"][0]["speaker_response"]["status"] == "manual_gap"
+    assert payload["turns"][0]["speaker_response"]["blocked_reason"] == (
+        "provider response proof level is contract_proof"
+    )
+    assert [event["event_id"] for event in payload["room"]["events"]] == ["evt-propose"]
+    assert calls == 1
+    run_artifact = payload["artifacts"]["multi_turn_provider_speech_run"]
+    assert (tmp_path / run_artifact).exists()
+    assert not (tmp_path / "feature_lanes.json").exists()
+
+
+def test_chat_api_god_room_multi_turn_provider_speech_stops_before_freeze(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    def fail_if_provider_invoked(**kwargs):
+        raise AssertionError("provider should not be invoked after freeze_requested")
+
+    monkeypatch.setattr(
+        chat_api,
+        "invoke_god_room_provider_speech",
+        fail_if_provider_invoked,
+    )
+    client = _client(tmp_path)
+    conversation = client.post(
+        "/api/chat/conversations",
+        json={"title": "GOD room multi-turn provider speech freeze stop"},
+    ).json()
+    conv_id = conversation["id"]
+    room = client.post(f"/api/chat/conversations/{conv_id}/god-room").json()["room"]
+    participants = {participant["role"]: participant for participant in room["participants"]}
+    _seed_room_selected_god_bindings(tmp_path, room=room)
+    _activate_god_room_sessions(tmp_path, conversation_id=conv_id, room=room)
+    assert client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/events",
+        json={
+            "event_id": "evt-freeze",
+            "room_id": room["room_id"],
+            "conversation_id": conv_id,
+            "participant_id": participants["architect"]["participant_id"],
+            "god_id": participants["architect"]["god_id"],
+            "actor_kind": "god",
+            "event_type": "freeze_requested",
+            "timestamp_utc": "2026-06-14T12:00:00Z",
+            "content": "Freeze this transcript before further provider turns.",
+            "source_refs": [f"conversation:{conv_id}"],
+            "cli_id": participants["architect"]["cli_id"],
+            "provider_profile": "codex.god",
+            "payload": {
+                "body": "Freeze this transcript.",
+                "freeze_target_ref": f"conversation:{conv_id}:god-room",
+            },
+        },
+    ).status_code == 201
+
+    response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/multi-turn-provider-speech",
+        json={
+            "after_event_id": "evt-freeze",
+            "max_turns": 2,
+            "event_id_prefix": "evt-provider-speak-after-freeze",
+            "allow_live_provider_proof": True,
+        },
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["status"] == "stopped"
+    assert payload["proof_level"] == "contract_proof"
+    assert payload["turn_count"] == 0
+    assert payload["blocked_reason"] == "after_event_id is freeze_requested"
+    assert "natural_groupchat_closure" in payload["forbidden_claims"]
+    assert [event["event_id"] for event in payload["room"]["events"]] == ["evt-freeze"]
+    run_artifact = payload["artifacts"]["multi_turn_provider_speech_run"]
+    assert (tmp_path / run_artifact).exists()
 
 
 def test_chat_api_god_room_rejects_unknown_target_without_writing(

@@ -80,13 +80,15 @@ runtime、provider invocation、lane authority、review truth 完成。后续生
   `515f1817e8c7fabf9c594b96ed044018eaefbc6f`
 - Local head at start of L6 freeze manual-gap event proof enforcement slice:
   `604851eca5df99de1e0c9a3b51576037c8a3c93b`
+- Local head at start of L3-L5 multi-turn provider speech orchestrator slice:
+  `3c8b17eb433a5536899ca8936c545323da1ee1ab`
 - PR: <https://github.com/iiyazu/Cross-Muse/pull/43>
 - PR state last checked: draft/open/unmerged
 - PR merge state last checked: `CLEAN`
 - PR review decision last checked: empty
 - Verified GitHub Actions truth at the start of this slice applied to remote head
-  `515f1817e8c7fabf9c594b96ed044018eaefbc6f`: run
-  `27491335024`, success
+  `3c8b17eb433a5536899ca8936c545323da1ee1ab`: run
+  `27492257001`, success
 - Local documentation commits after the remote head must not be treated as
   CI-verified until pushed and checked again.
 
@@ -115,13 +117,14 @@ truth_snapshot:
   local_head_at_l3_public_event_append_authorship_classification_slice: 2ac5eebeb0226324e3bba5a3e62b73c7c27e3124
   local_head_at_l3_replay_event_proof_projection_slice: 515f1817e8c7fabf9c594b96ed044018eaefbc6f
   local_head_at_l6_freeze_manual_gap_event_proof_enforcement_slice: 604851eca5df99de1e0c9a3b51576037c8a3c93b
+  local_head_at_l3_l5_multi_turn_provider_speech_orchestrator_slice: 3c8b17eb433a5536899ca8936c545323da1ee1ab
   pr: 43
   pr_url: https://github.com/iiyazu/Cross-Muse/pull/43
   pr_state: draft_open_unmerged
   merge_state: CLEAN
   review_decision: empty
-  verified_ci_head_at_slice_start: 515f1817e8c7fabf9c594b96ed044018eaefbc6f
-  verified_ci_run_at_slice_start: 27491335024
+  verified_ci_head_at_slice_start: 3c8b17eb433a5536899ca8936c545323da1ee1ab
+  verified_ci_run_at_slice_start: 27492257001
   ci_verified_for_slice_start_head: true
   local_docs_after_verified_head: true
   pr_merged_claim_allowed: false
@@ -148,9 +151,9 @@ Evidence boundaries:
 |---|---|---|---|---|---|
 | L1 | Authority / Boundary Model | Partly documented | Enforcement uneven | Not server-bound | Boundary policy exists, not global enforcement |
 | L2 | GOD Identity / Provider Binding | Durable account/profile/room binding contract and store exist | Speaker attempt/capture consume binding fail-closed; one isolated Codex L4/L5 live route consumed binding | Not server-bound | L2 contract proof; bounded worker/provider inventory only |
-| L3 | GOD Room Durable Event Runtime | Durable event contract/store exists | Single-turn opt-in live Codex L4/L5 route appended and replayed one `speak` event; live multi-GOD proof still missing | Not server-bound | Durable room contract proof plus isolated opt-in live speak replay proof |
-| L4 | Speaker Selection / Provider Invocation | Selection/attempt evidence plus provider invocation artifact producer contract exist | Core/API producer emits response artifacts, fail-closed artifacts, and one verified local opt-in live Codex artifact through execution worktree | Not server-bound | Provider invocation artifact contract/fail-closed proof plus isolated Codex opt-in live proof |
-| L5 | Speaker Response Capture / Replay Proof | Artifact-backed capture plus composed L4-to-L5 route exists | Rejects contract-only L4 artifacts; appends/replays only server-written real-proof artifacts; one local opt-in live Codex artifact was captured into durable replay | Not server-bound | Capture/replay contract proof plus isolated Codex opt-in live capture proof |
+| L3 | GOD Room Durable Event Runtime | Durable event contract/store exists | Single-turn opt-in live Codex L4/L5 route appended and replayed one `speak` event; bounded multi-turn API can append/replay multiple L5-gated `speak` events; live natural multi-GOD proof still missing | Not server-bound | Durable room contract proof plus isolated opt-in live speak replay proof and bounded multi-turn orchestration contract proof |
+| L4 | Speaker Selection / Provider Invocation | Selection/attempt evidence plus provider invocation artifact producer contract exist | Core/API producer emits response artifacts, fail-closed artifacts, one verified local opt-in live Codex artifact through execution worktree, and multiple artifacts when driven by the bounded multi-turn route | Not server-bound | Provider invocation artifact contract/fail-closed proof plus isolated Codex opt-in live proof |
+| L5 | Speaker Response Capture / Replay Proof | Artifact-backed capture plus composed L4-to-L5 route exists | Rejects contract-only L4 artifacts; appends/replays only server-written real-proof artifacts; one local opt-in live Codex artifact was captured into durable replay; bounded multi-turn route stops on manual_gap and preserves prior durable events | Not server-bound | Capture/replay contract proof plus isolated Codex opt-in live capture proof and bounded multi-turn capture orchestration proof |
 | L6 | Blueprint Freeze Authority | Typed freeze artifact exists with proof-level classification | Single-turn provider-backed Codex speech can produce an opt-in live freeze artifact; fresh natural multi-GOD freeze still missing | Not server-bound | Freeze contract proof plus isolated opt-in live freeze proof |
 | L7 | Feature / LaneDAG Authority | LaneDAG/contract artifact exists with upstream freeze proof metadata | Live L4/L5/L6 proof metadata can flow into laneDAG without writing `feature_lanes.json`; dispatch/review authority still not unified | Not server-bound | LaneDAG contract proof plus isolated opt-in live upstream-proof propagation |
 | L8 | Lane Runtime Enforcement / Recovery | Recovery contract/API exists and recovery artifacts carry laneDAG proof lineage | Recovery API consumes laneDAG contract/budget and preserves blueprint proof/source refs; GOD-room review intake and orchestrator dispatch now fail-close non-retry recovery decisions; broader supervisor/live runner enforcement still incomplete | Not server-bound | Recovery policy proof plus laneDAG-lineage evidence proof plus review-intake/dispatch enforcement proof |
@@ -165,10 +168,10 @@ Current closure audit:
   claim-boundary governance.
 - Least closed areas: natural multi-GOD deliberation, GOD-room-originated
   execution/review, live MemoryOS trace, and GitHub merge truth.
-- Next production priority: preserve the isolated L4/L5 live speech lineage in
-  downstream release evidence where appropriate, then enforce L8/L9 runtime
-  and review consumption of authoritative laneDAG contracts without claiming
-  natural multi-GOD closure.
+- Next production priority: carry bounded multi-turn L3-L5 speech lineage into
+  L6 freeze and L10 release evidence where appropriate, then enforce L7-L9
+  runtime/review consumption of authoritative laneDAG contracts without
+  claiming natural multi-GOD closure.
 
 ## L1 - Authority / Boundary Model
 
@@ -404,8 +407,18 @@ Use these as implementation references, not as xmuse package dependencies:
     room-level replay `proof_level` at `contract_proof` or `manual_gap`. The
     original L4/L5 artifact proof label remains available as artifact lineage,
     not as a room-level closure claim.
+  - Chat API now exposes a bounded sequential
+    `POST /api/chat/conversations/{conversation_id}/god-room/multi-turn-provider-speech`
+    route. The route drives multiple turns only by repeatedly invoking the
+    existing L4 provider invocation producer and L5 capture path, reloading
+    durable GOD room state between turns and writing a
+    `xmuse.god_room_multi_turn_provider_speech_run.v1` evidence artifact under
+    `reports/god_room_provider_speech_runs/`.
 - Missing production closure:
   - Natural multi-GOD live runtime has not been proven over a long session.
+  - The multi-turn provider speech route is bounded sequential orchestration,
+    not natural peer-GOD autonomy, distributed groupchat, or overnight runtime
+    proof.
   - Public direct append now classifies GOD event authorship through L2 binding
     resolution or explicit `manual_gap`, but this still does not prove fresh
     provider-backed natural deliberation or every non-HTTP writer path.
@@ -420,9 +433,9 @@ Use these as implementation references, not as xmuse package dependencies:
   - Direct public append remains contract/manual proof only unless backed by
     the L4/L5 provider-capture route.
 - Next production slice:
-  - Production append paths have been audited as public append classification
-    or L4/L5 capture paths. Next, drive fresh provider-backed multi-GOD speech
-    through the durable event store.
+  - Use bounded multi-turn provider-backed speech as input for L6 freeze and
+    L10 release-evidence lineage while preserving the natural peer-GOD
+    groupchat and live/server proof gaps.
 - Downstream blocked until:
   - L6 blueprint freeze cannot claim live deliberation closure without fresh
     durable room event proof.
@@ -454,6 +467,10 @@ Use these as implementation references, not as xmuse package dependencies:
     `POST /api/chat/conversations/{conversation_id}/god-room/provider-invocation`
     and writes provider response artifacts under `reports/provider-responses/`
     without appending a durable `speak` event.
+  - The bounded multi-turn provider speech route does not create provider
+    responses itself. Each turn calls the same L4 producer, so every successful
+    turn still has its own `xmuse.god_room_provider_speech_response.v1`
+    artifact and fail-closed outcome.
   - The provider invocation API now uses the configured execution worktree for
     provider CLI subprocesses while continuing to write runtime artifacts under
     the xmuse runtime root; this prevents Codex/OpenCode from being launched in
@@ -474,9 +491,10 @@ Use these as implementation references, not as xmuse package dependencies:
   - `allow_live_provider_proof=true` remains opt-in runtime behavior and must
     not be claimed broadly unless the resulting artifact, L5 capture, and L3
     replay are inspected from current runtime evidence.
-  - The verified live path is limited to a single local Codex invocation; it
-    does not prove OpenCode peer-GOD status, multi-GOD natural deliberation, or
-    long-running autonomous provider speech.
+  - The verified live path is limited to local Codex invocation artifacts; the
+    bounded multi-turn route can preserve multiple per-turn artifacts, but it
+    still does not prove OpenCode peer-GOD status, natural multi-GOD
+    deliberation, or long-running autonomous provider speech.
 - Proof required to close:
   - A provider invocation contract creates
     `xmuse.god_room_provider_speech_response.v1` from a real configured
@@ -504,8 +522,8 @@ Use these as implementation references, not as xmuse package dependencies:
   - Treating an L4 `contract_proof` artifact as L5-capturable
     `real_provider_proof`.
 - Next production slice:
-  - Carry the L4 provider artifact lineage into L6/L10 evidence without
-    expanding the claim beyond isolated local Codex opt-in live proof.
+  - Carry the bounded multi-turn L4 provider artifact lineage into L6/L10
+    evidence without expanding the claim beyond per-turn artifact proof.
 - Downstream blocked until:
   - L5 can validate/capture live-proof artifacts, but cannot claim live
     provider speech from contract-only L4 artifacts.
@@ -534,6 +552,11 @@ Use these as implementation references, not as xmuse package dependencies:
     ref into the L5 capture gate.
   - The composed route writes both provider response and speaker response
     artifacts and returns the durable room replay from `GodRoomEventStore`.
+  - The bounded multi-turn provider speech route repeatedly uses the composed
+    L4/L5 route. It appends each `speak` event only through L5 capture, stops
+    on the first `manual_gap`, preserves already appended durable events, and
+    records the run artifact with per-turn provider response refs, speaker
+    response refs, final replay, manual gaps, and forbidden claims.
   - The composed route now refreshes durable `GodSessionRegistry` provider
     binding from a completed `real_provider_proof` L4 artifact before L5
     capture, so L5 still enforces provider session lineage while accepting a
@@ -548,7 +571,8 @@ Use these as implementation references, not as xmuse package dependencies:
   - Release evidence cross-checks claimed appended `speak_event_id` against
     GOD room replay events.
 - Missing production closure:
-  - Long natural multi-turn capture has not yet been proven.
+  - Long natural multi-turn capture has not yet been proven; current multi-turn
+    proof is bounded sequential API orchestration.
   - Release evidence does not yet preserve this live L4/L5 lineage as a
     production release proof.
 - Proof required to close:
@@ -557,9 +581,10 @@ Use these as implementation references, not as xmuse package dependencies:
 - Current risk:
   - Capture proof can be overread as invocation proof.
 - Next production slice:
-  - Preserve the appended `speak_event_id`, L4 artifact ref, L5 artifact ref,
-    and replay evidence in release evidence, then use the durable speech as the
-    input for L6 freeze without claiming natural deliberation.
+  - Preserve the bounded multi-turn appended `speak_event_id` values, L4
+    artifact refs, L5 artifact refs, and replay evidence in L6/L10 lineage,
+    then use the durable speech as input for freeze without claiming natural
+    deliberation.
 - Downstream blocked until:
   - L6 cannot claim real deliberation freeze if room speech was not captured
     through L4/L5 proof.

@@ -413,6 +413,21 @@ class GodRoomProviderInvocationCaptureRequest(GodRoomProviderInvocationRequest):
         return _strip_optional_string(value)
 
 
+class GodRoomMultiTurnProviderSpeechRequest(BaseModel):
+    max_turns: int = Field(default=3, ge=1, le=10)
+    after_event_id: str | None = Field(default=None, min_length=1)
+    prompt: str | None = Field(default=None, min_length=1)
+    timeout_seconds: int = Field(default=120, gt=0)
+    allow_live_provider_proof: bool = False
+    event_id_prefix: str | None = Field(default=None, min_length=1)
+    stop_on_freeze_requested: bool = True
+
+    @field_validator("after_event_id", "prompt", "event_id_prefix", mode="before")
+    @classmethod
+    def _strip_optional_text(cls, value: object) -> object:
+        return _strip_optional_string(value)
+
+
 class GodRoomSpeakerResponseRequest(BaseModel):
     after_event_id: str | None = Field(default=None, min_length=1)
     event_id: str | None = Field(default=None, min_length=1)
