@@ -44,6 +44,8 @@ runtime、provider invocation、lane authority、review truth 完成。后续生
   `2cfc9e3016ff1671758bd78b3b69f8ca922307c1`
 - Local head at start of L4 provider invocation producer slice:
   `db9a759ac23e3e5f6095fe35ed5d373e64281505`
+- Local head at start of L5 provider invocation capture slice:
+  `85e573c24c4c1abc955638b4feb609c6381580ff`
 - PR: <https://github.com/iiyazu/Cross-Muse/pull/43>
 - PR state last checked: draft/open/unmerged
 - PR merge state last checked: `CLEAN`
@@ -61,6 +63,7 @@ truth_snapshot:
   branch: vision-closure-deliberation-tui
   base_head: 2cfc9e3016ff1671758bd78b3b69f8ca922307c1
   local_head_at_l4_provider_invocation_slice: db9a759ac23e3e5f6095fe35ed5d373e64281505
+  local_head_at_l5_provider_invocation_capture_slice: 85e573c24c4c1abc955638b4feb609c6381580ff
   pr: 43
   pr_url: https://github.com/iiyazu/Cross-Muse/pull/43
   pr_state: draft_open_unmerged
@@ -96,7 +99,7 @@ Evidence boundaries:
 | L2 | GOD Identity / Provider Binding | Durable account/profile/room binding contract and store exist | Speaker attempt/capture consume binding fail-closed; live provider invocation still missing | Not server-bound | L2 contract proof; bounded worker/provider inventory only |
 | L3 | GOD Room Durable Event Runtime | Durable event contract/store exists | Live multi-GOD proof missing | Not server-bound | Durable room contract proof |
 | L4 | Speaker Selection / Provider Invocation | Selection/attempt evidence plus provider invocation artifact producer contract exist | Core/API producer emits response artifacts and fail-closed artifacts; opt-in live provider run not verified | Not server-bound | Provider invocation artifact contract/fail-closed proof only |
-| L5 | Speaker Response Capture / Replay Proof | Artifact-backed capture exists | Rejects contract-only L4 artifacts; fresh live capture still depends on opt-in L4 proof | Not server-bound | Capture contract proof only |
+| L5 | Speaker Response Capture / Replay Proof | Artifact-backed capture plus composed L4-to-L5 route exists | Rejects contract-only L4 artifacts; appends/replays only server-written real-proof artifacts; fresh live capture still depends on opt-in L4 proof | Not server-bound | Capture/replay contract proof only |
 | L6 | Blueprint Freeze Authority | Typed freeze artifact exists | Fresh live deliberation freeze missing | Not server-bound | Freeze contract proof |
 | L7 | Feature / LaneDAG Authority | LaneDAG/contract artifact exists | Dispatch/review authority not unified | Not server-bound | LaneDAG contract proof |
 | L8 | Lane Runtime Enforcement / Recovery | Recovery contract/API exists | Runner/supervisor enforcement incomplete | Not server-bound | Recovery policy proof |
@@ -112,9 +115,9 @@ Current closure audit:
 - Least closed areas: provider-backed speech invocation, natural multi-GOD
   deliberation, GOD-room-originated execution/review, live MemoryOS trace, and
   GitHub merge truth.
-- Next production priority: run an opt-in live L4 invocation artifact through L5
-  capture/replay, or preserve the live provider speech `manual_gap` before
-  expanding L11 cockpit surface area.
+- Next production priority: run a configured opt-in live L4 provider invocation
+  through the composed L5 capture/replay route, or preserve the live provider
+  speech `manual_gap` before expanding L6/L11 claims.
 
 ## L1 - Authority / Boundary Model
 
@@ -433,11 +436,21 @@ Use these as implementation references, not as xmuse package dependencies:
   - Contract-only L4 provider invocation artifacts remain `manual_gap` at the
     L5 capture boundary; this prevents capture proof from being overread as
     provider invocation live proof.
+  - Chat API now exposes
+    `POST /api/chat/conversations/{conversation_id}/god-room/provider-invocation-capture`
+    to produce a server-written L4 artifact and immediately pass that artifact
+    ref into the L5 capture gate.
+  - The composed route writes both provider response and speaker response
+    artifacts and returns the durable room replay from `GodRoomEventStore`.
+  - Focused tests prove that contract/manual L4 artifacts do not append speech,
+    while a server-produced `real_provider_proof` artifact is captured into a
+    durable `speak` event and appears in replay with binding lineage.
   - Release evidence cross-checks claimed appended `speak_event_id` against
     GOD room replay events.
 - Missing production closure:
   - This layer still depends on L4 producing a fresh opt-in live provider
-    artifact before it can append a live-provider `speak` event.
+    artifact from an actual configured provider subprocess before xmuse can
+    claim live-provider `speak` event closure.
   - Long natural multi-turn capture has not yet been proven.
 - Proof required to close:
   - A fresh L4 invocation artifact is captured into L3 room events, then replay
@@ -445,13 +458,16 @@ Use these as implementation references, not as xmuse package dependencies:
 - Current risk:
   - Capture proof can be overread as invocation proof.
 - Next production slice:
-  - Run capture against the new provider invocation artifact and preserve
-    lineage into release evidence.
+  - Execute the composed route with a configured live provider, then preserve
+    the appended `speak_event_id`, L4 artifact ref, L5 artifact ref, and replay
+    evidence in release evidence.
 - Downstream blocked until:
   - L6 cannot claim real deliberation freeze if room speech was not captured
     through L4/L5 proof.
 - Do not claim yet:
-  - Do not claim live provider invocation proof from capture-only artifacts.
+  - Do not claim live provider invocation proof from capture-only artifacts or
+    from the composed route unless the L4 artifact was produced by a verified
+    opt-in live provider run.
 
 ## L6 - Blueprint Freeze Authority
 

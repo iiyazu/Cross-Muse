@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from xmuse_core.agents.god_session_registry import GodSessionRegistry
 from xmuse_core.chat.execution_cards import ChatExecutionCardEmitter
+from xmuse_core.chat.god_room_speaker_response import GodRoomProviderSpeechResponseV1
 from xmuse_core.chat.inbox_store import ChatInboxStore
 from xmuse_core.chat.store import ChatStore
 from xmuse_core.providers.god_cli_selection_store import GodCliSelectionStore
@@ -895,6 +896,257 @@ def test_chat_api_god_room_provider_invocation_writes_fail_closed_artifact(
         "events"
     ]
     assert [event["event_id"] for event in events] == ["evt-propose"]
+
+
+def test_chat_api_god_room_provider_invocation_capture_preserves_manual_gap(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    def fake_contract_provider_invocation(**kwargs):
+        attempt = kwargs["attempt"]
+        assert attempt.status == "ready_for_provider_attempt"
+        return GodRoomProviderSpeechResponseV1(
+            response_id="provider-response-contract-only",
+            status="completed",
+            proof_level="contract_proof",
+            target_participant_id=attempt.target_participant_id,
+            provider_profile_ref=attempt.provider_profile_ref,
+            provider_session_id=attempt.provider_session_id,
+            provider_session_kind=attempt.provider_session_kind,
+            content="This completed provider artifact is still contract proof only.",
+            source_refs=[
+                "provider_invocation:contract-only",
+                "provider_raw_output_sha256:contract",
+            ],
+            conversation_id=attempt.conversation_id,
+            room_id=attempt.room_id,
+            target_god_id=attempt.target_god_id,
+            binding_revision=attempt.binding_revision,
+            account_ref=attempt.account_ref,
+            cli_command=attempt.cli_command,
+            model=attempt.model,
+            variant=attempt.variant,
+            invocation_id="provider-invocation-contract-only",
+            invocation_status="completed",
+            prompt_refs=["prompt:contract-only"],
+            output_refs=["provider_raw_output_sha256:contract"],
+            raw_output_digest="contract",
+            completed_at_utc="2026-06-13T10:01:00Z",
+            started_at_utc="2026-06-13T10:00:59Z",
+            duration_ms=1,
+            exit_code=0,
+        )
+
+    monkeypatch.setattr(
+        chat_api,
+        "invoke_god_room_provider_speech",
+        fake_contract_provider_invocation,
+    )
+    client = _client(tmp_path)
+    conversation = client.post(
+        "/api/chat/conversations",
+        json={"title": "GOD room provider invocation capture gap"},
+    ).json()
+    conv_id = conversation["id"]
+    room = client.post(f"/api/chat/conversations/{conv_id}/god-room").json()["room"]
+    participants = {participant["role"]: participant for participant in room["participants"]}
+    GodCliSelectionStore(tmp_path / "god_cli_selections.json").record_selection(
+        conversation_id=conv_id,
+        cli_id="codex.god",
+        selected_by="operator",
+        audit_id="audit-select-provider-invocation-capture-gap",
+        idempotency_key="select-provider-invocation-capture-gap",
+    )
+    _seed_room_selected_god_binding(
+        tmp_path,
+        room_id=room["room_id"],
+        participant=participants["review"],
+    )
+    session_registry = GodSessionRegistry(tmp_path / "god_sessions.json")
+    session = session_registry.find_by_conversation_participant(
+        conv_id,
+        participants["review"]["participant_id"],
+    )
+    session_registry.update_provider_binding(
+        session.god_session_id,
+        provider_session_id="provider-thread-review",
+        provider_session_kind="provider_thread",
+        provider_binding_status="active",
+        provider_binding_failure_reason=None,
+    )
+    client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/events",
+        json={
+            "event_id": "evt-propose",
+            "room_id": room["room_id"],
+            "conversation_id": conv_id,
+            "participant_id": participants["architect"]["participant_id"],
+            "god_id": participants["architect"]["god_id"],
+            "actor_kind": "god",
+            "event_type": "speak",
+            "timestamp_utc": "2026-06-13T10:00:00Z",
+            "content": "I propose asking the review GOD for a provider response.",
+            "source_refs": [f"conversation:{conv_id}"],
+            "cli_id": participants["architect"]["cli_id"],
+            "provider_profile": "codex.god",
+            "payload": {"body": "I propose asking the review GOD."},
+        },
+    )
+
+    response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/provider-invocation-capture",
+        json={
+            "after_event_id": "evt-propose",
+            "event_id": "evt-review-provider-speak",
+            "timestamp_utc": "2026-06-13T10:02:00Z",
+            "prompt": "Return structured GOD speech.",
+        },
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    provider_response = payload["provider_response"]
+    capture = payload["speaker_response"]
+    assert provider_response["status"] == "completed"
+    assert provider_response["proof_level"] == "contract_proof"
+    assert capture["status"] == "manual_gap"
+    assert capture["proof_level"] == "manual_gap"
+    assert capture["blocked_reason"] == "provider response proof level is contract_proof"
+    assert payload["artifacts"]["provider_response"].startswith(
+        "reports/provider-responses/"
+    )
+    assert payload["artifacts"]["speaker_response"].startswith(
+        "reports/god_room_speaker_responses/"
+    )
+    events = payload["room"]["events"]
+    assert [event["event_id"] for event in events] == ["evt-propose"]
+
+
+def test_chat_api_god_room_provider_invocation_capture_appends_server_artifact(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    def fake_provider_invocation(**kwargs):
+        attempt = kwargs["attempt"]
+        assert attempt.status == "ready_for_provider_attempt"
+        assert attempt.account_ref == "codex.god"
+        return GodRoomProviderSpeechResponseV1(
+            response_id="provider-response-from-server-producer",
+            status="completed",
+            proof_level="real_provider_proof",
+            target_participant_id=attempt.target_participant_id,
+            provider_profile_ref=attempt.provider_profile_ref,
+            provider_session_id=attempt.provider_session_id,
+            provider_session_kind=attempt.provider_session_kind,
+            content="I can now be captured from the server-written L4 artifact.",
+            source_refs=[
+                "provider_invocation:server-produced",
+                "provider_raw_output_sha256:test",
+            ],
+            conversation_id=attempt.conversation_id,
+            room_id=attempt.room_id,
+            target_god_id=attempt.target_god_id,
+            binding_revision=attempt.binding_revision,
+            account_ref=attempt.account_ref,
+            cli_command=attempt.cli_command,
+            model=attempt.model,
+            variant=attempt.variant,
+            invocation_id="provider-invocation-server-produced",
+            invocation_status="completed",
+            prompt_refs=["prompt:server-produced"],
+            output_refs=["provider_raw_output_sha256:test"],
+            raw_output_digest="test",
+            completed_at_utc="2026-06-13T10:01:00Z",
+            started_at_utc="2026-06-13T10:00:59Z",
+            duration_ms=1,
+            exit_code=0,
+        )
+
+    monkeypatch.setattr(
+        chat_api,
+        "invoke_god_room_provider_speech",
+        fake_provider_invocation,
+    )
+    client = _client(tmp_path)
+    conversation = client.post(
+        "/api/chat/conversations",
+        json={"title": "GOD room provider invocation capture success"},
+    ).json()
+    conv_id = conversation["id"]
+    room = client.post(f"/api/chat/conversations/{conv_id}/god-room").json()["room"]
+    participants = {participant["role"]: participant for participant in room["participants"]}
+    GodCliSelectionStore(tmp_path / "god_cli_selections.json").record_selection(
+        conversation_id=conv_id,
+        cli_id="codex.god",
+        selected_by="operator",
+        audit_id="audit-select-provider-invocation-capture",
+        idempotency_key="select-provider-invocation-capture",
+    )
+    binding_ref = _seed_room_selected_god_binding(
+        tmp_path,
+        room_id=room["room_id"],
+        participant=participants["review"],
+    )
+    session_registry = GodSessionRegistry(tmp_path / "god_sessions.json")
+    session = session_registry.find_by_conversation_participant(
+        conv_id,
+        participants["review"]["participant_id"],
+    )
+    session_registry.update_provider_binding(
+        session.god_session_id,
+        provider_session_id="provider-thread-review",
+        provider_session_kind="provider_thread",
+        provider_binding_status="active",
+        provider_binding_failure_reason=None,
+    )
+    client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/events",
+        json={
+            "event_id": "evt-propose",
+            "room_id": room["room_id"],
+            "conversation_id": conv_id,
+            "participant_id": participants["architect"]["participant_id"],
+            "god_id": participants["architect"]["god_id"],
+            "actor_kind": "god",
+            "event_type": "speak",
+            "timestamp_utc": "2026-06-13T10:00:00Z",
+            "content": "I propose asking the review GOD for a provider response.",
+            "source_refs": [f"conversation:{conv_id}"],
+            "cli_id": participants["architect"]["cli_id"],
+            "provider_profile": "codex.god",
+            "payload": {"body": "I propose asking the review GOD."},
+        },
+    )
+
+    response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/provider-invocation-capture",
+        json={
+            "after_event_id": "evt-propose",
+            "event_id": "evt-review-provider-speak",
+            "timestamp_utc": "2026-06-13T10:02:00Z",
+            "prompt": "Return structured GOD speech.",
+            "allow_live_provider_proof": True,
+        },
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    provider_artifact_ref = payload["artifacts"]["provider_response"]
+    capture = payload["speaker_response"]
+    assert provider_artifact_ref.startswith("reports/provider-responses/")
+    assert (tmp_path / provider_artifact_ref).exists()
+    assert capture["status"] == "speak_event_appended"
+    assert capture["proof_level"] == "real_provider_proof"
+    assert capture["provider_response_artifact_ref"] == provider_artifact_ref
+    assert binding_ref in capture["source_refs"]
+    events = payload["room"]["events"]
+    assert [event["event_id"] for event in events] == [
+        "evt-propose",
+        "evt-review-provider-speak",
+    ]
+    assert events[1]["payload"]["provider_response_artifact_ref"] == provider_artifact_ref
+    assert events[1]["payload"]["binding_revision"] == capture["binding_revision"]
+    assert payload["room"]["replay"]["status"] == "ok"
 
 
 def test_chat_api_god_room_rejects_unknown_target_without_writing(

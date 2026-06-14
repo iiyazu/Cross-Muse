@@ -311,6 +311,16 @@ class GodRoomProviderInvocationRequest(BaseModel):
         return _strip_optional_string(value)
 
 
+class GodRoomProviderInvocationCaptureRequest(GodRoomProviderInvocationRequest):
+    event_id: str | None = Field(default=None, min_length=1)
+    timestamp_utc: str | None = Field(default=None, min_length=1)
+
+    @field_validator("event_id", "timestamp_utc", mode="before")
+    @classmethod
+    def _strip_capture_optional_text(cls, value: object) -> object:
+        return _strip_optional_string(value)
+
+
 class GodRoomSpeakerResponseRequest(BaseModel):
     after_event_id: str | None = Field(default=None, min_length=1)
     event_id: str | None = Field(default=None, min_length=1)

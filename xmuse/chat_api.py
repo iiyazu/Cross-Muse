@@ -34,6 +34,7 @@ from xmuse_core.chat.api_models import (
     GodRoomLaneDagRequest,
     GodRoomLaneRecoveryRequest,
     GodRoomMemoryPlanRequest,
+    GodRoomProviderInvocationCaptureRequest,
     GodRoomProviderInvocationRequest,
     GodRoomSpeakerAttemptRequest,
     GodRoomSpeakerResponseRequest,
@@ -1125,6 +1126,106 @@ def _invoke_god_room_provider_speech_from_runtime(
     conversation_id: str,
     request: GodRoomProviderInvocationRequest,
 ) -> dict[str, object]:
+    invocation = _build_god_room_provider_invocation_artifact(
+        base_dir,
+        conversation_id=conversation_id,
+        request=request,
+    )
+    return {
+        "source_authority": (
+            "god_room_event_store+room_selected_god_binding+provider_invocation"
+        ),
+        "conversation_id": conversation_id,
+        "room_id": invocation["room_id"],
+        "speaker_attempt": invocation["speaker_attempt"],
+        "provider_response": invocation["provider_response"],
+        "runtime_continuity": invocation["runtime_continuity"],
+        "artifacts": {
+            "provider_response": invocation["provider_response_artifact_ref"],
+        },
+    }
+
+
+def _invoke_and_capture_god_room_provider_speech_from_runtime(
+    base_dir: Path,
+    *,
+    conversation_id: str,
+    request: GodRoomProviderInvocationCaptureRequest,
+) -> dict[str, object]:
+    invocation = _build_god_room_provider_invocation_artifact(
+        base_dir,
+        conversation_id=conversation_id,
+        request=request,
+    )
+    event_store = invocation["event_store"]
+    snapshot = invocation["snapshot"]
+    room_id = invocation["room_id"]
+    provider_response = invocation["provider_response_model"]
+    provider_response_artifact_ref = invocation["provider_response_artifact_ref"]
+    runtime_continuity = invocation["runtime_continuity"]
+
+    def append_event(event: GodRoomEventV1) -> Literal["created", "duplicate"]:
+        return event_store.append_event(event).status
+
+    try:
+        capture = capture_god_room_speaker_response(
+            conversation_id=conversation_id,
+            room_id=room_id,
+            participants=snapshot.participants,
+            events=snapshot.events,
+            runtime_continuity=runtime_continuity,
+            provider_response=provider_response,
+            provider_response_artifact_ref=provider_response_artifact_ref,
+            after_event_id=request.after_event_id,
+            event_id=request.event_id,
+            selected_binding_resolver=_selected_god_binding_resolver(base_dir, room_id),
+            timestamp_utc=request.timestamp_utc or _utc_now(),
+            append_event=append_event,
+        )
+    except GodRoomMembershipError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "god_room_membership_error", "message": str(exc)},
+        ) from exc
+    except GodRoomEventConflictError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "god_room_event_conflict", "message": str(exc)},
+        ) from exc
+
+    capture_payload = capture.model_dump(mode="json")
+    capture_path = _write_god_room_speaker_response_artifact(
+        base_dir,
+        conversation_id=conversation_id,
+        after_event_id=request.after_event_id,
+        event_id=request.event_id,
+        payload=capture_payload,
+    )
+    return {
+        "source_authority": (
+            "god_room_event_store+room_selected_god_binding+provider_invocation"
+            "+provider_response_capture"
+        ),
+        "conversation_id": conversation_id,
+        "room_id": room_id,
+        "speaker_attempt": invocation["speaker_attempt"],
+        "provider_response": invocation["provider_response"],
+        "speaker_response": capture_payload,
+        "runtime_continuity": runtime_continuity,
+        "artifacts": {
+            "provider_response": provider_response_artifact_ref,
+            "speaker_response": str(capture_path.relative_to(base_dir)),
+        },
+        "room": _god_room_payload(event_store, room_id),
+    }
+
+
+def _build_god_room_provider_invocation_artifact(
+    base_dir: Path,
+    *,
+    conversation_id: str,
+    request: GodRoomProviderInvocationRequest,
+) -> dict[str, object]:
     if not _conversation_exists(_store(base_dir), conversation_id):
         raise HTTPException(status_code=404, detail="conversation not found")
     event_store = _god_room_event_store(base_dir)
@@ -1181,17 +1282,15 @@ def _invoke_god_room_provider_speech_from_runtime(
         payload=response_payload,
     )
     return {
-        "source_authority": (
-            "god_room_event_store+room_selected_god_binding+provider_invocation"
-        ),
-        "conversation_id": conversation_id,
         "room_id": room_id,
+        "event_store": event_store,
+        "snapshot": snapshot,
         "speaker_attempt": attempt.model_dump(mode="json"),
+        "speaker_attempt_model": attempt,
         "provider_response": response_payload,
+        "provider_response_model": provider_response,
+        "provider_response_artifact_ref": str(artifact_path.relative_to(base_dir)),
         "runtime_continuity": runtime_continuity,
-        "artifacts": {
-            "provider_response": str(artifact_path.relative_to(base_dir)),
-        },
     }
 
 
@@ -2528,6 +2627,20 @@ def create_app(
         request: GodRoomProviderInvocationRequest,
     ) -> dict[str, object]:
         return _invoke_god_room_provider_speech_from_runtime(
+            root,
+            conversation_id=conversation_id,
+            request=request,
+        )
+
+    @app.post(
+        "/api/chat/conversations/{conversation_id}/god-room/provider-invocation-capture",
+        status_code=status.HTTP_201_CREATED,
+    )
+    def invoke_and_capture_god_room_provider_speech(
+        conversation_id: str,
+        request: GodRoomProviderInvocationCaptureRequest,
+    ) -> dict[str, object]:
+        return _invoke_and_capture_god_room_provider_speech_from_runtime(
             root,
             conversation_id=conversation_id,
             request=request,
