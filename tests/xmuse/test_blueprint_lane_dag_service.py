@@ -76,6 +76,44 @@ def test_lane_dag_plan_preserves_freeze_proof_level() -> None:
     assert "god-room-event:evt-freeze" in plan.source_refs
 
 
+def test_lane_dag_plan_preserves_freeze_source_event_lineage() -> None:
+    plan = BlueprintLaneDagService().build_plan(
+        _request(
+            blueprint_proof_level="opt_in_live_proof",
+            source_event_lineage=[
+                {
+                    "event_id": "evt-review-provider-question",
+                    "event_type": "question",
+                    "participant_id": "part-review",
+                    "god_id": "god-review",
+                    "proof_level": "opt_in_live_proof",
+                    "source_authority": "god_room_event_store+provider_response",
+                    "provider_response_artifact_ref": (
+                        "reports/provider-responses/question.json"
+                    ),
+                    "target_participant_ids": ["part-architect"],
+                    "source_refs": [
+                        "god-room-event:evt-propose",
+                        "provider_response_artifact:"
+                        "reports/provider-responses/question.json",
+                    ],
+                    "forbidden_claims": ["natural_groupchat_closure"],
+                }
+            ],
+        )
+    )
+
+    lineage = plan.source_event_lineage[0]
+    assert lineage.event_id == "evt-review-provider-question"
+    assert lineage.event_type == "question"
+    assert lineage.proof_level == "opt_in_live_proof"
+    assert lineage.provider_response_artifact_ref == (
+        "reports/provider-responses/question.json"
+    )
+    assert lineage.target_participant_ids == ["part-architect"]
+    assert "natural_groupchat_closure" in lineage.forbidden_claims
+
+
 def test_lane_dag_plan_preserves_runtime_contracts_from_frozen_blueprint() -> None:
     plan = BlueprintLaneDagService().build_plan(
         _request(
@@ -309,6 +347,7 @@ def _request(
     features: list[BlueprintFeatureSpec] | None = None,
     lanes: list[BlueprintLaneSpec] | None = None,
     blueprint_proof_level: str = "contract_proof",
+    source_event_lineage: list[dict[str, object]] | None = None,
     source_refs: list[str] | None = None,
 ) -> BlueprintLaneDagRequest:
     return BlueprintLaneDagRequest(
@@ -317,6 +356,7 @@ def _request(
         graph_version=1,
         blueprint=_blueprint(),
         blueprint_proof_level=blueprint_proof_level,
+        source_event_lineage=source_event_lineage or [],
         features=features or [_feature("feature-a")],
         lanes=lanes or [_lane("lane-a")],
         source_refs=source_refs or ["message:freeze"],

@@ -2213,6 +2213,66 @@ def test_chat_api_god_room_freeze_blueprint_preserves_provider_question_lineage(
     ]
     assert response.json()["blueprint"]["source_refs"] == artifact["source_refs"]
 
+    lane_dag_response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag",
+        json={
+            "resolution_id": response.json()["resolution"]["id"],
+            "graph_id": "graph-question-freeze",
+            "graph_version": 1,
+            "source_refs": ["god-room-freeze:evt-freeze"],
+            "source_event_lineage": [
+                {
+                    "event_id": "evt-request-body-forged-lineage",
+                    "event_type": "speak",
+                    "participant_id": "part-forged",
+                    "god_id": "god-forged",
+                    "proof_level": "opt_in_live_proof",
+                    "source_authority": "request_body",
+                    "forbidden_claims": [],
+                }
+            ],
+            "features": [
+                {
+                    "feature_id": "feature-question-lineage",
+                    "title": "Question lineage lane",
+                    "goal": "Carry provider-backed question lineage into laneDAG.",
+                    "acceptance_criteria": [
+                        "LaneDAG preserves frozen source event lineage."
+                    ],
+                    "blueprint_refs": ["blueprint:bp-question-freeze:1"],
+                }
+            ],
+            "lanes": [
+                {
+                    "lane_id": "lane-question-lineage",
+                    "feature_id": "feature-question-lineage",
+                    "title": "Preserve question lineage",
+                    "prompt": "Carry L6 source_event_lineage into L7.",
+                    "acceptance_criteria": [
+                        "source_event_lineage survives laneDAG persistence."
+                    ],
+                    "blueprint_refs": ["blueprint:bp-question-freeze:1"],
+                    "required_checks": ["focused-pytest"],
+                }
+            ],
+        },
+    )
+
+    assert lane_dag_response.status_code == 201
+    lane_dag_payload = lane_dag_response.json()["lane_dag"]
+    lane_dag_lineage = {
+        item["event_id"]: item for item in lane_dag_payload["source_event_lineage"]
+    }
+    assert lane_dag_payload["blueprint_proof_level"] == "opt_in_live_proof"
+    assert "evt-request-body-forged-lineage" not in lane_dag_lineage
+    assert lane_dag_lineage["evt-review-provider-question"]["event_type"] == "question"
+    assert lane_dag_lineage["evt-review-provider-question"][
+        "provider_response_artifact_ref"
+    ] == "reports/provider-responses/provider-response-question-freeze-1.json"
+    assert "natural_groupchat_closure" in lane_dag_lineage[
+        "evt-review-provider-question"
+    ]["forbidden_claims"]
+
 
 def test_chat_api_god_room_freeze_blueprint_rejects_mismatched_multi_turn_run(
     tmp_path: Path,

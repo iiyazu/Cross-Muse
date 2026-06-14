@@ -39,6 +39,56 @@ TERMINAL_FAILED_STATUSES = {LaneExecutionStatus.FAILED, LaneExecutionStatus.BLOC
 BlueprintProofLevel = Literal["contract_proof", "opt_in_live_proof", "manual_gap"]
 
 
+class BlueprintSourceEventLineage(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    event_id: str
+    event_type: str
+    participant_id: str
+    god_id: str
+    proof_level: BlueprintProofLevel
+    source_authority: str
+    provider_response_artifact_ref: str | None = None
+    binding_revision: str | None = None
+    account_ref: str | None = None
+    cli_command: str | None = None
+    model: str | None = None
+    variant: str | None = None
+    target_participant_ids: list[str] = Field(default_factory=list)
+    source_refs: list[str] = Field(default_factory=list)
+    forbidden_claims: list[str] = Field(default_factory=list)
+
+    @field_validator(
+        "event_id",
+        "event_type",
+        "participant_id",
+        "god_id",
+        "source_authority",
+    )
+    @classmethod
+    def _validate_required_text(cls, value: str) -> str:
+        return _require_non_empty(value)
+
+    @field_validator(
+        "provider_response_artifact_ref",
+        "binding_revision",
+        "account_ref",
+        "cli_command",
+        "model",
+        "variant",
+    )
+    @classmethod
+    def _validate_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _require_non_empty(value)
+
+    @field_validator("target_participant_ids", "source_refs", "forbidden_claims")
+    @classmethod
+    def _validate_text_list(cls, values: list[str]) -> list[str]:
+        return [_require_non_empty(value) for value in values]
+
+
 class BlueprintFeatureSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -237,6 +287,9 @@ class BlueprintLaneDagRequest(BaseModel):
     graph_version: int = 1
     blueprint: MissionBlueprintV1
     blueprint_proof_level: BlueprintProofLevel = "contract_proof"
+    source_event_lineage: list[BlueprintSourceEventLineage] = Field(
+        default_factory=list
+    )
     features: list[BlueprintFeatureSpec]
     lanes: list[BlueprintLaneSpec]
     source_refs: list[str] = Field(default_factory=list)
@@ -265,6 +318,9 @@ class BlueprintLaneDagPlan(BaseModel):
     blueprint_id: str
     blueprint_ref: str
     blueprint_proof_level: BlueprintProofLevel = "contract_proof"
+    source_event_lineage: list[BlueprintSourceEventLineage] = Field(
+        default_factory=list
+    )
     feature_ids: list[str]
     lane_graph: LaneGraph
     dependency_edges: list[LaneDependencyEdge]
@@ -387,6 +443,7 @@ class BlueprintLaneDagService:
             blueprint_id=request.blueprint.blueprint_id,
             blueprint_ref=_blueprint_ref(request.blueprint),
             blueprint_proof_level=request.blueprint_proof_level,
+            source_event_lineage=list(request.source_event_lineage),
             feature_ids=[feature.feature_id for feature in request.features],
             lane_graph=lane_graph,
             dependency_edges=dependency_edges,

@@ -1331,6 +1331,26 @@ def test_release_evidence_pack_converts_god_room_runtime_closure_into_replay_sec
         lane_dag,
         {
             "blueprint_ref": "blueprint:bp-runtime:1",
+            "source_event_lineage": [
+                {
+                    "event_id": "evt-review-provider-speak",
+                    "event_type": "speak",
+                    "participant_id": "part-review",
+                    "god_id": "god-review",
+                    "proof_level": "opt_in_live_proof",
+                    "source_authority": "god_room_event_store+provider_response",
+                    "provider_response_artifact_ref": (
+                        "reports/provider-responses/provider-response-1.json"
+                    ),
+                    "target_participant_ids": [],
+                    "source_refs": [
+                        "god-room-event:evt-propose",
+                        "provider_response_artifact:"
+                        "reports/provider-responses/provider-response-1.json",
+                    ],
+                    "forbidden_claims": ["natural_groupchat_closure"],
+                }
+            ],
             "lane_contracts": [
                 {
                     "lane_id": "lane-runtime-evidence",
@@ -1575,6 +1595,15 @@ def test_release_evidence_pack_converts_god_room_runtime_closure_into_replay_sec
     assert closure["details"]["god_room_runtime_closure"]["lane_dag"][
         "lane_contract_count"
     ] == 1
+    assert closure["details"]["god_room_runtime_closure"]["lane_dag"][
+        "source_event_lineage_count"
+    ] == 1
+    assert closure["details"]["god_room_runtime_closure"]["lane_dag"][
+        "source_event_lineage_event_types"
+    ] == {"speak": 1}
+    assert closure["details"]["god_room_runtime_closure"]["lane_dag"][
+        "source_event_lineage_proof_levels"
+    ] == {"opt_in_live_proof": 1}
     assert closure["details"]["god_room_runtime_closure"]["speaker_attempt"][
         "status"
     ] == "ready_for_provider_attempt"
@@ -1591,6 +1620,7 @@ def test_release_evidence_pack_converts_god_room_runtime_closure_into_replay_sec
         "provider_response_artifact:reports/provider-responses/provider-response-1.json"
         in closure["source_refs"]
     )
+    assert "god-room-event:evt-review-provider-speak" in closure["source_refs"]
     assert closure["details"]["god_room_runtime_closure"]["review_closure"][
         "status"
     ] == "candidate_input_ready"

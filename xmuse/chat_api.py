@@ -139,6 +139,7 @@ from xmuse_core.structuring.blueprint_execution.lane_dag_service import (
     BlueprintLaneDagRequest,
     BlueprintLaneDagService,
     BlueprintLaneSpec,
+    BlueprintSourceEventLineage,
     LaneRecoveryDecision,
     evaluate_lane_recovery,
 )
@@ -1085,6 +1086,12 @@ def _build_lane_dag_from_god_room_freeze(
                 graph_version=request.graph_version,
                 blueprint=blueprint,
                 blueprint_proof_level=freeze_artifact.proof_level,
+                source_event_lineage=[
+                    BlueprintSourceEventLineage.model_validate(
+                        item.model_dump(mode="json")
+                    )
+                    for item in freeze_artifact.source_event_lineage
+                ],
                 features=request.features,
                 lanes=request.lanes,
                 source_refs=[

@@ -421,6 +421,7 @@ def _lane_dag_details(
         return _manual_gap_details("laneDAG artifact is missing"), [], []
     lane_contracts = _dict_rows(payload.get("lane_contracts"))
     recovery_decisions = _dict_rows(payload.get("recovery_decisions"))
+    source_event_lineage = _dict_rows(payload.get("source_event_lineage"))
     if not lane_contracts:
         issues.append("laneDAG artifact has no lane runtime contracts")
     lane_ids = _dedupe([_text(contract.get("lane_id")) for contract in lane_contracts])
@@ -428,6 +429,7 @@ def _lane_dag_details(
         [
             _text(payload.get("blueprint_ref")),
             *[f"lane:{lane_id}" for lane_id in lane_ids],
+            *_lane_dag_source_event_lineage_refs(source_event_lineage),
         ]
     )
     targets = [f"lane:{lane_id}" for lane_id in lane_ids]
@@ -436,6 +438,21 @@ def _lane_dag_details(
             "blueprint_ref": _text(payload.get("blueprint_ref")),
             "lane_contract_count": len(lane_contracts),
             "lane_ids": lane_ids,
+            "source_event_lineage_count": len(source_event_lineage),
+            "source_event_lineage_event_types": _counts(
+                [
+                    event_type
+                    for item in source_event_lineage
+                    if (event_type := _text(item.get("event_type"))) is not None
+                ]
+            ),
+            "source_event_lineage_proof_levels": _counts(
+                [
+                    proof_level
+                    for item in source_event_lineage
+                    if (proof_level := _text(item.get("proof_level"))) is not None
+                ]
+            ),
             "recovery_decision_count": len(recovery_decisions),
             "refactor_required_count": sum(
                 1
@@ -446,6 +463,23 @@ def _lane_dag_details(
         refs,
         targets,
     )
+
+
+def _lane_dag_source_event_lineage_refs(
+    lineage: list[dict[str, Any]],
+) -> list[str]:
+    refs: list[str] = []
+    for item in lineage:
+        event_id = _text(item.get("event_id"))
+        if event_id is not None:
+            refs.append(f"god-room-event:{event_id}")
+        provider_response_artifact_ref = _text(
+            item.get("provider_response_artifact_ref")
+        )
+        if provider_response_artifact_ref is not None:
+            refs.append(f"provider_response_artifact:{provider_response_artifact_ref}")
+        refs.extend(_string_list(item.get("source_refs")))
+    return refs
 
 
 def _memory_trace_details(

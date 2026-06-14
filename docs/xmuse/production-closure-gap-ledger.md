@@ -110,14 +110,16 @@ runtime、provider invocation、lane authority、review truth 完成。后续生
   `4badeb6b4764e5633bbd68b4cbfe385dc8e98943`
 - Local head at start of L6 provider-backed event lineage freeze slice:
   `1566e657d8548d3627eed22dfd6b013d16fba1cf`
+- Local head at start of L7/L10 freeze source-event lineage carry slice:
+  `aff7607052bb4dd4f017b84ae728dc73f57a0995`
 - PR: <https://github.com/iiyazu/Cross-Muse/pull/43>
 - PR state last checked: draft/open/unmerged
 - PR merge state last checked: `CLEAN`
 - PR review decision last checked: empty
 - Verified GitHub Actions truth at the start of this slice applied to remote head
-  `1566e657d8548d3627eed22dfd6b013d16fba1cf`: run
-  `27499279396`, success
-- Local changes after `1566e657d8548d3627eed22dfd6b013d16fba1cf` must not be
+  `aff7607052bb4dd4f017b84ae728dc73f57a0995`: run
+  `27500112828`, success
+- Local changes after `aff7607052bb4dd4f017b84ae728dc73f57a0995` must not be
   treated as CI-verified until pushed and checked again.
 
 Machine-readable snapshot for gates and future `/goal` setup:
@@ -160,13 +162,14 @@ truth_snapshot:
   local_head_at_l8_runner_loop_recovery_local_proof_slice: 6c9cb329ff5a839b7632d324982073b64ce51491
   local_head_at_l3_l5_provider_backed_deliberation_event_capture_slice: 4badeb6b4764e5633bbd68b4cbfe385dc8e98943
   local_head_at_l6_provider_backed_event_lineage_freeze_slice: 1566e657d8548d3627eed22dfd6b013d16fba1cf
+  local_head_at_l7_l10_freeze_source_event_lineage_carry_slice: aff7607052bb4dd4f017b84ae728dc73f57a0995
   pr: 43
   pr_url: https://github.com/iiyazu/Cross-Muse/pull/43
   pr_state: draft_open_unmerged
   merge_state: CLEAN
   review_decision: empty
-  verified_ci_head_at_slice_start: 1566e657d8548d3627eed22dfd6b013d16fba1cf
-  verified_ci_run_at_slice_start: 27499279396
+  verified_ci_head_at_slice_start: aff7607052bb4dd4f017b84ae728dc73f57a0995
+  verified_ci_run_at_slice_start: 27500112828
   ci_verified_for_slice_start_head: true
   local_changes_after_verified_head: true
   pr_merged_claim_allowed: false
@@ -197,10 +200,10 @@ Evidence boundaries:
 | L4 | Speaker Selection / Provider Invocation | Selection/attempt evidence plus provider invocation artifact producer contract exist | Core/API producer emits response artifacts, fail-closed artifacts, one verified local opt-in live Codex artifact through execution worktree, and multiple artifacts when driven by the bounded multi-turn route | Not server-bound | Provider invocation artifact contract/fail-closed proof plus isolated Codex opt-in live proof |
 | L5 | Speaker Response Capture / Replay Proof | Artifact-backed capture plus composed L4-to-L5 route exists | Rejects contract-only L4 artifacts; appends/replays only server-written real-proof artifacts; one local opt-in live Codex artifact was captured into durable replay; bounded multi-turn route stops on manual_gap and preserves prior durable events | Not server-bound | Capture/replay contract proof plus isolated Codex opt-in live capture proof and bounded multi-turn capture orchestration proof |
 | L6 | Blueprint Freeze Authority | Typed freeze artifact exists with proof-level classification and source event lineage | Single-turn provider-backed speech plus provider-backed question/challenge/handoff event proofs and bounded multi-turn L3-L5 run lineage can feed freeze artifacts while preserving durable event authority; fresh natural multi-GOD freeze still missing | Not server-bound | Freeze contract proof plus isolated opt-in live freeze proof, provider-backed event lineage proof, and bounded multi-turn lineage proof |
-| L7 | Feature / LaneDAG Authority | LaneDAG/contract artifact exists with upstream freeze proof metadata and graph-set/status initialization contract | Live L4/L5/L6 proof metadata can flow into laneDAG without writing `feature_lanes.json`; laneDAG route now derives graph-set artifacts and initializes graph-native status records with inherited `blueprint_proof_level`; `graph_set_id`-backed orchestrator dispatch/review/reprojection now fail closed when durable graph-native status is missing; full dispatch/review authority still not unified | Not server-bound | LaneDAG contract proof plus isolated opt-in live upstream-proof propagation, graph-native proof-lineage carrier proof, laneDAG-to-status initialization proof, and graph-native missing-status fail-closed proof |
+| L7 | Feature / LaneDAG Authority | LaneDAG/contract artifact exists with upstream freeze proof metadata, source event lineage, and graph-set/status initialization contract | Live L4/L5/L6 proof metadata and structured freeze source-event lineage can flow into laneDAG without writing `feature_lanes.json`; laneDAG route now derives graph-set artifacts and initializes graph-native status records with inherited `blueprint_proof_level`; `graph_set_id`-backed orchestrator dispatch/review/reprojection now fail closed when durable graph-native status is missing; full dispatch/review authority still not unified | Not server-bound | LaneDAG contract proof plus isolated opt-in live upstream-proof propagation, structured freeze lineage carrier proof, graph-native proof-lineage carrier proof, laneDAG-to-status initialization proof, and graph-native missing-status fail-closed proof |
 | L8 | Lane Runtime Enforcement / Recovery | Recovery contract/API exists and recovery artifacts carry laneDAG proof lineage | Recovery API consumes laneDAG contract/budget and preserves blueprint proof/source refs; GOD-room review intake and orchestrator dispatch now fail-close non-retry recovery decisions; review intake now also requires graph-native `REVIEWING` status from `FeatureGraphStatusStore`; broader supervisor/live runner enforcement still incomplete | Not server-bound | Recovery policy proof plus laneDAG-lineage evidence proof plus review-intake/dispatch enforcement proof |
 | L9 | Execution / Review / Patch-Forward | Review plane plus GOD-room review intake/verdict/patch-forward/closure artifact contracts exist | GOD-room lane contracts/recovery/candidate evidence can be packaged for independent review only after graph-native status is `REVIEWING`; merge/rework/blocked verdicts now consume graph-native review coordinator authority and update `FeatureGraphStatusStore`; patch-forward verdicts record graph-native gate plans without writing lane status; patch-forward can append a laneDAG patch lane; reviewed patch-lane closure now requires `FeatureGraphStatusStore` `MERGED` authority before producing a release-evidence handoff candidate; live execution proof and server truth still missing | Not server-bound | GOD-room review/patch-forward closure contract proof plus graph-status-gated review-intake/verdict/closure proof and review-plane store lineage proof, not server/GitHub truth |
-| L10 | MemoryOS / Release Evidence / GitHub Truth | Evidence bundle semantics exist and can index GOD-room review closure handoff plus bounded multi-turn provider speech lineage; release candidates can seed MemoryOS source refs from review closure and runtime closure evidence | Runtime closure evidence preserves per-turn L4/L5 refs plus appended event ids/types as contract lineage; live MemoryOS trace and live execution/server truth missing | PR open/unmerged; CI truth only for verified remote head | Replay/readiness proof with explicit gaps |
+| L10 | MemoryOS / Release Evidence / GitHub Truth | Evidence bundle semantics exist and can index GOD-room review closure handoff plus bounded multi-turn provider speech lineage; release candidates can seed MemoryOS source refs from review closure and runtime closure evidence | Runtime closure evidence preserves per-turn L4/L5 refs, appended event ids/types, and laneDAG-carried freeze source-event lineage as contract lineage; live MemoryOS trace and live execution/server truth missing | PR open/unmerged; CI truth only for verified remote head | Replay/readiness proof with explicit gaps |
 | L11 | Operator Cockpit / TUI / Overnight Soak | TUI/control slices exist | Complete cockpit/soak missing | Depends on L10 | Operator projection/control proof only |
 
 Current closure audit:
@@ -210,10 +213,9 @@ Current closure audit:
   claim-boundary governance.
 - Least closed areas: natural multi-GOD deliberation, GOD-room-originated
   execution/review, live MemoryOS trace, and GitHub merge truth.
-- Next production priority: carry L6 source event lineage and bounded
-  provider-backed event ids/types into L7/L10 evidence without inflating them to
-  natural groupchat or server truth, then add opt-in live MemoryOS trace capture
-  after upstream artifacts exist.
+- Next production priority: carry L7 structured freeze source-event lineage
+  through graph-set/status/review artifacts and MemoryOS source-ref candidates
+  without inflating it to natural groupchat, review truth, or server truth.
 
 ## L1 - Authority / Boundary Model
 
@@ -669,7 +671,7 @@ Use these as implementation references, not as xmuse package dependencies:
     - `manual_gap` for blocked freezes;
     - `contract_proof` for fixture/contract transcripts;
     - `opt_in_live_proof` only when durable source events include
-      `speak` events with `real_provider_proof` and a
+      provider-backed appended events with `real_provider_proof` and a
       `provider_response_artifact:` lineage ref from L4/L5.
   - Legacy `xmuse.god_room_blueprint_freeze.v1` artifacts without
     `proof_level` deserialize as `manual_gap` when blocked and
@@ -751,6 +753,14 @@ Use these as implementation references, not as xmuse package dependencies:
     inherited from the GOD-room freeze artifact. This keeps downstream
     execution/review/release evidence aware of whether the source freeze was
     `contract_proof` or `opt_in_live_proof`.
+  - `BlueprintLaneDagPlan` and the persisted laneDAG artifact now also carry
+    generic `source_event_lineage` inherited from the GOD-room freeze artifact.
+    The Chat API laneDAG route populates it from the frozen
+    `xmuse.god_room_blueprint_freeze.v1` artifact, not from request body,
+    `feature_lanes.json`, TUI state, or release evidence.
+  - Provider-backed `speak`, `question`, `challenge`, and `handoff` lineage can
+    therefore remain visible to downstream lane/release evidence while
+    preserving each event's proof level and forbidden claims.
   - A local L7 smoke run in temp runtime root
     `/tmp/xmuse-live-l7-lanedag-vtb6b6by` consumed a live L4/L5/L6 Codex
     lineage and produced `lane_graphs/graph-live-route.lane-dag.json` with
@@ -782,6 +792,9 @@ Use these as implementation references, not as xmuse package dependencies:
     status records, worker evidence bundles, GOD-room recovery/review
     artifacts, and key graph-native status-transition producers, but it is not
     yet proven through every live runner evidence path.
+  - Structured `source_event_lineage` is now preserved in the laneDAG artifact,
+    but graph-set/status/recovery/review artifacts still do not consume it as a
+    first-class lineage object.
   - The laneDAG-to-graph-set bridge is contract proof only; it has not yet been
     exercised in a fresh live L4/L5/L6/L7 runtime chain and does not prove
     execution/review consumption.
@@ -793,11 +806,12 @@ Use these as implementation references, not as xmuse package dependencies:
     dispatch/review actually consumes them.
   - Legacy projection lanes and graph-id-only compatibility lanes remain
     compatibility-only and must not be described as graph-native L7 authority.
+  - Source-event lineage can be overread as fresh provider invocation or natural
+    groupchat proof if downstream artifacts omit the original forbidden claims.
 - Next production slice:
-  - Feed the laneDAG-derived graph-set/status authority into the next
-    dispatch/review runner path, then continue removing graph-backed
-    dispatch/review fallbacks to detached laneDAG artifacts or
-    `feature_lanes.json`.
+  - Carry structured `source_event_lineage` through graph-set status,
+    recovery/review, and release-evidence paths without falling back to
+    `feature_lanes.json` or treating the lineage as review/server truth.
 - Downstream blocked until:
   - L8 and L9 cannot claim production execution closure without consuming this
     lane authority.
@@ -988,8 +1002,13 @@ Use these as implementation references, not as xmuse package dependencies:
   - Bounded multi-turn provider speech evidence counts appended event types
     and accepts `event_appended` turns as lineage. This does not upgrade the
     run to GitHub, review, MemoryOS, or natural groupchat truth.
+  - GOD room runtime closure evidence now indexes laneDAG-carried
+    `source_event_lineage`, including event id/type counts, proof-level counts,
+    provider response artifact refs, and source refs. This is replay lineage
+    only; it does not prove live MemoryOS, independent review, GitHub truth, or
+    merge readiness.
   - PR #43 latest verified CI at the start of this slice passed for remote head
-    `1566e657d8548d3627eed22dfd6b013d16fba1cf` in run `27499279396`; merge
+    `aff7607052bb4dd4f017b84ae728dc73f57a0995` in run `27500112828`; merge
     state was `CLEAN` when last checked.
 - Missing production closure:
   - No current live MemoryOS Lite trace proof is established for this branch
@@ -1013,10 +1032,11 @@ Use these as implementation references, not as xmuse package dependencies:
   - `ready_for_replay` can be confused with `ready_to_merge` or `pr_merged`.
   - CI success can be overread as review or merge truth.
 - Next production slice:
-  - Carry L6 `source_event_lineage` into release evidence and MemoryOS
-    source-ref candidates, then run an opt-in live MemoryOS trace capture when
-    the environment is configured. A fresh replay bundle and GitHub truth
-    capture must still avoid treating either as merge truth.
+  - Carry L7 laneDAG `source_event_lineage` into MemoryOS source-ref candidates
+    and replay bundles as lineage-only evidence, then run an opt-in live
+    MemoryOS trace capture when the environment is configured. A fresh replay
+    bundle and GitHub truth capture must still avoid treating either as merge
+    truth.
 - Downstream blocked until:
   - L11 cannot claim production cockpit or overnight readiness unless this
     layer shows honest replay/server truth.
