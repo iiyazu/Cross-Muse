@@ -167,6 +167,101 @@ def test_release_evidence_candidates_identify_ready_natural_and_provider_inputs(
     }
 
 
+def test_release_evidence_candidates_seed_memoryos_refs_from_review_closure(
+    tmp_path: Path,
+) -> None:
+    review_closure = _write_god_room_review_closure_artifact(
+        tmp_path / "review-closure.json"
+    )
+
+    report = build_release_evidence_candidate_report(
+        tmp_path,
+        conversation_id="conv-1",
+        env={
+            "XMUSE_LIVE_MEMORYOS_LITE": "1",
+            "XMUSE_MEMORYOS_LITE_URL": "http://memoryos-lite.example",
+        },
+        memoryos_payload={
+            "repo_id": "iiyazu/Cross-Muse",
+            "workspace_id": "xmuse",
+            "god_id": "review",
+            "conversation_id": "conv-1",
+            "thread_id": "thread-1",
+            "blueprint_id": "bp-1",
+            "feature_id": "feature-1",
+            "lane_id": "lane-runtime-evidence-patch",
+            "content": "live evidence",
+            "query": "production evidence",
+            "source_refs": ["operator:manual-context"],
+            "god_room_review_closure": str(review_closure),
+        },
+    )
+
+    memoryos = report["live_memoryos"]
+    payload_hints = memoryos["suggested_operator_action"]["payload_hints"]
+    assert memoryos["export_ready"] is True
+    assert memoryos["review_closure_artifact_configured"] is True
+    assert memoryos["review_closure_artifact_gate_ready"] is True
+    assert memoryos["review_closure_source_ref_count"] == 7
+    assert "god_room_review_closure_artifact" in memoryos["source_authority"]
+    assert payload_hints["source_refs"] == [
+        "operator:manual-context",
+        (
+            "god-room-review-closure:graph-runtime:"
+            "lane-runtime-evidence:lane-runtime-evidence-patch"
+        ),
+        "lane:lane-runtime-evidence",
+        "lane:lane-runtime-evidence-patch",
+        "reports/god-room/patch-forward.json",
+        "reports/god-room/patch-intake.json",
+        "reports/god-room/patch-verdict.json",
+        "worker-candidate:patch-reviewed",
+    ]
+    assert memoryos["proof_boundary"] == "candidate_report_is_not_live_memoryos_proof"
+
+
+def test_release_evidence_candidates_reject_review_closure_server_truth_overclaim(
+    tmp_path: Path,
+) -> None:
+    review_closure = _write_god_room_review_closure_artifact(
+        tmp_path / "review-closure.json",
+        server_truth_status="github_review_truth",
+    )
+
+    report = build_release_evidence_candidate_report(
+        tmp_path,
+        conversation_id="conv-1",
+        env={
+            "XMUSE_LIVE_MEMORYOS_LITE": "1",
+            "XMUSE_MEMORYOS_LITE_URL": "http://memoryos-lite.example",
+        },
+        memoryos_payload={
+            "repo_id": "iiyazu/Cross-Muse",
+            "workspace_id": "xmuse",
+            "god_id": "review",
+            "conversation_id": "conv-1",
+            "thread_id": "thread-1",
+            "blueprint_id": "bp-1",
+            "feature_id": "feature-1",
+            "lane_id": "lane-runtime-evidence-patch",
+            "content": "live evidence",
+            "query": "production evidence",
+            "god_room_review_closure": str(review_closure),
+        },
+    )
+
+    memoryos = report["live_memoryos"]
+    payload_hints = memoryos["suggested_operator_action"]["payload_hints"]
+    assert memoryos["review_closure_artifact_configured"] is True
+    assert memoryos["review_closure_artifact_gate_ready"] is False
+    assert memoryos["review_closure_artifact_summary"] == (
+        "GOD room review closure overclaims server truth."
+    )
+    assert "god_room_review_closure_artifact_not_ready" in memoryos["blockers"]
+    assert "god_room_review_closure_artifact" not in memoryos["source_authority"]
+    assert "source_refs" not in payload_hints
+
+
 def test_release_evidence_candidates_require_selected_runtime_for_natural_export(
     tmp_path: Path,
 ) -> None:
@@ -397,6 +492,9 @@ def test_release_evidence_candidates_cli_writes_operator_candidate_report(
     from xmuse.release_evidence_candidates import main
 
     conversation = ChatStore(tmp_path / "chat.db").create_conversation("CLI candidates")
+    review_closure = _write_god_room_review_closure_artifact(
+        tmp_path / "review-closure.json"
+    )
     output = tmp_path / "candidates.json"
     monkeypatch.setenv("XMUSE_LIVE_MEMORYOS_LITE", "1")
     monkeypatch.setenv("XMUSE_MEMORYOS_LITE_URL", "http://memoryos-lite.example")
@@ -425,6 +523,8 @@ def test_release_evidence_candidates_cli_writes_operator_candidate_report(
             "live evidence",
             "--query",
             "production evidence",
+            "--god-room-review-closure",
+            str(review_closure),
             "--github-repo",
             "iiyazu/Cross-Muse",
             "--github-pull-request",
@@ -456,6 +556,18 @@ def test_release_evidence_candidates_cli_writes_operator_candidate_report(
         "blueprint_id": "bp-1",
         "feature_id": "feature-1",
         "lane_id": "lane-1",
+        "source_refs": [
+            (
+                "god-room-review-closure:graph-runtime:"
+                "lane-runtime-evidence:lane-runtime-evidence-patch"
+            ),
+            "lane:lane-runtime-evidence",
+            "lane:lane-runtime-evidence-patch",
+            "reports/god-room/patch-forward.json",
+            "reports/god-room/patch-intake.json",
+            "reports/god-room/patch-verdict.json",
+            "worker-candidate:patch-reviewed",
+        ],
     }
     assert report["github_server_truth"]["export_ready"] is True
     assert report["github_server_truth"]["suggested_operator_action"][
@@ -657,6 +769,59 @@ def _write_memoryos_trace_artifact(path: Path) -> Path:
                 "source_refs": ["conversation:conv-1"],
                 "estimated_tokens": 128,
                 "blockers": [],
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def _write_god_room_review_closure_artifact(
+    path: Path,
+    *,
+    server_truth_status: str = "not_server_truth",
+) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "xmuse.god_room_lane_review_closure.v1",
+                "proof_level": "contract_proof",
+                "review_truth_status": "independent_review_artifact",
+                "execution_truth_status": "candidate_reviewed",
+                "server_truth_status": server_truth_status,
+                "release_evidence_handoff_status": "candidate_input_ready",
+                "graph_id": "graph-runtime",
+                "failed_lane_id": "lane-runtime-evidence",
+                "terminal_lane_id": "lane-runtime-evidence-patch",
+                "patch_forward_artifact": "reports/god-room/patch-forward.json",
+                "patch_lane_review_intake_artifact": (
+                    "reports/god-room/patch-intake.json"
+                ),
+                "patch_lane_review_verdict_artifact": (
+                    "reports/god-room/patch-verdict.json"
+                ),
+                "candidate_refs": ["worker-candidate:patch-reviewed"],
+                "cited_candidate_refs": ["worker-candidate:patch-reviewed"],
+                "terminal_review_verdict": {
+                    "evidence_refs": ["worker-candidate:patch-reviewed"]
+                },
+                "manual_gaps": [
+                    "review_plane_store_not_updated",
+                    "lane_status_not_updated",
+                    "release_evidence_not_linked",
+                    "github_truth_not_checked",
+                ],
+                "forbidden_claims": [
+                    "worker_output_is_review_truth",
+                    "end_to_end_execution_review_closure",
+                    "ready_to_merge",
+                    "pr_merged",
+                    "github_review_truth",
+                ],
             },
             indent=2,
             sort_keys=True,

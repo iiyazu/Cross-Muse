@@ -1115,6 +1115,12 @@ MemoryOS candidate rows use
 env/payload source authority, and `attempt_release_evidence` hints. They do not
 include env values or task `content`/`query` text in payload hints, and they do
 not prove the live MemoryOS service responded.
+`xmuse-release-evidence-candidates --god-room-review-closure <path>` may point
+at an `xmuse.god_room_lane_review_closure.v1` handoff. The candidate report
+validates that it remains `contract_proof` and `server_truth_status=not_server_truth`,
+then seeds `live_memoryos` `source_refs` payload hints from the closure lineage.
+This is only operator input guidance; it is not a live MemoryOS trace and does
+not prove review, merge, or readiness truth.
 When `XMUSE_MEMORYOS_LIVE_TRACE_ARTIFACT` points at an existing trace, the
 candidate report also validates that artifact through the live MemoryOS release
 gate builder and exposes `artifact_gate_ready`, `artifact_gate_status`,

@@ -31,6 +31,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--lane-id")
     parser.add_argument("--content")
     parser.add_argument("--query")
+    parser.add_argument(
+        "--god-room-review-closure",
+        type=Path,
+        default=None,
+        help=(
+            "Optional xmuse.god_room_lane_review_closure.v1 artifact used only "
+            "to seed live MemoryOS source_refs payload hints."
+        ),
+    )
     parser.add_argument("--github-repo")
     parser.add_argument("--github-pull-request")
     parser.add_argument("--github-base-branch")
@@ -94,6 +103,8 @@ def _candidate_payload(args: argparse.Namespace) -> dict[str, Any]:
     _set_if_present(payload, "lane_id", args.lane_id)
     _set_if_present(payload, "content", args.content)
     _set_if_present(payload, "query", args.query)
+    if args.god_room_review_closure is not None:
+        payload["god_room_review_closure"] = str(args.god_room_review_closure)
     _set_if_present(payload, "repo", args.github_repo)
     _set_if_present(payload, "pull_request_number", args.github_pull_request)
     _set_if_present(payload, "base_branch", args.github_base_branch)

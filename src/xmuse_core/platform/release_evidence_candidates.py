@@ -29,6 +29,7 @@ from xmuse_core.providers.god_cli_selection_store import (
 
 _MEMORYOS_REQUIRED_ENV = ("XMUSE_LIVE_MEMORYOS_LITE", "XMUSE_MEMORYOS_LITE_URL")
 _MEMORYOS_LIVE_TRACE_ARTIFACT_ENV = "XMUSE_MEMORYOS_LIVE_TRACE_ARTIFACT"
+_GOD_ROOM_REVIEW_CLOSURE_ARTIFACT_ENV = "XMUSE_GOD_ROOM_REVIEW_CLOSURE_ARTIFACT"
 _NATURAL_TRANSCRIPT_ARTIFACT_ENV = "XMUSE_NATURAL_GOD_TRANSCRIPT_PATH"
 _NATURAL_RUNTIME_ARTIFACT_ENV = "XMUSE_NATURAL_GOD_RUNTIME_ARTIFACT"
 _MEMORYOS_REQUIRED_PAYLOAD = (
@@ -430,6 +431,7 @@ def _memoryos_candidates(
     payload: Mapping[str, Any],
 ) -> dict[str, Any]:
     artifact = _memoryos_trace_artifact_candidate(env)
+    review_closure = _memoryos_review_closure_candidate(env, payload)
     missing_env = [
         key
         for key in _MEMORYOS_REQUIRED_ENV
@@ -444,12 +446,22 @@ def _memoryos_candidates(
         if not artifact["artifact_configured"] or artifact["artifact_gate_ready"]
         else ["memoryos_live_trace_artifact_not_ready"]
     )
+    review_closure_blockers = (
+        []
+        if not review_closure["artifact_configured"]
+        or review_closure["artifact_gate_ready"]
+        else ["god_room_review_closure_artifact_not_ready"]
+    )
     return {
         "configured": not missing_env or artifact["artifact_configured"],
         "export_ready": not missing_env and not missing_payload,
         "env_keys_present": sorted(
             key
-            for key in (*_MEMORYOS_REQUIRED_ENV, _MEMORYOS_LIVE_TRACE_ARTIFACT_ENV)
+            for key in (
+                *_MEMORYOS_REQUIRED_ENV,
+                _MEMORYOS_LIVE_TRACE_ARTIFACT_ENV,
+                _GOD_ROOM_REVIEW_CLOSURE_ARTIFACT_ENV,
+            )
             if key in env
         ),
         "missing_env_keys": missing_env,
@@ -466,9 +478,19 @@ def _memoryos_candidates(
                 else []
             ),
             *artifact_blockers,
+            *review_closure_blockers,
         ],
         **artifact,
-        **_memoryos_candidate_guidance(payload, artifact=artifact),
+        "review_closure_artifact_configured": review_closure["artifact_configured"],
+        "review_closure_artifact_path": review_closure["artifact_path"],
+        "review_closure_artifact_gate_ready": review_closure["artifact_gate_ready"],
+        "review_closure_artifact_summary": review_closure["artifact_summary"],
+        "review_closure_source_ref_count": review_closure["source_ref_count"],
+        **_memoryos_candidate_guidance(
+            payload,
+            artifact=artifact,
+            review_closure=review_closure,
+        ),
     }
 
 
@@ -513,16 +535,116 @@ def _memoryos_trace_artifact_candidate(env: Mapping[str, str]) -> dict[str, Any]
     }
 
 
+def _memoryos_review_closure_candidate(
+    env: Mapping[str, str],
+    payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    artifact_path = _text(payload.get("god_room_review_closure")) or _text(
+        env.get(_GOD_ROOM_REVIEW_CLOSURE_ARTIFACT_ENV)
+    )
+    base = {
+        "artifact_configured": artifact_path is not None,
+        "artifact_path": artifact_path,
+        "artifact_gate_ready": False,
+        "artifact_summary": None,
+        "source_refs": [],
+        "source_ref_count": 0,
+    }
+    if artifact_path is None:
+        return base
+    artifact, load_error = _json_file(
+        Path(artifact_path),
+        subject="GOD room review closure artifact",
+    )
+    if artifact is None:
+        return {
+            **base,
+            "artifact_summary": load_error,
+        }
+    schema_version = _text(artifact.get("schema_version"))
+    proof_level = _text(artifact.get("proof_level"))
+    server_truth_status = _text(artifact.get("server_truth_status"))
+    forbidden_claims = _string_list(artifact.get("forbidden_claims"))
+    required_forbidden = {"ready_to_merge", "pr_merged", "github_review_truth"}
+    if schema_version != "xmuse.god_room_lane_review_closure.v1":
+        return {
+            **base,
+            "artifact_summary": "GOD room review closure schema is unsupported.",
+        }
+    if proof_level != "contract_proof":
+        return {
+            **base,
+            "artifact_summary": "GOD room review closure must remain contract_proof.",
+        }
+    if server_truth_status != "not_server_truth":
+        return {
+            **base,
+            "artifact_summary": "GOD room review closure overclaims server truth.",
+        }
+    if not required_forbidden.issubset(set(forbidden_claims)):
+        return {
+            **base,
+            "artifact_summary": "GOD room review closure missing forbidden claims.",
+        }
+    source_refs = _review_closure_source_refs(artifact)
+    return {
+        **base,
+        "artifact_gate_ready": True,
+        "artifact_summary": "GOD room review closure can seed MemoryOS source refs.",
+        "source_refs": source_refs,
+        "source_ref_count": len(source_refs),
+    }
+
+
+def _review_closure_source_refs(artifact: Mapping[str, Any]) -> list[str]:
+    terminal_verdict = artifact.get("terminal_review_verdict")
+    verdict_refs = (
+        _string_list(terminal_verdict.get("evidence_refs"))
+        if isinstance(terminal_verdict, dict)
+        else []
+    )
+    graph_id = _text(artifact.get("graph_id"))
+    failed_lane_id = _text(artifact.get("failed_lane_id"))
+    terminal_lane_id = _text(artifact.get("terminal_lane_id"))
+    synthetic_ref = (
+        f"god-room-review-closure:{graph_id}:{failed_lane_id}:{terminal_lane_id}"
+        if graph_id and failed_lane_id and terminal_lane_id
+        else None
+    )
+    return _ordered_unique(
+        [
+            synthetic_ref,
+            f"lane:{failed_lane_id}" if failed_lane_id else None,
+            f"lane:{terminal_lane_id}" if terminal_lane_id else None,
+            _text(artifact.get("patch_forward_artifact")),
+            _text(artifact.get("patch_lane_review_intake_artifact")),
+            _text(artifact.get("patch_lane_review_verdict_artifact")),
+            *_string_list(artifact.get("candidate_refs")),
+            *_string_list(artifact.get("cited_candidate_refs")),
+            *verdict_refs,
+        ]
+    )
+
+
 def _memoryos_candidate_guidance(
     payload: Mapping[str, Any],
     *,
     artifact: Mapping[str, Any],
+    review_closure: Mapping[str, Any],
 ) -> dict[str, Any]:
     payload_hints = {
         key: text
         for key in _MEMORYOS_PAYLOAD_HINT_KEYS
         if (text := _text(payload.get(key))) is not None
     }
+    source_refs = _ordered_unique(
+        [
+            *_string_list(payload.get("source_refs")),
+            *_string_list(review_closure.get("source_refs")),
+        ]
+    )
+    if source_refs:
+        payload_hints["source_refs"] = source_refs
     source_authority = [
         "redacted_environment_presence",
         "operator_release_candidate_payload",
@@ -535,6 +657,8 @@ def _memoryos_candidate_guidance(
                 "memoryos_live_release_gate",
             ]
         )
+    if review_closure.get("artifact_gate_ready") is True:
+        source_authority.append("god_room_review_closure_artifact")
     guidance: dict[str, Any] = {
         "proof_boundary": "candidate_report_is_not_live_memoryos_proof",
         "required_artifact_schema": "xmuse.memoryos_lite_trace.v1",
