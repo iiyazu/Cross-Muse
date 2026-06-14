@@ -10,6 +10,7 @@ import pytest
 from xmuse_core.chat.dispatch_queue import ChatDispatchQueueStore
 from xmuse_core.chat.store import ChatStore
 from xmuse_core.platform.run_health import build_process_inventory
+from xmuse_core.platform.runner_supervisor import RunnerSupervisorConfig, runner_status
 from xmuse_core.structuring.blueprint_execution.lane_recovery_artifacts import (
     lane_recovery_artifact_path,
 )
@@ -827,6 +828,143 @@ async def test_runner_ticks_blueprint_automation_without_blocking_dispatch(
     assert captured["planning_base_dir"] == tmp_path / "xmuse"
     assert captured["planning_worker_ids"] == ["platform-runner"]
     assert captured["dispatches"] == ["lane-1"]
+
+
+@pytest.mark.asyncio
+async def test_runner_loop_blocks_refactor_required_and_status_reports_recovery(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    xmuse_root = tmp_path / "xmuse"
+    lanes_path = xmuse_root / "feature_lanes.json"
+    lanes_path.parent.mkdir(parents=True)
+    lanes_path.write_text(
+        json.dumps(
+            {
+                "lanes": [
+                    {
+                        "feature_id": "lane-refactor",
+                        "status": "reworking",
+                        "priority": 5,
+                        "graph_id": "graph-a",
+                    }
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    _write_recovery_artifact(
+        xmuse_root,
+        graph_id="graph-a",
+        lane_id="lane-refactor",
+        decision="refactor_required",
+        retry_allowed=False,
+    )
+    captured: dict[str, object] = {"dispatches": []}
+    orchestrator_holder: dict[str, object] = {}
+
+    class FakeLoop:
+        def __init__(self) -> None:
+            self._times = iter((0.0, 0.0, 3601.0))
+
+        def add_signal_handler(self, *args, **kwargs) -> None:
+            return None
+
+        def time(self) -> float:
+            return next(self._times)
+
+    class FakeOrchestrator:
+        def __init__(self, **kwargs) -> None:
+            self._root = kwargs["xmuse_root"]
+            self._sm = _FakeStateMachine(
+                [
+                    {
+                        "feature_id": "lane-refactor",
+                        "status": "reworking",
+                        "priority": 5,
+                        "graph_id": "graph-a",
+                    }
+                ]
+            )
+            orchestrator_holder["orch"] = self
+
+        async def reconcile_status_changes(
+            self, *, dispatch_reworking: bool = True
+        ) -> None:
+            captured["reconcile_dispatch_reworking"] = dispatch_reworking
+
+        async def dispatch_lane(self, lane_id: str) -> None:
+            captured["dispatches"].append(lane_id)
+
+    class FakeBlueprintAutomationService:
+        def __init__(self, *, base_dir: Path, **kwargs) -> None:
+            captured["planning_base_dir"] = base_dir
+
+        def tick(self, *, worker_id: str):
+            captured["planning_worker_id"] = worker_id
+            return None
+
+    async def _instant_idle_wait(awaitable, *, timeout: float):
+        awaitable.close()
+        raise TimeoutError
+
+    monkeypatch.setattr(platform_runner, "PlatformOrchestrator", FakeOrchestrator)
+    monkeypatch.setattr(
+        platform_runner,
+        "BlueprintAutomationService",
+        FakeBlueprintAutomationService,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        platform_runner,
+        "_writer_lease_heartbeat_loop",
+        lambda *args, **kwargs: asyncio.Event().wait(),
+    )
+    monkeypatch.setattr(platform_runner.asyncio, "get_running_loop", lambda: FakeLoop())
+    monkeypatch.setattr(platform_runner.asyncio, "wait_for", _instant_idle_wait)
+
+    await platform_runner.run(
+        lanes_path=lanes_path,
+        xmuse_root=xmuse_root,
+        mcp_port=8100,
+        max_hours=1,
+        max_concurrent=1,
+    )
+
+    assert captured["planning_base_dir"] == xmuse_root
+    assert captured["planning_worker_id"] == "platform-runner"
+    assert captured["dispatches"] == []
+    blocked_lane = orchestrator_holder["orch"]._sm.get_lanes()[0]
+    assert blocked_lane["dispatch_blocked_by_recovery"] is True
+    assert blocked_lane["recovery_dispatch_block_reason"] == "refactor_required"
+    assert blocked_lane["recovery_source_authority"] == "lane_recovery_artifact"
+    assert blocked_lane["recovery_decision"]["retry_allowed"] is False
+    assert "dispatch_attempt_id" not in blocked_lane
+
+    status = runner_status(
+        RunnerSupervisorConfig(
+            repo_root=tmp_path,
+            pid_file=xmuse_root / "runner.pid.json",
+            lanes_path=lanes_path,
+        ),
+        runner_pids=[1234],
+        mcp_pids=[],
+        live_pids={1234},
+    )
+    recovery = status["health"]["recovery"]
+    assert recovery["source_authority"] == "lane_recovery_artifact"
+    assert recovery["proof_level"] == "contract_proof"
+    assert recovery["counts"] == {
+        "blocked": 1,
+        "non_retry_decision": 1,
+        "invalid_artifact": 0,
+        "retry_allowed": 0,
+    }
+    assert recovery["blocked_lanes"][0]["lane_id"] == "lane-refactor"
+    assert recovery["blocked_lanes"][0]["decision"] == "refactor_required"
+    assert "live_runner_recovery_enforcement_not_proven" in recovery["manual_gaps"]
+    assert "ready_to_merge" in recovery["forbidden_claims"]
 
 
 @pytest.mark.asyncio
