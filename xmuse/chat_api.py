@@ -131,6 +131,11 @@ from xmuse_core.structuring.blueprint_execution.lane_dag_service import (
     LaneRecoveryDecision,
     evaluate_lane_recovery,
 )
+from xmuse_core.structuring.blueprint_execution.lane_recovery_artifacts import (
+    LaneRecoveryArtifactError,
+    lane_recovery_artifact_path,
+    load_lane_recovery_decisions,
+)
 from xmuse_core.structuring.feature_plan_store import (
     build_feature_plan_proposal,
     read_approved_mission_blueprint,
@@ -2397,31 +2402,20 @@ def _load_lane_recovery_decisions(
     graph_id: str,
     lane_ids: list[str],
 ) -> list[LaneRecoveryDecision]:
-    decisions: list[LaneRecoveryDecision] = []
-    for lane_id in lane_ids:
-        path = _lane_recovery_artifact_path(base_dir, graph_id=graph_id, lane_id=lane_id)
-        if not path.exists():
-            continue
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(payload, dict) or not isinstance(payload.get("decision"), dict):
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "code": "god_room_lane_recovery_invalid_artifact",
-                    "message": f"lane recovery artifact is invalid: {path.name}",
-                },
-            )
-        try:
-            decisions.append(LaneRecoveryDecision.model_validate(payload["decision"]))
-        except ValidationError as exc:
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "code": "god_room_lane_recovery_invalid_artifact",
-                    "message": str(exc),
-                },
-            ) from exc
-    return decisions
+    try:
+        return load_lane_recovery_decisions(
+            base_dir,
+            graph_id=graph_id,
+            lane_ids=lane_ids,
+        )
+    except LaneRecoveryArtifactError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "god_room_lane_recovery_invalid_artifact",
+                "message": str(exc),
+            },
+        ) from exc
 
 
 def _god_room_blueprint_freeze_artifact_for_lane_dag(
@@ -2815,11 +2809,7 @@ def _lane_dag_artifact_path(base_dir: Path, graph_id: str) -> Path:
 
 
 def _lane_recovery_artifact_path(base_dir: Path, *, graph_id: str, lane_id: str) -> Path:
-    return (
-        base_dir
-        / "lane_graphs"
-        / f"{_artifact_path_id(graph_id)}.{_artifact_path_id(lane_id)}.recovery.json"
-    )
+    return lane_recovery_artifact_path(base_dir, graph_id=graph_id, lane_id=lane_id)
 
 
 def _artifact_path_id(value: str) -> str:

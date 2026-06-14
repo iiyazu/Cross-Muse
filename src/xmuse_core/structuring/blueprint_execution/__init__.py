@@ -27,6 +27,12 @@ from .lane_dag_service import (
     PatchForwardLink,
     evaluate_lane_recovery,
 )
+from .lane_recovery_artifacts import (
+    LaneRecoveryArtifactError,
+    lane_recovery_artifact_path,
+    load_lane_recovery_decision,
+    load_lane_recovery_decisions,
+)
 
 __all__ = [
     "BlueprintApprovalEventProducer",
@@ -47,10 +53,14 @@ __all__ = [
     "LaneFailureEvidence",
     "LaneRecoveryDecision",
     "LaneRecoveryDecisionType",
+    "LaneRecoveryArtifactError",
     "LaneRuntimeBudget",
     "LaneRuntimeContract",
     "PatchForwardLink",
     "build_blueprint_approval_dedupe_key",
     "evaluate_lane_recovery",
+    "lane_recovery_artifact_path",
+    "load_lane_recovery_decision",
+    "load_lane_recovery_decisions",
     "produce_blueprint_approval_event",
 ]

@@ -25,6 +25,9 @@ from xmuse_core.providers.models import ProviderId, RiskTier, TaskCapability
 from xmuse_core.providers.registry import build_default_provider_registry
 from xmuse_core.providers.selection_record import ProviderSelectionRecordStore
 from xmuse_core.providers.service import RunnerProviderService
+from xmuse_core.structuring.blueprint_execution.lane_recovery_artifacts import (
+    lane_recovery_artifact_path,
+)
 from xmuse_core.structuring.feature_graph_artifact_store import FeatureGraphArtifactStore
 from xmuse_core.structuring.feature_graph_status_store import FeatureGraphStatusStore
 from xmuse_core.structuring.models import (
@@ -329,6 +332,188 @@ async def test_dispatch_lane_allows_graph_native_reworking_with_stale_pending_pr
 
     assert orch._sm.get_lane("lane-1")["status"] == "dispatched"
     run_exec.assert_awaited_once_with("lane-1")
+
+
+@pytest.mark.asyncio
+async def test_dispatch_lane_blocks_non_retry_recovery_decision(tmp_path):
+    lanes_path = tmp_path / "feature_lanes.json"
+    lanes_path.write_text(
+        json.dumps(
+            {
+                "projection_revision": 7,
+                "lanes": [
+                    {
+                        "feature_id": "lane-1",
+                        "status": "reworking",
+                        "prompt": "repair and retry",
+                        "worktree": str(tmp_path),
+                        "graph_id": "graph-feature-a",
+                    }
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    recovery_path = lane_recovery_artifact_path(
+        tmp_path,
+        graph_id="graph-feature-a",
+        lane_id="lane-1",
+    )
+    recovery_path.parent.mkdir(parents=True)
+    recovery_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "xmuse.god_room_lane_recovery.v1",
+                "decision": {
+                    "lane_id": "lane-1",
+                    "decision": "refactor_required",
+                    "retry_allowed": False,
+                    "failure_class": "demo_grade_boundary",
+                    "attempt": 2,
+                    "refactor_required_reason": (
+                        "failure_class demo_grade_boundary repeated 2 times"
+                    ),
+                    "next_action": (
+                        "refactor or replace the failing lane boundary before retrying"
+                    ),
+                    "source_refs": ["pytest:recovery-refactor-required"],
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    orch = PlatformOrchestrator(
+        lanes_path=lanes_path,
+        xmuse_root=tmp_path,
+        mcp_port=9999,
+    )
+
+    with patch.object(orch, "_run_execution_god", new_callable=AsyncMock) as run_exec:
+        await orch.dispatch_lane("lane-1")
+
+    lane = orch._sm.get_lane("lane-1")
+    assert lane["status"] == "reworking"
+    assert lane["dispatch_blocked_by_recovery"] is True
+    assert lane["recovery_dispatch_block_reason"] == "refactor_required"
+    assert lane["recovery_source_authority"] == "lane_recovery_artifact"
+    assert lane["recovery_decision"]["retry_allowed"] is False
+    assert "live_runner_recovery_enforcement_not_proven" in lane["manual_gaps"]
+    assert "end_to_end_execution_review_closure" in lane["forbidden_claims"]
+    assert "dispatch_attempt_id" not in lane
+    run_exec.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_lane_allows_retry_recovery_decision(tmp_path):
+    lanes_path = tmp_path / "feature_lanes.json"
+    lanes_path.write_text(
+        json.dumps(
+            {
+                "projection_revision": 7,
+                "lanes": [
+                    {
+                        "feature_id": "lane-1",
+                        "status": "reworking",
+                        "prompt": "repair and retry",
+                        "worktree": str(tmp_path),
+                        "graph_id": "graph-feature-a",
+                    }
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    recovery_path = lane_recovery_artifact_path(
+        tmp_path,
+        graph_id="graph-feature-a",
+        lane_id="lane-1",
+    )
+    recovery_path.parent.mkdir(parents=True)
+    recovery_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "xmuse.god_room_lane_recovery.v1",
+                "decision": {
+                    "lane_id": "lane-1",
+                    "decision": "retry",
+                    "retry_allowed": True,
+                    "failure_class": "lint_failure",
+                    "attempt": 1,
+                    "next_action": "retry lane within declared budget",
+                    "source_refs": ["pytest:recovery-retry"],
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    orch = PlatformOrchestrator(
+        lanes_path=lanes_path,
+        xmuse_root=tmp_path,
+        mcp_port=9999,
+    )
+
+    with patch.object(orch, "_run_execution_god", new_callable=AsyncMock) as run_exec:
+        await orch.dispatch_lane("lane-1")
+
+    lane = orch._sm.get_lane("lane-1")
+    assert lane["status"] == "dispatched"
+    assert "dispatch_blocked_by_recovery" not in lane
+    run_exec.assert_awaited_once_with("lane-1")
+
+
+@pytest.mark.asyncio
+async def test_dispatch_lane_blocks_invalid_recovery_artifact(tmp_path):
+    lanes_path = tmp_path / "feature_lanes.json"
+    lanes_path.write_text(
+        json.dumps(
+            {
+                "projection_revision": 7,
+                "lanes": [
+                    {
+                        "feature_id": "lane-1",
+                        "status": "reworking",
+                        "prompt": "repair and retry",
+                        "worktree": str(tmp_path),
+                        "graph_id": "graph-feature-a",
+                    }
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    recovery_path = lane_recovery_artifact_path(
+        tmp_path,
+        graph_id="graph-feature-a",
+        lane_id="lane-1",
+    )
+    recovery_path.parent.mkdir(parents=True)
+    recovery_path.write_text(
+        json.dumps({"schema_version": "xmuse.god_room_lane_recovery.v1"}) + "\n",
+        encoding="utf-8",
+    )
+    orch = PlatformOrchestrator(
+        lanes_path=lanes_path,
+        xmuse_root=tmp_path,
+        mcp_port=9999,
+    )
+
+    with patch.object(orch, "_run_execution_god", new_callable=AsyncMock) as run_exec:
+        await orch.dispatch_lane("lane-1")
+
+    lane = orch._sm.get_lane("lane-1")
+    assert lane["status"] == "reworking"
+    assert lane["dispatch_blocked_by_recovery"] is True
+    assert lane["recovery_dispatch_block_reason"] == "invalid_recovery_artifact"
+    assert lane["recovery_source_authority"] == "lane_recovery_artifact"
+    assert "lane_recovery_artifact_invalid" in lane["manual_gaps"]
+    assert "ready_to_merge" in lane["forbidden_claims"]
+    assert "dispatch_attempt_id" not in lane
+    run_exec.assert_not_awaited()
 
 
 @pytest.mark.asyncio

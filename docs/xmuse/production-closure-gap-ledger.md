@@ -70,13 +70,15 @@ runtime、provider invocation、lane authority、review truth 完成。后续生
   `b9b94acbdf8748bbc5fcd56bd40c5a93b702aded`
 - Local head at start of L8 review-intake recovery enforcement slice:
   `d8e268c2a70ffc1e2fe83fe3d51850cc93a2ed1d`
+- Local head at start of L8 dispatch recovery enforcement slice:
+  `9befbc8709585df60072ffef26b26cbc0b61c6ee`
 - PR: <https://github.com/iiyazu/Cross-Muse/pull/43>
 - PR state last checked: draft/open/unmerged
 - PR merge state last checked: `CLEAN`
 - PR review decision last checked: empty
 - Latest verified GitHub Actions truth applies to remote head
-  `1a244285c6e9b287f9c32acb640b0bc68087d90b`: run
-  `27470910514`, success
+  `9befbc8709585df60072ffef26b26cbc0b61c6ee`: run
+  `27490170887`, success
 - Local documentation commits after the remote head must not be treated as
   CI-verified until pushed and checked again.
 
@@ -100,13 +102,14 @@ truth_snapshot:
   local_head_at_l10_review_closure_memoryos_candidate_source_ref_slice: 112d410334ebf8ae702dc5582297aedc57cd223d
   local_head_at_l9_review_plane_store_sync_slice: b9b94acbdf8748bbc5fcd56bd40c5a93b702aded
   local_head_at_l8_review_intake_recovery_enforcement_slice: d8e268c2a70ffc1e2fe83fe3d51850cc93a2ed1d
+  local_head_at_l8_dispatch_recovery_enforcement_slice: 9befbc8709585df60072ffef26b26cbc0b61c6ee
   pr: 43
   pr_url: https://github.com/iiyazu/Cross-Muse/pull/43
   pr_state: draft_open_unmerged
   merge_state: CLEAN
   review_decision: empty
-  verified_ci_head: 1a244285c6e9b287f9c32acb640b0bc68087d90b
-  verified_ci_run: 27470910514
+  verified_ci_head: 9befbc8709585df60072ffef26b26cbc0b61c6ee
+  verified_ci_run: 27490170887
   ci_verified_for_verified_head: true
   local_docs_after_verified_head: true
   pr_merged_claim_allowed: false
@@ -138,7 +141,7 @@ Evidence boundaries:
 | L5 | Speaker Response Capture / Replay Proof | Artifact-backed capture plus composed L4-to-L5 route exists | Rejects contract-only L4 artifacts; appends/replays only server-written real-proof artifacts; one local opt-in live Codex artifact was captured into durable replay | Not server-bound | Capture/replay contract proof plus isolated Codex opt-in live capture proof |
 | L6 | Blueprint Freeze Authority | Typed freeze artifact exists with proof-level classification | Single-turn provider-backed Codex speech can produce an opt-in live freeze artifact; fresh natural multi-GOD freeze still missing | Not server-bound | Freeze contract proof plus isolated opt-in live freeze proof |
 | L7 | Feature / LaneDAG Authority | LaneDAG/contract artifact exists with upstream freeze proof metadata | Live L4/L5/L6 proof metadata can flow into laneDAG without writing `feature_lanes.json`; dispatch/review authority still not unified | Not server-bound | LaneDAG contract proof plus isolated opt-in live upstream-proof propagation |
-| L8 | Lane Runtime Enforcement / Recovery | Recovery contract/API exists and recovery artifacts carry laneDAG proof lineage | Recovery API consumes laneDAG contract/budget and preserves blueprint proof/source refs; GOD-room review intake now fail-closes non-retry recovery decisions; runner/supervisor enforcement still incomplete | Not server-bound | Recovery policy proof plus laneDAG-lineage evidence proof plus review-intake enforcement proof |
+| L8 | Lane Runtime Enforcement / Recovery | Recovery contract/API exists and recovery artifacts carry laneDAG proof lineage | Recovery API consumes laneDAG contract/budget and preserves blueprint proof/source refs; GOD-room review intake and orchestrator dispatch now fail-close non-retry recovery decisions; broader supervisor/live runner enforcement still incomplete | Not server-bound | Recovery policy proof plus laneDAG-lineage evidence proof plus review-intake/dispatch enforcement proof |
 | L9 | Execution / Review / Patch-Forward | Review plane plus GOD-room review intake/verdict/patch-forward/closure artifact contracts exist | GOD-room lane contracts/recovery/candidate evidence can be packaged for independent review; review verdicts sync task/verdict lineage into `review_plane.json`; patch-forward verdicts can append a laneDAG patch lane and reviewed patch-lane merge verdicts can produce a release-evidence handoff; lane status, live execution proof, and server truth still missing | Not server-bound | GOD-room review/patch-forward closure contract proof plus review-plane store lineage proof, not server/GitHub truth |
 | L10 | MemoryOS / Release Evidence / GitHub Truth | Evidence bundle semantics exist and can index GOD-room review closure handoff; release candidates can seed MemoryOS source refs from that handoff | Live MemoryOS trace and live execution/server truth missing | PR open/unmerged; CI truth only for verified remote head | Replay/readiness proof with explicit gaps |
 | L11 | Operator Cockpit / TUI / Overnight Soak | TUI/control slices exist | Complete cockpit/soak missing | Depends on L10 | Operator projection/control proof only |
@@ -634,21 +637,26 @@ Use these as implementation references, not as xmuse package dependencies:
     as a gate: `retry_allowed=false` decisions (`manual_gap`, `suspended`, or
     `refactor_required`) return 409 and do not write review-intake, review-plane,
     or `feature_lanes.json` artifacts.
+  - Orchestrator dispatch now consumes the durable lane recovery artifact before
+    dispatch CAS. A latest `retry_allowed=false` decision blocks same-path
+    dispatch, records recovery block metadata, and does not invoke the execution
+    GOD.
   - Goal-stage and development policy require direct refactor for repeated
     failure/demo-grade production paths.
 - Missing production closure:
-  - Recovery is not yet enforced through every supervisor, runner, and dispatch
-    path; current enforcement is proven at the GOD-room review-intake boundary.
+  - Recovery is not yet enforced through every supervisor/runner path; current
+    enforcement is proven at the GOD-room review-intake and orchestrator
+    dispatch boundaries.
   - No live runner proof yet shows a blocked retry after refactor_required.
 - Proof required to close:
   - A real lane failure sequence enters recovery/refactor_required and blocks
     further same-path retries until a refactor artifact exists.
 - Current risk:
-  - Recovery remains advisory if runners can bypass it.
+  - Recovery remains advisory if non-dispatch runner/supervisor paths can bypass
+    it.
 - Next production slice:
-  - Enforce recovery decisions in runner/supervisor control flow and produce
-    local runtime proof that same-path retry is blocked after
-    `refactor_required`.
+  - Enforce recovery decisions in remaining runner/supervisor control flow and
+    produce local runtime proof beyond the dispatch-boundary contract test.
 - Downstream blocked until:
   - L9 cannot claim trustworthy execution/review if lanes can bypass recovery
     decisions.

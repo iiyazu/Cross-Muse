@@ -38,6 +38,10 @@ from xmuse_core.platform.verdicts.writer import (
     ingest_rework_verdict,
     stable_verdict_id_for_lane,
 )
+from xmuse_core.structuring.blueprint_execution.lane_recovery_artifacts import (
+    LaneRecoveryArtifactError,
+    load_lane_recovery_decision,
+)
 from xmuse_core.structuring.feature_review_contracts import FeatureGraphExecutionStatus
 
 logger = logging.getLogger(__name__)
@@ -103,6 +107,57 @@ def _graph_native_dispatch_authority_allows_lane(orchestrator, lane: dict[str, A
     if status.status is FeatureGraphExecutionStatus.RUNNING:
         return lane_id in status.active_lane_ids
     return False
+
+
+def _lane_recovery_dispatch_block_metadata(
+    orchestrator,
+    lane: dict[str, Any],
+) -> dict[str, Any] | None:
+    graph_id = _lane_graph_id(lane)
+    lane_id = _optional_text(lane.get("feature_id"))
+    if graph_id is None or lane_id is None:
+        return None
+    try:
+        decision = load_lane_recovery_decision(
+            orchestrator._root,
+            graph_id=graph_id,
+            lane_id=lane_id,
+        )
+    except (LaneRecoveryArtifactError, ValueError) as exc:
+        return {
+            "dispatch_blocked_by_recovery": True,
+            "recovery_dispatch_block_reason": "invalid_recovery_artifact",
+            "recovery_dispatch_block_error": str(exc),
+            "recovery_source_authority": "lane_recovery_artifact",
+            "manual_gaps": [
+                "lane_recovery_artifact_invalid",
+                "live_runner_recovery_enforcement_not_proven",
+            ],
+            "forbidden_claims": [
+                "overnight_safe_recovery",
+                "end_to_end_execution_review_closure",
+                "ready_to_merge",
+                "pr_merged",
+            ],
+        }
+    if decision is None or decision.retry_allowed:
+        return None
+    return {
+        "dispatch_blocked_by_recovery": True,
+        "recovery_dispatch_block_reason": decision.decision.value,
+        "recovery_decision": decision.model_dump(mode="json"),
+        "recovery_source_authority": "lane_recovery_artifact",
+        "manual_gaps": [
+            "lane_status_not_updated_by_durable_authority",
+            "live_runner_recovery_enforcement_not_proven",
+        ],
+        "forbidden_claims": [
+            "overnight_safe_recovery",
+            "end_to_end_execution_review_closure",
+            "ready_to_merge",
+            "pr_merged",
+        ],
+    }
 
 
 def _graph_native_review_authority_allows_lane(orchestrator, lane: dict[str, Any]) -> bool:
@@ -208,6 +263,18 @@ async def dispatch_lane(orchestrator, lane_id: str) -> None:
                 "lane_dispatch_skipped_status_changed",
                 lane_id=lane_id,
                 status=current_status,
+            )
+            return
+        recovery_block = _lane_recovery_dispatch_block_metadata(orchestrator, lane)
+        if recovery_block is not None:
+            orchestrator._sm.update_metadata(lane_id, recovery_block)
+            log_event(
+                logger,
+                logging.WARNING,
+                "lane_dispatch_blocked_by_recovery_decision",
+                lane_id=lane_id,
+                graph_id=_lane_graph_id(lane),
+                reason=recovery_block["recovery_dispatch_block_reason"],
             )
             return
         memory_event = "takeover" if _lane_needs_takeover_memory(lane) else "planning"
