@@ -43,6 +43,26 @@ class GodRoomProviderSpeechResponseV1(BaseModel):
     provider_session_kind: str | None = None
     content: str | None = None
     source_refs: list[str] = Field(min_length=1)
+    conversation_id: str | None = None
+    room_id: str | None = None
+    target_god_id: str | None = None
+    binding_revision: str | None = None
+    account_ref: str | None = None
+    cli_command: str | None = None
+    model: str | None = None
+    variant: str | None = None
+    invocation_id: str | None = None
+    invocation_status: str | None = None
+    command: list[str] = Field(default_factory=list)
+    started_at_utc: str | None = None
+    completed_at_utc: str | None = None
+    duration_ms: int | None = None
+    exit_code: int | None = None
+    prompt_refs: list[str] = Field(default_factory=list)
+    output_refs: list[str] = Field(default_factory=list)
+    raw_output_digest: str | None = None
+    blocked_reason: str | None = None
+    failure_kind: str | None = None
 
     @field_validator(
         "response_id",
@@ -65,7 +85,34 @@ class GodRoomProviderSpeechResponseV1(BaseModel):
             return None
         return _require_non_empty(value, info.field_name or "field")
 
-    @field_validator("source_refs")
+    @field_validator(
+        "conversation_id",
+        "room_id",
+        "target_god_id",
+        "binding_revision",
+        "account_ref",
+        "cli_command",
+        "model",
+        "variant",
+        "invocation_id",
+        "invocation_status",
+        "started_at_utc",
+        "completed_at_utc",
+        "raw_output_digest",
+        "blocked_reason",
+        "failure_kind",
+    )
+    @classmethod
+    def _validate_optional_lineage_text(
+        cls,
+        value: str | None,
+        info: ValidationInfo,
+    ) -> str | None:
+        if value is None:
+            return None
+        return _require_non_empty(value, info.field_name or "field")
+
+    @field_validator("source_refs", "command", "prompt_refs", "output_refs")
     @classmethod
     def _validate_source_refs(cls, value: list[str]) -> list[str]:
         return _unique([_require_non_empty(item, "source_refs") for item in value])

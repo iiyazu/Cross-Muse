@@ -42,6 +42,8 @@ runtime、provider invocation、lane authority、review truth 完成。后续生
 - Branch: `vision-closure-deliberation-tui`
 - Local base head before audit reinforcement annotation:
   `2cfc9e3016ff1671758bd78b3b69f8ca922307c1`
+- Local head at start of L4 provider invocation producer slice:
+  `db9a759ac23e3e5f6095fe35ed5d373e64281505`
 - PR: <https://github.com/iiyazu/Cross-Muse/pull/43>
 - PR state last checked: draft/open/unmerged
 - PR merge state last checked: `CLEAN`
@@ -58,6 +60,7 @@ Machine-readable snapshot for gates and future `/goal` setup:
 truth_snapshot:
   branch: vision-closure-deliberation-tui
   base_head: 2cfc9e3016ff1671758bd78b3b69f8ca922307c1
+  local_head_at_l4_provider_invocation_slice: db9a759ac23e3e5f6095fe35ed5d373e64281505
   pr: 43
   pr_url: https://github.com/iiyazu/Cross-Muse/pull/43
   pr_state: draft_open_unmerged
@@ -92,8 +95,8 @@ Evidence boundaries:
 | L1 | Authority / Boundary Model | Partly documented | Enforcement uneven | Not server-bound | Boundary policy exists, not global enforcement |
 | L2 | GOD Identity / Provider Binding | Durable account/profile/room binding contract and store exist | Speaker attempt/capture consume binding fail-closed; live provider invocation still missing | Not server-bound | L2 contract proof; bounded worker/provider inventory only |
 | L3 | GOD Room Durable Event Runtime | Durable event contract/store exists | Live multi-GOD proof missing | Not server-bound | Durable room contract proof |
-| L4 | Speaker Selection / Provider Invocation | Selection/attempt evidence exists | Provider invocation artifact path missing | Not server-bound | Speaker selection/attempt proof only |
-| L5 | Speaker Response Capture / Replay Proof | Artifact-backed capture exists | Depends on L4 invocation proof | Not server-bound | Capture contract proof only |
+| L4 | Speaker Selection / Provider Invocation | Selection/attempt evidence plus provider invocation artifact producer contract exist | Core/API producer emits response artifacts and fail-closed artifacts; opt-in live provider run not verified | Not server-bound | Provider invocation artifact contract/fail-closed proof only |
+| L5 | Speaker Response Capture / Replay Proof | Artifact-backed capture exists | Rejects contract-only L4 artifacts; fresh live capture still depends on opt-in L4 proof | Not server-bound | Capture contract proof only |
 | L6 | Blueprint Freeze Authority | Typed freeze artifact exists | Fresh live deliberation freeze missing | Not server-bound | Freeze contract proof |
 | L7 | Feature / LaneDAG Authority | LaneDAG/contract artifact exists | Dispatch/review authority not unified | Not server-bound | LaneDAG contract proof |
 | L8 | Lane Runtime Enforcement / Recovery | Recovery contract/API exists | Runner/supervisor enforcement incomplete | Not server-bound | Recovery policy proof |
@@ -109,8 +112,9 @@ Current closure audit:
 - Least closed areas: provider-backed speech invocation, natural multi-GOD
   deliberation, GOD-room-originated execution/review, live MemoryOS trace, and
   GitHub merge truth.
-- Next production priority: close L4-L5 real GOD/provider speech artifact
-  production and capture lineage before expanding L11 cockpit surface area.
+- Next production priority: run an opt-in live L4 invocation artifact through L5
+  capture/replay, or preserve the live provider speech `manual_gap` before
+  expanding L11 cockpit surface area.
 
 ## L1 - Authority / Boundary Model
 
@@ -353,13 +357,29 @@ Use these as implementation references, not as xmuse package dependencies:
     continuity.
   - Speaker attempt/response capture now fail closed through
     `RoomSelectedGodBinding` resolution when the Chat API runtime hook is used.
+  - `src/xmuse_core/chat/god_room_provider_invocation.py` now provides the L4
+    producer for `xmuse.god_room_provider_speech_response.v1`. It consumes a
+    ready `GodRoomSpeakerAttemptV1`, preserves selected binding lineage
+    (`binding_revision`, `account_ref`, `cli_command`, `model`, `variant`),
+    builds the provider CLI command, records prompt/output refs, timing,
+    exit status, raw output digest, failure kind, and proof level.
+  - Chat API exposes
+    `POST /api/chat/conversations/{conversation_id}/god-room/provider-invocation`
+    and writes provider response artifacts under `reports/provider-responses/`
+    without appending a durable `speak` event.
+  - Focused tests cover the contract producer success path, unresolved binding,
+    unsupported CLI, missing CLI, nonzero exit, timeout, non-structured output
+    as `raw_archive_only`, and L5 refusing to capture contract-only provider
+    responses as real provider speech.
   - Correct OpenCode/DeepSeek invocation format is documented:
     `opencode run --model opencode-go/deepseek-v4-flash --variant max ...`.
 - Missing production closure:
-  - The provider response artifact is not yet produced by a production provider
-    invocation path in the GOD room flow.
-  - Failure modes such as missing provider config, bad CLI, timeout, and
-    nonzero exit need contract-level evidence.
+  - The provider response artifact producer is proven at `contract_proof` and
+    fail-closed levels only; no fresh configured provider subprocess run has
+    been checked in this ledger update.
+  - `allow_live_provider_proof=true` remains opt-in runtime behavior and must
+    not be claimed unless the resulting artifact, L5 capture, and L3 replay are
+    inspected from current runtime evidence.
 - Proof required to close:
   - A provider invocation contract creates
     `xmuse.god_room_provider_speech_response.v1` from a real configured
@@ -384,12 +404,15 @@ Use these as implementation references, not as xmuse package dependencies:
 - Current risk:
   - Treating an imported artifact as equivalent to the live invocation that
     produced it.
+  - Treating an L4 `contract_proof` artifact as L5-capturable
+    `real_provider_proof`.
 - Next production slice:
-  - Build the provider invocation/action that emits the provider response
-    artifact, with `manual_gap` when provider config or live proof is missing.
+  - Run an opt-in live provider invocation only when the configured provider,
+    prompt, artifact, L5 capture, and L3 replay can all be inspected; otherwise
+    keep `provider_invocation_live_proof` as `manual_gap`.
 - Downstream blocked until:
-  - L5 can validate/capture artifacts, but cannot claim live provider speech
-    unless the artifact came from this invocation path.
+  - L5 can validate/capture live-proof artifacts, but cannot claim live
+    provider speech from contract-only L4 artifacts.
 - Do not claim yet:
   - Do not claim the GOD room can autonomously generate live provider speech
     end to end.
@@ -407,11 +430,14 @@ Use these as implementation references, not as xmuse package dependencies:
     by a server-loaded provider response artifact.
   - Request-body-only/direct response becomes `manual_gap` when provider
     response artifact proof is missing.
+  - Contract-only L4 provider invocation artifacts remain `manual_gap` at the
+    L5 capture boundary; this prevents capture proof from being overread as
+    provider invocation live proof.
   - Release evidence cross-checks claimed appended `speak_event_id` against
     GOD room replay events.
 - Missing production closure:
-  - This layer still depends on L4 producing the artifact through a real
-    invocation path.
+  - This layer still depends on L4 producing a fresh opt-in live provider
+    artifact before it can append a live-provider `speak` event.
   - Long natural multi-turn capture has not yet been proven.
 - Proof required to close:
   - A fresh L4 invocation artifact is captured into L3 room events, then replay

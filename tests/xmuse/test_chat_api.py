@@ -800,6 +800,103 @@ def test_chat_api_god_room_speaker_response_manual_gap_does_not_append_event(
     assert [event["event_id"] for event in events] == ["evt-propose"]
 
 
+def test_chat_api_god_room_provider_invocation_writes_fail_closed_artifact(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    conversation = client.post(
+        "/api/chat/conversations",
+        json={"title": "GOD room provider invocation gap"},
+    ).json()
+    conv_id = conversation["id"]
+    room = client.post(f"/api/chat/conversations/{conv_id}/god-room").json()["room"]
+    participants = {participant["role"]: participant for participant in room["participants"]}
+    GodCliSelectionStore(tmp_path / "god_cli_selections.json").record_selection(
+        conversation_id=conv_id,
+        cli_id="codex.god",
+        selected_by="operator",
+        audit_id="audit-select-provider-invocation-gap",
+        idempotency_key="select-provider-invocation-gap",
+    )
+    account, profile, binding = build_operator_selected_god_binding(
+        room_id=room["room_id"],
+        participant_id=str(participants["review"]["participant_id"]),
+        god_id=str(participants["review"]["god_id"]),
+        account_ref="unsupported.god",
+        cli_command="unsupported-cli",
+        model="unsupported-model",
+        selected_by="operator",
+        selected_at="2026-06-14T00:00:00Z",
+        role=str(participants["review"].get("role") or "god"),
+        capabilities=("peer_god", "review"),
+    )
+    GodIdentityBindingStore(tmp_path / "god_identity_bindings.json").upsert_selection(
+        provider_account=account,
+        god_profile=profile,
+        room_binding=binding,
+    )
+    session_registry = GodSessionRegistry(tmp_path / "god_sessions.json")
+    session = session_registry.find_by_conversation_participant(
+        conv_id,
+        participants["review"]["participant_id"],
+    )
+    session_registry.update_provider_binding(
+        session.god_session_id,
+        provider_session_id="provider-thread-review",
+        provider_session_kind="provider_thread",
+        provider_binding_status="active",
+        provider_binding_failure_reason=None,
+    )
+    client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/events",
+        json={
+            "event_id": "evt-propose",
+            "room_id": room["room_id"],
+            "conversation_id": conv_id,
+            "participant_id": participants["architect"]["participant_id"],
+            "god_id": participants["architect"]["god_id"],
+            "actor_kind": "god",
+            "event_type": "speak",
+            "timestamp_utc": "2026-06-13T10:00:00Z",
+            "content": "I propose asking the review GOD for a provider response.",
+            "source_refs": [f"conversation:{conv_id}"],
+            "cli_id": participants["architect"]["cli_id"],
+            "provider_profile": "codex.god",
+            "payload": {"body": "I propose asking the review GOD."},
+        },
+    )
+
+    response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/provider-invocation",
+        json={
+            "after_event_id": "evt-propose",
+            "prompt": "Return structured GOD speech.",
+            "timeout_seconds": 1,
+        },
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    provider_response = payload["provider_response"]
+    assert provider_response["schema_version"] == (
+        "xmuse.god_room_provider_speech_response.v1"
+    )
+    assert provider_response["status"] == "blocked"
+    assert provider_response["proof_level"] == "manual_gap"
+    assert provider_response["blocked_reason"] == (
+        "unsupported provider CLI for GOD room speech: unsupported-cli"
+    )
+    assert provider_response["binding_revision"] == binding.binding_revision
+    assert provider_response["account_ref"] == "unsupported.god"
+    artifact_ref = payload["artifacts"]["provider_response"]
+    assert artifact_ref.startswith("reports/provider-responses/")
+    assert (tmp_path / artifact_ref).exists()
+    events = client.get(f"/api/chat/conversations/{conv_id}/god-room").json()["room"][
+        "events"
+    ]
+    assert [event["event_id"] for event in events] == ["evt-propose"]
+
+
 def test_chat_api_god_room_rejects_unknown_target_without_writing(
     tmp_path: Path,
 ) -> None:

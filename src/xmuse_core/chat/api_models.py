@@ -299,6 +299,18 @@ class GodRoomSpeakerAttemptRequest(BaseModel):
         return _strip_optional_string(value)
 
 
+class GodRoomProviderInvocationRequest(BaseModel):
+    after_event_id: str | None = Field(default=None, min_length=1)
+    prompt: str | None = Field(default=None, min_length=1)
+    timeout_seconds: int = Field(default=120, gt=0)
+    allow_live_provider_proof: bool = False
+
+    @field_validator("after_event_id", "prompt", mode="before")
+    @classmethod
+    def _strip_optional_text(cls, value: object) -> object:
+        return _strip_optional_string(value)
+
+
 class GodRoomSpeakerResponseRequest(BaseModel):
     after_event_id: str | None = Field(default=None, min_length=1)
     event_id: str | None = Field(default=None, min_length=1)

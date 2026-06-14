@@ -34,6 +34,7 @@ from xmuse_core.chat.api_models import (
     GodRoomLaneDagRequest,
     GodRoomLaneRecoveryRequest,
     GodRoomMemoryPlanRequest,
+    GodRoomProviderInvocationRequest,
     GodRoomSpeakerAttemptRequest,
     GodRoomSpeakerResponseRequest,
     MessageCreate,
@@ -57,6 +58,9 @@ from xmuse_core.chat.god_room_event_store import (
     GodRoomEventConflictError,
     GodRoomEventStore,
     GodRoomMembershipError,
+)
+from xmuse_core.chat.god_room_provider_invocation import (
+    invoke_god_room_provider_speech,
 )
 from xmuse_core.chat.god_room_runtime import GodRoomEventV1, GodRoomParticipant
 from xmuse_core.chat.god_room_speaker_response import (
@@ -1115,6 +1119,82 @@ def _build_god_room_speaker_attempt_from_runtime(
     }
 
 
+def _invoke_god_room_provider_speech_from_runtime(
+    base_dir: Path,
+    *,
+    conversation_id: str,
+    request: GodRoomProviderInvocationRequest,
+) -> dict[str, object]:
+    if not _conversation_exists(_store(base_dir), conversation_id):
+        raise HTTPException(status_code=404, detail="conversation not found")
+    event_store = _god_room_event_store(base_dir)
+    room_id = _default_god_room_id(conversation_id)
+    try:
+        snapshot = event_store.load_room(room_id)
+    except GodRoomMembershipError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "god_room_not_found", "message": str(exc)},
+        ) from exc
+    god_cli_registry = build_default_god_cli_registry(
+        extra_registrations=_god_cli_registration_store(base_dir).list_registrations()
+    )
+    runtime_continuity = build_selected_god_runtime_continuity_view(
+        conversation_id=conversation_id,
+        selections=_god_cli_selection_store(base_dir).list_records(),
+        sessions=_god_session_registry(base_dir).list(),
+        god_cli_registry=god_cli_registry,
+    )
+    attempt = build_god_room_speaker_attempt(
+        conversation_id=conversation_id,
+        room_id=room_id,
+        participants=snapshot.participants,
+        events=snapshot.events,
+        runtime_continuity=runtime_continuity,
+        after_event_id=request.after_event_id,
+        selected_binding_resolver=_selected_god_binding_resolver(base_dir, room_id),
+    )
+    prompt = request.prompt or _build_god_room_provider_speech_prompt(
+        conversation_id=conversation_id,
+        room_id=room_id,
+        events=snapshot.events,
+        attempt=attempt,
+    )
+    prompt_ref = (
+        f"god-room-provider-prompt:"
+        f"{conversation_id}:{attempt.selected_event_id or 'latest'}"
+    )
+    provider_response = invoke_god_room_provider_speech(
+        attempt=attempt,
+        prompt=prompt,
+        workspace=base_dir,
+        timeout_seconds=request.timeout_seconds,
+        prompt_refs=[prompt_ref],
+        allow_live_provider_proof=request.allow_live_provider_proof,
+    )
+    response_payload = provider_response.model_dump(mode="json")
+    artifact_path = _write_god_room_provider_response_artifact(
+        base_dir,
+        conversation_id=conversation_id,
+        after_event_id=request.after_event_id,
+        response_id=provider_response.response_id,
+        payload=response_payload,
+    )
+    return {
+        "source_authority": (
+            "god_room_event_store+room_selected_god_binding+provider_invocation"
+        ),
+        "conversation_id": conversation_id,
+        "room_id": room_id,
+        "speaker_attempt": attempt.model_dump(mode="json"),
+        "provider_response": response_payload,
+        "runtime_continuity": runtime_continuity,
+        "artifacts": {
+            "provider_response": str(artifact_path.relative_to(base_dir)),
+        },
+    }
+
+
 def _capture_god_room_speaker_response_from_runtime(
     base_dir: Path,
     *,
@@ -1191,6 +1271,32 @@ def _capture_god_room_speaker_response_from_runtime(
         "artifacts": {"speaker_response": str(artifact_path.relative_to(base_dir))},
         "room": _god_room_payload(event_store, room_id),
     }
+
+
+def _build_god_room_provider_speech_prompt(
+    *,
+    conversation_id: str,
+    room_id: str,
+    events: list[GodRoomEventV1],
+    attempt,
+) -> str:
+    recent_events = sorted(events, key=lambda item: (item.timestamp_utc, item.event_id))[-8:]
+    transcript = "\n".join(
+        f"- {event.god_id}/{event.event_type.value}: {event.content}"
+        for event in recent_events
+    )
+    target = attempt.target_god_id or attempt.target_participant_id or "selected GOD"
+    return (
+        "You are the selected GOD speaker in an xmuse GOD room.\n"
+        f"conversation_id: {conversation_id}\n"
+        f"room_id: {room_id}\n"
+        f"target: {target}\n"
+        "Return a JSON object with at least a non-empty string field named "
+        "`content`. Optional fields: response_id, provider_session_id, "
+        "provider_session_kind, source_refs, output_refs.\n"
+        "Recent durable room transcript:\n"
+        f"{transcript or '- no prior events'}\n"
+    )
 
 
 def _load_god_room_provider_response_artifact(
@@ -1515,6 +1621,33 @@ def _write_god_room_speaker_response_artifact(
             f"{_artifact_safe_id(conversation_id)}."
             f"{_artifact_safe_id(replay_event_id)}."
             f"{_artifact_safe_id(response_event_id)}.speaker-response.json"
+        )
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def _write_god_room_provider_response_artifact(
+    base_dir: Path,
+    *,
+    conversation_id: str,
+    after_event_id: str | None,
+    response_id: str,
+    payload: dict[str, object],
+) -> Path:
+    replay_event_id = after_event_id or "latest"
+    path = (
+        base_dir
+        / "reports"
+        / "provider-responses"
+        / (
+            f"{_artifact_safe_id(conversation_id)}."
+            f"{_artifact_safe_id(replay_event_id)}."
+            f"{_artifact_safe_id(response_id)}.json"
         )
     )
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -2381,6 +2514,20 @@ def create_app(
         request: GodRoomSpeakerAttemptRequest,
     ) -> dict[str, object]:
         return _build_god_room_speaker_attempt_from_runtime(
+            root,
+            conversation_id=conversation_id,
+            request=request,
+        )
+
+    @app.post(
+        "/api/chat/conversations/{conversation_id}/god-room/provider-invocation",
+        status_code=status.HTTP_201_CREATED,
+    )
+    def invoke_god_room_provider_speech(
+        conversation_id: str,
+        request: GodRoomProviderInvocationRequest,
+    ) -> dict[str, object]:
+        return _invoke_god_room_provider_speech_from_runtime(
             root,
             conversation_id=conversation_id,
             request=request,
