@@ -131,9 +131,11 @@ from xmuse_core.structuring.blueprint_execution.approval_events import (
     produce_blueprint_approval_event,
 )
 from xmuse_core.structuring.blueprint_execution.lane_dag_service import (
+    BlueprintFeatureSpec,
     BlueprintLaneDagPlan,
     BlueprintLaneDagRequest,
     BlueprintLaneDagService,
+    BlueprintLaneSpec,
     LaneRecoveryDecision,
     evaluate_lane_recovery,
 )
@@ -142,7 +144,9 @@ from xmuse_core.structuring.blueprint_execution.lane_recovery_artifacts import (
     lane_recovery_artifact_path,
     load_lane_recovery_decisions,
 )
+from xmuse_core.structuring.feature_graph_status_store import FeatureGraphStatusStore
 from xmuse_core.structuring.feature_plan_store import (
+    FeatureGraphSetStore,
     build_feature_plan_proposal,
     read_approved_mission_blueprint,
     save_approved_feature_plan_artifacts,
@@ -160,8 +164,11 @@ from xmuse_core.structuring.mission_blueprint_v1 import (
     render_mission_blueprint_markdown,
 )
 from xmuse_core.structuring.models import (
+    FeatureGraphSet,
+    FeaturePlan,
     FeaturePlanFeature,
     FeaturePlanProposalApproval,
+    LaneGraph,
     ReviewDecision,
     ReviewTask,
     ReviewVerdict,
@@ -1076,7 +1083,7 @@ def _build_lane_dag_from_god_room_freeze(
                 "resolution_id": resolution.id,
             },
         ) from exc
-    artifacts = _write_lane_dag_artifacts(base_dir, plan)
+    artifacts = _write_lane_dag_artifacts(base_dir, plan, request=request)
     return {
         "source_authority": "mission_blueprint_resolution",
         "resolution_id": resolution.id,
@@ -3014,6 +3021,8 @@ def _review_plane_verdict_ref_if_synced(
 def _write_lane_dag_artifacts(
     base_dir: Path,
     plan: BlueprintLaneDagPlan,
+    *,
+    request: GodRoomLaneDagRequest | None = None,
 ) -> dict[str, str]:
     lane_graph = plan.lane_graph
     lane_dag_path = _lane_dag_artifact_path(base_dir, lane_graph.id)
@@ -3029,10 +3038,151 @@ def _write_lane_dag_artifacts(
         + "\n",
         encoding="utf-8",
     )
-    return {
+    artifacts = {
         "lane_graph": str(graph_path.relative_to(base_dir)),
         "lane_dag": str(lane_dag_path.relative_to(base_dir)),
     }
+    if request is not None:
+        graph_set = _feature_graph_set_from_lane_dag_plan(plan, request=request)
+        graph_set_path = FeatureGraphSetStore(base_dir / "graph_sets").save(graph_set)
+        FeatureGraphStatusStore(
+            base_dir / "feature_graph_statuses.json"
+        ).initialize_from_graph_set(
+            graph_set,
+            updated_at=_utc_now(),
+            blueprint_proof_level=plan.blueprint_proof_level,
+        )
+        artifacts["feature_graph_set"] = str(graph_set_path.relative_to(base_dir))
+        artifacts["feature_graph_statuses"] = "feature_graph_statuses.json"
+    return artifacts
+
+
+def _feature_graph_set_from_lane_dag_plan(
+    plan: BlueprintLaneDagPlan,
+    *,
+    request: GodRoomLaneDagRequest,
+) -> FeatureGraphSet:
+    graph_id_by_feature_id = {
+        feature.feature_id: _lane_dag_feature_graph_id(
+            plan.lane_graph.id,
+            feature.feature_id,
+        )
+        for feature in request.features
+    }
+    feature_plan = FeaturePlan(
+        id=f"{plan.lane_graph.id}-feature-plan",
+        conversation_id=plan.lane_graph.conversation_id,
+        resolution_id=plan.lane_graph.resolution_id,
+        version=plan.lane_graph.version,
+        features=[
+            _feature_plan_feature_from_lane_dag_feature(
+                feature,
+                graph_id=graph_id_by_feature_id[feature.feature_id],
+            )
+            for feature in request.features
+        ],
+    )
+    graphs = [
+        _feature_lane_graph_from_lane_dag_plan(
+            plan,
+            feature=feature,
+            lanes=request.lanes,
+            graph_id=graph_id_by_feature_id[feature.feature_id],
+        )
+        for feature in request.features
+    ]
+    return FeatureGraphSet(
+        id=f"{plan.lane_graph.id}-graph-set",
+        version=plan.lane_graph.version,
+        source_refs=[
+            f"lane_dag:{plan.lane_graph.id}",
+            f"lane_dag_artifact:{_lane_dag_artifact_path(Path('.'), plan.lane_graph.id)}",
+            *plan.source_refs,
+        ],
+        feature_plan=feature_plan,
+        graphs=graphs,
+    )
+
+
+def _feature_plan_feature_from_lane_dag_feature(
+    feature: BlueprintFeatureSpec,
+    *,
+    graph_id: str,
+) -> FeaturePlanFeature:
+    return FeaturePlanFeature(
+        feature_id=feature.feature_id,
+        title=feature.title,
+        goal=feature.goal,
+        acceptance_criteria=feature.acceptance_criteria,
+        dependencies=feature.depends_on_features,
+        graph_id=graph_id,
+        expected_touched_areas=feature.expected_touched_areas,
+        blueprint_refs=feature.blueprint_refs,
+    )
+
+
+def _feature_lane_graph_from_lane_dag_plan(
+    plan: BlueprintLaneDagPlan,
+    *,
+    feature: BlueprintFeatureSpec,
+    lanes: list[BlueprintLaneSpec],
+    graph_id: str,
+) -> LaneGraph:
+    lane_feature_ids = {lane.lane_id: lane.feature_id for lane in lanes}
+    feature_lane_ids = {
+        lane.lane_id for lane in lanes if lane.feature_id == feature.feature_id
+    }
+    graph_lanes = [
+        lane
+        for lane in plan.lane_graph.lanes
+        if _lane_dag_node_feature_id(lane.feature_id, lane_feature_ids)
+        == feature.feature_id
+    ]
+    if not graph_lanes:
+        raise ValueError(f"laneDAG feature has no executable lanes: {feature.feature_id}")
+    local_lane_ids = {lane.feature_id for lane in graph_lanes}
+    return LaneGraph(
+        id=graph_id,
+        conversation_id=plan.lane_graph.conversation_id,
+        resolution_id=plan.lane_graph.resolution_id,
+        version=plan.lane_graph.version,
+        status=plan.lane_graph.status,
+        source_refs=[
+            f"lane_dag:{plan.lane_graph.id}",
+            *plan.source_refs,
+            *feature.blueprint_refs,
+        ],
+        lanes=[
+            lane.model_copy(
+                update={
+                    "depends_on": [
+                        dependency
+                        for dependency in lane.depends_on
+                        if dependency in local_lane_ids or dependency in feature_lane_ids
+                    ],
+                    "feature_group": feature.feature_id,
+                }
+            )
+            for lane in graph_lanes
+        ],
+    )
+
+
+def _lane_dag_node_feature_id(
+    lane_id: str,
+    lane_feature_ids: dict[str, str],
+) -> str | None:
+    direct = lane_feature_ids.get(lane_id)
+    if direct is not None:
+        return direct
+    for suffix in ("-check-gate", "-review-gate"):
+        if lane_id.endswith(suffix):
+            return lane_feature_ids.get(lane_id[: -len(suffix)])
+    return None
+
+
+def _lane_dag_feature_graph_id(graph_id: str, feature_id: str) -> str:
+    return f"{graph_id}-{feature_id}"
 
 
 def _write_lane_recovery_artifact(

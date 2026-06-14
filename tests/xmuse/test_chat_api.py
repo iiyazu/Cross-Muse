@@ -2425,7 +2425,15 @@ def test_chat_api_god_room_lane_dag_builds_from_freeze_resolution_without_projec
                     "acceptance_criteria": ["Runtime contracts are persisted."],
                     "blueprint_refs": [blueprint_ref],
                     "memory_refs": [f"memory://conversation/{conv_id}/blueprint/bp-god-room"],
-                }
+                },
+                {
+                    "feature_id": "feature-review",
+                    "title": "Review wiring",
+                    "goal": "Review only after runtime wiring is authoritative.",
+                    "acceptance_criteria": ["Review waits for runtime feature status."],
+                    "blueprint_refs": [blueprint_ref],
+                    "depends_on_features": ["feature-runtime"],
+                },
             ],
             "lanes": [
                 {
@@ -2452,7 +2460,17 @@ def test_chat_api_god_room_lane_dag_builds_from_freeze_resolution_without_projec
                         "retry_backoff_seconds": 30,
                         "source_refs": ["budget:lane-runtime-api"],
                     },
-                }
+                },
+                {
+                    "lane_id": "lane-review-api",
+                    "feature_id": "feature-review",
+                    "title": "Expose laneDAG review API",
+                    "prompt": "Build the review action from graph-native status.",
+                    "acceptance_criteria": ["Review depends on runtime status."],
+                    "blueprint_refs": [blueprint_ref],
+                    "owner": "review-god",
+                    "required_checks": ["focused-pytest"],
+                },
             ],
         },
     )
@@ -2467,10 +2485,47 @@ def test_chat_api_god_room_lane_dag_builds_from_freeze_resolution_without_projec
     assert payload["lane_dag"]["lane_contracts"][0]["lane_id"] == "lane-runtime-api"
     assert payload["lane_dag"]["lane_contracts"][0]["owner"] == "execute-god"
     assert payload["lane_dag"]["lane_contracts"][0]["budget"]["max_runtime_seconds"] == 1800
+    assert payload["lane_dag"]["lane_contracts"][1]["lane_id"] == "lane-review-api"
     assert payload["artifacts"]["lane_graph"].endswith("graph-bp-god-room.json")
     assert payload["artifacts"]["lane_dag"].endswith("graph-bp-god-room.lane-dag.json")
+    assert payload["artifacts"]["feature_graph_set"].endswith(
+        "graph-bp-god-room-graph-set.json"
+    )
+    assert payload["artifacts"]["feature_graph_statuses"] == "feature_graph_statuses.json"
     assert (tmp_path / payload["artifacts"]["lane_graph"]).exists()
     assert (tmp_path / payload["artifacts"]["lane_dag"]).exists()
+    assert (tmp_path / payload["artifacts"]["feature_graph_set"]).exists()
+    status_payload = json.loads((tmp_path / "feature_graph_statuses.json").read_text())
+    assert [
+        (
+            record["feature_id"],
+            record["feature_graph_id"],
+            record["status"],
+            record["blueprint_proof_level"],
+        )
+        for record in status_payload["statuses"]
+    ] == [
+        (
+            "feature-runtime",
+            "graph-bp-god-room-feature-runtime",
+            "ready",
+            "contract_proof",
+        ),
+        (
+            "feature-review",
+            "graph-bp-god-room-feature-review",
+            "planned",
+            "contract_proof",
+        ),
+    ]
+    graph_set_payload = json.loads(
+        (tmp_path / payload["artifacts"]["feature_graph_set"]).read_text()
+    )
+    assert graph_set_payload["id"] == "graph-bp-god-room-graph-set"
+    assert [graph["id"] for graph in graph_set_payload["graphs"]] == [
+        "graph-bp-god-room-feature-runtime",
+        "graph-bp-god-room-feature-review",
+    ]
     assert not (tmp_path / "feature_lanes.json").exists()
 
 
