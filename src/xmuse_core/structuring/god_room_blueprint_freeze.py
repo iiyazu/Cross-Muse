@@ -3,7 +3,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from xmuse_core.chat.god_room_runtime import GodRoomEventKind, GodRoomEventV1, sort_god_room_events
 from xmuse_core.structuring.mission_blueprint_v1 import (
@@ -18,6 +18,9 @@ class GodRoomBlueprintFreezeStatus(StrEnum):
     MANUAL_GAP = "manual_gap"
 
 
+ProofLevel = Literal["contract_proof", "opt_in_live_proof", "manual_gap"]
+
+
 class GodRoomBlueprintFreezeArtifactV1(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -25,6 +28,7 @@ class GodRoomBlueprintFreezeArtifactV1(BaseModel):
         "xmuse.god_room_blueprint_freeze.v1"
     )
     status: GodRoomBlueprintFreezeStatus
+    proof_level: ProofLevel
     blueprint: MissionBlueprintV1 | None = None
     decision_event_id: str | None = None
     assumptions: list[str] = Field(default_factory=list)
@@ -45,6 +49,20 @@ class GodRoomBlueprintFreezeArtifactV1(BaseModel):
     def _clean_text_list(cls, value: list[str]) -> list[str]:
         return _dedupe([item.strip() for item in value if item.strip()])
 
+    @model_validator(mode="before")
+    @classmethod
+    def _default_legacy_proof_level(cls, value: object) -> object:
+        if not isinstance(value, dict) or "proof_level" in value:
+            return value
+        payload = dict(value)
+        payload["proof_level"] = (
+            "manual_gap"
+            if payload.get("status") == GodRoomBlueprintFreezeStatus.MANUAL_GAP
+            or payload.get("status") == GodRoomBlueprintFreezeStatus.MANUAL_GAP.value
+            else "contract_proof"
+        )
+        return payload
+
 
 def compile_blueprint_freeze_from_god_room_events(
     *,
@@ -59,6 +77,7 @@ def compile_blueprint_freeze_from_god_room_events(
     if unresolved:
         return GodRoomBlueprintFreezeArtifactV1(
             status=GodRoomBlueprintFreezeStatus.MANUAL_GAP,
+            proof_level="manual_gap",
             blueprint=None,
             decision_event_id=_latest_freeze_event_id(ordered_events),
             assumptions=_payload_texts(ordered_events, "assumptions"),
@@ -76,6 +95,7 @@ def compile_blueprint_freeze_from_god_room_events(
     if freeze_event is None:
         return GodRoomBlueprintFreezeArtifactV1(
             status=GodRoomBlueprintFreezeStatus.MANUAL_GAP,
+            proof_level="manual_gap",
             blueprint=None,
             assumptions=_payload_texts(ordered_events, "assumptions"),
             conflicts=[],
@@ -112,6 +132,7 @@ def compile_blueprint_freeze_from_god_room_events(
     )
     return GodRoomBlueprintFreezeArtifactV1(
         status=GodRoomBlueprintFreezeStatus.FROZEN,
+        proof_level=_freeze_proof_level(ordered_events),
         blueprint=blueprint,
         decision_event_id=freeze_event.event_id,
         assumptions=_payload_texts(ordered_events, "assumptions"),
@@ -157,6 +178,17 @@ def _source_refs(events: list[GodRoomEventV1]) -> list[str]:
         refs.append(f"god-room-event:{event.event_id}")
         refs.extend(event.source_refs)
     return _dedupe(refs)
+
+
+def _freeze_proof_level(events: list[GodRoomEventV1]) -> ProofLevel:
+    for event in events:
+        if (
+            event.event_type is GodRoomEventKind.SPEAK
+            and event.payload.get("proof_level") == "real_provider_proof"
+            and any(ref.startswith("provider_response_artifact:") for ref in event.source_refs)
+        ):
+            return "opt_in_live_proof"
+    return "contract_proof"
 
 
 def _payload_texts(events: list[GodRoomEventV1], key: str) -> list[str]:

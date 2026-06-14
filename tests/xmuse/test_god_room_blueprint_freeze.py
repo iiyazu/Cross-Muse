@@ -6,6 +6,7 @@ from xmuse_core.chat.god_room_runtime import (
     GodRoomEventV1,
 )
 from xmuse_core.structuring.god_room_blueprint_freeze import (
+    GodRoomBlueprintFreezeArtifactV1,
     GodRoomBlueprintFreezeStatus,
     compile_blueprint_freeze_from_god_room_events,
 )
@@ -54,6 +55,7 @@ def test_compile_blueprint_freeze_from_room_events_preserves_decision_context() 
     )
 
     assert artifact.status is GodRoomBlueprintFreezeStatus.FROZEN
+    assert artifact.proof_level == "contract_proof"
     assert artifact.blueprint is not None
     assert artifact.blueprint.status is MissionBlueprintStatus.FROZEN
     assert artifact.blueprint.goal == "Build GOD room runtime."
@@ -69,6 +71,87 @@ def test_compile_blueprint_freeze_from_room_events_preserves_decision_context() 
     ]
     assert artifact.blockers == []
     assert artifact.blocked_reason is None
+
+
+def test_compile_blueprint_freeze_marks_provider_backed_speech_as_opt_in_live() -> None:
+    artifact = compile_blueprint_freeze_from_god_room_events(
+        blueprint_id="bp-god-room",
+        revision=1,
+        events=[
+            _event(
+                "evt-provider-speak",
+                event_type=GodRoomEventKind.SPEAK,
+                source_refs=[
+                    "provider_response_artifact:reports/provider-responses/live.json",
+                    "provider_invocation:provider-invocation-live",
+                ],
+                payload={
+                    "body": "Live provider speech proposes the blueprint.",
+                    "goal": "Build GOD room runtime.",
+                    "scope": ["GOD room event contract"],
+                    "acceptance_contracts": ["Freeze records live speech lineage."],
+                    "proof_level": "real_provider_proof",
+                },
+            ),
+            _event(
+                "evt-freeze",
+                event_type=GodRoomEventKind.FREEZE_REQUESTED,
+                participant_id="part-review",
+                god_id="god-review",
+                causal_parent_id="evt-provider-speak",
+                payload={
+                    "freeze_target_ref": "blueprint:bp-god-room:1",
+                    "goal": "Build GOD room runtime.",
+                    "scope": ["GOD room event contract"],
+                    "acceptance_contracts": ["Freeze records live speech lineage."],
+                },
+            ),
+        ],
+    )
+
+    assert artifact.status is GodRoomBlueprintFreezeStatus.FROZEN
+    assert artifact.proof_level == "opt_in_live_proof"
+    assert (
+        "provider_response_artifact:reports/provider-responses/live.json"
+        in artifact.source_refs
+    )
+
+
+def test_compile_blueprint_freeze_ignores_non_speak_provider_proof_markers() -> None:
+    artifact = compile_blueprint_freeze_from_god_room_events(
+        blueprint_id="bp-god-room",
+        revision=1,
+        events=[
+            _event(
+                "evt-question",
+                event_type=GodRoomEventKind.QUESTION,
+                target_participant_ids=["part-review"],
+                source_refs=[
+                    "provider_response_artifact:reports/provider-responses/live.json"
+                ],
+                payload={
+                    "question": "Can this marker alone upgrade freeze proof?",
+                    "proof_level": "real_provider_proof",
+                },
+            ),
+            _event(
+                "evt-freeze",
+                event_type=GodRoomEventKind.FREEZE_REQUESTED,
+                participant_id="part-review",
+                god_id="god-review",
+                causal_parent_id="evt-question",
+                payload={
+                    "freeze_target_ref": "blueprint:bp-god-room:1",
+                    "goal": "Build GOD room runtime.",
+                    "scope": ["GOD room event contract"],
+                    "acceptance_contracts": ["Freeze records live speech lineage."],
+                },
+            ),
+        ],
+    )
+
+    assert artifact.status is GodRoomBlueprintFreezeStatus.FROZEN
+    assert artifact.proof_level == "contract_proof"
 
 
 def test_compile_blueprint_freeze_blocks_unresolved_challenge_as_manual_gap() -> None:
@@ -112,10 +195,24 @@ def test_compile_blueprint_freeze_blocks_unresolved_challenge_as_manual_gap() ->
     )
 
     assert artifact.status is GodRoomBlueprintFreezeStatus.MANUAL_GAP
+    assert artifact.proof_level == "manual_gap"
     assert artifact.blueprint is None
     assert artifact.conflicts == ["No proof that TUI is non-authoritative."]
     assert artifact.blockers == ["unresolved challenge evt-challenge"]
     assert artifact.blocked_reason == "unresolved GOD room challenges block blueprint freeze"
+
+
+def test_blueprint_freeze_artifact_defaults_legacy_missing_proof_level() -> None:
+    artifact = GodRoomBlueprintFreezeArtifactV1.model_validate(
+        {
+            "version": "xmuse.god_room_blueprint_freeze.v1",
+            "status": "manual_gap",
+            "source_refs": ["god-room-event:evt-freeze"],
+            "blocked_reason": "legacy runtime artifact",
+        }
+    )
+
+    assert artifact.proof_level == "manual_gap"
 
 
 def _event(
@@ -126,6 +223,7 @@ def _event(
     god_id: str = "god-architect",
     target_participant_ids: list[str] | None = None,
     causal_parent_id: str | None = None,
+    source_refs: list[str] | None = None,
     payload: dict[str, object],
 ) -> GodRoomEventV1:
     return GodRoomEventV1(
@@ -140,7 +238,7 @@ def _event(
         content=str(payload.get("goal") or payload.get("conflict") or "Freeze request."),
         target_participant_ids=target_participant_ids or [],
         causal_parent_id=causal_parent_id,
-        source_refs=[f"message:{event_id}"],
+        source_refs=source_refs or [f"message:{event_id}"],
         cli_id="codex.god",
         provider_profile="codex",
         payload=payload,

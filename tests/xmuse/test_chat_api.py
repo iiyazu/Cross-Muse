@@ -1280,6 +1280,7 @@ def test_chat_api_god_room_freeze_blueprint_persists_resolution_from_room_events
     assert payload["source_authority"] == "god_room_event_store"
     assert payload["artifact"]["version"] == "xmuse.god_room_blueprint_freeze.v1"
     assert payload["artifact"]["status"] == "frozen"
+    assert payload["artifact"]["proof_level"] == "contract_proof"
     assert payload["artifact"]["decision_event_id"] == "evt-freeze"
     assert payload["blueprint"]["blueprint_id"] == "bp-god-room"
     assert payload["blueprint"]["status"] == "frozen"

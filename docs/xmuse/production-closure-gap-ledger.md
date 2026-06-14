@@ -48,6 +48,8 @@ runtime、provider invocation、lane authority、review truth 完成。后续生
   `85e573c24c4c1abc955638b4feb609c6381580ff`
 - Local head at start of L4/L5 opt-in live route repair:
   `7aef014e41b6de3caac032c3338c39accf1a8e90`
+- Local head at start of L6 freeze proof classification slice:
+  `5f74e2d3911d1f919758ea397ff5c423149a20ce`
 - PR: <https://github.com/iiyazu/Cross-Muse/pull/43>
 - PR state last checked: draft/open/unmerged
 - PR merge state last checked: `CLEAN`
@@ -67,6 +69,7 @@ truth_snapshot:
   local_head_at_l4_provider_invocation_slice: db9a759ac23e3e5f6095fe35ed5d373e64281505
   local_head_at_l5_provider_invocation_capture_slice: 85e573c24c4c1abc955638b4feb609c6381580ff
   local_head_at_l4_l5_opt_in_live_route_repair: 7aef014e41b6de3caac032c3338c39accf1a8e90
+  local_head_at_l6_freeze_proof_classification_slice: 5f74e2d3911d1f919758ea397ff5c423149a20ce
   pr: 43
   pr_url: https://github.com/iiyazu/Cross-Muse/pull/43
   pr_state: draft_open_unmerged
@@ -103,7 +106,7 @@ Evidence boundaries:
 | L3 | GOD Room Durable Event Runtime | Durable event contract/store exists | Single-turn opt-in live Codex L4/L5 route appended and replayed one `speak` event; live multi-GOD proof still missing | Not server-bound | Durable room contract proof plus isolated opt-in live speak replay proof |
 | L4 | Speaker Selection / Provider Invocation | Selection/attempt evidence plus provider invocation artifact producer contract exist | Core/API producer emits response artifacts, fail-closed artifacts, and one verified local opt-in live Codex artifact through execution worktree | Not server-bound | Provider invocation artifact contract/fail-closed proof plus isolated Codex opt-in live proof |
 | L5 | Speaker Response Capture / Replay Proof | Artifact-backed capture plus composed L4-to-L5 route exists | Rejects contract-only L4 artifacts; appends/replays only server-written real-proof artifacts; one local opt-in live Codex artifact was captured into durable replay | Not server-bound | Capture/replay contract proof plus isolated Codex opt-in live capture proof |
-| L6 | Blueprint Freeze Authority | Typed freeze artifact exists | Fresh live deliberation freeze missing | Not server-bound | Freeze contract proof |
+| L6 | Blueprint Freeze Authority | Typed freeze artifact exists with proof-level classification | Single-turn provider-backed Codex speech can produce an opt-in live freeze artifact; fresh natural multi-GOD freeze still missing | Not server-bound | Freeze contract proof plus isolated opt-in live freeze proof |
 | L7 | Feature / LaneDAG Authority | LaneDAG/contract artifact exists | Dispatch/review authority not unified | Not server-bound | LaneDAG contract proof |
 | L8 | Lane Runtime Enforcement / Recovery | Recovery contract/API exists | Runner/supervisor enforcement incomplete | Not server-bound | Recovery policy proof |
 | L9 | Execution / Review / Patch-Forward | Review plane exists | GOD-room-originated lane chain missing | Not server-bound | Review artifact/read-model proof |
@@ -118,8 +121,8 @@ Current closure audit:
 - Least closed areas: natural multi-GOD deliberation, GOD-room-originated
   execution/review, live MemoryOS trace, and GitHub merge truth.
 - Next production priority: preserve the isolated L4/L5 live speech lineage in
-  downstream release evidence where appropriate, then advance L6 blueprint
-  freeze from durable room speech without claiming natural multi-GOD closure.
+  downstream release evidence where appropriate, then advance L7 laneDAG from
+  the frozen blueprint without claiming natural multi-GOD closure.
 
 ## L1 - Authority / Boundary Model
 
@@ -501,9 +504,29 @@ Use these as implementation references, not as xmuse package dependencies:
   - GOD room events can compile into `xmuse.god_room_blueprint_freeze.v1`.
   - The freeze endpoint persists through the existing mission blueprint
     proposal/resolution path.
+  - Freeze artifacts now carry explicit `proof_level`:
+    - `manual_gap` for blocked freezes;
+    - `contract_proof` for fixture/contract transcripts;
+    - `opt_in_live_proof` only when durable source events include
+      `speak` events with `real_provider_proof` and a
+      `provider_response_artifact:` lineage ref from L4/L5.
+  - Legacy `xmuse.god_room_blueprint_freeze.v1` artifacts without
+    `proof_level` deserialize as `manual_gap` when blocked and
+    `contract_proof` otherwise; missing proof metadata does not become live
+    proof.
+  - A local L6 smoke run in temp runtime root
+    `/tmp/xmuse-live-l6-freeze-9anxog8k` used a live Codex L4/L5 speak event,
+    appended `evt-freeze`, and produced a frozen
+    `xmuse.god_room_blueprint_freeze.v1` artifact with
+    `proof_level=opt_in_live_proof`, `decision_event_id=evt-freeze`, provider
+    artifact lineage in source refs, and resolution
+    `res_70fff7c8e1224215a6e35c58ffadcf5d` with
+    `approval_mode=god_room_blueprint_freeze`.
 - Missing production closure:
   - The freeze path has not yet been proven from a fresh live multi-GOD
     transcript with real challenges and objections.
+  - Release evidence does not yet preserve the L4/L5/L6 live lineage as a
+    production proof bundle.
 - Proof required to close:
   - A live transcript produces a freeze artifact preserving assumptions,
     blockers, rejected alternatives, source refs, and decision event lineage.
@@ -511,8 +534,8 @@ Use these as implementation references, not as xmuse package dependencies:
   - Freezing a clean contract fixture can be mistaken for real deliberation
     closure.
 - Next production slice:
-  - Require live transcript source evidence for production freeze claims and
-    mark fixture-only freezes as contract proof.
+  - Carry the frozen blueprint into L7 laneDAG authority while preserving
+    whether the freeze proof level is `contract_proof` or `opt_in_live_proof`.
 - Downstream blocked until:
   - L7 cannot claim blueprint-to-lane authority unless the blueprint freeze is
     tied to durable deliberation proof.
