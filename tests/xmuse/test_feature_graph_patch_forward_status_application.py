@@ -98,6 +98,25 @@ def test_patch_forward_merge_guard_preserves_provider_binding_degradations(
     assert transitioned.provider_session_binding_degradations == [degradation]
 
 
+def test_patch_forward_merge_guard_preserves_blueprint_proof_level(
+    tmp_path: Path,
+) -> None:
+    store = FeatureGraphStatusStore(tmp_path / "feature_graph_statuses.json")
+    store.upsert(
+        _reviewing_status().model_copy(
+            update={"blueprint_proof_level": "opt_in_live_proof"}
+        )
+    )
+
+    transitioned = apply_feature_graph_patch_forward_merge_guard_decision(
+        store=store,
+        decision=_merge_guard_decision(),
+        updated_at="2026-06-03T02:25:00Z",
+    )
+
+    assert transitioned.blueprint_proof_level == "opt_in_live_proof"
+
+
 def test_patch_forward_merge_guard_decision_replay_is_idempotent(
     tmp_path: Path,
 ) -> None:

@@ -169,6 +169,40 @@ def test_review_status_transition_preserves_provider_binding_degradations() -> N
     ]
 
 
+def test_review_status_transition_preserves_blueprint_proof_level() -> None:
+    current = _reviewing_status().model_copy(
+        update={"blueprint_proof_level": "opt_in_live_proof"}
+    )
+
+    plan = build_feature_graph_review_status_transition_plan(
+        evidence_bundle=_bundle(),
+        verdict=_merge_verdict(),
+        current_status=current,
+        updated_at="2026-06-03T02:14:00Z",
+    )
+
+    assert plan.target_status_record is not None
+    assert plan.target_status_record.blueprint_proof_level == "opt_in_live_proof"
+
+
+def test_review_status_transition_rejects_blueprint_proof_level_mismatch() -> None:
+    current = _reviewing_status().model_copy(
+        update={"blueprint_proof_level": "opt_in_live_proof"}
+    )
+    bundle = _bundle().model_copy(update={"blueprint_proof_level": "contract_proof"})
+
+    with pytest.raises(
+        ValueError,
+        match="evidence bundle blueprint_proof_level must match current status",
+    ):
+        build_feature_graph_review_status_transition_plan(
+            evidence_bundle=bundle,
+            verdict=_merge_verdict(),
+            current_status=current,
+            updated_at="2026-06-03T02:14:00Z",
+        )
+
+
 def test_review_rework_and_blocked_verdicts_build_status_transitions() -> None:
     rework_plan = build_feature_graph_review_status_transition_plan(
         evidence_bundle=_bundle(),

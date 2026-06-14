@@ -86,6 +86,8 @@ runtime、provider invocation、lane authority、review truth 完成。后续生
   `4d9e5ef9f9404813e337038409138448e70495da`
 - Local head at start of L7 graph-native dispatch authority slice:
   `91500e4d852e07bacf4ed4ff00e9aa7ef0bd2f71`
+- Local head at start of L7 blueprint proof status lineage slice:
+  `3251134b63f886758559a27d80393e9543ac3c80`
 - PR: <https://github.com/iiyazu/Cross-Muse/pull/43>
 - PR state last checked: draft/open/unmerged
 - PR merge state last checked: `CLEAN`
@@ -124,6 +126,7 @@ truth_snapshot:
   local_head_at_l3_l5_multi_turn_provider_speech_orchestrator_slice: 3c8b17eb433a5536899ca8936c545323da1ee1ab
   local_head_at_l6_multi_turn_freeze_lineage_slice: 4d9e5ef9f9404813e337038409138448e70495da
   local_head_at_l7_graph_native_dispatch_authority_slice: 91500e4d852e07bacf4ed4ff00e9aa7ef0bd2f71
+  local_head_at_l7_blueprint_proof_status_lineage_slice: 3251134b63f886758559a27d80393e9543ac3c80
   pr: 43
   pr_url: https://github.com/iiyazu/Cross-Muse/pull/43
   pr_state: draft_open_unmerged
@@ -161,7 +164,7 @@ Evidence boundaries:
 | L4 | Speaker Selection / Provider Invocation | Selection/attempt evidence plus provider invocation artifact producer contract exist | Core/API producer emits response artifacts, fail-closed artifacts, one verified local opt-in live Codex artifact through execution worktree, and multiple artifacts when driven by the bounded multi-turn route | Not server-bound | Provider invocation artifact contract/fail-closed proof plus isolated Codex opt-in live proof |
 | L5 | Speaker Response Capture / Replay Proof | Artifact-backed capture plus composed L4-to-L5 route exists | Rejects contract-only L4 artifacts; appends/replays only server-written real-proof artifacts; one local opt-in live Codex artifact was captured into durable replay; bounded multi-turn route stops on manual_gap and preserves prior durable events | Not server-bound | Capture/replay contract proof plus isolated Codex opt-in live capture proof and bounded multi-turn capture orchestration proof |
 | L6 | Blueprint Freeze Authority | Typed freeze artifact exists with proof-level classification | Single-turn provider-backed Codex speech and bounded multi-turn L3-L5 run lineage can feed freeze artifacts while preserving durable event authority; fresh natural multi-GOD freeze still missing | Not server-bound | Freeze contract proof plus isolated opt-in live freeze proof plus bounded multi-turn lineage proof |
-| L7 | Feature / LaneDAG Authority | LaneDAG/contract artifact exists with upstream freeze proof metadata | Live L4/L5/L6 proof metadata can flow into laneDAG without writing `feature_lanes.json`; `graph_set_id`-backed orchestrator dispatch/review/reprojection now fail closed when durable graph-native status is missing; full dispatch/review authority still not unified | Not server-bound | LaneDAG contract proof plus isolated opt-in live upstream-proof propagation and graph-native missing-status fail-closed proof |
+| L7 | Feature / LaneDAG Authority | LaneDAG/contract artifact exists with upstream freeze proof metadata | Live L4/L5/L6 proof metadata can flow into laneDAG without writing `feature_lanes.json`; `blueprint_proof_level` now has durable graph-native status/evidence carriers and status-transition preservation; `graph_set_id`-backed orchestrator dispatch/review/reprojection now fail closed when durable graph-native status is missing; full dispatch/review authority still not unified | Not server-bound | LaneDAG contract proof plus isolated opt-in live upstream-proof propagation, graph-native proof-lineage carrier proof, and graph-native missing-status fail-closed proof |
 | L8 | Lane Runtime Enforcement / Recovery | Recovery contract/API exists and recovery artifacts carry laneDAG proof lineage | Recovery API consumes laneDAG contract/budget and preserves blueprint proof/source refs; GOD-room review intake and orchestrator dispatch now fail-close non-retry recovery decisions; broader supervisor/live runner enforcement still incomplete | Not server-bound | Recovery policy proof plus laneDAG-lineage evidence proof plus review-intake/dispatch enforcement proof |
 | L9 | Execution / Review / Patch-Forward | Review plane plus GOD-room review intake/verdict/patch-forward/closure artifact contracts exist | GOD-room lane contracts/recovery/candidate evidence can be packaged for independent review; review verdicts sync task/verdict lineage into `review_plane.json`; patch-forward verdicts can append a laneDAG patch lane and reviewed patch-lane merge verdicts can produce a release-evidence handoff; lane status, live execution proof, and server truth still missing | Not server-bound | GOD-room review/patch-forward closure contract proof plus review-plane store lineage proof, not server/GitHub truth |
 | L10 | MemoryOS / Release Evidence / GitHub Truth | Evidence bundle semantics exist and can index GOD-room review closure handoff; release candidates can seed MemoryOS source refs from that handoff | Live MemoryOS trace and live execution/server truth missing | PR open/unmerged; CI truth only for verified remote head | Replay/readiness proof with explicit gaps |
@@ -695,14 +698,21 @@ Use these as implementation references, not as xmuse package dependencies:
     keep projection-compatible behavior; graph-set-backed lanes with only
     `feature_lanes.json` projection state do not dispatch/review/reproject from
     projection alone.
+  - `FeatureGraphExecutionStatusRecord` and `FeatureEvidenceBundle` now carry
+    optional `blueprint_proof_level`, and `FeatureGraphStatusStore`
+    initialization/upsert/transition plus worker-evidence, review, rework, and
+    patch-forward status producers preserve that lineage. Legacy records with
+    no proof field remain readable and are treated as proof boundary unknown /
+    contract-level rather than live proof.
 - Missing production closure:
   - The graph-set/lane authority path is not yet fully unified with every
     execution/dispatch path.
   - Dispatch/review still need to prove they consume laneDAG authority and do
     not fall back to detached artifacts or projection queue state.
-  - `blueprint_proof_level` is preserved in laneDAG artifacts and GOD-room
-    recovery/review artifacts, but it is not yet propagated into every
-    `FeatureGraphExecutionStatusRecord` or live runner evidence path.
+  - `blueprint_proof_level` is preserved in laneDAG artifacts, graph-native
+    status records, worker evidence bundles, GOD-room recovery/review
+    artifacts, and key graph-native status-transition producers, but it is not
+    yet proven through every live runner evidence path.
 - Proof required to close:
   - A frozen GOD room blueprint feeds authoritative laneDAG/graph-set state
     used by dispatch and review.
@@ -712,9 +722,10 @@ Use these as implementation references, not as xmuse package dependencies:
   - Legacy projection lanes and graph-id-only compatibility lanes remain
     compatibility-only and must not be described as graph-native L7 authority.
 - Next production slice:
-  - Propagate laneDAG `blueprint_proof_level` into graph-native status/runtime
-    evidence and continue removing graph-backed dispatch/review fallbacks to
-    `feature_lanes.json`.
+  - Propagate laneDAG `blueprint_proof_level` from the actual
+    blueprint-laneDAG producer into graph-set/status initialization call sites
+    and live runner evidence, then continue removing graph-backed
+    dispatch/review fallbacks to `feature_lanes.json`.
 - Downstream blocked until:
   - L8 and L9 cannot claim production execution closure without consuming this
     lane authority.

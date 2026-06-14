@@ -114,6 +114,49 @@ def test_rework_packet_status_application_preserves_provider_binding_degradation
     assert transitioned.provider_session_binding_degradations == [degradation]
 
 
+def test_rework_packet_status_application_preserves_blueprint_proof_level(
+    tmp_path: Path,
+) -> None:
+    store = FeatureGraphStatusStore(tmp_path / "feature_graph_statuses.json")
+    store.upsert(
+        _reworking_status().model_copy(
+            update={"blueprint_proof_level": "opt_in_live_proof"}
+        )
+    )
+
+    transitioned = apply_feature_graph_rework_packet_status(
+        store=store,
+        evidence_bundle=_bundle(),
+        rework_packet=_rework_packet(),
+        updated_at="2026-06-03T02:20:00Z",
+    )
+
+    assert transitioned.blueprint_proof_level == "opt_in_live_proof"
+
+
+def test_rework_packet_status_application_rejects_blueprint_proof_level_mismatch(
+    tmp_path: Path,
+) -> None:
+    store = FeatureGraphStatusStore(tmp_path / "feature_graph_statuses.json")
+    store.upsert(
+        _reworking_status().model_copy(
+            update={"blueprint_proof_level": "opt_in_live_proof"}
+        )
+    )
+    bundle = _bundle().model_copy(update={"blueprint_proof_level": "contract_proof"})
+
+    with pytest.raises(
+        ValueError,
+        match="evidence bundle blueprint_proof_level must match current status",
+    ):
+        apply_feature_graph_rework_packet_status(
+            store=store,
+            evidence_bundle=bundle,
+            rework_packet=_rework_packet(),
+            updated_at="2026-06-03T02:20:00Z",
+        )
+
+
 def test_rework_packet_status_application_replay_is_idempotent(tmp_path: Path) -> None:
     store = FeatureGraphStatusStore(tmp_path / "feature_graph_statuses.json")
     store.upsert(_reworking_status())

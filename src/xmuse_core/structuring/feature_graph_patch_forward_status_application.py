@@ -63,6 +63,7 @@ def _target_status_record(
         feature_plan_version=current_status.feature_plan_version,
         feature_id=decision.feature_id,
         feature_graph_id=decision.feature_graph_id,
+        blueprint_proof_level=current_status.blueprint_proof_level,
         status=FeatureGraphExecutionStatus.MERGED,
         ready_lane_ids=[],
         active_lane_ids=[],

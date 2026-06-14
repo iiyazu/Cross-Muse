@@ -31,6 +31,7 @@ def _status(
     active_lane_ids: list[str] | None = None,
     completed_lane_ids: list[str] | None = None,
     blocked_lane_ids: list[str] | None = None,
+    blueprint_proof_level: str | None = None,
     provider_session_binding_degradations: list[
         ProviderSessionBindingDegradationEvidence
     ] | None = None,
@@ -46,6 +47,7 @@ def _status(
         feature_plan_version=1,
         feature_id=feature_id,
         feature_graph_id=feature_graph_id,
+        blueprint_proof_level=blueprint_proof_level,
         status=status,
         ready_lane_ids=ready_lane_ids or ["lane-a"],
         active_lane_ids=active_lane_ids or [],
@@ -641,6 +643,48 @@ def test_feature_graph_status_store_initializes_graph_set_statuses(
         ("feature_graph_status.initialized", "feature-a", None, "ready"),
         ("feature_graph_status.initialized", "feature-b", None, "planned"),
     ]
+
+
+def test_feature_graph_status_store_initializes_blueprint_proof_level(
+    tmp_path: Path,
+) -> None:
+    store = FeatureGraphStatusStore(tmp_path / "feature_graph_statuses.json")
+
+    initialized = store.initialize_from_graph_set(
+        _graph_set(),
+        updated_at="2026-06-03T03:00:00Z",
+        blueprint_proof_level="opt_in_live_proof",
+    )
+
+    assert [record.blueprint_proof_level for record in initialized] == [
+        "opt_in_live_proof",
+        "opt_in_live_proof",
+    ]
+    raw = json.loads((tmp_path / "feature_graph_statuses.json").read_text())
+    assert raw["statuses"][0]["blueprint_proof_level"] == "opt_in_live_proof"
+
+
+def test_feature_graph_status_store_preserves_blueprint_proof_level_on_transition(
+    tmp_path: Path,
+) -> None:
+    store = FeatureGraphStatusStore(tmp_path / "feature_graph_statuses.json")
+    ready = _status(blueprint_proof_level="opt_in_live_proof")
+    running_without_proof = _status(
+        status_id="fgs-running",
+        status=FeatureGraphExecutionStatus.RUNNING,
+        ready_lane_ids=[],
+        active_lane_ids=["lane-a"],
+        updated_at="2026-06-03T03:10:00Z",
+    )
+
+    store.upsert(ready)
+    transitioned = store.transition(running_without_proof)
+
+    assert transitioned.blueprint_proof_level == "opt_in_live_proof"
+    assert store.get(
+        graph_set_id="graph-set-1",
+        feature_graph_id="graph-feature-a",
+    ).blueprint_proof_level == "opt_in_live_proof"
 
 
 def test_feature_graph_status_store_repeated_initialize_does_not_duplicate_events(

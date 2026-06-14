@@ -105,6 +105,39 @@ def test_feature_graph_worker_evidence_submission_plan_golden_fixture_is_stable(
     )
 
 
+def test_worker_evidence_submission_preserves_blueprint_proof_level() -> None:
+    current = _running_status().model_copy(
+        update={"blueprint_proof_level": "opt_in_live_proof"}
+    )
+
+    plan = build_feature_graph_worker_evidence_submission_plan(
+        evidence_bundle=_bundle(),
+        current_status=current,
+        evidence_bundle_ref="feature_evidence_bundle:fevb_demo:v1",
+        updated_at="2026-06-03T02:17:00Z",
+    )
+
+    assert plan.target_status_record.blueprint_proof_level == "opt_in_live_proof"
+
+
+def test_worker_evidence_submission_rejects_blueprint_proof_level_mismatch() -> None:
+    current = _running_status().model_copy(
+        update={"blueprint_proof_level": "opt_in_live_proof"}
+    )
+    bundle = _bundle().model_copy(update={"blueprint_proof_level": "contract_proof"})
+
+    with pytest.raises(
+        ValueError,
+        match="evidence bundle blueprint_proof_level must match current status",
+    ):
+        build_feature_graph_worker_evidence_submission_plan(
+            evidence_bundle=bundle,
+            current_status=current,
+            evidence_bundle_ref="feature_evidence_bundle:fevb_demo:v1",
+            updated_at="2026-06-03T02:17:00Z",
+        )
+
+
 def test_worker_evidence_submission_plan_requires_running_status() -> None:
     with pytest.raises(ValueError, match="worker evidence submission requires running status"):
         build_feature_graph_worker_evidence_submission_plan(

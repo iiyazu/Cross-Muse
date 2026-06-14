@@ -47,6 +47,10 @@ def _target_status_record(
     rework_packet: ReworkPacket,
     updated_at: str,
 ) -> FeatureGraphExecutionStatusRecord:
+    blueprint_proof_level = _resolve_blueprint_proof_level(
+        evidence_bundle,
+        current_status,
+    )
     return FeatureGraphExecutionStatusRecord(
         status_id=_feature_graph_status_id(
             graph_set_id=evidence_bundle.graph_set_id,
@@ -61,6 +65,7 @@ def _target_status_record(
         feature_plan_version=evidence_bundle.feature_plan_version,
         feature_id=evidence_bundle.feature_id,
         feature_graph_id=evidence_bundle.feature_graph_id,
+        blueprint_proof_level=blueprint_proof_level,
         status=FeatureGraphExecutionStatus.RUNNING,
         ready_lane_ids=[],
         active_lane_ids=_rework_active_lane_ids(current_status, evidence_bundle),
@@ -77,6 +82,17 @@ def _target_status_record(
         ),
         updated_at=updated_at,
     )
+
+
+def _resolve_blueprint_proof_level(
+    evidence_bundle: FeatureEvidenceBundle,
+    current_status: FeatureGraphExecutionStatusRecord,
+) -> str | None:
+    bundle_level = evidence_bundle.blueprint_proof_level
+    current_level = current_status.blueprint_proof_level
+    if bundle_level is not None and current_level is not None and bundle_level != current_level:
+        raise ValueError("evidence bundle blueprint_proof_level must match current status")
+    return bundle_level if bundle_level is not None else current_level
 
 
 def _require_packet_targets_bundle(

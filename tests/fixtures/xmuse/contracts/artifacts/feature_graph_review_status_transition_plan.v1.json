@@ -47,6 +47,7 @@
       "feature_plan_version": 1,
       "feature_id": "feature-provider-session-binding",
       "feature_graph_id": "graph-provider-session-binding",
+      "blueprint_proof_level": null,
       "status": "merged",
       "ready_lane_ids": [],
       "active_lane_ids": [],

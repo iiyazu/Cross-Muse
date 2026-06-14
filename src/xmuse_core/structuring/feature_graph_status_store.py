@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import Any
+from typing import Any, TypeAlias
 
 from xmuse_core.structuring.feature_review_contracts import (
     FeatureGraphExecutionStatus,
@@ -18,6 +18,10 @@ from xmuse_core.structuring.feature_review_contracts import (
 from xmuse_core.structuring.models import FeatureGraphSet, FeaturePlanFeature, LaneGraph
 
 SCHEMA_VERSION = "xmuse.feature_graph_statuses.v1"
+FeatureGraphExecutionStatusRecords: TypeAlias = list[
+    FeatureGraphExecutionStatusRecord
+]
+FeatureGraphStatusEvents: TypeAlias = list[FeatureGraphStatusEventRecord]
 _ALLOWED_STATUS_TRANSITIONS: dict[
     FeatureGraphExecutionStatus,
     set[FeatureGraphExecutionStatus],
@@ -81,7 +85,7 @@ class FeatureGraphStatusStore:
         with self._locked_file():
             records = self._read_records_unlocked()
             events = self._read_events_unlocked()
-            updated: list[FeatureGraphExecutionStatusRecord] = []
+            updated: FeatureGraphExecutionStatusRecords = []
             replaced = False
             for existing in records:
                 _raise_if_status_id_replay_conflict(existing, validated)
@@ -91,6 +95,15 @@ class FeatureGraphStatusStore:
                         existing,
                         validated,
                     )
+                    if (
+                        validated.blueprint_proof_level is None
+                        and existing.blueprint_proof_level is not None
+                    ):
+                        validated = validated.model_copy(
+                            update={
+                                "blueprint_proof_level": existing.blueprint_proof_level
+                            }
+                        )
                     if not replaced:
                         updated.append(validated)
                         replaced = True
@@ -113,7 +126,7 @@ class FeatureGraphStatusStore:
         with self._locked_file():
             records = self._read_records_unlocked()
             events = self._read_events_unlocked()
-            updated: list[FeatureGraphExecutionStatusRecord] = []
+            updated: FeatureGraphExecutionStatusRecords = []
             transitioned: FeatureGraphExecutionStatusRecord | None = None
             event: FeatureGraphStatusEventRecord | None = None
             found = False
@@ -138,6 +151,15 @@ class FeatureGraphStatusStore:
                     existing,
                     validated,
                 )
+                if (
+                    validated.blueprint_proof_level is None
+                    and existing.blueprint_proof_level is not None
+                ):
+                    validated = validated.model_copy(
+                        update={
+                            "blueprint_proof_level": existing.blueprint_proof_level
+                        }
+                    )
                 _raise_if_conflicting_replay(existing, validated)
                 _raise_if_illegal_transition(existing.status, validated.status)
                 updated.append(validated)
@@ -159,8 +181,9 @@ class FeatureGraphStatusStore:
         graph_set: FeatureGraphSet,
         *,
         updated_at: str,
-    ) -> list[FeatureGraphExecutionStatusRecord]:
-        initialized: list[FeatureGraphExecutionStatusRecord] = []
+        blueprint_proof_level: str | None = None,
+    ) -> FeatureGraphExecutionStatusRecords:
+        initialized: FeatureGraphExecutionStatusRecords = []
         with self._locked_file():
             records = self._read_records_unlocked()
             events = self._read_events_unlocked()
@@ -192,11 +215,17 @@ class FeatureGraphStatusStore:
                         else FeatureGraphExecutionStatus.PLANNED
                     ),
                     updated_at=updated_at,
+                    blueprint_proof_level=blueprint_proof_level,
                 )
                 previous = previous_by_graph_id.get(graph.id)
                 if previous is not None:
                     record = record.model_copy(
                         update={
+                            "blueprint_proof_level": (
+                                blueprint_proof_level
+                                if blueprint_proof_level is not None
+                                else previous.blueprint_proof_level
+                            ),
                             "provider_session_binding_degradations": list(
                                 previous.provider_session_binding_degradations
                             )
@@ -213,7 +242,7 @@ class FeatureGraphStatusStore:
         graph_set: FeatureGraphSet,
         *,
         updated_at: str,
-    ) -> list[FeatureGraphExecutionStatusRecord]:
+    ) -> FeatureGraphExecutionStatusRecords:
         expected_graph_id_by_feature_id = {
             feature.feature_id: feature.graph_id
             for feature in graph_set.feature_plan.features
@@ -223,7 +252,7 @@ class FeatureGraphStatusStore:
             graph_set=graph_set,
             expected_graph_id_by_feature_id=expected_graph_id_by_feature_id,
         )
-        released: list[FeatureGraphExecutionStatusRecord] = []
+        released: FeatureGraphExecutionStatusRecords = []
         for feature, graph in _feature_graph_pairs(graph_set):
             current = existing_by_feature_id.get(feature.feature_id)
             if current is None:
@@ -304,7 +333,7 @@ class FeatureGraphStatusStore:
         with self._locked_file():
             records = self._read_records_unlocked()
             events = self._read_events_unlocked()
-            updated_records: list[FeatureGraphExecutionStatusRecord] = []
+            updated_records: FeatureGraphExecutionStatusRecords = []
             updated_record: FeatureGraphExecutionStatusRecord | None = None
             event: FeatureGraphStatusEventRecord | None = None
             for current in records:
@@ -382,7 +411,7 @@ class FeatureGraphStatusStore:
         *,
         graph_set_id: str | None = None,
         conversation_id: str | None = None,
-    ) -> list[FeatureGraphExecutionStatusRecord]:
+    ) -> FeatureGraphExecutionStatusRecords:
         with self._locked_file():
             records = self._read_records_unlocked()
         if graph_set_id is not None:
@@ -398,7 +427,7 @@ class FeatureGraphStatusStore:
         *,
         graph_set_id: str | None = None,
         conversation_id: str | None = None,
-    ) -> list[FeatureGraphExecutionStatusRecord]:
+    ) -> FeatureGraphExecutionStatusRecords:
         return [
             record
             for record in self.list(
@@ -413,7 +442,7 @@ class FeatureGraphStatusStore:
         *,
         graph_set_id: str | None = None,
         feature_graph_id: str | None = None,
-    ) -> list[FeatureGraphStatusEventRecord]:
+    ) -> FeatureGraphStatusEvents:
         with self._locked_file():
             events = self._read_events_unlocked()
         if graph_set_id is not None:
@@ -434,11 +463,11 @@ class FeatureGraphStatusStore:
             raise ValueError("feature graph status payload must be an object")
         return payload
 
-    def _read_records_unlocked(self) -> list[FeatureGraphExecutionStatusRecord]:
+    def _read_records_unlocked(self) -> FeatureGraphExecutionStatusRecords:
         payload = self._read_payload_unlocked()
         return self._read_records_from_payload(payload)
 
-    def _read_events_unlocked(self) -> list[FeatureGraphStatusEventRecord]:
+    def _read_events_unlocked(self) -> FeatureGraphStatusEvents:
         payload = self._read_payload_unlocked()
         records = self._read_records_from_payload(payload)
         events = payload.get("events", [])
@@ -460,7 +489,7 @@ class FeatureGraphStatusStore:
     def _read_records_from_payload(
         self,
         payload: dict[str, Any],
-    ) -> list[FeatureGraphExecutionStatusRecord]:
+    ) -> FeatureGraphExecutionStatusRecords:
         statuses = payload.get("statuses", [])
         if not isinstance(statuses, list):
             raise ValueError("feature graph statuses must be a list")
@@ -477,14 +506,14 @@ class FeatureGraphStatusStore:
 
     def _write_records_unlocked(
         self,
-        records: list[FeatureGraphExecutionStatusRecord],
+        records: FeatureGraphExecutionStatusRecords,
     ) -> None:
         self._write_payload_unlocked(records, self._read_events_unlocked())
 
     def _write_payload_unlocked(
         self,
-        records: list[FeatureGraphExecutionStatusRecord],
-        events: list[FeatureGraphStatusEventRecord],
+        records: FeatureGraphExecutionStatusRecords,
+        events: FeatureGraphStatusEvents,
     ) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
@@ -552,10 +581,10 @@ def _is_same_claim_replay(
 
 
 def _upsert_record(
-    records: list[FeatureGraphExecutionStatusRecord],
+    records: FeatureGraphExecutionStatusRecords,
     candidate: FeatureGraphExecutionStatusRecord,
-) -> list[FeatureGraphExecutionStatusRecord]:
-    updated: list[FeatureGraphExecutionStatusRecord] = []
+) -> FeatureGraphExecutionStatusRecords:
+    updated: FeatureGraphExecutionStatusRecords = []
     replaced = False
     for existing in records:
         _raise_if_status_id_replay_conflict(existing, candidate)
@@ -596,7 +625,7 @@ def _feature_dependencies_merged(
 
 
 def _current_records_by_feature_id(
-    records: list[FeatureGraphExecutionStatusRecord],
+    records: FeatureGraphExecutionStatusRecords,
     *,
     graph_set: FeatureGraphSet,
     expected_graph_id_by_feature_id: dict[str, str],
@@ -618,9 +647,13 @@ def _status_from_graph_set(
     graph: LaneGraph,
     status: FeatureGraphExecutionStatus,
     updated_at: str,
+    blueprint_proof_level: str | None = None,
     previous: FeatureGraphExecutionStatusRecord | None = None,
 ) -> FeatureGraphExecutionStatusRecord:
     root_lane_ids = [lane.feature_id for lane in graph.lanes if not lane.depends_on]
+    graph_set_version = graph_set.version
+    if graph_set_version is None:
+        raise ValueError("feature graph status requires graph_set version")
     return FeatureGraphExecutionStatusRecord(
         status_id=_feature_graph_status_id(
             graph_set_id=graph_set.id,
@@ -631,11 +664,16 @@ def _status_from_graph_set(
         conversation_id=graph_set.feature_plan.conversation_id,
         planning_run_id=previous.planning_run_id if previous is not None else None,
         graph_set_id=graph_set.id,
-        graph_set_version=graph_set.version,
+        graph_set_version=graph_set_version,
         feature_plan_id=graph_set.feature_plan.id,
         feature_plan_version=graph_set.feature_plan.version,
         feature_id=feature.feature_id,
         feature_graph_id=graph.id,
+        blueprint_proof_level=(
+            blueprint_proof_level
+            if blueprint_proof_level is not None
+            else previous.blueprint_proof_level if previous is not None else None
+        ),
         status=status,
         ready_lane_ids=root_lane_ids if status is FeatureGraphExecutionStatus.READY else [],
         active_lane_ids=[],
@@ -763,9 +801,9 @@ def _provider_binding_degradation_event(
 
 
 def _append_event(
-    events: list[FeatureGraphStatusEventRecord],
+    events: FeatureGraphStatusEvents,
     event: FeatureGraphStatusEventRecord | None,
-) -> list[FeatureGraphStatusEventRecord]:
+) -> FeatureGraphStatusEvents:
     if event is None:
         return events
     for existing in events:
@@ -780,7 +818,7 @@ def _append_event(
 
 
 def _raise_if_event_replay_conflicts(
-    events: list[FeatureGraphStatusEventRecord],
+    events: FeatureGraphStatusEvents,
 ) -> None:
     by_event_id: dict[str, FeatureGraphStatusEventRecord] = {}
     by_idempotency_key: dict[str, FeatureGraphStatusEventRecord] = {}
@@ -802,8 +840,8 @@ def _raise_if_event_replay_conflicts(
 
 
 def _raise_if_events_reference_missing_status_identity(
-    events: list[FeatureGraphStatusEventRecord],
-    records: list[FeatureGraphExecutionStatusRecord],
+    events: FeatureGraphStatusEvents,
+    records: FeatureGraphExecutionStatusRecords,
 ) -> None:
     status_identities = {
         (record.graph_set_id, record.feature_graph_id)
@@ -819,8 +857,8 @@ def _raise_if_events_reference_missing_status_identity(
 
 
 def _raise_if_events_drift_from_status_records(
-    events: list[FeatureGraphStatusEventRecord],
-    records: list[FeatureGraphExecutionStatusRecord],
+    events: FeatureGraphStatusEvents,
+    records: FeatureGraphExecutionStatusRecords,
 ) -> None:
     records_by_identity = {
         (record.graph_set_id, record.feature_graph_id): record
@@ -841,8 +879,8 @@ def _raise_if_events_drift_from_status_records(
 
 
 def _raise_if_event_status_lineage_gaps(
-    events: list[FeatureGraphStatusEventRecord],
-    records: list[FeatureGraphExecutionStatusRecord],
+    events: FeatureGraphStatusEvents,
+    records: FeatureGraphExecutionStatusRecords,
 ) -> None:
     records_by_identity = {
         (record.graph_set_id, record.feature_graph_id): record
@@ -878,7 +916,7 @@ def _raise_if_event_status_lineage_gaps(
 
 
 def _raise_if_duplicate_feature_graph_status_identities(
-    records: list[FeatureGraphExecutionStatusRecord],
+    records: FeatureGraphExecutionStatusRecords,
 ) -> None:
     seen: set[tuple[str, str]] = set()
     for record in records:
@@ -892,7 +930,7 @@ def _raise_if_duplicate_feature_graph_status_identities(
 
 
 def _raise_if_status_record_replay_conflicts(
-    records: list[FeatureGraphExecutionStatusRecord],
+    records: FeatureGraphExecutionStatusRecords,
 ) -> None:
     by_status_id: dict[str, FeatureGraphExecutionStatusRecord] = {}
     for record in records:
