@@ -755,6 +755,12 @@ def _string_list(value: object) -> list[str]:
     return [item for item in value if isinstance(item, str) and item.strip()]
 
 
+def _source_event_lineage_payload(
+    lineage: list[BlueprintSourceEventLineage],
+) -> list[dict[str, object]]:
+    return [item.model_dump(mode="json") for item in lineage]
+
+
 def _role_template_has_participants(base_dir: Path, template_id: str) -> bool:
     store = _store(base_dir)
     participant_store = _participant_store(base_dir)
@@ -1176,6 +1182,9 @@ def _evaluate_god_room_lane_recovery(
         "graph_id": request.graph_id,
         "lane_id": request.lane_id,
         "blueprint_proof_level": plan.blueprint_proof_level,
+        "source_event_lineage": _source_event_lineage_payload(
+            plan.source_event_lineage
+        ),
         "source_refs": authority_refs,
         "decision": decision.model_dump(mode="json"),
         "lane_contract": contract.model_dump(mode="json"),
@@ -1193,6 +1202,9 @@ def _evaluate_god_room_lane_recovery(
         "graph_id": request.graph_id,
         "lane_id": request.lane_id,
         "blueprint_proof_level": plan.blueprint_proof_level,
+        "source_event_lineage": _source_event_lineage_payload(
+            plan.source_event_lineage
+        ),
         "source_refs": authority_refs,
         "decision": decision.model_dump(mode="json"),
         "lane_dag": plan.model_dump(mode="json"),
@@ -1310,6 +1322,9 @@ def _build_god_room_lane_review_intake(
         "feature_graph_status": status_record.model_dump(mode="json"),
         "lane_id": request.lane_id,
         "blueprint_proof_level": plan.blueprint_proof_level,
+        "source_event_lineage": _source_event_lineage_payload(
+            status_record.source_event_lineage
+        ),
         "reviewer_id": request.reviewer_id,
         "lane_contract": contract.model_dump(mode="json"),
         "worker_candidate_refs": list(request.worker_candidate_refs),
@@ -1659,6 +1674,9 @@ def _apply_god_room_lane_patch_forward(
         "failed_lane_id": request.lane_id,
         "patch_lane_id": patch_lane_id,
         "blueprint_proof_level": patched_plan.blueprint_proof_level,
+        "source_event_lineage": _source_event_lineage_payload(
+            patched_plan.source_event_lineage
+        ),
         "review_verdict_artifact": str(verdict_path.relative_to(base_dir)),
         "patch_forward_link": patch_link,
         "patch_lane_contract": patch_contract.model_dump(mode="json"),
@@ -1953,6 +1971,9 @@ def _build_god_room_lane_review_closure(
         "failed_lane_id": request.lane_id,
         "terminal_lane_id": patch_lane_id,
         "blueprint_proof_level": plan.blueprint_proof_level,
+        "source_event_lineage": _source_event_lineage_payload(
+            graph_status.source_event_lineage
+        ),
         "patch_forward_artifact": str(patch_forward_path.relative_to(base_dir)),
         "patch_lane_review_intake_artifact": str(intake_path.relative_to(base_dir)),
         "patch_lane_review_verdict_artifact": str(
@@ -3595,6 +3616,7 @@ def _feature_graph_set_from_lane_dag_plan(
             f"lane_dag_artifact:{_lane_dag_artifact_path(Path('.'), plan.lane_graph.id)}",
             *plan.source_refs,
         ],
+        source_event_lineage=list(plan.source_event_lineage),
         feature_plan=feature_plan,
         graphs=graphs,
     )

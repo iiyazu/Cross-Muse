@@ -1534,6 +1534,25 @@ def test_release_evidence_pack_converts_god_room_runtime_closure_into_replay_sec
             "graph_id": "graph-runtime",
             "failed_lane_id": "lane-runtime-evidence",
             "terminal_lane_id": "lane-runtime-evidence-patch",
+            "source_event_lineage": [
+                {
+                    "event_id": "evt-review-provider-speak",
+                    "event_type": "speak",
+                    "participant_id": "part-review",
+                    "god_id": "god-review",
+                    "proof_level": "opt_in_live_proof",
+                    "source_authority": "feature_graph_status_store",
+                    "provider_response_artifact_ref": (
+                        "reports/provider-responses/provider-response-1.json"
+                    ),
+                    "source_refs": [
+                        "god-room-event:evt-review-provider-speak",
+                        "provider_response_artifact:"
+                        "reports/provider-responses/provider-response-1.json",
+                    ],
+                    "forbidden_claims": ["natural_groupchat_closure"],
+                }
+            ],
             "patch_forward_artifact": "reports/god-room/patch-forward.json",
             "patch_lane_review_intake_artifact": (
                 "reports/god-room/patch-intake.json"
@@ -1630,6 +1649,12 @@ def test_release_evidence_pack_converts_god_room_runtime_closure_into_replay_sec
     assert closure["details"]["god_room_runtime_closure"]["review_closure"][
         "server_truth_status"
     ] == "not_server_truth"
+    assert closure["details"]["god_room_runtime_closure"]["review_closure"][
+        "source_event_lineage_count"
+    ] == 1
+    assert closure["details"]["god_room_runtime_closure"]["review_closure"][
+        "source_event_lineage_proof_levels"
+    ] == {"opt_in_live_proof": 1}
     assert "worker-candidate:patch-reviewed" in closure["source_refs"]
 
 
@@ -2167,6 +2192,25 @@ def test_release_evidence_pack_cli_accepts_god_room_review_closure(
             "graph_id": "graph-runtime",
             "failed_lane_id": "lane-runtime-evidence",
             "terminal_lane_id": "lane-runtime-evidence-patch",
+            "source_event_lineage": [
+                {
+                    "event_id": "evt-provider-speak",
+                    "event_type": "speak",
+                    "participant_id": "part-review",
+                    "god_id": "god-review",
+                    "proof_level": "opt_in_live_proof",
+                    "source_authority": "feature_graph_status_store",
+                    "provider_response_artifact_ref": (
+                        "reports/provider-responses/provider-response-1.json"
+                    ),
+                    "source_refs": [
+                        "god-room-event:evt-provider-speak",
+                        "provider_response_artifact:"
+                        "reports/provider-responses/provider-response-1.json",
+                    ],
+                    "forbidden_claims": ["natural_groupchat_closure"],
+                }
+            ],
             "candidate_refs": ["worker-candidate:patch-reviewed"],
             "cited_candidate_refs": ["worker-candidate:patch-reviewed"],
             "terminal_review_verdict": {
@@ -2283,6 +2327,8 @@ def test_release_evidence_pack_cli_accepts_god_room_review_closure(
     assert details["status"] == "candidate_input_ready"
     assert details["proof_level"] == "contract_proof"
     assert details["server_truth_status"] == "not_server_truth"
+    assert details["source_event_lineage_count"] == 1
+    assert details["source_event_lineage_event_types"] == {"speak": 1}
     assert "ready_to_merge" in details["forbidden_claims"]
     assert runtime_details["multi_turn_provider_speech"]["status"] == "completed"
     assert runtime_details["multi_turn_provider_speech"]["appended_event_ids"] == [

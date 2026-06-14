@@ -104,6 +104,10 @@ class FeatureGraphStatusStore:
                                 "blueprint_proof_level": existing.blueprint_proof_level
                             }
                         )
+                    validated = _preserve_or_validate_source_event_lineage(
+                        existing,
+                        validated,
+                    )
                     if not replaced:
                         updated.append(validated)
                         replaced = True
@@ -157,9 +161,13 @@ class FeatureGraphStatusStore:
                 ):
                     validated = validated.model_copy(
                         update={
-                            "blueprint_proof_level": existing.blueprint_proof_level
-                        }
-                    )
+                                "blueprint_proof_level": existing.blueprint_proof_level
+                            }
+                        )
+                validated = _preserve_or_validate_source_event_lineage(
+                    existing,
+                    validated,
+                )
                 _raise_if_conflicting_replay(existing, validated)
                 _raise_if_illegal_transition(existing.status, validated.status)
                 updated.append(validated)
@@ -228,7 +236,11 @@ class FeatureGraphStatusStore:
                             ),
                             "provider_session_binding_degradations": list(
                                 previous.provider_session_binding_degradations
-                            )
+                            ),
+                            "source_event_lineage": (
+                                list(graph_set.source_event_lineage)
+                                or list(previous.source_event_lineage)
+                            ),
                         }
                     )
                 updated = _upsert_record(updated, record)
@@ -561,6 +573,23 @@ def _same_feature_graph(
     )
 
 
+def _preserve_or_validate_source_event_lineage(
+    existing: FeatureGraphExecutionStatusRecord,
+    candidate: FeatureGraphExecutionStatusRecord,
+) -> FeatureGraphExecutionStatusRecord:
+    if not candidate.source_event_lineage and existing.source_event_lineage:
+        return candidate.model_copy(
+            update={"source_event_lineage": list(existing.source_event_lineage)}
+        )
+    if (
+        candidate.source_event_lineage
+        and existing.source_event_lineage
+        and candidate.source_event_lineage != existing.source_event_lineage
+    ):
+        raise ValueError("feature graph status source_event_lineage cannot change")
+    return candidate
+
+
 def _is_same_claim_replay(
     current: FeatureGraphExecutionStatusRecord,
     *,
@@ -673,6 +702,12 @@ def _status_from_graph_set(
             blueprint_proof_level
             if blueprint_proof_level is not None
             else previous.blueprint_proof_level if previous is not None else None
+        ),
+        source_event_lineage=(
+            list(graph_set.source_event_lineage)
+            or list(previous.source_event_lineage)
+            if previous is not None
+            else list(graph_set.source_event_lineage)
         ),
         status=status,
         ready_lane_ids=root_lane_ids if status is FeatureGraphExecutionStatus.READY else [],

@@ -439,19 +439,13 @@ def _lane_dag_details(
             "lane_contract_count": len(lane_contracts),
             "lane_ids": lane_ids,
             "source_event_lineage_count": len(source_event_lineage),
-            "source_event_lineage_event_types": _counts(
-                [
-                    event_type
-                    for item in source_event_lineage
-                    if (event_type := _text(item.get("event_type"))) is not None
-                ]
+            "source_event_lineage_event_types": _lineage_field_counts(
+                source_event_lineage,
+                "event_type",
             ),
-            "source_event_lineage_proof_levels": _counts(
-                [
-                    proof_level
-                    for item in source_event_lineage
-                    if (proof_level := _text(item.get("proof_level"))) is not None
-                ]
+            "source_event_lineage_proof_levels": _lineage_field_counts(
+                source_event_lineage,
+                "proof_level",
             ),
             "recovery_decision_count": len(recovery_decisions),
             "refactor_required_count": sum(
@@ -480,6 +474,19 @@ def _lane_dag_source_event_lineage_refs(
             refs.append(f"provider_response_artifact:{provider_response_artifact_ref}")
         refs.extend(_string_list(item.get("source_refs")))
     return refs
+
+
+def _lineage_field_counts(
+    lineage: list[dict[str, Any]],
+    field_name: str,
+) -> dict[str, int]:
+    return _counts(
+        [
+            value
+            for item in lineage
+            if (value := _text(item.get(field_name))) is not None
+        ]
+    )
 
 
 def _memory_trace_details(
@@ -863,6 +870,7 @@ def _review_closure_details(
     failed_lane_id = _text(payload.get("failed_lane_id"))
     terminal_lane_id = _text(payload.get("terminal_lane_id"))
     graph_id = _text(payload.get("graph_id"))
+    source_event_lineage = _dict_rows(payload.get("source_event_lineage"))
     refs = _dedupe(
         [
             f"god-room-review-closure:{graph_id}:{failed_lane_id}:{terminal_lane_id}"
@@ -874,6 +882,7 @@ def _review_closure_details(
             *candidate_refs,
             *cited_candidate_refs,
             *verdict_refs,
+            *_lane_dag_source_event_lineage_refs(source_event_lineage),
         ]
     )
     targets = _dedupe(
@@ -893,6 +902,15 @@ def _review_closure_details(
             "terminal_lane_id": terminal_lane_id,
             "candidate_ref_count": len(candidate_refs),
             "cited_candidate_ref_count": len(cited_candidate_refs),
+            "source_event_lineage_count": len(source_event_lineage),
+            "source_event_lineage_event_types": _lineage_field_counts(
+                source_event_lineage,
+                "event_type",
+            ),
+            "source_event_lineage_proof_levels": _lineage_field_counts(
+                source_event_lineage,
+                "proof_level",
+            ),
             "manual_gaps": manual_gaps,
             "forbidden_claims": forbidden_claims,
         },

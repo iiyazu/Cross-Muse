@@ -61,6 +61,7 @@ from xmuse_core.structuring.review_models import (
     RunTerminalStatus,
     StructuredEvidenceBundle,
 )
+from xmuse_core.structuring.source_event_lineage import BlueprintSourceEventLineage
 from xmuse_core.structuring.takeover_models import (
     ReviewGodTakeoverAction,
     ReviewGodTakeoverContextContract,
@@ -750,6 +751,7 @@ class FeatureGraphSet(BaseModel):
     id: str
     version: int | None = None
     source_refs: list[str] = Field(default_factory=list)
+    source_event_lineage: list[BlueprintSourceEventLineage] = Field(default_factory=list)
     feature_plan: FeaturePlan
     graphs: list[LaneGraph] = Field(default_factory=list)
     decomposition_review: GraphSetDecompositionReviewPacket | None = None

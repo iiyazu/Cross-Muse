@@ -2272,6 +2272,25 @@ def test_chat_api_god_room_freeze_blueprint_preserves_provider_question_lineage(
     assert "natural_groupchat_closure" in lane_dag_lineage[
         "evt-review-provider-question"
     ]["forbidden_claims"]
+    graph_set_payload = json.loads(
+        (tmp_path / lane_dag_response.json()["artifacts"]["feature_graph_set"]).read_text()
+    )
+    graph_set_lineage = {
+        item["event_id"]: item for item in graph_set_payload["source_event_lineage"]
+    }
+    assert "evt-request-body-forged-lineage" not in graph_set_lineage
+    assert graph_set_lineage["evt-review-provider-question"] == lane_dag_lineage[
+        "evt-review-provider-question"
+    ]
+    status_payload = json.loads((tmp_path / "feature_graph_statuses.json").read_text())
+    status_lineage = {
+        item["event_id"]: item
+        for item in status_payload["statuses"][0]["source_event_lineage"]
+    }
+    assert "evt-request-body-forged-lineage" not in status_lineage
+    assert status_lineage["evt-review-provider-question"] == lane_dag_lineage[
+        "evt-review-provider-question"
+    ]
 
 
 def test_chat_api_god_room_freeze_blueprint_rejects_mismatched_multi_turn_run(
@@ -2814,6 +2833,7 @@ def test_chat_api_god_room_lane_dag_builds_from_freeze_resolution_without_projec
             record["feature_graph_id"],
             record["status"],
             record["blueprint_proof_level"],
+            [item["event_id"] for item in record["source_event_lineage"]],
         )
         for record in status_payload["statuses"]
     ] == [
@@ -2822,18 +2842,24 @@ def test_chat_api_god_room_lane_dag_builds_from_freeze_resolution_without_projec
             "graph-bp-god-room-feature-runtime",
             "ready",
             "contract_proof",
+            ["evt-propose", "evt-freeze"],
         ),
         (
             "feature-review",
             "graph-bp-god-room-feature-review",
             "planned",
             "contract_proof",
+            ["evt-propose", "evt-freeze"],
         ),
     ]
     graph_set_payload = json.loads(
         (tmp_path / payload["artifacts"]["feature_graph_set"]).read_text()
     )
     assert graph_set_payload["id"] == "graph-bp-god-room-graph-set"
+    assert [item["event_id"] for item in graph_set_payload["source_event_lineage"]] == [
+        "evt-propose",
+        "evt-freeze",
+    ]
     assert [graph["id"] for graph in graph_set_payload["graphs"]] == [
         "graph-bp-god-room-feature-runtime",
         "graph-bp-god-room-feature-review",
@@ -2966,6 +2992,12 @@ def test_chat_api_god_room_lane_recovery_requires_refactor_from_lane_budget(
     payload = response.json()
     assert payload["source_authority"] == "lane_dag_artifact"
     assert payload["blueprint_proof_level"] == "contract_proof"
+    assert [
+        item["event_id"] for item in payload["source_event_lineage"]
+    ] == [
+        "evt-propose-graph-recovery",
+        "evt-freeze-graph-recovery",
+    ]
     assert "blueprint:bp-god-room:1" in payload["source_refs"]
     assert any(
         ref.startswith("god-room-event:evt-freeze")
@@ -2988,6 +3020,7 @@ def test_chat_api_god_room_lane_recovery_requires_refactor_from_lane_budget(
     assert recovery_artifact.exists()
     artifact_payload = json.loads(recovery_artifact.read_text(encoding="utf-8"))
     assert artifact_payload["blueprint_proof_level"] == "contract_proof"
+    assert artifact_payload["source_event_lineage"] == payload["source_event_lineage"]
     assert artifact_payload["source_refs"] == payload["source_refs"]
     assert not (tmp_path / "feature_lanes.json").exists()
 
@@ -3072,9 +3105,18 @@ def test_chat_api_god_room_lane_review_intake_keeps_worker_output_candidate_only
     assert intake["review_truth_status"] == "pending_independent_review"
     assert intake["candidate_truth_status"] == "candidate_only"
     assert intake["blueprint_proof_level"] == "contract_proof"
+    assert [
+        item["event_id"] for item in intake["source_event_lineage"]
+    ] == [
+        "evt-propose-graph-review-intake",
+        "evt-freeze-graph-review-intake",
+    ]
     assert intake["graph_set_id"] == "graph-review-intake-graph-set"
     assert intake["feature_graph_id"] == "graph-review-intake-feature-runtime"
     assert intake["feature_graph_status"]["status"] == "reviewing"
+    assert intake["feature_graph_status"]["source_event_lineage"] == intake[
+        "source_event_lineage"
+    ]
     assert intake["manual_gaps"] == []
     assert "worker_output_is_review_truth" in intake["forbidden_claims"]
     assert "end_to_end_execution_review_closure" in intake["forbidden_claims"]
@@ -3809,6 +3851,12 @@ def test_chat_api_god_room_lane_patch_forward_appends_lanedag_lane(
     assert patch_forward["schema_version"] == "xmuse.god_room_lane_patch_forward.v1"
     assert patch_forward["proof_level"] == "contract_proof"
     assert patch_forward["blueprint_proof_level"] == "contract_proof"
+    assert [
+        item["event_id"] for item in patch_forward["source_event_lineage"]
+    ] == [
+        "evt-propose-graph-patch-forward",
+        "evt-freeze-graph-patch-forward",
+    ]
     assert "patch_lane_not_executed" in patch_forward["manual_gaps"]
     assert "patch_lane_not_reviewed" in patch_forward["manual_gaps"]
     assert "release_evidence_not_linked" in patch_forward["manual_gaps"]
@@ -3951,6 +3999,12 @@ def test_chat_api_god_room_lane_review_closure_links_reviewed_patch_lane(
     assert closure["release_evidence_handoff_status"] == "candidate_input_ready"
     assert closure["failed_lane_id"] == "lane-runtime-api"
     assert closure["terminal_lane_id"] == "lane-runtime-api-patch-reviewed"
+    assert [
+        item["event_id"] for item in closure["source_event_lineage"]
+    ] == [
+        "evt-propose-graph-review-closure",
+        "evt-freeze-graph-review-closure",
+    ]
     assert closure["patch_lane_contract"]["lane_id"] == (
         "lane-runtime-api-patch-reviewed"
     )
@@ -3965,6 +4019,9 @@ def test_chat_api_god_room_lane_review_closure_links_reviewed_patch_lane(
     assert closure["graph_status_source_authority"] == "feature_graph_status_store"
     assert closure["graph_status_merge_status"] == "verified_merged"
     assert closure["terminal_feature_graph_status"]["status"] == "merged"
+    assert closure["terminal_feature_graph_status"]["source_event_lineage"] == closure[
+        "source_event_lineage"
+    ]
     assert "review_plane_store_not_updated" not in closure["manual_gaps"]
     assert "lane_status_not_updated" not in closure["manual_gaps"]
     assert "release_evidence_not_linked" in closure["manual_gaps"]

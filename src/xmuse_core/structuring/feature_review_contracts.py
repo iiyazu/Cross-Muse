@@ -7,6 +7,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from xmuse_core.structuring.source_event_lineage import BlueprintSourceEventLineage
+
 
 def _require_text(value: str, field_name: str) -> str:
     cleaned = value.strip()
@@ -1273,6 +1275,7 @@ class FeatureGraphExecutionStatusRecord(BaseModel):
     feature_id: str
     feature_graph_id: str
     blueprint_proof_level: str | None = None
+    source_event_lineage: list[BlueprintSourceEventLineage] = Field(default_factory=list)
     status: FeatureGraphExecutionStatus
     ready_lane_ids: list[str] = Field(default_factory=list)
     active_lane_ids: list[str] = Field(default_factory=list)

@@ -35,6 +35,7 @@ def _status(
     provider_session_binding_degradations: list[
         ProviderSessionBindingDegradationEvidence
     ] | None = None,
+    source_event_lineage: list[dict[str, str]] | None = None,
     updated_at: str = "2026-06-03T03:00:00Z",
 ) -> FeatureGraphExecutionStatusRecord:
     return FeatureGraphExecutionStatusRecord(
@@ -48,6 +49,7 @@ def _status(
         feature_id=feature_id,
         feature_graph_id=feature_graph_id,
         blueprint_proof_level=blueprint_proof_level,
+        source_event_lineage=source_event_lineage or [],
         status=status,
         ready_lane_ids=ready_lane_ids or ["lane-a"],
         active_lane_ids=active_lane_ids or [],
@@ -94,6 +96,16 @@ def _graph_set() -> FeatureGraphSet:
         id="graph-set-1",
         version=3,
         source_refs=["feature_plan:feature-plan-1:v3", "blueprint:bp-1:v1"],
+        source_event_lineage=[
+            {
+                "event_id": "evt-freeze",
+                "event_type": "freeze_requested",
+                "participant_id": "part-architect",
+                "god_id": "god-architect",
+                "proof_level": "contract_proof",
+                "source_authority": "god_room_event_store",
+            }
+        ],
         feature_plan=plan,
         graphs=[
             LaneGraph(
@@ -147,6 +159,87 @@ def test_feature_graph_status_store_upserts_and_reads_graph_native_record(
     assert raw["schema_version"] == "xmuse.feature_graph_statuses.v1"
     assert raw["statuses"][0]["feature_graph_id"] == "graph-feature-a"
     assert raw["events"] == []
+
+
+def test_feature_graph_status_store_preserves_source_event_lineage_on_transition(
+    tmp_path: Path,
+) -> None:
+    store = FeatureGraphStatusStore(tmp_path / "feature_graph_statuses.json")
+    record = _status(
+        source_event_lineage=[
+            {
+                "event_id": "evt-freeze",
+                "event_type": "freeze_requested",
+                "participant_id": "part-architect",
+                "god_id": "god-architect",
+                "proof_level": "contract_proof",
+                "source_authority": "god_room_event_store",
+            }
+        ]
+    )
+    store.upsert(record)
+
+    running = record.model_copy(
+        update={
+            "status_id": "fgs-1-running",
+            "status": FeatureGraphExecutionStatus.RUNNING,
+            "ready_lane_ids": [],
+            "active_lane_ids": ["lane-a"],
+            "source_event_lineage": [],
+            "updated_at": "2026-06-03T03:05:00Z",
+        }
+    )
+    transitioned = store.transition(
+        running,
+        expected_status=FeatureGraphExecutionStatus.READY,
+    )
+
+    assert transitioned.source_event_lineage == record.source_event_lineage
+
+
+def test_feature_graph_status_store_rejects_source_event_lineage_rewrite(
+    tmp_path: Path,
+) -> None:
+    store = FeatureGraphStatusStore(tmp_path / "feature_graph_statuses.json")
+    record = _status(
+        source_event_lineage=[
+            {
+                "event_id": "evt-freeze",
+                "event_type": "freeze_requested",
+                "participant_id": "part-architect",
+                "god_id": "god-architect",
+                "proof_level": "contract_proof",
+                "source_authority": "god_room_event_store",
+            }
+        ]
+    )
+    store.upsert(record)
+    forged = FeatureGraphExecutionStatusRecord.model_validate(
+        {
+            **record.model_dump(mode="json"),
+            "status_id": "fgs-1-forged",
+            "status": FeatureGraphExecutionStatus.RUNNING,
+            "ready_lane_ids": [],
+            "active_lane_ids": ["lane-a"],
+            "source_event_lineage": [
+                {
+                    "event_id": "evt-forged",
+                    "event_type": "speak",
+                    "participant_id": "part-forged",
+                    "god_id": "god-forged",
+                    "proof_level": "opt_in_live_proof",
+                    "source_authority": "request_body",
+                }
+            ],
+            "updated_at": "2026-06-03T03:05:00Z",
+        }
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="feature graph status source_event_lineage cannot change",
+    ):
+        store.transition(forged, expected_status=FeatureGraphExecutionStatus.READY)
 
 
 def test_feature_graph_status_store_replaces_same_feature_graph_without_duplicates(
