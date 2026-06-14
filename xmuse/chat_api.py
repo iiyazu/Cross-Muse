@@ -1075,6 +1075,31 @@ def _build_god_room_lane_review_intake(
         lane_ids=[request.lane_id],
     )
     recovery_decision = recovery_decisions[-1] if recovery_decisions else None
+    if recovery_decision is not None and not recovery_decision.retry_allowed:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "god_room_lane_review_blocked_by_recovery_decision",
+                "message": (
+                    "review intake requires a retry-allowed recovery decision; "
+                    f"latest decision is {recovery_decision.decision.value}"
+                ),
+                "source_authority": "lane_dag_artifact+lane_recovery_artifact",
+                "graph_id": request.graph_id,
+                "lane_id": request.lane_id,
+                "recovery_decision": recovery_decision.model_dump(mode="json"),
+                "manual_gaps": [
+                    "lane_status_not_updated",
+                    "live_runner_recovery_enforcement_not_proven",
+                ],
+                "forbidden_claims": [
+                    "overnight_safe_recovery",
+                    "end_to_end_execution_review_closure",
+                    "ready_to_merge",
+                    "pr_merged",
+                ],
+            },
+        )
     candidate_refs = _dedupe_text(
         [*request.worker_candidate_refs, *request.execution_artifact_refs]
     )

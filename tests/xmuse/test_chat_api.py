@@ -1761,6 +1761,159 @@ def test_chat_api_god_room_lane_review_intake_keeps_worker_output_candidate_only
     assert not (tmp_path / "feature_lanes.json").exists()
 
 
+def test_chat_api_god_room_lane_review_intake_blocks_refactor_required_recovery(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    conv_id = _create_god_room_lane_dag(client, graph_id="graph-review-refactor-block")
+    recovery = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/recovery",
+        json={
+            "graph_id": "graph-review-refactor-block",
+            "lane_id": "lane-runtime-api",
+            "failures": [
+                {
+                    "lane_id": "lane-runtime-api",
+                    "attempt": 1,
+                    "failure_class": "demo_grade_boundary",
+                    "reason": "First failure shows demo-grade boundary.",
+                    "source_refs": ["pytest:demo-boundary-1"],
+                },
+                {
+                    "lane_id": "lane-runtime-api",
+                    "attempt": 2,
+                    "failure_class": "demo_grade_boundary",
+                    "reason": "Second failure requires refactor.",
+                    "source_refs": ["pytest:demo-boundary-2"],
+                },
+            ],
+        },
+    )
+    assert recovery.status_code == 201
+    assert recovery.json()["decision"]["decision"] == "refactor_required"
+
+    response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-intake",
+        json={
+            "graph_id": "graph-review-refactor-block",
+            "lane_id": "lane-runtime-api",
+            "worker_candidate_refs": ["worker-candidate:should-not-review"],
+            "execution_artifact_refs": ["artifacts/lane-runtime-api/result.json"],
+            "reviewer_id": "review-god",
+        },
+    )
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["code"] == "god_room_lane_review_blocked_by_recovery_decision"
+    assert detail["source_authority"] == "lane_dag_artifact+lane_recovery_artifact"
+    assert detail["recovery_decision"]["decision"] == "refactor_required"
+    assert detail["recovery_decision"]["retry_allowed"] is False
+    assert "lane_status_not_updated" in detail["manual_gaps"]
+    assert "live_runner_recovery_enforcement_not_proven" in detail["manual_gaps"]
+    assert "end_to_end_execution_review_closure" in detail["forbidden_claims"]
+    assert not (
+        tmp_path
+        / "reports"
+        / "god_room_review_intake"
+        / "graph-review-refactor-block.lane-runtime-api.review-intake.json"
+    ).exists()
+    assert not (tmp_path / "review_plane.json").exists()
+    assert not (tmp_path / "feature_lanes.json").exists()
+
+
+@pytest.mark.parametrize(
+    ("graph_id", "recovery_payload", "expected_decision"),
+    [
+        (
+            "graph-review-manual-gap-block",
+            {"failures": []},
+            "manual_gap",
+        ),
+        (
+            "graph-review-suspended-block",
+            {
+                "failures": [
+                    {
+                        "lane_id": "lane-runtime-api",
+                        "attempt": 1,
+                        "failure_class": "lint_failure",
+                        "reason": "First attempt failed lint.",
+                        "source_refs": ["pytest:suspend-1"],
+                    },
+                    {
+                        "lane_id": "lane-runtime-api",
+                        "attempt": 2,
+                        "failure_class": "type_failure",
+                        "reason": "Second attempt failed type checks.",
+                        "source_refs": ["pytest:suspend-2"],
+                    },
+                    {
+                        "lane_id": "lane-runtime-api",
+                        "attempt": 3,
+                        "failure_class": "runtime_failure",
+                        "reason": "Third attempt failed runtime checks.",
+                        "source_refs": ["pytest:suspend-3"],
+                    },
+                    {
+                        "lane_id": "lane-runtime-api",
+                        "attempt": 4,
+                        "failure_class": "review_failure",
+                        "reason": "Fourth attempt exhausted retry budget.",
+                        "source_refs": ["pytest:suspend-4"],
+                    },
+                ],
+            },
+            "suspended",
+        ),
+    ],
+)
+def test_chat_api_god_room_lane_review_intake_blocks_non_retry_recovery(
+    tmp_path: Path,
+    graph_id: str,
+    recovery_payload: dict[str, object],
+    expected_decision: str,
+) -> None:
+    client = _client(tmp_path)
+    conv_id = _create_god_room_lane_dag(client, graph_id=graph_id)
+    recovery = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/recovery",
+        json={
+            "graph_id": graph_id,
+            "lane_id": "lane-runtime-api",
+            **recovery_payload,
+        },
+    )
+    assert recovery.status_code == 201
+    assert recovery.json()["decision"]["decision"] == expected_decision
+    assert recovery.json()["decision"]["retry_allowed"] is False
+
+    response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-intake",
+        json={
+            "graph_id": graph_id,
+            "lane_id": "lane-runtime-api",
+            "worker_candidate_refs": ["worker-candidate:blocked"],
+            "execution_artifact_refs": ["artifacts/lane-runtime-api/result.json"],
+            "reviewer_id": "review-god",
+        },
+    )
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["code"] == "god_room_lane_review_blocked_by_recovery_decision"
+    assert detail["recovery_decision"]["decision"] == expected_decision
+    assert detail["recovery_decision"]["retry_allowed"] is False
+    assert not (
+        tmp_path
+        / "reports"
+        / "god_room_review_intake"
+        / f"{graph_id}.lane-runtime-api.review-intake.json"
+    ).exists()
+    assert not (tmp_path / "review_plane.json").exists()
+    assert not (tmp_path / "feature_lanes.json").exists()
+
+
 def test_chat_api_god_room_lane_review_intake_preserves_manual_gap_without_candidate(
     tmp_path: Path,
 ) -> None:
