@@ -53,6 +53,7 @@ def test_frozen_blueprint_builds_feature_lane_dag_with_typed_edges() -> None:
 
     assert plan.blueprint_id == "bp-1"
     assert plan.blueprint_ref == "blueprint:bp-1:1"
+    assert plan.blueprint_proof_level == "contract_proof"
     assert plan.feature_ids == ["feature-a", "feature-b"]
     assert lane_b.depends_on == ["lane-a"]
     assert {edge.edge_type for edge in plan.dependency_edges} == {
@@ -60,6 +61,19 @@ def test_frozen_blueprint_builds_feature_lane_dag_with_typed_edges() -> None:
         LaneDependencyType.REVIEW_DEP,
     }
     assert plan.memory_refs == ["memory://conversation/conv-1/decision/1"]
+    assert "message:freeze" in plan.source_refs
+
+
+def test_lane_dag_plan_preserves_freeze_proof_level() -> None:
+    plan = BlueprintLaneDagService().build_plan(
+        _request(
+            blueprint_proof_level="opt_in_live_proof",
+            source_refs=["god-room-event:evt-freeze"],
+        )
+    )
+
+    assert plan.blueprint_proof_level == "opt_in_live_proof"
+    assert "god-room-event:evt-freeze" in plan.source_refs
 
 
 def test_lane_dag_plan_preserves_runtime_contracts_from_frozen_blueprint() -> None:
@@ -294,15 +308,18 @@ def _request(
     *,
     features: list[BlueprintFeatureSpec] | None = None,
     lanes: list[BlueprintLaneSpec] | None = None,
+    blueprint_proof_level: str = "contract_proof",
+    source_refs: list[str] | None = None,
 ) -> BlueprintLaneDagRequest:
     return BlueprintLaneDagRequest(
         graph_id="graph-bp-1",
         resolution_id="resolution-1",
         graph_version=1,
         blueprint=_blueprint(),
+        blueprint_proof_level=blueprint_proof_level,
         features=features or [_feature("feature-a")],
         lanes=lanes or [_lane("lane-a")],
-        source_refs=["message:freeze"],
+        source_refs=source_refs or ["message:freeze"],
     )
 
 

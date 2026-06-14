@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import Counter
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -35,6 +36,7 @@ class LaneExecutionStatus(StrEnum):
 
 TERMINAL_APPROVED_STATUSES = {LaneExecutionStatus.APPROVED}
 TERMINAL_FAILED_STATUSES = {LaneExecutionStatus.FAILED, LaneExecutionStatus.BLOCKED}
+BlueprintProofLevel = Literal["contract_proof", "opt_in_live_proof", "manual_gap"]
 
 
 class BlueprintFeatureSpec(BaseModel):
@@ -234,6 +236,7 @@ class BlueprintLaneDagRequest(BaseModel):
     resolution_id: str
     graph_version: int = 1
     blueprint: MissionBlueprintV1
+    blueprint_proof_level: BlueprintProofLevel = "contract_proof"
     features: list[BlueprintFeatureSpec]
     lanes: list[BlueprintLaneSpec]
     source_refs: list[str] = Field(default_factory=list)
@@ -261,12 +264,14 @@ class BlueprintLaneDagPlan(BaseModel):
 
     blueprint_id: str
     blueprint_ref: str
+    blueprint_proof_level: BlueprintProofLevel = "contract_proof"
     feature_ids: list[str]
     lane_graph: LaneGraph
     dependency_edges: list[LaneDependencyEdge]
     lane_contracts: list[LaneRuntimeContract] = Field(default_factory=list)
     memory_refs: list[str] = Field(default_factory=list)
     patch_forward_links: list[PatchForwardLink] = Field(default_factory=list)
+    source_refs: list[str] = Field(default_factory=list)
 
 
 class LaneRecoveryDecisionType(StrEnum):
@@ -381,11 +386,13 @@ class BlueprintLaneDagService:
         return BlueprintLaneDagPlan(
             blueprint_id=request.blueprint.blueprint_id,
             blueprint_ref=_blueprint_ref(request.blueprint),
+            blueprint_proof_level=request.blueprint_proof_level,
             feature_ids=[feature.feature_id for feature in request.features],
             lane_graph=lane_graph,
             dependency_edges=dependency_edges,
             lane_contracts=_lane_runtime_contracts(request, dependency_edges),
             memory_refs=_collect_memory_refs(request),
+            source_refs=_dedupe([*request.source_refs, *request.blueprint.source_refs]),
         )
 
     def evaluate_dispatch(

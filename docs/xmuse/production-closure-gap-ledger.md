@@ -50,6 +50,8 @@ runtime、provider invocation、lane authority、review truth 完成。后续生
   `7aef014e41b6de3caac032c3338c39accf1a8e90`
 - Local head at start of L6 freeze proof classification slice:
   `5f74e2d3911d1f919758ea397ff5c423149a20ce`
+- Local head at start of L7 laneDAG proof metadata slice:
+  `914d1b2597bf2a011cb321b123391bd0d26a5b28`
 - PR: <https://github.com/iiyazu/Cross-Muse/pull/43>
 - PR state last checked: draft/open/unmerged
 - PR merge state last checked: `CLEAN`
@@ -70,6 +72,7 @@ truth_snapshot:
   local_head_at_l5_provider_invocation_capture_slice: 85e573c24c4c1abc955638b4feb609c6381580ff
   local_head_at_l4_l5_opt_in_live_route_repair: 7aef014e41b6de3caac032c3338c39accf1a8e90
   local_head_at_l6_freeze_proof_classification_slice: 5f74e2d3911d1f919758ea397ff5c423149a20ce
+  local_head_at_l7_lanedag_proof_metadata_slice: 914d1b2597bf2a011cb321b123391bd0d26a5b28
   pr: 43
   pr_url: https://github.com/iiyazu/Cross-Muse/pull/43
   pr_state: draft_open_unmerged
@@ -107,7 +110,7 @@ Evidence boundaries:
 | L4 | Speaker Selection / Provider Invocation | Selection/attempt evidence plus provider invocation artifact producer contract exist | Core/API producer emits response artifacts, fail-closed artifacts, and one verified local opt-in live Codex artifact through execution worktree | Not server-bound | Provider invocation artifact contract/fail-closed proof plus isolated Codex opt-in live proof |
 | L5 | Speaker Response Capture / Replay Proof | Artifact-backed capture plus composed L4-to-L5 route exists | Rejects contract-only L4 artifacts; appends/replays only server-written real-proof artifacts; one local opt-in live Codex artifact was captured into durable replay | Not server-bound | Capture/replay contract proof plus isolated Codex opt-in live capture proof |
 | L6 | Blueprint Freeze Authority | Typed freeze artifact exists with proof-level classification | Single-turn provider-backed Codex speech can produce an opt-in live freeze artifact; fresh natural multi-GOD freeze still missing | Not server-bound | Freeze contract proof plus isolated opt-in live freeze proof |
-| L7 | Feature / LaneDAG Authority | LaneDAG/contract artifact exists | Dispatch/review authority not unified | Not server-bound | LaneDAG contract proof |
+| L7 | Feature / LaneDAG Authority | LaneDAG/contract artifact exists with upstream freeze proof metadata | Live L4/L5/L6 proof metadata can flow into laneDAG without writing `feature_lanes.json`; dispatch/review authority still not unified | Not server-bound | LaneDAG contract proof plus isolated opt-in live upstream-proof propagation |
 | L8 | Lane Runtime Enforcement / Recovery | Recovery contract/API exists | Runner/supervisor enforcement incomplete | Not server-bound | Recovery policy proof |
 | L9 | Execution / Review / Patch-Forward | Review plane exists | GOD-room-originated lane chain missing | Not server-bound | Review artifact/read-model proof |
 | L10 | MemoryOS / Release Evidence / GitHub Truth | Evidence bundle semantics exist | Live MemoryOS trace missing | PR open/unmerged; CI truth only for verified remote head | Replay/readiness proof with explicit gaps |
@@ -121,8 +124,9 @@ Current closure audit:
 - Least closed areas: natural multi-GOD deliberation, GOD-room-originated
   execution/review, live MemoryOS trace, and GitHub merge truth.
 - Next production priority: preserve the isolated L4/L5 live speech lineage in
-  downstream release evidence where appropriate, then advance L7 laneDAG from
-  the frozen blueprint without claiming natural multi-GOD closure.
+  downstream release evidence where appropriate, then enforce L8/L9 runtime
+  and review consumption of authoritative laneDAG contracts without claiming
+  natural multi-GOD closure.
 
 ## L1 - Authority / Boundary Model
 
@@ -555,9 +559,20 @@ Use these as implementation references, not as xmuse package dependencies:
     rollback, memory refs, and budget.
   - Chat API can build laneDAG from GOD-room freeze resolution without writing
     `feature_lanes.json`.
+  - `BlueprintLaneDagPlan` now carries `blueprint_proof_level` and source refs
+    inherited from the GOD-room freeze artifact. This keeps downstream
+    execution/review/release evidence aware of whether the source freeze was
+    `contract_proof` or `opt_in_live_proof`.
+  - A local L7 smoke run in temp runtime root
+    `/tmp/xmuse-live-l7-lanedag-vtb6b6by` consumed a live L4/L5/L6 Codex
+    lineage and produced `lane_graphs/graph-live-route.lane-dag.json` with
+    `blueprint_proof_level=opt_in_live_proof`, provider artifact source refs,
+    and no `feature_lanes.json` write.
 - Missing production closure:
   - The graph-set/lane authority path is not yet fully unified with every
     execution/dispatch path.
+  - Dispatch/review still need to prove they consume laneDAG authority and do
+    not fall back to detached artifacts or projection queue state.
 - Proof required to close:
   - A frozen GOD room blueprint feeds authoritative laneDAG/graph-set state
     used by dispatch and review.
@@ -565,8 +580,8 @@ Use these as implementation references, not as xmuse package dependencies:
   - Detached laneDAG artifacts may be treated as execution authority before
     dispatch/review actually consumes them.
 - Next production slice:
-  - Wire lane runtime contracts into dispatch/review evidence and reject
-    `feature_lanes.json` as authority.
+  - Wire lane runtime contracts and `blueprint_proof_level` into
+    dispatch/review evidence and reject `feature_lanes.json` as authority.
 - Downstream blocked until:
   - L8 and L9 cannot claim production execution closure without consuming this
     lane authority.

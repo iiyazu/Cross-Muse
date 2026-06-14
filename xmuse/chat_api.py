@@ -893,7 +893,16 @@ def _build_lane_dag_from_god_room_freeze(
                 "message": "resolution does not belong to the conversation",
             },
         )
-    blueprint = _blueprint_from_god_room_freeze_resolution(resolution)
+    freeze_artifact = _god_room_blueprint_freeze_artifact_for_lane_dag(resolution)
+    blueprint = freeze_artifact.blueprint
+    if blueprint is None:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "god_room_lane_dag_requires_frozen_blueprint",
+                "message": "GOD room blueprint freeze artifact is missing a blueprint",
+            },
+        )
     try:
         plan = BlueprintLaneDagService().build_plan(
             BlueprintLaneDagRequest(
@@ -901,10 +910,12 @@ def _build_lane_dag_from_god_room_freeze(
                 resolution_id=resolution.id,
                 graph_version=request.graph_version,
                 blueprint=blueprint,
+                blueprint_proof_level=freeze_artifact.proof_level,
                 features=request.features,
                 lanes=request.lanes,
                 source_refs=[
                     f"resolution:{resolution.id}",
+                    *freeze_artifact.source_refs,
                     *request.source_refs,
                 ],
             )
@@ -1627,7 +1638,9 @@ def _load_lane_recovery_decisions(
     return decisions
 
 
-def _blueprint_from_god_room_freeze_resolution(resolution: object) -> MissionBlueprintV1:
+def _god_room_blueprint_freeze_artifact_for_lane_dag(
+    resolution: object,
+) -> GodRoomBlueprintFreezeArtifactV1:
     approval_mode = str(getattr(resolution, "approval_mode", "") or "")
     content = getattr(resolution, "content", None)
     if approval_mode != "god_room_blueprint_freeze" or not isinstance(content, dict):
@@ -1650,25 +1663,25 @@ def _blueprint_from_god_room_freeze_resolution(resolution: object) -> MissionBlu
                 "message": "GOD room blueprint freeze artifact is missing or not frozen",
             },
         )
-    blueprint_payload = content.get("blueprint_v1")
-    if not isinstance(blueprint_payload, dict):
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "god_room_lane_dag_missing_blueprint",
-                "message": "GOD room freeze resolution does not carry blueprint_v1",
-            },
-        )
     try:
-        return MissionBlueprintV1.model_validate(blueprint_payload)
+        artifact = GodRoomBlueprintFreezeArtifactV1.model_validate(freeze_artifact)
     except ValidationError as exc:
         raise HTTPException(
             status_code=409,
             detail={
-                "code": "god_room_lane_dag_invalid_blueprint",
+                "code": "god_room_lane_dag_invalid_freeze",
                 "message": str(exc),
             },
         ) from exc
+    if artifact.blueprint is None:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "god_room_lane_dag_missing_blueprint",
+                "message": "GOD room freeze artifact does not carry blueprint",
+            },
+        )
+    return artifact
 
 
 def _write_lane_dag_artifacts(

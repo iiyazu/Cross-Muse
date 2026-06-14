@@ -1509,6 +1509,8 @@ def test_chat_api_god_room_lane_dag_builds_from_freeze_resolution_without_projec
     assert payload["source_authority"] == "mission_blueprint_resolution"
     assert payload["resolution_id"] == freeze["resolution"]["id"]
     assert payload["lane_dag"]["blueprint_ref"] == blueprint_ref
+    assert payload["lane_dag"]["blueprint_proof_level"] == "contract_proof"
+    assert "god-room-event:evt-freeze" in payload["lane_dag"]["source_refs"]
     assert payload["lane_dag"]["lane_contracts"][0]["lane_id"] == "lane-runtime-api"
     assert payload["lane_dag"]["lane_contracts"][0]["owner"] == "execute-god"
     assert payload["lane_dag"]["lane_contracts"][0]["budget"]["max_runtime_seconds"] == 1800
