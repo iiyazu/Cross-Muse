@@ -65,6 +65,13 @@ def test_compile_blueprint_freeze_from_room_events_preserves_decision_context() 
         "god-room-event:evt-freeze",
         "message:evt-freeze",
     ]
+    assert [
+        (lineage.event_id, lineage.event_type, lineage.proof_level)
+        for lineage in artifact.source_event_lineage
+    ] == [
+        ("evt-proposal", GodRoomEventKind.SPEAK, "contract_proof"),
+        ("evt-freeze", GodRoomEventKind.FREEZE_REQUESTED, "contract_proof"),
+    ]
     assert artifact.assumptions == ["Provider responses may be unavailable in CI."]
     assert artifact.rejected_alternatives == [
         "Scrape TUI rendered text as transcript authority."
@@ -122,7 +129,7 @@ def test_compile_blueprint_freeze_marks_provider_backed_speech_as_opt_in_live() 
     )
 
 
-def test_compile_blueprint_freeze_ignores_non_speak_provider_proof_markers() -> None:
+def test_compile_blueprint_freeze_preserves_provider_backed_question_lineage() -> None:
     artifact = compile_blueprint_freeze_from_god_room_events(
         blueprint_id="bp-god-room",
         revision=1,
@@ -136,6 +143,10 @@ def test_compile_blueprint_freeze_ignores_non_speak_provider_proof_markers() -> 
                 ],
                 payload={
                     "question": "Can this marker alone upgrade freeze proof?",
+                    "provider_response_artifact_ref": (
+                        "reports/provider-responses/live.json"
+                    ),
+                    "binding_revision": "binding:god-room:conv-1:part-architect:1",
                     "proof_level": "real_provider_proof",
                 },
             ),
@@ -156,7 +167,16 @@ def test_compile_blueprint_freeze_ignores_non_speak_provider_proof_markers() -> 
     )
 
     assert artifact.status is GodRoomBlueprintFreezeStatus.FROZEN
-    assert artifact.proof_level == "contract_proof"
+    assert artifact.proof_level == "opt_in_live_proof"
+    question_lineage = artifact.source_event_lineage[0]
+    assert question_lineage.event_id == "evt-question"
+    assert question_lineage.event_type is GodRoomEventKind.QUESTION
+    assert question_lineage.proof_level == "opt_in_live_proof"
+    assert question_lineage.provider_response_artifact_ref == (
+        "reports/provider-responses/live.json"
+    )
+    assert question_lineage.target_participant_ids == ["part-review"]
+    assert "natural_groupchat_closure" in question_lineage.forbidden_claims
 
 
 def test_compile_blueprint_freeze_blocks_manual_gap_event_proof() -> None:
@@ -216,6 +236,7 @@ def test_compile_blueprint_freeze_blocks_manual_gap_event_proof() -> None:
     assert artifact.proof_level == "manual_gap"
     assert artifact.blueprint is None
     assert artifact.blocked_reason == "GOD room transcript contains manual-gap event proof"
+    assert artifact.source_event_lineage[0].proof_level == "manual_gap"
     assert artifact.blockers == [
         (
             "manual-gap event proof evt-manual-proposal: "
@@ -268,6 +289,8 @@ def test_compile_blueprint_freeze_blocks_unresolved_challenge_as_manual_gap() ->
     assert artifact.proof_level == "manual_gap"
     assert artifact.blueprint is None
     assert artifact.conflicts == ["No proof that TUI is non-authoritative."]
+    lineage = {item.event_id: item for item in artifact.source_event_lineage}
+    assert lineage["evt-challenge"].event_type is GodRoomEventKind.CHALLENGE
     assert artifact.blockers == ["unresolved challenge evt-challenge"]
     assert artifact.blocked_reason == "unresolved GOD room challenges block blueprint freeze"
 

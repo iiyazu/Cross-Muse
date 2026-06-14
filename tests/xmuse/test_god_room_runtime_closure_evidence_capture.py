@@ -185,6 +185,7 @@ def test_god_room_runtime_closure_evidence_indexes_contracts_without_merge_upgra
                 "reports/provider-responses/provider-response-1.json"
             ),
             "append_status": "created",
+            "event_type": "speak",
             "blocked_reason": None,
             "source_refs": [
                 "god-room-event:evt-propose",
@@ -340,6 +341,10 @@ def test_god_room_runtime_closure_evidence_indexes_contracts_without_merge_upgra
     )
     assert details["speaker_response"]["status"] == "speak_event_appended"
     assert details["speaker_response"]["proof_level"] == "real_provider_proof"
+    assert details["speaker_response"]["appended_event_id"] == (
+        "evt-review-provider-speak"
+    )
+    assert details["speaker_response"]["appended_event_type"] == "speak"
     assert details["speaker_response"]["speak_event_id"] == (
         "evt-review-provider-speak"
     )
@@ -352,6 +357,9 @@ def test_god_room_runtime_closure_evidence_indexes_contracts_without_merge_upgra
     assert details["multi_turn_provider_speech"]["appended_event_ids"] == [
         "evt-review-provider-speak"
     ]
+    assert details["multi_turn_provider_speech"]["appended_event_types"] == {
+        "speak": 1
+    }
     assert details["multi_turn_provider_speech"]["provider_response_artifacts"] == [
         "reports/provider-responses/provider-response-1.json"
     ]
@@ -500,8 +508,128 @@ def test_god_room_runtime_closure_evidence_rejects_unreplayed_speaker_response(
     assert details["proof_level"] == "manual_gap"
     assert details["speak_event_id"] == "evt-review-provider-speak"
     assert details["blocked_reason"] == (
-        "speaker response speak event is missing from god room events"
+        "speaker response appended event is missing from god room events"
     )
+
+
+def test_god_room_runtime_closure_evidence_indexes_provider_backed_question_response(
+    tmp_path: Path,
+) -> None:
+    participants_path = _write_json(
+        tmp_path / "participants.json",
+        {
+            "participants": [
+                GodRoomParticipant(
+                    participant_id="part-architect",
+                    god_id="god-architect",
+                ).model_dump(mode="json"),
+                GodRoomParticipant(
+                    participant_id="part-review",
+                    god_id="god-review",
+                ).model_dump(mode="json"),
+            ]
+        },
+    )
+    question_event = _event(
+        "evt-review-provider-question",
+        event_type=GodRoomEventKind.QUESTION,
+        participant_id="part-review",
+        god_id="god-review",
+        causal_parent_id="evt-propose",
+        target_participant_ids=["part-architect"],
+        payload={
+            "body": "Can the architect prove this question is provider-backed?",
+            "provider_response_id": "provider-response-question-1",
+            "provider_response_artifact_ref": (
+                "reports/provider-responses/provider-response-question-1.json"
+            ),
+            "proof_level": "real_provider_proof",
+        },
+    ).model_copy(
+        update={
+            "source_refs": [
+                "god-room-event:evt-propose",
+                "provider_response_artifact:"
+                "reports/provider-responses/provider-response-question-1.json",
+            ]
+        }
+    )
+    events_path = _write_json(
+        tmp_path / "events.json",
+        {
+            "events": [
+                _event("evt-propose").model_dump(mode="json"),
+                question_event.model_dump(mode="json"),
+            ]
+        },
+    )
+    speaker_attempt = {
+        "schema_version": "xmuse.god_room_speaker_attempt.v1",
+        "status": "ready_for_provider_attempt",
+        "proof_level": "contract_proof",
+        "source_authority": "god_room_event_store+selected_god_runtime_continuity",
+        "conversation_id": "conv-1",
+        "room_id": "room-1",
+        "selected_event_id": "evt-propose",
+        "decision_reason": "round_robin",
+        "target_participant_id": "part-review",
+        "target_god_id": "god-review",
+        "provider_profile_ref": "codex.god",
+        "provider_session_id": "provider-thread-review",
+        "source_refs": ["god-room-event:evt-propose"],
+    }
+    speaker_response_path = _write_json(
+        tmp_path / "speaker-response-question.json",
+        {
+            "schema_version": "xmuse.god_room_speaker_response.v1",
+            "status": "event_appended",
+            "proof_level": "real_provider_proof",
+            "conversation_id": "conv-1",
+            "room_id": "room-1",
+            "selected_event_id": "evt-propose",
+            "target_participant_id": "part-review",
+            "target_god_id": "god-review",
+            "provider_profile_ref": "codex.god",
+            "provider_session_id": "provider-thread-review",
+            "provider_response_artifact_ref": (
+                "reports/provider-responses/provider-response-question-1.json"
+            ),
+            "append_status": "created",
+            "event_type": "question",
+            "target_participant_ids": ["part-architect"],
+            "source_refs": ["god-room-event:evt-propose"],
+            "speaker_attempt": speaker_attempt,
+            "provider_response": {
+                "schema_version": "xmuse.god_room_provider_speech_response.v1",
+                "response_id": "provider-response-question-1",
+                "status": "completed",
+                "proof_level": "real_provider_proof",
+                "target_participant_id": "part-review",
+                "provider_profile_ref": "codex.god",
+                "provider_session_id": "provider-thread-review",
+                "content": "Can the architect prove this question is provider-backed?",
+                "source_refs": ["provider-run:codex:provider-response-question-1"],
+            },
+            "appended_event": question_event.model_dump(mode="json"),
+            "speak_event": None,
+        },
+    )
+
+    evidence = capture_god_room_runtime_closure_evidence(
+        run_id="overnight-runtime-closure",
+        output_path=tmp_path / "closure-evidence.json",
+        participants_artifact=participants_path,
+        events_artifact=events_path,
+        speaker_response_artifact=speaker_response_path,
+    )
+
+    details = evidence["god_room_runtime_closure"]["speaker_response"]
+    assert details["status"] == "event_appended"
+    assert details["proof_level"] == "real_provider_proof"
+    assert details["appended_event_id"] == "evt-review-provider-question"
+    assert details["appended_event_type"] == "question"
+    assert details["speak_event_id"] is None
+    assert details["provider_response_id"] == "provider-response-question-1"
 
 
 def test_god_room_runtime_closure_evidence_rejects_unreplayed_multi_turn_event(
@@ -597,6 +725,7 @@ def _event(
     participant_id: str = "part-architect",
     god_id: str = "god-architect",
     causal_parent_id: str | None = None,
+    target_participant_ids: list[str] | None = None,
     payload: dict[str, object] | None = None,
 ) -> GodRoomEventV1:
     return GodRoomEventV1(
@@ -609,6 +738,7 @@ def _event(
         event_type=event_type,
         timestamp_utc="2026-06-13T10:00:00Z",
         content=str((payload or {}).get("goal") or "Close the runtime evidence path."),
+        target_participant_ids=target_participant_ids or [],
         causal_parent_id=causal_parent_id,
         source_refs=[f"message:{event_id}"],
         cli_id="codex",

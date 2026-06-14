@@ -600,21 +600,24 @@ def _speaker_response_details(
         if capture.provider_response is not None
         else None
     )
+    appended_event = capture.appended_event or capture.speak_event
+    appended_event_id = appended_event.event_id if appended_event else None
+    appended_event_type = appended_event.event_type.value if appended_event else None
     speak_event_id = capture.speak_event.event_id if capture.speak_event else None
     blocked_reason = capture.blocked_reason
     status = capture.status
     proof_level = capture.proof_level
-    if capture.status == "speak_event_appended" and not str(
+    if capture.status in {"speak_event_appended", "event_appended"} and not str(
         capture.provider_response_artifact_ref or ""
     ).strip():
         blocked_reason = "provider response artifact missing"
         issues.append(f"speaker response blocked: {blocked_reason}")
         status = "manual_gap"
         proof_level = "manual_gap"
-    elif capture.status == "speak_event_appended" and (
-        speak_event_id is None or speak_event_id not in event_ids
+    elif capture.status in {"speak_event_appended", "event_appended"} and (
+        appended_event_id is None or appended_event_id not in event_ids
     ):
-        blocked_reason = "speaker response speak event is missing from god room events"
+        blocked_reason = "speaker response appended event is missing from god room events"
         issues.append(f"speaker response blocked: {blocked_reason}")
         status = "manual_gap"
         proof_level = "manual_gap"
@@ -626,6 +629,7 @@ def _speaker_response_details(
             f"provider_session:{capture.provider_session_id}"
             if capture.provider_session_id
             else None,
+            f"god-room-event:{appended_event_id}" if appended_event_id else None,
             f"god-room-event:{speak_event_id}" if speak_event_id else None,
         ]
     )
@@ -642,6 +646,8 @@ def _speaker_response_details(
             "provider_response_artifact_ref": capture.provider_response_artifact_ref,
             "append_status": capture.append_status,
             "blocked_reason": blocked_reason,
+            "appended_event_id": appended_event_id,
+            "appended_event_type": appended_event_type,
             "provider_response_id": provider_response_id,
             "speak_event_id": speak_event_id,
         },
@@ -691,6 +697,7 @@ def _multi_turn_provider_speech_run_details(
         issues.append("multi-turn provider speech run has no turns")
         turns = []
     appended_event_ids: list[str] = []
+    appended_event_types: list[str] = []
     provider_response_artifacts: list[str] = []
     speaker_response_artifacts: list[str] = []
     provider_response_ids: list[str] = []
@@ -730,11 +737,23 @@ def _multi_turn_provider_speech_run_details(
             speaker_status = _text(speaker_response_payload.get("status"))
             if speaker_status is not None:
                 speaker_response_statuses.append(speaker_status)
-            if speaker_status and speaker_status != "speak_event_appended":
+            if speaker_status and speaker_status not in {
+                "speak_event_appended",
+                "event_appended",
+            }:
                 issues.append(
                     "multi-turn provider speech run turn "
                     f"{index} speaker response is {speaker_status}"
                 )
+            appended_event = speaker_response_payload.get("appended_event")
+            if isinstance(appended_event, dict):
+                event_type = _text(appended_event.get("event_type"))
+                if event_type is not None:
+                    appended_event_types.append(event_type)
+            else:
+                event_type = _text(speaker_response_payload.get("event_type"))
+                if event_type is not None:
+                    appended_event_types.append(event_type)
         provider_response_payload = turn.get("provider_response")
         if isinstance(provider_response_payload, dict):
             response_id = _text(provider_response_payload.get("response_id"))
@@ -750,6 +769,7 @@ def _multi_turn_provider_speech_run_details(
             "turn_count": _int(payload.get("turn_count")) or len(turns),
             "indexed_turn_count": len(appended_event_ids),
             "appended_event_ids": _dedupe(appended_event_ids),
+            "appended_event_types": _counts(appended_event_types),
             "provider_response_artifacts": _dedupe(provider_response_artifacts),
             "speaker_response_artifacts": _dedupe(speaker_response_artifacts),
             "provider_response_ids": _dedupe(provider_response_ids),

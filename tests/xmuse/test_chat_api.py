@@ -2082,6 +2082,138 @@ def test_chat_api_god_room_freeze_blueprint_preserves_multi_turn_run_lineage(
     ]
 
 
+def test_chat_api_god_room_freeze_blueprint_preserves_provider_question_lineage(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    conversation = client.post(
+        "/api/chat/conversations",
+        json={"title": "GOD room freeze from provider question"},
+    ).json()
+    conv_id = conversation["id"]
+    room = client.post(f"/api/chat/conversations/{conv_id}/god-room").json()["room"]
+    participants = {participant["role"]: participant for participant in room["participants"]}
+    GodCliSelectionStore(tmp_path / "god_cli_selections.json").record_selection(
+        conversation_id=conv_id,
+        cli_id="codex.god",
+        selected_by="operator",
+        audit_id="audit-select-freeze-provider-question",
+        idempotency_key="select-freeze-provider-question",
+    )
+    _seed_room_selected_god_bindings(tmp_path, room=room)
+    _activate_god_room_sessions(tmp_path, conversation_id=conv_id, room=room)
+    assert client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/events",
+        json={
+            "event_id": "evt-propose",
+            "room_id": room["room_id"],
+            "conversation_id": conv_id,
+            "participant_id": participants["architect"]["participant_id"],
+            "god_id": participants["architect"]["god_id"],
+            "actor_kind": "god",
+            "event_type": "speak",
+            "timestamp_utc": "2026-06-14T13:10:00Z",
+            "content": "Start provider-backed question freeze.",
+            "source_refs": [f"conversation:{conv_id}", "message:evt-propose"],
+            "cli_id": participants["architect"]["cli_id"],
+            "provider_profile": "codex.god",
+            "payload": {
+                "goal": "Freeze provider-backed question lineage.",
+                "scope": ["GOD room runtime action"],
+                "acceptance_contracts": [
+                    "Freeze preserves provider-backed question lineage."
+                ],
+            },
+        },
+    ).status_code == 201
+    provider_response = {
+        "response_id": "provider-response-question-freeze-1",
+        "status": "completed",
+        "proof_level": "real_provider_proof",
+        "target_participant_id": participants["review"]["participant_id"],
+        "provider_profile_ref": "codex.god",
+        "provider_session_id": "provider-thread-review",
+        "provider_session_kind": "provider_thread",
+        "content": "Can the architect prove the freeze lineage is not fixture-only?",
+        "source_refs": ["provider-run:codex:provider-response-question-freeze-1"],
+    }
+    _write_json(
+        tmp_path
+        / "reports"
+        / "provider-responses"
+        / "provider-response-question-freeze-1.json",
+        provider_response,
+    )
+    question_response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/speaker-response",
+        json={
+            "after_event_id": "evt-propose",
+            "event_id": "evt-review-provider-question",
+            "event_type": "question",
+            "target_participant_ids": [participants["architect"]["participant_id"]],
+            "timestamp_utc": "2026-06-14T13:11:00Z",
+            "provider_response_artifact": (
+                "reports/provider-responses/provider-response-question-freeze-1.json"
+            ),
+            "provider_response": provider_response,
+        },
+    )
+    assert question_response.status_code == 201
+    question_capture = question_response.json()["speaker_response"]
+    assert question_capture["status"] == "event_appended", question_capture
+    assert question_capture["appended_event"]["event_type"] == "question"
+    assert client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/events",
+        json={
+            "event_id": "evt-freeze",
+            "room_id": room["room_id"],
+            "conversation_id": conv_id,
+            "participant_id": participants["architect"]["participant_id"],
+            "god_id": participants["architect"]["god_id"],
+            "actor_kind": "god",
+            "event_type": "freeze_requested",
+            "timestamp_utc": "2026-06-14T13:12:00Z",
+            "content": "Freeze this question-backed blueprint.",
+            "source_refs": [f"conversation:{conv_id}", "message:evt-freeze"],
+            "causal_parent_id": "evt-review-provider-question",
+            "cli_id": participants["architect"]["cli_id"],
+            "provider_profile": "codex.god",
+            "payload": {
+                "freeze_target_ref": "blueprint:bp-question-freeze:1",
+                "goal": "Freeze provider-backed question lineage.",
+                "scope": ["GOD room runtime action"],
+                "acceptance_contracts": [
+                    "Freeze preserves provider-backed question lineage."
+                ],
+            },
+        },
+    ).status_code == 201
+
+    response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/freeze-blueprint",
+        json={"blueprint_id": "bp-question-freeze", "revision": 1},
+    )
+
+    assert response.status_code == 201
+    artifact = response.json()["artifact"]
+    assert artifact["status"] == "frozen"
+    assert artifact["proof_level"] == "opt_in_live_proof"
+    lineage = {
+        item["event_id"]: item for item in artifact["source_event_lineage"]
+    }
+    assert lineage["evt-review-provider-question"]["event_type"] == "question"
+    assert lineage["evt-review-provider-question"]["proof_level"] == (
+        "opt_in_live_proof"
+    )
+    assert lineage["evt-review-provider-question"][
+        "provider_response_artifact_ref"
+    ] == "reports/provider-responses/provider-response-question-freeze-1.json"
+    assert "natural_groupchat_closure" in lineage["evt-review-provider-question"][
+        "forbidden_claims"
+    ]
+    assert response.json()["blueprint"]["source_refs"] == artifact["source_refs"]
+
+
 def test_chat_api_god_room_freeze_blueprint_rejects_mismatched_multi_turn_run(
     tmp_path: Path,
     monkeypatch,

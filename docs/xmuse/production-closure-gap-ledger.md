@@ -108,14 +108,16 @@ runtime、provider invocation、lane authority、review truth 完成。后续生
   `6c9cb329ff5a839b7632d324982073b64ce51491`
 - Local head at start of L3/L5 provider-backed deliberation event capture slice:
   `4badeb6b4764e5633bbd68b4cbfe385dc8e98943`
+- Local head at start of L6 provider-backed event lineage freeze slice:
+  `1566e657d8548d3627eed22dfd6b013d16fba1cf`
 - PR: <https://github.com/iiyazu/Cross-Muse/pull/43>
 - PR state last checked: draft/open/unmerged
 - PR merge state last checked: `CLEAN`
 - PR review decision last checked: empty
 - Verified GitHub Actions truth at the start of this slice applied to remote head
-  `4badeb6b4764e5633bbd68b4cbfe385dc8e98943`: run
-  `27498670924`, success
-- Local changes after `4badeb6b4764e5633bbd68b4cbfe385dc8e98943` must not be
+  `1566e657d8548d3627eed22dfd6b013d16fba1cf`: run
+  `27499279396`, success
+- Local changes after `1566e657d8548d3627eed22dfd6b013d16fba1cf` must not be
   treated as CI-verified until pushed and checked again.
 
 Machine-readable snapshot for gates and future `/goal` setup:
@@ -157,13 +159,14 @@ truth_snapshot:
   local_head_at_l8_runner_supervisor_recovery_projection_slice: 48c49906d3493b91790d9f85cf8fab020e0e5dce
   local_head_at_l8_runner_loop_recovery_local_proof_slice: 6c9cb329ff5a839b7632d324982073b64ce51491
   local_head_at_l3_l5_provider_backed_deliberation_event_capture_slice: 4badeb6b4764e5633bbd68b4cbfe385dc8e98943
+  local_head_at_l6_provider_backed_event_lineage_freeze_slice: 1566e657d8548d3627eed22dfd6b013d16fba1cf
   pr: 43
   pr_url: https://github.com/iiyazu/Cross-Muse/pull/43
   pr_state: draft_open_unmerged
   merge_state: CLEAN
   review_decision: empty
-  verified_ci_head_at_slice_start: 4badeb6b4764e5633bbd68b4cbfe385dc8e98943
-  verified_ci_run_at_slice_start: 27498670924
+  verified_ci_head_at_slice_start: 1566e657d8548d3627eed22dfd6b013d16fba1cf
+  verified_ci_run_at_slice_start: 27499279396
   ci_verified_for_slice_start_head: true
   local_changes_after_verified_head: true
   pr_merged_claim_allowed: false
@@ -181,8 +184,8 @@ Evidence boundaries:
 - MemoryOS evidence is governed plan/artifact proof unless a configured live
   MemoryOS service trace is captured.
 - Speaker response capture is real-provider evidence only when backed by a
-  server-loaded provider response artifact and a durable GOD room `speak` event
-  present in room replay evidence.
+  server-loaded provider response artifact and a durable GOD room
+  provider-backed appended event present in room replay evidence.
 
 ## Dependency-First Layer Map
 
@@ -193,11 +196,11 @@ Evidence boundaries:
 | L3 | GOD Room Durable Event Runtime | Durable event contract/store exists | Single-turn opt-in live Codex L4/L5 route appended and replayed one `speak` event; bounded multi-turn API can append/replay multiple L5-gated `speak` events; live natural multi-GOD proof still missing | Not server-bound | Durable room contract proof plus isolated opt-in live speak replay proof and bounded multi-turn orchestration contract proof |
 | L4 | Speaker Selection / Provider Invocation | Selection/attempt evidence plus provider invocation artifact producer contract exist | Core/API producer emits response artifacts, fail-closed artifacts, one verified local opt-in live Codex artifact through execution worktree, and multiple artifacts when driven by the bounded multi-turn route | Not server-bound | Provider invocation artifact contract/fail-closed proof plus isolated Codex opt-in live proof |
 | L5 | Speaker Response Capture / Replay Proof | Artifact-backed capture plus composed L4-to-L5 route exists | Rejects contract-only L4 artifacts; appends/replays only server-written real-proof artifacts; one local opt-in live Codex artifact was captured into durable replay; bounded multi-turn route stops on manual_gap and preserves prior durable events | Not server-bound | Capture/replay contract proof plus isolated Codex opt-in live capture proof and bounded multi-turn capture orchestration proof |
-| L6 | Blueprint Freeze Authority | Typed freeze artifact exists with proof-level classification | Single-turn provider-backed Codex speech and bounded multi-turn L3-L5 run lineage can feed freeze artifacts while preserving durable event authority; fresh natural multi-GOD freeze still missing | Not server-bound | Freeze contract proof plus isolated opt-in live freeze proof plus bounded multi-turn lineage proof |
+| L6 | Blueprint Freeze Authority | Typed freeze artifact exists with proof-level classification and source event lineage | Single-turn provider-backed speech plus provider-backed question/challenge/handoff event proofs and bounded multi-turn L3-L5 run lineage can feed freeze artifacts while preserving durable event authority; fresh natural multi-GOD freeze still missing | Not server-bound | Freeze contract proof plus isolated opt-in live freeze proof, provider-backed event lineage proof, and bounded multi-turn lineage proof |
 | L7 | Feature / LaneDAG Authority | LaneDAG/contract artifact exists with upstream freeze proof metadata and graph-set/status initialization contract | Live L4/L5/L6 proof metadata can flow into laneDAG without writing `feature_lanes.json`; laneDAG route now derives graph-set artifacts and initializes graph-native status records with inherited `blueprint_proof_level`; `graph_set_id`-backed orchestrator dispatch/review/reprojection now fail closed when durable graph-native status is missing; full dispatch/review authority still not unified | Not server-bound | LaneDAG contract proof plus isolated opt-in live upstream-proof propagation, graph-native proof-lineage carrier proof, laneDAG-to-status initialization proof, and graph-native missing-status fail-closed proof |
 | L8 | Lane Runtime Enforcement / Recovery | Recovery contract/API exists and recovery artifacts carry laneDAG proof lineage | Recovery API consumes laneDAG contract/budget and preserves blueprint proof/source refs; GOD-room review intake and orchestrator dispatch now fail-close non-retry recovery decisions; review intake now also requires graph-native `REVIEWING` status from `FeatureGraphStatusStore`; broader supervisor/live runner enforcement still incomplete | Not server-bound | Recovery policy proof plus laneDAG-lineage evidence proof plus review-intake/dispatch enforcement proof |
 | L9 | Execution / Review / Patch-Forward | Review plane plus GOD-room review intake/verdict/patch-forward/closure artifact contracts exist | GOD-room lane contracts/recovery/candidate evidence can be packaged for independent review only after graph-native status is `REVIEWING`; merge/rework/blocked verdicts now consume graph-native review coordinator authority and update `FeatureGraphStatusStore`; patch-forward verdicts record graph-native gate plans without writing lane status; patch-forward can append a laneDAG patch lane; reviewed patch-lane closure now requires `FeatureGraphStatusStore` `MERGED` authority before producing a release-evidence handoff candidate; live execution proof and server truth still missing | Not server-bound | GOD-room review/patch-forward closure contract proof plus graph-status-gated review-intake/verdict/closure proof and review-plane store lineage proof, not server/GitHub truth |
-| L10 | MemoryOS / Release Evidence / GitHub Truth | Evidence bundle semantics exist and can index GOD-room review closure handoff plus bounded multi-turn provider speech lineage; release candidates can seed MemoryOS source refs from review closure and runtime closure evidence | Runtime closure evidence preserves per-turn L4/L5 refs and appended speak ids as contract lineage; live MemoryOS trace and live execution/server truth missing | PR open/unmerged; CI truth only for verified remote head | Replay/readiness proof with explicit gaps |
+| L10 | MemoryOS / Release Evidence / GitHub Truth | Evidence bundle semantics exist and can index GOD-room review closure handoff plus bounded multi-turn provider speech lineage; release candidates can seed MemoryOS source refs from review closure and runtime closure evidence | Runtime closure evidence preserves per-turn L4/L5 refs plus appended event ids/types as contract lineage; live MemoryOS trace and live execution/server truth missing | PR open/unmerged; CI truth only for verified remote head | Replay/readiness proof with explicit gaps |
 | L11 | Operator Cockpit / TUI / Overnight Soak | TUI/control slices exist | Complete cockpit/soak missing | Depends on L10 | Operator projection/control proof only |
 
 Current closure audit:
@@ -207,9 +210,10 @@ Current closure audit:
   claim-boundary governance.
 - Least closed areas: natural multi-GOD deliberation, GOD-room-originated
   execution/review, live MemoryOS trace, and GitHub merge truth.
-- Next production priority: carry bounded multi-turn L3-L5 speech lineage into
-  L10 release evidence without inflating it to live/server truth, then add
-  opt-in live MemoryOS trace capture after upstream artifacts exist.
+- Next production priority: carry L6 source event lineage and bounded
+  provider-backed event ids/types into L7/L10 evidence without inflating them to
+  natural groupchat or server truth, then add opt-in live MemoryOS trace capture
+  after upstream artifacts exist.
 
 ## L1 - Authority / Boundary Model
 
@@ -684,6 +688,16 @@ Use these as implementation references, not as xmuse package dependencies:
     response artifact refs are carried into the freeze artifact and frozen
     blueprint `source_refs` as lineage only. Freeze `proof_level` remains
     derived from durable event proof projection, not from the run artifact.
+  - Freeze artifacts now preserve `source_event_lineage` derived from the L3
+    event proof projection. The lineage records source event ids/types,
+    participant/GOD ids, proof level, source authority, provider response
+    artifact refs, binding/account/model/variant details where available,
+    target participant ids, source refs, and forbidden claims.
+  - Provider-backed `question`, `challenge`, and `handoff` events captured by
+    L5 can therefore feed L6 freeze proof classification and lineage when the
+    durable room event proof projection marks them `opt_in_live_proof`. This
+    preserves the event lineage without treating capture proof as a fresh L4
+    invocation proof or natural groupchat closure.
   - A local L6 smoke run in temp runtime root
     `/tmp/xmuse-live-l6-freeze-9anxog8k` used a live Codex L4/L5 speak event,
     appended `evt-freeze`, and produced a frozen
@@ -701,6 +715,8 @@ Use these as implementation references, not as xmuse package dependencies:
     preserves the upstream event proof boundary.
   - Multi-turn run artifact validation links orchestration lineage to freeze,
     but it still does not prove natural peer-GOD deliberation or server truth.
+  - L7 laneDAG and L10 release evidence do not yet consume the new
+    `source_event_lineage` field as first-class proof lineage.
 - Proof required to close:
   - A live transcript produces a freeze artifact preserving assumptions,
     blockers, rejected alternatives, source refs, and decision event lineage.
@@ -708,9 +724,10 @@ Use these as implementation references, not as xmuse package dependencies:
   - Freezing a clean contract fixture can be mistaken for real deliberation
     closure.
 - Next production slice:
-  - Carry the frozen blueprint and bounded multi-turn lineage refs into L7
-    laneDAG authority while preserving whether the freeze proof level is
-    `contract_proof` or `opt_in_live_proof`.
+  - Carry the frozen blueprint `source_event_lineage` and bounded multi-turn
+    lineage refs into L7 laneDAG authority and L10 release evidence while
+    preserving whether the freeze proof level is `contract_proof` or
+    `opt_in_live_proof`.
 - Downstream blocked until:
   - L7 cannot claim blueprint-to-lane authority unless the blueprint freeze is
     tied to durable deliberation proof.
@@ -962,9 +979,18 @@ Use these as implementation references, not as xmuse package dependencies:
     `source_authority=god_room_runtime_closure_contract`, proof level no higher
     than `contract_proof`/`manual_gap`, and non-empty source refs. This is
     source-ref guidance only; it is not a live MemoryOS trace.
-  - PR #43 latest verified CI passed for remote head
-    `1a244285c6e9b287f9c32acb640b0bc68087d90b`; merge state was `CLEAN` when
-    last checked.
+  - GOD room runtime closure evidence now indexes L5 speaker response artifacts
+    through generic appended event identity, not only `speak_event_id`.
+    `event_appended` provider-backed `question`, `challenge`, and `handoff`
+    captures can contribute `appended_event_id`, `appended_event_type`, and L4
+    provider response refs as contract/runtime lineage when replay proves the
+    appended event is present in durable room events.
+  - Bounded multi-turn provider speech evidence counts appended event types
+    and accepts `event_appended` turns as lineage. This does not upgrade the
+    run to GitHub, review, MemoryOS, or natural groupchat truth.
+  - PR #43 latest verified CI at the start of this slice passed for remote head
+    `1566e657d8548d3627eed22dfd6b013d16fba1cf` in run `27499279396`; merge
+    state was `CLEAN` when last checked.
 - Missing production closure:
   - No current live MemoryOS Lite trace proof is established for this branch
     head.
@@ -982,12 +1008,15 @@ Use these as implementation references, not as xmuse package dependencies:
     any `pr_merged` event.
 - Current risk:
   - Governance plan proof can be overread as live memory proof.
+  - Appended event lineage can be overread as independent review truth or
+    natural multi-GOD deliberation if the upstream proof boundary is omitted.
   - `ready_for_replay` can be confused with `ready_to_merge` or `pr_merged`.
   - CI success can be overread as review or merge truth.
 - Next production slice:
-  - Use the candidate source-ref hints to run an opt-in live MemoryOS trace
-    capture when the environment is configured, then produce a fresh replay
-    bundle and GitHub truth capture without treating either as merge truth.
+  - Carry L6 `source_event_lineage` into release evidence and MemoryOS
+    source-ref candidates, then run an opt-in live MemoryOS trace capture when
+    the environment is configured. A fresh replay bundle and GitHub truth
+    capture must still avoid treating either as merge truth.
 - Downstream blocked until:
   - L11 cannot claim production cockpit or overnight readiness unless this
     layer shows honest replay/server truth.
