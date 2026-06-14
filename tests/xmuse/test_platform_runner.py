@@ -10,6 +10,7 @@ import pytest
 from xmuse_core.chat.dispatch_queue import ChatDispatchQueueStore
 from xmuse_core.chat.store import ChatStore
 from xmuse_core.platform.run_health import build_process_inventory
+from xmuse_core.platform.runner_recovery_proof import build_runner_recovery_proof
 from xmuse_core.platform.runner_supervisor import RunnerSupervisorConfig, runner_status
 from xmuse_core.structuring.blueprint_execution.lane_recovery_artifacts import (
     lane_recovery_artifact_path,
@@ -54,6 +55,54 @@ class _FakeStateMachine:
                 lane.update(metadata)
                 return dict(lane)
         raise KeyError(lane_id)
+
+
+def test_runner_recovery_proof_without_block_remains_manual_gap(tmp_path: Path) -> None:
+    artifact = build_runner_recovery_proof(
+        run_id="run-no-block",
+        runner_id="runner-test",
+        lanes=[
+            {
+                "feature_id": "lane-ready",
+                "status": "pending",
+                "graph_id": "graph-a",
+            }
+        ],
+        candidate_lanes=[
+            {
+                "feature_id": "lane-ready",
+                "status": "pending",
+                "graph_id": "graph-a",
+            }
+        ],
+        runner_status={
+            "health": {
+                "recovery": {
+                    "source_authority": "lane_recovery_artifact",
+                    "proof_level": "contract_proof",
+                    "counts": {
+                        "blocked": 0,
+                        "non_retry_decision": 0,
+                        "invalid_artifact": 0,
+                        "retry_allowed": 0,
+                    },
+                    "blocked_lanes": [],
+                    "invalid_artifacts": [],
+                }
+            }
+        },
+        lanes_path=tmp_path / "feature_lanes.json",
+        xmuse_root=tmp_path / "xmuse",
+    )
+
+    assert artifact["status"] == "manual_gap"
+    assert artifact["proof_level"] == "manual_gap"
+    assert "no_durable_recovery_block_observed" in artifact["manual_gaps"]
+    assert "overnight_safe_recovery" in artifact["forbidden_claims"]
+    assert "end_to_end_execution_review_closure" in artifact["forbidden_claims"]
+    assert "worker_output_is_review_truth" in artifact["forbidden_claims"]
+    assert "ready_to_merge" in artifact["forbidden_claims"]
+    assert "pr_merged" in artifact["forbidden_claims"]
 
 
 @pytest.mark.asyncio
@@ -930,6 +979,7 @@ async def test_runner_loop_blocks_refactor_required_and_status_reports_recovery(
         mcp_port=8100,
         max_hours=1,
         max_concurrent=1,
+        runner_recovery_proof_output=xmuse_root / "reports" / "runner-recovery.json",
     )
 
     assert captured["planning_base_dir"] == xmuse_root
@@ -965,6 +1015,27 @@ async def test_runner_loop_blocks_refactor_required_and_status_reports_recovery(
     assert recovery["blocked_lanes"][0]["decision"] == "refactor_required"
     assert "live_runner_recovery_enforcement_not_proven" in recovery["manual_gaps"]
     assert "ready_to_merge" in recovery["forbidden_claims"]
+
+    proof_artifact = json.loads(
+        (xmuse_root / "reports" / "runner-recovery.json").read_text(encoding="utf-8")
+    )
+    assert proof_artifact["schema_version"] == "xmuse.local_runner_recovery_proof.v1"
+    assert proof_artifact["status"] == "ok"
+    assert proof_artifact["proof_level"] == "local_runtime_proof"
+    assert proof_artifact["source_authority"] == (
+        "platform_runner_candidate_selection"
+        "+shared_runner_health_model"
+        "+lane_recovery_artifact"
+    )
+    assert proof_artifact["candidate_selection"][
+        "excluded_recovery_blocked_lane_ids"
+    ] == ["lane-refactor"]
+    assert proof_artifact["runner_supervisor"]["recovery"]["blocked_lanes"][0][
+        "decision"
+    ] == "refactor_required"
+    assert "review_truth_not_proven" in proof_artifact["manual_gaps"]
+    assert "overnight_safe_recovery" in proof_artifact["forbidden_claims"]
+    assert "ready_to_merge" in proof_artifact["forbidden_claims"]
 
 
 @pytest.mark.asyncio

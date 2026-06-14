@@ -36,6 +36,7 @@ from xmuse_core.platform.run_health import (
     list_live_pids,
     summarize_run_health,
 )
+from xmuse_core.platform.runner_recovery_proof import capture_runner_recovery_proof
 from xmuse_core.providers.registry import DEFAULT_CODEX_GOD_MODEL_ID
 from xmuse_core.runtime.paths import default_xmuse_root, resolve_xmuse_root
 from xmuse_core.self_evolution import SelfEvolutionController
@@ -86,6 +87,7 @@ async def run(
     model_policy: CodexModelPolicy | None = None,
     execution_provider_profile_ref: str | None = None,
     review_provider_profile_ref: str | None = None,
+    runner_recovery_proof_output: Path | None = None,
 ) -> None:
     runner_id = _default_runner_id()
     control_service = CoordinatorControlService(
@@ -321,6 +323,17 @@ async def run(
                 await _tick_chat_dispatch_bridge(chat_dispatch_bridge, xmuse_root=xmuse_root)
             pending = _candidate_lanes(
                 orch,
+                graph_id=graph_id,
+                resolution_id=resolution_id,
+            )
+            _capture_runner_recovery_proof_if_requested(
+                output_path=runner_recovery_proof_output,
+                run_id=f"local-runner-recovery-{runner_id}",
+                runner_id=runner_id,
+                orch=orch,
+                candidate_lanes=pending,
+                lanes_path=lanes_path,
+                xmuse_root=xmuse_root,
                 graph_id=graph_id,
                 resolution_id=resolution_id,
             )
@@ -788,6 +801,47 @@ def _runner_recovery_authority_allows_lane(
         },
     )
     return False
+
+
+def _capture_runner_recovery_proof_if_requested(
+    *,
+    output_path: Path | None,
+    run_id: str,
+    runner_id: str,
+    orch: PlatformOrchestrator,
+    candidate_lanes: list[dict[str, Any]],
+    lanes_path: Path,
+    xmuse_root: Path,
+    graph_id: str | None,
+    resolution_id: str | None,
+) -> dict[str, Any] | None:
+    if output_path is None:
+        return None
+    process_inventory = discover_xmuse_runtime_processes()
+    lanes = list(orch._sm.get_lanes())
+    runner_status = {
+        "pid_file": None,
+        "health": build_run_health_model(
+            lanes_path,
+            runner_pids=process_inventory["runner_pids"],
+            mcp_pids=process_inventory["mcp_pids"],
+            live_pids=_live_pids(),
+            xmuse_root=xmuse_root,
+            process_inventory=process_inventory,
+        ),
+    }
+    return capture_runner_recovery_proof(
+        output_path=output_path,
+        run_id=run_id,
+        runner_id=runner_id,
+        lanes=lanes,
+        candidate_lanes=candidate_lanes,
+        runner_status=runner_status,
+        lanes_path=lanes_path,
+        xmuse_root=xmuse_root,
+        graph_id=graph_id,
+        resolution_id=resolution_id,
+    )
 
 
 def _live_pids() -> set[int]:
@@ -1466,6 +1520,15 @@ def main_arg_parser() -> argparse.ArgumentParser:
         help="optional MemoryOS API base URL for lane context and execution memory",
     )
     parser.add_argument(
+        "--runner-recovery-proof-output",
+        type=Path,
+        default=None,
+        help=(
+            "optional path for a local runner recovery proof artifact; "
+            "records candidate selection plus shared run-health recovery state"
+        ),
+    )
+    parser.add_argument(
         "--health-once",
         action="store_true",
         help="print a JSON run health summary and exit without starting the runner",
@@ -1582,6 +1645,7 @@ def main() -> None:
         model_policy=model_policy,
         execution_provider_profile_ref=args.execution_provider_profile_ref,
         review_provider_profile_ref=args.review_provider_profile_ref,
+        runner_recovery_proof_output=args.runner_recovery_proof_output,
     ))
 
 

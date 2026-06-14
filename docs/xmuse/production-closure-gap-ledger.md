@@ -114,14 +114,16 @@ runtime、provider invocation、lane authority、review truth 完成。后续生
   `aff7607052bb4dd4f017b84ae728dc73f57a0995`
 - Local head at start of L7-L10 graph-status source-event lineage carrier slice:
   `a47e5ba657cc1e307cbcb2b5dadb521852232a99`
+- Local head at start of L8 runner recovery proof artifact slice:
+  `b122394186a697a2512fd23f9bb90ea70db41273`
 - PR: <https://github.com/iiyazu/Cross-Muse/pull/43>
 - PR state last checked: draft/open/unmerged
 - PR merge state last checked: `CLEAN`
 - PR review decision last checked: empty
 - Verified GitHub Actions truth at the start of this slice applied to remote head
-  `a47e5ba657cc1e307cbcb2b5dadb521852232a99`: run
-  `27500626010`, success
-- Local changes after `a47e5ba657cc1e307cbcb2b5dadb521852232a99` must not be
+  `b122394186a697a2512fd23f9bb90ea70db41273`: run
+  `27501340999`, success
+- Local changes after `b122394186a697a2512fd23f9bb90ea70db41273` must not be
   treated as CI-verified until pushed and checked again.
 
 Machine-readable snapshot for gates and future `/goal` setup:
@@ -166,13 +168,14 @@ truth_snapshot:
   local_head_at_l6_provider_backed_event_lineage_freeze_slice: 1566e657d8548d3627eed22dfd6b013d16fba1cf
   local_head_at_l7_l10_freeze_source_event_lineage_carry_slice: aff7607052bb4dd4f017b84ae728dc73f57a0995
   local_head_at_l7_l10_graph_status_source_event_lineage_carrier_slice: a47e5ba657cc1e307cbcb2b5dadb521852232a99
+  local_head_at_l8_runner_recovery_proof_artifact_slice: b122394186a697a2512fd23f9bb90ea70db41273
   pr: 43
   pr_url: https://github.com/iiyazu/Cross-Muse/pull/43
   pr_state: draft_open_unmerged
   merge_state: CLEAN
   review_decision: empty
-  verified_ci_head_at_slice_start: a47e5ba657cc1e307cbcb2b5dadb521852232a99
-  verified_ci_run_at_slice_start: 27500626010
+  verified_ci_head_at_slice_start: b122394186a697a2512fd23f9bb90ea70db41273
+  verified_ci_run_at_slice_start: 27501340999
   ci_verified_for_slice_start_head: true
   local_changes_after_verified_head: true
   pr_merged_claim_allowed: false
@@ -204,7 +207,7 @@ Evidence boundaries:
 | L5 | Speaker Response Capture / Replay Proof | Artifact-backed capture plus composed L4-to-L5 route exists | Rejects contract-only L4 artifacts; appends/replays only server-written real-proof artifacts; one local opt-in live Codex artifact was captured into durable replay; bounded multi-turn route stops on manual_gap and preserves prior durable events | Not server-bound | Capture/replay contract proof plus isolated Codex opt-in live capture proof and bounded multi-turn capture orchestration proof |
 | L6 | Blueprint Freeze Authority | Typed freeze artifact exists with proof-level classification and source event lineage | Single-turn provider-backed speech plus provider-backed question/challenge/handoff event proofs and bounded multi-turn L3-L5 run lineage can feed freeze artifacts while preserving durable event authority; fresh natural multi-GOD freeze still missing | Not server-bound | Freeze contract proof plus isolated opt-in live freeze proof, provider-backed event lineage proof, and bounded multi-turn lineage proof |
 | L7 | Feature / LaneDAG Authority | LaneDAG/contract artifact exists with upstream freeze proof metadata, source event lineage, and graph-set/status initialization contract | Live L4/L5/L6 proof metadata and structured freeze source-event lineage can flow into laneDAG without writing `feature_lanes.json`; laneDAG route now derives graph-set artifacts and initializes graph-native status records with inherited `blueprint_proof_level` and `source_event_lineage`; `FeatureGraphStatusStore` preserves existing lineage and rejects conflicting rewrites; `graph_set_id`-backed orchestrator dispatch/review/reprojection now fail closed when durable graph-native status is missing; full dispatch/review authority still not unified | Not server-bound | LaneDAG contract proof plus isolated opt-in live upstream-proof propagation, structured freeze lineage carrier proof, graph-native proof/source-event-lineage carrier proof, laneDAG-to-status initialization proof, and graph-native missing-status fail-closed proof |
-| L8 | Lane Runtime Enforcement / Recovery | Recovery contract/API exists and recovery artifacts carry laneDAG proof lineage | Recovery API consumes laneDAG contract/budget and preserves blueprint proof/source refs plus laneDAG `source_event_lineage`; GOD-room review intake and orchestrator dispatch now fail-close non-retry recovery decisions; review intake now also requires graph-native `REVIEWING` status from `FeatureGraphStatusStore`; broader supervisor/live runner enforcement still incomplete | Not server-bound | Recovery policy proof plus laneDAG-lineage/source-event-lineage evidence proof plus review-intake/dispatch enforcement proof |
+| L8 | Lane Runtime Enforcement / Recovery | Recovery contract/API exists and recovery artifacts carry laneDAG proof lineage | Recovery API consumes laneDAG contract/budget and preserves blueprint proof/source refs plus laneDAG `source_event_lineage`; GOD-room review intake and orchestrator dispatch now fail-close non-retry recovery decisions; review intake now also requires graph-native `REVIEWING` status from `FeatureGraphStatusStore`; platform runner can emit a local recovery proof artifact from candidate selection plus shared run-health recovery state; broader live runner enforcement still incomplete | Not server-bound | Recovery policy proof plus laneDAG-lineage/source-event-lineage evidence proof plus review-intake/dispatch enforcement proof plus local runner recovery artifact proof |
 | L9 | Execution / Review / Patch-Forward | Review plane plus GOD-room review intake/verdict/patch-forward/closure artifact contracts exist | GOD-room lane contracts/recovery/candidate evidence can be packaged for independent review only after graph-native status is `REVIEWING`; review intake carries `source_event_lineage` from graph-native status, patch-forward carries it from laneDAG, and reviewed patch-lane closure carries it from `FeatureGraphStatusStore` `MERGED` authority; merge/rework/blocked verdicts now consume graph-native review coordinator authority and update `FeatureGraphStatusStore`; patch-forward verdicts record graph-native gate plans without writing lane status; patch-forward can append a laneDAG patch lane; live execution proof and server truth still missing | Not server-bound | GOD-room review/patch-forward closure contract proof plus graph-status-gated review-intake/verdict/closure proof and review-plane/source-event-lineage store lineage proof, not server/GitHub truth |
 | L10 | MemoryOS / Release Evidence / GitHub Truth | Evidence bundle semantics exist and can index GOD-room review closure handoff plus bounded multi-turn provider speech lineage; release candidates can seed MemoryOS source refs from review closure and runtime closure evidence | Runtime closure evidence preserves per-turn L4/L5 refs, appended event ids/types, laneDAG-carried freeze source-event lineage, and review-closure-carried graph-status source-event lineage as contract lineage; live MemoryOS trace and live execution/server truth missing | PR open/unmerged; CI truth only for verified remote head | Replay/readiness proof with explicit gaps |
 | L11 | Operator Cockpit / TUI / Overnight Soak | TUI/control slices exist | Complete cockpit/soak missing | Depends on L10 | Operator projection/control proof only |
@@ -876,15 +879,25 @@ Use these as implementation references, not as xmuse package dependencies:
     not dispatched, recovery block metadata is recorded through the runner
     candidate path, and `runner_status` reports the same durable recovery block
     from the shared health model.
+  - `platform_runner` now has an opt-in
+    `--runner-recovery-proof-output` hook that writes
+    `xmuse.local_runner_recovery_proof.v1`. The artifact is produced only from
+    real runner candidate selection, the shared run-health recovery model, and
+    durable `lane_recovery_artifact` refs. It records excluded
+    recovery-blocked lanes as `local_runtime_proof` while preserving manual
+    gaps for long-running live runner proof, review truth, server truth, and
+    overnight-safe recovery. If no durable recovery block is observed, the
+    artifact remains `manual_gap`.
   - Goal-stage and development policy require direct refactor for repeated
     failure/demo-grade production paths.
 - Missing production closure:
   - Recovery is not yet proven through a live long-running runner/supervisor
     session; current enforcement/projection is proven at the GOD-room
     review-intake, graph-status intake, platform runner candidate-selection,
-    local runner loop, orchestrator dispatch, and runner supervisor status
-    boundaries.
-  - No live runner proof yet shows a blocked retry after refactor_required.
+    local runner loop/proof artifact, orchestrator dispatch, and runner
+    supervisor status boundaries.
+  - No live long-running runner proof yet shows a blocked retry after
+    `refactor_required`.
 - Proof required to close:
   - A real lane failure sequence enters recovery/refactor_required and blocks
     further same-path retries until a refactor artifact exists.
@@ -892,9 +905,11 @@ Use these as implementation references, not as xmuse package dependencies:
   - Recovery remains advisory if non-dispatch runner/supervisor paths can bypass
     it.
 - Next production slice:
-  - Capture a replayable runner recovery proof artifact from an opt-in local
-    runner/supervisor session, then continue toward live runner proof without
-    upgrading it to overnight-safe recovery.
+  - Consume `xmuse.local_runner_recovery_proof.v1` in the L9 review/release
+    evidence chain as recovery enforcement lineage only, then prove a
+    graph-native lane through local execution/review without upgrading worker
+    output, local tests, or the recovery proof artifact into review/server
+    truth.
 - Downstream blocked until:
   - L9 cannot claim trustworthy execution/review if lanes can bypass recovery
     decisions.
