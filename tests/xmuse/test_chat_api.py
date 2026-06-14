@@ -3,6 +3,7 @@ import json
 import sqlite3
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from xmuse_core.agents.god_session_registry import GodSessionRegistry
@@ -1811,6 +1812,173 @@ def test_chat_api_god_room_lane_review_intake_rejects_unknown_lane(
         / "reports"
         / "god_room_review_intake"
         / "graph-review-unknown.lane-missing.review-intake.json"
+    ).exists()
+
+
+def test_chat_api_god_room_lane_review_verdict_requires_independent_evidence(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    conv_id = _create_god_room_lane_dag(client, graph_id="graph-review-verdict")
+    assert client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-intake",
+        json={
+            "graph_id": "graph-review-verdict",
+            "lane_id": "lane-runtime-api",
+            "worker_candidate_refs": ["worker-candidate:run-1"],
+            "execution_artifact_refs": ["artifacts/lane-runtime-api/result.json"],
+        },
+    ).status_code == 201
+
+    response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-verdict",
+        json={
+            "graph_id": "graph-review-verdict",
+            "lane_id": "lane-runtime-api",
+            "reviewer_id": "review-god",
+            "decision": "merge",
+            "summary": "Candidate output matches the lane contract.",
+            "evidence_refs": [
+                "worker-candidate:run-1",
+                "artifacts/lane-runtime-api/result.json",
+            ],
+        },
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    artifact = payload["review_verdict"]
+    assert payload["source_authority"] == "god_room_lane_review_intake_artifact"
+    assert artifact["schema_version"] == "xmuse.god_room_lane_review_verdict.v1"
+    assert artifact["proof_level"] == "contract_proof"
+    assert artifact["review_truth_status"] == "independent_review_artifact"
+    assert artifact["server_truth_status"] == "not_server_truth"
+    assert artifact["candidate_truth_status"] == "candidate_only"
+    assert artifact["reviewer_id"] == "review-god"
+    assert artifact["review_verdict"]["decision"] == "merge"
+    assert artifact["review_verdict"]["summary"] == (
+        "Candidate output matches the lane contract."
+    )
+    assert artifact["review_verdict"]["evidence_refs"][0].endswith(
+        "graph-review-verdict.lane-runtime-api.review-intake.json"
+    )
+    assert "worker-candidate:run-1" in artifact["review_verdict"]["evidence_refs"]
+    assert "review_plane_store_not_updated" in artifact["manual_gaps"]
+    assert "patch_forward_lane_dag_not_linked" in artifact["manual_gaps"]
+    assert "end_to_end_execution_review_closure" in artifact["forbidden_claims"]
+    assert "ready_to_merge" in artifact["forbidden_claims"]
+    verdict_artifact = tmp_path / payload["artifacts"]["review_verdict"]
+    assert verdict_artifact.exists()
+    assert json.loads(verdict_artifact.read_text(encoding="utf-8")) == artifact
+    assert not (tmp_path / "review_plane.json").exists()
+    assert not (tmp_path / "feature_lanes.json").exists()
+
+
+def test_chat_api_god_room_lane_review_verdict_rejects_missing_intake(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    conv_id = _create_god_room_lane_dag(client, graph_id="graph-verdict-no-intake")
+
+    response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-verdict",
+        json={
+            "graph_id": "graph-verdict-no-intake",
+            "lane_id": "lane-runtime-api",
+            "reviewer_id": "review-god",
+            "decision": "merge",
+            "summary": "No intake exists.",
+            "evidence_refs": ["worker-candidate:run-1"],
+        },
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"]["code"] == "god_room_lane_review_intake_not_found"
+    assert not (
+        tmp_path
+        / "reports"
+        / "god_room_review_verdicts"
+        / "graph-verdict-no-intake.lane-runtime-api.review-verdict.json"
+    ).exists()
+
+
+def test_chat_api_god_room_lane_review_verdict_rejects_uncited_evidence(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    conv_id = _create_god_room_lane_dag(client, graph_id="graph-verdict-uncited")
+    assert client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-intake",
+        json={
+            "graph_id": "graph-verdict-uncited",
+            "lane_id": "lane-runtime-api",
+            "worker_candidate_refs": ["worker-candidate:run-1"],
+        },
+    ).status_code == 201
+
+    response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-verdict",
+        json={
+            "graph_id": "graph-verdict-uncited",
+            "lane_id": "lane-runtime-api",
+            "reviewer_id": "review-god",
+            "decision": "merge",
+            "summary": "Evidence does not cite intake inputs.",
+            "evidence_refs": ["worker-candidate:other-run"],
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == (
+        "god_room_lane_review_verdict_missing_intake_evidence"
+    )
+
+
+@pytest.mark.parametrize(
+    ("decision", "expected_code"),
+    [
+        (
+            "patch-forward",
+            "god_room_lane_review_verdict_missing_patch_instructions",
+        ),
+        ("terminate", "god_room_lane_review_verdict_missing_terminate_reason"),
+    ],
+)
+def test_chat_api_god_room_lane_review_verdict_requires_decision_details(
+    tmp_path: Path,
+    decision: str,
+    expected_code: str,
+) -> None:
+    client = _client(tmp_path)
+    conv_id = _create_god_room_lane_dag(client, graph_id=f"graph-verdict-{decision}")
+    assert client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-intake",
+        json={
+            "graph_id": f"graph-verdict-{decision}",
+            "lane_id": "lane-runtime-api",
+            "worker_candidate_refs": ["worker-candidate:run-1"],
+        },
+    ).status_code == 201
+
+    response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-verdict",
+        json={
+            "graph_id": f"graph-verdict-{decision}",
+            "lane_id": "lane-runtime-api",
+            "reviewer_id": "review-god",
+            "decision": decision,
+            "summary": "Decision is missing required follow-up detail.",
+            "evidence_refs": ["worker-candidate:run-1"],
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == expected_code
+    assert not (
+        tmp_path
+        / "reports"
+        / "god_room_review_verdicts"
+        / f"graph-verdict-{decision}.lane-runtime-api.review-verdict.json"
     ).exists()
 
 

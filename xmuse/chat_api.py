@@ -34,6 +34,7 @@ from xmuse_core.chat.api_models import (
     GodRoomLaneDagRequest,
     GodRoomLaneRecoveryRequest,
     GodRoomLaneReviewIntakeRequest,
+    GodRoomLaneReviewVerdictRequest,
     GodRoomMemoryPlanRequest,
     GodRoomProviderInvocationCaptureRequest,
     GodRoomProviderInvocationRequest,
@@ -145,7 +146,12 @@ from xmuse_core.structuring.mission_blueprint_v1 import (
     MissionBlueprintV1,
     render_mission_blueprint_markdown,
 )
-from xmuse_core.structuring.models import FeaturePlanFeature, FeaturePlanProposalApproval
+from xmuse_core.structuring.models import (
+    FeaturePlanFeature,
+    FeaturePlanProposalApproval,
+    ReviewDecision,
+    ReviewVerdict,
+)
 from xmuse_core.structuring.planner import build_lane_graph
 from xmuse_core.structuring.projection import project_ready_lanes
 
@@ -699,6 +705,12 @@ def _dedupe_text(values: list[str]) -> list[str]:
     return result
 
 
+def _string_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, str) and item.strip()]
+
+
 def _role_template_has_participants(base_dir: Path, template_id: str) -> bool:
     store = _store(base_dir)
     participant_store = _participant_store(base_dir)
@@ -1137,6 +1149,145 @@ def _build_god_room_lane_review_intake(
         "review_intake": intake_payload,
         "artifacts": {
             "review_intake": str(intake_path.relative_to(base_dir)),
+        },
+    }
+
+
+def _build_god_room_lane_review_verdict(
+    base_dir: Path,
+    *,
+    conversation_id: str,
+    request: GodRoomLaneReviewVerdictRequest,
+) -> dict[str, object]:
+    if not _conversation_exists(_store(base_dir), conversation_id):
+        raise HTTPException(status_code=404, detail="conversation not found")
+    intake_path = _god_room_lane_review_intake_artifact_path(
+        base_dir,
+        graph_id=request.graph_id,
+        lane_id=request.lane_id,
+    )
+    if not intake_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "god_room_lane_review_intake_not_found",
+                "message": "review verdict requires a GOD room lane review intake artifact",
+            },
+        )
+    try:
+        intake = json.loads(intake_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "god_room_lane_review_intake_invalid",
+                "message": str(exc),
+            },
+        ) from exc
+    if not isinstance(intake, dict):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "god_room_lane_review_intake_invalid",
+                "message": "review intake artifact must be an object",
+            },
+        )
+    if (
+        intake.get("conversation_id") != conversation_id
+        or intake.get("graph_id") != request.graph_id
+        or intake.get("lane_id") != request.lane_id
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "god_room_lane_review_intake_mismatch",
+                "message": "review intake artifact does not match request scope",
+            },
+        )
+    reviewer_inputs = set(_string_list(intake.get("reviewer_input_refs")))
+    cited_inputs = [ref for ref in request.evidence_refs if ref in reviewer_inputs]
+    if not cited_inputs:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "god_room_lane_review_verdict_missing_intake_evidence",
+                "message": "review verdict evidence_refs must cite review intake inputs",
+            },
+        )
+    if request.decision == "patch-forward" and not request.patch_instructions:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "god_room_lane_review_verdict_missing_patch_instructions",
+                "message": "patch-forward verdict requires patch_instructions",
+            },
+        )
+    if request.decision == "terminate" and not request.terminate_reason:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "god_room_lane_review_verdict_missing_terminate_reason",
+                "message": "terminate verdict requires terminate_reason",
+            },
+        )
+    verdict = ReviewVerdict(
+        id=f"god_room_review_{uuid.uuid4().hex}",
+        lane_id=request.lane_id,
+        decision=ReviewDecision(request.decision),
+        summary=request.summary,
+        evidence_refs=[
+            str(intake_path.relative_to(base_dir)),
+            *request.evidence_refs,
+        ],
+        patch_instructions=request.patch_instructions,
+        terminate_reason=request.terminate_reason,
+    )
+    verdict_payload: dict[str, object] = {
+        "schema_version": "xmuse.god_room_lane_review_verdict.v1",
+        "source_authority": "god_room_lane_review_intake_artifact",
+        "proof_level": "contract_proof",
+        "review_truth_status": "independent_review_artifact",
+        "server_truth_status": "not_server_truth",
+        "conversation_id": conversation_id,
+        "graph_id": request.graph_id,
+        "lane_id": request.lane_id,
+        "reviewer_id": request.reviewer_id,
+        "review_intake_artifact": str(intake_path.relative_to(base_dir)),
+        "review_intake_source_authority": intake.get("source_authority"),
+        "candidate_truth_status": intake.get("candidate_truth_status"),
+        "review_verdict": verdict.model_dump(mode="json"),
+        "required_follow_up": (
+            "append_patch_forward_lane"
+            if request.decision == "patch-forward"
+            else "release_evidence_link"
+        ),
+        "manual_gaps": [
+            "review_plane_store_not_updated",
+            "lane_status_not_updated",
+            "patch_forward_lane_dag_not_linked",
+            "release_evidence_not_linked",
+        ],
+        "forbidden_claims": [
+            "end_to_end_execution_review_closure",
+            "ready_to_merge",
+            "pr_merged",
+            "github_review_truth",
+        ],
+    }
+    verdict_path = _write_god_room_lane_review_verdict_artifact(
+        base_dir,
+        graph_id=request.graph_id,
+        lane_id=request.lane_id,
+        payload=verdict_payload,
+    )
+    return {
+        "source_authority": "god_room_lane_review_intake_artifact",
+        "conversation_id": conversation_id,
+        "graph_id": request.graph_id,
+        "lane_id": request.lane_id,
+        "review_verdict": verdict_payload,
+        "artifacts": {
+            "review_verdict": str(verdict_path.relative_to(base_dir)),
         },
     }
 
@@ -1865,13 +2016,50 @@ def _write_god_room_lane_review_intake_artifact(
     lane_id: str,
     payload: dict[str, object],
 ) -> Path:
-    path = (
+    path = _god_room_lane_review_intake_artifact_path(
+        base_dir,
+        graph_id=graph_id,
+        lane_id=lane_id,
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def _god_room_lane_review_intake_artifact_path(
+    base_dir: Path,
+    *,
+    graph_id: str,
+    lane_id: str,
+) -> Path:
+    return (
         base_dir
         / "reports"
         / "god_room_review_intake"
         / (
             f"{_artifact_path_id(graph_id)}."
             f"{_artifact_path_id(lane_id)}.review-intake.json"
+        )
+    )
+
+
+def _write_god_room_lane_review_verdict_artifact(
+    base_dir: Path,
+    *,
+    graph_id: str,
+    lane_id: str,
+    payload: dict[str, object],
+) -> Path:
+    path = (
+        base_dir
+        / "reports"
+        / "god_room_review_verdicts"
+        / (
+            f"{_artifact_path_id(graph_id)}."
+            f"{_artifact_path_id(lane_id)}.review-verdict.json"
         )
     )
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -2938,6 +3126,20 @@ def create_app(
         request: GodRoomLaneReviewIntakeRequest,
     ) -> dict[str, object]:
         return _build_god_room_lane_review_intake(
+            root,
+            conversation_id=conversation_id,
+            request=request,
+        )
+
+    @app.post(
+        "/api/chat/conversations/{conversation_id}/god-room/lane-dag/review-verdict",
+        status_code=status.HTTP_201_CREATED,
+    )
+    def build_god_room_lane_review_verdict(
+        conversation_id: str,
+        request: GodRoomLaneReviewVerdictRequest,
+    ) -> dict[str, object]:
+        return _build_god_room_lane_review_verdict(
             root,
             conversation_id=conversation_id,
             request=request,

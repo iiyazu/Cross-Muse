@@ -304,6 +304,39 @@ class GodRoomLaneReviewIntakeRequest(BaseModel):
         return value
 
 
+class GodRoomLaneReviewVerdictRequest(BaseModel):
+    graph_id: str = Field(min_length=1)
+    lane_id: str = Field(min_length=1)
+    reviewer_id: str = Field(min_length=1)
+    decision: Literal["merge", "rework", "patch-forward", "terminate"]
+    summary: str = Field(min_length=1)
+    evidence_refs: list[str] = Field(min_length=1)
+    patch_instructions: str | None = None
+    terminate_reason: str | None = None
+
+    @field_validator("graph_id", "lane_id", mode="before")
+    @classmethod
+    def _strip_storage_id(cls, value: object) -> object:
+        return _strip_required_storage_id(value)
+
+    @field_validator("reviewer_id", "summary", mode="before")
+    @classmethod
+    def _strip_required_text(cls, value: object) -> object:
+        return _strip_required_string(value)
+
+    @field_validator("patch_instructions", "terminate_reason", mode="before")
+    @classmethod
+    def _strip_optional_text(cls, value: object) -> object:
+        return _strip_optional_string(value)
+
+    @field_validator("evidence_refs", mode="before")
+    @classmethod
+    def _strip_evidence_refs(cls, value: object) -> object:
+        if isinstance(value, list):
+            return [_strip_required_string(item) for item in value]
+        return value
+
+
 class GodRoomMemoryPlanRequest(BaseModel):
     graph_id: str = Field(min_length=1)
     repo_id: str = Field(min_length=1)

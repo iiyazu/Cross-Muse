@@ -763,6 +763,11 @@ room events，不由前端 projection 提供：
   的 `review_truth_status` 固定为
   `pending_independent_review`，worker output 仍是 `candidate_only`；它不写
   `review_plane.json`，不生成 `ReviewVerdict`，不改变 lane status。
+- `POST /god-room/lane-dag/review-verdict` 要求已存在 review intake artifact，
+  且 `evidence_refs` 必须引用 intake 的 reviewer input refs。成功时写
+  `reports/god_room_review_verdicts/*.review-verdict.json`，其中
+  `server_truth_status = "not_server_truth"`；它不写 `review_plane.json`，
+  不改变 lane status，不代表 GitHub review/merge truth。
 - `POST /god-room/memoryos-plan` 使用 GOD room event store、GOD room freeze
   resolution、laneDAG artifact 和 recovery sidecar 作为输入，生成
   `source_authority = "god_room_memoryos_plan_contract"` 的 governed
