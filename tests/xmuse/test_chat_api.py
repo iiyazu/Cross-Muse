@@ -1645,6 +1645,13 @@ def test_chat_api_god_room_lane_recovery_requires_refactor_from_lane_budget(
     assert response.status_code == 201
     payload = response.json()
     assert payload["source_authority"] == "lane_dag_artifact"
+    assert payload["blueprint_proof_level"] == "contract_proof"
+    assert "blueprint:bp-god-room:1" in payload["source_refs"]
+    assert any(
+        ref.startswith("god-room-event:evt-freeze")
+        for ref in payload["source_refs"]
+    )
+    assert "budget:lane-runtime-api" in payload["source_refs"]
     assert payload["decision"]["decision"] == "refactor_required"
     assert payload["decision"]["retry_allowed"] is False
     assert payload["decision"]["failure_class"] == "contract_boundary_leak"
@@ -1657,7 +1664,11 @@ def test_chat_api_god_room_lane_recovery_requires_refactor_from_lane_budget(
     assert payload["artifacts"]["recovery"].endswith(
         "graph-recovery.lane-runtime-api.recovery.json"
     )
-    assert (tmp_path / payload["artifacts"]["recovery"]).exists()
+    recovery_artifact = tmp_path / payload["artifacts"]["recovery"]
+    assert recovery_artifact.exists()
+    artifact_payload = json.loads(recovery_artifact.read_text(encoding="utf-8"))
+    assert artifact_payload["blueprint_proof_level"] == "contract_proof"
+    assert artifact_payload["source_refs"] == payload["source_refs"]
     assert not (tmp_path / "feature_lanes.json").exists()
 
 

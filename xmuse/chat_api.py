@@ -980,12 +980,22 @@ def _evaluate_god_room_lane_recovery(
         failures=request.failures,
         runtime_seconds=request.runtime_seconds,
     )
+    authority_refs = _dedupe_text(
+        [
+            plan.blueprint_ref,
+            *plan.source_refs,
+            *contract.source_refs,
+            *decision.source_refs,
+        ]
+    )
     recovery_payload = {
         "schema_version": "xmuse.god_room_lane_recovery.v1",
         "source_authority": "lane_dag_artifact",
         "conversation_id": conversation_id,
         "graph_id": request.graph_id,
         "lane_id": request.lane_id,
+        "blueprint_proof_level": plan.blueprint_proof_level,
+        "source_refs": authority_refs,
         "decision": decision.model_dump(mode="json"),
         "lane_contract": contract.model_dump(mode="json"),
         "failure_count": len(request.failures),
@@ -1001,6 +1011,8 @@ def _evaluate_god_room_lane_recovery(
         "conversation_id": conversation_id,
         "graph_id": request.graph_id,
         "lane_id": request.lane_id,
+        "blueprint_proof_level": plan.blueprint_proof_level,
+        "source_refs": authority_refs,
         "decision": decision.model_dump(mode="json"),
         "lane_dag": plan.model_dump(mode="json"),
         "artifacts": {"recovery": str(recovery_path.relative_to(base_dir))},

@@ -52,6 +52,8 @@ runtime、provider invocation、lane authority、review truth 完成。后续生
   `5f74e2d3911d1f919758ea397ff5c423149a20ce`
 - Local head at start of L7 laneDAG proof metadata slice:
   `914d1b2597bf2a011cb321b123391bd0d26a5b28`
+- Local head at start of L8 recovery lineage evidence slice:
+  `7d96d3045af4a02d12c045485ed78f072af9f093`
 - PR: <https://github.com/iiyazu/Cross-Muse/pull/43>
 - PR state last checked: draft/open/unmerged
 - PR merge state last checked: `CLEAN`
@@ -73,6 +75,7 @@ truth_snapshot:
   local_head_at_l4_l5_opt_in_live_route_repair: 7aef014e41b6de3caac032c3338c39accf1a8e90
   local_head_at_l6_freeze_proof_classification_slice: 5f74e2d3911d1f919758ea397ff5c423149a20ce
   local_head_at_l7_lanedag_proof_metadata_slice: 914d1b2597bf2a011cb321b123391bd0d26a5b28
+  local_head_at_l8_recovery_lineage_evidence_slice: 7d96d3045af4a02d12c045485ed78f072af9f093
   pr: 43
   pr_url: https://github.com/iiyazu/Cross-Muse/pull/43
   pr_state: draft_open_unmerged
@@ -111,7 +114,7 @@ Evidence boundaries:
 | L5 | Speaker Response Capture / Replay Proof | Artifact-backed capture plus composed L4-to-L5 route exists | Rejects contract-only L4 artifacts; appends/replays only server-written real-proof artifacts; one local opt-in live Codex artifact was captured into durable replay | Not server-bound | Capture/replay contract proof plus isolated Codex opt-in live capture proof |
 | L6 | Blueprint Freeze Authority | Typed freeze artifact exists with proof-level classification | Single-turn provider-backed Codex speech can produce an opt-in live freeze artifact; fresh natural multi-GOD freeze still missing | Not server-bound | Freeze contract proof plus isolated opt-in live freeze proof |
 | L7 | Feature / LaneDAG Authority | LaneDAG/contract artifact exists with upstream freeze proof metadata | Live L4/L5/L6 proof metadata can flow into laneDAG without writing `feature_lanes.json`; dispatch/review authority still not unified | Not server-bound | LaneDAG contract proof plus isolated opt-in live upstream-proof propagation |
-| L8 | Lane Runtime Enforcement / Recovery | Recovery contract/API exists | Runner/supervisor enforcement incomplete | Not server-bound | Recovery policy proof |
+| L8 | Lane Runtime Enforcement / Recovery | Recovery contract/API exists and recovery artifacts carry laneDAG proof lineage | Recovery API consumes laneDAG contract/budget and preserves blueprint proof/source refs; runner/supervisor enforcement still incomplete | Not server-bound | Recovery policy proof plus laneDAG-lineage evidence proof |
 | L9 | Execution / Review / Patch-Forward | Review plane exists | GOD-room-originated lane chain missing | Not server-bound | Review artifact/read-model proof |
 | L10 | MemoryOS / Release Evidence / GitHub Truth | Evidence bundle semantics exist | Live MemoryOS trace missing | PR open/unmerged; CI truth only for verified remote head | Replay/readiness proof with explicit gaps |
 | L11 | Operator Cockpit / TUI / Overnight Soak | TUI/control slices exist | Complete cockpit/soak missing | Depends on L10 | Operator projection/control proof only |
@@ -600,11 +603,15 @@ Use these as implementation references, not as xmuse package dependencies:
 - Current implemented evidence:
   - Lane recovery contracts classify retry, suspend, manual_gap, and
     refactor_required.
+  - GOD-room lane recovery API consumes the laneDAG artifact and lane runtime
+    contract budget, then writes recovery artifacts with
+    `blueprint_proof_level` and laneDAG/source refs.
   - Goal-stage and development policy require direct refactor for repeated
     failure/demo-grade production paths.
 - Missing production closure:
   - Recovery is not yet enforced through every supervisor, runner, dispatch,
     and review path.
+  - No live runner proof yet shows a blocked retry after refactor_required.
 - Proof required to close:
   - A real lane failure sequence enters recovery/refactor_required and blocks
     further same-path retries until a refactor artifact exists.
