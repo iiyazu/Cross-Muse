@@ -51,7 +51,9 @@ create_app = chat_api.create_app
 
 
 def _client(tmp_path: Path) -> TestClient:
-    return TestClient(create_app(base_dir=tmp_path))
+    app = create_app(base_dir=tmp_path)
+    app.state.test_base_dir = tmp_path
+    return TestClient(app)
 
 
 def _write_json(path: Path, payload: object) -> None:
@@ -84,6 +86,21 @@ def _seed_room_selected_god_binding(
         room_binding=binding,
     )
     return binding.binding_ref
+
+
+def _seed_room_selected_god_bindings(
+    tmp_path: Path,
+    *,
+    room: dict[str, object],
+    roles: tuple[str, ...] = ("architect", "review", "execute"),
+) -> None:
+    participants = {participant["role"]: participant for participant in room["participants"]}  # type: ignore[index]
+    for role in roles:
+        _seed_room_selected_god_binding(
+            tmp_path,
+            room_id=str(room["room_id"]),
+            participant=participants[role],
+        )
 
 
 def _manual_god_cli_registration_payload() -> dict[str, object]:
@@ -1353,6 +1370,7 @@ def test_chat_api_god_room_freeze_blueprint_persists_resolution_from_room_events
     ).json()
     conv_id = conversation["id"]
     room = client.post(f"/api/chat/conversations/{conv_id}/god-room").json()["room"]
+    _seed_room_selected_god_bindings(tmp_path, room=room)
     participants = {participant["role"]: participant for participant in room["participants"]}
 
     for event in [
@@ -1442,6 +1460,89 @@ def test_chat_api_god_room_freeze_blueprint_persists_resolution_from_room_events
     assert read_model["resolutions"][-1]["resolution_id"] == payload["resolution"]["id"]
 
 
+def test_chat_api_god_room_freeze_blueprint_blocks_manual_gap_event_proof(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    conversation = client.post(
+        "/api/chat/conversations",
+        json={"title": "GOD room manual-gap freeze"},
+    ).json()
+    conv_id = conversation["id"]
+    room = client.post(f"/api/chat/conversations/{conv_id}/god-room").json()["room"]
+    participants = {participant["role"]: participant for participant in room["participants"]}
+
+    for event in [
+        {
+            "event_id": "evt-manual-propose",
+            "room_id": room["room_id"],
+            "conversation_id": conv_id,
+            "participant_id": participants["architect"]["participant_id"],
+            "god_id": participants["architect"]["god_id"],
+            "actor_kind": "god",
+            "event_type": "speak",
+            "timestamp_utc": "2026-06-13T10:00:00Z",
+            "content": "This unbound public transcript must not freeze.",
+            "source_refs": [f"conversation:{conv_id}", "message:evt-manual-propose"],
+            "cli_id": participants["architect"]["cli_id"],
+            "provider_profile": "codex",
+            "payload": {
+                "goal": "Do not freeze an unbound public transcript.",
+                "scope": ["GOD room event proof"],
+                "acceptance_contracts": ["Manual-gap event proof blocks freeze."],
+            },
+        },
+        {
+            "event_id": "evt-manual-freeze",
+            "room_id": room["room_id"],
+            "conversation_id": conv_id,
+            "participant_id": participants["review"]["participant_id"],
+            "god_id": participants["review"]["god_id"],
+            "actor_kind": "god",
+            "event_type": "freeze_requested",
+            "timestamp_utc": "2026-06-13T10:03:00Z",
+            "content": "Freeze without selected-GOD binding.",
+            "source_refs": [f"conversation:{conv_id}", "message:evt-manual-freeze"],
+            "causal_parent_id": "evt-manual-propose",
+            "cli_id": participants["review"]["cli_id"],
+            "provider_profile": "codex",
+            "payload": {
+                "freeze_target_ref": "blueprint:bp-manual-gap:1",
+                "goal": "Do not freeze an unbound public transcript.",
+                "scope": ["GOD room event proof"],
+                "acceptance_contracts": ["Manual-gap event proof blocks freeze."],
+            },
+        },
+    ]:
+        assert client.post(
+            f"/api/chat/conversations/{conv_id}/god-room/events",
+            json=event,
+        ).status_code in {200, 201}
+    stored_events = client.get(f"/api/chat/conversations/{conv_id}/god-room").json()[
+        "room"
+    ]["events"]
+    assert stored_events[0]["payload"]["public_append_authority"]["proof_level"] == (
+        "manual_gap"
+    )
+
+    response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/freeze-blueprint",
+        json={"blueprint_id": "bp-manual-gap", "revision": 1},
+    )
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["code"] == "god_room_blueprint_freeze_blocked"
+    assert detail["artifact"]["status"] == "manual_gap"
+    assert detail["artifact"]["proof_level"] == "manual_gap"
+    assert detail["artifact"]["blocked_reason"] == (
+        "GOD room transcript contains manual-gap event proof"
+    )
+    assert detail["artifact"]["blockers"][0].startswith(
+        "manual-gap event proof evt-manual-propose"
+    )
+
+
 def test_chat_api_god_room_freeze_blueprint_blocks_unresolved_challenge(
     tmp_path: Path,
 ) -> None:
@@ -1452,6 +1553,7 @@ def test_chat_api_god_room_freeze_blueprint_blocks_unresolved_challenge(
     ).json()
     conv_id = conversation["id"]
     room = client.post(f"/api/chat/conversations/{conv_id}/god-room").json()["room"]
+    _seed_room_selected_god_bindings(tmp_path, room=room)
     participants = {participant["role"]: participant for participant in room["participants"]}
 
     for event in [
@@ -1545,6 +1647,7 @@ def test_chat_api_god_room_lane_dag_builds_from_freeze_resolution_without_projec
     ).json()
     conv_id = conversation["id"]
     room = client.post(f"/api/chat/conversations/{conv_id}/god-room").json()["room"]
+    _seed_room_selected_god_bindings(tmp_path, room=room)
     participants = {participant["role"]: participant for participant in room["participants"]}
     blueprint_ref = "blueprint:bp-god-room:1"
 
@@ -2707,6 +2810,7 @@ def _create_god_room_lane_dag(client: TestClient, *, graph_id: str) -> str:
     ).json()
     conv_id = conversation["id"]
     room = client.post(f"/api/chat/conversations/{conv_id}/god-room").json()["room"]
+    _seed_room_selected_god_bindings(client.app.state.test_base_dir, room=room)
     participants = {participant["role"]: participant for participant in room["participants"]}
     blueprint_ref = "blueprint:bp-god-room:1"
 

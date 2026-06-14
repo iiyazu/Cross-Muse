@@ -74,6 +74,7 @@ def test_compile_blueprint_freeze_from_room_events_preserves_decision_context() 
 
 
 def test_compile_blueprint_freeze_marks_provider_backed_speech_as_opt_in_live() -> None:
+    # This event shape is produced by L5 capture, not public event append.
     artifact = compile_blueprint_freeze_from_god_room_events(
         blueprint_id="bp-god-room",
         revision=1,
@@ -87,6 +88,10 @@ def test_compile_blueprint_freeze_marks_provider_backed_speech_as_opt_in_live() 
                 ],
                 payload={
                     "body": "Live provider speech proposes the blueprint.",
+                    "provider_response_artifact_ref": (
+                        "reports/provider-responses/live.json"
+                    ),
+                    "binding_revision": "binding:god-room:conv-1:part-architect:1",
                     "goal": "Build GOD room runtime.",
                     "scope": ["GOD room event contract"],
                     "acceptance_contracts": ["Freeze records live speech lineage."],
@@ -152,6 +157,71 @@ def test_compile_blueprint_freeze_ignores_non_speak_provider_proof_markers() -> 
 
     assert artifact.status is GodRoomBlueprintFreezeStatus.FROZEN
     assert artifact.proof_level == "contract_proof"
+
+
+def test_compile_blueprint_freeze_blocks_manual_gap_event_proof() -> None:
+    artifact = compile_blueprint_freeze_from_god_room_events(
+        blueprint_id="bp-god-room",
+        revision=1,
+        events=[
+            _event(
+                "evt-manual-proposal",
+                event_type=GodRoomEventKind.SPEAK,
+                payload={
+                    "goal": "Do not freeze manual transcript as authority.",
+                    "scope": ["GOD room event proof"],
+                    "acceptance_contracts": ["Manual-gap event blocks freeze."],
+                    "public_append_authority": {
+                        "schema_version": "xmuse.god_room_public_append_authority.v1",
+                        "source_authority": (
+                            "chat_api_public_event_append+room_selected_god_binding_manual_gap"
+                        ),
+                        "status": "manual_gap",
+                        "proof_level": "manual_gap",
+                        "room_id": "room-1",
+                        "participant_id": "part-architect",
+                        "god_id": "god-architect",
+                        "binding_revision": None,
+                        "account_ref": None,
+                        "cli_command": None,
+                        "model": None,
+                        "variant": None,
+                        "blocked_reason": "room selected GOD binding unresolved",
+                        "source_refs": [],
+                        "manual_gaps": ["room_selected_god_binding_unresolved"],
+                        "forbidden_claims": [
+                            "provider_invocation_live_proof",
+                            "natural_groupchat_closure",
+                        ],
+                    },
+                },
+            ),
+            _event(
+                "evt-freeze",
+                event_type=GodRoomEventKind.FREEZE_REQUESTED,
+                participant_id="part-review",
+                god_id="god-review",
+                causal_parent_id="evt-manual-proposal",
+                payload={
+                    "freeze_target_ref": "blueprint:bp-god-room:1",
+                    "goal": "Do not freeze manual transcript as authority.",
+                    "scope": ["GOD room event proof"],
+                    "acceptance_contracts": ["Manual-gap event blocks freeze."],
+                },
+            ),
+        ],
+    )
+
+    assert artifact.status is GodRoomBlueprintFreezeStatus.MANUAL_GAP
+    assert artifact.proof_level == "manual_gap"
+    assert artifact.blueprint is None
+    assert artifact.blocked_reason == "GOD room transcript contains manual-gap event proof"
+    assert artifact.blockers == [
+        (
+            "manual-gap event proof evt-manual-proposal: "
+            "chat_api_public_event_append+room_selected_god_binding_manual_gap"
+        )
+    ]
 
 
 def test_compile_blueprint_freeze_blocks_unresolved_challenge_as_manual_gap() -> None:

@@ -78,6 +78,8 @@ runtime、provider invocation、lane authority、review truth 完成。后续生
   `2ac5eebeb0226324e3bba5a3e62b73c7c27e3124`
 - Local head at start of L3 replay event proof projection slice:
   `515f1817e8c7fabf9c594b96ed044018eaefbc6f`
+- Local head at start of L6 freeze manual-gap event proof enforcement slice:
+  `604851eca5df99de1e0c9a3b51576037c8a3c93b`
 - PR: <https://github.com/iiyazu/Cross-Muse/pull/43>
 - PR state last checked: draft/open/unmerged
 - PR merge state last checked: `CLEAN`
@@ -112,6 +114,7 @@ truth_snapshot:
   local_head_at_l3_public_event_append_proof_boundary_slice: 9190723d7da2580fed392829f3367c32b52f82a9
   local_head_at_l3_public_event_append_authorship_classification_slice: 2ac5eebeb0226324e3bba5a3e62b73c7c27e3124
   local_head_at_l3_replay_event_proof_projection_slice: 515f1817e8c7fabf9c594b96ed044018eaefbc6f
+  local_head_at_l6_freeze_manual_gap_event_proof_enforcement_slice: 604851eca5df99de1e0c9a3b51576037c8a3c93b
   pr: 43
   pr_url: https://github.com/iiyazu/Cross-Muse/pull/43
   pr_state: draft_open_unmerged
@@ -417,9 +420,9 @@ Use these as implementation references, not as xmuse package dependencies:
   - Direct public append remains contract/manual proof only unless backed by
     the L4/L5 provider-capture route.
 - Next production slice:
-  - Extend authorship/proof projection to remaining GOD room writer paths where
-    they bypass Chat API classification, then drive fresh provider-backed
-    multi-GOD speech through the durable event store.
+  - Production append paths have been audited as public append classification
+    or L4/L5 capture paths. Next, drive fresh provider-backed multi-GOD speech
+    through the durable event store.
 - Downstream blocked until:
   - L6 blueprint freeze cannot claim live deliberation closure without fresh
     durable room event proof.
@@ -587,6 +590,10 @@ Use these as implementation references, not as xmuse package dependencies:
     `proof_level` deserialize as `manual_gap` when blocked and
     `contract_proof` otherwise; missing proof metadata does not become live
     proof.
+  - Freeze compilation now consumes L3 event proof projection and blocks
+    `manual_gap` event proof before persisting a frozen blueprint. This prevents
+    unresolved public GOD-room transcripts from being frozen as authoritative
+    blueprint evidence.
   - A local L6 smoke run in temp runtime root
     `/tmp/xmuse-live-l6-freeze-9anxog8k` used a live Codex L4/L5 speak event,
     appended `evt-freeze`, and produced a frozen
@@ -600,6 +607,8 @@ Use these as implementation references, not as xmuse package dependencies:
     transcript with real challenges and objections.
   - Release evidence does not yet preserve the L4/L5/L6 live lineage as a
     production proof bundle.
+  - Event proof enforcement does not re-verify L4 provider artifacts; it only
+    preserves the upstream event proof boundary.
 - Proof required to close:
   - A live transcript produces a freeze artifact preserving assumptions,
     blockers, rejected alternatives, source refs, and decision event lineage.

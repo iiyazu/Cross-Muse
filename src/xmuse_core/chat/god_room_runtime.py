@@ -202,12 +202,12 @@ def replay_god_room_turns(
         return _manual_gap_result(
             participants=participants,
             events=events,
-            event_proofs=_event_proofs(events),
+            event_proofs=project_god_room_event_proofs(events),
             blocked_reason="god room replay requires at least one participant",
         )
 
     ordered_events = sort_god_room_events(events)
-    event_proofs = _event_proofs(ordered_events)
+    event_proofs = project_god_room_event_proofs(ordered_events)
     for event in ordered_events:
         if event.participant_id not in roster:
             return _manual_gap_result(
@@ -339,7 +339,7 @@ def _manual_gap_result(
     )
 
 
-def _event_proofs(events: list[GodRoomEventV1]) -> list[GodRoomEventProof]:
+def project_god_room_event_proofs(events: list[GodRoomEventV1]) -> list[GodRoomEventProof]:
     return [_event_proof(event) for event in events]
 
 
@@ -490,6 +490,7 @@ __all__ = [
     "GodRoomParticipant",
     "GodRoomReplayResult",
     "GodRoomTurnDecision",
+    "project_god_room_event_proofs",
     "replay_god_room_turns",
     "sort_god_room_events",
 ]

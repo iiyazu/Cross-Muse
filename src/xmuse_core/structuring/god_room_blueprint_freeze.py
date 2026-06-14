@@ -5,7 +5,13 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from xmuse_core.chat.god_room_runtime import GodRoomEventKind, GodRoomEventV1, sort_god_room_events
+from xmuse_core.chat.god_room_runtime import (
+    GodRoomEventKind,
+    GodRoomEventProof,
+    GodRoomEventV1,
+    project_god_room_event_proofs,
+    sort_god_room_events,
+)
 from xmuse_core.structuring.mission_blueprint_v1 import (
     MissionBlueprintDecisionLogEntry,
     MissionBlueprintStatus,
@@ -72,6 +78,35 @@ def compile_blueprint_freeze_from_god_room_events(
 ) -> GodRoomBlueprintFreezeArtifactV1:
     ordered_events = sort_god_room_events(events)
     source_refs = _source_refs(ordered_events)
+    manual_gap_proofs = _manual_gap_event_proofs(ordered_events)
+    if manual_gap_proofs:
+        return GodRoomBlueprintFreezeArtifactV1(
+            status=GodRoomBlueprintFreezeStatus.MANUAL_GAP,
+            proof_level="manual_gap",
+            blueprint=None,
+            decision_event_id=_latest_freeze_event_id(ordered_events),
+            assumptions=_payload_texts(ordered_events, "assumptions"),
+            conflicts=[],
+            rejected_alternatives=_payload_texts(
+                ordered_events,
+                "rejected_alternatives",
+            ),
+            blockers=[
+                f"manual-gap event proof {proof.event_id}: {proof.source_authority}"
+                for proof in manual_gap_proofs
+            ],
+            source_refs=_dedupe(
+                [
+                    *source_refs,
+                    *[
+                        ref
+                        for proof in manual_gap_proofs
+                        for ref in proof.source_refs
+                    ],
+                ]
+            ),
+            blocked_reason="GOD room transcript contains manual-gap event proof",
+        )
     unresolved = _unresolved_challenges(ordered_events)
     conflicts = [_challenge_conflict(event) for event in unresolved]
     if unresolved:
@@ -180,13 +215,17 @@ def _source_refs(events: list[GodRoomEventV1]) -> list[str]:
     return _dedupe(refs)
 
 
+def _manual_gap_event_proofs(events: list[GodRoomEventV1]) -> list[GodRoomEventProof]:
+    return [
+        proof
+        for proof in project_god_room_event_proofs(events)
+        if proof.proof_level == "manual_gap"
+    ]
+
+
 def _freeze_proof_level(events: list[GodRoomEventV1]) -> ProofLevel:
-    for event in events:
-        if (
-            event.event_type is GodRoomEventKind.SPEAK
-            and event.payload.get("proof_level") == "real_provider_proof"
-            and any(ref.startswith("provider_response_artifact:") for ref in event.source_refs)
-        ):
+    for proof in project_god_room_event_proofs(events):
+        if proof.proof_level == "opt_in_live_proof":
             return "opt_in_live_proof"
     return "contract_proof"
 
