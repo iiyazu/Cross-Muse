@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import subprocess
 import time
 from collections.abc import Callable, Mapping, Sequence
@@ -150,6 +151,7 @@ def invoke_god_room_provider_speech(
         "real_provider_proof" if allow_live_provider_proof else "contract_proof"
     )
     provider_session_id = _optional_text(parsed.get("provider_session_id"))
+    raw_provider_session_id = _provider_session_id_from_output(stdout + "\n" + stderr)
     response_id = _optional_text(parsed.get("response_id")) or _response_id(
         invocation_id=invocation_id,
         content=content,
@@ -161,6 +163,7 @@ def invoke_god_room_provider_speech(
             "status": "completed",
             "proof_level": proof_level,
             "provider_session_id": provider_session_id
+            or raw_provider_session_id
             or attempt.provider_session_id
             or invocation_id,
             "provider_session_kind": _optional_text(parsed.get("provider_session_kind"))
@@ -344,6 +347,14 @@ def _json_objects(stdout: str) -> list[dict[str, Any]]:
         if isinstance(item, dict):
             values.append(item)
     return values
+
+
+def _provider_session_id_from_output(output: str) -> str | None:
+    for line in output.splitlines():
+        match = re.search(r"\bsession id:\s*([A-Za-z0-9._:-]+)", line, flags=re.I)
+        if match:
+            return match.group(1)
+    return None
 
 
 def _blocked_response(

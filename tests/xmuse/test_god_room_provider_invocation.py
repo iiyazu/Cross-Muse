@@ -280,6 +280,39 @@ def test_provider_invocation_records_nonzero_exit_without_live_claim(
     assert response.exit_code == 2
 
 
+def test_provider_invocation_extracts_codex_session_id_from_live_output(
+    tmp_path: Path,
+) -> None:
+    response = invoke_god_room_provider_speech(
+        attempt=_ready_attempt(
+            cli_command="codex",
+            model="gpt-5.4",
+            variant=None,
+        ),
+        prompt="Respond with JSON.",
+        workspace=tmp_path,
+        timeout_seconds=90,
+        timestamp_factory=_clock(),
+        allow_live_provider_proof=True,
+        runner=lambda *_: ProviderCommandResult(
+            returncode=0,
+            stdout='{"content": "Live Codex output is structured."}\n',
+            stderr=(
+                "OpenAI Codex v0.139.0\n"
+                "session id: 019ec421-536e-7722-b2bc-9ed1e3863586\n"
+            ),
+        ),
+    )
+
+    assert response.status == "completed"
+    assert response.proof_level == "real_provider_proof"
+    assert (
+        response.provider_session_id
+        == "019ec421-536e-7722-b2bc-9ed1e3863586"
+    )
+    assert response.content == "Live Codex output is structured."
+
+
 def _ready_attempt(
     *,
     cli_command: str,

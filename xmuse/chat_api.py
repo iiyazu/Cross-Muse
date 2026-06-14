@@ -1123,11 +1123,13 @@ def _build_god_room_speaker_attempt_from_runtime(
 def _invoke_god_room_provider_speech_from_runtime(
     base_dir: Path,
     *,
+    execution_worktree: Path,
     conversation_id: str,
     request: GodRoomProviderInvocationRequest,
 ) -> dict[str, object]:
     invocation = _build_god_room_provider_invocation_artifact(
         base_dir,
+        execution_worktree=execution_worktree,
         conversation_id=conversation_id,
         request=request,
     )
@@ -1149,11 +1151,13 @@ def _invoke_god_room_provider_speech_from_runtime(
 def _invoke_and_capture_god_room_provider_speech_from_runtime(
     base_dir: Path,
     *,
+    execution_worktree: Path,
     conversation_id: str,
     request: GodRoomProviderInvocationCaptureRequest,
 ) -> dict[str, object]:
     invocation = _build_god_room_provider_invocation_artifact(
         base_dir,
+        execution_worktree=execution_worktree,
         conversation_id=conversation_id,
         request=request,
     )
@@ -1162,7 +1166,12 @@ def _invoke_and_capture_god_room_provider_speech_from_runtime(
     room_id = invocation["room_id"]
     provider_response = invocation["provider_response_model"]
     provider_response_artifact_ref = invocation["provider_response_artifact_ref"]
-    runtime_continuity = invocation["runtime_continuity"]
+    runtime_continuity = _refresh_runtime_continuity_after_provider_invocation(
+        base_dir,
+        conversation_id=conversation_id,
+        provider_response=provider_response,
+        fallback=invocation["runtime_continuity"],
+    )
 
     def append_event(event: GodRoomEventV1) -> Literal["created", "duplicate"]:
         return event_store.append_event(event).status
@@ -1223,6 +1232,7 @@ def _invoke_and_capture_god_room_provider_speech_from_runtime(
 def _build_god_room_provider_invocation_artifact(
     base_dir: Path,
     *,
+    execution_worktree: Path,
     conversation_id: str,
     request: GodRoomProviderInvocationRequest,
 ) -> dict[str, object]:
@@ -1268,7 +1278,7 @@ def _build_god_room_provider_invocation_artifact(
     provider_response = invoke_god_room_provider_speech(
         attempt=attempt,
         prompt=prompt,
-        workspace=base_dir,
+        workspace=execution_worktree,
         timeout_seconds=request.timeout_seconds,
         prompt_refs=[prompt_ref],
         allow_live_provider_proof=request.allow_live_provider_proof,
@@ -1292,6 +1302,50 @@ def _build_god_room_provider_invocation_artifact(
         "provider_response_artifact_ref": str(artifact_path.relative_to(base_dir)),
         "runtime_continuity": runtime_continuity,
     }
+
+
+def _refresh_runtime_continuity_after_provider_invocation(
+    base_dir: Path,
+    *,
+    conversation_id: str,
+    provider_response: GodRoomProviderSpeechResponseV1,
+    fallback: dict[str, Any],
+) -> dict[str, Any]:
+    if (
+        provider_response.status != "completed"
+        or provider_response.proof_level != "real_provider_proof"
+        or not provider_response.target_participant_id
+        or not provider_response.provider_session_id
+    ):
+        return fallback
+    registry = _god_session_registry(base_dir)
+    try:
+        session = registry.find_by_conversation_participant(
+            conversation_id,
+            provider_response.target_participant_id,
+        )
+    except KeyError:
+        return fallback
+    registry.update_provider_binding(
+        session.god_session_id,
+        provider_session_id=provider_response.provider_session_id,
+        provider_session_kind=(
+            provider_response.provider_session_kind
+            or session.provider_session_kind
+            or "provider_invocation"
+        ),
+        provider_binding_status="active",
+        provider_binding_failure_reason=None,
+    )
+    god_cli_registry = build_default_god_cli_registry(
+        extra_registrations=_god_cli_registration_store(base_dir).list_registrations()
+    )
+    return build_selected_god_runtime_continuity_view(
+        conversation_id=conversation_id,
+        selections=_god_cli_selection_store(base_dir).list_records(),
+        sessions=registry.list(),
+        god_cli_registry=god_cli_registry,
+    )
 
 
 def _capture_god_room_speaker_response_from_runtime(
@@ -2628,6 +2682,7 @@ def create_app(
     ) -> dict[str, object]:
         return _invoke_god_room_provider_speech_from_runtime(
             root,
+            execution_worktree=execution_root,
             conversation_id=conversation_id,
             request=request,
         )
@@ -2642,6 +2697,7 @@ def create_app(
     ) -> dict[str, object]:
         return _invoke_and_capture_god_room_provider_speech_from_runtime(
             root,
+            execution_worktree=execution_root,
             conversation_id=conversation_id,
             request=request,
         )

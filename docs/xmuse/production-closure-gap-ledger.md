@@ -46,6 +46,8 @@ runtime、provider invocation、lane authority、review truth 完成。后续生
   `db9a759ac23e3e5f6095fe35ed5d373e64281505`
 - Local head at start of L5 provider invocation capture slice:
   `85e573c24c4c1abc955638b4feb609c6381580ff`
+- Local head at start of L4/L5 opt-in live route repair:
+  `7aef014e41b6de3caac032c3338c39accf1a8e90`
 - PR: <https://github.com/iiyazu/Cross-Muse/pull/43>
 - PR state last checked: draft/open/unmerged
 - PR merge state last checked: `CLEAN`
@@ -64,6 +66,7 @@ truth_snapshot:
   base_head: 2cfc9e3016ff1671758bd78b3b69f8ca922307c1
   local_head_at_l4_provider_invocation_slice: db9a759ac23e3e5f6095fe35ed5d373e64281505
   local_head_at_l5_provider_invocation_capture_slice: 85e573c24c4c1abc955638b4feb609c6381580ff
+  local_head_at_l4_l5_opt_in_live_route_repair: 7aef014e41b6de3caac032c3338c39accf1a8e90
   pr: 43
   pr_url: https://github.com/iiyazu/Cross-Muse/pull/43
   pr_state: draft_open_unmerged
@@ -96,10 +99,10 @@ Evidence boundaries:
 | Layer | Name | Contract state | Runtime state | Server truth state | Allowed claim |
 |---|---|---|---|---|---|
 | L1 | Authority / Boundary Model | Partly documented | Enforcement uneven | Not server-bound | Boundary policy exists, not global enforcement |
-| L2 | GOD Identity / Provider Binding | Durable account/profile/room binding contract and store exist | Speaker attempt/capture consume binding fail-closed; live provider invocation still missing | Not server-bound | L2 contract proof; bounded worker/provider inventory only |
-| L3 | GOD Room Durable Event Runtime | Durable event contract/store exists | Live multi-GOD proof missing | Not server-bound | Durable room contract proof |
-| L4 | Speaker Selection / Provider Invocation | Selection/attempt evidence plus provider invocation artifact producer contract exist | Core/API producer emits response artifacts and fail-closed artifacts; opt-in live provider run not verified | Not server-bound | Provider invocation artifact contract/fail-closed proof only |
-| L5 | Speaker Response Capture / Replay Proof | Artifact-backed capture plus composed L4-to-L5 route exists | Rejects contract-only L4 artifacts; appends/replays only server-written real-proof artifacts; fresh live capture still depends on opt-in L4 proof | Not server-bound | Capture/replay contract proof only |
+| L2 | GOD Identity / Provider Binding | Durable account/profile/room binding contract and store exist | Speaker attempt/capture consume binding fail-closed; one isolated Codex L4/L5 live route consumed binding | Not server-bound | L2 contract proof; bounded worker/provider inventory only |
+| L3 | GOD Room Durable Event Runtime | Durable event contract/store exists | Single-turn opt-in live Codex L4/L5 route appended and replayed one `speak` event; live multi-GOD proof still missing | Not server-bound | Durable room contract proof plus isolated opt-in live speak replay proof |
+| L4 | Speaker Selection / Provider Invocation | Selection/attempt evidence plus provider invocation artifact producer contract exist | Core/API producer emits response artifacts, fail-closed artifacts, and one verified local opt-in live Codex artifact through execution worktree | Not server-bound | Provider invocation artifact contract/fail-closed proof plus isolated Codex opt-in live proof |
+| L5 | Speaker Response Capture / Replay Proof | Artifact-backed capture plus composed L4-to-L5 route exists | Rejects contract-only L4 artifacts; appends/replays only server-written real-proof artifacts; one local opt-in live Codex artifact was captured into durable replay | Not server-bound | Capture/replay contract proof plus isolated Codex opt-in live capture proof |
 | L6 | Blueprint Freeze Authority | Typed freeze artifact exists | Fresh live deliberation freeze missing | Not server-bound | Freeze contract proof |
 | L7 | Feature / LaneDAG Authority | LaneDAG/contract artifact exists | Dispatch/review authority not unified | Not server-bound | LaneDAG contract proof |
 | L8 | Lane Runtime Enforcement / Recovery | Recovery contract/API exists | Runner/supervisor enforcement incomplete | Not server-bound | Recovery policy proof |
@@ -112,12 +115,11 @@ Current closure audit:
 - Overall ledger verdict: valid as a gap ledger, not valid as closure proof.
 - Most mature areas: control surfaces, read models, evidence envelopes, and
   claim-boundary governance.
-- Least closed areas: provider-backed speech invocation, natural multi-GOD
-  deliberation, GOD-room-originated execution/review, live MemoryOS trace, and
-  GitHub merge truth.
-- Next production priority: run a configured opt-in live L4 provider invocation
-  through the composed L5 capture/replay route, or preserve the live provider
-  speech `manual_gap` before expanding L6/L11 claims.
+- Least closed areas: natural multi-GOD deliberation, GOD-room-originated
+  execution/review, live MemoryOS trace, and GitHub merge truth.
+- Next production priority: preserve the isolated L4/L5 live speech lineage in
+  downstream release evidence where appropriate, then advance L6 blueprint
+  freeze from durable room speech without claiming natural multi-GOD closure.
 
 ## L1 - Authority / Boundary Model
 
@@ -201,17 +203,18 @@ Current closure audit:
 - Missing production closure:
   - Durable binding authority is currently proven at `contract_proof` through
     JSON store, operator action, resolver, speaker attempt, and capture paths;
-    it is not yet proven by a live provider invocation.
+    it is also consumed by one isolated local Codex opt-in L4/L5 live speech
+    route.
   - Provider inventory/runtime evidence is not yet sufficient to upgrade a CLI
     into a peer-GOD role.
-  - Full closure still requires the L4 provider invocation artifact producer and
-    live/server evidence before any production peer-GOD speech proof can be
-    claimed.
+  - Full peer-GOD speech closure still requires the remaining escalation
+    conditions below, including non-`speak` deliberation acts and release
+    evidence.
 - Proof required to close:
   - Durable account/profile/selection artifacts exist and are consumed by GOD
-    room speaker selection and provider invocation. The current slice proves
-    selection/attempt/capture consumption at `contract_proof`; L4 live
-    invocation remains a gap.
+    room speaker selection and provider invocation. Current evidence proves
+    selection/attempt/capture consumption at `contract_proof` and one isolated
+    Codex opt-in live L4/L5 route.
   - Explicit binding resolution is fail-closed: unresolved `account_ref`,
     incompatible provider/model, missing CLI, or missing proof config produces
     `manual_gap` or `refactor_required`, not fallback environment scanning.
@@ -241,14 +244,13 @@ Current closure audit:
     GOD binding in paths not yet audited.
   - Treating L2 `contract_proof` as L4 provider invocation proof.
 - Next production slice:
-  - Implement the L4 provider invocation producer for
-    `xmuse.god_room_provider_speech_response.v1`, using
-    `RoomSelectedGodBinding` for actor/account/model/variant resolution and
-    preserving `manual_gap` for missing CLI/config/live proof.
+  - Use the isolated L4/L5 Codex live speech lineage as input for L6 freeze or
+    L10 evidence while preserving the missing natural multi-GOD and release
+    evidence gaps.
 - Downstream blocked until:
-  - L3 can store events and L4/L5 can consume selected binding, but L4 cannot
-    claim live GOD/provider speech until provider invocation artifacts are
-    produced by the selected binding path.
+  - L3-L5 can prove isolated live Codex speech, but natural peer-GOD room
+    closure remains blocked until multiple configured GOD acts and release
+    evidence exist.
 - Do not claim yet:
   - Do not claim OpenCode or any CLI is a peer-GOD solely because it appears in
     provider inventory.
@@ -327,6 +329,9 @@ Use these as implementation references, not as xmuse package dependencies:
   - `GodRoomEventStore` persists rooms/events and supports replay/snapshot
     export.
   - Chat API exposes room creation, event append, and snapshot routes.
+  - A local opt-in live Codex composed route run appended one provider-backed
+    `speak` event and returned room replay `ok` from a temp runtime root:
+    `/tmp/xmuse-live-l4-l5-uynpv_gj`.
 - Missing production closure:
   - Natural multi-GOD live runtime has not been proven over a long session.
   - Event append controls still need to prove they use L2 actor identity and L1
@@ -370,6 +375,16 @@ Use these as implementation references, not as xmuse package dependencies:
     `POST /api/chat/conversations/{conversation_id}/god-room/provider-invocation`
     and writes provider response artifacts under `reports/provider-responses/`
     without appending a durable `speak` event.
+  - The provider invocation API now uses the configured execution worktree for
+    provider CLI subprocesses while continuing to write runtime artifacts under
+    the xmuse runtime root; this prevents Codex/OpenCode from being launched in
+    untrusted state directories.
+  - A local opt-in live Codex smoke run through the composed L4/L5 route
+    produced a `completed` `real_provider_proof` L4 artifact with command
+    `codex exec -m gpt-5.4 -C /home/iiyatu/projects/python/xmuse`, provider
+    session id `019ec42d-b245-7d10-b3f8-f511fdceff5f`, and artifact ref
+    `reports/provider-responses/conv_b1a9fbccd098460abbb4e9ca84131d3f.evt-live-propose.provider-response-7e7a878796cfeebd.json`
+    in temp runtime root `/tmp/xmuse-live-l4-l5-uynpv_gj`.
   - Focused tests cover the contract producer success path, unresolved binding,
     unsupported CLI, missing CLI, nonzero exit, timeout, non-structured output
     as `raw_archive_only`, and L5 refusing to capture contract-only provider
@@ -377,12 +392,12 @@ Use these as implementation references, not as xmuse package dependencies:
   - Correct OpenCode/DeepSeek invocation format is documented:
     `opencode run --model opencode-go/deepseek-v4-flash --variant max ...`.
 - Missing production closure:
-  - The provider response artifact producer is proven at `contract_proof` and
-    fail-closed levels only; no fresh configured provider subprocess run has
-    been checked in this ledger update.
   - `allow_live_provider_proof=true` remains opt-in runtime behavior and must
-    not be claimed unless the resulting artifact, L5 capture, and L3 replay are
-    inspected from current runtime evidence.
+    not be claimed broadly unless the resulting artifact, L5 capture, and L3
+    replay are inspected from current runtime evidence.
+  - The verified live path is limited to a single local Codex invocation; it
+    does not prove OpenCode peer-GOD status, multi-GOD natural deliberation, or
+    long-running autonomous provider speech.
 - Proof required to close:
   - A provider invocation contract creates
     `xmuse.god_room_provider_speech_response.v1` from a real configured
@@ -410,15 +425,13 @@ Use these as implementation references, not as xmuse package dependencies:
   - Treating an L4 `contract_proof` artifact as L5-capturable
     `real_provider_proof`.
 - Next production slice:
-  - Run an opt-in live provider invocation only when the configured provider,
-    prompt, artifact, L5 capture, and L3 replay can all be inspected; otherwise
-    keep `provider_invocation_live_proof` as `manual_gap`.
+  - Carry the L4 provider artifact lineage into L6/L10 evidence without
+    expanding the claim beyond isolated local Codex opt-in live proof.
 - Downstream blocked until:
   - L5 can validate/capture live-proof artifacts, but cannot claim live
     provider speech from contract-only L4 artifacts.
 - Do not claim yet:
-  - Do not claim the GOD room can autonomously generate live provider speech
-    end to end.
+  - Do not claim natural multi-GOD autonomous provider speech end to end.
 
 ## L5 - Speaker Response Capture / Replay Proof
 
@@ -442,32 +455,38 @@ Use these as implementation references, not as xmuse package dependencies:
     ref into the L5 capture gate.
   - The composed route writes both provider response and speaker response
     artifacts and returns the durable room replay from `GodRoomEventStore`.
+  - The composed route now refreshes durable `GodSessionRegistry` provider
+    binding from a completed `real_provider_proof` L4 artifact before L5
+    capture, so L5 still enforces provider session lineage while accepting a
+    fresh session id created by the live provider invocation.
   - Focused tests prove that contract/manual L4 artifacts do not append speech,
     while a server-produced `real_provider_proof` artifact is captured into a
     durable `speak` event and appears in replay with binding lineage.
+  - A local opt-in live Codex route produced L5
+    `status=speak_event_appended`, `proof_level=real_provider_proof`, matching
+    provider session id `019ec42d-b245-7d10-b3f8-f511fdceff5f`, events
+    `["evt-live-propose", "evt-live-provider-speak"]`, and replay `ok`.
   - Release evidence cross-checks claimed appended `speak_event_id` against
     GOD room replay events.
 - Missing production closure:
-  - This layer still depends on L4 producing a fresh opt-in live provider
-    artifact from an actual configured provider subprocess before xmuse can
-    claim live-provider `speak` event closure.
   - Long natural multi-turn capture has not yet been proven.
+  - Release evidence does not yet preserve this live L4/L5 lineage as a
+    production release proof.
 - Proof required to close:
   - A fresh L4 invocation artifact is captured into L3 room events, then replay
     evidence confirms the appended `speak` event and lineage.
 - Current risk:
   - Capture proof can be overread as invocation proof.
 - Next production slice:
-  - Execute the composed route with a configured live provider, then preserve
-    the appended `speak_event_id`, L4 artifact ref, L5 artifact ref, and replay
-    evidence in release evidence.
+  - Preserve the appended `speak_event_id`, L4 artifact ref, L5 artifact ref,
+    and replay evidence in release evidence, then use the durable speech as the
+    input for L6 freeze without claiming natural deliberation.
 - Downstream blocked until:
   - L6 cannot claim real deliberation freeze if room speech was not captured
     through L4/L5 proof.
 - Do not claim yet:
-  - Do not claim live provider invocation proof from capture-only artifacts or
-    from the composed route unless the L4 artifact was produced by a verified
-    opt-in live provider run.
+  - Do not claim natural multi-turn provider speech or OpenCode peer-GOD proof
+    from this single Codex opt-in live route.
 
 ## L6 - Blueprint Freeze Authority
 

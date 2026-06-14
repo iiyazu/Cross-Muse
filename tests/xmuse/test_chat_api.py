@@ -902,9 +902,13 @@ def test_chat_api_god_room_provider_invocation_capture_preserves_manual_gap(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
+    execution_worktree = tmp_path / "trusted-worktree"
+    execution_worktree.mkdir()
+
     def fake_contract_provider_invocation(**kwargs):
         attempt = kwargs["attempt"]
         assert attempt.status == "ready_for_provider_attempt"
+        assert kwargs["workspace"] == execution_worktree
         return GodRoomProviderSpeechResponseV1(
             response_id="provider-response-contract-only",
             status="completed",
@@ -942,7 +946,9 @@ def test_chat_api_god_room_provider_invocation_capture_preserves_manual_gap(
         "invoke_god_room_provider_speech",
         fake_contract_provider_invocation,
     )
-    client = _client(tmp_path)
+    client = TestClient(
+        create_app(base_dir=tmp_path, execution_worktree=execution_worktree)
+    )
     conversation = client.post(
         "/api/chat/conversations",
         json={"title": "GOD room provider invocation capture gap"},
@@ -1036,7 +1042,7 @@ def test_chat_api_god_room_provider_invocation_capture_appends_server_artifact(
             proof_level="real_provider_proof",
             target_participant_id=attempt.target_participant_id,
             provider_profile_ref=attempt.provider_profile_ref,
-            provider_session_id=attempt.provider_session_id,
+            provider_session_id="provider-thread-fresh-live",
             provider_session_kind=attempt.provider_session_kind,
             content="I can now be captured from the server-written L4 artifact.",
             source_refs=[
@@ -1137,6 +1143,8 @@ def test_chat_api_god_room_provider_invocation_capture_appends_server_artifact(
     assert (tmp_path / provider_artifact_ref).exists()
     assert capture["status"] == "speak_event_appended"
     assert capture["proof_level"] == "real_provider_proof"
+    assert capture["provider_session_id"] == "provider-thread-fresh-live"
+    assert "provider_session:provider-thread-fresh-live" in capture["source_refs"]
     assert capture["provider_response_artifact_ref"] == provider_artifact_ref
     assert binding_ref in capture["source_refs"]
     events = payload["room"]["events"]
