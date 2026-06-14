@@ -33,6 +33,7 @@ from xmuse_core.chat.api_models import (
     GodRoomBlueprintFreezeRequest,
     GodRoomLaneDagRequest,
     GodRoomLaneRecoveryRequest,
+    GodRoomLaneReviewIntakeRequest,
     GodRoomMemoryPlanRequest,
     GodRoomProviderInvocationCaptureRequest,
     GodRoomProviderInvocationRequest,
@@ -1019,6 +1020,127 @@ def _evaluate_god_room_lane_recovery(
     }
 
 
+def _build_god_room_lane_review_intake(
+    base_dir: Path,
+    *,
+    conversation_id: str,
+    request: GodRoomLaneReviewIntakeRequest,
+) -> dict[str, object]:
+    if not _conversation_exists(_store(base_dir), conversation_id):
+        raise HTTPException(status_code=404, detail="conversation not found")
+    plan = _load_lane_dag_plan(base_dir, request.graph_id)
+    if str(plan.lane_graph.conversation_id) != conversation_id:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "god_room_lane_review_conversation_mismatch",
+                "message": "laneDAG artifact does not belong to the conversation",
+            },
+        )
+    contract = next(
+        (
+            lane_contract
+            for lane_contract in plan.lane_contracts
+            if lane_contract.lane_id == request.lane_id
+        ),
+        None,
+    )
+    if contract is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "god_room_lane_review_unknown_lane",
+                "message": f"lane runtime contract not found: {request.lane_id}",
+            },
+        )
+    recovery_decisions = _load_lane_recovery_decisions(
+        base_dir,
+        graph_id=request.graph_id,
+        lane_ids=[request.lane_id],
+    )
+    recovery_decision = recovery_decisions[-1] if recovery_decisions else None
+    candidate_refs = _dedupe_text(
+        [*request.worker_candidate_refs, *request.execution_artifact_refs]
+    )
+    manual_gaps: list[str] = []
+    if not candidate_refs:
+        manual_gaps.append("worker_candidate_evidence_missing")
+    if recovery_decision is None:
+        manual_gaps.append("lane_recovery_decision_missing")
+    source_authority = (
+        "lane_dag_artifact+lane_recovery_artifact"
+        if recovery_decision is not None
+        else "lane_dag_artifact"
+    )
+    reviewer_input_refs = _dedupe_text(
+        [
+            f"lane_dag:{request.graph_id}",
+            f"lane_contract:{request.lane_id}",
+            plan.blueprint_ref,
+            *plan.source_refs,
+            *contract.source_refs,
+            *candidate_refs,
+            *(
+                recovery_decision.source_refs
+                if recovery_decision is not None
+                else []
+            ),
+        ]
+    )
+    intake_payload: dict[str, object] = {
+        "schema_version": "xmuse.god_room_lane_review_intake.v1",
+        "source_authority": source_authority,
+        "proof_level": "contract_proof",
+        "review_truth_status": "pending_independent_review",
+        "conversation_id": conversation_id,
+        "graph_id": request.graph_id,
+        "lane_id": request.lane_id,
+        "blueprint_proof_level": plan.blueprint_proof_level,
+        "reviewer_id": request.reviewer_id,
+        "lane_contract": contract.model_dump(mode="json"),
+        "worker_candidate_refs": list(request.worker_candidate_refs),
+        "execution_artifact_refs": list(request.execution_artifact_refs),
+        "candidate_truth_status": "candidate_only",
+        "recovery_decision": (
+            recovery_decision.model_dump(mode="json")
+            if recovery_decision is not None
+            else None
+        ),
+        "required_review_checks": _dedupe_text(
+            [
+                contract.review_profile,
+                *contract.required_checks,
+                "review_worker_candidate_against_lane_contract",
+                "verify_no_worker_self_report_as_truth",
+            ]
+        ),
+        "reviewer_input_refs": reviewer_input_refs,
+        "manual_gaps": manual_gaps,
+        "forbidden_claims": [
+            "worker_output_is_review_truth",
+            "end_to_end_execution_review_closure",
+            "ready_to_merge",
+            "pr_merged",
+        ],
+    }
+    intake_path = _write_god_room_lane_review_intake_artifact(
+        base_dir,
+        graph_id=request.graph_id,
+        lane_id=request.lane_id,
+        payload=intake_payload,
+    )
+    return {
+        "source_authority": source_authority,
+        "conversation_id": conversation_id,
+        "graph_id": request.graph_id,
+        "lane_id": request.lane_id,
+        "review_intake": intake_payload,
+        "artifacts": {
+            "review_intake": str(intake_path.relative_to(base_dir)),
+        },
+    }
+
+
 def _build_god_room_memoryos_plan(
     base_dir: Path,
     *,
@@ -1728,6 +1850,30 @@ def _write_lane_recovery_artifact(
     payload: dict[str, object],
 ) -> Path:
     path = _lane_recovery_artifact_path(base_dir, graph_id=graph_id, lane_id=lane_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def _write_god_room_lane_review_intake_artifact(
+    base_dir: Path,
+    *,
+    graph_id: str,
+    lane_id: str,
+    payload: dict[str, object],
+) -> Path:
+    path = (
+        base_dir
+        / "reports"
+        / "god_room_review_intake"
+        / (
+            f"{_artifact_path_id(graph_id)}."
+            f"{_artifact_path_id(lane_id)}.review-intake.json"
+        )
+    )
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
@@ -2778,6 +2924,20 @@ def create_app(
         request: GodRoomLaneRecoveryRequest,
     ) -> dict[str, object]:
         return _evaluate_god_room_lane_recovery(
+            root,
+            conversation_id=conversation_id,
+            request=request,
+        )
+
+    @app.post(
+        "/api/chat/conversations/{conversation_id}/god-room/lane-dag/review-intake",
+        status_code=status.HTTP_201_CREATED,
+    )
+    def build_god_room_lane_review_intake(
+        conversation_id: str,
+        request: GodRoomLaneReviewIntakeRequest,
+    ) -> dict[str, object]:
+        return _build_god_room_lane_review_intake(
             root,
             conversation_id=conversation_id,
             request=request,

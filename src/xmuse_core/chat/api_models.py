@@ -273,6 +273,37 @@ class GodRoomLaneRecoveryRequest(BaseModel):
         return _strip_required_storage_id(value)
 
 
+class GodRoomLaneReviewIntakeRequest(BaseModel):
+    graph_id: str = Field(min_length=1)
+    lane_id: str = Field(min_length=1)
+    worker_candidate_refs: list[str] = Field(default_factory=list)
+    execution_artifact_refs: list[str] = Field(default_factory=list)
+    reviewer_id: str | None = None
+
+    @field_validator("graph_id", "lane_id", mode="before")
+    @classmethod
+    def _strip_storage_id(cls, value: object) -> object:
+        return _strip_required_storage_id(value)
+
+    @field_validator("reviewer_id", mode="before")
+    @classmethod
+    def _strip_optional_text(cls, value: object) -> object:
+        return _strip_optional_string(value)
+
+    @field_validator(
+        "worker_candidate_refs",
+        "execution_artifact_refs",
+        mode="before",
+    )
+    @classmethod
+    def _strip_ref_list(cls, value: object) -> object:
+        if value is None:
+            return []
+        if isinstance(value, list):
+            return [_strip_required_string(item) for item in value]
+        return value
+
+
 class GodRoomMemoryPlanRequest(BaseModel):
     graph_id: str = Field(min_length=1)
     repo_id: str = Field(min_length=1)

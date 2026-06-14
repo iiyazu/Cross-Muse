@@ -1699,6 +1699,121 @@ def test_chat_api_god_room_lane_recovery_records_manual_gap_without_failures(
     assert not (tmp_path / "feature_lanes.json").exists()
 
 
+def test_chat_api_god_room_lane_review_intake_keeps_worker_output_candidate_only(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    conv_id = _create_god_room_lane_dag(client, graph_id="graph-review-intake")
+    recovery = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/recovery",
+        json={
+            "graph_id": "graph-review-intake",
+            "lane_id": "lane-runtime-api",
+            "failures": [
+                {
+                    "lane_id": "lane-runtime-api",
+                    "attempt": 1,
+                    "failure_class": "missing_review_evidence",
+                    "reason": "Worker result requires independent review.",
+                    "source_refs": ["worker-candidate:run-1"],
+                }
+            ],
+        },
+    )
+    assert recovery.status_code == 201
+
+    response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-intake",
+        json={
+            "graph_id": "graph-review-intake",
+            "lane_id": "lane-runtime-api",
+            "worker_candidate_refs": ["worker-candidate:run-1"],
+            "execution_artifact_refs": ["artifacts/lane-runtime-api/result.json"],
+            "reviewer_id": "review-god",
+        },
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    intake = payload["review_intake"]
+    assert payload["source_authority"] == "lane_dag_artifact+lane_recovery_artifact"
+    assert intake["schema_version"] == "xmuse.god_room_lane_review_intake.v1"
+    assert intake["proof_level"] == "contract_proof"
+    assert intake["review_truth_status"] == "pending_independent_review"
+    assert intake["candidate_truth_status"] == "candidate_only"
+    assert intake["blueprint_proof_level"] == "contract_proof"
+    assert intake["manual_gaps"] == []
+    assert "worker_output_is_review_truth" in intake["forbidden_claims"]
+    assert "end_to_end_execution_review_closure" in intake["forbidden_claims"]
+    assert "review_worker_candidate_against_lane_contract" in intake[
+        "required_review_checks"
+    ]
+    assert "verify_no_worker_self_report_as_truth" in intake["required_review_checks"]
+    assert "worker-candidate:run-1" in intake["reviewer_input_refs"]
+    assert "artifacts/lane-runtime-api/result.json" in intake["reviewer_input_refs"]
+    assert intake["recovery_decision"]["decision"] == "retry"
+    intake_artifact = tmp_path / payload["artifacts"]["review_intake"]
+    assert intake_artifact.exists()
+    artifact_payload = json.loads(intake_artifact.read_text(encoding="utf-8"))
+    assert artifact_payload == intake
+    assert not (tmp_path / "review_plane.json").exists()
+    assert not (tmp_path / "feature_lanes.json").exists()
+
+
+def test_chat_api_god_room_lane_review_intake_preserves_manual_gap_without_candidate(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    conv_id = _create_god_room_lane_dag(client, graph_id="graph-review-gap")
+
+    response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-intake",
+        json={
+            "graph_id": "graph-review-gap",
+            "lane_id": "lane-runtime-api",
+        },
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["source_authority"] == "lane_dag_artifact"
+    intake = payload["review_intake"]
+    assert intake["source_authority"] == "lane_dag_artifact"
+    assert intake["review_truth_status"] == "pending_independent_review"
+    assert intake["candidate_truth_status"] == "candidate_only"
+    assert intake["recovery_decision"] is None
+    assert intake["manual_gaps"] == [
+        "worker_candidate_evidence_missing",
+        "lane_recovery_decision_missing",
+    ]
+    assert "worker_output_is_review_truth" in intake["forbidden_claims"]
+
+
+def test_chat_api_god_room_lane_review_intake_rejects_unknown_lane(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    conv_id = _create_god_room_lane_dag(client, graph_id="graph-review-unknown")
+
+    response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-intake",
+        json={
+            "graph_id": "graph-review-unknown",
+            "lane_id": "lane-missing",
+            "worker_candidate_refs": ["worker-candidate:run-1"],
+        },
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"]["code"] == "god_room_lane_review_unknown_lane"
+    assert not (
+        tmp_path
+        / "reports"
+        / "god_room_review_intake"
+        / "graph-review-unknown.lane-missing.review-intake.json"
+    ).exists()
+
+
 def test_chat_api_god_room_lane_recovery_rejects_graph_path_escape(
     tmp_path: Path,
 ) -> None:

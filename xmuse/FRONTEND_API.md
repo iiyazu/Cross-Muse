@@ -755,6 +755,14 @@ room events，不由前端 projection 提供：
   budget，并基于提交的 `LaneFailureEvidence` 生成 retry/suspended/manual_gap/
   refactor_required decision。它只写 `lane_graphs/*.recovery.json` artifact，
   不直接改变 lane status。
+- `POST /god-room/lane-dag/review-intake` 使用已保存 laneDAG artifact、lane
+  runtime contract、可选 recovery artifact 和 worker/execution candidate refs，
+  生成 review intake artifact。若 recovery artifact 存在，`source_authority`
+  为 `"lane_dag_artifact+lane_recovery_artifact"`；否则为
+  `"lane_dag_artifact"` 并记录 `lane_recovery_decision_missing`。该 artifact
+  的 `review_truth_status` 固定为
+  `pending_independent_review`，worker output 仍是 `candidate_only`；它不写
+  `review_plane.json`，不生成 `ReviewVerdict`，不改变 lane status。
 - `POST /god-room/memoryos-plan` 使用 GOD room event store、GOD room freeze
   resolution、laneDAG artifact 和 recovery sidecar 作为输入，生成
   `source_authority = "god_room_memoryos_plan_contract"` 的 governed
