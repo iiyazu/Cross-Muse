@@ -1110,6 +1110,7 @@ async def test_chat_screen_release_pack_accepts_god_room_runtime_payload(
             "room_tui=god-room/tui-projection.json "
             "room_speaker_attempt=god-room/speaker-attempt.json "
             "room_speaker_response=god-room/speaker-response.json "
+            "room_review_closure=god-room/review-closure.json "
             "room_closure_output=god-room/closure-evidence.json"
         )
         input_widget.post_message(input_widget.Submitted(input_widget, input_widget.value))
@@ -1128,6 +1129,7 @@ async def test_chat_screen_release_pack_accepts_god_room_runtime_payload(
                 "god_room_tui_projection": "god-room/tui-projection.json",
                 "god_room_speaker_attempt": "god-room/speaker-attempt.json",
                 "god_room_speaker_response": "god-room/speaker-response.json",
+                "god_room_review_closure": "god-room/review-closure.json",
                 "god_room_runtime_closure_evidence_output": (
                     "god-room/closure-evidence.json"
                 ),

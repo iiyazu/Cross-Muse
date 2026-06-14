@@ -1447,6 +1447,55 @@ def test_release_evidence_pack_converts_god_room_runtime_closure_into_replay_sec
             },
         },
     )
+    review_closure = tmp_path / "review-closure.json"
+    _write_json(
+        review_closure,
+        {
+            "schema_version": "xmuse.god_room_lane_review_closure.v1",
+            "source_authority": (
+                "god_room_lane_patch_forward_artifact+"
+                "patch_lane_review_verdict_artifact"
+            ),
+            "proof_level": "contract_proof",
+            "review_truth_status": "independent_review_artifact",
+            "execution_truth_status": "candidate_reviewed",
+            "server_truth_status": "not_server_truth",
+            "release_evidence_handoff_status": "candidate_input_ready",
+            "conversation_id": "conv-1",
+            "graph_id": "graph-runtime",
+            "failed_lane_id": "lane-runtime-evidence",
+            "terminal_lane_id": "lane-runtime-evidence-patch",
+            "patch_forward_artifact": "reports/god-room/patch-forward.json",
+            "patch_lane_review_intake_artifact": (
+                "reports/god-room/patch-intake.json"
+            ),
+            "patch_lane_review_verdict_artifact": (
+                "reports/god-room/patch-verdict.json"
+            ),
+            "candidate_refs": ["worker-candidate:patch-reviewed"],
+            "cited_candidate_refs": ["worker-candidate:patch-reviewed"],
+            "terminal_review_verdict": {
+                "id": "god_room_review_patch_merge",
+                "lane_id": "lane-runtime-evidence-patch",
+                "decision": "merge",
+                "summary": "Patch lane reviewed.",
+                "evidence_refs": ["worker-candidate:patch-reviewed"],
+            },
+            "manual_gaps": [
+                "review_plane_store_not_updated",
+                "lane_status_not_updated",
+                "release_evidence_not_linked",
+                "github_truth_not_checked",
+            ],
+            "forbidden_claims": [
+                "worker_output_is_review_truth",
+                "end_to_end_execution_review_closure",
+                "ready_to_merge",
+                "pr_merged",
+                "github_review_truth",
+            ],
+        },
+    )
 
     pack = capture_release_evidence_pack(
         artifacts_dir=tmp_path / "artifacts",
@@ -1460,6 +1509,7 @@ def test_release_evidence_pack_converts_god_room_runtime_closure_into_replay_sec
         god_room_tui_projection=tui,
         god_room_speaker_attempt=speaker_attempt,
         god_room_speaker_response=speaker_response,
+        god_room_review_closure=review_closure,
     )
 
     replay = json.loads(Path(pack["overnight_replay_bundle"]).read_text(encoding="utf-8"))
@@ -1481,6 +1531,16 @@ def test_release_evidence_pack_converts_god_room_runtime_closure_into_replay_sec
     assert closure["details"]["god_room_runtime_closure"]["speaker_response"][
         "status"
     ] == "speak_event_appended"
+    assert closure["details"]["god_room_runtime_closure"]["review_closure"][
+        "status"
+    ] == "candidate_input_ready"
+    assert closure["details"]["god_room_runtime_closure"]["review_closure"][
+        "execution_truth_status"
+    ] == "candidate_reviewed"
+    assert closure["details"]["god_room_runtime_closure"]["review_closure"][
+        "server_truth_status"
+    ] == "not_server_truth"
+    assert "worker-candidate:patch-reviewed" in closure["source_refs"]
 
 
 def test_release_evidence_pack_rejects_ambiguous_supervisor_sources(
@@ -1995,6 +2055,82 @@ def test_release_evidence_pack_cli_accepts_raw_live_gate_inputs(
     )
     assert pack["artifact_count"] == 2
     assert pack["release_readiness_decision"] == "ready"
+
+
+def test_release_evidence_pack_cli_accepts_god_room_review_closure(
+    tmp_path: Path,
+) -> None:
+    from xmuse.release_evidence_pack import main
+
+    artifacts = tmp_path / "artifacts"
+    output = tmp_path / "pack.json"
+    review_closure = tmp_path / "god-room" / "review-closure.json"
+    _write_json(
+        review_closure,
+        {
+            "schema_version": "xmuse.god_room_lane_review_closure.v1",
+            "proof_level": "contract_proof",
+            "review_truth_status": "independent_review_artifact",
+            "execution_truth_status": "candidate_reviewed",
+            "server_truth_status": "not_server_truth",
+            "release_evidence_handoff_status": "candidate_input_ready",
+            "graph_id": "graph-runtime",
+            "failed_lane_id": "lane-runtime-evidence",
+            "terminal_lane_id": "lane-runtime-evidence-patch",
+            "candidate_refs": ["worker-candidate:patch-reviewed"],
+            "cited_candidate_refs": ["worker-candidate:patch-reviewed"],
+            "terminal_review_verdict": {
+                "evidence_refs": ["worker-candidate:patch-reviewed"]
+            },
+            "manual_gaps": [
+                "review_plane_store_not_updated",
+                "lane_status_not_updated",
+                "release_evidence_not_linked",
+                "github_truth_not_checked",
+            ],
+            "forbidden_claims": [
+                "worker_output_is_review_truth",
+                "end_to_end_execution_review_closure",
+                "ready_to_merge",
+                "pr_merged",
+                "github_review_truth",
+            ],
+        },
+    )
+
+    assert (
+        main(
+            [
+                "--artifacts-dir",
+                str(artifacts),
+                "--output",
+                str(output),
+                "--run-id",
+                "review-closure-cli-pack",
+                "--god-room-review-closure",
+                str(review_closure),
+            ]
+        )
+        == 0
+    )
+
+    pack = json.loads(output.read_text(encoding="utf-8"))
+    replay = json.loads(
+        (output.parent / "overnight-replay-bundle.json").read_text(encoding="utf-8")
+    )
+    sections = {section["section_id"]: section for section in replay["sections"]}
+    closure = sections["god_room_runtime_closure"]
+    details = closure["details"]["god_room_runtime_closure"]["review_closure"]
+    assert pack["source_reports"]["god_room_runtime_closure_evidence"] == str(
+        output.parent / "god-room-runtime-closure-production-evidence.json"
+    )
+    assert closure["status"] == "manual_gap"
+    assert closure["proof_level"] == "manual_gap"
+    assert details["status"] == "candidate_input_ready"
+    assert details["proof_level"] == "contract_proof"
+    assert details["server_truth_status"] == "not_server_truth"
+    assert "ready_to_merge" in details["forbidden_claims"]
+    assert "worker-candidate:patch-reviewed" in closure["source_refs"]
 
 
 def test_release_evidence_pack_cli_accepts_natural_release_gate_input(

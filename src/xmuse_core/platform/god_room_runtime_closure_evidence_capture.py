@@ -41,6 +41,7 @@ def capture_god_room_runtime_closure_evidence(
     tui_projection_artifact: str | Path | None = None,
     speaker_attempt_artifact: str | Path | None = None,
     speaker_response_artifact: str | Path | None = None,
+    review_closure_artifact: str | Path | None = None,
     github_truth_artifact: str | Path | None = None,
     release_readiness_artifact: str | Path | None = None,
     stage_id: str = "S8",
@@ -56,6 +57,7 @@ def capture_god_room_runtime_closure_evidence(
         tui_projection_artifact=tui_projection_artifact,
         speaker_attempt_artifact=speaker_attempt_artifact,
         speaker_response_artifact=speaker_response_artifact,
+        review_closure_artifact=review_closure_artifact,
         github_truth_artifact=github_truth_artifact,
         release_readiness_artifact=release_readiness_artifact,
     )
@@ -80,6 +82,7 @@ def build_god_room_runtime_closure_evidence(
     tui_projection_artifact: str | Path | None = None,
     speaker_attempt_artifact: str | Path | None = None,
     speaker_response_artifact: str | Path | None = None,
+    review_closure_artifact: str | Path | None = None,
     github_truth_artifact: str | Path | None = None,
     release_readiness_artifact: str | Path | None = None,
 ) -> dict[str, object]:
@@ -138,6 +141,12 @@ def build_god_room_runtime_closure_evidence(
             issues=issues,
         )
     )
+    review_closure_details, review_closure_refs, review_closure_targets = (
+        _review_closure_details(
+            review_closure_artifact,
+            issues=issues,
+        )
+    )
     github_details, github_refs, github_targets = _github_truth_details(
         github_truth_artifact,
         issues=issues,
@@ -168,6 +177,7 @@ def build_god_room_runtime_closure_evidence(
                     *tui_refs,
                     *speaker_refs,
                     *speaker_response_refs,
+                    *review_closure_refs,
                     *github_refs,
                     *readiness_refs,
                 ]
@@ -181,6 +191,7 @@ def build_god_room_runtime_closure_evidence(
                     *trace_targets,
                     *speaker_targets,
                     *speaker_response_targets,
+                    *review_closure_targets,
                     *github_targets,
                 ]
             )
@@ -195,6 +206,7 @@ def build_god_room_runtime_closure_evidence(
                 tui_projection_artifact,
                 speaker_attempt_artifact,
                 speaker_response_artifact,
+                review_closure_artifact,
                 github_truth_artifact,
                 release_readiness_artifact,
             )
@@ -208,6 +220,7 @@ def build_god_room_runtime_closure_evidence(
             trace=trace_details,
             speaker=speaker_details,
             speaker_response=speaker_response_details,
+            review_closure=review_closure_details,
             readiness=readiness_details,
         ),
     )
@@ -222,6 +235,7 @@ def build_god_room_runtime_closure_evidence(
         "tui_projection": tui_details,
         "speaker_attempt": speaker_details,
         "speaker_response": speaker_response_details,
+        "review_closure": review_closure_details,
         "github_truth": github_details,
         "release_readiness": readiness_details,
     }
@@ -619,6 +633,90 @@ def _speaker_response_details(
     )
 
 
+def _review_closure_details(
+    path: str | Path | None,
+    *,
+    issues: list[str],
+) -> tuple[dict[str, object], list[str], list[str]]:
+    if path is None:
+        return {
+            "status": "not_provided",
+            "proof_level": "manual_gap",
+            "optional": True,
+        }, [], []
+    payload = _load_json(path, label="GOD room review closure", issues=issues)
+    if not isinstance(payload, dict):
+        return _manual_gap_details("GOD room review closure artifact is missing"), [], []
+    schema_version = _text(payload.get("schema_version"))
+    proof_level = _text(payload.get("proof_level")) or "manual_gap"
+    review_truth_status = _text(payload.get("review_truth_status"))
+    execution_truth_status = _text(payload.get("execution_truth_status"))
+    server_truth_status = _text(payload.get("server_truth_status"))
+    handoff_status = _text(payload.get("release_evidence_handoff_status"))
+    if schema_version != "xmuse.god_room_lane_review_closure.v1":
+        issues.append("GOD room review closure artifact has unexpected schema")
+    if proof_level != "contract_proof":
+        issues.append("GOD room review closure proof level is not contract_proof")
+    if review_truth_status != "independent_review_artifact":
+        issues.append("GOD room review closure is missing independent review truth")
+    if execution_truth_status != "candidate_reviewed":
+        issues.append("GOD room review closure overclaims execution truth")
+    if server_truth_status != "not_server_truth":
+        issues.append("GOD room review closure overclaims server truth")
+    manual_gaps = _string_list(payload.get("manual_gaps"))
+    forbidden_claims = _string_list(payload.get("forbidden_claims"))
+    if "release_evidence_not_linked" not in manual_gaps:
+        issues.append("GOD room review closure must preserve release evidence gap")
+    for claim in ("ready_to_merge", "pr_merged", "github_review_truth"):
+        if claim not in forbidden_claims:
+            issues.append(f"GOD room review closure missing forbidden claim: {claim}")
+    terminal_verdict = payload.get("terminal_review_verdict")
+    verdict_refs: list[str] = []
+    if isinstance(terminal_verdict, dict):
+        verdict_refs.extend(_string_list(terminal_verdict.get("evidence_refs")))
+    candidate_refs = _string_list(payload.get("candidate_refs"))
+    cited_candidate_refs = _string_list(payload.get("cited_candidate_refs"))
+    failed_lane_id = _text(payload.get("failed_lane_id"))
+    terminal_lane_id = _text(payload.get("terminal_lane_id"))
+    graph_id = _text(payload.get("graph_id"))
+    refs = _dedupe(
+        [
+            f"god-room-review-closure:{graph_id}:{failed_lane_id}:{terminal_lane_id}"
+            if graph_id and failed_lane_id and terminal_lane_id
+            else None,
+            _text(payload.get("patch_forward_artifact")),
+            _text(payload.get("patch_lane_review_intake_artifact")),
+            _text(payload.get("patch_lane_review_verdict_artifact")),
+            *candidate_refs,
+            *cited_candidate_refs,
+            *verdict_refs,
+        ]
+    )
+    targets = _dedupe(
+        [
+            f"lane:{failed_lane_id}" if failed_lane_id else None,
+            f"lane:{terminal_lane_id}" if terminal_lane_id else None,
+        ]
+    )
+    return (
+        {
+            "status": handoff_status or "not_evaluated",
+            "proof_level": proof_level,
+            "review_truth_status": review_truth_status,
+            "execution_truth_status": execution_truth_status,
+            "server_truth_status": server_truth_status,
+            "failed_lane_id": failed_lane_id,
+            "terminal_lane_id": terminal_lane_id,
+            "candidate_ref_count": len(candidate_refs),
+            "cited_candidate_ref_count": len(cited_candidate_refs),
+            "manual_gaps": manual_gaps,
+            "forbidden_claims": forbidden_claims,
+        },
+        refs,
+        targets,
+    )
+
+
 def _github_truth_details(
     path: str | Path | None,
     *,
@@ -786,6 +884,7 @@ def _summary(
     trace: Mapping[str, object],
     speaker: Mapping[str, object],
     speaker_response: Mapping[str, object],
+    review_closure: Mapping[str, object],
     readiness: Mapping[str, object],
 ) -> str:
     return (
@@ -796,6 +895,8 @@ def _summary(
         f"speaker attempt is {_text(speaker.get('status')) or 'not_provided'}; "
         "speaker response is "
         f"{_text(speaker_response.get('status')) or 'not_provided'}; "
+        "review closure is "
+        f"{_text(review_closure.get('status')) or 'not_provided'}; "
         f"release readiness is {_text(readiness.get('decision')) or 'not_evaluated'}."
     )
 

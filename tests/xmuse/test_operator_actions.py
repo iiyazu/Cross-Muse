@@ -1433,6 +1433,50 @@ def test_operator_action_captures_release_pack_with_god_room_runtime_inputs(
             },
         },
     )
+    _write_json(
+        release_dir / "god-room" / "review-closure.json",
+        {
+            "schema_version": "xmuse.god_room_lane_review_closure.v1",
+            "source_authority": (
+                "god_room_lane_patch_forward_artifact+"
+                "patch_lane_review_verdict_artifact"
+            ),
+            "proof_level": "contract_proof",
+            "review_truth_status": "independent_review_artifact",
+            "execution_truth_status": "candidate_reviewed",
+            "server_truth_status": "not_server_truth",
+            "release_evidence_handoff_status": "candidate_input_ready",
+            "conversation_id": "conv-pack",
+            "graph_id": "graph-pack",
+            "failed_lane_id": "lane-runtime-pack",
+            "terminal_lane_id": "lane-runtime-pack-patch",
+            "patch_forward_artifact": "god-room/patch-forward.json",
+            "patch_lane_review_intake_artifact": "god-room/patch-intake.json",
+            "patch_lane_review_verdict_artifact": "god-room/patch-verdict.json",
+            "candidate_refs": ["worker-candidate:patch-pack"],
+            "cited_candidate_refs": ["worker-candidate:patch-pack"],
+            "terminal_review_verdict": {
+                "id": "god_room_review_patch_pack_merge",
+                "lane_id": "lane-runtime-pack-patch",
+                "decision": "merge",
+                "summary": "Patch lane reviewed.",
+                "evidence_refs": ["worker-candidate:patch-pack"],
+            },
+            "manual_gaps": [
+                "review_plane_store_not_updated",
+                "lane_status_not_updated",
+                "release_evidence_not_linked",
+                "github_truth_not_checked",
+            ],
+            "forbidden_claims": [
+                "worker_output_is_review_truth",
+                "end_to_end_execution_review_closure",
+                "ready_to_merge",
+                "pr_merged",
+                "github_review_truth",
+            ],
+        },
+    )
     _write_github_server_truth(release_dir / "artifacts" / "github-truth.json")
     service = OperatorActionService(
         god_cli_registry=build_default_god_cli_registry(),
@@ -1457,6 +1501,7 @@ def test_operator_action_captures_release_pack_with_god_room_runtime_inputs(
                 "god_room_tui_projection": "god-room/tui-projection.json",
                 "god_room_speaker_attempt": "god-room/speaker-attempt.json",
                 "god_room_speaker_response": "god-room/speaker-response.json",
+                "god_room_review_closure": "god-room/review-closure.json",
             },
             source="tui",
         )
@@ -1480,6 +1525,12 @@ def test_operator_action_captures_release_pack_with_god_room_runtime_inputs(
     assert closure["god_room_runtime_closure"]["speaker_response"]["status"] == (
         "speak_event_appended"
     )
+    assert closure["god_room_runtime_closure"]["review_closure"]["status"] == (
+        "candidate_input_ready"
+    )
+    assert closure["god_room_runtime_closure"]["review_closure"][
+        "server_truth_status"
+    ] == "not_server_truth"
     assert "god_room_runtime_closure" in sections
     assert sections["god_room_runtime_closure"]["source_authority"] == (
         "god_room_runtime_closure_contract"

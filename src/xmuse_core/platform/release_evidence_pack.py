@@ -74,6 +74,7 @@ def capture_release_evidence_pack(
     god_room_tui_projection: str | Path | None = None,
     god_room_speaker_attempt: str | Path | None = None,
     god_room_speaker_response: str | Path | None = None,
+    god_room_review_closure: str | Path | None = None,
     god_room_runtime_closure_evidence_output: str | Path | None = None,
     feature_contracts: tuple[str | Path, ...] = (),
     feature_lineage_evidence_output: str | Path | None = None,
@@ -169,6 +170,7 @@ def capture_release_evidence_pack(
             tui_projection_artifact=god_room_tui_projection,
             speaker_attempt_artifact=god_room_speaker_attempt,
             speaker_response_artifact=god_room_speaker_response,
+            review_closure_artifact=god_room_review_closure,
             github_truth_artifact=github_server_truth,
             release_readiness_artifact=readiness_path,
             evidence_output=god_room_runtime_closure_evidence_output,
@@ -395,6 +397,7 @@ def _with_god_room_runtime_closure_evidence(
     tui_projection_artifact: str | Path | None,
     speaker_attempt_artifact: str | Path | None,
     speaker_response_artifact: str | Path | None,
+    review_closure_artifact: str | Path | None,
     github_truth_artifact: str | Path | None,
     release_readiness_artifact: str | Path,
     evidence_output: str | Path | None,
@@ -412,6 +415,7 @@ def _with_god_room_runtime_closure_evidence(
             tui_projection_artifact,
             speaker_attempt_artifact,
             speaker_response_artifact,
+            review_closure_artifact,
         )
     )
     if not has_inputs:
@@ -438,6 +442,7 @@ def _with_god_room_runtime_closure_evidence(
         tui_projection_artifact=tui_projection_artifact,
         speaker_attempt_artifact=speaker_attempt_artifact,
         speaker_response_artifact=speaker_response_artifact,
+        review_closure_artifact=review_closure_artifact,
         github_truth_artifact=github_truth_artifact,
         release_readiness_artifact=release_readiness_artifact,
     )

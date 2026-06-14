@@ -1045,6 +1045,12 @@ production baseline artifact through the same release-root path guard.
 It can pass `stage=goal/S1.result.json` to attach goal-stage harness evidence
 through the replay `stage_evidence` section, again using only release-root
 scoped paths and the audited operator action path.
+It can pass `god_room_review_closure=god-room/review-closure.json` to attach
+an `xmuse.god_room_lane_review_closure.v1` handoff into the GOD-room runtime
+closure replay section. This indexes the reviewed patch-lane contract evidence
+only; `execution_truth_status=candidate_reviewed` and
+`server_truth_status=not_server_truth` must not be read as live execution,
+ready-to-merge, GitHub review, or merge truth.
 `/release candidates` calls
 `inspect_release_evidence_candidates` and reads durable `chat.db`,
 `god_sessions.json`, `god_cli_selections.json`, `god_cli_registrations.json`,

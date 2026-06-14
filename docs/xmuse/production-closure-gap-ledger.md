@@ -62,6 +62,8 @@ runtime、provider invocation、lane authority、review truth 完成。后续生
   `39c5c00c46a3ec09ad9a65019ad5b95697d961f4`
 - Local head at start of L9 reviewed patch-lane closure handoff slice:
   `734a410a181dd5e6d880f68e248c945e0668f76a`
+- Local head at start of L10 review-closure release evidence linkage slice:
+  `31f9a96195d8194f6b0fcd5a4464fb340ecc7f85`
 - PR: <https://github.com/iiyazu/Cross-Muse/pull/43>
 - PR state last checked: draft/open/unmerged
 - PR merge state last checked: `CLEAN`
@@ -88,6 +90,7 @@ truth_snapshot:
   local_head_at_l9_review_verdict_artifact_slice: 9cfde76cf5e974a0c0fdbbb851a58cbf09fcbe63
   local_head_at_l9_patch_forward_lanedag_contract_slice: 39c5c00c46a3ec09ad9a65019ad5b95697d961f4
   local_head_at_l9_reviewed_patch_lane_closure_handoff_slice: 734a410a181dd5e6d880f68e248c945e0668f76a
+  local_head_at_l10_review_closure_release_evidence_linkage_slice: 31f9a96195d8194f6b0fcd5a4464fb340ecc7f85
   pr: 43
   pr_url: https://github.com/iiyazu/Cross-Muse/pull/43
   pr_state: draft_open_unmerged
@@ -128,7 +131,7 @@ Evidence boundaries:
 | L7 | Feature / LaneDAG Authority | LaneDAG/contract artifact exists with upstream freeze proof metadata | Live L4/L5/L6 proof metadata can flow into laneDAG without writing `feature_lanes.json`; dispatch/review authority still not unified | Not server-bound | LaneDAG contract proof plus isolated opt-in live upstream-proof propagation |
 | L8 | Lane Runtime Enforcement / Recovery | Recovery contract/API exists and recovery artifacts carry laneDAG proof lineage | Recovery API consumes laneDAG contract/budget and preserves blueprint proof/source refs; runner/supervisor enforcement still incomplete | Not server-bound | Recovery policy proof plus laneDAG-lineage evidence proof |
 | L9 | Execution / Review / Patch-Forward | Review plane plus GOD-room review intake/verdict/patch-forward/closure artifact contracts exist | GOD-room lane contracts/recovery/candidate evidence can be packaged for independent review; patch-forward verdicts can append a laneDAG patch lane and reviewed patch-lane merge verdicts can produce a release-evidence handoff; review plane store, lane status, release linkage, and live execution proof still missing | Not server-bound | GOD-room review/patch-forward closure contract proof only, not server/GitHub truth |
-| L10 | MemoryOS / Release Evidence / GitHub Truth | Evidence bundle semantics exist | Live MemoryOS trace missing | PR open/unmerged; CI truth only for verified remote head | Replay/readiness proof with explicit gaps |
+| L10 | MemoryOS / Release Evidence / GitHub Truth | Evidence bundle semantics exist and can index GOD-room review closure handoff | Live MemoryOS trace and live execution/server truth missing | PR open/unmerged; CI truth only for verified remote head | Replay/readiness proof with explicit gaps |
 | L11 | Operator Cockpit / TUI / Overnight Soak | TUI/control slices exist | Complete cockpit/soak missing | Depends on L10 | Operator projection/control proof only |
 
 Current closure audit:
@@ -698,14 +701,18 @@ Use these as implementation references, not as xmuse package dependencies:
   - Release evidence pack indexes GOD room closure inputs, speaker attempt,
     artifact-backed speaker response, laneDAG, MemoryOS plan, TUI projection,
     GitHub truth, and readiness.
+  - Release evidence pack and operator action can now index
+    `xmuse.god_room_lane_review_closure.v1` as GOD-room runtime closure
+    handoff input while preserving `server_truth_status = not_server_truth`.
   - PR #43 latest verified CI passed for remote head
     `1a244285c6e9b287f9c32acb640b0bc68087d90b`; merge state was `CLEAN` when
     last checked.
 - Missing production closure:
   - No current live MemoryOS Lite trace proof is established for this branch
     head.
-  - The release pack still depends on missing live provider invocation, review
-    truth, and merge truth for full production closure.
+  - The release pack still depends on missing live execution proof, live
+    MemoryOS trace, review-plane/lane-status integration, and merge truth for
+    full production closure.
   - PR #43 is still draft/open/unmerged and has no review decision.
 - Proof required to close:
   - Configured MemoryOS Lite service accepts writes/context requests and

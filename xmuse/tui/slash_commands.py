@@ -1569,6 +1569,8 @@ def _release_pack_payload(args: list[str]) -> dict[str, Any]:
             "room_speaker_response": "god_room_speaker_response",
             "room_response": "god_room_speaker_response",
             "god_room_speaker_response": "god_room_speaker_response",
+            "room_review_closure": "god_room_review_closure",
+            "god_room_review_closure": "god_room_review_closure",
             "room_closure_output": "god_room_runtime_closure_evidence_output",
             "god_room_closure_output": "god_room_runtime_closure_evidence_output",
             "god_room_runtime_closure_evidence_output": (
