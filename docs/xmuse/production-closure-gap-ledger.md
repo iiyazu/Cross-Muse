@@ -41,7 +41,7 @@ runtime、provider invocation、lane authority、review truth 完成。后续生
 
 - Branch: `vision-closure-deliberation-tui`
 - Local base head before audit reinforcement annotation:
-  `2cfc9e3016ff1671758bd78b3b69f8ca922307c1`
+  `0c3ccc4553f582667f5349c9b1b4e5de3a6cd81a`
 - Local head at start of L4 provider invocation producer slice:
   `db9a759ac23e3e5f6095fe35ed5d373e64281505`
 - Local head at start of L5 provider invocation capture slice:
@@ -350,10 +350,10 @@ truth_snapshot:
   pr_state: draft_open_unmerged
   merge_state: CLEAN
   review_decision: empty
-  verified_ci_head_at_slice_start: 53e6e58bdf4eb2bf3e26673fa38368ece823b029
-  verified_ci_run_at_slice_start: 27605037247
+  verified_ci_head_at_slice_start: 03791fe63abe0884c18ee315d567a201746689e5
+  verified_ci_run_at_slice_start: 27606521959
   ci_verified_for_slice_start_head: true
-  local_changes_after_verified_head: false
+  local_changes_after_verified_head: true
   local_github_server_truth_refresh:
     capture_mode: opt_in_read_only_gh_api
     artifact_path: /tmp/xmuse-github-truth-pr43.json
