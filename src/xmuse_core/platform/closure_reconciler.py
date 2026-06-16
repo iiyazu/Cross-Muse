@@ -772,7 +772,15 @@ def _release_handoff_evaluated(
                 "manual_gap",
                 "release handoff proof level is not contract_proof",
             )
-        if _text(release_handoff.get("graph_id")) not in {None, graph_id}:
+        actual_graph_id = _text(release_handoff.get("graph_id"))
+        if actual_graph_id is None:
+            return _condition(
+                RELEASE_HANDOFF_EVALUATED,
+                "false",
+                "manual_gap",
+                "release handoff graph_id is missing",
+            )
+        if actual_graph_id != graph_id:
             return _condition(
                 RELEASE_HANDOFF_EVALUATED,
                 "false",
@@ -780,7 +788,14 @@ def _release_handoff_evaluated(
                 "release handoff graph_id does not match current closure graph",
             )
         terminal_lane = _text(release_handoff.get("terminal_lane_id"))
-        if terminal_lane is not None and terminal_lane != lane_id:
+        if terminal_lane is None:
+            return _condition(
+                RELEASE_HANDOFF_EVALUATED,
+                "false",
+                "manual_gap",
+                "release handoff terminal_lane_id is missing",
+            )
+        if terminal_lane != lane_id:
             return _condition(
                 RELEASE_HANDOFF_EVALUATED,
                 "false",
@@ -795,7 +810,15 @@ def _release_handoff_evaluated(
                 "manual_gap",
                 "review-closure handoff status is not ready",
             )
-        if _text(release_handoff.get("graph_id")) not in {None, graph_id}:
+        actual_graph_id = _text(release_handoff.get("graph_id"))
+        if actual_graph_id is None:
+            return _condition(
+                RELEASE_HANDOFF_EVALUATED,
+                "false",
+                "manual_gap",
+                "review-closure handoff graph_id is missing",
+            )
+        if actual_graph_id != graph_id:
             return _condition(
                 RELEASE_HANDOFF_EVALUATED,
                 "false",
@@ -803,7 +826,14 @@ def _release_handoff_evaluated(
                 "review-closure handoff graph_id does not match current closure graph",
             )
         handoff_lane_id = _text(release_handoff.get("lane_id"))
-        if handoff_lane_id is not None and handoff_lane_id != lane_id:
+        if handoff_lane_id is None:
+            return _condition(
+                RELEASE_HANDOFF_EVALUATED,
+                "false",
+                "manual_gap",
+                "review-closure handoff lane_id is missing",
+            )
+        if handoff_lane_id != lane_id:
             return _condition(
                 RELEASE_HANDOFF_EVALUATED,
                 "false",

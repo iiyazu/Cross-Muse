@@ -314,6 +314,8 @@ def test_reconcile_closure_fails_closed_release_handoff_without_source_refs(
         release_handoff={
             "schema_version": "xmuse.review_closure_handoff_evaluation.v1",
             "status": "ready",
+            "graph_id": "graph-runtime",
+            "lane_id": "lane-runtime-evidence-patch",
             "server_truth_status": "not_server_truth",
         },
     )
@@ -375,6 +377,54 @@ def test_reconcile_closure_rejects_review_chain_handoff_wrong_graph_and_lane_sco
     assert (
         condition.reason == "release handoff graph_id does not match current closure graph"
     )
+
+
+def test_reconcile_closure_rejects_review_chain_handoff_missing_graph_scope(
+    tmp_path: Path,
+) -> None:
+    closure = reconcile_closure(
+        root=tmp_path,
+        graph_id="graph-runtime",
+        lane_id="lane-runtime-evidence-patch",
+        release_handoff={
+            "schema_version": "xmuse.god_room_lane_review_chain_proof.v1",
+            "status": "chain_ready",
+            "proof_level": "contract_proof",
+            "server_truth_status": "not_server_truth",
+            "terminal_lane_id": "lane-runtime-evidence-patch",
+            "source_refs": ["god-room-review-closure:graph-runtime:failed:terminal"],
+        },
+    )
+
+    condition = closure_condition_by_type(closure, RELEASE_HANDOFF_EVALUATED)
+    assert condition is not None
+    assert condition.status == "false"
+    assert condition.severity == "manual_gap"
+    assert condition.reason == "release handoff graph_id is missing"
+
+
+def test_reconcile_closure_rejects_review_chain_handoff_missing_terminal_lane_scope(
+    tmp_path: Path,
+) -> None:
+    closure = reconcile_closure(
+        root=tmp_path,
+        graph_id="graph-runtime",
+        lane_id="lane-runtime-evidence-patch",
+        release_handoff={
+            "schema_version": "xmuse.god_room_lane_review_chain_proof.v1",
+            "status": "chain_ready",
+            "proof_level": "contract_proof",
+            "server_truth_status": "not_server_truth",
+            "graph_id": "graph-runtime",
+            "source_refs": ["god-room-review-closure:graph-runtime:failed:terminal"],
+        },
+    )
+
+    condition = closure_condition_by_type(closure, RELEASE_HANDOFF_EVALUATED)
+    assert condition is not None
+    assert condition.status == "false"
+    assert condition.severity == "manual_gap"
+    assert condition.reason == "release handoff terminal_lane_id is missing"
 
 
 def test_reconcile_closure_rejects_review_chain_handoff_wrong_proof_level(
@@ -453,6 +503,54 @@ def test_reconcile_closure_rejects_review_closure_handoff_wrong_graph_and_lane_s
         condition.reason
         == "review-closure handoff graph_id does not match current closure graph"
     )
+
+
+def test_reconcile_closure_rejects_review_closure_handoff_missing_graph_scope(
+    tmp_path: Path,
+) -> None:
+    closure = reconcile_closure(
+        root=tmp_path,
+        graph_id="graph-runtime",
+        lane_id="lane-runtime-evidence-patch",
+        release_handoff={
+            "schema_version": "xmuse.review_closure_handoff_evaluation.v1",
+            "status": "ready",
+            "server_truth_status": "not_server_truth",
+            "lane_id": "lane-runtime-evidence-patch",
+            "candidate_artifact_refs": ["artifacts/local-exec/result.json"],
+            "source_refs": ["god-room-review-closure:graph-runtime:failed:terminal"],
+        },
+    )
+
+    condition = closure_condition_by_type(closure, RELEASE_HANDOFF_EVALUATED)
+    assert condition is not None
+    assert condition.status == "false"
+    assert condition.severity == "manual_gap"
+    assert condition.reason == "review-closure handoff graph_id is missing"
+
+
+def test_reconcile_closure_rejects_review_closure_handoff_missing_lane_scope(
+    tmp_path: Path,
+) -> None:
+    closure = reconcile_closure(
+        root=tmp_path,
+        graph_id="graph-runtime",
+        lane_id="lane-runtime-evidence-patch",
+        release_handoff={
+            "schema_version": "xmuse.review_closure_handoff_evaluation.v1",
+            "status": "ready",
+            "server_truth_status": "not_server_truth",
+            "graph_id": "graph-runtime",
+            "candidate_artifact_refs": ["artifacts/local-exec/result.json"],
+            "source_refs": ["god-room-review-closure:graph-runtime:failed:terminal"],
+        },
+    )
+
+    condition = closure_condition_by_type(closure, RELEASE_HANDOFF_EVALUATED)
+    assert condition is not None
+    assert condition.status == "false"
+    assert condition.severity == "manual_gap"
+    assert condition.reason == "review-closure handoff lane_id is missing"
 
 
 def test_reconcile_closure_rejects_candidate_without_runner_session(
