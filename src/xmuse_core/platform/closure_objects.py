@@ -284,6 +284,16 @@ def evaluate_closure_object_l10_admission(
         issues.append(
             "ClosureObject missing forbidden claims: " + ", ".join(missing_claims)
         )
+    source_refs = dedupe_text(
+        [
+            *closure.metadata.source_refs,
+            *closure.status.observed_refs,
+        ]
+    )
+    if not source_refs:
+        issues.append("ClosureObject source refs are missing")
+    if not closure.metadata.target_refs:
+        issues.append("ClosureObject target refs are missing")
     if issues:
         return ClosureObjectL10Admission(
             gate_ready=False,
@@ -294,12 +304,6 @@ def evaluate_closure_object_l10_admission(
             forbidden_claim_count=len(closure.status.forbidden_claims),
             issues=tuple(issues),
         )
-    source_refs = dedupe_text(
-        [
-            *closure.metadata.source_refs,
-            *closure.status.observed_refs,
-        ]
-    )
     return ClosureObjectL10Admission(
         gate_ready=True,
         summary="ClosureObject can seed MemoryOS source refs.",

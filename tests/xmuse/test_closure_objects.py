@@ -149,6 +149,7 @@ def test_closure_object_l10_admission_rejects_stale_or_weakened_boundary() -> No
             name="closure:graph-a:lane-a",
             layer="WaveD-E/L8-L10",
             source_refs=("handoff:a",),
+            target_refs=("lane:lane-a",),
         ),
         spec=ClosureSpec(),
         status=ClosureStatus(
@@ -192,4 +193,48 @@ def test_closure_object_l10_admission_rejects_stale_or_weakened_boundary() -> No
             "ClosureObject missing forbidden claims: github_review_truth, "
             "ready_to_merge, pr_merged, worker_output_is_review_truth"
         ),
+    )
+
+
+def test_closure_object_l10_admission_requires_stable_refs() -> None:
+    closure = ClosureObject(
+        metadata=ClosureMetadata(
+            name="closure:graph-a:lane-a",
+            layer="WaveD-E/L8-L10",
+        ),
+        spec=ClosureSpec(),
+        status=ClosureStatus(
+            phase="manual_gap",
+            conditions=(
+                ClosureCondition(
+                    type=CLOSURE_CONTROLLER_FRESH,
+                    status="true",
+                    severity="ok",
+                    reason="current evaluator and generation are fresh",
+                ),
+                ClosureCondition(
+                    type=REQUIRED_FORBIDDEN_CLAIMS_PRESENT,
+                    status="true",
+                    severity="ok",
+                    reason="required forbidden claims are preserved",
+                ),
+                ClosureCondition(
+                    type=SERVER_TRUTH_PENDING,
+                    status="true",
+                    severity="ok",
+                    reason="server truth remains pending",
+                ),
+            ),
+            forbidden_claims=REQUIRED_FORBIDDEN_CLAIMS,
+        ),
+    )
+
+    admission = evaluate_closure_object_l10_admission(closure)
+
+    assert admission.gate_ready is False
+    assert admission.source_refs == ()
+    assert admission.source_ref_count == 0
+    assert admission.issues == (
+        "ClosureObject source refs are missing",
+        "ClosureObject target refs are missing",
     )
