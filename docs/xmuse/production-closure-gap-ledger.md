@@ -356,8 +356,8 @@ truth_snapshot:
   local_changes_after_verified_head: false
   local_github_server_truth_refresh:
     capture_mode: opt_in_read_only_gh_api
-    artifact_path: /tmp/xmuse-github-truth-pr43.json
-    release_gate_artifact_path: /tmp/xmuse-github-truth-gate-pr43.json
+    artifact_path: /tmp/xmuse-github-truth-current.json
+    release_gate_artifact_path: /tmp/xmuse-github-truth-gate-current.json
     truth_proof_level: manual_gap
     gate_proof_level: server_side_enforcement_proof
     pull_request_state: open
@@ -2196,9 +2196,9 @@ Use these as implementation references, not as xmuse package dependencies:
     `test ! -e xmuse/__init__.py` -> passed. These are local validation only,
     not CI, GitHub review, or merge truth.
   - A fresh local read-only GitHub server-truth refresh for PR #43 at head
-    `654b418c52cc1487193561f65e0521a5a82f0452` wrote
-    `/tmp/xmuse-github-truth-pr43.json` and
-    `/tmp/xmuse-github-truth-gate-pr43.json`. It captured branch protection
+    `b154021111400863098f11ed98eeb24d6fad9311` wrote
+    `/tmp/xmuse-github-truth-current.json` and
+    `/tmp/xmuse-github-truth-gate-current.json`. It captured branch protection
     and required check truth for `quality-gates`, `contract-smoke-gates`, and
     `real-runtime-integration-gate`, but the raw truth artifact remains
     `proof_level=manual_gap` because server-side `review_truth` and
