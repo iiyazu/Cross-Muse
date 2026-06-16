@@ -9,10 +9,15 @@ closure proof，也不是 PR #43 的 merge/readiness 证明。当前 worktree �
 ## Current Local Truth
 
 - Current branch: `vision-closure-deliberation-tui`
-- Current HEAD: `b01dbcc0f8706b4b1cb3e2276ab998f2b1b1f3e4`
+- Current HEAD: `747d36278fbebbb04d612339a5c8e7830f080210`
 - Worktree state: clean
-- Remote CI truth: only applies to remote head `b01dbcc0f8706b4b1cb3e2276ab998f2b1b1f3e4`
-- Local changes are clean and at the verified HEAD
+- Remote CI truth: latest successful run id `27608880621` on this head
+- Local verification in this cycle:
+  - `uv run pytest tests/xmuse/test_platform_orchestrator.py -q` -> `248 passed`
+  - `uv run pytest tests/xmuse/test_local_execution_candidate.py tests/xmuse/test_runner_session.py tests/xmuse/test_feature_graph_claim_coordinator.py -q` -> `26 passed`
+  - `uv run pytest tests/xmuse/test_god_room_review_chain_proof.py tests/xmuse/test_chat_api.py -q` -> `150 passed`
+  - `uv run pytest tests/xmuse/test_release_evidence_candidates.py tests/xmuse/test_release_evidence_pack.py tests/xmuse/test_god_room_runtime_closure_evidence_capture.py -q` -> `98 passed`
+  - `uv run pytest tests/xmuse/test_tui_vision_read_model.py tests/xmuse/test_dashboard_read_models.py tests/xmuse/test_overnight_runner.py tests/xmuse/test_overnight_supervisor_evidence_capture.py -q` -> `41 passed`
 - PR #43 handling: historical umbrella context only; do not add new scope unless
   explicitly instructed
 
@@ -395,37 +400,25 @@ Suggested validation:
 ## Next Operational Cursor
 
 Do not continue feature work on the current heavy branch until the active slice
-is explicitly selected and isolated. The preferred next action is to prepare a
-small scoped branch or worktree for Slice 1a, followed by Slice 1b. Slice 1 is
-the earliest active Wave D dependency, but it is too large as one PR; splitting
-it before any commit/push is required.
+is explicitly selected and isolated. Slice 1 (1a-1e), Slice 2, Slice 3 and Slice
+4 are currently validated on this head; their outputs are present in the local
+verification list above.
 
-Recommended first extraction:
+Next suggested cursor:
 
-```text
-Branch/worktree name: wave-d-l8-recovery-gate-foundation
-Target: Slice 1a
-Plan: docs/xmuse/wave-d-l8-recovery-gate-foundation-extraction-plan.md
-Base: current stable base or the explicit stacked base chosen by the user
-Validation:
-  uv run pytest tests/xmuse/test_platform_orchestrator.py -q -k "gate_failure_writes_retry_recovery_artifact or repeated_gate_failure_writes_refactor_required_recovery_artifact or dispatch_lane_blocks_non_retry_recovery_decision"
-  uv run ruff check .
-  git diff --check
-  test ! -e xmuse/__init__.py
-```
+Wave E (L11) production-surface hardening, with one bounded extraction at a time:
 
-Recommended second extraction:
+- Slice E-a: Native CLI session bridge and terminal output capture boundary
+- Slice E-b: operator/cockpit projection hardening for projection-only claims
+- Slice E-c: overnight soak proof gating and budget/cool-down bookkeeping
 
-```text
-Branch/worktree name: wave-d-l8-review-retry-recovery
-Target: Slice 1b
-Base: Slice 1a branch if the shared recovery helper is not already merged
-Validation:
-  uv run pytest tests/xmuse/test_platform_orchestrator.py -q -k "review_retry_count_increments_on_reconcile_recovery or reconcile_recovers_review_timeout_by_rerunning_review or review_retry_exhaustion_writes_refactor_recovery_artifact or review_infra_exhaustion_writes_suspended_recovery_artifact or review_infra_unavailable_circuit_breaker_respects_backoff or review_infra_unavailable_circuit_breaker_closes_after_backoff"
-  uv run ruff check .
-  git diff --check
-  test ! -e xmuse/__init__.py
-```
+Validate each extraction with:
 
-If the selected slice depends on unmerged PR #43 content, mark the future PR as
-stacked and do not claim standalone merge readiness.
+- `uv run ruff check .`
+- `git diff --check`
+- `test ! -e xmuse/__init__.py`
+- focused L11 tests (`tests/xmuse/test_tui_*`, overnight evidence tests, release truth
+  projection tests) before any broader claim
+
+If a selected slice depends on PR #43 context, mark it stacked and do not claim
+standalone merge readiness.
