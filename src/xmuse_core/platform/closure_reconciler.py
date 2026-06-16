@@ -99,6 +99,7 @@ def reconcile_closure(
     )
     patch_forward_present = _patch_forward_lineage_present(
         release_handoff=current.release_handoff,
+        review_closure=current.review_closure,
         graph_id=graph_id,
         lane_id=lane_id,
     )
@@ -779,6 +780,7 @@ def _release_handoff_evaluated(
 def _patch_forward_lineage_present(
     *,
     release_handoff: Mapping[str, Any] | None,
+    review_closure: Mapping[str, Any] | None,
     graph_id: str,
     lane_id: str,
 ) -> _ConditionBuilder:
@@ -826,6 +828,12 @@ def _patch_forward_lineage_present(
                 "local execution review session terminal_lane_id does not match "
                 "current closure lane"
             )
+        issues.extend(
+            _patch_forward_review_closure_ref_mismatches(
+                review_closure=review_closure,
+                session=session,
+            )
+        )
     patch_boundary = _mapping(session.get("patch_forward_artifact_boundary"))
     patch_boundary_status = _text(patch_boundary.get("status"))
     if patch_boundary_status not in {
@@ -876,6 +884,37 @@ def _patch_forward_lineage_present(
             f"lane:{_text(release_handoff.get('terminal_lane_id'))}",
         ),
     )
+
+
+def _patch_forward_review_closure_ref_mismatches(
+    *,
+    review_closure: Mapping[str, Any] | None,
+    session: Mapping[str, Any],
+) -> list[str]:
+    if review_closure is None:
+        return []
+    checks = (
+        (
+            "patch_forward_artifact",
+            "patch-forward artifact ref does not match review closure",
+        ),
+        (
+            "patch_lane_review_intake_artifact",
+            "patch-lane review intake ref does not match review closure",
+        ),
+        (
+            "patch_lane_review_verdict_artifact",
+            "patch-lane review verdict ref does not match review closure",
+        ),
+    )
+    issues: list[str] = []
+    for key, reason in checks:
+        expected = _text(review_closure.get(key))
+        if expected is None:
+            continue
+        if _text(session.get(key)) != expected:
+            issues.append(reason)
+    return issues
 
 
 def _server_truth_pending(

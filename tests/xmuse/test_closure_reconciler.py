@@ -462,6 +462,51 @@ def test_reconcile_closure_rejects_patch_forward_lineage_wrong_graph_and_lane_sc
     )
 
 
+def test_reconcile_closure_rejects_patch_forward_lineage_mismatched_closure_refs(
+    tmp_path: Path,
+) -> None:
+    candidate_ref = "artifacts/lane-runtime-evidence-patch/result.json"
+    _write_candidate(tmp_path, candidate_ref)
+    _write_runner_session(tmp_path, candidate_ref)
+    review_closure = _review_closure_payload(tmp_path, candidate_ref)
+    review_closure["patch_forward_artifact"] = (
+        "reports/god_room_patch_forward/"
+        "graph-runtime.lane-runtime-evidence.patch-forward.json"
+    )
+    review_closure["patch_lane_review_intake_artifact"] = (
+        "reports/god_room_review_intake/"
+        "graph-runtime.lane-runtime-evidence-patch.review-intake.json"
+    )
+    review_closure["patch_lane_review_verdict_artifact"] = (
+        "reports/god_room_review_verdicts/"
+        "graph-runtime.lane-runtime-evidence-patch.review-verdict.json"
+    )
+    release_handoff = _review_chain_proof_payload(candidate_ref)
+    session = release_handoff["local_execution_review_session"]
+    assert isinstance(session, dict)
+    session["patch_forward_artifact"] = (
+        "reports/god_room_patch_forward/"
+        "graph-runtime.other-lane.patch-forward.json"
+    )
+
+    closure = reconcile_closure(
+        root=tmp_path,
+        graph_id="graph-runtime",
+        lane_id="lane-runtime-evidence-patch",
+        review_closure=review_closure,
+        release_handoff=release_handoff,
+    )
+
+    patch_condition = closure_condition_by_type(closure, PATCH_FORWARD_LINEAGE_PRESENT)
+    assert patch_condition is not None
+    assert patch_condition.status == "false"
+    assert patch_condition.severity == "manual_gap"
+    assert (
+        "patch-forward artifact ref does not match review closure" in
+        patch_condition.reason
+    )
+
+
 def test_reconcile_closure_rejects_review_chain_handoff_missing_graph_scope(
     tmp_path: Path,
 ) -> None:

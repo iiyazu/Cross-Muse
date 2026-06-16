@@ -270,6 +270,9 @@ runtime、provider invocation、lane authority、review truth 完成。后续生
   `cf6bd548fcf75c4374ed95ff5c800b290a01ed90`
 - Local head at start of x3 patch-forward lineage scope admission slice:
   `cafb4b49cdf8f562b64c94950382cb8a3e9318da`
+- Local head at start of x3 patch-forward lineage review-closure ref admission
+  slice:
+  `365d956307e37575054d89f3aa3fc384db968be8`
 - PR: <https://github.com/iiyazu/Cross-Muse/pull/43>
 - PR state last checked: draft/open/unmerged
 - PR merge state last checked: `CLEAN`
@@ -383,6 +386,7 @@ truth_snapshot:
   local_head_at_x3_github_release_gate_model_admission_slice: 6cd34fcff8dd75ec9e2465d404095ae4e97d7dc0
   local_head_at_x3_memoryos_live_gate_source_ref_boundary_slice: cf6bd548fcf75c4374ed95ff5c800b290a01ed90
   local_head_at_x3_patch_forward_lineage_scope_admission_slice: cafb4b49cdf8f562b64c94950382cb8a3e9318da
+  local_head_at_x3_patch_forward_lineage_review_closure_ref_admission_slice: 365d956307e37575054d89f3aa3fc384db968be8
   pr: 43
   pr_url: https://github.com/iiyazu/Cross-Muse/pull/43
   pr_state: draft_open_unmerged
@@ -2226,6 +2230,14 @@ Use these as implementation references, not as xmuse package dependencies:
     session from one lane or graph from satisfying another lane's Goal B
     condition; it is scope/admission hardening only, not live execution or
     independent review server truth.
+    The same condition now also cross-checks patch-forward artifact refs
+    declared by the current `xmuse.god_room_lane_review_closure.v1` artifact
+    against the embedded `local_execution_review_session` refs in the
+    review-chain proof. If the review closure points at one patch-forward /
+    patch-lane intake / patch-lane verdict artifact and the release handoff
+    session points at another, `PatchForwardLineagePresent` remains
+    `manual_gap`. This prevents a review-chain proof from self-reporting
+    patch-forward lineage for a different review closure.
   - Release evidence candidate reports can now consume
     `xmuse.god_room_lane_review_chain_proof.v1` artifacts directly as
     `live_memoryos` source-ref guidance after validating
