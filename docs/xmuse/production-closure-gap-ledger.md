@@ -244,6 +244,8 @@ runtime、provider invocation、lane authority、review truth 完成。后续生
   `b050d534873594466e46190619ab20387427f231`
 - Local head at start of x3 closure-controller freshness/admission slice:
   `5bdf647cb9e127000554bef587697547797224f6`
+- Local head at start of x3 shared release/review scope admission slice:
+  `d19e936fbc794943becb9b37499e6d6a62b84ecc`
 - PR: <https://github.com/iiyazu/Cross-Muse/pull/43>
 - PR state last checked: draft/open/unmerged
 - PR merge state last checked: `CLEAN`
@@ -618,6 +620,28 @@ Current closure audit:
     silently repaired by status aggregation. This is still controller
     `contract_proof`; it does not close live MemoryOS, GitHub review truth,
     merge truth, or end-to-end Wave D/E runtime closure.
+    The shared L9/L10 handoff evaluator now also owns release-handoff to
+    review-closure graph/lane scope admission. `closure_reconciler` consumes
+    that shared result instead of carrying a private scope check, so stale or
+    cross-lane release handoff artifacts fail closed consistently before
+    `ReleaseHandoffEvaluated` can become true.
+    The same shared evaluator also checks closure-level required forbidden
+    claims on otherwise well-scoped release handoffs, so inherited gaps such as
+    `live_memoryos` and `github_review_truth` cannot be dropped by a downstream
+    handoff consumer.
+    `xmuse.release_evidence_candidates.v1` may only be treated as a closure
+    handoff candidate when it is explicitly scoped to the current graph/lane and
+    carries source refs plus inherited forbidden claims; otherwise it remains a
+    downstream aggregation surface and fails closed.
+    Runtime closure evidence now consumes the shared review-closure handoff
+    evaluator issues for schema/proof/review/execution/server/forbidden-claim
+    admission instead of reimplementing those checks locally. It still performs
+    only runtime-closure-specific checks such as preserving
+    `release_evidence_not_linked`.
+    Closure-controller and review-handoff regression tests now share a small
+    fixture builder that produces candidate, runner-session, review-closure,
+    and review-chain payloads through the production capture/build helpers. This
+    reduces test-private schema drift but does not change runtime proof level.
   - The x3 Goal B controller-facing slice adds
     `PatchForwardLineagePresent` and keeps it `manual_gap` unless a
     `xmuse.god_room_lane_review_chain_proof.v1` artifact proves a

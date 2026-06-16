@@ -1,6 +1,17 @@
-import json
 from pathlib import Path
 
+from tests.xmuse.closure_test_fixtures import (
+    review_chain_proof_payload as _review_chain_proof_payload,
+)
+from tests.xmuse.closure_test_fixtures import (
+    review_closure_payload as _review_closure_payload,
+)
+from tests.xmuse.closure_test_fixtures import (
+    write_candidate as _write_candidate,
+)
+from tests.xmuse.closure_test_fixtures import (
+    write_runner_session as _write_runner_session,
+)
 from xmuse_core.platform.closure_objects import (
     CLOSURE_CONTROLLER_FRESH,
     CLOSURE_OBJECT_EVALUATOR_VERSION,
@@ -18,12 +29,6 @@ from xmuse_core.platform.closure_objects import (
 from xmuse_core.platform.closure_reconciler import (
     reconcile_closure,
 )
-from xmuse_core.platform.local_execution_candidate import (
-    LOCAL_EXECUTION_CANDIDATE_FORBIDDEN_CLAIMS,
-    capture_local_execution_candidate,
-    load_local_execution_candidate_lineage,
-)
-from xmuse_core.platform.runner_session import build_runner_session_artifact
 
 
 def test_reconcile_closure_emits_idempotent_conditions_for_current_artifacts(
@@ -505,6 +510,62 @@ def test_reconcile_closure_rejects_review_closure_handoff_wrong_graph_and_lane_s
     )
 
 
+def test_reconcile_closure_rejects_release_handoff_scope_mismatch_with_review_closure_graph(
+    tmp_path: Path,
+) -> None:
+    candidate_ref = "artifacts/lane-runtime-evidence-patch/result.json"
+    _write_candidate(tmp_path, candidate_ref)
+    _write_runner_session(tmp_path, candidate_ref)
+    review_closure = _review_closure_payload(tmp_path, candidate_ref)
+    review_closure["graph_id"] = "graph-other"
+    closure = reconcile_closure(
+        root=tmp_path,
+        graph_id="graph-runtime",
+        lane_id="lane-runtime-evidence-patch",
+        recovery_artifact=_recovery_artifact("lane-runtime-evidence-patch"),
+        execution_candidates=[candidate_ref],
+        review_closure=review_closure,
+        release_handoff=_review_chain_proof_payload(candidate_ref),
+    )
+
+    condition = closure_condition_by_type(closure, RELEASE_HANDOFF_EVALUATED)
+    assert condition is not None
+    assert condition.status == "false"
+    assert condition.severity == "manual_gap"
+    assert (
+        condition.reason
+        == "release handoff graph_id does not match review closure graph_id"
+    )
+
+
+def test_reconcile_closure_rejects_release_handoff_scope_mismatch_with_review_closure_lane(
+    tmp_path: Path,
+) -> None:
+    candidate_ref = "artifacts/lane-runtime-evidence-patch/result.json"
+    _write_candidate(tmp_path, candidate_ref)
+    _write_runner_session(tmp_path, candidate_ref)
+    review_closure = _review_closure_payload(tmp_path, candidate_ref)
+    review_closure["terminal_lane_id"] = "lane-other"
+    closure = reconcile_closure(
+        root=tmp_path,
+        graph_id="graph-runtime",
+        lane_id="lane-runtime-evidence-patch",
+        recovery_artifact=_recovery_artifact("lane-runtime-evidence-patch"),
+        execution_candidates=[candidate_ref],
+        review_closure=review_closure,
+        release_handoff=_review_chain_proof_payload(candidate_ref),
+    )
+
+    condition = closure_condition_by_type(closure, RELEASE_HANDOFF_EVALUATED)
+    assert condition is not None
+    assert condition.status == "false"
+    assert condition.severity == "manual_gap"
+    assert (
+        condition.reason
+        == "release handoff lane scope does not match review closure lane scope"
+    )
+
+
 def test_reconcile_closure_rejects_review_closure_handoff_missing_graph_scope(
     tmp_path: Path,
 ) -> None:
@@ -679,176 +740,3 @@ def _god_room_lane_recovery_artifact(
             "pr_merged",
         ],
     }
-
-
-def _review_closure_payload(root: Path, candidate_ref: str) -> dict[str, object]:
-    candidate_lineage = load_local_execution_candidate_lineage(
-        root=root,
-        artifact_ref=candidate_ref,
-        lane_id="lane-runtime-evidence-patch",
-        graph_id="graph-runtime",
-        conversation_id="conv-runtime",
-        required_producer="platform_runner_dispatch",
-    )
-    return {
-        "schema_version": "xmuse.god_room_lane_review_closure.v1",
-        "proof_level": "contract_proof",
-        "review_truth_status": "independent_review_artifact",
-        "execution_truth_status": "candidate_reviewed",
-        "server_truth_status": "not_server_truth",
-        "release_evidence_handoff_status": "candidate_input_ready",
-        "conversation_id": "conv-runtime",
-        "graph_id": "graph-runtime",
-        "failed_lane_id": "lane-runtime-evidence",
-        "terminal_lane_id": "lane-runtime-evidence-patch",
-        "candidate_refs": ["worker-candidate:patch-reviewed", candidate_ref],
-        "cited_candidate_refs": ["worker-candidate:patch-reviewed", candidate_ref],
-        "cited_candidate_artifact_refs": [candidate_ref],
-        "cited_candidate_artifact_lineage": [candidate_lineage],
-        "source_event_lineage": [
-            {
-                "event_id": "evt-review-provider-speak",
-                "event_type": "speak",
-                "proof_level": "opt_in_live_proof",
-                "provider_response_artifact_ref": "reports/provider-response-1.json",
-                "source_refs": ["god-room-event:evt-review-provider-speak:source"],
-            }
-        ],
-        "terminal_review_verdict": {
-            "evidence_refs": ["worker-candidate:patch-reviewed", candidate_ref],
-        },
-        "manual_gaps": ["release_evidence_not_linked"],
-        "forbidden_claims": list(LOCAL_EXECUTION_CANDIDATE_FORBIDDEN_CLAIMS),
-    }
-
-
-def _review_chain_proof_payload(candidate_ref: str) -> dict[str, object]:
-    patch_forward_ref = (
-        "reports/god_room_patch_forward/"
-        "graph-runtime.lane-runtime-evidence.patch-forward.json"
-    )
-    patch_intake_ref = (
-        "reports/god_room_review_intake/"
-        "graph-runtime.lane-runtime-evidence-patch.review-intake.json"
-    )
-    patch_verdict_ref = (
-        "reports/god_room_review_verdicts/"
-        "graph-runtime.lane-runtime-evidence-patch.review-verdict.json"
-    )
-    return {
-        "schema_version": "xmuse.god_room_lane_review_chain_proof.v1",
-        "status": "chain_ready",
-        "proof_level": "contract_proof",
-        "server_truth_status": "not_server_truth",
-        "graph_id": "graph-runtime",
-        "failed_lane_id": "lane-runtime-evidence",
-        "terminal_lane_id": "lane-runtime-evidence-patch",
-        "review_closure_artifact": (
-            "reports/god_room_review_closures/"
-            "graph-runtime.lane-runtime-evidence.review-closure.json"
-        ),
-        "source_refs": [
-            "god-room-review-closure:graph-runtime:failed:terminal",
-            patch_forward_ref,
-            patch_intake_ref,
-            patch_verdict_ref,
-        ],
-        "release_evidence_handoff": {
-            "review_closure_artifact_gate_ready": True,
-            "review_closure_candidate_artifact_refs": [candidate_ref],
-        },
-        "local_execution_review_session": {
-            "schema_version": "xmuse.local_execution_review_session.v1",
-            "status": "bounded_session_ready",
-            "proof_level": "contract_proof",
-            "graph_id": "graph-runtime",
-            "failed_lane_id": "lane-runtime-evidence",
-            "terminal_lane_id": "lane-runtime-evidence-patch",
-            "candidate_artifact_refs": [candidate_ref],
-            "session_source_refs": [
-                "reports/runner-recovery-proof.json",
-                "reports/lane-recovery/lane-runtime-evidence.json",
-            ],
-            "patch_forward_artifact": patch_forward_ref,
-            "patch_lane_review_intake_artifact": patch_intake_ref,
-            "patch_lane_review_verdict_artifact": patch_verdict_ref,
-            "session_artifact_validation": {
-                "status": "validated",
-                "proof_level": "contract_proof",
-            },
-            "patch_forward_artifact_boundary": {
-                "status": "resolved_with_retained_manual_gaps",
-                "proof_level": "contract_proof",
-                "retained_manual_gaps": ["release_evidence_not_linked"],
-            },
-        },
-        "forbidden_claims": list(REQUIRED_FORBIDDEN_CLAIMS),
-    }
-
-
-def _write_candidate(
-    root: Path,
-    candidate_ref: str,
-    *,
-    producer: str = "platform_runner_dispatch",
-) -> None:
-    platform_runner_candidate = producer == "platform_runner_dispatch"
-    capture_local_execution_candidate(
-        output_path=root / candidate_ref,
-        lane_id="lane-runtime-evidence-patch",
-        candidate_id="candidate-runtime-1",
-        conversation_id="conv-runtime",
-        graph_id="graph-runtime",
-        graph_set_id="graph-runtime-graph-set",
-        feature_graph_id="graph-runtime-feature",
-        feature_graph_status_id="fgs:graph-runtime-feature:reviewing",
-        feature_graph_status="reviewing",
-        graph_status_lineage={
-            "source_authority": "feature_graph_status_store",
-            "graph_set_id": "graph-runtime-graph-set",
-            "feature_graph_id": "graph-runtime-feature",
-            "status_id": "fgs:graph-runtime-feature:reviewing",
-            "status": "reviewing",
-            "blueprint_proof_level": "contract_proof",
-            "active_lane_ids": [],
-            "completed_lane_ids": ["lane-runtime-evidence-patch"],
-            "source_event_lineage": [],
-        },
-        run_id="platform-runner:run-1" if platform_runner_candidate else None,
-        worker_id="platform-runner" if platform_runner_candidate else None,
-        runner_session_id="runner-session-1" if platform_runner_candidate else None,
-        runner_session_ref=(
-            "work/runner_sessions/runner-session-1.json"
-            if platform_runner_candidate
-            else None
-        ),
-        producer=producer,
-        source_refs=["worker-candidate:patch-reviewed"],
-        output_refs=[candidate_ref],
-        verification_refs=["uv run pytest tests/xmuse/test_closure_reconciler.py -q"],
-    )
-
-
-def _write_runner_session(
-    root: Path,
-    candidate_ref: str,
-    *,
-    run_id: str = "platform-runner:run-1",
-) -> None:
-    artifact = build_runner_session_artifact(
-        session_id="runner-session-1",
-        run_id=run_id,
-        runner_id="platform-runner",
-        status="session_completed",
-        started_at="2026-06-16T00:00:00Z",
-        completed_at="2026-06-16T00:01:00Z",
-        graph_id="graph-runtime",
-        candidate_artifact_refs=[candidate_ref],
-        candidate_lane_ids=["lane-runtime-evidence-patch"],
-    )
-    path = root / "work" / "runner_sessions" / "runner-session-1.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(artifact, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )

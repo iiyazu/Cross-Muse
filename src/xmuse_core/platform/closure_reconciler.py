@@ -104,6 +104,7 @@ def reconcile_closure(
         current.release_handoff,
         graph_id=graph_id,
         lane_id=lane_id,
+        review_closure=current.review_closure,
     )
     forbidden_claims = _forbidden_claims(
         current.recovery_artifact,
@@ -738,11 +739,13 @@ def _release_handoff_evaluated(
     *,
     graph_id: str,
     lane_id: str,
+    review_closure: Mapping[str, Any] | None = None,
 ) -> _ConditionBuilder:
     gate = build_release_handoff_gate_evaluation_for_closure(
         release_handoff=release_handoff,
         graph_id=graph_id,
         lane_id=lane_id,
+        review_closure=review_closure,
     )
     source_refs = dedupe_text(gate.get("source_refs") or ())
     target_refs = dedupe_text(gate.get("target_refs") or ())

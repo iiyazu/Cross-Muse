@@ -5,6 +5,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from xmuse_core.platform.closure_objects import REQUIRED_FORBIDDEN_CLAIMS
 from xmuse_core.platform.local_execution_candidate import (
     LOCAL_EXECUTION_CANDIDATE_FORBIDDEN_CLAIMS,
     LOCAL_EXECUTION_CANDIDATE_PLATFORM_RUNNER_PRODUCER,
@@ -303,6 +304,7 @@ def build_release_handoff_gate_evaluation_for_closure(
     release_handoff: Mapping[str, Any] | None,
     graph_id: str,
     lane_id: str,
+    review_closure: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Evaluate L9->L10 handoff readiness for closure-level reconciliation."""
 
@@ -311,6 +313,20 @@ def build_release_handoff_gate_evaluation_for_closure(
             "status": "false",
             "severity": "manual_gap",
             "reason": "release handoff artifact/report is missing",
+            "source_refs": [],
+            "target_refs": [],
+            "is_blocking": False,
+        }
+
+    scope_mismatch = _release_handoff_scope_mismatch(
+        release_handoff=release_handoff,
+        review_closure=review_closure,
+    )
+    if scope_mismatch is not None:
+        return {
+            "status": "false",
+            "severity": "manual_gap",
+            "reason": scope_mismatch,
             "source_refs": [],
             "target_refs": [],
             "is_blocking": False,
@@ -438,6 +454,54 @@ def build_release_handoff_gate_evaluation_for_closure(
                 "is_blocking": False,
             }
 
+    if schema_version == RELEASE_EVIDENCE_CANDIDATES_SCHEMA_VERSION:
+        release_graph = _text(release_handoff.get("graph_id"))
+        if release_graph is None:
+            return {
+                "status": "false",
+                "severity": "manual_gap",
+                "reason": "release evidence candidate handoff graph_id is missing",
+                "source_refs": [],
+                "target_refs": [],
+                "is_blocking": False,
+            }
+        if release_graph != graph_id:
+            return {
+                "status": "false",
+                "severity": "manual_gap",
+                "reason": (
+                    "release evidence candidate handoff graph_id does not match "
+                    "current closure graph"
+                ),
+                "source_refs": [],
+                "target_refs": [],
+                "is_blocking": False,
+            }
+        release_lane = _text(
+            release_handoff.get("lane_id") or release_handoff.get("terminal_lane_id")
+        )
+        if release_lane is None:
+            return {
+                "status": "false",
+                "severity": "manual_gap",
+                "reason": "release evidence candidate handoff lane_id is missing",
+                "source_refs": [],
+                "target_refs": [],
+                "is_blocking": False,
+            }
+        if release_lane != lane_id:
+            return {
+                "status": "false",
+                "severity": "manual_gap",
+                "reason": (
+                    "release evidence candidate handoff lane_id does not match "
+                    "current closure lane"
+                ),
+                "source_refs": [],
+                "target_refs": [],
+                "is_blocking": False,
+            }
+
     if _text(release_handoff.get("server_truth_status")) not in {None, "not_server_truth"}:
         return {
             "status": "false",
@@ -464,6 +528,23 @@ def build_release_handoff_gate_evaluation_for_closure(
             "target_refs": [],
             "is_blocking": False,
         }
+    missing_forbidden_claims = [
+        claim
+        for claim in REQUIRED_FORBIDDEN_CLAIMS
+        if claim not in set(_string_list(release_handoff.get("forbidden_claims")))
+    ]
+    if missing_forbidden_claims:
+        return {
+            "status": "false",
+            "severity": "manual_gap",
+            "reason": (
+                "release handoff missing forbidden claims: "
+                + ", ".join(missing_forbidden_claims)
+            ),
+            "source_refs": source_refs,
+            "target_refs": _string_list(release_handoff.get("target_refs")),
+            "is_blocking": False,
+        }
     return {
         "status": "true",
         "severity": "ok",
@@ -472,6 +553,36 @@ def build_release_handoff_gate_evaluation_for_closure(
         "target_refs": _string_list(release_handoff.get("target_refs")),
         "is_blocking": False,
     }
+
+
+def _release_handoff_scope_mismatch(
+    *,
+    release_handoff: Mapping[str, Any],
+    review_closure: Mapping[str, Any] | None,
+) -> str | None:
+    if review_closure is None:
+        return None
+    release_graph = _text(release_handoff.get("graph_id"))
+    review_graph = _text(review_closure.get("graph_id"))
+    if (
+        release_graph is not None
+        and review_graph is not None
+        and release_graph != review_graph
+    ):
+        return "release handoff graph_id does not match review closure graph_id"
+    release_lane = _text(
+        release_handoff.get("lane_id")
+        or release_handoff.get("terminal_lane_id")
+        or release_handoff.get("failed_lane_id")
+    )
+    review_lane = _text(
+        review_closure.get("terminal_lane_id")
+        or review_closure.get("lane_id")
+        or review_closure.get("failed_lane_id")
+    )
+    if release_lane is not None and review_lane is not None and release_lane != review_lane:
+        return "release handoff lane scope does not match review closure lane scope"
+    return None
 
 
 def load_and_evaluate_review_closure_handoff(

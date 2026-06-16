@@ -20,7 +20,6 @@ from xmuse_core.platform.god_room_review_chain_proof import (
     build_review_chain_proof_l10_handoff_evaluation,
 )
 from xmuse_core.platform.god_room_review_handoff import (
-    REQUIRED_GOD_ROOM_REVIEW_CLOSURE_FORBIDDEN_CLAIMS,
     build_review_closure_handoff_evaluation,
 )
 from xmuse_core.platform.production_evidence import (
@@ -865,7 +864,6 @@ def _review_closure_details(
     payload = _load_json(path, label="GOD room review closure", issues=issues)
     if not isinstance(payload, dict):
         return _manual_gap_details("GOD room review closure artifact is missing"), [], []
-    schema_version = _text(payload.get("schema_version"))
     proof_level = _text(payload.get("proof_level")) or "manual_gap"
     review_truth_status = _text(payload.get("review_truth_status"))
     execution_truth_status = _text(payload.get("execution_truth_status"))
@@ -881,32 +879,15 @@ def _review_closure_details(
         handoff_evaluation.get("candidate_artifact_refs")
     )
     current_handoff_source_refs = _string_list(handoff_evaluation.get("source_refs"))
-    if schema_version != "xmuse.god_room_lane_review_closure.v1":
-        issues.append("GOD room review closure artifact has unexpected schema")
-    if proof_level != "contract_proof":
-        issues.append("GOD room review closure proof level is not contract_proof")
-    if review_truth_status != "independent_review_artifact":
-        issues.append("GOD room review closure is missing independent review truth")
-    if execution_truth_status != "candidate_reviewed":
-        issues.append("GOD room review closure overclaims execution truth")
-    if server_truth_status != "not_server_truth":
-        issues.append("GOD room review closure overclaims server truth")
+    issues.extend(_review_closure_handoff_issues(handoff_evaluation))
     if handoff_status != "candidate_input_ready":
         issues.append(
             "GOD room review closure release handoff is not candidate_input_ready"
-        )
-    if not current_handoff_ready:
-        issues.append(
-            "GOD room review closure current handoff is not gate-ready: "
-            f"{current_handoff_summary or 'unknown'}"
         )
     manual_gaps = _string_list(payload.get("manual_gaps"))
     forbidden_claims = _string_list(payload.get("forbidden_claims"))
     if "release_evidence_not_linked" not in manual_gaps:
         issues.append("GOD room review closure must preserve release evidence gap")
-    for claim in sorted(REQUIRED_GOD_ROOM_REVIEW_CLOSURE_FORBIDDEN_CLAIMS):
-        if claim not in forbidden_claims:
-            issues.append(f"GOD room review closure missing forbidden claim: {claim}")
     candidate_refs = _string_list(payload.get("candidate_refs"))
     cited_candidate_refs = _string_list(payload.get("cited_candidate_refs"))
     failed_lane_id = _text(payload.get("failed_lane_id"))
@@ -964,6 +945,23 @@ def _review_closure_details(
         },
         refs,
         targets,
+    )
+
+
+def _review_closure_handoff_issues(
+    handoff_evaluation: Mapping[str, Any],
+) -> list[str]:
+    if _text(handoff_evaluation.get("status")) == "ready":
+        return []
+    summary = _text(handoff_evaluation.get("handoff_summary"))
+    return _dedupe(
+        [
+            (
+                "GOD room review closure current handoff is not gate-ready: "
+                f"{summary or 'unknown'}"
+            ),
+            *_string_list(handoff_evaluation.get("issues")),
+        ]
     )
 
 

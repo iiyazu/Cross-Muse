@@ -3,17 +3,21 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from tests.xmuse.closure_test_fixtures import (
+    release_handoff_payload as _release_handoff_payload,
+)
+from tests.xmuse.closure_test_fixtures import (
+    review_closure_payload as _review_closure_payload,
+)
 from xmuse_core.platform.god_room_review_handoff import (
     REVIEW_CLOSURE_HANDOFF_EVALUATION_SCHEMA_VERSION,
+    build_release_handoff_gate_evaluation_for_closure,
     build_review_closure_handoff_evaluation,
     load_and_evaluate_review_closure_handoff,
 )
 from xmuse_core.platform.local_execution_candidate import (
     LOCAL_EXECUTION_CANDIDATE_FORBIDDEN_CLAIMS,
-    capture_local_execution_candidate,
-    load_local_execution_candidate_lineage,
 )
-from xmuse_core.platform.runner_session import build_runner_session_artifact
 
 
 def test_review_closure_handoff_evaluation_marks_ready_contract_handoff(
@@ -85,6 +89,99 @@ def test_review_closure_handoff_evaluation_blocks_server_truth_overclaim(
     assert any("overclaims server truth" in issue for issue in evaluation["issues"])
 
 
+def test_release_handoff_gate_rejects_review_closure_graph_scope_mismatch(
+    tmp_path: Path,
+) -> None:
+    review_closure = _review_closure_payload(tmp_path)
+    review_closure["graph_id"] = "graph-other"
+
+    gate = build_release_handoff_gate_evaluation_for_closure(
+        release_handoff=_release_handoff_payload(),
+        graph_id="graph-runtime",
+        lane_id="lane-runtime-evidence-patch",
+        review_closure=review_closure,
+    )
+
+    assert gate["status"] == "false"
+    assert gate["severity"] == "manual_gap"
+    assert gate["reason"] == (
+        "release handoff graph_id does not match review closure graph_id"
+    )
+
+
+def test_release_handoff_gate_rejects_review_closure_lane_scope_mismatch(
+    tmp_path: Path,
+) -> None:
+    review_closure = _review_closure_payload(tmp_path)
+    review_closure["terminal_lane_id"] = "lane-other"
+
+    gate = build_release_handoff_gate_evaluation_for_closure(
+        release_handoff=_release_handoff_payload(),
+        graph_id="graph-runtime",
+        lane_id="lane-runtime-evidence-patch",
+        review_closure=review_closure,
+    )
+
+    assert gate["status"] == "false"
+    assert gate["severity"] == "manual_gap"
+    assert gate["reason"] == (
+        "release handoff lane scope does not match review closure lane scope"
+    )
+
+
+def test_release_handoff_gate_rejects_missing_required_forbidden_claims() -> None:
+    handoff = _release_handoff_payload()
+    handoff["forbidden_claims"] = ["ready_to_merge"]
+
+    gate = build_release_handoff_gate_evaluation_for_closure(
+        release_handoff=handoff,
+        graph_id="graph-runtime",
+        lane_id="lane-runtime-evidence-patch",
+    )
+
+    assert gate["status"] == "false"
+    assert gate["severity"] == "manual_gap"
+    assert "release handoff missing forbidden claims" in gate["reason"]
+    assert "live_memoryos" in gate["reason"]
+    assert "github_review_truth" in gate["reason"]
+
+
+def test_release_handoff_gate_accepts_scoped_release_evidence_candidates() -> None:
+    gate = build_release_handoff_gate_evaluation_for_closure(
+        release_handoff={
+            "schema_version": "xmuse.release_evidence_candidates.v1",
+            "graph_id": "graph-runtime",
+            "lane_id": "lane-runtime-evidence-patch",
+            "server_truth_status": "not_server_truth",
+            "source_refs": ["release-evidence-candidate:graph-runtime"],
+            "forbidden_claims": list(LOCAL_EXECUTION_CANDIDATE_FORBIDDEN_CLAIMS),
+        },
+        graph_id="graph-runtime",
+        lane_id="lane-runtime-evidence-patch",
+    )
+
+    assert gate["status"] == "true"
+    assert gate["severity"] == "ok"
+    assert gate["source_refs"] == ["release-evidence-candidate:graph-runtime"]
+
+
+def test_release_handoff_gate_rejects_unscoped_release_evidence_candidates() -> None:
+    gate = build_release_handoff_gate_evaluation_for_closure(
+        release_handoff={
+            "schema_version": "xmuse.release_evidence_candidates.v1",
+            "server_truth_status": "not_server_truth",
+            "source_refs": ["release-evidence-candidate:graph-runtime"],
+            "forbidden_claims": list(LOCAL_EXECUTION_CANDIDATE_FORBIDDEN_CLAIMS),
+        },
+        graph_id="graph-runtime",
+        lane_id="lane-runtime-evidence-patch",
+    )
+
+    assert gate["status"] == "false"
+    assert gate["severity"] == "manual_gap"
+    assert gate["reason"] == "release evidence candidate handoff graph_id is missing"
+
+
 def test_load_and_evaluate_review_closure_handoff_uses_artifact_ref(
     tmp_path: Path,
 ) -> None:
@@ -124,97 +221,3 @@ def test_load_and_evaluate_review_closure_handoff_rejects_escaping_ref(
         "GOD room review closure artifact escapes xmuse root."
     )
     assert "review_closure_handoff_not_ready" in evaluation["manual_gaps"]
-
-
-def _review_closure_payload(root: Path) -> dict[str, object]:
-    candidate_ref = "artifacts/lane-runtime-evidence-patch/result.json"
-    _write_candidate(root, candidate_ref)
-    _write_runner_session(root, candidate_ref)
-    candidate_lineage = load_local_execution_candidate_lineage(
-        root=root,
-        artifact_ref=candidate_ref,
-        lane_id="lane-runtime-evidence-patch",
-        graph_id="graph-runtime",
-        conversation_id="conv-runtime",
-        required_producer="platform_runner_dispatch",
-    )
-    return {
-        "schema_version": "xmuse.god_room_lane_review_closure.v1",
-        "proof_level": "contract_proof",
-        "review_truth_status": "independent_review_artifact",
-        "execution_truth_status": "candidate_reviewed",
-        "server_truth_status": "not_server_truth",
-        "release_evidence_handoff_status": "candidate_input_ready",
-        "conversation_id": "conv-runtime",
-        "graph_id": "graph-runtime",
-        "failed_lane_id": "lane-runtime-evidence",
-        "terminal_lane_id": "lane-runtime-evidence-patch",
-        "candidate_refs": ["worker-candidate:patch-reviewed", candidate_ref],
-        "cited_candidate_refs": ["worker-candidate:patch-reviewed", candidate_ref],
-        "cited_candidate_artifact_refs": [candidate_ref],
-        "cited_candidate_artifact_lineage": [candidate_lineage],
-        "source_event_lineage": [
-            {
-                "event_id": "evt-review-provider-speak",
-                "event_type": "speak",
-                "proof_level": "opt_in_live_proof",
-                "provider_response_artifact_ref": "reports/provider-response-1.json",
-                "source_refs": ["god-room-event:evt-review-provider-speak:source"],
-            }
-        ],
-        "terminal_review_verdict": {
-            "evidence_refs": ["worker-candidate:patch-reviewed", candidate_ref],
-        },
-        "manual_gaps": ["release_evidence_not_linked"],
-        "forbidden_claims": list(LOCAL_EXECUTION_CANDIDATE_FORBIDDEN_CLAIMS),
-    }
-
-
-def _write_candidate(root: Path, candidate_ref: str) -> None:
-    capture_local_execution_candidate(
-        output_path=root / candidate_ref,
-        lane_id="lane-runtime-evidence-patch",
-        candidate_id="candidate-runtime-1",
-        conversation_id="conv-runtime",
-        graph_id="graph-runtime",
-        graph_set_id="graph-runtime-graph-set",
-        feature_graph_id="graph-runtime-feature",
-        feature_graph_status_id="fgs:graph-runtime-feature:reviewing",
-        feature_graph_status="reviewing",
-        graph_status_lineage={
-            "source_authority": "feature_graph_status_store",
-            "graph_set_id": "graph-runtime-graph-set",
-            "feature_graph_id": "graph-runtime-feature",
-            "status_id": "fgs:graph-runtime-feature:reviewing",
-            "status": "reviewing",
-            "blueprint_proof_level": "contract_proof",
-            "active_lane_ids": [],
-            "completed_lane_ids": ["lane-runtime-evidence-patch"],
-            "source_event_lineage": [],
-        },
-        run_id="platform-runner:run-1",
-        worker_id="platform-runner",
-        runner_session_id="runner-session-1",
-        runner_session_ref="work/runner_sessions/runner-session-1.json",
-        producer="platform_runner_dispatch",
-        source_refs=["worker-candidate:patch-reviewed"],
-        output_refs=[candidate_ref],
-        verification_refs=["uv run pytest tests/xmuse/test_review_closure_handoff_evaluator.py -q"],
-    )
-
-
-def _write_runner_session(root: Path, candidate_ref: str) -> None:
-    artifact = build_runner_session_artifact(
-        session_id="runner-session-1",
-        run_id="platform-runner:run-1",
-        runner_id="platform-runner",
-        status="session_completed",
-        started_at="2026-06-15T00:00:00Z",
-        completed_at="2026-06-15T00:01:00Z",
-        graph_id="graph-runtime",
-        candidate_artifact_refs=[candidate_ref],
-        candidate_lane_ids=["lane-runtime-evidence-patch"],
-    )
-    path = root / "work" / "runner_sessions" / "runner-session-1.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(artifact, indent=2, sort_keys=True) + "\n", encoding="utf-8")
