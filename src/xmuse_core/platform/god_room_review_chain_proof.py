@@ -696,6 +696,54 @@ def build_god_room_review_chain_proof(
             *_string_list(runner_recovery_lineage.get("forbidden_claims")),
         ]
     )
+    local_execution_review_session = _local_execution_review_session(
+        status=status,
+        proof_level=proof_level,
+        closure=closure,
+        candidate_lineages=candidate_lineages,
+        runner_recovery_lineage=runner_recovery_lineage,
+        session_artifact_validation=session_artifact_validation,
+        session_scope_boundary=session_scope_boundary,
+        patch_forward_artifact_boundary=patch_forward_artifact_boundary,
+        worker_evidence_bundle_citation_boundary=_mapping(
+            session_artifact_validation.get(
+                "worker_evidence_bundle_citation_boundary"
+            )
+        ),
+        reviewer_independence=reviewer_independence,
+        runner_session_boundary=runner_session_boundary,
+        runner_recovery_lineage_boundary=runner_recovery_lineage_boundary,
+        graph_wide_lane_accounting_boundary=graph_wide_lane_accounting_boundary,
+        manual_gaps=manual_gaps,
+        forbidden_claims=forbidden_claims,
+    )
+    source_refs = _ordered_unique(
+        [
+            _text(base.get("review_closure_artifact")),
+            *_string_list(release_handoff_evaluation.get("source_refs")),
+            *_string_list(release_handoff_evaluation.get("candidate_artifact_refs")),
+            *_string_list(local_execution_review_session.get("session_source_refs")),
+            *_string_list(local_execution_review_session.get("session_artifact_refs")),
+            *[
+                _text(lineage.get("artifact_ref"))
+                for lineage in candidate_lineages
+            ],
+            *[
+                ref
+                for lineage in candidate_lineages
+                for ref in _string_list(lineage.get("source_refs"))
+            ],
+            _text(runner_recovery_lineage.get("artifact_ref")),
+            *_string_list(runner_recovery_lineage.get("source_refs")),
+        ]
+    )
+    target_refs = _ordered_unique(
+        [
+            f"graph:{graph_id}" if graph_id else None,
+            f"lane:{failed_lane_id}" if failed_lane_id else None,
+            f"lane:{terminal_lane_id}" if terminal_lane_id else None,
+        ]
+    )
     return {
         **base,
         "status": status,
@@ -709,6 +757,9 @@ def build_god_room_review_chain_proof(
         "graph_id": graph_id,
         "failed_lane_id": failed_lane_id,
         "terminal_lane_id": terminal_lane_id,
+        "source_refs": source_refs,
+        "source_ref_count": len(source_refs),
+        "target_refs": target_refs,
         "review_closure": {
             "schema_version": _text(closure.get("schema_version")),
             "source_authority": _text(closure.get("source_authority")),
@@ -774,27 +825,7 @@ def build_god_room_review_chain_proof(
                 _text(lineage.get("runner_session_id")) for lineage in candidate_lineages
             ),
         },
-        "local_execution_review_session": _local_execution_review_session(
-            status=status,
-            proof_level=proof_level,
-            closure=closure,
-            candidate_lineages=candidate_lineages,
-            runner_recovery_lineage=runner_recovery_lineage,
-            session_artifact_validation=session_artifact_validation,
-            session_scope_boundary=session_scope_boundary,
-            patch_forward_artifact_boundary=patch_forward_artifact_boundary,
-            worker_evidence_bundle_citation_boundary=_mapping(
-                session_artifact_validation.get(
-                    "worker_evidence_bundle_citation_boundary"
-                )
-            ),
-            reviewer_independence=reviewer_independence,
-            runner_session_boundary=runner_session_boundary,
-            runner_recovery_lineage_boundary=runner_recovery_lineage_boundary,
-            graph_wide_lane_accounting_boundary=graph_wide_lane_accounting_boundary,
-            manual_gaps=manual_gaps,
-            forbidden_claims=forbidden_claims,
-        ),
+        "local_execution_review_session": local_execution_review_session,
         "runner_recovery_proof_lineage": {
             "status": runner_recovery_status or "not_provided",
             "proof_level": runner_recovery_proof_level or "manual_gap",

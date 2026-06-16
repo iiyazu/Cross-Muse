@@ -246,6 +246,8 @@ runtime、provider invocation、lane authority、review truth 完成。后续生
   `5bdf647cb9e127000554bef587697547797224f6`
 - Local head at start of x3 shared release/review scope admission slice:
   `d19e936fbc794943becb9b37499e6d6a62b84ecc`
+- Local head at start of x3 review-chain closure-reconciler handoff slice:
+  `d4ea5c4020ef6b25c9526587925d0a6f520cb51b`
 - PR: <https://github.com/iiyazu/Cross-Muse/pull/43>
 - PR state last checked: draft/open/unmerged
 - PR merge state last checked: `CLEAN`
@@ -347,6 +349,7 @@ truth_snapshot:
   local_head_at_l8_review_retry_recovery_artifact_slice: 654b418c52cc1487193561f65e0521a5a82f0452
   local_head_at_l8_l9_l10_closure_controller_contract_slice: b050d534873594466e46190619ab20387427f231
   local_head_at_l8_shared_recovery_writer_consolidation_slice: b050d534873594466e46190619ab20387427f231
+  local_head_at_x3_review_chain_closure_reconciler_handoff_slice: d4ea5c4020ef6b25c9526587925d0a6f520cb51b
   pr: 43
   pr_url: https://github.com/iiyazu/Cross-Muse/pull/43
   pr_state: draft_open_unmerged
@@ -638,6 +641,21 @@ Current closure audit:
     admission instead of reimplementing those checks locally. It still performs
     only runtime-closure-specific checks such as preserving
     `release_evidence_not_linked`.
+    The API-generated `xmuse.god_room_lane_review_chain_proof.v1` artifact now
+    also carries top-level `source_refs`, `source_ref_count`, and `target_refs`
+    derived from its review closure, bounded session, local execution
+    candidate, runner recovery proof, and shared handoff evaluation. This lets
+    `closure_reconciler` evaluate the same review-chain artifact as the
+    `ReleaseHandoffEvaluated` input instead of treating it as a source-ref gap.
+    The focused API integration proof reaches `release_handoff_evaluated` only
+    for artifact-local `contract_proof` while preserving `ServerTruthPending`
+    and inherited forbidden claims such as `worker_output_is_review_truth`,
+    `live_memoryos`, `github_review_truth`, `ready_to_merge`, and `pr_merged`.
+    The same focused proof now writes that reconciled ClosureObject artifact
+    and feeds it into the release-evidence candidate MemoryOS guidance path;
+    L10 accepts it only as `closure_object_artifact` source-ref guidance with
+    `candidate_report_is_not_live_memoryos_proof`, not as a live MemoryOS trace
+    or release/server readiness signal.
     Closure-controller and review-handoff regression tests now share a small
     fixture builder that produces candidate, runner-session, review-closure,
     and review-chain payloads through the production capture/build helpers. This

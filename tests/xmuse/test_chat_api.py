@@ -13,6 +13,19 @@ from xmuse_core.chat.execution_cards import ChatExecutionCardEmitter
 from xmuse_core.chat.god_room_speaker_response import GodRoomProviderSpeechResponseV1
 from xmuse_core.chat.inbox_store import ChatInboxStore
 from xmuse_core.chat.store import ChatStore
+from xmuse_core.platform.closure_objects import (
+    INDEPENDENT_REVIEW_VERDICT_PRESENT,
+    PATCH_FORWARD_LINEAGE_PRESENT,
+    RECOVERY_ALLOWS_PROGRESS,
+    RECOVERY_ARTIFACT_PRESENT,
+    RELEASE_HANDOFF_EVALUATED,
+    REQUIRED_FORBIDDEN_CLAIMS,
+    REQUIRED_FORBIDDEN_CLAIMS_PRESENT,
+    SERVER_TRUTH_PENDING,
+    VALIDATED_EXECUTION_CANDIDATE_PRESENT,
+    closure_condition_by_type,
+)
+from xmuse_core.platform.closure_reconciler import reconcile_closure
 from xmuse_core.platform.feature_graph_claim_coordinator import (
     claim_next_ready_feature_graph_worker,
 )
@@ -4783,6 +4796,143 @@ def test_chat_api_god_room_lane_review_closure_writes_chain_proof_from_explicit_
     ]["source_refs"]
     assert "ready_to_merge" not in pack
     assert not (tmp_path / "feature_lanes.json").exists()
+
+
+def test_chat_api_review_chain_artifacts_feed_closure_reconciler_conditions(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    graph_id = "graph-review-chain-closure-reconciler"
+    failed_lane_id = "lane-runtime-api"
+    patch_lane_id = "lane-runtime-api-patch-reconciler"
+    conv_id = _create_reviewed_patch_forward_lane(
+        client,
+        graph_id=graph_id,
+        patch_lane_id=patch_lane_id,
+        patch_decision="merge",
+    )
+    candidate_ref = f"work/local_execution_candidates/{graph_id}.{patch_lane_id}.json"
+    recovery_proof = _write_runner_recovery_proof_artifact(
+        tmp_path,
+        graph_id=graph_id,
+        lane_id=failed_lane_id,
+    )
+
+    response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-closure",
+        json={
+            "graph_id": graph_id,
+            "lane_id": failed_lane_id,
+            "runner_recovery_proof_artifact": str(recovery_proof.relative_to(tmp_path)),
+        },
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    chain_proof = json.loads(
+        (tmp_path / payload["artifacts"]["review_chain_proof"]).read_text(
+            encoding="utf-8",
+        )
+    )
+    assert candidate_ref in chain_proof["source_refs"]
+    assert payload["artifacts"]["review_closure"] in chain_proof["source_refs"]
+    assert f"graph:{graph_id}" in chain_proof["target_refs"]
+    assert f"lane:{patch_lane_id}" in chain_proof["target_refs"]
+    closure = reconcile_closure(
+        root=tmp_path,
+        graph_id=graph_id,
+        lane_id=patch_lane_id,
+        recovery_artifact=str(recovery_proof.relative_to(tmp_path)),
+        execution_candidates=[candidate_ref],
+        review_closure=payload["artifacts"]["review_closure"],
+        release_handoff=payload["artifacts"]["review_chain_proof"],
+    )
+
+    assert closure.status.phase == "release_handoff_evaluated"
+    assert closure.status.proof_level == "contract_proof"
+    assert not closure.status.manual_gaps
+    assert not closure.status.blocked_reasons
+    assert candidate_ref in closure.metadata.source_refs
+    assert payload["artifacts"]["review_closure"] in closure.metadata.source_refs
+    assert any(
+        ref.startswith("feature_evidence_bundle:")
+        for ref in closure.metadata.source_refs
+    )
+    assert set(REQUIRED_FORBIDDEN_CLAIMS).issubset(closure.status.forbidden_claims)
+    assert "server_side_truth" in closure.status.forbidden_claims
+    assert "worker_output_is_review_truth" in closure.status.forbidden_claims
+    assert "pr_merged" in closure.status.forbidden_claims
+
+    expected_conditions = {
+        RECOVERY_ARTIFACT_PRESENT,
+        RECOVERY_ALLOWS_PROGRESS,
+        VALIDATED_EXECUTION_CANDIDATE_PRESENT,
+        INDEPENDENT_REVIEW_VERDICT_PRESENT,
+        PATCH_FORWARD_LINEAGE_PRESENT,
+        RELEASE_HANDOFF_EVALUATED,
+        REQUIRED_FORBIDDEN_CLAIMS_PRESENT,
+        SERVER_TRUTH_PENDING,
+    }
+    conditions = {
+        condition_type: closure_condition_by_type(closure, condition_type)
+        for condition_type in expected_conditions
+    }
+    assert all(condition is not None for condition in conditions.values())
+    assert all(condition.status == "true" for condition in conditions.values())
+    assert all(condition.severity == "ok" for condition in conditions.values())
+
+    candidate_condition = conditions[VALIDATED_EXECUTION_CANDIDATE_PRESENT]
+    assert candidate_condition is not None
+    assert candidate_condition.observed_ref == candidate_ref
+    assert candidate_condition.proof_level == "local_runtime_proof"
+    release_condition = conditions[RELEASE_HANDOFF_EVALUATED]
+    assert release_condition is not None
+    assert release_condition.observed_ref == payload["artifacts"]["review_chain_proof"]
+    server_condition = conditions[SERVER_TRUTH_PENDING]
+    assert server_condition is not None
+    assert server_condition.reason == (
+        "server truth remains pending; no live/server proof is claimed"
+    )
+
+    closure_object_path = tmp_path / "closure-object.json"
+    closure_object_path.write_text(
+        json.dumps(closure.to_dict(), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    candidate_report = build_release_evidence_candidate_report(
+        tmp_path,
+        conversation_id=conv_id,
+        env={
+            "XMUSE_LIVE_MEMORYOS_LITE": "1",
+            "XMUSE_MEMORYOS_LITE_URL": "http://memoryos-lite.example",
+        },
+        memoryos_payload={
+            "repo_id": "iiyazu/Cross-Muse",
+            "workspace_id": "xmuse",
+            "god_id": "review",
+            "conversation_id": conv_id,
+            "thread_id": "thread-closure-reconciler",
+            "blueprint_id": "blueprint-closure-reconciler",
+            "feature_id": "feature-runtime",
+            "lane_id": patch_lane_id,
+            "content": "closure object source refs",
+            "query": "closure object source refs",
+            "closure_object": str(closure_object_path),
+        },
+    )
+    memoryos = candidate_report["live_memoryos"]
+    payload_hints = memoryos["suggested_operator_action"]["payload_hints"]
+    assert memoryos["closure_object_artifact_configured"] is True
+    assert memoryos["closure_object_artifact_gate_ready"] is True
+    assert memoryos["closure_object_phase"] == "release_handoff_evaluated"
+    assert "closure_object_artifact" in memoryos["source_authority"]
+    assert memoryos["proof_boundary"] == "candidate_report_is_not_live_memoryos_proof"
+    assert candidate_ref in payload_hints["source_refs"]
+    assert payload["artifacts"]["review_closure"] in payload_hints["source_refs"]
+    assert any(
+        ref.startswith("feature_evidence_bundle:")
+        for ref in payload_hints["source_refs"]
+    )
 
 
 def test_chat_api_god_room_lane_review_closure_rejects_manual_candidate_producer(
