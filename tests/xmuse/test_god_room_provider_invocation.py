@@ -4,6 +4,8 @@ import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
+
 from xmuse_core.chat.god_room_provider_invocation import (
     ProviderCommandResult,
     invoke_god_room_provider_speech,
@@ -251,6 +253,33 @@ def test_provider_invocation_records_missing_cli_without_live_claim(
     assert response.proof_level == "manual_gap"
     assert response.failure_kind == "missing_cli_binary"
     assert response.blocked_reason == "provider CLI unavailable: opencode"
+
+
+def test_provider_invocation_rejects_opencode_inline_variant_in_model(
+    tmp_path: Path,
+) -> None:
+    response = invoke_god_room_provider_speech(
+        attempt=_ready_attempt(
+            cli_command="opencode",
+            model="opencode-go/deepseek-v4-flash:max",
+            variant=None,
+        ),
+        prompt="Respond with JSON.",
+        workspace=tmp_path,
+        timeout_seconds=90,
+        timestamp_factory=_clock(),
+        runner=lambda *_: pytest.fail(
+            "inline-variant command path should not invoke provider subprocess"
+        ),
+    )
+
+    assert response.status == "blocked"
+    assert response.proof_level == "manual_gap"
+    assert response.failure_kind == "manual_gap"
+    assert (
+        response.blocked_reason
+        == "speaker attempt uses inline opencode variant; use variant field instead"
+    )
 
 
 def test_provider_invocation_records_nonzero_exit_without_live_claim(

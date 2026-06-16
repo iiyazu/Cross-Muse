@@ -288,6 +288,12 @@ def _build_command(
     if model_id is None:
         return [], None, "speaker attempt missing model"
     if command == "opencode":
+        if model_id.endswith(":max") or model_id.endswith("-max"):
+            return (
+                [],
+                None,
+                "speaker attempt uses inline opencode variant; use variant field instead",
+            )
         run_command = [
             command,
             "run",

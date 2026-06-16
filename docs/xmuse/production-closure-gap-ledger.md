@@ -48,6 +48,8 @@ runtime、provider invocation、lane authority、review truth 完成。后续生
   `85e573c24c4c1abc955638b4feb609c6381580ff`
 - Local head at start of L4/L5 opt-in live route repair:
   `7aef014e41b6de3caac032c3338c39accf1a8e90`
+- Local head at start of L4 opencode inline-variant fail-closed slice:
+  `0d99e7765d31b921a948dcccaab96c967a7c14ed`
 - Local head at start of L6 freeze proof classification slice:
   `5f74e2d3911d1f919758ea397ff5c423149a20ce`
 - Local head at start of L7 laneDAG proof metadata slice:
@@ -994,6 +996,10 @@ Use these as implementation references, not as xmuse package dependencies:
     responses as real provider speech.
   - Correct OpenCode/DeepSeek invocation format is documented:
     `opencode run --model opencode-go/deepseek-v4-flash --variant max ...`.
+  - Opencode inline-variant misuse is now fail-closed in the command builder:
+    models encoded as `...:max` or `...-max` are rejected with
+    `manual_gap`; no subprocess is started and the user is instructed to use the
+    separate `variant` field.
 - Missing production closure:
   - `allow_live_provider_proof=true` remains opt-in runtime behavior and must
     not be claimed broadly unless the resulting artifact, L5 capture, and L3
@@ -1013,6 +1019,7 @@ Use these as implementation references, not as xmuse package dependencies:
 
 | Condition | Required outcome | Claim boundary |
 |---|---|---|
+| Inline opencode variant in model field (e.g. `:max` / `-max`) | `manual_gap` | No provider invocation run; keep claim at configuration/protocol level only |
 | Missing `account_ref` | `manual_gap` | No provider speech artifact |
 | Unknown `god_id` | `manual_gap` | No provider speech artifact |
 | Unsupported provider/model/variant | `manual_gap` or `refactor_required` | No fallback model/provider |
