@@ -286,6 +286,20 @@ def evaluate_closure_object_l10_admission(
             "ClosureObject status missing desired conditions: "
             + ", ".join(missing_status_conditions)
         )
+    else:
+        stale_condition_generations = [
+            condition_type
+            for condition_type in CONDITION_ORDER
+            if (
+                condition := closure.status.condition(condition_type)
+            ) is not None
+            and condition.observed_generation != closure.status.observed_generation
+        ]
+        if stale_condition_generations:
+            issues.append(
+                "ClosureObject conditions have stale observed_generation: "
+                + ", ".join(stale_condition_generations)
+            )
     if closure.status.evaluator_version != CLOSURE_OBJECT_EVALUATOR_VERSION:
         issues.append("ClosureObject evaluator_version is stale")
     if closure.status.observed_generation != closure.metadata.generation:

@@ -98,7 +98,11 @@ def test_dedupe_text_preserves_first_seen_order_and_drops_empty_values() -> None
     )
 
 
-def _admission_condition(condition_type: str) -> ClosureCondition:
+def _admission_condition(
+    condition_type: str,
+    *,
+    observed_generation: int | None = 1,
+) -> ClosureCondition:
     if condition_type in {
         CLOSURE_CONTROLLER_FRESH,
         REQUIRED_FORBIDDEN_CLAIMS_PRESENT,
@@ -109,6 +113,7 @@ def _admission_condition(condition_type: str) -> ClosureCondition:
             status="true",
             severity="ok",
             reason=f"{condition_type} is satisfied",
+            observed_generation=observed_generation,
         )
     if condition_type == RELEASE_HANDOFF_EVALUATED:
         return ClosureCondition(
@@ -116,12 +121,14 @@ def _admission_condition(condition_type: str) -> ClosureCondition:
             status="true",
             severity="ok",
             reason="release handoff was evaluated",
+            observed_generation=observed_generation,
         )
     return ClosureCondition(
         type=condition_type,
         status="false",
         severity="manual_gap",
         reason=f"{condition_type} remains a manual gap",
+        observed_generation=observed_generation,
     )
 
 
@@ -257,6 +264,44 @@ def test_closure_object_l10_admission_rejects_stale_observed_generation() -> Non
         "ClosureObject observed_generation does not match metadata generation"
         in admission.issues
     )
+
+
+def test_closure_object_l10_admission_rejects_unobserved_conditions() -> None:
+    closure = ClosureObject(
+        metadata=ClosureMetadata(
+            name="closure:graph-a:lane-a",
+            layer="WaveD-E/L8-L10",
+            source_refs=("handoff:a",),
+            target_refs=("lane:lane-a",),
+            owner_refs=("source_authority:closure-controller",),
+        ),
+        spec=ClosureSpec(),
+        status=ClosureStatus(
+            phase="manual_gap",
+            conditions=tuple(
+                _admission_condition(
+                    condition_type,
+                    observed_generation=None,
+                )
+                for condition_type in CONDITION_ORDER
+            ),
+            observed_refs=("candidate:a", "handoff:a"),
+            forbidden_claims=REQUIRED_FORBIDDEN_CLAIMS,
+        ),
+    )
+
+    admission = evaluate_closure_object_l10_admission(closure)
+
+    assert admission.gate_ready is False
+    assert admission.source_refs == ()
+    assert admission.target_refs == ()
+    assert admission.owner_refs == ()
+    assert (
+        "ClosureObject conditions have stale observed_generation"
+        in admission.summary
+    )
+    assert CLOSURE_CONTROLLER_FRESH in admission.summary
+    assert SERVER_TRUTH_PENDING in admission.summary
 
 
 def test_closure_object_l10_admission_requires_complete_condition_chain() -> None:

@@ -309,6 +309,9 @@ runtime、provider invocation、lane authority、review truth 完成。后续生
 - Local head at start of x3 ClosureObject observed-generation L10 admission
   slice:
   `ebc5cb4e71a04083d99b5961cac9945215592fac`
+- Local head at start of x3 ClosureObject condition observed-generation L10
+  admission slice:
+  `c751db94f190daec1163e15f16b4fd90ca73a751`
 - PR: <https://github.com/iiyazu/Cross-Muse/pull/43>
 - PR state last checked: draft/open/unmerged
 - PR merge state last checked: `CLEAN`
@@ -436,6 +439,7 @@ truth_snapshot:
   local_head_at_x3_runtime_closure_shared_review_chain_handoff_admission_slice: 267ac887b899649a8b6ab6152321df879f249425
   local_head_at_x3_closure_reconciler_patch_forward_shared_review_chain_handoff_admission_slice: a99d9499984d8544523944f9b0cc623997625db3
   local_head_at_x3_closure_object_observed_generation_l10_admission_slice: ebc5cb4e71a04083d99b5961cac9945215592fac
+  local_head_at_x3_closure_object_condition_observed_generation_l10_admission_slice: c751db94f190daec1163e15f16b4fd90ca73a751
   pr: 43
   pr_url: https://github.com/iiyazu/Cross-Muse/pull/43
   pr_state: draft_open_unmerged
@@ -2515,6 +2519,11 @@ Use these as implementation references, not as xmuse package dependencies:
     object whose conditions look current but whose observed status belongs to
     an older generation can no longer seed MemoryOS provenance hints. This is a
     stale-status guard only and does not upgrade any proof level.
+    The same L10 admission also rejects complete condition chains whose
+    individual conditions do not carry the current `observed_generation`.
+    Hand-built ClosureObjects with apparently satisfied conditions but missing
+    or stale per-condition generation metadata therefore remain manual-gap and
+    cannot seed MemoryOS provenance.
   - MemoryOS live gate source-ref admission now excludes MemoryOS-owned refs
     from the upstream source-ref count. A live trace must cite a non-MemoryOS
     xmuse source such as conversation, lane, blueprint, review, or release
