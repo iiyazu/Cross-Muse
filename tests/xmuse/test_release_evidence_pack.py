@@ -515,6 +515,7 @@ def _write_github_server_truth(path: Path, **overrides: object) -> Path:
             "contract-smoke-gates",
             "real-runtime-integration-gate",
         ],
+        "workflow_run_id": 211,
         "check_run_ids": [211, 212, 213],
         "expected_source_app": "github-actions",
         "branch_protection_snapshot": {
@@ -1377,6 +1378,31 @@ def test_release_evidence_pack_recomputes_github_merge_truth(
     assert pack["github_truth"]["merge_truth"] == "missing"
     assert pack["github_truth"]["merged"] is False
     assert pack["github_truth"]["can_emit_pr_merged"] is False
+
+
+def test_release_evidence_pack_rejects_github_truth_without_workflow_lineage(
+    tmp_path: Path,
+) -> None:
+    artifacts = tmp_path / "artifacts"
+    truth = _write_github_server_truth(
+        tmp_path / "github" / "github-truth.json",
+        workflow_run_id=None,
+    )
+
+    pack = capture_release_evidence_pack(
+        artifacts_dir=artifacts,
+        output_path=tmp_path / "pack.json",
+        github_server_truth=truth,
+        github_expected_head_sha="head-pack-1",
+    )
+
+    gate = json.loads((artifacts / "github-server-truth.json").read_text())
+    assert gate["status"] == "manual_gap"
+    assert gate["proof_level"] == "manual_gap"
+    assert "status_check_truth" in gate["summary"]
+    assert gate["forbidden_claims"] == ["pr_merged"]
+    assert pack["release_readiness_decision"] == "blocked"
+    assert pack["blockers"][0]["gate_id"] == "github-server-truth"
 
 
 def test_release_evidence_pack_accepts_server_side_merge_truth(

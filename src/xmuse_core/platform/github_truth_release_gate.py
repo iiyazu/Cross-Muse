@@ -29,6 +29,8 @@ def build_github_server_truth_release_gate(
         head_sha=actual_head_sha,
         expected_head_sha=expected_head_sha,
     )
+    evidence = _github_truth_evidence(github_truth)
+    can_emit_merged = evidence is not None and can_emit_pr_merged(evidence)
     if expected_head_sha is not None and actual_head_sha != expected_head_sha:
         return _gate(
             status="manual_gap",
@@ -49,10 +51,10 @@ def build_github_server_truth_release_gate(
                 github_truth,
                 actual_head_sha=actual_head_sha,
                 expected_head_sha=expected_head_sha,
+                can_emit_pr_merged=can_emit_merged,
             ),
         )
-    if _has_server_enforcement_proof(github_truth):
-        can_emit_merged = _can_emit_pr_merged(github_truth)
+    if _has_server_enforcement_proof(evidence):
         proof_level = (
             "server_side_merge_proof"
             if can_emit_merged
@@ -64,18 +66,19 @@ def build_github_server_truth_release_gate(
             summary="GitHub branch protection/ruleset and required check truth were captured.",
             source_refs=source_refs,
             artifact_path=artifact_path,
-            next_action=_next_action(github_truth),
+            next_action=_next_action(github_truth, can_emit_pr_merged=can_emit_merged),
             forbidden_claims=[] if can_emit_merged else _PR_MERGED_FORBIDDEN_CLAIMS,
             github_truth=_truth_detail(
                 github_truth,
                 actual_head_sha=actual_head_sha,
                 expected_head_sha=expected_head_sha,
+                can_emit_pr_merged=can_emit_merged,
             ),
         )
     return _gate(
         status="manual_gap",
         proof_level="manual_gap",
-        summary=_gap_summary(github_truth),
+        summary=_gap_summary(github_truth, evidence=evidence),
         source_refs=source_refs,
         artifact_path=artifact_path,
         next_action="Capture GitHub branch protection/ruleset and required check truth.",
@@ -84,6 +87,7 @@ def build_github_server_truth_release_gate(
             github_truth,
             actual_head_sha=actual_head_sha,
             expected_head_sha=expected_head_sha,
+            can_emit_pr_merged=can_emit_merged,
         ),
     )
 
@@ -147,6 +151,7 @@ def _truth_detail(
     *,
     actual_head_sha: str | None,
     expected_head_sha: str | None,
+    can_emit_pr_merged: bool,
 ) -> dict[str, Any]:
     if expected_head_sha is None:
         freshness_status = "unchecked"
@@ -163,37 +168,26 @@ def _truth_detail(
         "expected_head_sha": expected_head_sha,
         "head_sha_matches_expected": matches_expected,
         "head_freshness_status": freshness_status,
-        "can_emit_pr_merged": _can_emit_pr_merged(github_truth),
+        "can_emit_pr_merged": can_emit_pr_merged,
     }
 
 
-def _has_server_enforcement_proof(github_truth: dict[str, Any]) -> bool:
+def _has_server_enforcement_proof(
+    evidence: GitHubServerSideTruthEvidence | None,
+) -> bool:
     return (
-        _has_status_check_truth(github_truth)
-        and _has_server_enforcement_truth(github_truth)
+        evidence is not None
+        and evidence.has_status_check_truth
+        and evidence.has_server_enforcement_truth
     )
 
 
-def _has_status_check_truth(github_truth: dict[str, Any]) -> bool:
-    required_checks = _string_list(github_truth.get("required_checks"))
-    check_run_ids = github_truth.get("check_run_ids")
-    return (
-        bool(required_checks)
-        and isinstance(check_run_ids, list)
-        and len(check_run_ids) >= len(required_checks)
-        and _text(github_truth.get("expected_source_app")) is not None
-    )
-
-
-def _has_server_enforcement_truth(github_truth: dict[str, Any]) -> bool:
-    return isinstance(github_truth.get("branch_protection_snapshot"), dict) or isinstance(
-        github_truth.get("ruleset_snapshot"),
-        dict,
-    )
-
-
-def _next_action(github_truth: dict[str, Any]) -> str:
-    if _can_emit_pr_merged(github_truth):
+def _next_action(
+    github_truth: dict[str, Any],
+    *,
+    can_emit_pr_merged: bool,
+) -> str:
+    if can_emit_pr_merged:
         return "No GitHub server-truth action required."
     gap_reason = _text(github_truth.get("gap_reason"))
     if gap_reason is not None:
@@ -201,24 +195,41 @@ def _next_action(github_truth: dict[str, Any]) -> str:
     return "Keep GitHub server-truth artifact attached to release readiness evidence."
 
 
-def _can_emit_pr_merged(github_truth: dict[str, Any]) -> bool:
+def _gap_summary(
+    github_truth: dict[str, Any],
+    *,
+    evidence: GitHubServerSideTruthEvidence | None,
+) -> str:
+    if evidence is not None:
+        missing = []
+        if not evidence.has_status_check_truth:
+            missing.append("status_check_truth")
+        if not evidence.has_server_enforcement_truth:
+            missing.append("server_enforcement_truth")
+        if missing:
+            return (
+                "GitHub server truth is incomplete: missing server-side truth: "
+                + ", ".join(missing)
+                + "."
+            )
+    gap_reason = _text(github_truth.get("gap_reason"))
+    if gap_reason is not None:
+        return f"GitHub server truth is incomplete: {gap_reason}."
+    return "GitHub branch protection/ruleset or required check truth is unavailable."
+
+
+def _github_truth_evidence(
+    github_truth: dict[str, Any],
+) -> GitHubServerSideTruthEvidence | None:
     try:
         payload = {
             key: value
             for key in GitHubServerSideTruthEvidence.model_fields
             if (value := github_truth.get(key)) is not None
         }
-        evidence = GitHubServerSideTruthEvidence.model_validate(payload)
+        return GitHubServerSideTruthEvidence.model_validate(payload)
     except ValueError:
-        return False
-    return can_emit_pr_merged(evidence)
-
-
-def _gap_summary(github_truth: dict[str, Any]) -> str:
-    gap_reason = _text(github_truth.get("gap_reason"))
-    if gap_reason is not None:
-        return f"GitHub server truth is incomplete: {gap_reason}."
-    return "GitHub branch protection/ruleset or required check truth is unavailable."
+        return None
 
 
 def _source_refs(
@@ -237,12 +248,6 @@ def _source_refs(
     if expected_head_sha is not None:
         refs.append(f"github:expected-head:{expected_head_sha}")
     return refs
-
-
-def _string_list(value: Any) -> list[str]:
-    if not isinstance(value, list):
-        return []
-    return [item.strip() for item in value if isinstance(item, str) and item.strip()]
 
 
 def _text(value: Any) -> str | None:
