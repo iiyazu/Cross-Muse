@@ -258,6 +258,8 @@ runtime、provider invocation、lane authority、review truth 完成。后续生
   `e818f52ec434aed0042eee8cf6c169683ecb2d7b`
 - Local head at start of x3 ClosureObject complete-condition admission slice:
   `1a02f7acb5ebc0ecadbce9b73dabc9f7733e2206`
+- Local head at start of x3 release-gate digest refs preservation slice:
+  `bcc49d1caf6548f56cdf69c73d20619563ff1085`
 - PR: <https://github.com/iiyazu/Cross-Muse/pull/43>
 - PR state last checked: draft/open/unmerged
 - PR merge state last checked: `CLEAN`
@@ -365,6 +367,7 @@ truth_snapshot:
   local_head_at_x3_closure_object_owner_lineage_admission_slice: 955ebd56330a9fea61fed40c430b0dc9aeca5bb3
   local_head_at_x3_closure_object_owner_ref_projection_slice: e818f52ec434aed0042eee8cf6c169683ecb2d7b
   local_head_at_x3_closure_object_complete_condition_admission_slice: 1a02f7acb5ebc0ecadbce9b73dabc9f7733e2206
+  local_head_at_x3_release_gate_digest_refs_preservation_slice: bcc49d1caf6548f56cdf69c73d20619563ff1085
   pr: 43
   pr_url: https://github.com/iiyazu/Cross-Muse/pull/43
   pr_state: draft_open_unmerged
@@ -696,6 +699,13 @@ Current closure audit:
     This remains `contract_proof`/provenance projection; it does not create
     live MemoryOS proof, GitHub review truth, merge truth, or production
     release readiness.
+    Release evidence pack gate digests now preserve machine-readable
+    `source_refs`, `target_refs`, `owner_refs`, and `forbidden_claims` from the
+    release readiness gate model instead of retaining only counts. Missing
+    fields remain empty lists and are not inferred from projection state. This
+    prevents the L10 aggregation artifact from stripping scope/claim guardrails
+    that upstream gate artifacts already produced, but it does not make a gate
+    ready or upgrade any proof level.
     Closure-controller and review-handoff regression tests now share a small
     fixture builder that produces candidate, runner-session, review-closure,
     and review-chain payloads through the production capture/build helpers. This

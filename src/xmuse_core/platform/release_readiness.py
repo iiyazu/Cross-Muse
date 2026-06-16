@@ -41,6 +41,9 @@ class ReleaseGateEvidence:
     attempted_command: str | None = None
     next_action: str | None = None
     source_refs: tuple[str, ...] = field(default_factory=tuple)
+    target_refs: tuple[str, ...] = field(default_factory=tuple)
+    owner_refs: tuple[str, ...] = field(default_factory=tuple)
+    forbidden_claims: tuple[str, ...] = field(default_factory=tuple)
     artifacts: tuple[str, ...] = field(default_factory=tuple)
 
     def model_dump(self) -> dict[str, object]:

@@ -137,6 +137,9 @@ def _gate_from_payload(
         attempted_command=attempted_command,
         next_action=_text(payload.get("next_action")),
         source_refs=tuple(_string_list(payload.get("source_refs"))),
+        target_refs=tuple(_string_list(payload.get("target_refs"))),
+        owner_refs=tuple(_string_list(payload.get("owner_refs"))),
+        forbidden_claims=tuple(_string_list(payload.get("forbidden_claims"))),
         artifacts=tuple(_string_list(payload.get("artifacts"))),
     )
 

@@ -924,6 +924,10 @@ def _proof_level_summary(readiness: dict[str, Any]) -> dict[str, int]:
 def _release_gate_digests(readiness: dict[str, Any]) -> list[dict[str, Any]]:
     digests: list[dict[str, Any]] = []
     for gate in _dicts(readiness.get("gates")):
+        source_refs = _string_list(gate.get("source_refs"))
+        target_refs = _string_list(gate.get("target_refs"))
+        owner_refs = _string_list(gate.get("owner_refs"))
+        forbidden_claims = _string_list(gate.get("forbidden_claims"))
         digests.append(
             {
                 "gate_id": _text(gate.get("gate_id")) or "unknown",
@@ -936,7 +940,14 @@ def _release_gate_digests(readiness: dict[str, Any]) -> list[dict[str, Any]]:
                 "summary": _text(gate.get("summary")) or "release gate evidence",
                 "attempted_command": _text(gate.get("attempted_command")),
                 "next_action": _text(gate.get("next_action")),
-                "source_ref_count": len(_string_list(gate.get("source_refs"))),
+                "source_refs": source_refs,
+                "source_ref_count": len(source_refs),
+                "target_refs": target_refs,
+                "target_ref_count": len(target_refs),
+                "owner_refs": owner_refs,
+                "owner_ref_count": len(owner_refs),
+                "forbidden_claims": forbidden_claims,
+                "forbidden_claim_count": len(forbidden_claims),
                 "artifact_count": len(_string_list(gate.get("artifacts"))),
             }
         )
