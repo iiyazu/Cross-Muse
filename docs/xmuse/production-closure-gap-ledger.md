@@ -251,8 +251,8 @@ runtime、provider invocation、lane authority、review truth 完成。后续生
   `27603798046`, success. Jobs success: `quality-gates`,
   `contract-smoke-gates`, `real-runtime-integration-gate`.
 - Current worktree refresh is verified for head
-  `14f8cdccd0b6e65f3fc4d1f2bcf6f5a2d9a9c5a2` by run
-  `27604256932`; local changes after that head are clean.
+  `53e6e58bdf4eb2bf3e26673fa38368ece823b029` by run
+  `27605037247`; local changes after that head are clean.
 
 Machine-readable snapshot for gates and future `/goal` setup:
 
@@ -348,8 +348,8 @@ truth_snapshot:
   pr_state: draft_open_unmerged
   merge_state: CLEAN
   review_decision: empty
-  verified_ci_head_at_slice_start: 14f8cdccd0b6e65f3fc4d1f2bcf6f5a2d9a9c5a2
-  verified_ci_run_at_slice_start: 27604256932
+  verified_ci_head_at_slice_start: 53e6e58bdf4eb2bf3e26673fa38368ece823b029
+  verified_ci_run_at_slice_start: 27605037247
   ci_verified_for_slice_start_head: true
   local_changes_after_verified_head: false
   local_github_server_truth_refresh:
