@@ -39,6 +39,10 @@ from xmuse_core.structuring.mission_blueprint_v1 import (
     MissionBlueprintV1,
 )
 
+WORKER_EVIDENCE_BUNDLE_REF = (
+    "feature_evidence_bundle:platform_runner_worker_evidence_runtime_patch:v1"
+)
+
 
 def _write_json(path: Path, payload: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -221,7 +225,10 @@ def _write_local_execution_candidate(
             "worker_id": "platform-runner",
             "runner_session_id": "runner-session-1",
             "runner_session_ref": "work/runner_sessions/runner-session-1.json",
-            "source_refs": ["worker-candidate:patch-reviewed"],
+            "source_refs": [
+                "worker-candidate:patch-reviewed",
+                WORKER_EVIDENCE_BUNDLE_REF,
+            ],
             "output_refs": [str(path)],
             "changed_file_refs": [],
             "verification_refs": [
@@ -261,6 +268,8 @@ def _write_local_execution_candidate(
             "candidate_artifact_refs": [candidate_ref],
             "candidate_lane_ids": [lane_id],
             "candidate_count": 1,
+            "worker_evidence_bundle_refs": [WORKER_EVIDENCE_BUNDLE_REF],
+            "worker_evidence_bundle_count": 1,
             "manual_gaps": [
                 "review_truth_not_proven",
                 "server_truth_not_proven",
@@ -2221,6 +2230,9 @@ def test_release_evidence_pack_converts_god_room_runtime_closure_into_replay_sec
             "review_plane_verdict_ref": (
                 "review-plane:lane-runtime-evidence-patch:verdict-1"
             ),
+            "worker_evidence_bundle_refs": [WORKER_EVIDENCE_BUNDLE_REF],
+            "cited_worker_evidence_bundle_refs": [WORKER_EVIDENCE_BUNDLE_REF],
+            "worker_evidence_bundle_citation_status": "verified",
             "review_verdict": {
                 "id": "god_room_review_patch_merge",
                 "lane_id": "lane-runtime-evidence-patch",
@@ -3766,6 +3778,9 @@ def test_release_evidence_pack_cli_accepts_god_room_review_closure(
             "review_plane_verdict_ref": (
                 "review-plane:lane-runtime-evidence-patch:verdict-1"
             ),
+            "worker_evidence_bundle_refs": [WORKER_EVIDENCE_BUNDLE_REF],
+            "cited_worker_evidence_bundle_refs": [WORKER_EVIDENCE_BUNDLE_REF],
+            "worker_evidence_bundle_citation_status": "verified",
             "review_verdict": {
                 "id": "god_room_review_patch_merge",
                 "decision": "merge",

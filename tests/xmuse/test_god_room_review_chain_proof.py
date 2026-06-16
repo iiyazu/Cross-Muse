@@ -11,6 +11,7 @@ from xmuse_core.platform.god_room_review_chain_proof import (
     build_god_room_review_chain_proof,
     build_review_chain_proof_l10_handoff_evaluation,
     capture_god_room_review_chain_proof,
+    review_chain_proof_worker_evidence_bundle_refs,
 )
 from xmuse_core.platform.local_execution_candidate import (
     load_local_execution_candidate_lineage,
@@ -313,6 +314,78 @@ def test_god_room_review_chain_proof_validates_l9_to_l10_handoff(
     assert "patch_lane_not_executed" not in proof["manual_gaps"]
     assert "patch_lane_not_reviewed" not in proof["manual_gaps"]
     assert (tmp_path / "work" / "review-chain-proof.json").exists()
+
+
+def test_review_chain_l10_handoff_rejects_unverified_worker_bundle_citation_status(
+    tmp_path: Path,
+) -> None:
+    review_closure = _write_review_closure(tmp_path)
+    proof_path = tmp_path / "work" / "review-chain-proof.json"
+    proof = capture_god_room_review_chain_proof(
+        root=tmp_path,
+        review_closure_artifact=review_closure,
+        output_path=proof_path,
+    )
+    boundary = proof["local_execution_review_session"][
+        "worker_evidence_bundle_citation_boundary"
+    ]
+    boundary["status"] = "verified"
+    boundary["proof_level"] = "contract_proof"
+    boundary["citation_status"] = "manual_gap"
+    proof_path.write_text(
+        json.dumps(proof, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    handoff = build_review_chain_proof_l10_handoff_evaluation(
+        root=tmp_path,
+        artifact_path=proof_path,
+        review_chain_proof=proof,
+    )
+
+    assert review_chain_proof_worker_evidence_bundle_refs(proof) == []
+    assert handoff["status"] == "manual_gap"
+    assert handoff["worker_evidence_bundle_refs"] == []
+    assert handoff["bounded_session_gate_status"] == "manual_gap"
+    assert (
+        "worker_evidence_bundle_citation_boundary citation_status is not verified"
+        in handoff["bounded_session_gate_summary"]
+    )
+
+
+def test_review_chain_worker_bundle_citation_gate_uses_fallback_refs(
+    tmp_path: Path,
+) -> None:
+    review_closure = _write_review_closure(tmp_path)
+    proof_path = tmp_path / "work" / "review-chain-proof.json"
+    proof = capture_god_room_review_chain_proof(
+        root=tmp_path,
+        review_closure_artifact=review_closure,
+        output_path=proof_path,
+    )
+    boundary = proof["local_execution_review_session"][
+        "worker_evidence_bundle_citation_boundary"
+    ]
+    fallback_refs = boundary["terminal_review_verdict_worker_evidence_bundle_refs"]
+    assert fallback_refs
+    boundary["all_worker_evidence_bundle_refs"] = []
+    boundary["status"] = "verified"
+    boundary["proof_level"] = "contract_proof"
+    boundary["citation_status"] = "verified"
+    proof_path.write_text(
+        json.dumps(proof, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    handoff = build_review_chain_proof_l10_handoff_evaluation(
+        root=tmp_path,
+        artifact_path=proof_path,
+        review_chain_proof=proof,
+    )
+
+    assert review_chain_proof_worker_evidence_bundle_refs(proof) == fallback_refs
+    assert handoff["bounded_session_gate_status"] == "verified"
+    assert handoff["worker_evidence_bundle_refs"] == fallback_refs
 
 
 def test_god_room_review_chain_proof_rejects_manual_candidate_for_bounded_session(

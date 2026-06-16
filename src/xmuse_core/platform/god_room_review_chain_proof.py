@@ -234,10 +234,34 @@ def review_chain_proof_bounded_session_gate(
             "status": boundary_status,
             "proof_level": boundary_proof_level,
         }
+        if boundary_name == "worker_evidence_bundle_citation_boundary":
+            boundary_statuses[boundary_name]["citation_status"] = _text(
+                boundary.get("citation_status")
+            )
         if boundary_status != "verified":
             issues.append(f"{boundary_name} is not verified")
         if boundary_proof_level != "contract_proof":
             issues.append(f"{boundary_name} proof level is not contract_proof")
+        if boundary_name == "worker_evidence_bundle_citation_boundary":
+            citation_status = _text(boundary.get("citation_status")) or "not_required"
+            worker_bundle_refs = _review_chain_worker_evidence_bundle_boundary_refs(
+                boundary
+            )
+            expected_refs = _ordered_unique(
+                _string_list(
+                    boundary.get("expected_terminal_worker_evidence_bundle_refs")
+                )
+            )
+            if (worker_bundle_refs or expected_refs) and citation_status != "verified":
+                issues.append(
+                    "worker_evidence_bundle_citation_boundary citation_status is "
+                    "not verified"
+                )
+            if citation_status == "verified" and not worker_bundle_refs:
+                issues.append(
+                    "worker_evidence_bundle_citation_boundary citation_status is "
+                    "verified without worker evidence bundle refs"
+                )
         if boundary_name == "candidate_artifact_ref_boundary":
             closure_refs = _ordered_unique(
                 _string_list(boundary.get("closure_cited_candidate_artifact_refs"))
@@ -333,6 +357,27 @@ def review_chain_proof_bounded_session_gate(
     }
 
 
+def _review_chain_worker_evidence_bundle_boundary_refs(
+    boundary: Mapping[str, Any],
+) -> list[str]:
+    refs = _ordered_unique(
+        _string_list(boundary.get("all_worker_evidence_bundle_refs"))
+    )
+    if refs:
+        return refs
+    return _ordered_unique(
+        [
+            *_string_list(
+                boundary.get("source_review_verdict_worker_evidence_bundle_refs")
+            ),
+            *_string_list(boundary.get("patch_forward_worker_evidence_bundle_refs")),
+            *_string_list(
+                boundary.get("terminal_review_verdict_worker_evidence_bundle_refs")
+            ),
+        ]
+    )
+
+
 def review_chain_proof_worker_evidence_bundle_refs(
     payload: Mapping[str, Any],
 ) -> list[str]:
@@ -345,19 +390,13 @@ def review_chain_proof_worker_evidence_bundle_refs(
         or _text(boundary.get("proof_level")) != "contract_proof"
     ):
         return []
-    refs = _string_list(boundary.get("all_worker_evidence_bundle_refs"))
-    if not refs:
-        refs = _ordered_unique(
-            [
-                *_string_list(
-                    boundary.get("source_review_verdict_worker_evidence_bundle_refs")
-                ),
-                *_string_list(boundary.get("patch_forward_worker_evidence_bundle_refs")),
-                *_string_list(
-                    boundary.get("terminal_review_verdict_worker_evidence_bundle_refs")
-                ),
-            ]
-        )
+    citation_status = _text(boundary.get("citation_status")) or "not_required"
+    expected_refs = _string_list(
+        boundary.get("expected_terminal_worker_evidence_bundle_refs")
+    )
+    refs = _review_chain_worker_evidence_bundle_boundary_refs(boundary)
+    if (refs or expected_refs) and citation_status != "verified":
+        return []
     return _ordered_unique(refs)
 
 

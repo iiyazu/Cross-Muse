@@ -282,6 +282,9 @@ runtime、provider invocation、lane authority、review truth 完成。后续生
 - Local head at start of x3 terminal review worker-bundle citation admission
   slice:
   `20fdc0a0a3409c7a121d8de83bb7228b9e987e1d`
+- Local head at start of x3 review-chain L10 worker-bundle citation-status
+  admission slice:
+  `9f429e25bc6bcdf776e09790d75ef13cb555a3b5`
 - PR: <https://github.com/iiyazu/Cross-Muse/pull/43>
 - PR state last checked: draft/open/unmerged
 - PR merge state last checked: `CLEAN`
@@ -400,6 +403,7 @@ truth_snapshot:
   local_head_at_x3_validated_execution_candidate_worker_bundle_admission_slice: e56c9c3a8f19011f2f4ee8e9e14c3d9942562e11
   local_head_at_x3_review_chain_runner_session_worker_bundle_admission_slice: c729c5c79a8e45ed45bf68cc18bb67a920cdac68
   local_head_at_x3_terminal_review_worker_bundle_citation_admission_slice: 20fdc0a0a3409c7a121d8de83bb7228b9e987e1d
+  local_head_at_x3_review_chain_l10_worker_bundle_citation_status_admission_slice: 9f429e25bc6bcdf776e09790d75ef13cb555a3b5
   pr: 43
   pr_url: https://github.com/iiyazu/Cross-Muse/pull/43
   pr_state: draft_open_unmerged
@@ -2274,6 +2278,14 @@ Use these as implementation references, not as xmuse package dependencies:
     `worker_evidence_bundle_citation_status=verified`. If review evidence
     omits those refs, the review-chain proof stays `manual_gap`; worker bundle
     existence is still candidate evidence, not review truth by itself.
+    L10 review-chain handoff admission now also checks that the verified
+    worker-evidence bundle citation boundary did not carry a degraded
+    `citation_status`; worker bundle refs are exported to MemoryOS/runtime
+    closure/release aggregation only when the boundary is `verified`,
+    `contract_proof`, and `citation_status=verified` whenever expected or
+    observed bundle refs exist. Tampered or stale chain-proof artifacts with
+    inconsistent citation status remain `manual_gap` and export no worker
+    bundle refs.
   - Release evidence candidate reports can now consume
     `xmuse.god_room_lane_review_chain_proof.v1` artifacts directly as
     `live_memoryos` source-ref guidance after validating

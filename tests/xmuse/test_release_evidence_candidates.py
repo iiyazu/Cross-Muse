@@ -23,6 +23,10 @@ from xmuse_core.platform.release_evidence_candidates import (
 )
 from xmuse_core.providers.god_cli_selection_store import GodCliSelectionStore
 
+WORKER_EVIDENCE_BUNDLE_REF = (
+    "feature_evidence_bundle:platform_runner_worker_evidence_runtime_patch:v1"
+)
+
 
 def test_release_evidence_candidates_identify_ready_natural_and_provider_inputs(
     tmp_path: Path,
@@ -2578,7 +2582,10 @@ def _write_god_room_review_closure_artifact(
                     "worker_id": "platform-runner",
                     "runner_session_id": "runner-session-1",
                     "runner_session_ref": "work/runner_sessions/runner-session-1.json",
-                    "source_refs": ["worker-candidate:patch-reviewed"],
+                    "source_refs": [
+                        "worker-candidate:patch-reviewed",
+                        WORKER_EVIDENCE_BUNDLE_REF,
+                    ],
                     "output_refs": [candidate_artifact_ref],
                     "changed_file_refs": [],
                     "verification_refs": [
@@ -2632,6 +2639,8 @@ def _write_god_room_review_closure_artifact(
                 "candidate_artifact_refs": [candidate_artifact_ref],
                 "candidate_lane_ids": ["lane-runtime-evidence-patch"],
                 "candidate_count": 1,
+                "worker_evidence_bundle_refs": [WORKER_EVIDENCE_BUNDLE_REF],
+                "worker_evidence_bundle_count": 1,
                 "manual_gaps": [
                     "review_truth_not_proven",
                     "server_truth_not_proven",
@@ -2761,6 +2770,9 @@ def _write_god_room_review_closure_artifact(
                 "review_plane_verdict_ref": (
                     "review-plane:lane-runtime-evidence-patch:verdict-1"
                 ),
+                "worker_evidence_bundle_refs": [WORKER_EVIDENCE_BUNDLE_REF],
+                "cited_worker_evidence_bundle_refs": [WORKER_EVIDENCE_BUNDLE_REF],
+                "worker_evidence_bundle_citation_status": "verified",
                 "review_verdict": {
                     "id": "god-room-review-verdict-merge",
                     "decision": "merge",
