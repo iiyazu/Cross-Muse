@@ -9,10 +9,10 @@ closure proof，也不是 PR #43 的 merge/readiness 证明。当前分支已经
 ## Current Local Truth
 
 - Current branch: `vision-closure-deliberation-tui`
-- Current HEAD: `4465686cd56c94bdbb448e747817003a87f3d91c`
-- Worktree state: dirty, broad multi-slice diff
-- Remote CI truth: only applies to remote head `4465686cd56c94bdbb448e747817003a87f3d91c`
-- Local dirty changes are not CI-verified
+- Current HEAD: `5bdf647cb9e127000554bef587697547797224f6`
+- Worktree state: clean
+- Remote CI truth: only applies to remote head `5bdf647cb9e127000554bef587697547797224f6`
+- Local changes are clean and at the verified HEAD
 - PR #43 handling: historical umbrella context only; do not add new scope unless
   explicitly instructed
 

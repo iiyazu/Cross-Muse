@@ -241,18 +241,17 @@ runtime、provider invocation、lane authority、review truth 完成。后续生
 - Local head at start of L8 shared recovery writer consolidation slice:
   `b050d534873594466e46190619ab20387427f231`
 - Local head at start of x3 closure-controller freshness/admission slice:
-  `4465686cd56c94bdbb448e747817003a87f3d91c`
+  `5bdf647cb9e127000554bef587697547797224f6`
 - PR: <https://github.com/iiyazu/Cross-Muse/pull/43>
 - PR state last checked: draft/open/unmerged
 - PR merge state last checked: `CLEAN`
 - PR review decision last checked: empty
 - Verified GitHub Actions truth before the x3 freshness/admission slice applied
-  to remote head `4465686cd56c94bdbb448e747817003a87f3d91c`: run
-  `27595483007`, success. Jobs success: `quality-gates`,
+  to remote head `5bdf647cb9e127000554bef587697547797224f6`: run
+  `27603798046`, success. Jobs success: `quality-gates`,
   `contract-smoke-gates`, `real-runtime-integration-gate`.
-- Local changes after `4465686cd56c94bdbb448e747817003a87f3d91c` must not be
-  treated as CI-verified until pushed and checked again. CI success remains
-  separate from GitHub review truth and merge truth.
+- Local changes after `5bdf647cb9e127000554bef587697547797224f6` are clean after
+  push verification.
 
 Machine-readable snapshot for gates and future `/goal` setup:
 
@@ -348,10 +347,10 @@ truth_snapshot:
   pr_state: draft_open_unmerged
   merge_state: CLEAN
   review_decision: empty
-  verified_ci_head_at_slice_start: 654b418c52cc1487193561f65e0521a5a82f0452
-  verified_ci_run_at_slice_start: 27502826595
+  verified_ci_head_at_slice_start: 5bdf647cb9e127000554bef587697547797224f6
+  verified_ci_run_at_slice_start: 27603798046
   ci_verified_for_slice_start_head: true
-  local_changes_after_verified_head: true
+  local_changes_after_verified_head: false
   local_github_server_truth_refresh:
     capture_mode: opt_in_read_only_gh_api
     artifact_path: /tmp/xmuse-github-truth-pr43.json
@@ -2215,10 +2214,10 @@ Use these as implementation references, not as xmuse package dependencies:
     produce `pr_merged` projection or a "no action required" GitHub next action.
     The GitHub release gate itself remains `server_side_enforcement_proof`
     unless the validated server truth satisfies full `server_side_merge_proof`.
-  - PR #43 latest verified CI at the start of this slice passed for remote head
-    `654b418c52cc1487193561f65e0521a5a82f0452` in run `27502826595`; merge
-    state was `CLEAN` when last checked. Local changes after that head are not
-    CI-verified until pushed and checked again.
+  - PR #43 latest verified CI after this slice refresh is for remote head
+    `5bdf647cb9e127000554bef587697547797224f6` in run `27603798046`; merge
+    state was `CLEAN` when last checked. Local changes after that head remain
+    clean after push verification.
 - Missing production closure:
   - No current live MemoryOS Lite trace proof is established for this branch
     head.
