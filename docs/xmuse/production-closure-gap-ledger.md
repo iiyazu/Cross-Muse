@@ -251,8 +251,8 @@ runtime、provider invocation、lane authority、review truth 完成。后续生
   `27603798046`, success. Jobs success: `quality-gates`,
   `contract-smoke-gates`, `real-runtime-integration-gate`.
 - Current worktree refresh is verified for head
-  `712fde819e92b4a4590d9260b9d73b7bb4060714` by run
-  `27604168573`; local changes after that head are clean.
+  `14f8cdccd0b6e65f3fc4d1f2bcf6f5a2d9a9c5a2` by run
+  `27604256932`; local changes after that head are clean.
 
 Machine-readable snapshot for gates and future `/goal` setup:
 
@@ -348,8 +348,8 @@ truth_snapshot:
   pr_state: draft_open_unmerged
   merge_state: CLEAN
   review_decision: empty
-  verified_ci_head_at_slice_start: 712fde819e92b4a4590d9260b9d73b7bb4060714
-  verified_ci_run_at_slice_start: 27604168573
+  verified_ci_head_at_slice_start: 14f8cdccd0b6e65f3fc4d1f2bcf6f5a2d9a9c5a2
+  verified_ci_run_at_slice_start: 27604256932
   ci_verified_for_slice_start_head: true
   local_changes_after_verified_head: false
   local_github_server_truth_refresh:
@@ -2216,7 +2216,7 @@ Use these as implementation references, not as xmuse package dependencies:
     The GitHub release gate itself remains `server_side_enforcement_proof`
     unless the validated server truth satisfies full `server_side_merge_proof`.
   - PR #43 latest verified CI after this slice refresh is for remote head
-    `712fde819e92b4a4590d9260b9d73b7bb4060714` in run `27604168573`; merge
+    `14f8cdccd0b6e65f3fc4d1f2bcf6f5a2d9a9c5a2` in run `27604256932`; merge
     state was `CLEAN` when last checked. Local changes after that head remain
     clean after push verification.
 - Missing production closure:
