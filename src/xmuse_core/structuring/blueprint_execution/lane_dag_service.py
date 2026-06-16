@@ -764,6 +764,7 @@ def _patch_forward_runtime_contract(
     return failed_contract.model_copy(
         update={
             "lane_id": patch_lane_id,
+            "feature_id": patch_lane_id,
             "inputs": _dedupe(
                 [*failed_contract.inputs, f"lane:{failed_lane_id}", *evidence_refs]
             ),

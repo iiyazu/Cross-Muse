@@ -150,6 +150,39 @@ def test_capture_feature_lineage_evidence_reports_manual_gap_without_contracts(
     )
 
 
+def test_feature_lineage_evidence_surfaces_review_closure_handoff_counts(
+    tmp_path: Path,
+) -> None:
+    contract_artifact = _write_contract(tmp_path / "feature-owner-contract.json")
+    review_closure = _write_review_closure(tmp_path / "review-closure.json")
+
+    artifact = capture_feature_lineage_evidence(
+        run_id="overnight-feature-lineage",
+        contract_artifacts=[contract_artifact],
+        review_closure_artifacts=[review_closure],
+        output_path=tmp_path / "feature-lineage-production-evidence.json",
+    )
+
+    assert artifact["status"] == "manual_gap"
+    assert artifact["proof_level"] == "manual_gap"
+    assert artifact["blocked_reason"] == (
+        "review closure handoff evaluations are not ready: "
+        f"{review_closure}"
+    )
+    evaluations = artifact["review_closure_handoff_evaluations"]
+    assert len(evaluations) == 1
+    evaluation = evaluations[0]
+    assert evaluation["schema_version"] == "xmuse.review_closure_handoff_evaluation.v1"
+    assert evaluation["artifact_path"] == str(review_closure)
+    assert evaluation["status"] == "manual_gap"
+    assert evaluation["candidate_ref_count"] == 2
+    assert evaluation["cited_candidate_ref_count"] == 2
+    assert evaluation["source_event_lineage_count"] == 1
+    assert evaluation["server_truth_status"] == "not_server_truth"
+    assert "live_memoryos" in evaluation["forbidden_claims"]
+    assert "review_closure_handoff_not_ready" in evaluation["manual_gaps"]
+
+
 def test_feature_lineage_evidence_capture_cli_writes_artifact(
     tmp_path: Path,
 ) -> None:
@@ -229,6 +262,49 @@ def _write_contract(path: Path) -> Path:
     )
     path.write_text(
         json.dumps(contract.model_dump(mode="json"), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def _write_review_closure(path: Path) -> Path:
+    payload = {
+        "schema_version": "xmuse.god_room_lane_review_closure.v1",
+        "proof_level": "contract_proof",
+        "review_truth_status": "independent_review_artifact",
+        "execution_truth_status": "candidate_reviewed",
+        "server_truth_status": "not_server_truth",
+        "conversation_id": "conv-1",
+        "graph_id": "graph-runtime",
+        "failed_lane_id": "lane-replay",
+        "terminal_lane_id": "lane-replay-patch",
+        "candidate_refs": [
+            "worker-candidate:patch-reviewed",
+            "artifacts/lane-replay-patch/result.json",
+        ],
+        "cited_candidate_refs": [
+            "worker-candidate:patch-reviewed",
+            "artifacts/lane-replay-patch/result.json",
+        ],
+        "source_event_lineage": [
+            {
+                "event_id": "evt-review-provider-speak",
+                "event_type": "speak",
+                "proof_level": "contract_proof",
+            }
+        ],
+        "manual_gaps": ["release_evidence_not_linked"],
+        "forbidden_claims": [
+            "worker_output_is_review_truth",
+            "end_to_end_execution_review_closure",
+            "ready_to_merge",
+            "pr_merged",
+            "github_review_truth",
+            "live_memoryos",
+        ],
+    }
+    path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
     return path

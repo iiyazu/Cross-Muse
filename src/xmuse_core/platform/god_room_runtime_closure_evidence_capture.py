@@ -14,6 +14,17 @@ from xmuse_core.chat.god_room_runtime import (
 )
 from xmuse_core.chat.god_room_speaker_response import GodRoomSpeakerResponseCaptureV1
 from xmuse_core.chat.god_room_speaker_runtime import GodRoomSpeakerAttemptV1
+from xmuse_core.platform.god_room_review_chain_proof import (
+    GOD_ROOM_REVIEW_CHAIN_PROOF_FORBIDDEN_CLAIMS,
+    GOD_ROOM_REVIEW_CHAIN_PROOF_SCHEMA_VERSION,
+    review_chain_proof_bounded_session_gate,
+    review_chain_proof_worker_evidence_bundle_refs,
+)
+from xmuse_core.platform.god_room_review_handoff import (
+    REQUIRED_GOD_ROOM_REVIEW_CLOSURE_FORBIDDEN_CLAIMS,
+    build_god_room_review_closure_handoff,
+    build_review_closure_handoff_evaluation,
+)
 from xmuse_core.platform.production_evidence import (
     ProductionEvidenceEnvelope,
     ProductionEvidenceStatus,
@@ -43,6 +54,8 @@ def capture_god_room_runtime_closure_evidence(
     speaker_response_artifact: str | Path | None = None,
     multi_turn_provider_speech_run_artifact: str | Path | None = None,
     review_closure_artifact: str | Path | None = None,
+    review_chain_proof_artifact: str | Path | None = None,
+    review_chain_proof_expected: bool = False,
     github_truth_artifact: str | Path | None = None,
     release_readiness_artifact: str | Path | None = None,
     stage_id: str = "S8",
@@ -60,6 +73,8 @@ def capture_god_room_runtime_closure_evidence(
         speaker_response_artifact=speaker_response_artifact,
         multi_turn_provider_speech_run_artifact=multi_turn_provider_speech_run_artifact,
         review_closure_artifact=review_closure_artifact,
+        review_chain_proof_artifact=review_chain_proof_artifact,
+        review_chain_proof_expected=review_chain_proof_expected,
         github_truth_artifact=github_truth_artifact,
         release_readiness_artifact=release_readiness_artifact,
     )
@@ -86,6 +101,8 @@ def build_god_room_runtime_closure_evidence(
     speaker_response_artifact: str | Path | None = None,
     multi_turn_provider_speech_run_artifact: str | Path | None = None,
     review_closure_artifact: str | Path | None = None,
+    review_chain_proof_artifact: str | Path | None = None,
+    review_chain_proof_expected: bool = False,
     github_truth_artifact: str | Path | None = None,
     release_readiness_artifact: str | Path | None = None,
 ) -> dict[str, object]:
@@ -159,6 +176,13 @@ def build_god_room_runtime_closure_evidence(
             issues=issues,
         )
     )
+    review_chain_details, review_chain_refs, review_chain_targets = (
+        _review_chain_proof_details(
+            review_chain_proof_artifact,
+            expected=review_chain_proof_expected,
+            issues=issues,
+        )
+    )
     github_details, github_refs, github_targets = _github_truth_details(
         github_truth_artifact,
         issues=issues,
@@ -191,6 +215,7 @@ def build_god_room_runtime_closure_evidence(
                     *speaker_response_refs,
                     *multi_turn_refs,
                     *review_closure_refs,
+                    *review_chain_refs,
                     *github_refs,
                     *readiness_refs,
                 ]
@@ -206,6 +231,7 @@ def build_god_room_runtime_closure_evidence(
                     *speaker_response_targets,
                     *multi_turn_targets,
                     *review_closure_targets,
+                    *review_chain_targets,
                     *github_targets,
                 ]
             )
@@ -222,6 +248,7 @@ def build_god_room_runtime_closure_evidence(
                 speaker_response_artifact,
                 multi_turn_provider_speech_run_artifact,
                 review_closure_artifact,
+                review_chain_proof_artifact,
                 github_truth_artifact,
                 release_readiness_artifact,
             )
@@ -237,6 +264,7 @@ def build_god_room_runtime_closure_evidence(
             speaker_response=speaker_response_details,
             multi_turn_provider_speech=multi_turn_details,
             review_closure=review_closure_details,
+            review_chain_proof=review_chain_details,
             readiness=readiness_details,
         ),
     )
@@ -253,6 +281,7 @@ def build_god_room_runtime_closure_evidence(
         "speaker_response": speaker_response_details,
         "multi_turn_provider_speech": multi_turn_details,
         "review_closure": review_closure_details,
+        "review_chain_proof": review_chain_details,
         "github_truth": github_details,
         "release_readiness": readiness_details,
     }
@@ -844,6 +873,20 @@ def _review_closure_details(
     execution_truth_status = _text(payload.get("execution_truth_status"))
     server_truth_status = _text(payload.get("server_truth_status"))
     handoff_status = _text(payload.get("release_evidence_handoff_status"))
+    current_handoff = build_god_room_review_closure_handoff(
+        root=_review_closure_root(path, payload),
+        review_closure=payload,
+    )
+    handoff_evaluation = build_review_closure_handoff_evaluation(
+        root=_review_closure_root(path, payload),
+        review_closure=payload,
+    )
+    current_handoff_ready = current_handoff.get("gate_ready") is True
+    current_handoff_summary = _text(current_handoff.get("summary"))
+    current_candidate_refs = _string_list(
+        current_handoff.get("candidate_artifact_refs")
+    )
+    current_handoff_source_refs = _string_list(current_handoff.get("source_refs"))
     if schema_version != "xmuse.god_room_lane_review_closure.v1":
         issues.append("GOD room review closure artifact has unexpected schema")
     if proof_level != "contract_proof":
@@ -854,35 +897,35 @@ def _review_closure_details(
         issues.append("GOD room review closure overclaims execution truth")
     if server_truth_status != "not_server_truth":
         issues.append("GOD room review closure overclaims server truth")
+    if handoff_status != "candidate_input_ready":
+        issues.append(
+            "GOD room review closure release handoff is not candidate_input_ready"
+        )
+    if not current_handoff_ready:
+        issues.append(
+            "GOD room review closure current handoff is not gate-ready: "
+            f"{current_handoff_summary or 'unknown'}"
+        )
     manual_gaps = _string_list(payload.get("manual_gaps"))
     forbidden_claims = _string_list(payload.get("forbidden_claims"))
     if "release_evidence_not_linked" not in manual_gaps:
         issues.append("GOD room review closure must preserve release evidence gap")
-    for claim in ("ready_to_merge", "pr_merged", "github_review_truth"):
+    for claim in sorted(REQUIRED_GOD_ROOM_REVIEW_CLOSURE_FORBIDDEN_CLAIMS):
         if claim not in forbidden_claims:
             issues.append(f"GOD room review closure missing forbidden claim: {claim}")
-    terminal_verdict = payload.get("terminal_review_verdict")
-    verdict_refs: list[str] = []
-    if isinstance(terminal_verdict, dict):
-        verdict_refs.extend(_string_list(terminal_verdict.get("evidence_refs")))
     candidate_refs = _string_list(payload.get("candidate_refs"))
     cited_candidate_refs = _string_list(payload.get("cited_candidate_refs"))
     failed_lane_id = _text(payload.get("failed_lane_id"))
     terminal_lane_id = _text(payload.get("terminal_lane_id"))
-    graph_id = _text(payload.get("graph_id"))
     source_event_lineage = _dict_rows(payload.get("source_event_lineage"))
+    runner_recovery_raw = payload.get("runner_recovery_proof_lineage")
+    runner_recovery_lineage = (
+        runner_recovery_raw if isinstance(runner_recovery_raw, Mapping) else {}
+    )
     refs = _dedupe(
         [
-            f"god-room-review-closure:{graph_id}:{failed_lane_id}:{terminal_lane_id}"
-            if graph_id and failed_lane_id and terminal_lane_id
-            else None,
-            _text(payload.get("patch_forward_artifact")),
-            _text(payload.get("patch_lane_review_intake_artifact")),
-            _text(payload.get("patch_lane_review_verdict_artifact")),
-            *candidate_refs,
-            *cited_candidate_refs,
-            *verdict_refs,
-            *_lane_dag_source_event_lineage_refs(source_event_lineage),
+            *(current_handoff_source_refs if current_handoff_ready else []),
+            *(current_candidate_refs if current_handoff_ready else []),
         ]
     )
     targets = _dedupe(
@@ -898,6 +941,14 @@ def _review_closure_details(
             "review_truth_status": review_truth_status,
             "execution_truth_status": execution_truth_status,
             "server_truth_status": server_truth_status,
+            "current_handoff_gate_ready": current_handoff_ready,
+            "current_handoff_summary": current_handoff_summary,
+            "handoff_evaluation": handoff_evaluation,
+            "current_handoff_candidate_artifact_refs": current_candidate_refs,
+            "current_handoff_candidate_artifact_ref_count": len(
+                current_candidate_refs
+            ),
+            "current_handoff_source_ref_count": len(current_handoff_source_refs),
             "failed_lane_id": failed_lane_id,
             "terminal_lane_id": terminal_lane_id,
             "candidate_ref_count": len(candidate_refs),
@@ -911,12 +962,369 @@ def _review_closure_details(
                 source_event_lineage,
                 "proof_level",
             ),
+            "runner_recovery_proof_lineage": _runner_recovery_lineage_details(
+                runner_recovery_lineage
+            ),
             "manual_gaps": manual_gaps,
             "forbidden_claims": forbidden_claims,
         },
         refs,
         targets,
     )
+
+
+def _review_closure_root(path: str | Path, payload: Mapping[str, Any]) -> Path:
+    root_ref = _text(payload.get("xmuse_root"))
+    if root_ref is not None:
+        return Path(root_ref)
+    return Path(path).parent
+
+
+def _review_chain_proof_details(
+    path: str | Path | None,
+    *,
+    expected: bool = False,
+    issues: list[str],
+) -> tuple[dict[str, object], list[str], list[str]]:
+    if path is None:
+        if expected:
+            reason = "GOD room review chain proof artifact is expected but missing"
+            issues.append(reason)
+            return {
+                "status": "manual_gap",
+                "proof_level": "manual_gap",
+                "optional": False,
+                "expected": True,
+                "blocked_reason": reason,
+                "manual_gaps": [
+                    "god_room_review_chain_proof_artifact_missing",
+                    "review_truth_not_proven",
+                    "server_truth_not_proven",
+                    "live_memoryos_trace_not_proven",
+                    "github_truth_not_checked",
+                ],
+                "forbidden_claims": list(
+                    GOD_ROOM_REVIEW_CHAIN_PROOF_FORBIDDEN_CLAIMS
+                ),
+            }, [], []
+        return {
+            "status": "not_provided",
+            "proof_level": "manual_gap",
+            "optional": True,
+            "expected": False,
+        }, [], []
+    payload = _load_json(path, label="GOD room review chain proof", issues=issues)
+    if not isinstance(payload, dict):
+        return _manual_gap_details("GOD room review chain proof artifact is missing"), [], []
+    schema_version = _text(payload.get("schema_version"))
+    status = _text(payload.get("status")) or "manual_gap"
+    proof_level = _text(payload.get("proof_level")) or "manual_gap"
+    server_truth_status = _text(payload.get("server_truth_status"))
+    if schema_version != GOD_ROOM_REVIEW_CHAIN_PROOF_SCHEMA_VERSION:
+        issues.append("GOD room review chain proof artifact has unexpected schema")
+    if status != "chain_ready":
+        issues.append("GOD room review chain proof is not chain_ready")
+    if proof_level != "contract_proof":
+        issues.append("GOD room review chain proof proof level is not contract_proof")
+    if server_truth_status != "not_server_truth":
+        issues.append("GOD room review chain proof overclaims server truth")
+
+    forbidden_claims = _string_list(payload.get("forbidden_claims"))
+    for claim in GOD_ROOM_REVIEW_CHAIN_PROOF_FORBIDDEN_CLAIMS:
+        if claim not in forbidden_claims:
+            issues.append(
+                f"GOD room review chain proof missing forbidden claim: {claim}"
+            )
+
+    release_handoff = payload.get("release_evidence_handoff")
+    if not isinstance(release_handoff, Mapping):
+        release_handoff = {}
+        issues.append("GOD room review chain proof missing release handoff")
+    handoff_ready = release_handoff.get("review_closure_artifact_gate_ready") is True
+    if not handoff_ready:
+        issues.append("GOD room review chain proof release handoff is not gate-ready")
+    candidate_refs = _string_list(
+        release_handoff.get("review_closure_candidate_artifact_refs")
+    )
+    if not candidate_refs:
+        issues.append("GOD room review chain proof has no candidate artifact refs")
+    session_raw = payload.get("local_execution_review_session")
+    session = session_raw if isinstance(session_raw, Mapping) else {}
+    bounded_session_gate = review_chain_proof_bounded_session_gate(payload)
+    if bounded_session_gate["status"] != "verified":
+        issues.append(str(bounded_session_gate["summary"]))
+
+    current_handoff = _review_chain_current_handoff(path, payload)
+    current_handoff_ready = current_handoff.get("gate_ready") is True
+    current_handoff_summary = _text(current_handoff.get("summary"))
+    current_candidate_refs = _string_list(
+        current_handoff.get("candidate_artifact_refs")
+    )
+    current_handoff_source_refs = _string_list(current_handoff.get("source_refs"))
+    if not current_handoff_ready:
+        issues.append(
+            "GOD room review chain proof current review-closure handoff is not "
+            f"gate-ready: {current_handoff_summary or 'unknown'}"
+        )
+    elif current_candidate_refs != candidate_refs:
+        issues.append(
+            "GOD room review chain proof current review-closure handoff "
+            "candidate refs do not match embedded handoff refs"
+        )
+
+    runner_recovery_raw = payload.get("runner_recovery_proof_lineage")
+    runner_recovery_lineage = (
+        runner_recovery_raw if isinstance(runner_recovery_raw, Mapping) else {}
+    )
+    worker_evidence_bundle_refs = review_chain_proof_worker_evidence_bundle_refs(
+        payload
+    )
+    graph_id = _text(payload.get("graph_id"))
+    failed_lane_id = _text(payload.get("failed_lane_id"))
+    terminal_lane_id = _text(payload.get("terminal_lane_id"))
+    refs = _dedupe(
+        [
+            f"god-room-review-chain-proof:{graph_id}:{failed_lane_id}:{terminal_lane_id}"
+            if current_handoff_ready and graph_id and failed_lane_id and terminal_lane_id
+            else None,
+            f"review_chain_proof_artifact:{Path(path)}"
+            if current_handoff_ready
+            else None,
+            _text(payload.get("review_closure_artifact"))
+            if current_handoff_ready
+            else None,
+            f"lane:{failed_lane_id}" if current_handoff_ready and failed_lane_id else None,
+            f"lane:{terminal_lane_id}"
+            if current_handoff_ready and terminal_lane_id
+            else None,
+            *(current_handoff_source_refs if current_handoff_ready else []),
+            *(candidate_refs if current_handoff_ready else []),
+            *(
+                _runner_recovery_lineage_refs(runner_recovery_lineage)
+                if current_handoff_ready
+                else []
+            ),
+            *(worker_evidence_bundle_refs if current_handoff_ready else []),
+        ]
+    )
+    targets = _dedupe(
+        [
+            f"lane:{failed_lane_id}" if failed_lane_id else None,
+            f"lane:{terminal_lane_id}" if terminal_lane_id else None,
+        ]
+    )
+    manual_gaps = _string_list(payload.get("manual_gaps"))
+    return (
+        {
+            "status": status,
+            "proof_level": proof_level,
+            "server_truth_status": server_truth_status,
+            "conversation_id": _text(payload.get("conversation_id")),
+            "graph_id": graph_id,
+            "failed_lane_id": failed_lane_id,
+            "terminal_lane_id": terminal_lane_id,
+            "release_handoff_gate_ready": handoff_ready,
+            "current_handoff_gate_ready": current_handoff_ready,
+            "current_handoff_summary": current_handoff_summary,
+            "current_handoff_candidate_artifact_refs": current_candidate_refs,
+            "current_handoff_candidate_artifact_ref_count": len(
+                current_candidate_refs
+            ),
+            "current_handoff_source_ref_count": len(current_handoff_source_refs),
+            "candidate_artifact_ref_count": len(candidate_refs),
+            "bounded_session_gate": bounded_session_gate,
+            "local_execution_review_session": _review_chain_session_details(
+                session
+            ),
+            "runner_recovery_proof_lineage": _runner_recovery_lineage_details(
+                runner_recovery_lineage
+            ),
+            "worker_evidence_bundle_refs": worker_evidence_bundle_refs
+            if current_handoff_ready
+            else [],
+            "worker_evidence_bundle_ref_count": (
+                len(worker_evidence_bundle_refs) if current_handoff_ready else 0
+            ),
+            "manual_gaps": manual_gaps,
+            "forbidden_claims": forbidden_claims,
+        },
+        refs,
+        targets,
+    )
+
+
+def _review_chain_current_handoff(
+    path: str | Path,
+    payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    review_closure_ref = _text(payload.get("review_closure_artifact"))
+    base = {
+        "gate_ready": False,
+        "summary": "GOD room review chain proof missing review_closure_artifact.",
+        "candidate_artifact_refs": [],
+    }
+    if review_closure_ref is None:
+        return base
+    root = _review_chain_root(path, payload)
+    review_closure_path = _root_relative_artifact_path(root, review_closure_ref)
+    if review_closure_path is None:
+        return {
+            **base,
+            "summary": (
+                "GOD room review chain proof review_closure_artifact escapes "
+                "xmuse root."
+            ),
+        }
+    load_issues: list[str] = []
+    review_closure = _load_json(
+        review_closure_path,
+        label="GOD room review closure artifact referenced by chain proof",
+        issues=load_issues,
+    )
+    if not isinstance(review_closure, Mapping):
+        return {
+            **base,
+            "summary": "; ".join(load_issues)
+            or "GOD room review closure artifact referenced by chain proof is missing",
+        }
+    handoff = build_god_room_review_closure_handoff(
+        root=root,
+        review_closure=review_closure,
+    )
+    return dict(handoff)
+
+
+def _review_chain_root(path: str | Path, payload: Mapping[str, Any]) -> Path:
+    root_ref = _text(payload.get("xmuse_root"))
+    if root_ref is not None:
+        return Path(root_ref)
+    return Path(path).parent
+
+
+def _root_relative_artifact_path(root: Path, artifact_ref: str) -> Path | None:
+    raw_path = Path(artifact_ref)
+    candidate = raw_path if raw_path.is_absolute() else root / raw_path
+    try:
+        candidate.resolve(strict=False).relative_to(root.resolve(strict=False))
+    except ValueError:
+        return None
+    return candidate
+
+
+def _review_chain_session_details(payload: Mapping[str, Any]) -> dict[str, object]:
+    if not payload:
+        return {
+            "status": "not_provided",
+            "proof_level": "manual_gap",
+            "optional": True,
+        }
+    return {
+        "schema_version": _text(payload.get("schema_version")),
+        "session_id": _text(payload.get("session_id")),
+        "status": _text(payload.get("status")),
+        "proof_level": _text(payload.get("proof_level")),
+        "session_truth_status": _text(payload.get("session_truth_status")),
+        "execution_truth_status": _text(payload.get("execution_truth_status")),
+        "review_truth_status": _text(payload.get("review_truth_status")),
+        "server_truth_status": _text(payload.get("server_truth_status")),
+        "candidate_count": _int(payload.get("candidate_count")),
+        "candidate_artifact_refs": _string_list(
+            payload.get("candidate_artifact_refs")
+        ),
+        "candidate_run_ids": _string_list(payload.get("candidate_run_ids")),
+        "candidate_worker_ids": _string_list(payload.get("candidate_worker_ids")),
+        "candidate_output_refs": _string_list(
+            payload.get("candidate_output_refs")
+        ),
+        "candidate_verification_refs": _string_list(
+            payload.get("candidate_verification_refs")
+        ),
+        "session_artifact_ref_count": len(
+            _string_list(payload.get("session_artifact_refs"))
+        ),
+        "session_source_ref_count": len(
+            _string_list(payload.get("session_source_refs"))
+        ),
+        "session_scope_boundary": _review_chain_session_boundary_details(
+            payload.get("session_scope_boundary")
+        ),
+        "session_artifact_validation": _review_chain_session_artifact_validation(
+            payload.get("session_artifact_validation")
+        ),
+        "runner_recovery_proof_status": _text(
+            payload.get("runner_recovery_proof_status")
+        ),
+        "runner_recovery_proof_level": _text(
+            payload.get("runner_recovery_proof_level")
+        ),
+        "runner_recovery_lineage_boundary": _review_chain_session_boundary_details(
+            payload.get("runner_recovery_lineage_boundary")
+        ),
+    }
+
+
+def _review_chain_session_boundary_details(value: object) -> dict[str, object]:
+    if not isinstance(value, Mapping):
+        return {
+            "status": "not_provided",
+            "proof_level": "manual_gap",
+            "issue_count": 0,
+        }
+    return {
+        "schema_version": _text(value.get("schema_version")),
+        "status": _text(value.get("status")) or "manual_gap",
+        "proof_level": _text(value.get("proof_level")) or "manual_gap",
+        "issue_count": len(_string_list(value.get("issues"))),
+        "manual_gaps": _string_list(value.get("manual_gaps")),
+    }
+
+
+def _review_chain_session_artifact_validation(value: object) -> dict[str, object]:
+    if not isinstance(value, Mapping):
+        return {
+            "status": "not_provided",
+            "proof_level": "manual_gap",
+            "artifact_count": 0,
+            "issue_count": 0,
+        }
+    return {
+        "schema_version": _text(value.get("schema_version")),
+        "status": _text(value.get("status")) or "manual_gap",
+        "proof_level": _text(value.get("proof_level")) or "manual_gap",
+        "artifact_count": _int(value.get("artifact_count")),
+        "artifact_refs": _string_list(value.get("artifact_refs")),
+        "issue_count": len(_string_list(value.get("issues"))),
+        "manual_gaps": _string_list(value.get("manual_gaps")),
+    }
+
+
+def _runner_recovery_lineage_refs(payload: Mapping[str, Any]) -> list[str]:
+    refs: list[str] = []
+    artifact_ref = _text(payload.get("artifact_ref"))
+    if artifact_ref is not None:
+        refs.append(f"runner_recovery_proof_artifact:{artifact_ref}")
+    refs.extend(_string_list(payload.get("source_refs")))
+    return _dedupe(refs)
+
+
+def _runner_recovery_lineage_details(payload: Mapping[str, Any]) -> dict[str, object]:
+    if not payload:
+        return {
+            "status": "not_provided",
+            "proof_level": "manual_gap",
+            "optional": True,
+        }
+    return {
+        "schema_version": _text(payload.get("schema_version")),
+        "status": _text(payload.get("status")) or "not_evaluated",
+        "proof_level": _text(payload.get("proof_level")) or "manual_gap",
+        "source_authority": _text(payload.get("source_authority")),
+        "artifact_ref": _text(payload.get("artifact_ref")),
+        "source_ref_count": len(_string_list(payload.get("source_refs"))),
+        "target_ref_count": len(_string_list(payload.get("target_refs"))),
+        "manual_gaps": _string_list(payload.get("manual_gaps")),
+        "forbidden_claims": _string_list(payload.get("forbidden_claims")),
+    }
 
 
 def _github_truth_details(
@@ -1088,6 +1496,7 @@ def _summary(
     speaker_response: Mapping[str, object],
     multi_turn_provider_speech: Mapping[str, object],
     review_closure: Mapping[str, object],
+    review_chain_proof: Mapping[str, object],
     readiness: Mapping[str, object],
 ) -> str:
     return (
@@ -1102,6 +1511,8 @@ def _summary(
         f"{_text(multi_turn_provider_speech.get('status')) or 'not_provided'}; "
         "review closure is "
         f"{_text(review_closure.get('status')) or 'not_provided'}; "
+        "review chain proof is "
+        f"{_text(review_chain_proof.get('status')) or 'not_provided'}; "
         f"release readiness is {_text(readiness.get('decision')) or 'not_evaluated'}."
     )
 

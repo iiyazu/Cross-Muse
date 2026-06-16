@@ -1,6 +1,7 @@
 """Lane execution and review flow helpers for PlatformOrchestrator."""
 from __future__ import annotations
 
+import json
 import logging
 import re
 import subprocess
@@ -38,8 +39,16 @@ from xmuse_core.platform.verdicts.writer import (
     ingest_rework_verdict,
     stable_verdict_id_for_lane,
 )
+from xmuse_core.structuring.blueprint_execution.lane_dag_service import (
+    LaneFailureEvidence,
+    LaneRecoveryDecision,
+    LaneRecoveryDecisionType,
+    LaneRuntimeBudget,
+    evaluate_lane_recovery,
+)
 from xmuse_core.structuring.blueprint_execution.lane_recovery_artifacts import (
     LaneRecoveryArtifactError,
+    lane_recovery_artifact_path,
     load_lane_recovery_decision,
 )
 from xmuse_core.structuring.feature_review_contracts import FeatureGraphExecutionStatus
@@ -164,6 +173,871 @@ def _lane_recovery_dispatch_block_metadata(
     }
 
 
+def build_lane_recovery_dispatch_block_metadata(
+    orchestrator,
+    lane: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Return durable recovery dispatch-block metadata for a lane."""
+    return _lane_recovery_dispatch_block_metadata(orchestrator, lane)
+
+
+def _record_gate_failure_recovery_artifact(
+    orchestrator,
+    lane: dict[str, Any],
+) -> None:
+    graph_id = _lane_graph_id(lane)
+    lane_id = _optional_text(lane.get("feature_id"))
+    if graph_id is None or lane_id is None:
+        orchestrator._sm.update_metadata(
+            str(lane.get("feature_id") or ""),
+            {
+                "recovery_artifact_status": "manual_gap",
+                "recovery_artifact_source_authority": (
+                    "platform_orchestrator_gate_runner"
+                ),
+                "manual_gaps": [
+                    "gate_failure_recovery_artifact_missing_graph_or_lane_id",
+                    "live_runner_recovery_enforcement_not_proven",
+                ],
+                "forbidden_claims": _lane_recovery_forbidden_claims(),
+            },
+        )
+        return
+    budget = _lane_runtime_budget(lane)
+    gate_report_ref = gate_report_ref_for_lane(lane_id, xmuse_root=orchestrator._root)
+    source_refs = _dedupe_texts(
+        [
+            f"lane:{lane_id}",
+            f"lane_graph:{graph_id}",
+            gate_report_ref,
+            *_text_list(lane.get("source_refs")),
+            *budget.source_refs,
+        ]
+    )
+    attempt = _lane_gate_failure_attempt(lane)
+    failures = [
+        LaneFailureEvidence(
+            lane_id=lane_id,
+            attempt=failure_attempt,
+            failure_class="gate_failed",
+            reason="execution gate returned failure",
+            source_refs=source_refs,
+            occurred_at_utc=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        )
+        for failure_attempt in range(1, attempt + 1)
+    ]
+    decision = evaluate_lane_recovery(
+        lane_id=lane_id,
+        budget=budget,
+        failures=failures,
+    )
+    payload = {
+        "schema_version": "xmuse.god_room_lane_recovery.v1",
+        "source_authority": "platform_orchestrator_gate_runner",
+        "proof_level": "contract_proof",
+        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "graph_id": graph_id,
+        "lane_id": lane_id,
+        "decision": decision.model_dump(mode="json"),
+        "failure_evidence": [failure.model_dump(mode="json") for failure in failures],
+        "source_refs": source_refs,
+        "manual_gaps": [
+            "live_runner_recovery_enforcement_not_proven",
+            "review_truth_not_proven",
+            "server_truth_not_proven",
+            "overnight_safe_recovery_not_proven",
+        ],
+        "forbidden_claims": _lane_recovery_forbidden_claims(),
+    }
+    try:
+        recovery_path = lane_recovery_artifact_path(
+            orchestrator._root,
+            graph_id=graph_id,
+            lane_id=lane_id,
+        )
+        recovery_path.parent.mkdir(parents=True, exist_ok=True)
+        recovery_path.write_text(
+            json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    except (OSError, ValueError) as exc:
+        orchestrator._sm.update_metadata(
+            lane_id,
+            {
+                "recovery_artifact_status": "manual_gap",
+                "recovery_artifact_source_authority": (
+                    "platform_orchestrator_gate_runner"
+                ),
+                "recovery_artifact_error": str(exc),
+                "manual_gaps": [
+                    "gate_failure_recovery_artifact_write_failed",
+                    "live_runner_recovery_enforcement_not_proven",
+                ],
+                "forbidden_claims": _lane_recovery_forbidden_claims(),
+            },
+        )
+        return
+    orchestrator._sm.update_metadata(
+        lane_id,
+        {
+            "recovery_artifact_status": "written",
+            "recovery_artifact_source_authority": "platform_orchestrator_gate_runner",
+            "recovery_artifact_ref": _relative_artifact_ref(
+                orchestrator._root,
+                recovery_path,
+            ),
+            "recovery_decision": decision.model_dump(mode="json"),
+            "recovery_source_refs": source_refs,
+        },
+    )
+
+
+def _record_patch_forward_recovery_artifact(
+    orchestrator,
+    lane: dict[str, Any],
+    patch_lane: dict[str, Any],
+    review_metadata: dict[str, Any],
+) -> None:
+    graph_id = _lane_graph_id(lane)
+    lane_id = _optional_text(lane.get("feature_id"))
+    patch_lane_id = _optional_text(patch_lane.get("feature_id"))
+    source_authority = "platform_orchestrator_review_patch_forward"
+    if graph_id is None or lane_id is None or patch_lane_id is None:
+        orchestrator._sm.update_metadata(
+            str(lane.get("feature_id") or ""),
+            {
+                "recovery_artifact_status": "manual_gap",
+                "recovery_artifact_source_authority": source_authority,
+                "manual_gaps": [
+                    "patch_forward_recovery_artifact_missing_graph_or_lane_id",
+                    "live_runner_recovery_enforcement_not_proven",
+                ],
+                "forbidden_claims": _lane_recovery_forbidden_claims(),
+            },
+        )
+        return
+
+    budget = _lane_runtime_budget(lane)
+    gate_report_ref = gate_report_ref_for_lane(lane_id, xmuse_root=orchestrator._root)
+    review_verdict_id = _optional_text(review_metadata.get("review_verdict_id"))
+    evidence_refs = _text_list(review_metadata.get("review_evidence_refs"))
+    source_refs = _dedupe_texts(
+        [
+            f"lane:{lane_id}",
+            f"lane_graph:{graph_id}",
+            f"patch_lane:{patch_lane_id}",
+            f"review_verdict:{review_verdict_id}" if review_verdict_id else None,
+            gate_report_ref,
+            *evidence_refs,
+            *_text_list(lane.get("source_refs")),
+            *_text_list(patch_lane.get("source_refs")),
+            *budget.source_refs,
+        ]
+    )
+    failure = LaneFailureEvidence(
+        lane_id=lane_id,
+        attempt=_lane_review_failure_attempt(review_metadata),
+        failure_class="patch_forward_requested",
+        reason="independent review requested patch-forward lane",
+        source_refs=source_refs,
+        occurred_at_utc=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    )
+    decision = LaneRecoveryDecision(
+        lane_id=lane_id,
+        decision=LaneRecoveryDecisionType.SUSPENDED,
+        retry_allowed=False,
+        failure_class=failure.failure_class,
+        attempt=failure.attempt,
+        suspend_reason="patch_forward_requested",
+        next_action=(
+            f"execute and review patch-forward lane {patch_lane_id} before "
+            "retrying the failed lane"
+        ),
+        source_refs=source_refs,
+    )
+    payload = {
+        "schema_version": "xmuse.god_room_lane_recovery.v1",
+        "source_authority": source_authority,
+        "proof_level": "contract_proof",
+        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "graph_id": graph_id,
+        "lane_id": lane_id,
+        "patch_lane_id": patch_lane_id,
+        "decision": decision.model_dump(mode="json"),
+        "failure_evidence": [failure.model_dump(mode="json")],
+        "source_refs": source_refs,
+        "manual_gaps": [
+            "live_runner_recovery_enforcement_not_proven",
+            "review_truth_not_proven",
+            "server_truth_not_proven",
+            "overnight_safe_recovery_not_proven",
+        ],
+        "forbidden_claims": _lane_recovery_forbidden_claims(),
+    }
+    try:
+        recovery_path = lane_recovery_artifact_path(
+            orchestrator._root,
+            graph_id=graph_id,
+            lane_id=lane_id,
+        )
+        recovery_path.parent.mkdir(parents=True, exist_ok=True)
+        recovery_path.write_text(
+            json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    except (OSError, ValueError) as exc:
+        orchestrator._sm.update_metadata(
+            lane_id,
+            {
+                "recovery_artifact_status": "manual_gap",
+                "recovery_artifact_source_authority": source_authority,
+                "recovery_artifact_error": str(exc),
+                "manual_gaps": [
+                    "patch_forward_recovery_artifact_write_failed",
+                    "live_runner_recovery_enforcement_not_proven",
+                ],
+                "forbidden_claims": _lane_recovery_forbidden_claims(),
+            },
+        )
+        return
+    orchestrator._sm.update_metadata(
+        lane_id,
+        {
+            "recovery_artifact_status": "written",
+            "recovery_artifact_source_authority": source_authority,
+            "recovery_artifact_ref": _relative_artifact_ref(
+                orchestrator._root,
+                recovery_path,
+            ),
+            "recovery_decision": decision.model_dump(mode="json"),
+            "recovery_source_refs": source_refs,
+            "patch_forward_recovery_lane_id": patch_lane_id,
+        },
+    )
+
+
+def record_review_rejection_recovery_artifact(
+    orchestrator,
+    lane: dict[str, Any],
+) -> None:
+    graph_id = _lane_graph_id(lane)
+    lane_id = _optional_text(lane.get("feature_id"))
+    source_authority = "platform_orchestrator_review_rejection"
+    if graph_id is None or lane_id is None:
+        orchestrator._sm.update_metadata(
+            str(lane.get("feature_id") or ""),
+            {
+                "recovery_artifact_status": "manual_gap",
+                "recovery_artifact_source_authority": source_authority,
+                "manual_gaps": [
+                    "review_rejection_recovery_artifact_missing_graph_or_lane_id",
+                    "live_runner_recovery_enforcement_not_proven",
+                ],
+                "forbidden_claims": _lane_recovery_forbidden_claims(),
+            },
+        )
+        return
+
+    attempt = _lane_review_retry_exhausted_attempt(lane)
+    budget = _lane_runtime_budget(lane)
+    gate_report_ref = gate_report_ref_for_lane(lane_id, xmuse_root=orchestrator._root)
+    source_refs = _dedupe_texts(
+        [
+            f"lane:{lane_id}",
+            f"lane_graph:{graph_id}",
+            gate_report_ref,
+            *_text_list(lane.get("review_evidence_refs")),
+            *_text_list(lane.get("source_refs")),
+            *budget.source_refs,
+        ]
+    )
+    failure = LaneFailureEvidence(
+        lane_id=lane_id,
+        attempt=attempt,
+        failure_class="review_rejected",
+        reason="review rejection retry budget exhausted",
+        source_refs=source_refs,
+        occurred_at_utc=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    )
+    decision = LaneRecoveryDecision(
+        lane_id=lane_id,
+        decision=LaneRecoveryDecisionType.REFACTOR_REQUIRED,
+        retry_allowed=False,
+        failure_class=failure.failure_class,
+        attempt=failure.attempt,
+        refactor_required_reason=(
+            f"review rejection retry budget exhausted after attempt {attempt}"
+        ),
+        next_action="refactor or replace the rejected lane boundary before retrying",
+        source_refs=source_refs,
+    )
+    payload = {
+        "schema_version": "xmuse.god_room_lane_recovery.v1",
+        "source_authority": source_authority,
+        "proof_level": "contract_proof",
+        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "graph_id": graph_id,
+        "lane_id": lane_id,
+        "decision": decision.model_dump(mode="json"),
+        "failure_evidence": [failure.model_dump(mode="json")],
+        "source_refs": source_refs,
+        "manual_gaps": [
+            "live_runner_recovery_enforcement_not_proven",
+            "review_truth_not_proven",
+            "server_truth_not_proven",
+            "overnight_safe_recovery_not_proven",
+        ],
+        "forbidden_claims": _lane_recovery_forbidden_claims(),
+    }
+    try:
+        recovery_path = lane_recovery_artifact_path(
+            orchestrator._root,
+            graph_id=graph_id,
+            lane_id=lane_id,
+        )
+        recovery_path.parent.mkdir(parents=True, exist_ok=True)
+        recovery_path.write_text(
+            json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    except (OSError, ValueError) as exc:
+        orchestrator._sm.update_metadata(
+            lane_id,
+            {
+                "recovery_artifact_status": "manual_gap",
+                "recovery_artifact_source_authority": source_authority,
+                "recovery_artifact_error": str(exc),
+                "manual_gaps": [
+                    "review_rejection_recovery_artifact_write_failed",
+                    "live_runner_recovery_enforcement_not_proven",
+                ],
+                "forbidden_claims": _lane_recovery_forbidden_claims(),
+            },
+        )
+        return
+    orchestrator._sm.update_metadata(
+        lane_id,
+        {
+            "recovery_artifact_status": "written",
+            "recovery_artifact_source_authority": source_authority,
+            "recovery_artifact_ref": _relative_artifact_ref(
+                orchestrator._root,
+                recovery_path,
+            ),
+            "recovery_decision": decision.model_dump(mode="json"),
+            "recovery_source_refs": source_refs,
+        },
+    )
+
+
+def record_review_retry_exhaustion_recovery_artifact(
+    orchestrator,
+    lane: dict[str, Any],
+    *,
+    failure_reason: str,
+) -> None:
+    graph_id = _lane_graph_id(lane)
+    lane_id = _optional_text(lane.get("feature_id"))
+    source_authority = "platform_orchestrator_review_retry_exhaustion"
+    if graph_id is None or lane_id is None:
+        orchestrator._sm.update_metadata(
+            str(lane.get("feature_id") or ""),
+            {
+                "recovery_artifact_status": "manual_gap",
+                "recovery_artifact_source_authority": source_authority,
+                "manual_gaps": [
+                    "review_retry_exhaustion_recovery_artifact_missing_graph_or_lane_id",
+                    "live_runner_recovery_enforcement_not_proven",
+                ],
+                "forbidden_claims": _lane_recovery_forbidden_claims(),
+            },
+        )
+        return
+
+    attempt = _lane_review_retry_failure_attempt(lane)
+    budget = _lane_runtime_budget(lane)
+    gate_report_ref = gate_report_ref_for_lane(lane_id, xmuse_root=orchestrator._root)
+    review_task_id = _optional_text(lane.get("review_task_id"))
+    source_refs = _dedupe_texts(
+        [
+            f"lane:{lane_id}",
+            f"lane_graph:{graph_id}",
+            f"review_task:{review_task_id}" if review_task_id else None,
+            f"review_failure:{failure_reason}",
+            gate_report_ref,
+            *_text_list(lane.get("review_evidence_refs")),
+            *_text_list(lane.get("source_refs")),
+            *budget.source_refs,
+        ]
+    )
+    failure = LaneFailureEvidence(
+        lane_id=lane_id,
+        attempt=attempt,
+        failure_class=failure_reason,
+        reason=f"review retry budget exhausted for {failure_reason}",
+        source_refs=source_refs,
+        occurred_at_utc=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    )
+    if failure_reason == "review_infra_unavailable":
+        decision = LaneRecoveryDecision(
+            lane_id=lane_id,
+            decision=LaneRecoveryDecisionType.SUSPENDED,
+            retry_allowed=False,
+            failure_class=failure.failure_class,
+            attempt=failure.attempt,
+            suspend_reason=failure.failure_class,
+            next_action="restore review infrastructure before retrying this lane",
+            source_refs=source_refs,
+        )
+    else:
+        decision = LaneRecoveryDecision(
+            lane_id=lane_id,
+            decision=LaneRecoveryDecisionType.REFACTOR_REQUIRED,
+            retry_allowed=False,
+            failure_class=failure.failure_class,
+            attempt=failure.attempt,
+            refactor_required_reason=(
+                f"review retry budget exhausted for {failure_reason} "
+                f"after attempt {attempt}"
+            ),
+            next_action="refactor or replace the review boundary before retrying",
+            source_refs=source_refs,
+        )
+    payload = {
+        "schema_version": "xmuse.god_room_lane_recovery.v1",
+        "source_authority": source_authority,
+        "proof_level": "contract_proof",
+        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "graph_id": graph_id,
+        "lane_id": lane_id,
+        "decision": decision.model_dump(mode="json"),
+        "failure_evidence": [failure.model_dump(mode="json")],
+        "source_refs": source_refs,
+        "manual_gaps": [
+            "live_runner_recovery_enforcement_not_proven",
+            "review_truth_not_proven",
+            "server_truth_not_proven",
+            "overnight_safe_recovery_not_proven",
+        ],
+        "forbidden_claims": _lane_recovery_forbidden_claims(),
+    }
+    try:
+        recovery_path = lane_recovery_artifact_path(
+            orchestrator._root,
+            graph_id=graph_id,
+            lane_id=lane_id,
+        )
+        recovery_path.parent.mkdir(parents=True, exist_ok=True)
+        recovery_path.write_text(
+            json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    except (OSError, ValueError) as exc:
+        orchestrator._sm.update_metadata(
+            lane_id,
+            {
+                "recovery_artifact_status": "manual_gap",
+                "recovery_artifact_source_authority": source_authority,
+                "recovery_artifact_error": str(exc),
+                "manual_gaps": [
+                    "review_retry_exhaustion_recovery_artifact_write_failed",
+                    "live_runner_recovery_enforcement_not_proven",
+                ],
+                "forbidden_claims": _lane_recovery_forbidden_claims(),
+            },
+        )
+        return
+    orchestrator._sm.update_metadata(
+        lane_id,
+        {
+            "recovery_artifact_status": "written",
+            "recovery_artifact_source_authority": source_authority,
+            "recovery_artifact_ref": _relative_artifact_ref(
+                orchestrator._root,
+                recovery_path,
+            ),
+            "recovery_decision": decision.model_dump(mode="json"),
+            "recovery_source_refs": source_refs,
+        },
+    )
+
+
+def record_review_retry_recovery_artifact(
+    orchestrator,
+    lane: dict[str, Any],
+    *,
+    failure_reason: str,
+) -> None:
+    graph_id = _lane_graph_id(lane)
+    lane_id = _optional_text(lane.get("feature_id"))
+    source_authority = "platform_orchestrator_review_retry"
+    if graph_id is None or lane_id is None:
+        orchestrator._sm.update_metadata(
+            str(lane.get("feature_id") or ""),
+            {
+                "recovery_artifact_status": "manual_gap",
+                "recovery_artifact_source_authority": source_authority,
+                "manual_gaps": [
+                    "review_retry_recovery_artifact_missing_graph_or_lane_id",
+                    "live_runner_recovery_enforcement_not_proven",
+                ],
+                "forbidden_claims": _lane_recovery_forbidden_claims(),
+            },
+        )
+        return
+
+    attempt = _lane_review_retry_failure_attempt(lane)
+    budget = _lane_runtime_budget(lane)
+    gate_report_ref = gate_report_ref_for_lane(lane_id, xmuse_root=orchestrator._root)
+    review_task_id = _optional_text(lane.get("review_task_id"))
+    review_attempt_id = _optional_text(lane.get("review_attempt_id"))
+    source_refs = _dedupe_texts(
+        [
+            f"lane:{lane_id}",
+            f"lane_graph:{graph_id}",
+            f"review_task:{review_task_id}" if review_task_id else None,
+            f"review_attempt:{review_attempt_id}" if review_attempt_id else None,
+            f"review_failure:{failure_reason}",
+            gate_report_ref,
+            *_text_list(lane.get("review_evidence_refs")),
+            *_text_list(lane.get("source_refs")),
+            *budget.source_refs,
+        ]
+    )
+    failure = LaneFailureEvidence(
+        lane_id=lane_id,
+        attempt=attempt,
+        failure_class=failure_reason,
+        reason=f"review retry remains allowed for {failure_reason}",
+        source_refs=source_refs,
+        occurred_at_utc=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    )
+    decision = LaneRecoveryDecision(
+        lane_id=lane_id,
+        decision=LaneRecoveryDecisionType.RETRY,
+        retry_allowed=True,
+        failure_class=failure.failure_class,
+        attempt=failure.attempt,
+        next_action="retry review within declared recovery budget",
+        source_refs=source_refs,
+    )
+    payload = {
+        "schema_version": "xmuse.god_room_lane_recovery.v1",
+        "source_authority": source_authority,
+        "proof_level": "contract_proof",
+        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "graph_id": graph_id,
+        "lane_id": lane_id,
+        "decision": decision.model_dump(mode="json"),
+        "failure_evidence": [failure.model_dump(mode="json")],
+        "source_refs": source_refs,
+        "manual_gaps": [
+            "live_runner_recovery_enforcement_not_proven",
+            "review_truth_not_proven",
+            "server_truth_not_proven",
+            "overnight_safe_recovery_not_proven",
+        ],
+        "forbidden_claims": _lane_recovery_forbidden_claims(),
+    }
+    try:
+        recovery_path = lane_recovery_artifact_path(
+            orchestrator._root,
+            graph_id=graph_id,
+            lane_id=lane_id,
+        )
+        recovery_path.parent.mkdir(parents=True, exist_ok=True)
+        recovery_path.write_text(
+            json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    except (OSError, ValueError) as exc:
+        orchestrator._sm.update_metadata(
+            lane_id,
+            {
+                "recovery_artifact_status": "manual_gap",
+                "recovery_artifact_source_authority": source_authority,
+                "recovery_artifact_error": str(exc),
+                "manual_gaps": [
+                    "review_retry_recovery_artifact_write_failed",
+                    "live_runner_recovery_enforcement_not_proven",
+                ],
+                "forbidden_claims": _lane_recovery_forbidden_claims(),
+            },
+        )
+        return
+    orchestrator._sm.update_metadata(
+        lane_id,
+        {
+            "recovery_artifact_status": "written",
+            "recovery_artifact_source_authority": source_authority,
+            "recovery_artifact_ref": _relative_artifact_ref(
+                orchestrator._root,
+                recovery_path,
+            ),
+            "recovery_decision": decision.model_dump(mode="json"),
+            "recovery_source_refs": source_refs,
+        },
+    )
+
+
+def record_merge_failure_recovery_artifact(
+    orchestrator,
+    lane: dict[str, Any],
+    merge_metadata: dict[str, Any],
+    *,
+    decision_type: LaneRecoveryDecisionType,
+) -> None:
+    graph_id = _lane_graph_id(lane)
+    lane_id = _optional_text(lane.get("feature_id"))
+    source_authority = "platform_orchestrator_merge_failure"
+    if graph_id is None or lane_id is None:
+        orchestrator._sm.update_metadata(
+            str(lane.get("feature_id") or ""),
+            {
+                "recovery_artifact_status": "manual_gap",
+                "recovery_artifact_source_authority": source_authority,
+                "manual_gaps": [
+                    "merge_failure_recovery_artifact_missing_graph_or_lane_id",
+                    "live_runner_recovery_enforcement_not_proven",
+                ],
+                "forbidden_claims": _lane_recovery_forbidden_claims(),
+            },
+        )
+        return
+
+    failure_class = _merge_failure_class(merge_metadata)
+    attempt = _lane_merge_failure_attempt(lane)
+    budget = _lane_runtime_budget(lane)
+    gate_report_ref = gate_report_ref_for_lane(lane_id, xmuse_root=orchestrator._root)
+    source_refs = _dedupe_texts(
+        [
+            f"lane:{lane_id}",
+            f"lane_graph:{graph_id}",
+            gate_report_ref,
+            *_text_list(lane.get("review_evidence_refs")),
+            *_text_list(lane.get("source_refs")),
+            *budget.source_refs,
+        ]
+    )
+    failure = LaneFailureEvidence(
+        lane_id=lane_id,
+        attempt=attempt,
+        failure_class=failure_class,
+        reason=str(merge_metadata.get("merge_failure_detail") or failure_class),
+        source_refs=source_refs,
+        occurred_at_utc=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    )
+    decision = _merge_failure_recovery_decision(
+        lane_id=lane_id,
+        decision_type=decision_type,
+        failure=failure,
+        source_refs=source_refs,
+    )
+    payload = {
+        "schema_version": "xmuse.god_room_lane_recovery.v1",
+        "source_authority": source_authority,
+        "proof_level": "contract_proof",
+        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "graph_id": graph_id,
+        "lane_id": lane_id,
+        "decision": decision.model_dump(mode="json"),
+        "failure_evidence": [failure.model_dump(mode="json")],
+        "source_refs": source_refs,
+        "manual_gaps": [
+            "live_runner_recovery_enforcement_not_proven",
+            "review_truth_not_proven",
+            "server_truth_not_proven",
+            "overnight_safe_recovery_not_proven",
+        ],
+        "forbidden_claims": _lane_recovery_forbidden_claims(),
+    }
+    try:
+        recovery_path = lane_recovery_artifact_path(
+            orchestrator._root,
+            graph_id=graph_id,
+            lane_id=lane_id,
+        )
+        recovery_path.parent.mkdir(parents=True, exist_ok=True)
+        recovery_path.write_text(
+            json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    except (OSError, ValueError) as exc:
+        orchestrator._sm.update_metadata(
+            lane_id,
+            {
+                "recovery_artifact_status": "manual_gap",
+                "recovery_artifact_source_authority": source_authority,
+                "recovery_artifact_error": str(exc),
+                "manual_gaps": [
+                    "merge_failure_recovery_artifact_write_failed",
+                    "live_runner_recovery_enforcement_not_proven",
+                ],
+                "forbidden_claims": _lane_recovery_forbidden_claims(),
+            },
+        )
+        return
+    orchestrator._sm.update_metadata(
+        lane_id,
+        {
+            "recovery_artifact_status": "written",
+            "recovery_artifact_source_authority": source_authority,
+            "recovery_artifact_ref": _relative_artifact_ref(
+                orchestrator._root,
+                recovery_path,
+            ),
+            "recovery_decision": decision.model_dump(mode="json"),
+            "recovery_source_refs": source_refs,
+        },
+    )
+
+
+def _lane_runtime_budget(lane: dict[str, Any]) -> LaneRuntimeBudget:
+    budget = lane.get("budget")
+    if isinstance(budget, dict):
+        try:
+            return LaneRuntimeBudget.model_validate(budget)
+        except ValueError:
+            pass
+    return LaneRuntimeBudget(
+        source_refs=_dedupe_texts(
+            [
+                f"lane:{_optional_text(lane.get('feature_id'))}"
+                if _optional_text(lane.get("feature_id"))
+                else None,
+                f"lane_graph:{_lane_graph_id(lane)}" if _lane_graph_id(lane) else None,
+            ]
+        )
+    )
+
+
+def _lane_gate_failure_attempt(lane: dict[str, Any]) -> int:
+    retry_count = lane.get("retry_count")
+    if isinstance(retry_count, bool) or not isinstance(retry_count, int):
+        return 1
+    return max(1, retry_count + 1)
+
+
+def _lane_review_failure_attempt(review_metadata: dict[str, Any]) -> int:
+    history = review_metadata.get("review_history")
+    if not isinstance(history, list):
+        return 1
+    attempts = [
+        entry
+        for entry in history
+        if isinstance(entry, dict) and entry.get("decision") == "patch-forward"
+    ]
+    return max(1, len(attempts))
+
+
+def _lane_review_retry_exhausted_attempt(lane: dict[str, Any]) -> int:
+    retry_count = lane.get("retry_count")
+    if isinstance(retry_count, bool) or not isinstance(retry_count, int):
+        return 1
+    return max(1, retry_count + 1)
+
+
+def _lane_review_retry_failure_attempt(lane: dict[str, Any]) -> int:
+    retry_count = lane.get("review_retry_count")
+    if isinstance(retry_count, bool) or not isinstance(retry_count, int):
+        return 1
+    return max(1, retry_count + 1)
+
+
+def _lane_merge_failure_attempt(lane: dict[str, Any]) -> int:
+    retry_count = lane.get("retry_count")
+    if isinstance(retry_count, bool) or not isinstance(retry_count, int):
+        return 1
+    if lane.get("status") == "reworking":
+        return max(1, retry_count)
+    return max(1, retry_count + 1)
+
+
+def _merge_failure_class(merge_metadata: dict[str, Any]) -> str:
+    reason = str(merge_metadata.get("failure_reason") or "merge_failed")
+    if reason == "merge_conflict_or_failed" and (
+        merge_metadata.get("merge_failure_reworkable") is True
+    ):
+        return "merge_conflict"
+    return reason
+
+
+def _merge_failure_recovery_decision(
+    *,
+    lane_id: str,
+    decision_type: LaneRecoveryDecisionType,
+    failure: LaneFailureEvidence,
+    source_refs: list[str],
+) -> LaneRecoveryDecision:
+    if decision_type is LaneRecoveryDecisionType.RETRY:
+        return LaneRecoveryDecision(
+            lane_id=lane_id,
+            decision=LaneRecoveryDecisionType.RETRY,
+            retry_allowed=True,
+            failure_class=failure.failure_class,
+            attempt=failure.attempt,
+            next_action="retry merge failure lane within declared budget",
+            source_refs=source_refs,
+        )
+    if decision_type is LaneRecoveryDecisionType.REFACTOR_REQUIRED:
+        return LaneRecoveryDecision(
+            lane_id=lane_id,
+            decision=LaneRecoveryDecisionType.REFACTOR_REQUIRED,
+            retry_allowed=False,
+            failure_class=failure.failure_class,
+            attempt=failure.attempt,
+            refactor_required_reason=(
+                f"merge failure {failure.failure_class} exhausted retry budget"
+            ),
+            next_action="refactor or replace the merge failure boundary before retrying",
+            source_refs=source_refs,
+        )
+    return LaneRecoveryDecision(
+        lane_id=lane_id,
+        decision=LaneRecoveryDecisionType.SUSPENDED,
+        retry_allowed=False,
+        failure_class=failure.failure_class,
+        attempt=failure.attempt,
+        suspend_reason=failure.failure_class,
+        next_action="inspect non-retryable merge failure before retrying",
+        source_refs=source_refs,
+    )
+
+
+def _lane_recovery_forbidden_claims() -> list[str]:
+    return [
+        "overnight_safe_recovery",
+        "end_to_end_execution_review_closure",
+        "worker_output_is_review_truth",
+        "ready_to_merge",
+        "pr_merged",
+    ]
+
+
+def _text_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [item.strip() for item in value if isinstance(item, str) and item.strip()]
+
+
+def _dedupe_texts(values: list[str | None]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        if value is None or value in seen:
+            continue
+        seen.add(value)
+        result.append(value)
+    return result
+
+
+def _relative_artifact_ref(root: Path, path: Path) -> str:
+    try:
+        return str(path.relative_to(root))
+    except ValueError:
+        return str(path)
+
+
 def _graph_native_review_authority_allows_lane(orchestrator, lane: dict[str, Any]) -> bool:
     status = _graph_native_status_record(orchestrator, lane)
     if status is None:
@@ -269,7 +1143,7 @@ async def dispatch_lane(orchestrator, lane_id: str) -> None:
                 status=current_status,
             )
             return
-        recovery_block = _lane_recovery_dispatch_block_metadata(orchestrator, lane)
+        recovery_block = build_lane_recovery_dispatch_block_metadata(orchestrator, lane)
         if recovery_block is not None:
             orchestrator._sm.update_metadata(lane_id, recovery_block)
             log_event(
@@ -445,10 +1319,6 @@ async def run_execution_god(orchestrator, lane_id: str) -> None:
             invocation=provider_invocation,
             used_override=orchestrator._execution_provider_profile_ref is not None,
         )
-        orchestrator._sm.update_metadata(
-            lane_id,
-            {"provider_profile_ref": provider_invocation.provider_profile_ref},
-        )
         provider_model = orchestrator._provider_service.model_for_invocation(
             provider_invocation,
             model_override=god.model,
@@ -548,11 +1418,12 @@ async def on_lane_executed(orchestrator, lane_id: str) -> None:
             orchestrator._sm.transition(lane_id, "gated", metadata={"gate_passed": True})
             await orchestrator._run_review_god(lane_id)
         else:
-            orchestrator._sm.transition(
+            failed_lane = orchestrator._sm.transition(
                 lane_id,
                 "gate_failed",
                 metadata={"gate_passed": False, "failure_reason": "gate_failed"},
             )
+            _record_gate_failure_recovery_artifact(orchestrator, failed_lane or lane)
 
 async def run_review_god(orchestrator, lane_id: str) -> None:
     lane = orchestrator._sm.get_lane(lane_id)
@@ -711,6 +1582,12 @@ async def on_lane_reviewed_inner(orchestrator, lane_id: str, lane: dict[str, Any
                 "patch_lane_id": adapted.patch_lane["feature_id"],
             },
         )
+        _record_patch_forward_recovery_artifact(
+            orchestrator,
+            lane,
+            adapted.patch_lane,
+            adapted.metadata,
+        )
         log_event(
             logger,
             logging.INFO,
@@ -802,9 +1679,23 @@ async def on_lane_reviewed_inner(orchestrator, lane_id: str, lane: dict[str, Any
             return
         if _merge_failure_is_reworkable(lane):
             try:
-                orchestrator._sm.transition(lane_id, "reworking", metadata=metadata)
+                reworked_lane = orchestrator._sm.transition(
+                    lane_id,
+                    "reworking",
+                    metadata=metadata,
+                )
             except InvalidTransitionError:
-                orchestrator._sm.transition(lane_id, "failed", metadata=metadata)
+                failed_lane = orchestrator._sm.transition(
+                    lane_id,
+                    "failed",
+                    metadata=metadata,
+                )
+                record_merge_failure_recovery_artifact(
+                    orchestrator,
+                    failed_lane or lane,
+                    metadata,
+                    decision_type=LaneRecoveryDecisionType.REFACTOR_REQUIRED,
+                )
                 await reproject_dependents_if_needed(
                     lane_id,
                     sm=orchestrator._sm,
@@ -817,6 +1708,12 @@ async def on_lane_reviewed_inner(orchestrator, lane_id: str, lane: dict[str, Any
                     lane_id=lane_id,
                 )
                 return
+            record_merge_failure_recovery_artifact(
+                orchestrator,
+                reworked_lane or orchestrator._sm.get_lane(lane_id),
+                metadata,
+                decision_type=LaneRecoveryDecisionType.RETRY,
+            )
             log_event(
                 logger,
                 logging.WARNING,
@@ -825,7 +1722,13 @@ async def on_lane_reviewed_inner(orchestrator, lane_id: str, lane: dict[str, Any
             )
             await orchestrator.dispatch_lane(lane_id)
             return
-        orchestrator._sm.transition(lane_id, "failed", metadata=metadata)
+        failed_lane = orchestrator._sm.transition(lane_id, "failed", metadata=metadata)
+        record_merge_failure_recovery_artifact(
+            orchestrator,
+            failed_lane or lane,
+            metadata,
+            decision_type=LaneRecoveryDecisionType.SUSPENDED,
+        )
         await reproject_dependents_if_needed(
             lane_id,
             sm=orchestrator._sm,

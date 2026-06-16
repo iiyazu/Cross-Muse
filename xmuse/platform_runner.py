@@ -18,16 +18,21 @@ import urllib.parse
 import urllib.request
 import uuid
 from contextlib import contextmanager, suppress
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from xmuse_core.agents.memoryos_client import MemoryOSClient
 from xmuse_core.chat.driver import ChatDriver
 from xmuse_core.platform.coordinator_control import CoordinatorControlService
+from xmuse_core.platform.local_execution_candidate import (
+    LOCAL_EXECUTION_CANDIDATE_PLATFORM_RUNNER_PRODUCER,
+    capture_local_execution_candidate,
+)
 from xmuse_core.platform.model_policy import CodexModelPolicy, resolve_codex_model_policy
 from xmuse_core.platform.orchestrator import PlatformOrchestrator
 from xmuse_core.platform.orchestrator_lane_flow import (
-    _lane_recovery_dispatch_block_metadata,
+    build_lane_recovery_dispatch_block_metadata,
 )
 from xmuse_core.platform.run_health import (
     DEFAULT_STALE_AFTER_S,
@@ -37,11 +42,29 @@ from xmuse_core.platform.run_health import (
     summarize_run_health,
 )
 from xmuse_core.platform.runner_recovery_proof import capture_runner_recovery_proof
+from xmuse_core.platform.runner_session import (
+    RUNNER_SESSION_COMPLETED_STATUS,
+    RUNNER_SESSION_FAILED_STATUS,
+    capture_runner_session_finished,
+    capture_runner_session_started,
+)
 from xmuse_core.providers.registry import DEFAULT_CODEX_GOD_MODEL_ID
 from xmuse_core.runtime.paths import default_xmuse_root, resolve_xmuse_root
 from xmuse_core.self_evolution import SelfEvolutionController
 from xmuse_core.self_evolution.watcher import TerminalRunWatcher
 from xmuse_core.structuring.blueprint_execution import BlueprintAutomationService
+from xmuse_core.structuring.blueprint_execution.lane_recovery_artifacts import (
+    lane_recovery_artifact_path,
+)
+from xmuse_core.structuring.feature_review_contracts import (
+    CommandEvidence,
+    FeatureEvidenceBundle,
+    FeatureGraphExecutionStatus,
+    FeatureGraphExecutionStatusRecord,
+    FeatureVerificationEvidence,
+    FeatureWorkerNotes,
+    LaneGraphEvidenceSummary,
+)
 from xmuse_core.structuring.ready_set import (
     build_graph_ready_set,
     build_ready_set_parity_evidence,
@@ -88,8 +111,20 @@ async def run(
     execution_provider_profile_ref: str | None = None,
     review_provider_profile_ref: str | None = None,
     runner_recovery_proof_output: Path | None = None,
+    local_execution_candidate_output_dir: Path | None = None,
+    local_execution_candidate_capture_enabled: bool = True,
 ) -> None:
     runner_id = _default_runner_id()
+    local_execution_run_id = f"local-execution-{runner_id}"
+    runner_session_id = f"runner-session-{uuid.uuid4().hex}"
+    runner_session_ref = f"work/runner_sessions/{runner_session_id}.json"
+    runner_session_path = xmuse_root / runner_session_ref
+    runner_session_candidate_refs: list[str] = []
+    runner_session_candidate_lane_ids: list[str] = []
+    runner_session_worker_evidence_bundle_refs: list[str] = []
+    runner_session_failure: str | None = None
+    runner_session_dispatch_failures: dict[str, str] = {}
+    runner_session_candidate_capture_failures: dict[str, str] = {}
     control_service = CoordinatorControlService(
         xmuse_root=xmuse_root,
         runner_id=runner_id,
@@ -127,11 +162,24 @@ async def run(
                 "a launcher that supports xmuse persistent sessions"
             )
         writer_lease = _acquire_writer_lease(lanes_path, runner_id=runner_id)
+        capture_runner_session_started(
+            output_path=runner_session_path,
+            session_id=runner_session_id,
+            run_id=local_execution_run_id,
+            runner_id=runner_id,
+            lanes_path=lanes_path,
+            xmuse_root=xmuse_root,
+            graph_id=graph_id,
+            resolution_id=resolution_id,
+            writer_lease_id=str(writer_lease["lease_id"]),
+        )
         control_service.record_lifecycle(
             "writer_lease_acquired",
             details={
                 "lanes_path": str(lanes_path),
                 "lease_id": str(writer_lease["lease_id"]),
+                "runner_session_id": runner_session_id,
+                "runner_session_ref": runner_session_ref,
             },
         )
         god_session_layer = GodSessionLayer(
@@ -188,6 +236,13 @@ async def run(
         if review_provider_profile_ref is not None:
             orchestrator_kwargs["review_provider_profile_ref"] = review_provider_profile_ref
         orch = PlatformOrchestrator(**orchestrator_kwargs)
+        resolved_local_execution_candidate_output_dir = (
+            _local_execution_candidate_output_dir(
+                xmuse_root=xmuse_root,
+                configured=local_execution_candidate_output_dir,
+                enabled=local_execution_candidate_capture_enabled,
+            )
+        )
 
         watcher: TerminalRunWatcher | None = None
         if auto_evolve:
@@ -306,7 +361,11 @@ async def run(
                     "writer lease lost before reconcile; refusing to continue dispatch"
                 )
             writer_lease = renewed
-            _repair_stale_dispatched_lanes(orch, owned_lane_ids=in_flight_lane_ids)
+            _repair_stale_dispatched_lanes(
+                orch,
+                xmuse_root=xmuse_root,
+                owned_lane_ids=in_flight_lane_ids,
+            )
             if blueprint_automation_service is None:
                 blueprint_automation_service = BlueprintAutomationService(base_dir=xmuse_root)
             control_service.drive_blueprint_automation(
@@ -323,6 +382,7 @@ async def run(
                 await _tick_chat_dispatch_bridge(chat_dispatch_bridge, xmuse_root=xmuse_root)
             pending = _candidate_lanes(
                 orch,
+                xmuse_root=xmuse_root,
                 graph_id=graph_id,
                 resolution_id=resolution_id,
             )
@@ -359,23 +419,128 @@ async def run(
                         "Dispatching lane: %s (priority=%d)", lane_id, lane.get("priority", 0)
                     )
 
-                    async def _run(lid: str) -> None:
+                    async def _run(lid: str, lane_snapshot: dict[str, Any]) -> None:
                         async with semaphore:
                             await orch.dispatch_lane(lid)
+                            worker_evidence_ref: str | None = None
+                            try:
+                                worker_evidence = (
+                                    _submit_graph_native_worker_evidence_if_possible(
+                                        run_id=local_execution_run_id,
+                                        runner_id=runner_id,
+                                        runner_session_id=runner_session_id,
+                                        runner_session_ref=runner_session_ref,
+                                        xmuse_root=xmuse_root,
+                                        orch=orch,
+                                        lane_id=lid,
+                                        lane_snapshot=lane_snapshot,
+                                    )
+                                )
+                                if worker_evidence is not None:
+                                    worker_evidence_ref = _text(
+                                        worker_evidence.get("artifact_ref")
+                                    )
+                                    if worker_evidence_ref is not None:
+                                        runner_session_worker_evidence_bundle_refs.append(
+                                            worker_evidence_ref
+                                        )
+                            except Exception:
+                                logger.warning(
+                                    "Graph-native worker evidence handoff failed for "
+                                    "lane %s; local execution candidate will remain "
+                                    "candidate-only or manual-gap evidence",
+                                    lid,
+                                    exc_info=True,
+                                )
+                            try:
+                                latest_lane = _latest_lane_snapshot(
+                                    orch=orch,
+                                    lane_id=lid,
+                                    fallback=lane_snapshot,
+                                )
+                                candidate_capture = (
+                                    _capture_local_execution_candidate_if_requested(
+                                        output_dir=(
+                                            resolved_local_execution_candidate_output_dir
+                                        ),
+                                        run_id=local_execution_run_id,
+                                        runner_id=runner_id,
+                                        runner_session_id=runner_session_id,
+                                        runner_session_ref=runner_session_ref,
+                                        xmuse_root=xmuse_root,
+                                        orch=orch,
+                                        lane=latest_lane,
+                                        graph_id=graph_id,
+                                        resolution_id=resolution_id,
+                                        worker_evidence_ref=worker_evidence_ref,
+                                    )
+                                )
+                            except Exception as exc:
+                                logger.warning(
+                                    "Local execution candidate capture failed for "
+                                    "lane %s; dispatch result remains candidate-only "
+                                    "unproven",
+                                    lid,
+                                    exc_info=True,
+                                )
+                                runner_session_candidate_capture_failures.setdefault(
+                                    lid,
+                                    (
+                                        f"{lid}: {type(exc).__name__}: "
+                                        f"{exc}"
+                                    ),
+                                )
+                                candidate_capture = None
+                            candidate_artifact = (
+                                candidate_capture.get("artifact")
+                                if candidate_capture is not None
+                                else None
+                            )
+                            candidate_is_runtime_proof = (
+                                isinstance(candidate_artifact, dict)
+                                and candidate_artifact.get("status") == "candidate_only"
+                                and candidate_artifact.get("proof_level")
+                                == "local_runtime_proof"
+                            )
+                            if candidate_capture is not None and candidate_is_runtime_proof:
+                                runner_session_candidate_refs.append(
+                                    candidate_capture["artifact_ref"]
+                                )
+                                runner_session_candidate_lane_ids.append(lid)
 
-                    task = asyncio.create_task(_run(lane_id))
+                    task = asyncio.create_task(_run(lane_id, dict(lane)))
                     in_flight.add(task)
                     in_flight_lane_ids.add(lane_id)
 
-                    def _discard_finished_lane_id(
-                        _finished: asyncio.Task,
+                    def _record_finished_lane_task(
+                        finished: asyncio.Task,
                         *,
                         finished_lane_id: str = lane_id,
                     ) -> None:
                         in_flight_lane_ids.discard(finished_lane_id)
+                        if finished.cancelled():
+                            runner_session_dispatch_failures.setdefault(
+                                finished_lane_id,
+                                f"{finished_lane_id}: CancelledError",
+                            )
+                            return
+                        exc = finished.exception()
+                        if exc is None:
+                            return
+                        failure = f"{finished_lane_id}: {type(exc).__name__}: {exc}"
+                        runner_session_dispatch_failures.setdefault(
+                            finished_lane_id,
+                            failure,
+                        )
+                        logger.error(
+                            "runner dispatch task failed for lane %s: %s",
+                            finished_lane_id,
+                            exc,
+                            exc_info=(type(exc), exc, exc.__traceback__),
+                        )
 
                     task.add_done_callback(in_flight.discard)
-                    task.add_done_callback(_discard_finished_lane_id)
+                    task.add_done_callback(_record_finished_lane_task)
 
             if reconcile_task is None or reconcile_task.done():
                 reconcile_task = asyncio.create_task(
@@ -393,13 +558,55 @@ async def run(
 
         if in_flight:
             await asyncio.gather(*in_flight, return_exceptions=True)
+        if runner_session_dispatch_failures:
+            runner_session_failure = "dispatch task failure: " + "; ".join(
+                runner_session_dispatch_failures[lane_id]
+                for lane_id in sorted(runner_session_dispatch_failures)
+            )
+        elif runner_session_candidate_capture_failures:
+            runner_session_failure = (
+                "local execution candidate capture failure: "
+                + "; ".join(
+                    runner_session_candidate_capture_failures[lane_id]
+                    for lane_id in sorted(runner_session_candidate_capture_failures)
+                )
+            )
         logger.info("Platform shutting down")
+    except BaseException as exc:
+        runner_session_failure = f"{type(exc).__name__}: {exc}"
+        raise
     finally:
+        if runner_session_path.exists():
+            try:
+                capture_runner_session_finished(
+                    output_path=runner_session_path,
+                    status=(
+                        RUNNER_SESSION_FAILED_STATUS
+                        if runner_session_failure
+                        else RUNNER_SESSION_COMPLETED_STATUS
+                    ),
+                    candidate_artifact_refs=runner_session_candidate_refs,
+                    candidate_lane_ids=runner_session_candidate_lane_ids,
+                    worker_evidence_bundle_refs=(
+                        runner_session_worker_evidence_bundle_refs
+                    ),
+                    failure=runner_session_failure,
+                )
+            except Exception:
+                logger.exception(
+                    "runner session finish capture failed; continuing shutdown",
+                    extra={
+                        "runner_session_id": runner_session_id,
+                        "runner_session_ref": runner_session_ref,
+                    },
+                )
         control_service.record_lifecycle(
             "stopping",
             details={
                 "lanes_path": str(lanes_path),
                 "in_flight_count": len(in_flight),
+                "runner_session_id": runner_session_id,
+                "runner_session_ref": runner_session_ref,
             },
         )
         if reconcile_task is not None and not reconcile_task.done():
@@ -729,6 +936,7 @@ def _build_decomposer(kind: str):
 def _candidate_lanes(
     orch: PlatformOrchestrator,
     *,
+    xmuse_root: Path,
     graph_id: str | None,
     resolution_id: str | None,
 ) -> list[dict]:
@@ -757,7 +965,11 @@ def _candidate_lanes(
     dispatchable_candidates = [
         lane
         for lane in legacy_candidates
-        if _runner_recovery_authority_allows_lane(orch, lane)
+        if _runner_recovery_authority_allows_lane(
+            orch,
+            lane,
+            xmuse_root=xmuse_root,
+        )
     ]
     ready_set_candidates = build_graph_ready_set(
         all_lanes,
@@ -779,11 +991,16 @@ def _candidate_lanes(
 def _runner_recovery_authority_allows_lane(
     orch: PlatformOrchestrator,
     lane: dict[str, Any],
+    *,
+    xmuse_root: Path,
 ) -> bool:
     """Apply durable L8 recovery authority before runner task scheduling."""
-    if not hasattr(orch, "_root"):
-        return True
-    recovery_block = _lane_recovery_dispatch_block_metadata(orch, lane)
+    recovery_authority = _RunnerRecoveryAuthority(root=xmuse_root)
+    recovery_lane = _runner_recovery_authority_lane(lane)
+    recovery_block = build_lane_recovery_dispatch_block_metadata(
+        recovery_authority,
+        recovery_lane,
+    )
     if recovery_block is None:
         return True
 
@@ -801,6 +1018,18 @@ def _runner_recovery_authority_allows_lane(
         },
     )
     return False
+
+
+class _RunnerRecoveryAuthority:
+    def __init__(self, *, root: Path) -> None:
+        self._root = root
+
+
+def _runner_recovery_authority_lane(lane: dict[str, Any]) -> dict[str, Any]:
+    recovery_lane_id = _text(lane.get("lane_local_id")) or _text(lane.get("feature_id"))
+    if recovery_lane_id is None or recovery_lane_id == _text(lane.get("feature_id")):
+        return lane
+    return {**lane, "feature_id": recovery_lane_id}
 
 
 def _capture_runner_recovery_proof_if_requested(
@@ -842,6 +1071,568 @@ def _capture_runner_recovery_proof_if_requested(
         graph_id=graph_id,
         resolution_id=resolution_id,
     )
+
+
+def _submit_graph_native_worker_evidence_if_possible(
+    *,
+    run_id: str,
+    runner_id: str,
+    runner_session_id: str,
+    runner_session_ref: str,
+    xmuse_root: Path,
+    orch: PlatformOrchestrator,
+    lane_id: str,
+    lane_snapshot: dict[str, Any],
+) -> dict[str, Any] | None:
+    lane = _latest_lane_snapshot(orch=orch, lane_id=lane_id, fallback=lane_snapshot)
+    if _lane_status_blocks_worker_evidence_submission(lane):
+        return None
+    lane_ref = _text(lane.get("feature_id") or lane.get("lane_id") or lane_id)
+    if lane_ref is None:
+        return None
+    lane_local_id = _text(lane.get("lane_local_id")) or lane_ref
+    graph_set_id = _text(lane.get("graph_set_id"))
+    feature_graph_id = _text(lane.get("graph_id"))
+    conversation_id = _text(lane.get("conversation_id"))
+    if graph_set_id is None or feature_graph_id is None or conversation_id is None:
+        return None
+
+    status = _feature_graph_status_record(
+        orch=orch,
+        graph_set_id=graph_set_id,
+        feature_graph_id=feature_graph_id,
+    )
+    if status is None:
+        return None
+
+    provider_session_binding_ref = _provider_session_binding_ref(lane)
+    blueprint_refs = _string_list(lane.get("blueprint_refs"))
+    acceptance_criteria = _string_list(lane.get("acceptance_criteria"))
+    required_checks = _string_list(lane.get("required_checks"))
+    if (
+        provider_session_binding_ref is None
+        or _text(status.planning_run_id) is None
+        or not blueprint_refs
+        or not acceptance_criteria
+        or not required_checks
+    ):
+        return None
+
+    status_value = _feature_graph_status_value(status)
+    active_lane_id = _status_lane_identity(
+        status=status,
+        lane_id=lane_ref,
+        lane_local_id=lane_local_id,
+    )
+    if status_value == FeatureGraphExecutionStatus.RUNNING.value and (
+        status.active_worker_session_id != runner_session_id
+        or status.active_provider_session_binding_ref != provider_session_binding_ref
+    ):
+        return None
+
+    evidence_bundle = _build_platform_runner_feature_evidence_bundle(
+        status=status,
+        lane=lane,
+        run_id=run_id,
+        runner_id=runner_id,
+        runner_session_id=runner_session_id,
+        runner_session_ref=runner_session_ref,
+        completed_lane_id=active_lane_id,
+        provider_session_binding_ref=provider_session_binding_ref,
+        blueprint_refs=blueprint_refs,
+        acceptance_criteria=acceptance_criteria,
+        required_checks=required_checks,
+    )
+    updated_at = _utc_now()
+    if status_value == FeatureGraphExecutionStatus.READY.value:
+        claim_worker = getattr(orch, "claim_next_ready_feature_graph_worker", None)
+        if not callable(claim_worker):
+            return None
+        outcome = claim_worker(
+            graph_set_id=graph_set_id,
+            conversation_id=conversation_id,
+            feature_graph_id=feature_graph_id,
+            worker_session_id=runner_session_id,
+            provider_session_binding_ref=provider_session_binding_ref,
+            updated_at=updated_at,
+            active_lane_ids=[active_lane_id],
+        )
+        if outcome is None:
+            return None
+        status = outcome.status
+        status_value = _feature_graph_status_value(status)
+
+    if status_value != FeatureGraphExecutionStatus.RUNNING.value:
+        return None
+    if (
+        status.active_worker_session_id != runner_session_id
+        or status.active_provider_session_binding_ref != provider_session_binding_ref
+    ):
+        return None
+    evidence_bundle_ref = f"feature_evidence_bundle:{evidence_bundle.bundle_id}:v1"
+    submit_evidence = getattr(orch, "submit_feature_graph_worker_evidence", None)
+    if not callable(submit_evidence):
+        return None
+    outcome = submit_evidence(
+        evidence_bundle=evidence_bundle,
+        evidence_bundle_ref=evidence_bundle_ref,
+        updated_at=_utc_now(),
+    )
+    return {
+        "artifact_ref": evidence_bundle_ref,
+        "status": outcome.status,
+        "evidence_bundle": evidence_bundle,
+    }
+
+
+def _build_platform_runner_feature_evidence_bundle(
+    *,
+    status: FeatureGraphExecutionStatusRecord,
+    lane: dict[str, Any],
+    run_id: str,
+    runner_id: str,
+    runner_session_id: str,
+    runner_session_ref: str,
+    completed_lane_id: str,
+    provider_session_binding_ref: str,
+    blueprint_refs: list[str],
+    acceptance_criteria: list[str],
+    required_checks: list[str],
+) -> FeatureEvidenceBundle:
+    lane_ref = _text(lane.get("feature_id") or lane.get("lane_id")) or completed_lane_id
+    safe_graph = _safe_artifact_fragment(status.feature_graph_id)
+    safe_lane = _safe_artifact_fragment(lane_ref)
+    allowed_files = _string_list(lane.get("allowed_files"))
+    feature_goal = (
+        _text(lane.get("prompt"))
+        or _text(lane.get("prompt_summary"))
+        or _text(lane.get("title"))
+        or lane_ref
+    )
+    return FeatureEvidenceBundle(
+        bundle_id=f"platform_runner_worker_evidence_{safe_graph}_{safe_lane}",
+        conversation_id=status.conversation_id,
+        planning_run_id=str(status.planning_run_id),
+        feature_plan_id=status.feature_plan_id,
+        feature_plan_version=status.feature_plan_version,
+        graph_set_id=status.graph_set_id,
+        graph_set_version=status.graph_set_version,
+        feature_id=status.feature_id,
+        feature_graph_id=status.feature_graph_id,
+        worker_session_id=runner_session_id,
+        provider_session_binding_ref=provider_session_binding_ref,
+        blueprint_refs=blueprint_refs,
+        blueprint_proof_level=status.blueprint_proof_level,
+        feature_goal=feature_goal,
+        acceptance_criteria=acceptance_criteria,
+        lane_graph_summary=LaneGraphEvidenceSummary(
+            feature_graph_id=status.feature_graph_id,
+            lane_count=_graph_lane_count(status, completed_lane_id),
+            completed_lane_ids=[completed_lane_id],
+            blocked_lane_ids=list(status.blocked_lane_ids),
+        ),
+        touched_files=allowed_files,
+        base_head_sha=_text(lane.get("base_head_sha")),
+        branch=_text(lane.get("branch")),
+        worktree=_text(lane.get("worktree")),
+        changed_files=allowed_files,
+        dependency_changes=[],
+        verification=FeatureVerificationEvidence(
+            commands_run=required_checks,
+            test_results=[
+                CommandEvidence(
+                    command=command,
+                    status="declared_for_independent_review",
+                    evidence_ref=runner_session_ref,
+                )
+                for command in required_checks
+            ],
+            screenshots_or_logs=[runner_session_ref],
+        ),
+        worker_notes=FeatureWorkerNotes(
+            implementation_summary=(
+                "Platform runner dispatch returned and produced graph-native "
+                "candidate evidence for independent review."
+            ),
+            decisions_made=[
+                "Worker evidence is candidate input only; review truth requires "
+                "an independent review verdict."
+            ],
+            risks_or_open_questions=[
+                "Local runner evidence is not server truth, GitHub review truth, "
+                "or merge truth."
+            ],
+        ),
+        created_at=_utc_now(),
+    )
+
+
+def _latest_lane_snapshot(
+    *,
+    orch: PlatformOrchestrator,
+    lane_id: str,
+    fallback: dict[str, Any],
+) -> dict[str, Any]:
+    state_machine = getattr(orch, "_sm", None)
+    get_lane = getattr(state_machine, "get_lane", None)
+    if not callable(get_lane):
+        return dict(fallback)
+    try:
+        latest = get_lane(lane_id)
+    except (KeyError, AttributeError, TypeError):
+        return dict(fallback)
+    return dict(latest) if isinstance(latest, dict) else dict(fallback)
+
+
+def _lane_status_blocks_worker_evidence_submission(lane: dict[str, Any]) -> bool:
+    status = _text(lane.get("status"))
+    return status in {
+        None,
+        "pending",
+        "reworking",
+        "exec_failed",
+        "gate_failed",
+        "failed",
+        "blocked",
+    }
+
+
+def _provider_session_binding_ref(lane: dict[str, Any]) -> str | None:
+    value = _text(lane.get("provider_session_binding_ref")) or _text(
+        lane.get("provider_session_binding_id")
+    )
+    if value is None or value.startswith("manual_gap:"):
+        return None
+    return value
+
+
+def _feature_graph_status_record(
+    *,
+    orch: PlatformOrchestrator,
+    graph_set_id: str | None,
+    feature_graph_id: str | None,
+) -> FeatureGraphExecutionStatusRecord | None:
+    if graph_set_id is None or feature_graph_id is None:
+        return None
+    store = getattr(orch, "_feature_graph_status_store", None)
+    get_status = getattr(store, "get", None)
+    if not callable(get_status):
+        return None
+    try:
+        record = get_status(
+            graph_set_id=graph_set_id,
+            feature_graph_id=feature_graph_id,
+        )
+    except (KeyError, ValueError, AttributeError):
+        return None
+    try:
+        return FeatureGraphExecutionStatusRecord.model_validate(
+            record.model_dump(mode="json")
+            if hasattr(record, "model_dump")
+            else {
+                "status_id": record.status_id,
+                "conversation_id": record.conversation_id,
+                "planning_run_id": getattr(record, "planning_run_id", None),
+                "graph_set_id": record.graph_set_id,
+                "graph_set_version": record.graph_set_version,
+                "feature_plan_id": record.feature_plan_id,
+                "feature_plan_version": record.feature_plan_version,
+                "feature_id": record.feature_id,
+                "feature_graph_id": record.feature_graph_id,
+                "blueprint_proof_level": getattr(
+                    record,
+                    "blueprint_proof_level",
+                    None,
+                ),
+                "source_event_lineage": getattr(record, "source_event_lineage", []),
+                "status": record.status,
+                "ready_lane_ids": getattr(record, "ready_lane_ids", []),
+                "active_lane_ids": getattr(record, "active_lane_ids", []),
+                "completed_lane_ids": getattr(record, "completed_lane_ids", []),
+                "blocked_lane_ids": getattr(record, "blocked_lane_ids", []),
+                "projection_lane_ids": getattr(record, "projection_lane_ids", []),
+                "feature_lanes_projection_ref": getattr(
+                    record,
+                    "feature_lanes_projection_ref",
+                    None,
+                ),
+                "provider_session_binding_degradations": getattr(
+                    record,
+                    "provider_session_binding_degradations",
+                    [],
+                ),
+                "updated_at": record.updated_at,
+            }
+        )
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
+def _feature_graph_status_value(record: FeatureGraphExecutionStatusRecord) -> str:
+    status = record.status
+    return getattr(status, "value", str(status))
+
+
+def _status_lane_identity(
+    *,
+    status: FeatureGraphExecutionStatusRecord,
+    lane_id: str,
+    lane_local_id: str,
+) -> str:
+    known_ids = [
+        *status.ready_lane_ids,
+        *status.active_lane_ids,
+        *status.completed_lane_ids,
+    ]
+    if lane_local_id in known_ids:
+        return lane_local_id
+    if lane_id in known_ids:
+        return lane_id
+    return lane_local_id
+
+
+def _graph_lane_count(
+    status: FeatureGraphExecutionStatusRecord,
+    completed_lane_id: str,
+) -> int:
+    lane_ids = {
+        *status.ready_lane_ids,
+        *status.active_lane_ids,
+        *status.completed_lane_ids,
+        *status.blocked_lane_ids,
+        completed_lane_id,
+    }
+    return len(lane_ids)
+
+
+def _capture_local_execution_candidate_if_requested(
+    *,
+    output_dir: Path | None,
+    run_id: str,
+    runner_id: str,
+    runner_session_id: str,
+    runner_session_ref: str,
+    xmuse_root: Path,
+    orch: PlatformOrchestrator,
+    lane: dict[str, Any],
+    graph_id: str | None,
+    resolution_id: str | None,
+    worker_evidence_ref: str | None = None,
+) -> dict[str, Any] | None:
+    if output_dir is None:
+        return None
+    lane_id = _text(lane.get("feature_id") or lane.get("lane_id") or lane.get("id"))
+    if lane_id is None:
+        return None
+    lane_local_id = _text(lane.get("lane_local_id")) or lane_id
+    conversation_id = _text(lane.get("conversation_id"))
+    feature_graph_id = _text(lane.get("graph_id"))
+    graph_set_id = _text(lane.get("graph_set_id"))
+    root_graph_id = graph_id or _root_graph_id_from_graph_set_id(graph_set_id)
+    candidate_graph_id = root_graph_id or feature_graph_id
+    graph_status_lineage = _local_execution_candidate_graph_status_lineage(
+        orch=orch,
+        graph_set_id=graph_set_id,
+        feature_graph_id=feature_graph_id,
+    )
+    graph_status = (
+        _text(graph_status_lineage.get("status"))
+        if graph_status_lineage is not None
+        else None
+    )
+    graph_status_reviewable = graph_status == "reviewing"
+    candidate_status = (
+        "candidate_only"
+        if graph_status_lineage is not None and graph_status_reviewable
+        else "manual_gap"
+    )
+    candidate_proof_level = (
+        "local_runtime_proof"
+        if graph_status_lineage is not None and graph_status_reviewable
+        else "manual_gap"
+    )
+    manual_gaps = []
+    if graph_status_lineage is not None and not graph_status_reviewable:
+        manual_gaps = [
+            "graph_native_worker_evidence_not_submitted",
+            "local_execution_candidate_not_reviewable",
+        ]
+    output_path = output_dir / (
+        f"{_safe_artifact_fragment(candidate_graph_id or 'graph')}"
+        f".{_safe_artifact_fragment(lane_id)}.json"
+    )
+    artifact_ref = _relative_artifact_ref(root=xmuse_root, path=output_path)
+    artifact = capture_local_execution_candidate(
+        output_path=output_path,
+        lane_id=lane_id,
+        lane_local_id=lane_local_id,
+        candidate_id=f"platform-runner:{run_id}:{lane_id}",
+        conversation_id=conversation_id,
+        graph_id=candidate_graph_id,
+        graph_status_lineage=graph_status_lineage,
+        run_id=run_id,
+        worker_id=runner_id,
+        runner_session_id=runner_session_id,
+        runner_session_ref=runner_session_ref,
+        producer=LOCAL_EXECUTION_CANDIDATE_PLATFORM_RUNNER_PRODUCER,
+        source_refs=_candidate_source_refs(
+            lane_id=lane_id,
+            lane_local_id=lane_local_id,
+            graph_id=candidate_graph_id,
+            graph_set_id=graph_set_id,
+            feature_graph_id=feature_graph_id,
+            feature_graph_status_id=(
+                str(graph_status_lineage["status_id"])
+                if graph_status_lineage is not None
+                else None
+            ),
+            resolution_id=resolution_id,
+            worker_evidence_ref=worker_evidence_ref,
+        ),
+        changed_file_refs=_string_list(lane.get("allowed_files")),
+        verification_refs=_string_list(lane.get("required_checks")),
+        proof_level=candidate_proof_level,
+        status=candidate_status,
+        manual_gaps=manual_gaps,
+    )
+    return {"artifact_ref": artifact_ref, "lane_id": lane_id, "artifact": artifact}
+
+
+def _local_execution_candidate_output_dir(
+    *,
+    xmuse_root: Path,
+    configured: Path | None,
+    enabled: bool,
+) -> Path | None:
+    if not enabled:
+        return None
+    return configured or (xmuse_root / "work" / "local_execution_candidates")
+
+
+def _relative_artifact_ref(*, root: Path, path: Path) -> str:
+    try:
+        return str(path.resolve().relative_to(root.resolve()))
+    except ValueError:
+        return str(path)
+
+
+def _local_execution_candidate_graph_status_lineage(
+    *,
+    orch: PlatformOrchestrator,
+    graph_set_id: str | None,
+    feature_graph_id: str | None,
+) -> dict[str, Any] | None:
+    if graph_set_id is None or feature_graph_id is None:
+        return None
+    store = getattr(orch, "_feature_graph_status_store", None)
+    get_status = getattr(store, "get", None)
+    if not callable(get_status):
+        return None
+    try:
+        record = get_status(
+            graph_set_id=graph_set_id,
+            feature_graph_id=feature_graph_id,
+        )
+    except (KeyError, ValueError, AttributeError):
+        return None
+    status = getattr(record, "status", None)
+    status_value = getattr(status, "value", status)
+    try:
+        return {
+            "source_authority": "feature_graph_status_store",
+            "graph_set_id": str(record.graph_set_id),
+            "feature_graph_id": str(record.feature_graph_id),
+            "status_id": str(record.status_id),
+            "status": str(status_value),
+            "blueprint_proof_level": record.blueprint_proof_level,
+            "active_lane_ids": list(record.active_lane_ids),
+            "completed_lane_ids": list(record.completed_lane_ids),
+            "source_event_lineage": [
+                item.model_dump(mode="json") if hasattr(item, "model_dump") else item
+                for item in record.source_event_lineage
+            ],
+        }
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
+def _candidate_source_refs(
+    *,
+    lane_id: str,
+    lane_local_id: str | None,
+    graph_id: str | None,
+    graph_set_id: str | None,
+    feature_graph_id: str | None,
+    feature_graph_status_id: str | None,
+    resolution_id: str | None,
+    worker_evidence_ref: str | None = None,
+) -> list[str]:
+    refs = [f"lane:{lane_id}"]
+    if lane_local_id and lane_local_id != lane_id:
+        refs.append(f"lane_local:{lane_local_id}")
+    if graph_id:
+        refs.append(f"graph:{graph_id}")
+    if graph_set_id:
+        refs.append(f"graph_set:{graph_set_id}")
+    if feature_graph_id:
+        refs.append(f"feature_graph:{feature_graph_id}")
+    if feature_graph_status_id:
+        refs.append(f"feature_graph_status:{feature_graph_status_id}")
+    if resolution_id:
+        refs.append(f"resolution:{resolution_id}")
+    if worker_evidence_ref:
+        refs.append(worker_evidence_ref)
+    return refs
+
+
+def _root_graph_id_from_graph_set_id(graph_set_id: str | None) -> str | None:
+    if graph_set_id is None:
+        return None
+    suffix = "-graph-set"
+    if graph_set_id.endswith(suffix):
+        return graph_set_id[: -len(suffix)] or None
+    return None
+
+
+def _safe_artifact_fragment(value: str) -> str:
+    result = "".join(
+        char if char.isalnum() or char in {"-", "_", "."} else "-"
+        for char in value.strip()
+    ).strip("-_.")
+    return result or "artifact"
+
+
+def _text(value: object) -> str | None:
+    if isinstance(value, str):
+        stripped = value.strip()
+        return stripped or None
+    return None
+
+
+def _utc_now() -> str:
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _dedupe_texts(values: list[str | None]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        if value is None:
+            continue
+        stripped = value.strip()
+        if not stripped or stripped in seen:
+            continue
+        seen.add(stripped)
+        result.append(stripped)
+    return result
+
+
+def _string_list(value: object) -> list[str]:
+    if isinstance(value, str):
+        return [value.strip()] if value.strip() else []
+    if not isinstance(value, list):
+        return []
+    return [item.strip() for item in value if isinstance(item, str) and item.strip()]
 
 
 def _live_pids() -> set[int]:
@@ -1324,6 +2115,7 @@ def _http_status(url: str) -> int | None:
 def _repair_stale_dispatched_lanes(
     orch: PlatformOrchestrator,
     *,
+    xmuse_root: Path,
     now: float | None = None,
     stale_after_s: float = DEFAULT_STALE_AFTER_S,
     owned_lane_ids: set[str] | None = None,
@@ -1344,32 +2136,187 @@ def _repair_stale_dispatched_lanes(
     for lane in lanes:
         lane_id = str(lane.get("feature_id") or "")
         worker_pid = lane.get("worker_pid")
+        worker_pid_is_int = isinstance(worker_pid, int) and not isinstance(worker_pid, bool)
+        worker_pid_missing = worker_pid is None and _text(lane.get("graph_id")) is not None
         if (
             lane_id not in stale_ids
             or lane_id in owned
-            or not isinstance(worker_pid, int)
-            or isinstance(worker_pid, bool)
+            or not (worker_pid_is_int or worker_pid_missing)
         ):
             continue
+        failure_class = (
+            "stale_worker_lost" if worker_pid_is_int else "dispatch_no_worker_pid"
+        )
         metadata: dict[str, Any] = {
-            "failure_reason": "stale_worker_lost",
-            "stale_worker_pid": worker_pid,
+            "failure_reason": failure_class,
             "stale_repaired_at": current_time,
         }
+        if worker_pid_is_int:
+            metadata["stale_worker_pid"] = worker_pid
+        else:
+            metadata["stale_worker_pid_missing"] = True
         logger.warning(
             "repairing stale dispatched lane: %s worker_pid=%s",
             lane_id,
             worker_pid,
         )
-        orch._sm.transition_if_metadata(
+        expected_metadata: dict[str, Any] = {"status": "dispatched"}
+        if worker_pid_is_int or worker_pid is None:
+            expected_metadata["worker_pid"] = worker_pid
+        repaired_lane = orch._sm.transition_if_metadata(
             lane_id,
             "exec_failed",
-            expected_metadata={
-                "status": "dispatched",
-                "worker_pid": worker_pid,
-            },
+            expected_metadata=expected_metadata,
             metadata=metadata,
         )
+        if repaired_lane is not None:
+            _record_stale_repair_recovery_artifact(
+                orch,
+                lane=repaired_lane,
+                lane_id=lane_id,
+                worker_pid=worker_pid if worker_pid_is_int else None,
+                failure_class=failure_class,
+                repaired_at=current_time,
+                xmuse_root=xmuse_root,
+            )
+
+
+def _record_stale_repair_recovery_artifact(
+    orch: PlatformOrchestrator,
+    *,
+    lane: dict[str, Any],
+    lane_id: str,
+    worker_pid: int | None,
+    failure_class: str,
+    repaired_at: float,
+    xmuse_root: Path,
+) -> None:
+    """Write durable recovery authority after a stale-dispatch repair succeeds."""
+    graph_id = _text(lane.get("graph_id"))
+    recovery_lane_id = _text(lane.get("lane_local_id")) or _text(lane.get("feature_id"))
+    update_metadata = getattr(getattr(orch, "_sm", None), "update_metadata", None)
+    if graph_id is None or recovery_lane_id is None:
+        recovery_metadata = {
+            "recovery_artifact_status": "manual_gap",
+            "recovery_artifact_source_authority": "platform_runner_stale_repair",
+            "manual_gaps": [
+                "stale_repair_recovery_artifact_missing_graph_or_lane_id",
+                "live_runner_recovery_enforcement_not_proven",
+            ],
+            "forbidden_claims": [
+                "overnight_safe_recovery",
+                "end_to_end_execution_review_closure",
+                "ready_to_merge",
+                "pr_merged",
+            ],
+        }
+        if callable(update_metadata):
+            update_metadata(lane_id, recovery_metadata)
+        return
+
+    source_refs = _dedupe_texts(
+        [
+            f"lane:{lane_id}",
+            f"graph:{graph_id}",
+            (
+                f"stale_worker_pid:{worker_pid}"
+                if worker_pid is not None
+                else "worker_pid:missing"
+            ),
+            f"platform_runner_stale_repair:{repaired_at}",
+        ]
+    )
+    attempt = _stale_repair_attempt(lane)
+    next_action = (
+        "inspect stale worker loss and record recovery or refactor evidence "
+        "before retrying this lane"
+        if failure_class == "stale_worker_lost"
+        else "inspect dispatch startup failure and record recovery or refactor "
+        "evidence before retrying this lane"
+    )
+    recovery_payload = {
+        "schema_version": "xmuse.god_room_lane_recovery.v1",
+        "source_authority": "platform_runner_stale_repair",
+        "graph_id": graph_id,
+        "lane_id": recovery_lane_id,
+        "projection_lane_id": lane_id if recovery_lane_id != lane_id else None,
+        "source_refs": source_refs,
+        "decision": {
+            "lane_id": recovery_lane_id,
+            "decision": "suspended",
+            "retry_allowed": False,
+            "failure_class": failure_class,
+            "attempt": attempt,
+            "suspend_reason": failure_class,
+            "next_action": next_action,
+            "source_refs": source_refs,
+        },
+        "manual_gaps": [
+            "live_runner_recovery_enforcement_not_proven",
+            "review_truth_not_proven",
+            "server_truth_not_proven",
+            "overnight_safe_recovery_not_proven",
+        ],
+        "forbidden_claims": [
+            "overnight_safe_recovery",
+            "end_to_end_execution_review_closure",
+            "worker_output_is_review_truth",
+            "ready_to_merge",
+            "pr_merged",
+        ],
+    }
+    try:
+        recovery_path = lane_recovery_artifact_path(
+            xmuse_root,
+            graph_id=graph_id,
+            lane_id=recovery_lane_id,
+        )
+        recovery_path.parent.mkdir(parents=True, exist_ok=True)
+        recovery_path.write_text(
+            json.dumps(recovery_payload, indent=2, ensure_ascii=False, sort_keys=True)
+            + "\n",
+            encoding="utf-8",
+        )
+    except Exception as exc:
+        recovery_metadata = {
+            "recovery_artifact_status": "manual_gap",
+            "recovery_artifact_source_authority": "platform_runner_stale_repair",
+            "recovery_artifact_error": str(exc),
+            "manual_gaps": [
+                "stale_repair_recovery_artifact_write_failed",
+                "live_runner_recovery_enforcement_not_proven",
+            ],
+            "forbidden_claims": [
+                "overnight_safe_recovery",
+                "end_to_end_execution_review_closure",
+                "ready_to_merge",
+                "pr_merged",
+            ],
+        }
+    else:
+        recovery_metadata = {
+            "recovery_artifact_status": "written",
+            "recovery_artifact_source_authority": "platform_runner_stale_repair",
+            "recovery_artifact_ref": _relative_artifact_ref(
+                root=xmuse_root,
+                path=recovery_path,
+            ),
+            "recovery_decision": recovery_payload["decision"],
+            "recovery_source_refs": source_refs,
+        }
+    if callable(update_metadata):
+        update_metadata(lane_id, recovery_metadata)
+
+
+def _stale_repair_attempt(lane: dict[str, Any]) -> int:
+    for key in ("attempt", "attempts"):
+        value = lane.get(key)
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 1:
+            return value
+    retry_count = lane.get("retry_count")
+    if isinstance(retry_count, int) and not isinstance(retry_count, bool):
+        return max(1, retry_count + 1)
+    return 1
 
 
 def _dependencies_satisfied(lane: dict, lane_status_by_id: dict[str, str | None]) -> bool:
@@ -1529,6 +2476,24 @@ def main_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--local-execution-candidate-output-dir",
+        type=Path,
+        default=None,
+        help=(
+            "directory for xmuse.local_execution_candidate.v1 artifacts captured "
+            "after runner dispatch_lane returns successfully; defaults to "
+            "<xmuse-root>/work/local_execution_candidates"
+        ),
+    )
+    parser.add_argument(
+        "--disable-local-execution-candidate-capture",
+        action="store_true",
+        help=(
+            "disable default local execution candidate artifact capture; use only "
+            "for diagnostics that must not emit runtime evidence"
+        ),
+    )
+    parser.add_argument(
         "--health-once",
         action="store_true",
         help="print a JSON run health summary and exit without starting the runner",
@@ -1646,6 +2611,10 @@ def main() -> None:
         execution_provider_profile_ref=args.execution_provider_profile_ref,
         review_provider_profile_ref=args.review_provider_profile_ref,
         runner_recovery_proof_output=args.runner_recovery_proof_output,
+        local_execution_candidate_output_dir=args.local_execution_candidate_output_dir,
+        local_execution_candidate_capture_enabled=(
+            not args.disable_local_execution_candidate_capture
+        ),
     ))
 
 

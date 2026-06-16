@@ -103,6 +103,9 @@ from xmuse_core.platform.orchestrator_lane_flow import (
     _graph_native_reprojection_authority_allows_lane,
     _graph_native_review_authority_allows_lane,
     _graph_native_status_record,
+    record_review_rejection_recovery_artifact,
+    record_review_retry_exhaustion_recovery_artifact,
+    record_review_retry_recovery_artifact,
 )
 from xmuse_core.platform.orchestrator_lane_flow import (
     create_or_reuse_worktree as create_or_reuse_worktree_flow,
@@ -591,6 +594,26 @@ class PlatformOrchestrator:
             return retry_count < 40
         return False
 
+    def _review_retry_exhausted_failure_reason(
+        self,
+        lane: dict[str, Any],
+        *,
+        now: float,
+    ) -> str | None:
+        if lane.get("gate_passed") is not True:
+            return None
+
+        failure_reason = lane.get("failure_reason")
+        retry_count = int(lane.get("review_retry_count", 0))
+        if failure_reason in {"review_timeout", "review_no_verdict"}:
+            return str(failure_reason) if retry_count >= 2 else None
+        if failure_reason == "review_infra_unavailable":
+            retry_after = lane.get("review_retry_after_at")
+            if isinstance(retry_after, int | float) and now < float(retry_after):
+                return None
+            return str(failure_reason) if retry_count >= 40 else None
+        return None
+
     async def _run_reconcile_lane_batch(
         self,
         lane_ids: list[str],
@@ -748,6 +771,11 @@ class PlatformOrchestrator:
                         continue
                     lane_id = str(lane["feature_id"])
                     failure_reason = str(lane.get("failure_reason", "review_failed"))
+                    record_review_retry_recovery_artifact(
+                        self,
+                        lane,
+                        failure_reason=failure_reason,
+                    )
                     review_retries = int(lane.get("review_retry_count", 0)) + 1
                     self._sm.transition(
                         lane_id,
@@ -758,6 +786,21 @@ class PlatformOrchestrator:
                         },
                     )
                     await self._run_review_god(lane_id)
+                    continue
+                exhausted_failure_reason = self._review_retry_exhausted_failure_reason(
+                    lane,
+                    now=current_time,
+                )
+                if exhausted_failure_reason is None:
+                    continue
+                if not _graph_native_review_authority_allows_lane(self, lane):
+                    continue
+                record_review_retry_exhaustion_recovery_artifact(
+                    self,
+                    lane,
+                    failure_reason=exhausted_failure_reason,
+                )
+                continue
             for lane in _reconcile_candidate_lanes(
                 self,
                 graph_native_status=FeatureGraphExecutionStatus.MERGED,
@@ -803,6 +846,7 @@ class PlatformOrchestrator:
         graph_set_id: str | None = None,
         conversation_id: str | None = None,
         feature_graph_id: str | None = None,
+        active_lane_ids: list[str] | None = None,
     ) -> FeatureGraphWorkerClaimOutcome | None:
         return claim_next_ready_feature_graph_worker_flow(
             store=self._feature_graph_status_store,
@@ -812,6 +856,7 @@ class PlatformOrchestrator:
             graph_set_id=graph_set_id,
             conversation_id=conversation_id,
             feature_graph_id=feature_graph_id,
+            active_lane_ids=active_lane_ids,
         )
 
     def submit_feature_graph_worker_evidence(
@@ -1155,7 +1200,12 @@ class PlatformOrchestrator:
         ):
             retries = lane.get("retry_count", 0)
             if retries >= 2:
-                self._sm.transition(lane_id, "failed")
+                failed_lane = self._sm.transition(
+                    lane_id,
+                    "failed",
+                    metadata={"failure_reason": "review_rejected_retry_exhausted"},
+                )
+                record_review_rejection_recovery_artifact(self, failed_lane or lane)
                 log_event(logger, logging.INFO, "lane_failed_after_max_retries", lane_id=lane_id)
                 return
             self._sm.transition(lane_id, "reworking")

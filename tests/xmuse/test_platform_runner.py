@@ -9,13 +9,23 @@ import pytest
 
 from xmuse_core.chat.dispatch_queue import ChatDispatchQueueStore
 from xmuse_core.chat.store import ChatStore
+from xmuse_core.platform.feature_graph_claim_coordinator import (
+    claim_next_ready_feature_graph_worker,
+)
+from xmuse_core.platform.feature_graph_worker_evidence_coordinator import (
+    submit_feature_graph_worker_evidence,
+)
 from xmuse_core.platform.run_health import build_process_inventory
 from xmuse_core.platform.runner_recovery_proof import build_runner_recovery_proof
 from xmuse_core.platform.runner_supervisor import RunnerSupervisorConfig, runner_status
 from xmuse_core.structuring.blueprint_execution.lane_recovery_artifacts import (
     lane_recovery_artifact_path,
 )
+from xmuse_core.structuring.feature_graph_artifact_store import FeatureGraphArtifactStore
+from xmuse_core.structuring.feature_graph_status_store import FeatureGraphStatusStore
 from xmuse_core.structuring.models import (
+    FeatureGraphExecutionStatus,
+    FeatureGraphExecutionStatusRecord,
     FeatureGraphSet,
     FeaturePlan,
     FeaturePlanFeature,
@@ -49,12 +59,60 @@ class _FakeStateMachine:
             return list(self._lanes)
         return [lane for lane in self._lanes if lane.get("status") == status]
 
+    def get_lane(self, lane_id: str):
+        for lane in self._lanes:
+            if lane.get("feature_id") == lane_id:
+                return dict(lane)
+        raise KeyError(lane_id)
+
     def update_metadata(self, lane_id: str, metadata: dict):
         for lane in self._lanes:
             if lane.get("feature_id") == lane_id:
                 lane.update(metadata)
                 return dict(lane)
         raise KeyError(lane_id)
+
+
+class _FakeFeatureGraphStatus:
+    graph_set_id = "graph-a-graph-set"
+    feature_graph_id = "graph-a-feature-a"
+    status_id = "fgs:graph-a:feature-a:reviewing"
+    status = "reviewing"
+    blueprint_proof_level = "contract_proof"
+    active_lane_ids: list[str] = []
+    completed_lane_ids = ["lane-local-1"]
+    source_event_lineage: list[dict] = []
+
+
+class _FakeFeatureGraphStatusStore:
+    def get(self, *, graph_set_id: str, feature_graph_id: str):
+        if (
+            graph_set_id == _FakeFeatureGraphStatus.graph_set_id
+            and feature_graph_id == _FakeFeatureGraphStatus.feature_graph_id
+        ):
+            return _FakeFeatureGraphStatus()
+        raise KeyError(f"{graph_set_id}:{feature_graph_id}")
+
+
+class _FakeRunningFeatureGraphStatus:
+    graph_set_id = "graph-a-graph-set"
+    feature_graph_id = "graph-a-feature-a"
+    status_id = "fgs:graph-a:feature-a:running"
+    status = "running"
+    blueprint_proof_level = "contract_proof"
+    active_lane_ids = ["lane-local-1"]
+    completed_lane_ids: list[str] = []
+    source_event_lineage: list[dict] = []
+
+
+class _FakeRunningFeatureGraphStatusStore:
+    def get(self, *, graph_set_id: str, feature_graph_id: str):
+        if (
+            graph_set_id == _FakeRunningFeatureGraphStatus.graph_set_id
+            and feature_graph_id == _FakeRunningFeatureGraphStatus.feature_graph_id
+        ):
+            return _FakeRunningFeatureGraphStatus()
+        raise KeyError(f"{graph_set_id}:{feature_graph_id}")
 
 
 def test_runner_recovery_proof_without_block_remains_manual_gap(tmp_path: Path) -> None:
@@ -828,12 +886,19 @@ async def test_runner_ticks_blueprint_automation_without_blocking_dispatch(
 
     class FakeOrchestrator:
         def __init__(self, **kwargs) -> None:
+            self._feature_graph_status_store = _FakeFeatureGraphStatusStore()
             self._sm = _FakeStateMachine(
                 [
                     {
                         "feature_id": "lane-1",
+                        "lane_local_id": "lane-local-1",
+                        "conversation_id": "conv-a",
+                        "graph_id": "graph-a-feature-a",
+                        "graph_set_id": "graph-a-graph-set",
                         "status": "pending",
                         "priority": 1,
+                        "allowed_files": ["src/xmuse_core/example.py"],
+                        "required_checks": ["uv run pytest tests/xmuse/test_example.py -q"],
                     }
                 ]
             )
@@ -877,6 +942,554 @@ async def test_runner_ticks_blueprint_automation_without_blocking_dispatch(
     assert captured["planning_base_dir"] == tmp_path / "xmuse"
     assert captured["planning_worker_ids"] == ["platform-runner"]
     assert captured["dispatches"] == ["lane-1"]
+    candidate = json.loads(
+        (
+            tmp_path
+            / "xmuse"
+            / "work"
+            / "local_execution_candidates"
+            / "graph-a.lane-1.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert candidate["schema_version"] == "xmuse.local_execution_candidate.v1"
+    assert candidate["status"] == "candidate_only"
+    assert candidate["proof_level"] == "local_runtime_proof"
+    assert candidate["source_authority"] == "local_execution_candidate_capture"
+    assert candidate["producer"] == "platform_runner_dispatch"
+    assert candidate["conversation_id"] == "conv-a"
+    assert candidate["lane_id"] == "lane-1"
+    assert candidate["lane_local_id"] == "lane-local-1"
+    assert candidate["runner_session_id"].startswith("runner-session-")
+    assert candidate["runner_session_ref"].startswith("work/runner_sessions/")
+    assert candidate["graph_id"] == "graph-a"
+    assert candidate["graph_status_source_authority"] == "feature_graph_status_store"
+    assert candidate["graph_status_lineage"]["status_id"] == "fgs:graph-a:feature-a:reviewing"
+    assert candidate["source_refs"] == [
+        "lane:lane-1",
+        "lane_local:lane-local-1",
+        "graph:graph-a",
+        "graph_set:graph-a-graph-set",
+        "feature_graph:graph-a-feature-a",
+        "feature_graph_status:fgs:graph-a:feature-a:reviewing",
+    ]
+    assert candidate["changed_file_refs"] == ["src/xmuse_core/example.py"]
+    assert candidate["verification_refs"] == [
+        "uv run pytest tests/xmuse/test_example.py -q"
+    ]
+    assert "worker_output_is_review_truth" in candidate["forbidden_claims"]
+    assert "review_truth_not_proven" in candidate["manual_gaps"]
+    session_path = tmp_path / "xmuse" / candidate["runner_session_ref"]
+    runner_session = json.loads(session_path.read_text(encoding="utf-8"))
+    assert runner_session["schema_version"] == "xmuse.runner_session.v1"
+    assert runner_session["session_id"] == candidate["runner_session_id"]
+    assert runner_session["run_id"] == candidate["run_id"]
+    assert runner_session["runner_id"] == candidate["worker_id"]
+    assert runner_session["status"] == "session_completed"
+    assert runner_session["proof_level"] == "local_runtime_proof"
+    assert runner_session["candidate_artifact_refs"] == [
+        "work/local_execution_candidates/graph-a.lane-1.json"
+    ]
+    assert runner_session["worker_evidence_bundle_refs"] == []
+    assert runner_session["worker_evidence_bundle_count"] == 0
+    assert "runner_session_is_review_truth" in runner_session["forbidden_claims"]
+
+
+@pytest.mark.asyncio
+async def test_runner_submits_graph_native_worker_evidence_before_candidate_capture(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    class FakeLoop:
+        def __init__(self) -> None:
+            self._times = iter((0.0, 0.0, 3601.0))
+
+        def add_signal_handler(self, *args, **kwargs) -> None:
+            return None
+
+        def time(self) -> float:
+            return next(self._times)
+
+    class FakeOrchestrator:
+        def __init__(self, **kwargs) -> None:
+            xmuse_root = kwargs["xmuse_root"]
+            self._feature_graph_status_store = FeatureGraphStatusStore(
+                xmuse_root / "feature_graph_statuses.json"
+            )
+            self._feature_graph_artifact_store = FeatureGraphArtifactStore(
+                xmuse_root / "feature_graph_artifacts.json"
+            )
+            self._feature_graph_status_store.upsert(
+                FeatureGraphExecutionStatusRecord(
+                    status_id="fgs:graph-a:feature-a:ready",
+                    conversation_id="conv-a",
+                    planning_run_id="planning-run-a",
+                    graph_set_id="graph-a-graph-set",
+                    graph_set_version=1,
+                    feature_plan_id="feature-plan-a",
+                    feature_plan_version=1,
+                    feature_id="feature-a",
+                    feature_graph_id="graph-a-feature-a",
+                    blueprint_proof_level="contract_proof",
+                    status=FeatureGraphExecutionStatus.READY,
+                    ready_lane_ids=["lane-local-1"],
+                    projection_lane_ids=["lane-1"],
+                    updated_at="2026-06-03T03:00:00Z",
+                )
+            )
+            self._sm = _FakeStateMachine(
+                [
+                    {
+                        "feature_id": "lane-1",
+                        "lane_local_id": "lane-local-1",
+                        "conversation_id": "conv-a",
+                        "graph_id": "graph-a-feature-a",
+                        "graph_set_id": "graph-a-graph-set",
+                        "status": "pending",
+                        "priority": 1,
+                        "prompt": "Implement the graph-native worker handoff.",
+                        "acceptance_criteria": [
+                            "Worker evidence reaches graph-native review intake."
+                        ],
+                        "blueprint_refs": ["blueprint:bp-graph-native:v1"],
+                        "allowed_files": ["src/xmuse_core/example.py"],
+                        "required_checks": [
+                            "uv run pytest tests/xmuse/test_example.py -q"
+                        ],
+                        "provider_session_binding_id": (
+                            "provider_session_binding:psb-worker-a:v1"
+                        ),
+                    }
+                ]
+            )
+
+        async def reconcile_status_changes(self) -> None:
+            return None
+
+        async def dispatch_lane(self, lane_id: str) -> None:
+            self._sm.update_metadata(lane_id, {"status": "dispatched"})
+
+        def claim_next_ready_feature_graph_worker(self, **kwargs):
+            return claim_next_ready_feature_graph_worker(
+                store=self._feature_graph_status_store,
+                **kwargs,
+            )
+
+        def submit_feature_graph_worker_evidence(self, **kwargs):
+            return submit_feature_graph_worker_evidence(
+                store=self._feature_graph_status_store,
+                artifact_store=self._feature_graph_artifact_store,
+                **kwargs,
+            )
+
+    class FakeBlueprintAutomationService:
+        def __init__(self, *, base_dir: Path, **kwargs) -> None:
+            return None
+
+        def tick(self, *, worker_id: str):
+            return None
+
+    async def _fast_sleep(_: float) -> None:
+        return None
+
+    monkeypatch.setattr(platform_runner, "PlatformOrchestrator", FakeOrchestrator)
+    monkeypatch.setattr(
+        platform_runner,
+        "BlueprintAutomationService",
+        FakeBlueprintAutomationService,
+        raising=False,
+    )
+    monkeypatch.setattr(platform_runner.asyncio, "get_running_loop", lambda: FakeLoop())
+    monkeypatch.setattr(platform_runner.asyncio, "sleep", _fast_sleep)
+
+    await platform_runner.run(
+        lanes_path=tmp_path / "feature_lanes.json",
+        xmuse_root=tmp_path / "xmuse",
+        mcp_port=8100,
+        max_hours=1,
+        max_concurrent=1,
+    )
+
+    status_store = FeatureGraphStatusStore(
+        tmp_path / "xmuse" / "feature_graph_statuses.json"
+    )
+    status = status_store.get(
+        graph_set_id="graph-a-graph-set",
+        feature_graph_id="graph-a-feature-a",
+    )
+    assert status.status is FeatureGraphExecutionStatus.REVIEWING
+    assert status.active_lane_ids == []
+    assert status.completed_lane_ids == ["lane-local-1"]
+    assert status.active_worker_session_id.startswith("runner-session-")
+    assert (
+        status.active_provider_session_binding_ref
+        == "provider_session_binding:psb-worker-a:v1"
+    )
+
+    artifact_store = FeatureGraphArtifactStore(
+        tmp_path / "xmuse" / "feature_graph_artifacts.json"
+    )
+    bundles = artifact_store.list_evidence_bundles()
+    assert len(bundles) == 1
+    assert bundles[0].worker_session_id == status.active_worker_session_id
+    assert bundles[0].provider_session_binding_ref == (
+        "provider_session_binding:psb-worker-a:v1"
+    )
+    assert bundles[0].lane_graph_summary.completed_lane_ids == ["lane-local-1"]
+    assert bundles[0].verification.commands_run == [
+        "uv run pytest tests/xmuse/test_example.py -q"
+    ]
+
+    candidate = json.loads(
+        (
+            tmp_path
+            / "xmuse"
+            / "work"
+            / "local_execution_candidates"
+            / "graph-a.lane-1.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert candidate["status"] == "candidate_only"
+    assert candidate["proof_level"] == "local_runtime_proof"
+    assert candidate["graph_status_lineage"]["status"] == "reviewing"
+    assert (
+        f"feature_evidence_bundle:{bundles[0].bundle_id}:v1"
+        in candidate["source_refs"]
+    )
+    assert "review_truth_not_proven" in candidate["manual_gaps"]
+    assert "worker_output_is_review_truth" in candidate["forbidden_claims"]
+
+    session_path = tmp_path / "xmuse" / candidate["runner_session_ref"]
+    runner_session = json.loads(session_path.read_text(encoding="utf-8"))
+    assert runner_session["status"] == "session_completed"
+    assert runner_session["proof_level"] == "local_runtime_proof"
+    assert runner_session["candidate_artifact_refs"] == [
+        "work/local_execution_candidates/graph-a.lane-1.json"
+    ]
+    assert runner_session["worker_evidence_bundle_refs"] == [
+        f"feature_evidence_bundle:{bundles[0].bundle_id}:v1"
+    ]
+    assert runner_session["worker_evidence_bundle_count"] == 1
+    assert "runner_session_is_review_truth" in runner_session["forbidden_claims"]
+
+
+def test_runner_candidate_capture_fail_closes_before_worker_evidence_reviewing(
+    tmp_path: Path,
+) -> None:
+    class FakeOrchestrator:
+        def __init__(self) -> None:
+            self._feature_graph_status_store = _FakeRunningFeatureGraphStatusStore()
+
+    lane = {
+        "feature_id": "lane-1",
+        "lane_local_id": "lane-local-1",
+        "conversation_id": "conv-a",
+        "graph_id": "graph-a-feature-a",
+        "graph_set_id": "graph-a-graph-set",
+        "status": "dispatched",
+        "allowed_files": ["src/xmuse_core/example.py"],
+        "required_checks": ["uv run pytest tests/xmuse/test_example.py -q"],
+    }
+
+    capture = platform_runner._capture_local_execution_candidate_if_requested(
+        output_dir=tmp_path / "xmuse" / "work" / "local_execution_candidates",
+        run_id="local-execution-runner",
+        runner_id="platform-runner",
+        runner_session_id="runner-session-running",
+        runner_session_ref="work/runner_sessions/runner-session-running.json",
+        xmuse_root=tmp_path / "xmuse",
+        orch=FakeOrchestrator(),
+        lane=lane,
+        graph_id=None,
+        resolution_id=None,
+    )
+
+    assert capture is not None
+    candidate = capture["artifact"]
+    assert candidate["status"] == "manual_gap"
+    assert candidate["proof_level"] == "manual_gap"
+    assert candidate["producer"] == "platform_runner_dispatch"
+    assert candidate["graph_status_lineage"]["status"] == "running"
+    assert "graph_native_worker_evidence_not_submitted" in candidate["manual_gaps"]
+    assert "local_execution_candidate_not_reviewable" in candidate["manual_gaps"]
+    assert "graph_status_lineage_missing" not in candidate["manual_gaps"]
+    assert "worker_output_is_review_truth" in candidate["forbidden_claims"]
+
+
+@pytest.mark.asyncio
+async def test_runner_session_does_not_count_manual_gap_candidate_as_runtime_proof(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    class FakeLoop:
+        def __init__(self) -> None:
+            self._times = iter((0.0, 0.0, 3601.0))
+
+        def add_signal_handler(self, *args, **kwargs) -> None:
+            return None
+
+        def time(self) -> float:
+            return next(self._times)
+
+    class FakeOrchestrator:
+        def __init__(self, **kwargs) -> None:
+            self._feature_graph_status_store = _FakeRunningFeatureGraphStatusStore()
+            self._sm = _FakeStateMachine(
+                [
+                    {
+                        "feature_id": "lane-1",
+                        "lane_local_id": "lane-local-1",
+                        "conversation_id": "conv-a",
+                        "graph_id": "graph-a-feature-a",
+                        "graph_set_id": "graph-a-graph-set",
+                        "status": "pending",
+                        "priority": 1,
+                        "allowed_files": ["src/xmuse_core/example.py"],
+                        "required_checks": [
+                            "uv run pytest tests/xmuse/test_example.py -q"
+                        ],
+                    }
+                ]
+            )
+
+        async def reconcile_status_changes(self) -> None:
+            return None
+
+        async def dispatch_lane(self, lane_id: str) -> None:
+            self._sm._lanes[0]["status"] = "dispatched"
+
+    class FakeBlueprintAutomationService:
+        def __init__(self, *, base_dir: Path, **kwargs) -> None:
+            return None
+
+        def tick(self, *, worker_id: str):
+            return None
+
+    async def _fast_sleep(_: float) -> None:
+        return None
+
+    monkeypatch.setattr(platform_runner, "PlatformOrchestrator", FakeOrchestrator)
+    monkeypatch.setattr(
+        platform_runner,
+        "BlueprintAutomationService",
+        FakeBlueprintAutomationService,
+        raising=False,
+    )
+    monkeypatch.setattr(platform_runner.asyncio, "get_running_loop", lambda: FakeLoop())
+    monkeypatch.setattr(platform_runner.asyncio, "sleep", _fast_sleep)
+
+    await platform_runner.run(
+        lanes_path=tmp_path / "feature_lanes.json",
+        xmuse_root=tmp_path / "xmuse",
+        mcp_port=8100,
+        max_hours=1,
+        max_concurrent=1,
+    )
+
+    candidate = json.loads(
+        (
+            tmp_path
+            / "xmuse"
+            / "work"
+            / "local_execution_candidates"
+            / "graph-a.lane-1.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert candidate["status"] == "manual_gap"
+    assert candidate["proof_level"] == "manual_gap"
+    assert "graph_native_worker_evidence_not_submitted" in candidate["manual_gaps"]
+
+    session_paths = list((tmp_path / "xmuse" / "work" / "runner_sessions").glob("*.json"))
+    assert len(session_paths) == 1
+    runner_session = json.loads(session_paths[0].read_text(encoding="utf-8"))
+    assert runner_session["schema_version"] == "xmuse.runner_session.v1"
+    assert runner_session["status"] == "session_completed"
+    assert runner_session["proof_level"] == "manual_gap"
+    assert runner_session["candidate_artifact_refs"] == []
+    assert runner_session["candidate_lane_ids"] == []
+    assert "runner_session_candidate_refs_missing" in runner_session["manual_gaps"]
+    assert "runner_session_is_review_truth" in runner_session["forbidden_claims"]
+
+
+@pytest.mark.asyncio
+async def test_runner_session_marks_dispatch_task_failure_manual_gap(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    class FakeLoop:
+        def __init__(self) -> None:
+            self._times = iter((0.0, 0.0, 3601.0))
+
+        def add_signal_handler(self, *args, **kwargs) -> None:
+            return None
+
+        def time(self) -> float:
+            return next(self._times)
+
+    class FakeOrchestrator:
+        def __init__(self, **kwargs) -> None:
+            self._sm = _FakeStateMachine(
+                [
+                    {
+                        "feature_id": "lane-fails",
+                        "status": "pending",
+                        "priority": 1,
+                        "graph_id": "graph-a",
+                    }
+                ]
+            )
+
+        async def reconcile_status_changes(self) -> None:
+            return None
+
+        async def dispatch_lane(self, lane_id: str) -> None:
+            raise RuntimeError(f"dispatch failed for {lane_id}")
+
+    async def _fast_sleep(_: float) -> None:
+        return None
+
+    monkeypatch.setattr(platform_runner, "PlatformOrchestrator", FakeOrchestrator)
+    monkeypatch.setattr(platform_runner.asyncio, "get_running_loop", lambda: FakeLoop())
+    monkeypatch.setattr(platform_runner.asyncio, "sleep", _fast_sleep)
+
+    await platform_runner.run(
+        lanes_path=tmp_path / "feature_lanes.json",
+        xmuse_root=tmp_path / "xmuse",
+        mcp_port=8100,
+        max_hours=1,
+        max_concurrent=1,
+    )
+
+    session_paths = list((tmp_path / "xmuse" / "work" / "runner_sessions").glob("*.json"))
+    assert len(session_paths) == 1
+    runner_session = json.loads(session_paths[0].read_text(encoding="utf-8"))
+    assert runner_session["schema_version"] == "xmuse.runner_session.v1"
+    assert runner_session["status"] == "session_failed"
+    assert runner_session["proof_level"] == "manual_gap"
+    assert runner_session["candidate_artifact_refs"] == []
+    assert runner_session["candidate_lane_ids"] == []
+    assert runner_session["failure"] == (
+        "dispatch task failure: lane-fails: RuntimeError: "
+        "dispatch failed for lane-fails"
+    )
+    assert "runner_session_not_completed" in runner_session["manual_gaps"]
+    assert "runner_session_is_review_truth" in runner_session["forbidden_claims"]
+
+
+@pytest.mark.asyncio
+async def test_runner_session_marks_candidate_capture_failure_manual_gap(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    class FakeLoop:
+        def __init__(self) -> None:
+            self._times = iter((0.0, 0.0, 3601.0))
+
+        def add_signal_handler(self, *args, **kwargs) -> None:
+            return None
+
+        def time(self) -> float:
+            return next(self._times)
+
+    class FakeOrchestrator:
+        def __init__(self, **kwargs) -> None:
+            self._sm = _FakeStateMachine(
+                [
+                    {
+                        "feature_id": "lane-capture-fails",
+                        "status": "pending",
+                        "priority": 1,
+                        "graph_id": "graph-a",
+                    }
+                ]
+            )
+
+        async def reconcile_status_changes(self) -> None:
+            return None
+
+        async def dispatch_lane(self, lane_id: str) -> None:
+            self._sm._lanes[0]["status"] = "dispatched"
+
+    async def _fast_sleep(_: float) -> None:
+        return None
+
+    def _capture_fails(**kwargs):
+        raise OSError("candidate output directory unavailable")
+
+    monkeypatch.setattr(platform_runner, "PlatformOrchestrator", FakeOrchestrator)
+    monkeypatch.setattr(platform_runner.asyncio, "get_running_loop", lambda: FakeLoop())
+    monkeypatch.setattr(platform_runner.asyncio, "sleep", _fast_sleep)
+    monkeypatch.setattr(
+        platform_runner,
+        "_capture_local_execution_candidate_if_requested",
+        _capture_fails,
+    )
+
+    await platform_runner.run(
+        lanes_path=tmp_path / "feature_lanes.json",
+        xmuse_root=tmp_path / "xmuse",
+        mcp_port=8100,
+        max_hours=1,
+        max_concurrent=1,
+    )
+
+    session_paths = list((tmp_path / "xmuse" / "work" / "runner_sessions").glob("*.json"))
+    assert len(session_paths) == 1
+    runner_session = json.loads(session_paths[0].read_text(encoding="utf-8"))
+    assert runner_session["schema_version"] == "xmuse.runner_session.v1"
+    assert runner_session["status"] == "session_failed"
+    assert runner_session["proof_level"] == "manual_gap"
+    assert runner_session["candidate_artifact_refs"] == []
+    assert runner_session["candidate_lane_ids"] == []
+    assert runner_session["failure"] == (
+        "local execution candidate capture failure: lane-capture-fails: "
+        "OSError: candidate output directory unavailable"
+    )
+    assert "runner_session_not_completed" in runner_session["manual_gaps"]
+    assert "runner_session_is_review_truth" in runner_session["forbidden_claims"]
+
+
+@pytest.mark.asyncio
+async def test_runner_shutdown_continues_when_session_finish_capture_fails(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    class FakeLoop:
+        def add_signal_handler(self, *args, **kwargs) -> None:
+            return None
+
+        def time(self) -> float:
+            return 0.0
+
+    class FakeOrchestrator:
+        def __init__(self, **kwargs) -> None:
+            self._sm = _FakeStateMachine([])
+
+    captured: dict[str, object] = {"finish_attempted": False}
+
+    def _finish_fails(**kwargs):
+        captured["finish_attempted"] = True
+        raise ValueError("runner session start artifact is invalid JSON")
+
+    monkeypatch.setattr(platform_runner, "PlatformOrchestrator", FakeOrchestrator)
+    monkeypatch.setattr(platform_runner.asyncio, "get_running_loop", lambda: FakeLoop())
+    monkeypatch.setattr(
+        platform_runner,
+        "capture_runner_session_finished",
+        _finish_fails,
+    )
+
+    await platform_runner.run(
+        lanes_path=tmp_path / "feature_lanes.json",
+        xmuse_root=tmp_path / "xmuse",
+        mcp_port=8100,
+        max_hours=0,
+        max_concurrent=1,
+    )
+
+    assert captured["finish_attempted"] is True
+    assert not platform_runner._writer_lease_path(
+        tmp_path / "feature_lanes.json"
+    ).exists()
 
 
 @pytest.mark.asyncio
@@ -2348,6 +2961,7 @@ def test_candidate_lanes_filters_to_target_graph_and_includes_reworking() -> Non
 
     lanes = platform_runner._candidate_lanes(
         FakeOrchestrator(),
+        xmuse_root=Path("/tmp/no-recovery-artifacts"),
         graph_id="graph-a",
         resolution_id=None,
     )
@@ -2379,6 +2993,7 @@ def test_candidate_lanes_waits_for_unmerged_dependencies() -> None:
 
     lanes = platform_runner._candidate_lanes(
         FakeOrchestrator(),
+        xmuse_root=Path("/tmp/no-recovery-artifacts"),
         graph_id=None,
         resolution_id=None,
     )
@@ -2423,6 +3038,7 @@ def test_candidate_lanes_excludes_non_retry_recovery_decision(tmp_path: Path) ->
 
     lanes = platform_runner._candidate_lanes(
         orch,
+        xmuse_root=tmp_path,
         graph_id="graph-a",
         resolution_id=None,
     )
@@ -2447,6 +3063,45 @@ def test_candidate_lanes_excludes_non_retry_recovery_decision(tmp_path: Path) ->
     assert "live_runner_recovery_enforcement_not_proven" in blocked["manual_gaps"]
     assert "ready_to_merge" in blocked["forbidden_claims"]
     assert "dispatch_attempt_id" not in blocked
+
+
+def test_candidate_lanes_uses_explicit_recovery_root_without_orchestrator_private_root(
+    tmp_path: Path,
+) -> None:
+    class FakeOrchestrator:
+        def __init__(self) -> None:
+            self._sm = _FakeStateMachine(
+                [
+                    {
+                        "feature_id": "lane-refactor",
+                        "status": "reworking",
+                        "graph_id": "graph-a",
+                    }
+                ]
+            )
+
+    _write_recovery_artifact(
+        tmp_path,
+        graph_id="graph-a",
+        lane_id="lane-refactor",
+        decision="refactor_required",
+        retry_allowed=False,
+    )
+    orch = FakeOrchestrator()
+
+    lanes = platform_runner._candidate_lanes(
+        orch,
+        xmuse_root=tmp_path,
+        graph_id="graph-a",
+        resolution_id=None,
+    )
+
+    assert lanes == []
+    blocked = orch._sm.get_lanes()[0]
+    assert blocked["dispatch_blocked_by_recovery"] is True
+    assert blocked["recovery_dispatch_block_reason"] == "refactor_required"
+    assert blocked["recovery_source_authority"] == "lane_recovery_artifact"
+    assert "live_runner_recovery_enforcement_not_proven" in blocked["manual_gaps"]
 
 
 def test_candidate_lanes_excludes_invalid_recovery_artifact(tmp_path: Path) -> None:
@@ -2477,6 +3132,7 @@ def test_candidate_lanes_excludes_invalid_recovery_artifact(tmp_path: Path) -> N
 
     lanes = platform_runner._candidate_lanes(
         orch,
+        xmuse_root=tmp_path,
         graph_id="graph-a",
         resolution_id=None,
     )
@@ -2563,6 +3219,7 @@ def test_candidate_lanes_matches_graph_native_ready_set_parity(
 
     initial_lanes = platform_runner._candidate_lanes(
         FakeOrchestrator(),
+        xmuse_root=tmp_path,
         graph_id="graph-projection",
         resolution_id="res-1",
     )
@@ -2597,6 +3254,7 @@ def test_candidate_lanes_matches_graph_native_ready_set_parity(
 
     dependent_lanes = platform_runner._candidate_lanes(
         FakeOrchestrator(),
+        xmuse_root=tmp_path,
         graph_id="graph-projection",
         resolution_id="res-1",
     )
@@ -2653,7 +3311,10 @@ def _write_recovery_artifact(
     )
 
 
-def test_repair_stale_dispatched_lanes_marks_dead_worker_exec_failed(monkeypatch) -> None:
+def test_repair_stale_dispatched_lanes_marks_dead_worker_exec_failed(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
     class FakeStateMachine:
         def __init__(self) -> None:
             self._lanes = [
@@ -2662,6 +3323,8 @@ def test_repair_stale_dispatched_lanes_marks_dead_worker_exec_failed(monkeypatch
                     "status": "dispatched",
                     "worker_pid": 123,
                     "dispatched_at": 100.0,
+                    "graph_id": "graph-a",
+                    "retry_count": 2,
                 },
                 {
                     "feature_id": "live-worker",
@@ -2680,6 +3343,13 @@ def test_repair_stale_dispatched_lanes_marks_dead_worker_exec_failed(monkeypatch
                     "status": "dispatched",
                     "worker_pid": 999,
                     "dispatched_at": 100.0,
+                    "graph_id": "graph-a",
+                },
+                {
+                    "feature_id": "dispatch-no-pid",
+                    "status": "dispatched",
+                    "dispatched_at": 100.0,
+                    "graph_id": "graph-a",
                 },
                 {
                     "feature_id": "no-lease",
@@ -2729,6 +3399,13 @@ def test_repair_stale_dispatched_lanes_marks_dead_worker_exec_failed(monkeypatch
                     return lane
             raise KeyError(lane_id)
 
+        def update_metadata(self, lane_id: str, metadata: dict):
+            for lane in self._lanes:
+                if lane["feature_id"] == lane_id:
+                    lane.update(metadata)
+                    return lane
+            raise KeyError(lane_id)
+
     class FakeOrchestrator:
         def __init__(self) -> None:
             self._sm = FakeStateMachine()
@@ -2738,6 +3415,7 @@ def test_repair_stale_dispatched_lanes_marks_dead_worker_exec_failed(monkeypatch
 
     platform_runner._repair_stale_dispatched_lanes(
         orch,
+        xmuse_root=tmp_path,
         now=1000.0,
         stale_after_s=300.0,
         owned_lane_ids={"owned-finishing-worker"},
@@ -2752,13 +3430,95 @@ def test_repair_stale_dispatched_lanes_marks_dead_worker_exec_failed(monkeypatch
                 "stale_worker_pid": 123,
                 "stale_repaired_at": 1000.0,
             },
-        )
+        ),
+        (
+            "dispatch-no-pid",
+            "exec_failed",
+            {
+                "failure_reason": "dispatch_no_worker_pid",
+                "stale_worker_pid_missing": True,
+                "stale_repaired_at": 1000.0,
+            },
+        ),
     ]
     assert orch._sm.get_lanes()[1]["status"] == "dispatched"
     assert orch._sm.get_lanes()[2]["status"] == "dispatched"
     assert orch._sm.get_lanes()[3]["status"] == "dispatched"
     assert orch._sm.get_lanes()[3]["worker_pid"] == 1000
-    assert orch._sm.get_lanes()[4]["status"] == "dispatched"
+    assert orch._sm.get_lanes()[4]["status"] == "exec_failed"
+    assert orch._sm.get_lanes()[5]["status"] == "dispatched"
+    repaired = orch._sm.get_lanes()[0]
+    assert repaired["recovery_artifact_status"] == "written"
+    assert repaired["recovery_artifact_source_authority"] == (
+        "platform_runner_stale_repair"
+    )
+    assert repaired["recovery_artifact_ref"] == (
+        "lane_graphs/graph-a.dead-worker.recovery.json"
+    )
+    recovery_artifact = json.loads(
+        lane_recovery_artifact_path(
+            tmp_path,
+            graph_id="graph-a",
+            lane_id="dead-worker",
+        ).read_text(encoding="utf-8")
+    )
+    assert recovery_artifact["source_authority"] == "platform_runner_stale_repair"
+    assert recovery_artifact["decision"] == {
+        "attempt": 3,
+        "decision": "suspended",
+        "failure_class": "stale_worker_lost",
+        "lane_id": "dead-worker",
+        "next_action": (
+            "inspect stale worker loss and record recovery or refactor evidence "
+            "before retrying this lane"
+        ),
+        "retry_allowed": False,
+        "source_refs": [
+            "lane:dead-worker",
+            "graph:graph-a",
+            "stale_worker_pid:123",
+            "platform_runner_stale_repair:1000.0",
+        ],
+        "suspend_reason": "stale_worker_lost",
+    }
+    assert not lane_recovery_artifact_path(
+        tmp_path,
+        graph_id="graph-a",
+        lane_id="lease-changed-before-write",
+    ).exists()
+    pidless_repair = orch._sm.get_lanes()[4]
+    assert pidless_repair["recovery_artifact_status"] == "written"
+    pidless_artifact = json.loads(
+        lane_recovery_artifact_path(
+            tmp_path,
+            graph_id="graph-a",
+            lane_id="dispatch-no-pid",
+        ).read_text(encoding="utf-8")
+    )
+    assert pidless_artifact["decision"]["failure_class"] == "dispatch_no_worker_pid"
+    assert pidless_artifact["decision"]["retry_allowed"] is False
+    assert pidless_artifact["decision"]["source_refs"] == [
+        "lane:dispatch-no-pid",
+        "graph:graph-a",
+        "worker_pid:missing",
+        "platform_runner_stale_repair:1000.0",
+    ]
+
+    repaired["status"] = "reworking"
+    pidless_repair["status"] = "reworking"
+    assert (
+        platform_runner._candidate_lanes(
+            orch,
+            xmuse_root=tmp_path,
+            graph_id="graph-a",
+            resolution_id=None,
+        )
+        == []
+    )
+    assert repaired["dispatch_blocked_by_recovery"] is True
+    assert repaired["recovery_dispatch_block_reason"] == "suspended"
+    assert pidless_repair["dispatch_blocked_by_recovery"] is True
+    assert pidless_repair["recovery_dispatch_block_reason"] == "suspended"
 
 
 def test_coordinator_control_service_records_lifecycle_event(tmp_path: Path) -> None:

@@ -12,6 +12,9 @@ from xmuse_core.chat.god_room_runtime import (
 from xmuse_core.platform.god_room_runtime_closure_evidence_capture import (
     capture_god_room_runtime_closure_evidence,
 )
+from xmuse_core.platform.local_execution_candidate import (
+    load_local_execution_candidate_lineage,
+)
 from xmuse_core.structuring.god_room_blueprint_freeze import (
     compile_blueprint_freeze_from_god_room_events,
 )
@@ -399,6 +402,225 @@ def test_god_room_runtime_closure_evidence_reports_manual_gap_for_missing_room_i
     ]
 
 
+def test_god_room_runtime_closure_evidence_reports_expected_review_chain_gap(
+    tmp_path: Path,
+) -> None:
+    evidence = capture_god_room_runtime_closure_evidence(
+        run_id="runtime-closure-review-chain-expected",
+        output_path=tmp_path / "evidence.json",
+        review_chain_proof_expected=True,
+    )
+
+    review_chain = evidence["god_room_runtime_closure"]["review_chain_proof"]
+    assert evidence["status"] == "manual_gap"
+    assert evidence["proof_level"] == "manual_gap"
+    assert (
+        "GOD room review chain proof artifact is expected but missing"
+        in evidence["blocked_reason"]
+    )
+    assert review_chain["status"] == "manual_gap"
+    assert review_chain["proof_level"] == "manual_gap"
+    assert review_chain["optional"] is False
+    assert review_chain["expected"] is True
+    assert "god_room_review_chain_proof_artifact_missing" in review_chain[
+        "manual_gaps"
+    ]
+    assert "worker_output_is_review_truth" in review_chain["forbidden_claims"]
+
+
+def test_god_room_runtime_closure_evidence_rejects_unready_review_handoff(
+    tmp_path: Path,
+) -> None:
+    review_closure = _write_json(
+        tmp_path / "review-closure.json",
+        {
+            "schema_version": "xmuse.god_room_lane_review_closure.v1",
+            "proof_level": "contract_proof",
+            "review_truth_status": "independent_review_artifact",
+            "execution_truth_status": "candidate_reviewed",
+            "server_truth_status": "not_server_truth",
+            "release_evidence_handoff_status": "not_ready",
+            "graph_id": "graph-runtime",
+            "failed_lane_id": "lane-runtime-evidence",
+            "terminal_lane_id": "lane-runtime-evidence-patch",
+            "candidate_refs": ["worker-candidate:patch-reviewed"],
+            "cited_candidate_refs": ["worker-candidate:patch-reviewed"],
+            "terminal_review_verdict": {
+                "evidence_refs": ["worker-candidate:patch-reviewed"],
+            },
+            "manual_gaps": ["release_evidence_not_linked"],
+            "forbidden_claims": [
+                "worker_output_is_review_truth",
+                "end_to_end_execution_review_closure",
+                "ready_to_merge",
+                "pr_merged",
+                "github_review_truth",
+                "live_memoryos",
+            ],
+        },
+    )
+
+    evidence = capture_god_room_runtime_closure_evidence(
+        run_id="runtime-closure-unready-review-handoff",
+        output_path=tmp_path / "evidence.json",
+        review_closure_artifact=review_closure,
+    )
+
+    assert evidence["status"] == "manual_gap"
+    assert evidence["proof_level"] == "manual_gap"
+    assert (
+        "GOD room review closure release handoff is not candidate_input_ready"
+        in evidence["blocked_reason"]
+    )
+    assert evidence["god_room_runtime_closure"]["review_closure"]["status"] == (
+        "not_ready"
+    )
+
+
+def test_god_room_runtime_closure_evidence_rederives_review_handoff(
+    tmp_path: Path,
+) -> None:
+    candidate_ref = "artifacts/lane-runtime-evidence-patch/result.json"
+    review_closure = _write_json(
+        tmp_path / "review-closure.json",
+        {
+            "schema_version": "xmuse.god_room_lane_review_closure.v1",
+            "proof_level": "contract_proof",
+            "review_truth_status": "independent_review_artifact",
+            "execution_truth_status": "candidate_reviewed",
+            "server_truth_status": "not_server_truth",
+            "release_evidence_handoff_status": "candidate_input_ready",
+            "conversation_id": "conv-runtime",
+            "graph_id": "graph-runtime",
+            "failed_lane_id": "lane-runtime-evidence",
+            "terminal_lane_id": "lane-runtime-evidence-patch",
+            "candidate_refs": ["worker-candidate:patch-reviewed", candidate_ref],
+            "cited_candidate_refs": [
+                "worker-candidate:patch-reviewed",
+                candidate_ref,
+            ],
+            "cited_candidate_artifact_refs": [candidate_ref],
+            "terminal_review_verdict": {
+                "evidence_refs": ["worker-candidate:patch-reviewed", candidate_ref],
+            },
+            "manual_gaps": ["release_evidence_not_linked"],
+            "forbidden_claims": [
+                "worker_output_is_review_truth",
+                "end_to_end_execution_review_closure",
+                "ready_to_merge",
+                "pr_merged",
+                "github_review_truth",
+                "live_memoryos",
+            ],
+        },
+    )
+
+    evidence = capture_god_room_runtime_closure_evidence(
+        run_id="runtime-closure-stale-review-handoff",
+        output_path=tmp_path / "evidence.json",
+        review_closure_artifact=review_closure,
+    )
+
+    review_closure_details = evidence["god_room_runtime_closure"]["review_closure"]
+    assert evidence["status"] == "manual_gap"
+    assert evidence["proof_level"] == "manual_gap"
+    assert (
+        "GOD room review closure current handoff is not gate-ready"
+        in evidence["blocked_reason"]
+    )
+    assert review_closure_details["status"] == "candidate_input_ready"
+    assert review_closure_details["current_handoff_gate_ready"] is False
+    assert review_closure_details["current_handoff_candidate_artifact_refs"] == []
+    assert review_closure_details["current_handoff_source_ref_count"] == 0
+    assert candidate_ref not in evidence["source_refs"]
+
+
+def test_god_room_runtime_closure_evidence_accepts_rederived_review_handoff_refs(
+    tmp_path: Path,
+) -> None:
+    candidate_ref = "artifacts/lane-runtime-evidence-patch/result.json"
+    _write_platform_runner_candidate(tmp_path, candidate_ref)
+    _write_runner_session(tmp_path, candidate_ref)
+    candidate_lineage = load_local_execution_candidate_lineage(
+        root=tmp_path,
+        artifact_ref=candidate_ref,
+        lane_id="lane-runtime-evidence-patch",
+        graph_id="graph-runtime",
+        conversation_id="conv-runtime",
+        required_producer="platform_runner_dispatch",
+    )
+    review_closure = _write_json(
+        tmp_path / "review-closure.json",
+        {
+            "schema_version": "xmuse.god_room_lane_review_closure.v1",
+            "proof_level": "contract_proof",
+            "review_truth_status": "independent_review_artifact",
+            "execution_truth_status": "candidate_reviewed",
+            "server_truth_status": "not_server_truth",
+            "release_evidence_handoff_status": "candidate_input_ready",
+            "conversation_id": "conv-runtime",
+            "graph_id": "graph-runtime",
+            "failed_lane_id": "lane-runtime-evidence",
+            "terminal_lane_id": "lane-runtime-evidence-patch",
+            "candidate_refs": ["worker-candidate:patch-reviewed", candidate_ref],
+            "cited_candidate_refs": [
+                "worker-candidate:patch-reviewed",
+                candidate_ref,
+            ],
+            "cited_candidate_artifact_refs": [candidate_ref],
+            "cited_candidate_artifact_lineage": [candidate_lineage],
+            "source_event_lineage": [
+                {
+                    "event_id": "evt-review-provider-speak",
+                    "event_type": "speak",
+                    "proof_level": "opt_in_live_proof",
+                    "provider_response_artifact_ref": (
+                        "reports/provider-responses/provider-response-1.json"
+                    ),
+                    "source_refs": [
+                        "god-room-event:evt-review-provider-speak",
+                    ],
+                }
+            ],
+            "terminal_review_verdict": {
+                "evidence_refs": ["worker-candidate:patch-reviewed", candidate_ref],
+            },
+            "manual_gaps": ["release_evidence_not_linked"],
+            "forbidden_claims": [
+                "worker_output_is_review_truth",
+                "end_to_end_execution_review_closure",
+                "ready_to_merge",
+                "pr_merged",
+                "github_review_truth",
+                "live_memoryos",
+            ],
+        },
+    )
+
+    evidence = capture_god_room_runtime_closure_evidence(
+        run_id="runtime-closure-ready-review-handoff",
+        output_path=tmp_path / "evidence.json",
+        review_closure_artifact=review_closure,
+    )
+
+    review_closure_details = evidence["god_room_runtime_closure"]["review_closure"]
+    assert evidence["status"] == "manual_gap"
+    assert review_closure_details["current_handoff_gate_ready"] is True
+    assert review_closure_details["handoff_evaluation"]["schema_version"] == (
+        "xmuse.review_closure_handoff_evaluation.v1"
+    )
+    assert review_closure_details["handoff_evaluation"]["status"] == "ready"
+    assert review_closure_details["handoff_evaluation"]["candidate_ref_count"] == 2
+    assert review_closure_details["handoff_evaluation"]["cited_candidate_ref_count"] == 2
+    assert review_closure_details["handoff_evaluation"]["source_event_lineage_count"] == 1
+    assert review_closure_details["current_handoff_candidate_artifact_refs"] == [
+        candidate_ref
+    ]
+    assert review_closure_details["current_handoff_source_ref_count"] >= 1
+    assert candidate_ref in evidence["source_refs"]
+    assert "god-room-event:evt-review-provider-speak" in evidence["source_refs"]
+
+
 def test_god_room_runtime_closure_evidence_blocks_empty_room_artifacts(
     tmp_path: Path,
 ) -> None:
@@ -754,3 +976,101 @@ def _write_json(path: Path, payload: dict[str, object]) -> Path:
         encoding="utf-8",
     )
     return path
+
+
+def _write_platform_runner_candidate(root: Path, candidate_ref: str) -> None:
+    _write_json(
+        root / candidate_ref,
+        {
+            "schema_version": "xmuse.local_execution_candidate.v1",
+            "candidate_id": "candidate-lane-runtime-evidence-patch",
+            "source_authority": "local_execution_candidate_capture",
+            "producer": "platform_runner_dispatch",
+            "conversation_id": "conv-runtime",
+            "proof_level": "local_runtime_proof",
+            "status": "candidate_only",
+            "candidate_truth_status": "candidate_only",
+            "graph_id": "graph-runtime",
+            "graph_set_id": "graph-runtime-graph-set",
+            "feature_graph_id": "graph-runtime-feature-runtime",
+            "feature_graph_status_id": "fgs:graph-runtime-feature-runtime:reviewing",
+            "feature_graph_status": "reviewing",
+            "graph_status_source_authority": "feature_graph_status_store",
+            "graph_status_lineage": {
+                "source_authority": "feature_graph_status_store",
+                "graph_set_id": "graph-runtime-graph-set",
+                "feature_graph_id": "graph-runtime-feature-runtime",
+                "status_id": "fgs:graph-runtime-feature-runtime:reviewing",
+                "status": "reviewing",
+                "blueprint_proof_level": "contract_proof",
+                "active_lane_ids": [],
+                "completed_lane_ids": ["lane-runtime-evidence-patch"],
+                "source_event_lineage": [],
+            },
+            "lane_id": "lane-runtime-evidence-patch",
+            "run_id": "platform-runner:run-1",
+            "worker_id": "platform-runner",
+            "runner_session_id": "runner-session-1",
+            "runner_session_ref": "work/runner_sessions/runner-session-1.json",
+            "source_refs": ["worker-candidate:patch-reviewed"],
+            "output_refs": [candidate_ref],
+            "changed_file_refs": [],
+            "verification_refs": [
+                "uv run pytest "
+                "tests/xmuse/test_god_room_runtime_closure_evidence_capture.py -q",
+            ],
+            "manual_gaps": [
+                "review_truth_not_proven",
+                "server_truth_not_proven",
+                "github_truth_not_checked",
+                "live_memoryos_trace_not_proven",
+            ],
+            "forbidden_claims": [
+                "worker_output_is_review_truth",
+                "end_to_end_execution_review_closure",
+                "ready_to_merge",
+                "pr_merged",
+                "github_review_truth",
+                "live_memoryos",
+            ],
+        },
+    )
+
+
+def _write_runner_session(root: Path, candidate_ref: str) -> None:
+    _write_json(
+        root / "work" / "runner_sessions" / "runner-session-1.json",
+        {
+            "schema_version": "xmuse.runner_session.v1",
+            "source_authority": "platform_runner_session_boundary",
+            "session_id": "runner-session-1",
+            "run_id": "platform-runner:run-1",
+            "runner_id": "platform-runner",
+            "status": "session_completed",
+            "proof_level": "local_runtime_proof",
+            "started_at": "2026-06-15T00:00:00Z",
+            "completed_at": "2026-06-15T00:01:00Z",
+            "graph_id": "graph-runtime",
+            "resolution_id": "resolution-runtime",
+            "writer_lease_id": "lease-runtime",
+            "candidate_artifact_refs": [candidate_ref],
+            "candidate_lane_ids": ["lane-runtime-evidence-patch"],
+            "candidate_count": 1,
+            "manual_gaps": [
+                "review_truth_not_proven",
+                "server_truth_not_proven",
+                "github_truth_not_checked",
+                "live_memoryos_trace_not_proven",
+                "overnight_safe_recovery_not_proven",
+            ],
+            "forbidden_claims": [
+                "runner_session_is_review_truth",
+                "runner_session_is_server_truth",
+                "runner_session_is_live_invocation_proof",
+                "runner_session_is_graph_wide_closure",
+                "end_to_end_execution_review_closure",
+                "ready_to_merge",
+                "pr_merged",
+            ],
+        },
+    )

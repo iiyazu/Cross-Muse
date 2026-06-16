@@ -14,6 +14,8 @@ DEFAULT_CLI_TIMEOUT_SECONDS = 1800
 DEFAULT_OPENCODE_RUN_MODEL = "opencode-go/deepseek-v4-flash"
 DEFAULT_OPENCODE_RUN_VARIANT = "max"
 DEFAULT_CODEX_MODEL = os.getenv("GOAL_CODEX_MODEL", "gpt-5.5")
+DEFAULT_CODEX_FALLBACK_MODEL = "gpt-5.3-codex-spark"
+QuotaFallbackMode = Literal["none", "quota_exhausted"]
 
 
 StageStatus = Literal["ok", "retry", "blocked"]
@@ -284,6 +286,8 @@ class StagePaths:
     manifest_log: Path
     evidence_dir: Path
     runner_log: Path
+    primary_runner_log: Path
+    fallback_runner_log: Path
 
 
 def _stage_paths(output: Path) -> StagePaths:
@@ -294,16 +298,24 @@ def _stage_paths(output: Path) -> StagePaths:
         manifest_log=output.parent / f"{output.name}.manifest.jsonl",
         evidence_dir=evidence_dir,
         runner_log=evidence_dir / "engine_output.txt",
+        primary_runner_log=evidence_dir / "engine_output.primary.txt",
+        fallback_runner_log=evidence_dir / "engine_output.fallback.txt",
     )
 
 
-def _pick_command(engine: str, repo_root: Path, prompt_path: Path) -> list[str]:
+def _pick_command(
+    engine: str,
+    repo_root: Path,
+    prompt_path: Path,
+    *,
+    codex_model: str | None = None,
+) -> list[str]:
     if engine == "codex":
         return [
             "codex",
             "exec",
             "-m",
-            DEFAULT_CODEX_MODEL,
+            codex_model or DEFAULT_CODEX_MODEL,
             "--dangerously-bypass-approvals-and-sandbox",
             "-",
         ]
@@ -324,6 +336,21 @@ def _pick_command(engine: str, repo_root: Path, prompt_path: Path) -> list[str]:
             str(prompt_path),
         ]
     raise ValueError(f"unsupported engine: {engine}")
+
+
+def _is_quota_exhausted(output: str) -> bool:
+    lowered = output.lower()
+    return any(
+        token in lowered
+        for token in [
+            "quota",
+            "usage limit",
+            "weekly limit",
+            "rate limit",
+            "insufficient quota",
+            "model access",
+        ]
+    )
 
 
 def _classify_status(
@@ -357,6 +384,8 @@ def _is_recoverable_error(output: str) -> bool:
 def _build_retry_hint(returncode: int, output: str) -> str:
     if returncode == 124:
         return "Retry with longer timeout or smaller scope."
+    if _is_quota_exhausted(output):
+        return "Retry with a fallback Codex model if configured; otherwise resume manually."
     if _is_recoverable_error(output):
         return "Retry once; if repeated, switch to codex."
     return "Check manifest scope/permissions and rerun with corrected constraints."
@@ -430,6 +459,8 @@ def run_stage(
     output: Path,
     timeout_seconds: int,
     dry_run: bool,
+    fallback_model: str | None = None,
+    fallback_on: QuotaFallbackMode = "none",
 ) -> int:
     paths = _stage_paths(output)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -489,21 +520,24 @@ def run_stage(
 
     if dry_run:
         dry_run_message = "Dry run generated prompt and command but did not execute stage."
-        result = _with_manifest_metadata(
-            {
-                "stage_id": manifest.stage_id,
-                "status": "blocked",
-                "engine": chosen_engine,
-                "issues": _as_issue_list(dry_run_message),
-                "review_decision": "dry_run",
-                "retry_hint": "Run the same stage without --dry-run before advancing.",
-                "evidence_dir": str(paths.evidence_dir),
-                "agent_output_path": str(output),
-                "command": command,
-                "agent_stdout_path": str(paths.runner_log),
-            },
-            manifest,
-        )
+        dry_run_payload: dict[str, Any] = {
+            "stage_id": manifest.stage_id,
+            "status": "blocked",
+            "engine": chosen_engine,
+            "issues": _as_issue_list(dry_run_message),
+            "review_decision": "dry_run",
+            "retry_hint": "Run the same stage without --dry-run before advancing.",
+            "evidence_dir": str(paths.evidence_dir),
+            "agent_output_path": str(output),
+            "command": command,
+            "agent_stdout_path": str(paths.runner_log),
+        }
+        if chosen_engine == "codex":
+            dry_run_payload["primary_model"] = DEFAULT_CODEX_MODEL
+            dry_run_payload["fallback_model"] = fallback_model
+            dry_run_payload["fallback_on"] = fallback_on
+            dry_run_payload["fallback_triggered"] = False
+        result = _with_manifest_metadata(dry_run_payload, manifest)
         paths.runner_log.write_text(dry_run_message + "\n", encoding="utf-8")
         _write_result(output, result)
         _append_manifest_line(paths.manifest_log, result)
@@ -575,41 +609,133 @@ def run_stage(
         completed.stdout + ("\n---STDERR---\n" + completed.stderr if completed.stderr else ""),
         encoding="utf-8",
     )
+    paths.primary_runner_log.write_text(
+        completed.stdout + ("\n---STDERR---\n" + completed.stderr if completed.stderr else ""),
+        encoding="utf-8",
+    )
+
+    primary_returncode = completed.returncode
+    primary_output = completed.stdout + "\n" + completed.stderr
+    fallback_triggered = (
+        chosen_engine == "codex"
+        and fallback_on == "quota_exhausted"
+        and bool(fallback_model)
+        and completed.returncode != 0
+        and _is_quota_exhausted(primary_output)
+    )
+    fallback_completed: subprocess.CompletedProcess[str] | None = None
+    fallback_command: list[str] | None = None
+    fallback_command_repr: str | None = None
+    if fallback_triggered:
+        fallback_command = _pick_command(
+            "codex",
+            repo_root=repo_root,
+            prompt_path=paths.prompt,
+            codex_model=fallback_model,
+        )
+        fallback_command_repr = " ".join(fallback_command)
+        try:
+            fallback_completed = subprocess.run(
+                fallback_command,
+                cwd=str(repo_root),
+                capture_output=True,
+                input=prompt,
+                text=True,
+                timeout=timeout_seconds,
+                check=False,
+            )
+        except FileNotFoundError as exc:
+            fallback_completed = subprocess.CompletedProcess(
+                args=fallback_command,
+                returncode=127,
+                stdout="",
+                stderr=f"Command not found during fallback: {exc}",
+            )
+        except subprocess.TimeoutExpired as exc:
+            fallback_completed = subprocess.CompletedProcess(
+                args=fallback_command,
+                returncode=124,
+                stdout=_timeout_output(exc),
+                stderr=f"Fallback invocation timed out: {exc}",
+            )
+
+        fallback_text = fallback_completed.stdout + (
+            "\n---STDERR---\n" + fallback_completed.stderr if fallback_completed.stderr else ""
+        )
+        paths.fallback_runner_log.write_text(fallback_text, encoding="utf-8")
+        paths.runner_log.write_text(
+            "===PRIMARY ENGINE OUTPUT===\n"
+            + paths.primary_runner_log.read_text(encoding="utf-8")
+            + "\n===FALLBACK ENGINE OUTPUT===\n"
+            + fallback_text,
+            encoding="utf-8",
+        )
+        completed = fallback_completed
 
     previous_retries = _count_previous_retries(paths.manifest_log, manifest.stage_id)
     status = _classify_status(completed, manifest.max_retries, previous_retries)
-    issues_out = [] if completed.returncode == 0 else [
-        {
-            "message": f"Engine returned non-zero exit: {completed.returncode}",
-            "context": {
-                "stdout_tail": completed.stdout[-1200:],
-                "stderr_tail": completed.stderr[-1200:],
-            },
+    if completed.returncode == 0:
+        issues_out = []
+    else:
+        issue_context: dict[str, Any] = {
+            "stdout_tail": completed.stdout[-1200:],
+            "stderr_tail": completed.stderr[-1200:],
         }
-    ]
-
-    result = _with_manifest_metadata(
-        {
-            "stage_id": manifest.stage_id,
-            "status": status,
-            "engine": chosen_engine,
-            "issues": issues_out,
-            "review_decision": "pass" if status == "ok" else status,
-            "retry_hint": _build_retry_hint(
-                completed.returncode,
-                completed.stdout + "\n" + completed.stderr,
+        if fallback_triggered:
+            issue_context.update(
+                {
+                    "primary_returncode": primary_returncode,
+                    "fallback_command": fallback_command_repr,
+                }
             )
-            if status != "ok"
-            else None,
-            "evidence_dir": str(paths.evidence_dir),
-            "agent_output_path": str(output),
-            "command": command,
-            "agent_stdout_path": str(paths.runner_log),
-            "returncode": completed.returncode,
-            "attempt": previous_retries + 1,
-        },
-        manifest,
-    )
+        issues_out = [
+            {
+                "message": f"Engine returned non-zero exit: {completed.returncode}",
+                "context": issue_context,
+            }
+        ]
+
+    result_payload: dict[str, Any] = {
+        "stage_id": manifest.stage_id,
+        "status": status,
+        "engine": chosen_engine,
+        "issues": issues_out,
+        "review_decision": "pass" if status == "ok" else status,
+        "retry_hint": _build_retry_hint(
+            completed.returncode,
+            completed.stdout + "\n" + completed.stderr,
+        )
+        if status != "ok"
+        else None,
+        "evidence_dir": str(paths.evidence_dir),
+        "agent_output_path": str(output),
+        "command": fallback_command if fallback_triggered and fallback_command else command,
+        "primary_command": command,
+        "agent_stdout_path": str(paths.runner_log),
+        "primary_agent_stdout_path": str(paths.primary_runner_log),
+        "returncode": completed.returncode,
+        "attempt": previous_retries + 1,
+    }
+    if chosen_engine == "codex":
+        result_payload["primary_model"] = DEFAULT_CODEX_MODEL
+        result_payload["primary_returncode"] = primary_returncode
+    if fallback_model:
+        result_payload["fallback_model"] = fallback_model
+        result_payload["fallback_on"] = fallback_on
+    if fallback_triggered:
+        result_payload.update(
+            {
+                "fallback_triggered": True,
+                "fallback_reason": "quota_exhausted",
+                "fallback_command": fallback_command,
+                "fallback_agent_stdout_path": str(paths.fallback_runner_log),
+                "fallback_returncode": completed.returncode,
+            }
+        )
+    else:
+        result_payload["fallback_triggered"] = False
+
+    result = _with_manifest_metadata(result_payload, manifest)
     _write_result(output, result)
     _append_manifest_line(paths.manifest_log, result)
     return 0 if status == "ok" else 1 if status == "retry" else 2
@@ -668,6 +794,20 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Build prompt and command, but do not invoke engine",
     )
+    parser.add_argument(
+        "--fallback-model",
+        default=DEFAULT_CODEX_FALLBACK_MODEL,
+        help=(
+            "Optional Codex model to retry with when --fallback-on is triggered, "
+            f"for example {DEFAULT_CODEX_FALLBACK_MODEL}."
+        ),
+    )
+    parser.add_argument(
+        "--fallback-on",
+        default="quota_exhausted",
+        choices=["none", "quota_exhausted"],
+        help="Condition that triggers Codex model fallback.",
+    )
     return parser.parse_args(argv)
 
 
@@ -680,6 +820,8 @@ def main(argv: list[str] | None = None) -> int:
         output=args.output,
         timeout_seconds=args.timeout_seconds,
         dry_run=args.dry_run,
+        fallback_model=args.fallback_model,
+        fallback_on=args.fallback_on,
     )
 
 

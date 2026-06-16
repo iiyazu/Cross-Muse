@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -19,6 +20,8 @@ RUNNER_RECOVERY_FORBIDDEN_CLAIMS = [
     "ready_to_merge",
     "pr_merged",
 ]
+
+RUNNER_RECOVERY_LINEAGE_SCHEMA_VERSION = "xmuse.local_runner_recovery_proof_lineage.v1"
 
 
 def capture_runner_recovery_proof(
@@ -129,6 +132,107 @@ def build_runner_recovery_proof(
         ),
         "manual_gaps": _dedupe(manual_gaps),
         "forbidden_claims": list(RUNNER_RECOVERY_FORBIDDEN_CLAIMS),
+    }
+
+
+def build_runner_recovery_proof_lineage(
+    *,
+    proof: Mapping[str, Any],
+    artifact_ref: str,
+    graph_id: str,
+    lane_id: str,
+) -> dict[str, Any]:
+    """Validate a runner recovery proof for L9 lineage consumption.
+
+    The returned payload is intentionally lineage-only. It does not upgrade the
+    recovery proof into review truth, execution truth, server truth, or merge
+    readiness.
+    """
+
+    if _text(proof.get("schema_version")) != RUNNER_RECOVERY_PROOF_SCHEMA_VERSION:
+        raise ValueError("runner recovery proof schema is unsupported")
+    if _text(proof.get("source_authority")) != RUNNER_RECOVERY_PROOF_AUTHORITY:
+        raise ValueError("runner recovery proof source authority is unsupported")
+    status = _text(proof.get("status"))
+    proof_level = _text(proof.get("proof_level"))
+    if status not in {"ok", "manual_gap"}:
+        raise ValueError("runner recovery proof status is unsupported")
+    if proof_level not in {"local_runtime_proof", "manual_gap"}:
+        raise ValueError("runner recovery proof overclaims proof level")
+    if (status, proof_level) not in {
+        ("ok", "local_runtime_proof"),
+        ("manual_gap", "manual_gap"),
+    }:
+        raise ValueError("runner recovery proof status/proof_level mismatch")
+
+    forbidden_claims = _string_list(proof.get("forbidden_claims"))
+    missing_forbidden_claims = [
+        claim for claim in RUNNER_RECOVERY_FORBIDDEN_CLAIMS if claim not in forbidden_claims
+    ]
+    if missing_forbidden_claims:
+        raise ValueError("runner recovery proof missing forbidden claims")
+    manual_gaps = _dedupe(_string_list(proof.get("manual_gaps")))
+    required_manual_gaps = {
+        "review_truth_not_proven",
+        "server_truth_not_proven",
+        "overnight_safe_recovery_not_proven",
+    }
+    if not required_manual_gaps.issubset(set(manual_gaps)):
+        raise ValueError("runner recovery proof missing manual gaps")
+
+    filters = _dict(proof.get("filters"))
+    filtered_graph_id = _text(filters.get("graph_id"))
+    if filtered_graph_id is None:
+        raise ValueError("runner recovery proof graph filter is required")
+    if filtered_graph_id != graph_id:
+        raise ValueError("runner recovery proof graph filter does not match review closure")
+
+    target_ref = f"lane:{lane_id}"
+    target_refs = _string_list(proof.get("target_refs"))
+    if target_ref not in target_refs:
+        raise ValueError("runner recovery proof does not target the review closure lane")
+
+    candidate_selection = _dict(proof.get("candidate_selection"))
+    excluded_blocked_lane_ids = _string_list(
+        candidate_selection.get("excluded_recovery_blocked_lane_ids")
+    )
+    invalid_lane_ids = _string_list(
+        candidate_selection.get("invalid_recovery_artifact_lane_ids")
+    )
+    candidate_lane_ids = _string_list(candidate_selection.get("candidate_lane_ids"))
+    blocked_or_invalid = lane_id in {
+        *excluded_blocked_lane_ids,
+        *invalid_lane_ids,
+    }
+    if proof_level == "local_runtime_proof" and not blocked_or_invalid:
+        raise ValueError("runner recovery proof does not show a target-lane recovery block")
+
+    source_refs = _string_list(proof.get("source_refs"))
+    if proof_level == "local_runtime_proof" and not source_refs:
+        raise ValueError("runner recovery proof has no durable source refs")
+
+    lineage_status = "manual_gap"
+    if lane_id in excluded_blocked_lane_ids:
+        lineage_status = "target_lane_recovery_blocked"
+    elif lane_id in invalid_lane_ids:
+        lineage_status = "target_lane_recovery_artifact_invalid"
+
+    return {
+        "schema_version": RUNNER_RECOVERY_LINEAGE_SCHEMA_VERSION,
+        "artifact_ref": artifact_ref,
+        "source_authority": RUNNER_RECOVERY_PROOF_AUTHORITY,
+        "status": lineage_status,
+        "proof_level": proof_level,
+        "graph_id": graph_id,
+        "lane_id": lane_id,
+        "filtered_graph_id": filtered_graph_id,
+        "candidate_lane_ids": candidate_lane_ids,
+        "excluded_recovery_blocked_lane_ids": excluded_blocked_lane_ids,
+        "invalid_recovery_artifact_lane_ids": invalid_lane_ids,
+        "source_refs": source_refs,
+        "target_refs": target_refs,
+        "manual_gaps": manual_gaps,
+        "forbidden_claims": forbidden_claims,
     }
 
 

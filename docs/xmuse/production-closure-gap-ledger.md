@@ -1,6 +1,6 @@
 # xmuse Production Closure Gap Ledger
 
-更新日期: 2026-06-14
+更新日期: 2026-06-15
 
 本文档是 xmuse 生产闭环缺口台账。它用于把“用户最终看到的体验”和
 “生产实现必须遵守的依赖顺序”分开记录。
@@ -116,14 +116,134 @@ runtime、provider invocation、lane authority、review truth 完成。后续生
   `a47e5ba657cc1e307cbcb2b5dadb521852232a99`
 - Local head at start of L8 runner recovery proof artifact slice:
   `b122394186a697a2512fd23f9bb90ea70db41273`
+- Local head at start of L9 runner recovery proof lineage consumer slice:
+  `654b418c52cc1487193561f65e0521a5a82f0452`
+- Local head at start of L9 local execution candidate producer slice:
+  `654b418c52cc1487193561f65e0521a5a82f0452`
+- Local head at start of L9 review-chain proof capture slice:
+  `654b418c52cc1487193561f65e0521a5a82f0452`
+- Local head at start of L9 review-closure auto chain-proof handoff slice:
+  `654b418c52cc1487193561f65e0521a5a82f0452`
+- Local head at start of L9 platform-runner candidate handoff proof slice:
+  `654b418c52cc1487193561f65e0521a5a82f0452`
+- Local head at start of L9/L10 shared review-handoff gate refactor slice:
+  `654b418c52cc1487193561f65e0521a5a82f0452`
+- Local head at start of L10 GitHub server-truth refresh slice:
+  `654b418c52cc1487193561f65e0521a5a82f0452`
+- Local head at start of L10 GitHub server-truth artifact consumer slice:
+  `654b418c52cc1487193561f65e0521a5a82f0452`
+- Local head at start of L10 release-pack review-chain proof aggregation slice:
+  `654b418c52cc1487193561f65e0521a5a82f0452`
+- Local head at start of L9 review-chain durable second-step/session evidence slice:
+  `654b418c52cc1487193561f65e0521a5a82f0452`
+- Local head at start of L9 review-chain upstream session artifact validation slice:
+  `654b418c52cc1487193561f65e0521a5a82f0452`
+- Local head at start of L9 review-chain session semantic cross-link validation slice:
+  `654b418c52cc1487193561f65e0521a5a82f0452`
+- Local head at start of L9 review-chain patch-forward lane-contract validation slice:
+  `654b418c52cc1487193561f65e0521a5a82f0452`
+- Local head at start of L9 review-chain patch-forward source-gap boundary slice:
+  `654b418c52cc1487193561f65e0521a5a82f0452`
+- Local head at start of L9 review-chain reviewer independence boundary slice:
+  `654b418c52cc1487193561f65e0521a5a82f0452`
+- Local head at start of L9 review-chain graph-status source-lineage boundary
+  slice:
+  `654b418c52cc1487193561f65e0521a5a82f0452`
+- Local head at start of L9 review-chain review-intake graph-status boundary
+  slice:
+  `654b418c52cc1487193561f65e0521a5a82f0452`
+- Local head at start of L9 review-chain candidate graph-status boundary slice:
+  `654b418c52cc1487193561f65e0521a5a82f0452`
+- Local head at start of L9 review-chain candidate artifact-ref boundary slice:
+  `654b418c52cc1487193561f65e0521a5a82f0452`
+- Local head at start of L9 review-chain embedded candidate-lineage boundary
+  slice:
+  `654b418c52cc1487193561f65e0521a5a82f0452`
+- Local head at start of L9/L10 review-chain bounded-session consumer gate
+  slice:
+  `654b418c52cc1487193561f65e0521a5a82f0452`
+- Local head at start of L9 review-chain runner-recovery boundary slice:
+  `654b418c52cc1487193561f65e0521a5a82f0452`
+- Local head at start of L9 review-chain graph-wide lane-accounting boundary
+  slice:
+  `654b418c52cc1487193561f65e0521a5a82f0452`
+- Local head at start of L9 platform-runner session-boundary slice:
+  `654b418c52cc1487193561f65e0521a5a82f0452`
+- Local head at start of L8 platform-runner explicit recovery-root slice:
+  `654b418c52cc1487193561f65e0521a5a82f0452`
+- Local head at start of L8 stale-dispatch repair recovery-artifact slice:
+  `654b418c52cc1487193561f65e0521a5a82f0452`
+- Local head at start of L9 runner-session dispatch-failure boundary slice:
+  `654b418c52cc1487193561f65e0521a5a82f0452`
+- Local head at start of L8 pidless dispatched-lane recovery-artifact slice:
+  `654b418c52cc1487193561f65e0521a5a82f0452`
+- Local head at start of L9 runner-session candidate-capture-failure boundary
+  slice:
+  `654b418c52cc1487193561f65e0521a5a82f0452`
+- Local head at start of L9 runner-session empty-candidate proof boundary slice:
+  `654b418c52cc1487193561f65e0521a5a82f0452`
+- Local head at start of L9/L10 direct review-closure runner-session handoff
+  gate slice:
+  `654b418c52cc1487193561f65e0521a5a82f0452`
+- Local head at start of L9/L10 review-chain current-handoff consumer
+  revalidation slice:
+  `654b418c52cc1487193561f65e0521a5a82f0452`
+- Local head at start of L9 review-closure candidate producer boundary slice:
+  `654b418c52cc1487193561f65e0521a5a82f0452`
+- Local head at start of L9 runner-recovery graph-scope boundary slice:
+  `654b418c52cc1487193561f65e0521a5a82f0452`
+- Local head at start of L9/L10 review-chain release-linkage summary slice:
+  `654b418c52cc1487193561f65e0521a5a82f0452`
+- Local head at start of L9 platform-runner candidate graph-status reviewability
+  boundary slice:
+  `654b418c52cc1487193561f65e0521a5a82f0452`
+- Local head at start of L9 graph-native worker-evidence producer handoff slice:
+  `654b418c52cc1487193561f65e0521a5a82f0452`
+- Local head at start of L9 worker-evidence bundle verdict/chain citation
+  boundary slice:
+  `654b418c52cc1487193561f65e0521a5a82f0452`
+- Local head at start of L9 patch-lane graph-native worker-evidence producer
+  coverage slice:
+  `654b418c52cc1487193561f65e0521a5a82f0452`
+- Local head at start of L9/L10 worker-evidence bundle release source-ref
+  aggregation slice:
+  `654b418c52cc1487193561f65e0521a5a82f0452`
+- Local head at start of L9/L10 review-chain source-event lineage source-ref
+  aggregation slice:
+  `654b418c52cc1487193561f65e0521a5a82f0452`
+- Local head at start of L9/L10 direct review-closure current-handoff
+  revalidation slice:
+  `654b418c52cc1487193561f65e0521a5a82f0452`
+- Local head at start of L10 review-chain release-linkage source-ref gate slice:
+  `654b418c52cc1487193561f65e0521a5a82f0452`
+- Local head at start of L10 runtime-closure MemoryOS handoff revalidation slice:
+  `654b418c52cc1487193561f65e0521a5a82f0452`
+- Local head at start of L8 overnight supervisor recovery gate slice:
+  `654b418c52cc1487193561f65e0521a5a82f0452`
+- Local head at start of L9 runner-session worker-bundle lineage slice:
+  `654b418c52cc1487193561f65e0521a5a82f0452`
+- Local head at start of L10 expected review-chain gap slice:
+  `654b418c52cc1487193561f65e0521a5a82f0452`
+- Local head at start of L8 orchestrator gate-failure recovery-artifact slice:
+  `654b418c52cc1487193561f65e0521a5a82f0452`
+- Local head at start of L8 review patch-forward recovery-artifact slice:
+  `654b418c52cc1487193561f65e0521a5a82f0452`
+- Local head at start of L8 review rejection recovery-artifact slice:
+  `654b418c52cc1487193561f65e0521a5a82f0452`
+- Local head at start of L8 merge-failure recovery-artifact slice:
+  `654b418c52cc1487193561f65e0521a5a82f0452`
+- Local head at start of L8 review retry-exhaustion recovery-artifact slice:
+  `654b418c52cc1487193561f65e0521a5a82f0452`
+- Local head at start of L8 review retry recovery-artifact slice:
+  `654b418c52cc1487193561f65e0521a5a82f0452`
 - PR: <https://github.com/iiyazu/Cross-Muse/pull/43>
 - PR state last checked: draft/open/unmerged
 - PR merge state last checked: `CLEAN`
 - PR review decision last checked: empty
 - Verified GitHub Actions truth at the start of this slice applied to remote head
-  `b122394186a697a2512fd23f9bb90ea70db41273`: run
-  `27501340999`, success
-- Local changes after `b122394186a697a2512fd23f9bb90ea70db41273` must not be
+  `654b418c52cc1487193561f65e0521a5a82f0452`: run
+  `27502826595`, success
+- Local changes after `654b418c52cc1487193561f65e0521a5a82f0452` must not be
   treated as CI-verified until pushed and checked again.
 
 Machine-readable snapshot for gates and future `/goal` setup:
@@ -169,15 +289,73 @@ truth_snapshot:
   local_head_at_l7_l10_freeze_source_event_lineage_carry_slice: aff7607052bb4dd4f017b84ae728dc73f57a0995
   local_head_at_l7_l10_graph_status_source_event_lineage_carrier_slice: a47e5ba657cc1e307cbcb2b5dadb521852232a99
   local_head_at_l8_runner_recovery_proof_artifact_slice: b122394186a697a2512fd23f9bb90ea70db41273
+  local_head_at_l9_runner_recovery_proof_lineage_consumer_slice: 654b418c52cc1487193561f65e0521a5a82f0452
+  local_head_at_l9_local_execution_candidate_producer_slice: 654b418c52cc1487193561f65e0521a5a82f0452
+  local_head_at_l9_default_graph_status_candidate_producer_slice: 654b418c52cc1487193561f65e0521a5a82f0452
+  local_head_at_l9_review_chain_proof_capture_slice: 654b418c52cc1487193561f65e0521a5a82f0452
+  local_head_at_l9_review_closure_auto_chain_proof_handoff_slice: 654b418c52cc1487193561f65e0521a5a82f0452
+  local_head_at_l9_platform_runner_candidate_handoff_proof_slice: 654b418c52cc1487193561f65e0521a5a82f0452
+  local_head_at_l9_l10_shared_review_handoff_gate_refactor_slice: 654b418c52cc1487193561f65e0521a5a82f0452
+  local_head_at_l10_github_server_truth_refresh_slice: 654b418c52cc1487193561f65e0521a5a82f0452
+  local_head_at_l10_github_server_truth_artifact_consumer_slice: 654b418c52cc1487193561f65e0521a5a82f0452
+  local_head_at_l10_release_pack_review_chain_proof_aggregation_slice: 654b418c52cc1487193561f65e0521a5a82f0452
+  local_head_at_l9_review_chain_durable_second_step_session_evidence_slice: 654b418c52cc1487193561f65e0521a5a82f0452
+  local_head_at_l9_review_chain_upstream_session_artifact_validation_slice: 654b418c52cc1487193561f65e0521a5a82f0452
+  local_head_at_l9_review_chain_session_semantic_cross_link_validation_slice: 654b418c52cc1487193561f65e0521a5a82f0452
+  local_head_at_l9_review_chain_patch_forward_lane_contract_validation_slice: 654b418c52cc1487193561f65e0521a5a82f0452
+  local_head_at_l9_review_chain_patch_forward_source_gap_boundary_slice: 654b418c52cc1487193561f65e0521a5a82f0452
+  local_head_at_l9_review_chain_reviewer_independence_boundary_slice: 654b418c52cc1487193561f65e0521a5a82f0452
+  local_head_at_l9_review_chain_graph_status_source_lineage_boundary_slice: 654b418c52cc1487193561f65e0521a5a82f0452
+  local_head_at_l9_review_chain_review_intake_graph_status_boundary_slice: 654b418c52cc1487193561f65e0521a5a82f0452
+  local_head_at_l9_review_chain_candidate_graph_status_boundary_slice: 654b418c52cc1487193561f65e0521a5a82f0452
+  local_head_at_l9_review_chain_candidate_artifact_ref_boundary_slice: 654b418c52cc1487193561f65e0521a5a82f0452
+  local_head_at_l9_review_chain_embedded_candidate_lineage_boundary_slice: 654b418c52cc1487193561f65e0521a5a82f0452
+  local_head_at_l9_l10_review_chain_bounded_session_consumer_gate_slice: 654b418c52cc1487193561f65e0521a5a82f0452
+  local_head_at_l9_review_chain_runner_recovery_boundary_slice: 654b418c52cc1487193561f65e0521a5a82f0452
+  local_head_at_l9_runner_session_empty_candidate_proof_boundary_slice: 654b418c52cc1487193561f65e0521a5a82f0452
+  local_head_at_l9_l10_direct_review_closure_runner_session_handoff_gate_slice: 654b418c52cc1487193561f65e0521a5a82f0452
+  local_head_at_l9_l10_review_chain_current_handoff_consumer_revalidation_slice: 654b418c52cc1487193561f65e0521a5a82f0452
+  local_head_at_l9_review_closure_candidate_producer_boundary_slice: 654b418c52cc1487193561f65e0521a5a82f0452
+  local_head_at_l9_runner_recovery_graph_scope_boundary_slice: 654b418c52cc1487193561f65e0521a5a82f0452
+  local_head_at_l9_l10_review_chain_release_linkage_summary_slice: 654b418c52cc1487193561f65e0521a5a82f0452
+  local_head_at_l9_platform_runner_candidate_graph_status_reviewability_boundary_slice: 654b418c52cc1487193561f65e0521a5a82f0452
+  local_head_at_l9_graph_native_worker_evidence_producer_handoff_slice: 654b418c52cc1487193561f65e0521a5a82f0452
+  local_head_at_l9_worker_evidence_bundle_verdict_chain_citation_boundary_slice: 654b418c52cc1487193561f65e0521a5a82f0452
+  local_head_at_l9_patch_lane_graph_native_worker_evidence_producer_coverage_slice: 654b418c52cc1487193561f65e0521a5a82f0452
+  local_head_at_l9_l10_worker_evidence_bundle_release_source_ref_aggregation_slice: 654b418c52cc1487193561f65e0521a5a82f0452
+  local_head_at_l9_l10_review_chain_source_event_lineage_source_ref_aggregation_slice: 654b418c52cc1487193561f65e0521a5a82f0452
+  local_head_at_l9_l10_direct_review_closure_current_handoff_revalidation_slice: 654b418c52cc1487193561f65e0521a5a82f0452
+  local_head_at_l10_review_chain_release_linkage_source_ref_gate_slice: 654b418c52cc1487193561f65e0521a5a82f0452
+  local_head_at_l10_runtime_closure_memoryos_handoff_revalidation_slice: 654b418c52cc1487193561f65e0521a5a82f0452
+  local_head_at_l8_overnight_supervisor_recovery_gate_slice: 654b418c52cc1487193561f65e0521a5a82f0452
+  local_head_at_l8_orchestrator_gate_failure_recovery_artifact_slice: 654b418c52cc1487193561f65e0521a5a82f0452
+  local_head_at_l8_review_patch_forward_recovery_artifact_slice: 654b418c52cc1487193561f65e0521a5a82f0452
+  local_head_at_l8_review_rejection_recovery_artifact_slice: 654b418c52cc1487193561f65e0521a5a82f0452
+  local_head_at_l8_merge_failure_recovery_artifact_slice: 654b418c52cc1487193561f65e0521a5a82f0452
+  local_head_at_l8_review_retry_recovery_artifact_slice: 654b418c52cc1487193561f65e0521a5a82f0452
   pr: 43
   pr_url: https://github.com/iiyazu/Cross-Muse/pull/43
   pr_state: draft_open_unmerged
   merge_state: CLEAN
   review_decision: empty
-  verified_ci_head_at_slice_start: b122394186a697a2512fd23f9bb90ea70db41273
-  verified_ci_run_at_slice_start: 27501340999
+  verified_ci_head_at_slice_start: 654b418c52cc1487193561f65e0521a5a82f0452
+  verified_ci_run_at_slice_start: 27502826595
   ci_verified_for_slice_start_head: true
   local_changes_after_verified_head: true
+  local_github_server_truth_refresh:
+    capture_mode: opt_in_read_only_gh_api
+    artifact_path: /tmp/xmuse-github-truth-pr43.json
+    release_gate_artifact_path: /tmp/xmuse-github-truth-gate-pr43.json
+    truth_proof_level: manual_gap
+    gate_proof_level: server_side_enforcement_proof
+    pull_request_state: open
+    draft: true
+    mergeable_state: clean
+    head_sha_matches_expected: true
+    required_check_truth_captured: true
+    branch_protection_truth_captured: true
+    can_emit_pr_merged: false
+    gap_reason: "missing server-side truth: review_truth, merge_truth"
   pr_merged_claim_allowed: false
 ```
 
@@ -208,8 +386,8 @@ Evidence boundaries:
 | L6 | Blueprint Freeze Authority | Typed freeze artifact exists with proof-level classification and source event lineage | Single-turn provider-backed speech plus provider-backed question/challenge/handoff event proofs and bounded multi-turn L3-L5 run lineage can feed freeze artifacts while preserving durable event authority; fresh natural multi-GOD freeze still missing | Not server-bound | Freeze contract proof plus isolated opt-in live freeze proof, provider-backed event lineage proof, and bounded multi-turn lineage proof |
 | L7 | Feature / LaneDAG Authority | LaneDAG/contract artifact exists with upstream freeze proof metadata, source event lineage, and graph-set/status initialization contract | Live L4/L5/L6 proof metadata and structured freeze source-event lineage can flow into laneDAG without writing `feature_lanes.json`; laneDAG route now derives graph-set artifacts and initializes graph-native status records with inherited `blueprint_proof_level` and `source_event_lineage`; `FeatureGraphStatusStore` preserves existing lineage and rejects conflicting rewrites; `graph_set_id`-backed orchestrator dispatch/review/reprojection now fail closed when durable graph-native status is missing; full dispatch/review authority still not unified | Not server-bound | LaneDAG contract proof plus isolated opt-in live upstream-proof propagation, structured freeze lineage carrier proof, graph-native proof/source-event-lineage carrier proof, laneDAG-to-status initialization proof, and graph-native missing-status fail-closed proof |
 | L8 | Lane Runtime Enforcement / Recovery | Recovery contract/API exists and recovery artifacts carry laneDAG proof lineage | Recovery API consumes laneDAG contract/budget and preserves blueprint proof/source refs plus laneDAG `source_event_lineage`; GOD-room review intake and orchestrator dispatch now fail-close non-retry recovery decisions; review intake now also requires graph-native `REVIEWING` status from `FeatureGraphStatusStore`; platform runner can emit a local recovery proof artifact from candidate selection plus shared run-health recovery state; broader live runner enforcement still incomplete | Not server-bound | Recovery policy proof plus laneDAG-lineage/source-event-lineage evidence proof plus review-intake/dispatch enforcement proof plus local runner recovery artifact proof |
-| L9 | Execution / Review / Patch-Forward | Review plane plus GOD-room review intake/verdict/patch-forward/closure artifact contracts exist | GOD-room lane contracts/recovery/candidate evidence can be packaged for independent review only after graph-native status is `REVIEWING`; review intake carries `source_event_lineage` from graph-native status, patch-forward carries it from laneDAG, and reviewed patch-lane closure carries it from `FeatureGraphStatusStore` `MERGED` authority; merge/rework/blocked verdicts now consume graph-native review coordinator authority and update `FeatureGraphStatusStore`; patch-forward verdicts record graph-native gate plans without writing lane status; patch-forward can append a laneDAG patch lane; live execution proof and server truth still missing | Not server-bound | GOD-room review/patch-forward closure contract proof plus graph-status-gated review-intake/verdict/closure proof and review-plane/source-event-lineage store lineage proof, not server/GitHub truth |
-| L10 | MemoryOS / Release Evidence / GitHub Truth | Evidence bundle semantics exist and can index GOD-room review closure handoff plus bounded multi-turn provider speech lineage; release candidates can seed MemoryOS source refs from review closure and runtime closure evidence | Runtime closure evidence preserves per-turn L4/L5 refs, appended event ids/types, laneDAG-carried freeze source-event lineage, and review-closure-carried graph-status source-event lineage as contract lineage; live MemoryOS trace and live execution/server truth missing | PR open/unmerged; CI truth only for verified remote head | Replay/readiness proof with explicit gaps |
+| L9 | Execution / Review / Patch-Forward | Review plane plus GOD-room review intake/verdict/patch-forward/closure artifact contracts exist | GOD-room lane contracts/recovery/candidate evidence can be packaged for independent review only after graph-native status is `REVIEWING`; review intake carries `source_event_lineage` from graph-native status, can auto-discover valid runner-emitted graph-status-bound local execution candidates only when their current status and `FeatureGraphArtifactStore` evidence bundle match the platform-runner worker session, and preserves missing/invalid candidates as manual gaps; patch-forward now gives the patch lane its own lane runtime `feature_id`, updates graph-set/status authority for that patch feature, and initializes the patch feature graph to `READY` so the platform-runner worker-evidence producer can advance the patch lane through READY -> RUNNING -> REVIEWING instead of reusing the failed lane's REVIEWING feature graph; patch-forward carries lineage from laneDAG, and reviewed patch-lane closure carries it from `FeatureGraphStatusStore` `MERGED` authority; merge/rework/blocked verdicts now consume graph-native review coordinator authority and update `FeatureGraphStatusStore`; patch-forward verdicts record graph-native gate plans without writing lane status; patch-forward can append a laneDAG patch lane; review closure can now consume `xmuse.local_runner_recovery_proof.v1` as lineage-only recovery evidence and validates cited graph-status-bound `xmuse.local_execution_candidate.v1` artifacts before L10 handoff; platform runner emits local execution candidate artifacts by default under runtime `work/local_execution_candidates`, but `candidate_only` requires `FeatureGraphStatusStore` lineage and missing lineage degrades to `manual_gap`; platform-runner candidate source refs now include the graph-native worker `FeatureEvidenceBundle` ref when that producer handoff succeeds; candidate artifacts now carry a `producer` boundary, and only `platform_runner_dispatch` can satisfy bounded-session readiness, while `manual_cli_capture` remains generic candidate evidence only; `xmuse.god_room_lane_review_chain_proof.v1` can now validate a review closure, cited local execution candidates, required L8 recovery lineage, and the shared L9/L10 review-closure handoff gate as one contract handoff artifact without importing the L10 aggregator; the review-closure API now writes that chain-proof handoff artifact on the same graph-status-gated closure path, and a separate review-chain-proof API can regenerate it as a second durable operation from the stored review-closure artifact; the chain proof carries a bounded `local_execution_review_session` detail with candidate refs/run ids, producer refs, review verdict refs, patch-forward refs, recovery proof status, runner-recovery boundary status, and upstream session artifact validation for patch-forward, the failed-lane patch-forward verdict, patch-lane intake, and patch-lane verdict artifacts while staying `contract_proof`/`not_server_truth`; the same validation now requires the patch-lane intake to cite closure-selected platform-runner local execution candidate artifacts, the terminal merge verdict to cite both the review intake and closure-selected candidate refs, the terminal patch-lane verdict to preserve and cite its discovered worker-evidence bundle refs, the patch-forward artifact to point at a failed-lane `patch-forward` verdict, and the patch-forward laneDAG link/runtime contract to bind failed lane, patch lane, patch-forward verdict ref, evidence refs, dependency refs, required checks, and patch output refs; graph-wide lane accounting now treats a failed lane with a validated patch-forward terminal lane as superseded rather than requiring the failed lane's graph to merge or carry a separate candidate; missing recovery lineage, escaping, schema-mismatched, scope-mismatched, producer-mismatched, cross-link-mismatched, non-merge/non-patch-forward, invalid patch-forward link/contract, invalid patch-lane graph-status authority, uncited terminal patch-lane worker bundle refs, or proof-inflated upstream session artifacts degrade the chain proof to `manual_gap`; full live execution/review chain and server truth still missing | Not server-bound | GOD-room review/patch-forward closure contract proof plus graph-status-gated review-intake/verdict/closure proof, review-plane/source-event-lineage store lineage proof, L8 recovery-proof lineage-boundary proof, default graph-status-bound local execution candidate producer/validator proof, review-intake candidate discovery proof, platform-runner producer-boundary proof, review-intake worker-evidence-bundle consumer proof, patch-lane graph-native worker-evidence producer coverage proof, terminal patch-lane worker-bundle citation proof, and L9-to-L10 review-chain proof capture/API handoff plus durable second-step/session-detail/upstream-artifact-validation, semantic cross-link, patch-forward lane-contract, and graph-wide superseded-lane accounting contract proof; not server/GitHub truth |
+| L10 | MemoryOS / Release Evidence / GitHub Truth | Evidence bundle semantics exist and can index GOD-room review closure handoff plus bounded multi-turn provider speech lineage; release candidates can seed MemoryOS source refs from review closure, review-chain proof, and runtime closure evidence | Runtime closure evidence preserves per-turn L4/L5 refs, appended event ids/types, laneDAG-carried freeze source-event lineage, review-closure-carried graph-status source-event lineage, and review-closure-carried runner recovery proof lineage as contract lineage; `xmuse.review_closure_handoff_evaluation.v1` now gives runtime closure, release candidates, and feature lineage replay one shared evaluation surface for review-closure candidate refs, cited refs, source-event-lineage counts, required forbidden claims, and not-server-truth status; release-evidence candidate reports can consume `xmuse.god_room_lane_review_chain_proof.v1` only as source-ref guidance after validating it remains `contract_proof`/`not_server_truth` and passes the bounded local execution/review session consumer gate; verified worker-evidence bundle refs from the review-chain citation boundary now flow into MemoryOS candidate payload hints, runtime closure replay source refs, and review-chain release-linkage source refs as aggregation lineage only; release-evidence candidate reports can also consume `github_server_side_truth_capture.v1` as existing GitHub server-truth input through the GitHub release gate while recomputing `can_emit_pr_merged`; live MemoryOS trace and live execution/server truth missing | PR open/unmerged; CI truth only for verified remote head; review/merge truth still missing | Replay/readiness proof with explicit gaps plus shared review-closure handoff evaluation and worker-bundle source-ref aggregation proof; not review/server truth |
 | L11 | Operator Cockpit / TUI / Overnight Soak | TUI/control slices exist | Complete cockpit/soak missing | Depends on L10 | Operator projection/control proof only |
 
 Current closure audit:
@@ -228,13 +406,159 @@ Current closure audit:
     graph-set, and graph-native status contracts. Do not overread it as full
     execution authority.
   - Wave D / L8-L9 is the current production focus. L8 now has a local runner
-    recovery proof artifact; the next priority is L9 review/release lineage.
+    recovery proof artifact, and L9 can consume it as review/release lineage.
+    L9 now also has a local execution candidate capture/validation contract,
+    including opt-in platform-runner candidate artifact emission after dispatch,
+    and a durable second-step review-chain-proof API that reloads the stored
+    review closure and exposes bounded local execution/review session evidence
+    without upgrading it beyond `contract_proof` / `not_server_truth`.
+    The chain proof now also reloads patch-forward, patch-lane intake, and
+    patch-lane verdict artifact refs from the closure and fail-closes dangling
+    refs, scope mismatches, non-merge terminal verdicts, and proof inflation.
+    It additionally validates semantic cross-links across the bounded session:
+    the patch-forward artifact must point at a failed-lane `patch-forward`
+    verdict, the patch-lane intake must include closure-selected local
+    execution candidate artifacts, and the terminal merge verdict must cite
+    both the review intake and closure-selected candidate refs.
+    The same chain proof now also validates the patch-forward laneDAG link and
+    patch-lane runtime contract: failed lane and patch lane ids, patch-forward
+    verdict ref, evidence refs, dependency refs, required checks, and patch
+    output refs must remain aligned or the bounded session stays `manual_gap`.
+    It also records the patch-forward artifact's source `manual_gaps` and
+    `forbidden_claims`, explicitly marking `patch_lane_not_executed` and
+    `patch_lane_not_reviewed` as resolved only when downstream patch-lane
+    candidate/intake/verdict evidence validates, while keeping
+    `release_evidence_not_linked` as a retained gap for L10.
+    The bounded session now also checks terminal patch-lane review
+    independence by comparing the validated verdict `reviewer_id` with cited
+    local execution candidate `worker_id`s; missing reviewer identity or a
+    reviewer/worker match keeps the chain proof at `manual_gap`.
+    The same bounded session now also checks that review-closure
+    `cited_candidate_artifact_refs` exactly match the resolved valid
+    `xmuse.local_execution_candidate.v1` lineage artifact refs, and the shared
+    L9/L10 handoff gate rejects unresolved or undeclared candidate artifact refs.
+    This prevents L10 source-ref aggregation from consuming a partially resolved
+    candidate list while remaining `contract_proof` / `not_server_truth`.
+    It now also checks closure-embedded `cited_candidate_artifact_lineage`
+    against freshly resolved local execution candidate lineage before the chain
+    proof or shared handoff gate can become ready. This prevents a stale or
+    forged embedded lineage block from being overread by downstream consumers
+    while still remaining artifact-local `contract_proof`.
+    L10 MemoryOS candidate and runtime-closure consumers now also require a
+    shared review-chain bounded-session gate before accepting a chain proof as
+    source-ref aggregation. That gate requires
+    `local_execution_review_session` to be `bounded_session_ready`, artifact
+    validation, session-scope, graph/candidate/reviewer boundaries to be
+    verified, and session candidate refs to match the release handoff,
+    candidate-lineage, candidate-boundary, and session artifact refs. A
+    hand-written `chain_ready` proof without this bounded session stays
+    `manual_gap`; this is still contract-proof consumer hardening, not live
+    review/server truth.
+    L10 MemoryOS candidate and runtime-closure consumers now also re-derive the
+    current review-closure handoff from the chain proof's `review_closure_artifact`
+    before accepting source-ref aggregation. If the current runner-session or
+    candidate lineage no longer validates, or if current candidate refs diverge
+    from the embedded handoff refs, the chain proof stays out of L10 source refs.
+    This prevents stale embedded handoff data from being treated as current L9
+    authority while remaining contract-proof aggregation only.
+    The bounded session now includes
+    `xmuse.local_execution_review_session.v1` plus
+    `xmuse.local_execution_review_session_scope_boundary.v1`, carrying a stable
+    session id, graph/failed-lane/patch-lane scope, runner-emitted local
+    execution candidate refs, L8 recovery proof refs, patch-forward/review
+    artifact refs, and session source refs. Missing session artifact/source
+    refs keeps the proof out of L10 source-ref aggregation.
+    The chain proof now also carries a `runner_recovery_lineage_boundary` and
+    treats L8 recovery lineage as required for `chain_ready`: missing recovery
+    proof, unreadable recovery proof `artifact_ref`, unsupported lineage schema,
+    missing or unreadable durable source refs, missing target refs, missing
+    failed-lane target ref, missing forbidden claims, or missing review/server/
+    overnight manual gaps keep the chain proof at `manual_gap`.
+    Review closure may still be written with `runner_recovery_proof_not_linked`,
+    but it cannot be overread as a complete L8-L9 chain or L10-ready handoff.
+    Release evidence pack now emits
+    `xmuse.god_room_review_chain_release_linkage.v1` as a top-level aggregation
+    summary when a review-chain proof is supplied. It records whether the
+    chain proof was actually indexed into the GOD-room runtime closure replay
+    source refs, marks `release_evidence_export_not_attempted` and
+    `release_evidence_not_linked` as resolved only for that pack when linked,
+    retains server/MemoryOS/GitHub gaps, and explicitly says it does not affect
+    pack readiness or create server truth.
+    The linkage emits chain `source_refs` only after the review-chain proof is
+    actually linked through runtime-closure replay source refs, bounded session
+    gate, and current review-closure handoff. When linkage stays `manual_gap`,
+    unrelated GOD-room/provider refs already present in the same replay section
+    are not copied into review-chain linkage source refs.
+    L10 MemoryOS candidate reports now also revalidate runtime-closure evidence
+    that carries review-closure or review-chain lineage before copying its
+    `source_refs` into MemoryOS payload hints. Provider-only runtime replay refs
+    can remain candidate hints, but stale review-closure candidate/session
+    lineage keeps the runtime-closure candidate gate not-ready. The
+    review-chain proof candidate gate now uses the L9 review-chain forbidden
+    claims constant instead of a hand-written subset, preventing L10 from
+    accepting proof artifacts that dropped end-to-end/reviewer-boundary
+    forbidden claims.
+    Overnight supervisor stage start now runs a durable recovery preflight gate
+    over runtime `lane_graphs/*.recovery.json` artifacts. Non-retry
+    `refactor_required`/`suspended`/`manual_gap` decisions or invalid recovery
+    artifacts produce blocked supervisor evidence and prevent the stage from
+    starting, while preserving `manual_gap` and forbidden claims instead of
+    claiming overnight-safe recovery.
+    Platform-runner runner-session artifacts now also record worker-evidence
+    bundle refs produced during that runner invocation. The L9 review-chain
+    runner-session boundary compares candidate `feature_evidence_bundle:*`
+    source refs against the runner-session bundle refs; a candidate that cites
+    a worker bundle not recorded by its runner session keeps the chain proof at
+    `manual_gap`. This binds worker-bundle citation to the runner-session
+    authority path without making the bundle, local runner output, or local
+    tests independent review truth.
+    Platform-runner local execution candidate capture now requires
+    graph-native status lineage to be `reviewing` before the candidate can be
+    recorded as `candidate_only` / `local_runtime_proof`; READY/RUNNING or other
+    pre-review statuses produce a `manual_gap` with
+    `graph_native_worker_evidence_not_submitted` and
+    `local_execution_candidate_not_reviewable`. Runner sessions no longer count
+    those manual-gap candidate artifacts as runtime-proof candidate refs, so a
+    dispatch-return artifact cannot be mistaken for review-ready L9 execution
+    proof before graph-native worker evidence moves the lane to review intake.
+    Platform runner now has a bounded graph-native worker-evidence producer
+    handoff: after `dispatch_lane` returns, it can claim a READY
+    `FeatureGraphStatusStore` record into RUNNING for the current
+    `runner_session_id`, build a `FeatureEvidenceBundle` from current lane
+    metadata plus status-store authority, and submit it through the existing
+    worker-evidence coordinator to move the graph status to REVIEWING before
+    local execution candidate capture. This path requires a real
+    `provider_session_binding_ref` / `provider_session_binding_id`,
+    `planning_run_id`, `blueprint_refs`, `acceptance_criteria`, and
+    `required_checks`; missing prerequisites leave the existing candidate
+    path at `manual_gap`. The proof is local runtime / contract handoff only
+    and still does not create independent review truth, GitHub truth,
+    MemoryOS live proof, merge truth, or broad live worker closure.
+    GOD-room review intake auto-discovery now consumes that producer handoff:
+    a platform-runner local execution candidate is auto-added as reviewer input
+    only when its embedded graph-status lineage matches the current
+    `FeatureGraphStatusStore` record and a matching
+    `FeatureGraphArtifactStore` `FeatureEvidenceBundle` for the same
+    runner-session/provider-binding/completed-lane is present and cited by the
+    candidate source refs. Missing bundle/current-status lineage keeps the
+    candidate out of auto-discovery and preserves
+    `worker_candidate_evidence_missing`. Independent review verdicts now
+    fail closed when such discovered worker-evidence bundle refs are not cited
+    in `evidence_refs`, then carry
+    `worker_evidence_bundle_citation_status=verified` plus the intake
+    `xmuse.local_execution_candidate_worker_evidence_boundary.v1` payload into
+    the verdict artifact. Patch-forward artifacts propagate the source verdict
+    bundle citation fields, and the L9 review-chain proof now requires
+    `xmuse.worker_evidence_bundle_citation_boundary.v1` in the bounded session
+    gate so missing or mismatched bundle citation keeps the chain at
+    `manual_gap`. This remains contract/API handoff proof only; patch-lane
+    bundle producer coverage and broad live worker execution/review proof
+    remain later work.
   - Wave E / L10-L11 must wait for honest L8-L9 lineage before claiming
     release readiness, complete cockpit, or overnight proof.
-- Next production priority: consume `xmuse.local_runner_recovery_proof.v1` in
-  the L9 review/release evidence chain as recovery enforcement lineage only,
-  then prove a graph-native GOD-room-originated lane through local execution,
-  independent review, patch-forward, and release-evidence linkage without
+- Next production priority: prove a graph-native GOD-room-originated lane
+  through local execution, independent review, patch-forward, and
+  release-evidence linkage while carrying L8 recovery proof lineage and without
   inflating worker output, local tests, recovery artifacts, CI, MemoryOS plans,
   or TUI projections into review/server truth.
 
@@ -882,12 +1206,200 @@ Use these as implementation references, not as xmuse package dependencies:
     non-retry recovery decision or invalid recovery artifact is recorded on the
     lane metadata and excluded from runner candidates, so runner scheduling no
     longer repeatedly treats recovery-blocked lanes as dispatchable.
+    Candidate selection now receives the xmuse root explicitly and no longer
+    treats a missing private orchestrator `_root` attribute as permission to
+    skip recovery authority. Projection lanes whose public `feature_id` is a
+    URI use their stable `lane_local_id` for durable recovery-artifact lookup
+    without changing dispatch/state-machine identity. This closes a runner
+    candidate-selection bypass at `local_runtime_proof`/contract boundary; it
+    still does not prove a long-running live supervisor or overnight-safe
+    recovery.
+  - Platform runner stale-dispatch repair now writes a durable
+    `lane_recovery_artifact` after a CAS-guarded transition from `dispatched`
+    to `exec_failed` succeeds. The artifact records
+    `source_authority=platform_runner_stale_repair`, a non-retry suspended
+    decision for `stale_worker_lost` or `dispatch_no_worker_pid`, manual gaps
+    for live/review/server/overnight proof, and forbidden claims. The repaired
+    lane metadata records the artifact ref, and the next runner
+    candidate-selection pass consumes the artifact and blocks same-path
+    redispatch. If the CAS transition fails, no recovery artifact is written for
+    that lane. For pidless dispatched lanes, repair is limited to graph-bound
+    lanes whose recovery artifact can be written under durable lane authority;
+    legacy projection-only lanes still cannot be promoted to durable authority.
+    This closes stale worker and graph-bound pidless-dispatch redispatch-loop
+    bypasses at local runtime/contract boundary only.
+  - Orchestrator gate failure now also writes a durable
+    `lane_recovery_artifact` after the lane transitions from `executed` to
+    `gate_failed`. The artifact is produced by
+    `source_authority=platform_orchestrator_gate_runner`, uses the lane runtime
+    budget plus gate report/source refs to build `LaneFailureEvidence`, and
+    derives the recovery decision through `evaluate_lane_recovery` rather than
+    hand-written status tags. First gate failure can remain
+    `decision=retry`/`retry_allowed=true`; repeated same-class gate failure
+    can become `decision=refactor_required`/`retry_allowed=false`. The lane
+    metadata records the recovery artifact ref and decision; write failure is
+    preserved as `manual_gap`. This closes the normal execution gate-failure
+    producer gap at contract/local authority boundary only, and does not prove
+    review truth, server truth, live long-running runner enforcement, or
+    overnight-safe recovery. Local validation for this slice: `uv run pytest
+    tests/xmuse/test_platform_orchestrator.py::test_gate_failure_marks_lane_gate_failed_and_skips_review
+    tests/xmuse/test_platform_orchestrator.py::test_gate_failure_writes_retry_recovery_artifact
+    tests/xmuse/test_platform_orchestrator.py::test_repeated_gate_failure_writes_refactor_required_recovery_artifact
+    tests/xmuse/test_platform_runner.py::test_candidate_lanes_excludes_non_retry_recovery_decision
+    tests/xmuse/test_overnight_operator_supervisor.py::test_overnight_supervisor_recovery_gate_snapshots_durable_blocks
+    -q` -> 5 passed; `uv run pytest tests/xmuse/test_package_boundaries.py -q`
+    -> 18 passed; `uv run ruff check .` -> passed; `git diff --check` ->
+    passed; `test ! -e xmuse/__init__.py` -> passed. These are local validation
+    only, not CI, live runner, review, or merge truth.
+  - Orchestrator review patch-forward now writes a durable
+    `lane_recovery_artifact` for the original failed lane after the
+    patch-forward verdict transitions it to `failed` and appends the patch
+    lane. The artifact is produced by
+    `source_authority=platform_orchestrator_review_patch_forward`, records the
+    review verdict, evidence refs, gate report ref, lane budget refs, and patch
+    lane ref, and writes a non-retry `suspended` recovery decision with
+    `failure_class=patch_forward_requested`. The next same-path dispatch for
+    the original lane consumes that artifact through the existing recovery
+    dispatch gate and blocks redispatch. This closes the normal review
+    patch-forward recovery-producer gap at contract/local authority boundary
+    only; it does not make the patch lane executed/reviewed, create independent
+    review truth, prove a live long-running runner, or prove server truth.
+    Local validation for this slice: `uv run pytest
+    tests/xmuse/test_platform_orchestrator.py::test_on_lane_reviewed_patch_forward_writes_recovery_artifact
+    tests/xmuse/test_platform_orchestrator.py::test_dispatch_lane_blocks_non_retry_recovery_decision
+    tests/xmuse/test_platform_orchestrator.py::test_gate_failure_writes_retry_recovery_artifact
+    tests/xmuse/test_platform_orchestrator.py::test_repeated_gate_failure_writes_refactor_required_recovery_artifact
+    tests/xmuse/test_platform_runner.py::test_candidate_lanes_excludes_non_retry_recovery_decision
+    tests/xmuse/test_overnight_operator_supervisor.py::test_overnight_supervisor_recovery_gate_snapshots_durable_blocks
+    -q` -> 6 passed; nearby review transition validation: `uv run pytest
+    tests/xmuse/test_platform_orchestrator.py::test_on_lane_reviewed_transitions_to_merged
+    tests/xmuse/test_platform_orchestrator.py::test_on_lane_reviewed_preserves_merge_context_failure
+    tests/xmuse/test_platform_orchestrator.py::test_on_lane_reviewed_reworks_merge_conflict_with_context
+    tests/xmuse/test_platform_orchestrator.py::test_on_lane_reviewed_does_not_rework_non_reworkable_merge_failure
+    tests/xmuse/test_platform_orchestrator.py::test_submit_feature_graph_review_verdict_patch_forward_does_not_write_status
+    -q` -> 5 passed; final local gates after both review-recovery producer
+    slices: `uv run pytest tests/xmuse/test_package_boundaries.py -q` -> 18
+    passed; `uv run ruff check .` -> passed; `git diff --check` -> passed;
+    `test ! -e xmuse/__init__.py` -> passed. These are local validation only,
+    not CI, live runner, review, or merge truth.
+  - Orchestrator review rejection max-retry failure now writes a durable
+    `lane_recovery_artifact` when `on_lane_rejected` reaches the existing retry
+    exhaustion branch. The artifact is produced by
+    `source_authority=platform_orchestrator_review_rejection`, records review
+    evidence refs, gate report ref, lane budget refs, and writes a non-retry
+    `refactor_required` recovery decision with
+    `failure_class=review_rejected`. The next same-path dispatch for the
+    rejected original lane consumes that artifact through the existing recovery
+    dispatch gate and blocks redispatch. This closes the normal review
+    rejection retry-exhaustion producer gap at contract/local authority
+    boundary only; it does not prove independent review truth, broad live
+    runner enforcement, or server truth. Local validation for this slice:
+    `uv run pytest
+    tests/xmuse/test_platform_orchestrator.py::test_on_lane_reviewed_patch_forward_writes_recovery_artifact
+    tests/xmuse/test_platform_orchestrator.py::test_on_lane_rejected_max_retries_writes_recovery_artifact
+    tests/xmuse/test_platform_orchestrator.py::test_dispatch_lane_blocks_non_retry_recovery_decision
+    tests/xmuse/test_platform_orchestrator.py::test_gate_failure_writes_retry_recovery_artifact
+    tests/xmuse/test_platform_orchestrator.py::test_repeated_gate_failure_writes_refactor_required_recovery_artifact
+    tests/xmuse/test_platform_orchestrator.py::test_on_lane_reviewed_transitions_to_merged
+    tests/xmuse/test_platform_orchestrator.py::test_on_lane_reviewed_reworks_merge_conflict_with_context
+    tests/xmuse/test_platform_orchestrator.py::test_on_lane_reviewed_does_not_rework_non_reworkable_merge_failure
+    -q` -> 8 passed; `uv run pytest tests/xmuse/test_package_boundaries.py -q`
+    -> 18 passed; `uv run ruff check .` -> passed; `git diff --check` ->
+    passed; `test ! -e xmuse/__init__.py` -> passed. These are local validation
+    only, not CI, live runner, review, or merge truth.
+  - Orchestrator merge failure now writes a durable `lane_recovery_artifact`
+    for graph-bound merge failure branches in `on_lane_reviewed`. Reworkable
+    merge conflicts produce `source_authority=platform_orchestrator_merge_failure`
+    with `decision=retry`/`retry_allowed=true` before redispatch; merge-conflict
+    retry exhaustion produces `decision=refactor_required`/`retry_allowed=false`;
+    non-reworkable merge failures produce a non-retry `suspended` recovery
+    decision that the existing dispatch recovery gate consumes if the same lane
+    tries to re-enter the original path. Missing graph/lane ids remain
+    `manual_gap` metadata rather than durable authority. This closes the normal
+    merge-failure producer gap at contract/local authority boundary only; it
+    does not prove independent review truth, broad live runner enforcement,
+    server truth, or GitHub merge truth. Local validation for this slice:
+    `uv run pytest
+    tests/xmuse/test_platform_orchestrator.py::test_on_lane_reviewed_merge_conflict_writes_retry_recovery_artifact
+    tests/xmuse/test_platform_orchestrator.py::test_on_lane_reviewed_merge_conflict_retry_exhausted_writes_refactor_artifact
+    tests/xmuse/test_platform_orchestrator.py::test_on_lane_reviewed_non_reworkable_merge_writes_suspended_artifact
+    tests/xmuse/test_platform_orchestrator.py::test_on_lane_reviewed_patch_forward_writes_recovery_artifact
+    tests/xmuse/test_platform_orchestrator.py::test_on_lane_rejected_max_retries_writes_recovery_artifact
+    tests/xmuse/test_platform_orchestrator.py::test_dispatch_lane_blocks_non_retry_recovery_decision
+    tests/xmuse/test_platform_orchestrator.py::test_gate_failure_writes_retry_recovery_artifact
+    tests/xmuse/test_platform_orchestrator.py::test_repeated_gate_failure_writes_refactor_required_recovery_artifact
+    tests/xmuse/test_platform_runner.py::test_candidate_lanes_excludes_non_retry_recovery_decision
+    tests/xmuse/test_overnight_operator_supervisor.py::test_overnight_supervisor_recovery_gate_snapshots_durable_blocks
+    -q` -> 10 passed. These are local validation only and still require final
+    lint/diff/package-boundary gates before any PR claim.
+  - Orchestrator review retry exhaustion now writes a durable
+    `lane_recovery_artifact` during `reconcile_status_changes` when
+    `review_timeout` or `review_no_verdict` has exhausted the review retry
+    budget. The artifact is produced by
+    `source_authority=platform_orchestrator_review_retry_exhaustion`, records
+    review failure/task/evidence refs plus lane budget refs, and writes a
+    non-retry `refactor_required` recovery decision. Exhausted
+    `review_infra_unavailable` writes a non-retry `suspended` decision, while
+    active review-infra backoff remains non-terminal and does not produce this
+    exhausted-recovery artifact. The existing dispatch recovery gate consumes
+    the artifact and blocks same-path redispatch. This closes the retry-budget
+    exhaustion producer gap at contract/local authority boundary only; it does
+    not prove independent review truth, broad live runner enforcement, server
+    truth, or overnight-safe recovery. Retry-eligible first/early review-GOD
+    artifact production remains a separate producer slice. Local validation for this
+    slice: `uv run pytest
+    tests/xmuse/test_platform_orchestrator.py::test_review_retry_count_increments_on_reconcile_recovery
+    tests/xmuse/test_platform_orchestrator.py::test_review_retry_stops_after_max_review_retries
+    tests/xmuse/test_platform_orchestrator.py::test_review_retry_exhaustion_writes_refactor_recovery_artifact
+    tests/xmuse/test_platform_orchestrator.py::test_review_infra_unavailable_circuit_breaker_respects_backoff
+    tests/xmuse/test_platform_orchestrator.py::test_review_infra_unavailable_circuit_breaker_closes_after_backoff
+    tests/xmuse/test_platform_orchestrator.py::test_review_infra_unavailable_circuit_breaker_stops_at_40_retries
+    tests/xmuse/test_platform_orchestrator.py::test_review_infra_exhaustion_writes_suspended_recovery_artifact
+    -q` -> 7 passed; broader orchestrator validation:
+    `uv run pytest tests/xmuse/test_platform_orchestrator.py -q` -> 248
+    passed; final local gates: `uv run pytest
+    tests/xmuse/test_package_boundaries.py -q` -> 18 passed;
+    `uv run ruff check .` -> passed; `git diff --check` -> passed;
+    `test ! -e xmuse/__init__.py` -> passed. These are local validation only,
+    not CI, live runner, review, server, or merge truth.
+  - Orchestrator review retry now writes a durable `lane_recovery_artifact`
+    during `reconcile_status_changes` before a retry-eligible review failure is
+    moved back to `gated`. The artifact is produced by
+    `source_authority=platform_orchestrator_review_retry`, records review
+    failure/task/attempt/evidence refs plus lane budget refs, and writes a
+    retry-allowed `retry` recovery decision. Missing graph/lane authority
+    preserves `manual_gap` instead of fabricating durable recovery proof. The
+    existing dispatch recovery gate treats this artifact as non-blocking
+    because `retry_allowed=true`; terminal retry exhaustion still uses
+    `platform_orchestrator_review_retry_exhaustion` to write non-retry
+    `refactor_required` or `suspended` recovery decisions. This closes the
+    retry-eligible first/early review-failure producer gap at contract/local
+    authority boundary only; it does not prove independent review truth, broad
+    live runner enforcement, server truth, or overnight-safe recovery. Local
+    validation for this slice: `uv run pytest
+    tests/xmuse/test_platform_orchestrator.py -q -k
+    "review_retry_count_increments_on_reconcile_recovery or
+    reconcile_recovers_review_timeout_by_rerunning_review or
+    review_retry_exhaustion_writes_refactor_recovery_artifact or
+    review_infra_exhaustion_writes_suspended_recovery_artifact or
+    review_infra_unavailable_circuit_breaker_respects_backoff or
+    review_infra_unavailable_circuit_breaker_closes_after_backoff"` -> 6
+    passed. Broader lint/package/CI gates remain pending for local changes.
   - Runner supervisor status now exposes a read-only recovery summary derived
     from durable `lane_recovery_artifact` files through the shared run-health
     model. It reports blocked/non-retry counts, invalid artifact counts,
     retry-allowed counts, latest blocked lane samples, source authority,
     `contract_proof`, manual gaps, and forbidden claims without mutating lane
     status or treating process health as recovery authority.
+  - Overnight supervisor stage start now reads durable
+    `lane_graphs/*.recovery.json` artifacts through
+    `xmuse.overnight_supervisor_recovery_gate.v1` before marking a stage
+    running. Non-retry recovery decisions such as `refactor_required` or
+    invalid recovery artifacts write a blocked `recovery_gate_block`
+    production-evidence envelope, record an issue/failure classification, and
+    refuse to start the stage. The gate is a contract/manual-gap preflight
+    boundary only; it does not prove a live long-running supervisor or
+    overnight-safe recovery.
   - A local runner-loop proof now exercises `platform_runner.run()` with a
     durable `refactor_required` recovery artifact and verifies that the lane is
     not dispatched, recovery block metadata is recorded through the runner
@@ -902,14 +1414,23 @@ Use these as implementation references, not as xmuse package dependencies:
     gaps for long-running live runner proof, review truth, server truth, and
     overnight-safe recovery. If no durable recovery block is observed, the
     artifact remains `manual_gap`.
+  - L9 review closure can now consume this artifact as
+    `xmuse.local_runner_recovery_proof_lineage.v1` after validating schema,
+    source authority, proof level, graph filter, target lane refs, and
+    forbidden claims. A runner recovery proof without a graph filter, or with a
+    graph filter that does not match the review-closure graph, is rejected
+    before the review-closure artifact is written. This is recovery lineage
+    only, not review truth or server truth.
   - Goal-stage and development policy require direct refactor for repeated
     failure/demo-grade production paths.
 - Missing production closure:
   - Recovery is not yet proven through a live long-running runner/supervisor
     session; current enforcement/projection is proven at the GOD-room
     review-intake, graph-status intake, platform runner candidate-selection,
-    local runner loop/proof artifact, orchestrator dispatch, and runner
-    supervisor status boundaries.
+    stale-dispatch repair artifact production, local runner loop/proof artifact,
+    orchestrator dispatch, orchestrator gate-failure artifact production,
+    runner supervisor status, and overnight supervisor recovery preflight
+    boundaries.
   - No live long-running runner proof yet shows a blocked retry after
     `refactor_required`.
 - Proof required to close:
@@ -917,13 +1438,26 @@ Use these as implementation references, not as xmuse package dependencies:
     further same-path retries until a refactor artifact exists.
 - Current risk:
   - Recovery remains advisory if non-dispatch runner/supervisor paths can bypass
-    it.
+    it, but platform-runner candidate selection no longer silently bypasses
+    recovery authority because an orchestrator/fake lacks `_root`, and stale
+    dispatched-lane repair no longer leaves a repaired lane without a durable
+    recovery artifact when the CAS transition succeeds. Graph-bound pidless
+    dispatched lanes are repaired into non-retry recovery artifacts, normal
+    gate-failed execution now writes a durable recovery artifact, and normal
+    review patch-forward now writes a non-retry recovery artifact for the failed
+    original lane. Review rejection retry exhaustion now also writes a
+    `refactor_required` recovery artifact for the failed original lane. Review
+    retry exhaustion in reconcile now writes `refactor_required` or `suspended`
+    recovery artifacts for exhausted review failure paths, while preserving
+    active review-infra backoff as non-terminal. Normal graph-bound merge
+    failure now writes retry/suspend/refactor recovery artifacts, with missing
+    graph/lane ids preserved as manual gaps. Legacy projection-only pidless
+    lanes, deferred target-dirty merge retries, and immediate first-failure
+    review-GOD artifact production remain outside this slice.
 - Next production slice:
-  - Consume `xmuse.local_runner_recovery_proof.v1` in the L9 review/release
-    evidence chain as recovery enforcement lineage only, then prove a
-    graph-native lane through local execution/review without upgrading worker
-    output, local tests, or the recovery proof artifact into review/server
-    truth.
+  - Prove a graph-native lane through local execution/review while carrying
+    recovery proof lineage without upgrading worker output, local tests, or the
+    recovery proof artifact into review/server truth.
 - Downstream blocked until:
   - L9 cannot claim trustworthy execution/review if lanes can bypass recovery
     decisions.
@@ -956,6 +1490,17 @@ Use these as implementation references, not as xmuse package dependencies:
   - GOD-room lane review verdict artifact requires an existing review intake
     artifact and evidence refs that cite reviewer inputs before recording an
     explicit reviewer decision.
+  - Platform orchestrator review rejection retry exhaustion now produces an L8
+    `lane_recovery_artifact` for the failed original lane with
+    `decision=refactor_required`, so repeated rejected-lane same-path retries
+    are blocked by durable recovery authority. This is recovery lineage only;
+    it does not make a worker report or local test result into review truth.
+  - Platform orchestrator merge failure now produces L8 recovery lineage for
+    graph-bound merge failures after a review verdict: reworkable merge
+    conflicts carry retry-allowed recovery evidence, retry exhaustion carries
+    `refactor_required`, and non-reworkable merge failures carry non-retry
+    `suspended` recovery evidence. These artifacts do not prove GitHub merge
+    truth, independent review truth, or release readiness.
   - GOD-room lane review verdict artifacts now write a `ReviewTask` and
     `ReviewVerdict` into `review_plane.json` through `VerdictStore`, and review
     closure requires the terminal patch-lane merge verdict to be present in
@@ -969,6 +1514,12 @@ Use these as implementation references, not as xmuse package dependencies:
   - GOD-room patch-forward verdicts produce graph-native patch-forward gate
     plans and preserve `lane_status_not_updated`; they do not write durable
     lane status until the patch-forward laneDAG/review path runs.
+  - Platform orchestrator review patch-forward now produces an L8
+    `lane_recovery_artifact` for the original failed lane, so same-path
+    redispatch is blocked while the patch-forward lane carries the repair path.
+    This is recovery lineage for the failed original lane only; it does not
+    prove patch-lane execution/review, independent review truth, server truth,
+    or release readiness.
   - GOD-room lane patch-forward artifact requires a patch-forward review verdict
     and saved laneDAG artifact, then uses `BlueprintLaneDagService` to append a
     patch lane, dependency edge, runtime contract, and patch-forward link.
@@ -980,27 +1531,344 @@ Use these as implementation references, not as xmuse package dependencies:
     `FeatureGraphStatusStore` and requires the patch lane's feature graph to
     be `MERGED` before producing a release-evidence handoff candidate; missing
     or non-`MERGED` status returns 409 and does not write the closure artifact.
+    The merge verdict must also cite at least one candidate evidence artifact
+    that resolves under the xmuse root; opaque worker-candidate strings alone
+    cannot produce a review-closure handoff.
   - Review-closure artifacts now record
     `graph_status_source_authority = feature_graph_status_store` and the
     terminal feature graph status snapshot, including `source_event_lineage`.
     `lane_status_not_updated` is no longer a valid closure gap once this gate succeeds, but
     `release_evidence_not_linked` and `github_truth_not_checked` remain.
+  - Review-closure artifacts can now consume a
+    `xmuse.local_runner_recovery_proof.v1` artifact and store a derived
+    `xmuse.local_runner_recovery_proof_lineage.v1` section. The consumer
+    fail-closes unsupported schema/source authority, proof-level overclaims,
+    missing target-lane refs, missing durable source refs for local runtime
+    proof, and missing forbidden claims. The closure preserves
+    `worker_output_is_review_truth`, `ready_to_merge`, `pr_merged`,
+    `github_review_truth`, and `overnight_safe_recovery` as forbidden claims.
+  - `xmuse.local_execution_candidate.v1` now has a core capture/lineage
+    contract and CLI, and platform runner emits candidate artifacts by default
+    under runtime `work/local_execution_candidates` after `dispatch_lane`
+    returns successfully. `candidate_only` local runtime proof now requires
+    `FeatureGraphStatusStore` lineage (`graph_set_id`, `feature_graph_id`,
+    `status_id`, and status) and preserves the distinction between the top-level
+    GOD-room laneDAG graph id and the graph-native feature graph id. Missing
+    graph-status lineage degrades the artifact to `manual_gap`. The artifact
+    remains candidate evidence only, carries review/server/GitHub/MemoryOS
+    manual gaps, and preserves `worker_output_is_review_truth` as a forbidden
+    claim.
+  - Local execution candidate artifacts now carry a `producer` boundary:
+    `platform_runner_dispatch` for artifacts emitted by `xmuse-platform-runner`
+    after `dispatch_lane`, and `manual_cli_capture` for the standalone capture
+    CLI. Manual CLI captures can remain generic candidate evidence, but they no
+    longer satisfy the bounded L9 local execution/review session gate. A
+    `platform_runner_dispatch` candidate must include runner `run_id` and
+    `worker_id`; missing or mismatched producer evidence keeps the chain proof
+    at `manual_gap`.
+  - GOD-room review closure now enforces the same producer boundary before the
+    closure artifact is written. The patch-lane merge verdict must cite at
+    least one resolvable `xmuse.local_execution_candidate.v1` artifact produced
+    by `platform_runner_dispatch`; a `manual_cli_capture` candidate returns
+    `409 god_room_lane_review_closure_candidate_artifact_invalid` and no
+    review-closure or review-chain-proof artifact is written. This moves the
+    fail-closed boundary upstream from L10 aggregation into the L9 closure API
+    path while preserving manual CLI captures as generic candidate evidence
+    only.
+  - GOD-room review closure no longer accepts arbitrary resolvable files as
+    candidate evidence. Cited candidate artifacts must validate as
+    `xmuse.local_execution_candidate.v1`, match the terminal patch lane or its
+    scoped projection/local lane identity, remain `candidate_only`, include
+    graph-status lineage, match the GOD-room conversation scope, and preserve
+    manual gaps/forbidden claims before the review-closure handoff can be
+    written.
+  - GOD-room review intake now scans runtime
+    `work/local_execution_candidates/*.json` and auto-adds only validator-passing
+    graph-status-bound local execution candidate artifacts for the target
+    conversation, lane, top-level GOD-room laneDAG graph id, and
+    `producer=platform_runner_dispatch`. Invalid, manual, or mismatched
+    artifacts are ignored and the intake keeps
+    `worker_candidate_evidence_missing` as a manual gap. Auto-discovery only
+    supplies reviewer input; it is not review truth. Artifacts emitted to a
+    non-default runner output directory are not auto-discovered unless they are
+    also made resolvable under this runtime discovery path or cited explicitly.
+  - Release-evidence candidate gating now requires review-closure
+    `cited_candidate_refs` to include at least one valid
+    `xmuse.local_execution_candidate.v1` artifact resolvable under the xmuse
+    root before seeding MemoryOS source refs from the review closure. The
+    shared handoff gate now also requires those candidate artifacts to declare
+    `producer=platform_runner_dispatch`; manual CLI captures and opaque worker
+    refs can still be carried as lineage, but they cannot by themselves make
+    the L10 candidate gate ready.
+  - `xmuse.god_room_lane_review_chain_proof.v1` now captures the L9-to-L10
+    handoff as a single contract artifact by consuming the GOD-room review
+    closure, re-validating cited local execution candidate lineage, requiring
+    verified L8 runner recovery lineage, and requiring the shared L9/L10
+    review-closure handoff gate to be ready without importing the L10
+    release-evidence aggregator. The artifact preserves
+    `not_server_truth` and keeps `worker_output_is_review_truth`,
+    `ready_to_merge`, `pr_merged`, `github_review_truth`, `live_memoryos`, and
+    `overnight_readiness` forbidden.
+  - GOD-room review closure now writes the
+    `xmuse.god_room_lane_review_chain_proof.v1` handoff artifact automatically
+    on the same API path after a graph-status-gated patch lane reaches a
+    review-plane-backed merge verdict. The API response returns both
+    `review_closure` and `review_chain_proof` artifact refs. A focused API
+    proof covers an auto-discovered candidate generated through a bounded
+    platform-runner dispatch loop and local execution candidate capture under
+    `work/local_execution_candidates`, an independent merge verdict, closure,
+    and `chain_ready` handoff while preserving `candidate_only`,
+    `contract_proof`, `not_server_truth`, `worker_output_is_review_truth`,
+    `ready_to_merge`, `pr_merged`, and `server_side_truth` boundaries. This is
+    still a bounded local runner/API contract proof, not a broad live worker
+    execution session or server-truth proof. Positive review-closure helper
+    paths now use the platform-runner loop/capture path rather than
+    hand-writing successful `xmuse.local_execution_candidate.v1` artifacts;
+    hand-written malformed artifacts remain only for fail-closed negative
+    coverage.
+  - The review-chain proof now also validates the patch-forward laneDAG
+    contract carried by the patch-forward artifact. The `patch_forward_link`
+    must bind the failed lane, patch lane, patch-forward verdict id, and
+    evidence refs; the `patch_lane_contract` must bind the patch lane id,
+    failed-lane dependency, required checks, link evidence refs, and patch
+    output ref. Missing or mismatched link/contract data keeps the chain proof
+    `manual_gap`. This remains contract artifact reconciliation, not broad live
+    execution/review proof.
+  - The review-chain proof now carries a
+    `patch_forward_artifact_boundary` inside bounded session evidence. It
+    preserves the patch-forward artifact's source gaps/forbidden claims and
+    separates source gaps resolved by downstream patch-lane evidence from gaps
+    still retained. `patch_lane_not_executed` is resolved only by validated
+    patch-lane intake plus cited local execution candidate lineage;
+    `patch_lane_not_reviewed` is resolved only by the validated patch-lane
+    verdict/review-plane ref; `release_evidence_not_linked` remains a retained
+    manual gap. This is contract-proof gap accounting, not release readiness.
+  - The bounded session evidence now carries a `reviewer_independence`
+    boundary. It compares the terminal patch-lane verdict `reviewer_id` with
+    cited `xmuse.local_execution_candidate.v1` worker ids and fail-closes
+    self-review or missing reviewer identity to `manual_gap`. This blocks a
+    worker/candidate identity from becoming independent review truth inside the
+    L9 chain proof, while still remaining artifact-local `contract_proof` and
+    `not_server_truth`.
+  - The review-chain proof now also fail-closes review-closure artifacts that
+    lack `graph_status_source_authority = feature_graph_status_store`, a
+    non-empty `source_event_lineage`, or a terminal
+    `terminal_feature_graph_status` snapshot whose status/source lineage
+    matches the closure. This keeps the L9-to-L10 handoff bound to the graph
+    status/source-event authority captured by review closure, rather than
+    letting an artifact-local merge summary stand in for store-derived lineage.
+    The proof level remains artifact-local `contract_proof`; it is not
+    server-side review, merge, GitHub, or release readiness truth.
+  - The bounded session evidence now also carries a
+    `review_intake_graph_status_boundary`. It re-validates the patch-lane
+    review-intake artifact's `source_authority`,
+    `feature_graph_status_store`/`lane_dag_artifact` authority, non-empty
+    `source_event_lineage`, `reviewing` feature graph status, and matching
+    intake/status source-event lineage before the chain proof can be ready.
+    This broadens the local execution/review session proof across the intake
+    authority boundary while remaining `contract_proof` / `not_server_truth`.
+  - The same session evidence now also carries a
+    `candidate_graph_status_boundary`. It cross-checks every cited
+    `xmuse.local_execution_candidate.v1` lineage against the patch-lane
+    review-intake `feature_graph_status` snapshot, including graph set,
+    feature graph, status id, status, and source-event lineage. A candidate
+    whose graph-status lineage is valid in isolation but does not match the
+    review-intake graph-status authority keeps the chain proof `manual_gap`.
+    This prevents a worker candidate from being spliced into a review session
+    for the same top-level graph/lane while carrying detached feature-graph
+    status evidence. It remains artifact-local `contract_proof`, not broad live
+    worker execution/review or server truth.
+  - The session evidence also now carries a
+    `candidate_artifact_ref_boundary`. It requires review-closure
+    `cited_candidate_artifact_refs` to exactly match the resolved valid
+    `xmuse.local_execution_candidate.v1` lineage artifact refs. Missing declared
+    artifact refs or resolved-but-undeclared candidate artifacts keep the chain
+    proof `manual_gap`, and the shared L9/L10 handoff gate rejects the same
+    mismatch before release-evidence source-ref aggregation. This remains
+    artifact-local `contract_proof`, not review truth, server truth, or
+    ready-to-merge evidence.
+  - The session evidence also now carries a `candidate_lineage_boundary`. It
+    requires review-closure `cited_candidate_artifact_lineage` to match freshly
+    resolved valid `xmuse.local_execution_candidate.v1` lineage by artifact ref
+    and lineage payload. Missing, unexpected, or mismatched embedded lineage
+    keeps the chain proof `manual_gap`, and the shared L9/L10 handoff gate
+    rejects the same mismatch before direct review-closure source-ref
+    aggregation. This prevents stale embedded closure lineage from becoming
+    downstream truth while remaining `contract_proof` / `not_server_truth`.
+  - L10 review-chain consumers now share an additional bounded-session gate for
+    `xmuse.god_room_lane_review_chain_proof.v1`. MemoryOS source-ref candidate
+    aggregation and runtime-closure replay indexing reject `chain_ready` proof
+    artifacts unless `local_execution_review_session` is present, remains
+    `contract_proof` / `not_server_truth`, carries
+    `bounded_local_execution_review_session`, has validated session artifacts,
+    has verified review-intake graph-status, candidate graph-status,
+    candidate-artifact-ref, candidate-lineage, and reviewer-independence
+    boundaries, keeps session candidate refs aligned with the release handoff
+    and embedded candidate-lineage refs, and proves candidate producers are
+    `platform_runner_dispatch`. This blocks hand-written, manual CLI, or
+    partially copied review-chain proofs from becoming L10 source-ref
+    authority, but it is still artifact-local contract proof rather than live
+    MemoryOS, review, GitHub, or merge truth.
+  - The bounded session evidence now also carries a
+    `runner_recovery_lineage_boundary`. It verifies that the L8 runner recovery
+    proof lineage is present, remains `local_runtime_proof`, shows target-lane
+    recovery enforcement, carries a graph filter matching the review closure,
+    points at a readable recovery proof artifact, keeps readable durable source
+    refs, targets the failed lane, and preserves review/server/overnight manual
+    gaps and forbidden claims. Missing, unscoped, or mismatched recovery
+    lineage keeps the chain proof `manual_gap`; the review closure can still
+    record honest gaps, but L10 cannot consume it as a ready review-chain
+    handoff.
+  - The platform runner now writes a local
+    `xmuse.runner_session.v1` artifact under `work/runner_sessions/` for each
+    bounded runner invocation, marks it completed/failed in runner shutdown, and
+    injects `runner_session_id` plus `runner_session_ref` into emitted
+    `xmuse.local_execution_candidate.v1` artifacts. The L9 review-chain proof
+    now carries `xmuse.runner_session_boundary.v1`, reloads that session
+    artifact, and verifies candidate artifact refs, run id, runner id, graph
+    scope, and completed session status before a bounded session can be ready.
+    Missing, incomplete, mismatched, or proof-inflated runner-session artifacts
+    keep the proof and shared L10 gate at `manual_gap`. This is local runner
+    session-boundary proof only; it is not review truth, live provider proof,
+    GitHub truth, or server truth.
+  - Runner-session artifacts now also record worker-evidence bundle refs
+    submitted during the same platform-runner invocation. The L9 review-chain
+    `xmuse.runner_session_boundary.v1` compares those refs with each cited
+    candidate's `feature_evidence_bundle:*` source refs. If a candidate cites a
+    worker bundle that is not recorded by its runner session, the boundary
+    stays `manual_gap` and the chain cannot become `chain_ready`. This reduces
+    artifact splicing risk while keeping worker bundles as candidate lineage,
+    not review truth or server truth.
+    Runner-session artifacts are now written with same-directory temp-file
+    replacement, and platform-runner shutdown logs session-finish capture
+    failures instead of masking the original runner error or skipping cleanup.
+    The runner also consumes the public recovery-dispatch helper rather than an
+    underscore-prefixed helper from the orchestrator flow module.
+  - Platform runner dispatch task failures now keep the runner session artifact
+    at `session_failed` / `manual_gap` instead of allowing an unawaited failed
+    task to be overreported as `session_completed` / `local_runtime_proof`.
+    The failure is recorded on the session artifact, candidate refs remain
+    absent unless a real local execution candidate was captured, and downstream
+    review-chain/session-boundary consumers continue to fail closed on the
+    incomplete session. This prevents failed runner dispatch from becoming
+    bounded-session evidence; it does not create review truth.
+  - Platform runner local execution candidate capture failures after a
+    successful dispatch now also keep the runner session artifact at
+    `session_failed` / `manual_gap`. The session records the capture error, does
+    not append a missing/failed candidate ref, and downstream bounded-session
+    consumers still require a completed session plus real
+    `xmuse.local_execution_candidate.v1` refs before any L9 handoff can be
+    ready. This prevents dispatch success without candidate evidence from being
+    overreported as local execution proof.
+  - A completed `xmuse.runner_session.v1` artifact now remains
+    `proof_level=manual_gap` when it has no candidate artifact refs. This
+    preserves the fact that the runner session ended while preventing an empty
+    completed session from being overreported as local execution proof. Only a
+    completed session carrying real candidate artifact refs can produce
+    runner-session `local_runtime_proof`; downstream review-chain consumers
+    still reload those candidate artifacts before any bounded L9 handoff can be
+    ready.
+  - The shared GOD-room review-closure handoff gate used by L9 and L10 now
+    reloads each platform-runner candidate's `xmuse.runner_session.v1` artifact
+    before allowing direct review-closure source-ref aggregation. Missing,
+    incomplete, mismatched, empty-candidate, or proof-inflated runner-session
+    artifacts keep the handoff not-ready and prevent L10 MemoryOS candidate
+    source refs from being seeded directly from that review closure. This keeps
+    direct L10 aggregation aligned with the Wave D runner-session authority
+    boundary; it is still `contract_proof`/local lineage, not review truth,
+    live MemoryOS trace, GitHub truth, or merge truth.
+  - The same bounded session evidence now carries a session-scope boundary and
+    the API integration path uses platform-runner local execution candidate
+    artifacts for both the failed lane's patch-forward review input and the
+    patch lane's terminal merge review input. This proves a wider
+    GOD-room-originated local runner/API handoff while remaining
+    `contract_proof` / `not_server_truth`.
+  - The bounded session evidence now also carries
+    `xmuse.graph_wide_lane_accounting_boundary.v1`. It loads the graph-set
+    artifact plus `FeatureGraphStatusStore`, compares expected feature graphs
+    with observed status records, requires no ready/active/blocked lane residue,
+    and requires every completed lane in the graph-wide status records to have
+    validated `producer=platform_runner_dispatch`
+    `xmuse.local_execution_candidate.v1` lineage. Missing graph-set/status
+    authority, unaccounted feature graphs, ready/active/blocked residue,
+    uncovered completed lanes, or missing candidate refs keeps the chain proof
+    and L10 bounded-session consumer gate at `manual_gap`. This is graph-wide
+    contract accounting, not broad live worker execution/review or server
+    truth.
+  - Platform-runner candidate capture now fail-closes when graph-native worker
+    evidence has not advanced the lane into `REVIEWING`: the emitted local
+    execution candidate is `manual_gap`, carries
+    `graph_native_worker_evidence_not_submitted`, and is not counted by the
+    runner session as `local_runtime_proof`. This prevents READY/RUNNING
+    dispatch-return artifacts from satisfying review-chain candidate lineage
+    before the graph-native worker-evidence producer is integrated.
+  - Platform runner now integrates the first bounded graph-native
+    worker-evidence producer handoff: after dispatch returns and only when
+    provider binding, planning run, blueprint refs, acceptance criteria, and
+    required checks are present, it scopes the READY claim to the dispatched
+    lane, writes the worker `FeatureEvidenceBundle` through
+    `FeatureGraphArtifactStore`, and advances `FeatureGraphStatusStore` to
+    REVIEWING via the existing coordinator before candidate capture. Missing
+    prerequisites preserve the existing `manual_gap` path. This is not review
+    truth or server truth.
+  - Independent GOD-room review verdicts now consume the review-intake
+    worker-evidence bundle boundary: when review intake discovered
+    graph-native `FeatureEvidenceBundle` refs, verdict `evidence_refs` must
+    cite those refs before review-plane or graph-status side effects are
+    written. Verdict artifacts carry the cited bundle refs, citation status,
+    and intake-local worker-evidence boundary. Patch-forward artifacts preserve
+    the source verdict bundle citation, and
+    `xmuse.god_room_lane_review_chain_proof.v1` now includes
+    `xmuse.worker_evidence_bundle_citation_boundary.v1` in the bounded
+    session gate. Missing, uncited, or mismatched bundle citation remains
+    `manual_gap`; the bundle is still contract lineage, not independent review
+    truth or server truth.
+  - Patch-forward lanes now receive independent graph-native status authority:
+    the patch lane runtime contract uses the patch lane as its feature id, the
+    patch-forward API updates the graph-set with a patch feature graph, and
+    `FeatureGraphStatusStore` initializes that graph to `READY`. The existing
+    platform-runner worker-evidence producer can then create a
+    `FeatureEvidenceBundle` for the patch lane, review intake can discover it,
+    and review verdicts must cite it before the patch-lane closure/chain-proof
+    path becomes ready. Graph-wide lane accounting treats the original failed
+    lane as patch-forward superseded only when the patch terminal lane validates;
+    this is still contract/API proof, not broad live execution/review or server
+    truth.
+  - L9/L10 source-ref aggregation now preserves verified worker-evidence bundle
+    refs from the review-chain citation boundary. The terminal patch-lane
+    verdict's bundle refs are included in
+    `xmuse.worker_evidence_bundle_citation_boundary.v1`, and L10 MemoryOS
+    candidate hints, runtime closure replay refs, and review-chain release
+    linkage refs can carry those bundle refs as source refs only. This remains
+    aggregation lineage, not review truth, merge truth, live MemoryOS trace, or
+    server truth.
+  - L9/L10 source-ref aggregation now also preserves review-closure
+    `source_event_lineage` refs through the shared review-closure handoff
+    helper. Review-chain MemoryOS source-ref hints, GOD-room runtime closure
+    replay refs, and review-chain release-linkage refs can carry
+    `god-room-event:*`, `provider_response_artifact:*`, and lineage
+    `source_refs` as aggregation provenance only after the current
+    review-closure handoff remains gate-ready. This aligns the chain-proof
+    consumer path with the existing runtime-closure lineage path without
+    upgrading the proof beyond `contract_proof` / `not_server_truth`.
 - Missing production closure:
   - A GOD-room-originated lane has not yet been proven through live execution,
     review, patch-forward, and release evidence in one chain.
   - Review intake/review-verdict/patch-forward/closure artifacts still do not
-    execute live worker runtime or assert GitHub truth; release
-    evidence linkage exists only as contract/candidate handoff, not as
-    server-side readiness.
+    prove a broad live worker runtime or assert GitHub truth; release evidence
+    linkage exists only as contract/candidate handoff with validated local
+    execution candidate artifacts, not as server-side readiness.
 - Proof required to close:
   - A lane from GOD room freeze is executed, reviewed, accepted/reworked, and
     linked into release evidence with lineage.
 - Current risk:
   - Worker self-report or local test results can be mistaken for review truth.
 - Next production slice:
-  - Link graph-status-gated review closure into L10 release evidence without
-    treating worker candidate refs, local tests, review-plane artifacts, or
-    GitHub CI success as review/merge truth.
+  - Use the verified patch-lane worker-bundle source-ref chain to drive broader
+    live runner/review session evidence or an honest L10 replay refresh, while
+    continuing to treat worker candidate refs, local tests, review-plane
+    artifacts, L8 recovery proof artifacts, runner-session artifacts, bundle
+    refs, and GitHub CI success as non-review/non-merge truth.
 - Downstream blocked until:
   - L10 release evidence cannot claim end-to-end closure without execution and
     review truth from this layer.
@@ -1061,15 +1929,165 @@ Use these as implementation references, not as xmuse package dependencies:
     artifacts, including event-type/proof-level counts and source refs. This
     preserves graph-status/review-closure provenance for replay bundles only;
     it is not live execution, live MemoryOS, GitHub review, or merge truth.
+  - Release evidence candidate reports and GOD room runtime closure evidence
+    now preserve `runner_recovery_proof_lineage` refs carried by
+    `xmuse.god_room_lane_review_closure.v1`. This lets MemoryOS candidate
+    `source_refs` and replay bundles cite the L8 recovery proof artifact and
+    durable lane recovery refs as lineage only; it does not prove live MemoryOS,
+    review truth, GitHub truth, or merge readiness.
+  - Release evidence candidate reports fail closed when a GOD-room review
+    closure has only opaque worker candidate refs and no resolvable
+    reviewer-cited `xmuse.local_execution_candidate.v1` artifact, or when a
+    cited candidate artifact overclaims/misses required forbidden claims or
+    does not match the review closure conversation scope. Older review-closure
+    artifacts that predate the top-level `conversation_id` field are treated as
+    not gate-ready rather than being upgraded by inference. This tightens
+    L9-to-L10 aggregation but remains `contract_proof` source-ref gating, not
+    live MemoryOS or server truth.
+  - GOD-room review chain proof capture and release evidence candidate reports
+    now share the same review-closure handoff gate. L9 no longer imports the
+    L10 release-evidence aggregator to prove its chain artifact; L10 consumes
+    the resulting artifact as aggregation input only. This is evidence that
+    local contract artifacts were consistently linked into the release-evidence
+    candidate path; it is not a live MemoryOS trace, GitHub review truth,
+    GitHub merge truth, or release export proof.
+  - The shared L9/L10 review-closure handoff gate now also requires the closure
+    artifact itself to preserve the local execution candidate forbidden-claim
+    boundary, including `worker_output_is_review_truth`, `ready_to_merge`,
+    `pr_merged`, `github_review_truth`, and `live_memoryos`. Older or external
+    closure artifacts missing these forbidden claims are not gate-ready for
+    L10 source-ref guidance.
+  - Release evidence candidate reports can now consume
+    `xmuse.god_room_lane_review_chain_proof.v1` artifacts directly as
+    `live_memoryos` source-ref guidance after validating
+    `status=chain_ready`, `proof_level=contract_proof`,
+    `server_truth_status=not_server_truth`, required forbidden claims, and a
+    gate-ready review-closure handoff. `manual_gap`, overclaiming, or missing
+    candidate refs keep `god_room_review_chain_proof_artifact_not_ready` as a
+    blocker. This is aggregation only and does not create a live MemoryOS
+    trace.
+  - A focused L9-to-L10 API path proof now feeds the review-chain proof artifact
+    written by GOD-room review closure into the release evidence candidate
+    report. The report accepts the chain proof only as MemoryOS source-ref
+    guidance, carries the platform-runner candidate artifact ref, and preserves
+    `candidate_report_is_not_live_memoryos_proof`.
+  - Review-chain MemoryOS source-ref guidance now reuses the shared
+    review-closure handoff source refs, so `source_event_lineage` entries from
+    the gate-ready current review closure can appear as `god-room-event:*`,
+    `provider_response_artifact:*`, and lineage `source_refs`. These refs are
+    provenance for a future live MemoryOS write only; the candidate report
+    remains `candidate_report_is_not_live_memoryos_proof`.
+  - The same API-generated review-chain proof can now be fed into the release
+    evidence pack replay bundle path as GOD-room runtime closure aggregation.
+    The replay section indexes the chain proof as `contract_proof` /
+    `not_server_truth`, carries the platform-runner candidate artifact ref, and
+    remains `manual_gap` when GitHub/server truth is missing.
+  - Release evidence pack now also produces
+    `xmuse.god_room_review_chain_release_linkage.v1` when a review-chain proof
+    is provided. The summary is `contract_proof` only when the chain proof is
+    present in replay source refs, the bounded session gate remains verified,
+    and the current review-closure handoff is still gate-ready. It resolves
+    `release_evidence_export_not_attempted` / `release_evidence_not_linked`
+    only for that pack's aggregation lineage, preserves
+    `affects_pack_decision=false`, and keeps `ready_to_merge`, `pr_merged`,
+    GitHub review/merge truth, live MemoryOS, and server truth forbidden.
+    The linkage may retain review-closure `source_event_lineage` refs from the
+    runtime-closure replay section, but those refs remain aggregation
+    provenance and do not affect the pack decision.
+  - Release evidence pack and CLI can now pass the same
+    `xmuse.god_room_lane_review_chain_proof.v1` artifact into the GOD room
+    runtime closure replay section. The pack relies on runtime-closure evidence
+    validation for schema/status/proof-level/not-server-truth/forbidden-claim
+    and handoff checks, records review-chain source refs only as aggregation
+    lineage, and fail-closes the section to `manual_gap` on server-truth
+    overclaim. This does not create live MemoryOS, GitHub review truth, GitHub
+    merge truth, `ready_to_merge`, or `pr_merged`.
+  - Release evidence candidate reports and GOD-room runtime closure evidence
+    now both re-load the current review closure referenced by the chain proof
+    and run the shared L9/L10 handoff gate before accepting review-chain source
+    refs. A stale embedded handoff whose runner-session artifact has since
+    disappeared remains diagnostic evidence only: the runtime closure section
+    records `manual_gap`, exposes the current handoff failure, and does not add
+    chain-proof/candidate refs to aggregation `source_refs`. This is still
+    contract-proof consumer hardening and not server truth or live review truth.
+  - GOD-room runtime closure evidence now also re-derives the shared
+    L9/L10 review-closure handoff gate for direct `god_room_review_closure`
+    inputs instead of trusting the embedded
+    `release_evidence_handoff_status` string. Missing, stale, or invalid
+    cited candidate artifacts and runner-session lineage keep the direct
+    closure path at `manual_gap`, expose the current handoff failure, and
+    prevent review-closure source refs, including `source_event_lineage`, from
+    being treated as ready aggregation input. The section remains
+    `contract_proof` / `manual_gap` consumer hardening and does not create
+    live MemoryOS, review truth, GitHub truth, or merge truth.
+  - The shared L9/L10 handoff helper now also emits
+    `xmuse.review_closure_handoff_evaluation.v1`. Runtime closure evidence,
+    release evidence candidates, and feature lineage replay expose this same
+    evaluation payload instead of each redefining candidate lineage truth:
+    `ready` is allowed only for `xmuse.god_room_lane_review_closure.v1`,
+    `proof_level=contract_proof`,
+    `review_truth_status=independent_review_artifact`,
+    `execution_truth_status=candidate_reviewed`,
+    `server_truth_status=not_server_truth`, a gate-ready current handoff, and
+    required forbidden claims including `live_memoryos`,
+    `github_review_truth`, `ready_to_merge`, and `pr_merged`. Missing
+    forbidden claims remain `manual_gap`; server-truth overclaims are
+    `blocked`. Candidate refs, cited refs, and `source_event_lineage` counts
+    are exposed as aggregation lineage only and do not prove live MemoryOS,
+    GitHub review truth, merge truth, or release readiness.
+  - Release evidence pack now treats a supplied GOD-room review-closure
+    artifact without a matching review-chain proof as an expected L9 handoff
+    gap. It asks GOD-room runtime-closure evidence to emit
+    `review_chain_proof.status=manual_gap`, `expected=true`, and
+    `god_room_review_chain_proof_artifact_missing` instead of silently omitting
+    the review-chain proof section. Legacy packs without GOD-room review
+    closure input remain unaffected, and a missing chain proof still does not
+    create release linkage, review truth, server truth, or pack readiness.
+    Local validation for this slice: `uv run pytest
+    tests/xmuse/test_god_room_runtime_closure_evidence_capture.py
+    tests/xmuse/test_release_evidence_pack.py
+    tests/xmuse/test_release_evidence_candidates.py -q` -> 95 passed;
+    `uv run pytest tests/xmuse/test_package_boundaries.py -q` -> 18 passed;
+    `uv run ruff check .` -> passed; `git diff --check` -> passed;
+    `test ! -e xmuse/__init__.py` -> passed. These are local validation only,
+    not CI, GitHub review, or merge truth.
+  - A fresh local read-only GitHub server-truth refresh for PR #43 at head
+    `654b418c52cc1487193561f65e0521a5a82f0452` wrote
+    `/tmp/xmuse-github-truth-pr43.json` and
+    `/tmp/xmuse-github-truth-gate-pr43.json`. It captured branch protection
+    and required check truth for `quality-gates`, `contract-smoke-gates`, and
+    `real-runtime-integration-gate`, but the raw truth artifact remains
+    `proof_level=manual_gap` because server-side `review_truth` and
+    `merge_truth` are missing; it also records `draft=true`,
+    `pull_request_state=open`, and `can_emit_pr_merged=false`. The release-gate
+    artifact is
+    `server_side_enforcement_proof` for enforcement/check truth only, not review
+    or merge truth.
+  - Release evidence candidate reports can now consume an existing
+    `github_server_side_truth_capture.v1` artifact from
+    `github_server_truth_artifact` or `XMUSE_GITHUB_SERVER_TRUTH_ARTIFACT`.
+    The report re-runs the GitHub server-truth release gate, fail-closes stale
+    head mismatches, and recomputes `can_emit_pr_merged` through
+    `GitHubServerSideTruthEvidence`/`can_emit_pr_merged` instead of trusting a
+    raw artifact boolean. This is artifact aggregation guidance only; the
+    candidate report remains `candidate_report_is_not_github_server_truth_proof`.
+  - Release evidence pack GitHub truth projection now uses the same
+    `GitHubServerSideTruthEvidence`/`can_emit_pr_merged` recomputation and
+    requires the GitHub server-truth gate to be `ok` before projecting
+    `can_emit_pr_merged` or `merged=true`. Raw artifact booleans can no longer
+    produce `pr_merged` projection or a "no action required" GitHub next action.
+    The GitHub release gate itself remains `server_side_enforcement_proof`
+    unless the validated server truth satisfies full `server_side_merge_proof`.
   - PR #43 latest verified CI at the start of this slice passed for remote head
-    `aff7607052bb4dd4f017b84ae728dc73f57a0995` in run `27500112828`; merge
-    state was `CLEAN` when last checked.
+    `654b418c52cc1487193561f65e0521a5a82f0452` in run `27502826595`; merge
+    state was `CLEAN` when last checked. Local changes after that head are not
+    CI-verified until pushed and checked again.
 - Missing production closure:
   - No current live MemoryOS Lite trace proof is established for this branch
     head.
   - The release pack still depends on missing live execution proof, live
-    MemoryOS trace, broad live execution/review proof, and merge truth for full
-    production closure.
+    MemoryOS trace, broad live execution/review proof, GitHub review truth, and
+    merge truth for full production closure.
   - PR #43 is still draft/open/unmerged and has no review decision.
 - Proof required to close:
   - Configured MemoryOS Lite service accepts writes/context requests and

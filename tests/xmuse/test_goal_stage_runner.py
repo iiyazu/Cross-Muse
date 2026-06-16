@@ -168,6 +168,212 @@ def test_goal_stage_runner_respects_zero_retry_budget(
     assert result["attempt"] == 1
 
 
+def test_goal_stage_runner_falls_back_to_spark_on_codex_quota(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest = tmp_path / "stage.json"
+    _write_manifest(
+        manifest,
+        {
+            "stage_id": "S-quota",
+            "objective": "Check fallback",
+            "scope": [],
+            "acceptance_contracts": [],
+        },
+    )
+    calls: list[list[str]] = []
+
+    def fake_run(*args: Any, **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        command = args[0]
+        calls.append(command)
+        model = command[command.index("-m") + 1]
+        if model == "gpt-5.5":
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=1,
+                stdout="weekly limit reached",
+                stderr="quota exhausted",
+            )
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=0,
+            stdout="fallback ok",
+            stderr="",
+        )
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+
+    output = tmp_path / "S-quota.result.json"
+    rc = module.run_stage(
+        stage_manifest_path=manifest,
+        engine="codex",
+        repo_root=ROOT,
+        output=output,
+        timeout_seconds=10,
+        dry_run=False,
+        fallback_model="gpt-5.3-codex-spark",
+        fallback_on="quota_exhausted",
+    )
+
+    assert rc == 0
+    assert len(calls) == 2
+    assert calls[0][calls[0].index("-m") + 1] == "gpt-5.5"
+    assert calls[1][calls[1].index("-m") + 1] == "gpt-5.3-codex-spark"
+    result = json.loads(output.read_text(encoding="utf-8"))
+    assert result["status"] == "ok"
+    assert result["fallback_triggered"] is True
+    assert result["fallback_reason"] == "quota_exhausted"
+    assert result["primary_model"] == "gpt-5.5"
+    assert result["fallback_model"] == "gpt-5.3-codex-spark"
+    assert result["primary_returncode"] == 1
+    assert result["fallback_returncode"] == 0
+    assert "engine_output.primary.txt" in result["primary_agent_stdout_path"]
+    assert "engine_output.fallback.txt" in result["fallback_agent_stdout_path"]
+    assert (tmp_path / "S-quota.result.json.evidence" / "engine_output.primary.txt").exists()
+    assert (tmp_path / "S-quota.result.json.evidence" / "engine_output.fallback.txt").exists()
+
+
+def test_goal_stage_runner_does_not_fallback_without_quota_signal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest = tmp_path / "stage.json"
+    _write_manifest(
+        manifest,
+        {
+            "stage_id": "S-nonquota",
+            "objective": "Check no fallback",
+            "scope": [],
+            "acceptance_contracts": [],
+        },
+    )
+    calls: list[list[str]] = []
+
+    def fake_run(*args: Any, **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        command = args[0]
+        calls.append(command)
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=2,
+            stdout="syntax error",
+            stderr="permanent failure",
+        )
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+
+    output = tmp_path / "S-nonquota.result.json"
+    rc = module.run_stage(
+        stage_manifest_path=manifest,
+        engine="codex",
+        repo_root=ROOT,
+        output=output,
+        timeout_seconds=10,
+        dry_run=False,
+        fallback_model="gpt-5.3-codex-spark",
+        fallback_on="quota_exhausted",
+    )
+
+    assert rc == 1
+    assert len(calls) == 1
+    result = json.loads(output.read_text(encoding="utf-8"))
+    assert result["status"] == "retry"
+    assert result["fallback_triggered"] is False
+    assert result["primary_returncode"] == 2
+
+
+def test_goal_stage_runner_does_not_fallback_when_primary_succeeds(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest = tmp_path / "stage.json"
+    _write_manifest(
+        manifest,
+        {
+            "stage_id": "S-primary-ok",
+            "objective": "Check no fallback",
+            "scope": [],
+            "acceptance_contracts": [],
+        },
+    )
+    calls: list[list[str]] = []
+
+    def fake_run(*args: Any, **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        command = args[0]
+        calls.append(command)
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=0,
+            stdout="primary ok",
+            stderr="",
+        )
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+
+    output = tmp_path / "S-primary-ok.result.json"
+    rc = module.run_stage(
+        stage_manifest_path=manifest,
+        engine="codex",
+        repo_root=ROOT,
+        output=output,
+        timeout_seconds=10,
+        dry_run=False,
+        fallback_model="gpt-5.3-codex-spark",
+        fallback_on="quota_exhausted",
+    )
+
+    assert rc == 0
+    assert len(calls) == 1
+    result = json.loads(output.read_text(encoding="utf-8"))
+    assert result["status"] == "ok"
+    assert result["fallback_triggered"] is False
+    assert result["primary_returncode"] == 0
+
+
+def test_goal_stage_runner_cli_defaults_enable_codex_spark_quota_fallback() -> None:
+    args = module._parse_args(
+        [
+            "--stage-manifest",
+            "stage.json",
+        ]
+    )
+
+    assert args.fallback_model == "gpt-5.3-codex-spark"
+    assert args.fallback_on == "quota_exhausted"
+
+
+def test_goal_stage_runner_dry_run_records_codex_fallback_metadata(tmp_path: Path) -> None:
+    manifest = tmp_path / "stage.json"
+    _write_manifest(
+        manifest,
+        {
+            "stage_id": "S-dry-fallback",
+            "objective": "Check dry-run fallback metadata.",
+            "scope": [],
+            "acceptance_contracts": [],
+        },
+    )
+
+    output = tmp_path / "S-dry-fallback.result.json"
+    rc = module.run_stage(
+        stage_manifest_path=manifest,
+        engine="codex",
+        repo_root=ROOT,
+        output=output,
+        timeout_seconds=10,
+        dry_run=True,
+        fallback_model="gpt-5.3-codex-spark",
+        fallback_on="quota_exhausted",
+    )
+
+    assert rc == 0
+    result = json.loads(output.read_text(encoding="utf-8"))
+    assert result["primary_model"] == "gpt-5.5"
+    assert result["fallback_model"] == "gpt-5.3-codex-spark"
+    assert result["fallback_on"] == "quota_exhausted"
+    assert result["fallback_triggered"] is False
+
+
 def test_goal_stage_runner_opencode_message_does_not_get_consumed_as_file(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -5,6 +5,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from xmuse_core.platform.execution.github_ops import (
+    GitHubServerSideTruthEvidence,
+    can_emit_pr_merged,
+)
+
 
 def build_github_server_truth_release_gate(
     github_truth: dict[str, Any],
@@ -39,9 +44,14 @@ def build_github_server_truth_release_gate(
             ),
         )
     if _has_server_enforcement_proof(github_truth):
+        proof_level = (
+            "server_side_merge_proof"
+            if _can_emit_pr_merged(github_truth)
+            else "server_side_enforcement_proof"
+        )
         return _gate(
             status="ok",
-            proof_level="server_side_enforcement_proof",
+            proof_level=proof_level,
             summary="GitHub branch protection/ruleset and required check truth were captured.",
             source_refs=source_refs,
             artifact_path=artifact_path,
@@ -133,12 +143,25 @@ def _has_server_enforcement_truth(github_truth: dict[str, Any]) -> bool:
 
 
 def _next_action(github_truth: dict[str, Any]) -> str:
-    if github_truth.get("can_emit_pr_merged") is True:
+    if _can_emit_pr_merged(github_truth):
         return "No GitHub server-truth action required."
     gap_reason = _text(github_truth.get("gap_reason"))
     if gap_reason is not None:
         return f"Resolve remaining GitHub truth gap before pr_merged: {gap_reason}."
     return "Keep GitHub server-truth artifact attached to release readiness evidence."
+
+
+def _can_emit_pr_merged(github_truth: dict[str, Any]) -> bool:
+    try:
+        payload = {
+            key: value
+            for key in GitHubServerSideTruthEvidence.model_fields
+            if (value := github_truth.get(key)) is not None
+        }
+        evidence = GitHubServerSideTruthEvidence.model_validate(payload)
+    except ValueError:
+        return False
+    return can_emit_pr_merged(evidence)
 
 
 def _gap_summary(github_truth: dict[str, Any]) -> str:

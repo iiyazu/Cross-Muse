@@ -5,6 +5,7 @@ import json
 import os
 import sqlite3
 import uuid
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -34,6 +35,7 @@ from xmuse_core.chat.api_models import (
     GodRoomLaneDagRequest,
     GodRoomLanePatchForwardRequest,
     GodRoomLaneRecoveryRequest,
+    GodRoomLaneReviewChainProofRequest,
     GodRoomLaneReviewClosureRequest,
     GodRoomLaneReviewIntakeRequest,
     GodRoomLaneReviewVerdictRequest,
@@ -100,12 +102,21 @@ from xmuse_core.integrations.memoryos_lite_interop import live_memoryos_lite_ena
 from xmuse_core.platform.feature_graph_review_coordinator import (
     submit_feature_graph_review_verdict,
 )
+from xmuse_core.platform.god_room_review_chain_proof import (
+    GOD_ROOM_REVIEW_CHAIN_PROOF_FORBIDDEN_CLAIMS,
+    capture_god_room_review_chain_proof,
+)
 from xmuse_core.platform.god_runtime_continuity import (
     build_selected_god_runtime_continuity_view,
 )
 from xmuse_core.platform.http_auth import (
     authorize_chat_api_write,
     require_production_write_auth_token,
+)
+from xmuse_core.platform.local_execution_candidate import (
+    LOCAL_EXECUTION_CANDIDATE_PLATFORM_RUNNER_PRODUCER,
+    build_local_execution_candidate_worker_evidence_boundary,
+    valid_local_execution_candidate_lineages,
 )
 from xmuse_core.platform.operator_actions import (
     OperatorActionBlockedError,
@@ -124,6 +135,11 @@ from xmuse_core.platform.release_evidence_export_actions import (
     run_release_evidence_export_action,
 )
 from xmuse_core.platform.run_health import summarize_run_health
+from xmuse_core.platform.runner_recovery_proof import (
+    RUNNER_RECOVERY_FORBIDDEN_CLAIMS,
+    RUNNER_RECOVERY_PROOF_AUTHORITY,
+    build_runner_recovery_proof_lineage,
+)
 from xmuse_core.platform.state_machine import LaneStateMachine
 from xmuse_core.providers.god_cli_registration_store import GodCliRegistrationStore
 from xmuse_core.providers.god_cli_registry import build_default_god_cli_registry
@@ -755,6 +771,12 @@ def _string_list(value: object) -> list[str]:
     return [item for item in value if isinstance(item, str) and item.strip()]
 
 
+def _mapping_list(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        return []
+    return [dict(item) for item in value if isinstance(item, Mapping)]
+
+
 def _source_event_lineage_payload(
     lineage: list[BlueprintSourceEventLineage],
 ) -> list[dict[str, object]]:
@@ -1283,8 +1305,29 @@ def _build_god_room_lane_review_intake(
         lane_id=request.lane_id,
         feature_id=contract.feature_id,
     )
+    discovered_candidates = _discover_local_execution_candidates(
+        base_dir,
+        conversation_id=conversation_id,
+        graph_id=request.graph_id,
+        lane_id=request.lane_id,
+    )
+    discovered_candidate_refs = [
+        candidate["artifact_ref"] for candidate in discovered_candidates
+    ]
+    discovered_worker_evidence_bundle_refs = _dedupe_text(
+        [
+            ref
+            for candidate in discovered_candidates
+            for ref in _string_list(
+                candidate["worker_evidence_boundary"].get("evidence_bundle_refs")
+            )
+        ]
+    )
+    execution_artifact_refs = _dedupe_text(
+        [*request.execution_artifact_refs, *discovered_candidate_refs]
+    )
     candidate_refs = _dedupe_text(
-        [*request.worker_candidate_refs, *request.execution_artifact_refs]
+        [*request.worker_candidate_refs, *execution_artifact_refs]
     )
     manual_gaps: list[str] = []
     if not candidate_refs:
@@ -1303,6 +1346,7 @@ def _build_god_room_lane_review_intake(
             *plan.source_refs,
             *contract.source_refs,
             *candidate_refs,
+            *discovered_worker_evidence_bundle_refs,
             *(
                 recovery_decision.source_refs
                 if recovery_decision is not None
@@ -1328,7 +1372,12 @@ def _build_god_room_lane_review_intake(
         "reviewer_id": request.reviewer_id,
         "lane_contract": contract.model_dump(mode="json"),
         "worker_candidate_refs": list(request.worker_candidate_refs),
-        "execution_artifact_refs": list(request.execution_artifact_refs),
+        "execution_artifact_refs": execution_artifact_refs,
+        "discovered_local_execution_candidate_refs": discovered_candidate_refs,
+        "discovered_worker_evidence_bundle_refs": discovered_worker_evidence_bundle_refs,
+        "local_execution_candidate_worker_evidence_boundaries": [
+            candidate["worker_evidence_boundary"] for candidate in discovered_candidates
+        ],
         "candidate_truth_status": "candidate_only",
         "recovery_decision": (
             recovery_decision.model_dump(mode="json")
@@ -1434,6 +1483,43 @@ def _build_god_room_lane_review_verdict(
                 "message": "review verdict evidence_refs must cite review intake inputs",
             },
         )
+    worker_evidence_bundle_refs = _dedupe_text(
+        _string_list(intake.get("discovered_worker_evidence_bundle_refs"))
+    )
+    cited_worker_evidence_bundle_refs = [
+        ref for ref in worker_evidence_bundle_refs if ref in request.evidence_refs
+    ]
+    missing_worker_evidence_bundle_refs = [
+        ref for ref in worker_evidence_bundle_refs if ref not in request.evidence_refs
+    ]
+    if missing_worker_evidence_bundle_refs:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": (
+                    "god_room_lane_review_verdict_missing_worker_evidence_"
+                    "bundle_citation"
+                ),
+                "message": (
+                    "review verdict evidence_refs must cite graph-native worker "
+                    "evidence bundle refs discovered by review intake"
+                ),
+                "source_authority": (
+                    "god_room_lane_review_intake_artifact+"
+                    "feature_graph_artifact_store"
+                ),
+                "missing_worker_evidence_bundle_refs": (
+                    missing_worker_evidence_bundle_refs
+                ),
+                "manual_gaps": ["worker_evidence_bundle_not_reviewed"],
+                "forbidden_claims": [
+                    "worker_output_is_review_truth",
+                    "end_to_end_execution_review_closure",
+                    "ready_to_merge",
+                    "pr_merged",
+                ],
+            },
+        )
     if request.decision == "patch-forward" and not request.patch_instructions:
         raise HTTPException(
             status_code=409,
@@ -1502,6 +1588,14 @@ def _build_god_room_lane_review_verdict(
         "feature_graph_patch_forward_plan": graph_review_sync[
             "feature_graph_patch_forward_plan"
         ],
+        "worker_evidence_bundle_refs": worker_evidence_bundle_refs,
+        "cited_worker_evidence_bundle_refs": cited_worker_evidence_bundle_refs,
+        "worker_evidence_bundle_citation_status": (
+            "verified" if worker_evidence_bundle_refs else "not_required"
+        ),
+        "local_execution_candidate_worker_evidence_boundaries": _mapping_list(
+            intake.get("local_execution_candidate_worker_evidence_boundaries")
+        ),
         "server_truth_status": "not_server_truth",
         "conversation_id": conversation_id,
         "graph_id": request.graph_id,
@@ -1518,10 +1612,7 @@ def _build_god_room_lane_review_verdict(
         ),
         "manual_gaps": graph_review_sync["manual_gaps"],
         "forbidden_claims": [
-            "end_to_end_execution_review_closure",
-            "ready_to_merge",
-            "pr_merged",
-            "github_review_truth",
+            *GOD_ROOM_REVIEW_CHAIN_PROOF_FORBIDDEN_CLAIMS,
         ],
     }
     verdict_path = _write_god_room_lane_review_verdict_artifact(
@@ -1658,13 +1749,41 @@ def _apply_god_room_lane_patch_forward(
                 "message": str(exc),
             },
         ) from exc
-    artifacts = _write_lane_dag_artifacts(base_dir, patched_plan)
     patch_link = patched_plan.patch_forward_links[-1].model_dump(mode="json")
     patch_contract = next(
         contract
         for contract in patched_plan.lane_contracts
         if contract.lane_id == patch_lane_id
     )
+    patch_forward_ref = str(
+        _god_room_lane_patch_forward_artifact_path(
+            base_dir,
+            graph_id=request.graph_id,
+            lane_id=request.lane_id,
+        ).relative_to(base_dir)
+    )
+    patch_lane_graph_status_authority = _sync_patch_forward_feature_graph_authority(
+        base_dir,
+        patched_plan,
+        conversation_id=conversation_id,
+        failed_lane_id=request.lane_id,
+        patch_lane_id=patch_lane_id,
+        patch_contract=patch_contract,
+        review_verdict_artifact_ref=str(verdict_path.relative_to(base_dir)),
+        patch_forward_artifact_ref=patch_forward_ref,
+    )
+    artifacts = _write_lane_dag_artifacts(base_dir, patched_plan)
+    patch_lane_graph_status_artifacts = patch_lane_graph_status_authority.get(
+        "artifacts",
+        {},
+    )
+    if isinstance(patch_lane_graph_status_artifacts, dict):
+        artifacts.update(
+            {
+                str(key): str(value)
+                for key, value in patch_lane_graph_status_artifacts.items()
+            }
+        )
     patch_forward_payload: dict[str, object] = {
         "schema_version": "xmuse.god_room_lane_patch_forward.v1",
         "source_authority": "god_room_lane_review_verdict_artifact+lane_dag_artifact",
@@ -1678,8 +1797,22 @@ def _apply_god_room_lane_patch_forward(
             patched_plan.source_event_lineage
         ),
         "review_verdict_artifact": str(verdict_path.relative_to(base_dir)),
+        "worker_evidence_bundle_refs": _string_list(
+            verdict_artifact.get("worker_evidence_bundle_refs")
+        ),
+        "cited_worker_evidence_bundle_refs": _string_list(
+            verdict_artifact.get("cited_worker_evidence_bundle_refs")
+        ),
+        "worker_evidence_bundle_citation_status": verdict_artifact.get(
+            "worker_evidence_bundle_citation_status"
+        )
+        or "not_required",
+        "local_execution_candidate_worker_evidence_boundaries": _mapping_list(
+            verdict_artifact.get("local_execution_candidate_worker_evidence_boundaries")
+        ),
         "patch_forward_link": patch_link,
         "patch_lane_contract": patch_contract.model_dump(mode="json"),
+        "patch_lane_graph_status_authority": patch_lane_graph_status_authority,
         "lane_dag_artifacts": artifacts,
         "manual_gaps": [
             "patch_lane_not_executed",
@@ -1687,10 +1820,7 @@ def _apply_god_room_lane_patch_forward(
             "release_evidence_not_linked",
         ],
         "forbidden_claims": [
-            "end_to_end_execution_review_closure",
-            "ready_to_merge",
-            "pr_merged",
-            "github_review_truth",
+            *GOD_ROOM_REVIEW_CHAIN_PROOF_FORBIDDEN_CLAIMS,
         ],
     }
     patch_forward_path = _write_god_room_lane_patch_forward_artifact(
@@ -1947,6 +2077,68 @@ def _build_god_room_lane_review_closure(
                 "message": "patch lane merge verdict must cite candidate evidence",
             },
         )
+    try:
+        cited_candidate_artifact_lineage = valid_local_execution_candidate_lineages(
+            root=base_dir,
+            refs=cited_candidates,
+            lane_id=patch_lane_id,
+            graph_id=request.graph_id,
+            conversation_id=conversation_id,
+            required_producer=LOCAL_EXECUTION_CANDIDATE_PLATFORM_RUNNER_PRODUCER,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "god_room_lane_review_closure_candidate_artifact_invalid",
+                "message": str(exc),
+                "manual_gaps": ["candidate_evidence_artifact_invalid"],
+                "forbidden_claims": [
+                    "worker_output_is_review_truth",
+                    "end_to_end_execution_review_closure",
+                    "ready_to_merge",
+                    "pr_merged",
+                    "github_review_truth",
+                ],
+            },
+        ) from exc
+    cited_candidate_artifact_refs = [
+        str(lineage["artifact_ref"]) for lineage in cited_candidate_artifact_lineage
+    ]
+    if not cited_candidate_artifact_refs:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "god_room_lane_review_closure_candidate_artifact_not_resolvable",
+                "message": (
+                    "patch lane merge verdict must cite at least one resolvable "
+                    "candidate evidence artifact"
+                ),
+                "manual_gaps": ["candidate_evidence_artifact_not_resolvable"],
+                "forbidden_claims": [
+                    "worker_output_is_review_truth",
+                    "end_to_end_execution_review_closure",
+                    "ready_to_merge",
+                    "pr_merged",
+                    "github_review_truth",
+                ],
+            },
+        )
+    candidate_manual_gaps = _dedupe_text(
+        [
+            gap
+            for lineage in cited_candidate_artifact_lineage
+            for gap in _string_list(lineage.get("manual_gaps"))
+        ]
+    )
+    candidate_forbidden_claims = _dedupe_text(
+        [
+            claim
+            for lineage in cited_candidate_artifact_lineage
+            for claim in _string_list(lineage.get("forbidden_claims"))
+        ]
+    )
+    cited_candidate_artifact_refs = _dedupe_text(cited_candidate_artifact_refs)
     graph_status = _require_god_room_lane_review_closure_merged_status(
         base_dir,
         conversation_id=conversation_id,
@@ -1954,13 +2146,46 @@ def _build_god_room_lane_review_closure(
         terminal_lane_id=patch_lane_id,
         patch_contract=patch_contract.model_dump(mode="json"),
     )
+    runner_recovery_lineage = _god_room_runner_recovery_proof_lineage(
+        base_dir,
+        graph_id=request.graph_id,
+        lane_id=request.lane_id,
+        artifact_ref=request.runner_recovery_proof_artifact,
+    )
+    source_authority = (
+        "god_room_lane_patch_forward_artifact+"
+        "patch_lane_review_verdict_artifact+"
+        "feature_graph_status_store"
+    )
+    manual_gaps = [
+        "release_evidence_not_linked",
+        "github_truth_not_checked",
+        *candidate_manual_gaps,
+    ]
+    forbidden_claims = [
+        "worker_output_is_review_truth",
+        "end_to_end_execution_review_closure",
+        "ready_to_merge",
+        "pr_merged",
+        "github_review_truth",
+        "overnight_safe_recovery",
+        *candidate_forbidden_claims,
+    ]
+    if runner_recovery_lineage is None:
+        manual_gaps.append("runner_recovery_proof_not_linked")
+    else:
+        source_authority = f"{source_authority}+local_runner_recovery_proof_artifact"
+        forbidden_claims = _dedupe_text(
+            [
+                *forbidden_claims,
+                *_string_list(runner_recovery_lineage.get("forbidden_claims")),
+            ]
+        )
+        if runner_recovery_lineage.get("proof_level") == "manual_gap":
+            manual_gaps.append("runner_recovery_proof_manual_gap")
     closure_payload: dict[str, object] = {
         "schema_version": "xmuse.god_room_lane_review_closure.v1",
-        "source_authority": (
-            "god_room_lane_patch_forward_artifact+"
-            "patch_lane_review_verdict_artifact+"
-            "feature_graph_status_store"
-        ),
+        "source_authority": source_authority,
         "proof_level": "contract_proof",
         "review_truth_status": "independent_review_artifact",
         "execution_truth_status": "candidate_reviewed",
@@ -1983,29 +2208,34 @@ def _build_god_room_lane_review_closure(
         "patch_lane_contract": patch_contract.model_dump(mode="json"),
         "candidate_refs": candidate_refs,
         "cited_candidate_refs": cited_candidates,
+        "cited_candidate_artifact_refs": cited_candidate_artifact_refs,
+        "cited_candidate_artifact_lineage": cited_candidate_artifact_lineage,
         "terminal_review_verdict": patch_verdict.model_dump(mode="json"),
         "review_plane_sync_status": "review_plane_store_updated",
         "review_plane_verdict_ref": review_plane_verdict_ref,
         "graph_status_source_authority": "feature_graph_status_store",
         "graph_status_merge_status": "verified_merged",
         "terminal_feature_graph_status": graph_status.model_dump(mode="json"),
-        "manual_gaps": [
-            "release_evidence_not_linked",
-            "github_truth_not_checked",
-        ],
-        "forbidden_claims": [
-            "worker_output_is_review_truth",
-            "end_to_end_execution_review_closure",
-            "ready_to_merge",
-            "pr_merged",
-            "github_review_truth",
-        ],
+        "manual_gaps": manual_gaps,
+        "forbidden_claims": forbidden_claims,
     }
+    if runner_recovery_lineage is not None:
+        closure_payload["runner_recovery_proof_lineage"] = runner_recovery_lineage
     closure_path = _write_god_room_lane_review_closure_artifact(
         base_dir,
         graph_id=request.graph_id,
         lane_id=request.lane_id,
         payload=closure_payload,
+    )
+    review_chain_proof_path = _god_room_lane_review_chain_proof_artifact_path(
+        base_dir,
+        graph_id=request.graph_id,
+        lane_id=request.lane_id,
+    )
+    review_chain_proof = capture_god_room_review_chain_proof(
+        root=base_dir,
+        review_closure_artifact=str(closure_path.relative_to(base_dir)),
+        output_path=review_chain_proof_path,
     )
     return {
         "source_authority": closure_payload["source_authority"],
@@ -2014,9 +2244,98 @@ def _build_god_room_lane_review_closure(
         "failed_lane_id": request.lane_id,
         "terminal_lane_id": patch_lane_id,
         "review_closure": closure_payload,
+        "review_chain_proof": review_chain_proof,
         "artifacts": {
             "review_closure": str(closure_path.relative_to(base_dir)),
+            "review_chain_proof": str(review_chain_proof_path.relative_to(base_dir)),
         },
+    }
+
+
+def _build_god_room_lane_review_chain_proof(
+    base_dir: Path,
+    *,
+    conversation_id: str,
+    request: GodRoomLaneReviewChainProofRequest,
+) -> dict[str, object]:
+    if not _conversation_exists(_store(base_dir), conversation_id):
+        raise HTTPException(status_code=404, detail="conversation not found")
+    closure_path = _god_room_lane_review_closure_artifact_path(
+        base_dir,
+        graph_id=request.graph_id,
+        lane_id=request.lane_id,
+    )
+    if not closure_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "god_room_lane_review_closure_not_found",
+                "message": "review chain proof requires a durable review closure artifact",
+            },
+        )
+    try:
+        closure_artifact = json.loads(closure_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "god_room_lane_review_closure_invalid",
+                "message": str(exc),
+            },
+        ) from exc
+    if not isinstance(closure_artifact, dict):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "god_room_lane_review_closure_invalid",
+                "message": "review closure artifact must be an object",
+            },
+        )
+    if (
+        closure_artifact.get("conversation_id") != conversation_id
+        or closure_artifact.get("graph_id") != request.graph_id
+        or closure_artifact.get("failed_lane_id") != request.lane_id
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "god_room_lane_review_closure_mismatch",
+                "message": "review closure artifact does not match request scope",
+            },
+        )
+
+    review_chain_proof_path = _god_room_lane_review_chain_proof_artifact_path(
+        base_dir,
+        graph_id=request.graph_id,
+        lane_id=request.lane_id,
+    )
+    review_chain_proof = capture_god_room_review_chain_proof(
+        root=base_dir,
+        review_closure_artifact=str(closure_path.relative_to(base_dir)),
+        output_path=review_chain_proof_path,
+    )
+    artifacts = {
+        "review_closure": str(closure_path.relative_to(base_dir)),
+        "review_chain_proof": str(review_chain_proof_path.relative_to(base_dir)),
+    }
+    if review_chain_proof.get("status") != "chain_ready":
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "god_room_lane_review_chain_proof_not_ready",
+                "message": "review chain proof remained manual_gap",
+                "review_chain_proof": review_chain_proof,
+                "artifacts": artifacts,
+            },
+        )
+    return {
+        "source_authority": review_chain_proof.get("source_authority"),
+        "conversation_id": conversation_id,
+        "graph_id": request.graph_id,
+        "failed_lane_id": request.lane_id,
+        "terminal_lane_id": review_chain_proof.get("terminal_lane_id"),
+        "review_chain_proof": review_chain_proof,
+        "artifacts": artifacts,
     }
 
 
@@ -3535,6 +3854,72 @@ def _require_god_room_lane_review_closure_merged_status(
     return record
 
 
+def _god_room_runner_recovery_proof_lineage(
+    base_dir: Path,
+    *,
+    graph_id: str,
+    lane_id: str,
+    artifact_ref: str | None,
+) -> dict[str, object] | None:
+    if artifact_ref is None:
+        return None
+    proof_path = _resolve_runtime_artifact_path(base_dir, artifact_ref)
+    if not proof_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "god_room_runner_recovery_proof_not_found",
+                "message": "review closure requires an existing runner recovery proof artifact",
+                "source_authority": RUNNER_RECOVERY_PROOF_AUTHORITY,
+                "manual_gaps": ["runner_recovery_proof_missing"],
+                "forbidden_claims": list(RUNNER_RECOVERY_FORBIDDEN_CLAIMS),
+            },
+        )
+    try:
+        payload = json.loads(proof_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "god_room_runner_recovery_proof_invalid",
+                "message": str(exc),
+                "source_authority": RUNNER_RECOVERY_PROOF_AUTHORITY,
+                "manual_gaps": ["runner_recovery_proof_invalid"],
+                "forbidden_claims": list(RUNNER_RECOVERY_FORBIDDEN_CLAIMS),
+            },
+        ) from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "god_room_runner_recovery_proof_invalid",
+                "message": "runner recovery proof artifact must be an object",
+                "source_authority": RUNNER_RECOVERY_PROOF_AUTHORITY,
+                "manual_gaps": ["runner_recovery_proof_invalid"],
+                "forbidden_claims": list(RUNNER_RECOVERY_FORBIDDEN_CLAIMS),
+            },
+        )
+    try:
+        lineage_artifact_ref = str(proof_path.resolve().relative_to(base_dir.resolve()))
+        return build_runner_recovery_proof_lineage(
+            proof=payload,
+            artifact_ref=lineage_artifact_ref,
+            graph_id=graph_id,
+            lane_id=lane_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "god_room_runner_recovery_proof_invalid",
+                "message": str(exc),
+                "source_authority": RUNNER_RECOVERY_PROOF_AUTHORITY,
+                "manual_gaps": ["runner_recovery_proof_invalid"],
+                "forbidden_claims": list(RUNNER_RECOVERY_FORBIDDEN_CLAIMS),
+            },
+        ) from exc
+
+
 def _write_lane_dag_artifacts(
     base_dir: Path,
     plan: BlueprintLaneDagPlan,
@@ -3572,6 +3957,205 @@ def _write_lane_dag_artifacts(
         artifacts["feature_graph_set"] = str(graph_set_path.relative_to(base_dir))
         artifacts["feature_graph_statuses"] = "feature_graph_statuses.json"
     return artifacts
+
+
+def _sync_patch_forward_feature_graph_authority(
+    base_dir: Path,
+    plan: BlueprintLaneDagPlan,
+    *,
+    conversation_id: str,
+    failed_lane_id: str,
+    patch_lane_id: str,
+    patch_contract: Any,
+    review_verdict_artifact_ref: str,
+    patch_forward_artifact_ref: str,
+) -> dict[str, object]:
+    graph_set_id = _lane_dag_graph_set_id(plan.lane_graph.id)
+    patch_feature_id = str(getattr(patch_contract, "feature_id", "") or "").strip()
+    if not patch_feature_id:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "god_room_lane_patch_forward_missing_feature_id",
+                "message": "patch-forward lane contract must identify its feature id",
+                "source_authority": "lane_runtime_contract",
+                "manual_gaps": ["patch_lane_feature_authority_missing"],
+                "forbidden_claims": ["patch_lane_worker_evidence_producer_ready"],
+            },
+        )
+    patch_lane = next(
+        (
+            lane
+            for lane in plan.lane_graph.lanes
+            if str(lane.feature_id) == patch_lane_id
+        ),
+        None,
+    )
+    if patch_lane is None:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "god_room_lane_patch_forward_patch_lane_missing",
+                "message": "patch-forward laneDAG does not contain the patch lane",
+                "source_authority": "lane_dag_artifact",
+                "manual_gaps": ["patch_lane_lanedag_authority_missing"],
+                "forbidden_claims": ["patch_lane_worker_evidence_producer_ready"],
+            },
+        )
+    graph_set_store = FeatureGraphSetStore(base_dir / "graph_sets")
+    try:
+        graph_set = graph_set_store.get(
+            graph_set_id,
+            conversation_id=conversation_id,
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "god_room_lane_patch_forward_missing_graph_set",
+                "message": "patch-forward requires durable graph-set authority",
+                "source_authority": "feature_graph_set_store",
+                "graph_id": plan.lane_graph.id,
+                "graph_set_id": graph_set_id,
+                "manual_gaps": ["patch_lane_graph_set_authority_missing"],
+                "forbidden_claims": ["patch_lane_worker_evidence_producer_ready"],
+            },
+        ) from exc
+    if graph_set.decomposition_review is not None:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "god_room_lane_patch_forward_graph_set_review_packet_stale",
+                "message": (
+                    "patch-forward cannot update a graph-set with stale "
+                    "decomposition review packets"
+                ),
+                "source_authority": "feature_graph_set_store",
+                "graph_id": plan.lane_graph.id,
+                "graph_set_id": graph_set_id,
+                "manual_gaps": ["patch_lane_graph_set_review_packet_refactor_required"],
+                "forbidden_claims": ["patch_lane_worker_evidence_producer_ready"],
+            },
+        )
+
+    patch_feature_graph_id = _lane_dag_feature_graph_id(
+        plan.lane_graph.id,
+        patch_feature_id,
+    )
+    source_refs = _dedupe_text(
+        [
+            *graph_set.source_refs,
+            f"lane_dag:{plan.lane_graph.id}",
+            f"lane:{failed_lane_id}",
+            f"lane:{patch_lane_id}",
+            f"feature:{patch_feature_id}",
+            review_verdict_artifact_ref,
+            patch_forward_artifact_ref,
+            *plan.source_refs,
+            *list(patch_lane.blueprint_refs),
+        ]
+    )
+    feature = FeaturePlanFeature(
+        feature_id=patch_feature_id,
+        title=patch_lane.title or f"Patch forward for {failed_lane_id}",
+        goal=patch_lane.prompt,
+        acceptance_criteria=list(patch_lane.acceptance_criteria)
+        or list(getattr(patch_contract, "outputs", []))
+        or [f"Patch-forward lane {patch_lane_id} is independently reviewed."],
+        dependencies=[],
+        graph_id=patch_feature_graph_id,
+        expected_touched_areas=list(patch_lane.expected_touched_areas)
+        or list(getattr(patch_contract, "allowed_files", [])),
+        blueprint_refs=list(patch_lane.blueprint_refs) or [plan.blueprint_ref],
+    )
+    patch_graph = LaneGraph(
+        id=patch_feature_graph_id,
+        conversation_id=graph_set.feature_plan.conversation_id,
+        resolution_id=graph_set.feature_plan.resolution_id,
+        version=graph_set.feature_plan.version,
+        status=plan.lane_graph.status,
+        source_refs=source_refs,
+        lanes=[
+            patch_lane.model_copy(
+                update={
+                    "depends_on": [],
+                    "feature_group": patch_feature_id,
+                }
+            )
+        ],
+    )
+    updated_graph_set = graph_set.model_copy(
+        update={
+            "source_refs": source_refs,
+            "source_event_lineage": list(plan.source_event_lineage)
+            or list(graph_set.source_event_lineage),
+            "feature_plan": graph_set.feature_plan.model_copy(
+                update={
+                    "features": [
+                        *[
+                            item
+                            for item in graph_set.feature_plan.features
+                            if item.feature_id != patch_feature_id
+                        ],
+                        feature,
+                    ]
+                }
+            ),
+            "graphs": [
+                *[item for item in graph_set.graphs if item.id != patch_feature_graph_id],
+                patch_graph,
+            ],
+        }
+    )
+    graph_set_path = graph_set_store.save(updated_graph_set)
+    statuses = FeatureGraphStatusStore(
+        base_dir / "feature_graph_statuses.json"
+    ).initialize_from_graph_set(
+        updated_graph_set,
+        updated_at=_utc_now(),
+        blueprint_proof_level=plan.blueprint_proof_level,
+    )
+    patch_status = next(
+        (
+            status
+            for status in statuses
+            if status.graph_set_id == graph_set_id
+            and status.feature_graph_id == patch_feature_graph_id
+        ),
+        None,
+    )
+    if patch_status is None:
+        patch_status = FeatureGraphStatusStore(
+            base_dir / "feature_graph_statuses.json"
+        ).get(
+            graph_set_id=graph_set_id,
+            feature_graph_id=patch_feature_graph_id,
+        )
+    return {
+        "schema_version": "xmuse.patch_forward_lane_graph_status_authority.v1",
+        "source_authority": "feature_graph_set_store+feature_graph_status_store",
+        "status": "initialized",
+        "proof_level": "contract_proof",
+        "conversation_id": conversation_id,
+        "graph_id": plan.lane_graph.id,
+        "graph_set_id": graph_set_id,
+        "feature_id": patch_feature_id,
+        "feature_graph_id": patch_feature_graph_id,
+        "lane_id": patch_lane_id,
+        "failed_lane_id": failed_lane_id,
+        "feature_graph_status": patch_status.model_dump(mode="json"),
+        "artifacts": {
+            "feature_graph_set": str(graph_set_path.relative_to(base_dir)),
+            "feature_graph_statuses": "feature_graph_statuses.json",
+        },
+        "manual_gaps": ["patch_lane_not_executed", "patch_lane_not_reviewed"],
+        "forbidden_claims": [
+            "patch_lane_worker_output_is_review_truth",
+            "end_to_end_execution_review_closure",
+            "ready_to_merge",
+            "pr_merged",
+        ],
+    }
 
 
 def _feature_graph_set_from_lane_dag_plan(
@@ -3801,6 +4385,58 @@ def _require_god_room_lane_review_status_authority(
     return record
 
 
+def _discover_local_execution_candidates(
+    base_dir: Path,
+    *,
+    conversation_id: str,
+    graph_id: str,
+    lane_id: str,
+) -> list[dict[str, object]]:
+    candidate_dir = base_dir / "work" / "local_execution_candidates"
+    if not candidate_dir.is_dir():
+        return []
+    candidates: list[dict[str, object]] = []
+    for path in sorted(candidate_dir.glob("*.json")):
+        try:
+            ref = str(path.relative_to(base_dir))
+        except ValueError:
+            continue
+        try:
+            lineages = valid_local_execution_candidate_lineages(
+                root=base_dir,
+                refs=[ref],
+                lane_id=lane_id,
+                graph_id=graph_id,
+                conversation_id=conversation_id,
+                required_producer=LOCAL_EXECUTION_CANDIDATE_PLATFORM_RUNNER_PRODUCER,
+            )
+        except ValueError:
+            continue
+        for lineage in lineages:
+            if lineage.get("status") != "candidate_only":
+                continue
+            worker_evidence_boundary = (
+                build_local_execution_candidate_worker_evidence_boundary(
+                    root=base_dir,
+                    lineage=lineage,
+                )
+            )
+            if worker_evidence_boundary.get("status") != "verified":
+                continue
+            artifact_ref = str(lineage["artifact_ref"])
+            if artifact_ref in {
+                str(candidate["artifact_ref"]) for candidate in candidates
+            }:
+                continue
+            candidates.append(
+                {
+                    "artifact_ref": artifact_ref,
+                    "worker_evidence_boundary": worker_evidence_boundary,
+                }
+            )
+    return candidates
+
+
 def _write_lane_recovery_artifact(
     base_dir: Path,
     *,
@@ -3935,7 +4571,26 @@ def _write_god_room_lane_review_closure_artifact(
     lane_id: str,
     payload: dict[str, object],
 ) -> Path:
-    path = (
+    path = _god_room_lane_review_closure_artifact_path(
+        base_dir,
+        graph_id=graph_id,
+        lane_id=lane_id,
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def _god_room_lane_review_closure_artifact_path(
+    base_dir: Path,
+    *,
+    graph_id: str,
+    lane_id: str,
+) -> Path:
+    return (
         base_dir
         / "reports"
         / "god_room_review_closure"
@@ -3944,12 +4599,23 @@ def _write_god_room_lane_review_closure_artifact(
             f"{_artifact_path_id(lane_id)}.review-closure.json"
         )
     )
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
-        encoding="utf-8",
+
+
+def _god_room_lane_review_chain_proof_artifact_path(
+    base_dir: Path,
+    *,
+    graph_id: str,
+    lane_id: str,
+) -> Path:
+    return (
+        base_dir
+        / "reports"
+        / "god_room_review_chain_proof"
+        / (
+            f"{_artifact_path_id(graph_id)}."
+            f"{_artifact_path_id(lane_id)}.review-chain-proof.json"
+        )
     )
-    return path
 
 
 def _write_god_room_memoryos_plan_artifact(
@@ -5097,6 +5763,20 @@ def create_app(
         request: GodRoomLaneReviewClosureRequest,
     ) -> dict[str, object]:
         return _build_god_room_lane_review_closure(
+            root,
+            conversation_id=conversation_id,
+            request=request,
+        )
+
+    @app.post(
+        "/api/chat/conversations/{conversation_id}/god-room/lane-dag/review-chain-proof",
+        status_code=status.HTTP_201_CREATED,
+    )
+    def build_god_room_lane_review_chain_proof(
+        conversation_id: str,
+        request: GodRoomLaneReviewChainProofRequest,
+    ) -> dict[str, object]:
+        return _build_god_room_lane_review_chain_proof(
             root,
             conversation_id=conversation_id,
             request=request,

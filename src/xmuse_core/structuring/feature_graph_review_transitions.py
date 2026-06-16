@@ -149,7 +149,11 @@ def _target_status_record(
         status=target_status,
         ready_lane_ids=[],
         active_lane_ids=[],
-        completed_lane_ids=list(current_status.completed_lane_ids),
+        completed_lane_ids=_target_completed_lane_ids(
+            evidence_bundle=evidence_bundle,
+            current_status=current_status,
+            target_status=target_status,
+        ),
         blocked_lane_ids=list(current_status.blocked_lane_ids),
         projection_lane_ids=list(current_status.projection_lane_ids),
         feature_lanes_projection_ref=current_status.feature_lanes_projection_ref,
@@ -169,6 +173,17 @@ def _resolve_blueprint_proof_level(
     if bundle_level is not None and current_level is not None and bundle_level != current_level:
         raise ValueError("evidence bundle blueprint_proof_level must match current status")
     return bundle_level if bundle_level is not None else current_level
+
+
+def _target_completed_lane_ids(
+    *,
+    evidence_bundle: FeatureEvidenceBundle,
+    current_status: FeatureGraphExecutionStatusRecord,
+    target_status: FeatureGraphExecutionStatus,
+) -> list[str]:
+    if target_status is FeatureGraphExecutionStatus.MERGED:
+        return list(evidence_bundle.lane_graph_summary.completed_lane_ids)
+    return list(current_status.completed_lane_ids)
 
 
 def _transition_plan_id(

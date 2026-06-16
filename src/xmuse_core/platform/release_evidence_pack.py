@@ -9,6 +9,10 @@ from typing import Any
 from xmuse_core.platform.deliberation_transcript_evidence_capture import (
     capture_deliberation_transcript_evidence,
 )
+from xmuse_core.platform.execution.github_ops import (
+    GitHubServerSideTruthEvidence,
+    can_emit_pr_merged,
+)
 from xmuse_core.platform.feature_lineage_evidence_capture import (
     capture_feature_lineage_evidence,
 )
@@ -19,6 +23,9 @@ from xmuse_core.platform.github_truth_release_gate import (
     write_github_server_truth_release_gate,
 )
 from xmuse_core.platform.goal_stage_evidence_capture import capture_goal_stage_evidence
+from xmuse_core.platform.god_room_review_chain_proof import (
+    GOD_ROOM_REVIEW_CHAIN_PROOF_FORBIDDEN_CLAIMS,
+)
 from xmuse_core.platform.god_room_runtime_closure_evidence_capture import (
     GOD_ROOM_RUNTIME_CLOSURE_SECTION,
     capture_god_room_runtime_closure_evidence,
@@ -76,6 +83,8 @@ def capture_release_evidence_pack(
     god_room_speaker_response: str | Path | None = None,
     god_room_multi_turn_provider_speech_run: str | Path | None = None,
     god_room_review_closure: str | Path | None = None,
+    god_room_review_chain_proof: str | Path | None = None,
+    god_room_review_chain_proof_expected: bool = False,
     god_room_runtime_closure_evidence_output: str | Path | None = None,
     feature_contracts: tuple[str | Path, ...] = (),
     feature_lineage_evidence_output: str | Path | None = None,
@@ -175,6 +184,14 @@ def capture_release_evidence_pack(
                 god_room_multi_turn_provider_speech_run
             ),
             review_closure_artifact=god_room_review_closure,
+            review_chain_proof_artifact=god_room_review_chain_proof,
+            review_chain_proof_expected=(
+                god_room_review_chain_proof_expected
+                or (
+                    god_room_review_closure is not None
+                    and god_room_review_chain_proof is None
+                )
+            ),
             github_truth_artifact=github_server_truth,
             release_readiness_artifact=readiness_path,
             evidence_output=god_room_runtime_closure_evidence_output,
@@ -187,6 +204,14 @@ def capture_release_evidence_pack(
         output_path=replay_path,
         section_artifacts=replay_section_artifacts,
         tombstoned_source_refs=tombstoned_source_refs,
+    )
+    review_chain_release_linkage = _god_room_review_chain_release_linkage(
+        review_chain_proof_artifact=god_room_review_chain_proof,
+        runtime_closure_evidence_report=god_room_source_reports.get(
+            "god_room_runtime_closure_evidence"
+        ),
+        replay_bundle=replay_path,
+        replay=replay,
     )
     replay_blockers = replay.get("blockers")
     if not isinstance(replay_blockers, list):
@@ -243,6 +268,8 @@ def capture_release_evidence_pack(
         pack["real_provider_runtime"] = real_provider_runtime_summary
     if github_truth_summary is not None:
         pack["github_truth"] = github_truth_summary
+    if review_chain_release_linkage is not None:
+        pack["god_room_review_chain_release_linkage"] = review_chain_release_linkage
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(pack, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return pack
@@ -403,6 +430,8 @@ def _with_god_room_runtime_closure_evidence(
     speaker_response_artifact: str | Path | None,
     multi_turn_provider_speech_run_artifact: str | Path | None,
     review_closure_artifact: str | Path | None,
+    review_chain_proof_artifact: str | Path | None,
+    review_chain_proof_expected: bool,
     github_truth_artifact: str | Path | None,
     release_readiness_artifact: str | Path,
     evidence_output: str | Path | None,
@@ -422,8 +451,9 @@ def _with_god_room_runtime_closure_evidence(
             speaker_response_artifact,
             multi_turn_provider_speech_run_artifact,
             review_closure_artifact,
+            review_chain_proof_artifact,
         )
-    )
+    ) or review_chain_proof_expected
     if not has_inputs:
         return (artifacts or None), source_reports
     if GOD_ROOM_RUNTIME_CLOSURE_SECTION in artifacts:
@@ -450,12 +480,132 @@ def _with_god_room_runtime_closure_evidence(
         speaker_response_artifact=speaker_response_artifact,
         multi_turn_provider_speech_run_artifact=multi_turn_provider_speech_run_artifact,
         review_closure_artifact=review_closure_artifact,
+        review_chain_proof_artifact=review_chain_proof_artifact,
+        review_chain_proof_expected=review_chain_proof_expected,
         github_truth_artifact=github_truth_artifact,
         release_readiness_artifact=release_readiness_artifact,
     )
     artifacts[GOD_ROOM_RUNTIME_CLOSURE_SECTION] = closure_evidence_path
     source_reports["god_room_runtime_closure_evidence"] = str(closure_evidence_path)
     return artifacts, source_reports
+
+
+def _god_room_review_chain_release_linkage(
+    *,
+    review_chain_proof_artifact: str | Path | None,
+    runtime_closure_evidence_report: str | None,
+    replay_bundle: str | Path,
+    replay: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    if review_chain_proof_artifact is None:
+        return None
+    artifact_ref = f"review_chain_proof_artifact:{Path(review_chain_proof_artifact)}"
+    section = _replay_section(replay, GOD_ROOM_RUNTIME_CLOSURE_SECTION)
+    section_source_refs = _string_list(section.get("source_refs"))
+    section_details = section.get("details")
+    if not isinstance(section_details, Mapping):
+        section_details = {}
+    runtime_details = section_details.get(GOD_ROOM_RUNTIME_CLOSURE_SECTION)
+    if not isinstance(runtime_details, Mapping):
+        runtime_details = {}
+    chain_details = runtime_details.get("review_chain_proof")
+    if not isinstance(chain_details, Mapping):
+        chain_details = {}
+    source_manual_gaps = _string_list(chain_details.get("manual_gaps"))
+    resolved_gap_candidates = {
+        "release_evidence_export_not_attempted",
+        "release_evidence_not_linked",
+    }
+    linked = (
+        artifact_ref in section_source_refs
+        and _text(chain_details.get("status")) == "chain_ready"
+        and _text(chain_details.get("proof_level")) == "contract_proof"
+        and _text(chain_details.get("server_truth_status")) == "not_server_truth"
+        and _mapping_status(chain_details.get("bounded_session_gate")) == "verified"
+        and chain_details.get("current_handoff_gate_ready") is True
+    )
+    resolved_manual_gaps = [
+        gap for gap in source_manual_gaps if gap in resolved_gap_candidates
+    ] if linked else []
+    retained_manual_gaps = [
+        gap for gap in source_manual_gaps if gap not in set(resolved_manual_gaps)
+    ]
+    chain_source_refs = (
+        [
+            ref
+            for ref in section_source_refs
+            if ref == artifact_ref
+            or ref.startswith("god-room-review-chain-proof:")
+            or ref.startswith("god-room-event:")
+            or ref.startswith("provider_response_artifact:")
+            or ref.startswith("runner_recovery_proof_artifact:")
+            or ref.startswith("feature_evidence_bundle:")
+            or ref.startswith("worker_evidence_bundle:")
+        ]
+        if linked
+        else []
+    )
+    status = "linked_to_replay_bundle" if linked else "manual_gap"
+    blocked_reason = None
+    if not linked:
+        blocked_reason = (
+            "review chain proof was not indexed into replay source refs"
+            if artifact_ref not in section_source_refs
+            else "review chain proof is not gate-ready for release linkage"
+        )
+    return {
+        "schema_version": "xmuse.god_room_review_chain_release_linkage.v1",
+        "status": status,
+        "proof_level": "contract_proof" if linked else "manual_gap",
+        "server_truth_status": "not_server_truth",
+        "source_authority": (
+            "release_evidence_pack+god_room_runtime_closure_evidence+"
+            "overnight_replay_bundle"
+        ),
+        "review_chain_proof_artifact": str(Path(review_chain_proof_artifact)),
+        "runtime_closure_evidence_report": runtime_closure_evidence_report,
+        "replay_bundle": str(Path(replay_bundle)),
+        "replay_section_id": GOD_ROOM_RUNTIME_CLOSURE_SECTION,
+        "replay_section_status": _text(section.get("status")) or "not_provided",
+        "review_chain_proof_status": _text(chain_details.get("status"))
+        or "not_provided",
+        "review_chain_proof_level": _text(chain_details.get("proof_level"))
+        or "manual_gap",
+        "bounded_session_gate_status": _mapping_status(
+            chain_details.get("bounded_session_gate")
+        ),
+        "current_handoff_gate_ready": chain_details.get("current_handoff_gate_ready")
+        is True,
+        "source_refs": chain_source_refs,
+        "source_ref_count": len(chain_source_refs),
+        "source_manual_gaps": source_manual_gaps,
+        "resolved_manual_gaps": _dedupe(resolved_manual_gaps),
+        "retained_manual_gaps": _dedupe(retained_manual_gaps),
+        "blocked_reason": blocked_reason,
+        "affects_pack_decision": False,
+        "forbidden_claims": _dedupe(
+            [
+                *GOD_ROOM_REVIEW_CHAIN_PROOF_FORBIDDEN_CLAIMS,
+                *_string_list(chain_details.get("forbidden_claims")),
+            ]
+        ),
+        "summary": (
+            "GOD-room review chain proof was indexed into the release evidence "
+            "replay bundle as aggregation lineage only."
+            if linked
+            else "GOD-room review chain proof was not linked into release evidence."
+        ),
+    }
+
+
+def _replay_section(replay: Mapping[str, Any], section_id: str) -> dict[str, Any]:
+    sections = replay.get("sections")
+    if not isinstance(sections, list):
+        return {}
+    for section in sections:
+        if isinstance(section, dict) and section.get("section_id") == section_id:
+            return section
+    return {}
 
 
 def _release_gate_artifacts(
@@ -660,6 +810,7 @@ def _github_truth_pack_projection(
     gate_artifact: Path,
 ) -> dict[str, Any]:
     truth_artifacts = _string_list(gate.get("artifacts"))
+    pr_merged_allowed = _can_emit_pr_merged_from_gate(gate, truth)
     return {
         "authority": "github_truth_release_gate",
         "status": _text(gate.get("status")) or "not_evaluated",
@@ -680,9 +831,9 @@ def _github_truth_pack_projection(
         "expected_source_app": _text(truth.get("expected_source_app")),
         "server_enforcement": _github_server_enforcement(truth),
         "review_truth": _github_review_truth(truth),
-        "merge_truth": _github_merge_truth(truth),
-        "merged": truth.get("merged") is True,
-        "can_emit_pr_merged": truth.get("can_emit_pr_merged") is True,
+        "merge_truth": "pr_merged" if pr_merged_allowed else "missing",
+        "merged": pr_merged_allowed,
+        "can_emit_pr_merged": pr_merged_allowed,
         "gap_reason": _text(truth.get("gap_reason")),
         "capture_mode": _text(truth.get("capture_mode")),
     }
@@ -704,10 +855,22 @@ def _github_review_truth(truth: dict[str, Any]) -> str:
     return "missing"
 
 
-def _github_merge_truth(truth: dict[str, Any]) -> str:
-    if truth.get("can_emit_pr_merged") is True and truth.get("merged") is True:
-        return "pr_merged"
-    return "missing"
+def _can_emit_pr_merged_from_gate(
+    gate: Mapping[str, Any],
+    truth: Mapping[str, Any],
+) -> bool:
+    if _text(gate.get("status")) != "ok":
+        return False
+    try:
+        payload = {
+            key: value
+            for key in GitHubServerSideTruthEvidence.model_fields
+            if (value := truth.get(key)) is not None
+        }
+        evidence = GitHubServerSideTruthEvidence.model_validate(payload)
+    except ValueError:
+        return False
+    return can_emit_pr_merged(evidence)
 
 
 def _production_baseline_summary(path: str | Path | None) -> dict[str, Any] | None:
@@ -942,6 +1105,23 @@ def _optional_bool(value: object) -> bool | None:
 
 def _list_value(value: object) -> list[object]:
     return value if isinstance(value, list) else []
+
+
+def _mapping_status(value: object) -> str | None:
+    if not isinstance(value, Mapping):
+        return None
+    return _text(value.get("status"))
+
+
+def _dedupe(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        result.append(value)
+    return result
 
 
 def _pack_decision(

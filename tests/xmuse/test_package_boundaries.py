@@ -211,6 +211,29 @@ def test_mcp_server_does_not_import_agent_spawner() -> None:
     )
 
 
+def test_god_room_review_chain_proof_does_not_import_l10_aggregator() -> None:
+    _check_file_boundary(
+        "src/xmuse_core/platform/god_room_review_chain_proof.py",
+        "xmuse_core.platform.release_evidence_candidates",
+        "L9 review-chain proof must not depend on the L10 release aggregator.",
+    )
+
+
+def test_platform_runner_uses_public_recovery_dispatch_helper() -> None:
+    path = PROJECT_ROOT / "xmuse/platform_runner.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    imported_names: list[str] = []
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.ImportFrom)
+            and node.module == "xmuse_core.platform.orchestrator_lane_flow"
+        ):
+            imported_names.extend(alias.name for alias in node.names)
+
+    assert "_lane_recovery_dispatch_block_metadata" not in imported_names
+    assert "build_lane_recovery_dispatch_block_metadata" in imported_names
+
+
 # ── boundary: self_evolution → TUI ──────────────────────────────────
 
 def test_self_evolution_does_not_import_tui() -> None:

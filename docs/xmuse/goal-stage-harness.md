@@ -18,6 +18,27 @@ uv run python scripts/goal_stage_runner.py \
   --output /tmp/goal-runs/<stage-id>/result.json
 ```
 
+Codex model fallback 默认启用：当 runner 通过 `codex exec -m gpt-5.5`
+执行阶段且输出匹配 quota/usage/weekly limit 等额度耗尽信号时，会自动用
+`gpt-5.3-codex-spark` 重跑同一阶段 prompt。无需在常规 stage 命令中重复传
+fallback 参数。
+
+如需显式覆盖或关闭:
+
+```bash
+uv run python scripts/goal_stage_runner.py \
+  --stage-manifest /abs/path/to/stage-manifest.json \
+  --engine codex \
+  --fallback-model gpt-5.3-codex-spark \
+  --fallback-on quota_exhausted \
+  --repo-root /home/iiyatu/projects/python/xmuse \
+  --output /tmp/goal-runs/<stage-id>/result.json
+```
+
+关闭 fallback 时使用 `--fallback-on none`。注意：fallback 只作用于通过
+`scripts/goal_stage_runner.py` 启动的阶段子进程；当前外层 `/goal` 会话如果耗尽，
+仍需要人工在 Codex UI/CLI 中选择可用模型后继续。
+
 - 规则：未生成 `result.json` 不得进入下一阶段。
 - 规则：`--dry-run` 只用于预览 prompt/command，生成的 `result.json` 不得作为阶段通过证据。
 - `status` 约束：
@@ -59,6 +80,14 @@ uv run python scripts/goal_stage_runner.py \
   - `<output-path>.manifest.jsonl`（追加审计日志，例如 `result.json.manifest.jsonl`）
   - `<output-path>.prompt.txt`（本次给执行器的标准化提示，例如 `result.json.prompt.txt`）
   - `<output-path>.evidence/engine_output.txt`（引擎原始输出，例如 `result.json.evidence/engine_output.txt`）
+- 触发 Codex model fallback 时，脚本还会输出：
+  - `<output-path>.evidence/engine_output.primary.txt`
+  - `<output-path>.evidence/engine_output.fallback.txt`
+  - `result.json` 中的 `primary_model`、`fallback_model`、
+    `fallback_triggered`、`fallback_reason`、`primary_returncode` 和
+    `fallback_returncode`
+- Codex model fallback 只解决执行连续性。它不升级 `proof_level`，不改变
+  forbidden claims，不允许提交/推送/改 PR，也不把 fallback 输出变成 review truth。
 - OpenCode engine 的默认模型 ref 必须是 `opencode-go/deepseek-v4-flash`，并且
   CLI 必须额外传 `--variant max`；不能把 `max` 拼进 model id，也不能退回旧
   `deepseek/<model>` package。

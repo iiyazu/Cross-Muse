@@ -27,6 +27,7 @@ from xmuse_core.providers.selection_record import ProviderSelectionRecordStore
 from xmuse_core.providers.service import RunnerProviderService
 from xmuse_core.structuring.blueprint_execution.lane_recovery_artifacts import (
     lane_recovery_artifact_path,
+    load_lane_recovery_decision,
 )
 from xmuse_core.structuring.feature_graph_artifact_store import FeatureGraphArtifactStore
 from xmuse_core.structuring.feature_graph_status_store import FeatureGraphStatusStore
@@ -928,6 +929,135 @@ async def test_on_lane_reviewed_reworks_merge_conflict_with_context(setup):
 
 
 @pytest.mark.asyncio
+async def test_on_lane_reviewed_merge_conflict_writes_retry_recovery_artifact(setup):
+    tmp_path, lanes_path = setup
+    lanes_path.write_text(json.dumps({"lanes": [
+        {
+            "feature_id": "lane-1",
+            "status": "reviewed",
+            "prompt": "fix",
+            "branch": "lane-1",
+            "worktree": str(tmp_path / "lane-1"),
+            "graph_id": "graph-merge",
+            "review_evidence_refs": ["review:merge-conflict"],
+            "budget": {
+                "max_attempts": 3,
+                "max_consecutive_same_failure": 2,
+                "retry_backoff_seconds": 0,
+                "source_refs": ["budget:lane-1"],
+            },
+        },
+    ]}))
+    orch = PlatformOrchestrator(
+        lanes_path=lanes_path, xmuse_root=tmp_path, mcp_port=9999,
+    )
+
+    async def fail_with_conflict(lane_id: str, worktree: Path) -> bool:
+        orch._sm.update_metadata(
+            lane_id,
+            {
+                "merge_failure_reason": "merge_conflict_or_failed",
+                "merge_failure_reworkable": True,
+                "merge_failure_detail": "CONFLICT (content): file.py",
+            },
+        )
+        return False
+
+    with patch.object(orch, "_auto_merge", side_effect=fail_with_conflict):
+        with patch.object(orch, "dispatch_lane", new_callable=AsyncMock) as dispatch:
+            await orch.on_lane_reviewed("lane-1")
+
+    recovery_path = lane_recovery_artifact_path(
+        tmp_path,
+        graph_id="graph-merge",
+        lane_id="lane-1",
+    )
+    artifact = json.loads(recovery_path.read_text(encoding="utf-8"))
+    decision = load_lane_recovery_decision(
+        tmp_path,
+        graph_id="graph-merge",
+        lane_id="lane-1",
+    )
+    lane = orch._sm.get_lane("lane-1")
+    assert lane["status"] == "reworking"
+    assert lane["retry_count"] == 1
+    assert decision is not None
+    assert decision.decision.value == "retry"
+    assert decision.retry_allowed is True
+    assert decision.failure_class == "merge_conflict"
+    assert decision.attempt == 1
+    assert "logs/gates/lane-1/report.json" in decision.source_refs
+    assert "budget:lane-1" in decision.source_refs
+    assert "review:merge-conflict" in decision.source_refs
+    assert artifact["source_authority"] == "platform_orchestrator_merge_failure"
+    assert artifact["proof_level"] == "contract_proof"
+    assert "review_truth_not_proven" in artifact["manual_gaps"]
+    assert "worker_output_is_review_truth" in artifact["forbidden_claims"]
+    assert lane["recovery_artifact_status"] == "written"
+    assert lane["recovery_decision"]["decision"] == "retry"
+    dispatch.assert_awaited_once_with("lane-1")
+
+
+@pytest.mark.asyncio
+async def test_on_lane_reviewed_merge_conflict_retry_exhausted_writes_refactor_artifact(
+    setup,
+):
+    tmp_path, lanes_path = setup
+    lanes_path.write_text(json.dumps({"lanes": [
+        {
+            "feature_id": "lane-1",
+            "status": "reviewed",
+            "prompt": "fix",
+            "branch": "lane-1",
+            "worktree": str(tmp_path / "lane-1"),
+            "graph_id": "graph-merge",
+            "retry_count": 2,
+            "review_evidence_refs": ["review:merge-conflict"],
+        },
+    ]}))
+    orch = PlatformOrchestrator(
+        lanes_path=lanes_path, xmuse_root=tmp_path, mcp_port=9999,
+    )
+
+    async def fail_with_conflict(lane_id: str, worktree: Path) -> bool:
+        orch._sm.update_metadata(
+            lane_id,
+            {
+                "merge_failure_reason": "merge_conflict_or_failed",
+                "merge_failure_reworkable": True,
+                "merge_failure_detail": "CONFLICT (content): file.py",
+            },
+        )
+        return False
+
+    with patch.object(orch, "_auto_merge", side_effect=fail_with_conflict):
+        with patch.object(orch, "dispatch_lane", new_callable=AsyncMock) as dispatch:
+            await orch.on_lane_reviewed("lane-1")
+
+    decision = load_lane_recovery_decision(
+        tmp_path,
+        graph_id="graph-merge",
+        lane_id="lane-1",
+    )
+    lane = orch._sm.get_lane("lane-1")
+    assert lane["status"] == "failed"
+    assert lane["failure_reason"] == "merge_conflict_or_failed"
+    assert decision is not None
+    assert decision.decision.value == "refactor_required"
+    assert decision.retry_allowed is False
+    assert decision.failure_class == "merge_conflict"
+    assert decision.attempt == 3
+    assert decision.refactor_required_reason == (
+        "merge failure merge_conflict exhausted retry budget"
+    )
+    assert lane["recovery_artifact_source_authority"] == (
+        "platform_orchestrator_merge_failure"
+    )
+    assert lane["recovery_decision"]["decision"] == "refactor_required"
+    dispatch.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_on_lane_reviewed_does_not_rework_non_reworkable_merge_failure(setup):
     tmp_path, lanes_path = setup
     lanes_path.write_text(json.dumps({"lanes": [
@@ -963,6 +1093,305 @@ async def test_on_lane_reviewed_does_not_rework_non_reworkable_merge_failure(set
     assert lane["failure_reason"] == "merge_failed"
     assert lane["merge_failure_reworkable"] is False
     dispatch.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_on_lane_reviewed_non_reworkable_merge_writes_suspended_artifact(setup):
+    tmp_path, lanes_path = setup
+    lanes_path.write_text(json.dumps({"lanes": [
+        {
+            "feature_id": "lane-1",
+            "status": "reviewed",
+            "prompt": "fix",
+            "branch": "lane-1",
+            "worktree": str(tmp_path / "lane-1"),
+            "graph_id": "graph-merge",
+            "review_evidence_refs": ["review:merge-failed"],
+        },
+    ]}))
+    orch = PlatformOrchestrator(
+        lanes_path=lanes_path, xmuse_root=tmp_path, mcp_port=9999,
+    )
+
+    async def fail_without_conflict(lane_id: str, worktree: Path) -> bool:
+        orch._sm.update_metadata(
+            lane_id,
+            {
+                "merge_failure_reason": "merge_failed",
+                "merge_failure_reworkable": False,
+                "merge_failure_detail": "fatal: refusing to merge unrelated histories",
+            },
+        )
+        return False
+
+    with patch.object(orch, "_auto_merge", side_effect=fail_without_conflict):
+        with patch.object(orch, "dispatch_lane", new_callable=AsyncMock) as dispatch:
+            await orch.on_lane_reviewed("lane-1")
+
+    recovery_path = lane_recovery_artifact_path(
+        tmp_path,
+        graph_id="graph-merge",
+        lane_id="lane-1",
+    )
+    artifact = json.loads(recovery_path.read_text(encoding="utf-8"))
+    decision = load_lane_recovery_decision(
+        tmp_path,
+        graph_id="graph-merge",
+        lane_id="lane-1",
+    )
+    lane = orch._sm.get_lane("lane-1")
+    assert lane["status"] == "failed"
+    assert decision is not None
+    assert decision.decision.value == "suspended"
+    assert decision.retry_allowed is False
+    assert decision.failure_class == "merge_failed"
+    assert decision.suspend_reason == "merge_failed"
+    assert "review:merge-failed" in decision.source_refs
+    assert artifact["source_authority"] == "platform_orchestrator_merge_failure"
+    assert artifact["proof_level"] == "contract_proof"
+    assert "review_truth_not_proven" in artifact["manual_gaps"]
+    assert lane["recovery_decision"]["decision"] == "suspended"
+    dispatch.assert_not_awaited()
+
+    lanes_path.write_text(json.dumps({"lanes": [
+        {
+            "feature_id": "lane-1",
+            "status": "reworking",
+            "prompt": "retry original merge path",
+            "worktree": str(tmp_path),
+            "graph_id": "graph-merge",
+        },
+    ]}))
+    retry_orch = PlatformOrchestrator(
+        lanes_path=lanes_path,
+        xmuse_root=tmp_path,
+        mcp_port=9999,
+    )
+    with patch.object(
+        retry_orch,
+        "_run_execution_god",
+        new_callable=AsyncMock,
+    ) as run_exec:
+        await retry_orch.dispatch_lane("lane-1")
+
+    retried_lane = retry_orch._sm.get_lane("lane-1")
+    assert retried_lane["dispatch_blocked_by_recovery"] is True
+    assert retried_lane["recovery_dispatch_block_reason"] == "suspended"
+    run_exec.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_on_lane_reviewed_patch_forward_writes_recovery_artifact(setup):
+    tmp_path, lanes_path = setup
+    lanes_path.write_text(
+        json.dumps(
+            {
+                "lanes": [
+                    {
+                        "feature_id": "lane-1",
+                        "status": "reviewed",
+                        "prompt": "fix",
+                        "worktree": str(tmp_path),
+                        "graph_id": "graph-patch",
+                        "review_decision": "patch-forward",
+                        "review_summary": "Needs a bounded repair lane.",
+                        "review_verdict_id": "verdict-patch-forward-1",
+                        "review_evidence_refs": ["review:patch-forward-input"],
+                        "patch_instructions": "Repair the failing boundary.",
+                        "budget": {
+                            "max_attempts": 3,
+                            "max_consecutive_same_failure": 2,
+                            "retry_backoff_seconds": 0,
+                            "source_refs": ["budget:lane-1"],
+                        },
+                    },
+                ]
+            }
+        )
+    )
+    orch = PlatformOrchestrator(
+        lanes_path=lanes_path,
+        xmuse_root=tmp_path,
+        mcp_port=9999,
+    )
+
+    await orch.on_lane_reviewed("lane-1")
+
+    recovery_path = lane_recovery_artifact_path(
+        tmp_path,
+        graph_id="graph-patch",
+        lane_id="lane-1",
+    )
+    artifact = json.loads(recovery_path.read_text(encoding="utf-8"))
+    decision = load_lane_recovery_decision(
+        tmp_path,
+        graph_id="graph-patch",
+        lane_id="lane-1",
+    )
+    lane = orch._sm.get_lane("lane-1")
+    patch_lane = orch._sm.get_lane("lane-1-patch-forward")
+    assert lane["status"] == "failed"
+    assert lane["failure_reason"] == "patch_forward_requested"
+    assert patch_lane["status"] == "pending"
+    assert patch_lane["source_lane_id"] == "lane-1"
+    assert decision is not None
+    assert decision.decision.value == "suspended"
+    assert decision.retry_allowed is False
+    assert decision.failure_class == "patch_forward_requested"
+    assert decision.suspend_reason == "patch_forward_requested"
+    assert "patch-forward lane lane-1-patch-forward" in decision.next_action
+    assert "logs/gates/lane-1/report.json" in decision.source_refs
+    assert "budget:lane-1" in decision.source_refs
+    assert "review_verdict:verdict-patch-forward-1" in decision.source_refs
+    assert "review:patch-forward-input" in decision.source_refs
+    assert "patch_lane:lane-1-patch-forward" in decision.source_refs
+    assert artifact["source_authority"] == "platform_orchestrator_review_patch_forward"
+    assert artifact["proof_level"] == "contract_proof"
+    assert artifact["patch_lane_id"] == "lane-1-patch-forward"
+    assert "review_truth_not_proven" in artifact["manual_gaps"]
+    assert "worker_output_is_review_truth" in artifact["forbidden_claims"]
+    assert lane["recovery_artifact_status"] == "written"
+    assert lane["recovery_artifact_source_authority"] == (
+        "platform_orchestrator_review_patch_forward"
+    )
+    assert lane["recovery_decision"]["retry_allowed"] is False
+
+    lanes_path.write_text(
+        json.dumps(
+            {
+                "lanes": [
+                    {
+                        "feature_id": "lane-1",
+                        "status": "reworking",
+                        "prompt": "retry original path",
+                        "worktree": str(tmp_path),
+                        "graph_id": "graph-patch",
+                    },
+                ]
+            }
+        )
+    )
+    retry_orch = PlatformOrchestrator(
+        lanes_path=lanes_path,
+        xmuse_root=tmp_path,
+        mcp_port=9999,
+    )
+    with patch.object(
+        retry_orch,
+        "_run_execution_god",
+        new_callable=AsyncMock,
+    ) as run_exec:
+        await retry_orch.dispatch_lane("lane-1")
+
+    retried_lane = retry_orch._sm.get_lane("lane-1")
+    assert retried_lane["status"] == "reworking"
+    assert retried_lane["dispatch_blocked_by_recovery"] is True
+    assert retried_lane["recovery_dispatch_block_reason"] == "suspended"
+    assert retried_lane["recovery_source_authority"] == "lane_recovery_artifact"
+    run_exec.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_on_lane_rejected_max_retries_writes_recovery_artifact(setup):
+    tmp_path, lanes_path = setup
+    lanes_path.write_text(
+        json.dumps(
+            {
+                "lanes": [
+                    {
+                        "feature_id": "lane-1",
+                        "status": "rejected",
+                        "prompt": "fix",
+                        "worktree": str(tmp_path),
+                        "graph_id": "graph-reject",
+                        "retry_count": 2,
+                        "review_evidence_refs": ["review:rejecting-verdict"],
+                        "budget": {
+                            "max_attempts": 3,
+                            "max_consecutive_same_failure": 2,
+                            "retry_backoff_seconds": 0,
+                            "source_refs": ["budget:lane-1"],
+                        },
+                    },
+                ]
+            }
+        )
+    )
+    orch = PlatformOrchestrator(
+        lanes_path=lanes_path,
+        xmuse_root=tmp_path,
+        mcp_port=9999,
+    )
+
+    with patch.object(orch, "dispatch_lane", new_callable=AsyncMock) as dispatch:
+        await orch.on_lane_rejected("lane-1")
+
+    recovery_path = lane_recovery_artifact_path(
+        tmp_path,
+        graph_id="graph-reject",
+        lane_id="lane-1",
+    )
+    artifact = json.loads(recovery_path.read_text(encoding="utf-8"))
+    decision = load_lane_recovery_decision(
+        tmp_path,
+        graph_id="graph-reject",
+        lane_id="lane-1",
+    )
+    lane = orch._sm.get_lane("lane-1")
+    assert lane["status"] == "failed"
+    assert lane["failure_reason"] == "review_rejected_retry_exhausted"
+    assert decision is not None
+    assert decision.decision.value == "refactor_required"
+    assert decision.retry_allowed is False
+    assert decision.failure_class == "review_rejected"
+    assert decision.attempt == 3
+    assert decision.refactor_required_reason == (
+        "review rejection retry budget exhausted after attempt 3"
+    )
+    assert "logs/gates/lane-1/report.json" in decision.source_refs
+    assert "budget:lane-1" in decision.source_refs
+    assert "review:rejecting-verdict" in decision.source_refs
+    assert artifact["source_authority"] == "platform_orchestrator_review_rejection"
+    assert artifact["proof_level"] == "contract_proof"
+    assert "review_truth_not_proven" in artifact["manual_gaps"]
+    assert "worker_output_is_review_truth" in artifact["forbidden_claims"]
+    assert lane["recovery_artifact_status"] == "written"
+    assert lane["recovery_decision"]["decision"] == "refactor_required"
+    dispatch.assert_not_awaited()
+
+    lanes_path.write_text(
+        json.dumps(
+            {
+                "lanes": [
+                    {
+                        "feature_id": "lane-1",
+                        "status": "reworking",
+                        "prompt": "retry original rejected path",
+                        "worktree": str(tmp_path),
+                        "graph_id": "graph-reject",
+                    },
+                ]
+            }
+        )
+    )
+    retry_orch = PlatformOrchestrator(
+        lanes_path=lanes_path,
+        xmuse_root=tmp_path,
+        mcp_port=9999,
+    )
+    with patch.object(
+        retry_orch,
+        "_run_execution_god",
+        new_callable=AsyncMock,
+    ) as run_exec:
+        await retry_orch.dispatch_lane("lane-1")
+
+    retried_lane = retry_orch._sm.get_lane("lane-1")
+    assert retried_lane["status"] == "reworking"
+    assert retried_lane["dispatch_blocked_by_recovery"] is True
+    assert retried_lane["recovery_dispatch_block_reason"] == "refactor_required"
+    assert retried_lane["recovery_source_authority"] == "lane_recovery_artifact"
+    run_exec.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -5452,6 +5881,122 @@ async def test_gate_failure_marks_lane_gate_failed_and_skips_review(setup):
 
 
 @pytest.mark.asyncio
+async def test_gate_failure_writes_retry_recovery_artifact(setup):
+    tmp_path, lanes_path = setup
+    lanes_path.write_text(
+        json.dumps(
+            {
+                "lanes": [
+                    {
+                        "feature_id": "lane-1",
+                        "status": "executed",
+                        "prompt": "fix",
+                        "worktree": str(tmp_path),
+                        "graph_id": "graph-gate",
+                        "budget": {
+                            "max_attempts": 3,
+                            "max_consecutive_same_failure": 2,
+                            "retry_backoff_seconds": 0,
+                            "source_refs": ["budget:lane-1"],
+                        },
+                    },
+                ]
+            }
+        )
+    )
+    orch = PlatformOrchestrator(
+        lanes_path=lanes_path,
+        xmuse_root=tmp_path,
+        mcp_port=9999,
+    )
+
+    with patch.object(orch, "_run_gate", new_callable=AsyncMock, return_value=False):
+        with patch.object(orch, "_run_review_god", new_callable=AsyncMock):
+            await orch._on_lane_executed("lane-1")
+
+    recovery_path = lane_recovery_artifact_path(
+        tmp_path,
+        graph_id="graph-gate",
+        lane_id="lane-1",
+    )
+    artifact = json.loads(recovery_path.read_text(encoding="utf-8"))
+    decision = load_lane_recovery_decision(
+        tmp_path,
+        graph_id="graph-gate",
+        lane_id="lane-1",
+    )
+    lane = orch._sm.get_lane("lane-1")
+    assert decision is not None
+    assert decision.decision.value == "retry"
+    assert decision.retry_allowed is True
+    assert decision.failure_class == "gate_failed"
+    assert decision.attempt == 1
+    assert "logs/gates/lane-1/report.json" in decision.source_refs
+    assert "budget:lane-1" in decision.source_refs
+    assert artifact["source_authority"] == "platform_orchestrator_gate_runner"
+    assert artifact["proof_level"] == "contract_proof"
+    assert "review_truth_not_proven" in artifact["manual_gaps"]
+    assert "worker_output_is_review_truth" in artifact["forbidden_claims"]
+    assert lane["recovery_artifact_status"] == "written"
+    assert lane["recovery_artifact_ref"] == "lane_graphs/graph-gate.lane-1.recovery.json"
+    assert lane["recovery_decision"]["decision"] == "retry"
+
+
+@pytest.mark.asyncio
+async def test_repeated_gate_failure_writes_refactor_required_recovery_artifact(setup):
+    tmp_path, lanes_path = setup
+    lanes_path.write_text(
+        json.dumps(
+            {
+                "lanes": [
+                    {
+                        "feature_id": "lane-1",
+                        "status": "executed",
+                        "prompt": "fix",
+                        "worktree": str(tmp_path),
+                        "graph_id": "graph-gate",
+                        "retry_count": 1,
+                        "budget": {
+                            "max_attempts": 3,
+                            "max_consecutive_same_failure": 2,
+                            "retry_backoff_seconds": 0,
+                            "source_refs": ["budget:lane-1"],
+                        },
+                    },
+                ]
+            }
+        )
+    )
+    orch = PlatformOrchestrator(
+        lanes_path=lanes_path,
+        xmuse_root=tmp_path,
+        mcp_port=9999,
+    )
+
+    with patch.object(orch, "_run_gate", new_callable=AsyncMock, return_value=False):
+        with patch.object(orch, "_run_review_god", new_callable=AsyncMock):
+            await orch._on_lane_executed("lane-1")
+
+    decision = load_lane_recovery_decision(
+        tmp_path,
+        graph_id="graph-gate",
+        lane_id="lane-1",
+    )
+    lane = orch._sm.get_lane("lane-1")
+    assert decision is not None
+    assert decision.decision.value == "refactor_required"
+    assert decision.retry_allowed is False
+    assert decision.failure_class == "gate_failed"
+    assert decision.attempt == 2
+    assert decision.refactor_required_reason == (
+        "failure_class gate_failed repeated 2 times"
+    )
+    assert lane["recovery_artifact_status"] == "written"
+    assert lane["recovery_decision"]["decision"] == "refactor_required"
+    assert "ready_to_merge" not in lane["recovery_decision"]
+
+
+@pytest.mark.asyncio
 async def test_gate_failure_transition_is_rejected_without_failure_reason(setup):
     tmp_path, lanes_path = setup
     lanes_path.write_text(json.dumps({"lanes": [
@@ -5579,6 +6124,13 @@ async def test_reconcile_recovers_review_timeout_by_rerunning_review(setup):
     assert lane["review_retry_count"] == 1
     assert lane["review_recovered_from"] == "review_timeout"
     assert "failure_reason" not in lane
+    assert lane["recovery_artifact_status"] == "manual_gap"
+    assert lane["recovery_artifact_source_authority"] == (
+        "platform_orchestrator_review_retry"
+    )
+    assert "review_retry_recovery_artifact_missing_graph_or_lane_id" in (
+        lane["manual_gaps"]
+    )
     review.assert_awaited_once_with("lane-1")
 
 
@@ -8805,8 +9357,18 @@ async def test_review_retry_count_increments_on_reconcile_recovery(setup):
             "status": "gate_failed",
             "prompt": "fix",
             "worktree": str(tmp_path),
+            "graph_id": "graph-review",
             "gate_passed": True,
             "failure_reason": "review_timeout",
+            "review_task_id": "review-task-1",
+            "review_attempt_id": "review-attempt-1",
+            "review_evidence_refs": ["review:timeout"],
+            "budget": {
+                "max_attempts": 3,
+                "max_consecutive_same_failure": 2,
+                "retry_backoff_seconds": 0,
+                "source_refs": ["budget:lane-1"],
+            },
         },
     ]}))
     orch = PlatformOrchestrator(
@@ -8820,6 +9382,36 @@ async def test_review_retry_count_increments_on_reconcile_recovery(setup):
     assert lane["review_retry_count"] == 1
     assert lane["review_recovered_from"] == "review_timeout"
     assert "failure_reason" not in lane
+    recovery_path = lane_recovery_artifact_path(
+        tmp_path,
+        graph_id="graph-review",
+        lane_id="lane-1",
+    )
+    artifact = json.loads(recovery_path.read_text(encoding="utf-8"))
+    decision = load_lane_recovery_decision(
+        tmp_path,
+        graph_id="graph-review",
+        lane_id="lane-1",
+    )
+    assert decision is not None
+    assert decision.decision.value == "retry"
+    assert decision.retry_allowed is True
+    assert decision.failure_class == "review_timeout"
+    assert decision.attempt == 1
+    assert "review_task:review-task-1" in decision.source_refs
+    assert "review_attempt:review-attempt-1" in decision.source_refs
+    assert "review_failure:review_timeout" in decision.source_refs
+    assert "review:timeout" in decision.source_refs
+    assert "budget:lane-1" in decision.source_refs
+    assert artifact["source_authority"] == "platform_orchestrator_review_retry"
+    assert artifact["proof_level"] == "contract_proof"
+    assert "review_truth_not_proven" in artifact["manual_gaps"]
+    assert "worker_output_is_review_truth" in artifact["forbidden_claims"]
+    assert lane["recovery_artifact_status"] == "written"
+    assert lane["recovery_artifact_source_authority"] == (
+        "platform_orchestrator_review_retry"
+    )
+    assert lane["recovery_decision"]["decision"] == "retry"
 
 
 @pytest.mark.asyncio
@@ -8845,7 +9437,124 @@ async def test_review_retry_stops_after_max_review_retries(setup):
         await orch.reconcile_status_changes()
 
     review.assert_not_called()
-    assert orch._sm.get_lane("lane-1")["status"] == "gate_failed"
+    lane = orch._sm.get_lane("lane-1")
+    assert lane["status"] == "gate_failed"
+    assert lane["recovery_artifact_status"] == "manual_gap"
+    assert lane["recovery_artifact_source_authority"] == (
+        "platform_orchestrator_review_retry_exhaustion"
+    )
+    assert "review_retry_exhaustion_recovery_artifact_missing_graph_or_lane_id" in (
+        lane["manual_gaps"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_review_retry_exhaustion_writes_refactor_recovery_artifact(setup):
+    tmp_path, lanes_path = setup
+    lanes_path.write_text(
+        json.dumps(
+            {
+                "lanes": [
+                    {
+                        "feature_id": "lane-1",
+                        "status": "gate_failed",
+                        "prompt": "fix",
+                        "worktree": str(tmp_path),
+                        "graph_id": "graph-review",
+                        "gate_passed": True,
+                        "failure_reason": "review_timeout",
+                        "review_retry_count": 2,
+                        "review_task_id": "review-task-1",
+                        "review_evidence_refs": ["review:timeout"],
+                        "budget": {
+                            "max_attempts": 3,
+                            "max_consecutive_same_failure": 2,
+                            "retry_backoff_seconds": 0,
+                            "source_refs": ["budget:lane-1"],
+                        },
+                    },
+                ]
+            }
+        )
+    )
+    orch = PlatformOrchestrator(
+        lanes_path=lanes_path,
+        xmuse_root=tmp_path,
+        mcp_port=9999,
+    )
+
+    with patch.object(orch, "_run_review_god", new_callable=AsyncMock) as review:
+        await orch.reconcile_status_changes()
+
+    recovery_path = lane_recovery_artifact_path(
+        tmp_path,
+        graph_id="graph-review",
+        lane_id="lane-1",
+    )
+    artifact = json.loads(recovery_path.read_text(encoding="utf-8"))
+    decision = load_lane_recovery_decision(
+        tmp_path,
+        graph_id="graph-review",
+        lane_id="lane-1",
+    )
+    lane = orch._sm.get_lane("lane-1")
+    review.assert_not_called()
+    assert lane["status"] == "gate_failed"
+    assert decision is not None
+    assert decision.decision.value == "refactor_required"
+    assert decision.retry_allowed is False
+    assert decision.failure_class == "review_timeout"
+    assert decision.attempt == 3
+    assert decision.refactor_required_reason == (
+        "review retry budget exhausted for review_timeout after attempt 3"
+    )
+    assert "review_task:review-task-1" in decision.source_refs
+    assert "review_failure:review_timeout" in decision.source_refs
+    assert "review:timeout" in decision.source_refs
+    assert "budget:lane-1" in decision.source_refs
+    assert artifact["source_authority"] == (
+        "platform_orchestrator_review_retry_exhaustion"
+    )
+    assert artifact["proof_level"] == "contract_proof"
+    assert "review_truth_not_proven" in artifact["manual_gaps"]
+    assert "worker_output_is_review_truth" in artifact["forbidden_claims"]
+    assert lane["recovery_artifact_status"] == "written"
+    assert lane["recovery_artifact_source_authority"] == (
+        "platform_orchestrator_review_retry_exhaustion"
+    )
+    assert lane["recovery_decision"]["decision"] == "refactor_required"
+
+    lanes_path.write_text(
+        json.dumps(
+            {
+                "lanes": [
+                    {
+                        "feature_id": "lane-1",
+                        "status": "reworking",
+                        "prompt": "retry exhausted review path",
+                        "worktree": str(tmp_path),
+                        "graph_id": "graph-review",
+                    },
+                ]
+            }
+        )
+    )
+    retry_orch = PlatformOrchestrator(
+        lanes_path=lanes_path,
+        xmuse_root=tmp_path,
+        mcp_port=9999,
+    )
+    with patch.object(
+        retry_orch,
+        "_run_execution_god",
+        new_callable=AsyncMock,
+    ) as run_exec:
+        await retry_orch.dispatch_lane("lane-1")
+
+    retried_lane = retry_orch._sm.get_lane("lane-1")
+    assert retried_lane["dispatch_blocked_by_recovery"] is True
+    assert retried_lane["recovery_dispatch_block_reason"] == "refactor_required"
+    run_exec.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -8993,6 +9702,71 @@ async def test_review_infra_unavailable_circuit_breaker_stops_at_40_retries(setu
 
     review.assert_not_called()
     assert orch._sm.get_lane("lane-1")["status"] == "gate_failed"
+
+
+@pytest.mark.asyncio
+async def test_review_infra_exhaustion_writes_suspended_recovery_artifact(setup):
+    tmp_path, lanes_path = setup
+    lanes_path.write_text(
+        json.dumps(
+            {
+                "lanes": [
+                    {
+                        "feature_id": "lane-1",
+                        "status": "gate_failed",
+                        "prompt": "fix",
+                        "worktree": str(tmp_path),
+                        "graph_id": "graph-review",
+                        "gate_passed": True,
+                        "failure_reason": "review_infra_unavailable",
+                        "review_infra_reason": "provider_unavailable",
+                        "review_retry_after_at": 1,
+                        "review_retry_count": 40,
+                    },
+                ]
+            }
+        )
+    )
+    orch = PlatformOrchestrator(
+        lanes_path=lanes_path,
+        xmuse_root=tmp_path,
+        mcp_port=9999,
+    )
+
+    with patch.object(orch, "_run_review_god", new_callable=AsyncMock) as review:
+        await orch.reconcile_status_changes()
+
+    artifact = json.loads(
+        lane_recovery_artifact_path(
+            tmp_path,
+            graph_id="graph-review",
+            lane_id="lane-1",
+        ).read_text(encoding="utf-8")
+    )
+    decision = load_lane_recovery_decision(
+        tmp_path,
+        graph_id="graph-review",
+        lane_id="lane-1",
+    )
+    lane = orch._sm.get_lane("lane-1")
+    review.assert_not_called()
+    assert decision is not None
+    assert decision.decision.value == "suspended"
+    assert decision.retry_allowed is False
+    assert decision.failure_class == "review_infra_unavailable"
+    assert decision.attempt == 41
+    assert decision.suspend_reason == "review_infra_unavailable"
+    assert decision.next_action == (
+        "restore review infrastructure before retrying this lane"
+    )
+    assert "review_failure:review_infra_unavailable" in decision.source_refs
+    assert artifact["source_authority"] == (
+        "platform_orchestrator_review_retry_exhaustion"
+    )
+    assert artifact["proof_level"] == "contract_proof"
+    assert "server_truth_not_proven" in artifact["manual_gaps"]
+    assert lane["recovery_artifact_status"] == "written"
+    assert lane["recovery_decision"]["decision"] == "suspended"
 
 
 @pytest.mark.asyncio

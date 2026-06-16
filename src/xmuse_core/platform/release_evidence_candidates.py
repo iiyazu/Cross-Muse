@@ -8,6 +8,22 @@ from pathlib import Path
 from typing import Any
 
 from xmuse_core.agents.god_session_registry import GodSessionRecord, GodSessionRegistry
+from xmuse_core.platform.execution.github_ops import (
+    GitHubServerSideTruthEvidence,
+    can_emit_pr_merged,
+)
+from xmuse_core.platform.github_truth_release_gate import (
+    build_github_server_truth_release_gate,
+)
+from xmuse_core.platform.god_room_review_chain_proof import (
+    GOD_ROOM_REVIEW_CHAIN_PROOF_FORBIDDEN_CLAIMS,
+    review_chain_proof_bounded_session_gate,
+    review_chain_proof_worker_evidence_bundle_refs,
+)
+from xmuse_core.platform.god_room_review_handoff import (
+    build_god_room_review_closure_handoff,
+    build_review_closure_handoff_evaluation,
+)
 from xmuse_core.platform.god_runtime_continuity import (
     build_selected_god_runtime_continuity_view,
 )
@@ -30,6 +46,9 @@ from xmuse_core.providers.god_cli_selection_store import (
 _MEMORYOS_REQUIRED_ENV = ("XMUSE_LIVE_MEMORYOS_LITE", "XMUSE_MEMORYOS_LITE_URL")
 _MEMORYOS_LIVE_TRACE_ARTIFACT_ENV = "XMUSE_MEMORYOS_LIVE_TRACE_ARTIFACT"
 _GOD_ROOM_REVIEW_CLOSURE_ARTIFACT_ENV = "XMUSE_GOD_ROOM_REVIEW_CLOSURE_ARTIFACT"
+_GOD_ROOM_REVIEW_CHAIN_PROOF_ARTIFACT_ENV = (
+    "XMUSE_GOD_ROOM_REVIEW_CHAIN_PROOF_ARTIFACT"
+)
 _GOD_ROOM_RUNTIME_CLOSURE_ARTIFACT_ENV = "XMUSE_GOD_ROOM_RUNTIME_CLOSURE_ARTIFACT"
 _NATURAL_TRANSCRIPT_ARTIFACT_ENV = "XMUSE_NATURAL_GOD_TRANSCRIPT_PATH"
 _NATURAL_RUNTIME_ARTIFACT_ENV = "XMUSE_NATURAL_GOD_RUNTIME_ARTIFACT"
@@ -62,6 +81,7 @@ _GITHUB_NEXT_ACTION = (
     "Provide repo and pull_request_number, then run attempt_release_evidence "
     "for github_server_truth to capture read-only GitHub server truth."
 )
+_GITHUB_SERVER_TRUTH_ARTIFACT_ENV = "XMUSE_GITHUB_SERVER_TRUTH_ARTIFACT"
 _MEMORYOS_PAYLOAD_HINT_KEYS = (
     "conversation_id",
     "repo_id",
@@ -112,10 +132,14 @@ def build_release_evidence_candidate_report(
             trace_limit=trace_limit,
         ),
         "live_memoryos": _memoryos_candidates(
+            root=root,
             env=environment,
             payload=memoryos_inputs,
         ),
-        "github_server_truth": _github_candidates(payload=memoryos_inputs),
+        "github_server_truth": _github_candidates(
+            env=environment,
+            payload=memoryos_inputs,
+        ),
     }
 
 
@@ -428,12 +452,14 @@ def _provider_candidates(
 
 def _memoryos_candidates(
     *,
+    root: Path,
     env: Mapping[str, str],
     payload: Mapping[str, Any],
 ) -> dict[str, Any]:
     artifact = _memoryos_trace_artifact_candidate(env)
-    review_closure = _memoryos_review_closure_candidate(env, payload)
-    runtime_closure = _memoryos_runtime_closure_candidate(env, payload)
+    review_closure = _memoryos_review_closure_candidate(root, env, payload)
+    review_chain = _memoryos_review_chain_proof_candidate(root, env, payload)
+    runtime_closure = _memoryos_runtime_closure_candidate(root, env, payload)
     missing_env = [
         key
         for key in _MEMORYOS_REQUIRED_ENV
@@ -454,6 +480,12 @@ def _memoryos_candidates(
         or review_closure["artifact_gate_ready"]
         else ["god_room_review_closure_artifact_not_ready"]
     )
+    review_chain_blockers = (
+        []
+        if not review_chain["artifact_configured"]
+        or review_chain["artifact_gate_ready"]
+        else ["god_room_review_chain_proof_artifact_not_ready"]
+    )
     runtime_closure_blockers = (
         []
         if not runtime_closure["artifact_configured"]
@@ -469,6 +501,7 @@ def _memoryos_candidates(
                 *_MEMORYOS_REQUIRED_ENV,
                 _MEMORYOS_LIVE_TRACE_ARTIFACT_ENV,
                 _GOD_ROOM_REVIEW_CLOSURE_ARTIFACT_ENV,
+                _GOD_ROOM_REVIEW_CHAIN_PROOF_ARTIFACT_ENV,
                 _GOD_ROOM_RUNTIME_CLOSURE_ARTIFACT_ENV,
             )
             if key in env
@@ -488,6 +521,7 @@ def _memoryos_candidates(
             ),
             *artifact_blockers,
             *review_closure_blockers,
+            *review_chain_blockers,
             *runtime_closure_blockers,
         ],
         **artifact,
@@ -496,15 +530,54 @@ def _memoryos_candidates(
         "review_closure_artifact_gate_ready": review_closure["artifact_gate_ready"],
         "review_closure_artifact_summary": review_closure["artifact_summary"],
         "review_closure_source_ref_count": review_closure["source_ref_count"],
+        "review_closure_candidate_artifact_refs": review_closure[
+            "candidate_artifact_refs"
+        ],
+        "review_closure_candidate_artifact_ref_count": review_closure[
+            "candidate_artifact_ref_count"
+        ],
+        "review_closure_handoff_evaluation": review_closure[
+            "handoff_evaluation"
+        ],
+        "review_chain_proof_artifact_configured": review_chain["artifact_configured"],
+        "review_chain_proof_artifact_path": review_chain["artifact_path"],
+        "review_chain_proof_artifact_gate_ready": review_chain["artifact_gate_ready"],
+        "review_chain_proof_artifact_summary": review_chain["artifact_summary"],
+        "review_chain_proof_source_ref_count": review_chain["source_ref_count"],
+        "review_chain_proof_candidate_artifact_refs": review_chain[
+            "candidate_artifact_refs"
+        ],
+        "review_chain_proof_candidate_artifact_ref_count": review_chain[
+            "candidate_artifact_ref_count"
+        ],
+        "review_chain_proof_bounded_session_gate_status": review_chain[
+            "bounded_session_gate_status"
+        ],
+        "review_chain_proof_bounded_session_gate_summary": review_chain[
+            "bounded_session_gate_summary"
+        ],
         "runtime_closure_artifact_configured": runtime_closure["artifact_configured"],
         "runtime_closure_artifact_path": runtime_closure["artifact_path"],
         "runtime_closure_artifact_gate_ready": runtime_closure["artifact_gate_ready"],
         "runtime_closure_artifact_summary": runtime_closure["artifact_summary"],
         "runtime_closure_source_ref_count": runtime_closure["source_ref_count"],
+        "runtime_closure_current_handoff_gate_ready": runtime_closure[
+            "current_handoff_gate_ready"
+        ],
+        "runtime_closure_current_handoff_summary": runtime_closure[
+            "current_handoff_summary"
+        ],
+        "runtime_closure_current_handoff_candidate_artifact_refs": runtime_closure[
+            "current_handoff_candidate_artifact_refs"
+        ],
+        "runtime_closure_current_handoff_candidate_artifact_ref_count": runtime_closure[
+            "current_handoff_candidate_artifact_ref_count"
+        ],
         **_memoryos_candidate_guidance(
             payload,
             artifact=artifact,
             review_closure=review_closure,
+            review_chain=review_chain,
             runtime_closure=runtime_closure,
         ),
     }
@@ -552,6 +625,7 @@ def _memoryos_trace_artifact_candidate(env: Mapping[str, str]) -> dict[str, Any]
 
 
 def _memoryos_review_closure_candidate(
+    root: Path,
     env: Mapping[str, str],
     payload: Mapping[str, Any],
 ) -> dict[str, Any]:
@@ -563,8 +637,11 @@ def _memoryos_review_closure_candidate(
         "artifact_path": artifact_path,
         "artifact_gate_ready": False,
         "artifact_summary": None,
+        "handoff_evaluation": None,
         "source_refs": [],
         "source_ref_count": 0,
+        "candidate_artifact_refs": [],
+        "candidate_artifact_ref_count": 0,
     }
     if artifact_path is None:
         return base
@@ -577,72 +654,277 @@ def _memoryos_review_closure_candidate(
             **base,
             "artifact_summary": load_error,
         }
-    schema_version = _text(artifact.get("schema_version"))
-    proof_level = _text(artifact.get("proof_level"))
-    server_truth_status = _text(artifact.get("server_truth_status"))
-    forbidden_claims = _string_list(artifact.get("forbidden_claims"))
-    required_forbidden = {"ready_to_merge", "pr_merged", "github_review_truth"}
-    if schema_version != "xmuse.god_room_lane_review_closure.v1":
+    handoff = build_god_room_review_closure_handoff(
+        root=root,
+        review_closure=artifact,
+    )
+    handoff_evaluation = build_review_closure_handoff_evaluation(
+        root=root,
+        review_closure=artifact,
+    )
+    if handoff["gate_ready"] is not True:
         return {
             **base,
-            "artifact_summary": "GOD room review closure schema is unsupported.",
+            "artifact_summary": handoff["summary"],
+            "handoff_evaluation": handoff_evaluation,
+        }
+    source_refs = _string_list(handoff.get("source_refs"))
+    candidate_artifact_refs = _string_list(handoff.get("candidate_artifact_refs"))
+    return {
+        **base,
+        "artifact_gate_ready": True,
+        "artifact_summary": handoff["summary"],
+        "handoff_evaluation": handoff_evaluation,
+        "source_refs": source_refs,
+        "source_ref_count": len(source_refs),
+        "candidate_artifact_refs": candidate_artifact_refs,
+        "candidate_artifact_ref_count": len(candidate_artifact_refs),
+    }
+
+
+def _memoryos_review_chain_proof_candidate(
+    root: Path,
+    env: Mapping[str, str],
+    payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    artifact_path = _text(payload.get("god_room_review_chain_proof")) or _text(
+        env.get(_GOD_ROOM_REVIEW_CHAIN_PROOF_ARTIFACT_ENV)
+    )
+    base = {
+        "artifact_configured": artifact_path is not None,
+        "artifact_path": artifact_path,
+        "artifact_gate_ready": False,
+        "artifact_summary": None,
+        "source_refs": [],
+        "source_ref_count": 0,
+        "candidate_artifact_refs": [],
+        "candidate_artifact_ref_count": 0,
+        "bounded_session_gate_status": None,
+        "bounded_session_gate_summary": None,
+    }
+    if artifact_path is None:
+        return base
+    artifact, load_error = _json_file(
+        Path(artifact_path),
+        subject="GOD room review chain proof artifact",
+    )
+    if artifact is None:
+        return {
+            **base,
+            "artifact_summary": load_error,
+        }
+    schema_version = _text(artifact.get("schema_version"))
+    status = _text(artifact.get("status"))
+    proof_level = _text(artifact.get("proof_level"))
+    server_truth_status = _text(artifact.get("server_truth_status"))
+    forbidden_claims = set(_string_list(artifact.get("forbidden_claims")))
+    required_forbidden = set(GOD_ROOM_REVIEW_CHAIN_PROOF_FORBIDDEN_CLAIMS)
+    if schema_version != "xmuse.god_room_lane_review_chain_proof.v1":
+        return {
+            **base,
+            "artifact_summary": "GOD room review chain proof schema is unsupported.",
+        }
+    if status != "chain_ready":
+        return {
+            **base,
+            "artifact_summary": "GOD room review chain proof is not chain_ready.",
         }
     if proof_level != "contract_proof":
         return {
             **base,
-            "artifact_summary": "GOD room review closure must remain contract_proof.",
+            "artifact_summary": "GOD room review chain proof must remain contract_proof.",
         }
     if server_truth_status != "not_server_truth":
         return {
             **base,
-            "artifact_summary": "GOD room review closure overclaims server truth.",
+            "artifact_summary": "GOD room review chain proof overclaims server truth.",
         }
-    if not required_forbidden.issubset(set(forbidden_claims)):
+    missing_forbidden = sorted(required_forbidden - forbidden_claims)
+    if missing_forbidden:
         return {
             **base,
-            "artifact_summary": "GOD room review closure missing forbidden claims.",
+            "artifact_summary": (
+                "GOD room review chain proof missing forbidden claims: "
+                + ", ".join(missing_forbidden)
+            ),
         }
-    source_refs = _review_closure_source_refs(artifact)
+    release_handoff = artifact.get("release_evidence_handoff")
+    if not isinstance(release_handoff, Mapping):
+        return {
+            **base,
+            "artifact_summary": "GOD room review chain proof missing release handoff.",
+        }
+    if release_handoff.get("review_closure_artifact_gate_ready") is not True:
+        return {
+            **base,
+            "artifact_summary": (
+                "GOD room review chain proof release handoff is not gate-ready."
+            ),
+        }
+    candidate_refs = _string_list(
+        release_handoff.get("review_closure_candidate_artifact_refs")
+    )
+    if not candidate_refs:
+        return {
+            **base,
+            "artifact_summary": (
+                "GOD room review chain proof has no candidate artifact refs."
+            ),
+        }
+    bounded_session_gate = review_chain_proof_bounded_session_gate(artifact)
+    if bounded_session_gate["status"] != "verified":
+        return {
+            **base,
+            "artifact_summary": bounded_session_gate["summary"],
+            "bounded_session_gate_status": bounded_session_gate["status"],
+            "bounded_session_gate_summary": bounded_session_gate["summary"],
+        }
+    current_handoff = _review_chain_current_handoff(root, artifact)
+    if current_handoff["gate_ready"] is not True:
+        return {
+            **base,
+            "artifact_summary": current_handoff["summary"],
+            "bounded_session_gate_status": bounded_session_gate["status"],
+            "bounded_session_gate_summary": bounded_session_gate["summary"],
+        }
+    current_candidate_refs = _string_list(current_handoff.get("candidate_artifact_refs"))
+    if current_candidate_refs != candidate_refs:
+        return {
+            **base,
+            "artifact_summary": (
+                "GOD room review chain proof current review-closure handoff "
+                "candidate refs do not match embedded handoff refs."
+            ),
+            "bounded_session_gate_status": bounded_session_gate["status"],
+            "bounded_session_gate_summary": bounded_session_gate["summary"],
+        }
+    source_refs = _review_chain_proof_source_refs(
+        root,
+        artifact,
+        artifact_path,
+        current_handoff=current_handoff,
+    )
     return {
         **base,
         "artifact_gate_ready": True,
-        "artifact_summary": "GOD room review closure can seed MemoryOS source refs.",
+        "artifact_summary": (
+            "GOD room review chain proof can seed MemoryOS source refs."
+        ),
         "source_refs": source_refs,
         "source_ref_count": len(source_refs),
+        "candidate_artifact_refs": candidate_refs,
+        "candidate_artifact_ref_count": len(candidate_refs),
+        "bounded_session_gate_status": bounded_session_gate["status"],
+        "bounded_session_gate_summary": bounded_session_gate["summary"],
     }
 
 
-def _review_closure_source_refs(artifact: Mapping[str, Any]) -> list[str]:
-    terminal_verdict = artifact.get("terminal_review_verdict")
-    verdict_refs = (
-        _string_list(terminal_verdict.get("evidence_refs"))
-        if isinstance(terminal_verdict, dict)
-        else []
+def _review_chain_current_handoff(
+    root: Path,
+    artifact: Mapping[str, Any],
+) -> dict[str, Any]:
+    review_closure_ref = _text(artifact.get("review_closure_artifact"))
+    base = {
+        "gate_ready": False,
+        "summary": "GOD room review chain proof missing review_closure_artifact.",
+        "candidate_artifact_refs": [],
+    }
+    if review_closure_ref is None:
+        return base
+    review_closure_path = _root_relative_artifact_path(root, review_closure_ref)
+    if review_closure_path is None:
+        return {
+            **base,
+            "summary": (
+                "GOD room review chain proof review_closure_artifact escapes "
+                "xmuse root."
+            ),
+        }
+    review_closure, load_error = _json_file(
+        review_closure_path,
+        subject="GOD room review closure artifact referenced by chain proof",
     )
+    if review_closure is None:
+        return {
+            **base,
+            "summary": load_error,
+        }
+    handoff = build_god_room_review_closure_handoff(
+        root=root,
+        review_closure=review_closure,
+    )
+    if handoff.get("gate_ready") is not True:
+        return {
+            **handoff,
+            "summary": (
+                "GOD room review chain proof current review-closure handoff is "
+                f"not gate-ready: {_text(handoff.get('summary')) or 'unknown'}"
+            ),
+        }
+    return handoff
+
+
+def _root_relative_artifact_path(root: Path, artifact_ref: str) -> Path | None:
+    raw_path = Path(artifact_ref)
+    candidate = raw_path if raw_path.is_absolute() else root / raw_path
+    try:
+        candidate.resolve(strict=False).relative_to(root.resolve(strict=False))
+    except ValueError:
+        return None
+    return candidate
+
+
+def _review_chain_proof_source_refs(
+    root: Path,
+    artifact: Mapping[str, Any],
+    artifact_path: str,
+    *,
+    current_handoff: Mapping[str, Any],
+) -> list[str]:
     graph_id = _text(artifact.get("graph_id"))
     failed_lane_id = _text(artifact.get("failed_lane_id"))
     terminal_lane_id = _text(artifact.get("terminal_lane_id"))
+    review_closure_ref = _text(artifact.get("review_closure_artifact"))
+    release_handoff = artifact.get("release_evidence_handoff")
+    if not isinstance(release_handoff, Mapping):
+        release_handoff = {}
+    runner_recovery = artifact.get("runner_recovery_proof_lineage")
+    runner_recovery_refs: list[str] = []
+    if isinstance(runner_recovery, Mapping):
+        recovery_ref = _text(runner_recovery.get("artifact_ref"))
+        if recovery_ref is not None:
+            runner_recovery_refs.append(
+                f"runner_recovery_proof_artifact:{recovery_ref}"
+            )
+    worker_evidence_bundle_refs = review_chain_proof_worker_evidence_bundle_refs(
+        artifact
+    )
+    try:
+        artifact_ref = str(Path(artifact_path).resolve(strict=False).relative_to(root))
+    except ValueError:
+        artifact_ref = artifact_path
     synthetic_ref = (
-        f"god-room-review-closure:{graph_id}:{failed_lane_id}:{terminal_lane_id}"
+        f"god-room-review-chain-proof:{graph_id}:{failed_lane_id}:{terminal_lane_id}"
         if graph_id and failed_lane_id and terminal_lane_id
         else None
     )
     return _ordered_unique(
         [
             synthetic_ref,
+            f"review_chain_proof_artifact:{artifact_ref}",
+            review_closure_ref,
             f"lane:{failed_lane_id}" if failed_lane_id else None,
             f"lane:{terminal_lane_id}" if terminal_lane_id else None,
-            _text(artifact.get("patch_forward_artifact")),
-            _text(artifact.get("patch_lane_review_intake_artifact")),
-            _text(artifact.get("patch_lane_review_verdict_artifact")),
-            *_string_list(artifact.get("candidate_refs")),
-            *_string_list(artifact.get("cited_candidate_refs")),
-            *verdict_refs,
+            *_string_list(current_handoff.get("source_refs")),
+            *_string_list(release_handoff.get("review_closure_candidate_artifact_refs")),
+            *runner_recovery_refs,
+            *worker_evidence_bundle_refs,
         ]
     )
 
 
 def _memoryos_runtime_closure_candidate(
+    root: Path,
     env: Mapping[str, str],
     payload: Mapping[str, Any],
 ) -> dict[str, Any]:
@@ -656,6 +938,10 @@ def _memoryos_runtime_closure_candidate(
         "artifact_summary": None,
         "source_refs": [],
         "source_ref_count": 0,
+        "current_handoff_gate_ready": None,
+        "current_handoff_summary": None,
+        "current_handoff_candidate_artifact_refs": [],
+        "current_handoff_candidate_artifact_ref_count": 0,
     }
     if artifact_path is None:
         return base
@@ -674,6 +960,11 @@ def _memoryos_runtime_closure_candidate(
     status = _text(artifact.get("status"))
     source_authority = _text(artifact.get("source_authority"))
     source_refs = _string_list(artifact.get("source_refs"))
+    closure_details = _runtime_closure_details(artifact)
+    requires_handoff_revalidation = _runtime_closure_requires_handoff_revalidation(
+        source_refs=source_refs,
+        closure_details=closure_details,
+    )
     if schema_version != "xmuse.production_evidence.v1":
         return {
             **base,
@@ -706,8 +997,47 @@ def _memoryos_runtime_closure_candidate(
             **base,
             "artifact_summary": "GOD room runtime closure evidence has no source refs.",
         }
+    current_handoff = (
+        _runtime_closure_current_review_handoff(
+            root=root,
+            runtime_closure_artifact=artifact,
+        )
+        if requires_handoff_revalidation
+        else None
+    )
+    if current_handoff is not None and current_handoff.get("gate_ready") is not True:
+        return {
+            **base,
+            "artifact_summary": (
+                "GOD room runtime closure evidence current review-closure handoff "
+                f"is not gate-ready: {_text(current_handoff.get('summary')) or 'unknown'}"
+            ),
+            "current_handoff_gate_ready": False,
+            "current_handoff_summary": _text(current_handoff.get("summary")),
+            "current_handoff_candidate_artifact_refs": _string_list(
+                current_handoff.get("candidate_artifact_refs")
+            ),
+            "current_handoff_candidate_artifact_ref_count": len(
+                _string_list(current_handoff.get("candidate_artifact_refs"))
+            ),
+        }
+    current_handoff_fields = (
+        {
+            "current_handoff_gate_ready": True,
+            "current_handoff_summary": _text(current_handoff.get("summary")),
+            "current_handoff_candidate_artifact_refs": _string_list(
+                current_handoff.get("candidate_artifact_refs")
+            ),
+            "current_handoff_candidate_artifact_ref_count": len(
+                _string_list(current_handoff.get("candidate_artifact_refs"))
+            ),
+        }
+        if current_handoff is not None
+        else {}
+    )
     return {
         **base,
+        **current_handoff_fields,
         "artifact_gate_ready": True,
         "artifact_summary": (
             "GOD room runtime closure evidence can seed MemoryOS source refs; "
@@ -718,11 +1048,85 @@ def _memoryos_runtime_closure_candidate(
     }
 
 
+def _runtime_closure_details(artifact: Mapping[str, Any]) -> Mapping[str, Any]:
+    value = artifact.get("god_room_runtime_closure")
+    return value if isinstance(value, Mapping) else {}
+
+
+def _runtime_closure_requires_handoff_revalidation(
+    *,
+    source_refs: list[str],
+    closure_details: Mapping[str, Any],
+) -> bool:
+    review_closure = closure_details.get("review_closure")
+    if isinstance(review_closure, Mapping) and _text(review_closure.get("status")) not in {
+        None,
+        "not_provided",
+    }:
+        return True
+    review_chain = closure_details.get("review_chain_proof")
+    if isinstance(review_chain, Mapping) and _text(review_chain.get("status")) not in {
+        None,
+        "not_provided",
+    }:
+        return True
+    return any(
+        ref.startswith(
+            (
+                "god-room-review-closure:",
+                "god-room-review-chain-proof:",
+                "review_chain_proof_artifact:",
+                "runner_recovery_proof_artifact:",
+                "feature_evidence_bundle:",
+                "worker_evidence_bundle:",
+            )
+        )
+        for ref in source_refs
+    )
+
+
+def _runtime_closure_current_review_handoff(
+    *,
+    root: Path,
+    runtime_closure_artifact: Mapping[str, Any],
+) -> dict[str, Any]:
+    base = {
+        "gate_ready": False,
+        "summary": (
+            "GOD room runtime closure evidence has no revalidatable review "
+            "closure artifact."
+        ),
+        "candidate_artifact_refs": [],
+    }
+    for artifact_ref in _string_list(runtime_closure_artifact.get("artifacts")):
+        review_closure_path = _root_relative_artifact_path(root, artifact_ref)
+        if review_closure_path is None:
+            continue
+        review_closure, _load_error = _json_file(
+            review_closure_path,
+            subject="GOD room review closure artifact referenced by runtime closure",
+        )
+        if review_closure is None:
+            continue
+        if _text(review_closure.get("schema_version")) != (
+            "xmuse.god_room_lane_review_closure.v1"
+        ):
+            continue
+        handoff_root_ref = _text(review_closure.get("xmuse_root"))
+        handoff = build_god_room_review_closure_handoff(
+            root=Path(handoff_root_ref) if handoff_root_ref is not None else root,
+            review_closure=review_closure,
+        )
+        return dict(handoff)
+    return base
+
+
 def _memoryos_candidate_guidance(
     payload: Mapping[str, Any],
     *,
     artifact: Mapping[str, Any],
     review_closure: Mapping[str, Any],
+    review_chain: Mapping[str, Any],
     runtime_closure: Mapping[str, Any],
 ) -> dict[str, Any]:
     payload_hints = {
@@ -734,6 +1138,7 @@ def _memoryos_candidate_guidance(
         [
             *_string_list(payload.get("source_refs")),
             *_string_list(review_closure.get("source_refs")),
+            *_string_list(review_chain.get("source_refs")),
             *_string_list(runtime_closure.get("source_refs")),
         ]
     )
@@ -753,6 +1158,8 @@ def _memoryos_candidate_guidance(
         )
     if review_closure.get("artifact_gate_ready") is True:
         source_authority.append("god_room_review_closure_artifact")
+    if review_chain.get("artifact_gate_ready") is True:
+        source_authority.append("god_room_review_chain_proof_artifact")
     if runtime_closure.get("artifact_gate_ready") is True:
         source_authority.append("god_room_runtime_closure_evidence")
     guidance: dict[str, Any] = {
@@ -777,38 +1184,141 @@ def _memoryos_candidate_guidance(
     return guidance
 
 
-def _github_candidates(*, payload: Mapping[str, Any]) -> dict[str, Any]:
+def _github_candidates(
+    *,
+    env: Mapping[str, str],
+    payload: Mapping[str, Any],
+) -> dict[str, Any]:
     repo = _text(payload.get("repo"))
     pull_request_number = _positive_int(
         payload.get("pull_request_number")
         or payload.get("pull_request")
         or payload.get("pr")
     )
+    artifact = _github_artifact_candidate(env, payload)
     missing_payload_keys = []
     if repo is None:
         missing_payload_keys.append("repo")
     if pull_request_number is None:
         missing_payload_keys.append("pull_request_number")
     export_ready = not missing_payload_keys
+    artifact_blockers = (
+        []
+        if not artifact["artifact_configured"] or artifact["artifact_gate_ready"]
+        else ["github_server_truth_artifact_not_ready"]
+    )
     return {
         "target_configured": export_ready,
         "export_ready": export_ready,
         "repo": repo,
         "pull_request_number": pull_request_number,
         "missing_payload_keys": missing_payload_keys,
-        "blockers": [] if export_ready else ["github_server_truth_target_missing"],
-        "can_emit_pr_merged": False,
+        "blockers": [
+            *([] if export_ready else ["github_server_truth_target_missing"]),
+            *artifact_blockers,
+        ],
+        "can_emit_pr_merged": artifact["artifact_can_emit_pr_merged"],
+        **artifact,
         **_github_candidate_guidance(
             payload,
+            artifact=artifact,
             repo=repo,
             pull_request_number=pull_request_number,
         ),
     }
 
 
+def _github_artifact_candidate(
+    env: Mapping[str, str],
+    payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    artifact_path = _text(payload.get("github_server_truth_artifact")) or _text(
+        env.get(_GITHUB_SERVER_TRUTH_ARTIFACT_ENV)
+    )
+    base = {
+        "artifact_configured": artifact_path is not None,
+        "artifact_path": artifact_path,
+        "artifact_gate_ready": False,
+        "artifact_gate_status": None,
+        "artifact_proof_level": None,
+        "artifact_summary": None,
+        "artifact_source_refs": [],
+        "artifact_source_ref_count": 0,
+        "artifact_can_emit_pr_merged": False,
+        "artifact_head_sha": None,
+        "artifact_expected_head_sha": None,
+        "artifact_head_sha_matches_expected": False,
+        "artifact_gap_reason": None,
+    }
+    if artifact_path is None:
+        return base
+    artifact, load_error = _json_file(
+        Path(artifact_path),
+        subject="GitHub server truth artifact",
+    )
+    if artifact is None:
+        return {
+            **base,
+            "artifact_summary": load_error,
+        }
+    if _text(artifact.get("schema_version")) != "github_server_side_truth_capture.v1":
+        return {
+            **base,
+            "artifact_summary": "GitHub server truth artifact schema is unsupported.",
+        }
+    truth, validation_error = _github_truth_evidence(artifact)
+    if truth is None:
+        return {
+            **base,
+            "artifact_summary": (
+                "GitHub server truth artifact is invalid: "
+                f"{validation_error or 'unknown validation error'}"
+            ),
+        }
+    gate = build_github_server_truth_release_gate(
+        truth.model_dump(mode="json"),
+        artifact_path=artifact_path,
+        base_branch=_text(payload.get("base_branch")) or "main",
+        expected_head_sha=_text(payload.get("expected_head_sha"))
+        or _text(artifact.get("expected_head_sha")),
+    )
+    gate_ready = gate.get("status") == "ok"
+    return {
+        **base,
+        "artifact_gate_ready": gate_ready,
+        "artifact_gate_status": _text(gate.get("status")),
+        "artifact_proof_level": _text(gate.get("proof_level")),
+        "artifact_summary": _text(gate.get("summary")),
+        "artifact_source_refs": _string_list(gate.get("source_refs")),
+        "artifact_source_ref_count": len(_string_list(gate.get("source_refs"))),
+        "artifact_can_emit_pr_merged": gate_ready and can_emit_pr_merged(truth),
+        "artifact_head_sha": _text(artifact.get("head_sha")),
+        "artifact_expected_head_sha": _text(artifact.get("expected_head_sha")),
+        "artifact_head_sha_matches_expected": (
+            artifact.get("head_sha_matches_expected") is True
+        ),
+        "artifact_gap_reason": _text(artifact.get("gap_reason")),
+    }
+
+
+def _github_truth_evidence(
+    artifact: Mapping[str, Any],
+) -> tuple[GitHubServerSideTruthEvidence | None, str | None]:
+    payload = {
+        key: value
+        for key in GitHubServerSideTruthEvidence.model_fields
+        if (value := artifact.get(key)) is not None
+    }
+    try:
+        return GitHubServerSideTruthEvidence.model_validate(payload), None
+    except ValueError as exc:
+        return None, str(exc)
+
+
 def _github_candidate_guidance(
     payload: Mapping[str, Any],
     *,
+    artifact: Mapping[str, Any],
     repo: str | None,
     pull_request_number: int | None,
 ) -> dict[str, Any]:
@@ -823,14 +1333,23 @@ def _github_candidate_guidance(
         payload_hints["base_branch"] = base_branch
     if required_checks := _string_list(payload.get("required_checks")):
         payload_hints["required_checks"] = required_checks
-    return {
+    source_authority = [
+        "operator_release_candidate_payload",
+        "github_server_truth_export_action",
+    ]
+    artifact_path = _text(artifact.get("artifact_path"))
+    if artifact.get("artifact_gate_ready") is True:
+        source_authority.extend(
+            [
+                "github_server_truth_artifact",
+                "github_server_truth_release_gate",
+            ]
+        )
+    guidance: dict[str, Any] = {
         "proof_boundary": "candidate_report_is_not_github_server_truth_proof",
         "required_gate_kind": "github_server_truth",
         "required_proof_level": "server_side_enforcement_proof",
-        "source_authority": [
-            "operator_release_candidate_payload",
-            "github_server_truth_export_action",
-        ],
+        "source_authority": source_authority,
         "next_action": _GITHUB_NEXT_ACTION,
         "suggested_operator_action": {
             "action": "attempt_release_evidence",
@@ -839,6 +1358,13 @@ def _github_candidate_guidance(
             "payload_hints": payload_hints,
         },
     }
+    if artifact_path is not None and artifact.get("artifact_gate_ready") is True:
+        guidance["suggested_existing_artifact_action"] = {
+            "action": "capture_release_evidence_pack",
+            "kind": "github_server_truth",
+            "payload_hints": {"github_server_truth": artifact_path},
+        }
+    return guidance
 
 
 def _session_records(registry_path: Path) -> list[GodSessionRecord]:

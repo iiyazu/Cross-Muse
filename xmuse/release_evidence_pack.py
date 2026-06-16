@@ -201,6 +201,23 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--god-room-review-chain-proof",
+        type=Path,
+        default=None,
+        help=(
+            "Optional xmuse.god_room_lane_review_chain_proof.v1 artifact to "
+            "index as L10 aggregation/replay evidence only."
+        ),
+    )
+    parser.add_argument(
+        "--require-god-room-review-chain-proof",
+        action="store_true",
+        help=(
+            "Record a manual_gap when L9 review-chain proof is expected but "
+            "--god-room-review-chain-proof is missing."
+        ),
+    )
+    parser.add_argument(
         "--god-room-multi-turn-provider-speech-run",
         type=Path,
         default=None,
@@ -385,6 +402,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             args.god_room_multi_turn_provider_speech_run
         ),
         god_room_review_closure=args.god_room_review_closure,
+        god_room_review_chain_proof=args.god_room_review_chain_proof,
+        god_room_review_chain_proof_expected=(
+            args.require_god_room_review_chain_proof
+        ),
         god_room_runtime_closure_evidence_output=(
             args.god_room_runtime_closure_evidence_output
         ),

@@ -26,6 +26,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Path to a serialized FeatureOwnerExecutionContract JSON artifact.",
     )
     parser.add_argument(
+        "--review-closure",
+        action="append",
+        default=[],
+        type=Path,
+        help=(
+            "Path to an xmuse.god_room_lane_review_closure.v1 artifact to "
+            "evaluate for L10 replay lineage."
+        ),
+    )
+    parser.add_argument(
         "--stage-id",
         default="S3",
         help="Goal stage id for the production evidence envelope.",
@@ -44,6 +54,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         run_id=args.run_id,
         stage_id=args.stage_id,
         contract_artifacts=args.contract,
+        review_closure_artifacts=args.review_closure,
         output_path=args.output,
     )
     print(

@@ -90,6 +90,32 @@ def test_claim_next_ready_feature_graph_worker_claims_without_projection_write(
     assert projection_path.read_text(encoding="utf-8") == before_projection
 
 
+def test_claim_next_ready_feature_graph_worker_can_scope_active_lanes(
+    tmp_path: Path,
+) -> None:
+    store = FeatureGraphStatusStore(tmp_path / "feature_graph_statuses.json")
+    store.upsert(
+        _status(
+            status_id="fgs-ready",
+            ready_lane_ids=["lane-a", "lane-b"],
+        )
+    )
+
+    outcome = claim_next_ready_feature_graph_worker(
+        store=store,
+        graph_set_id="graph-set-1",
+        worker_session_id="god-session-feature-worker-a",
+        provider_session_binding_ref="provider_session_binding:psb-worker-a:v1",
+        updated_at="2026-06-03T03:10:00Z",
+        active_lane_ids=["lane-b"],
+    )
+
+    assert outcome is not None
+    assert outcome.plan.active_lane_ids == ["lane-b"]
+    assert outcome.status.status is FeatureGraphExecutionStatus.RUNNING
+    assert outcome.status.active_lane_ids == ["lane-b"]
+
+
 def test_claim_next_ready_feature_graph_worker_filters_by_conversation_and_graph(
     tmp_path: Path,
 ) -> None:

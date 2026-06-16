@@ -4,12 +4,18 @@ import json
 import tomllib
 from pathlib import Path
 
+import pytest
+
 from xmuse_core.platform.overnight_operator_supervisor import (
     OvernightSimulationConfig,
     OvernightSimulationFailure,
     OvernightSupervisor,
     OvernightSupervisorConfig,
     OvernightSupervisorStage,
+    build_overnight_supervisor_recovery_gate,
+)
+from xmuse_core.structuring.blueprint_execution.lane_recovery_artifacts import (
+    lane_recovery_artifact_path,
 )
 
 
@@ -50,6 +56,95 @@ def test_overnight_supervisor_records_heartbeat_checkpoint_and_stage_journal(
     persisted = json.loads((tmp_path / "overnight-supervisor-run-1.json").read_text())
     assert persisted["run_id"] == "run-1"
     assert persisted["stages"][0]["completed_summary"] == "evidence action spine green"
+
+
+def test_overnight_supervisor_recovery_gate_snapshots_durable_blocks(
+    tmp_path: Path,
+) -> None:
+    _write_lane_recovery_artifact(
+        tmp_path,
+        graph_id="graph-runtime",
+        lane_id="lane-blocked",
+        decision="refactor_required",
+        retry_allowed=False,
+    )
+    _write_lane_recovery_artifact(
+        tmp_path,
+        graph_id="graph-runtime",
+        lane_id="lane-retry",
+        decision="retry",
+        retry_allowed=True,
+    )
+
+    gate = build_overnight_supervisor_recovery_gate(tmp_path)
+
+    assert gate["schema_version"] == "xmuse.overnight_supervisor_recovery_gate.v1"
+    assert gate["status"] == "blocked"
+    assert gate["proof_level"] == "manual_gap"
+    assert gate["source_authority"] == "lane_recovery_artifact"
+    assert gate["counts"]["blocked"] == 1
+    assert gate["counts"]["non_retry_decision"] == 1
+    assert gate["counts"]["retry_allowed"] == 1
+    assert gate["blocked_lanes"][0]["lane_id"] == "lane-blocked"
+    assert gate["blocked_lanes"][0]["decision"] == "refactor_required"
+    assert "lane_graphs/graph-runtime.lane-blocked.recovery.json" in gate[
+        "source_refs"
+    ]
+    assert "overnight_safe_recovery_not_proven" in gate["manual_gaps"]
+    assert "worker_output_is_review_truth" in gate["forbidden_claims"]
+    assert "overnight_safe_recovery" in gate["forbidden_claims"]
+
+
+def test_overnight_supervisor_blocks_stage_with_refactor_required_recovery_artifact(
+    tmp_path: Path,
+) -> None:
+    artifact_dir = tmp_path / "overnight"
+    _write_lane_recovery_artifact(
+        tmp_path,
+        graph_id="graph-runtime",
+        lane_id="lane-blocked",
+        decision="refactor_required",
+        retry_allowed=False,
+    )
+    supervisor = OvernightSupervisor(
+        OvernightSupervisorConfig(
+            run_id="run-recovery-gate",
+            artifact_dir=artifact_dir,
+            xmuse_root=tmp_path,
+            stages=[
+                OvernightSupervisorStage(
+                    stage_id="S4",
+                    objective="overnight supervisor loop",
+                )
+            ],
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="recovery gate blocked stage S4"):
+        supervisor.start_stage("S4")
+
+    snapshot = supervisor.snapshot()
+    assert snapshot["current_stage_id"] is None
+    assert snapshot["stages"][0]["status"] == "blocked"
+    assert snapshot["stages"][0]["blocked_reason"] == (
+        "Durable lane recovery artifacts block overnight supervisor stage start."
+    )
+    assert snapshot["issue_queue"][0]["severity"] == "blocked"
+    assert snapshot["failure_classifications"][0]["failure_class"] == (
+        "durable_lane_recovery_block"
+    )
+    evidence = snapshot["production_evidence"][0]
+    assert evidence["action"] == "recovery_gate_block"
+    assert evidence["status"] == "blocked"
+    assert evidence["proof_level"] == "manual_gap"
+    assert evidence["kind"] == "supervisor_recovery_gate"
+    assert evidence["source_refs"] == [
+        "lane_graphs/graph-runtime.lane-blocked.recovery.json"
+    ]
+    assert evidence["target_refs"] == ["overnight_supervisor_stage:S4"]
+    gate_path = artifact_dir / "overnight-recovery-gate-s4.json"
+    assert evidence["artifacts"] == [str(gate_path)]
+    assert json.loads(gate_path.read_text(encoding="utf-8"))["status"] == "blocked"
 
 
 def test_overnight_supervisor_records_checkpoint_production_evidence(
@@ -1316,3 +1411,47 @@ def _write_goal_stage_runner_result(
         "bounded worker output\n",
         encoding="utf-8",
     )
+
+
+def _write_lane_recovery_artifact(
+    base_dir: Path,
+    *,
+    graph_id: str,
+    lane_id: str,
+    decision: str,
+    retry_allowed: bool,
+) -> Path:
+    path = lane_recovery_artifact_path(
+        base_dir,
+        graph_id=graph_id,
+        lane_id=lane_id,
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "xmuse.god_room_lane_recovery.v1",
+                "decision": {
+                    "lane_id": lane_id,
+                    "decision": decision,
+                    "retry_allowed": retry_allowed,
+                    "failure_class": "demo_grade_boundary",
+                    "attempt": 2,
+                    "refactor_required_reason": (
+                        "same path failed repeatedly"
+                        if decision == "refactor_required"
+                        else None
+                    ),
+                    "next_action": (
+                        "refactor or replace the failing lane boundary before retrying"
+                    ),
+                    "source_refs": ["pytest:overnight-supervisor-recovery-gate"],
+                },
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return path

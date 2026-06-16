@@ -1,6 +1,8 @@
+import asyncio
 import importlib.util
 import json
 import sqlite3
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -11,6 +13,22 @@ from xmuse_core.chat.execution_cards import ChatExecutionCardEmitter
 from xmuse_core.chat.god_room_speaker_response import GodRoomProviderSpeechResponseV1
 from xmuse_core.chat.inbox_store import ChatInboxStore
 from xmuse_core.chat.store import ChatStore
+from xmuse_core.platform.feature_graph_claim_coordinator import (
+    claim_next_ready_feature_graph_worker,
+)
+from xmuse_core.platform.feature_graph_worker_evidence_coordinator import (
+    submit_feature_graph_worker_evidence,
+)
+from xmuse_core.platform.god_room_review_chain_proof import (
+    GOD_ROOM_REVIEW_CHAIN_PROOF_FORBIDDEN_CLAIMS,
+)
+from xmuse_core.platform.local_execution_candidate import (
+    capture_local_execution_candidate,
+)
+from xmuse_core.platform.release_evidence_candidates import (
+    build_release_evidence_candidate_report,
+)
+from xmuse_core.platform.release_evidence_pack import capture_release_evidence_pack
 from xmuse_core.providers.god_cli_selection_store import GodCliSelectionStore
 from xmuse_core.providers.god_identity_binding import (
     GodIdentityBindingStore,
@@ -19,6 +37,7 @@ from xmuse_core.providers.god_identity_binding import (
 from xmuse_core.structuring.blueprint_execution.approval_events import (
     build_blueprint_approval_dedupe_key,
 )
+from xmuse_core.structuring.feature_graph_artifact_store import FeatureGraphArtifactStore
 from xmuse_core.structuring.feature_graph_status_store import FeatureGraphStatusStore
 from xmuse_core.structuring.feature_plan_store import FeaturePlanStore
 from xmuse_core.structuring.feature_review_contracts import FeatureGraphExecutionStatus
@@ -37,6 +56,7 @@ from xmuse_core.structuring.planning_event_store import PlanningEventStore
 
 PROJECT = Path(__file__).resolve().parents[2]
 MODULE_PATH = PROJECT / "xmuse" / "chat_api.py"
+PLATFORM_RUNNER_MODULE_PATH = PROJECT / "xmuse" / "platform_runner.py"
 
 
 def _load_module():
@@ -50,6 +70,21 @@ def _load_module():
 
 chat_api = _load_module()
 create_app = chat_api.create_app
+
+
+def _load_platform_runner_module():
+    spec = importlib.util.spec_from_file_location(
+        "xmuse_platform_runner_for_chat_api_tests",
+        PLATFORM_RUNNER_MODULE_PATH,
+    )
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+platform_runner = _load_platform_runner_module()
 
 
 def _client(tmp_path: Path) -> TestClient:
@@ -3323,6 +3358,302 @@ def test_chat_api_god_room_lane_review_intake_preserves_manual_gap_without_candi
     assert "worker_output_is_review_truth" in intake["forbidden_claims"]
 
 
+def test_chat_api_god_room_lane_review_intake_discovers_runner_emitted_candidate(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    graph_id = "graph-review-auto-candidate"
+    lane_id = "lane-runtime-api"
+    conv_id = _create_god_room_lane_dag(client, graph_id=graph_id)
+    candidate_ref = _emit_platform_runner_local_execution_candidate_artifact(
+        tmp_path,
+        conversation_id=conv_id,
+        graph_id=graph_id,
+        lane_id=lane_id,
+    )
+
+    response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-intake",
+        json={
+            "graph_id": graph_id,
+            "lane_id": lane_id,
+            "reviewer_id": "review-god",
+        },
+    )
+
+    assert response.status_code == 201
+    intake = response.json()["review_intake"]
+    assert intake["execution_artifact_refs"] == [candidate_ref]
+    assert intake["discovered_local_execution_candidate_refs"] == [candidate_ref]
+    assert intake["discovered_worker_evidence_bundle_refs"] == [
+        f"feature_evidence_bundle:"
+        f"platform_runner_worker_evidence_{graph_id}-feature-runtime_{lane_id}:v1"
+    ]
+    assert intake["local_execution_candidate_worker_evidence_boundaries"][0][
+        "status"
+    ] == "verified"
+    assert candidate_ref in intake["reviewer_input_refs"]
+    assert intake["manual_gaps"] == ["lane_recovery_decision_missing"]
+    assert "worker_candidate_evidence_missing" not in intake["manual_gaps"]
+    assert intake["candidate_truth_status"] == "candidate_only"
+    assert not (tmp_path / "feature_lanes.json").exists()
+
+
+def test_chat_api_god_room_lane_review_verdict_requires_discovered_worker_bundle(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    graph_id = "graph-review-verdict-worker-bundle"
+    lane_id = "lane-runtime-api"
+    conv_id = _create_god_room_lane_dag(client, graph_id=graph_id)
+    candidate_ref = _emit_platform_runner_local_execution_candidate_artifact(
+        tmp_path,
+        conversation_id=conv_id,
+        graph_id=graph_id,
+        lane_id=lane_id,
+    )
+    intake_response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-intake",
+        json={
+            "graph_id": graph_id,
+            "lane_id": lane_id,
+            "reviewer_id": "review-god",
+        },
+    )
+    assert intake_response.status_code == 201
+    bundle_refs = intake_response.json()["review_intake"][
+        "discovered_worker_evidence_bundle_refs"
+    ]
+    assert bundle_refs
+
+    missing_response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-verdict",
+        json={
+            "graph_id": graph_id,
+            "lane_id": lane_id,
+            "reviewer_id": "review-god",
+            "decision": "merge",
+            "summary": "Candidate was reviewed without bundle citation.",
+            "evidence_refs": [candidate_ref],
+        },
+    )
+
+    assert missing_response.status_code == 409
+    assert missing_response.json()["detail"]["code"] == (
+        "god_room_lane_review_verdict_missing_worker_evidence_bundle_citation"
+    )
+    assert missing_response.json()["detail"][
+        "missing_worker_evidence_bundle_refs"
+    ] == bundle_refs
+    assert not (
+        tmp_path
+        / "reports"
+        / "god_room_review_verdicts"
+        / f"{graph_id}.{lane_id}.review-verdict.json"
+    ).exists()
+
+    response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-verdict",
+        json={
+            "graph_id": graph_id,
+            "lane_id": lane_id,
+            "reviewer_id": "review-god",
+            "decision": "merge",
+            "summary": "Candidate and worker evidence bundle were reviewed.",
+            "evidence_refs": [candidate_ref, *bundle_refs],
+        },
+    )
+
+    assert response.status_code == 201
+    verdict = response.json()["review_verdict"]
+    assert verdict["worker_evidence_bundle_refs"] == bundle_refs
+    assert verdict["cited_worker_evidence_bundle_refs"] == bundle_refs
+    assert verdict["worker_evidence_bundle_citation_status"] == "verified"
+    assert verdict["local_execution_candidate_worker_evidence_boundaries"][0][
+        "status"
+    ] == "verified"
+    assert bundle_refs[0] in verdict["review_verdict"]["evidence_refs"]
+
+
+def test_chat_api_god_room_lane_review_intake_ignores_invalid_runner_candidate(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    graph_id = "graph-review-invalid-auto-candidate"
+    lane_id = "lane-runtime-api"
+    conv_id = _create_god_room_lane_dag(client, graph_id=graph_id)
+    _mark_god_room_lane_reviewing(
+        tmp_path,
+        graph_id=graph_id,
+        lane_id=lane_id,
+    )
+    _write_json(
+        tmp_path / "work" / "local_execution_candidates" / f"{graph_id}.{lane_id}.json",
+        {
+            "schema_version": "xmuse.local_execution_candidate.v1",
+            "candidate_id": f"candidate-{lane_id}",
+            "source_authority": "local_execution_candidate_capture",
+            "conversation_id": conv_id,
+            "proof_level": "local_runtime_proof",
+            "status": "candidate_only",
+            "candidate_truth_status": "candidate_only",
+            "graph_id": graph_id,
+            "lane_id": lane_id,
+            "source_refs": [f"lane:{lane_id}"],
+            "manual_gaps": [
+                "review_truth_not_proven",
+                "server_truth_not_proven",
+                "github_truth_not_checked",
+                "live_memoryos_trace_not_proven",
+            ],
+            "forbidden_claims": [
+                "worker_output_is_review_truth",
+                "end_to_end_execution_review_closure",
+                "ready_to_merge",
+                "pr_merged",
+                "github_review_truth",
+                "live_memoryos",
+            ],
+        },
+    )
+
+    response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-intake",
+        json={
+            "graph_id": graph_id,
+            "lane_id": lane_id,
+            "reviewer_id": "review-god",
+        },
+    )
+
+    assert response.status_code == 201
+    intake = response.json()["review_intake"]
+    assert intake["execution_artifact_refs"] == []
+    assert intake["discovered_local_execution_candidate_refs"] == []
+    assert intake["manual_gaps"] == [
+        "worker_candidate_evidence_missing",
+        "lane_recovery_decision_missing",
+    ]
+
+
+def test_chat_api_review_intake_ignores_candidate_without_worker_bundle(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    graph_id = "graph-review-candidate-without-worker-evidence"
+    lane_id = "lane-runtime-api"
+    conv_id = _create_god_room_lane_dag(client, graph_id=graph_id)
+    _mark_god_room_lane_reviewing(
+        tmp_path,
+        graph_id=graph_id,
+        lane_id=lane_id,
+    )
+    graph_status_lineage = _feature_graph_status_lineage_for_lane(
+        tmp_path,
+        graph_id=graph_id,
+        lane_id=lane_id,
+    )
+    candidate_ref = f"work/local_execution_candidates/{graph_id}.{lane_id}.json"
+    capture_local_execution_candidate(
+        output_path=tmp_path / candidate_ref,
+        lane_id=lane_id,
+        lane_local_id=lane_id,
+        candidate_id=f"candidate-{lane_id}",
+        conversation_id=conv_id,
+        graph_id=graph_id,
+        graph_status_lineage=graph_status_lineage,
+        run_id="run-without-worker-evidence",
+        worker_id="platform-runner",
+        runner_session_id=f"worker-session-{lane_id}",
+        runner_session_ref=f"work/runner_sessions/{graph_id}.{lane_id}.json",
+        producer="platform_runner_dispatch",
+        source_refs=[f"lane:{lane_id}"],
+    )
+
+    response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-intake",
+        json={
+            "graph_id": graph_id,
+            "lane_id": lane_id,
+            "reviewer_id": "review-god",
+        },
+    )
+
+    assert response.status_code == 201
+    intake = response.json()["review_intake"]
+    assert intake["execution_artifact_refs"] == []
+    assert intake["discovered_local_execution_candidate_refs"] == []
+    assert intake["discovered_worker_evidence_bundle_refs"] == []
+    assert intake["local_execution_candidate_worker_evidence_boundaries"] == []
+    assert intake["manual_gaps"] == [
+        "worker_candidate_evidence_missing",
+        "lane_recovery_decision_missing",
+    ]
+
+
+def test_chat_api_god_room_lane_review_intake_ignores_manual_gap_candidate(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    graph_id = "graph-review-manual-gap-candidate"
+    lane_id = "lane-runtime-api"
+    conv_id = _create_god_room_lane_dag(client, graph_id=graph_id)
+    _mark_god_room_lane_reviewing(
+        tmp_path,
+        graph_id=graph_id,
+        lane_id=lane_id,
+    )
+    candidate_ref = f"work/local_execution_candidates/{graph_id}.{lane_id}.json"
+    _write_json(
+        tmp_path / candidate_ref,
+        {
+            "schema_version": "xmuse.local_execution_candidate.v1",
+            "candidate_id": f"candidate-{lane_id}",
+            "source_authority": "local_execution_candidate_capture",
+            "conversation_id": conv_id,
+            "proof_level": "manual_gap",
+            "status": "manual_gap",
+            "candidate_truth_status": "candidate_only",
+            "lane_id": lane_id,
+            "source_refs": [f"lane:{lane_id}"],
+            "output_refs": [candidate_ref],
+            "manual_gaps": [
+                "graph_status_lineage_missing",
+                "review_truth_not_proven",
+                "server_truth_not_proven",
+                "github_truth_not_checked",
+                "live_memoryos_trace_not_proven",
+            ],
+            "forbidden_claims": [
+                "worker_output_is_review_truth",
+                "end_to_end_execution_review_closure",
+                "ready_to_merge",
+                "pr_merged",
+                "github_review_truth",
+                "live_memoryos",
+            ],
+        },
+    )
+
+    response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-intake",
+        json={
+            "graph_id": graph_id,
+            "lane_id": lane_id,
+            "reviewer_id": "review-god",
+        },
+    )
+
+    assert response.status_code == 201
+    intake = response.json()["review_intake"]
+    assert intake["execution_artifact_refs"] == []
+    assert intake["discovered_local_execution_candidate_refs"] == []
+    assert intake["manual_gaps"] == [
+        "worker_candidate_evidence_missing",
+        "lane_recovery_decision_missing",
+    ]
+
+
 def test_chat_api_god_room_lane_review_intake_rejects_non_reviewing_graph_status(
     tmp_path: Path,
 ) -> None:
@@ -3454,8 +3785,8 @@ def test_chat_api_god_room_lane_review_verdict_requires_independent_evidence(
     assert "review_plane_store_not_updated" not in artifact["manual_gaps"]
     assert "patch_forward_lane_dag_not_linked" not in artifact["manual_gaps"]
     assert "lane_status_not_updated" not in artifact["manual_gaps"]
-    assert "end_to_end_execution_review_closure" in artifact["forbidden_claims"]
-    assert "ready_to_merge" in artifact["forbidden_claims"]
+    for claim in GOD_ROOM_REVIEW_CHAIN_PROOF_FORBIDDEN_CLAIMS:
+        assert claim in artifact["forbidden_claims"]
     verdict_artifact = tmp_path / payload["artifacts"]["review_verdict"]
     assert verdict_artifact.exists()
     assert json.loads(verdict_artifact.read_text(encoding="utf-8")) == artifact
@@ -3540,7 +3871,9 @@ def test_chat_api_god_room_lane_review_verdict_rejects_stale_graph_status(
             update={
                 "status_id": f"{current.status_id}-blocked",
                 "status": FeatureGraphExecutionStatus.BLOCKED,
-                "updated_at": "2026-06-15T01:06:00Z",
+                "updated_at": _after_feature_graph_status_timestamp(
+                    current.updated_at
+                ),
             }
         ),
         expected_status=FeatureGraphExecutionStatus.REVIEWING,
@@ -3860,10 +4193,8 @@ def test_chat_api_god_room_lane_patch_forward_appends_lanedag_lane(
     assert "patch_lane_not_executed" in patch_forward["manual_gaps"]
     assert "patch_lane_not_reviewed" in patch_forward["manual_gaps"]
     assert "release_evidence_not_linked" in patch_forward["manual_gaps"]
-    assert "end_to_end_execution_review_closure" in patch_forward["forbidden_claims"]
-    assert "ready_to_merge" in patch_forward["forbidden_claims"]
-    assert "pr_merged" in patch_forward["forbidden_claims"]
-    assert "github_review_truth" in patch_forward["forbidden_claims"]
+    for claim in GOD_ROOM_REVIEW_CHAIN_PROOF_FORBIDDEN_CLAIMS:
+        assert claim in patch_forward["forbidden_claims"]
     patch_lane = next(
         lane
         for lane in payload["lane_dag"]["lane_graph"]["lanes"]
@@ -3874,20 +4205,124 @@ def test_chat_api_god_room_lane_patch_forward_appends_lanedag_lane(
     assert patch_lane["prompt"] == "Repair recovery evidence lineage."
     patch_contract = patch_forward["patch_lane_contract"]
     assert patch_contract["lane_id"] == "lane-runtime-api-patch-1"
+    assert patch_contract["feature_id"] == "lane-runtime-api-patch-1"
     assert any(
         ref.endswith("graph-patch-forward.lane-runtime-api.review-verdict.json")
         for ref in patch_contract["source_refs"]
     )
     assert "worker-candidate:patch-run-1" in patch_contract["source_refs"]
+    patch_status_authority = patch_forward["patch_lane_graph_status_authority"]
+    assert patch_status_authority["schema_version"] == (
+        "xmuse.patch_forward_lane_graph_status_authority.v1"
+    )
+    assert patch_status_authority["source_authority"] == (
+        "feature_graph_set_store+feature_graph_status_store"
+    )
+    assert patch_status_authority["status"] == "initialized"
+    assert patch_status_authority["proof_level"] == "contract_proof"
+    assert patch_status_authority["feature_id"] == "lane-runtime-api-patch-1"
+    assert patch_status_authority["feature_graph_id"] == (
+        "graph-patch-forward-lane-runtime-api-patch-1"
+    )
+    assert patch_status_authority["feature_graph_status"]["status"] == "ready"
+    assert patch_status_authority["feature_graph_status"]["ready_lane_ids"] == [
+        "lane-runtime-api-patch-1"
+    ]
+    assert patch_status_authority["feature_graph_status"]["source_event_lineage"]
     assert patch_forward["patch_forward_link"]["failed_lane_id"] == "lane-runtime-api"
     assert patch_forward["patch_forward_link"]["patch_lane_id"] == (
         "lane-runtime-api-patch-1"
     )
     assert (tmp_path / payload["artifacts"]["lane_dag"]).exists()
+    assert (tmp_path / payload["artifacts"]["feature_graph_set"]).exists()
     assert (tmp_path / payload["artifacts"]["patch_forward"]).exists()
+    patch_graph_status = FeatureGraphStatusStore(
+        tmp_path / "feature_graph_statuses.json"
+    ).get(
+        graph_set_id="graph-patch-forward-graph-set",
+        feature_graph_id="graph-patch-forward-lane-runtime-api-patch-1",
+    )
+    assert patch_graph_status.status is FeatureGraphExecutionStatus.READY
     review_plane = json.loads((tmp_path / "review_plane.json").read_text())
     assert review_plane["review_verdicts"][0]["lane_id"] == "lane-runtime-api"
     assert review_plane["review_verdicts"][0]["decision"] == "patch-forward"
+    assert not (tmp_path / "feature_lanes.json").exists()
+
+
+def test_chat_api_god_room_lane_patch_forward_requires_graph_set_authority(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    graph_id = "graph-patch-forward-missing-graph-set"
+    conv_id = _create_god_room_lane_dag(client, graph_id=graph_id)
+    root_candidate_ref = _emit_platform_runner_local_execution_candidate_artifact(
+        tmp_path,
+        conversation_id=conv_id,
+        graph_id=graph_id,
+        lane_id="lane-runtime-api",
+    )
+    intake_response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-intake",
+        json={
+            "graph_id": graph_id,
+            "lane_id": "lane-runtime-api",
+            "worker_candidate_refs": ["worker-candidate:missing-graph-set"],
+            "execution_artifact_refs": [root_candidate_ref],
+        },
+    )
+    assert intake_response.status_code == 201
+    worker_evidence_bundle_refs = intake_response.json()["review_intake"][
+        "discovered_worker_evidence_bundle_refs"
+    ]
+    assert client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-verdict",
+        json={
+            "graph_id": graph_id,
+            "lane_id": "lane-runtime-api",
+            "reviewer_id": "review-god",
+            "decision": "patch-forward",
+            "summary": "Root lane needs a patch-forward lane.",
+            "evidence_refs": [
+                "worker-candidate:missing-graph-set",
+                root_candidate_ref,
+                *worker_evidence_bundle_refs,
+            ],
+            "patch_instructions": "Apply a bounded patch-forward repair.",
+        },
+    ).status_code == 201
+    lane_dag_path = tmp_path / "lane_graphs" / f"{graph_id}.lane-dag.json"
+    graph_set_paths = list(
+        (tmp_path / "graph_sets").glob(f"*{graph_id}-graph-set.json")
+    )
+    assert graph_set_paths
+    for path in graph_set_paths:
+        path.unlink()
+
+    response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/patch-forward",
+        json={
+            "graph_id": graph_id,
+            "lane_id": "lane-runtime-api",
+            "patch_lane_id": "lane-runtime-api-patch-missing-graph-set",
+        },
+    )
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["code"] == "god_room_lane_patch_forward_missing_graph_set"
+    assert "patch_lane_graph_set_authority_missing" in detail["manual_gaps"]
+    assert "patch_lane_worker_evidence_producer_ready" in detail["forbidden_claims"]
+    lane_dag = json.loads(lane_dag_path.read_text(encoding="utf-8"))
+    assert all(
+        lane["feature_id"] != "lane-runtime-api-patch-missing-graph-set"
+        for lane in lane_dag["lane_graph"]["lanes"]
+    )
+    assert not (
+        tmp_path
+        / "reports"
+        / "god_room_patch_forward"
+        / f"{graph_id}.lane-runtime-api.patch-forward.json"
+    ).exists()
     assert not (tmp_path / "feature_lanes.json").exists()
 
 
@@ -4005,14 +4440,59 @@ def test_chat_api_god_room_lane_review_closure_links_reviewed_patch_lane(
         "evt-propose-graph-review-closure",
         "evt-freeze-graph-review-closure",
     ]
+    expected_candidate_ref = (
+        "work/local_execution_candidates/"
+        "graph-review-closure.lane-runtime-api-patch-reviewed.json"
+    )
     assert closure["patch_lane_contract"]["lane_id"] == (
         "lane-runtime-api-patch-reviewed"
     )
     assert "worker-candidate:patch-reviewed" in closure["candidate_refs"]
-    assert "artifacts/lane-runtime-api-patch-reviewed/result.json" in closure[
-        "candidate_refs"
-    ]
+    assert expected_candidate_ref in closure["candidate_refs"]
     assert "worker-candidate:patch-reviewed" in closure["cited_candidate_refs"]
+    assert closure["cited_candidate_artifact_refs"] == [expected_candidate_ref]
+    candidate_lineage = closure["cited_candidate_artifact_lineage"][0]
+    assert candidate_lineage["schema_version"] == (
+        "xmuse.local_execution_candidate_lineage.v1"
+    )
+    assert candidate_lineage["artifact_ref"] == expected_candidate_ref
+    assert candidate_lineage["candidate_id"].startswith(
+        "platform-runner:local-execution-"
+    )
+    assert candidate_lineage["candidate_id"].endswith(
+        ":lane-runtime-api-patch-reviewed"
+    )
+    assert candidate_lineage["source_authority"] == "local_execution_candidate_capture"
+    assert candidate_lineage["producer"] == "platform_runner_dispatch"
+    assert candidate_lineage["conversation_id"] == conv_id
+    assert candidate_lineage["status"] == "candidate_only"
+    assert candidate_lineage["proof_level"] == "local_runtime_proof"
+    assert candidate_lineage["lane_id"] == "lane-runtime-api-patch-reviewed"
+    assert candidate_lineage["graph_id"] == "graph-review-closure"
+    assert candidate_lineage["candidate_truth_status"] == "candidate_only"
+    assert "lane:lane-runtime-api-patch-reviewed" in candidate_lineage["source_refs"]
+    assert "graph:graph-review-closure" in candidate_lineage["source_refs"]
+    assert "graph_set:graph-review-closure-graph-set" in candidate_lineage["source_refs"]
+    assert "feature_graph:graph-review-closure-lane-runtime-api-patch-reviewed" in (
+        candidate_lineage["source_refs"]
+    )
+    assert any(
+        ref.startswith("feature_graph_status:")
+        for ref in candidate_lineage["source_refs"]
+    )
+    assert candidate_lineage["output_refs"] == []
+    assert candidate_lineage["graph_status_lineage"]["source_authority"] == (
+        "feature_graph_status_store"
+    )
+    assert candidate_lineage["graph_status_lineage"]["graph_set_id"] == (
+        "graph-review-closure-graph-set"
+    )
+    assert candidate_lineage["graph_status_lineage"]["feature_graph_id"] == (
+        "graph-review-closure-lane-runtime-api-patch-reviewed"
+    )
+    assert candidate_lineage["graph_status_lineage"]["status"] == "reviewing"
+    assert "review_truth_not_proven" in candidate_lineage["manual_gaps"]
+    assert "worker_output_is_review_truth" in candidate_lineage["forbidden_claims"]
     assert closure["terminal_review_verdict"]["decision"] == "merge"
     assert closure["review_plane_sync_status"] == "review_plane_store_updated"
     assert closure["review_plane_verdict_ref"].startswith("review_plane_verdict:")
@@ -4032,6 +4512,32 @@ def test_chat_api_god_room_lane_review_closure_links_reviewed_patch_lane(
     assert "pr_merged" in closure["forbidden_claims"]
     assert "github_review_truth" in closure["forbidden_claims"]
     assert (tmp_path / payload["artifacts"]["review_closure"]).exists()
+    chain_proof = payload["review_chain_proof"]
+    assert chain_proof["schema_version"] == "xmuse.god_room_lane_review_chain_proof.v1"
+    assert chain_proof["status"] == "manual_gap"
+    assert chain_proof["proof_level"] == "manual_gap"
+    assert chain_proof["server_truth_status"] == "not_server_truth"
+    assert chain_proof["review_closure_artifact"] == payload["artifacts"][
+        "review_closure"
+    ]
+    assert chain_proof["candidate_lineage"]["candidate_artifact_refs"] == [
+        expected_candidate_ref
+    ]
+    assert chain_proof["release_evidence_handoff"][
+        "review_closure_artifact_gate_ready"
+    ] is True
+    assert "runner_recovery_proof_not_linked" in chain_proof["manual_gaps"]
+    runner_recovery_boundary = chain_proof["local_execution_review_session"][
+        "runner_recovery_lineage_boundary"
+    ]
+    assert runner_recovery_boundary["status"] == "manual_gap"
+    assert "runner recovery proof lineage does not show target-lane recovery enforcement" in (
+        runner_recovery_boundary["issues"]
+    )
+    assert "ready_to_merge" in chain_proof["forbidden_claims"]
+    assert "pr_merged" in chain_proof["forbidden_claims"]
+    assert "server_side_truth" in chain_proof["forbidden_claims"]
+    assert (tmp_path / payload["artifacts"]["review_chain_proof"]).exists()
     review_plane = json.loads((tmp_path / "review_plane.json").read_text())
     assert {
         row["lane_id"]: row["decision"] for row in review_plane["review_verdicts"]
@@ -4040,6 +4546,580 @@ def test_chat_api_god_room_lane_review_closure_links_reviewed_patch_lane(
         "lane-runtime-api-patch-reviewed": "merge",
     }
     assert not (tmp_path / "feature_lanes.json").exists()
+
+
+def test_chat_api_god_room_lane_review_closure_writes_chain_proof_from_explicit_patch_candidate(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    graph_id = "graph-review-chain-auto-candidate"
+    patch_lane_id = "lane-runtime-api-patch-auto"
+    conv_id = _create_patch_forward_lane(
+        client,
+        graph_id=graph_id,
+        patch_lane_id=patch_lane_id,
+    )
+    root_candidate_ref = f"work/local_execution_candidates/{graph_id}.lane-runtime-api.json"
+    assert (tmp_path / root_candidate_ref).exists()
+    candidate_ref = _emit_platform_runner_local_execution_candidate_artifact(
+        tmp_path,
+        conversation_id=conv_id,
+        graph_id=graph_id,
+        lane_id=patch_lane_id,
+    )
+
+    intake_response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-intake",
+        json={
+            "graph_id": graph_id,
+            "lane_id": patch_lane_id,
+            "reviewer_id": "review-god",
+            "execution_artifact_refs": [candidate_ref],
+        },
+    )
+    assert intake_response.status_code == 201
+    intake = intake_response.json()["review_intake"]
+    assert intake["execution_artifact_refs"] == [candidate_ref]
+    assert intake["discovered_local_execution_candidate_refs"] == [candidate_ref]
+    patch_worker_evidence_bundle_refs = intake[
+        "discovered_worker_evidence_bundle_refs"
+    ]
+    assert patch_worker_evidence_bundle_refs == [
+        f"feature_evidence_bundle:"
+        "platform_runner_worker_evidence_"
+        f"{graph_id}-{patch_lane_id}_{patch_lane_id}:v1"
+    ]
+    assert intake["candidate_truth_status"] == "candidate_only"
+
+    verdict_response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-verdict",
+        json={
+            "graph_id": graph_id,
+            "lane_id": patch_lane_id,
+            "reviewer_id": "review-god",
+            "decision": "merge",
+            "summary": "Auto-discovered runner candidate was reviewed.",
+            "evidence_refs": [candidate_ref, *patch_worker_evidence_bundle_refs],
+        },
+    )
+    assert verdict_response.status_code == 201
+
+    recovery_proof = _write_runner_recovery_proof_artifact(
+        tmp_path,
+        graph_id=graph_id,
+        lane_id="lane-runtime-api",
+    )
+    closure_response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-closure",
+        json={
+            "graph_id": graph_id,
+            "lane_id": "lane-runtime-api",
+            "runner_recovery_proof_artifact": str(recovery_proof.relative_to(tmp_path)),
+        },
+    )
+
+    assert closure_response.status_code == 201
+    payload = closure_response.json()
+    closure = payload["review_closure"]
+    chain_proof = payload["review_chain_proof"]
+    assert closure["cited_candidate_artifact_refs"] == [candidate_ref]
+    assert closure["cited_candidate_artifact_lineage"][0]["artifact_ref"] == candidate_ref
+    assert closure["review_truth_status"] == "independent_review_artifact"
+    assert closure["server_truth_status"] == "not_server_truth"
+    assert chain_proof["status"] == "chain_ready"
+    assert chain_proof["proof_level"] == "contract_proof"
+    assert chain_proof["server_truth_status"] == "not_server_truth"
+    assert chain_proof["candidate_lineage"]["candidate_artifact_refs"] == [
+        candidate_ref
+    ]
+    assert chain_proof["candidate_lineage"]["producers"] == [
+        "platform_runner_dispatch"
+    ]
+    assert chain_proof["candidate_lineage"]["candidate_truth_statuses"] == [
+        "candidate_only"
+    ]
+    session = chain_proof["local_execution_review_session"]
+    assert session["schema_version"] == "xmuse.local_execution_review_session.v1"
+    assert session["session_id"] == (
+        "local-execution-review-session:"
+        f"{graph_id}:lane-runtime-api:{patch_lane_id}"
+    )
+    assert session["status"] == "bounded_session_ready"
+    assert session["proof_level"] == "contract_proof"
+    assert session["session_truth_status"] == "bounded_local_execution_review_session"
+    assert session["server_truth_status"] == "not_server_truth"
+    assert session["candidate_artifact_refs"] == [candidate_ref]
+    assert session["candidate_producers"] == ["platform_runner_dispatch"]
+    assert session["candidate_count"] == 1
+    assert session["session_scope_boundary"]["status"] == "verified"
+    assert session["session_scope_boundary"]["session_id"] == session["session_id"]
+    assert session["session_scope_boundary"]["candidate_artifact_refs"] == [
+        candidate_ref
+    ]
+    assert candidate_ref in session["session_artifact_refs"]
+    assert "reports/runner-recovery-proof.json" in session["session_artifact_refs"]
+    assert session["runner_recovery_lineage_boundary"]["status"] == "verified"
+    assert session["worker_evidence_bundle_citation_boundary"]["status"] == "verified"
+    assert session["worker_evidence_bundle_citation_boundary"][
+        "citation_status"
+    ] == "verified"
+    assert session["worker_evidence_bundle_citation_boundary"][
+        "terminal_review_verdict_worker_evidence_bundle_refs"
+    ] == patch_worker_evidence_bundle_refs
+    assert set(
+        session["worker_evidence_bundle_citation_boundary"][
+            "all_worker_evidence_bundle_refs"
+        ]
+    ) >= set(patch_worker_evidence_bundle_refs)
+    assert session["runner_recovery_proof_status"] == "target_lane_recovery_blocked"
+    runner_session_boundary = session["runner_session_boundary"]
+    assert runner_session_boundary["status"] == "verified"
+    assert runner_session_boundary["candidate_worker_evidence_bundle_refs"] == (
+        patch_worker_evidence_bundle_refs
+    )
+    assert runner_session_boundary["session_worker_evidence_bundle_refs"] == (
+        patch_worker_evidence_bundle_refs
+    )
+    assert runner_session_boundary["missing_session_worker_evidence_bundle_refs"] == []
+    assert session["session_artifact_validation"]["status"] == "validated"
+    assert session["session_artifact_validation"]["artifact_count"] == 4
+    assert chain_proof["release_evidence_handoff"][
+        "review_closure_artifact_gate_ready"
+    ] is True
+    assert "worker_output_is_review_truth" in chain_proof["forbidden_claims"]
+    assert "ready_to_merge" in chain_proof["forbidden_claims"]
+    assert "pr_merged" in chain_proof["forbidden_claims"]
+    assert "server_side_truth" in chain_proof["forbidden_claims"]
+    review_chain_proof_path = tmp_path / payload["artifacts"]["review_chain_proof"]
+    assert review_chain_proof_path.exists()
+    second_step_response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-chain-proof",
+        json={
+            "graph_id": graph_id,
+            "lane_id": "lane-runtime-api",
+        },
+    )
+    assert second_step_response.status_code == 201
+    second_step = second_step_response.json()
+    assert second_step["artifacts"]["review_closure"] == payload["artifacts"][
+        "review_closure"
+    ]
+    assert second_step["artifacts"]["review_chain_proof"] == payload["artifacts"][
+        "review_chain_proof"
+    ]
+    second_step_chain = second_step["review_chain_proof"]
+    assert second_step_chain["status"] == "chain_ready"
+    assert second_step_chain["proof_level"] == "contract_proof"
+    assert second_step_chain["server_truth_status"] == "not_server_truth"
+    assert second_step_chain["local_execution_review_session"][
+        "candidate_artifact_refs"
+    ] == [candidate_ref]
+    candidate_report = build_release_evidence_candidate_report(
+        tmp_path,
+        conversation_id=conv_id,
+        env={
+            "XMUSE_LIVE_MEMORYOS_LITE": "1",
+            "XMUSE_MEMORYOS_LITE_URL": "http://memoryos-lite.example",
+        },
+        memoryos_payload={
+            "repo_id": "iiyazu/Cross-Muse",
+            "workspace_id": "xmuse",
+            "god_id": "review",
+            "conversation_id": conv_id,
+            "thread_id": "thread-1",
+            "blueprint_id": "blueprint-1",
+            "feature_id": "feature-runtime",
+            "lane_id": patch_lane_id,
+            "content": "review chain source refs",
+            "query": "review chain source refs",
+            "god_room_review_chain_proof": str(review_chain_proof_path),
+        },
+    )
+    memoryos = candidate_report["live_memoryos"]
+    payload_hints = memoryos["suggested_operator_action"]["payload_hints"]
+    assert memoryos["review_chain_proof_artifact_configured"] is True
+    assert memoryos["review_chain_proof_artifact_gate_ready"] is True
+    assert memoryos["review_chain_proof_candidate_artifact_refs"] == [candidate_ref]
+    assert "god_room_review_chain_proof_artifact" in memoryos["source_authority"]
+    assert memoryos["proof_boundary"] == "candidate_report_is_not_live_memoryos_proof"
+    assert "source_refs" in payload_hints
+    assert candidate_ref in payload_hints["source_refs"]
+    assert patch_worker_evidence_bundle_refs[0] in payload_hints["source_refs"]
+    assert (
+        "god-room-review-chain-proof:"
+        "graph-review-chain-auto-candidate:"
+        "lane-runtime-api:"
+        "lane-runtime-api-patch-auto"
+    ) in payload_hints["source_refs"]
+    pack = capture_release_evidence_pack(
+        artifacts_dir=tmp_path / "artifacts",
+        output_path=tmp_path / "release-pack.json",
+        run_id="api-review-chain-pack",
+        god_room_review_chain_proof=review_chain_proof_path,
+    )
+    replay = json.loads(Path(pack["overnight_replay_bundle"]).read_text())
+    sections = {section["section_id"]: section for section in replay["sections"]}
+    runtime_closure = sections["god_room_runtime_closure"]
+    runtime_details = runtime_closure["details"]["god_room_runtime_closure"]
+    chain_details = runtime_details["review_chain_proof"]
+    assert runtime_closure["status"] == "manual_gap"
+    assert runtime_closure["proof_level"] == "manual_gap"
+    assert "github truth artifact is missing" in runtime_closure["blocked_reason"]
+    assert chain_details["status"] == "chain_ready"
+    assert chain_details["proof_level"] == "contract_proof"
+    assert chain_details["server_truth_status"] == "not_server_truth"
+    assert chain_details["candidate_artifact_ref_count"] == 1
+    assert chain_details["worker_evidence_bundle_refs"] == (
+        session["worker_evidence_bundle_citation_boundary"][
+            "all_worker_evidence_bundle_refs"
+        ]
+    )
+    assert chain_details["release_handoff_gate_ready"] is True
+    assert "server_side_truth" in chain_details["forbidden_claims"]
+    assert candidate_ref in runtime_closure["source_refs"]
+    assert patch_worker_evidence_bundle_refs[0] in runtime_closure["source_refs"]
+    assert patch_worker_evidence_bundle_refs[0] in pack[
+        "god_room_review_chain_release_linkage"
+    ]["source_refs"]
+    assert "ready_to_merge" not in pack
+    assert not (tmp_path / "feature_lanes.json").exists()
+
+
+def test_chat_api_god_room_lane_review_closure_rejects_manual_candidate_producer(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    graph_id = "graph-review-closure-manual-producer"
+    patch_lane_id = "lane-runtime-api-patch-manual-producer"
+    conv_id = _create_reviewed_patch_forward_lane(
+        client,
+        graph_id=graph_id,
+        patch_lane_id=patch_lane_id,
+        patch_decision="merge",
+    )
+    candidate_ref = f"work/local_execution_candidates/{graph_id}.{patch_lane_id}.json"
+    candidate_path = tmp_path / candidate_ref
+    candidate = json.loads(candidate_path.read_text(encoding="utf-8"))
+    candidate["producer"] = "manual_cli_capture"
+    candidate_path.write_text(
+        json.dumps(candidate, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-closure",
+        json={
+            "graph_id": graph_id,
+            "lane_id": "lane-runtime-api",
+        },
+    )
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["code"] == "god_room_lane_review_closure_candidate_artifact_invalid"
+    assert "producer is not platform_runner_dispatch" in detail["message"]
+    assert "candidate_evidence_artifact_invalid" in detail["manual_gaps"]
+    assert "worker_output_is_review_truth" in detail["forbidden_claims"]
+    assert not (
+        tmp_path
+        / "reports"
+        / "god_room_review_closure"
+        / f"{graph_id}.lane-runtime-api.review-closure.json"
+    ).exists()
+    assert not (
+        tmp_path
+        / "reports"
+        / "god_room_review_chain_proof"
+        / f"{graph_id}.lane-runtime-api.review-chain-proof.json"
+    ).exists()
+
+
+def test_chat_api_god_room_lane_review_chain_proof_requires_review_closure(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    conv_id = _create_patch_forward_lane(
+        client,
+        graph_id="graph-review-chain-missing-closure",
+        patch_lane_id="lane-runtime-api-patch-missing-closure",
+    )
+
+    response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-chain-proof",
+        json={
+            "graph_id": "graph-review-chain-missing-closure",
+            "lane_id": "lane-runtime-api",
+        },
+    )
+
+    assert response.status_code == 404
+    detail = response.json()["detail"]
+    assert detail["code"] == "god_room_lane_review_closure_not_found"
+
+
+def test_chat_api_god_room_lane_review_closure_requires_resolvable_candidate_artifact(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    conv_id = _create_reviewed_patch_forward_lane(
+        client,
+        graph_id="graph-review-closure-unresolved-candidate",
+        patch_lane_id="lane-runtime-api-patch-unresolved-candidate",
+        patch_decision="merge",
+        create_execution_artifact=False,
+    )
+
+    response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-closure",
+        json={
+            "graph_id": "graph-review-closure-unresolved-candidate",
+            "lane_id": "lane-runtime-api",
+        },
+    )
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["code"] == (
+        "god_room_lane_review_closure_candidate_artifact_not_resolvable"
+    )
+    assert "candidate_evidence_artifact_not_resolvable" in detail["manual_gaps"]
+    assert "worker_output_is_review_truth" in detail["forbidden_claims"]
+    assert "ready_to_merge" in detail["forbidden_claims"]
+    assert not (
+        tmp_path
+        / "reports"
+        / "god_room_review_closure"
+        / (
+            "graph-review-closure-unresolved-candidate."
+            "lane-runtime-api.review-closure.json"
+        )
+    ).exists()
+
+
+def test_chat_api_god_room_lane_review_closure_rejects_invalid_candidate_artifact(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    patch_lane_id = "lane-runtime-api-patch-invalid-candidate"
+    conv_id = _create_reviewed_patch_forward_lane(
+        client,
+        graph_id="graph-review-closure-invalid-candidate",
+        patch_lane_id=patch_lane_id,
+        patch_decision="merge",
+    )
+    candidate_path = (
+        tmp_path
+        / "work"
+        / "local_execution_candidates"
+        / f"graph-review-closure-invalid-candidate.{patch_lane_id}.json"
+    )
+    candidate = json.loads(candidate_path.read_text(encoding="utf-8"))
+    candidate["forbidden_claims"] = ["ready_to_merge"]
+    candidate_path.write_text(
+        json.dumps(candidate, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-closure",
+        json={
+            "graph_id": "graph-review-closure-invalid-candidate",
+            "lane_id": "lane-runtime-api",
+        },
+    )
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["code"] == "god_room_lane_review_closure_candidate_artifact_invalid"
+    assert "missing forbidden claims" in detail["message"]
+    assert "candidate_evidence_artifact_invalid" in detail["manual_gaps"]
+    assert "worker_output_is_review_truth" in detail["forbidden_claims"]
+    assert not (
+        tmp_path
+        / "reports"
+        / "god_room_review_closure"
+        / "graph-review-closure-invalid-candidate.lane-runtime-api.review-closure.json"
+    ).exists()
+
+
+def test_chat_api_god_room_lane_review_closure_links_runner_recovery_proof(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    conv_id = _create_reviewed_patch_forward_lane(
+        client,
+        graph_id="graph-review-closure-recovery-proof",
+        patch_lane_id="lane-runtime-api-patch-recovery-proof",
+        patch_decision="merge",
+    )
+    proof_path = _write_runner_recovery_proof_artifact(
+        tmp_path,
+        graph_id="graph-review-closure-recovery-proof",
+        lane_id="lane-runtime-api",
+    )
+
+    response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-closure",
+        json={
+            "graph_id": "graph-review-closure-recovery-proof",
+            "lane_id": "lane-runtime-api",
+            "runner_recovery_proof_artifact": str(proof_path.relative_to(tmp_path)),
+        },
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["source_authority"] == (
+        "god_room_lane_patch_forward_artifact+patch_lane_review_verdict_artifact+"
+        "feature_graph_status_store+local_runner_recovery_proof_artifact"
+    )
+    closure = payload["review_closure"]
+    lineage = closure["runner_recovery_proof_lineage"]
+    assert lineage["schema_version"] == "xmuse.local_runner_recovery_proof_lineage.v1"
+    assert lineage["proof_level"] == "local_runtime_proof"
+    assert lineage["status"] == "target_lane_recovery_blocked"
+    assert lineage["artifact_ref"] == "reports/runner-recovery-proof.json"
+    assert lineage["filtered_graph_id"] == "graph-review-closure-recovery-proof"
+    assert lineage["excluded_recovery_blocked_lane_ids"] == ["lane-runtime-api"]
+    assert "reports/lane-recovery/lane-runtime-api.json" in lineage["source_refs"]
+    assert "lane:lane-runtime-api" in lineage["target_refs"]
+    assert "runner_recovery_proof_not_linked" not in closure["manual_gaps"]
+    assert "runner_recovery_proof_manual_gap" not in closure["manual_gaps"]
+    assert "overnight_safe_recovery" in closure["forbidden_claims"]
+    assert "worker_output_is_review_truth" in closure["forbidden_claims"]
+    assert "github_review_truth" in closure["forbidden_claims"]
+    chain_proof = payload["review_chain_proof"]
+    assert chain_proof["status"] == "chain_ready"
+    assert chain_proof["runner_recovery_proof_lineage"]["status"] == (
+        "target_lane_recovery_blocked"
+    )
+    assert chain_proof["local_execution_review_session"][
+        "runner_recovery_lineage_boundary"
+    ]["status"] == "verified"
+
+
+def test_chat_api_god_room_lane_review_closure_rejects_runner_recovery_overclaim(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    conv_id = _create_reviewed_patch_forward_lane(
+        client,
+        graph_id="graph-review-closure-recovery-overclaim",
+        patch_lane_id="lane-runtime-api-patch-recovery-overclaim",
+        patch_decision="merge",
+    )
+    proof_path = _write_runner_recovery_proof_artifact(
+        tmp_path,
+        graph_id="graph-review-closure-recovery-overclaim",
+        lane_id="lane-runtime-api",
+        proof_level="server_side_truth",
+    )
+
+    response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-closure",
+        json={
+            "graph_id": "graph-review-closure-recovery-overclaim",
+            "lane_id": "lane-runtime-api",
+            "runner_recovery_proof_artifact": str(proof_path.relative_to(tmp_path)),
+        },
+    )
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["code"] == "god_room_runner_recovery_proof_invalid"
+    assert detail["source_authority"] == (
+        "platform_runner_candidate_selection"
+        "+shared_runner_health_model"
+        "+lane_recovery_artifact"
+    )
+    assert detail["message"] == "runner recovery proof overclaims proof level"
+    assert "runner_recovery_proof_invalid" in detail["manual_gaps"]
+    assert "ready_to_merge" in detail["forbidden_claims"]
+    assert not (
+        tmp_path
+        / "reports"
+        / "god_room_review_closure"
+        / "graph-review-closure-recovery-overclaim.lane-runtime-api.review-closure.json"
+    ).exists()
+
+
+def test_chat_api_god_room_lane_review_closure_rejects_runner_recovery_missing_truth_gaps(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    conv_id = _create_reviewed_patch_forward_lane(
+        client,
+        graph_id="graph-review-closure-recovery-missing-gaps",
+        patch_lane_id="lane-runtime-api-patch-recovery-missing-gaps",
+        patch_decision="merge",
+    )
+    proof_path = _write_runner_recovery_proof_artifact(
+        tmp_path,
+        graph_id="graph-review-closure-recovery-missing-gaps",
+        lane_id="lane-runtime-api",
+        manual_gaps=["live_long_running_runner_recovery_session_not_proven"],
+    )
+
+    response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-closure",
+        json={
+            "graph_id": "graph-review-closure-recovery-missing-gaps",
+            "lane_id": "lane-runtime-api",
+            "runner_recovery_proof_artifact": str(proof_path.relative_to(tmp_path)),
+        },
+    )
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["code"] == "god_room_runner_recovery_proof_invalid"
+    assert detail["message"] == "runner recovery proof missing manual gaps"
+    assert "runner_recovery_proof_invalid" in detail["manual_gaps"]
+    assert "pr_merged" in detail["forbidden_claims"]
+    assert not (
+        tmp_path
+        / "reports"
+        / "god_room_review_closure"
+        / "graph-review-closure-recovery-missing-gaps.lane-runtime-api.review-closure.json"
+    ).exists()
+
+
+def test_chat_api_god_room_lane_review_closure_rejects_unscoped_runner_recovery_proof(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    conv_id = _create_reviewed_patch_forward_lane(
+        client,
+        graph_id="graph-review-closure-recovery-unscoped",
+        patch_lane_id="lane-runtime-api-patch-recovery-unscoped",
+        patch_decision="merge",
+    )
+    proof_path = _write_runner_recovery_proof_artifact(
+        tmp_path,
+        graph_id=None,
+        lane_id="lane-runtime-api",
+    )
+
+    response = client.post(
+        f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-closure",
+        json={
+            "graph_id": "graph-review-closure-recovery-unscoped",
+            "lane_id": "lane-runtime-api",
+            "runner_recovery_proof_artifact": str(proof_path.relative_to(tmp_path)),
+        },
+    )
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["code"] == "god_room_runner_recovery_proof_invalid"
+    assert detail["message"] == "runner recovery proof graph filter is required"
+    assert "runner_recovery_proof_invalid" in detail["manual_gaps"]
+    assert "ready_to_merge" in detail["forbidden_claims"]
+    assert not (
+        tmp_path
+        / "reports"
+        / "god_room_review_closure"
+        / "graph-review-closure-recovery-unscoped.lane-runtime-api.review-closure.json"
+    ).exists()
 
 
 def test_chat_api_god_room_lane_review_closure_requires_merged_graph_status(
@@ -4055,7 +5135,9 @@ def test_chat_api_god_room_lane_review_closure_requires_merged_graph_status(
     _force_feature_graph_status(
         tmp_path,
         graph_set_id="graph-review-closure-not-merged-graph-set",
-        feature_graph_id="graph-review-closure-not-merged-feature-runtime",
+        feature_graph_id=(
+            "graph-review-closure-not-merged-lane-runtime-api-patch-not-merged"
+        ),
         status="reviewing",
         completed_lane_ids=["lane-runtime-api-patch-not-merged"],
     )
@@ -4099,7 +5181,9 @@ def test_chat_api_god_room_lane_review_closure_requires_graph_status_record(
     _remove_feature_graph_status(
         tmp_path,
         graph_set_id="graph-review-closure-missing-status-graph-set",
-        feature_graph_id="graph-review-closure-missing-status-feature-runtime",
+        feature_graph_id=(
+            "graph-review-closure-missing-status-lane-runtime-api-patch-missing-status"
+        ),
     )
 
     response = client.post(
@@ -4454,6 +5538,7 @@ def _mark_god_room_lane_reviewing(
         feature_graph_id=feature_graph_id,
     )
     if ready.status is FeatureGraphExecutionStatus.READY:
+        running_updated_at = _after_feature_graph_status_timestamp(ready.updated_at)
         running = ready.model_copy(
             update={
                 "status_id": f"{ready.status_id}-running-for-review",
@@ -4461,7 +5546,7 @@ def _mark_god_room_lane_reviewing(
                 "ready_lane_ids": [],
                 "active_lane_ids": [lane_id],
                 "active_worker_session_id": f"worker-session-{lane_id}",
-                "updated_at": "2026-06-15T01:00:00Z",
+                "updated_at": running_updated_at,
             }
         )
         ready = store.transition(
@@ -4469,19 +5554,29 @@ def _mark_god_room_lane_reviewing(
             expected_status=FeatureGraphExecutionStatus.READY,
         )
     if ready.status is FeatureGraphExecutionStatus.RUNNING:
+        reviewing_updated_at = _after_feature_graph_status_timestamp(ready.updated_at)
         reviewing = ready.model_copy(
             update={
                 "status_id": f"{ready.status_id}-reviewing",
                 "status": FeatureGraphExecutionStatus.REVIEWING,
                 "active_lane_ids": [],
                 "completed_lane_ids": [lane_id],
-                "updated_at": "2026-06-15T01:05:00Z",
+                "updated_at": reviewing_updated_at,
             }
         )
         store.transition(
             reviewing,
             expected_status=FeatureGraphExecutionStatus.RUNNING,
         )
+
+
+def _after_feature_graph_status_timestamp(value: str) -> str:
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return (
+        (parsed.astimezone(UTC) + timedelta(seconds=1))
+        .isoformat(timespec="seconds")
+        .replace("+00:00", "Z")
+    )
 
 
 def _create_patch_forward_lane(
@@ -4491,20 +5586,25 @@ def _create_patch_forward_lane(
     patch_lane_id: str,
 ) -> str:
     conv_id = _create_god_room_lane_dag(client, graph_id=graph_id)
-    _mark_god_room_lane_reviewing(
+    root_candidate_ref = _emit_platform_runner_local_execution_candidate_artifact(
         client.app.state.test_base_dir,
+        conversation_id=conv_id,
         graph_id=graph_id,
         lane_id="lane-runtime-api",
     )
-    assert client.post(
+    intake_response = client.post(
         f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-intake",
         json={
             "graph_id": graph_id,
             "lane_id": "lane-runtime-api",
             "worker_candidate_refs": ["worker-candidate:root-patch"],
-            "execution_artifact_refs": ["artifacts/lane-runtime-api/result.json"],
+            "execution_artifact_refs": [root_candidate_ref],
         },
-    ).status_code == 201
+    )
+    assert intake_response.status_code == 201
+    root_worker_evidence_bundle_refs = intake_response.json()["review_intake"][
+        "discovered_worker_evidence_bundle_refs"
+    ]
     assert client.post(
         f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-verdict",
         json={
@@ -4515,7 +5615,8 @@ def _create_patch_forward_lane(
             "summary": "Root lane needs a patch-forward lane.",
             "evidence_refs": [
                 "worker-candidate:root-patch",
-                "artifacts/lane-runtime-api/result.json",
+                root_candidate_ref,
+                *root_worker_evidence_bundle_refs,
             ],
             "patch_instructions": "Apply a bounded patch-forward repair.",
         },
@@ -4537,6 +5638,7 @@ def _create_reviewed_patch_forward_lane(
     graph_id: str,
     patch_lane_id: str,
     patch_decision: str,
+    create_execution_artifact: bool = True,
 ) -> str:
     conv_id = _create_patch_forward_lane(
         client,
@@ -4544,13 +5646,21 @@ def _create_reviewed_patch_forward_lane(
         patch_lane_id=patch_lane_id,
     )
     candidate_ref = "worker-candidate:patch-reviewed"
-    execution_ref = f"artifacts/{patch_lane_id}/result.json"
-    _mark_god_room_lane_reviewing(
-        client.app.state.test_base_dir,
-        graph_id=graph_id,
-        lane_id=patch_lane_id,
-    )
-    assert client.post(
+    if create_execution_artifact:
+        execution_ref = _emit_platform_runner_local_execution_candidate_artifact(
+            client.app.state.test_base_dir,
+            conversation_id=conv_id,
+            graph_id=graph_id,
+            lane_id=patch_lane_id,
+        )
+    else:
+        execution_ref = f"artifacts/{patch_lane_id}/result.json"
+        _mark_god_room_lane_reviewing(
+            client.app.state.test_base_dir,
+            graph_id=graph_id,
+            lane_id=patch_lane_id,
+        )
+    intake_response = client.post(
         f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-intake",
         json={
             "graph_id": graph_id,
@@ -4558,7 +5668,11 @@ def _create_reviewed_patch_forward_lane(
             "worker_candidate_refs": [candidate_ref],
             "execution_artifact_refs": [execution_ref],
         },
-    ).status_code == 201
+    )
+    assert intake_response.status_code == 201
+    patch_worker_evidence_bundle_refs = intake_response.json()["review_intake"][
+        "discovered_worker_evidence_bundle_refs"
+    ]
     assert client.post(
         f"/api/chat/conversations/{conv_id}/god-room/lane-dag/review-verdict",
         json={
@@ -4567,10 +5681,302 @@ def _create_reviewed_patch_forward_lane(
             "reviewer_id": "review-god",
             "decision": patch_decision,
             "summary": "Patch lane candidate was independently reviewed.",
-            "evidence_refs": [candidate_ref, execution_ref],
+            "evidence_refs": [
+                candidate_ref,
+                execution_ref,
+                *patch_worker_evidence_bundle_refs,
+            ],
         },
     ).status_code == 201
     return conv_id
+
+
+def _emit_platform_runner_local_execution_candidate_artifact(
+    tmp_path: Path,
+    *,
+    conversation_id: str,
+    graph_id: str,
+    lane_id: str,
+    require_worker_evidence_ref: bool = True,
+) -> str:
+    _ensure_feature_graph_planning_run(
+        tmp_path,
+        graph_id=graph_id,
+        lane_id=lane_id,
+    )
+    graph_status_lineage = _feature_graph_status_lineage_for_lane(
+        tmp_path,
+        graph_id=graph_id,
+        lane_id=lane_id,
+    )
+    lane = {
+        "feature_id": lane_id,
+        "lane_local_id": lane_id,
+        "conversation_id": conversation_id,
+        "graph_id": graph_status_lineage["feature_graph_id"],
+        "graph_set_id": graph_status_lineage["graph_set_id"],
+        "provider_session_binding_id": f"provider_session_binding:{lane_id}:v1",
+        "status": "pending",
+        "priority": 1,
+        "blueprint_refs": [f"blueprint:{graph_id}:1"],
+        "acceptance_criteria": [f"complete {lane_id}"],
+        "allowed_files": ["xmuse/chat_api.py"],
+        "required_checks": ["uv run pytest tests/xmuse/test_chat_api.py -q"],
+    }
+    artifact_ref = f"work/local_execution_candidates/{graph_id}.{lane_id}.json"
+
+    class CandidateStateMachine:
+        def __init__(self) -> None:
+            self._lanes = [dict(lane)]
+
+        def get_lanes(self, status: str | None = None):
+            if status is None:
+                return list(self._lanes)
+            return [item for item in self._lanes if item.get("status") == status]
+
+        def update_metadata(self, update_lane_id: str, metadata: dict):
+            for item in self._lanes:
+                if item.get("feature_id") == update_lane_id:
+                    item.update(metadata)
+                    return dict(item)
+            raise KeyError(update_lane_id)
+
+        def get_lane(self, lane_id: str):
+            for item in self._lanes:
+                if item.get("feature_id") == lane_id:
+                    return dict(item)
+            raise KeyError(lane_id)
+
+    class CandidateOrchestrator:
+        def __init__(self, **_kwargs) -> None:
+            self._feature_graph_status_store = FeatureGraphStatusStore(
+                tmp_path / "feature_graph_statuses.json"
+            )
+            self._feature_graph_artifact_store = FeatureGraphArtifactStore(
+                tmp_path / "feature_graph_artifacts.json"
+            )
+            self._sm = CandidateStateMachine()
+
+        async def reconcile_status_changes(self) -> None:
+            return None
+
+        async def dispatch_lane(self, dispatch_lane_id: str) -> None:
+            self._sm.update_metadata(dispatch_lane_id, {"status": "dispatched"})
+
+        def claim_next_ready_feature_graph_worker(self, **kwargs):
+            return claim_next_ready_feature_graph_worker(
+                store=self._feature_graph_status_store,
+                **kwargs,
+            )
+
+        def submit_feature_graph_worker_evidence(self, **kwargs):
+            return submit_feature_graph_worker_evidence(
+                store=self._feature_graph_status_store,
+                artifact_store=self._feature_graph_artifact_store,
+                **kwargs,
+            )
+
+    class CandidateBlueprintAutomationService:
+        def __init__(self, *, base_dir: Path, **_kwargs) -> None:
+            assert base_dir == tmp_path
+
+        def tick(self, *, worker_id: str):
+            assert worker_id == "platform-runner"
+            return None
+
+    class CandidateLoop:
+        def __init__(self) -> None:
+            self._times = iter((0.0, 0.0, 3601.0))
+
+        def add_signal_handler(self, *_args, **_kwargs) -> None:
+            return None
+
+        def time(self) -> float:
+            return next(self._times, 3601.0)
+
+    async def fast_sleep(_delay: float) -> None:
+        return None
+
+    async def run_once() -> None:
+        with pytest.MonkeyPatch.context() as monkeypatch:
+            monkeypatch.setattr(
+                platform_runner,
+                "PlatformOrchestrator",
+                CandidateOrchestrator,
+            )
+            monkeypatch.setattr(
+                platform_runner,
+                "BlueprintAutomationService",
+                CandidateBlueprintAutomationService,
+                raising=False,
+            )
+            monkeypatch.setattr(
+                platform_runner.asyncio,
+                "get_running_loop",
+                lambda: CandidateLoop(),
+            )
+            monkeypatch.setattr(platform_runner.asyncio, "sleep", fast_sleep)
+            await platform_runner.run(
+                lanes_path=tmp_path / "feature_lanes.json",
+                xmuse_root=tmp_path,
+                mcp_port=8100,
+                max_hours=1,
+                max_concurrent=1,
+            )
+
+    asyncio.run(run_once())
+    assert (tmp_path / artifact_ref).exists()
+    artifact = json.loads((tmp_path / artifact_ref).read_text(encoding="utf-8"))
+    assert artifact["candidate_id"].startswith("platform-runner:local-execution-")
+    assert artifact["candidate_id"].endswith(f":{lane_id}")
+    assert artifact["status"] == "candidate_only"
+    if require_worker_evidence_ref:
+        assert any(
+            ref.startswith("feature_evidence_bundle:")
+            for ref in artifact["source_refs"]
+        )
+    return artifact_ref
+
+
+def _write_runner_recovery_proof_artifact(
+    tmp_path: Path,
+    *,
+    graph_id: str | None,
+    lane_id: str,
+    proof_level: str = "local_runtime_proof",
+    manual_gaps: list[str] | None = None,
+) -> Path:
+    path = tmp_path / "reports" / "runner-recovery-proof.json"
+    _write_json(
+        tmp_path / "reports" / "lane-recovery" / f"{lane_id}.json",
+        {
+            "schema_version": "xmuse.lane_recovery.v1",
+            "lane_id": lane_id,
+            "status": "blocked",
+        },
+    )
+    _write_json(
+        path,
+        {
+            "schema_version": "xmuse.local_runner_recovery_proof.v1",
+            "run_id": "run-recovery-proof",
+            "runner_id": "platform-runner",
+            "generated_at": "2026-06-14T23:10:00Z",
+            "status": "ok",
+            "proof_level": proof_level,
+            "source_authority": (
+                "platform_runner_candidate_selection"
+                "+shared_runner_health_model"
+                "+lane_recovery_artifact"
+            ),
+            "lanes_path": str(tmp_path / "feature_lanes.json"),
+            "xmuse_root": str(tmp_path),
+            "filters": {
+                "graph_id": graph_id,
+                "resolution_id": "resolution-recovery-proof",
+            },
+            "candidate_selection": {
+                "source_authority": "platform_runner._candidate_lanes",
+                "candidate_lane_ids": [f"{lane_id}-patch"],
+                "excluded_recovery_blocked_lane_ids": [lane_id],
+                "invalid_recovery_artifact_lane_ids": [],
+                "lane_count": 2,
+            },
+            "runner_supervisor": {
+                "source_authority": "run_health.build_run_health_model",
+                "recovery": {
+                    "blocked_count": 1,
+                    "blocked_lanes": [
+                        {
+                            "lane_id": lane_id,
+                            "artifact_ref": (
+                                f"reports/lane-recovery/{lane_id}.json"
+                            ),
+                        }
+                    ],
+                    "source_refs": [f"reports/lane-recovery/{lane_id}.json"],
+                },
+            },
+            "source_refs": [f"reports/lane-recovery/{lane_id}.json"],
+            "target_refs": [f"lane:{lane_id}", f"lane:{lane_id}-patch"],
+            "manual_gaps": manual_gaps
+            if manual_gaps is not None
+            else [
+                "live_long_running_runner_recovery_session_not_proven",
+                "overnight_safe_recovery_not_proven",
+                "review_truth_not_proven",
+                "server_truth_not_proven",
+            ],
+            "forbidden_claims": [
+                "overnight_safe_recovery",
+                "end_to_end_execution_review_closure",
+                "worker_output_is_review_truth",
+                "ready_to_merge",
+                "pr_merged",
+            ],
+        },
+    )
+    return path
+
+
+def _feature_graph_status_lineage_for_lane(
+    tmp_path: Path,
+    *,
+    graph_id: str,
+    lane_id: str,
+) -> dict:
+    lane_dag_path = tmp_path / "lane_graphs" / f"{graph_id}.lane-dag.json"
+    lane_dag = json.loads(lane_dag_path.read_text(encoding="utf-8"))
+    contract = next(
+        item for item in lane_dag["lane_contracts"] if item["lane_id"] == lane_id
+    )
+    graph_set_id = f"{graph_id}-graph-set"
+    feature_graph_id = f"{graph_id}-{contract['feature_id']}"
+    status = FeatureGraphStatusStore(tmp_path / "feature_graph_statuses.json").get(
+        graph_set_id=graph_set_id,
+        feature_graph_id=feature_graph_id,
+    )
+    return {
+        "source_authority": "feature_graph_status_store",
+        "graph_set_id": status.graph_set_id,
+        "feature_graph_id": status.feature_graph_id,
+        "status_id": status.status_id,
+        "status": status.status.value,
+        "blueprint_proof_level": status.blueprint_proof_level,
+        "active_lane_ids": list(status.active_lane_ids),
+        "completed_lane_ids": list(status.completed_lane_ids),
+        "source_event_lineage": [
+            item.model_dump(mode="json") for item in status.source_event_lineage
+        ],
+    }
+
+
+def _ensure_feature_graph_planning_run(
+    tmp_path: Path,
+    *,
+    graph_id: str,
+    lane_id: str,
+) -> None:
+    lane_dag_path = tmp_path / "lane_graphs" / f"{graph_id}.lane-dag.json"
+    lane_dag = json.loads(lane_dag_path.read_text(encoding="utf-8"))
+    contract = next(
+        item for item in lane_dag["lane_contracts"] if item["lane_id"] == lane_id
+    )
+    graph_set_id = f"{graph_id}-graph-set"
+    feature_graph_id = f"{graph_id}-{contract['feature_id']}"
+    path = tmp_path / "feature_graph_statuses.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    for row in payload["statuses"]:
+        if (
+            row["graph_set_id"] == graph_set_id
+            and row["feature_graph_id"] == feature_graph_id
+        ):
+            if row.get("planning_run_id") is None:
+                row["planning_run_id"] = f"planning-run-{graph_id}-{lane_id}"
+            break
+    else:
+        raise AssertionError(f"feature graph status missing: {feature_graph_id}")
+    _write_json(path, payload)
 
 
 def _force_feature_graph_status(

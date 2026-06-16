@@ -1,71 +1,82 @@
 # Dependency-First Closure Goal Prompt
 
-更新日期: 2026-06-14
+更新日期: 2026-06-15
 
 Use this as the concise prompt for the next long `/goal`.
 
 ```text
 /goal
 
-Implement the next production-closure slice for xmuse using dependency-first,
-contract-first, authority-first, evidence-first behavior.
+Continue xmuse production closure using dependency-first, authority-first,
+evidence-first behavior. Tests verify production paths; tests do not define
+architecture.
+
+Treat /goal as desired state and durable artifacts/status as observed state.
+Work as an idempotent reconcile loop: target condition -> observed durable
+state -> authority-owned producer/consumer path -> fail-closed gap or proof.
 
 Read and follow:
 - AGENTS.md
 - docs/xmuse/README.md
 - docs/xmuse/goal-behavior-contract.md
-- docs/xmuse/code-review.md
+- docs/xmuse/anti-tdd-abuse-policy.md
+- docs/xmuse/next-production-closure-long-goal.md
 - docs/xmuse/production-closure-gap-ledger.md
+- docs/xmuse/production-closure-wave-map.md
+- docs/xmuse/code-review.md
+- docs/xmuse/github-git-behavior-policy.md
 - docs/xmuse/development-goal-worker-delegation-policy.md
 - docs/xmuse/goal-stage-harness.md
 
-Target scope:
-- Use the Wave A-E order in goal-behavior-contract.md and the current wave
-  cursor in production-closure-gap-ledger.md.
-- Do not average effort across L1-L11.
-- Current default: Wave D / L9. Consume `xmuse.local_runner_recovery_proof.v1`
-  as recovery enforcement lineage in the review/release evidence chain.
-- Prove only what the slice produces. Do not upgrade worker output, local tests,
-  recovery artifacts, CI, MemoryOS plans, TUI/read models, or release evidence
-  aggregation into review/server truth.
-- Do not expand Wave E / L10-L11 cockpit or overnight surfaces except to report
-  explicit manual_gap / contract_proof boundaries.
+Target:
+- Execute docs/xmuse/next-production-closure-long-goal.md.
+- Use medium-grained autonomous task slices inside the goal.
+- Preserve Wave order. Do not redo L1-L2 unless authority drift is found.
+- Current focus: Wave D / L9 execution-review-patch-forward-release lineage.
+- Touch Wave E / L10 only as honest aggregation after L9 lineage exists.
 
 Required process:
-1. Truth refresh: inspect git status, branch, HEAD, recent commits, PR/CI if
-   available, ledger snapshot, and existing contracts/tests.
-2. Layer plan: record target layers, upstream blockers, authority owner,
-   allowed writers/readers, forbidden authorities, negative cases, proof level,
-   files, tests, and docs.
-3. Production slice: implement the smallest real contract/store/resolver/runtime
-   path with fail-closed behavior and evidence output.
-4. OpenCode: use bounded OpenCode/DeepSeek workers only for inventories,
-   mechanical candidate patches, low-intelligence lane execution, or read-only
-   review. Invoke via goal_stage_runner.py using
-   `opencode run --model opencode-go/deepseek-v4-flash --variant max`.
-   Codex must independently review all output and remains final judge.
-5. Targeted tests: add focused contract/runtime/negative tests after the
-   authority path is clear. Do not use tests to invent architecture.
-6. Self-review: audit false closure, TDD abuse, projection authority, provider
-   inventory bypass, capture-vs-invocation proof, worker truth, GitHub truth,
-   and repeated-failure refactor needs.
-7. Ledger: update production-closure-gap-ledger.md only for claims actually
-   changed, with explicit proof_level and forbidden claims preserved.
+1. Refresh truth: git status/branch/HEAD/log, PR/CI if available, ledger,
+   contracts, tests.
+2. Slice the work autonomously at medium granularity, but keep upstream
+   authority before downstream evidence/UI.
+3. For each slice, identify authority owner, forbidden authorities, proof level,
+   negative cases, manual gaps, forbidden claims, stable source/target refs,
+   and owner lineage.
+4. Implement the smallest real production path with fail-closed behavior and
+   evidence output.
+5. Use OpenCode/DeepSeek only as bounded worker/reviewer:
+   `opencode run --model opencode-go/deepseek-v4-flash --variant max ...`.
+   Candidate patches are allowed; Codex remains final judge.
+   When Codex quota risk is high, run stages through
+   `scripts/goal_stage_runner.py` with Codex model fallback enabled as described
+   in `docs/xmuse/goal-stage-harness.md`.
+6. Add targeted tests after the authority/proof path is clear.
+7. Enforce docs/xmuse/anti-tdd-abuse-policy.md: tests verify real production
+   paths and must not replace authority/proof producers.
+8. Preserve proof monotonicity and append-only forbidden_claims; do not remove
+   a forbidden claim without matching upstream live/server proof.
+9. Self-review false closure and update the ledger only for changed claims.
+10. Follow docs/xmuse/github-git-behavior-policy.md: do not push new work into
+   PR #43 unless explicitly instructed; prefer small scoped PRs.
 
 Validation:
-- Run focused tests first.
-- Run uv run ruff check .
-- Run git diff --check.
-- Run test ! -e xmuse/__init__.py.
-- Do not claim broad suite, live MemoryOS, peer-GOD, natural deliberation,
-  provider invocation live proof, ready_to_merge, pr_merged, or overnight
-  readiness unless the corresponding proof was actually produced.
+- uv run pytest <focused tests> -q
+- uv run ruff check .
+- git diff --check
+- test ! -e xmuse/__init__.py
+- package boundary tests if core/runtime boundary changed
 
 Final report:
-- current_head, target_layers, proof_level;
-- behavior changed;
-- authority/proof path implemented;
+- internal slices completed;
+- authority/proof path changed;
+- OpenCode stages used and how Codex verified them;
 - tests/checks run;
 - ledger changes;
-- manual_gaps and forbidden claims that remain.
+- remaining manual_gaps and forbidden claims.
+
+Do not claim peer-GOD, natural groupchat closure, live MemoryOS, GitHub
+review/merge truth, ready_to_merge, pr_merged, overnight readiness, or TUI
+production closure without corresponding live/server proof. Do not commit or
+push unless explicitly instructed.
 ```

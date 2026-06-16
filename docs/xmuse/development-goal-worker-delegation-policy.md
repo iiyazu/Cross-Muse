@@ -17,7 +17,8 @@ L1-L11 dependency-first closure、proof level、anti-false-closure 和 anti-TDD-
 ## Roles
 
 - Codex 是 outer controller、planner、reviewer、verifier、committer 和最终事实判断者。
-- OpenCode 是 bounded worker，只提交候选 patch、候选 artifact 或候选审计摘要。
+- OpenCode 是 bounded worker，可以在明确 scope 内直接修改工作树生成候选 patch，
+  也可以提交候选 artifact 或候选审计摘要。
 - OpenCode 不能作为架构裁决者、状态权威、release truth、merge truth 或最终 reviewer。
 - OpenCode 的自报完成不构成证据；必须由 Codex 独立审查和验证。
 
@@ -197,6 +198,16 @@ Codex 最终报告或 PR notes 需要回答:
 - stage manifest 已定义且 gate 清晰的 bounded implementation stage。
 - 明确要求“不扩大范围、不提交、不推送、不写 runtime state”的候选 patch。
 
+OpenCode candidate patch 规则:
+
+- Codex 必须先写清 allowed files、forbidden files、acceptance gate 和回滚边界。
+- OpenCode 可以修改工作树，但不得提交、推送、更新 PR、改仓库设置或写 runtime
+  state。
+- OpenCode patch 默认未被接受；Codex 必须独立读 diff、运行 gate、审查 proof-level
+  和 package/runtime boundary 后才可纳入最终 diff。
+- 如果 OpenCode patch 触碰 authority、review truth、GitHub truth、MemoryOS live
+  proof、peer-GOD 或 release readiness 语义，Codex 必须拒收或重写该部分。
+
 不适合委派的任务:
 
 - 架构、权限、安全、Auth/RBAC、durable authority 或 package boundary 决策。
@@ -230,6 +241,25 @@ OpenCode CLI variant，不是 model id 的一部分。
 
 如果 `opencode`、`opencode-go` 或 `DEEPSEEK_API_KEY` 不可用，记录 blocker 和
 owner；不得把失败伪装成 OpenCode live proof。必要时由 Codex 接回任务。
+
+## Codex Model Fallback Is Not Delegation
+
+`scripts/goal_stage_runner.py` 默认使用
+`--fallback-model gpt-5.3-codex-spark --fallback-on quota_exhausted` 的等价行为。
+当 `codex exec -m gpt-5.5` 返回 quota/usage/weekly limit 等额度耗尽信号时，
+runner 会自动用 `gpt-5.3-codex-spark` 重跑同一阶段 prompt。fallback 仍属于
+Codex 执行上下文，只是为了解决 `gpt-5.5` 额度耗尽后的 stage 连续性。
+
+边界:
+
+- spark fallback 不是 OpenCode/DeepSeek worker 委派。
+- spark fallback 输出仍必须按 Codex 输出审查：读取 diff、验证 gate、检查
+  proof-level、manual gap 和 forbidden claims。
+- fallback 成功不升级 `proof_level`，不构成 live proof、review truth、merge truth
+  或 OpenCode peer-GOD 证明。
+- fallback 不允许自动提交、推送、改 PR 或删除 manual gaps。
+- fallback 只作用于 runner 启动的 stage 子进程；外层 `/goal` 会话耗尽时仍需要
+  用户在 Codex UI/CLI 中选择可用模型后继续。
 
 ## Delegation Packet
 

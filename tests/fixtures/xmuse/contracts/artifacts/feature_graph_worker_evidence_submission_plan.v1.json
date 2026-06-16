@@ -49,6 +49,7 @@
       "feature_id": "feature-provider-session-binding",
       "feature_graph_id": "graph-provider-session-binding",
       "blueprint_proof_level": null,
+      "source_event_lineage": [],
       "status": "reviewing",
       "ready_lane_ids": [],
       "active_lane_ids": [],

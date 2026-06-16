@@ -12,12 +12,22 @@ from xmuse_core.chat.god_room_runtime import (
 )
 from xmuse_core.integrations.memoryos_events import MemoryOSWritebackEvent
 from xmuse_core.integrations.memoryos_namespace import conversation_namespace
+from xmuse_core.platform.god_room_review_chain_proof import (
+    GOD_ROOM_REVIEW_CHAIN_PROOF_FORBIDDEN_CLAIMS,
+    capture_god_room_review_chain_proof,
+)
+from xmuse_core.platform.local_execution_candidate import (
+    load_local_execution_candidate_lineage,
+)
 from xmuse_core.platform.overnight_operator_supervisor import (
     OvernightSupervisor,
     OvernightSupervisorConfig,
     OvernightSupervisorStage,
 )
 from xmuse_core.platform.release_evidence_pack import capture_release_evidence_pack
+from xmuse_core.platform.runner_recovery_proof import (
+    build_runner_recovery_proof_lineage,
+)
 from xmuse_core.structuring.feature_owner_contract import (
     build_feature_owner_execution_contract,
 )
@@ -33,6 +43,28 @@ from xmuse_core.structuring.mission_blueprint_v1 import (
 def _write_json(path: Path, payload: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _attach_review_closure_candidate_lineage(
+    *,
+    root: Path,
+    review_closure: Path,
+    candidate_ref: str,
+    conversation_id: str,
+    graph_id: str = "graph-runtime",
+    lane_id: str = "lane-runtime-evidence-patch",
+) -> None:
+    payload = json.loads(review_closure.read_text(encoding="utf-8"))
+    payload["cited_candidate_artifact_lineage"] = [
+        load_local_execution_candidate_lineage(
+            root=root,
+            artifact_ref=candidate_ref,
+            lane_id=lane_id,
+            graph_id=graph_id,
+            conversation_id=conversation_id,
+        )
+    ]
+    _write_json(review_closure, payload)
 
 
 def _write_section_evidence(
@@ -137,6 +169,267 @@ def _write_memoryos_trace(path: Path, **overrides: object) -> Path:
     }
     payload.update(overrides)
     _write_json(path, payload)
+    return path
+
+
+def _write_local_execution_candidate(
+    path: Path,
+    *,
+    conversation_id: str,
+    graph_id: str = "graph-runtime",
+    lane_id: str = "lane-runtime-evidence-patch",
+    source_event_lineage: list[dict[str, object]] | None = None,
+) -> Path:
+    graph_status_source_event_lineage = source_event_lineage or []
+    root = path.parent.parent.parent
+    candidate_ref = str(path.relative_to(root))
+    _write_json(
+        path,
+        {
+            "schema_version": "xmuse.local_execution_candidate.v1",
+            "candidate_id": f"candidate-{lane_id}",
+            "source_authority": "local_execution_candidate_capture",
+            "producer": "platform_runner_dispatch",
+            "conversation_id": conversation_id,
+            "proof_level": "local_runtime_proof",
+            "status": "candidate_only",
+            "candidate_truth_status": "candidate_only",
+            "graph_id": graph_id,
+            "graph_set_id": f"{graph_id}-graph-set",
+            "feature_graph_id": f"{graph_id}-feature-runtime",
+            "feature_graph_status_id": f"fgs:{graph_id}-feature-runtime:reviewing",
+            "feature_graph_status": "reviewing",
+            "graph_status_source_authority": "feature_graph_status_store",
+            "graph_status_lineage": {
+                "source_authority": "feature_graph_status_store",
+                "graph_set_id": f"{graph_id}-graph-set",
+                "feature_graph_id": f"{graph_id}-feature-runtime",
+                "status_id": f"fgs:{graph_id}-feature-runtime:reviewing",
+                "status": "reviewing",
+                "blueprint_proof_level": "contract_proof",
+                "active_lane_ids": [],
+                "completed_lane_ids": [lane_id],
+                "source_event_lineage": graph_status_source_event_lineage,
+            },
+            "lane_id": lane_id,
+            "run_id": "platform-runner:run-1",
+            "worker_id": "platform-runner",
+            "runner_session_id": "runner-session-1",
+            "runner_session_ref": "work/runner_sessions/runner-session-1.json",
+            "source_refs": ["worker-candidate:patch-reviewed"],
+            "output_refs": [str(path)],
+            "changed_file_refs": [],
+            "verification_refs": [
+                "uv run pytest tests/xmuse/test_release_evidence_pack.py -q"
+            ],
+            "manual_gaps": [
+                "review_truth_not_proven",
+                "server_truth_not_proven",
+                "github_truth_not_checked",
+                "live_memoryos_trace_not_proven",
+            ],
+            "forbidden_claims": [
+                "worker_output_is_review_truth",
+                "end_to_end_execution_review_closure",
+                "ready_to_merge",
+                "pr_merged",
+                "github_review_truth",
+                "live_memoryos",
+            ],
+        },
+    )
+    _write_json(
+        root / "work" / "runner_sessions" / "runner-session-1.json",
+        {
+            "schema_version": "xmuse.runner_session.v1",
+            "source_authority": "platform_runner_session_boundary",
+            "session_id": "runner-session-1",
+            "run_id": "platform-runner:run-1",
+            "runner_id": "platform-runner",
+            "status": "session_completed",
+            "proof_level": "local_runtime_proof",
+            "started_at": "2026-06-15T00:00:00Z",
+            "completed_at": "2026-06-15T00:01:00Z",
+            "graph_id": graph_id,
+            "resolution_id": "resolution-runtime",
+            "writer_lease_id": "lease-runtime",
+            "candidate_artifact_refs": [candidate_ref],
+            "candidate_lane_ids": [lane_id],
+            "candidate_count": 1,
+            "manual_gaps": [
+                "review_truth_not_proven",
+                "server_truth_not_proven",
+                "github_truth_not_checked",
+                "live_memoryos_trace_not_proven",
+                "overnight_safe_recovery_not_proven",
+            ],
+            "forbidden_claims": [
+                "runner_session_is_review_truth",
+                "runner_session_is_server_truth",
+                "runner_session_is_live_invocation_proof",
+                "runner_session_is_graph_wide_closure",
+                "end_to_end_execution_review_closure",
+                "ready_to_merge",
+                "pr_merged",
+            ],
+        },
+    )
+    return path
+
+
+def _write_graph_authority(
+    *,
+    root: Path,
+    conversation_id: str,
+    source_event_lineage: list[dict[str, object]],
+    graph_id: str = "graph-runtime",
+    lane_id: str = "lane-runtime-evidence-patch",
+) -> None:
+    graph_set_id = f"{graph_id}-graph-set"
+    feature_graph_id = f"{graph_id}-feature-runtime"
+    _write_json(
+        root / "graph_sets" / f"{conversation_id}--{graph_set_id}.json",
+        {
+            "id": graph_set_id,
+            "version": 1,
+            "source_refs": [f"lane_dag:{graph_id}"],
+            "source_event_lineage": source_event_lineage,
+            "feature_plan": {
+                "id": f"{graph_id}-feature-plan",
+                "conversation_id": conversation_id,
+                "resolution_id": "resolution-runtime",
+                "version": 1,
+                "features": [
+                    {
+                        "feature_id": "feature-runtime",
+                        "title": "Runtime evidence",
+                        "goal": "Review runtime evidence.",
+                        "acceptance_criteria": ["Review candidate evidence."],
+                        "dependencies": [],
+                        "graph_id": feature_graph_id,
+                        "expected_touched_areas": [],
+                        "blueprint_refs": ["blueprint:runtime"],
+                    }
+                ],
+            },
+            "graphs": [
+                {
+                    "id": feature_graph_id,
+                    "conversation_id": conversation_id,
+                    "resolution_id": "resolution-runtime",
+                    "version": 1,
+                    "status": "planned",
+                    "source_refs": [f"lane_dag:{graph_id}"],
+                    "lanes": [
+                        {
+                            "feature_id": lane_id,
+                            "title": lane_id,
+                            "prompt": f"Execute {lane_id}",
+                            "task_type": "execute",
+                            "priority": 0,
+                            "capabilities": ["code"],
+                            "depends_on": [],
+                            "gate_profile": None,
+                            "gate_profiles": [],
+                            "source_lane_id": None,
+                            "feature_group": "feature-runtime",
+                            "blueprint_refs": ["blueprint:runtime"],
+                            "acceptance_criteria": ["Review candidate evidence."],
+                            "expected_touched_areas": [],
+                        }
+                    ],
+                }
+            ],
+        },
+    )
+    _write_json(
+        root / "feature_graph_statuses.json",
+        {
+            "schema_version": "xmuse.feature_graph_statuses.v1",
+            "statuses": [
+                {
+                    "status_id": f"fgs:{feature_graph_id}:merged",
+                    "conversation_id": conversation_id,
+                    "planning_run_id": "planning-runtime",
+                    "graph_set_id": graph_set_id,
+                    "graph_set_version": 1,
+                    "feature_plan_id": f"{graph_id}-feature-plan",
+                    "feature_plan_version": 1,
+                    "feature_id": "feature-runtime",
+                    "feature_graph_id": feature_graph_id,
+                    "blueprint_proof_level": "contract_proof",
+                    "source_event_lineage": source_event_lineage,
+                    "status": "merged",
+                    "ready_lane_ids": [],
+                    "active_lane_ids": [],
+                    "completed_lane_ids": [lane_id],
+                    "blocked_lane_ids": [],
+                    "projection_lane_ids": [],
+                    "feature_lanes_projection_ref": None,
+                    "provider_session_binding_degradations": [],
+                    "updated_at": "2026-06-15T00:00:00Z",
+                }
+            ],
+            "events": [],
+        },
+    )
+
+
+def _write_review_chain_proof_artifact(
+    path: Path,
+    *,
+    server_truth_status: str = "not_server_truth",
+    forbidden_claims: list[str] | None = None,
+) -> Path:
+    claims = forbidden_claims or [
+        "worker_output_is_review_truth",
+        "end_to_end_execution_review_closure",
+        "ready_to_merge",
+        "pr_merged",
+        "github_review_truth",
+        "live_memoryos",
+        "server_side_truth",
+        "overnight_readiness",
+    ]
+    _write_json(
+        path,
+        {
+            "schema_version": "xmuse.god_room_lane_review_chain_proof.v1",
+            "source_authority": (
+                "god_room_lane_review_closure_artifact+"
+                "local_execution_candidate_lineage+"
+                "shared_god_room_review_closure_handoff_gate"
+            ),
+            "status": "chain_ready",
+            "proof_level": "contract_proof",
+            "server_truth_status": server_truth_status,
+            "conversation_id": "conv-1",
+            "graph_id": "graph-runtime",
+            "failed_lane_id": "lane-runtime-evidence",
+            "terminal_lane_id": "lane-runtime-evidence-patch",
+            "review_closure_artifact": "review-closure.json",
+            "runner_recovery_proof_lineage": {
+                "status": "target_lane_recovery_blocked",
+                "proof_level": "local_runtime_proof",
+                "artifact_ref": "reports/runner-recovery-proof.json",
+                "source_refs": ["reports/lane-recovery/lane-runtime-evidence.json"],
+            },
+            "release_evidence_handoff": {
+                "review_closure_artifact_gate_ready": True,
+                "review_closure_candidate_artifact_refs": [
+                    "artifacts/lane-runtime-evidence-patch/result.json"
+                ],
+                "review_closure_candidate_artifact_ref_count": 1,
+            },
+            "manual_gaps": [
+                "live_memoryos_trace_not_proven",
+                "github_truth_not_checked",
+                "server_truth_not_proven",
+                "release_evidence_export_not_attempted",
+            ],
+            "forbidden_claims": claims,
+        },
+    )
     return path
 
 
@@ -1016,6 +1309,79 @@ def test_release_evidence_pack_converts_github_truth_into_release_gate(
     assert pack["decision"] == "blocked"
 
 
+def test_release_evidence_pack_recomputes_github_merge_truth(
+    tmp_path: Path,
+) -> None:
+    artifacts = tmp_path / "artifacts"
+    output = tmp_path / "pack" / "evidence-pack.json"
+    truth = _write_github_server_truth(
+        tmp_path / "github" / "github-truth.json",
+        can_emit_pr_merged=True,
+        merged=True,
+        merge_commit_sha="raw-merge-claim",
+    )
+
+    pack = capture_release_evidence_pack(
+        artifacts_dir=artifacts,
+        output_path=output,
+        run_id="pack-github-server-truth",
+        github_server_truth=truth,
+        github_base_branch="main",
+        github_expected_head_sha="head-pack-1",
+    )
+
+    gate = json.loads((artifacts / "github-server-truth.json").read_text())
+    assert gate["status"] == "ok"
+    assert gate["proof_level"] == "server_side_enforcement_proof"
+    assert gate["next_action"] == (
+        "Resolve remaining GitHub truth gap before pr_merged: "
+        "missing server-side truth: review_truth, merge_truth."
+    )
+    assert pack["github_truth"]["merge_truth"] == "missing"
+    assert pack["github_truth"]["merged"] is False
+    assert pack["github_truth"]["can_emit_pr_merged"] is False
+
+
+def test_release_evidence_pack_accepts_server_side_merge_truth(
+    tmp_path: Path,
+) -> None:
+    artifacts = tmp_path / "artifacts"
+    output = tmp_path / "pack" / "evidence-pack.json"
+    truth = _write_github_server_truth(
+        tmp_path / "github" / "github-truth.json",
+        proof_level="server_side_merge_proof",
+        workflow_run_id=211,
+        check_suite_id=210,
+        review_event_id=789,
+        reviewer_login="reviewer",
+        merge_commit_sha="merge-sha-1",
+        merged_at="2026-06-14T15:00:00Z",
+        merge_event_id=456,
+        gap_reason=None,
+        can_emit_pr_merged=True,
+        merged=True,
+    )
+
+    pack = capture_release_evidence_pack(
+        artifacts_dir=artifacts,
+        output_path=output,
+        run_id="pack-github-server-truth",
+        github_server_truth=truth,
+        github_base_branch="main",
+        github_expected_head_sha="head-pack-1",
+    )
+
+    gate = json.loads((artifacts / "github-server-truth.json").read_text())
+    assert gate["status"] == "ok"
+    assert gate["proof_level"] == "server_side_merge_proof"
+    assert gate["next_action"] == "No GitHub server-truth action required."
+    assert pack["github_truth"]["proof_level"] == "server_side_merge_proof"
+    assert pack["github_truth"]["review_truth"] == "github_review"
+    assert pack["github_truth"]["merge_truth"] == "pr_merged"
+    assert pack["github_truth"]["merged"] is True
+    assert pack["github_truth"]["can_emit_pr_merged"] is True
+
+
 def test_release_evidence_pack_keeps_stale_github_truth_as_manual_gap(
     tmp_path: Path,
 ) -> None:
@@ -1516,6 +1882,286 @@ def test_release_evidence_pack_converts_god_room_runtime_closure_into_replay_sec
             ],
         },
     )
+    candidate_ref = "artifacts/lane-runtime-evidence-patch/result.json"
+    _write_local_execution_candidate(
+        tmp_path / candidate_ref,
+        conversation_id="conv-1",
+        source_event_lineage=[
+            {
+                "event_id": "evt-review-provider-speak",
+                "event_type": "speak",
+                "participant_id": "part-review",
+                "god_id": "god-review",
+                "proof_level": "opt_in_live_proof",
+                "source_authority": "feature_graph_status_store",
+                "provider_response_artifact_ref": (
+                    "reports/provider-responses/provider-response-1.json"
+                ),
+                "source_refs": [
+                    "god-room-event:evt-review-provider-speak",
+                    "provider_response_artifact:"
+                    "reports/provider-responses/provider-response-1.json",
+                ],
+                "forbidden_claims": ["natural_groupchat_closure"],
+            }
+        ],
+    )
+    runner_recovery_ref = "reports/runner-recovery-proof.json"
+    runner_recovery_proof = {
+        "schema_version": "xmuse.local_runner_recovery_proof.v1",
+        "run_id": "run-runtime-closure-recovery",
+        "runner_id": "platform-runner",
+        "generated_at": "2026-06-14T23:10:00Z",
+        "status": "ok",
+        "proof_level": "local_runtime_proof",
+        "source_authority": (
+            "platform_runner_candidate_selection"
+            "+shared_runner_health_model"
+            "+lane_recovery_artifact"
+        ),
+        "lanes_path": str(tmp_path / "feature_lanes.json"),
+        "xmuse_root": str(tmp_path),
+        "filters": {
+            "graph_id": "graph-runtime",
+            "resolution_id": "resolution-runtime-closure-recovery",
+        },
+        "candidate_selection": {
+            "source_authority": "platform_runner._candidate_lanes",
+            "candidate_lane_ids": ["lane-runtime-evidence-patch"],
+            "excluded_recovery_blocked_lane_ids": ["lane-runtime-evidence"],
+            "invalid_recovery_artifact_lane_ids": [],
+            "lane_count": 2,
+        },
+        "runner_supervisor": {
+            "source_authority": "run_health.build_run_health_model",
+            "recovery": {
+                "blocked_count": 1,
+                "blocked_lanes": [
+                    {
+                        "lane_id": "lane-runtime-evidence",
+                        "artifact_ref": (
+                            "reports/lane-recovery/lane-runtime-evidence.json"
+                        ),
+                    }
+                ],
+                "source_refs": [
+                    "reports/lane-recovery/lane-runtime-evidence.json"
+                ],
+            },
+        },
+        "source_refs": ["reports/lane-recovery/lane-runtime-evidence.json"],
+        "target_refs": [
+            "lane:lane-runtime-evidence",
+            "lane:lane-runtime-evidence-patch",
+        ],
+        "manual_gaps": [
+            "live_long_running_runner_recovery_session_not_proven",
+            "overnight_safe_recovery_not_proven",
+            "review_truth_not_proven",
+            "server_truth_not_proven",
+        ],
+        "forbidden_claims": [
+            "overnight_safe_recovery",
+            "end_to_end_execution_review_closure",
+            "worker_output_is_review_truth",
+            "ready_to_merge",
+            "pr_merged",
+        ],
+    }
+    _write_json(tmp_path / runner_recovery_ref, runner_recovery_proof)
+    _write_json(
+        tmp_path / "reports/lane-recovery/lane-runtime-evidence.json",
+        {
+            "schema_version": "xmuse.lane_recovery.v1",
+            "lane_id": "lane-runtime-evidence",
+            "status": "blocked",
+        },
+    )
+    runner_recovery_lineage = build_runner_recovery_proof_lineage(
+        proof=runner_recovery_proof,
+        artifact_ref=runner_recovery_ref,
+        graph_id="graph-runtime",
+        lane_id="lane-runtime-evidence",
+    )
+    patch_forward_ref = (
+        "reports/god_room_patch_forward/"
+        "graph-runtime.lane-runtime-evidence.patch-forward.json"
+    )
+    patch_intake_ref = (
+        "reports/god_room_review_intake/"
+        "graph-runtime.lane-runtime-evidence-patch.review-intake.json"
+    )
+    patch_verdict_ref = (
+        "reports/god_room_review_verdicts/"
+        "graph-runtime.lane-runtime-evidence-patch.review-verdict.json"
+    )
+    patch_forward_verdict_ref = (
+        "reports/god_room_review_verdicts/"
+        "graph-runtime.lane-runtime-evidence.review-verdict.json"
+    )
+    patch_forward_evidence_refs = [
+        patch_forward_verdict_ref,
+        "reports/god_room_review_intake/"
+        "graph-runtime.lane-runtime-evidence.review-intake.json",
+        "worker-candidate:patch-needed",
+    ]
+    _write_json(
+        tmp_path / patch_forward_ref,
+        {
+            "schema_version": "xmuse.god_room_lane_patch_forward.v1",
+            "proof_level": "contract_proof",
+            "conversation_id": "conv-1",
+            "graph_id": "graph-runtime",
+            "failed_lane_id": "lane-runtime-evidence",
+            "patch_lane_id": "lane-runtime-evidence-patch",
+            "review_verdict_artifact": patch_forward_verdict_ref,
+            "patch_forward_link": {
+                "failed_lane_id": "lane-runtime-evidence",
+                "patch_lane_id": "lane-runtime-evidence-patch",
+                "verdict_ref": (
+                    "god_room_review_verdict:god_room_review_patch_forward"
+                ),
+                "evidence_refs": patch_forward_evidence_refs,
+            },
+            "patch_lane_contract": {
+                "lane_id": "lane-runtime-evidence-patch",
+                "feature_id": "feature-runtime-evidence",
+                "owner": "codex",
+                "inputs": [
+                    "lane:lane-runtime-evidence",
+                    *patch_forward_evidence_refs,
+                ],
+                "outputs": [
+                    "artifact://lane-runtime-evidence-patch/"
+                    "patch-forward-evidence.json"
+                ],
+                "dependency_refs": ["lane:lane-runtime-evidence"],
+                "required_checks": ["focused-pytest"],
+                "allowed_files": [],
+                "rollback_constraints": ["preserve failed lane evidence"],
+                "review_profile": "patch-forward-review",
+                "memory_refs": [],
+                "budget": {
+                    "max_attempts": 3,
+                    "max_consecutive_same_failure": 2,
+                    "max_runtime_seconds": None,
+                    "retry_backoff_seconds": 0,
+                    "source_refs": [],
+                },
+                "source_refs": patch_forward_evidence_refs,
+            },
+        },
+    )
+    _write_json(
+        tmp_path / patch_forward_verdict_ref,
+        {
+            "schema_version": "xmuse.god_room_lane_review_verdict.v1",
+            "proof_level": "contract_proof",
+            "review_truth_status": "independent_review_artifact",
+            "server_truth_status": "not_server_truth",
+            "conversation_id": "conv-1",
+            "graph_id": "graph-runtime",
+            "lane_id": "lane-runtime-evidence",
+            "review_verdict": {
+                "id": "god_room_review_patch_forward",
+                "lane_id": "lane-runtime-evidence",
+                "decision": "patch-forward",
+                "summary": "Patch-forward required.",
+                "evidence_refs": patch_forward_evidence_refs[1:],
+            },
+        },
+    )
+    _write_json(
+        tmp_path / patch_intake_ref,
+        {
+            "schema_version": "xmuse.god_room_lane_review_intake.v1",
+            "source_authority": "feature_graph_status_store+lane_dag_artifact",
+            "proof_level": "contract_proof",
+            "review_truth_status": "pending_independent_review",
+            "conversation_id": "conv-1",
+            "graph_id": "graph-runtime",
+            "graph_set_id": "graph-runtime-graph-set",
+            "feature_graph_id": "graph-runtime-feature-runtime",
+            "feature_graph_status": {
+                "graph_set_id": "graph-runtime-graph-set",
+                "feature_graph_id": "graph-runtime-feature-runtime",
+                "status_id": "fgs:graph-runtime-feature-runtime:reviewing",
+                "status": "reviewing",
+                "blueprint_proof_level": "contract_proof",
+                "active_lane_ids": [],
+                "completed_lane_ids": ["lane-runtime-evidence-patch"],
+                "source_event_lineage": [
+                    {
+                        "event_id": "evt-review-provider-speak",
+                        "event_type": "speak",
+                        "participant_id": "part-review",
+                        "god_id": "god-review",
+                        "proof_level": "opt_in_live_proof",
+                        "source_authority": "feature_graph_status_store",
+                        "provider_response_artifact_ref": (
+                            "reports/provider-responses/provider-response-1.json"
+                        ),
+                        "source_refs": [
+                            "god-room-event:evt-review-provider-speak",
+                            "provider_response_artifact:"
+                            "reports/provider-responses/provider-response-1.json",
+                        ],
+                        "forbidden_claims": ["natural_groupchat_closure"],
+                    }
+                ],
+            },
+            "lane_id": "lane-runtime-evidence-patch",
+            "blueprint_proof_level": "contract_proof",
+            "source_event_lineage": [
+                {
+                    "event_id": "evt-review-provider-speak",
+                    "event_type": "speak",
+                    "participant_id": "part-review",
+                    "god_id": "god-review",
+                    "proof_level": "opt_in_live_proof",
+                    "source_authority": "feature_graph_status_store",
+                    "provider_response_artifact_ref": (
+                        "reports/provider-responses/provider-response-1.json"
+                    ),
+                    "source_refs": [
+                        "god-room-event:evt-review-provider-speak",
+                        "provider_response_artifact:"
+                        "reports/provider-responses/provider-response-1.json",
+                    ],
+                    "forbidden_claims": ["natural_groupchat_closure"],
+                }
+            ],
+            "candidate_truth_status": "candidate_only",
+            "execution_artifact_refs": [candidate_ref],
+        },
+    )
+    _write_json(
+        tmp_path / patch_verdict_ref,
+        {
+            "schema_version": "xmuse.god_room_lane_review_verdict.v1",
+            "proof_level": "contract_proof",
+            "review_truth_status": "independent_review_artifact",
+            "server_truth_status": "not_server_truth",
+            "conversation_id": "conv-1",
+            "graph_id": "graph-runtime",
+            "lane_id": "lane-runtime-evidence-patch",
+            "reviewer_id": "review-god",
+            "review_plane_verdict_ref": (
+                "review-plane:lane-runtime-evidence-patch:verdict-1"
+            ),
+            "review_verdict": {
+                "id": "god_room_review_patch_merge",
+                "lane_id": "lane-runtime-evidence-patch",
+                "decision": "merge",
+                "summary": "Patch lane reviewed.",
+                "evidence_refs": [
+                    patch_intake_ref,
+                    "worker-candidate:patch-reviewed",
+                    candidate_ref,
+                ],
+            },
+        },
+    )
     review_closure = tmp_path / "review-closure.json"
     _write_json(
         review_closure,
@@ -1523,7 +2169,8 @@ def test_release_evidence_pack_converts_god_room_runtime_closure_into_replay_sec
             "schema_version": "xmuse.god_room_lane_review_closure.v1",
             "source_authority": (
                 "god_room_lane_patch_forward_artifact+"
-                "patch_lane_review_verdict_artifact"
+                "patch_lane_review_verdict_artifact+"
+                "local_runner_recovery_proof_artifact"
             ),
             "proof_level": "contract_proof",
             "review_truth_status": "independent_review_artifact",
@@ -1553,21 +2200,66 @@ def test_release_evidence_pack_converts_god_room_runtime_closure_into_replay_sec
                     "forbidden_claims": ["natural_groupchat_closure"],
                 }
             ],
-            "patch_forward_artifact": "reports/god-room/patch-forward.json",
-            "patch_lane_review_intake_artifact": (
-                "reports/god-room/patch-intake.json"
-            ),
-            "patch_lane_review_verdict_artifact": (
-                "reports/god-room/patch-verdict.json"
-            ),
-            "candidate_refs": ["worker-candidate:patch-reviewed"],
-            "cited_candidate_refs": ["worker-candidate:patch-reviewed"],
+            "patch_forward_artifact": patch_forward_ref,
+            "patch_lane_review_intake_artifact": patch_intake_ref,
+            "patch_lane_review_verdict_artifact": patch_verdict_ref,
+            "candidate_refs": ["worker-candidate:patch-reviewed", candidate_ref],
+            "cited_candidate_refs": ["worker-candidate:patch-reviewed", candidate_ref],
+            "cited_candidate_artifact_refs": [candidate_ref],
+            "cited_candidate_artifact_lineage": [
+                load_local_execution_candidate_lineage(
+                    root=tmp_path,
+                    artifact_ref=candidate_ref,
+                    lane_id="lane-runtime-evidence-patch",
+                    graph_id="graph-runtime",
+                    conversation_id="conv-1",
+                )
+            ],
+            "runner_recovery_proof_lineage": runner_recovery_lineage,
             "terminal_review_verdict": {
                 "id": "god_room_review_patch_merge",
                 "lane_id": "lane-runtime-evidence-patch",
                 "decision": "merge",
                 "summary": "Patch lane reviewed.",
-                "evidence_refs": ["worker-candidate:patch-reviewed"],
+                "evidence_refs": [
+                    patch_intake_ref,
+                    "worker-candidate:patch-reviewed",
+                    candidate_ref,
+                ],
+            },
+            "review_plane_sync_status": "review_plane_store_updated",
+            "review_plane_verdict_ref": (
+                "review-plane:lane-runtime-evidence-patch:verdict-1"
+            ),
+            "graph_status_source_authority": "feature_graph_status_store",
+            "graph_status_merge_status": "verified_merged",
+            "terminal_feature_graph_status": {
+                "graph_set_id": "graph-runtime-graph-set",
+                "feature_graph_id": "graph-runtime-feature-runtime",
+                "status_id": "fgs:graph-runtime-feature-runtime:merged",
+                "status": "merged",
+                "blueprint_proof_level": "contract_proof",
+                "active_lane_ids": [],
+                "completed_lane_ids": ["lane-runtime-evidence-patch"],
+                "source_event_lineage": [
+                    {
+                        "event_id": "evt-review-provider-speak",
+                        "event_type": "speak",
+                        "participant_id": "part-review",
+                        "god_id": "god-review",
+                        "proof_level": "opt_in_live_proof",
+                        "source_authority": "feature_graph_status_store",
+                        "provider_response_artifact_ref": (
+                            "reports/provider-responses/provider-response-1.json"
+                        ),
+                        "source_refs": [
+                            "god-room-event:evt-review-provider-speak",
+                            "provider_response_artifact:"
+                            "reports/provider-responses/provider-response-1.json",
+                        ],
+                        "forbidden_claims": ["natural_groupchat_closure"],
+                    }
+                ],
             },
             "manual_gaps": [
                 "review_plane_store_not_updated",
@@ -1581,9 +2273,40 @@ def test_release_evidence_pack_converts_god_room_runtime_closure_into_replay_sec
                 "ready_to_merge",
                 "pr_merged",
                 "github_review_truth",
+                "live_memoryos",
             ],
         },
     )
+    _write_graph_authority(
+        root=tmp_path,
+        conversation_id="conv-1",
+        source_event_lineage=[
+            {
+                "event_id": "evt-review-provider-speak",
+                "event_type": "speak",
+                "participant_id": "part-review",
+                "god_id": "god-review",
+                "proof_level": "opt_in_live_proof",
+                "source_authority": "feature_graph_status_store",
+                "provider_response_artifact_ref": (
+                    "reports/provider-responses/provider-response-1.json"
+                ),
+                "source_refs": [
+                    "god-room-event:evt-review-provider-speak",
+                    "provider_response_artifact:"
+                    "reports/provider-responses/provider-response-1.json",
+                ],
+                "forbidden_claims": ["natural_groupchat_closure"],
+            }
+        ],
+    )
+    review_chain_proof = tmp_path / "review-chain-proof.json"
+    chain_proof = capture_god_room_review_chain_proof(
+        root=tmp_path,
+        review_closure_artifact=review_closure,
+        output_path=review_chain_proof,
+    )
+    assert chain_proof["status"] == "chain_ready"
 
     pack = capture_release_evidence_pack(
         artifacts_dir=tmp_path / "artifacts",
@@ -1599,6 +2322,7 @@ def test_release_evidence_pack_converts_god_room_runtime_closure_into_replay_sec
         god_room_speaker_response=speaker_response,
         god_room_multi_turn_provider_speech_run=multi_turn_run,
         god_room_review_closure=review_closure,
+        god_room_review_chain_proof=review_chain_proof,
     )
 
     replay = json.loads(Path(pack["overnight_replay_bundle"]).read_text(encoding="utf-8"))
@@ -1656,6 +2380,446 @@ def test_release_evidence_pack_converts_god_room_runtime_closure_into_replay_sec
         "source_event_lineage_proof_levels"
     ] == {"opt_in_live_proof": 1}
     assert "worker-candidate:patch-reviewed" in closure["source_refs"]
+    assert closure["details"]["god_room_runtime_closure"]["review_chain_proof"][
+        "status"
+    ] == "chain_ready"
+    assert closure["details"]["god_room_runtime_closure"]["review_chain_proof"][
+        "proof_level"
+    ] == "contract_proof"
+    assert closure["details"]["god_room_runtime_closure"]["review_chain_proof"][
+        "server_truth_status"
+    ] == "not_server_truth"
+    assert closure["details"]["god_room_runtime_closure"]["review_chain_proof"][
+        "candidate_artifact_ref_count"
+    ] == 1
+    assert closure["details"]["god_room_runtime_closure"]["review_chain_proof"][
+        "bounded_session_gate"
+    ]["status"] == "verified"
+    session = closure["details"]["god_room_runtime_closure"]["review_chain_proof"][
+        "local_execution_review_session"
+    ]
+    assert session["status"] == "bounded_session_ready"
+    assert session["proof_level"] == "contract_proof"
+    assert session["session_truth_status"] == "bounded_local_execution_review_session"
+    assert session["server_truth_status"] == "not_server_truth"
+    assert session["schema_version"] == "xmuse.local_execution_review_session.v1"
+    assert session["session_id"] == (
+        "local-execution-review-session:"
+        "graph-runtime:lane-runtime-evidence:lane-runtime-evidence-patch"
+    )
+    assert session["session_artifact_ref_count"] >= 5
+    assert session["session_source_ref_count"] >= 5
+    assert session["session_scope_boundary"]["status"] == "verified"
+    assert session["candidate_count"] == 1
+    assert session["candidate_artifact_refs"] == [
+        "artifacts/lane-runtime-evidence-patch/result.json"
+    ]
+    assert session["session_artifact_validation"]["status"] == "validated"
+    assert session["session_artifact_validation"]["artifact_count"] == 4
+    assert session["session_artifact_validation"]["issue_count"] == 0
+    assert "server_side_truth" in closure["details"]["god_room_runtime_closure"][
+        "review_chain_proof"
+    ]["forbidden_claims"]
+    review_chain_source_ref = (
+        "god-room-review-chain-proof:graph-runtime:"
+        "lane-runtime-evidence:lane-runtime-evidence-patch"
+    )
+    assert review_chain_source_ref in closure["source_refs"]
+    assert f"review_chain_proof_artifact:{review_chain_proof}" in closure["source_refs"]
+    linkage = pack["god_room_review_chain_release_linkage"]
+    assert linkage["schema_version"] == (
+        "xmuse.god_room_review_chain_release_linkage.v1"
+    )
+    assert linkage["status"] == "linked_to_replay_bundle"
+    assert linkage["proof_level"] == "contract_proof"
+    assert linkage["server_truth_status"] == "not_server_truth"
+    assert linkage["review_chain_proof_artifact"] == str(review_chain_proof)
+    assert linkage["runtime_closure_evidence_report"] == pack["source_reports"][
+        "god_room_runtime_closure_evidence"
+    ]
+    assert linkage["replay_bundle"] == pack["overnight_replay_bundle"]
+    assert linkage["replay_section_id"] == "god_room_runtime_closure"
+    assert linkage["review_chain_proof_status"] == "chain_ready"
+    assert linkage["bounded_session_gate_status"] == "verified"
+    assert linkage["current_handoff_gate_ready"] is True
+    assert review_chain_source_ref in linkage["source_refs"]
+    assert f"review_chain_proof_artifact:{review_chain_proof}" in linkage[
+        "source_refs"
+    ]
+    assert "god-room-event:evt-review-provider-speak" in linkage["source_refs"]
+    assert (
+        "provider_response_artifact:reports/provider-responses/provider-response-1.json"
+        in linkage["source_refs"]
+    )
+    assert linkage["resolved_manual_gaps"] == [
+        "release_evidence_export_not_attempted",
+        "release_evidence_not_linked",
+    ]
+    assert "server_truth_not_proven" in linkage["retained_manual_gaps"]
+    assert linkage["affects_pack_decision"] is False
+    for claim in GOD_ROOM_REVIEW_CHAIN_PROOF_FORBIDDEN_CLAIMS:
+        assert claim in linkage["forbidden_claims"]
+    assert "ready_to_merge" in linkage["forbidden_claims"]
+    assert "pr_merged" in linkage["forbidden_claims"]
+
+
+def test_release_evidence_pack_reports_missing_expected_review_chain_for_closure(
+    tmp_path: Path,
+) -> None:
+    review_closure = tmp_path / "review-closure.json"
+    _write_json(
+        review_closure,
+        {
+            "schema_version": "xmuse.god_room_lane_review_closure.v1",
+            "proof_level": "contract_proof",
+            "review_truth_status": "independent_review_artifact",
+            "execution_truth_status": "candidate_reviewed",
+            "server_truth_status": "not_server_truth",
+            "release_evidence_handoff_status": "candidate_input_ready",
+            "graph_id": "graph-runtime",
+            "failed_lane_id": "lane-runtime-evidence",
+            "terminal_lane_id": "lane-runtime-evidence-patch",
+            "candidate_refs": ["worker-candidate:patch-reviewed"],
+            "cited_candidate_refs": ["worker-candidate:patch-reviewed"],
+            "manual_gaps": ["release_evidence_not_linked"],
+            "forbidden_claims": [
+                "worker_output_is_review_truth",
+                "end_to_end_execution_review_closure",
+                "ready_to_merge",
+                "pr_merged",
+                "github_review_truth",
+                "live_memoryos",
+            ],
+        },
+    )
+
+    pack = capture_release_evidence_pack(
+        artifacts_dir=tmp_path / "artifacts",
+        output_path=tmp_path / "pack.json",
+        run_id="runtime-closure-pack-missing-chain",
+        god_room_review_closure=review_closure,
+    )
+
+    replay = json.loads(Path(pack["overnight_replay_bundle"]).read_text(encoding="utf-8"))
+    sections = {section["section_id"]: section for section in replay["sections"]}
+    closure = sections["god_room_runtime_closure"]
+    review_chain = closure["details"]["god_room_runtime_closure"][
+        "review_chain_proof"
+    ]
+    assert closure["status"] == "manual_gap"
+    assert closure["proof_level"] == "manual_gap"
+    assert (
+        "GOD room review chain proof artifact is expected but missing"
+        in closure["blocked_reason"]
+    )
+    assert review_chain["status"] == "manual_gap"
+    assert review_chain["optional"] is False
+    assert review_chain["expected"] is True
+    assert "god_room_review_chain_proof_artifact_missing" in review_chain[
+        "manual_gaps"
+    ]
+    assert "worker_output_is_review_truth" in review_chain["forbidden_claims"]
+    assert "god_room_review_chain_release_linkage" not in pack
+
+
+def test_release_evidence_pack_rejects_review_chain_when_current_handoff_fails(
+    tmp_path: Path,
+) -> None:
+    candidate_ref = "artifacts/lane-runtime-evidence-patch/result.json"
+    _write_local_execution_candidate(
+        tmp_path / candidate_ref,
+        conversation_id="conv-1",
+    )
+    review_closure = tmp_path / "review-closure.json"
+    _write_json(
+        review_closure,
+        {
+            "schema_version": "xmuse.god_room_lane_review_closure.v1",
+            "proof_level": "contract_proof",
+            "review_truth_status": "independent_review_artifact",
+            "execution_truth_status": "candidate_reviewed",
+            "server_truth_status": "not_server_truth",
+            "conversation_id": "conv-1",
+            "graph_id": "graph-runtime",
+            "failed_lane_id": "lane-runtime-evidence",
+            "terminal_lane_id": "lane-runtime-evidence-patch",
+            "candidate_refs": ["worker-candidate:patch-reviewed", candidate_ref],
+            "cited_candidate_refs": [
+                "worker-candidate:patch-reviewed",
+                candidate_ref,
+            ],
+            "cited_candidate_artifact_refs": [candidate_ref],
+            "manual_gaps": [
+                "review_plane_store_not_updated",
+                "lane_status_not_updated",
+                "release_evidence_not_linked",
+                "github_truth_not_checked",
+            ],
+            "forbidden_claims": [
+                "worker_output_is_review_truth",
+                "end_to_end_execution_review_closure",
+                "ready_to_merge",
+                "pr_merged",
+                "github_review_truth",
+                "live_memoryos",
+            ],
+        },
+    )
+    _attach_review_closure_candidate_lineage(
+        root=tmp_path,
+        review_closure=review_closure,
+        candidate_ref=candidate_ref,
+        conversation_id="conv-1",
+    )
+    review_chain_proof = tmp_path / "review-chain-proof.json"
+    _write_review_chain_proof_artifact(review_chain_proof)
+    chain_proof = json.loads(review_chain_proof.read_text(encoding="utf-8"))
+    verified_boundary = {"status": "verified", "proof_level": "contract_proof"}
+    chain_proof.update(
+        {
+            "xmuse_root": str(tmp_path),
+            "candidate_lineage": {
+                "candidate_artifact_refs": [candidate_ref],
+                "producers": ["platform_runner_dispatch"],
+            },
+            "local_execution_review_session": {
+                "schema_version": "xmuse.local_execution_review_session.v1",
+                "session_id": (
+                    "local-execution-review-session:"
+                    "graph-runtime:lane-runtime-evidence:"
+                    "lane-runtime-evidence-patch"
+                ),
+                "status": "bounded_session_ready",
+                "proof_level": "contract_proof",
+                "session_truth_status": "bounded_local_execution_review_session",
+                "execution_truth_status": "candidate_reviewed",
+                "review_truth_status": "independent_review_artifact",
+                "server_truth_status": "not_server_truth",
+                "candidate_count": 1,
+                "candidate_artifact_refs": [candidate_ref],
+                "candidate_producers": ["platform_runner_dispatch"],
+                "session_artifact_refs": [
+                    "review-closure.json",
+                    candidate_ref,
+                    "reports/runner-recovery-proof.json",
+                ],
+                "session_source_refs": [
+                    "god-room-review-chain-session:"
+                    "graph-runtime:lane-runtime-evidence:"
+                    "lane-runtime-evidence-patch",
+                    candidate_ref,
+                ],
+                "session_artifact_validation": {
+                    "status": "validated",
+                    "proof_level": "contract_proof",
+                },
+                "session_scope_boundary": verified_boundary,
+                "runner_session_boundary": {
+                    **verified_boundary,
+                    "runner_session_refs": [
+                        "work/runner_sessions/runner-session-1.json"
+                    ],
+                    "candidate_artifact_refs": [candidate_ref],
+                },
+                "graph_wide_lane_accounting_boundary": {
+                    **verified_boundary,
+                    "candidate_artifact_refs": [candidate_ref],
+                },
+                "runner_recovery_lineage_boundary": verified_boundary,
+                "review_intake_graph_status_boundary": verified_boundary,
+                "candidate_graph_status_boundary": verified_boundary,
+                "candidate_artifact_ref_boundary": {
+                    **verified_boundary,
+                    "closure_cited_candidate_artifact_refs": [candidate_ref],
+                    "resolved_candidate_artifact_refs": [candidate_ref],
+                },
+                "candidate_lineage_boundary": {
+                    **verified_boundary,
+                    "closure_candidate_artifact_refs": [candidate_ref],
+                    "resolved_candidate_artifact_refs": [candidate_ref],
+                },
+                "worker_evidence_bundle_citation_boundary": {
+                    **verified_boundary,
+                    "citation_status": "not_required",
+                },
+                "reviewer_independence": verified_boundary,
+            },
+        }
+    )
+    assert chain_proof["status"] == "chain_ready"
+    _write_json(review_chain_proof, chain_proof)
+    (tmp_path / "work" / "runner_sessions" / "runner-session-1.json").unlink()
+
+    pack = capture_release_evidence_pack(
+        artifacts_dir=tmp_path / "artifacts",
+        output_path=tmp_path / "pack.json",
+        run_id="runtime-chain-stale-current-handoff-pack",
+        god_room_review_chain_proof=review_chain_proof,
+    )
+
+    replay = json.loads(Path(pack["overnight_replay_bundle"]).read_text(encoding="utf-8"))
+    sections = {section["section_id"]: section for section in replay["sections"]}
+    closure = sections["god_room_runtime_closure"]
+    details = closure["details"]["god_room_runtime_closure"]["review_chain_proof"]
+    assert closure["status"] == "manual_gap"
+    assert closure["proof_level"] == "manual_gap"
+    assert (
+        "GOD room review chain proof current review-closure handoff is not "
+        "gate-ready: GOD room review closure runner session artifact is not "
+        "readable: work/runner_sessions/runner-session-1.json"
+    ) in closure["blocked_reason"]
+    assert details["status"] == "chain_ready"
+    assert details["bounded_session_gate"]["status"] == "verified"
+    assert details["current_handoff_gate_ready"] is False
+    assert details["current_handoff_summary"] == (
+        "GOD room review closure runner session artifact is not readable: "
+        "work/runner_sessions/runner-session-1.json"
+    )
+    assert details["current_handoff_candidate_artifact_refs"] == [candidate_ref]
+    assert details["current_handoff_candidate_artifact_ref_count"] == 1
+    assert (
+        "god-room-review-chain-proof:graph-runtime:"
+        "lane-runtime-evidence:lane-runtime-evidence-patch"
+    ) not in closure["source_refs"]
+    assert f"review_chain_proof_artifact:{review_chain_proof}" not in closure[
+        "source_refs"
+    ]
+    linkage = pack["god_room_review_chain_release_linkage"]
+    assert linkage["status"] == "manual_gap"
+    assert linkage["proof_level"] == "manual_gap"
+    assert linkage["review_chain_proof_status"] == "chain_ready"
+    assert linkage["bounded_session_gate_status"] == "verified"
+    assert linkage["current_handoff_gate_ready"] is False
+    assert linkage["source_refs"] == []
+    assert linkage["resolved_manual_gaps"] == []
+    assert "release_evidence_export_not_attempted" in linkage["retained_manual_gaps"]
+    assert linkage["blocked_reason"] == (
+        "review chain proof was not indexed into replay source refs"
+    )
+    assert "ready_to_merge" in linkage["forbidden_claims"]
+
+
+def test_release_evidence_pack_fail_closes_review_chain_proof_server_truth_overclaim(
+    tmp_path: Path,
+) -> None:
+    participants = tmp_path / "god-room-participants.json"
+    _write_json(
+        participants,
+        {
+            "participants": [
+                GodRoomParticipant(
+                    participant_id="part-architect",
+                    god_id="god-architect",
+                    cli_id="codex",
+                ).model_dump(mode="json")
+            ]
+        },
+    )
+    events_path = tmp_path / "god-room-events.json"
+    _write_json(
+        events_path,
+        {
+            "events": [
+                _god_room_event("evt-overclaim-context").model_dump(mode="json")
+            ]
+        },
+    )
+    review_chain_proof = _write_review_chain_proof_artifact(
+        tmp_path / "review-chain-proof.json",
+        server_truth_status="server_side_truth",
+    )
+
+    pack = capture_release_evidence_pack(
+        artifacts_dir=tmp_path / "artifacts",
+        output_path=tmp_path / "pack.json",
+        run_id="runtime-chain-overclaim-pack",
+        god_room_participants=participants,
+        god_room_events=events_path,
+        god_room_review_chain_proof=review_chain_proof,
+    )
+
+    replay = json.loads(Path(pack["overnight_replay_bundle"]).read_text(encoding="utf-8"))
+    sections = {section["section_id"]: section for section in replay["sections"]}
+    closure = sections["god_room_runtime_closure"]
+    details = closure["details"]["god_room_runtime_closure"]["review_chain_proof"]
+    assert closure["status"] == "manual_gap"
+    assert closure["proof_level"] == "manual_gap"
+    assert "GOD room review chain proof overclaims server truth" in closure[
+        "blocked_reason"
+    ]
+    assert details["status"] == "chain_ready"
+    assert details["server_truth_status"] == "server_side_truth"
+    assert "server_side_truth" in details["forbidden_claims"]
+    assert "god-room-event:evt-overclaim-context" in closure["source_refs"]
+    linkage = pack["god_room_review_chain_release_linkage"]
+    assert linkage["status"] == "manual_gap"
+    assert linkage["source_refs"] == []
+    assert linkage["source_ref_count"] == 0
+    assert linkage["blocked_reason"] == (
+        "review chain proof was not indexed into replay source refs"
+    )
+
+
+def test_release_evidence_pack_fail_closes_review_chain_proof_missing_forbidden_claim(
+    tmp_path: Path,
+) -> None:
+    review_chain_proof = _write_review_chain_proof_artifact(
+        tmp_path / "review-chain-proof.json",
+        forbidden_claims=[
+            "worker_output_is_review_truth",
+            "end_to_end_execution_review_closure",
+            "ready_to_merge",
+            "pr_merged",
+            "github_review_truth",
+            "live_memoryos",
+            "overnight_readiness",
+        ],
+    )
+
+    pack = capture_release_evidence_pack(
+        artifacts_dir=tmp_path / "artifacts",
+        output_path=tmp_path / "pack.json",
+        run_id="runtime-chain-missing-claim-pack",
+        god_room_review_chain_proof=review_chain_proof,
+    )
+
+    replay = json.loads(Path(pack["overnight_replay_bundle"]).read_text(encoding="utf-8"))
+    sections = {section["section_id"]: section for section in replay["sections"]}
+    closure = sections["god_room_runtime_closure"]
+    details = closure["details"]["god_room_runtime_closure"]["review_chain_proof"]
+    assert closure["status"] == "manual_gap"
+    assert closure["proof_level"] == "manual_gap"
+    assert "GOD room review chain proof missing forbidden claim: server_side_truth" in (
+        closure["blocked_reason"]
+    )
+    assert details["status"] == "chain_ready"
+    assert "server_side_truth" not in details["forbidden_claims"]
+
+
+def test_release_evidence_pack_fail_closes_review_chain_proof_missing_bounded_session(
+    tmp_path: Path,
+) -> None:
+    review_chain_proof = _write_review_chain_proof_artifact(
+        tmp_path / "review-chain-proof.json",
+    )
+
+    pack = capture_release_evidence_pack(
+        artifacts_dir=tmp_path / "artifacts",
+        output_path=tmp_path / "pack.json",
+        run_id="runtime-chain-missing-session-pack",
+        god_room_review_chain_proof=review_chain_proof,
+    )
+
+    replay = json.loads(Path(pack["overnight_replay_bundle"]).read_text(encoding="utf-8"))
+    sections = {section["section_id"]: section for section in replay["sections"]}
+    closure = sections["god_room_runtime_closure"]
+    details = closure["details"]["god_room_runtime_closure"]["review_chain_proof"]
+    assert closure["status"] == "manual_gap"
+    assert closure["proof_level"] == "manual_gap"
+    assert "local_execution_review_session is missing" in closure["blocked_reason"]
+    assert details["status"] == "chain_ready"
+    assert details["bounded_session_gate"]["status"] == "manual_gap"
+    assert details["local_execution_review_session"]["status"] == "not_provided"
 
 
 def test_release_evidence_pack_rejects_ambiguous_supervisor_sources(
@@ -2180,6 +3344,29 @@ def test_release_evidence_pack_cli_accepts_god_room_review_closure(
     artifacts = tmp_path / "artifacts"
     output = tmp_path / "pack.json"
     review_closure = tmp_path / "god-room" / "review-closure.json"
+    candidate_ref = "artifacts/lane-runtime-evidence-patch/result.json"
+    patch_forward_ref = (
+        "reports/god_room_patch_forward/"
+        "graph-runtime.lane-runtime-evidence.patch-forward.json"
+    )
+    patch_intake_ref = (
+        "reports/god_room_review_intake/"
+        "graph-runtime.lane-runtime-evidence-patch.review-intake.json"
+    )
+    patch_verdict_ref = (
+        "reports/god_room_review_verdicts/"
+        "graph-runtime.lane-runtime-evidence-patch.review-verdict.json"
+    )
+    patch_forward_verdict_ref = (
+        "reports/god_room_review_verdicts/"
+        "graph-runtime.lane-runtime-evidence.review-verdict.json"
+    )
+    patch_forward_evidence_refs = [
+        patch_forward_verdict_ref,
+        "reports/god_room_review_intake/"
+        "graph-runtime.lane-runtime-evidence.review-intake.json",
+        "worker-candidate:patch-needed",
+    ]
     _write_json(
         review_closure,
         {
@@ -2192,6 +3379,7 @@ def test_release_evidence_pack_cli_accepts_god_room_review_closure(
             "graph_id": "graph-runtime",
             "failed_lane_id": "lane-runtime-evidence",
             "terminal_lane_id": "lane-runtime-evidence-patch",
+            "conversation_id": "conv-1",
             "source_event_lineage": [
                 {
                     "event_id": "evt-provider-speak",
@@ -2211,10 +3399,88 @@ def test_release_evidence_pack_cli_accepts_god_room_review_closure(
                     "forbidden_claims": ["natural_groupchat_closure"],
                 }
             ],
-            "candidate_refs": ["worker-candidate:patch-reviewed"],
-            "cited_candidate_refs": ["worker-candidate:patch-reviewed"],
+            "patch_forward_artifact": patch_forward_ref,
+            "patch_lane_review_intake_artifact": patch_intake_ref,
+            "patch_lane_review_verdict_artifact": patch_verdict_ref,
+            "candidate_refs": ["worker-candidate:patch-reviewed", candidate_ref],
+            "cited_candidate_refs": ["worker-candidate:patch-reviewed", candidate_ref],
+            "cited_candidate_artifact_refs": [candidate_ref],
             "terminal_review_verdict": {
-                "evidence_refs": ["worker-candidate:patch-reviewed"]
+                "id": "god_room_review_patch_merge",
+                "decision": "merge",
+                "evidence_refs": [
+                    patch_intake_ref,
+                    "worker-candidate:patch-reviewed",
+                    candidate_ref,
+                ],
+            },
+            "review_plane_sync_status": "review_plane_store_updated",
+            "review_plane_verdict_ref": (
+                "review-plane:lane-runtime-evidence-patch:verdict-1"
+            ),
+            "graph_status_source_authority": "feature_graph_status_store",
+            "graph_status_merge_status": "verified_merged",
+            "terminal_feature_graph_status": {
+                "graph_set_id": "graph-runtime-graph-set",
+                "feature_graph_id": "graph-runtime-feature-runtime",
+                "status_id": "fgs:graph-runtime-feature-runtime:merged",
+                "status": "merged",
+                "blueprint_proof_level": "contract_proof",
+                "active_lane_ids": [],
+                "completed_lane_ids": ["lane-runtime-evidence-patch"],
+                "source_event_lineage": [
+                    {
+                        "event_id": "evt-provider-speak",
+                        "event_type": "speak",
+                        "participant_id": "part-review",
+                        "god_id": "god-review",
+                        "proof_level": "opt_in_live_proof",
+                        "source_authority": "feature_graph_status_store",
+                        "provider_response_artifact_ref": (
+                            "reports/provider-responses/provider-response-1.json"
+                        ),
+                        "source_refs": [
+                            "god-room-event:evt-provider-speak",
+                            "provider_response_artifact:"
+                            "reports/provider-responses/provider-response-1.json",
+                        ],
+                        "forbidden_claims": ["natural_groupchat_closure"],
+                    }
+                ],
+            },
+            "runner_recovery_proof_lineage": {
+                "schema_version": "xmuse.local_runner_recovery_proof_lineage.v1",
+                "artifact_ref": "reports/runner-recovery-proof.json",
+                "source_authority": (
+                    "platform_runner_candidate_selection"
+                    "+shared_runner_health_model"
+                    "+lane_recovery_artifact"
+                ),
+                "status": "target_lane_recovery_blocked",
+                "proof_level": "local_runtime_proof",
+                "graph_id": "graph-runtime",
+                "lane_id": "lane-runtime-evidence",
+                "filtered_graph_id": "graph-runtime",
+                "candidate_lane_ids": ["lane-runtime-evidence-patch"],
+                "excluded_recovery_blocked_lane_ids": ["lane-runtime-evidence"],
+                "invalid_recovery_artifact_lane_ids": [],
+                "source_refs": ["reports/lane-recovery/lane-runtime-evidence.json"],
+                "target_refs": [
+                    "lane:lane-runtime-evidence",
+                    "lane:lane-runtime-evidence-patch",
+                ],
+                "manual_gaps": [
+                    "review_truth_not_proven",
+                    "server_truth_not_proven",
+                    "overnight_safe_recovery_not_proven",
+                ],
+                "forbidden_claims": [
+                    "overnight_safe_recovery",
+                    "end_to_end_execution_review_closure",
+                    "worker_output_is_review_truth",
+                    "ready_to_merge",
+                    "pr_merged",
+                ],
             },
             "manual_gaps": [
                 "review_plane_store_not_updated",
@@ -2228,9 +3494,245 @@ def test_release_evidence_pack_cli_accepts_god_room_review_closure(
                 "ready_to_merge",
                 "pr_merged",
                 "github_review_truth",
+                "live_memoryos",
             ],
         },
     )
+    _write_json(
+        review_closure.parent / "reports/runner-recovery-proof.json",
+        {
+            "schema_version": "xmuse.local_runner_recovery_proof.v1",
+            "status": "ok",
+            "proof_level": "local_runtime_proof",
+            "source_authority": (
+                "platform_runner_candidate_selection"
+                "+shared_runner_health_model"
+                "+lane_recovery_artifact"
+            ),
+        },
+    )
+    _write_json(
+        review_closure.parent / "reports/lane-recovery/lane-runtime-evidence.json",
+        {
+            "schema_version": "xmuse.lane_recovery.v1",
+            "lane_id": "lane-runtime-evidence",
+            "status": "blocked",
+        },
+    )
+    _write_local_execution_candidate(
+        review_closure.parent / candidate_ref,
+        conversation_id="conv-1",
+        source_event_lineage=[
+            {
+                "event_id": "evt-provider-speak",
+                "event_type": "speak",
+                "participant_id": "part-review",
+                "god_id": "god-review",
+                "proof_level": "opt_in_live_proof",
+                "source_authority": "feature_graph_status_store",
+                "provider_response_artifact_ref": (
+                    "reports/provider-responses/provider-response-1.json"
+                ),
+                "source_refs": [
+                    "god-room-event:evt-provider-speak",
+                    "provider_response_artifact:"
+                    "reports/provider-responses/provider-response-1.json",
+                ],
+                "forbidden_claims": ["natural_groupchat_closure"],
+            }
+        ],
+    )
+    _attach_review_closure_candidate_lineage(
+        root=review_closure.parent,
+        review_closure=review_closure,
+        candidate_ref=candidate_ref,
+        conversation_id="conv-1",
+    )
+    _write_json(
+        review_closure.parent / patch_forward_ref,
+        {
+            "schema_version": "xmuse.god_room_lane_patch_forward.v1",
+            "proof_level": "contract_proof",
+            "conversation_id": "conv-1",
+            "graph_id": "graph-runtime",
+            "failed_lane_id": "lane-runtime-evidence",
+            "patch_lane_id": "lane-runtime-evidence-patch",
+            "review_verdict_artifact": patch_forward_verdict_ref,
+            "patch_forward_link": {
+                "failed_lane_id": "lane-runtime-evidence",
+                "patch_lane_id": "lane-runtime-evidence-patch",
+                "verdict_ref": (
+                    "god_room_review_verdict:god_room_review_patch_forward"
+                ),
+                "evidence_refs": patch_forward_evidence_refs,
+            },
+            "patch_lane_contract": {
+                "lane_id": "lane-runtime-evidence-patch",
+                "feature_id": "feature-runtime-evidence",
+                "owner": "codex",
+                "inputs": [
+                    "lane:lane-runtime-evidence",
+                    *patch_forward_evidence_refs,
+                ],
+                "outputs": [
+                    "artifact://lane-runtime-evidence-patch/"
+                    "patch-forward-evidence.json"
+                ],
+                "dependency_refs": ["lane:lane-runtime-evidence"],
+                "required_checks": ["focused-pytest"],
+                "allowed_files": [],
+                "rollback_constraints": ["preserve failed lane evidence"],
+                "review_profile": "patch-forward-review",
+                "memory_refs": [],
+                "budget": {
+                    "max_attempts": 3,
+                    "max_consecutive_same_failure": 2,
+                    "max_runtime_seconds": None,
+                    "retry_backoff_seconds": 0,
+                    "source_refs": [],
+                },
+                "source_refs": patch_forward_evidence_refs,
+            },
+        },
+    )
+    _write_json(
+        review_closure.parent / patch_forward_verdict_ref,
+        {
+            "schema_version": "xmuse.god_room_lane_review_verdict.v1",
+            "proof_level": "contract_proof",
+            "review_truth_status": "independent_review_artifact",
+            "server_truth_status": "not_server_truth",
+            "conversation_id": "conv-1",
+            "graph_id": "graph-runtime",
+            "lane_id": "lane-runtime-evidence",
+            "review_verdict": {
+                "id": "god_room_review_patch_forward",
+                "lane_id": "lane-runtime-evidence",
+                "decision": "patch-forward",
+                "summary": "Patch-forward required.",
+                "evidence_refs": patch_forward_evidence_refs[1:],
+            },
+        },
+    )
+    _write_json(
+        review_closure.parent / patch_intake_ref,
+        {
+            "schema_version": "xmuse.god_room_lane_review_intake.v1",
+            "source_authority": "feature_graph_status_store+lane_dag_artifact",
+            "proof_level": "contract_proof",
+            "review_truth_status": "pending_independent_review",
+            "conversation_id": "conv-1",
+            "graph_id": "graph-runtime",
+            "graph_set_id": "graph-runtime-graph-set",
+            "feature_graph_id": "graph-runtime-feature-runtime",
+            "feature_graph_status": {
+                "graph_set_id": "graph-runtime-graph-set",
+                "feature_graph_id": "graph-runtime-feature-runtime",
+                "status_id": "fgs:graph-runtime-feature-runtime:reviewing",
+                "status": "reviewing",
+                "blueprint_proof_level": "contract_proof",
+                "active_lane_ids": [],
+                "completed_lane_ids": ["lane-runtime-evidence-patch"],
+                "source_event_lineage": [
+                    {
+                        "event_id": "evt-provider-speak",
+                        "event_type": "speak",
+                        "participant_id": "part-review",
+                        "god_id": "god-review",
+                        "proof_level": "opt_in_live_proof",
+                        "source_authority": "feature_graph_status_store",
+                        "provider_response_artifact_ref": (
+                            "reports/provider-responses/provider-response-1.json"
+                        ),
+                        "source_refs": [
+                            "god-room-event:evt-provider-speak",
+                            "provider_response_artifact:"
+                            "reports/provider-responses/provider-response-1.json",
+                        ],
+                        "forbidden_claims": ["natural_groupchat_closure"],
+                    }
+                ],
+            },
+            "lane_id": "lane-runtime-evidence-patch",
+            "blueprint_proof_level": "contract_proof",
+            "source_event_lineage": [
+                {
+                    "event_id": "evt-provider-speak",
+                    "event_type": "speak",
+                    "participant_id": "part-review",
+                    "god_id": "god-review",
+                    "proof_level": "opt_in_live_proof",
+                    "source_authority": "feature_graph_status_store",
+                    "provider_response_artifact_ref": (
+                        "reports/provider-responses/provider-response-1.json"
+                    ),
+                    "source_refs": [
+                        "god-room-event:evt-provider-speak",
+                        "provider_response_artifact:"
+                        "reports/provider-responses/provider-response-1.json",
+                    ],
+                    "forbidden_claims": ["natural_groupchat_closure"],
+                }
+            ],
+            "candidate_truth_status": "candidate_only",
+            "execution_artifact_refs": [candidate_ref],
+        },
+    )
+    _write_json(
+        review_closure.parent / patch_verdict_ref,
+        {
+            "schema_version": "xmuse.god_room_lane_review_verdict.v1",
+            "proof_level": "contract_proof",
+            "review_truth_status": "independent_review_artifact",
+            "server_truth_status": "not_server_truth",
+            "conversation_id": "conv-1",
+            "graph_id": "graph-runtime",
+            "lane_id": "lane-runtime-evidence-patch",
+            "reviewer_id": "review-god",
+            "review_plane_verdict_ref": (
+                "review-plane:lane-runtime-evidence-patch:verdict-1"
+            ),
+            "review_verdict": {
+                "id": "god_room_review_patch_merge",
+                "decision": "merge",
+                "evidence_refs": [
+                    patch_intake_ref,
+                    "worker-candidate:patch-reviewed",
+                    candidate_ref,
+                ],
+            },
+        },
+    )
+    _write_graph_authority(
+        root=review_closure.parent,
+        conversation_id="conv-1",
+        source_event_lineage=[
+            {
+                "event_id": "evt-provider-speak",
+                "event_type": "speak",
+                "participant_id": "part-review",
+                "god_id": "god-review",
+                "proof_level": "opt_in_live_proof",
+                "source_authority": "feature_graph_status_store",
+                "provider_response_artifact_ref": (
+                    "reports/provider-responses/provider-response-1.json"
+                ),
+                "source_refs": [
+                    "god-room-event:evt-provider-speak",
+                    "provider_response_artifact:"
+                    "reports/provider-responses/provider-response-1.json",
+                ],
+                "forbidden_claims": ["natural_groupchat_closure"],
+            }
+        ],
+    )
+    review_chain_proof = tmp_path / "god-room" / "review-chain-proof.json"
+    chain_proof = capture_god_room_review_chain_proof(
+        root=review_closure.parent,
+        review_closure_artifact=review_closure,
+        output_path=review_chain_proof,
+    )
+    assert chain_proof["status"] == "chain_ready"
     events_path = tmp_path / "god-room" / "events.json"
     _write_json(
         events_path,
@@ -2306,6 +3808,8 @@ def test_release_evidence_pack_cli_accepts_god_room_review_closure(
                 str(multi_turn_run),
                 "--god-room-review-closure",
                 str(review_closure),
+                "--god-room-review-chain-proof",
+                str(review_chain_proof),
             ]
         )
         == 0
@@ -2329,12 +3833,33 @@ def test_release_evidence_pack_cli_accepts_god_room_review_closure(
     assert details["server_truth_status"] == "not_server_truth"
     assert details["source_event_lineage_count"] == 1
     assert details["source_event_lineage_event_types"] == {"speak": 1}
+    assert details["runner_recovery_proof_lineage"]["status"] == (
+        "target_lane_recovery_blocked"
+    )
+    assert details["runner_recovery_proof_lineage"]["proof_level"] == (
+        "local_runtime_proof"
+    )
     assert "ready_to_merge" in details["forbidden_claims"]
+    chain_details = runtime_details["review_chain_proof"]
+    assert chain_details["status"] == "chain_ready"
+    assert chain_details["proof_level"] == "contract_proof"
+    assert chain_details["server_truth_status"] == "not_server_truth"
+    assert chain_details["release_handoff_gate_ready"] is True
+    assert chain_details["candidate_artifact_ref_count"] == 1
+    assert chain_details["bounded_session_gate"]["status"] == "verified"
+    assert "server_side_truth" in chain_details["forbidden_claims"]
     assert runtime_details["multi_turn_provider_speech"]["status"] == "completed"
     assert runtime_details["multi_turn_provider_speech"]["appended_event_ids"] == [
         "evt-provider-speak"
     ]
     assert "worker-candidate:patch-reviewed" in closure["source_refs"]
+    assert (
+        "runner_recovery_proof_artifact:reports/runner-recovery-proof.json"
+        in closure["source_refs"]
+    )
+    assert "reports/lane-recovery/lane-runtime-evidence.json" in closure[
+        "source_refs"
+    ]
 
 
 def test_release_evidence_pack_cli_accepts_natural_release_gate_input(

@@ -30,6 +30,7 @@ def claim_next_ready_feature_graph_worker(
     graph_set_id: str | None = None,
     conversation_id: str | None = None,
     feature_graph_id: str | None = None,
+    active_lane_ids: list[str] | None = None,
 ) -> FeatureGraphWorkerClaimOutcome | None:
     """Claim one graph-native ready feature graph for a feature worker.
 
@@ -64,6 +65,7 @@ def claim_next_ready_feature_graph_worker(
         worker_session_id=worker_session_id,
         provider_session_binding_ref=provider_session_binding_ref,
         updated_at=updated_at,
+        active_lane_ids=active_lane_ids,
     )
     status = apply_feature_graph_worker_claim_plan(store, plan)
     return FeatureGraphWorkerClaimOutcome(plan=plan, status=status)

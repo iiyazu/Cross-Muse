@@ -40,11 +40,29 @@ def main(argv: Sequence[str] | None = None) -> int:
             "to seed live MemoryOS source_refs payload hints."
         ),
     )
+    parser.add_argument(
+        "--god-room-review-chain-proof",
+        type=Path,
+        default=None,
+        help=(
+            "Optional xmuse.god_room_lane_review_chain_proof.v1 artifact used "
+            "only to seed live MemoryOS source_refs payload hints."
+        ),
+    )
     parser.add_argument("--github-repo")
     parser.add_argument("--github-pull-request")
     parser.add_argument("--github-base-branch")
     parser.add_argument("--github-expected-head-sha")
     parser.add_argument("--github-required-check", action="append", default=[])
+    parser.add_argument(
+        "--github-server-truth-artifact",
+        type=Path,
+        default=None,
+        help=(
+            "Optional github_server_side_truth_capture.v1 artifact used only "
+            "as existing GitHub server-truth evidence input."
+        ),
+    )
     parser.add_argument("--trace-limit", type=int, default=20)
     parser.add_argument(
         "--output",
@@ -105,10 +123,18 @@ def _candidate_payload(args: argparse.Namespace) -> dict[str, Any]:
     _set_if_present(payload, "query", args.query)
     if args.god_room_review_closure is not None:
         payload["god_room_review_closure"] = str(args.god_room_review_closure)
+    if args.god_room_review_chain_proof is not None:
+        payload["god_room_review_chain_proof"] = str(
+            args.god_room_review_chain_proof
+        )
     _set_if_present(payload, "repo", args.github_repo)
     _set_if_present(payload, "pull_request_number", args.github_pull_request)
     _set_if_present(payload, "base_branch", args.github_base_branch)
     _set_if_present(payload, "expected_head_sha", args.github_expected_head_sha)
+    if args.github_server_truth_artifact is not None:
+        payload["github_server_truth_artifact"] = str(
+            args.github_server_truth_artifact
+        )
     if args.github_required_check:
         payload["required_checks"] = [
             check.strip() for check in args.github_required_check if check.strip()

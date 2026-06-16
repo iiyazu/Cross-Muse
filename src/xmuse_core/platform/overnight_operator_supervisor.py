@@ -6,11 +6,19 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, cast
 
+from pydantic import ValidationError
+
+from xmuse_core.platform.god_room_review_chain_proof import (
+    GOD_ROOM_REVIEW_CHAIN_PROOF_FORBIDDEN_CLAIMS,
+)
 from xmuse_core.platform.production_evidence import (
     ProductionEvidenceEnvelope,
     ProductionEvidenceStatus,
 )
 from xmuse_core.platform.release_readiness import ProofLevel
+from xmuse_core.structuring.blueprint_execution.lane_dag_service import (
+    LaneRecoveryDecision,
+)
 
 StageStatus = Literal["pending", "running", "ok", "manual_gap", "blocked"]
 SelfReviewDecision = Literal[
@@ -35,6 +43,8 @@ class OvernightSupervisorConfig:
     run_id: str
     artifact_dir: Path
     stages: list[OvernightSupervisorStage]
+    xmuse_root: Path | None = None
+    recovery_gate_enabled: bool = True
 
 
 @dataclass(frozen=True)
@@ -134,6 +144,19 @@ class OvernightSupervisor:
 
     def start_stage(self, stage_id: str) -> None:
         stage = self._stage(stage_id)
+        if self._config.recovery_gate_enabled:
+            recovery_gate = build_overnight_supervisor_recovery_gate(
+                self._xmuse_root()
+            )
+            if recovery_gate["status"] == "blocked":
+                self._block_stage_for_recovery_gate(
+                    stage_id=stage_id,
+                    recovery_gate=recovery_gate,
+                )
+                raise RuntimeError(
+                    "overnight supervisor recovery gate blocked stage "
+                    f"{stage_id}: {recovery_gate['summary']}"
+                )
         stage["status"] = "running"
         stage["started_at"] = _utcnow()
         self._current_stage_id = stage_id
@@ -896,6 +919,73 @@ class OvernightSupervisor:
             failure_class=failure_class,
         )
 
+    def _block_stage_for_recovery_gate(
+        self,
+        *,
+        stage_id: str,
+        recovery_gate: dict[str, Any],
+    ) -> None:
+        stage = self._stage(stage_id)
+        reason = str(recovery_gate["summary"])
+        now = _utcnow()
+        stage["status"] = "blocked"
+        stage["blocked_reason"] = reason
+        stage["completed_at"] = now
+        if self._current_stage_id == stage_id:
+            self._current_stage_id = None
+        artifact_path = (
+            self._config.artifact_dir
+            / f"overnight-recovery-gate-{_slug(stage_id)}.json"
+        )
+        self._write_json(artifact_path, recovery_gate)
+        source_refs = _string_list(recovery_gate.get("source_refs"))
+        self._issue_queue.append(
+            {
+                "run_id": self._config.run_id,
+                "stage_id": stage_id,
+                "title": reason,
+                "severity": "blocked",
+                "source_ref": source_refs[0] if source_refs else None,
+                "status": "open",
+                "timestamp_utc": now,
+            }
+        )
+        self._failure_classifications.append(
+            {
+                "run_id": self._config.run_id,
+                "stage_id": stage_id,
+                "failure_class": "durable_lane_recovery_block",
+                "reason": reason,
+                "retryable": False,
+                "timestamp_utc": now,
+            }
+        )
+        self._record_production_evidence(
+            stage_id=stage_id,
+            action="recovery_gate_block",
+            status="blocked",
+            proof_level="manual_gap",
+            source_refs=source_refs,
+            target_refs=[f"overnight_supervisor_stage:{stage_id}"],
+            commands=[],
+            test_results=[],
+            artifacts=[str(artifact_path)],
+            blocked_reason=reason,
+            owner="codex",
+            next_action="resolve durable lane recovery blocks before starting this stage",
+            summary=reason,
+            gate_id=f"goal-stage-{stage_id}-recovery-gate",
+            kind="supervisor_recovery_gate",
+            configured=True,
+            required=True,
+        )
+        self._journal(
+            "recovery_gate_blocked",
+            stage_id=stage_id,
+            blocked_recovery_count=recovery_gate["counts"]["blocked"],
+        )
+        self._persist()
+
     def _journal(self, event: str, **fields: Any) -> None:
         self._stage_journal.append(
             {"event": event, "timestamp_utc": _utcnow(), **fields}
@@ -967,6 +1057,9 @@ class OvernightSupervisor:
             f"production-evidence-{index:03d}-{_slug(stage_id)}-{_slug(action)}.json"
         )
 
+    def _xmuse_root(self) -> Path:
+        return self._config.xmuse_root or self._config.artifact_dir
+
     @staticmethod
     def _write_json(path: Path, payload: dict[str, Any]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -974,6 +1067,129 @@ class OvernightSupervisor:
             json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
+
+
+def build_overnight_supervisor_recovery_gate(
+    xmuse_root: str | Path,
+    *,
+    sample_limit: int = 5,
+) -> dict[str, Any]:
+    root = Path(xmuse_root)
+    lane_graphs_dir = root / "lane_graphs"
+    counts = {
+        "blocked": 0,
+        "non_retry_decision": 0,
+        "invalid_artifact": 0,
+        "retry_allowed": 0,
+        "not_found": 0,
+    }
+    blocked_lanes: list[dict[str, Any]] = []
+    invalid_artifacts: list[dict[str, Any]] = []
+    source_refs: list[str] = []
+    artifact_paths = sorted(lane_graphs_dir.glob("*.recovery.json"))
+    if not artifact_paths:
+        counts["not_found"] = 1
+        return {
+            "schema_version": "xmuse.overnight_supervisor_recovery_gate.v1",
+            "source_authority": "lane_recovery_artifact",
+            "status": "ok",
+            "proof_level": "contract_proof",
+            "xmuse_root": str(root),
+            "counts": counts,
+            "blocked_lanes": [],
+            "invalid_artifacts": [],
+            "source_refs": [],
+            "source_ref_count": 0,
+            "manual_gaps": ["live_runner_recovery_enforcement_not_proven"],
+            "forbidden_claims": _overnight_recovery_gate_forbidden_claims(),
+            "summary": "No durable lane recovery artifacts were found.",
+        }
+    for path in artifact_paths:
+        artifact_ref = _relative_artifact_ref(root, path)
+        source_refs.append(artifact_ref)
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(payload, dict) or not isinstance(
+                payload.get("decision"),
+                dict,
+            ):
+                raise ValueError("lane recovery artifact must contain decision object")
+            decision = LaneRecoveryDecision.model_validate(payload["decision"])
+        except (OSError, json.JSONDecodeError, ValidationError, ValueError) as exc:
+            counts["invalid_artifact"] += 1
+            invalid_artifacts.append(
+                {
+                    "artifact_ref": artifact_ref,
+                    "status": "invalid_artifact",
+                    "reason": str(exc),
+                    "retry_allowed": False,
+                }
+            )
+            continue
+        if decision.retry_allowed:
+            counts["retry_allowed"] += 1
+            continue
+        counts["non_retry_decision"] += 1
+        blocked_lanes.append(
+            {
+                "artifact_ref": artifact_ref,
+                "lane_id": decision.lane_id,
+                "decision": decision.decision.value,
+                "retry_allowed": False,
+                "failure_class": decision.failure_class,
+                "attempt": decision.attempt,
+                "suspend_reason": decision.suspend_reason,
+                "next_action": decision.next_action,
+                "source_refs": list(decision.source_refs),
+            }
+        )
+
+    counts["blocked"] = counts["non_retry_decision"] + counts["invalid_artifact"]
+    status = "blocked" if counts["blocked"] else "ok"
+    return {
+        "schema_version": "xmuse.overnight_supervisor_recovery_gate.v1",
+        "source_authority": "lane_recovery_artifact",
+        "status": status,
+        "proof_level": "contract_proof" if status == "ok" else "manual_gap",
+        "xmuse_root": str(root),
+        "counts": counts,
+        "blocked_lanes": blocked_lanes[:sample_limit],
+        "invalid_artifacts": invalid_artifacts[:sample_limit],
+        "source_refs": source_refs,
+        "source_ref_count": len(source_refs),
+        "manual_gaps": _overnight_recovery_gate_manual_gaps(),
+        "forbidden_claims": _overnight_recovery_gate_forbidden_claims(),
+        "summary": (
+            "Durable lane recovery artifacts block overnight supervisor stage start."
+            if status == "blocked"
+            else "Durable lane recovery artifacts do not block supervisor stage start."
+        ),
+    }
+
+
+def _overnight_recovery_gate_manual_gaps() -> list[str]:
+    return [
+        "live_runner_recovery_enforcement_not_proven",
+        "review_truth_not_proven",
+        "server_truth_not_proven",
+        "overnight_safe_recovery_not_proven",
+    ]
+
+
+def _overnight_recovery_gate_forbidden_claims() -> list[str]:
+    return _dedupe_text(
+        [
+            *GOD_ROOM_REVIEW_CHAIN_PROOF_FORBIDDEN_CLAIMS,
+            "overnight_safe_recovery",
+        ]
+    )
+
+
+def _relative_artifact_ref(root: Path, path: Path) -> str:
+    try:
+        return str(path.relative_to(root))
+    except ValueError:
+        return str(path)
 
 
 def _truthy(value: str | None) -> bool:
@@ -1208,6 +1424,26 @@ def _command_text(command: object) -> str:
     if not isinstance(command, list):
         return ""
     return " ".join(str(item) for item in command if str(item))
+
+
+def _dedupe_text(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        text = value.strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        result.append(text)
+    return result
+
+
+def _string_list(value: object) -> list[str]:
+    if isinstance(value, str):
+        return [value.strip()] if value.strip() else []
+    if not isinstance(value, list):
+        return []
+    return [item.strip() for item in value if isinstance(item, str) and item.strip()]
 
 
 def _clean_text(value: object) -> str | None:

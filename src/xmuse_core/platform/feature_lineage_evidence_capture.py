@@ -7,6 +7,9 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from xmuse_core.platform.god_room_review_handoff import (
+    build_review_closure_handoff_evaluation,
+)
 from xmuse_core.platform.production_evidence import (
     ProductionEvidenceEnvelope,
     ProductionEvidenceStatus,
@@ -25,14 +28,17 @@ def capture_feature_lineage_evidence(
     run_id: str,
     output_path: str | Path,
     contract_artifacts: Sequence[str | Path] = (),
+    review_closure_artifacts: Sequence[str | Path] = (),
     stage_id: str = "S3",
 ) -> dict[str, object]:
     contracts, invalid_artifacts = _contracts_from_artifacts(contract_artifacts)
+    review_closures = _review_closure_evaluations(review_closure_artifacts)
     evidence = build_feature_lineage_evidence(
         run_id=run_id,
         stage_id=stage_id,
         contracts=contracts,
         invalid_artifacts=invalid_artifacts,
+        review_closure_evaluations=review_closures,
     )
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -49,10 +55,12 @@ def build_feature_lineage_evidence(
     stage_id: str,
     contracts: Sequence[tuple[Path, FeatureOwnerExecutionContract]],
     invalid_artifacts: Sequence[tuple[Path, str]] = (),
+    review_closure_evaluations: Sequence[dict[str, object]] = (),
 ) -> dict[str, object]:
     blocked_reason = _blocked_reason(
         contracts=contracts,
         invalid_artifacts=invalid_artifacts,
+        review_closure_evaluations=review_closure_evaluations,
     )
     if blocked_reason is None:
         status: ProductionEvidenceStatus = "ok"
@@ -69,9 +77,20 @@ def build_feature_lineage_evidence(
         status=status,
         proof_level=proof_level,
         source_authority=FEATURE_LINEAGE_AUTHORITY,
-        source_refs=tuple(_source_refs(contracts)),
+        source_refs=tuple(
+            _source_refs(
+                contracts,
+                review_closure_evaluations=review_closure_evaluations,
+            )
+        ),
         target_refs=tuple(_target_refs(contracts)),
-        artifacts=tuple(_artifacts(contracts=contracts, invalid_artifacts=invalid_artifacts)),
+        artifacts=tuple(
+            _artifacts(
+                contracts=contracts,
+                invalid_artifacts=invalid_artifacts,
+                review_closure_evaluations=review_closure_evaluations,
+            )
+        ),
         blocked_reason=blocked_reason,
         owner="codex",
         next_action=next_action,
@@ -79,6 +98,7 @@ def build_feature_lineage_evidence(
     )
     evidence = envelope.model_dump()
     evidence["feature_lineage"] = _feature_lineage_details(contracts)
+    evidence["review_closure_handoff_evaluations"] = list(review_closure_evaluations)
     return evidence
 
 
@@ -113,6 +133,7 @@ def _blocked_reason(
     *,
     contracts: Sequence[tuple[Path, FeatureOwnerExecutionContract]],
     invalid_artifacts: Sequence[tuple[Path, str]],
+    review_closure_evaluations: Sequence[dict[str, object]],
 ) -> str | None:
     if invalid_artifacts:
         reasons = [
@@ -129,6 +150,16 @@ def _blocked_reason(
         return (
             "feature owner contracts have no lane lineage: "
             + ", ".join(empty_features)
+        )
+    unready_handoffs = [
+        _text(evaluation.get("artifact_path")) or "unknown-review-closure"
+        for evaluation in review_closure_evaluations
+        if evaluation.get("status") != "ready"
+    ]
+    if unready_handoffs:
+        return (
+            "review closure handoff evaluations are not ready: "
+            + ", ".join(unready_handoffs)
         )
     return None
 
@@ -147,6 +178,8 @@ def _next_action(blocked_reason: str) -> str:
 
 def _source_refs(
     contracts: Sequence[tuple[Path, FeatureOwnerExecutionContract]],
+    *,
+    review_closure_evaluations: Sequence[dict[str, object]],
 ) -> list[str]:
     refs: list[str] = []
     for _path, contract in contracts:
@@ -162,6 +195,13 @@ def _source_refs(
         refs.extend(f"lane:{lane_id}" for lane_id in contract.lane_ids)
         refs.extend(_lane_blocker_refs(contract))
         refs.extend(contract.memory_refs)
+    for evaluation in review_closure_evaluations:
+        if evaluation.get("status") != "ready":
+            continue
+        refs.extend(_string_list(evaluation.get("source_event_lineage_refs")))
+        refs.extend(_string_list(evaluation.get("candidate_refs")))
+        refs.extend(_string_list(evaluation.get("cited_candidate_refs")))
+        refs.extend(_string_list(evaluation.get("candidate_artifact_refs")))
     return _dedupe(refs)
 
 
@@ -185,10 +225,16 @@ def _artifacts(
     *,
     contracts: Sequence[tuple[Path, FeatureOwnerExecutionContract]],
     invalid_artifacts: Sequence[tuple[Path, str]],
+    review_closure_evaluations: Sequence[dict[str, object]],
 ) -> list[str]:
     return _dedupe(
         [str(path) for path, _contract in contracts]
         + [str(path) for path, _reason in invalid_artifacts]
+        + [
+            artifact_path
+            for evaluation in review_closure_evaluations
+            if (artifact_path := _text(evaluation.get("artifact_path"))) is not None
+        ]
     )
 
 
@@ -286,6 +332,62 @@ def _lane_blocker_refs(contract: FeatureOwnerExecutionContract) -> list[str]:
 
 def _one_line(value: str) -> str:
     return " ".join(value.split())
+
+
+def _review_closure_evaluations(
+    artifacts: Sequence[str | Path],
+) -> list[dict[str, object]]:
+    evaluations: list[dict[str, object]] = []
+    for artifact in artifacts:
+        path = Path(artifact)
+        try:
+            payload = _read_json(path)
+        except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
+            evaluations.append(
+                {
+                    "schema_version": "xmuse.review_closure_handoff_evaluation.v1",
+                    "artifact_path": str(path),
+                    "status": "manual_gap",
+                    "review_truth_status": None,
+                    "execution_truth_status": None,
+                    "server_truth_status": "not_server_truth",
+                    "candidate_refs": [],
+                    "candidate_ref_count": 0,
+                    "cited_candidate_refs": [],
+                    "cited_candidate_ref_count": 0,
+                    "candidate_artifact_refs": [],
+                    "candidate_artifact_ref_count": 0,
+                    "source_event_lineage_refs": [],
+                    "source_event_lineage_ref_count": 0,
+                    "source_event_lineage_count": 0,
+                    "required_forbidden_claims_present": False,
+                    "manual_gaps": ["review_closure_artifact_unreadable"],
+                    "forbidden_claims": [],
+                    "issues": [f"review closure artifact rejected: {exc}"],
+                }
+            )
+            continue
+        root_ref = _text(payload.get("xmuse_root"))
+        evaluation = build_review_closure_handoff_evaluation(
+            root=Path(root_ref) if root_ref is not None else path.parent,
+            review_closure=payload,
+        )
+        evaluation["artifact_path"] = str(path)
+        evaluations.append(evaluation)
+    return evaluations
+
+
+def _string_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [item.strip() for item in value if isinstance(item, str) and item.strip()]
+
+
+def _text(value: object) -> str | None:
+    if isinstance(value, str):
+        stripped = value.strip()
+        return stripped or None
+    return None
 
 
 def _dedupe(values: Sequence[str | None]) -> list[str]:

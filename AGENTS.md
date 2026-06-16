@@ -20,8 +20,10 @@ Two packages, one `pyproject.toml`:
 uv run xmuse-chat-api          # REST API (FastAPI)
 uv run xmuse-goal-stage-evidence-capture  # Goal stage result replay evidence
 uv run xmuse-god-runtime-continuity-capture  # Selected-GOD runtime continuity artifact
+uv run xmuse-god-room-review-chain-proof-capture  # GOD-room review chain proof artifact
 uv run xmuse-god-session-heartbeat  # Guarded GOD session heartbeat update
 uv run xmuse-internal-review-gate-capture  # Internal review release gate
+uv run xmuse-local-execution-candidate-capture  # Local execution candidate artifact
 uv run xmuse-memoryos-live-gate-capture  # MemoryOS Lite live release gate
 uv run xmuse-mcp-server        # MCP-over-HTTP server (FastAPI)
 uv run xmuse-platform-runner   # Platform orchestrator
@@ -40,9 +42,11 @@ uv run python xmuse/chat_api.py
 uv run python -m xmuse.tui
 uv run python xmuse/goal_stage_evidence_capture.py
 uv run python xmuse/god_runtime_continuity_capture.py
+uv run python xmuse/god_room_review_chain_proof_capture.py
 uv run python xmuse/god_session_heartbeat.py
 uv run python xmuse/platform_runner.py
 uv run python xmuse/internal_review_gate_capture.py
+uv run python xmuse/local_execution_candidate_capture.py
 uv run python xmuse/memoryos_live_gate_capture.py
 uv run python xmuse/live_gate_status_capture.py
 uv run python xmuse/natural_deliberation_gate_capture.py
@@ -72,6 +76,12 @@ xmuse development is not test-driven-first. It is dependency-first,
 contract-first, authority-first, and evidence-first. Tests are verification,
 not architecture authority.
 
+Treat `/goal` as desired state and durable artifacts/status as observed state.
+Long-running xmuse work should behave like an idempotent reconcile loop:
+declare the target condition, inspect observed durable state, produce or update
+the smallest authority-owned artifact, and fail closed to `manual_gap`,
+`blocked`, or `refactor_required` when proof is missing.
+
 Before changing code in any `/goal` task, identify:
 
 1. Target closure layer(s), L1-L11, from
@@ -82,6 +92,9 @@ Before changing code in any `/goal` task, identify:
    `contract_proof`, `local_runtime_proof`, `opt_in_live_proof`,
    `server_side_truth`, or `manual_gap`.
 5. Claims that remain forbidden after the change.
+6. Stable refs and owner lineage required by the production path, including
+   `source_refs`, `target_refs`, authority owner, allowed writer, and inherited
+   `forbidden_claims`.
 
 Do not start by writing broad tests against imagined behavior. First inspect
 current contracts, stores, APIs, docs, runtime paths, and evidence artifacts.
@@ -102,6 +115,25 @@ Never claim:
 - MemoryOS plan artifact is live MemoryOS trace.
 - `ready_for_replay` means `ready_to_merge` or `pr_merged`.
 
+Proof levels may only upgrade when a stronger upstream producer, live trace, or
+server API proof exists:
+
+```text
+manual_gap -> contract_proof -> local_runtime_proof -> opt_in_live_proof -> server_side_truth
+```
+
+`forbidden_claims` are append-only guardrails. Carry them forward unless a
+matching upstream proof explicitly removes one. Do not remove `ready_to_merge`,
+`pr_merged`, `github_review_truth`, `live_memoryos`, or
+`worker_output_is_review_truth` to make an evidence surface look complete.
+
+Closure artifacts and status records must be machine-readable and scoped.
+Prefer refs like `lane:{lane_id}`, `internal_review:{review_id}`, and
+`god-room-review-closure:{graph_id}:{failed_lane_id}:{terminal_lane_id}`.
+Opaque strings, pane ids, provider sessions, TUI row ids, and human summaries
+are not closure authority. Missing owner lineage means candidate evidence or
+`manual_gap`, not truth.
+
 Before declaring completion, self-review:
 
 1. Did this change only modify downstream projection while upstream authority
@@ -117,8 +149,13 @@ production authority is identified, tests construct artifacts that production
 runtime should produce, mocks bypass selected GOD binding/provider invocation/
 recovery enforcement/review truth, fields are added to evidence packs without
 upstream producers, or TUI/read models expand without fail-closed authority
-checks. If detected, stop adding tests, identify the missing production
-producer, and implement or document the smallest real path/manual gap.
+checks. It is also TDD-abusive if tests assert desired closure directly instead
+of observed durable artifacts/status, pass by omitting inherited
+`forbidden_claims`, or verify candidate artifacts without an independent verdict
+that cites them before review truth is claimed. If detected, stop adding tests,
+identify the missing production producer, and implement or document the smallest
+real path/manual gap. The canonical policy is
+`docs/xmuse/anti-tdd-abuse-policy.md`.
 
 ### Completion Definition
 
@@ -237,7 +274,9 @@ Before claiming completion, answer these checks in the final review:
 Current authoritative docs are in `docs/xmuse/`. Old `docs/superpowers/` specs/plans remain on disk for test/legacy references but are not the current entry point. Start with `docs/xmuse/README.md`.
 
 For long `/goal` work, read `docs/xmuse/goal-behavior-contract.md`,
-`docs/xmuse/code-review.md`, `docs/xmuse/production-closure-gap-ledger.md`,
+`docs/xmuse/anti-tdd-abuse-policy.md`, `docs/xmuse/code-review.md`,
+`docs/xmuse/github-git-behavior-policy.md`,
+`docs/xmuse/production-closure-gap-ledger.md`,
 `docs/xmuse/development-goal-worker-delegation-policy.md`, and
 `docs/xmuse/goal-stage-harness.md`.
 
@@ -299,8 +338,13 @@ prompt; reference it unless the policy itself is being changed.
 - This worktree may already be pushed and may have an open PR; verify current
   branch, remote, PR, and CI state with `git status`, `git branch -vv`, `gh pr
   view`, and `gh run list` instead of relying on this file for live facts
+- Follow `docs/xmuse/github-git-behavior-policy.md`: prefer small scoped PRs,
+  do not use PR #43 as the default sink for future `/goal` work, and do not push
+  into PR #43 unless explicitly instructed
 - GitHub Actions may be configured; if pushing, update the PR body and inspect
   the latest Actions run for the pushed head
+- CI success is not GitHub review truth, merge truth, `ready_to_merge`, or
+  `pr_merged`
 - Avoid committing runtime state: `*.db`, `*.sqlite3`, `*.jsonl`, `feature_lanes.json`, `xmuse/work/`, `xmuse/history/`, `xmuse/logs/` (all in `.gitignore`)
 - Don't `git reset --hard` — worktree may have user goal dirtiness
 - 78MB old blobs in history; full cleanup needs `git filter-repo` (confirm with user first)

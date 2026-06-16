@@ -151,6 +151,15 @@ def _parser() -> argparse.ArgumentParser:
         help="Directory for supervisor snapshots and production evidence artifacts.",
     )
     parser.add_argument(
+        "--xmuse-root",
+        type=Path,
+        default=DEFAULT_XMUSE_ROOT,
+        help=(
+            "Runtime root used for durable lane recovery artifact scans; defaults "
+            "to XMUSE_ROOT or the package runtime root."
+        ),
+    )
+    parser.add_argument(
         "--stage",
         action="append",
         default=[],
@@ -335,6 +344,7 @@ def _load_supervisor(args: argparse.Namespace) -> OvernightSupervisor:
         run_id=args.run_id,
         artifact_dir=args.artifact_dir,
         stages=stages,
+        xmuse_root=args.xmuse_root,
     )
     if args.resume:
         snapshot_path = args.artifact_dir / f"overnight-supervisor-{args.run_id}.json"
