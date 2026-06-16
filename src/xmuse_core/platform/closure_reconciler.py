@@ -965,19 +965,21 @@ def _server_truth_pending(
     review_closure: Mapping[str, Any] | None,
     release_handoff: Mapping[str, Any] | None,
 ) -> ClosureCondition:
-    server_truth_values = [
-        _text((review_closure or {}).get("server_truth_status")),
-        _text((release_handoff or {}).get("server_truth_status")),
-    ]
-    overclaims = [
-        value for value in server_truth_values if value not in {None, "not_server_truth"}
-    ]
+    overclaims = dedupe_text(
+        [
+            *_server_truth_overclaims(review_closure or {}, path="review_closure"),
+            *_server_truth_overclaims(release_handoff or {}, path="release_handoff"),
+        ]
+    )
     if overclaims:
         return ClosureCondition(
             type=SERVER_TRUTH_PENDING,
             status="false",
             severity="blocked",
-            reason="server truth was claimed without server-side proof",
+            reason=(
+                "server truth was claimed without server-side proof: "
+                + "; ".join(overclaims)
+            ),
             proof_level="contract_proof",
             observed_ref=None,
         )
@@ -989,6 +991,26 @@ def _server_truth_pending(
         proof_level="contract_proof",
         observed_ref=None,
     )
+
+
+def _server_truth_overclaims(value: object, *, path: str) -> list[str]:
+    overclaims: list[str] = []
+    if isinstance(value, Mapping):
+        for key, child in value.items():
+            child_path = f"{path}.{key}" if path else str(key)
+            if key == "server_truth_status":
+                status = _text(child)
+                if status not in {None, "not_server_truth"}:
+                    overclaims.append(f"{child_path}={status}")
+            overclaims.extend(_server_truth_overclaims(child, path=child_path))
+        return overclaims
+    if isinstance(value, Sequence) and not isinstance(
+        value,
+        (str, bytes, bytearray),
+    ):
+        for index, child in enumerate(value):
+            overclaims.extend(_server_truth_overclaims(child, path=f"{path}[{index}]"))
+    return overclaims
 
 
 def _required_forbidden_claims_present(

@@ -417,6 +417,9 @@ def test_reconcile_closure_revalidates_file_backed_review_chain_l10_handoff(
     release_handoff = _review_chain_proof_payload(candidate_ref)
     release_handoff["xmuse_root"] = str(tmp_path)
     release_handoff["review_closure_artifact"] = review_closure_ref
+    session = release_handoff["local_execution_review_session"]
+    assert isinstance(session, dict)
+    session["server_truth_status"] = "github_review_truth"
     release_handoff_ref = "reports/review-chain-proof.json"
     release_handoff_path = tmp_path / release_handoff_ref
     release_handoff_path.write_text(
@@ -443,6 +446,14 @@ def test_reconcile_closure_revalidates_file_backed_review_chain_l10_handoff(
     assert patch_condition.status == "false"
     assert patch_condition.severity == "manual_gap"
     assert "bounded session is not verified" in patch_condition.reason
+    server_condition = closure_condition_by_type(closure, SERVER_TRUTH_PENDING)
+    assert server_condition is not None
+    assert server_condition.status == "false"
+    assert server_condition.severity == "blocked"
+    assert (
+        "release_handoff.local_execution_review_session.server_truth_status"
+        in server_condition.reason
+    )
 
 
 def test_reconcile_closure_rejects_review_chain_handoff_wrong_graph_and_lane_scope(

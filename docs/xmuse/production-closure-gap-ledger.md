@@ -294,6 +294,9 @@ runtime、provider invocation、lane authority、review truth 完成。后续生
 - Local head at start of x3 closure-reconciler file-backed patch-forward
   bounded-session gate slice:
   `d32545e29435a2644182ef0fc5748fd4fb7f34e8`
+- Local head at start of x3 closure-reconciler nested server-truth overclaim
+  admission slice:
+  `ecba8946b0f8a2384ac628144e4c33aa46700480`
 - PR: <https://github.com/iiyazu/Cross-Muse/pull/43>
 - PR state last checked: draft/open/unmerged
 - PR merge state last checked: `CLEAN`
@@ -416,6 +419,7 @@ truth_snapshot:
   local_head_at_x3_release_linkage_bounded_current_handoff_admission_slice: 60c8b755ea7b98cb99a87347d07a55305ad13988
   local_head_at_x3_closure_reconciler_review_chain_l10_revalidation_slice: c863da736e01210516f46bad9221b93614c8b258
   local_head_at_x3_closure_reconciler_file_backed_patch_forward_bounded_session_gate_slice: d32545e29435a2644182ef0fc5748fd4fb7f34e8
+  local_head_at_x3_closure_reconciler_nested_server_truth_overclaim_admission_slice: ecba8946b0f8a2384ac628144e4c33aa46700480
   pr: 43
   pr_url: https://github.com/iiyazu/Cross-Muse/pull/43
   pr_state: draft_open_unmerged
@@ -2322,6 +2326,13 @@ Use these as implementation references, not as xmuse package dependencies:
     and release handoff evaluation. Inline contract fixtures remain shallow
     compatibility inputs; durable/file-backed artifacts must satisfy the shared
     bounded-session gate.
+    `ServerTruthPending` now scans nested `server_truth_status` fields inside
+    the current review-closure and release-handoff artifacts, so a file-backed
+    review-chain proof cannot hide server-truth overclaims inside bounded
+    session details while the closure object reports server truth as merely
+    pending. Any such nested overclaim blocks the condition and keeps
+    GitHub/review/merge truth forbidden unless a separate server-side truth
+    observation proves it.
   - Release evidence candidate reports can now consume
     `xmuse.god_room_lane_review_chain_proof.v1` artifacts directly as
     `live_memoryos` source-ref guidance after validating
