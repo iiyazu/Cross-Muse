@@ -104,6 +104,7 @@ def test_closure_object_l10_admission_accepts_fresh_forbidden_boundary() -> None
             layer="WaveD-E/L8-L10",
             source_refs=("handoff:a",),
             target_refs=("lane:lane-a",),
+            owner_refs=("source_authority:closure-controller",),
         ),
         spec=ClosureSpec(),
         status=ClosureStatus(
@@ -150,6 +151,7 @@ def test_closure_object_l10_admission_rejects_stale_or_weakened_boundary() -> No
             layer="WaveD-E/L8-L10",
             source_refs=("handoff:a",),
             target_refs=("lane:lane-a",),
+            owner_refs=("source_authority:closure-controller",),
         ),
         spec=ClosureSpec(),
         status=ClosureStatus(
@@ -237,4 +239,5 @@ def test_closure_object_l10_admission_requires_stable_refs() -> None:
     assert admission.issues == (
         "ClosureObject source refs are missing",
         "ClosureObject target refs are missing",
+        "ClosureObject owner refs are missing",
     )

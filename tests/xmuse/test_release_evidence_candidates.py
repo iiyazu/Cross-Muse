@@ -1277,6 +1277,7 @@ def test_release_evidence_candidates_seed_memoryos_refs_from_closure_object(
         lane_id="lane-runtime-evidence-patch",
         release_handoff={
             "schema_version": "xmuse.review_closure_handoff_evaluation.v1",
+            "source_authority": "review_closure_handoff_evaluation",
             "status": "ready",
             "server_truth_status": "not_server_truth",
             "source_refs": [
@@ -1340,6 +1341,7 @@ def test_release_evidence_candidates_reject_stale_closure_object(
         lane_id="lane-runtime-evidence-patch",
         release_handoff={
             "schema_version": "xmuse.review_closure_handoff_evaluation.v1",
+            "source_authority": "review_closure_handoff_evaluation",
             "status": "ready",
             "server_truth_status": "not_server_truth",
             "source_refs": [
@@ -1877,6 +1879,7 @@ def test_release_evidence_candidates_cli_accepts_closure_object(
         lane_id="lane-runtime-evidence-patch",
         release_handoff={
             "schema_version": "xmuse.review_closure_handoff_evaluation.v1",
+            "source_authority": "review_closure_handoff_evaluation",
             "status": "ready",
             "server_truth_status": "not_server_truth",
             "source_refs": [

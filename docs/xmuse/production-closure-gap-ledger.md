@@ -252,6 +252,8 @@ runtime、provider invocation、lane authority、review truth 完成。后续生
   `0e09f27ff0614da31fb8ca3e7d45cf193d55ebf3`
 - Local head at start of x3 ClosureObject stable-ref admission slice:
   `875547f1c4a76615a068fc17580aaafa7357b84a`
+- Local head at start of x3 ClosureObject owner-lineage admission slice:
+  `955ebd56330a9fea61fed40c430b0dc9aeca5bb3`
 - PR: <https://github.com/iiyazu/Cross-Muse/pull/43>
 - PR state last checked: draft/open/unmerged
 - PR merge state last checked: `CLEAN`
@@ -356,6 +358,7 @@ truth_snapshot:
   local_head_at_x3_review_chain_closure_reconciler_handoff_slice: d4ea5c4020ef6b25c9526587925d0a6f520cb51b
   local_head_at_x3_release_handoff_candidate_ref_revalidation_slice: 0e09f27ff0614da31fb8ca3e7d45cf193d55ebf3
   local_head_at_x3_closure_object_stable_ref_admission_slice: 875547f1c4a76615a068fc17580aaafa7357b84a
+  local_head_at_x3_closure_object_owner_lineage_admission_slice: 955ebd56330a9fea61fed40c430b0dc9aeca5bb3
   pr: 43
   pr_url: https://github.com/iiyazu/Cross-Muse/pull/43
   pr_state: draft_open_unmerged
@@ -668,9 +671,10 @@ Current closure audit:
     `ReleaseHandoffEvaluated` at `manual_gap` instead of entering L10
     provenance guidance.
     ClosureObject L10 admission now also requires non-empty stable
-    `source_refs` and `target_refs`; otherwise the object remains not
-    gate-ready and cannot seed MemoryOS provenance hints. This keeps a fresh
-    controller condition set from becoming L10 guidance when lineage is empty.
+    `source_refs`, `target_refs`, and `owner_refs`; otherwise the object
+    remains not gate-ready and cannot seed MemoryOS provenance hints. This
+    keeps a fresh controller condition set from becoming L10 guidance when
+    lineage or owner authority is empty.
     Closure-controller and review-handoff regression tests now share a small
     fixture builder that produces candidate, runner-session, review-closure,
     and review-chain payloads through the production capture/build helpers. This

@@ -294,6 +294,8 @@ def evaluate_closure_object_l10_admission(
         issues.append("ClosureObject source refs are missing")
     if not closure.metadata.target_refs:
         issues.append("ClosureObject target refs are missing")
+    if not closure.metadata.owner_refs:
+        issues.append("ClosureObject owner refs are missing")
     if issues:
         return ClosureObjectL10Admission(
             gate_ready=False,
