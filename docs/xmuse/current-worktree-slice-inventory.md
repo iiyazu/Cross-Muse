@@ -3,15 +3,15 @@
 更新日期: 2026-06-16
 
 本文记录当前 `vision-closure-deliberation-tui` worktree 的拆分边界。它不是
-closure proof，也不是 PR #43 的 merge/readiness 证明。当前分支已经承载过多未提交
-改动；后续不得继续把新生产功能默认堆入 PR #43。
+closure proof，也不是 PR #43 的 merge/readiness 证明。当前 worktree 处于
+已验证且干净状态；后续不得继续把新生产功能默认堆入 PR #43。
 
 ## Current Local Truth
 
 - Current branch: `vision-closure-deliberation-tui`
-- Current HEAD: `df0bdad02008e47df9835f53e18b529d34a96f44`
+- Current HEAD: `b154021111400863098f11ed98eeb24d6fad9311`
 - Worktree state: clean
-- Remote CI truth: only applies to remote head `df0bdad02008e47df9835f53e18b529d34a96f44`
+- Remote CI truth: only applies to remote head `b154021111400863098f11ed98eeb24d6fad9311`
 - Local changes are clean and at the verified HEAD
 - PR #43 handling: historical umbrella context only; do not add new scope unless
   explicitly instructed
