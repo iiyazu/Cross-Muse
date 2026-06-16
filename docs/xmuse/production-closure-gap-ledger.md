@@ -279,6 +279,9 @@ runtime、provider invocation、lane authority、review truth 完成。后续生
 - Local head at start of x3 review-chain runner-session worker-bundle
   admission slice:
   `c729c5c79a8e45ed45bf68cc18bb67a920cdac68`
+- Local head at start of x3 terminal review worker-bundle citation admission
+  slice:
+  `20fdc0a0a3409c7a121d8de83bb7228b9e987e1d`
 - PR: <https://github.com/iiyazu/Cross-Muse/pull/43>
 - PR state last checked: draft/open/unmerged
 - PR merge state last checked: `CLEAN`
@@ -396,6 +399,7 @@ truth_snapshot:
   local_head_at_x3_patch_forward_lineage_review_closure_ref_admission_slice: 365d956307e37575054d89f3aa3fc384db968be8
   local_head_at_x3_validated_execution_candidate_worker_bundle_admission_slice: e56c9c3a8f19011f2f4ee8e9e14c3d9942562e11
   local_head_at_x3_review_chain_runner_session_worker_bundle_admission_slice: c729c5c79a8e45ed45bf68cc18bb67a920cdac68
+  local_head_at_x3_terminal_review_worker_bundle_citation_admission_slice: 20fdc0a0a3409c7a121d8de83bb7228b9e987e1d
   pr: 43
   pr_url: https://github.com/iiyazu/Cross-Muse/pull/43
   pr_state: draft_open_unmerged
@@ -2264,6 +2268,12 @@ Use these as implementation references, not as xmuse package dependencies:
     prevents `xmuse.god_room_lane_review_chain_proof.v1` from satisfying its
     bounded-session proof with only a runner-session artifact and candidate
     artifact present. The proof remains `contract_proof`/`not_server_truth`.
+    The worker-evidence bundle citation boundary now also receives the
+    terminal candidate's expected `feature_evidence_bundle:*` refs and requires
+    the terminal patch-lane review verdict to preserve and cite them with
+    `worker_evidence_bundle_citation_status=verified`. If review evidence
+    omits those refs, the review-chain proof stays `manual_gap`; worker bundle
+    existence is still candidate evidence, not review truth by itself.
   - Release evidence candidate reports can now consume
     `xmuse.god_room_lane_review_chain_proof.v1` artifacts directly as
     `live_memoryos` source-ref guidance after validating

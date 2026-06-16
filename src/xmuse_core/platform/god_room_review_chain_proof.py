@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -1527,6 +1527,9 @@ def _validate_session_artifacts(
 
     worker_evidence_bundle_citation_boundary = (
         _worker_evidence_bundle_citation_boundary(
+            expected_terminal_worker_evidence_bundle_refs=(
+                _candidate_worker_evidence_bundle_refs(candidate_lineages)
+            ),
             patch_forward_payload=patch_forward_payload,
             patch_forward_verdict_payload=patch_forward_verdict_payload,
             terminal_verdict_payload=verdict_payload,
@@ -1577,10 +1580,14 @@ def _validate_session_artifacts(
 
 def _worker_evidence_bundle_citation_boundary(
     *,
+    expected_terminal_worker_evidence_bundle_refs: Sequence[str] = (),
     patch_forward_payload: Mapping[str, Any],
     patch_forward_verdict_payload: Mapping[str, Any],
     terminal_verdict_payload: Mapping[str, Any],
 ) -> dict[str, Any]:
+    expected_terminal_refs = _ordered_unique(
+        expected_terminal_worker_evidence_bundle_refs
+    )
     verdict_refs = _ordered_unique(
         _string_list(patch_forward_verdict_payload.get("worker_evidence_bundle_refs"))
     )
@@ -1658,17 +1665,46 @@ def _worker_evidence_bundle_citation_boundary(
             "terminal patch-lane review verdict worker evidence bundle citation "
             "status is not verified"
         )
+    missing_terminal_expected_refs = [
+        ref for ref in expected_terminal_refs if ref not in set(terminal_refs)
+    ]
+    if missing_terminal_expected_refs:
+        issues.append(
+            "terminal patch-lane review verdict missing worker evidence bundle "
+            "refs: "
+            + ", ".join(missing_terminal_expected_refs)
+        )
+    missing_terminal_expected_cited_refs = [
+        ref for ref in expected_terminal_refs if ref not in set(terminal_cited_refs)
+    ]
+    if missing_terminal_expected_cited_refs:
+        issues.append(
+            "terminal patch-lane review verdict did not cite expected worker "
+            "evidence bundle refs: "
+            + ", ".join(missing_terminal_expected_cited_refs)
+        )
+    if expected_terminal_refs and not terminal_refs and terminal_status != "verified":
+        issues.append(
+            "terminal patch-lane review verdict worker evidence bundle citation "
+            "status is not verified"
+        )
 
     status = "verified" if not issues else "manual_gap"
     all_refs = _ordered_unique([*verdict_refs, *patch_forward_refs, *terminal_refs])
     all_cited_refs = _ordered_unique(
         [*verdict_cited_refs, *patch_forward_cited_refs, *terminal_cited_refs]
     )
+    citation_status = "not_required"
+    if status == "verified" and all_refs:
+        citation_status = "verified"
+    elif expected_terminal_refs or all_refs:
+        citation_status = "manual_gap"
     return {
         "schema_version": WORKER_EVIDENCE_BUNDLE_CITATION_BOUNDARY_SCHEMA_VERSION,
         "status": status,
         "proof_level": "contract_proof" if status == "verified" else "manual_gap",
-        "citation_status": "verified" if all_refs else "not_required",
+        "citation_status": citation_status,
+        "expected_terminal_worker_evidence_bundle_refs": expected_terminal_refs,
         "source_review_verdict_worker_evidence_bundle_refs": verdict_refs,
         "source_review_verdict_cited_worker_evidence_bundle_refs": verdict_cited_refs,
         "patch_forward_worker_evidence_bundle_refs": patch_forward_refs,
@@ -1691,6 +1727,17 @@ def _worker_evidence_bundle_citation_boundary(
             "server_side_truth",
         ],
     }
+
+
+def _candidate_worker_evidence_bundle_refs(
+    candidate_lineages: Sequence[Mapping[str, Any]],
+) -> list[str]:
+    return _ordered_unique(
+        ref
+        for lineage in candidate_lineages
+        for ref in _string_list(lineage.get("source_refs"))
+        if ref.startswith("feature_evidence_bundle:")
+    )
 
 
 def _candidate_artifact_ref_boundary(

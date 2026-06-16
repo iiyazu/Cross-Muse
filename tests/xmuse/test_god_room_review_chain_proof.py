@@ -243,6 +243,19 @@ def test_god_room_review_chain_proof_validates_l9_to_l10_handoff(
     assert "runner_session_is_review_truth" in runner_session_boundary[
         "forbidden_claims"
     ]
+    citation_boundary = session["worker_evidence_bundle_citation_boundary"]
+    assert citation_boundary["status"] == "verified"
+    assert citation_boundary["citation_status"] == "verified"
+    assert citation_boundary["expected_terminal_worker_evidence_bundle_refs"] == [
+        WORKER_EVIDENCE_BUNDLE_REF
+    ]
+    assert citation_boundary["terminal_review_verdict_worker_evidence_bundle_refs"] == [
+        WORKER_EVIDENCE_BUNDLE_REF
+    ]
+    assert (
+        citation_boundary["terminal_review_verdict_cited_worker_evidence_bundle_refs"]
+        == [WORKER_EVIDENCE_BUNDLE_REF]
+    )
     graph_accounting = session["graph_wide_lane_accounting_boundary"]
     assert graph_accounting["schema_version"] == (
         "xmuse.graph_wide_lane_accounting_boundary.v1"
@@ -1560,6 +1573,54 @@ def test_god_room_review_chain_proof_fail_closes_candidate_bundle_not_in_session
     )
 
 
+def test_god_room_review_chain_proof_fail_closes_uncited_terminal_worker_bundle(
+    tmp_path: Path,
+) -> None:
+    review_closure = _write_review_closure(tmp_path)
+    verdict_path = (
+        tmp_path
+        / "reports/god_room_review_verdicts/"
+        "graph-runtime.lane-runtime-evidence-patch.review-verdict.json"
+    )
+    verdict = json.loads(verdict_path.read_text(encoding="utf-8"))
+    verdict.pop("worker_evidence_bundle_refs")
+    verdict.pop("cited_worker_evidence_bundle_refs")
+    verdict.pop("worker_evidence_bundle_citation_status")
+    verdict_path.write_text(
+        json.dumps(verdict, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    proof = build_god_room_review_chain_proof(
+        root=tmp_path,
+        review_closure_artifact=review_closure,
+    )
+
+    assert proof["status"] == "manual_gap"
+    boundary = proof["local_execution_review_session"][
+        "worker_evidence_bundle_citation_boundary"
+    ]
+    assert boundary["status"] == "manual_gap"
+    assert boundary["expected_terminal_worker_evidence_bundle_refs"] == [
+        WORKER_EVIDENCE_BUNDLE_REF
+    ]
+    assert boundary["terminal_review_verdict_worker_evidence_bundle_refs"] == []
+    assert boundary["citation_status"] == "manual_gap"
+    assert (
+        "worker_evidence_bundle_citation_not_proven" in boundary["manual_gaps"]
+    )
+    assert any(
+        "terminal patch-lane review verdict missing worker evidence bundle refs"
+        in issue
+        for issue in proof["issues"]
+    )
+    assert any(
+        "terminal patch-lane review verdict did not cite expected worker evidence"
+        in issue
+        for issue in proof["issues"]
+    )
+
+
 def test_god_room_review_chain_proof_fail_closes_server_truth_overclaim(
     tmp_path: Path,
 ) -> None:
@@ -2118,6 +2179,9 @@ def _write_session_artifacts(
             "review_plane_verdict_ref": (
                 "review-plane:lane-runtime-evidence-patch:verdict-1"
             ),
+            "worker_evidence_bundle_refs": [WORKER_EVIDENCE_BUNDLE_REF],
+            "cited_worker_evidence_bundle_refs": [WORKER_EVIDENCE_BUNDLE_REF],
+            "worker_evidence_bundle_citation_status": "verified",
             "review_verdict": {
                 "id": "god-room-review-verdict-merge",
                 "decision": patch_verdict_decision,
