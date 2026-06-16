@@ -438,6 +438,11 @@ def test_reconcile_closure_revalidates_file_backed_review_chain_l10_handoff(
     assert condition.severity == "manual_gap"
     assert "bounded session is not verified" in condition.reason
     assert "release handoff has been evaluated" not in condition.reason
+    patch_condition = closure_condition_by_type(closure, PATCH_FORWARD_LINEAGE_PRESENT)
+    assert patch_condition is not None
+    assert patch_condition.status == "false"
+    assert patch_condition.severity == "manual_gap"
+    assert "bounded session is not verified" in patch_condition.reason
 
 
 def test_reconcile_closure_rejects_review_chain_handoff_wrong_graph_and_lane_scope(

@@ -31,6 +31,7 @@ from xmuse_core.platform.closure_objects import (
 )
 from xmuse_core.platform.god_room_review_chain_proof import (
     build_review_chain_proof_l10_handoff_evaluation,
+    review_chain_proof_bounded_session_gate,
 )
 from xmuse_core.platform.god_room_review_handoff import (
     build_release_handoff_gate_evaluation_for_closure,
@@ -102,6 +103,7 @@ def reconcile_closure(
     )
     patch_forward_present = _patch_forward_lineage_present(
         release_handoff=current.release_handoff,
+        release_handoff_ref=current.release_handoff_ref,
         review_closure=current.review_closure,
         graph_id=graph_id,
         lane_id=lane_id,
@@ -816,6 +818,7 @@ def _release_handoff_evaluated(
 def _patch_forward_lineage_present(
     *,
     release_handoff: Mapping[str, Any] | None,
+    release_handoff_ref: str | None = None,
     review_closure: Mapping[str, Any] | None,
     graph_id: str,
     lane_id: str,
@@ -842,6 +845,10 @@ def _patch_forward_lineage_present(
         issues.append("review-chain proof proof level is not contract_proof")
     if _text(release_handoff.get("server_truth_status")) != "not_server_truth":
         issues.append("review-chain proof overclaims server truth")
+    if release_handoff_ref is not None:
+        bounded_session_gate = review_chain_proof_bounded_session_gate(release_handoff)
+        if bounded_session_gate["status"] != "verified":
+            issues.append(str(bounded_session_gate["summary"]))
     if _text(release_handoff.get("graph_id")) != graph_id:
         issues.append("review-chain proof graph_id does not match current closure graph")
     if _text(release_handoff.get("terminal_lane_id")) != lane_id:
