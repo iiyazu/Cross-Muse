@@ -29,6 +29,9 @@ from xmuse_core.platform.closure_objects import (
     dedupe_text,
     string_list,
 )
+from xmuse_core.platform.god_room_review_chain_proof import (
+    build_review_chain_proof_l10_handoff_evaluation,
+)
 from xmuse_core.platform.god_room_review_handoff import (
     build_release_handoff_gate_evaluation_for_closure,
     build_review_closure_handoff_evaluation,
@@ -105,6 +108,7 @@ def reconcile_closure(
     )
     release_evaluated = _release_handoff_evaluated(
         current.release_handoff,
+        release_handoff_ref=current.release_handoff_ref,
         root=xmuse_root,
         graph_id=graph_id,
         lane_id=lane_id,
@@ -741,11 +745,36 @@ def _independent_review_verdict_present(
 def _release_handoff_evaluated(
     release_handoff: Mapping[str, Any] | None,
     *,
+    release_handoff_ref: str | None = None,
     root: Path,
     graph_id: str,
     lane_id: str,
     review_closure: Mapping[str, Any] | None = None,
 ) -> _ConditionBuilder:
+    review_chain_l10_gate: Mapping[str, Any] | None = None
+    if (
+        release_handoff is not None
+        and _text(release_handoff.get("schema_version"))
+        == REVIEW_CHAIN_PROOF_SCHEMA_VERSION
+        and release_handoff_ref is not None
+    ):
+        review_chain_l10_gate = build_review_chain_proof_l10_handoff_evaluation(
+            root=root,
+            artifact_path=root / release_handoff_ref,
+            review_chain_proof=release_handoff,
+        )
+        l10_status = _text(review_chain_l10_gate.get("status"))
+        if l10_status != "ready":
+            severity = "blocked" if l10_status == "blocked" else "manual_gap"
+            return _condition(
+                RELEASE_HANDOFF_EVALUATED,
+                "false",
+                severity,
+                _text(review_chain_l10_gate.get("handoff_summary"))
+                or "review-chain proof L10 handoff is not ready",
+                proof_level="contract_proof",
+            )
+
     gate = build_release_handoff_gate_evaluation_for_closure(
         release_handoff=release_handoff,
         root=root,
@@ -765,6 +794,13 @@ def _release_handoff_evaluated(
             severity,
             reason,
             proof_level="contract_proof",
+        )
+    if review_chain_l10_gate is not None:
+        source_refs = dedupe_text(
+            (
+                *source_refs,
+                *string_list(review_chain_l10_gate.get("source_refs")),
+            )
         )
     return _condition(
         RELEASE_HANDOFF_EVALUATED,

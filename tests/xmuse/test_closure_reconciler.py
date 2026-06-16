@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 from tests.xmuse.closure_test_fixtures import (
@@ -394,6 +395,49 @@ def test_reconcile_closure_rejects_review_chain_handoff_wrong_status(
     assert condition.status == "false"
     assert condition.severity == "manual_gap"
     assert condition.reason == "release handoff status is not chain_ready"
+
+
+def test_reconcile_closure_revalidates_file_backed_review_chain_l10_handoff(
+    tmp_path: Path,
+) -> None:
+    candidate_ref = "artifacts/lane-runtime-evidence-patch/result.json"
+    _write_candidate(tmp_path, candidate_ref)
+    _write_runner_session(tmp_path, candidate_ref)
+    review_closure = _review_closure_payload(tmp_path, candidate_ref)
+    review_closure_ref = (
+        "reports/god_room_review_closures/"
+        "graph-runtime.lane-runtime-evidence.review-closure.json"
+    )
+    review_closure_path = tmp_path / review_closure_ref
+    review_closure_path.parent.mkdir(parents=True, exist_ok=True)
+    review_closure_path.write_text(
+        json.dumps(review_closure, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    release_handoff = _review_chain_proof_payload(candidate_ref)
+    release_handoff["xmuse_root"] = str(tmp_path)
+    release_handoff["review_closure_artifact"] = review_closure_ref
+    release_handoff_ref = "reports/review-chain-proof.json"
+    release_handoff_path = tmp_path / release_handoff_ref
+    release_handoff_path.write_text(
+        json.dumps(release_handoff, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    closure = reconcile_closure(
+        root=tmp_path,
+        graph_id="graph-runtime",
+        lane_id="lane-runtime-evidence-patch",
+        review_closure=review_closure,
+        release_handoff=release_handoff_ref,
+    )
+
+    condition = closure_condition_by_type(closure, RELEASE_HANDOFF_EVALUATED)
+    assert condition is not None
+    assert condition.status == "false"
+    assert condition.severity == "manual_gap"
+    assert "bounded session is not verified" in condition.reason
+    assert "release handoff has been evaluated" not in condition.reason
 
 
 def test_reconcile_closure_rejects_review_chain_handoff_wrong_graph_and_lane_scope(
