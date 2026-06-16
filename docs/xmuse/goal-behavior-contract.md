@@ -1,6 +1,6 @@
 # XMuse Goal Behavior Contract
 
-更新日期: 2026-06-15
+更新日期: 2026-06-16
 
 本文档定义 Codex 执行 xmuse 长 `/goal` 时的固定行为。它约束开发过程，
 不改变 xmuse 产品运行时权限模型。
@@ -75,6 +75,37 @@ like:
 
 Conditions must be idempotent: rerunning the same reconciliation should not
 duplicate artifacts, erase lineage, or silently upgrade proof.
+
+The default closure controller path is intentionally narrow:
+
+```text
+Recovery -> ExecutionCandidate -> ReviewClosure -> ReleaseHandoff
+```
+
+Use this chain before inventing a new closure surface. A production slice should
+state:
+
+- `spec`: the desired condition from the goal, wave map, or contract;
+- `status`: the observed durable artifact, store record, or server-side truth;
+- `conditions`: machine-readable results, for example
+  `RecoveryArtifactPresent`, `RecoveryAllowsProgress`,
+  `ValidatedExecutionCandidatePresent`,
+  `IndependentReviewVerdictPresent`, `ReleaseHandoffEvaluated`, and
+  `ServerTruthPending`;
+- `owner_refs`: authority owner, allowed writer, and producer path;
+- `source_refs` and `target_refs`: stable lane/graph/review/release refs.
+
+Admission-style checks must run before a closure writer updates status. Reject
+or downgrade to `manual_gap` / `refactor_required` when stable refs are missing,
+owner lineage is missing, inherited `manual_gaps` or `forbidden_claims` are
+deleted, a proof level is upgraded without a stronger producer, or a downstream
+surface tries to create truth without an upstream producer.
+
+MemoryOS Lite is an L10 provenance/trace consumer, not an xmuse authority write
+path. It may receive scoped source refs and lineage hints after L8/L9 artifacts
+exist. It must not own recovery decisions, execution-candidate validity,
+independent review verdicts, release handoff truth, or GitHub review/merge
+truth.
 
 ## Proof Levels
 
@@ -414,7 +445,9 @@ If the slice is a reconcile-style closure, also include:
 - observed status condition;
 - idempotent producer/consumer behavior;
 - stable source/target refs;
-- owner lineage and inherited forbidden claims.
+- owner lineage and inherited forbidden claims;
+- admission checks that preserve inherited `manual_gaps`, preserve
+  `forbidden_claims`, and reject proof inflation.
 
 Insufficient slices:
 
@@ -430,11 +463,17 @@ replaced at the failed boundary instead of patched again.
 Trigger `refactor_required` instead of more patching when:
 
 - the same failure class recurs on the same feature/stage/test cluster;
-- schema parsing or proof classification is copied into three or more places;
+- schema parsing, proof classification, handoff evaluation, condition
+  classification, or failure handling is copied into two or more production
+  consumers;
 - condition branches are added only to route around a missing authority owner;
 - tests must mock recovery enforcement, review truth, GitHub truth, or
   MemoryOS truth to make the path pass;
 - a downstream surface needs new truth fields but no upstream producer exists.
+
+A third same-boundary retry is forbidden until a bounded refactor or replacement
+of the failed boundary exists, with migration notes, focused validation, and
+rollback/compatibility notes where needed.
 
 ### Phase 4 - Targeted Tests
 

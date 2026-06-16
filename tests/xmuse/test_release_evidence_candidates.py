@@ -341,6 +341,10 @@ def test_release_evidence_candidates_seed_memoryos_refs_from_review_chain_proof(
     payload_hints = memoryos["suggested_operator_action"]["payload_hints"]
     assert memoryos["review_chain_proof_artifact_configured"] is True
     assert memoryos["review_chain_proof_artifact_gate_ready"] is True
+    assert memoryos["review_chain_proof_handoff_evaluation"]["schema_version"] == (
+        "xmuse.review_chain_proof_l10_handoff_evaluation.v1"
+    )
+    assert memoryos["review_chain_proof_handoff_evaluation"]["status"] == "ready"
     assert memoryos["review_chain_proof_bounded_session_gate_status"] == "verified"
     assert memoryos["review_chain_proof_candidate_artifact_refs"] == [
         "artifacts/lane-runtime-evidence-patch/result.json"

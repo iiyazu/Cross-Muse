@@ -17,6 +17,9 @@ LOCAL_EXECUTION_CANDIDATE_LINEAGE_SCHEMA_VERSION = (
 LOCAL_EXECUTION_CANDIDATE_WORKER_EVIDENCE_BOUNDARY_SCHEMA_VERSION = (
     "xmuse.local_execution_candidate_worker_evidence_boundary.v1"
 )
+VALIDATED_EXECUTION_CANDIDATE_BOUNDARY_SCHEMA_VERSION = (
+    "xmuse.validated_execution_candidate_boundary.v1"
+)
 LOCAL_EXECUTION_CANDIDATE_AUTHORITY = "local_execution_candidate_capture"
 LOCAL_EXECUTION_CANDIDATE_GRAPH_STATUS_AUTHORITY = "feature_graph_status_store"
 LOCAL_EXECUTION_CANDIDATE_PLATFORM_RUNNER_PRODUCER = "platform_runner_dispatch"
@@ -430,6 +433,132 @@ def valid_local_execution_candidate_lineages(
     return _unique_lineages(lineages)
 
 
+def build_validated_execution_candidate_boundary(
+    *,
+    candidate_lineage: Mapping[str, Any],
+    runner_session_lineage: Mapping[str, Any] | None,
+    graph_id: str,
+    lane_id: str,
+) -> dict[str, Any]:
+    """Validate bounded L9 review intake without promoting review truth."""
+
+    required_graph_id = _required_text(graph_id, "graph_id")
+    required_lane_id = _required_text(lane_id, "lane_id")
+    issues: list[str] = []
+
+    candidate_artifact_ref = _text(candidate_lineage.get("artifact_ref"))
+    candidate_graph_id = _text(candidate_lineage.get("graph_id"))
+    candidate_lane_id = _text(candidate_lineage.get("lane_id"))
+    candidate_lane_local_id = _text(candidate_lineage.get("lane_local_id"))
+    candidate_lane_ids = {
+        value for value in (candidate_lane_id, candidate_lane_local_id) if value
+    }
+    candidate_run_id = _text(candidate_lineage.get("run_id"))
+    candidate_worker_id = _text(candidate_lineage.get("worker_id"))
+    candidate_runner_session_id = _text(candidate_lineage.get("runner_session_id"))
+    candidate_runner_session_ref = _text(candidate_lineage.get("runner_session_ref"))
+    graph_status_lineage = _mapping(candidate_lineage.get("graph_status_lineage"))
+    candidate_bundle_refs = _feature_evidence_bundle_refs(
+        candidate_lineage.get("source_refs")
+    )
+
+    if _text(candidate_lineage.get("producer")) != (
+        LOCAL_EXECUTION_CANDIDATE_PLATFORM_RUNNER_PRODUCER
+    ):
+        issues.append("local execution candidate is not platform_runner_dispatch")
+    if _text(candidate_lineage.get("status")) != "candidate_only":
+        issues.append("local execution candidate is not candidate_only")
+    if _text(candidate_lineage.get("proof_level")) != "local_runtime_proof":
+        issues.append("local execution candidate proof level is not local_runtime_proof")
+    if candidate_graph_id != required_graph_id:
+        issues.append("local execution candidate graph_id does not match review graph")
+    if required_lane_id not in candidate_lane_ids:
+        issues.append("local execution candidate lane_id does not match review lane")
+    if _text(graph_status_lineage.get("status")) != (
+        FeatureGraphExecutionStatus.REVIEWING.value
+    ):
+        issues.append("local execution candidate graph status is not reviewing")
+    for field_name, value in (
+        ("artifact_ref", candidate_artifact_ref),
+        ("run_id", candidate_run_id),
+        ("worker_id", candidate_worker_id),
+        ("runner_session_id", candidate_runner_session_id),
+        ("runner_session_ref", candidate_runner_session_ref),
+    ):
+        if value is None:
+            issues.append(f"local execution candidate missing {field_name}")
+
+    runner_session_ref: str | None = None
+    runner_bundle_refs: list[str] = []
+    if runner_session_lineage is None:
+        issues.append("runner session lineage is missing")
+    else:
+        runner_session_ref = _text(runner_session_lineage.get("artifact_ref"))
+        runner_bundle_refs = _string_list(
+            runner_session_lineage.get("worker_evidence_bundle_refs")
+        )
+        if _text(runner_session_lineage.get("status")) != "session_completed":
+            issues.append("runner session is not completed")
+        if _text(runner_session_lineage.get("proof_level")) != "local_runtime_proof":
+            issues.append("runner session proof level is not local_runtime_proof")
+        if _text(runner_session_lineage.get("session_id")) != candidate_runner_session_id:
+            issues.append("runner session_id does not match candidate")
+        if _text(runner_session_lineage.get("run_id")) != candidate_run_id:
+            issues.append("runner session run_id does not match candidate")
+        if _text(runner_session_lineage.get("runner_id")) != candidate_worker_id:
+            issues.append("runner session runner_id does not match candidate")
+        session_graph_id = _text(runner_session_lineage.get("graph_id"))
+        if session_graph_id not in {None, required_graph_id}:
+            issues.append("runner session graph_id does not match review graph")
+        candidate_refs = _string_list(
+            runner_session_lineage.get("candidate_artifact_refs")
+        )
+        if candidate_artifact_ref is None or candidate_artifact_ref not in candidate_refs:
+            issues.append("runner session does not include candidate artifact ref")
+        session_lane_ids = set(
+            _string_list(runner_session_lineage.get("candidate_lane_ids"))
+        )
+        if session_lane_ids and required_lane_id not in session_lane_ids:
+            issues.append("runner session lane scope does not match review lane")
+        if set(candidate_bundle_refs) != set(runner_bundle_refs):
+            issues.append(
+                "local execution candidate worker evidence bundle refs do not "
+                "match runner session"
+            )
+
+    status = "validated" if not issues else "manual_gap"
+    return {
+        "schema_version": VALIDATED_EXECUTION_CANDIDATE_BOUNDARY_SCHEMA_VERSION,
+        "status": status,
+        "proof_level": "local_runtime_proof" if status == "validated" else "manual_gap",
+        "source_authority": "local_execution_candidate_lineage+runner_session_lineage",
+        "candidate_artifact_ref": candidate_artifact_ref,
+        "runner_session_ref": runner_session_ref or candidate_runner_session_ref,
+        "graph_id": required_graph_id,
+        "lane_id": required_lane_id,
+        "runner_session_id": candidate_runner_session_id,
+        "run_id": candidate_run_id,
+        "worker_id": candidate_worker_id,
+        "worker_evidence_bundle_refs": _dedupe(candidate_bundle_refs),
+        "runner_session_worker_evidence_bundle_refs": _dedupe(runner_bundle_refs),
+        "issues": _dedupe(issues),
+        "manual_gaps": (
+            []
+            if status == "validated"
+            else ["validated_execution_candidate_not_proven"]
+        ),
+        "forbidden_claims": _dedupe(
+            [
+                *LOCAL_EXECUTION_CANDIDATE_FORBIDDEN_CLAIMS,
+                "runner_session_is_review_truth",
+                "runner_session_is_server_truth",
+                "independent_review_truth",
+                "server_side_truth",
+            ]
+        ),
+    }
+
+
 def build_local_execution_candidate_worker_evidence_boundary(
     *,
     root: str | Path,
@@ -718,6 +847,14 @@ def _mapping(value: object) -> Mapping[str, Any]:
     return value if isinstance(value, Mapping) else {}
 
 
+def _feature_evidence_bundle_refs(value: object) -> list[str]:
+    return [
+        item
+        for item in _string_list(value)
+        if item.startswith("feature_evidence_bundle:")
+    ]
+
+
 def _dedupe(values: Sequence[str]) -> list[str]:
     result: list[str] = []
     seen: set[str] = set()
@@ -740,9 +877,11 @@ __all__ = [
     "LOCAL_EXECUTION_CANDIDATE_PLATFORM_RUNNER_PRODUCER",
     "LOCAL_EXECUTION_CANDIDATE_SCHEMA_VERSION",
     "LOCAL_EXECUTION_CANDIDATE_WORKER_EVIDENCE_BOUNDARY_SCHEMA_VERSION",
+    "VALIDATED_EXECUTION_CANDIDATE_BOUNDARY_SCHEMA_VERSION",
     "build_local_execution_candidate_worker_evidence_boundary",
     "build_local_execution_candidate",
     "build_local_execution_candidate_lineage",
+    "build_validated_execution_candidate_boundary",
     "capture_local_execution_candidate",
     "load_local_execution_candidate_lineage",
     "local_execution_candidate_artifact_path",

@@ -511,6 +511,9 @@ def _god_room_review_chain_release_linkage(
     chain_details = runtime_details.get("review_chain_proof")
     if not isinstance(chain_details, Mapping):
         chain_details = {}
+    handoff_evaluation = chain_details.get("handoff_evaluation")
+    if not isinstance(handoff_evaluation, Mapping):
+        handoff_evaluation = {}
     source_manual_gaps = _string_list(chain_details.get("manual_gaps"))
     resolved_gap_candidates = {
         "release_evidence_export_not_attempted",
@@ -521,8 +524,7 @@ def _god_room_review_chain_release_linkage(
         and _text(chain_details.get("status")) == "chain_ready"
         and _text(chain_details.get("proof_level")) == "contract_proof"
         and _text(chain_details.get("server_truth_status")) == "not_server_truth"
-        and _mapping_status(chain_details.get("bounded_session_gate")) == "verified"
-        and chain_details.get("current_handoff_gate_ready") is True
+        and _text(handoff_evaluation.get("status")) == "ready"
     )
     resolved_manual_gaps = [
         gap for gap in source_manual_gaps if gap in resolved_gap_candidates
@@ -574,6 +576,8 @@ def _god_room_review_chain_release_linkage(
         "bounded_session_gate_status": _mapping_status(
             chain_details.get("bounded_session_gate")
         ),
+        "handoff_evaluation_status": _text(handoff_evaluation.get("status"))
+        or "not_provided",
         "current_handoff_gate_ready": chain_details.get("current_handoff_gate_ready")
         is True,
         "source_refs": chain_source_refs,

@@ -39,12 +39,12 @@ safety，Wave E=L10-L11 aggregation/operator surface。具体行为规范见
 |---|---|
 | `docs/xmuse/mainline-contracts.md` | 当前产品主线合同：GOD 群聊、blueprint freeze、laneDAG、review/GitHub gate、REST-first MemoryOS |
 | `docs/xmuse/production-closure-gap-ledger.md` | 从用户视角维护生产机闭环缺口台账，逐层记录已有证据、缺口、所需 proof、下一步生产切片和不能声称的能力 |
-| `docs/xmuse/goal-behavior-contract.md` | 长 `/goal` 的 dependency-first / authority-first / evidence-first 行为契约，定义 L1-L11 阶段、proof level、desired/observed reconcile 纪律、anti-false-closure 和 anti-TDD-abuse |
+| `docs/xmuse/goal-behavior-contract.md` | 长 `/goal` 的 dependency-first / authority-first / evidence-first 行为契约，定义 L1-L11 阶段、proof level、desired/observed reconcile 纪律、closure controller condition/admission 规则、anti-false-closure 和 anti-TDD-abuse |
 | `docs/xmuse/anti-tdd-abuse-policy.md` | 长 `/goal` 的 anti-TDD 滥用硬规则：测试只能验证真实生产路径，不能替代 authority/proof producer |
 | `docs/xmuse/production-closure-wave-map.md` | Wave A-E 的实施路线图，记录每层下一步 production slice、Codex/OpenCode 分工、验收 proof 和 forbidden claims |
 | `docs/xmuse/next-production-closure-long-goal.md` | 下一轮生产闭环长 `/goal` 的任务文档，要求在 goal 内自主划分中等粒度任务并推进 Wave D/L9 lineage |
 | `docs/xmuse/code-review.md` | 生产闭环 review 契约，专门审查 projection authority、proof-level inflation、worker truth、GitHub truth 和 TDD abuse |
-| `docs/xmuse/github-git-behavior-policy.md` | Git/GitHub 行为规范：冻结过重 PR #43 为历史/集成上下文，后续默认小 PR、明确 push/CI/merge truth 边界 |
+| `docs/xmuse/github-git-behavior-policy.md` | Git/GitHub 行为规范：冻结过重 PR #43 为历史/集成上下文，后续默认中等 reconcile slice / 小 PR、明确 push/CI/merge truth 边界 |
 | `docs/xmuse/current-worktree-slice-inventory.md` | 当前重 worktree 的小 PR 拆分 inventory，按 Slice 0-5 记录候选拆分、文件边界、proof level、forbidden claims 和 focused validation |
 | `docs/xmuse/dependency-first-closure-goal-prompt.md` | 可直接用于下一轮长 `/goal` 的简洁 dependency-first closure prompt |
 | `docs/xmuse/deep-research-02-next-goal.md` | 第二轮深度研究转化目标，定义 #13-#19 的下一阶段任务 |

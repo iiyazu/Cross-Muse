@@ -1,6 +1,6 @@
 # Dependency-First Closure Goal Prompt
 
-更新日期: 2026-06-15
+更新日期: 2026-06-16
 
 Use this as the concise prompt for the next long `/goal`.
 
@@ -14,6 +14,8 @@ architecture.
 Treat /goal as desired state and durable artifacts/status as observed state.
 Work as an idempotent reconcile loop: target condition -> observed durable
 state -> authority-owned producer/consumer path -> fail-closed gap or proof.
+Use the narrow closure chain before adding new surfaces:
+Recovery -> ExecutionCandidate -> ReviewClosure -> ReleaseHandoff.
 
 Read and follow:
 - AGENTS.md
@@ -43,21 +45,27 @@ Required process:
 3. For each slice, identify authority owner, forbidden authorities, proof level,
    negative cases, manual gaps, forbidden claims, stable source/target refs,
    and owner lineage.
-4. Implement the smallest real production path with fail-closed behavior and
+4. Define spec/status/conditions and admission checks before writing status:
+   stable refs, owner lineage, inherited manual_gaps/forbidden_claims, and no
+   proof inflation.
+5. Implement the smallest real production path with fail-closed behavior and
    evidence output.
-5. Use OpenCode/DeepSeek only as bounded worker/reviewer:
+6. Use OpenCode/DeepSeek only as bounded worker/reviewer:
    `opencode run --model opencode-go/deepseek-v4-flash --variant max ...`.
    Candidate patches are allowed; Codex remains final judge.
    When Codex quota risk is high, run stages through
    `scripts/goal_stage_runner.py` with Codex model fallback enabled as described
    in `docs/xmuse/goal-stage-harness.md`.
-6. Add targeted tests after the authority/proof path is clear.
-7. Enforce docs/xmuse/anti-tdd-abuse-policy.md: tests verify real production
+7. Add targeted tests after the authority/proof path is clear.
+8. Enforce docs/xmuse/anti-tdd-abuse-policy.md: tests verify real production
    paths and must not replace authority/proof producers.
-8. Preserve proof monotonicity and append-only forbidden_claims; do not remove
+9. Preserve proof monotonicity and append-only forbidden_claims; do not remove
    a forbidden claim without matching upstream live/server proof.
-9. Self-review false closure and update the ledger only for changed claims.
-10. Follow docs/xmuse/github-git-behavior-policy.md: do not push new work into
+10. If proof parsing, condition classification, handoff evaluation, or failure
+    handling is duplicated across consumers, stop patch stacking and refactor
+    that boundary first.
+11. Self-review false closure and update the ledger only for changed claims.
+12. Follow docs/xmuse/github-git-behavior-policy.md: do not push new work into
    PR #43 unless explicitly instructed; prefer small scoped PRs.
 
 Validation:

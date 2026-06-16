@@ -9,7 +9,14 @@ from xmuse_core.platform.local_execution_candidate import (
     LOCAL_EXECUTION_CANDIDATE_PLATFORM_RUNNER_PRODUCER,
     LOCAL_EXECUTION_CANDIDATE_SCHEMA_VERSION,
     build_local_execution_candidate,
+    build_local_execution_candidate_lineage,
+    build_validated_execution_candidate_boundary,
     load_local_execution_candidate_lineage,
+)
+from xmuse_core.platform.runner_session import (
+    RUNNER_SESSION_COMPLETED_STATUS,
+    build_runner_session_artifact,
+    build_runner_session_lineage,
 )
 
 
@@ -264,6 +271,140 @@ def test_platform_runner_candidate_records_runner_session_boundary() -> None:
     )
 
 
+def test_validated_execution_candidate_accepts_bounded_runner_session() -> None:
+    candidate_lineage = build_local_execution_candidate_lineage(
+        artifact=_platform_runner_candidate_artifact(
+            source_refs=[
+                "feature_evidence_bundle:bundle-a:v1",
+            ],
+        ),
+        artifact_ref="work/local_execution_candidates/graph-a.lane-a.json",
+    )
+    runner_session_lineage = build_runner_session_lineage(
+        artifact=_runner_session_artifact(
+            worker_evidence_bundle_refs=[
+                "feature_evidence_bundle:bundle-a:v1",
+            ],
+        ),
+        artifact_ref="work/runner_sessions/session-a.json",
+        session_id="session-a",
+        run_id="run-a",
+        runner_id="runner-a",
+        candidate_artifact_ref="work/local_execution_candidates/graph-a.lane-a.json",
+        graph_id="graph-a",
+    )
+
+    boundary = build_validated_execution_candidate_boundary(
+        candidate_lineage=candidate_lineage,
+        runner_session_lineage=runner_session_lineage,
+        graph_id="graph-a",
+        lane_id="lane-a",
+    )
+
+    assert boundary["status"] == "validated"
+    assert boundary["proof_level"] == "local_runtime_proof"
+    assert boundary["worker_evidence_bundle_refs"] == [
+        "feature_evidence_bundle:bundle-a:v1"
+    ]
+    assert "worker_output_is_review_truth" in boundary["forbidden_claims"]
+    assert "runner_session_is_review_truth" in boundary["forbidden_claims"]
+
+
+def test_validated_execution_candidate_rejects_manual_cli_candidate() -> None:
+    candidate_lineage = build_local_execution_candidate_lineage(
+        artifact=_candidate_artifact(),
+        artifact_ref="artifacts/lane-a/result.json",
+    )
+
+    boundary = build_validated_execution_candidate_boundary(
+        candidate_lineage=candidate_lineage,
+        runner_session_lineage=None,
+        graph_id="graph-a",
+        lane_id="lane-a",
+    )
+
+    assert boundary["status"] == "manual_gap"
+    assert "local execution candidate is not platform_runner_dispatch" in boundary[
+        "issues"
+    ]
+    assert "runner session lineage is missing" in boundary["issues"]
+
+
+def test_validated_execution_candidate_requires_reviewing_graph_status() -> None:
+    candidate = _platform_runner_candidate_artifact()
+    candidate["graph_status_lineage"]["status"] = "running"
+    candidate["feature_graph_status"] = "running"
+    candidate_lineage = build_local_execution_candidate_lineage(
+        artifact=candidate,
+        artifact_ref="work/local_execution_candidates/graph-a.lane-a.json",
+    )
+    runner_session_lineage = build_runner_session_lineage(
+        artifact=_runner_session_artifact(),
+        artifact_ref="work/runner_sessions/session-a.json",
+    )
+
+    boundary = build_validated_execution_candidate_boundary(
+        candidate_lineage=candidate_lineage,
+        runner_session_lineage=runner_session_lineage,
+        graph_id="graph-a",
+        lane_id="lane-a",
+    )
+
+    assert boundary["status"] == "manual_gap"
+    assert "local execution candidate graph status is not reviewing" in boundary[
+        "issues"
+    ]
+
+
+def test_validated_execution_candidate_rejects_runner_session_mismatch() -> None:
+    candidate_lineage = build_local_execution_candidate_lineage(
+        artifact=_platform_runner_candidate_artifact(),
+        artifact_ref="work/local_execution_candidates/graph-a.lane-a.json",
+    )
+    runner_session_lineage = build_runner_session_lineage(
+        artifact=_runner_session_artifact(run_id="run-b"),
+        artifact_ref="work/runner_sessions/session-a.json",
+    )
+
+    boundary = build_validated_execution_candidate_boundary(
+        candidate_lineage=candidate_lineage,
+        runner_session_lineage=runner_session_lineage,
+        graph_id="graph-a",
+        lane_id="lane-a",
+    )
+
+    assert boundary["status"] == "manual_gap"
+    assert "runner session run_id does not match candidate" in boundary["issues"]
+
+
+def test_validated_execution_candidate_rejects_worker_bundle_mismatch() -> None:
+    candidate_lineage = build_local_execution_candidate_lineage(
+        artifact=_platform_runner_candidate_artifact(
+            source_refs=["feature_evidence_bundle:bundle-a:v1"]
+        ),
+        artifact_ref="work/local_execution_candidates/graph-a.lane-a.json",
+    )
+    runner_session_lineage = build_runner_session_lineage(
+        artifact=_runner_session_artifact(
+            worker_evidence_bundle_refs=["feature_evidence_bundle:bundle-b:v1"]
+        ),
+        artifact_ref="work/runner_sessions/session-a.json",
+    )
+
+    boundary = build_validated_execution_candidate_boundary(
+        candidate_lineage=candidate_lineage,
+        runner_session_lineage=runner_session_lineage,
+        graph_id="graph-a",
+        lane_id="lane-a",
+    )
+
+    assert boundary["status"] == "manual_gap"
+    assert (
+        "local execution candidate worker evidence bundle refs do not match "
+        "runner session"
+    ) in boundary["issues"]
+
+
 def _candidate_artifact() -> dict:
     return build_local_execution_candidate(
         lane_id="lane-a",
@@ -274,4 +415,50 @@ def _candidate_artifact() -> dict:
         feature_graph_id="graph-a-feature-a",
         feature_graph_status_id="fgs:graph-a:feature-a:reviewing",
         feature_graph_status="reviewing",
+    )
+
+
+def _platform_runner_candidate_artifact(
+    *,
+    source_refs: list[str] | None = None,
+) -> dict:
+    return build_local_execution_candidate(
+        lane_id="lane-a",
+        candidate_id="candidate-a",
+        conversation_id="conv-a",
+        lane_local_id="lane-local-a",
+        graph_id="graph-a",
+        graph_set_id="graph-a-graph-set",
+        feature_graph_id="graph-a-feature-a",
+        feature_graph_status_id="fgs:graph-a:feature-a:reviewing",
+        feature_graph_status="reviewing",
+        run_id="run-a",
+        worker_id="runner-a",
+        runner_session_id="session-a",
+        runner_session_ref="work/runner_sessions/session-a.json",
+        producer=LOCAL_EXECUTION_CANDIDATE_PLATFORM_RUNNER_PRODUCER,
+        source_refs=source_refs or [],
+    )
+
+
+def _runner_session_artifact(
+    *,
+    session_id: str = "session-a",
+    run_id: str = "run-a",
+    runner_id: str = "runner-a",
+    worker_evidence_bundle_refs: list[str] | None = None,
+) -> dict:
+    return build_runner_session_artifact(
+        session_id=session_id,
+        run_id=run_id,
+        runner_id=runner_id,
+        status=RUNNER_SESSION_COMPLETED_STATUS,
+        started_at="2026-06-16T00:00:00Z",
+        completed_at="2026-06-16T00:01:00Z",
+        graph_id="graph-a",
+        candidate_artifact_refs=[
+            "work/local_execution_candidates/graph-a.lane-a.json"
+        ],
+        candidate_lane_ids=["lane-a"],
+        worker_evidence_bundle_refs=worker_evidence_bundle_refs or [],
     )

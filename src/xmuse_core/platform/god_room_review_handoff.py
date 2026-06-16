@@ -272,6 +272,14 @@ def build_review_closure_handoff_evaluation(
         "candidate_artifact_ref_count": int(
             handoff.get("candidate_artifact_ref_count") or 0
         ),
+        "runner_session_refs": _string_list(handoff.get("runner_session_refs")),
+        "runner_session_ref_count": int(handoff.get("runner_session_ref_count") or 0),
+        "source_refs": (
+            _string_list(handoff.get("source_refs")) if status == "ready" else []
+        ),
+        "source_ref_count": int(handoff.get("source_ref_count") or 0)
+        if status == "ready"
+        else 0,
         "source_event_lineage_refs": source_event_lineage_refs,
         "source_event_lineage_ref_count": len(source_event_lineage_refs),
         "source_event_lineage_count": len(

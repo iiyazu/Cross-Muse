@@ -82,6 +82,20 @@ declare the target condition, inspect observed durable state, produce or update
 the smallest authority-owned artifact, and fail closed to `manual_gap`,
 `blocked`, or `refactor_required` when proof is missing.
 
+The default closure state machine is narrow:
+
+```text
+Recovery -> ExecutionCandidate -> ReviewClosure -> ReleaseHandoff
+```
+
+Do not add a new state surface, TUI field, release-pack field, or worker report
+unless it is produced by this chain or explicitly marked projection/manual gap.
+For every closure slice, separate `spec` (desired condition), `status`
+(observed artifact/server state), `conditions` (machine-readable result), and
+owner/source refs. A writer must pass admission-style checks before updating
+closure status: stable refs present, owner lineage present, inherited
+`manual_gaps` and `forbidden_claims` preserved, and no proof-level inflation.
+
 Before changing code in any `/goal` task, identify:
 
 1. Target closure layer(s), L1-L11, from
@@ -134,6 +148,11 @@ Opaque strings, pane ids, provider sessions, TUI row ids, and human summaries
 are not closure authority. Missing owner lineage means candidate evidence or
 `manual_gap`, not truth.
 
+MemoryOS Lite is not part of the xmuse authority write path. It may consume
+limited source refs and lineage hints as an L10 provenance/trace surface only.
+Do not route L8/L9 recovery, candidate, review, or handoff truth through
+MemoryOS Lite.
+
 Before declaring completion, self-review:
 
 1. Did this change only modify downstream projection while upstream authority
@@ -156,6 +175,11 @@ that cites them before review truth is claimed. If detected, stop adding tests,
 identify the missing production producer, and implement or document the smallest
 real path/manual gap. The canonical policy is
 `docs/xmuse/anti-tdd-abuse-policy.md`.
+
+Repeated same-boundary patching is a design failure signal. If proof parsing,
+handoff evaluation, condition classification, or failure handling is duplicated
+across multiple consumers, make the next slice a bounded refactor of that
+boundary instead of adding another compatibility branch.
 
 ### Completion Definition
 

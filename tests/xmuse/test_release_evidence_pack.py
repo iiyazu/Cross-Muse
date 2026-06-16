@@ -2441,6 +2441,7 @@ def test_release_evidence_pack_converts_god_room_runtime_closure_into_replay_sec
     assert linkage["replay_section_id"] == "god_room_runtime_closure"
     assert linkage["review_chain_proof_status"] == "chain_ready"
     assert linkage["bounded_session_gate_status"] == "verified"
+    assert linkage["handoff_evaluation_status"] == "ready"
     assert linkage["current_handoff_gate_ready"] is True
     assert review_chain_source_ref in linkage["source_refs"]
     assert f"review_chain_proof_artifact:{review_chain_proof}" in linkage[
@@ -2689,6 +2690,7 @@ def test_release_evidence_pack_rejects_review_chain_when_current_handoff_fails(
     assert linkage["proof_level"] == "manual_gap"
     assert linkage["review_chain_proof_status"] == "chain_ready"
     assert linkage["bounded_session_gate_status"] == "verified"
+    assert linkage["handoff_evaluation_status"] == "manual_gap"
     assert linkage["current_handoff_gate_ready"] is False
     assert linkage["source_refs"] == []
     assert linkage["resolved_manual_gaps"] == []

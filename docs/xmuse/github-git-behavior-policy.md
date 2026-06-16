@@ -1,6 +1,6 @@
 # XMuse Git And GitHub Behavior Policy
 
-更新日期: 2026-06-15
+更新日期: 2026-06-16
 
 本文固化 xmuse 开发中的 Git/GitHub 行为规范，目标是避免继续把所有生产闭环工作堆进
 过重 PR，并保持 proof、review、CI、merge truth 的边界清楚。
@@ -13,6 +13,18 @@ all future `/goal` work.
 PRs are review and integration units, not proof authorities. CI success,
 release evidence, local tests, worker output, and PR body text never become
 GitHub review or merge truth.
+
+Treat a long `/goal` as a sequence of medium reconcile slices, not as one
+ever-growing PR. The preferred slice boundary follows the closure controller
+path:
+
+```text
+Recovery -> ExecutionCandidate -> ReviewClosure -> ReleaseHandoff
+```
+
+Each PR should advance one producer/consumer boundary or one bounded refactor
+needed by that path. A PR may carry docs/tests/runtime together only when they
+describe the same authority/proof path.
 
 ## PR #43 Policy
 
@@ -30,6 +42,7 @@ Forbidden by default:
 
 - pushing new production feature work into PR #43;
 - using PR #43 as the default branch for every future goal;
+- using PR #43 as closure proof or the default evidence sink for new layers;
 - claiming PR #43 is merge-ready because local tests or CI passed;
 - emitting `pr_merged` without GitHub server-side merge proof.
 
@@ -75,6 +88,17 @@ Recommended size:
 - warning: over 1200 effective diff lines requires a split rationale;
 - avoid: broad PRs mixing architecture migration, runtime closure, TUI,
   release evidence, and GitHub truth.
+
+Recommended production split order:
+
+1. closure controller / condition model shell;
+2. L8 recovery producer consolidation;
+3. L9 execution-candidate and session boundary consolidation;
+4. L9 -> L10 release handoff aggregation;
+5. L10 MemoryOS/GitHub truth projection after upstream handoff exists.
+
+If a slice crosses L8/L9/L10 in one diff, split it unless there is a documented
+migration reason and focused validation for each crossed boundary.
 
 ## Branch Policy
 

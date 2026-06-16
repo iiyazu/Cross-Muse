@@ -46,6 +46,14 @@ from xmuse_core.structuring.models import (
 )
 from xmuse_core.structuring.verdict_store import ClarificationStore
 
+RECOVERY_FORBIDDEN_CLAIMS = {
+    "independent_review_truth",
+    "server_truth",
+    "overnight_safe_recovery",
+    "ready_to_merge",
+    "pr_merged",
+}
+
 CONTRACT_ROOT = Path("tests/fixtures/xmuse/contracts/artifacts")
 
 
@@ -64,6 +72,12 @@ def setup(tmp_path):
     (tmp_path / "xmuse" / "god_prompts" / "execution_god.md").write_text("exec")
     (tmp_path / "xmuse" / "god_prompts" / "review_god.md").write_text("review")
     return tmp_path, lanes_path
+
+
+def _assert_recovery_forbidden_claims(artifact: dict[str, object]) -> None:
+    forbidden_claims = artifact.get("forbidden_claims")
+    assert isinstance(forbidden_claims, list)
+    assert RECOVERY_FORBIDDEN_CLAIMS.issubset(set(forbidden_claims))
 
 
 @pytest.mark.asyncio
@@ -993,6 +1007,7 @@ async def test_on_lane_reviewed_merge_conflict_writes_retry_recovery_artifact(se
     assert artifact["proof_level"] == "contract_proof"
     assert "review_truth_not_proven" in artifact["manual_gaps"]
     assert "worker_output_is_review_truth" in artifact["forbidden_claims"]
+    _assert_recovery_forbidden_claims(artifact)
     assert lane["recovery_artifact_status"] == "written"
     assert lane["recovery_decision"]["decision"] == "retry"
     dispatch.assert_awaited_once_with("lane-1")
@@ -1150,6 +1165,7 @@ async def test_on_lane_reviewed_non_reworkable_merge_writes_suspended_artifact(s
     assert artifact["source_authority"] == "platform_orchestrator_merge_failure"
     assert artifact["proof_level"] == "contract_proof"
     assert "review_truth_not_proven" in artifact["manual_gaps"]
+    _assert_recovery_forbidden_claims(artifact)
     assert lane["recovery_decision"]["decision"] == "suspended"
     dispatch.assert_not_awaited()
 
@@ -1250,6 +1266,7 @@ async def test_on_lane_reviewed_patch_forward_writes_recovery_artifact(setup):
     assert artifact["patch_lane_id"] == "lane-1-patch-forward"
     assert "review_truth_not_proven" in artifact["manual_gaps"]
     assert "worker_output_is_review_truth" in artifact["forbidden_claims"]
+    _assert_recovery_forbidden_claims(artifact)
     assert lane["recovery_artifact_status"] == "written"
     assert lane["recovery_artifact_source_authority"] == (
         "platform_orchestrator_review_patch_forward"
@@ -1355,6 +1372,7 @@ async def test_on_lane_rejected_max_retries_writes_recovery_artifact(setup):
     assert artifact["proof_level"] == "contract_proof"
     assert "review_truth_not_proven" in artifact["manual_gaps"]
     assert "worker_output_is_review_truth" in artifact["forbidden_claims"]
+    _assert_recovery_forbidden_claims(artifact)
     assert lane["recovery_artifact_status"] == "written"
     assert lane["recovery_decision"]["decision"] == "refactor_required"
     dispatch.assert_not_awaited()
@@ -5937,6 +5955,7 @@ async def test_gate_failure_writes_retry_recovery_artifact(setup):
     assert artifact["proof_level"] == "contract_proof"
     assert "review_truth_not_proven" in artifact["manual_gaps"]
     assert "worker_output_is_review_truth" in artifact["forbidden_claims"]
+    _assert_recovery_forbidden_claims(artifact)
     assert lane["recovery_artifact_status"] == "written"
     assert lane["recovery_artifact_ref"] == "lane_graphs/graph-gate.lane-1.recovery.json"
     assert lane["recovery_decision"]["decision"] == "retry"
@@ -9407,6 +9426,7 @@ async def test_review_retry_count_increments_on_reconcile_recovery(setup):
     assert artifact["proof_level"] == "contract_proof"
     assert "review_truth_not_proven" in artifact["manual_gaps"]
     assert "worker_output_is_review_truth" in artifact["forbidden_claims"]
+    _assert_recovery_forbidden_claims(artifact)
     assert lane["recovery_artifact_status"] == "written"
     assert lane["recovery_artifact_source_authority"] == (
         "platform_orchestrator_review_retry"
@@ -9518,6 +9538,7 @@ async def test_review_retry_exhaustion_writes_refactor_recovery_artifact(setup):
     assert artifact["proof_level"] == "contract_proof"
     assert "review_truth_not_proven" in artifact["manual_gaps"]
     assert "worker_output_is_review_truth" in artifact["forbidden_claims"]
+    _assert_recovery_forbidden_claims(artifact)
     assert lane["recovery_artifact_status"] == "written"
     assert lane["recovery_artifact_source_authority"] == (
         "platform_orchestrator_review_retry_exhaustion"
@@ -9765,6 +9786,7 @@ async def test_review_infra_exhaustion_writes_suspended_recovery_artifact(setup)
     )
     assert artifact["proof_level"] == "contract_proof"
     assert "server_truth_not_proven" in artifact["manual_gaps"]
+    _assert_recovery_forbidden_claims(artifact)
     assert lane["recovery_artifact_status"] == "written"
     assert lane["recovery_decision"]["decision"] == "suspended"
 

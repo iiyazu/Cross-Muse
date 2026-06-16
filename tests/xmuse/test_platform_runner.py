@@ -15,8 +15,13 @@ from xmuse_core.platform.feature_graph_claim_coordinator import (
 from xmuse_core.platform.feature_graph_worker_evidence_coordinator import (
     submit_feature_graph_worker_evidence,
 )
+from xmuse_core.platform.local_execution_candidate import (
+    build_local_execution_candidate_lineage,
+    build_validated_execution_candidate_boundary,
+)
 from xmuse_core.platform.run_health import build_process_inventory
 from xmuse_core.platform.runner_recovery_proof import build_runner_recovery_proof
+from xmuse_core.platform.runner_session import build_runner_session_lineage
 from xmuse_core.platform.runner_supervisor import RunnerSupervisorConfig, runner_status
 from xmuse_core.structuring.blueprint_execution.lane_recovery_artifacts import (
     lane_recovery_artifact_path,
@@ -1170,6 +1175,27 @@ async def test_runner_submits_graph_native_worker_evidence_before_candidate_capt
     ]
     assert runner_session["worker_evidence_bundle_count"] == 1
     assert "runner_session_is_review_truth" in runner_session["forbidden_claims"]
+    candidate_lineage = build_local_execution_candidate_lineage(
+        artifact=candidate,
+        artifact_ref="work/local_execution_candidates/graph-a.lane-1.json",
+    )
+    runner_session_lineage = build_runner_session_lineage(
+        artifact=runner_session,
+        artifact_ref=candidate["runner_session_ref"],
+        session_id=candidate["runner_session_id"],
+        run_id=candidate["run_id"],
+        runner_id=candidate["worker_id"],
+        candidate_artifact_ref="work/local_execution_candidates/graph-a.lane-1.json",
+        graph_id="graph-a",
+    )
+    boundary = build_validated_execution_candidate_boundary(
+        candidate_lineage=candidate_lineage,
+        runner_session_lineage=runner_session_lineage,
+        graph_id="graph-a",
+        lane_id="lane-1",
+    )
+    assert boundary["status"] == "validated"
+    assert "worker_output_is_review_truth" in boundary["forbidden_claims"]
 
 
 def test_runner_candidate_capture_fail_closes_before_worker_evidence_reviewing(

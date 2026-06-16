@@ -1,6 +1,6 @@
 # xmuse Production Closure Gap Ledger
 
-更新日期: 2026-06-15
+更新日期: 2026-06-16
 
 本文档是 xmuse 生产闭环缺口台账。它用于把“用户最终看到的体验”和
 “生产实现必须遵守的依赖顺序”分开记录。
@@ -236,6 +236,10 @@ runtime、provider invocation、lane authority、review truth 完成。后续生
   `654b418c52cc1487193561f65e0521a5a82f0452`
 - Local head at start of L8 review retry recovery-artifact slice:
   `654b418c52cc1487193561f65e0521a5a82f0452`
+- Local head at start of L8/L9/L10 closure controller contract slice:
+  `b050d534873594466e46190619ab20387427f231`
+- Local head at start of L8 shared recovery writer consolidation slice:
+  `b050d534873594466e46190619ab20387427f231`
 - PR: <https://github.com/iiyazu/Cross-Muse/pull/43>
 - PR state last checked: draft/open/unmerged
 - PR merge state last checked: `CLEAN`
@@ -333,6 +337,8 @@ truth_snapshot:
   local_head_at_l8_review_rejection_recovery_artifact_slice: 654b418c52cc1487193561f65e0521a5a82f0452
   local_head_at_l8_merge_failure_recovery_artifact_slice: 654b418c52cc1487193561f65e0521a5a82f0452
   local_head_at_l8_review_retry_recovery_artifact_slice: 654b418c52cc1487193561f65e0521a5a82f0452
+  local_head_at_l8_l9_l10_closure_controller_contract_slice: b050d534873594466e46190619ab20387427f231
+  local_head_at_l8_shared_recovery_writer_consolidation_slice: b050d534873594466e46190619ab20387427f231
   pr: 43
   pr_url: https://github.com/iiyazu/Cross-Muse/pull/43
   pr_state: draft_open_unmerged
@@ -476,6 +482,17 @@ Current closure audit:
     overnight manual gaps keep the chain proof at `manual_gap`.
     Review closure may still be written with `runner_recovery_proof_not_linked`,
     but it cannot be overread as a complete L8-L9 chain or L10-ready handoff.
+    Gate failure, review retry, retry exhaustion, review rejection,
+    patch-forward original-lane suspension, and merge-failure recovery
+    production now use one shared writer-side durable recovery artifact helper
+    in `orchestrator_lane_flow.py`. The covered branches still make explicit
+    `retry`, `refactor_required`, or `suspended` decisions, retry decisions
+    remain non-blocking, and non-retry decisions are read by the existing same
+    durable dispatch gate. Missing graph/lane authority remains `manual_gap`,
+    and recovery artifacts preserve `independent_review_truth`, `server_truth`,
+    `overnight_safe_recovery`, `ready_to_merge`, and `pr_merged` as forbidden
+    claims. This is L8 writer consolidation contract/local authority proof only;
+    it does not create L9 independent review truth or L10 release/server truth.
     Release evidence pack now emits
     `xmuse.god_room_review_chain_release_linkage.v1` as a top-level aggregation
     summary when a review-chain proof is supplied. It records whether the
@@ -554,6 +571,19 @@ Current closure audit:
     `manual_gap`. This remains contract/API handoff proof only; patch-lane
     bundle producer coverage and broad live worker execution/review proof
     remain later work.
+    `src/xmuse_core/platform/closure_objects.py` and
+    `src/xmuse_core/platform/closure_reconciler.py` now add a minimal
+    Kubernetes-inspired controller contract over the existing L8/L9/L10
+    artifacts. It separates `spec` from observed status, emits machine-readable
+    conditions for
+    `RecoveryArtifactPresent`, `RecoveryAllowsProgress`,
+    `ValidatedExecutionCandidatePresent`,
+    `IndependentReviewVerdictPresent`, `ReleaseHandoffEvaluated`, and
+    `ServerTruthPending`, preserves inherited forbidden claims, and fail-closes
+    missing artifacts/schema/owner lineage to `manual_gap` or `blocked`. This is
+    controller `contract_proof` only; it does not add a service, queue, DB,
+    TUI/release truth surface, live MemoryOS trace, GitHub review/merge truth,
+    or broad live execution/review closure.
   - Wave E / L10-L11 must wait for honest L8-L9 lineage before claiming
     release readiness, complete cockpit, or overnight proof.
 - Next production priority: prove a graph-native GOD-room-originated lane
@@ -1744,6 +1774,17 @@ Use these as implementation references, not as xmuse package dependencies:
     failures instead of masking the original runner error or skipping cleanup.
     The runner also consumes the public recovery-dispatch helper rather than an
     underscore-prefixed helper from the orchestrator flow module.
+  - L9 now has a single bounded candidate validation boundary,
+    `xmuse.validated_execution_candidate_boundary.v1`, for local execution
+    candidate readiness checks. It accepts only `producer=platform_runner_dispatch`
+    candidates with `candidate_only` / `local_runtime_proof`, `REVIEWING`
+    graph-status lineage, target graph/lane scope, matching runner session id,
+    run id, runner id, candidate artifact refs, and worker-evidence bundle refs
+    recorded by the same `xmuse.runner_session.v1` lineage. Manual CLI capture,
+    missing runner sessions, stale graph/lane scope, non-REVIEWING lineage, and
+    worker bundle mismatches remain `manual_gap`. This is local bounded-session
+    proof only; it preserves worker-output/review-truth/server-truth forbidden
+    claims and does not create merge readiness.
   - Platform runner dispatch task failures now keep the runner session artifact
     at `session_failed` / `manual_gap` instead of allowing an unawaited failed
     task to be overreported as `session_completed` / `local_runtime_proof`.
@@ -2035,6 +2076,19 @@ Use these as implementation references, not as xmuse package dependencies:
     `blocked`. Candidate refs, cited refs, and `source_event_lineage` counts
     are exposed as aggregation lineage only and do not prove live MemoryOS,
     GitHub review truth, merge truth, or release readiness.
+  - Review-chain proof L10 consumers now share
+    `xmuse.review_chain_proof_l10_handoff_evaluation.v1` instead of each
+    hand-parsing embedded chain-proof handoff fields. The evaluator checks
+    `chain_ready`, `contract_proof`, `not_server_truth`, required forbidden
+    claims, bounded-session gate status, and a freshly reloaded current
+    `xmuse.review_closure_handoff_evaluation.v1`; only `status=ready` exposes
+    chain-proof source refs, candidate artifact refs, and worker-evidence
+    bundle refs to runtime closure or MemoryOS candidate source-ref hints.
+    Stale embedded handoff data, missing runner-session artifacts, server-truth
+    overclaims, or missing forbidden claims remain diagnostic/manual-gap or
+    blocked evidence and cannot seed release/runtime aggregation refs. This is
+    L9-to-L10 contract-proof consumer hardening only, not live MemoryOS,
+    GitHub review truth, `ready_to_merge`, or `pr_merged`.
   - Release evidence pack now treats a supplied GOD-room review-closure
     artifact without a matching review-chain proof as an expected L9 handoff
     gap. It asks GOD-room runtime-closure evidence to emit

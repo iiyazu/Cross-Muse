@@ -181,26 +181,115 @@ def build_lane_recovery_dispatch_block_metadata(
     return _lane_recovery_dispatch_block_metadata(orchestrator, lane)
 
 
+def _record_recovery_artifact_manual_gap(
+    orchestrator,
+    lane_id: str,
+    *,
+    source_authority: str,
+    manual_gap: str,
+    error: str | None = None,
+) -> None:
+    metadata: dict[str, Any] = {
+        "recovery_artifact_status": "manual_gap",
+        "recovery_artifact_source_authority": source_authority,
+        "manual_gaps": [
+            manual_gap,
+            "live_runner_recovery_enforcement_not_proven",
+        ],
+        "forbidden_claims": _lane_recovery_forbidden_claims(),
+    }
+    if error is not None:
+        metadata["recovery_artifact_error"] = error
+    orchestrator._sm.update_metadata(lane_id, metadata)
+
+
+def _write_lane_recovery_artifact(
+    orchestrator,
+    lane: dict[str, Any],
+    *,
+    source_authority: str,
+    decision: LaneRecoveryDecision,
+    failure_evidence: list[LaneFailureEvidence],
+    source_refs: list[str],
+    write_failed_gap: str,
+    extra_payload: dict[str, Any] | None = None,
+    extra_metadata: dict[str, Any] | None = None,
+) -> None:
+    """Write the single durable recovery artifact format used by L8 producers."""
+    graph_id = _lane_graph_id(lane)
+    lane_id = _optional_text(lane.get("feature_id"))
+    if graph_id is None or lane_id is None:
+        raise ValueError("graph_id and feature_id are required to write recovery artifact")
+    payload = {
+        "schema_version": "xmuse.god_room_lane_recovery.v1",
+        "source_authority": source_authority,
+        "proof_level": "contract_proof",
+        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "graph_id": graph_id,
+        "lane_id": lane_id,
+        "decision": decision.model_dump(mode="json"),
+        "failure_evidence": [
+            failure.model_dump(mode="json") for failure in failure_evidence
+        ],
+        "source_refs": source_refs,
+        "manual_gaps": [
+            "live_runner_recovery_enforcement_not_proven",
+            "review_truth_not_proven",
+            "server_truth_not_proven",
+            "overnight_safe_recovery_not_proven",
+        ],
+        "forbidden_claims": _lane_recovery_forbidden_claims(),
+    }
+    if extra_payload:
+        payload.update(extra_payload)
+    try:
+        recovery_path = lane_recovery_artifact_path(
+            orchestrator._root,
+            graph_id=graph_id,
+            lane_id=lane_id,
+        )
+        recovery_path.parent.mkdir(parents=True, exist_ok=True)
+        recovery_path.write_text(
+            json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    except (OSError, ValueError) as exc:
+        _record_recovery_artifact_manual_gap(
+            orchestrator,
+            lane_id,
+            source_authority=source_authority,
+            manual_gap=write_failed_gap,
+            error=str(exc),
+        )
+        return
+    metadata = {
+        "recovery_artifact_status": "written",
+        "recovery_artifact_source_authority": source_authority,
+        "recovery_artifact_ref": _relative_artifact_ref(
+            orchestrator._root,
+            recovery_path,
+        ),
+        "recovery_decision": decision.model_dump(mode="json"),
+        "recovery_source_refs": source_refs,
+    }
+    if extra_metadata:
+        metadata.update(extra_metadata)
+    orchestrator._sm.update_metadata(lane_id, metadata)
+
+
 def _record_gate_failure_recovery_artifact(
     orchestrator,
     lane: dict[str, Any],
 ) -> None:
     graph_id = _lane_graph_id(lane)
     lane_id = _optional_text(lane.get("feature_id"))
+    source_authority = "platform_orchestrator_gate_runner"
     if graph_id is None or lane_id is None:
-        orchestrator._sm.update_metadata(
+        _record_recovery_artifact_manual_gap(
+            orchestrator,
             str(lane.get("feature_id") or ""),
-            {
-                "recovery_artifact_status": "manual_gap",
-                "recovery_artifact_source_authority": (
-                    "platform_orchestrator_gate_runner"
-                ),
-                "manual_gaps": [
-                    "gate_failure_recovery_artifact_missing_graph_or_lane_id",
-                    "live_runner_recovery_enforcement_not_proven",
-                ],
-                "forbidden_claims": _lane_recovery_forbidden_claims(),
-            },
+            source_authority=source_authority,
+            manual_gap="gate_failure_recovery_artifact_missing_graph_or_lane_id",
         )
         return
     budget = _lane_runtime_budget(lane)
@@ -231,64 +320,14 @@ def _record_gate_failure_recovery_artifact(
         budget=budget,
         failures=failures,
     )
-    payload = {
-        "schema_version": "xmuse.god_room_lane_recovery.v1",
-        "source_authority": "platform_orchestrator_gate_runner",
-        "proof_level": "contract_proof",
-        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "graph_id": graph_id,
-        "lane_id": lane_id,
-        "decision": decision.model_dump(mode="json"),
-        "failure_evidence": [failure.model_dump(mode="json") for failure in failures],
-        "source_refs": source_refs,
-        "manual_gaps": [
-            "live_runner_recovery_enforcement_not_proven",
-            "review_truth_not_proven",
-            "server_truth_not_proven",
-            "overnight_safe_recovery_not_proven",
-        ],
-        "forbidden_claims": _lane_recovery_forbidden_claims(),
-    }
-    try:
-        recovery_path = lane_recovery_artifact_path(
-            orchestrator._root,
-            graph_id=graph_id,
-            lane_id=lane_id,
-        )
-        recovery_path.parent.mkdir(parents=True, exist_ok=True)
-        recovery_path.write_text(
-            json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
-    except (OSError, ValueError) as exc:
-        orchestrator._sm.update_metadata(
-            lane_id,
-            {
-                "recovery_artifact_status": "manual_gap",
-                "recovery_artifact_source_authority": (
-                    "platform_orchestrator_gate_runner"
-                ),
-                "recovery_artifact_error": str(exc),
-                "manual_gaps": [
-                    "gate_failure_recovery_artifact_write_failed",
-                    "live_runner_recovery_enforcement_not_proven",
-                ],
-                "forbidden_claims": _lane_recovery_forbidden_claims(),
-            },
-        )
-        return
-    orchestrator._sm.update_metadata(
-        lane_id,
-        {
-            "recovery_artifact_status": "written",
-            "recovery_artifact_source_authority": "platform_orchestrator_gate_runner",
-            "recovery_artifact_ref": _relative_artifact_ref(
-                orchestrator._root,
-                recovery_path,
-            ),
-            "recovery_decision": decision.model_dump(mode="json"),
-            "recovery_source_refs": source_refs,
-        },
+    _write_lane_recovery_artifact(
+        orchestrator,
+        lane,
+        source_authority=source_authority,
+        decision=decision,
+        failure_evidence=failures,
+        source_refs=source_refs,
+        write_failed_gap="gate_failure_recovery_artifact_write_failed",
     )
 
 
@@ -303,17 +342,11 @@ def _record_patch_forward_recovery_artifact(
     patch_lane_id = _optional_text(patch_lane.get("feature_id"))
     source_authority = "platform_orchestrator_review_patch_forward"
     if graph_id is None or lane_id is None or patch_lane_id is None:
-        orchestrator._sm.update_metadata(
+        _record_recovery_artifact_manual_gap(
+            orchestrator,
             str(lane.get("feature_id") or ""),
-            {
-                "recovery_artifact_status": "manual_gap",
-                "recovery_artifact_source_authority": source_authority,
-                "manual_gaps": [
-                    "patch_forward_recovery_artifact_missing_graph_or_lane_id",
-                    "live_runner_recovery_enforcement_not_proven",
-                ],
-                "forbidden_claims": _lane_recovery_forbidden_claims(),
-            },
+            source_authority=source_authority,
+            manual_gap="patch_forward_recovery_artifact_missing_graph_or_lane_id",
         )
         return
 
@@ -355,64 +388,16 @@ def _record_patch_forward_recovery_artifact(
         ),
         source_refs=source_refs,
     )
-    payload = {
-        "schema_version": "xmuse.god_room_lane_recovery.v1",
-        "source_authority": source_authority,
-        "proof_level": "contract_proof",
-        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "graph_id": graph_id,
-        "lane_id": lane_id,
-        "patch_lane_id": patch_lane_id,
-        "decision": decision.model_dump(mode="json"),
-        "failure_evidence": [failure.model_dump(mode="json")],
-        "source_refs": source_refs,
-        "manual_gaps": [
-            "live_runner_recovery_enforcement_not_proven",
-            "review_truth_not_proven",
-            "server_truth_not_proven",
-            "overnight_safe_recovery_not_proven",
-        ],
-        "forbidden_claims": _lane_recovery_forbidden_claims(),
-    }
-    try:
-        recovery_path = lane_recovery_artifact_path(
-            orchestrator._root,
-            graph_id=graph_id,
-            lane_id=lane_id,
-        )
-        recovery_path.parent.mkdir(parents=True, exist_ok=True)
-        recovery_path.write_text(
-            json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
-    except (OSError, ValueError) as exc:
-        orchestrator._sm.update_metadata(
-            lane_id,
-            {
-                "recovery_artifact_status": "manual_gap",
-                "recovery_artifact_source_authority": source_authority,
-                "recovery_artifact_error": str(exc),
-                "manual_gaps": [
-                    "patch_forward_recovery_artifact_write_failed",
-                    "live_runner_recovery_enforcement_not_proven",
-                ],
-                "forbidden_claims": _lane_recovery_forbidden_claims(),
-            },
-        )
-        return
-    orchestrator._sm.update_metadata(
-        lane_id,
-        {
-            "recovery_artifact_status": "written",
-            "recovery_artifact_source_authority": source_authority,
-            "recovery_artifact_ref": _relative_artifact_ref(
-                orchestrator._root,
-                recovery_path,
-            ),
-            "recovery_decision": decision.model_dump(mode="json"),
-            "recovery_source_refs": source_refs,
-            "patch_forward_recovery_lane_id": patch_lane_id,
-        },
+    _write_lane_recovery_artifact(
+        orchestrator,
+        lane,
+        source_authority=source_authority,
+        decision=decision,
+        failure_evidence=[failure],
+        source_refs=source_refs,
+        write_failed_gap="patch_forward_recovery_artifact_write_failed",
+        extra_payload={"patch_lane_id": patch_lane_id},
+        extra_metadata={"patch_forward_recovery_lane_id": patch_lane_id},
     )
 
 
@@ -424,17 +409,11 @@ def record_review_rejection_recovery_artifact(
     lane_id = _optional_text(lane.get("feature_id"))
     source_authority = "platform_orchestrator_review_rejection"
     if graph_id is None or lane_id is None:
-        orchestrator._sm.update_metadata(
+        _record_recovery_artifact_manual_gap(
+            orchestrator,
             str(lane.get("feature_id") or ""),
-            {
-                "recovery_artifact_status": "manual_gap",
-                "recovery_artifact_source_authority": source_authority,
-                "manual_gaps": [
-                    "review_rejection_recovery_artifact_missing_graph_or_lane_id",
-                    "live_runner_recovery_enforcement_not_proven",
-                ],
-                "forbidden_claims": _lane_recovery_forbidden_claims(),
-            },
+            source_authority=source_authority,
+            manual_gap="review_rejection_recovery_artifact_missing_graph_or_lane_id",
         )
         return
 
@@ -471,62 +450,14 @@ def record_review_rejection_recovery_artifact(
         next_action="refactor or replace the rejected lane boundary before retrying",
         source_refs=source_refs,
     )
-    payload = {
-        "schema_version": "xmuse.god_room_lane_recovery.v1",
-        "source_authority": source_authority,
-        "proof_level": "contract_proof",
-        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "graph_id": graph_id,
-        "lane_id": lane_id,
-        "decision": decision.model_dump(mode="json"),
-        "failure_evidence": [failure.model_dump(mode="json")],
-        "source_refs": source_refs,
-        "manual_gaps": [
-            "live_runner_recovery_enforcement_not_proven",
-            "review_truth_not_proven",
-            "server_truth_not_proven",
-            "overnight_safe_recovery_not_proven",
-        ],
-        "forbidden_claims": _lane_recovery_forbidden_claims(),
-    }
-    try:
-        recovery_path = lane_recovery_artifact_path(
-            orchestrator._root,
-            graph_id=graph_id,
-            lane_id=lane_id,
-        )
-        recovery_path.parent.mkdir(parents=True, exist_ok=True)
-        recovery_path.write_text(
-            json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
-    except (OSError, ValueError) as exc:
-        orchestrator._sm.update_metadata(
-            lane_id,
-            {
-                "recovery_artifact_status": "manual_gap",
-                "recovery_artifact_source_authority": source_authority,
-                "recovery_artifact_error": str(exc),
-                "manual_gaps": [
-                    "review_rejection_recovery_artifact_write_failed",
-                    "live_runner_recovery_enforcement_not_proven",
-                ],
-                "forbidden_claims": _lane_recovery_forbidden_claims(),
-            },
-        )
-        return
-    orchestrator._sm.update_metadata(
-        lane_id,
-        {
-            "recovery_artifact_status": "written",
-            "recovery_artifact_source_authority": source_authority,
-            "recovery_artifact_ref": _relative_artifact_ref(
-                orchestrator._root,
-                recovery_path,
-            ),
-            "recovery_decision": decision.model_dump(mode="json"),
-            "recovery_source_refs": source_refs,
-        },
+    _write_lane_recovery_artifact(
+        orchestrator,
+        lane,
+        source_authority=source_authority,
+        decision=decision,
+        failure_evidence=[failure],
+        source_refs=source_refs,
+        write_failed_gap="review_rejection_recovery_artifact_write_failed",
     )
 
 
@@ -540,17 +471,13 @@ def record_review_retry_exhaustion_recovery_artifact(
     lane_id = _optional_text(lane.get("feature_id"))
     source_authority = "platform_orchestrator_review_retry_exhaustion"
     if graph_id is None or lane_id is None:
-        orchestrator._sm.update_metadata(
+        _record_recovery_artifact_manual_gap(
+            orchestrator,
             str(lane.get("feature_id") or ""),
-            {
-                "recovery_artifact_status": "manual_gap",
-                "recovery_artifact_source_authority": source_authority,
-                "manual_gaps": [
-                    "review_retry_exhaustion_recovery_artifact_missing_graph_or_lane_id",
-                    "live_runner_recovery_enforcement_not_proven",
-                ],
-                "forbidden_claims": _lane_recovery_forbidden_claims(),
-            },
+            source_authority=source_authority,
+            manual_gap=(
+                "review_retry_exhaustion_recovery_artifact_missing_graph_or_lane_id"
+            ),
         )
         return
 
@@ -603,62 +530,14 @@ def record_review_retry_exhaustion_recovery_artifact(
             next_action="refactor or replace the review boundary before retrying",
             source_refs=source_refs,
         )
-    payload = {
-        "schema_version": "xmuse.god_room_lane_recovery.v1",
-        "source_authority": source_authority,
-        "proof_level": "contract_proof",
-        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "graph_id": graph_id,
-        "lane_id": lane_id,
-        "decision": decision.model_dump(mode="json"),
-        "failure_evidence": [failure.model_dump(mode="json")],
-        "source_refs": source_refs,
-        "manual_gaps": [
-            "live_runner_recovery_enforcement_not_proven",
-            "review_truth_not_proven",
-            "server_truth_not_proven",
-            "overnight_safe_recovery_not_proven",
-        ],
-        "forbidden_claims": _lane_recovery_forbidden_claims(),
-    }
-    try:
-        recovery_path = lane_recovery_artifact_path(
-            orchestrator._root,
-            graph_id=graph_id,
-            lane_id=lane_id,
-        )
-        recovery_path.parent.mkdir(parents=True, exist_ok=True)
-        recovery_path.write_text(
-            json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
-    except (OSError, ValueError) as exc:
-        orchestrator._sm.update_metadata(
-            lane_id,
-            {
-                "recovery_artifact_status": "manual_gap",
-                "recovery_artifact_source_authority": source_authority,
-                "recovery_artifact_error": str(exc),
-                "manual_gaps": [
-                    "review_retry_exhaustion_recovery_artifact_write_failed",
-                    "live_runner_recovery_enforcement_not_proven",
-                ],
-                "forbidden_claims": _lane_recovery_forbidden_claims(),
-            },
-        )
-        return
-    orchestrator._sm.update_metadata(
-        lane_id,
-        {
-            "recovery_artifact_status": "written",
-            "recovery_artifact_source_authority": source_authority,
-            "recovery_artifact_ref": _relative_artifact_ref(
-                orchestrator._root,
-                recovery_path,
-            ),
-            "recovery_decision": decision.model_dump(mode="json"),
-            "recovery_source_refs": source_refs,
-        },
+    _write_lane_recovery_artifact(
+        orchestrator,
+        lane,
+        source_authority=source_authority,
+        decision=decision,
+        failure_evidence=[failure],
+        source_refs=source_refs,
+        write_failed_gap="review_retry_exhaustion_recovery_artifact_write_failed",
     )
 
 
@@ -672,17 +551,11 @@ def record_review_retry_recovery_artifact(
     lane_id = _optional_text(lane.get("feature_id"))
     source_authority = "platform_orchestrator_review_retry"
     if graph_id is None or lane_id is None:
-        orchestrator._sm.update_metadata(
+        _record_recovery_artifact_manual_gap(
+            orchestrator,
             str(lane.get("feature_id") or ""),
-            {
-                "recovery_artifact_status": "manual_gap",
-                "recovery_artifact_source_authority": source_authority,
-                "manual_gaps": [
-                    "review_retry_recovery_artifact_missing_graph_or_lane_id",
-                    "live_runner_recovery_enforcement_not_proven",
-                ],
-                "forbidden_claims": _lane_recovery_forbidden_claims(),
-            },
+            source_authority=source_authority,
+            manual_gap="review_retry_recovery_artifact_missing_graph_or_lane_id",
         )
         return
 
@@ -721,62 +594,14 @@ def record_review_retry_recovery_artifact(
         next_action="retry review within declared recovery budget",
         source_refs=source_refs,
     )
-    payload = {
-        "schema_version": "xmuse.god_room_lane_recovery.v1",
-        "source_authority": source_authority,
-        "proof_level": "contract_proof",
-        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "graph_id": graph_id,
-        "lane_id": lane_id,
-        "decision": decision.model_dump(mode="json"),
-        "failure_evidence": [failure.model_dump(mode="json")],
-        "source_refs": source_refs,
-        "manual_gaps": [
-            "live_runner_recovery_enforcement_not_proven",
-            "review_truth_not_proven",
-            "server_truth_not_proven",
-            "overnight_safe_recovery_not_proven",
-        ],
-        "forbidden_claims": _lane_recovery_forbidden_claims(),
-    }
-    try:
-        recovery_path = lane_recovery_artifact_path(
-            orchestrator._root,
-            graph_id=graph_id,
-            lane_id=lane_id,
-        )
-        recovery_path.parent.mkdir(parents=True, exist_ok=True)
-        recovery_path.write_text(
-            json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
-    except (OSError, ValueError) as exc:
-        orchestrator._sm.update_metadata(
-            lane_id,
-            {
-                "recovery_artifact_status": "manual_gap",
-                "recovery_artifact_source_authority": source_authority,
-                "recovery_artifact_error": str(exc),
-                "manual_gaps": [
-                    "review_retry_recovery_artifact_write_failed",
-                    "live_runner_recovery_enforcement_not_proven",
-                ],
-                "forbidden_claims": _lane_recovery_forbidden_claims(),
-            },
-        )
-        return
-    orchestrator._sm.update_metadata(
-        lane_id,
-        {
-            "recovery_artifact_status": "written",
-            "recovery_artifact_source_authority": source_authority,
-            "recovery_artifact_ref": _relative_artifact_ref(
-                orchestrator._root,
-                recovery_path,
-            ),
-            "recovery_decision": decision.model_dump(mode="json"),
-            "recovery_source_refs": source_refs,
-        },
+    _write_lane_recovery_artifact(
+        orchestrator,
+        lane,
+        source_authority=source_authority,
+        decision=decision,
+        failure_evidence=[failure],
+        source_refs=source_refs,
+        write_failed_gap="review_retry_recovery_artifact_write_failed",
     )
 
 
@@ -791,17 +616,11 @@ def record_merge_failure_recovery_artifact(
     lane_id = _optional_text(lane.get("feature_id"))
     source_authority = "platform_orchestrator_merge_failure"
     if graph_id is None or lane_id is None:
-        orchestrator._sm.update_metadata(
+        _record_recovery_artifact_manual_gap(
+            orchestrator,
             str(lane.get("feature_id") or ""),
-            {
-                "recovery_artifact_status": "manual_gap",
-                "recovery_artifact_source_authority": source_authority,
-                "manual_gaps": [
-                    "merge_failure_recovery_artifact_missing_graph_or_lane_id",
-                    "live_runner_recovery_enforcement_not_proven",
-                ],
-                "forbidden_claims": _lane_recovery_forbidden_claims(),
-            },
+            source_authority=source_authority,
+            manual_gap="merge_failure_recovery_artifact_missing_graph_or_lane_id",
         )
         return
 
@@ -833,62 +652,14 @@ def record_merge_failure_recovery_artifact(
         failure=failure,
         source_refs=source_refs,
     )
-    payload = {
-        "schema_version": "xmuse.god_room_lane_recovery.v1",
-        "source_authority": source_authority,
-        "proof_level": "contract_proof",
-        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "graph_id": graph_id,
-        "lane_id": lane_id,
-        "decision": decision.model_dump(mode="json"),
-        "failure_evidence": [failure.model_dump(mode="json")],
-        "source_refs": source_refs,
-        "manual_gaps": [
-            "live_runner_recovery_enforcement_not_proven",
-            "review_truth_not_proven",
-            "server_truth_not_proven",
-            "overnight_safe_recovery_not_proven",
-        ],
-        "forbidden_claims": _lane_recovery_forbidden_claims(),
-    }
-    try:
-        recovery_path = lane_recovery_artifact_path(
-            orchestrator._root,
-            graph_id=graph_id,
-            lane_id=lane_id,
-        )
-        recovery_path.parent.mkdir(parents=True, exist_ok=True)
-        recovery_path.write_text(
-            json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
-    except (OSError, ValueError) as exc:
-        orchestrator._sm.update_metadata(
-            lane_id,
-            {
-                "recovery_artifact_status": "manual_gap",
-                "recovery_artifact_source_authority": source_authority,
-                "recovery_artifact_error": str(exc),
-                "manual_gaps": [
-                    "merge_failure_recovery_artifact_write_failed",
-                    "live_runner_recovery_enforcement_not_proven",
-                ],
-                "forbidden_claims": _lane_recovery_forbidden_claims(),
-            },
-        )
-        return
-    orchestrator._sm.update_metadata(
-        lane_id,
-        {
-            "recovery_artifact_status": "written",
-            "recovery_artifact_source_authority": source_authority,
-            "recovery_artifact_ref": _relative_artifact_ref(
-                orchestrator._root,
-                recovery_path,
-            ),
-            "recovery_decision": decision.model_dump(mode="json"),
-            "recovery_source_refs": source_refs,
-        },
+    _write_lane_recovery_artifact(
+        orchestrator,
+        lane,
+        source_authority=source_authority,
+        decision=decision,
+        failure_evidence=[failure],
+        source_refs=source_refs,
+        write_failed_gap="merge_failure_recovery_artifact_write_failed",
     )
 
 
@@ -1006,6 +777,8 @@ def _merge_failure_recovery_decision(
 
 def _lane_recovery_forbidden_claims() -> list[str]:
     return [
+        "independent_review_truth",
+        "server_truth",
         "overnight_safe_recovery",
         "end_to_end_execution_review_closure",
         "worker_output_is_review_truth",

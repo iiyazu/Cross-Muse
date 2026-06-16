@@ -16,12 +16,9 @@ from xmuse_core.platform.github_truth_release_gate import (
     build_github_server_truth_release_gate,
 )
 from xmuse_core.platform.god_room_review_chain_proof import (
-    GOD_ROOM_REVIEW_CHAIN_PROOF_FORBIDDEN_CLAIMS,
-    review_chain_proof_bounded_session_gate,
-    review_chain_proof_worker_evidence_bundle_refs,
+    build_review_chain_proof_l10_handoff_evaluation,
 )
 from xmuse_core.platform.god_room_review_handoff import (
-    build_god_room_review_closure_handoff,
     build_review_closure_handoff_evaluation,
 )
 from xmuse_core.platform.god_runtime_continuity import (
@@ -556,6 +553,9 @@ def _memoryos_candidates(
         "review_chain_proof_bounded_session_gate_summary": review_chain[
             "bounded_session_gate_summary"
         ],
+        "review_chain_proof_handoff_evaluation": review_chain[
+            "handoff_evaluation"
+        ],
         "runtime_closure_artifact_configured": runtime_closure["artifact_configured"],
         "runtime_closure_artifact_path": runtime_closure["artifact_path"],
         "runtime_closure_artifact_gate_ready": runtime_closure["artifact_gate_ready"],
@@ -654,26 +654,24 @@ def _memoryos_review_closure_candidate(
             **base,
             "artifact_summary": load_error,
         }
-    handoff = build_god_room_review_closure_handoff(
-        root=root,
-        review_closure=artifact,
-    )
     handoff_evaluation = build_review_closure_handoff_evaluation(
         root=root,
         review_closure=artifact,
     )
-    if handoff["gate_ready"] is not True:
+    if handoff_evaluation["status"] != "ready":
         return {
             **base,
-            "artifact_summary": handoff["summary"],
+            "artifact_summary": handoff_evaluation["handoff_summary"],
             "handoff_evaluation": handoff_evaluation,
         }
-    source_refs = _string_list(handoff.get("source_refs"))
-    candidate_artifact_refs = _string_list(handoff.get("candidate_artifact_refs"))
+    source_refs = _string_list(handoff_evaluation.get("source_refs"))
+    candidate_artifact_refs = _string_list(
+        handoff_evaluation.get("candidate_artifact_refs")
+    )
     return {
         **base,
         "artifact_gate_ready": True,
-        "artifact_summary": handoff["summary"],
+        "artifact_summary": handoff_evaluation["handoff_summary"],
         "handoff_evaluation": handoff_evaluation,
         "source_refs": source_refs,
         "source_ref_count": len(source_refs),
@@ -701,6 +699,7 @@ def _memoryos_review_chain_proof_candidate(
         "candidate_artifact_ref_count": 0,
         "bounded_session_gate_status": None,
         "bounded_session_gate_summary": None,
+        "handoff_evaluation": None,
     }
     if artifact_path is None:
         return base
@@ -713,155 +712,41 @@ def _memoryos_review_chain_proof_candidate(
             **base,
             "artifact_summary": load_error,
         }
-    schema_version = _text(artifact.get("schema_version"))
-    status = _text(artifact.get("status"))
-    proof_level = _text(artifact.get("proof_level"))
-    server_truth_status = _text(artifact.get("server_truth_status"))
-    forbidden_claims = set(_string_list(artifact.get("forbidden_claims")))
-    required_forbidden = set(GOD_ROOM_REVIEW_CHAIN_PROOF_FORBIDDEN_CLAIMS)
-    if schema_version != "xmuse.god_room_lane_review_chain_proof.v1":
-        return {
-            **base,
-            "artifact_summary": "GOD room review chain proof schema is unsupported.",
-        }
-    if status != "chain_ready":
-        return {
-            **base,
-            "artifact_summary": "GOD room review chain proof is not chain_ready.",
-        }
-    if proof_level != "contract_proof":
-        return {
-            **base,
-            "artifact_summary": "GOD room review chain proof must remain contract_proof.",
-        }
-    if server_truth_status != "not_server_truth":
-        return {
-            **base,
-            "artifact_summary": "GOD room review chain proof overclaims server truth.",
-        }
-    missing_forbidden = sorted(required_forbidden - forbidden_claims)
-    if missing_forbidden:
-        return {
-            **base,
-            "artifact_summary": (
-                "GOD room review chain proof missing forbidden claims: "
-                + ", ".join(missing_forbidden)
-            ),
-        }
-    release_handoff = artifact.get("release_evidence_handoff")
-    if not isinstance(release_handoff, Mapping):
-        return {
-            **base,
-            "artifact_summary": "GOD room review chain proof missing release handoff.",
-        }
-    if release_handoff.get("review_closure_artifact_gate_ready") is not True:
-        return {
-            **base,
-            "artifact_summary": (
-                "GOD room review chain proof release handoff is not gate-ready."
-            ),
-        }
-    candidate_refs = _string_list(
-        release_handoff.get("review_closure_candidate_artifact_refs")
+    handoff_evaluation = build_review_chain_proof_l10_handoff_evaluation(
+        root=root,
+        artifact_path=artifact_path,
+        review_chain_proof=artifact,
     )
-    if not candidate_refs:
+    if handoff_evaluation["status"] != "ready":
         return {
             **base,
-            "artifact_summary": (
-                "GOD room review chain proof has no candidate artifact refs."
-            ),
+            "artifact_summary": handoff_evaluation["handoff_summary"],
+            "bounded_session_gate_status": handoff_evaluation[
+                "bounded_session_gate_status"
+            ],
+            "bounded_session_gate_summary": handoff_evaluation[
+                "bounded_session_gate_summary"
+            ],
+            "handoff_evaluation": handoff_evaluation,
         }
-    bounded_session_gate = review_chain_proof_bounded_session_gate(artifact)
-    if bounded_session_gate["status"] != "verified":
-        return {
-            **base,
-            "artifact_summary": bounded_session_gate["summary"],
-            "bounded_session_gate_status": bounded_session_gate["status"],
-            "bounded_session_gate_summary": bounded_session_gate["summary"],
-        }
-    current_handoff = _review_chain_current_handoff(root, artifact)
-    if current_handoff["gate_ready"] is not True:
-        return {
-            **base,
-            "artifact_summary": current_handoff["summary"],
-            "bounded_session_gate_status": bounded_session_gate["status"],
-            "bounded_session_gate_summary": bounded_session_gate["summary"],
-        }
-    current_candidate_refs = _string_list(current_handoff.get("candidate_artifact_refs"))
-    if current_candidate_refs != candidate_refs:
-        return {
-            **base,
-            "artifact_summary": (
-                "GOD room review chain proof current review-closure handoff "
-                "candidate refs do not match embedded handoff refs."
-            ),
-            "bounded_session_gate_status": bounded_session_gate["status"],
-            "bounded_session_gate_summary": bounded_session_gate["summary"],
-        }
-    source_refs = _review_chain_proof_source_refs(
-        root,
-        artifact,
-        artifact_path,
-        current_handoff=current_handoff,
-    )
+    source_refs = _string_list(handoff_evaluation.get("source_refs"))
+    candidate_refs = _string_list(handoff_evaluation.get("candidate_artifact_refs"))
     return {
         **base,
         "artifact_gate_ready": True,
-        "artifact_summary": (
-            "GOD room review chain proof can seed MemoryOS source refs."
-        ),
+        "artifact_summary": handoff_evaluation["handoff_summary"],
         "source_refs": source_refs,
         "source_ref_count": len(source_refs),
         "candidate_artifact_refs": candidate_refs,
         "candidate_artifact_ref_count": len(candidate_refs),
-        "bounded_session_gate_status": bounded_session_gate["status"],
-        "bounded_session_gate_summary": bounded_session_gate["summary"],
+        "bounded_session_gate_status": handoff_evaluation[
+            "bounded_session_gate_status"
+        ],
+        "bounded_session_gate_summary": handoff_evaluation[
+            "bounded_session_gate_summary"
+        ],
+        "handoff_evaluation": handoff_evaluation,
     }
-
-
-def _review_chain_current_handoff(
-    root: Path,
-    artifact: Mapping[str, Any],
-) -> dict[str, Any]:
-    review_closure_ref = _text(artifact.get("review_closure_artifact"))
-    base = {
-        "gate_ready": False,
-        "summary": "GOD room review chain proof missing review_closure_artifact.",
-        "candidate_artifact_refs": [],
-    }
-    if review_closure_ref is None:
-        return base
-    review_closure_path = _root_relative_artifact_path(root, review_closure_ref)
-    if review_closure_path is None:
-        return {
-            **base,
-            "summary": (
-                "GOD room review chain proof review_closure_artifact escapes "
-                "xmuse root."
-            ),
-        }
-    review_closure, load_error = _json_file(
-        review_closure_path,
-        subject="GOD room review closure artifact referenced by chain proof",
-    )
-    if review_closure is None:
-        return {
-            **base,
-            "summary": load_error,
-        }
-    handoff = build_god_room_review_closure_handoff(
-        root=root,
-        review_closure=review_closure,
-    )
-    if handoff.get("gate_ready") is not True:
-        return {
-            **handoff,
-            "summary": (
-                "GOD room review chain proof current review-closure handoff is "
-                f"not gate-ready: {_text(handoff.get('summary')) or 'unknown'}"
-            ),
-        }
-    return handoff
 
 
 def _root_relative_artifact_path(root: Path, artifact_ref: str) -> Path | None:
@@ -872,55 +757,6 @@ def _root_relative_artifact_path(root: Path, artifact_ref: str) -> Path | None:
     except ValueError:
         return None
     return candidate
-
-
-def _review_chain_proof_source_refs(
-    root: Path,
-    artifact: Mapping[str, Any],
-    artifact_path: str,
-    *,
-    current_handoff: Mapping[str, Any],
-) -> list[str]:
-    graph_id = _text(artifact.get("graph_id"))
-    failed_lane_id = _text(artifact.get("failed_lane_id"))
-    terminal_lane_id = _text(artifact.get("terminal_lane_id"))
-    review_closure_ref = _text(artifact.get("review_closure_artifact"))
-    release_handoff = artifact.get("release_evidence_handoff")
-    if not isinstance(release_handoff, Mapping):
-        release_handoff = {}
-    runner_recovery = artifact.get("runner_recovery_proof_lineage")
-    runner_recovery_refs: list[str] = []
-    if isinstance(runner_recovery, Mapping):
-        recovery_ref = _text(runner_recovery.get("artifact_ref"))
-        if recovery_ref is not None:
-            runner_recovery_refs.append(
-                f"runner_recovery_proof_artifact:{recovery_ref}"
-            )
-    worker_evidence_bundle_refs = review_chain_proof_worker_evidence_bundle_refs(
-        artifact
-    )
-    try:
-        artifact_ref = str(Path(artifact_path).resolve(strict=False).relative_to(root))
-    except ValueError:
-        artifact_ref = artifact_path
-    synthetic_ref = (
-        f"god-room-review-chain-proof:{graph_id}:{failed_lane_id}:{terminal_lane_id}"
-        if graph_id and failed_lane_id and terminal_lane_id
-        else None
-    )
-    return _ordered_unique(
-        [
-            synthetic_ref,
-            f"review_chain_proof_artifact:{artifact_ref}",
-            review_closure_ref,
-            f"lane:{failed_lane_id}" if failed_lane_id else None,
-            f"lane:{terminal_lane_id}" if terminal_lane_id else None,
-            *_string_list(current_handoff.get("source_refs")),
-            *_string_list(release_handoff.get("review_closure_candidate_artifact_refs")),
-            *runner_recovery_refs,
-            *worker_evidence_bundle_refs,
-        ]
-    )
 
 
 def _memoryos_runtime_closure_candidate(
@@ -1005,15 +841,16 @@ def _memoryos_runtime_closure_candidate(
         if requires_handoff_revalidation
         else None
     )
-    if current_handoff is not None and current_handoff.get("gate_ready") is not True:
+    if current_handoff is not None and current_handoff.get("status") != "ready":
         return {
             **base,
             "artifact_summary": (
                 "GOD room runtime closure evidence current review-closure handoff "
-                f"is not gate-ready: {_text(current_handoff.get('summary')) or 'unknown'}"
+                "is not gate-ready: "
+                f"{_text(current_handoff.get('handoff_summary')) or 'unknown'}"
             ),
             "current_handoff_gate_ready": False,
-            "current_handoff_summary": _text(current_handoff.get("summary")),
+            "current_handoff_summary": _text(current_handoff.get("handoff_summary")),
             "current_handoff_candidate_artifact_refs": _string_list(
                 current_handoff.get("candidate_artifact_refs")
             ),
@@ -1024,7 +861,7 @@ def _memoryos_runtime_closure_candidate(
     current_handoff_fields = (
         {
             "current_handoff_gate_ready": True,
-            "current_handoff_summary": _text(current_handoff.get("summary")),
+            "current_handoff_summary": _text(current_handoff.get("handoff_summary")),
             "current_handoff_candidate_artifact_refs": _string_list(
                 current_handoff.get("candidate_artifact_refs")
             ),
@@ -1091,12 +928,15 @@ def _runtime_closure_current_review_handoff(
     runtime_closure_artifact: Mapping[str, Any],
 ) -> dict[str, Any]:
     base = {
-        "gate_ready": False,
-        "summary": (
+        "status": "manual_gap",
+        "handoff_summary": (
             "GOD room runtime closure evidence has no revalidatable review "
             "closure artifact."
         ),
         "candidate_artifact_refs": [],
+        "candidate_artifact_ref_count": 0,
+        "source_refs": [],
+        "source_ref_count": 0,
     }
     for artifact_ref in _string_list(runtime_closure_artifact.get("artifacts")):
         review_closure_path = _root_relative_artifact_path(root, artifact_ref)
@@ -1113,11 +953,11 @@ def _runtime_closure_current_review_handoff(
         ):
             continue
         handoff_root_ref = _text(review_closure.get("xmuse_root"))
-        handoff = build_god_room_review_closure_handoff(
-            root=Path(handoff_root_ref) if handoff_root_ref is not None else root,
+        handoff_root = Path(handoff_root_ref) if handoff_root_ref is not None else root
+        return build_review_closure_handoff_evaluation(
+            root=handoff_root,
             review_closure=review_closure,
         )
-        return dict(handoff)
     return base
 
 
