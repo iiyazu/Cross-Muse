@@ -325,6 +325,136 @@ def test_reconcile_closure_fails_closed_release_handoff_without_source_refs(
     assert condition.reason == "release handoff is missing source refs"
 
 
+def test_reconcile_closure_rejects_review_chain_handoff_wrong_status(
+    tmp_path: Path,
+) -> None:
+    closure = reconcile_closure(
+        root=tmp_path,
+        graph_id="graph-runtime",
+        lane_id="lane-runtime-evidence-patch",
+        release_handoff={
+            "schema_version": "xmuse.god_room_lane_review_chain_proof.v1",
+            "status": "ready",
+            "proof_level": "contract_proof",
+            "server_truth_status": "not_server_truth",
+            "graph_id": "graph-runtime",
+            "terminal_lane_id": "lane-runtime-evidence-patch",
+            "source_refs": ["god-room-review-closure:graph-runtime:failed:terminal"],
+        },
+    )
+
+    condition = closure_condition_by_type(closure, RELEASE_HANDOFF_EVALUATED)
+    assert condition is not None
+    assert condition.status == "false"
+    assert condition.severity == "manual_gap"
+    assert condition.reason == "release handoff status is not chain_ready"
+
+
+def test_reconcile_closure_rejects_review_chain_handoff_wrong_graph_and_lane_scope(
+    tmp_path: Path,
+) -> None:
+    closure = reconcile_closure(
+        root=tmp_path,
+        graph_id="graph-runtime",
+        lane_id="lane-runtime-evidence-patch",
+        release_handoff={
+            "schema_version": "xmuse.god_room_lane_review_chain_proof.v1",
+            "status": "chain_ready",
+            "proof_level": "contract_proof",
+            "server_truth_status": "not_server_truth",
+            "graph_id": "graph-other",
+            "terminal_lane_id": "lane-other",
+            "source_refs": ["god-room-review-closure:graph-runtime:failed:terminal"],
+        },
+    )
+
+    condition = closure_condition_by_type(closure, RELEASE_HANDOFF_EVALUATED)
+    assert condition is not None
+    assert condition.status == "false"
+    assert condition.severity == "manual_gap"
+    assert (
+        condition.reason == "release handoff graph_id does not match current closure graph"
+    )
+
+
+def test_reconcile_closure_rejects_review_chain_handoff_wrong_proof_level(
+    tmp_path: Path,
+) -> None:
+    closure = reconcile_closure(
+        root=tmp_path,
+        graph_id="graph-runtime",
+        lane_id="lane-runtime-evidence-patch",
+        release_handoff={
+            "schema_version": "xmuse.god_room_lane_review_chain_proof.v1",
+            "status": "chain_ready",
+            "proof_level": "manual_gap",
+            "server_truth_status": "not_server_truth",
+            "graph_id": "graph-runtime",
+            "terminal_lane_id": "lane-runtime-evidence-patch",
+            "source_refs": ["god-room-review-closure:graph-runtime:failed:terminal"],
+        },
+    )
+
+    condition = closure_condition_by_type(closure, RELEASE_HANDOFF_EVALUATED)
+    assert condition is not None
+    assert condition.status == "false"
+    assert condition.severity == "manual_gap"
+    assert condition.reason == "release handoff proof level is not contract_proof"
+
+
+def test_reconcile_closure_rejects_review_closure_handoff_wrong_status_or_scope(
+    tmp_path: Path,
+) -> None:
+    closure = reconcile_closure(
+        root=tmp_path,
+        graph_id="graph-runtime",
+        lane_id="lane-runtime-evidence-patch",
+        release_handoff={
+            "schema_version": "xmuse.review_closure_handoff_evaluation.v1",
+            "status": "blocked",
+            "server_truth_status": "not_server_truth",
+            "graph_id": "graph-other",
+            "lane_id": "lane-other",
+            "candidate_artifact_refs": ["artifacts/local-exec/result.json"],
+            "source_refs": ["god-room-review-closure:graph-runtime:failed:terminal"],
+        },
+    )
+
+    condition = closure_condition_by_type(closure, RELEASE_HANDOFF_EVALUATED)
+    assert condition is not None
+    assert condition.status == "false"
+    assert condition.severity == "manual_gap"
+    assert condition.reason == "review-closure handoff status is not ready"
+
+
+def test_reconcile_closure_rejects_review_closure_handoff_wrong_graph_and_lane_scope(
+    tmp_path: Path,
+) -> None:
+    closure = reconcile_closure(
+        root=tmp_path,
+        graph_id="graph-runtime",
+        lane_id="lane-runtime-evidence-patch",
+        release_handoff={
+            "schema_version": "xmuse.review_closure_handoff_evaluation.v1",
+            "status": "ready",
+            "server_truth_status": "not_server_truth",
+            "graph_id": "graph-other",
+            "lane_id": "lane-other",
+            "candidate_artifact_refs": ["artifacts/local-exec/result.json"],
+            "source_refs": ["god-room-review-closure:graph-runtime:failed:terminal"],
+        },
+    )
+
+    condition = closure_condition_by_type(closure, RELEASE_HANDOFF_EVALUATED)
+    assert condition is not None
+    assert condition.status == "false"
+    assert condition.severity == "manual_gap"
+    assert (
+        condition.reason
+        == "review-closure handoff graph_id does not match current closure graph"
+    )
+
+
 def test_reconcile_closure_rejects_candidate_without_runner_session(
     tmp_path: Path,
 ) -> None:

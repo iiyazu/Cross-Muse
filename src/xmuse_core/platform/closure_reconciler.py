@@ -99,7 +99,11 @@ def reconcile_closure(
     patch_forward_present = _patch_forward_lineage_present(
         release_handoff=current.release_handoff,
     )
-    release_evaluated = _release_handoff_evaluated(current.release_handoff)
+    release_evaluated = _release_handoff_evaluated(
+        current.release_handoff,
+        graph_id=graph_id,
+        lane_id=lane_id,
+    )
     forbidden_claims = _forbidden_claims(
         current.recovery_artifact,
         *current.execution_candidates,
@@ -730,6 +734,9 @@ def _independent_review_verdict_present(
 
 def _release_handoff_evaluated(
     release_handoff: Mapping[str, Any] | None,
+    *,
+    graph_id: str,
+    lane_id: str,
 ) -> _ConditionBuilder:
     if release_handoff is None:
         return _condition(
@@ -750,6 +757,59 @@ def _release_handoff_evaluated(
             "blocked",
             "release handoff schema is unsupported",
         )
+    if schema_version == REVIEW_CHAIN_PROOF_SCHEMA_VERSION:
+        if _text(release_handoff.get("status")) != "chain_ready":
+            return _condition(
+                RELEASE_HANDOFF_EVALUATED,
+                "false",
+                "manual_gap",
+                "release handoff status is not chain_ready",
+            )
+        if _text(release_handoff.get("proof_level")) != "contract_proof":
+            return _condition(
+                RELEASE_HANDOFF_EVALUATED,
+                "false",
+                "manual_gap",
+                "release handoff proof level is not contract_proof",
+            )
+        if _text(release_handoff.get("graph_id")) not in {None, graph_id}:
+            return _condition(
+                RELEASE_HANDOFF_EVALUATED,
+                "false",
+                "manual_gap",
+                "release handoff graph_id does not match current closure graph",
+            )
+        terminal_lane = _text(release_handoff.get("terminal_lane_id"))
+        if terminal_lane is not None and terminal_lane != lane_id:
+            return _condition(
+                RELEASE_HANDOFF_EVALUATED,
+                "false",
+                "manual_gap",
+                "release handoff terminal lane id does not match current closure lane",
+            )
+    if schema_version == "xmuse.review_closure_handoff_evaluation.v1":
+        if _text(release_handoff.get("status")) != "ready":
+            return _condition(
+                RELEASE_HANDOFF_EVALUATED,
+                "false",
+                "manual_gap",
+                "review-closure handoff status is not ready",
+            )
+        if _text(release_handoff.get("graph_id")) not in {None, graph_id}:
+            return _condition(
+                RELEASE_HANDOFF_EVALUATED,
+                "false",
+                "manual_gap",
+                "review-closure handoff graph_id does not match current closure graph",
+            )
+        handoff_lane_id = _text(release_handoff.get("lane_id"))
+        if handoff_lane_id is not None and handoff_lane_id != lane_id:
+            return _condition(
+                RELEASE_HANDOFF_EVALUATED,
+                "false",
+                "manual_gap",
+                "review-closure handoff lane_id does not match current closure lane",
+            )
     if _text(release_handoff.get("server_truth_status")) not in {None, "not_server_truth"}:
         return _condition(
             RELEASE_HANDOFF_EVALUATED,
