@@ -880,6 +880,16 @@ def test_release_evidence_pack_writes_readiness_audit_and_summary(
         "manual_gap": 1,
         "server_side_enforcement_proof": 1,
     }
+    assert pack["release_forbidden_claims"] == ["pr_merged"]
+    assert pack["release_forbidden_claim_count"] == 1
+    assert pack["release_forbidden_claim_gates"] == [
+        {
+            "gate_id": "github-server-truth",
+            "kind": "github_server_truth",
+            "owner": "operator",
+            "forbidden_claims": ["pr_merged"],
+        }
+    ]
     assert pack["release_gates"] == [
         {
             "gate_id": "github-server-truth",

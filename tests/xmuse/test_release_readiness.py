@@ -88,6 +88,40 @@ def test_release_readiness_accepts_internal_review_without_server_enforcement() 
     assert readiness.decision == "ready"
     assert readiness.proof_level_summary["internal_review_proof"] == 1
     assert readiness.proof_level_summary["server_side_enforcement_proof"] == 1
+    assert readiness.forbidden_claims == []
+    assert readiness.forbidden_claim_count == 0
+    assert readiness.forbidden_claim_gates == []
+
+
+def test_release_readiness_reports_forbidden_claims_without_blocking_gate_ready() -> None:
+    readiness = evaluate_release_readiness(
+        [
+            ReleaseGateEvidence(
+                gate_id="github-enforcement",
+                kind=ReleaseGateKind.GITHUB_SERVER_TRUTH,
+                configured=True,
+                required=True,
+                status="ok",
+                proof_level="server_side_enforcement_proof",
+                owner="github",
+                summary="branch rules observed; merge truth remains absent",
+                forbidden_claims=("ready_to_merge", "pr_merged"),
+            )
+        ]
+    )
+
+    assert readiness.decision == "ready"
+    assert readiness.blockers == []
+    assert readiness.forbidden_claims == ["ready_to_merge", "pr_merged"]
+    assert readiness.forbidden_claim_count == 2
+    assert readiness.forbidden_claim_gates == [
+        {
+            "gate_id": "github-enforcement",
+            "kind": "github_server_truth",
+            "owner": "github",
+            "forbidden_claims": ["ready_to_merge", "pr_merged"],
+        }
+    ]
 
 
 def test_release_readiness_blocks_internal_review_used_as_github_server_truth() -> None:

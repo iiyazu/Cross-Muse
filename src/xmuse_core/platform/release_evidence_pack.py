@@ -239,6 +239,13 @@ def capture_release_evidence_pack(
         "overnight_replay_decision": replay["decision"],
         "overnight_replay_authority": replay["authority"],
         "proof_level_summary": _proof_level_summary(readiness),
+        "release_forbidden_claims": _string_list(readiness.get("forbidden_claims")),
+        "release_forbidden_claim_count": len(
+            _string_list(readiness.get("forbidden_claims"))
+        ),
+        "release_forbidden_claim_gates": _dicts(
+            readiness.get("forbidden_claim_gates")
+        ),
         "release_gates": _release_gate_digests(readiness),
         "artifact_count": readiness["artifact_count"],
         "blocker_count": len(readiness["blockers"]),

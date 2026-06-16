@@ -57,6 +57,9 @@ class ReleaseReadinessResult:
     decision: ReadinessDecision
     blockers: list[dict[str, object]]
     proof_level_summary: dict[str, int]
+    forbidden_claims: list[str]
+    forbidden_claim_count: int
+    forbidden_claim_gates: list[dict[str, object]]
     gates: list[dict[str, object]]
 
     def model_dump(self) -> dict[str, object]:
@@ -68,10 +71,22 @@ def evaluate_release_readiness(
 ) -> ReleaseReadinessResult:
     blockers: list[dict[str, object]] = []
     proof_level_summary: dict[str, int] = {}
+    forbidden_claims: list[str] = []
+    forbidden_claim_gates: list[dict[str, object]] = []
     for gate in gates:
         proof_level_summary[gate.proof_level] = (
             proof_level_summary.get(gate.proof_level, 0) + 1
         )
+        if gate.forbidden_claims:
+            forbidden_claim_gates.append(
+                {
+                    "gate_id": gate.gate_id,
+                    "kind": gate.kind.value,
+                    "owner": gate.owner,
+                    "forbidden_claims": list(gate.forbidden_claims),
+                }
+            )
+            forbidden_claims = _dedupe([*forbidden_claims, *gate.forbidden_claims])
         blocker_reason = _gate_blocker_reason(gate)
         if blocker_reason is not None:
             blockers.append(
@@ -94,8 +109,23 @@ def evaluate_release_readiness(
         decision=decision,
         blockers=blockers,
         proof_level_summary=proof_level_summary,
+        forbidden_claims=forbidden_claims,
+        forbidden_claim_count=len(forbidden_claims),
+        forbidden_claim_gates=forbidden_claim_gates,
         gates=[gate.model_dump() for gate in gates],
     )
+
+
+def _dedupe(values: list[str]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        clean = value.strip()
+        if not clean or clean in seen:
+            continue
+        seen.add(clean)
+        result.append(clean)
+    return result
 
 
 def _gate_blocker_reason(gate: ReleaseGateEvidence) -> str | None:

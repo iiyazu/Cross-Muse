@@ -260,6 +260,8 @@ runtime、provider invocation、lane authority、review truth 完成。后续生
   `1a02f7acb5ebc0ecadbce9b73dabc9f7733e2206`
 - Local head at start of x3 release-gate digest refs preservation slice:
   `bcc49d1caf6548f56cdf69c73d20619563ff1085`
+- Local head at start of x3 release-readiness forbidden-claim projection slice:
+  `5220369bcf8da7f9a834159956669dce0d42c180`
 - PR: <https://github.com/iiyazu/Cross-Muse/pull/43>
 - PR state last checked: draft/open/unmerged
 - PR merge state last checked: `CLEAN`
@@ -368,6 +370,7 @@ truth_snapshot:
   local_head_at_x3_closure_object_owner_ref_projection_slice: e818f52ec434aed0042eee8cf6c169683ecb2d7b
   local_head_at_x3_closure_object_complete_condition_admission_slice: 1a02f7acb5ebc0ecadbce9b73dabc9f7733e2206
   local_head_at_x3_release_gate_digest_refs_preservation_slice: bcc49d1caf6548f56cdf69c73d20619563ff1085
+  local_head_at_x3_release_readiness_forbidden_claim_projection_slice: 5220369bcf8da7f9a834159956669dce0d42c180
   pr: 43
   pr_url: https://github.com/iiyazu/Cross-Muse/pull/43
   pr_state: draft_open_unmerged
@@ -706,6 +709,12 @@ Current closure audit:
     prevents the L10 aggregation artifact from stripping scope/claim guardrails
     that upstream gate artifacts already produced, but it does not make a gate
     ready or upgrade any proof level.
+    Release readiness reports now also carry a non-blocking
+    `forbidden_claims` summary plus per-gate forbidden-claim entries, and the
+    release evidence pack projects that summary at top level. This preserves
+    the existing meaning of `release_readiness_decision=ready` as gate readiness
+    while keeping claims such as `ready_to_merge` or `pr_merged` visibly
+    forbidden unless a stronger server-side proof removes them.
     Closure-controller and review-handoff regression tests now share a small
     fixture builder that produces candidate, runner-session, review-closure,
     and review-chain payloads through the production capture/build helpers. This
