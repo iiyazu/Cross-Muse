@@ -266,6 +266,8 @@ runtime、provider invocation、lane authority、review truth 完成。后续生
   `709008aff94a56ef88db38a78d78d9347003db56`
 - Local head at start of x3 GitHub release-gate model-admission slice:
   `6cd34fcff8dd75ec9e2465d404095ae4e97d7dc0`
+- Local head at start of x3 MemoryOS live-gate source-ref boundary slice:
+  `cf6bd548fcf75c4374ed95ff5c800b290a01ed90`
 - PR: <https://github.com/iiyazu/Cross-Muse/pull/43>
 - PR state last checked: draft/open/unmerged
 - PR merge state last checked: `CLEAN`
@@ -377,6 +379,7 @@ truth_snapshot:
   local_head_at_x3_release_readiness_forbidden_claim_projection_slice: 5220369bcf8da7f9a834159956669dce0d42c180
   local_head_at_x3_github_release_gate_forbidden_claim_producer_slice: 709008aff94a56ef88db38a78d78d9347003db56
   local_head_at_x3_github_release_gate_model_admission_slice: 6cd34fcff8dd75ec9e2465d404095ae4e97d7dc0
+  local_head_at_x3_memoryos_live_gate_source_ref_boundary_slice: cf6bd548fcf75c4374ed95ff5c800b290a01ed90
   pr: 43
   pr_url: https://github.com/iiyazu/Cross-Muse/pull/43
   pr_state: draft_open_unmerged
@@ -731,6 +734,12 @@ Current closure audit:
     `.has_server_enforcement_truth` instead of a wider raw-dict check. Missing
     workflow/check-run lineage therefore stays `manual_gap` and keeps
     `pr_merged` forbidden.
+    The MemoryOS live release gate now rejects trace artifacts whose source
+    refs are only MemoryOS refs (`memoryos:` or `memory://...`) and requires at
+    least one non-MemoryOS upstream xmuse source ref before live trace proof can
+    be release-gate `ok`. Blocked MemoryOS gates explicitly carry
+    `forbidden_claims=["live_memoryos"]`; successful live service proof drops
+    that forbidden claim without making MemoryOS an authority for L8/L9 truth.
     Closure-controller and review-handoff regression tests now share a small
     fixture builder that produces candidate, runner-session, review-closure,
     and review-chain payloads through the production capture/build helpers. This
@@ -2346,6 +2355,11 @@ Use these as implementation references, not as xmuse package dependencies:
     and server-enforcement truth properties as merge-proof emission, so a raw
     artifact with required-check names but no workflow/check-run lineage remains
     a `manual_gap`.
+  - MemoryOS live gate source-ref admission now excludes MemoryOS-owned refs
+    from the upstream source-ref count. A live trace must cite a non-MemoryOS
+    xmuse source such as conversation, lane, blueprint, review, or release
+    lineage; otherwise it remains blocked/manual-gap and keeps `live_memoryos`
+    forbidden. This prevents a MemoryOS trace artifact from proving itself.
   - PR #43 latest verified CI after this slice refresh is for remote head
   `b154021111400863098f11ed98eeb24d6fad9311` in run `27607281313`; merge
   state was `CLEAN` when last checked. Local changes after that head remain

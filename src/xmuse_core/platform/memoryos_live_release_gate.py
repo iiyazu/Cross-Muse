@@ -5,6 +5,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+_LIVE_MEMORYOS_FORBIDDEN_CLAIMS = ["live_memoryos"]
+
 
 def capture_memoryos_live_release_gate(
     *,
@@ -231,6 +233,9 @@ def _gate(
         "attempted_command": "uv run xmuse-memoryos-live-gate-capture",
         "next_action": next_action,
         "source_refs": source_refs,
+        "forbidden_claims": []
+        if status == "ok"
+        else _LIVE_MEMORYOS_FORBIDDEN_CLAIMS,
         "artifacts": [str(artifact_path)],
         "generated_at": _utc_now(),
     }
@@ -300,7 +305,11 @@ def _target_refs(trace_artifact: dict[str, Any]) -> list[str]:
 
 
 def _upstream_source_refs(source_refs: list[str]) -> list[str]:
-    return [ref for ref in source_refs if not ref.startswith("memoryos:")]
+    return [
+        ref
+        for ref in source_refs
+        if not ref.startswith("memoryos:") and not ref.startswith("memory://")
+    ]
 
 
 def _is_fake_or_fixture_event(event: dict[str, Any]) -> bool:

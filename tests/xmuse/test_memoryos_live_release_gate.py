@@ -66,6 +66,7 @@ def test_memoryos_live_gate_accepts_live_trace_artifact(tmp_path: Path) -> None:
     assert gate["kind"] == "live_memoryos"
     assert gate["status"] == "ok"
     assert gate["proof_level"] == "live_service_proof"
+    assert gate["forbidden_claims"] == []
     assert gate["source_refs"] == [
         "conversation:conv-live",
         "lane:lane-1",
@@ -120,6 +121,7 @@ def test_memoryos_live_gate_blocks_contract_or_fake_trace(tmp_path: Path) -> Non
 
     assert gate["status"] == "blocked"
     assert gate["proof_level"] == "manual_gap"
+    assert gate["forbidden_claims"] == ["live_memoryos"]
     assert "requires live_service_proof" in gate["summary"]
 
 
@@ -175,6 +177,39 @@ def test_memoryos_live_gate_blocks_trace_without_upstream_source_refs(
 
     assert gate["status"] == "blocked"
     assert gate["proof_level"] == "manual_gap"
+    assert gate["forbidden_claims"] == ["live_memoryos"]
+    assert "non-MemoryOS upstream source_ref" in gate["summary"]
+
+
+def test_memoryos_live_gate_blocks_memoryos_only_source_refs(
+    tmp_path: Path,
+) -> None:
+    artifact = tmp_path / "memoryos-only-source-refs.json"
+    _write_json(
+        artifact,
+        _trace_artifact(
+            source_refs=["memory://conversation/conv-live/god-review/thread-1"],
+            trace_events=[
+                {
+                    "kind": "session_created",
+                    "metadata": {
+                        "xmuse_source_refs": [
+                            "memory://conversation/conv-live/god-review/thread-1"
+                        ]
+                    },
+                }
+            ],
+        ),
+    )
+
+    gate = capture_memoryos_live_release_gate(
+        artifact_path=artifact,
+        output_path=tmp_path / "gate.json",
+    )
+
+    assert gate["status"] == "blocked"
+    assert gate["proof_level"] == "manual_gap"
+    assert gate["forbidden_claims"] == ["live_memoryos"]
     assert "non-MemoryOS upstream source_ref" in gate["summary"]
 
 
