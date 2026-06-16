@@ -276,6 +276,9 @@ runtime、provider invocation、lane authority、review truth 完成。后续生
 - Local head at start of x3 validated-execution-candidate worker-bundle
   admission slice:
   `e56c9c3a8f19011f2f4ee8e9e14c3d9942562e11`
+- Local head at start of x3 review-chain runner-session worker-bundle
+  admission slice:
+  `c729c5c79a8e45ed45bf68cc18bb67a920cdac68`
 - PR: <https://github.com/iiyazu/Cross-Muse/pull/43>
 - PR state last checked: draft/open/unmerged
 - PR merge state last checked: `CLEAN`
@@ -392,6 +395,7 @@ truth_snapshot:
   local_head_at_x3_patch_forward_lineage_scope_admission_slice: cafb4b49cdf8f562b64c94950382cb8a3e9318da
   local_head_at_x3_patch_forward_lineage_review_closure_ref_admission_slice: 365d956307e37575054d89f3aa3fc384db968be8
   local_head_at_x3_validated_execution_candidate_worker_bundle_admission_slice: e56c9c3a8f19011f2f4ee8e9e14c3d9942562e11
+  local_head_at_x3_review_chain_runner_session_worker_bundle_admission_slice: c729c5c79a8e45ed45bf68cc18bb67a920cdac68
   pr: 43
   pr_url: https://github.com/iiyazu/Cross-Muse/pull/43
   pr_state: draft_open_unmerged
@@ -2253,6 +2257,13 @@ Use these as implementation references, not as xmuse package dependencies:
     graph-native worker evidence, but it still does not prove independent
     review truth, live execution/review closure, GitHub truth, or merge
     readiness.
+    The GOD-room review-chain proof runner-session boundary now carries the
+    same non-empty worker-bundle requirement: candidate lineage and runner
+    session lineage must both expose worker-evidence bundle refs, and missing
+    candidate/session bundle refs keep the chain proof `manual_gap`. This
+    prevents `xmuse.god_room_lane_review_chain_proof.v1` from satisfying its
+    bounded-session proof with only a runner-session artifact and candidate
+    artifact present. The proof remains `contract_proof`/`not_server_truth`.
   - Release evidence candidate reports can now consume
     `xmuse.god_room_lane_review_chain_proof.v1` artifacts directly as
     `live_memoryos` source-ref guidance after validating

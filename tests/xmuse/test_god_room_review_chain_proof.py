@@ -20,6 +20,10 @@ from xmuse_core.platform.runner_recovery_proof import (
     build_runner_recovery_proof_lineage,
 )
 
+WORKER_EVIDENCE_BUNDLE_REF = (
+    "feature_evidence_bundle:platform_runner_worker_evidence_runtime_patch:v1"
+)
+
 
 def test_god_room_review_chain_proof_validates_l9_to_l10_handoff(
     tmp_path: Path,
@@ -229,8 +233,12 @@ def test_god_room_review_chain_proof_validates_l9_to_l10_handoff(
     assert runner_session_boundary["candidate_artifact_refs"] == [
         "artifacts/lane-runtime-evidence-patch/result.json"
     ]
-    assert runner_session_boundary["candidate_worker_evidence_bundle_refs"] == []
-    assert runner_session_boundary["session_worker_evidence_bundle_refs"] == []
+    assert runner_session_boundary["candidate_worker_evidence_bundle_refs"] == [
+        WORKER_EVIDENCE_BUNDLE_REF
+    ]
+    assert runner_session_boundary["session_worker_evidence_bundle_refs"] == [
+        WORKER_EVIDENCE_BUNDLE_REF
+    ]
     assert runner_session_boundary["missing_session_worker_evidence_bundle_refs"] == []
     assert "runner_session_is_review_truth" in runner_session_boundary[
         "forbidden_claims"
@@ -1464,14 +1472,62 @@ def test_god_room_review_chain_proof_fail_closes_missing_runner_session(
     )
 
 
+def test_god_room_review_chain_proof_fail_closes_empty_worker_bundle_refs(
+    tmp_path: Path,
+) -> None:
+    review_closure = _write_review_closure(tmp_path)
+    candidate_path = tmp_path / "artifacts/lane-runtime-evidence-patch/result.json"
+    candidate = json.loads(candidate_path.read_text(encoding="utf-8"))
+    candidate["source_refs"] = [
+        ref
+        for ref in candidate["source_refs"]
+        if not str(ref).startswith("feature_evidence_bundle:")
+    ]
+    candidate_path.write_text(
+        json.dumps(candidate, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    runner_session_path = tmp_path / "work/runner_sessions/runner-session-1.json"
+    runner_session = json.loads(runner_session_path.read_text(encoding="utf-8"))
+    runner_session["worker_evidence_bundle_refs"] = []
+    runner_session["worker_evidence_bundle_count"] = 0
+    runner_session_path.write_text(
+        json.dumps(runner_session, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    proof = build_god_room_review_chain_proof(
+        root=tmp_path,
+        review_closure_artifact=review_closure,
+    )
+
+    assert proof["status"] == "manual_gap"
+    boundary = proof["local_execution_review_session"]["runner_session_boundary"]
+    assert boundary["status"] == "manual_gap"
+    assert boundary["candidate_worker_evidence_bundle_refs"] == []
+    assert boundary["session_worker_evidence_bundle_refs"] == []
+    assert "runner_session_boundary_not_verified" in boundary["manual_gaps"]
+    assert (
+        "runner session boundary has no candidate worker evidence bundle refs"
+        in boundary["issues"]
+    )
+    assert (
+        "runner session boundary has no session worker evidence bundle refs"
+        in boundary["issues"]
+    )
+
+
 def test_god_room_review_chain_proof_fail_closes_candidate_bundle_not_in_session(
     tmp_path: Path,
 ) -> None:
     review_closure = _write_review_closure(tmp_path)
     candidate_path = tmp_path / "artifacts/lane-runtime-evidence-patch/result.json"
     candidate = json.loads(candidate_path.read_text(encoding="utf-8"))
+    missing_bundle_ref = (
+        "feature_evidence_bundle:platform_runner_worker_evidence_runtime_extra:v1"
+    )
     candidate["source_refs"].append(
-        "feature_evidence_bundle:platform_runner_worker_evidence_runtime_patch:v1"
+        missing_bundle_ref
     )
     candidate_path.write_text(
         json.dumps(candidate, indent=2, sort_keys=True) + "\n",
@@ -1487,11 +1543,14 @@ def test_god_room_review_chain_proof_fail_closes_candidate_bundle_not_in_session
     boundary = proof["local_execution_review_session"]["runner_session_boundary"]
     assert boundary["status"] == "manual_gap"
     assert boundary["candidate_worker_evidence_bundle_refs"] == [
-        "feature_evidence_bundle:platform_runner_worker_evidence_runtime_patch:v1"
+        WORKER_EVIDENCE_BUNDLE_REF,
+        missing_bundle_ref,
     ]
-    assert boundary["session_worker_evidence_bundle_refs"] == []
+    assert boundary["session_worker_evidence_bundle_refs"] == [
+        WORKER_EVIDENCE_BUNDLE_REF
+    ]
     assert boundary["missing_session_worker_evidence_bundle_refs"] == [
-        "feature_evidence_bundle:platform_runner_worker_evidence_runtime_patch:v1"
+        missing_bundle_ref
     ]
     assert "runner_session_boundary_not_verified" in boundary["manual_gaps"]
     assert any(
@@ -2125,7 +2184,10 @@ def _write_candidate(path: Path) -> None:
             "worker_id": "platform-runner",
             "runner_session_id": "runner-session-1",
             "runner_session_ref": "work/runner_sessions/runner-session-1.json",
-            "source_refs": ["worker-candidate:patch-reviewed"],
+            "source_refs": [
+                "worker-candidate:patch-reviewed",
+                WORKER_EVIDENCE_BUNDLE_REF,
+            ],
             "output_refs": ["artifacts/lane-runtime-evidence-patch/result.json"],
             "changed_file_refs": [],
             "verification_refs": [
@@ -2171,6 +2233,8 @@ def _write_runner_session(root: Path) -> None:
             ],
             "candidate_lane_ids": ["lane-runtime-evidence-patch"],
             "candidate_count": 1,
+            "worker_evidence_bundle_refs": [WORKER_EVIDENCE_BUNDLE_REF],
+            "worker_evidence_bundle_count": 1,
             "manual_gaps": [
                 "review_truth_not_proven",
                 "server_truth_not_proven",

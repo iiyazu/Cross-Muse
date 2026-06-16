@@ -2740,16 +2740,24 @@ def _runner_session_boundary(
     missing_session_worker_bundle_refs = [
         ref for ref in candidate_worker_bundle_refs if ref not in session_worker_bundle_refs
     ]
-    if missing_session_worker_bundle_refs:
+    if not candidate_lineages:
+        issues.append("runner session boundary has no candidate lineages")
+    if not session_lineages:
+        issues.append("runner session boundary has no validated runner session")
+    if candidate_lineages and not candidate_worker_bundle_refs:
+        issues.append(
+            "runner session boundary has no candidate worker evidence bundle refs"
+        )
+    if session_lineages and not session_worker_bundle_refs:
+        issues.append(
+            "runner session boundary has no session worker evidence bundle refs"
+        )
+    if session_lineages and missing_session_worker_bundle_refs:
         issues.append(
             "runner session artifact does not record candidate worker evidence "
             "bundle refs: "
             + ", ".join(missing_session_worker_bundle_refs)
         )
-    if not candidate_lineages:
-        issues.append("runner session boundary has no candidate lineages")
-    if not session_lineages:
-        issues.append("runner session boundary has no validated runner session")
     if len(session_ids) > 1:
         issues.append(
             "runner session boundary spans multiple runner sessions: "
