@@ -919,6 +919,7 @@ def _write_github_server_truth(path: Path) -> None:
                 "expected_head_sha": "head-pack-1",
                 "head_sha_matches_expected": True,
                 "required_checks": ["quality-gates"],
+                "workflow_run_id": 211,
                 "check_run_ids": [211],
                 "expected_source_app": "github-actions",
                 "branch_protection_snapshot": {

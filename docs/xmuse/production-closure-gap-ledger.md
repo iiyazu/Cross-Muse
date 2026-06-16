@@ -297,6 +297,9 @@ runtime、provider invocation、lane authority、review truth 完成。后续生
 - Local head at start of x3 closure-reconciler nested server-truth overclaim
   admission slice:
   `ecba8946b0f8a2384ac628144e4c33aa46700480`
+- Local head at start of x3 operator-action GitHub truth fixture drift cleanup
+  slice:
+  `2c03b2492e9e0a618f21e19120192b0a46765dbf`
 - PR: <https://github.com/iiyazu/Cross-Muse/pull/43>
 - PR state last checked: draft/open/unmerged
 - PR merge state last checked: `CLEAN`
@@ -420,6 +423,7 @@ truth_snapshot:
   local_head_at_x3_closure_reconciler_review_chain_l10_revalidation_slice: c863da736e01210516f46bad9221b93614c8b258
   local_head_at_x3_closure_reconciler_file_backed_patch_forward_bounded_session_gate_slice: d32545e29435a2644182ef0fc5748fd4fb7f34e8
   local_head_at_x3_closure_reconciler_nested_server_truth_overclaim_admission_slice: ecba8946b0f8a2384ac628144e4c33aa46700480
+  local_head_at_x3_operator_action_github_truth_fixture_drift_cleanup_slice: 2c03b2492e9e0a618f21e19120192b0a46765dbf
   pr: 43
   pr_url: https://github.com/iiyazu/Cross-Muse/pull/43
   pr_state: draft_open_unmerged
@@ -2474,6 +2478,12 @@ Use these as implementation references, not as xmuse package dependencies:
     and server-enforcement truth properties as merge-proof emission, so a raw
     artifact with required-check names but no workflow/check-run lineage remains
     a `manual_gap`.
+    Operator-action release-pack regression fixtures now include the workflow
+    run lineage required by that same `has_status_check_truth` admission
+    boundary, so the operator action path tests the current GitHub
+    server-truth contract instead of an obsolete raw-dict shape. This is test
+    fixture drift cleanup only; it does not upgrade GitHub review truth, merge
+    truth, `ready_to_merge`, or `pr_merged`.
   - MemoryOS live gate source-ref admission now excludes MemoryOS-owned refs
     from the upstream source-ref count. A live trace must cite a non-MemoryOS
     xmuse source such as conversation, lane, blueprint, review, or release
