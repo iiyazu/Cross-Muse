@@ -1,6 +1,6 @@
 # xmuse 文档入口
 
-更新日期: 2026-06-14
+更新日期: 2026-06-17
 
 本目录是 xmuse 当前阶段的文档入口。旧的 `docs/superpowers/specs/` 和
 `docs/superpowers/plans/` 仍保留原路径，因为测试、lane graph 和历史记录会引用
@@ -45,7 +45,7 @@ safety，Wave E=L10-L11 aggregation/operator surface。具体行为规范见
 | `docs/xmuse/next-production-closure-long-goal.md` | 下一轮生产闭环长 `/goal` 的任务文档，要求在 goal 内自主划分中等粒度任务并推进 Wave D/L9 lineage |
 | `docs/xmuse/code-review.md` | 生产闭环 review 契约，专门审查 projection authority、proof-level inflation、worker truth、GitHub truth 和 TDD abuse |
 | `docs/xmuse/github-git-behavior-policy.md` | Git/GitHub 行为规范：冻结过重 PR #43 为历史/集成上下文，后续默认中等 reconcile slice / 小 PR、明确 push/CI/merge truth 边界 |
-| `docs/xmuse/current-worktree-slice-inventory.md` | 当前重 worktree 的小 PR 拆分 inventory，按 Slice 0-5 记录候选拆分、文件边界、proof level、forbidden claims 和 focused validation |
+| `docs/xmuse/current-worktree-slice-inventory.md` | 当前 worktree 的快速交接入口，记录本地/远端 head、PR/CI 边界、本地未推提交、最新 focused validation、剩余 forbidden claims 和下一步干净 cursor |
 | `docs/xmuse/dependency-first-closure-goal-prompt.md` | 可直接用于下一轮长 `/goal` 的简洁 dependency-first closure prompt |
 | `docs/xmuse/deep-research-02-next-goal.md` | 第二轮深度研究转化目标，定义 #13-#19 的下一阶段任务 |
 | `docs/xmuse/contract-smoke-gates.md` | #19 合同 smoke CI：无 secrets 的 lint、format、typecheck、主线合约测试和 SLO smoke |

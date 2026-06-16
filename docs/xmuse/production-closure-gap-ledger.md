@@ -1,6 +1,6 @@
 # xmuse Production Closure Gap Ledger
 
-更新日期: 2026-06-16
+更新日期: 2026-06-17
 
 本文档是 xmuse 生产闭环缺口台账。它用于把“用户最终看到的体验”和
 “生产实现必须遵守的依赖顺序”分开记录。
@@ -38,6 +38,30 @@ runtime、provider invocation、lane authority、review truth 完成。后续生
 
 当前事实需在每轮长 `/goal` 开始时重新确认。本节是台账编写时的事实边界，
 不是自动更新状态。
+
+Latest handoff truth as of 2026-06-17:
+
+- Current branch: `vision-closure-deliberation-tui`
+- Latest implementation head before docs-only handoff sync:
+  `b5225b962b363d5cb2b60459735781333ade0bdf`
+- Remote tracking head / PR #43 head:
+  `2c03b2492e9e0a618f21e19120192b0a46765dbf`
+- Local state before docs-only handoff sync: clean and ahead of
+  `origin/vision-closure-deliberation-tui` by 5 commits.
+- PR #43 last checked from GitHub: draft/open/unmerged, merge state `CLEAN`,
+  review decision empty.
+- Latest GitHub Actions truth: `xmuse CI` run `27630501256`, success, for
+  pushed head `2c03b2492e9e0a618f21e19120192b0a46765dbf` only.
+- Local ahead commits after that pushed head are local-only proof/admission
+  hardening until pushed and rechecked.
+- Latest local focused validation for the implementation head:
+  `uv run pytest tests/xmuse/test_closure_objects.py tests/xmuse/test_closure_reconciler.py tests/xmuse/test_release_evidence_candidates.py -q`
+  -> 78 passed; `uv run ruff check .`, `git diff --check`, and
+  `test ! -e xmuse/__init__.py` passed.
+
+This latest handoff truth does not change forbidden claims: no `pr_merged`, no
+GitHub review truth, no merge truth, no live MemoryOS trace, no natural peer-GOD
+deliberation closure, and no overnight readiness.
 
 - Branch: `vision-closure-deliberation-tui`
 - Local base head before audit reinforcement annotation:
