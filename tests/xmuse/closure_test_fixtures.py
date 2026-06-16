@@ -19,6 +19,9 @@ DEFAULT_RUN_ID = "platform-runner:run-1"
 DEFAULT_RUNNER_ID = "platform-runner"
 DEFAULT_RUNNER_SESSION_ID = "runner-session-1"
 DEFAULT_RUNNER_SESSION_REF = "work/runner_sessions/runner-session-1.json"
+DEFAULT_WORKER_EVIDENCE_BUNDLE_REF = (
+    "feature_evidence_bundle:platform_runner_worker_evidence_runtime_patch:v1"
+)
 
 
 def write_candidate(
@@ -26,9 +29,13 @@ def write_candidate(
     candidate_ref: str = DEFAULT_CANDIDATE_REF,
     *,
     producer: str = "platform_runner_dispatch",
+    worker_evidence_bundle_ref: str | None = DEFAULT_WORKER_EVIDENCE_BUNDLE_REF,
     verification_refs: list[str] | None = None,
 ) -> None:
     platform_runner_candidate = producer == "platform_runner_dispatch"
+    source_refs = ["worker-candidate:patch-reviewed"]
+    if platform_runner_candidate and worker_evidence_bundle_ref is not None:
+        source_refs.append(worker_evidence_bundle_ref)
     capture_local_execution_candidate(
         output_path=root / candidate_ref,
         lane_id=DEFAULT_TERMINAL_LANE_ID,
@@ -59,7 +66,7 @@ def write_candidate(
             DEFAULT_RUNNER_SESSION_REF if platform_runner_candidate else None
         ),
         producer=producer,
-        source_refs=["worker-candidate:patch-reviewed"],
+        source_refs=source_refs,
         output_refs=[candidate_ref],
         verification_refs=verification_refs
         or ["uv run pytest tests/xmuse/test_closure_reconciler.py -q"],
@@ -71,6 +78,7 @@ def write_runner_session(
     candidate_ref: str = DEFAULT_CANDIDATE_REF,
     *,
     run_id: str = DEFAULT_RUN_ID,
+    worker_evidence_bundle_ref: str | None = DEFAULT_WORKER_EVIDENCE_BUNDLE_REF,
 ) -> None:
     artifact = build_runner_session_artifact(
         session_id=DEFAULT_RUNNER_SESSION_ID,
@@ -82,6 +90,11 @@ def write_runner_session(
         graph_id=DEFAULT_GRAPH_ID,
         candidate_artifact_refs=[candidate_ref],
         candidate_lane_ids=[DEFAULT_TERMINAL_LANE_ID],
+        worker_evidence_bundle_refs=(
+            [worker_evidence_bundle_ref]
+            if worker_evidence_bundle_ref is not None
+            else []
+        ),
     )
     path = root / DEFAULT_RUNNER_SESSION_REF
     path.parent.mkdir(parents=True, exist_ok=True)

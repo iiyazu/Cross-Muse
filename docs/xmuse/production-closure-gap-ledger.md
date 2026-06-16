@@ -273,6 +273,9 @@ runtime、provider invocation、lane authority、review truth 完成。后续生
 - Local head at start of x3 patch-forward lineage review-closure ref admission
   slice:
   `365d956307e37575054d89f3aa3fc384db968be8`
+- Local head at start of x3 validated-execution-candidate worker-bundle
+  admission slice:
+  `e56c9c3a8f19011f2f4ee8e9e14c3d9942562e11`
 - PR: <https://github.com/iiyazu/Cross-Muse/pull/43>
 - PR state last checked: draft/open/unmerged
 - PR merge state last checked: `CLEAN`
@@ -281,9 +284,10 @@ runtime、provider invocation、lane authority、review truth 完成。后续生
   to remote head `5bdf647cb9e127000554bef587697547797224f6`: run
   `27603798046`, success. Jobs success: `quality-gates`,
   `contract-smoke-gates`, `real-runtime-integration-gate`.
-- Current worktree refresh is verified for head
+- Last pushed worktree refresh was verified for head
   `b154021111400863098f11ed98eeb24d6fad9311` by run
-  `27607281313`; local changes after that head are clean.
+  `27607281313`; local x3 closure-controller/admission changes after that
+  head are not GitHub Actions verified until pushed and rechecked.
 
 Machine-readable snapshot for gates and future `/goal` setup:
 
@@ -387,6 +391,7 @@ truth_snapshot:
   local_head_at_x3_memoryos_live_gate_source_ref_boundary_slice: cf6bd548fcf75c4374ed95ff5c800b290a01ed90
   local_head_at_x3_patch_forward_lineage_scope_admission_slice: cafb4b49cdf8f562b64c94950382cb8a3e9318da
   local_head_at_x3_patch_forward_lineage_review_closure_ref_admission_slice: 365d956307e37575054d89f3aa3fc384db968be8
+  local_head_at_x3_validated_execution_candidate_worker_bundle_admission_slice: e56c9c3a8f19011f2f4ee8e9e14c3d9942562e11
   pr: 43
   pr_url: https://github.com/iiyazu/Cross-Muse/pull/43
   pr_state: draft_open_unmerged
@@ -395,7 +400,7 @@ truth_snapshot:
   verified_ci_head_at_slice_start: b154021111400863098f11ed98eeb24d6fad9311
   verified_ci_run_at_slice_start: 27607281313
   ci_verified_for_slice_start_head: true
-  local_changes_after_verified_head: false
+  local_changes_after_verified_head: true
   local_github_server_truth_refresh:
     capture_mode: opt_in_read_only_gh_api
     artifact_path: /tmp/xmuse-github-truth-current.json
@@ -2238,6 +2243,16 @@ Use these as implementation references, not as xmuse package dependencies:
     session points at another, `PatchForwardLineagePresent` remains
     `manual_gap`. This prevents a review-chain proof from self-reporting
     patch-forward lineage for a different review closure.
+    `ValidatedExecutionCandidatePresent` now also requires a non-empty
+    graph-native `feature_evidence_bundle:*` ref shared by the local execution
+    candidate and its runner-session artifact. A platform-runner candidate plus
+    runner session with both bundle-ref lists empty is no longer enough to
+    satisfy bounded execution-candidate admission; it remains `manual_gap`
+    until the worker-evidence producer lineage is present. This closes a Goal B
+    false-closure path where runner-session existence could be overread as
+    graph-native worker evidence, but it still does not prove independent
+    review truth, live execution/review closure, GitHub truth, or merge
+    readiness.
   - Release evidence candidate reports can now consume
     `xmuse.god_room_lane_review_chain_proof.v1` artifacts directly as
     `live_memoryos` source-ref guidance after validating

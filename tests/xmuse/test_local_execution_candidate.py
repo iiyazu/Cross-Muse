@@ -377,6 +377,34 @@ def test_validated_execution_candidate_rejects_runner_session_mismatch() -> None
     assert "runner session run_id does not match candidate" in boundary["issues"]
 
 
+def test_validated_execution_candidate_requires_worker_evidence_bundle_refs() -> None:
+    candidate_lineage = build_local_execution_candidate_lineage(
+        artifact=_platform_runner_candidate_artifact(),
+        artifact_ref="work/local_execution_candidates/graph-a.lane-a.json",
+    )
+    runner_session_lineage = build_runner_session_lineage(
+        artifact=_runner_session_artifact(),
+        artifact_ref="work/runner_sessions/session-a.json",
+    )
+
+    boundary = build_validated_execution_candidate_boundary(
+        candidate_lineage=candidate_lineage,
+        runner_session_lineage=runner_session_lineage,
+        graph_id="graph-a",
+        lane_id="lane-a",
+    )
+
+    assert boundary["status"] == "manual_gap"
+    assert (
+        "local execution candidate missing graph-native worker evidence bundle refs"
+        in boundary["issues"]
+    )
+    assert (
+        "runner session missing graph-native worker evidence bundle refs"
+        in boundary["issues"]
+    )
+
+
 def test_validated_execution_candidate_rejects_worker_bundle_mismatch() -> None:
     candidate_lineage = build_local_execution_candidate_lineage(
         artifact=_platform_runner_candidate_artifact(

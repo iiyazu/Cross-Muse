@@ -520,6 +520,15 @@ def build_validated_execution_candidate_boundary(
         )
         if session_lane_ids and required_lane_id not in session_lane_ids:
             issues.append("runner session lane scope does not match review lane")
+        if not candidate_bundle_refs:
+            issues.append(
+                "local execution candidate missing graph-native worker evidence "
+                "bundle refs"
+            )
+        if not runner_bundle_refs:
+            issues.append(
+                "runner session missing graph-native worker evidence bundle refs"
+            )
         if set(candidate_bundle_refs) != set(runner_bundle_refs):
             issues.append(
                 "local execution candidate worker evidence bundle refs do not "
