@@ -64,6 +64,10 @@ _RELEASE_EVIDENCE_EXPORT_ACTIONS = {
     "export_god_runtime",
     "god_runtime_continuity_export",
     "selected_god_runtime_export",
+    "export_god_room_review_chain_proof",
+    "capture_god_room_review_chain_proof",
+    "god_room_review_chain_proof_export",
+    "god_room_review_chain_proof_capture",
 }
 _RELEASE_EVIDENCE_CANDIDATE_ACTIONS = {
     "inspect_release_evidence_candidates",
@@ -380,6 +384,17 @@ class OperatorActionService:
             selection_payload["durable_state_ref"] = f"god_cli_selection:{conversation_id}"
             selection_payload["record"] = record.model_dump()
         if binding_plan is not None:
+            if self._god_identity_binding_store is None:
+                return OperatorActionResult(
+                    action="select_god_cli",
+                    status="blocked",
+                    proof_level="manual_gap",
+                    fact_state="blocked",
+                    actor_id=request.actor_id,
+                    audit_id=audit_id,
+                    summary="room selected GOD binding requires a durable binding store",
+                    payload={"selection_allowed": False},
+                )
             provider_account, god_profile, room_binding = binding_plan
             resolution = self._god_identity_binding_store.upsert_selection(
                 provider_account=provider_account,

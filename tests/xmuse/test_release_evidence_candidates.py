@@ -10,6 +10,8 @@ from xmuse_core.chat.participant_store import ParticipantStore
 from xmuse_core.chat.protocol_v2 import GodSpeechAct, GodSpeechActMessageV1
 from xmuse_core.chat.store import ChatStore
 from xmuse_core.chat.stream_store import PeerTurnLatencyTraceStore
+from xmuse_core.platform.closure_objects import REQUIRED_FORBIDDEN_CLAIMS
+from xmuse_core.platform.closure_reconciler import reconcile_closure
 from xmuse_core.platform.god_room_review_chain_proof import (
     capture_god_room_review_chain_proof,
 )
@@ -350,6 +352,21 @@ def test_release_evidence_candidates_seed_memoryos_refs_from_review_chain_proof(
         "artifacts/lane-runtime-evidence-patch/result.json"
     ]
     assert memoryos["review_chain_proof_candidate_artifact_ref_count"] == 1
+    assert memoryos["review_chain_proof_patch_forward_artifact_refs"] == [
+        (
+            "reports/god_room_patch_forward/"
+            "graph-runtime.lane-runtime-evidence.patch-forward.json"
+        ),
+        (
+            "reports/god_room_review_intake/"
+            "graph-runtime.lane-runtime-evidence-patch.review-intake.json"
+        ),
+        (
+            "reports/god_room_review_verdicts/"
+            "graph-runtime.lane-runtime-evidence-patch.review-verdict.json"
+        ),
+    ]
+    assert memoryos["review_chain_proof_patch_forward_artifact_ref_count"] == 3
     assert "god_room_review_chain_proof_artifact" in memoryos["source_authority"]
     assert (
         "god-room-review-chain-proof:graph-runtime:"
@@ -361,6 +378,18 @@ def test_release_evidence_candidates_seed_memoryos_refs_from_review_chain_proof(
     assert "artifacts/lane-runtime-evidence-patch/result.json" in payload_hints[
         "source_refs"
     ]
+    assert (
+        "reports/god_room_patch_forward/"
+        "graph-runtime.lane-runtime-evidence.patch-forward.json"
+    ) in payload_hints["source_refs"]
+    assert (
+        "reports/god_room_review_intake/"
+        "graph-runtime.lane-runtime-evidence-patch.review-intake.json"
+    ) in payload_hints["source_refs"]
+    assert (
+        "reports/god_room_review_verdicts/"
+        "graph-runtime.lane-runtime-evidence-patch.review-verdict.json"
+    ) in payload_hints["source_refs"]
     assert "god-room-event:evt-provider-speak" in payload_hints["source_refs"]
     assert (
         "runner_recovery_proof_artifact:reports/runner-recovery-proof.json"
@@ -1232,6 +1261,127 @@ def test_release_evidence_candidates_reject_stale_runtime_closure_handoff(
     assert "source_refs" not in payload_hints
 
 
+def test_release_evidence_candidates_seed_memoryos_refs_from_closure_object(
+    tmp_path: Path,
+) -> None:
+    closure_path = tmp_path / "closure-object.json"
+    closure = reconcile_closure(
+        root=tmp_path,
+        graph_id="graph-runtime",
+        lane_id="lane-runtime-evidence-patch",
+        release_handoff={
+            "schema_version": "xmuse.review_closure_handoff_evaluation.v1",
+            "status": "ready",
+            "server_truth_status": "not_server_truth",
+            "source_refs": [
+                "god-room-review-closure:graph-runtime:failed:terminal",
+                "lane:lane-runtime-evidence-patch",
+            ],
+            "forbidden_claims": list(REQUIRED_FORBIDDEN_CLAIMS),
+        },
+    )
+    closure_path.write_text(
+        json.dumps(closure.to_dict(), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    report = build_release_evidence_candidate_report(
+        tmp_path,
+        conversation_id="conv-1",
+        env={
+            "XMUSE_LIVE_MEMORYOS_LITE": "1",
+            "XMUSE_MEMORYOS_LITE_URL": "http://memoryos-lite.example",
+        },
+        memoryos_payload={
+            "repo_id": "iiyazu/Cross-Muse",
+            "workspace_id": "xmuse",
+            "god_id": "review",
+            "conversation_id": "conv-1",
+            "thread_id": "thread-1",
+            "blueprint_id": "bp-1",
+            "feature_id": "feature-1",
+            "lane_id": "lane-runtime-evidence-patch",
+            "content": "live evidence",
+            "query": "production evidence",
+            "closure_object": str(closure_path),
+        },
+    )
+
+    memoryos = report["live_memoryos"]
+    payload_hints = memoryos["suggested_operator_action"]["payload_hints"]
+    assert memoryos["closure_object_artifact_configured"] is True
+    assert memoryos["closure_object_artifact_gate_ready"] is True
+    assert memoryos["closure_object_phase"] == "manual_gap"
+    assert memoryos["closure_object_source_ref_count"] >= 2
+    assert memoryos["closure_object_forbidden_claim_count"] >= len(
+        REQUIRED_FORBIDDEN_CLAIMS
+    )
+    assert "closure_object_artifact" in memoryos["source_authority"]
+    assert "closure_object_artifact_not_ready" not in memoryos["blockers"]
+    assert "god-room-review-closure:graph-runtime:failed:terminal" in payload_hints[
+        "source_refs"
+    ]
+    assert "lane:lane-runtime-evidence-patch" in payload_hints["source_refs"]
+
+
+def test_release_evidence_candidates_reject_stale_closure_object(
+    tmp_path: Path,
+) -> None:
+    closure_path = tmp_path / "closure-object.json"
+    closure = reconcile_closure(
+        root=tmp_path,
+        graph_id="graph-runtime",
+        lane_id="lane-runtime-evidence-patch",
+        release_handoff={
+            "schema_version": "xmuse.review_closure_handoff_evaluation.v1",
+            "status": "ready",
+            "server_truth_status": "not_server_truth",
+            "source_refs": [
+                "god-room-review-closure:graph-runtime:failed:terminal",
+            ],
+            "forbidden_claims": list(REQUIRED_FORBIDDEN_CLAIMS),
+        },
+    ).to_dict()
+    closure["status"]["evaluator_version"] = "xmuse.closure_controller.v0"
+    closure_path.write_text(
+        json.dumps(closure, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    report = build_release_evidence_candidate_report(
+        tmp_path,
+        conversation_id="conv-1",
+        env={
+            "XMUSE_LIVE_MEMORYOS_LITE": "1",
+            "XMUSE_MEMORYOS_LITE_URL": "http://memoryos-lite.example",
+        },
+        memoryos_payload={
+            "repo_id": "iiyazu/Cross-Muse",
+            "workspace_id": "xmuse",
+            "god_id": "review",
+            "conversation_id": "conv-1",
+            "thread_id": "thread-1",
+            "blueprint_id": "bp-1",
+            "feature_id": "feature-1",
+            "lane_id": "lane-runtime-evidence-patch",
+            "content": "live evidence",
+            "query": "production evidence",
+            "closure_object": str(closure_path),
+        },
+    )
+
+    memoryos = report["live_memoryos"]
+    payload_hints = memoryos["suggested_operator_action"]["payload_hints"]
+    assert memoryos["closure_object_artifact_configured"] is True
+    assert memoryos["closure_object_artifact_gate_ready"] is False
+    assert memoryos["closure_object_artifact_summary"] == (
+        "ClosureObject evaluator_version is stale"
+    )
+    assert "closure_object_artifact_not_ready" in memoryos["blockers"]
+    assert "closure_object_artifact" not in memoryos["source_authority"]
+    assert "source_refs" not in payload_hints
+
+
 def test_release_evidence_candidates_reject_runtime_closure_proof_overclaim(
     tmp_path: Path,
 ) -> None:
@@ -1437,8 +1587,11 @@ def test_release_evidence_candidates_surface_existing_memoryos_trace_artifact(
     assert memoryos["artifact_path"] == str(trace_artifact)
     assert memoryos["artifact_gate_status"] == "ok"
     assert memoryos["artifact_proof_level"] == "live_service_proof"
+    assert memoryos["artifact_trace_id"] == "xmuse-memoryos-trace:candidate-1"
     assert memoryos["artifact_trace_event_count"] == 1
     assert memoryos["artifact_source_ref_count"] == 4
+    assert memoryos["artifact_upstream_source_ref_count"] == 2
+    assert memoryos["artifact_target_ref_count"] == 2
     assert memoryos["source_authority"] == [
         "redacted_environment_presence",
         "operator_release_candidate_payload",
@@ -1704,6 +1857,76 @@ def test_release_evidence_candidates_cli_accepts_review_chain_proof(
     assert "god_room_review_chain_proof_artifact" in memoryos["source_authority"]
 
 
+def test_release_evidence_candidates_cli_accepts_closure_object(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from xmuse.release_evidence_candidates import main
+
+    closure_path = tmp_path / "closure-object.json"
+    closure = reconcile_closure(
+        root=tmp_path,
+        graph_id="graph-runtime",
+        lane_id="lane-runtime-evidence-patch",
+        release_handoff={
+            "schema_version": "xmuse.review_closure_handoff_evaluation.v1",
+            "status": "ready",
+            "server_truth_status": "not_server_truth",
+            "source_refs": [
+                "god-room-review-closure:graph-runtime:failed:terminal",
+                "lane:lane-runtime-evidence-patch",
+            ],
+            "forbidden_claims": list(REQUIRED_FORBIDDEN_CLAIMS),
+        },
+    )
+    closure_path.write_text(
+        json.dumps(closure.to_dict(), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    output = tmp_path / "candidates.json"
+    monkeypatch.setenv("XMUSE_LIVE_MEMORYOS_LITE", "1")
+    monkeypatch.setenv("XMUSE_MEMORYOS_LITE_URL", "http://memoryos-lite.example")
+
+    exit_code = main(
+        [
+            "--xmuse-root",
+            str(tmp_path),
+            "--conversation-id",
+            "conv-1",
+            "--repo-id",
+            "iiyazu/Cross-Muse",
+            "--workspace-id",
+            "xmuse",
+            "--god-id",
+            "review",
+            "--thread-id",
+            "thread-1",
+            "--blueprint-id",
+            "bp-1",
+            "--feature-id",
+            "feature-1",
+            "--lane-id",
+            "lane-runtime-evidence-patch",
+            "--content",
+            "live evidence",
+            "--query",
+            "production evidence",
+            "--closure-object",
+            str(closure_path),
+            "--output",
+            str(output),
+        ]
+    )
+
+    assert exit_code == 0
+    report = json.loads(output.read_text(encoding="utf-8"))
+    memoryos = report["live_memoryos"]
+    payload_hints = memoryos["suggested_operator_action"]["payload_hints"]
+    assert memoryos["closure_object_artifact_gate_ready"] is True
+    assert "closure_object_artifact" in memoryos["source_authority"]
+    assert "lane:lane-runtime-evidence-patch" in payload_hints["source_refs"]
+
+
 def test_release_evidence_candidates_accepts_github_server_truth_artifact(
     tmp_path: Path,
 ) -> None:
@@ -1786,6 +2009,9 @@ def test_release_evidence_candidates_rejects_github_truth_head_mismatch(
     assert github["artifact_proof_level"] == "manual_gap"
     assert github["artifact_can_emit_pr_merged"] is False
     assert github["can_emit_pr_merged"] is False
+    assert github["artifact_head_sha"] == "old-head"
+    assert github["artifact_expected_head_sha"] == "new-head"
+    assert github["artifact_head_sha_matches_expected"] is False
     assert "github_server_truth_artifact_not_ready" in github["blockers"]
     assert "github_server_truth_artifact" not in github["source_authority"]
     assert "suggested_existing_artifact_action" not in github
@@ -2035,6 +2261,7 @@ def _write_memoryos_trace_artifact(path: Path) -> Path:
         json.dumps(
             {
                 "schema_version": "xmuse.memoryos_lite_trace.v1",
+                "trace_id": "xmuse-memoryos-trace:candidate-1",
                 "proof_level": "live_service_proof",
                 "fact_state": "observed",
                 "namespace_uri": "memory://repo/iiyazu/Cross-Muse/workspace/xmuse",
@@ -2047,6 +2274,10 @@ def _write_memoryos_trace_artifact(path: Path) -> Path:
                     }
                 ],
                 "source_refs": ["conversation:conv-1"],
+                "target_refs": [
+                    "memoryos:namespace:memory://repo/iiyazu/Cross-Muse/workspace/xmuse",
+                    "memoryos:session:ses-live",
+                ],
                 "estimated_tokens": 128,
                 "blockers": [],
             },

@@ -101,6 +101,7 @@ async def test_memoryos_live_trace_capture_runs_rest_sequence_and_writes_live_ar
     assert output.exists()
     assert artifact == json.loads(output.read_text(encoding="utf-8"))
     assert artifact["schema_version"] == "xmuse.memoryos_lite_trace.v1"
+    assert str(artifact["trace_id"]).startswith("xmuse-memoryos-trace:")
     assert artifact["proof_level"] == "live_service_proof"
     assert artifact["fact_state"] == "observed"
     assert artifact["namespace_uri"] == namespace.uri
@@ -116,6 +117,10 @@ async def test_memoryos_live_trace_capture_runs_rest_sequence_and_writes_live_ar
         "memoryos-lite-message:msg-live-1",
         "trace:session",
         "trace:context",
+    ]
+    assert artifact["target_refs"] == [
+        f"memoryos:namespace:{namespace.uri}",
+        "memoryos:session:ses-live-1",
     ]
     assert [path for path, _payload in requests] == [
         "/sessions",
@@ -161,6 +166,7 @@ async def test_memoryos_live_trace_capture_blocks_when_trace_is_missing(
         )
 
     assert artifact["schema_version"] == "xmuse.memoryos_lite_trace.v1"
+    assert artifact["trace_id"] is None
     assert artifact["proof_level"] == "manual_gap"
     assert artifact["fact_state"] == "blocked"
     assert artifact["namespace_uri"] == namespace.uri

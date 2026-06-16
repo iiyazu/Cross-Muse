@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from xmuse_core.platform.god_room_review_handoff import (
     REQUIRED_GOD_ROOM_REVIEW_CLOSURE_FORBIDDEN_CLAIMS,
     build_review_closure_handoff_evaluation,
+    load_and_evaluate_review_closure_handoff,
 )
 from xmuse_core.platform.local_execution_candidate import (
     LOCAL_EXECUTION_CANDIDATE_PLATFORM_RUNNER_PRODUCER,
@@ -449,6 +450,18 @@ def build_review_chain_proof_l10_handoff_evaluation(
         if evaluation_status == "ready"
         else []
     )
+    session = _mapping(review_chain_proof.get("local_execution_review_session"))
+    patch_forward_artifact_refs = (
+        _ordered_unique(
+            [
+                _text(session.get("patch_forward_artifact")),
+                _text(session.get("patch_lane_review_intake_artifact")),
+                _text(session.get("patch_lane_review_verdict_artifact")),
+            ]
+        )
+        if evaluation_status == "ready"
+        else []
+    )
     return {
         "schema_version": REVIEW_CHAIN_PROOF_L10_HANDOFF_EVALUATION_SCHEMA_VERSION,
         "status": evaluation_status,
@@ -478,6 +491,8 @@ def build_review_chain_proof_l10_handoff_evaluation(
         "bounded_session_gate_summary": _text(bounded_session_gate.get("summary")),
         "worker_evidence_bundle_refs": worker_evidence_bundle_refs,
         "worker_evidence_bundle_ref_count": len(worker_evidence_bundle_refs),
+        "patch_forward_artifact_refs": patch_forward_artifact_refs,
+        "patch_forward_artifact_ref_count": len(patch_forward_artifact_refs),
         "source_refs": source_refs,
         "source_ref_count": len(source_refs),
         "issues": _ordered_unique(issues),
@@ -1352,7 +1367,7 @@ def _validate_session_artifacts(
             ref=ref,
             expected_dir=str(spec["expected_dir"]),
             expected_schema=str(spec["schema_version"]),
-            expected_fields=dict(spec["checks"]),
+            expected_fields=dict(cast(Mapping[str, str | None], spec["checks"])),
         )
         issues.extend(artifact_issues)
         artifacts[key] = detail
@@ -2645,6 +2660,11 @@ def _runner_session_boundary(
                 + ", ".join(missing_fields)
             )
             continue
+        assert candidate_ref is not None
+        assert session_ref is not None
+        assert session_id is not None
+        assert run_id is not None
+        assert runner_id is not None
         try:
             session_lineages.append(
                 load_runner_session_lineage(
@@ -2948,37 +2968,15 @@ def _review_chain_current_handoff_evaluation(
     if review_closure_ref is None:
         return base
     root = _review_chain_root(artifact_path, payload)
-    review_closure_path = _root_relative_artifact_path(root, review_closure_ref)
-    if review_closure_path is None:
-        return {
-            **base,
-            "handoff_summary": (
-                "GOD room review chain proof review_closure_artifact escapes "
-                "xmuse root."
-            ),
-            "issues": [
-                "GOD room review chain proof review_closure_artifact escapes "
-                "xmuse root"
-            ],
-        }
-    review_closure, load_error = _load_json(review_closure_path)
-    if not isinstance(review_closure, Mapping):
-        return {
-            **base,
-            "handoff_summary": (
-                load_error
-                or "GOD room review closure artifact referenced by chain proof "
-                "is missing"
-            ),
-            "issues": [
-                load_error
-                or "GOD room review closure artifact referenced by chain proof "
-                "is missing"
-            ],
-        }
-    return build_review_closure_handoff_evaluation(
+    return load_and_evaluate_review_closure_handoff(
         root=root,
-        review_closure=review_closure,
+        review_closure_ref=review_closure_ref,
+        missing_summary=(
+            "GOD room review closure artifact referenced by chain proof is missing."
+        ),
+        escape_summary=(
+            "GOD room review chain proof review_closure_artifact escapes xmuse root."
+        ),
     )
 
 
@@ -2987,16 +2985,6 @@ def _review_chain_root(path: str | Path, payload: Mapping[str, Any]) -> Path:
     if root_ref is not None:
         return Path(root_ref)
     return Path(path).parent
-
-
-def _root_relative_artifact_path(root: Path, artifact_ref: str) -> Path | None:
-    raw_path = Path(artifact_ref)
-    candidate = raw_path if raw_path.is_absolute() else root / raw_path
-    try:
-        candidate.resolve(strict=False).relative_to(root.resolve(strict=False))
-    except ValueError:
-        return None
-    return candidate
 
 
 def _load_json(path: Path) -> tuple[dict[str, Any] | None, str | None]:
@@ -3037,7 +3025,12 @@ def _mapping_list(value: object) -> list[dict[str, Any]]:
 def _ordered_unique(values: object) -> list[str]:
     seen: set[str] = set()
     result: list[str] = []
-    iterable = values if isinstance(values, list | tuple | set) else list(values)
+    if not isinstance(values, Iterable) or isinstance(
+        values,
+        (str, bytes, bytearray),
+    ):
+        return result
+    iterable = values
     for value in iterable:
         text = _text(value)
         if text is None or text in seen:

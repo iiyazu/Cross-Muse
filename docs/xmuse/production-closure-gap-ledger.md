@@ -240,15 +240,19 @@ runtime、provider invocation、lane authority、review truth 完成。后续生
   `b050d534873594466e46190619ab20387427f231`
 - Local head at start of L8 shared recovery writer consolidation slice:
   `b050d534873594466e46190619ab20387427f231`
+- Local head at start of x3 closure-controller freshness/admission slice:
+  `4465686cd56c94bdbb448e747817003a87f3d91c`
 - PR: <https://github.com/iiyazu/Cross-Muse/pull/43>
 - PR state last checked: draft/open/unmerged
 - PR merge state last checked: `CLEAN`
 - PR review decision last checked: empty
-- Verified GitHub Actions truth at the start of this slice applied to remote head
-  `654b418c52cc1487193561f65e0521a5a82f0452`: run
-  `27502826595`, success
-- Local changes after `654b418c52cc1487193561f65e0521a5a82f0452` must not be
-  treated as CI-verified until pushed and checked again.
+- Verified GitHub Actions truth before the x3 freshness/admission slice applied
+  to remote head `4465686cd56c94bdbb448e747817003a87f3d91c`: run
+  `27595483007`, success. Jobs success: `quality-gates`,
+  `contract-smoke-gates`, `real-runtime-integration-gate`.
+- Local changes after `4465686cd56c94bdbb448e747817003a87f3d91c` must not be
+  treated as CI-verified until pushed and checked again. CI success remains
+  separate from GitHub review truth and merge truth.
 
 Machine-readable snapshot for gates and future `/goal` setup:
 
@@ -584,6 +588,80 @@ Current closure audit:
     controller `contract_proof` only; it does not add a service, queue, DB,
     TUI/release truth surface, live MemoryOS trace, GitHub review/merge truth,
     or broad live execution/review closure.
+  - The x3 freshness/admission hardening slice extends the same closure object
+    contract with `generation`, `observed_generation`, and
+    `evaluator_version` metadata, plus `ClosureControllerFresh` and
+    `RequiredForbiddenClaimsPresent` conditions. `reconcile_closure` can now
+    consume a previous serialized `ClosureObject`: stale evaluator versions and
+    generation regressions block, while generation skips remain `manual_gap`.
+    L10 release-evidence candidate discovery can now consume a supplied
+    `ClosureObject` artifact as a controller-facing provenance surface: only a
+    current evaluator, fresh controller condition, preserved required forbidden
+    claims, and pending server-truth boundary may seed MemoryOS source-ref
+    hints. The `xmuse-release-evidence-candidates` CLI now exposes the same
+    path through `--closure-object`, so this controller-facing input is usable
+    from the operator/reporting entry point instead of only internal Python
+    callers. Stale/blocked closure objects remain candidate blockers and do not
+    enter source authority.
+    The L10 ClosureObject admission check is now owned by the shared closure
+    object contract instead of being reimplemented in the release-candidate
+    projection. The review-chain proof consumer also uses the shared
+    review-closure handoff artifact loader/evaluator for its
+    `review_closure_artifact` ref, reducing duplicated L9/L10 handoff loading
+    without changing the proof level.
+    Review/release handoff artifacts that omit required inherited claims such as
+    `live_memoryos`,
+    `github_review_truth`, `ready_to_merge`, `pr_merged`, or
+    `worker_output_is_review_truth` now remain `manual_gap` instead of being
+    silently repaired by status aggregation. This is still controller
+    `contract_proof`; it does not close live MemoryOS, GitHub review truth,
+    merge truth, or end-to-end Wave D/E runtime closure.
+  - The x3 Goal B controller-facing slice adds
+    `PatchForwardLineagePresent` and keeps it `manual_gap` unless a
+    `xmuse.god_room_lane_review_chain_proof.v1` artifact proves a
+    `chain_ready` bounded local execution/review session with validated
+    patch-forward artifact, patch-lane review intake, and patch-lane review
+    verdict refs. Plain review-closure handoff evaluation artifacts can still
+    prove handoff readiness, but they cannot be overread as patch-forward
+    lineage. The reconciler also now accepts the production orchestrator
+    `xmuse.god_room_lane_recovery.v1` artifact in addition to
+    `xmuse.local_runner_recovery_proof.v1`: `retry_allowed=true` allows
+    progress, while `retry_allowed=false` blocks progress. This repairs the
+    producer/consumer schema gap without upgrading recovery, worker output, or
+    local tests into review truth.
+    The review-chain proof L10 handoff evaluation now explicitly projects the
+    patch-forward artifact, patch-lane review intake artifact, and patch-lane
+    review verdict artifact refs, and the release-evidence candidate report
+    carries those refs as provenance/source-ref hints instead of leaving L10 to
+    infer them from generic source refs. The
+    `xmuse-god-room-review-chain-proof-capture` CLI can also write an optional
+    ClosureObject via `--closure-object-output`, using the captured chain proof
+    as the release handoff input and preserving `ServerTruthPending` /
+    forbidden claims. The release-evidence export operator-service action can
+    now also run the same review-chain proof capture from a stored
+    review-closure artifact and optionally emit the ClosureObject, so the path
+    is no longer CLI-only; incomplete review closure without the chain proof remains
+    `manual_gap`. This is still single-lane controller `contract_proof`; it
+    does not make the chain live/server truth or prove all L9 closure.
+  - The x3 Goal D MemoryOS trace hardening slice keeps MemoryOS as an opt-in
+    L10 provenance/trace adapter. `xmuse.memoryos_lite_trace.v1` artifacts now
+    carry an explicit `trace_id` and `target_refs`; the live MemoryOS release
+    gate requires that `trace_id` and at least one non-`memoryos:` upstream
+    `source_ref` before accepting `live_service_proof`, and the release
+    candidate projection exposes trace id/source-ref/target-ref counts only as
+    projection data. GOD-room MemoryOS plans, source refs, runtime-closure
+    hints, and candidate reports remain provenance/guidance and do not become
+    live MemoryOS proof without a gate-ready trace artifact.
+  - The x3 Goal C GitHub truth hardening slice moves PR-head freshness upstream
+    into `GitHubServerSideTruthEvidence` / `GitHubServerSideTruthSnapshot` and
+    `can_emit_pr_merged()`. A supplied `expected_head_sha` now propagates through
+    the read-only collector, CLI capture, live-gate status capture, and release
+    evidence export actions. Stale `head_sha != expected_head_sha` blocks
+    `pr_merged` emission even if all review/check/merge structural fields are
+    present. The GitHub release gate now emits a structured `github_truth`
+    head-freshness detail, and release candidates / release packs project that
+    gate detail instead of trusting raw artifact self-report fields such as
+    `head_sha_matches_expected`.
   - Wave E / L10-L11 must wait for honest L8-L9 lineage before claiming
     release readiness, complete cockpit, or overnight proof.
 - Next production priority: prove a graph-native GOD-room-originated lane
@@ -1941,6 +2019,11 @@ Use these as implementation references, not as xmuse package dependencies:
   - Release evidence pack and operator action can now index
     `xmuse.god_room_lane_review_closure.v1` as GOD-room runtime closure
     handoff input while preserving `server_truth_status = not_server_truth`.
+  - Release evidence export operator-service action can now capture
+    `xmuse.god_room_lane_review_chain_proof.v1` from a stored review-closure
+    artifact and optionally write a ClosureObject for L10 admission. This is a
+    production control-surface entry to the existing proof producer, not a
+    claim of live/server review truth.
   - Release evidence candidate report can consume the same handoff artifact to
     seed `live_memoryos` operator `source_refs` hints after validating that the
     artifact remains `contract_proof` and `server_truth_status = not_server_truth`.

@@ -14,6 +14,12 @@ PRs are review and integration units, not proof authorities. CI success,
 release evidence, local tests, worker output, and PR body text never become
 GitHub review or merge truth.
 
+CI/check truth is head-scoped. A successful run only verifies the exact
+`head_sha` it reports. If a PR body, local branch, release evidence artifact, or
+operator summary names a newer head than the observed run, the GitHub truth
+state must fail closed to stale/manual-gap until a server-side observation for
+the newer head exists.
+
 Treat a long `/goal` as a sequence of medium reconcile slices, not as one
 ever-growing PR. The preferred slice boundary follows the closure controller
 path:
@@ -188,7 +194,8 @@ Each PR body should include:
 `ready_to_merge` requires explicit review/merge readiness criteria for the PR.
 
 `pr_merged` may only be claimed after GitHub server-side merge proof confirms
-the PR is merged.
+the PR is merged and that the observed `head_sha` matches the expected current
+PR head for the slice being evaluated.
 
 Do not infer GitHub review or merge truth from:
 

@@ -42,6 +42,11 @@ def build_github_server_truth_release_gate(
                 "Re-capture GitHub server truth for the current PR head before "
                 "using this artifact in release readiness."
             ),
+            github_truth=_truth_detail(
+                github_truth,
+                actual_head_sha=actual_head_sha,
+                expected_head_sha=expected_head_sha,
+            ),
         )
     if _has_server_enforcement_proof(github_truth):
         proof_level = (
@@ -56,6 +61,11 @@ def build_github_server_truth_release_gate(
             source_refs=source_refs,
             artifact_path=artifact_path,
             next_action=_next_action(github_truth),
+            github_truth=_truth_detail(
+                github_truth,
+                actual_head_sha=actual_head_sha,
+                expected_head_sha=expected_head_sha,
+            ),
         )
     return _gate(
         status="manual_gap",
@@ -64,6 +74,11 @@ def build_github_server_truth_release_gate(
         source_refs=source_refs,
         artifact_path=artifact_path,
         next_action="Capture GitHub branch protection/ruleset and required check truth.",
+        github_truth=_truth_detail(
+            github_truth,
+            actual_head_sha=actual_head_sha,
+            expected_head_sha=expected_head_sha,
+        ),
     )
 
 
@@ -98,6 +113,7 @@ def _gate(
     source_refs: list[str],
     artifact_path: str | Path,
     next_action: str,
+    github_truth: dict[str, Any],
 ) -> dict[str, Any]:
     return {
         "schema_version": "xmuse.production_evidence.v1",
@@ -113,7 +129,33 @@ def _gate(
         "next_action": next_action,
         "source_refs": source_refs,
         "artifacts": [str(artifact_path)],
+        "github_truth": github_truth,
         "generated_at": _utc_now(),
+    }
+
+
+def _truth_detail(
+    github_truth: dict[str, Any],
+    *,
+    actual_head_sha: str | None,
+    expected_head_sha: str | None,
+) -> dict[str, Any]:
+    if expected_head_sha is None:
+        freshness_status = "unchecked"
+        matches_expected = None
+    elif actual_head_sha == expected_head_sha:
+        freshness_status = "matched"
+        matches_expected = True
+    else:
+        freshness_status = "mismatch"
+        matches_expected = False
+    return {
+        "authority": "github_truth_release_gate",
+        "head_sha": actual_head_sha,
+        "expected_head_sha": expected_head_sha,
+        "head_sha_matches_expected": matches_expected,
+        "head_freshness_status": freshness_status,
+        "can_emit_pr_merged": _can_emit_pr_merged(github_truth),
     }
 
 

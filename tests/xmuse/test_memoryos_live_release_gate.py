@@ -18,6 +18,7 @@ def _write_json(path: Path, payload: dict[str, object]) -> None:
 def _trace_artifact(**overrides: object) -> dict[str, object]:
     payload: dict[str, object] = {
         "schema_version": "xmuse.memoryos_lite_trace.v1",
+        "trace_id": "xmuse-memoryos-trace:live-1",
         "proof_level": "live_service_proof",
         "fact_state": "observed",
         "namespace_uri": "memory://conversation/conv-live/god-review/thread-1",
@@ -38,6 +39,10 @@ def _trace_artifact(**overrides: object) -> dict[str, object]:
             },
         ],
         "source_refs": ["conversation:conv-live", "lane:lane-1", "blueprint:bp-1"],
+        "target_refs": [
+            "memoryos:namespace:memory://conversation/conv-live/god-review/thread-1",
+            "memoryos:session:ses-live-1",
+        ],
         "estimated_tokens": 96,
         "blockers": [],
     }
@@ -70,12 +75,19 @@ def test_memoryos_live_gate_accepts_live_trace_artifact(tmp_path: Path) -> None:
     ]
     assert gate["memoryos_trace"] == {
         "authority": "memoryos_live_release_gate",
+        "trace_id": "xmuse-memoryos-trace:live-1",
         "namespace_uri": "memory://conversation/conv-live/god-review/thread-1",
         "session_id": "ses-live-1",
         "trace_event_count": 3,
         "event_kinds": ["session_created", "ingest", "context_built"],
         "estimated_tokens": 96,
         "source_ref_count": 5,
+        "upstream_source_ref_count": 3,
+        "target_refs": [
+            "memoryos:namespace:memory://conversation/conv-live/god-review/thread-1",
+            "memoryos:session:ses-live-1",
+        ],
+        "target_ref_count": 2,
         "blocker_count": 0,
         "live_service_proof": True,
     }
@@ -123,6 +135,47 @@ def test_memoryos_live_gate_blocks_empty_trace(tmp_path: Path) -> None:
     assert gate["status"] == "blocked"
     assert gate["proof_level"] == "manual_gap"
     assert "trace events" in gate["summary"]
+
+
+def test_memoryos_live_gate_blocks_missing_trace_id(tmp_path: Path) -> None:
+    artifact = tmp_path / "missing-trace-id.json"
+    payload = _trace_artifact()
+    payload.pop("trace_id")
+    _write_json(artifact, payload)
+
+    gate = capture_memoryos_live_release_gate(
+        artifact_path=artifact,
+        output_path=tmp_path / "gate.json",
+    )
+
+    assert gate["status"] == "blocked"
+    assert gate["proof_level"] == "manual_gap"
+    assert "requires a trace_id" in gate["summary"]
+
+
+def test_memoryos_live_gate_blocks_trace_without_upstream_source_refs(
+    tmp_path: Path,
+) -> None:
+    artifact = tmp_path / "missing-upstream-source-refs.json"
+    _write_json(
+        artifact,
+        _trace_artifact(
+            source_refs=[],
+            trace_events=[
+                {"kind": "session_created", "metadata": {"xmuse_source_refs": []}},
+                {"kind": "ingest", "metadata": {"xmuse_source_refs": []}},
+            ],
+        ),
+    )
+
+    gate = capture_memoryos_live_release_gate(
+        artifact_path=artifact,
+        output_path=tmp_path / "gate.json",
+    )
+
+    assert gate["status"] == "blocked"
+    assert gate["proof_level"] == "manual_gap"
+    assert "non-MemoryOS upstream source_ref" in gate["summary"]
 
 
 def test_memoryos_live_gate_blocks_unresolved_blockers_but_keeps_live_proof(

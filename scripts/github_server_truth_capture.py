@@ -47,6 +47,7 @@ def capture_github_server_truth(
         repo=repo,
         pull_request_number=pull_request_number,
         required_checks=required_checks,
+        expected_head_sha=expected_head_sha,
     )
     payload = evidence.model_dump(mode="json")
     head_sha_matches_expected = (

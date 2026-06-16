@@ -1,6 +1,6 @@
 # Current Worktree Slice Inventory
 
-更新日期: 2026-06-15
+更新日期: 2026-06-16
 
 本文记录当前 `vision-closure-deliberation-tui` worktree 的拆分边界。它不是
 closure proof，也不是 PR #43 的 merge/readiness 证明。当前分支已经承载过多未提交
@@ -9,9 +9,9 @@ closure proof，也不是 PR #43 的 merge/readiness 证明。当前分支已经
 ## Current Local Truth
 
 - Current branch: `vision-closure-deliberation-tui`
-- Current HEAD: `654b418c52cc1487193561f65e0521a5a82f0452`
+- Current HEAD: `4465686cd56c94bdbb448e747817003a87f3d91c`
 - Worktree state: dirty, broad multi-slice diff
-- Remote CI truth: only applies to remote head `654b418c52cc1487193561f65e0521a5a82f0452`
+- Remote CI truth: only applies to remote head `4465686cd56c94bdbb448e747817003a87f3d91c`
 - Local dirty changes are not CI-verified
 - PR #43 handling: historical umbrella context only; do not add new scope unless
   explicitly instructed

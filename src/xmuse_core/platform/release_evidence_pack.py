@@ -815,6 +815,9 @@ def _github_truth_pack_projection(
 ) -> dict[str, Any]:
     truth_artifacts = _string_list(gate.get("artifacts"))
     pr_merged_allowed = _can_emit_pr_merged_from_gate(gate, truth)
+    gate_truth = gate.get("github_truth")
+    if not isinstance(gate_truth, dict):
+        gate_truth = {}
     return {
         "authority": "github_truth_release_gate",
         "status": _text(gate.get("status")) or "not_evaluated",
@@ -827,9 +830,12 @@ def _github_truth_pack_projection(
         "draft": _optional_bool(truth.get("draft")),
         "mergeable": _optional_bool(truth.get("mergeable")),
         "mergeable_state": _text(truth.get("mergeable_state")),
-        "head_sha": _text(truth.get("head_sha")),
-        "expected_head_sha": _text(truth.get("expected_head_sha")),
-        "head_sha_matches_expected": truth.get("head_sha_matches_expected") is True,
+        "head_sha": _text(gate_truth.get("head_sha")) or _text(truth.get("head_sha")),
+        "expected_head_sha": _text(gate_truth.get("expected_head_sha")),
+        "head_sha_matches_expected": gate_truth.get("head_sha_matches_expected")
+        is True,
+        "head_freshness_status": _text(gate_truth.get("head_freshness_status"))
+        or "unknown",
         "required_check_count": len(_string_list(truth.get("required_checks"))),
         "check_run_count": len(_list_value(truth.get("check_run_ids"))),
         "expected_source_app": _text(truth.get("expected_source_app")),

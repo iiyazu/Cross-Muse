@@ -121,6 +121,7 @@ class GitHubServerSideTruthEvidence(BaseModel):
     mergeable: bool | None = None
     mergeable_state: str | None = None
     head_sha: str | None = None
+    expected_head_sha: str | None = None
     workflow_run_id: int | None = None
     check_suite_id: int | None = None
     check_run_ids: list[int] = Field(default_factory=list)
@@ -159,6 +160,7 @@ class GitHubServerSideTruthEvidence(BaseModel):
     @field_validator(
         "expected_source_app",
         "head_sha",
+        "expected_head_sha",
         "reviewer_login",
         "internal_review_artifact",
         "internal_reviewer",
@@ -180,6 +182,8 @@ class GitHubServerSideTruthEvidence(BaseModel):
         if self.proof_level != "server_side_merge_proof":
             return self
         missing = []
+        if not self.has_head_freshness_truth:
+            missing.append("head_sha_matches_expected_head_sha")
         if not self.has_status_check_truth:
             missing.append("workflow_run_id/check_suite_id/check_run_ids/expected_source_app")
         if not self.has_server_enforcement_truth:
@@ -259,6 +263,12 @@ class GitHubServerSideTruthEvidence(BaseModel):
             and self.merge_event_id is not None
         )
 
+    @property
+    def has_head_freshness_truth(self) -> bool:
+        if self.expected_head_sha is None:
+            return True
+        return self.head_sha == self.expected_head_sha
+
 
 class GitHubServerSideTruthSnapshot(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -272,6 +282,7 @@ class GitHubServerSideTruthSnapshot(BaseModel):
     check_run_ids: list[int] = Field(default_factory=list)
     expected_source_app: str | None = None
     head_sha: str | None = None
+    expected_head_sha: str | None = None
     branch_protection_snapshot: dict[str, Any] | None = None
     ruleset_snapshot: dict[str, Any] | None = None
     review_event_id: int | str | None = None
@@ -293,6 +304,7 @@ class ReadOnlyGitHubServerSideTruthClient(Protocol):
         repo: str,
         pull_request_number: int,
         required_checks: list[str],
+        expected_head_sha: str | None = None,
     ) -> GitHubServerSideTruthSnapshot | None: ...
 
 
@@ -306,11 +318,13 @@ class ReadOnlyGitHubServerSideTruthCollector:
         repo: str,
         pull_request_number: int,
         required_checks: list[str],
+        expected_head_sha: str | None = None,
     ) -> GitHubServerSideTruthEvidence:
         snapshot = self._client.fetch_server_side_truth_snapshot(
             repo=repo,
             pull_request_number=pull_request_number,
             required_checks=required_checks,
+            expected_head_sha=expected_head_sha,
         )
         if snapshot is None:
             return build_github_server_side_truth_gap(
@@ -324,6 +338,7 @@ class ReadOnlyGitHubServerSideTruthCollector:
             pull_request_number=pull_request_number,
             required_checks=required_checks,
             snapshot=snapshot,
+            expected_head_sha=expected_head_sha,
         )
 
 
@@ -363,6 +378,7 @@ class GitHubCliServerSideTruthClient:
         repo: str,
         pull_request_number: int,
         required_checks: list[str],
+        expected_head_sha: str | None = None,
     ) -> GitHubServerSideTruthSnapshot | None:
         repo = _require_non_empty(repo)
         pr_payload = self._gh_api(f"repos/{repo}/pulls/{pull_request_number}")
@@ -401,6 +417,7 @@ class GitHubCliServerSideTruthClient:
             mergeable=_optional_bool(pr_payload.get("mergeable")),
             mergeable_state=_optional_str(pr_payload.get("mergeable_state")),
             head_sha=head_sha,
+            expected_head_sha=expected_head_sha,
             workflow_run_id=check_run_ids[0] if check_run_ids else None,
             check_run_ids=check_run_ids,
             expected_source_app=expected_source_app,
@@ -480,6 +497,7 @@ class FakeGitHubServerSideTruthCollector(BaseModel):
         repo: str,
         pull_request_number: int,
         required_checks: list[str],
+        expected_head_sha: str | None = None,
     ) -> GitHubServerSideTruthEvidence:
         return GitHubServerSideTruthEvidence(
             repo=repo,
@@ -487,6 +505,7 @@ class FakeGitHubServerSideTruthCollector(BaseModel):
             required_checks=required_checks,
             proof_level="contract_proof",
             head_sha=self.head_sha,
+            expected_head_sha=expected_head_sha,
             workflow_run_id=self.workflow_run_id,
             check_suite_id=self.check_suite_id,
             check_run_ids=list(self.check_run_ids),
@@ -633,7 +652,9 @@ def build_github_server_side_truth_from_snapshot(
     pull_request_number: int,
     required_checks: list[str],
     snapshot: GitHubServerSideTruthSnapshot,
+    expected_head_sha: str | None = None,
 ) -> GitHubServerSideTruthEvidence:
+    expected_head_sha = expected_head_sha or snapshot.expected_head_sha
     candidate = GitHubServerSideTruthEvidence.model_construct(
         repo=repo,
         pull_request_number=pull_request_number,
@@ -644,6 +665,7 @@ def build_github_server_side_truth_from_snapshot(
         mergeable=snapshot.mergeable,
         mergeable_state=snapshot.mergeable_state,
         head_sha=snapshot.head_sha,
+        expected_head_sha=expected_head_sha,
         workflow_run_id=snapshot.workflow_run_id,
         check_suite_id=snapshot.check_suite_id,
         check_run_ids=list(snapshot.check_run_ids),
@@ -673,6 +695,7 @@ def build_github_server_side_truth_from_snapshot(
             mergeable=snapshot.mergeable,
             mergeable_state=snapshot.mergeable_state,
             head_sha=snapshot.head_sha,
+            expected_head_sha=expected_head_sha,
             workflow_run_id=snapshot.workflow_run_id,
             check_suite_id=snapshot.check_suite_id,
             check_run_ids=list(snapshot.check_run_ids),
@@ -700,6 +723,7 @@ def build_github_server_side_truth_from_snapshot(
         mergeable=snapshot.mergeable,
         mergeable_state=snapshot.mergeable_state,
         head_sha=snapshot.head_sha,
+        expected_head_sha=expected_head_sha,
         workflow_run_id=snapshot.workflow_run_id,
         check_suite_id=snapshot.check_suite_id,
         check_run_ids=list(snapshot.check_run_ids),
@@ -723,6 +747,7 @@ def build_github_server_side_truth_from_snapshot(
 def can_emit_pr_merged(evidence: GitHubServerSideTruthEvidence) -> bool:
     return (
         evidence.proof_level == "server_side_merge_proof"
+        and evidence.has_head_freshness_truth
         and evidence.has_status_check_truth
         and evidence.has_server_enforcement_truth
         and evidence.has_review_truth
@@ -732,6 +757,8 @@ def can_emit_pr_merged(evidence: GitHubServerSideTruthEvidence) -> bool:
 
 def _github_server_side_truth_gap_reason(evidence: GitHubServerSideTruthEvidence) -> str:
     missing = []
+    if not evidence.has_head_freshness_truth:
+        missing.append("head_freshness_truth")
     if not evidence.has_status_check_truth:
         missing.append("status_check_truth")
     if not evidence.has_server_enforcement_truth:

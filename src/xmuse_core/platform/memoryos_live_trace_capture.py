@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
@@ -94,16 +95,29 @@ async def capture_memoryos_lite_live_trace_artifact(
     artifact_refs.extend(context.source_refs)
     if trace is not None:
         artifact_refs.extend(trace.source_refs)
+    source_refs_out = _dedupe(artifact_refs)
+    target_refs = _memoryos_target_refs(
+        namespace_uri=namespace.uri,
+        session_id=session_id,
+    )
+    trace_id = _trace_id(
+        namespace_uri=namespace.uri,
+        session_id=session_id,
+        trace_events=trace_events,
+        source_refs=source_refs_out,
+    )
 
     proof_level = "live_service_proof" if trace is not None else "manual_gap"
     artifact: dict[str, Any] = {
         "schema_version": "xmuse.memoryos_lite_trace.v1",
+        "trace_id": trace_id,
         "proof_level": proof_level,
         "fact_state": "blocked" if blockers else "observed",
         "namespace_uri": namespace.uri,
         "session_id": session_id,
         "trace_events": trace_events,
-        "source_refs": _dedupe(artifact_refs),
+        "source_refs": source_refs_out,
+        "target_refs": target_refs,
         "estimated_tokens": estimated_tokens,
         "blockers": blockers,
         "captured_at": _utc_now(),
@@ -122,12 +136,14 @@ def capture_memoryos_lite_live_trace_manual_gap_artifact(
     refs = _dedupe([str(ref) for ref in source_refs if str(ref).strip()])
     artifact: dict[str, Any] = {
         "schema_version": "xmuse.memoryos_lite_trace.v1",
+        "trace_id": None,
         "proof_level": "manual_gap",
         "fact_state": "blocked",
         "namespace_uri": namespace.uri,
         "session_id": "",
         "trace_events": [],
         "source_refs": refs,
+        "target_refs": _memoryos_target_refs(namespace_uri=namespace.uri, session_id=""),
         "estimated_tokens": None,
         "blockers": [_blocker(reason, source_refs=refs)],
         "captured_at": _utc_now(),
@@ -163,6 +179,34 @@ def _dedupe(values: Sequence[str]) -> list[str]:
         seen.add(value)
         result.append(value)
     return result
+
+
+def _memoryos_target_refs(*, namespace_uri: str, session_id: str) -> list[str]:
+    refs = [f"memoryos:namespace:{namespace_uri}"]
+    if session_id.strip():
+        refs.append(f"memoryos:session:{session_id}")
+    return refs
+
+
+def _trace_id(
+    *,
+    namespace_uri: str,
+    session_id: str,
+    trace_events: Sequence[Mapping[str, object]],
+    source_refs: Sequence[str],
+) -> str | None:
+    if not session_id.strip() or not trace_events:
+        return None
+    material = {
+        "namespace_uri": namespace_uri,
+        "session_id": session_id,
+        "trace_events": list(trace_events),
+        "source_refs": list(source_refs),
+    }
+    digest = sha256(
+        json.dumps(material, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()[:24]
+    return f"xmuse-memoryos-trace:{digest}"
 
 
 def _utc_now() -> str:

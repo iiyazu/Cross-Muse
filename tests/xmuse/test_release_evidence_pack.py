@@ -140,6 +140,7 @@ def _write_memoryos_event(path: Path) -> Path:
 def _write_memoryos_trace(path: Path, **overrides: object) -> Path:
     payload: dict[str, object] = {
         "schema_version": "xmuse.memoryos_lite_trace.v1",
+        "trace_id": "xmuse-memoryos-trace:pack-1",
         "proof_level": "live_service_proof",
         "fact_state": "observed",
         "namespace_uri": "memory://conversation/conv-prod-1/god-review/thread-1",
@@ -163,6 +164,10 @@ def _write_memoryos_trace(path: Path, **overrides: object) -> Path:
             "conversation:conv-prod-1",
             "lane:lane-memoryos",
             "blueprint:bp-overnight",
+        ],
+        "target_refs": [
+            "memoryos:namespace:memory://conversation/conv-prod-1/god-review/thread-1",
+            "memoryos:session:memoryos-session-1",
         ],
         "estimated_tokens": 128,
         "blockers": [],
@@ -1292,6 +1297,7 @@ def test_release_evidence_pack_converts_github_truth_into_release_gate(
         "head_sha": "head-pack-1",
         "expected_head_sha": "head-pack-1",
         "head_sha_matches_expected": True,
+        "head_freshness_status": "matched",
         "required_check_count": 3,
         "check_run_count": 3,
         "expected_source_app": "github-actions",
@@ -1404,6 +1410,13 @@ def test_release_evidence_pack_keeps_stale_github_truth_as_manual_gap(
     assert gate["status"] == "manual_gap"
     assert gate["proof_level"] == "manual_gap"
     assert "does not match expected current head fresh-head" in gate["summary"]
+    assert gate["github_truth"]["head_sha_matches_expected"] is False
+    assert gate["github_truth"]["head_freshness_status"] == "mismatch"
+    assert pack["github_truth"]["head_sha"] == "stale-head"
+    assert pack["github_truth"]["expected_head_sha"] == "fresh-head"
+    assert pack["github_truth"]["head_sha_matches_expected"] is False
+    assert pack["github_truth"]["head_freshness_status"] == "mismatch"
+    assert pack["github_truth"]["can_emit_pr_merged"] is False
     assert pack["release_readiness_decision"] == "blocked"
     assert pack["blockers"][0]["gate_id"] == "github-server-truth"
 

@@ -49,6 +49,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             "only to seed live MemoryOS source_refs payload hints."
         ),
     )
+    parser.add_argument(
+        "--closure-object",
+        type=Path,
+        default=None,
+        help=(
+            "Optional xmuse ClosureObject artifact used only to seed live "
+            "MemoryOS source_refs payload hints after controller freshness "
+            "and forbidden-claim gates pass."
+        ),
+    )
     parser.add_argument("--github-repo")
     parser.add_argument("--github-pull-request")
     parser.add_argument("--github-base-branch")
@@ -127,6 +137,8 @@ def _candidate_payload(args: argparse.Namespace) -> dict[str, Any]:
         payload["god_room_review_chain_proof"] = str(
             args.god_room_review_chain_proof
         )
+    if args.closure_object is not None:
+        payload["closure_object"] = str(args.closure_object)
     _set_if_present(payload, "repo", args.github_repo)
     _set_if_present(payload, "pull_request_number", args.github_pull_request)
     _set_if_present(payload, "base_branch", args.github_base_branch)

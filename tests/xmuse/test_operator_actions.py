@@ -15,6 +15,9 @@ from xmuse_core.platform.operator_actions import (
     OperatorActionRequest,
     OperatorActionService,
 )
+from xmuse_core.platform.release_evidence_export_actions import (
+    run_release_evidence_export_action,
+)
 from xmuse_core.platform.state_machine import LaneStateMachine
 from xmuse_core.providers.god_cli_registration_store import GodCliRegistrationStore
 from xmuse_core.providers.god_cli_registry import build_default_god_cli_registry
@@ -1514,7 +1517,16 @@ def test_operator_action_captures_release_pack_with_god_room_runtime_inputs(
     closure = json.loads(closure_path.read_text(encoding="utf-8"))
     replay = json.loads(replay_path.read_text(encoding="utf-8"))
     sections = {section["section_id"]: section for section in replay["sections"]}
-    assert closure["status"] == "ok"
+    assert closure["status"] == "manual_gap"
+    assert closure["proof_level"] == "manual_gap"
+    assert (
+        closure["god_room_runtime_closure"]["review_chain_proof"]["status"]
+        == "manual_gap"
+    )
+    assert (
+        "god_room_review_chain_proof_artifact_missing"
+        in closure["god_room_runtime_closure"]["review_chain_proof"]["manual_gaps"]
+    )
     assert closure["god_room_runtime_closure"]["room_replay"]["status"] == "ok"
     assert closure["god_room_runtime_closure"]["lane_dag"][
         "refactor_required_count"
@@ -1535,6 +1547,58 @@ def test_operator_action_captures_release_pack_with_god_room_runtime_inputs(
     assert sections["god_room_runtime_closure"]["source_authority"] == (
         "god_room_runtime_closure_contract"
     )
+
+
+def test_operator_action_exports_review_chain_proof_with_real_handler(
+    tmp_path: Path,
+) -> None:
+    from tests.xmuse.test_god_room_review_chain_proof import _write_review_closure
+
+    release_dir = tmp_path / "release_readiness"
+    review_closure = _write_review_closure(tmp_path)
+    service = OperatorActionService(
+        god_cli_registry=build_default_god_cli_registry(),
+        audit_dir=tmp_path / "operator_actions",
+        release_readiness_dir=release_dir,
+        release_evidence_export_handler=lambda request: run_release_evidence_export_action(
+            request,
+            xmuse_root=tmp_path,
+            release_readiness_dir=release_dir,
+        ),
+    )
+
+    result = service.handle(
+        OperatorActionRequest(
+            action="export_god_room_review_chain_proof",
+            actor_id="operator-1",
+            capabilities=(OperatorActionCapability.RELEASE_GATE,),
+            idempotency_key="idem-export-review-chain-1",
+            payload={
+                "god_room_review_closure": str(review_closure),
+                "closure_object_output_path": "closure-object.json",
+            },
+            source="tui",
+        )
+    )
+
+    artifact_path = release_dir / "god-room-review-chain-proof.json"
+    closure_path = release_dir / "closure-object.json"
+    assert result.status == "ok"
+    assert result.fact_state == "release_evidence_exported"
+    export = result.payload["export"]
+    assert export["kind"] == "god_room_review_chain_proof"
+    assert export["artifact_path"] == str(artifact_path.resolve(strict=False))
+    assert export["closure_object_path"] == str(closure_path.resolve(strict=False))
+    assert artifact_path.is_file()
+    assert closure_path.is_file()
+    audit_rows = [
+        json.loads(line)
+        for line in (tmp_path / "operator_actions" / "operator-actions.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert audit_rows[-1]["action"] == "export_god_room_review_chain_proof"
+    assert audit_rows[-1]["status"] == "ok"
 
 
 def test_operator_action_denies_release_evidence_pack_without_capability(

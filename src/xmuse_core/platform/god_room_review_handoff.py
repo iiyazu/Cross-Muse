@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+import json
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -295,6 +296,56 @@ def build_review_closure_handoff_evaluation(
     }
 
 
+def load_and_evaluate_review_closure_handoff(
+    *,
+    root: str | Path,
+    review_closure_ref: str,
+    missing_summary: str = "GOD room review closure artifact is missing.",
+    escape_summary: str = "GOD room review closure artifact escapes xmuse root.",
+) -> dict[str, Any]:
+    """Resolve a review-closure artifact ref and evaluate the shared handoff gate."""
+
+    xmuse_root = Path(root)
+    base = {
+        "schema_version": REVIEW_CLOSURE_HANDOFF_EVALUATION_SCHEMA_VERSION,
+        "status": "manual_gap",
+        "handoff_gate_ready": False,
+        "handoff_summary": None,
+        "candidate_artifact_refs": [],
+        "candidate_artifact_ref_count": 0,
+        "source_refs": [],
+        "source_ref_count": 0,
+        "issues": [],
+        "manual_gaps": ["review_closure_handoff_not_ready"],
+    }
+    review_closure_path = _root_relative_artifact_path(
+        root=xmuse_root,
+        artifact_ref=review_closure_ref,
+    )
+    if review_closure_path is None:
+        return {
+            **base,
+            "handoff_summary": escape_summary,
+            "issues": [escape_summary.rstrip(".")],
+        }
+    review_closure, load_error = _load_review_closure_json(review_closure_path)
+    if review_closure is None:
+        summary = load_error or missing_summary
+        if summary == "GOD room review closure artifact is missing.":
+            summary = missing_summary
+        return {
+            **base,
+            "handoff_summary": summary,
+            "issues": [summary.rstrip(".")],
+        }
+    handoff_root_ref = _text(review_closure.get("xmuse_root"))
+    handoff_root = Path(handoff_root_ref) if handoff_root_ref is not None else xmuse_root
+    return build_review_closure_handoff_evaluation(
+        root=handoff_root,
+        review_closure=review_closure,
+    )
+
+
 def _evaluation_issues(
     *,
     schema_version: str | None,
@@ -416,8 +467,30 @@ def _mapping_list(value: object) -> list[Mapping[str, Any]]:
     return [item for item in value if isinstance(item, Mapping)]
 
 
+def _root_relative_artifact_path(root: Path, artifact_ref: str) -> Path | None:
+    raw_path = Path(artifact_ref)
+    candidate = raw_path if raw_path.is_absolute() else root / raw_path
+    try:
+        candidate.resolve(strict=False).relative_to(root.resolve(strict=False))
+    except ValueError:
+        return None
+    return candidate
+
+
+def _load_review_closure_json(path: Path) -> tuple[dict[str, Any] | None, str | None]:
+    if not path.is_file():
+        return None, "GOD room review closure artifact is missing."
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        return None, f"GOD room review closure artifact is invalid JSON: {exc}"
+    if not isinstance(value, dict):
+        return None, "GOD room review closure artifact must be an object."
+    return value, None
+
+
 def _lineages_by_artifact_ref(
-    lineages: list[Mapping[str, Any]],
+    lineages: Sequence[Mapping[str, Any]],
 ) -> dict[str, Mapping[str, Any]]:
     result: dict[str, Mapping[str, Any]] = {}
     for lineage in lineages:
@@ -462,6 +535,11 @@ def _validate_runner_session_lineage(
                 "runner_session_refs": _ordered_unique(runner_session_refs),
                 "runner_session_ref_count": len(_ordered_unique(runner_session_refs)),
             }
+        assert artifact_ref is not None
+        assert session_ref is not None
+        assert session_id is not None
+        assert run_id is not None
+        assert runner_id is not None
         try:
             load_runner_session_lineage(
                 root=root,
@@ -514,7 +592,7 @@ def _validate_runner_session_lineage(
     }
 
 
-def _ordered_unique(values: list[str | None]) -> list[str]:
+def _ordered_unique(values: Sequence[str | None]) -> list[str]:
     result: list[str] = []
     seen: set[str] = set()
     for value in values:
@@ -532,4 +610,5 @@ __all__ = [
     "build_god_room_review_closure_handoff",
     "build_review_closure_handoff_evaluation",
     "god_room_review_closure_source_refs",
+    "load_and_evaluate_review_closure_handoff",
 ]

@@ -468,6 +468,7 @@ def _write_json(path: Path, payload: dict[str, object]) -> None:
 def _memoryos_trace_artifact() -> dict[str, object]:
     return {
         "schema_version": "xmuse.memoryos_lite_trace.v1",
+        "trace_id": "xmuse-memoryos-trace:live-gate-status",
         "proof_level": "live_service_proof",
         "fact_state": "observed",
         "namespace_uri": "memory://conversation/conv-live/god-review/thread-1",
@@ -484,6 +485,10 @@ def _memoryos_trace_artifact() -> dict[str, object]:
             },
         ],
         "source_refs": ["conversation:conv-live", "blueprint:bp-1"],
+        "target_refs": [
+            "memoryos:namespace:memory://conversation/conv-live/god-review/thread-1",
+            "memoryos:session:ses-live-1",
+        ],
         "estimated_tokens": 96,
         "blockers": [],
     }

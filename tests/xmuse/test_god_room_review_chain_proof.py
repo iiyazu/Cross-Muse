@@ -2,8 +2,14 @@ import json
 from pathlib import Path
 
 from xmuse.god_room_review_chain_proof_capture import main as capture_main
+from xmuse_core.platform.closure_objects import (
+    PATCH_FORWARD_LINEAGE_PRESENT,
+    SERVER_TRUTH_PENDING,
+    ClosureObject,
+)
 from xmuse_core.platform.god_room_review_chain_proof import (
     build_god_room_review_chain_proof,
+    build_review_chain_proof_l10_handoff_evaluation,
     capture_god_room_review_chain_proof,
 )
 from xmuse_core.platform.local_execution_candidate import (
@@ -264,6 +270,18 @@ def test_god_room_review_chain_proof_validates_l9_to_l10_handoff(
     assert proof["release_evidence_handoff"][
         "review_closure_candidate_artifact_refs"
     ] == ["artifacts/lane-runtime-evidence-patch/result.json"]
+    handoff = build_review_chain_proof_l10_handoff_evaluation(
+        root=tmp_path,
+        artifact_path=tmp_path / "work" / "review-chain-proof.json",
+        review_chain_proof=proof,
+    )
+    assert handoff["status"] == "ready"
+    assert handoff["patch_forward_artifact_refs"] == [
+        patch_forward_ref,
+        patch_intake_ref,
+        patch_verdict_ref,
+    ]
+    assert handoff["patch_forward_artifact_ref_count"] == 3
     assert "worker_output_is_review_truth" in proof["forbidden_claims"]
     assert "ready_to_merge" in proof["forbidden_claims"]
     assert "pr_merged" in proof["forbidden_claims"]
@@ -1505,6 +1523,7 @@ def test_god_room_review_chain_proof_fail_closes_server_truth_overclaim(
 def test_god_room_review_chain_proof_cli_writes_artifact(tmp_path: Path) -> None:
     review_closure = _write_review_closure(tmp_path)
     output = tmp_path / "reports" / "review-chain-proof.json"
+    closure_output = tmp_path / "reports" / "closure-object.json"
 
     assert capture_main(
         [
@@ -1514,12 +1533,18 @@ def test_god_room_review_chain_proof_cli_writes_artifact(tmp_path: Path) -> None
             str(review_closure),
             "--output",
             str(output),
+            "--closure-object-output",
+            str(closure_output),
         ]
     ) == 0
 
     proof = json.loads(output.read_text(encoding="utf-8"))
     assert proof["status"] == "chain_ready"
     assert proof["release_evidence_handoff"]["review_closure_artifact_gate_ready"] is True
+    closure = ClosureObject.from_dict(json.loads(closure_output.read_text(encoding="utf-8")))
+    assert closure.status.condition(PATCH_FORWARD_LINEAGE_PRESENT).status == "true"
+    assert closure.status.condition(SERVER_TRUTH_PENDING).status == "true"
+    assert "pr_merged" in closure.status.forbidden_claims
 
 
 def test_god_room_review_chain_proof_cli_returns_nonzero_for_manual_gap(

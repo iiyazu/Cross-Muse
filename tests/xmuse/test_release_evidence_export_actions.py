@@ -6,6 +6,11 @@ from pathlib import Path
 
 from xmuse_core.agents.god_session_registry import GodSessionRegistry
 from xmuse_core.chat.store import ChatStore
+from xmuse_core.platform.closure_objects import (
+    PATCH_FORWARD_LINEAGE_PRESENT,
+    SERVER_TRUTH_PENDING,
+    ClosureObject,
+)
 from xmuse_core.platform.operator_actions import OperatorActionRequest
 from xmuse_core.platform.release_evidence_export_actions import (
     run_release_evidence_export_action,
@@ -313,6 +318,49 @@ def test_release_export_action_writes_github_truth_snapshot_and_gate(
         for command in runner.commands
         for token in ("--method", "PATCH", "POST", "PUT", "DELETE")
     )
+
+
+def test_release_export_action_writes_review_chain_proof_and_closure_object(
+    tmp_path: Path,
+) -> None:
+    from tests.xmuse.test_god_room_review_chain_proof import _write_review_closure
+
+    release_dir = tmp_path / "work" / "release_readiness"
+    review_closure = _write_review_closure(tmp_path)
+    request = OperatorActionRequest(
+        action="export_god_room_review_chain_proof",
+        actor_id="operator-1",
+        capabilities=("release_gate",),
+        idempotency_key="idem-review-chain-export",
+        payload={
+            "god_room_review_closure": str(review_closure),
+            "closure_object_output_path": "closure-object.json",
+        },
+        source="chat_api",
+    )
+
+    result = run_release_evidence_export_action(
+        request,
+        xmuse_root=tmp_path,
+        release_readiness_dir=release_dir,
+        env={},
+    )
+
+    artifact_path = release_dir / "god-room-review-chain-proof.json"
+    closure_path = release_dir / "closure-object.json"
+    artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
+    closure = ClosureObject.from_dict(
+        json.loads(closure_path.read_text(encoding="utf-8"))
+    )
+    assert result["kind"] == "god_room_review_chain_proof"
+    assert result["artifact_path"] == str(artifact_path.resolve(strict=False))
+    assert result["closure_object_path"] == str(closure_path.resolve(strict=False))
+    assert result["artifact"] == artifact
+    assert result["closure_object"] == closure.to_dict()
+    assert artifact["status"] == "chain_ready"
+    assert closure.status.condition(PATCH_FORWARD_LINEAGE_PRESENT).status == "true"
+    assert closure.status.condition(SERVER_TRUTH_PENDING).status == "true"
+    assert "pr_merged" in closure.status.forbidden_claims
 
 
 def test_release_export_action_writes_god_runtime_continuity_artifact(

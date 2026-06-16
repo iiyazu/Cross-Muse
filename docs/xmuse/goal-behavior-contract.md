@@ -70,7 +70,9 @@ like:
 - `RecoveryAllowsProgress`
 - `ValidatedExecutionCandidatePresent`
 - `IndependentReviewVerdictPresent`
+- `PatchForwardLineagePresent`
 - `ReleaseHandoffEvaluated`
+- `RequiredForbiddenClaimsPresent`
 - `ServerTruthPending`
 
 Conditions must be idempotent: rerunning the same reconciliation should not
@@ -88,9 +90,10 @@ state:
 - `spec`: the desired condition from the goal, wave map, or contract;
 - `status`: the observed durable artifact, store record, or server-side truth;
 - `conditions`: machine-readable results, for example
-  `RecoveryArtifactPresent`, `RecoveryAllowsProgress`,
+  `ClosureControllerFresh`, `RecoveryArtifactPresent`, `RecoveryAllowsProgress`,
   `ValidatedExecutionCandidatePresent`,
-  `IndependentReviewVerdictPresent`, `ReleaseHandoffEvaluated`, and
+  `IndependentReviewVerdictPresent`, `PatchForwardLineagePresent`,
+  `ReleaseHandoffEvaluated`, `RequiredForbiddenClaimsPresent`, and
   `ServerTruthPending`;
 - `owner_refs`: authority owner, allowed writer, and producer path;
 - `source_refs` and `target_refs`: stable lane/graph/review/release refs.
@@ -98,8 +101,15 @@ state:
 Admission-style checks must run before a closure writer updates status. Reject
 or downgrade to `manual_gap` / `refactor_required` when stable refs are missing,
 owner lineage is missing, inherited `manual_gaps` or `forbidden_claims` are
-deleted, a proof level is upgraded without a stronger producer, or a downstream
-surface tries to create truth without an upstream producer.
+deleted, a proof level is upgraded without a stronger producer, a stale
+observed generation is treated as current status, or a downstream surface tries
+to create truth without an upstream producer.
+
+Closure objects must carry freshness metadata. At minimum, machine-readable
+controller output should include `generation`, `observed_generation`, and an
+`evaluator_version`. Consumers must fail closed when an embedded handoff,
+runner-session boundary, release observation, or GitHub/MemoryOS observation
+belongs to a stale head, stale generation, or different graph/lane scope.
 
 MemoryOS Lite is an L10 provenance/trace consumer, not an xmuse authority write
 path. It may receive scoped source refs and lineage hints after L8/L9 artifacts
@@ -390,7 +400,9 @@ classification.
 Acceptance:
 
 - Release evidence only aggregates upstream artifacts.
-- MemoryOS plan is not live MemoryOS trace.
+- MemoryOS plan is not live MemoryOS trace. A live MemoryOS trace gate must
+  carry a trace id plus upstream non-`memoryos:` source refs; those refs are
+  provenance, not authority.
 - CI success is not review/merge truth.
 - Draft/open/unmerged PR state preserves no `pr_merged`.
 - Raw terminal output does not become durable GOD speech without L4/L5 lineage.

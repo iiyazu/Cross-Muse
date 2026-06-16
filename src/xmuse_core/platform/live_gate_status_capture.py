@@ -467,6 +467,7 @@ def _capture_github_server_truth_gate(
             repo=str(target["repo"]),
             pull_request_number=int(target["pull_request_number"]),
             required_checks=list(target["required_checks"]),
+            expected_head_sha=_clean_text(target.get("expected_head_sha")),
         )
         payload = evidence.model_dump(mode="json")
         expected_head_sha = _clean_text(target.get("expected_head_sha"))

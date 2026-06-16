@@ -12,6 +12,7 @@ from xmuse_core.integrations.memoryos_lite_interop import (
     live_memoryos_lite_enabled,
 )
 from xmuse_core.integrations.memoryos_namespace import task_namespace
+from xmuse_core.platform.closure_reconciler import capture_closure_object
 from xmuse_core.platform.execution.github_ops import (
     GitHubCliServerSideTruthClient,
     ReadOnlyGitHubServerSideTruthCollector,
@@ -19,6 +20,9 @@ from xmuse_core.platform.execution.github_ops import (
 )
 from xmuse_core.platform.github_truth_release_gate import (
     write_github_server_truth_release_gate,
+)
+from xmuse_core.platform.god_room_review_chain_proof import (
+    capture_god_room_review_chain_proof,
 )
 from xmuse_core.platform.god_runtime_continuity_capture import (
     capture_selected_god_runtime_continuity_artifact,
@@ -79,12 +83,19 @@ GOD_RUNTIME_EXPORT_ACTIONS = {
     "god_runtime_continuity_export",
     "selected_god_runtime_export",
 }
+REVIEW_CHAIN_EXPORT_ACTIONS = {
+    "export_god_room_review_chain_proof",
+    "capture_god_room_review_chain_proof",
+    "god_room_review_chain_proof_export",
+    "god_room_review_chain_proof_capture",
+}
 RELEASE_EVIDENCE_EXPORT_ACTIONS = (
     NATURAL_EXPORT_ACTIONS
     | PROVIDER_EXPORT_ACTIONS
     | MEMORYOS_EXPORT_ACTIONS
     | GITHUB_EXPORT_ACTIONS
     | GOD_RUNTIME_EXPORT_ACTIONS
+    | REVIEW_CHAIN_EXPORT_ACTIONS
 )
 DEFAULT_GITHUB_REQUIRED_CHECKS = (
     "quality-gates",
@@ -124,6 +135,8 @@ def run_release_evidence_export_action(
         )
     if action in GOD_RUNTIME_EXPORT_ACTIONS:
         return _export_god_runtime(request, root=root, release_root=release_root)
+    if action in REVIEW_CHAIN_EXPORT_ACTIONS:
+        return _export_review_chain(request, root=root, release_root=release_root)
     raise OperatorActionBlockedError(
         f"unknown release evidence export action: {request.action}",
         proof_level="manual_gap",
@@ -350,6 +363,7 @@ def _export_github(
         repo=repo,
         pull_request_number=pull_request_number,
         required_checks=required_checks,
+        expected_head_sha=expected_head_sha,
     )
     artifact = evidence.model_dump(mode="json")
     head_sha_matches_expected = (
@@ -417,6 +431,60 @@ def _export_god_runtime(
     }
 
 
+def _export_review_chain(
+    request: OperatorActionRequest,
+    *,
+    root: Path,
+    release_root: Path,
+) -> dict[str, Any]:
+    review_closure = _input_path(
+        request.payload.get("god_room_review_closure")
+        or request.payload.get("review_closure")
+        or request.payload.get("review_closure_artifact"),
+        root=root,
+        field_name="payload.god_room_review_closure",
+    )
+    artifact_path = _release_path(
+        request.payload.get("output_path") or request.payload.get("artifact_path"),
+        release_root=release_root,
+        default=release_root / "god-room-review-chain-proof.json",
+    )
+    proof = capture_god_room_review_chain_proof(
+        root=root,
+        review_closure_artifact=review_closure,
+        output_path=artifact_path,
+    )
+    result: dict[str, Any] = {
+        "kind": "god_room_review_chain_proof",
+        "artifact_path": str(artifact_path.resolve(strict=False)),
+        "artifact": proof,
+    }
+    closure_output = request.payload.get("closure_object_output_path") or (
+        request.payload.get("closure_object_output")
+    )
+    if _text(closure_output) is not None:
+        closure_path = _release_path(
+            closure_output,
+            release_root=release_root,
+            default=release_root / "closure-object.json",
+        )
+        closure = capture_closure_object(
+            root=root,
+            graph_id=_required_artifact_text(proof, "graph_id"),
+            lane_id=_required_artifact_text(proof, "terminal_lane_id"),
+            generation=_int_value(request.payload.get("closure_generation"), default=1),
+            previous_closure=request.payload.get("previous_closure_object"),
+            recovery_artifact=_recovery_artifact_ref(proof),
+            execution_candidates=_candidate_artifact_refs(proof),
+            review_closure=review_closure,
+            release_handoff=artifact_path,
+            output_path=closure_path,
+        )
+        result["closure_object_path"] = str(closure_path.resolve(strict=False))
+        result["closure_object"] = closure.to_dict()
+    return result
+
+
 def _natural_god_runtime_path(payload: Mapping[str, Any], *, release_root: Path) -> Path | None:
     runtime_value = (
         payload.get("god_runtime")
@@ -475,6 +543,19 @@ def _release_path(value: Any, *, release_root: Path, default: Path) -> Path:
     return resolved
 
 
+def _input_path(value: Any, *, root: Path, field_name: str) -> Path:
+    text = _text(value)
+    if text is None:
+        raise OperatorActionBlockedError(
+            f"release evidence export requires {field_name}",
+            proof_level="manual_gap",
+        )
+    path = Path(text)
+    if not path.is_absolute():
+        path = root / path
+    return path.resolve(strict=False)
+
+
 def _required_text(payload: Mapping[str, Any], key: str) -> str:
     value = _text(payload.get(key))
     if value is None:
@@ -483,6 +564,30 @@ def _required_text(payload: Mapping[str, Any], key: str) -> str:
             proof_level="manual_gap",
         )
     return value
+
+
+def _required_artifact_text(artifact: Mapping[str, Any], key: str) -> str:
+    value = _text(artifact.get(key))
+    if value is None:
+        raise OperatorActionBlockedError(
+            f"review-chain proof artifact is missing {key}",
+            proof_level="manual_gap",
+        )
+    return value
+
+
+def _candidate_artifact_refs(proof: Mapping[str, Any]) -> list[str]:
+    lineage = proof.get("candidate_lineage")
+    if not isinstance(lineage, Mapping):
+        return []
+    return _string_list(lineage.get("candidate_artifact_refs"))
+
+
+def _recovery_artifact_ref(proof: Mapping[str, Any]) -> str | None:
+    lineage = proof.get("runner_recovery_proof_lineage")
+    if not isinstance(lineage, Mapping):
+        return None
+    return _text(lineage.get("artifact_ref"))
 
 
 def _text(value: Any) -> str | None:
@@ -558,6 +663,7 @@ __all__ = [
     "MEMORYOS_EXPORT_ACTIONS",
     "NATURAL_EXPORT_ACTIONS",
     "PROVIDER_EXPORT_ACTIONS",
+    "REVIEW_CHAIN_EXPORT_ACTIONS",
     "RELEASE_EVIDENCE_EXPORT_ACTIONS",
     "run_release_evidence_export_action",
 ]

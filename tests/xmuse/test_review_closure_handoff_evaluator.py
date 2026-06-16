@@ -6,6 +6,7 @@ from pathlib import Path
 from xmuse_core.platform.god_room_review_handoff import (
     REVIEW_CLOSURE_HANDOFF_EVALUATION_SCHEMA_VERSION,
     build_review_closure_handoff_evaluation,
+    load_and_evaluate_review_closure_handoff,
 )
 from xmuse_core.platform.local_execution_candidate import (
     LOCAL_EXECUTION_CANDIDATE_FORBIDDEN_CLAIMS,
@@ -82,6 +83,47 @@ def test_review_closure_handoff_evaluation_blocks_server_truth_overclaim(
     assert evaluation["server_truth_status"] == "github_review_truth"
     assert "review_closure_handoff_not_ready" in evaluation["manual_gaps"]
     assert any("overclaims server truth" in issue for issue in evaluation["issues"])
+
+
+def test_load_and_evaluate_review_closure_handoff_uses_artifact_ref(
+    tmp_path: Path,
+) -> None:
+    review_closure_path = tmp_path / "review-closure.json"
+    review_closure_path.write_text(
+        json.dumps(_review_closure_payload(tmp_path), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    evaluation = load_and_evaluate_review_closure_handoff(
+        root=tmp_path,
+        review_closure_ref="review-closure.json",
+    )
+
+    assert evaluation["schema_version"] == (
+        REVIEW_CLOSURE_HANDOFF_EVALUATION_SCHEMA_VERSION
+    )
+    assert evaluation["status"] == "ready"
+    assert evaluation["candidate_artifact_ref_count"] == 1
+    assert evaluation["source_ref_count"] > 0
+
+
+def test_load_and_evaluate_review_closure_handoff_rejects_escaping_ref(
+    tmp_path: Path,
+) -> None:
+    evaluation = load_and_evaluate_review_closure_handoff(
+        root=tmp_path,
+        review_closure_ref="../review-closure.json",
+    )
+
+    assert evaluation["schema_version"] == (
+        REVIEW_CLOSURE_HANDOFF_EVALUATION_SCHEMA_VERSION
+    )
+    assert evaluation["status"] == "manual_gap"
+    assert evaluation["handoff_gate_ready"] is False
+    assert evaluation["handoff_summary"] == (
+        "GOD room review closure artifact escapes xmuse root."
+    )
+    assert "review_closure_handoff_not_ready" in evaluation["manual_gaps"]
 
 
 def _review_closure_payload(root: Path) -> dict[str, object]:

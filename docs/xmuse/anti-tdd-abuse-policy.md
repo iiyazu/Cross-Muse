@@ -90,6 +90,12 @@ TDD 只在以下条件同时满足时合格：
 16. Tests treat MemoryOS Lite traces, plans, or summaries as the authority for
     L8/L9 recovery, execution-candidate validity, review truth, or handoff
     truth.
+17. Tests rely on the controller status layer to silently add required
+    `forbidden_claims` that an upstream review/release handoff artifact failed
+    to preserve.
+18. Tests ignore `generation`, `observed_generation`, `evaluator_version`, or
+    current-head freshness when the behavior under review depends on stale truth
+    rejection.
 
 ## Required Response To TDD Abuse
 
@@ -122,6 +128,10 @@ the real path:
 - desired condition is defined by the goal or contract;
 - production code emits durable artifact/status with stable refs;
 - owner lineage and inherited `forbidden_claims` are present;
+- missing inherited `forbidden_claims` become `manual_gap` instead of being
+  hidden by status aggregation;
+- generation/freshness metadata proves the observed status belongs to the
+  current reconciliation;
 - missing schema/artifact/owner fails closed to `manual_gap`, `blocked`, or
   `refactor_required`;
 - rerun is idempotent and does not duplicate artifacts or alter immutable

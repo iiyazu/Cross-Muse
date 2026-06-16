@@ -83,6 +83,25 @@ def build_memoryos_live_release_gate(
             source_refs=source_refs,
             proof_level="manual_gap",
         )
+    trace_id = _text(trace_artifact.get("trace_id"))
+    if trace_id is None:
+        return _blocked_gate(
+            summary="MemoryOS Lite live trace requires a trace_id.",
+            artifact_path=artifact,
+            source_refs=source_refs,
+            proof_level="manual_gap",
+        )
+    upstream_refs = _upstream_source_refs(source_refs)
+    if not upstream_refs:
+        return _blocked_gate(
+            summary=(
+                "MemoryOS Lite live trace requires at least one non-MemoryOS "
+                "upstream source_ref."
+            ),
+            artifact_path=artifact,
+            source_refs=source_refs,
+            proof_level="manual_gap",
+        )
 
     trace_events = _dicts(trace_artifact.get("trace_events"))
     if not trace_events:
@@ -239,12 +258,16 @@ def _trace_detail(
     )
     return {
         "authority": "memoryos_live_release_gate",
+        "trace_id": _text(trace_artifact.get("trace_id")),
         "namespace_uri": _text(trace_artifact.get("namespace_uri")),
         "session_id": _text(trace_artifact.get("session_id")),
         "trace_event_count": len(trace_events),
         "event_kinds": event_kinds,
         "estimated_tokens": normalized_tokens,
         "source_ref_count": len(source_refs),
+        "upstream_source_ref_count": len(_upstream_source_refs(source_refs)),
+        "target_refs": _target_refs(trace_artifact),
+        "target_ref_count": len(_target_refs(trace_artifact)),
         "blocker_count": len(_dicts(trace_artifact.get("blockers"))),
         "live_service_proof": _text(trace_artifact.get("proof_level"))
         == "live_service_proof",
@@ -263,6 +286,21 @@ def _source_refs(trace_artifact: dict[str, Any]) -> list[str]:
     if session_id is not None:
         refs.append(f"memoryos:session:{session_id}")
     return _dedupe(refs)
+
+
+def _target_refs(trace_artifact: dict[str, Any]) -> list[str]:
+    refs = _string_list(trace_artifact.get("target_refs"))
+    namespace_uri = _text(trace_artifact.get("namespace_uri"))
+    session_id = _text(trace_artifact.get("session_id"))
+    if namespace_uri is not None:
+        refs.append(f"memoryos:namespace:{namespace_uri}")
+    if session_id is not None:
+        refs.append(f"memoryos:session:{session_id}")
+    return _dedupe(refs)
+
+
+def _upstream_source_refs(source_refs: list[str]) -> list[str]:
+    return [ref for ref in source_refs if not ref.startswith("memoryos:")]
 
 
 def _is_fake_or_fixture_event(event: dict[str, Any]) -> bool:
