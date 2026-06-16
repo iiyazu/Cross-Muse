@@ -10,6 +10,8 @@ from xmuse_core.platform.execution.github_ops import (
     can_emit_pr_merged,
 )
 
+_PR_MERGED_FORBIDDEN_CLAIMS = ["pr_merged"]
+
 
 def build_github_server_truth_release_gate(
     github_truth: dict[str, Any],
@@ -42,6 +44,7 @@ def build_github_server_truth_release_gate(
                 "Re-capture GitHub server truth for the current PR head before "
                 "using this artifact in release readiness."
             ),
+            forbidden_claims=_PR_MERGED_FORBIDDEN_CLAIMS,
             github_truth=_truth_detail(
                 github_truth,
                 actual_head_sha=actual_head_sha,
@@ -49,9 +52,10 @@ def build_github_server_truth_release_gate(
             ),
         )
     if _has_server_enforcement_proof(github_truth):
+        can_emit_merged = _can_emit_pr_merged(github_truth)
         proof_level = (
             "server_side_merge_proof"
-            if _can_emit_pr_merged(github_truth)
+            if can_emit_merged
             else "server_side_enforcement_proof"
         )
         return _gate(
@@ -61,6 +65,7 @@ def build_github_server_truth_release_gate(
             source_refs=source_refs,
             artifact_path=artifact_path,
             next_action=_next_action(github_truth),
+            forbidden_claims=[] if can_emit_merged else _PR_MERGED_FORBIDDEN_CLAIMS,
             github_truth=_truth_detail(
                 github_truth,
                 actual_head_sha=actual_head_sha,
@@ -74,6 +79,7 @@ def build_github_server_truth_release_gate(
         source_refs=source_refs,
         artifact_path=artifact_path,
         next_action="Capture GitHub branch protection/ruleset and required check truth.",
+        forbidden_claims=_PR_MERGED_FORBIDDEN_CLAIMS,
         github_truth=_truth_detail(
             github_truth,
             actual_head_sha=actual_head_sha,
@@ -113,6 +119,7 @@ def _gate(
     source_refs: list[str],
     artifact_path: str | Path,
     next_action: str,
+    forbidden_claims: list[str],
     github_truth: dict[str, Any],
 ) -> dict[str, Any]:
     return {
@@ -128,6 +135,7 @@ def _gate(
         "attempted_command": "uv run python scripts/github_server_truth_capture.py",
         "next_action": next_action,
         "source_refs": source_refs,
+        "forbidden_claims": forbidden_claims,
         "artifacts": [str(artifact_path)],
         "github_truth": github_truth,
         "generated_at": _utc_now(),

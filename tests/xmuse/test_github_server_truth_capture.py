@@ -411,6 +411,7 @@ def test_github_server_truth_capture_can_write_release_gate_artifact(
         "github:head:head456",
     ]
     assert gate_payload["artifacts"] == [str(output)]
+    assert gate_payload["forbidden_claims"] == ["pr_merged"]
 
 
 def test_github_server_truth_capture_blocks_stale_expected_head(
@@ -489,3 +490,4 @@ def test_github_server_truth_capture_blocks_stale_expected_head(
     assert "does not match expected current head current-head" in gate_payload["summary"]
     assert "github:head:stale-head" in gate_payload["source_refs"]
     assert "github:expected-head:current-head" in gate_payload["source_refs"]
+    assert gate_payload["forbidden_claims"] == ["pr_merged"]

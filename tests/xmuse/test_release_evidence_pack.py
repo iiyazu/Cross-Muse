@@ -1308,6 +1308,7 @@ def test_release_evidence_pack_converts_github_truth_into_release_gate(
         "github:head:head-pack-1",
         "github:expected-head:head-pack-1",
     ]
+    assert gate["forbidden_claims"] == ["pr_merged"]
     assert pack["source_reports"]["github_server_truth_gate"] == str(gate_path)
     assert pack["github_truth"] == {
         "authority": "github_truth_release_gate",
@@ -1338,6 +1339,8 @@ def test_release_evidence_pack_converts_github_truth_into_release_gate(
     }
     assert pack["artifact_count"] == 1
     assert pack["release_readiness_decision"] == "ready"
+    assert pack["release_forbidden_claims"] == ["pr_merged"]
+    assert pack["release_forbidden_claim_count"] == 1
     assert pack["proof_contamination_decision"] == "clean"
     assert pack["decision"] == "blocked"
 
@@ -1366,6 +1369,7 @@ def test_release_evidence_pack_recomputes_github_merge_truth(
     gate = json.loads((artifacts / "github-server-truth.json").read_text())
     assert gate["status"] == "ok"
     assert gate["proof_level"] == "server_side_enforcement_proof"
+    assert gate["forbidden_claims"] == ["pr_merged"]
     assert gate["next_action"] == (
         "Resolve remaining GitHub truth gap before pr_merged: "
         "missing server-side truth: review_truth, merge_truth."
@@ -1407,6 +1411,7 @@ def test_release_evidence_pack_accepts_server_side_merge_truth(
     gate = json.loads((artifacts / "github-server-truth.json").read_text())
     assert gate["status"] == "ok"
     assert gate["proof_level"] == "server_side_merge_proof"
+    assert gate["forbidden_claims"] == []
     assert gate["next_action"] == "No GitHub server-truth action required."
     assert pack["github_truth"]["proof_level"] == "server_side_merge_proof"
     assert pack["github_truth"]["review_truth"] == "github_review"
@@ -1439,6 +1444,7 @@ def test_release_evidence_pack_keeps_stale_github_truth_as_manual_gap(
     assert "does not match expected current head fresh-head" in gate["summary"]
     assert gate["github_truth"]["head_sha_matches_expected"] is False
     assert gate["github_truth"]["head_freshness_status"] == "mismatch"
+    assert gate["forbidden_claims"] == ["pr_merged"]
     assert pack["github_truth"]["head_sha"] == "stale-head"
     assert pack["github_truth"]["expected_head_sha"] == "fresh-head"
     assert pack["github_truth"]["head_sha_matches_expected"] is False

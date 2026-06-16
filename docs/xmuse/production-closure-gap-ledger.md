@@ -262,6 +262,8 @@ runtime、provider invocation、lane authority、review truth 完成。后续生
   `bcc49d1caf6548f56cdf69c73d20619563ff1085`
 - Local head at start of x3 release-readiness forbidden-claim projection slice:
   `5220369bcf8da7f9a834159956669dce0d42c180`
+- Local head at start of x3 GitHub release-gate forbidden-claim producer slice:
+  `709008aff94a56ef88db38a78d78d9347003db56`
 - PR: <https://github.com/iiyazu/Cross-Muse/pull/43>
 - PR state last checked: draft/open/unmerged
 - PR merge state last checked: `CLEAN`
@@ -371,6 +373,7 @@ truth_snapshot:
   local_head_at_x3_closure_object_complete_condition_admission_slice: 1a02f7acb5ebc0ecadbce9b73dabc9f7733e2206
   local_head_at_x3_release_gate_digest_refs_preservation_slice: bcc49d1caf6548f56cdf69c73d20619563ff1085
   local_head_at_x3_release_readiness_forbidden_claim_projection_slice: 5220369bcf8da7f9a834159956669dce0d42c180
+  local_head_at_x3_github_release_gate_forbidden_claim_producer_slice: 709008aff94a56ef88db38a78d78d9347003db56
   pr: 43
   pr_url: https://github.com/iiyazu/Cross-Muse/pull/43
   pr_state: draft_open_unmerged
@@ -715,6 +718,11 @@ Current closure audit:
     the existing meaning of `release_readiness_decision=ready` as gate readiness
     while keeping claims such as `ready_to_merge` or `pr_merged` visibly
     forbidden unless a stronger server-side proof removes them.
+    The GitHub server-truth release gate now produces the `pr_merged`
+    forbidden claim itself unless the validated
+    `GitHubServerSideTruthEvidence` satisfies `can_emit_pr_merged()`. This keeps
+    a branch-protection/check-run enforcement gate from being overread as merge
+    truth even when release readiness for that gate is otherwise `ready`.
     Closure-controller and review-handoff regression tests now share a small
     fixture builder that produces candidate, runner-session, review-closure,
     and review-chain payloads through the production capture/build helpers. This
@@ -2323,6 +2331,9 @@ Use these as implementation references, not as xmuse package dependencies:
     produce `pr_merged` projection or a "no action required" GitHub next action.
     The GitHub release gate itself remains `server_side_enforcement_proof`
     unless the validated server truth satisfies full `server_side_merge_proof`.
+    The same gate also carries `forbidden_claims=["pr_merged"]` for enforcement
+    proof, manual gaps, and stale-head gaps, and only drops that forbidden claim
+    when validated server-side merge proof can emit `pr_merged`.
   - PR #43 latest verified CI after this slice refresh is for remote head
   `b154021111400863098f11ed98eeb24d6fad9311` in run `27607281313`; merge
   state was `CLEAN` when last checked. Local changes after that head remain
