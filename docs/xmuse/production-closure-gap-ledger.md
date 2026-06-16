@@ -303,6 +303,9 @@ runtime、provider invocation、lane authority、review truth 完成。后续生
 - Local head at start of x3 runtime-closure shared review-chain handoff
   admission slice:
   `267ac887b899649a8b6ab6152321df879f249425`
+- Local head at start of x3 closure-reconciler patch-forward shared
+  review-chain handoff admission slice:
+  `a99d9499984d8544523944f9b0cc623997625db3`
 - PR: <https://github.com/iiyazu/Cross-Muse/pull/43>
 - PR state last checked: draft/open/unmerged
 - PR merge state last checked: `CLEAN`
@@ -428,6 +431,7 @@ truth_snapshot:
   local_head_at_x3_closure_reconciler_nested_server_truth_overclaim_admission_slice: ecba8946b0f8a2384ac628144e4c33aa46700480
   local_head_at_x3_operator_action_github_truth_fixture_drift_cleanup_slice: 2c03b2492e9e0a618f21e19120192b0a46765dbf
   local_head_at_x3_runtime_closure_shared_review_chain_handoff_admission_slice: 267ac887b899649a8b6ab6152321df879f249425
+  local_head_at_x3_closure_reconciler_patch_forward_shared_review_chain_handoff_admission_slice: a99d9499984d8544523944f9b0cc623997625db3
   pr: 43
   pr_url: https://github.com/iiyazu/Cross-Muse/pull/43
   pr_state: draft_open_unmerged
@@ -2495,6 +2499,13 @@ Use these as implementation references, not as xmuse package dependencies:
     projection aligned with the same L9->L10 handoff evaluator used by release
     candidates and closure reconciliation, while preserving manual gaps and
     forbidden claims when the shared evaluator is not ready.
+    Closure reconciliation now also routes the file-backed
+    `PatchForwardLineagePresent` review-chain proof readiness check through the
+    same L10 handoff evaluator before accepting patch-forward lineage. Inline
+    mapping fixtures retain shallow compatibility, but durable/file-backed
+    review-chain proofs no longer duplicate status/proof/server-truth/bounded
+    session admission in the patch-forward condition. This is contract-level
+    admission consolidation only, not live execution/review or server truth.
   - MemoryOS live gate source-ref admission now excludes MemoryOS-owned refs
     from the upstream source-ref count. A live trace must cite a non-MemoryOS
     xmuse source such as conversation, lane, blueprint, review, or release

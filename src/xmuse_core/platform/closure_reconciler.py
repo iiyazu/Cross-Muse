@@ -31,7 +31,6 @@ from xmuse_core.platform.closure_objects import (
 )
 from xmuse_core.platform.god_room_review_chain_proof import (
     build_review_chain_proof_l10_handoff_evaluation,
-    review_chain_proof_bounded_session_gate,
 )
 from xmuse_core.platform.god_room_review_handoff import (
     build_release_handoff_gate_evaluation_for_closure,
@@ -105,6 +104,7 @@ def reconcile_closure(
         release_handoff=current.release_handoff,
         release_handoff_ref=current.release_handoff_ref,
         review_closure=current.review_closure,
+        root=xmuse_root,
         graph_id=graph_id,
         lane_id=lane_id,
     )
@@ -820,6 +820,7 @@ def _patch_forward_lineage_present(
     release_handoff: Mapping[str, Any] | None,
     release_handoff_ref: str | None = None,
     review_closure: Mapping[str, Any] | None,
+    root: Path,
     graph_id: str,
     lane_id: str,
 ) -> _ConditionBuilder:
@@ -839,16 +840,29 @@ def _patch_forward_lineage_present(
             "patch-forward lineage requires review-chain proof artifact",
         )
     issues: list[str] = []
-    if _text(release_handoff.get("status")) != "chain_ready":
-        issues.append("review-chain proof is not chain_ready")
-    if _text(release_handoff.get("proof_level")) != "contract_proof":
-        issues.append("review-chain proof proof level is not contract_proof")
-    if _text(release_handoff.get("server_truth_status")) != "not_server_truth":
-        issues.append("review-chain proof overclaims server truth")
     if release_handoff_ref is not None:
-        bounded_session_gate = review_chain_proof_bounded_session_gate(release_handoff)
-        if bounded_session_gate["status"] != "verified":
-            issues.append(str(bounded_session_gate["summary"]))
+        l10_gate = build_review_chain_proof_l10_handoff_evaluation(
+            root=root,
+            artifact_path=root / release_handoff_ref,
+            review_chain_proof=release_handoff,
+        )
+        l10_status = _text(l10_gate.get("status"))
+        if l10_status != "ready":
+            severity = "blocked" if l10_status == "blocked" else "manual_gap"
+            return _condition(
+                PATCH_FORWARD_LINEAGE_PRESENT,
+                "false",
+                severity,
+                _text(l10_gate.get("handoff_summary"))
+                or "review-chain proof L10 handoff is not ready",
+            )
+    else:
+        if _text(release_handoff.get("status")) != "chain_ready":
+            issues.append("review-chain proof is not chain_ready")
+        if _text(release_handoff.get("proof_level")) != "contract_proof":
+            issues.append("review-chain proof proof level is not contract_proof")
+        if _text(release_handoff.get("server_truth_status")) != "not_server_truth":
+            issues.append("review-chain proof overclaims server truth")
     if _text(release_handoff.get("graph_id")) != graph_id:
         issues.append("review-chain proof graph_id does not match current closure graph")
     if _text(release_handoff.get("terminal_lane_id")) != lane_id:
