@@ -254,6 +254,8 @@ runtime、provider invocation、lane authority、review truth 完成。后续生
   `875547f1c4a76615a068fc17580aaafa7357b84a`
 - Local head at start of x3 ClosureObject owner-lineage admission slice:
   `955ebd56330a9fea61fed40c430b0dc9aeca5bb3`
+- Local head at start of x3 ClosureObject owner-ref projection slice:
+  `e818f52ec434aed0042eee8cf6c169683ecb2d7b`
 - PR: <https://github.com/iiyazu/Cross-Muse/pull/43>
 - PR state last checked: draft/open/unmerged
 - PR merge state last checked: `CLEAN`
@@ -359,6 +361,7 @@ truth_snapshot:
   local_head_at_x3_release_handoff_candidate_ref_revalidation_slice: 0e09f27ff0614da31fb8ca3e7d45cf193d55ebf3
   local_head_at_x3_closure_object_stable_ref_admission_slice: 875547f1c4a76615a068fc17580aaafa7357b84a
   local_head_at_x3_closure_object_owner_lineage_admission_slice: 955ebd56330a9fea61fed40c430b0dc9aeca5bb3
+  local_head_at_x3_closure_object_owner_ref_projection_slice: e818f52ec434aed0042eee8cf6c169683ecb2d7b
   pr: 43
   pr_url: https://github.com/iiyazu/Cross-Muse/pull/43
   pr_state: draft_open_unmerged
@@ -675,6 +678,10 @@ Current closure audit:
     remains not gate-ready and cannot seed MemoryOS provenance hints. This
     keeps a fresh controller condition set from becoming L10 guidance when
     lineage or owner authority is empty.
+    Release-evidence candidate reports now expose the admitted ClosureObject
+    owner-ref count alongside source-ref and forbidden-claim counts, so
+    operators can see that L10 guidance came from owner-linked closure lineage.
+    This is provenance visibility only and does not create a new truth owner.
     Closure-controller and review-handoff regression tests now share a small
     fixture builder that produces candidate, runner-session, review-closure,
     and review-chain payloads through the production capture/build helpers. This

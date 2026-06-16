@@ -599,6 +599,7 @@ def _memoryos_candidates(
         "closure_object_artifact_summary": closure_object["artifact_summary"],
         "closure_object_phase": closure_object["phase"],
         "closure_object_source_ref_count": closure_object["source_ref_count"],
+        "closure_object_owner_ref_count": closure_object["owner_ref_count"],
         "closure_object_forbidden_claim_count": closure_object[
             "forbidden_claim_count"
         ],
@@ -1050,6 +1051,8 @@ def _memoryos_closure_object_candidate(
         "phase": None,
         "source_refs": [],
         "source_ref_count": 0,
+        "owner_refs": [],
+        "owner_ref_count": 0,
         "forbidden_claim_count": 0,
     }
     if artifact_path is None:
@@ -1078,6 +1081,8 @@ def _memoryos_closure_object_candidate(
             "phase": admission.phase,
             "source_refs": [],
             "source_ref_count": 0,
+            "owner_refs": [],
+            "owner_ref_count": 0,
             "forbidden_claim_count": admission.forbidden_claim_count,
         }
     return {
@@ -1087,6 +1092,8 @@ def _memoryos_closure_object_candidate(
         "phase": admission.phase,
         "source_refs": list(admission.source_refs),
         "source_ref_count": admission.source_ref_count,
+        "owner_refs": list(admission.owner_refs),
+        "owner_ref_count": admission.owner_ref_count,
         "forbidden_claim_count": admission.forbidden_claim_count,
     }
 

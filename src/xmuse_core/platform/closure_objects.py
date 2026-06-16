@@ -252,6 +252,8 @@ class ClosureObjectL10Admission:
     phase: str
     source_refs: tuple[str, ...]
     source_ref_count: int
+    owner_refs: tuple[str, ...]
+    owner_ref_count: int
     forbidden_claim_count: int
     issues: tuple[str, ...] = ()
 
@@ -303,6 +305,8 @@ def evaluate_closure_object_l10_admission(
             phase=closure.status.phase,
             source_refs=(),
             source_ref_count=0,
+            owner_refs=(),
+            owner_ref_count=0,
             forbidden_claim_count=len(closure.status.forbidden_claims),
             issues=tuple(issues),
         )
@@ -312,6 +316,8 @@ def evaluate_closure_object_l10_admission(
         phase=closure.status.phase,
         source_refs=source_refs,
         source_ref_count=len(source_refs),
+        owner_refs=closure.metadata.owner_refs,
+        owner_ref_count=len(closure.metadata.owner_refs),
         forbidden_claim_count=len(closure.status.forbidden_claims),
     )
 

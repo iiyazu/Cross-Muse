@@ -141,6 +141,8 @@ def test_closure_object_l10_admission_accepts_fresh_forbidden_boundary() -> None
     assert admission.phase == "manual_gap"
     assert admission.source_refs == ("handoff:a", "candidate:a")
     assert admission.source_ref_count == 2
+    assert admission.owner_refs == ("source_authority:closure-controller",)
+    assert admission.owner_ref_count == 1
     assert admission.forbidden_claim_count == len(REQUIRED_FORBIDDEN_CLAIMS)
 
 
@@ -186,6 +188,8 @@ def test_closure_object_l10_admission_rejects_stale_or_weakened_boundary() -> No
     assert admission.gate_ready is False
     assert admission.source_refs == ()
     assert admission.source_ref_count == 0
+    assert admission.owner_refs == ()
+    assert admission.owner_ref_count == 0
     assert admission.forbidden_claim_count == 1
     assert admission.issues == (
         "ClosureObject evaluator_version is stale",
@@ -236,6 +240,8 @@ def test_closure_object_l10_admission_requires_stable_refs() -> None:
     assert admission.gate_ready is False
     assert admission.source_refs == ()
     assert admission.source_ref_count == 0
+    assert admission.owner_refs == ()
+    assert admission.owner_ref_count == 0
     assert admission.issues == (
         "ClosureObject source refs are missing",
         "ClosureObject target refs are missing",

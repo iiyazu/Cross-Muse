@@ -4925,6 +4925,7 @@ def test_chat_api_review_chain_artifacts_feed_closure_reconciler_conditions(
     assert memoryos["closure_object_artifact_configured"] is True
     assert memoryos["closure_object_artifact_gate_ready"] is True
     assert memoryos["closure_object_phase"] == "release_handoff_evaluated"
+    assert memoryos["closure_object_owner_ref_count"] > 0
     assert "closure_object_artifact" in memoryos["source_authority"]
     assert memoryos["proof_boundary"] == "candidate_report_is_not_live_memoryos_proof"
     assert candidate_ref in payload_hints["source_refs"]

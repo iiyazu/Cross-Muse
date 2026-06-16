@@ -1320,6 +1320,7 @@ def test_release_evidence_candidates_seed_memoryos_refs_from_closure_object(
     assert memoryos["closure_object_artifact_gate_ready"] is True
     assert memoryos["closure_object_phase"] == "manual_gap"
     assert memoryos["closure_object_source_ref_count"] >= 2
+    assert memoryos["closure_object_owner_ref_count"] == 1
     assert memoryos["closure_object_forbidden_claim_count"] >= len(
         REQUIRED_FORBIDDEN_CLAIMS
     )
@@ -1933,6 +1934,7 @@ def test_release_evidence_candidates_cli_accepts_closure_object(
     memoryos = report["live_memoryos"]
     payload_hints = memoryos["suggested_operator_action"]["payload_hints"]
     assert memoryos["closure_object_artifact_gate_ready"] is True
+    assert memoryos["closure_object_owner_ref_count"] == 1
     assert "closure_object_artifact" in memoryos["source_authority"]
     assert "lane:lane-runtime-evidence-patch" in payload_hints["source_refs"]
 
