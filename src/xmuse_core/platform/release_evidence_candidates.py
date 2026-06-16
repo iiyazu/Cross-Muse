@@ -599,6 +599,8 @@ def _memoryos_candidates(
         "closure_object_artifact_summary": closure_object["artifact_summary"],
         "closure_object_phase": closure_object["phase"],
         "closure_object_source_ref_count": closure_object["source_ref_count"],
+        "closure_object_target_refs": closure_object["target_refs"],
+        "closure_object_target_ref_count": closure_object["target_ref_count"],
         "closure_object_owner_ref_count": closure_object["owner_ref_count"],
         "closure_object_forbidden_claim_count": closure_object[
             "forbidden_claim_count"
@@ -1051,6 +1053,8 @@ def _memoryos_closure_object_candidate(
         "phase": None,
         "source_refs": [],
         "source_ref_count": 0,
+        "target_refs": [],
+        "target_ref_count": 0,
         "owner_refs": [],
         "owner_ref_count": 0,
         "forbidden_claim_count": 0,
@@ -1081,6 +1085,8 @@ def _memoryos_closure_object_candidate(
             "phase": admission.phase,
             "source_refs": [],
             "source_ref_count": 0,
+            "target_refs": [],
+            "target_ref_count": 0,
             "owner_refs": [],
             "owner_ref_count": 0,
             "forbidden_claim_count": admission.forbidden_claim_count,
@@ -1092,6 +1098,8 @@ def _memoryos_closure_object_candidate(
         "phase": admission.phase,
         "source_refs": list(admission.source_refs),
         "source_ref_count": admission.source_ref_count,
+        "target_refs": list(admission.target_refs),
+        "target_ref_count": admission.target_ref_count,
         "owner_refs": list(admission.owner_refs),
         "owner_ref_count": admission.owner_ref_count,
         "forbidden_claim_count": admission.forbidden_claim_count,
@@ -1129,10 +1137,17 @@ def _memoryos_candidate_guidance(
             *_string_list(closure_object.get("source_event_lineage_refs")),
         ]
     )
+    target_refs = _ordered_unique(
+        [
+            *_string_list(closure_object.get("target_refs")),
+        ]
+    )
     if source_refs:
         payload_hints["source_refs"] = source_refs
     if source_event_lineage_refs:
         payload_hints["source_event_lineage_refs"] = source_event_lineage_refs
+    if target_refs:
+        payload_hints["target_refs"] = target_refs
     source_authority = [
         "redacted_environment_presence",
         "operator_release_candidate_payload",

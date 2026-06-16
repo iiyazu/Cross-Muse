@@ -252,6 +252,8 @@ class ClosureObjectL10Admission:
     phase: str
     source_refs: tuple[str, ...]
     source_ref_count: int
+    target_refs: tuple[str, ...]
+    target_ref_count: int
     owner_refs: tuple[str, ...]
     owner_ref_count: int
     forbidden_claim_count: int
@@ -264,6 +266,26 @@ def evaluate_closure_object_l10_admission(
     """Evaluate whether a ClosureObject can seed L10 provenance hints."""
 
     issues: list[str] = []
+    missing_spec_conditions = [
+        condition_type
+        for condition_type in CONDITION_ORDER
+        if condition_type not in closure.spec.desired_conditions
+    ]
+    if missing_spec_conditions:
+        issues.append(
+            "ClosureObject spec missing required desired conditions: "
+            + ", ".join(missing_spec_conditions)
+        )
+    missing_status_conditions = [
+        condition_type
+        for condition_type in CONDITION_ORDER
+        if closure.status.condition(condition_type) is None
+    ]
+    if missing_status_conditions:
+        issues.append(
+            "ClosureObject status missing desired conditions: "
+            + ", ".join(missing_status_conditions)
+        )
     if closure.status.evaluator_version != CLOSURE_OBJECT_EVALUATOR_VERSION:
         issues.append("ClosureObject evaluator_version is stale")
     if closure.status.phase == "blocked":
@@ -305,6 +327,8 @@ def evaluate_closure_object_l10_admission(
             phase=closure.status.phase,
             source_refs=(),
             source_ref_count=0,
+            target_refs=(),
+            target_ref_count=0,
             owner_refs=(),
             owner_ref_count=0,
             forbidden_claim_count=len(closure.status.forbidden_claims),
@@ -316,6 +340,8 @@ def evaluate_closure_object_l10_admission(
         phase=closure.status.phase,
         source_refs=source_refs,
         source_ref_count=len(source_refs),
+        target_refs=closure.metadata.target_refs,
+        target_ref_count=len(closure.metadata.target_refs),
         owner_refs=closure.metadata.owner_refs,
         owner_ref_count=len(closure.metadata.owner_refs),
         forbidden_claim_count=len(closure.status.forbidden_claims),

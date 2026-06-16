@@ -256,6 +256,8 @@ runtime、provider invocation、lane authority、review truth 完成。后续生
   `955ebd56330a9fea61fed40c430b0dc9aeca5bb3`
 - Local head at start of x3 ClosureObject owner-ref projection slice:
   `e818f52ec434aed0042eee8cf6c169683ecb2d7b`
+- Local head at start of x3 ClosureObject complete-condition admission slice:
+  `1a02f7acb5ebc0ecadbce9b73dabc9f7733e2206`
 - PR: <https://github.com/iiyazu/Cross-Muse/pull/43>
 - PR state last checked: draft/open/unmerged
 - PR merge state last checked: `CLEAN`
@@ -362,6 +364,7 @@ truth_snapshot:
   local_head_at_x3_closure_object_stable_ref_admission_slice: 875547f1c4a76615a068fc17580aaafa7357b84a
   local_head_at_x3_closure_object_owner_lineage_admission_slice: 955ebd56330a9fea61fed40c430b0dc9aeca5bb3
   local_head_at_x3_closure_object_owner_ref_projection_slice: e818f52ec434aed0042eee8cf6c169683ecb2d7b
+  local_head_at_x3_closure_object_complete_condition_admission_slice: 1a02f7acb5ebc0ecadbce9b73dabc9f7733e2206
   pr: 43
   pr_url: https://github.com/iiyazu/Cross-Muse/pull/43
   pr_state: draft_open_unmerged
@@ -682,6 +685,17 @@ Current closure audit:
     owner-ref count alongside source-ref and forbidden-claim counts, so
     operators can see that L10 guidance came from owner-linked closure lineage.
     This is provenance visibility only and does not create a new truth owner.
+    ClosureObject L10 admission now also requires the complete desired
+    condition chain for the default
+    `Recovery -> ExecutionCandidate -> ReviewClosure -> ReleaseHandoff`
+    controller path. A hand-built object that only carries a few positive
+    guard conditions is no longer enough to seed MemoryOS provenance hints.
+    Admitted ClosureObject candidates now expose target refs and target-ref
+    counts alongside source/owner/forbidden-claim counts, and the MemoryOS
+    candidate payload hints preserve those target refs as scope hints only.
+    This remains `contract_proof`/provenance projection; it does not create
+    live MemoryOS proof, GitHub review truth, merge truth, or production
+    release readiness.
     Closure-controller and review-handoff regression tests now share a small
     fixture builder that produces candidate, runner-session, review-closure,
     and review-chain payloads through the production capture/build helpers. This
