@@ -18,6 +18,8 @@ GOD_ROOM_REVIEW_CLOSURE_HANDOFF_SCHEMA_VERSION = (
 REVIEW_CLOSURE_HANDOFF_EVALUATION_SCHEMA_VERSION = (
     "xmuse.review_closure_handoff_evaluation.v1"
 )
+REVIEW_CHAIN_HANDOFF_SCHEMA_VERSION = "xmuse.god_room_lane_review_chain_proof.v1"
+RELEASE_EVIDENCE_CANDIDATES_SCHEMA_VERSION = "xmuse.release_evidence_candidates.v1"
 REQUIRED_GOD_ROOM_REVIEW_CLOSURE_FORBIDDEN_CLAIMS = frozenset(
     LOCAL_EXECUTION_CANDIDATE_FORBIDDEN_CLAIMS
 )
@@ -293,6 +295,182 @@ def build_review_closure_handoff_evaluation(
         "handoff_gate_ready": handoff.get("gate_ready") is True,
         "handoff_summary": _text(handoff.get("summary")),
         "issues": issues,
+    }
+
+
+def build_release_handoff_gate_evaluation_for_closure(
+    *,
+    release_handoff: Mapping[str, Any] | None,
+    graph_id: str,
+    lane_id: str,
+) -> dict[str, Any]:
+    """Evaluate L9->L10 handoff readiness for closure-level reconciliation."""
+
+    if release_handoff is None:
+        return {
+            "status": "false",
+            "severity": "manual_gap",
+            "reason": "release handoff artifact/report is missing",
+            "source_refs": [],
+            "target_refs": [],
+            "is_blocking": False,
+        }
+
+    schema_version = _text(release_handoff.get("schema_version"))
+    if schema_version not in {
+        REVIEW_CHAIN_HANDOFF_SCHEMA_VERSION,
+        RELEASE_EVIDENCE_CANDIDATES_SCHEMA_VERSION,
+        REVIEW_CLOSURE_HANDOFF_EVALUATION_SCHEMA_VERSION,
+    }:
+        return {
+            "status": "false",
+            "severity": "blocked",
+            "reason": "release handoff schema is unsupported",
+            "source_refs": [],
+            "target_refs": [],
+            "is_blocking": True,
+        }
+
+    if schema_version == REVIEW_CHAIN_HANDOFF_SCHEMA_VERSION:
+        if _text(release_handoff.get("status")) != "chain_ready":
+            return {
+                "status": "false",
+                "severity": "manual_gap",
+                "reason": "release handoff status is not chain_ready",
+                "source_refs": [],
+                "target_refs": [],
+                "is_blocking": False,
+            }
+        if _text(release_handoff.get("proof_level")) != "contract_proof":
+            return {
+                "status": "false",
+                "severity": "manual_gap",
+                "reason": "release handoff proof level is not contract_proof",
+                "source_refs": [],
+                "target_refs": [],
+                "is_blocking": False,
+            }
+        actual_graph_id = _text(release_handoff.get("graph_id"))
+        if actual_graph_id is None:
+            return {
+                "status": "false",
+                "severity": "manual_gap",
+                "reason": "release handoff graph_id is missing",
+                "source_refs": [],
+                "target_refs": [],
+                "is_blocking": False,
+            }
+        if actual_graph_id != graph_id:
+            return {
+                "status": "false",
+                "severity": "manual_gap",
+                "reason": "release handoff graph_id does not match current closure graph",
+                "source_refs": [],
+                "target_refs": [],
+                "is_blocking": False,
+            }
+        terminal_lane = _text(release_handoff.get("terminal_lane_id"))
+        if terminal_lane is None:
+            return {
+                "status": "false",
+                "severity": "manual_gap",
+                "reason": "release handoff terminal_lane_id is missing",
+                "source_refs": [],
+                "target_refs": [],
+                "is_blocking": False,
+            }
+        if terminal_lane != lane_id:
+            return {
+                "status": "false",
+                "severity": "manual_gap",
+                "reason": "release handoff terminal lane id does not match current closure lane",
+                "source_refs": [],
+                "target_refs": [],
+                "is_blocking": False,
+            }
+
+    if schema_version == REVIEW_CLOSURE_HANDOFF_EVALUATION_SCHEMA_VERSION:
+        if _text(release_handoff.get("status")) != "ready":
+            return {
+                "status": "false",
+                "severity": "manual_gap",
+                "reason": "review-closure handoff status is not ready",
+                "source_refs": [],
+                "target_refs": [],
+                "is_blocking": False,
+            }
+        actual_graph_id = _text(release_handoff.get("graph_id"))
+        if actual_graph_id is None:
+            return {
+                "status": "false",
+                "severity": "manual_gap",
+                "reason": "review-closure handoff graph_id is missing",
+                "source_refs": [],
+                "target_refs": [],
+                "is_blocking": False,
+            }
+        if actual_graph_id != graph_id:
+            return {
+                "status": "false",
+                "severity": "manual_gap",
+                "reason": "review-closure handoff graph_id does not match current closure graph",
+                "source_refs": [],
+                "target_refs": [],
+                "is_blocking": False,
+            }
+        handoff_lane_id = _text(release_handoff.get("lane_id"))
+        if handoff_lane_id is None:
+            return {
+                "status": "false",
+                "severity": "manual_gap",
+                "reason": "review-closure handoff lane_id is missing",
+                "source_refs": [],
+                "target_refs": [],
+                "is_blocking": False,
+            }
+        if handoff_lane_id != lane_id:
+            return {
+                "status": "false",
+                "severity": "manual_gap",
+                "reason": "review-closure handoff lane_id does not match current closure lane",
+                "source_refs": [],
+                "target_refs": [],
+                "is_blocking": False,
+            }
+
+    if _text(release_handoff.get("server_truth_status")) not in {None, "not_server_truth"}:
+        return {
+            "status": "false",
+            "severity": "blocked",
+            "reason": "release handoff overclaims server truth",
+            "source_refs": [],
+            "target_refs": [],
+            "is_blocking": True,
+        }
+
+    source_refs = _ordered_unique(
+        (
+            *_string_list(release_handoff.get("source_refs")),
+            *_string_list(release_handoff.get("candidate_artifact_refs")),
+            *_string_list(release_handoff.get("review_closure_candidate_artifact_refs")),
+        )
+    )
+    if not source_refs:
+        return {
+            "status": "false",
+            "severity": "manual_gap",
+            "reason": "release handoff is missing source refs",
+            "source_refs": [],
+            "target_refs": [],
+            "is_blocking": False,
+        }
+    return {
+        "status": "true",
+        "severity": "ok",
+        "reason": "release handoff has been evaluated without server-truth overclaim",
+        "source_refs": source_refs,
+        "target_refs": _string_list(release_handoff.get("target_refs")),
+        "is_blocking": False,
     }
 
 
@@ -609,6 +787,7 @@ __all__ = [
     "REQUIRED_GOD_ROOM_REVIEW_CLOSURE_FORBIDDEN_CLAIMS",
     "build_god_room_review_closure_handoff",
     "build_review_closure_handoff_evaluation",
+    "build_release_handoff_gate_evaluation_for_closure",
     "god_room_review_closure_source_refs",
     "load_and_evaluate_review_closure_handoff",
 ]

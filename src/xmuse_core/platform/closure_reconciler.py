@@ -30,6 +30,7 @@ from xmuse_core.platform.closure_objects import (
     string_list,
 )
 from xmuse_core.platform.god_room_review_handoff import (
+    build_release_handoff_gate_evaluation_for_closure,
     build_review_closure_handoff_evaluation,
 )
 from xmuse_core.platform.local_execution_candidate import (
@@ -738,137 +739,32 @@ def _release_handoff_evaluated(
     graph_id: str,
     lane_id: str,
 ) -> _ConditionBuilder:
-    if release_handoff is None:
-        return _condition(
-            RELEASE_HANDOFF_EVALUATED,
-            "false",
-            "manual_gap",
-            "release handoff artifact/report is missing",
-        )
-    schema_version = _text(release_handoff.get("schema_version"))
-    if schema_version not in {
-        REVIEW_CHAIN_PROOF_SCHEMA_VERSION,
-        RELEASE_EVIDENCE_CANDIDATES_SCHEMA_VERSION,
-        "xmuse.review_closure_handoff_evaluation.v1",
-    }:
-        return _condition(
-            RELEASE_HANDOFF_EVALUATED,
-            "false",
-            "blocked",
-            "release handoff schema is unsupported",
-        )
-    if schema_version == REVIEW_CHAIN_PROOF_SCHEMA_VERSION:
-        if _text(release_handoff.get("status")) != "chain_ready":
-            return _condition(
-                RELEASE_HANDOFF_EVALUATED,
-                "false",
-                "manual_gap",
-                "release handoff status is not chain_ready",
-            )
-        if _text(release_handoff.get("proof_level")) != "contract_proof":
-            return _condition(
-                RELEASE_HANDOFF_EVALUATED,
-                "false",
-                "manual_gap",
-                "release handoff proof level is not contract_proof",
-            )
-        actual_graph_id = _text(release_handoff.get("graph_id"))
-        if actual_graph_id is None:
-            return _condition(
-                RELEASE_HANDOFF_EVALUATED,
-                "false",
-                "manual_gap",
-                "release handoff graph_id is missing",
-            )
-        if actual_graph_id != graph_id:
-            return _condition(
-                RELEASE_HANDOFF_EVALUATED,
-                "false",
-                "manual_gap",
-                "release handoff graph_id does not match current closure graph",
-            )
-        terminal_lane = _text(release_handoff.get("terminal_lane_id"))
-        if terminal_lane is None:
-            return _condition(
-                RELEASE_HANDOFF_EVALUATED,
-                "false",
-                "manual_gap",
-                "release handoff terminal_lane_id is missing",
-            )
-        if terminal_lane != lane_id:
-            return _condition(
-                RELEASE_HANDOFF_EVALUATED,
-                "false",
-                "manual_gap",
-                "release handoff terminal lane id does not match current closure lane",
-            )
-    if schema_version == "xmuse.review_closure_handoff_evaluation.v1":
-        if _text(release_handoff.get("status")) != "ready":
-            return _condition(
-                RELEASE_HANDOFF_EVALUATED,
-                "false",
-                "manual_gap",
-                "review-closure handoff status is not ready",
-            )
-        actual_graph_id = _text(release_handoff.get("graph_id"))
-        if actual_graph_id is None:
-            return _condition(
-                RELEASE_HANDOFF_EVALUATED,
-                "false",
-                "manual_gap",
-                "review-closure handoff graph_id is missing",
-            )
-        if actual_graph_id != graph_id:
-            return _condition(
-                RELEASE_HANDOFF_EVALUATED,
-                "false",
-                "manual_gap",
-                "review-closure handoff graph_id does not match current closure graph",
-            )
-        handoff_lane_id = _text(release_handoff.get("lane_id"))
-        if handoff_lane_id is None:
-            return _condition(
-                RELEASE_HANDOFF_EVALUATED,
-                "false",
-                "manual_gap",
-                "review-closure handoff lane_id is missing",
-            )
-        if handoff_lane_id != lane_id:
-            return _condition(
-                RELEASE_HANDOFF_EVALUATED,
-                "false",
-                "manual_gap",
-                "review-closure handoff lane_id does not match current closure lane",
-            )
-    if _text(release_handoff.get("server_truth_status")) not in {None, "not_server_truth"}:
-        return _condition(
-            RELEASE_HANDOFF_EVALUATED,
-            "false",
-            "blocked",
-            "release handoff overclaims server truth",
-        )
-    source_refs = dedupe_text(
-        (
-            *string_list(release_handoff.get("source_refs")),
-            *string_list(release_handoff.get("candidate_artifact_refs")),
-            *string_list(release_handoff.get("review_closure_candidate_artifact_refs")),
-        )
+    gate = build_release_handoff_gate_evaluation_for_closure(
+        release_handoff=release_handoff,
+        graph_id=graph_id,
+        lane_id=lane_id,
     )
-    if not source_refs:
+    source_refs = dedupe_text(gate.get("source_refs") or ())
+    target_refs = dedupe_text(gate.get("target_refs") or ())
+    severity = _text(gate.get("severity")) or "manual_gap"
+    status = _text(gate.get("status")) or "false"
+    reason = _text(gate.get("reason")) or "release handoff evaluation failed"
+    if status != "true":
         return _condition(
             RELEASE_HANDOFF_EVALUATED,
-            "false",
-            "manual_gap",
-            "release handoff is missing source refs",
+            status,
+            severity,
+            reason,
+            proof_level="contract_proof",
         )
     return _condition(
         RELEASE_HANDOFF_EVALUATED,
         "true",
         "ok",
-        "release handoff has been evaluated without server-truth overclaim",
+        reason,
         proof_level="contract_proof",
         source_refs=source_refs,
-        target_refs=string_list(release_handoff.get("target_refs")),
+        target_refs=target_refs,
     )
 
 
