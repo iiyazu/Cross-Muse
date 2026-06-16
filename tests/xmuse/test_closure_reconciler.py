@@ -332,6 +332,45 @@ def test_reconcile_closure_fails_closed_release_handoff_without_source_refs(
     assert condition.reason == "release handoff is missing source refs"
 
 
+def test_reconcile_closure_fails_closed_release_handoff_with_unresolved_candidate_refs(
+    tmp_path: Path,
+) -> None:
+    missing_ref = "work/local_execution_candidates/missing-candidate.json"
+    closure = reconcile_closure(
+        root=tmp_path,
+        graph_id="graph-runtime",
+        lane_id="lane-runtime-evidence-patch",
+        release_handoff={
+            "schema_version": "xmuse.god_room_lane_review_chain_proof.v1",
+            "status": "chain_ready",
+            "proof_level": "contract_proof",
+            "server_truth_status": "not_server_truth",
+            "graph_id": "graph-runtime",
+            "terminal_lane_id": "lane-runtime-evidence-patch",
+            "source_refs": ["god-room-review-closure:graph-runtime:failed:terminal"],
+            "candidate_lineage": {
+                "candidate_artifact_refs": [missing_ref],
+            },
+            "local_execution_review_session": {
+                "candidate_artifact_refs": [missing_ref],
+            },
+            "release_evidence_handoff": {
+                "review_closure_candidate_artifact_refs": [missing_ref],
+            },
+            "forbidden_claims": list(REQUIRED_FORBIDDEN_CLAIMS),
+        },
+    )
+
+    condition = closure_condition_by_type(closure, RELEASE_HANDOFF_EVALUATED)
+    assert condition is not None
+    assert condition.status == "false"
+    assert condition.severity == "manual_gap"
+    assert condition.reason == (
+        "release handoff candidate artifact refs are not resolvable: "
+        f"{missing_ref}"
+    )
+
+
 def test_reconcile_closure_rejects_review_chain_handoff_wrong_status(
     tmp_path: Path,
 ) -> None:

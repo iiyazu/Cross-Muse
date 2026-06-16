@@ -248,6 +248,8 @@ runtime、provider invocation、lane authority、review truth 完成。后续生
   `d19e936fbc794943becb9b37499e6d6a62b84ecc`
 - Local head at start of x3 review-chain closure-reconciler handoff slice:
   `d4ea5c4020ef6b25c9526587925d0a6f520cb51b`
+- Local head at start of x3 release-handoff candidate-ref revalidation slice:
+  `0e09f27ff0614da31fb8ca3e7d45cf193d55ebf3`
 - PR: <https://github.com/iiyazu/Cross-Muse/pull/43>
 - PR state last checked: draft/open/unmerged
 - PR merge state last checked: `CLEAN`
@@ -350,6 +352,7 @@ truth_snapshot:
   local_head_at_l8_l9_l10_closure_controller_contract_slice: b050d534873594466e46190619ab20387427f231
   local_head_at_l8_shared_recovery_writer_consolidation_slice: b050d534873594466e46190619ab20387427f231
   local_head_at_x3_review_chain_closure_reconciler_handoff_slice: d4ea5c4020ef6b25c9526587925d0a6f520cb51b
+  local_head_at_x3_release_handoff_candidate_ref_revalidation_slice: 0e09f27ff0614da31fb8ca3e7d45cf193d55ebf3
   pr: 43
   pr_url: https://github.com/iiyazu/Cross-Muse/pull/43
   pr_state: draft_open_unmerged
@@ -656,6 +659,11 @@ Current closure audit:
     L10 accepts it only as `closure_object_artifact` source-ref guidance with
     `candidate_report_is_not_live_memoryos_proof`, not as a live MemoryOS trace
     or release/server readiness signal.
+    The shared release-handoff gate now also revalidates declared candidate
+    artifact refs against the controller root when a root is supplied, so a
+    stale or copied chain proof with unresolvable candidate refs keeps
+    `ReleaseHandoffEvaluated` at `manual_gap` instead of entering L10
+    provenance guidance.
     Closure-controller and review-handoff regression tests now share a small
     fixture builder that produces candidate, runner-session, review-closure,
     and review-chain payloads through the production capture/build helpers. This

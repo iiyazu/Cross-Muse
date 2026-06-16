@@ -305,6 +305,7 @@ def build_release_handoff_gate_evaluation_for_closure(
     graph_id: str,
     lane_id: str,
     review_closure: Mapping[str, Any] | None = None,
+    root: str | Path | None = None,
 ) -> dict[str, Any]:
     """Evaluate L9->L10 handoff readiness for closure-level reconciliation."""
 
@@ -528,6 +529,22 @@ def build_release_handoff_gate_evaluation_for_closure(
             "target_refs": [],
             "is_blocking": False,
         }
+    unresolved_candidate_refs = _unresolved_candidate_artifact_refs(
+        root=root,
+        release_handoff=release_handoff,
+    )
+    if unresolved_candidate_refs:
+        return {
+            "status": "false",
+            "severity": "manual_gap",
+            "reason": (
+                "release handoff candidate artifact refs are not resolvable: "
+                + ", ".join(unresolved_candidate_refs)
+            ),
+            "source_refs": source_refs,
+            "target_refs": _string_list(release_handoff.get("target_refs")),
+            "is_blocking": False,
+        }
     missing_forbidden_claims = [
         claim
         for claim in REQUIRED_FORBIDDEN_CLAIMS
@@ -583,6 +600,45 @@ def _release_handoff_scope_mismatch(
     if release_lane is not None and review_lane is not None and release_lane != review_lane:
         return "release handoff lane scope does not match review closure lane scope"
     return None
+
+
+def _unresolved_candidate_artifact_refs(
+    *,
+    root: str | Path | None,
+    release_handoff: Mapping[str, Any],
+) -> list[str]:
+    if root is None:
+        return []
+    xmuse_root = Path(root)
+    unresolved: list[str] = []
+    for ref in _release_handoff_candidate_artifact_refs(release_handoff):
+        path = _root_relative_artifact_path(xmuse_root, ref)
+        if path is None or not path.is_file():
+            unresolved.append(ref)
+    return _ordered_unique(unresolved)
+
+
+def _release_handoff_candidate_artifact_refs(
+    release_handoff: Mapping[str, Any],
+) -> list[str]:
+    refs: list[str] = [
+        *_string_list(release_handoff.get("candidate_artifact_refs")),
+        *_string_list(release_handoff.get("review_closure_candidate_artifact_refs")),
+    ]
+    candidate_lineage = release_handoff.get("candidate_lineage")
+    if isinstance(candidate_lineage, Mapping):
+        refs.extend(_string_list(candidate_lineage.get("candidate_artifact_refs")))
+    session = release_handoff.get("local_execution_review_session")
+    if isinstance(session, Mapping):
+        refs.extend(_string_list(session.get("candidate_artifact_refs")))
+    release_evidence_handoff = release_handoff.get("release_evidence_handoff")
+    if isinstance(release_evidence_handoff, Mapping):
+        refs.extend(
+            _string_list(
+                release_evidence_handoff.get("review_closure_candidate_artifact_refs")
+            )
+        )
+    return _ordered_unique(refs)
 
 
 def load_and_evaluate_review_closure_handoff(

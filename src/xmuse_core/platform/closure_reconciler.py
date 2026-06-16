@@ -102,6 +102,7 @@ def reconcile_closure(
     )
     release_evaluated = _release_handoff_evaluated(
         current.release_handoff,
+        root=xmuse_root,
         graph_id=graph_id,
         lane_id=lane_id,
         review_closure=current.review_closure,
@@ -737,12 +738,14 @@ def _independent_review_verdict_present(
 def _release_handoff_evaluated(
     release_handoff: Mapping[str, Any] | None,
     *,
+    root: Path,
     graph_id: str,
     lane_id: str,
     review_closure: Mapping[str, Any] | None = None,
 ) -> _ConditionBuilder:
     gate = build_release_handoff_gate_evaluation_for_closure(
         release_handoff=release_handoff,
+        root=root,
         graph_id=graph_id,
         lane_id=lane_id,
         review_closure=review_closure,
