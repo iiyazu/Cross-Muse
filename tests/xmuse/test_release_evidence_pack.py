@@ -24,7 +24,10 @@ from xmuse_core.platform.overnight_operator_supervisor import (
     OvernightSupervisorConfig,
     OvernightSupervisorStage,
 )
-from xmuse_core.platform.release_evidence_pack import capture_release_evidence_pack
+from xmuse_core.platform.release_evidence_pack import (
+    _god_room_review_chain_release_linkage,
+    capture_release_evidence_pack,
+)
 from xmuse_core.platform.runner_recovery_proof import (
     build_runner_recovery_proof_lineage,
 )
@@ -2546,6 +2549,58 @@ def test_release_evidence_pack_converts_god_room_runtime_closure_into_replay_sec
         assert claim in linkage["forbidden_claims"]
     assert "ready_to_merge" in linkage["forbidden_claims"]
     assert "pr_merged" in linkage["forbidden_claims"]
+
+
+def test_review_chain_release_linkage_rejects_inconsistent_bounded_gate(
+    tmp_path: Path,
+) -> None:
+    review_chain_proof = tmp_path / "review-chain-proof.json"
+    artifact_ref = f"review_chain_proof_artifact:{review_chain_proof}"
+    replay = {
+        "sections": [
+            {
+                "section_id": "god_room_runtime_closure",
+                "status": "ok",
+                "source_refs": [
+                    artifact_ref,
+                    "god-room-review-chain-proof:graph-runtime:"
+                    "lane-runtime-evidence:lane-runtime-evidence-patch",
+                ],
+                "details": {
+                    "god_room_runtime_closure": {
+                        "review_chain_proof": {
+                            "status": "chain_ready",
+                            "proof_level": "contract_proof",
+                            "server_truth_status": "not_server_truth",
+                            "bounded_session_gate": {"status": "manual_gap"},
+                            "handoff_evaluation": {"status": "ready"},
+                            "current_handoff_gate_ready": True,
+                            "manual_gaps": ["release_evidence_not_linked"],
+                        }
+                    }
+                },
+            }
+        ]
+    }
+
+    linkage = _god_room_review_chain_release_linkage(
+        review_chain_proof_artifact=review_chain_proof,
+        runtime_closure_evidence_report=str(tmp_path / "runtime-closure.json"),
+        replay_bundle=tmp_path / "replay.json",
+        replay=replay,
+    )
+
+    assert linkage is not None
+    assert linkage["status"] == "manual_gap"
+    assert linkage["proof_level"] == "manual_gap"
+    assert linkage["bounded_session_gate_status"] == "manual_gap"
+    assert linkage["handoff_evaluation_status"] == "ready"
+    assert linkage["current_handoff_gate_ready"] is True
+    assert linkage["source_refs"] == []
+    assert linkage["resolved_manual_gaps"] == []
+    assert linkage["blocked_reason"] == (
+        "review chain proof is not gate-ready for release linkage"
+    )
 
 
 def test_release_evidence_pack_reports_missing_expected_review_chain_for_closure(

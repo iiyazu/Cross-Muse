@@ -285,6 +285,9 @@ runtime、provider invocation、lane authority、review truth 完成。后续生
 - Local head at start of x3 review-chain L10 worker-bundle citation-status
   admission slice:
   `9f429e25bc6bcdf776e09790d75ef13cb555a3b5`
+- Local head at start of x3 release-linkage bounded/current handoff admission
+  slice:
+  `60c8b755ea7b98cb99a87347d07a55305ad13988`
 - PR: <https://github.com/iiyazu/Cross-Muse/pull/43>
 - PR state last checked: draft/open/unmerged
 - PR merge state last checked: `CLEAN`
@@ -404,6 +407,7 @@ truth_snapshot:
   local_head_at_x3_review_chain_runner_session_worker_bundle_admission_slice: c729c5c79a8e45ed45bf68cc18bb67a920cdac68
   local_head_at_x3_terminal_review_worker_bundle_citation_admission_slice: 20fdc0a0a3409c7a121d8de83bb7228b9e987e1d
   local_head_at_x3_review_chain_l10_worker_bundle_citation_status_admission_slice: 9f429e25bc6bcdf776e09790d75ef13cb555a3b5
+  local_head_at_x3_release_linkage_bounded_current_handoff_admission_slice: 60c8b755ea7b98cb99a87347d07a55305ad13988
   pr: 43
   pr_url: https://github.com/iiyazu/Cross-Muse/pull/43
   pr_state: draft_open_unmerged
@@ -2286,6 +2290,14 @@ Use these as implementation references, not as xmuse package dependencies:
     observed bundle refs exist. Tampered or stale chain-proof artifacts with
     inconsistent citation status remain `manual_gap` and export no worker
     bundle refs.
+    Release-pack review-chain linkage now also rechecks the runtime-closure
+    details consumed from replay: linkage is allowed only when the replay
+    section indexed the chain proof, the chain details are `chain_ready` /
+    `contract_proof` / `not_server_truth`, the handoff evaluation is `ready`,
+    the bounded session gate is `verified`, and the current review-closure
+    handoff remains gate-ready. Stale or tampered aggregation reports that carry
+    ready-looking source refs but a degraded bounded/current handoff remain
+    `manual_gap`; this is L10 aggregation hardening, not GitHub/server truth.
   - Release evidence candidate reports can now consume
     `xmuse.god_room_lane_review_chain_proof.v1` artifacts directly as
     `live_memoryos` source-ref guidance after validating
