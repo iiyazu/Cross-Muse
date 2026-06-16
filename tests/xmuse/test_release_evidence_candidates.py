@@ -251,6 +251,9 @@ def test_release_evidence_candidates_seed_memoryos_refs_from_review_closure(
         "worker-candidate:patch-reviewed",
         "artifacts/lane-runtime-evidence-patch/result.json",
     ]
+    assert payload_hints["source_event_lineage_refs"] == [
+        "god-room-event:evt-provider-speak"
+    ]
     assert memoryos["proof_boundary"] == "candidate_report_is_not_live_memoryos_proof"
 
 
@@ -395,6 +398,9 @@ def test_release_evidence_candidates_seed_memoryos_refs_from_review_chain_proof(
         "runner_recovery_proof_artifact:reports/runner-recovery-proof.json"
         in payload_hints["source_refs"]
     )
+    assert payload_hints["source_event_lineage_refs"] == [
+        "god-room-event:evt-provider-speak"
+    ]
     assert memoryos["proof_boundary"] == "candidate_report_is_not_live_memoryos_proof"
 
 
@@ -1786,6 +1792,7 @@ def test_release_evidence_candidates_cli_writes_operator_candidate_report(
             "worker-candidate:patch-reviewed",
             "artifacts/lane-runtime-evidence-patch/result.json",
         ],
+        "source_event_lineage_refs": ["god-room-event:evt-provider-speak"],
     }
     assert report["github_server_truth"]["export_ready"] is True
     assert report["github_server_truth"]["suggested_operator_action"][

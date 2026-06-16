@@ -680,6 +680,8 @@ def _memoryos_review_closure_candidate(
         "handoff_evaluation": None,
         "source_refs": [],
         "source_ref_count": 0,
+        "source_event_lineage_refs": [],
+        "source_event_lineage_ref_count": 0,
         "candidate_artifact_refs": [],
         "candidate_artifact_ref_count": 0,
     }
@@ -705,6 +707,9 @@ def _memoryos_review_closure_candidate(
             "handoff_evaluation": handoff_evaluation,
         }
     source_refs = _string_list(handoff_evaluation.get("source_refs"))
+    source_event_lineage_refs = _source_event_lineage_refs(
+        handoff_evaluation.get("source_event_lineage_refs")
+    )
     candidate_artifact_refs = _string_list(
         handoff_evaluation.get("candidate_artifact_refs")
     )
@@ -715,6 +720,8 @@ def _memoryos_review_closure_candidate(
         "handoff_evaluation": handoff_evaluation,
         "source_refs": source_refs,
         "source_ref_count": len(source_refs),
+        "source_event_lineage_refs": source_event_lineage_refs,
+        "source_event_lineage_ref_count": len(source_event_lineage_refs),
         "candidate_artifact_refs": candidate_artifact_refs,
         "candidate_artifact_ref_count": len(candidate_artifact_refs),
     }
@@ -735,6 +742,8 @@ def _memoryos_review_chain_proof_candidate(
         "artifact_summary": None,
         "source_refs": [],
         "source_ref_count": 0,
+        "source_event_lineage_refs": [],
+        "source_event_lineage_ref_count": 0,
         "candidate_artifact_refs": [],
         "candidate_artifact_ref_count": 0,
         "patch_forward_artifact_refs": [],
@@ -771,6 +780,11 @@ def _memoryos_review_chain_proof_candidate(
             ],
             "handoff_evaluation": handoff_evaluation,
         }
+    source_event_lineage_refs = _review_chain_source_event_lineage_refs(
+        root=root,
+        handoff_evaluation=handoff_evaluation,
+        artifact=artifact,
+    )
     source_refs = _string_list(handoff_evaluation.get("source_refs"))
     candidate_refs = _string_list(handoff_evaluation.get("candidate_artifact_refs"))
     patch_forward_refs = _string_list(
@@ -781,6 +795,8 @@ def _memoryos_review_chain_proof_candidate(
         **base,
         "artifact_gate_ready": True,
         "artifact_summary": handoff_evaluation["handoff_summary"],
+        "source_event_lineage_refs": source_event_lineage_refs,
+        "source_event_lineage_ref_count": len(source_event_lineage_refs),
         "source_refs": combined_source_refs,
         "source_ref_count": len(combined_source_refs),
         "candidate_artifact_refs": candidate_refs,
@@ -822,6 +838,8 @@ def _memoryos_runtime_closure_candidate(
         "artifact_summary": None,
         "source_refs": [],
         "source_ref_count": 0,
+        "source_event_lineage_refs": [],
+        "source_event_lineage_ref_count": 0,
         "current_handoff_gate_ready": None,
         "current_handoff_summary": None,
         "current_handoff_candidate_artifact_refs": [],
@@ -844,6 +862,12 @@ def _memoryos_runtime_closure_candidate(
     status = _text(artifact.get("status"))
     source_authority = _text(artifact.get("source_authority"))
     source_refs = _string_list(artifact.get("source_refs"))
+    source_event_lineage_refs = []
+    runtime_closure = artifact.get("god_room_runtime_closure")
+    if isinstance(runtime_closure, Mapping):
+        source_event_lineage_refs = _source_event_lineage_refs(
+            runtime_closure.get("source_event_lineage")
+        )
     closure_details = _runtime_closure_details(artifact)
     requires_handoff_revalidation = _runtime_closure_requires_handoff_revalidation(
         source_refs=source_refs,
@@ -930,6 +954,8 @@ def _memoryos_runtime_closure_candidate(
         ),
         "source_refs": source_refs,
         "source_ref_count": len(source_refs),
+        "source_event_lineage_refs": source_event_lineage_refs,
+        "source_event_lineage_ref_count": len(source_event_lineage_refs),
     }
 
 
@@ -1088,8 +1114,18 @@ def _memoryos_candidate_guidance(
             *_string_list(closure_object.get("source_refs")),
         ]
     )
+    source_event_lineage_refs = _ordered_unique(
+        [
+            *_string_list(review_closure.get("source_event_lineage_refs")),
+            *_string_list(review_chain.get("source_event_lineage_refs")),
+            *_string_list(runtime_closure.get("source_event_lineage_refs")),
+            *_string_list(closure_object.get("source_event_lineage_refs")),
+        ]
+    )
     if source_refs:
         payload_hints["source_refs"] = source_refs
+    if source_event_lineage_refs:
+        payload_hints["source_event_lineage_refs"] = source_event_lineage_refs
     source_authority = [
         "redacted_environment_presence",
         "operator_release_candidate_payload",
@@ -1552,6 +1588,52 @@ def _ordered_unique(values: Any) -> list[str]:
         seen.add(value)
         result.append(value)
     return result
+
+def _source_event_lineage_refs(value: Any) -> list[str]:
+    if isinstance(value, list) and all(isinstance(item, str) for item in value):
+        return _ordered_unique(_string_list(value))
+    refs: list[str] = []
+    for item in _dicts(value):
+        event_id = _text(item.get("event_id"))
+        if event_id is not None:
+            refs.append(f"god-room-event:{event_id}")
+        provider_response_artifact_ref = _text(item.get("provider_response_artifact_ref"))
+        if provider_response_artifact_ref is not None:
+            refs.append(f"provider_response_artifact:{provider_response_artifact_ref}")
+        speaker_response_artifact_ref = _text(item.get("speaker_response_artifact_ref"))
+        if speaker_response_artifact_ref is not None:
+            refs.append(f"speaker_response_artifact:{speaker_response_artifact_ref}")
+        refs.extend(_string_list(item.get("source_refs")))
+    return _ordered_unique(refs)
+
+
+def _review_chain_source_event_lineage_refs(
+    *,
+    root: Path,
+    handoff_evaluation: Mapping[str, Any],
+    artifact: Mapping[str, Any],
+) -> list[str]:
+    source_event_lineage_refs = _source_event_lineage_refs(
+        handoff_evaluation.get("source_event_lineage_refs")
+    )
+    if source_event_lineage_refs:
+        return source_event_lineage_refs
+    review_closure_artifact_ref = _text(artifact.get("review_closure_artifact"))
+    if review_closure_artifact_ref is None:
+        return []
+    review_closure_path = _root_relative_artifact_path(
+        root=root,
+        artifact_ref=review_closure_artifact_ref,
+    )
+    if review_closure_path is None:
+        return []
+    review_closure, _ = _json_file(
+        review_closure_path,
+        subject="GOD room review closure artifact",
+    )
+    if review_closure is None:
+        return []
+    return _source_event_lineage_refs(review_closure.get("source_event_lineage"))
 
 
 def _utc_now() -> str:
