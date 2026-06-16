@@ -99,6 +99,8 @@ def reconcile_closure(
     )
     patch_forward_present = _patch_forward_lineage_present(
         release_handoff=current.release_handoff,
+        graph_id=graph_id,
+        lane_id=lane_id,
     )
     release_evaluated = _release_handoff_evaluated(
         current.release_handoff,
@@ -777,6 +779,8 @@ def _release_handoff_evaluated(
 def _patch_forward_lineage_present(
     *,
     release_handoff: Mapping[str, Any] | None,
+    graph_id: str,
+    lane_id: str,
 ) -> _ConditionBuilder:
     if release_handoff is None:
         return _condition(
@@ -800,11 +804,28 @@ def _patch_forward_lineage_present(
         issues.append("review-chain proof proof level is not contract_proof")
     if _text(release_handoff.get("server_truth_status")) != "not_server_truth":
         issues.append("review-chain proof overclaims server truth")
+    if _text(release_handoff.get("graph_id")) != graph_id:
+        issues.append("review-chain proof graph_id does not match current closure graph")
+    if _text(release_handoff.get("terminal_lane_id")) != lane_id:
+        issues.append(
+            "review-chain proof terminal_lane_id does not match current closure lane"
+        )
     session = _mapping(release_handoff.get("local_execution_review_session"))
     if not session:
         issues.append("review-chain proof missing local execution review session")
     elif _text(session.get("status")) != "bounded_session_ready":
         issues.append("local execution review session is not bounded_session_ready")
+    if session:
+        if _text(session.get("graph_id")) != graph_id:
+            issues.append(
+                "local execution review session graph_id does not match current "
+                "closure graph"
+            )
+        if _text(session.get("terminal_lane_id")) != lane_id:
+            issues.append(
+                "local execution review session terminal_lane_id does not match "
+                "current closure lane"
+            )
     patch_boundary = _mapping(session.get("patch_forward_artifact_boundary"))
     patch_boundary_status = _text(patch_boundary.get("status"))
     if patch_boundary_status not in {

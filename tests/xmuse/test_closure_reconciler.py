@@ -423,6 +423,45 @@ def test_reconcile_closure_rejects_review_chain_handoff_wrong_graph_and_lane_sco
     )
 
 
+def test_reconcile_closure_rejects_patch_forward_lineage_wrong_graph_and_lane_scope(
+    tmp_path: Path,
+) -> None:
+    candidate_ref = "artifacts/lane-runtime-evidence-patch/result.json"
+    _write_candidate(tmp_path, candidate_ref)
+    _write_runner_session(tmp_path, candidate_ref)
+    release_handoff = _review_chain_proof_payload(candidate_ref)
+    release_handoff["graph_id"] = "graph-other"
+    release_handoff["terminal_lane_id"] = "lane-other"
+    session = release_handoff["local_execution_review_session"]
+    assert isinstance(session, dict)
+    session["graph_id"] = "graph-other"
+    session["terminal_lane_id"] = "lane-other"
+
+    closure = reconcile_closure(
+        root=tmp_path,
+        graph_id="graph-runtime",
+        lane_id="lane-runtime-evidence-patch",
+        release_handoff=release_handoff,
+    )
+
+    patch_condition = closure_condition_by_type(closure, PATCH_FORWARD_LINEAGE_PRESENT)
+    assert patch_condition is not None
+    assert patch_condition.status == "false"
+    assert patch_condition.severity == "manual_gap"
+    assert "review-chain proof graph_id does not match current closure graph" in (
+        patch_condition.reason
+    )
+    assert "review-chain proof terminal_lane_id does not match current closure lane" in (
+        patch_condition.reason
+    )
+    assert "local execution review session graph_id does not match" in (
+        patch_condition.reason
+    )
+    assert "local execution review session terminal_lane_id does not match" in (
+        patch_condition.reason
+    )
+
+
 def test_reconcile_closure_rejects_review_chain_handoff_missing_graph_scope(
     tmp_path: Path,
 ) -> None:

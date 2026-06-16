@@ -268,6 +268,8 @@ runtime、provider invocation、lane authority、review truth 完成。后续生
   `6cd34fcff8dd75ec9e2465d404095ae4e97d7dc0`
 - Local head at start of x3 MemoryOS live-gate source-ref boundary slice:
   `cf6bd548fcf75c4374ed95ff5c800b290a01ed90`
+- Local head at start of x3 patch-forward lineage scope admission slice:
+  `cafb4b49cdf8f562b64c94950382cb8a3e9318da`
 - PR: <https://github.com/iiyazu/Cross-Muse/pull/43>
 - PR state last checked: draft/open/unmerged
 - PR merge state last checked: `CLEAN`
@@ -380,6 +382,7 @@ truth_snapshot:
   local_head_at_x3_github_release_gate_forbidden_claim_producer_slice: 709008aff94a56ef88db38a78d78d9347003db56
   local_head_at_x3_github_release_gate_model_admission_slice: 6cd34fcff8dd75ec9e2465d404095ae4e97d7dc0
   local_head_at_x3_memoryos_live_gate_source_ref_boundary_slice: cf6bd548fcf75c4374ed95ff5c800b290a01ed90
+  local_head_at_x3_patch_forward_lineage_scope_admission_slice: cafb4b49cdf8f562b64c94950382cb8a3e9318da
   pr: 43
   pr_url: https://github.com/iiyazu/Cross-Muse/pull/43
   pr_state: draft_open_unmerged
@@ -2214,6 +2217,15 @@ Use these as implementation references, not as xmuse package dependencies:
     `pr_merged`, `github_review_truth`, and `live_memoryos`. Older or external
     closure artifacts missing these forbidden claims are not gate-ready for
     L10 source-ref guidance.
+  - Closure reconciler patch-forward lineage admission now binds
+    `PatchForwardLineagePresent` to the current closure graph and terminal lane
+    scope. A review-chain proof whose top-level graph/lane scope or embedded
+    `local_execution_review_session` graph/lane scope does not match the
+    reconciled closure remains `manual_gap` for patch-forward lineage even if
+    patch-forward/intake/verdict refs are present. This prevents a bounded
+    session from one lane or graph from satisfying another lane's Goal B
+    condition; it is scope/admission hardening only, not live execution or
+    independent review server truth.
   - Release evidence candidate reports can now consume
     `xmuse.god_room_lane_review_chain_proof.v1` artifacts directly as
     `live_memoryos` source-ref guidance after validating
