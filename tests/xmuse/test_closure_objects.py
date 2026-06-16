@@ -224,6 +224,41 @@ def test_closure_object_l10_admission_rejects_stale_or_weakened_boundary() -> No
     )
 
 
+def test_closure_object_l10_admission_rejects_stale_observed_generation() -> None:
+    closure = ClosureObject(
+        metadata=ClosureMetadata(
+            name="closure:graph-a:lane-a",
+            layer="WaveD-E/L8-L10",
+            source_refs=("handoff:a",),
+            target_refs=("lane:lane-a",),
+            owner_refs=("source_authority:closure-controller",),
+            generation=2,
+        ),
+        spec=ClosureSpec(),
+        status=ClosureStatus(
+            phase="manual_gap",
+            conditions=tuple(
+                _admission_condition(condition_type)
+                for condition_type in CONDITION_ORDER
+            ),
+            observed_refs=("candidate:a", "handoff:a"),
+            observed_generation=1,
+            forbidden_claims=REQUIRED_FORBIDDEN_CLAIMS,
+        ),
+    )
+
+    admission = evaluate_closure_object_l10_admission(closure)
+
+    assert admission.gate_ready is False
+    assert admission.source_refs == ()
+    assert admission.target_refs == ()
+    assert admission.owner_refs == ()
+    assert (
+        "ClosureObject observed_generation does not match metadata generation"
+        in admission.issues
+    )
+
+
 def test_closure_object_l10_admission_requires_complete_condition_chain() -> None:
     closure = ClosureObject(
         metadata=ClosureMetadata(

@@ -288,6 +288,10 @@ def evaluate_closure_object_l10_admission(
         )
     if closure.status.evaluator_version != CLOSURE_OBJECT_EVALUATOR_VERSION:
         issues.append("ClosureObject evaluator_version is stale")
+    if closure.status.observed_generation != closure.metadata.generation:
+        issues.append(
+            "ClosureObject observed_generation does not match metadata generation"
+        )
     if closure.status.phase == "blocked":
         issues.append("ClosureObject phase is blocked")
     fresh = closure.status.condition(CLOSURE_CONTROLLER_FRESH)
