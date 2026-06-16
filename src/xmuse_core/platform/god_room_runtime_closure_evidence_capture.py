@@ -16,7 +16,6 @@ from xmuse_core.chat.god_room_speaker_response import GodRoomSpeakerResponseCapt
 from xmuse_core.chat.god_room_speaker_runtime import GodRoomSpeakerAttemptV1
 from xmuse_core.platform.god_room_review_chain_proof import (
     GOD_ROOM_REVIEW_CHAIN_PROOF_FORBIDDEN_CLAIMS,
-    GOD_ROOM_REVIEW_CHAIN_PROOF_SCHEMA_VERSION,
     build_review_chain_proof_l10_handoff_evaluation,
 )
 from xmuse_core.platform.god_room_review_handoff import (
@@ -1008,26 +1007,10 @@ def _review_chain_proof_details(
     payload = _load_json(path, label="GOD room review chain proof", issues=issues)
     if not isinstance(payload, dict):
         return _manual_gap_details("GOD room review chain proof artifact is missing"), [], []
-    schema_version = _text(payload.get("schema_version"))
     status = _text(payload.get("status")) or "manual_gap"
     proof_level = _text(payload.get("proof_level")) or "manual_gap"
     server_truth_status = _text(payload.get("server_truth_status"))
-    if schema_version != GOD_ROOM_REVIEW_CHAIN_PROOF_SCHEMA_VERSION:
-        issues.append("GOD room review chain proof artifact has unexpected schema")
-    if status != "chain_ready":
-        issues.append("GOD room review chain proof is not chain_ready")
-    if proof_level != "contract_proof":
-        issues.append("GOD room review chain proof proof level is not contract_proof")
-    if server_truth_status != "not_server_truth":
-        issues.append("GOD room review chain proof overclaims server truth")
-
     forbidden_claims = _string_list(payload.get("forbidden_claims"))
-    for claim in GOD_ROOM_REVIEW_CHAIN_PROOF_FORBIDDEN_CLAIMS:
-        if claim not in forbidden_claims:
-            issues.append(
-                f"GOD room review chain proof missing forbidden claim: {claim}"
-            )
-
     session_raw = payload.get("local_execution_review_session")
     session = session_raw if isinstance(session_raw, Mapping) else {}
     handoff_evaluation = build_review_chain_proof_l10_handoff_evaluation(

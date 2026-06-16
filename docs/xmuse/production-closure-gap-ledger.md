@@ -300,6 +300,9 @@ runtime、provider invocation、lane authority、review truth 完成。后续生
 - Local head at start of x3 operator-action GitHub truth fixture drift cleanup
   slice:
   `2c03b2492e9e0a618f21e19120192b0a46765dbf`
+- Local head at start of x3 runtime-closure shared review-chain handoff
+  admission slice:
+  `267ac887b899649a8b6ab6152321df879f249425`
 - PR: <https://github.com/iiyazu/Cross-Muse/pull/43>
 - PR state last checked: draft/open/unmerged
 - PR merge state last checked: `CLEAN`
@@ -424,6 +427,7 @@ truth_snapshot:
   local_head_at_x3_closure_reconciler_file_backed_patch_forward_bounded_session_gate_slice: d32545e29435a2644182ef0fc5748fd4fb7f34e8
   local_head_at_x3_closure_reconciler_nested_server_truth_overclaim_admission_slice: ecba8946b0f8a2384ac628144e4c33aa46700480
   local_head_at_x3_operator_action_github_truth_fixture_drift_cleanup_slice: 2c03b2492e9e0a618f21e19120192b0a46765dbf
+  local_head_at_x3_runtime_closure_shared_review_chain_handoff_admission_slice: 267ac887b899649a8b6ab6152321df879f249425
   pr: 43
   pr_url: https://github.com/iiyazu/Cross-Muse/pull/43
   pr_state: draft_open_unmerged
@@ -2484,6 +2488,13 @@ Use these as implementation references, not as xmuse package dependencies:
     server-truth contract instead of an obsolete raw-dict shape. This is test
     fixture drift cleanup only; it does not upgrade GitHub review truth, merge
     truth, `ready_to_merge`, or `pr_merged`.
+    GOD-room runtime closure evidence capture now consumes the shared
+    `build_review_chain_proof_l10_handoff_evaluation()` result for review-chain
+    proof schema/status/proof/server-truth/forbidden-claim admission instead
+    of reimplementing those checks locally. This keeps runtime-closure
+    projection aligned with the same L9->L10 handoff evaluator used by release
+    candidates and closure reconciliation, while preserving manual gaps and
+    forbidden claims when the shared evaluator is not ready.
   - MemoryOS live gate source-ref admission now excludes MemoryOS-owned refs
     from the upstream source-ref count. A live trace must cite a non-MemoryOS
     xmuse source such as conversation, lane, blueprint, review, or release
