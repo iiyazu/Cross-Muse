@@ -16,10 +16,10 @@ from xmuse_core.chat.god_room_speaker_response import GodRoomSpeakerResponseCapt
 from xmuse_core.chat.god_room_speaker_runtime import GodRoomSpeakerAttemptV1
 from xmuse_core.platform.god_room_review_chain_proof import (
     GOD_ROOM_REVIEW_CHAIN_PROOF_FORBIDDEN_CLAIMS,
-    build_review_chain_proof_l10_handoff_evaluation,
+    build_review_chain_proof_l10_handoff_admission_context,
 )
 from xmuse_core.platform.god_room_review_handoff import (
-    build_review_closure_handoff_evaluation,
+    build_review_closure_handoff_admission_context,
 )
 from xmuse_core.platform.production_evidence import (
     ProductionEvidenceEnvelope,
@@ -868,29 +868,35 @@ def _review_closure_details(
     execution_truth_status = _text(payload.get("execution_truth_status"))
     server_truth_status = _text(payload.get("server_truth_status"))
     handoff_status = _text(payload.get("release_evidence_handoff_status"))
-    handoff_evaluation = build_review_closure_handoff_evaluation(
-        root=_review_closure_root(path, payload),
+    failed_lane_id = _text(payload.get("failed_lane_id"))
+    terminal_lane_id = _text(payload.get("terminal_lane_id"))
+    handoff_root = _review_closure_root(path, payload)
+    handoff_context = build_review_closure_handoff_admission_context(
+        root=handoff_root,
         review_closure=payload,
+        graph_id=_text(payload.get("graph_id")),
+        lane_id=terminal_lane_id or failed_lane_id,
     )
-    current_handoff_ready = handoff_evaluation.get("status") == "ready"
-    current_handoff_summary = _text(handoff_evaluation.get("handoff_summary"))
+    handoff_evaluation = handoff_context["evaluation"]
+    handoff_admission = handoff_context["admission"]
+    current_handoff_ready = handoff_admission["ready"] is True
+    current_handoff_summary = _text(handoff_admission.get("summary"))
     current_candidate_refs = _string_list(
-        handoff_evaluation.get("candidate_artifact_refs")
+        handoff_admission.get("candidate_artifact_refs")
     )
-    current_handoff_source_refs = _string_list(handoff_evaluation.get("source_refs"))
-    issues.extend(_review_closure_handoff_issues(handoff_evaluation))
-    if handoff_status != "candidate_input_ready":
-        issues.append(
-            "GOD room review closure release handoff is not candidate_input_ready"
-        )
-    manual_gaps = _string_list(payload.get("manual_gaps"))
-    forbidden_claims = _string_list(payload.get("forbidden_claims"))
+    current_candidate_ref_count = _int(
+        handoff_admission.get("candidate_artifact_ref_count")
+    )
+    current_handoff_source_refs = _string_list(handoff_admission.get("source_refs"))
+    current_handoff_source_ref_count = _int(handoff_admission.get("source_ref_count"))
+    if not current_handoff_ready:
+        issues.extend(_string_list(handoff_admission.get("issues")))
+    manual_gaps = _string_list(handoff_admission.get("source_manual_gaps"))
+    forbidden_claims = _string_list(handoff_admission.get("forbidden_claims"))
     if "release_evidence_not_linked" not in manual_gaps:
         issues.append("GOD room review closure must preserve release evidence gap")
     candidate_refs = _string_list(payload.get("candidate_refs"))
     cited_candidate_refs = _string_list(payload.get("cited_candidate_refs"))
-    failed_lane_id = _text(payload.get("failed_lane_id"))
-    terminal_lane_id = _text(payload.get("terminal_lane_id"))
     source_event_lineage = _dict_rows(payload.get("source_event_lineage"))
     runner_recovery_raw = payload.get("runner_recovery_proof_lineage")
     runner_recovery_lineage = (
@@ -919,10 +925,8 @@ def _review_closure_details(
             "current_handoff_summary": current_handoff_summary,
             "handoff_evaluation": handoff_evaluation,
             "current_handoff_candidate_artifact_refs": current_candidate_refs,
-            "current_handoff_candidate_artifact_ref_count": len(
-                current_candidate_refs
-            ),
-            "current_handoff_source_ref_count": len(current_handoff_source_refs),
+            "current_handoff_candidate_artifact_ref_count": current_candidate_ref_count,
+            "current_handoff_source_ref_count": current_handoff_source_ref_count,
             "failed_lane_id": failed_lane_id,
             "terminal_lane_id": terminal_lane_id,
             "candidate_ref_count": len(candidate_refs),
@@ -944,23 +948,6 @@ def _review_closure_details(
         },
         refs,
         targets,
-    )
-
-
-def _review_closure_handoff_issues(
-    handoff_evaluation: Mapping[str, Any],
-) -> list[str]:
-    if _text(handoff_evaluation.get("status")) == "ready":
-        return []
-    summary = _text(handoff_evaluation.get("handoff_summary"))
-    return _dedupe(
-        [
-            (
-                "GOD room review closure current handoff is not gate-ready: "
-                f"{summary or 'unknown'}"
-            ),
-            *_string_list(handoff_evaluation.get("issues")),
-        ]
     )
 
 
@@ -1010,39 +997,47 @@ def _review_chain_proof_details(
     status = _text(payload.get("status")) or "manual_gap"
     proof_level = _text(payload.get("proof_level")) or "manual_gap"
     server_truth_status = _text(payload.get("server_truth_status"))
-    forbidden_claims = _string_list(payload.get("forbidden_claims"))
+    graph_id = _text(payload.get("graph_id"))
+    failed_lane_id = _text(payload.get("failed_lane_id"))
+    terminal_lane_id = _text(payload.get("terminal_lane_id"))
     session_raw = payload.get("local_execution_review_session")
     session = session_raw if isinstance(session_raw, Mapping) else {}
-    handoff_evaluation = build_review_chain_proof_l10_handoff_evaluation(
+    handoff_context = build_review_chain_proof_l10_handoff_admission_context(
         root=_review_chain_root(path, payload),
         artifact_path=path,
         review_chain_proof=payload,
+        graph_id=graph_id,
+        lane_id=terminal_lane_id,
     )
-    bounded_session_raw = handoff_evaluation.get("bounded_session_gate")
+    handoff_evaluation = handoff_context["evaluation"]
+    handoff_admission = handoff_context["admission"]
+    bounded_session_raw = handoff_admission.get("bounded_session_gate")
     bounded_session_gate = (
         bounded_session_raw if isinstance(bounded_session_raw, Mapping) else {}
     )
-    handoff_ready = handoff_evaluation["status"] == "ready"
-    current_handoff_ready = handoff_evaluation.get("current_handoff_gate_ready") is True
-    current_handoff_summary = _text(handoff_evaluation.get("current_handoff_summary"))
+    handoff_ready = handoff_admission["ready"] is True
+    current_handoff_ready = handoff_admission["current_handoff_gate_ready"] is True
+    current_handoff_summary = _text(handoff_admission.get("current_handoff_summary"))
     current_candidate_refs = _string_list(
-        handoff_evaluation.get("current_handoff_candidate_artifact_refs")
+        handoff_admission.get("current_handoff_candidate_artifact_refs")
     )
-    current_handoff_source_refs = _string_list(handoff_evaluation.get("source_refs"))
-    candidate_refs = _string_list(handoff_evaluation.get("candidate_artifact_refs"))
+    current_candidate_ref_count = _int(
+        handoff_admission.get("current_handoff_candidate_artifact_ref_count")
+    )
+    current_handoff_source_refs = _string_list(handoff_admission.get("source_refs"))
+    current_handoff_source_ref_count = _int(handoff_admission.get("source_ref_count"))
+    candidate_refs = _string_list(handoff_admission.get("candidate_artifact_refs"))
+    candidate_ref_count = _int(handoff_admission.get("candidate_artifact_ref_count"))
     if not handoff_ready:
-        issues.extend(_string_list(handoff_evaluation.get("issues")))
+        issues.extend(_string_list(handoff_admission.get("issues")))
 
     runner_recovery_raw = payload.get("runner_recovery_proof_lineage")
     runner_recovery_lineage = (
         runner_recovery_raw if isinstance(runner_recovery_raw, Mapping) else {}
     )
     worker_evidence_bundle_refs = _string_list(
-        handoff_evaluation.get("worker_evidence_bundle_refs")
+        handoff_admission.get("worker_evidence_bundle_refs")
     )
-    graph_id = _text(payload.get("graph_id"))
-    failed_lane_id = _text(payload.get("failed_lane_id"))
-    terminal_lane_id = _text(payload.get("terminal_lane_id"))
     refs = _dedupe(
         [
             f"god-room-review-chain-proof:{graph_id}:{failed_lane_id}:{terminal_lane_id}"
@@ -1074,7 +1069,8 @@ def _review_chain_proof_details(
             f"lane:{terminal_lane_id}" if terminal_lane_id else None,
         ]
     )
-    manual_gaps = _string_list(payload.get("manual_gaps"))
+    manual_gaps = _string_list(handoff_admission.get("source_manual_gaps"))
+    forbidden_claims = _string_list(handoff_admission.get("forbidden_claims"))
     return (
         {
             "status": status,
@@ -1089,11 +1085,9 @@ def _review_chain_proof_details(
             "current_handoff_summary": current_handoff_summary,
             "handoff_evaluation": handoff_evaluation,
             "current_handoff_candidate_artifact_refs": current_candidate_refs,
-            "current_handoff_candidate_artifact_ref_count": len(
-                current_candidate_refs
-            ),
-            "current_handoff_source_ref_count": len(current_handoff_source_refs),
-            "candidate_artifact_ref_count": len(candidate_refs),
+            "current_handoff_candidate_artifact_ref_count": current_candidate_ref_count,
+            "current_handoff_source_ref_count": current_handoff_source_ref_count,
+            "candidate_artifact_ref_count": candidate_ref_count,
             "bounded_session_gate": bounded_session_gate,
             "local_execution_review_session": _review_chain_session_details(
                 session

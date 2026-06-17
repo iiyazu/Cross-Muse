@@ -99,6 +99,7 @@ from xmuse_core.integrations.god_room_memoryos_plan import (
     build_god_room_memoryos_plan,
 )
 from xmuse_core.integrations.memoryos_lite_interop import live_memoryos_lite_enabled
+from xmuse_core.platform.closure_objects import REQUIRED_FORBIDDEN_CLAIMS
 from xmuse_core.platform.feature_graph_review_coordinator import (
     submit_feature_graph_review_verdict,
 )
@@ -2168,6 +2169,7 @@ def _build_god_room_lane_review_closure(
         "ready_to_merge",
         "pr_merged",
         "github_review_truth",
+        *REQUIRED_FORBIDDEN_CLAIMS,
         "overnight_safe_recovery",
         *candidate_forbidden_claims,
     ]

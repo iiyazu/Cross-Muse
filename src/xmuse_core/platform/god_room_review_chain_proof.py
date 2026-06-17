@@ -8,8 +8,8 @@ from typing import Any, cast
 
 from xmuse_core.platform.god_room_review_handoff import (
     REQUIRED_GOD_ROOM_REVIEW_CLOSURE_FORBIDDEN_CLAIMS,
-    build_review_closure_handoff_evaluation,
-    load_and_evaluate_review_closure_handoff,
+    build_review_closure_handoff_admission_context,
+    load_and_admit_review_closure_handoff,
 )
 from xmuse_core.platform.local_execution_candidate import (
     LOCAL_EXECUTION_CANDIDATE_PLATFORM_RUNNER_PRODUCER,
@@ -30,17 +30,16 @@ GOD_ROOM_REVIEW_CHAIN_PROOF_AUTHORITY = (
     "god_room_lane_review_closure_artifact+local_execution_candidate_lineage+"
     "shared_god_room_review_closure_handoff_gate"
 )
-GOD_ROOM_REVIEW_CHAIN_PROOF_FORBIDDEN_CLAIMS = [
-    "worker_output_is_review_truth",
-    "end_to_end_execution_review_closure",
-    "ready_to_merge",
-    "pr_merged",
-    "github_review_truth",
-    "live_memoryos",
-    "server_side_truth",
-    "overnight_readiness",
-    "worker_self_review_equals_review_truth",
-]
+GOD_ROOM_REVIEW_CHAIN_PROOF_FORBIDDEN_CLAIMS = list(
+    dict.fromkeys(
+        [
+            *REQUIRED_GOD_ROOM_REVIEW_CLOSURE_FORBIDDEN_CLAIMS,
+            "server_side_truth",
+            "overnight_readiness",
+            "worker_self_review_equals_review_truth",
+        ]
+    )
+)
 GOD_ROOM_REVIEW_CHAIN_PROOF_MANUAL_GAPS = [
     "live_memoryos_trace_not_proven",
     "github_truth_not_checked",
@@ -87,6 +86,9 @@ REVIEW_CHAIN_PROOF_BOUNDED_SESSION_GATE_SCHEMA_VERSION = (
 )
 REVIEW_CHAIN_PROOF_L10_HANDOFF_EVALUATION_SCHEMA_VERSION = (
     "xmuse.review_chain_proof_l10_handoff_evaluation.v1"
+)
+REVIEW_CHAIN_L10_HANDOFF_STATUS_NOT_READY_ISSUE = (
+    "review-chain L10 handoff evaluation is not ready"
 )
 REQUIRED_REVIEW_CHAIN_SESSION_BOUNDARIES = (
     "session_scope_boundary",
@@ -419,19 +421,33 @@ def build_review_chain_proof_l10_handoff_evaluation(
     missing_forbidden = sorted(
         set(GOD_ROOM_REVIEW_CHAIN_PROOF_FORBIDDEN_CLAIMS) - forbidden_claim_set
     )
-    if schema_version != GOD_ROOM_REVIEW_CHAIN_PROOF_SCHEMA_VERSION:
-        issues.append("GOD room review chain proof artifact has unexpected schema")
-    if status != "chain_ready":
-        issues.append("GOD room review chain proof is not chain_ready")
-    if proof_level != "contract_proof":
-        issues.append("GOD room review chain proof proof level is not contract_proof")
-    if server_truth_status != "not_server_truth":
-        issues.append("GOD room review chain proof overclaims server truth")
-    if missing_forbidden:
-        issues.append(
-            "GOD room review chain proof missing forbidden claims: "
-            + ", ".join(missing_forbidden)
+    issues.extend(
+        _review_chain_l10_base_contract_issues(
+            checks=(
+                (
+                    schema_version,
+                    GOD_ROOM_REVIEW_CHAIN_PROOF_SCHEMA_VERSION,
+                    "GOD room review chain proof artifact has unexpected schema",
+                ),
+                (
+                    status,
+                    "chain_ready",
+                    "GOD room review chain proof is not chain_ready",
+                ),
+                (
+                    proof_level,
+                    "contract_proof",
+                    "GOD room review chain proof proof level is not contract_proof",
+                ),
+            ),
+            server_truth_status=server_truth_status,
+            server_truth_issue="GOD room review chain proof overclaims server truth",
+            missing_forbidden_claims=missing_forbidden,
+            missing_forbidden_prefix=(
+                "GOD room review chain proof missing forbidden claims: "
+            ),
         )
+    )
 
     release_handoff = _mapping(review_chain_proof.get("release_evidence_handoff"))
     embedded_handoff_ready = (
@@ -451,19 +467,38 @@ def build_review_chain_proof_l10_handoff_evaluation(
     if bounded_session_gate["status"] != "verified":
         issues.append(str(bounded_session_gate["summary"]))
 
-    current_handoff_evaluation = _review_chain_current_handoff_evaluation(
+    current_handoff_context = _review_chain_current_handoff_admission_context(
         artifact_path=artifact_path,
         payload=review_chain_proof,
+        graph_id=_text(review_chain_proof.get("graph_id")),
+        lane_id=_text(review_chain_proof.get("terminal_lane_id")),
     )
-    current_ready = current_handoff_evaluation.get("status") == "ready"
-    current_summary = _text(current_handoff_evaluation.get("handoff_summary"))
+    current_handoff_evaluation = _mapping(current_handoff_context.get("evaluation"))
+    current_handoff_admission = _mapping(current_handoff_context.get("admission"))
+    current_producer_ready = current_handoff_admission["producer_ready"] is True
+    current_ready = current_handoff_admission["ready"] is True
+    current_summary = _text(current_handoff_admission.get("summary"))
     current_candidate_refs = _string_list(
-        current_handoff_evaluation.get("candidate_artifact_refs")
+        current_handoff_admission.get("candidate_artifact_refs")
     )
-    if not current_ready:
+    current_source_event_lineage_refs = _string_list(
+        current_handoff_admission.get("source_event_lineage_refs")
+    )
+    current_handoff_for_refs: Mapping[str, Any] = current_handoff_evaluation
+    if current_ready:
+        current_handoff_for_refs = {
+            **current_handoff_evaluation,
+            "source_refs": _string_list(current_handoff_admission.get("source_refs")),
+        }
+    if not current_producer_ready:
         issues.append(
             "GOD room review chain proof current review-closure handoff is not "
             f"gate-ready: {current_summary or 'unknown'}"
+        )
+    elif not current_ready:
+        issues.append(
+            "GOD room review chain proof current review-closure handoff is not "
+            f"admissible: {current_summary or 'unknown'}"
         )
     elif current_candidate_refs != embedded_candidate_refs:
         issues.append(
@@ -479,7 +514,7 @@ def build_review_chain_proof_l10_handoff_evaluation(
             xmuse_root,
             review_chain_proof,
             str(artifact_path),
-            current_handoff=current_handoff_evaluation,
+            current_handoff=current_handoff_for_refs,
         )
         if evaluation_status == "ready"
         else []
@@ -501,11 +536,16 @@ def build_review_chain_proof_l10_handoff_evaluation(
         if evaluation_status == "ready"
         else []
     )
+    source_manual_gaps = _ordered_unique(
+        _string_list(review_chain_proof.get("manual_gaps"))
+    )
     return {
         "schema_version": REVIEW_CHAIN_PROOF_L10_HANDOFF_EVALUATION_SCHEMA_VERSION,
         "status": evaluation_status,
         "proof_level": "contract_proof" if evaluation_status == "ready" else "manual_gap",
         "server_truth_status": server_truth_status or "not_server_truth",
+        "graph_id": _text(review_chain_proof.get("graph_id")),
+        "terminal_lane_id": _text(review_chain_proof.get("terminal_lane_id")),
         "review_chain_proof_status": status,
         "review_chain_proof_level": proof_level,
         "handoff_summary": (
@@ -525,6 +565,12 @@ def build_review_chain_proof_l10_handoff_evaluation(
         ),
         "current_handoff_candidate_artifact_refs": current_candidate_refs,
         "current_handoff_candidate_artifact_ref_count": len(current_candidate_refs),
+        "source_event_lineage_refs": (
+            current_source_event_lineage_refs if evaluation_status == "ready" else []
+        ),
+        "source_event_lineage_ref_count": (
+            len(current_source_event_lineage_refs) if evaluation_status == "ready" else 0
+        ),
         "bounded_session_gate": bounded_session_gate,
         "bounded_session_gate_status": _text(bounded_session_gate.get("status")),
         "bounded_session_gate_summary": _text(bounded_session_gate.get("summary")),
@@ -535,6 +581,8 @@ def build_review_chain_proof_l10_handoff_evaluation(
         "source_refs": source_refs,
         "source_ref_count": len(source_refs),
         "issues": _ordered_unique(issues),
+        "source_manual_gaps": source_manual_gaps,
+        "source_manual_gap_count": len(source_manual_gaps),
         "manual_gaps": (
             []
             if evaluation_status == "ready"
@@ -548,6 +596,381 @@ def build_review_chain_proof_l10_handoff_evaluation(
             ]
         ),
     }
+
+
+def admit_review_chain_proof_l10_handoff_evaluation(
+    handoff_evaluation: Mapping[str, Any],
+    *,
+    graph_id: str | None = None,
+    lane_id: str | None = None,
+) -> dict[str, Any]:
+    """Admit a copied L10 handoff evaluation for downstream aggregation.
+
+    Consumers that cannot rebuild the review-chain proof should validate the
+    serialized evaluation through this function instead of re-parsing readiness
+    from copied review-chain detail fields.
+    """
+
+    issues: list[str] = []
+    schema_version = _text(handoff_evaluation.get("schema_version"))
+    status = _text(handoff_evaluation.get("status")) or "manual_gap"
+    proof_level = _text(handoff_evaluation.get("proof_level")) or "manual_gap"
+    review_chain_proof_status = _text(
+        handoff_evaluation.get("review_chain_proof_status")
+    )
+    review_chain_proof_level = _text(handoff_evaluation.get("review_chain_proof_level"))
+    actual_graph_id = _text(handoff_evaluation.get("graph_id"))
+    actual_lane_id = _text(handoff_evaluation.get("terminal_lane_id")) or _text(
+        handoff_evaluation.get("lane_id")
+    )
+    server_truth_status = _text(handoff_evaluation.get("server_truth_status"))
+    bounded_session_gate = _mapping(handoff_evaluation.get("bounded_session_gate"))
+    bounded_session_gate_status = _text(bounded_session_gate.get("status")) or _text(
+        handoff_evaluation.get("bounded_session_gate_status")
+    )
+    bounded_session_gate_summary = _text(bounded_session_gate.get("summary")) or _text(
+        handoff_evaluation.get("bounded_session_gate_summary")
+    )
+    current_handoff_gate_ready = (
+        handoff_evaluation.get("current_handoff_gate_ready") is True
+    )
+    current_handoff_summary = _text(handoff_evaluation.get("current_handoff_summary"))
+    current_handoff_candidate_artifact_refs = _string_list(
+        handoff_evaluation.get("current_handoff_candidate_artifact_refs")
+    )
+    candidate_artifact_refs = _string_list(
+        handoff_evaluation.get("candidate_artifact_refs")
+    )
+    source_refs = _string_list(handoff_evaluation.get("source_refs"))
+    source_event_lineage_refs = _string_list(
+        handoff_evaluation.get("source_event_lineage_refs")
+    )
+    worker_evidence_bundle_refs = _string_list(
+        handoff_evaluation.get("worker_evidence_bundle_refs")
+    )
+    patch_forward_artifact_refs = _string_list(
+        handoff_evaluation.get("patch_forward_artifact_refs")
+    )
+    provenance_source_refs = _ordered_unique([*source_refs, *patch_forward_artifact_refs])
+    source_manual_gaps = _ordered_unique(
+        _string_list(handoff_evaluation.get("source_manual_gaps"))
+    )
+    forbidden_claims = _string_list(handoff_evaluation.get("forbidden_claims"))
+    producer_issues = _string_list(handoff_evaluation.get("issues"))
+    missing_forbidden = sorted(
+        set(GOD_ROOM_REVIEW_CHAIN_PROOF_FORBIDDEN_CLAIMS) - set(forbidden_claims)
+    )
+
+    issues.extend(
+        _review_chain_l10_base_contract_issues(
+            checks=(
+                (
+                    schema_version,
+                    REVIEW_CHAIN_PROOF_L10_HANDOFF_EVALUATION_SCHEMA_VERSION,
+                    "review-chain L10 handoff evaluation schema is unsupported",
+                ),
+                (status, "ready", REVIEW_CHAIN_L10_HANDOFF_STATUS_NOT_READY_ISSUE),
+                (
+                    proof_level,
+                    "contract_proof",
+                    (
+                        "review-chain L10 handoff evaluation proof level is "
+                        "not contract_proof"
+                    ),
+                ),
+                (
+                    review_chain_proof_status,
+                    "chain_ready",
+                    "review-chain proof source status is not chain_ready",
+                ),
+                (
+                    review_chain_proof_level,
+                    "contract_proof",
+                    "review-chain proof source level is not contract_proof",
+                ),
+            ),
+            server_truth_status=server_truth_status,
+            server_truth_issue=(
+                "review-chain L10 handoff evaluation overclaims server truth"
+            ),
+            missing_forbidden_claims=missing_forbidden,
+            missing_forbidden_prefix=(
+                "GOD room review chain proof missing forbidden claims: "
+            ),
+        )
+    )
+    if status != "ready":
+        issues.extend(producer_issues)
+    if graph_id is not None:
+        if actual_graph_id is None:
+            issues.append("review-chain proof source graph_id is missing")
+        elif actual_graph_id != graph_id:
+            issues.append(
+                "review-chain proof source graph_id does not match current closure graph"
+            )
+    if lane_id is not None:
+        if actual_lane_id is None:
+            issues.append("review-chain proof source terminal_lane_id is missing")
+        elif actual_lane_id != lane_id:
+            issues.append(
+                "review-chain proof source terminal_lane_id does not match current "
+                "closure lane"
+            )
+    if bounded_session_gate_status != "verified":
+        issues.append("review-chain L10 bounded session gate is not verified")
+    if not current_handoff_gate_ready:
+        issues.append("review-chain L10 current handoff gate is not ready")
+    if not candidate_artifact_refs:
+        issues.append("review-chain L10 handoff has no candidate artifact refs")
+    if not source_refs:
+        issues.append("review-chain L10 handoff has no source refs")
+
+    admission_status = "ready" if not issues else (
+        "blocked"
+        if status == "blocked" or server_truth_status not in {None, "not_server_truth"}
+        else "manual_gap"
+    )
+    return {
+        "status": admission_status,
+        "proof_level": "contract_proof" if admission_status == "ready" else "manual_gap",
+        "summary": (
+            "Review-chain L10 handoff evaluation is admissible."
+            if admission_status == "ready"
+            else (
+                _review_chain_l10_handoff_summary(producer_issues)
+                if producer_issues
+                else _review_chain_l10_handoff_summary(issues)
+            )
+        ),
+        "server_truth_status": server_truth_status or "not_server_truth",
+        "candidate_artifact_refs": (
+            candidate_artifact_refs if admission_status == "ready" else []
+        ),
+        "candidate_artifact_ref_count": (
+            len(candidate_artifact_refs) if admission_status == "ready" else 0
+        ),
+        "source_refs": source_refs if admission_status == "ready" else [],
+        "source_ref_count": len(source_refs) if admission_status == "ready" else 0,
+        "source_event_lineage_refs": (
+            source_event_lineage_refs if admission_status == "ready" else []
+        ),
+        "source_event_lineage_ref_count": (
+            len(source_event_lineage_refs) if admission_status == "ready" else 0
+        ),
+        "current_handoff_candidate_artifact_refs": (
+            current_handoff_candidate_artifact_refs
+            if admission_status == "ready"
+            else []
+        ),
+        "current_handoff_candidate_artifact_ref_count": (
+            len(current_handoff_candidate_artifact_refs)
+            if admission_status == "ready"
+            else 0
+        ),
+        "worker_evidence_bundle_refs": (
+            worker_evidence_bundle_refs if admission_status == "ready" else []
+        ),
+        "worker_evidence_bundle_ref_count": (
+            len(worker_evidence_bundle_refs) if admission_status == "ready" else 0
+        ),
+        "patch_forward_artifact_refs": (
+            patch_forward_artifact_refs if admission_status == "ready" else []
+        ),
+        "patch_forward_artifact_ref_count": (
+            len(patch_forward_artifact_refs) if admission_status == "ready" else 0
+        ),
+        "provenance_source_refs": (
+            provenance_source_refs if admission_status == "ready" else []
+        ),
+        "provenance_source_ref_count": (
+            len(provenance_source_refs) if admission_status == "ready" else 0
+        ),
+        "source_manual_gaps": source_manual_gaps,
+        "source_manual_gap_count": len(source_manual_gaps),
+        "bounded_session_gate_status": bounded_session_gate_status or "not_provided",
+        "bounded_session_gate_summary": bounded_session_gate_summary,
+        "bounded_session_gate": dict(bounded_session_gate),
+        "current_handoff_gate_ready": current_handoff_gate_ready,
+        "current_handoff_summary": current_handoff_summary,
+        "issues": _ordered_unique(issues),
+        "manual_gaps": (
+            []
+            if admission_status == "ready"
+            else ["review_chain_proof_l10_handoff_not_ready"]
+        ),
+        "forbidden_claims": _ordered_unique(
+            [
+                *GOD_ROOM_REVIEW_CHAIN_PROOF_FORBIDDEN_CLAIMS,
+                *forbidden_claims,
+                "server_side_truth",
+            ]
+        ),
+    }
+
+
+def review_chain_proof_l10_handoff_admission_result(
+    handoff_evaluation: Mapping[str, Any],
+    *,
+    graph_id: str | None = None,
+    lane_id: str | None = None,
+) -> dict[str, Any]:
+    """Build the shared producer/admission result for review-chain L10 handoffs."""
+
+    producer_ready = handoff_evaluation.get("status") == "ready"
+    expected_graph_id = graph_id or ""
+    expected_lane_id = lane_id or ""
+    admission = admit_review_chain_proof_l10_handoff_evaluation(
+        handoff_evaluation,
+        graph_id=expected_graph_id,
+        lane_id=expected_lane_id,
+    )
+    ready = admission["status"] == "ready"
+    issues = _string_list(admission.get("issues"))
+    status = (
+        "ready"
+        if ready
+        else _text(admission.get("status")) or "manual_gap"
+    )
+    summary = (
+        _text(admission.get("summary"))
+        if not ready
+        else _text(handoff_evaluation.get("handoff_summary"))
+    )
+    return {
+        "producer_ready": producer_ready,
+        "ready": ready,
+        "status": status,
+        "summary": summary,
+        "source_refs": (
+            _string_list(admission.get("source_refs")) if ready else []
+        ),
+        "source_ref_count": (
+            _non_negative_int(admission.get("source_ref_count")) if ready else 0
+        ),
+        "candidate_artifact_refs": (
+            _string_list(admission.get("candidate_artifact_refs")) if ready else []
+        ),
+        "candidate_artifact_ref_count": (
+            _non_negative_int(admission.get("candidate_artifact_ref_count"))
+            if ready
+            else 0
+        ),
+        "source_event_lineage_refs": (
+            _string_list(admission.get("source_event_lineage_refs")) if ready else []
+        ),
+        "source_event_lineage_ref_count": (
+            len(_string_list(admission.get("source_event_lineage_refs")))
+            if ready
+            else 0
+        ),
+        "current_handoff_candidate_artifact_refs": (
+            _string_list(admission.get("current_handoff_candidate_artifact_refs"))
+            if ready
+            else []
+        ),
+        "current_handoff_candidate_artifact_ref_count": (
+            _non_negative_int(
+                admission.get("current_handoff_candidate_artifact_ref_count")
+            )
+            if ready
+            else 0
+        ),
+        "worker_evidence_bundle_refs": (
+            _string_list(admission.get("worker_evidence_bundle_refs")) if ready else []
+        ),
+        "worker_evidence_bundle_ref_count": (
+            _non_negative_int(admission.get("worker_evidence_bundle_ref_count"))
+            if ready
+            else 0
+        ),
+        "patch_forward_artifact_refs": (
+            _string_list(admission.get("patch_forward_artifact_refs")) if ready else []
+        ),
+        "patch_forward_artifact_ref_count": (
+            _non_negative_int(admission.get("patch_forward_artifact_ref_count"))
+            if ready
+            else 0
+        ),
+        "provenance_source_refs": (
+            _string_list(admission.get("provenance_source_refs")) if ready else []
+        ),
+        "provenance_source_ref_count": (
+            _non_negative_int(admission.get("provenance_source_ref_count"))
+            if ready
+            else 0
+        ),
+        "source_manual_gaps": _string_list(admission.get("source_manual_gaps")),
+        "source_manual_gap_count": _non_negative_int(
+            admission.get("source_manual_gap_count")
+        ),
+        "bounded_session_gate_status": _text(
+            admission.get("bounded_session_gate_status")
+        ) or "not_provided",
+        "bounded_session_gate_summary": _text(
+            admission.get("bounded_session_gate_summary")
+        ),
+        "bounded_session_gate": dict(_mapping(admission.get("bounded_session_gate"))),
+        "current_handoff_gate_ready": (
+            admission.get("current_handoff_gate_ready") is True
+        ),
+        "current_handoff_summary": _text(admission.get("current_handoff_summary")),
+        "issues": issues,
+        "forbidden_claims": _string_list(admission.get("forbidden_claims")),
+    }
+
+
+def build_review_chain_proof_l10_handoff_admission_context(
+    *,
+    root: str | Path,
+    artifact_path: str | Path,
+    review_chain_proof: Mapping[str, Any],
+    graph_id: str | None = None,
+    lane_id: str | None = None,
+) -> dict[str, Any]:
+    """Build and admit the shared review-chain L10 handoff in one path."""
+
+    handoff_evaluation = build_review_chain_proof_l10_handoff_evaluation(
+        root=root,
+        artifact_path=artifact_path,
+        review_chain_proof=review_chain_proof,
+    )
+    handoff_admission = review_chain_proof_l10_handoff_admission_result(
+        handoff_evaluation,
+        graph_id=(
+            graph_id
+            if graph_id is not None
+            else _text(review_chain_proof.get("graph_id"))
+        ),
+        lane_id=(
+            lane_id
+            if lane_id is not None
+            else _text(review_chain_proof.get("terminal_lane_id"))
+        ),
+    )
+    return {
+        "evaluation": handoff_evaluation,
+        "admission": handoff_admission,
+    }
+
+
+def _review_chain_l10_base_contract_issues(
+    *,
+    checks: Sequence[tuple[str | None, str, str]],
+    server_truth_status: str | None,
+    server_truth_issue: str,
+    missing_forbidden_claims: Sequence[str],
+    missing_forbidden_prefix: str,
+) -> list[str]:
+    issues = [
+        issue for actual, expected, issue in checks if actual != expected
+    ]
+    if server_truth_status != "not_server_truth":
+        issues.append(server_truth_issue)
+    if missing_forbidden_claims:
+        issues.append(
+            missing_forbidden_prefix + ", ".join(missing_forbidden_claims)
+        )
+    return issues
 
 
 def _review_chain_l10_handoff_summary(issues: list[str]) -> str:
@@ -674,13 +1097,32 @@ def build_god_room_review_chain_proof(
     runner_recovery_proof_level = runner_recovery_lineage.get("proof_level")
     runner_recovery_manual_gaps = _string_list(runner_recovery_lineage.get("manual_gaps"))
 
-    release_handoff_evaluation = build_review_closure_handoff_evaluation(
+    release_handoff_context = build_review_closure_handoff_admission_context(
         root=xmuse_root,
         review_closure=closure,
+        graph_id=graph_id,
+        lane_id=terminal_lane_id or failed_lane_id,
     )
-    review_gate_ready = release_handoff_evaluation.get("status") == "ready"
-    if not review_gate_ready:
-        summary = _text(release_handoff_evaluation.get("handoff_summary"))
+    release_handoff_evaluation = _mapping(release_handoff_context.get("evaluation"))
+    release_handoff_admission = _mapping(release_handoff_context.get("admission"))
+    release_handoff_producer_ready = (
+        release_handoff_admission["producer_ready"] is True
+    )
+    review_gate_ready = release_handoff_admission["ready"] is True
+    release_handoff_summary = _text(release_handoff_admission.get("summary"))
+    release_handoff_source_refs = _string_list(
+        release_handoff_admission.get("source_refs")
+    )
+    release_handoff_candidate_refs = _string_list(
+        release_handoff_admission.get("candidate_artifact_refs")
+    )
+    if not release_handoff_producer_ready:
+        issues.append(
+            release_handoff_summary
+            or "release evidence candidate gate rejected review closure"
+        )
+    elif not review_gate_ready:
+        summary = release_handoff_summary
         issues.append(summary or "release evidence candidate gate rejected review closure")
 
     status = "chain_ready" if not issues else "manual_gap"
@@ -759,8 +1201,8 @@ def build_god_room_review_chain_proof(
     source_refs = _ordered_unique(
         [
             _text(base.get("review_closure_artifact")),
-            *_string_list(release_handoff_evaluation.get("source_refs")),
-            *_string_list(release_handoff_evaluation.get("candidate_artifact_refs")),
+            *release_handoff_source_refs,
+            *release_handoff_candidate_refs,
             *_string_list(local_execution_review_session.get("session_source_refs")),
             *_string_list(local_execution_review_session.get("session_artifact_refs")),
             *[
@@ -880,16 +1322,16 @@ def build_god_room_review_chain_proof(
             "memoryos_export_ready": False,
             "review_closure_artifact_gate_ready": review_gate_ready,
             "review_closure_artifact_summary": _text(
-                release_handoff_evaluation.get("handoff_summary")
+                release_handoff_summary
             ),
             "review_closure_source_ref_count": _non_negative_int(
                 release_handoff_evaluation.get("source_ref_count")
             ),
             "review_closure_candidate_artifact_refs": _string_list(
-                release_handoff_evaluation.get("candidate_artifact_refs")
+                release_handoff_admission.get("candidate_artifact_refs")
             ),
             "review_closure_candidate_artifact_ref_count": _non_negative_int(
-                release_handoff_evaluation.get("candidate_artifact_ref_count")
+                release_handoff_admission.get("candidate_artifact_ref_count")
             ),
             "blockers": (
                 []
@@ -2411,7 +2853,7 @@ def _review_closure_issues(closure: Mapping[str, Any]) -> list[str]:
             issues.append(f"GOD room review closure missing {key}")
     forbidden_claims = set(_string_list(closure.get("forbidden_claims")))
     missing_forbidden = sorted(
-        REQUIRED_GOD_ROOM_REVIEW_CLOSURE_FORBIDDEN_CLAIMS - forbidden_claims
+        set(REQUIRED_GOD_ROOM_REVIEW_CLOSURE_FORBIDDEN_CLAIMS) - forbidden_claims
     )
     if missing_forbidden:
         issues.append(
@@ -3070,32 +3512,23 @@ def _artifact_ref(root: Path, artifact: str | Path, path: Path) -> str:
         return raw
 
 
-def _review_chain_current_handoff_evaluation(
+def _review_chain_current_handoff_admission_context(
     *,
     artifact_path: str | Path,
     payload: Mapping[str, Any],
+    graph_id: str | None,
+    lane_id: str | None,
 ) -> dict[str, Any]:
     review_closure_ref = _text(payload.get("review_closure_artifact"))
-    base = {
-        "schema_version": "xmuse.review_closure_handoff_evaluation.v1",
-        "status": "manual_gap",
-        "handoff_gate_ready": False,
-        "handoff_summary": (
-            "GOD room review chain proof missing review_closure_artifact."
-        ),
-        "candidate_artifact_refs": [],
-        "candidate_artifact_ref_count": 0,
-        "source_refs": [],
-        "source_ref_count": 0,
-        "issues": ["GOD room review chain proof missing review_closure_artifact"],
-        "manual_gaps": ["review_closure_handoff_not_ready"],
-    }
-    if review_closure_ref is None:
-        return base
     root = _review_chain_root(artifact_path, payload)
-    return load_and_evaluate_review_closure_handoff(
+    return load_and_admit_review_closure_handoff(
         root=root,
         review_closure_ref=review_closure_ref,
+        graph_id=graph_id,
+        lane_id=lane_id,
+        missing_ref_summary=(
+            "GOD room review chain proof missing review_closure_artifact."
+        ),
         missing_summary=(
             "GOD room review closure artifact referenced by chain proof is missing."
         ),
@@ -3180,9 +3613,12 @@ def _utc_now() -> str:
 __all__ = [
     "GOD_ROOM_REVIEW_CHAIN_PROOF_SCHEMA_VERSION",
     "REVIEW_CHAIN_PROOF_L10_HANDOFF_EVALUATION_SCHEMA_VERSION",
+    "admit_review_chain_proof_l10_handoff_evaluation",
     "build_review_chain_proof_l10_handoff_evaluation",
+    "build_review_chain_proof_l10_handoff_admission_context",
     "build_god_room_review_chain_proof",
     "capture_god_room_review_chain_proof",
     "review_chain_proof_bounded_session_gate",
+    "review_chain_proof_l10_handoff_admission_result",
     "review_chain_proof_worker_evidence_bundle_refs",
 ]

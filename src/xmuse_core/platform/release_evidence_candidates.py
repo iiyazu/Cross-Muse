@@ -20,10 +20,10 @@ from xmuse_core.platform.github_truth_release_gate import (
     build_github_server_truth_release_gate,
 )
 from xmuse_core.platform.god_room_review_chain_proof import (
-    build_review_chain_proof_l10_handoff_evaluation,
+    build_review_chain_proof_l10_handoff_admission_context,
 )
 from xmuse_core.platform.god_room_review_handoff import (
-    build_review_closure_handoff_evaluation,
+    load_and_admit_review_closure_handoff,
 )
 from xmuse_core.platform.god_runtime_continuity import (
     build_selected_god_runtime_continuity_view,
@@ -601,6 +601,7 @@ def _memoryos_candidates(
         "closure_object_source_ref_count": closure_object["source_ref_count"],
         "closure_object_target_refs": closure_object["target_refs"],
         "closure_object_target_ref_count": closure_object["target_ref_count"],
+        "closure_object_owner_refs": closure_object["owner_refs"],
         "closure_object_owner_ref_count": closure_object["owner_ref_count"],
         "closure_object_forbidden_claim_count": closure_object[
             "forbidden_claim_count"
@@ -690,43 +691,44 @@ def _memoryos_review_closure_candidate(
     }
     if artifact_path is None:
         return base
-    artifact, load_error = _json_file(
-        Path(artifact_path),
-        subject="GOD room review closure artifact",
-    )
-    if artifact is None:
-        return {
-            **base,
-            "artifact_summary": load_error,
-        }
-    handoff_evaluation = build_review_closure_handoff_evaluation(
+    expected_lane_id = _text(payload.get("lane_id"))
+    handoff_context = load_and_admit_review_closure_handoff(
         root=root,
-        review_closure=artifact,
+        review_closure_ref=artifact_path,
+        lane_id=expected_lane_id,
     )
-    if handoff_evaluation["status"] != "ready":
+    handoff_evaluation = handoff_context["evaluation"]
+    handoff_admission = handoff_context["admission"]
+    if handoff_admission["ready"] is not True:
         return {
             **base,
-            "artifact_summary": handoff_evaluation["handoff_summary"],
+            "artifact_summary": handoff_admission["summary"],
             "handoff_evaluation": handoff_evaluation,
         }
-    source_refs = _string_list(handoff_evaluation.get("source_refs"))
-    source_event_lineage_refs = _source_event_lineage_refs(
-        handoff_evaluation.get("source_event_lineage_refs")
+    source_refs = _string_list(handoff_admission.get("source_refs"))
+    source_event_lineage_refs = _string_list(
+        handoff_admission.get("source_event_lineage_refs")
     )
     candidate_artifact_refs = _string_list(
-        handoff_evaluation.get("candidate_artifact_refs")
+        handoff_admission.get("candidate_artifact_refs")
     )
     return {
         **base,
         "artifact_gate_ready": True,
-        "artifact_summary": handoff_evaluation["handoff_summary"],
+        "artifact_summary": handoff_admission["summary"],
         "handoff_evaluation": handoff_evaluation,
         "source_refs": source_refs,
-        "source_ref_count": len(source_refs),
+        "source_ref_count": _non_negative_int(
+            handoff_admission.get("source_ref_count")
+        ),
         "source_event_lineage_refs": source_event_lineage_refs,
-        "source_event_lineage_ref_count": len(source_event_lineage_refs),
+        "source_event_lineage_ref_count": _non_negative_int(
+            handoff_admission.get("source_event_lineage_ref_count")
+        ),
         "candidate_artifact_refs": candidate_artifact_refs,
-        "candidate_artifact_ref_count": len(candidate_artifact_refs),
+        "candidate_artifact_ref_count": _non_negative_int(
+            handoff_admission.get("candidate_artifact_ref_count")
+        ),
     }
 
 
@@ -766,50 +768,62 @@ def _memoryos_review_chain_proof_candidate(
             **base,
             "artifact_summary": load_error,
         }
-    handoff_evaluation = build_review_chain_proof_l10_handoff_evaluation(
+    expected_lane_id = _text(payload.get("lane_id"))
+    handoff_context = build_review_chain_proof_l10_handoff_admission_context(
         root=root,
         artifact_path=artifact_path,
         review_chain_proof=artifact,
+        graph_id=_text(artifact.get("graph_id")),
+        lane_id=expected_lane_id or _text(artifact.get("terminal_lane_id")),
     )
-    if handoff_evaluation["status"] != "ready":
+    handoff_evaluation = handoff_context["evaluation"]
+    handoff_admission = handoff_context["admission"]
+    if handoff_admission["ready"] is not True:
         return {
             **base,
-            "artifact_summary": handoff_evaluation["handoff_summary"],
-            "bounded_session_gate_status": handoff_evaluation[
+            "artifact_summary": handoff_admission["summary"],
+            "bounded_session_gate_status": handoff_admission[
                 "bounded_session_gate_status"
             ],
-            "bounded_session_gate_summary": handoff_evaluation[
+            "bounded_session_gate_summary": handoff_admission[
                 "bounded_session_gate_summary"
             ],
             "handoff_evaluation": handoff_evaluation,
         }
-    source_event_lineage_refs = _review_chain_source_event_lineage_refs(
-        root=root,
-        handoff_evaluation=handoff_evaluation,
-        artifact=artifact,
+    source_event_lineage_refs = _string_list(
+        handoff_admission.get("source_event_lineage_refs")
     )
-    source_refs = _string_list(handoff_evaluation.get("source_refs"))
-    candidate_refs = _string_list(handoff_evaluation.get("candidate_artifact_refs"))
+    candidate_refs = _string_list(handoff_admission.get("candidate_artifact_refs"))
     patch_forward_refs = _string_list(
-        handoff_evaluation.get("patch_forward_artifact_refs")
+        handoff_admission.get("patch_forward_artifact_refs")
     )
-    combined_source_refs = _ordered_unique([*source_refs, *patch_forward_refs])
+    provenance_source_refs = _string_list(
+        handoff_admission.get("provenance_source_refs")
+    )
     return {
         **base,
         "artifact_gate_ready": True,
-        "artifact_summary": handoff_evaluation["handoff_summary"],
+        "artifact_summary": handoff_admission["summary"],
         "source_event_lineage_refs": source_event_lineage_refs,
-        "source_event_lineage_ref_count": len(source_event_lineage_refs),
-        "source_refs": combined_source_refs,
-        "source_ref_count": len(combined_source_refs),
+        "source_event_lineage_ref_count": _non_negative_int(
+            handoff_admission.get("source_event_lineage_ref_count")
+        ),
+        "source_refs": provenance_source_refs,
+        "source_ref_count": _non_negative_int(
+            handoff_admission.get("provenance_source_ref_count")
+        ),
         "candidate_artifact_refs": candidate_refs,
-        "candidate_artifact_ref_count": len(candidate_refs),
+        "candidate_artifact_ref_count": _non_negative_int(
+            handoff_admission.get("candidate_artifact_ref_count")
+        ),
         "patch_forward_artifact_refs": patch_forward_refs,
-        "patch_forward_artifact_ref_count": len(patch_forward_refs),
-        "bounded_session_gate_status": handoff_evaluation[
+        "patch_forward_artifact_ref_count": _non_negative_int(
+            handoff_admission.get("patch_forward_artifact_ref_count")
+        ),
+        "bounded_session_gate_status": handoff_admission[
             "bounded_session_gate_status"
         ],
-        "bounded_session_gate_summary": handoff_evaluation[
+        "bounded_session_gate_summary": handoff_admission[
             "bounded_session_gate_summary"
         ],
         "handoff_evaluation": handoff_evaluation,
@@ -912,36 +926,37 @@ def _memoryos_runtime_closure_candidate(
         _runtime_closure_current_review_handoff(
             root=root,
             runtime_closure_artifact=artifact,
+            expected_lane_id=_text(payload.get("lane_id")),
         )
         if requires_handoff_revalidation
         else None
     )
-    if current_handoff is not None and current_handoff.get("status") != "ready":
+    if current_handoff is not None and current_handoff.get("ready") is not True:
         return {
             **base,
             "artifact_summary": (
                 "GOD room runtime closure evidence current review-closure handoff "
                 "is not gate-ready: "
-                f"{_text(current_handoff.get('handoff_summary')) or 'unknown'}"
+                f"{_text(current_handoff.get('summary')) or 'unknown'}"
             ),
             "current_handoff_gate_ready": False,
-            "current_handoff_summary": _text(current_handoff.get("handoff_summary")),
+            "current_handoff_summary": _text(current_handoff.get("summary")),
             "current_handoff_candidate_artifact_refs": _string_list(
                 current_handoff.get("candidate_artifact_refs")
             ),
-            "current_handoff_candidate_artifact_ref_count": len(
-                _string_list(current_handoff.get("candidate_artifact_refs"))
+            "current_handoff_candidate_artifact_ref_count": _non_negative_int(
+                current_handoff.get("candidate_artifact_ref_count")
             ),
         }
     current_handoff_fields = (
         {
             "current_handoff_gate_ready": True,
-            "current_handoff_summary": _text(current_handoff.get("handoff_summary")),
+            "current_handoff_summary": _text(current_handoff.get("summary")),
             "current_handoff_candidate_artifact_refs": _string_list(
                 current_handoff.get("candidate_artifact_refs")
             ),
-            "current_handoff_candidate_artifact_ref_count": len(
-                _string_list(current_handoff.get("candidate_artifact_refs"))
+            "current_handoff_candidate_artifact_ref_count": _non_negative_int(
+                current_handoff.get("candidate_artifact_ref_count")
             ),
         }
         if current_handoff is not None
@@ -1003,10 +1018,12 @@ def _runtime_closure_current_review_handoff(
     *,
     root: Path,
     runtime_closure_artifact: Mapping[str, Any],
+    expected_lane_id: str | None,
 ) -> dict[str, Any]:
     base: dict[str, Any] = {
         "status": "manual_gap",
-        "handoff_summary": (
+        "ready": False,
+        "summary": (
             "GOD room runtime closure evidence has no revalidatable review "
             "closure artifact."
         ),
@@ -1029,12 +1046,13 @@ def _runtime_closure_current_review_handoff(
             "xmuse.god_room_lane_review_closure.v1"
         ):
             continue
-        handoff_root_ref = _text(review_closure.get("xmuse_root"))
-        handoff_root = Path(handoff_root_ref) if handoff_root_ref is not None else root
-        return build_review_closure_handoff_evaluation(
-            root=handoff_root,
-            review_closure=review_closure,
+        handoff_context = load_and_admit_review_closure_handoff(
+            root=root,
+            review_closure_ref=artifact_ref,
+            graph_id=_text(review_closure.get("graph_id")),
+            lane_id=expected_lane_id,
         )
+        return handoff_context["admission"]
     return base
 
 
@@ -1142,12 +1160,19 @@ def _memoryos_candidate_guidance(
             *_string_list(closure_object.get("target_refs")),
         ]
     )
+    owner_refs = _ordered_unique(
+        [
+            *_string_list(closure_object.get("owner_refs")),
+        ]
+    )
     if source_refs:
         payload_hints["source_refs"] = source_refs
     if source_event_lineage_refs:
         payload_hints["source_event_lineage_refs"] = source_event_lineage_refs
     if target_refs:
         payload_hints["target_refs"] = target_refs
+    if owner_refs:
+        payload_hints["owner_refs"] = owner_refs
     source_authority = [
         "redacted_environment_presence",
         "operator_release_candidate_payload",
@@ -1627,35 +1652,6 @@ def _source_event_lineage_refs(value: Any) -> list[str]:
             refs.append(f"speaker_response_artifact:{speaker_response_artifact_ref}")
         refs.extend(_string_list(item.get("source_refs")))
     return _ordered_unique(refs)
-
-
-def _review_chain_source_event_lineage_refs(
-    *,
-    root: Path,
-    handoff_evaluation: Mapping[str, Any],
-    artifact: Mapping[str, Any],
-) -> list[str]:
-    source_event_lineage_refs = _source_event_lineage_refs(
-        handoff_evaluation.get("source_event_lineage_refs")
-    )
-    if source_event_lineage_refs:
-        return source_event_lineage_refs
-    review_closure_artifact_ref = _text(artifact.get("review_closure_artifact"))
-    if review_closure_artifact_ref is None:
-        return []
-    review_closure_path = _root_relative_artifact_path(
-        root=root,
-        artifact_ref=review_closure_artifact_ref,
-    )
-    if review_closure_path is None:
-        return []
-    review_closure, _ = _json_file(
-        review_closure_path,
-        subject="GOD room review closure artifact",
-    )
-    if review_closure is None:
-        return []
-    return _source_event_lineage_refs(review_closure.get("source_event_lineage"))
 
 
 def _utc_now() -> str:

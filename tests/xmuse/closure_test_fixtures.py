@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from xmuse_core.platform.god_room_review_chain_proof import (
+    GOD_ROOM_REVIEW_CHAIN_PROOF_FORBIDDEN_CLAIMS,
+)
 from xmuse_core.platform.local_execution_candidate import (
-    LOCAL_EXECUTION_CANDIDATE_FORBIDDEN_CLAIMS,
     capture_local_execution_candidate,
     load_local_execution_candidate_lineage,
 )
@@ -149,7 +151,7 @@ def review_closure_payload(
             "evidence_refs": ["worker-candidate:patch-reviewed", candidate_ref],
         },
         "manual_gaps": ["release_evidence_not_linked"],
-        "forbidden_claims": list(LOCAL_EXECUTION_CANDIDATE_FORBIDDEN_CLAIMS),
+        "forbidden_claims": list(GOD_ROOM_REVIEW_CHAIN_PROOF_FORBIDDEN_CLAIMS),
     }
 
 
@@ -215,7 +217,7 @@ def review_chain_proof_payload(
                 "retained_manual_gaps": ["release_evidence_not_linked"],
             },
         },
-        "forbidden_claims": list(LOCAL_EXECUTION_CANDIDATE_FORBIDDEN_CLAIMS),
+        "forbidden_claims": list(GOD_ROOM_REVIEW_CHAIN_PROOF_FORBIDDEN_CLAIMS),
     }
 
 

@@ -224,9 +224,9 @@ def test_closure_object_l10_admission_rejects_stale_or_weakened_boundary() -> No
         "ClosureObject evaluator_version is stale",
         "ClosureObject controller freshness is not ok",
         "ClosureObject required forbidden claims are not preserved",
-        (
-            "ClosureObject missing forbidden claims: github_review_truth, "
-            "ready_to_merge, pr_merged, worker_output_is_review_truth"
+        "ClosureObject missing forbidden claims: "
+        + ", ".join(
+            claim for claim in REQUIRED_FORBIDDEN_CLAIMS if claim != "live_memoryos"
         ),
     )
 

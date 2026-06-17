@@ -13,6 +13,9 @@ from tests.xmuse.closure_test_fixtures import (
 from tests.xmuse.closure_test_fixtures import (
     write_runner_session as _write_runner_session,
 )
+from tests.xmuse.test_god_room_review_chain_proof import (
+    _write_review_closure as _write_review_chain_closure,
+)
 from xmuse_core.platform.closure_objects import (
     CLOSURE_CONTROLLER_FRESH,
     CLOSURE_OBJECT_EVALUATOR_VERSION,
@@ -29,6 +32,9 @@ from xmuse_core.platform.closure_objects import (
 )
 from xmuse_core.platform.closure_reconciler import (
     reconcile_closure,
+)
+from xmuse_core.platform.god_room_review_chain_proof import (
+    capture_god_room_review_chain_proof,
 )
 
 
@@ -193,6 +199,35 @@ def test_reconcile_closure_blocks_overclaim_and_preserves_forbidden_claims(
     assert "worker_output_is_review_truth" in closure.status.forbidden_claims
 
 
+def test_reconcile_closure_withholds_review_closure_refs_when_admission_fails(
+    tmp_path: Path,
+) -> None:
+    candidate_ref = "artifacts/lane-runtime-evidence-patch/result.json"
+    _write_candidate(tmp_path, candidate_ref)
+    _write_runner_session(tmp_path, candidate_ref)
+    review_closure = _review_closure_payload(tmp_path, candidate_ref)
+    review_closure["forbidden_claims"] = ["ready_to_merge"]
+
+    closure = reconcile_closure(
+        root=tmp_path,
+        graph_id="graph-runtime",
+        lane_id="lane-runtime-evidence-patch",
+        recovery_artifact=_recovery_artifact("lane-runtime-evidence-patch"),
+        execution_candidates=[candidate_ref],
+        review_closure=review_closure,
+    )
+
+    review_condition = closure_condition_by_type(
+        closure,
+        INDEPENDENT_REVIEW_VERDICT_PRESENT,
+    )
+    assert review_condition is not None
+    assert review_condition.status == "false"
+    assert review_condition.severity == "manual_gap"
+    assert "missing forbidden claims" in review_condition.reason
+    assert review_condition.source_refs == ()
+
+
 def test_reconcile_closure_does_not_treat_plain_handoff_as_patch_forward_lineage(
     tmp_path: Path,
 ) -> None:
@@ -286,6 +321,32 @@ def test_reconcile_closure_accepts_orchestrator_lane_recovery_retry_artifact(
     assert condition.reason == (
         "lane lane-runtime-evidence-patch retry is allowed by durable recovery artifact"
     )
+
+
+def test_reconcile_closure_rejects_lane_recovery_decision_source_ref_fallback(
+    tmp_path: Path,
+) -> None:
+    recovery_artifact = _god_room_lane_recovery_artifact(
+        "lane-runtime-evidence-patch",
+        retry_allowed=True,
+        decision="retry",
+    )
+    recovery_artifact.pop("source_refs")
+
+    closure = reconcile_closure(
+        root=tmp_path,
+        graph_id="graph-runtime",
+        lane_id="lane-runtime-evidence-patch",
+        recovery_artifact=recovery_artifact,
+    )
+
+    condition = closure_condition_by_type(closure, RECOVERY_ALLOWS_PROGRESS)
+    assert condition is not None
+    assert condition.status == "unknown"
+    assert condition.severity == "manual_gap"
+    assert condition.reason == "lane recovery artifact missing source refs"
+    assert condition.source_refs == ()
+    assert "review:merge-conflict" not in closure.metadata.source_refs
 
 
 def test_reconcile_closure_blocks_orchestrator_lane_recovery_stop_artifact(
@@ -456,6 +517,46 @@ def test_reconcile_closure_revalidates_file_backed_review_chain_l10_handoff(
     )
 
 
+def test_reconcile_closure_uses_file_backed_l10_admission_for_patch_forward_lineage(
+    tmp_path: Path,
+) -> None:
+    review_closure_path = _write_review_chain_closure(tmp_path)
+    review_closure = json.loads(review_closure_path.read_text(encoding="utf-8"))
+    stale_projection = {
+        **review_closure,
+        "patch_forward_artifact": (
+            "reports/god_room_patch_forward/"
+            "graph-runtime.other-lane.patch-forward.json"
+        ),
+    }
+    release_handoff_ref = "reports/review-chain-proof.json"
+    capture_god_room_review_chain_proof(
+        root=tmp_path,
+        review_closure_artifact=review_closure_path,
+        output_path=tmp_path / release_handoff_ref,
+    )
+
+    closure = reconcile_closure(
+        root=tmp_path,
+        graph_id="graph-runtime",
+        lane_id="lane-runtime-evidence-patch",
+        review_closure=stale_projection,
+        release_handoff=release_handoff_ref,
+    )
+
+    patch_condition = closure_condition_by_type(closure, PATCH_FORWARD_LINEAGE_PRESENT)
+    assert patch_condition is not None
+    assert patch_condition.status == "true"
+    assert patch_condition.severity == "ok"
+    assert patch_condition.reason == (
+        "review-chain proof carries admitted patch-forward lineage"
+    )
+    assert (
+        "reports/god_room_patch_forward/"
+        "graph-runtime.lane-runtime-evidence.patch-forward.json"
+    ) in patch_condition.source_refs
+
+
 def test_reconcile_closure_rejects_review_chain_handoff_wrong_graph_and_lane_scope(
     tmp_path: Path,
 ) -> None:
@@ -483,6 +584,99 @@ def test_reconcile_closure_rejects_review_chain_handoff_wrong_graph_and_lane_sco
     )
 
 
+def test_reconcile_closure_blocks_inline_patch_forward_overclaim(
+    tmp_path: Path,
+) -> None:
+    candidate_ref = "artifacts/lane-runtime-evidence-patch/result.json"
+    review_closure = _review_closure_payload(tmp_path, candidate_ref)
+    release_handoff = _review_chain_proof_payload(candidate_ref)
+    release_handoff["server_truth_status"] = "github_review_truth"
+
+    closure = reconcile_closure(
+        root=tmp_path,
+        graph_id="graph-runtime",
+        lane_id="lane-runtime-evidence-patch",
+        recovery_artifact=_recovery_artifact("lane-runtime-evidence-patch"),
+        execution_candidates=[candidate_ref],
+        review_closure=review_closure,
+        release_handoff=release_handoff,
+    )
+
+    condition = closure_condition_by_type(closure, PATCH_FORWARD_LINEAGE_PRESENT)
+    assert condition is not None
+    assert condition.status == "false"
+    assert condition.severity == "blocked"
+    assert "release handoff overclaims server truth" in condition.reason
+    assert condition.source_refs == ()
+
+
+def test_reconcile_closure_metadata_source_refs_use_admitted_conditions(
+    tmp_path: Path,
+) -> None:
+    candidate_ref = "artifacts/lane-runtime-evidence-patch/result.json"
+    forged_ref = "forged:raw-release-source"
+    forged_target_ref = "lane:forged-raw-release-target"
+    forged_owner_ref = "source_authority:forged_release_handoff"
+    review_closure = _review_closure_payload(tmp_path, candidate_ref)
+    release_handoff = _review_chain_proof_payload(candidate_ref)
+    release_handoff["server_truth_status"] = "github_review_truth"
+    release_handoff["source_refs"] = [forged_ref]
+    release_handoff["target_refs"] = [forged_target_ref]
+    release_handoff["source_authority"] = "forged_release_handoff"
+
+    closure = reconcile_closure(
+        root=tmp_path,
+        graph_id="graph-runtime",
+        lane_id="lane-runtime-evidence-patch",
+        recovery_artifact=_recovery_artifact("lane-runtime-evidence-patch"),
+        execution_candidates=[candidate_ref],
+        review_closure=review_closure,
+        release_handoff=release_handoff,
+    )
+
+    assert forged_ref not in closure.metadata.source_refs
+    assert forged_target_ref not in closure.metadata.target_refs
+    assert forged_owner_ref not in closure.metadata.owner_refs
+    assert candidate_ref in closure.metadata.source_refs
+    assert "graph:graph-runtime" in closure.metadata.target_refs
+    assert "lane:lane-runtime-evidence-patch" in closure.metadata.target_refs
+    assert all(
+        condition.observed_generation == closure.status.observed_generation
+        for condition in closure.status.conditions
+    )
+
+
+def test_reconcile_closure_metadata_target_refs_use_admitted_conditions(
+    tmp_path: Path,
+) -> None:
+    candidate_ref = "artifacts/lane-runtime-evidence-patch/result.json"
+    forged_graph_ref = "graph:forged-review-graph"
+    forged_lane_ref = "lane:forged-review-lane"
+    review_closure = _review_closure_payload(tmp_path, candidate_ref)
+    review_closure["graph_id"] = "forged-review-graph"
+    review_closure["terminal_lane_id"] = "forged-review-lane"
+
+    closure = reconcile_closure(
+        root=tmp_path,
+        graph_id="graph-runtime",
+        lane_id="lane-runtime-evidence-patch",
+        recovery_artifact=_recovery_artifact("lane-runtime-evidence-patch"),
+        execution_candidates=[candidate_ref],
+        review_closure=review_closure,
+    )
+
+    review_condition = closure_condition_by_type(
+        closure,
+        INDEPENDENT_REVIEW_VERDICT_PRESENT,
+    )
+    assert review_condition is not None
+    assert review_condition.status == "false"
+    assert forged_graph_ref not in closure.metadata.target_refs
+    assert forged_lane_ref not in closure.metadata.target_refs
+    assert "graph:graph-runtime" in closure.metadata.target_refs
+    assert "lane:lane-runtime-evidence-patch" in closure.metadata.target_refs
+
+
 def test_reconcile_closure_rejects_patch_forward_lineage_wrong_graph_and_lane_scope(
     tmp_path: Path,
 ) -> None:
@@ -508,10 +702,10 @@ def test_reconcile_closure_rejects_patch_forward_lineage_wrong_graph_and_lane_sc
     assert patch_condition is not None
     assert patch_condition.status == "false"
     assert patch_condition.severity == "manual_gap"
-    assert "review-chain proof graph_id does not match current closure graph" in (
+    assert "release handoff graph_id does not match current closure graph" in (
         patch_condition.reason
     )
-    assert "review-chain proof terminal_lane_id does not match current closure lane" in (
+    assert "release handoff terminal lane id does not match current closure lane" in (
         patch_condition.reason
     )
     assert "local execution review session graph_id does not match" in (
@@ -661,8 +855,10 @@ def test_reconcile_closure_rejects_review_closure_handoff_wrong_status_or_scope(
     condition = closure_condition_by_type(closure, RELEASE_HANDOFF_EVALUATED)
     assert condition is not None
     assert condition.status == "false"
-    assert condition.severity == "manual_gap"
-    assert condition.reason == "review-closure handoff status is not ready"
+    assert condition.severity == "blocked"
+    assert condition.reason == (
+        "review-closure handoff graph_id does not match current closure graph"
+    )
 
 
 def test_reconcile_closure_rejects_review_closure_handoff_wrong_graph_and_lane_scope(

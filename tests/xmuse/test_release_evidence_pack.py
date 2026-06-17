@@ -243,14 +243,7 @@ def _write_local_execution_candidate(
                 "github_truth_not_checked",
                 "live_memoryos_trace_not_proven",
             ],
-            "forbidden_claims": [
-                "worker_output_is_review_truth",
-                "end_to_end_execution_review_closure",
-                "ready_to_merge",
-                "pr_merged",
-                "github_review_truth",
-                "live_memoryos",
-            ],
+            "forbidden_claims": list(GOD_ROOM_REVIEW_CHAIN_PROOF_FORBIDDEN_CLAIMS),
         },
     )
     _write_json(
@@ -2354,14 +2347,7 @@ def test_release_evidence_pack_converts_god_room_runtime_closure_into_replay_sec
                 "release_evidence_not_linked",
                 "github_truth_not_checked",
             ],
-            "forbidden_claims": [
-                "worker_output_is_review_truth",
-                "end_to_end_execution_review_closure",
-                "ready_to_merge",
-                "pr_merged",
-                "github_review_truth",
-                "live_memoryos",
-            ],
+            "forbidden_claims": list(GOD_ROOM_REVIEW_CHAIN_PROOF_FORBIDDEN_CLAIMS),
         },
     )
     _write_graph_authority(
@@ -2551,7 +2537,7 @@ def test_release_evidence_pack_converts_god_room_runtime_closure_into_replay_sec
     assert "pr_merged" in linkage["forbidden_claims"]
 
 
-def test_review_chain_release_linkage_rejects_inconsistent_bounded_gate(
+def test_review_chain_release_linkage_uses_shared_handoff_evaluation_admission(
     tmp_path: Path,
 ) -> None:
     review_chain_proof = tmp_path / "review-chain-proof.json"
@@ -2572,9 +2558,26 @@ def test_review_chain_release_linkage_rejects_inconsistent_bounded_gate(
                             "status": "chain_ready",
                             "proof_level": "contract_proof",
                             "server_truth_status": "not_server_truth",
-                            "bounded_session_gate": {"status": "manual_gap"},
-                            "handoff_evaluation": {"status": "ready"},
+                            "bounded_session_gate": {"status": "verified"},
+                            "handoff_evaluation": {
+                                "schema_version": (
+                                    "xmuse.review_chain_proof_l10_handoff_"
+                                    "evaluation.v1"
+                                ),
+                                "status": "manual_gap",
+                                "proof_level": "manual_gap",
+                                "server_truth_status": "not_server_truth",
+                                "current_handoff_gate_ready": True,
+                                "candidate_artifact_refs": [
+                                    "artifacts/lane-runtime-evidence-patch/result.json"
+                                ],
+                                "source_refs": [artifact_ref],
+                                "forbidden_claims": list(
+                                    GOD_ROOM_REVIEW_CHAIN_PROOF_FORBIDDEN_CLAIMS
+                                ),
+                            },
                             "current_handoff_gate_ready": True,
+                            "forbidden_claims": ["forged_top_level_claim"],
                             "manual_gaps": ["release_evidence_not_linked"],
                         }
                     }
@@ -2593,11 +2596,238 @@ def test_review_chain_release_linkage_rejects_inconsistent_bounded_gate(
     assert linkage is not None
     assert linkage["status"] == "manual_gap"
     assert linkage["proof_level"] == "manual_gap"
-    assert linkage["bounded_session_gate_status"] == "manual_gap"
-    assert linkage["handoff_evaluation_status"] == "ready"
+    assert linkage["bounded_session_gate_status"] == "not_provided"
+    assert linkage["handoff_evaluation_status"] == "manual_gap"
     assert linkage["current_handoff_gate_ready"] is True
     assert linkage["source_refs"] == []
     assert linkage["resolved_manual_gaps"] == []
+    assert "forged_top_level_claim" not in linkage["forbidden_claims"]
+    assert "server_side_truth" in linkage["forbidden_claims"]
+    for claim in GOD_ROOM_REVIEW_CHAIN_PROOF_FORBIDDEN_CLAIMS:
+        assert claim in linkage["forbidden_claims"]
+    assert linkage["blocked_reason"] == (
+        "review chain proof is not gate-ready for release linkage"
+    )
+
+
+def test_review_chain_release_linkage_admits_copied_scope_through_shared_evaluation(
+    tmp_path: Path,
+) -> None:
+    review_chain_proof = tmp_path / "review-chain-proof.json"
+    artifact_ref = f"review_chain_proof_artifact:{review_chain_proof}"
+    replay = {
+        "sections": [
+            {
+                "section_id": "god_room_runtime_closure",
+                "status": "ok",
+                "source_refs": [
+                    artifact_ref,
+                    "god-room-review-chain-proof:graph-runtime:"
+                    "lane-runtime-evidence:lane-runtime-evidence-patch",
+                ],
+                "details": {
+                    "god_room_runtime_closure": {
+                        "review_chain_proof": {
+                            "status": "chain_ready",
+                            "proof_level": "contract_proof",
+                            "server_truth_status": "not_server_truth",
+                            "graph_id": "graph-runtime",
+                            "terminal_lane_id": "lane-runtime-evidence-patch",
+                            "handoff_evaluation": {
+                                "schema_version": (
+                                    "xmuse.review_chain_proof_l10_handoff_"
+                                    "evaluation.v1"
+                                ),
+                                "status": "ready",
+                                "proof_level": "contract_proof",
+                                "server_truth_status": "not_server_truth",
+                                "graph_id": "graph-other",
+                                "terminal_lane_id": "lane-runtime-evidence-patch",
+                                "review_chain_proof_status": "chain_ready",
+                                "review_chain_proof_level": "contract_proof",
+                                "bounded_session_gate": {"status": "verified"},
+                                "current_handoff_gate_ready": True,
+                                "candidate_artifact_refs": [
+                                    "artifacts/lane-runtime-evidence-patch/result.json"
+                                ],
+                                "source_refs": [artifact_ref],
+                                "forbidden_claims": list(
+                                    GOD_ROOM_REVIEW_CHAIN_PROOF_FORBIDDEN_CLAIMS
+                                ),
+                            },
+                            "manual_gaps": ["release_evidence_not_linked"],
+                        }
+                    }
+                },
+            }
+        ]
+    }
+
+    linkage = _god_room_review_chain_release_linkage(
+        review_chain_proof_artifact=review_chain_proof,
+        runtime_closure_evidence_report=str(tmp_path / "runtime-closure.json"),
+        replay_bundle=tmp_path / "replay.json",
+        replay=replay,
+    )
+
+    assert linkage is not None
+    assert linkage["status"] == "manual_gap"
+    assert linkage["handoff_evaluation_status"] == "manual_gap"
+    assert linkage["source_refs"] == []
+    assert linkage["blocked_reason"] == (
+        "review chain proof is not gate-ready for release linkage"
+    )
+
+
+def test_review_chain_release_linkage_uses_admitted_source_refs_only(
+    tmp_path: Path,
+) -> None:
+    review_chain_proof = tmp_path / "review-chain-proof.json"
+    artifact_ref = f"review_chain_proof_artifact:{review_chain_proof}"
+    admitted_chain_ref = (
+        "god-room-review-chain-proof:graph-runtime:"
+        "lane-runtime-evidence:lane-runtime-evidence-patch"
+    )
+    admitted_patch_forward_ref = (
+        "reports/god_room_patch_forward/"
+        "graph-runtime.lane-runtime-evidence.patch-forward.json"
+    )
+    forged_section_ref = "worker_evidence_bundle:forged-section-only"
+    replay = {
+        "sections": [
+            {
+                "section_id": "god_room_runtime_closure",
+                "status": "ok",
+                "source_refs": [
+                    artifact_ref,
+                    forged_section_ref,
+                ],
+                "details": {
+                    "god_room_runtime_closure": {
+                        "review_chain_proof": {
+                            "status": "chain_ready",
+                            "proof_level": "contract_proof",
+                            "server_truth_status": "not_server_truth",
+                            "graph_id": "graph-runtime",
+                            "terminal_lane_id": "lane-runtime-evidence-patch",
+                            "handoff_evaluation": {
+                                "schema_version": (
+                                    "xmuse.review_chain_proof_l10_handoff_"
+                                    "evaluation.v1"
+                                ),
+                                "status": "ready",
+                                "proof_level": "contract_proof",
+                                "server_truth_status": "not_server_truth",
+                                "graph_id": "graph-runtime",
+                                "terminal_lane_id": "lane-runtime-evidence-patch",
+                                "review_chain_proof_status": "chain_ready",
+                                "review_chain_proof_level": "contract_proof",
+                                "bounded_session_gate": {"status": "verified"},
+                                "current_handoff_gate_ready": True,
+                                "candidate_artifact_refs": [
+                                    "artifacts/lane-runtime-evidence-patch/result.json"
+                                ],
+                                "source_refs": [admitted_chain_ref],
+                                "patch_forward_artifact_refs": [
+                                    admitted_patch_forward_ref
+                                ],
+                                "source_manual_gaps": [
+                                    "release_evidence_not_linked"
+                                ],
+                                "forbidden_claims": list(
+                                    GOD_ROOM_REVIEW_CHAIN_PROOF_FORBIDDEN_CLAIMS
+                                ),
+                            },
+                            "manual_gaps": ["forged_top_level_manual_gap"],
+                        }
+                    }
+                },
+            }
+        ]
+    }
+
+    linkage = _god_room_review_chain_release_linkage(
+        review_chain_proof_artifact=review_chain_proof,
+        runtime_closure_evidence_report=str(tmp_path / "runtime-closure.json"),
+        replay_bundle=tmp_path / "replay.json",
+        replay=replay,
+    )
+
+    assert linkage is not None
+    assert linkage["status"] == "linked_to_replay_bundle"
+    assert linkage["source_refs"] == [
+        artifact_ref,
+        admitted_chain_ref,
+        admitted_patch_forward_ref,
+    ]
+    assert forged_section_ref not in linkage["source_refs"]
+    assert linkage["resolved_manual_gaps"] == ["release_evidence_not_linked"]
+    assert "forged_top_level_manual_gap" not in linkage["retained_manual_gaps"]
+
+
+def test_review_chain_release_linkage_rejects_missing_copied_scope(
+    tmp_path: Path,
+) -> None:
+    review_chain_proof = tmp_path / "review-chain-proof.json"
+    artifact_ref = f"review_chain_proof_artifact:{review_chain_proof}"
+    replay = {
+        "sections": [
+            {
+                "section_id": "god_room_runtime_closure",
+                "status": "ok",
+                "source_refs": [
+                    artifact_ref,
+                    "god-room-review-chain-proof:graph-runtime:"
+                    "lane-runtime-evidence:lane-runtime-evidence-patch",
+                ],
+                "details": {
+                    "god_room_runtime_closure": {
+                        "review_chain_proof": {
+                            "status": "chain_ready",
+                            "proof_level": "contract_proof",
+                            "server_truth_status": "not_server_truth",
+                            "handoff_evaluation": {
+                                "schema_version": (
+                                    "xmuse.review_chain_proof_l10_handoff_"
+                                    "evaluation.v1"
+                                ),
+                                "status": "ready",
+                                "proof_level": "contract_proof",
+                                "server_truth_status": "not_server_truth",
+                                "graph_id": "graph-runtime",
+                                "terminal_lane_id": "lane-runtime-evidence-patch",
+                                "review_chain_proof_status": "chain_ready",
+                                "review_chain_proof_level": "contract_proof",
+                                "bounded_session_gate": {"status": "verified"},
+                                "current_handoff_gate_ready": True,
+                                "candidate_artifact_refs": [
+                                    "artifacts/lane-runtime-evidence-patch/result.json"
+                                ],
+                                "source_refs": [artifact_ref],
+                                "forbidden_claims": list(
+                                    GOD_ROOM_REVIEW_CHAIN_PROOF_FORBIDDEN_CLAIMS
+                                ),
+                            },
+                            "manual_gaps": ["release_evidence_not_linked"],
+                        }
+                    }
+                },
+            }
+        ]
+    }
+
+    linkage = _god_room_review_chain_release_linkage(
+        review_chain_proof_artifact=review_chain_proof,
+        runtime_closure_evidence_report=str(tmp_path / "runtime-closure.json"),
+        replay_bundle=tmp_path / "replay.json",
+        replay=replay,
+    )
+
+    assert linkage is not None
+    assert linkage["status"] == "manual_gap"
+    assert linkage["proof_level"] == "manual_gap"
+    assert linkage["handoff_evaluation_status"] == "manual_gap"
+    assert linkage["source_refs"] == []
     assert linkage["blocked_reason"] == (
         "review chain proof is not gate-ready for release linkage"
     )
@@ -2622,14 +2852,7 @@ def test_release_evidence_pack_reports_missing_expected_review_chain_for_closure
             "candidate_refs": ["worker-candidate:patch-reviewed"],
             "cited_candidate_refs": ["worker-candidate:patch-reviewed"],
             "manual_gaps": ["release_evidence_not_linked"],
-            "forbidden_claims": [
-                "worker_output_is_review_truth",
-                "end_to_end_execution_review_closure",
-                "ready_to_merge",
-                "pr_merged",
-                "github_review_truth",
-                "live_memoryos",
-            ],
+            "forbidden_claims": list(GOD_ROOM_REVIEW_CHAIN_PROOF_FORBIDDEN_CLAIMS),
         },
     )
 
@@ -2679,6 +2902,7 @@ def test_release_evidence_pack_rejects_review_chain_when_current_handoff_fails(
             "review_truth_status": "independent_review_artifact",
             "execution_truth_status": "candidate_reviewed",
             "server_truth_status": "not_server_truth",
+            "release_evidence_handoff_status": "candidate_input_ready",
             "conversation_id": "conv-1",
             "graph_id": "graph-runtime",
             "failed_lane_id": "lane-runtime-evidence",
@@ -2695,14 +2919,7 @@ def test_release_evidence_pack_rejects_review_chain_when_current_handoff_fails(
                 "release_evidence_not_linked",
                 "github_truth_not_checked",
             ],
-            "forbidden_claims": [
-                "worker_output_is_review_truth",
-                "end_to_end_execution_review_closure",
-                "ready_to_merge",
-                "pr_merged",
-                "github_review_truth",
-                "live_memoryos",
-            ],
+            "forbidden_claims": list(GOD_ROOM_REVIEW_CHAIN_PROOF_FORBIDDEN_CLAIMS),
         },
     )
     _attach_review_closure_candidate_lineage(
@@ -2815,8 +3032,8 @@ def test_release_evidence_pack_rejects_review_chain_when_current_handoff_fails(
         "GOD room review closure runner session artifact is not readable: "
         "work/runner_sessions/runner-session-1.json"
     )
-    assert details["current_handoff_candidate_artifact_refs"] == [candidate_ref]
-    assert details["current_handoff_candidate_artifact_ref_count"] == 1
+    assert details["current_handoff_candidate_artifact_refs"] == []
+    assert details["current_handoff_candidate_artifact_ref_count"] == 0
     assert (
         "god-room-review-chain-proof:graph-runtime:"
         "lane-runtime-evidence:lane-runtime-evidence-patch"
@@ -2907,13 +3124,9 @@ def test_release_evidence_pack_fail_closes_review_chain_proof_missing_forbidden_
     review_chain_proof = _write_review_chain_proof_artifact(
         tmp_path / "review-chain-proof.json",
         forbidden_claims=[
-            "worker_output_is_review_truth",
-            "end_to_end_execution_review_closure",
-            "ready_to_merge",
-            "pr_merged",
-            "github_review_truth",
-            "live_memoryos",
-            "overnight_readiness",
+            claim
+            for claim in GOD_ROOM_REVIEW_CHAIN_PROOF_FORBIDDEN_CLAIMS
+            if claim != "server_side_truth"
         ],
     )
 
@@ -2930,11 +3143,11 @@ def test_release_evidence_pack_fail_closes_review_chain_proof_missing_forbidden_
     details = closure["details"]["god_room_runtime_closure"]["review_chain_proof"]
     assert closure["status"] == "manual_gap"
     assert closure["proof_level"] == "manual_gap"
-    assert "GOD room review chain proof missing forbidden claim: server_side_truth" in (
+    assert "GOD room review chain proof missing forbidden claims: server_side_truth" in (
         closure["blocked_reason"]
     )
     assert details["status"] == "chain_ready"
-    assert "server_side_truth" not in details["forbidden_claims"]
+    assert "server_side_truth" in details["forbidden_claims"]
 
 
 def test_release_evidence_pack_fail_closes_review_chain_proof_missing_bounded_session(
@@ -3629,14 +3842,7 @@ def test_release_evidence_pack_cli_accepts_god_room_review_closure(
                 "release_evidence_not_linked",
                 "github_truth_not_checked",
             ],
-            "forbidden_claims": [
-                "worker_output_is_review_truth",
-                "end_to_end_execution_review_closure",
-                "ready_to_merge",
-                "pr_merged",
-                "github_review_truth",
-                "live_memoryos",
-            ],
+            "forbidden_claims": list(GOD_ROOM_REVIEW_CHAIN_PROOF_FORBIDDEN_CLAIMS),
         },
     )
     _write_json(

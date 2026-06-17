@@ -9,6 +9,9 @@ from xmuse_core.chat.god_room_runtime import (
     GodRoomEventV1,
     GodRoomParticipant,
 )
+from xmuse_core.platform.god_room_review_chain_proof import (
+    GOD_ROOM_REVIEW_CHAIN_PROOF_FORBIDDEN_CLAIMS,
+)
 from xmuse_core.platform.god_room_runtime_closure_evidence_capture import (
     capture_god_room_runtime_closure_evidence,
 )
@@ -449,14 +452,7 @@ def test_god_room_runtime_closure_evidence_rejects_unready_review_handoff(
                 "evidence_refs": ["worker-candidate:patch-reviewed"],
             },
             "manual_gaps": ["release_evidence_not_linked"],
-            "forbidden_claims": [
-                "worker_output_is_review_truth",
-                "end_to_end_execution_review_closure",
-                "ready_to_merge",
-                "pr_merged",
-                "github_review_truth",
-                "live_memoryos",
-            ],
+            "forbidden_claims": list(GOD_ROOM_REVIEW_CHAIN_PROOF_FORBIDDEN_CLAIMS),
         },
     )
 
@@ -504,14 +500,7 @@ def test_god_room_runtime_closure_evidence_rederives_review_handoff(
                 "evidence_refs": ["worker-candidate:patch-reviewed", candidate_ref],
             },
             "manual_gaps": ["release_evidence_not_linked"],
-            "forbidden_claims": [
-                "worker_output_is_review_truth",
-                "end_to_end_execution_review_closure",
-                "ready_to_merge",
-                "pr_merged",
-                "github_review_truth",
-                "live_memoryos",
-            ],
+                "forbidden_claims": list(GOD_ROOM_REVIEW_CHAIN_PROOF_FORBIDDEN_CLAIMS),
         },
     )
 
@@ -586,14 +575,7 @@ def test_god_room_runtime_closure_evidence_accepts_rederived_review_handoff_refs
                 "evidence_refs": ["worker-candidate:patch-reviewed", candidate_ref],
             },
             "manual_gaps": ["release_evidence_not_linked"],
-            "forbidden_claims": [
-                "worker_output_is_review_truth",
-                "end_to_end_execution_review_closure",
-                "ready_to_merge",
-                "pr_merged",
-                "github_review_truth",
-                "live_memoryos",
-            ],
+            "forbidden_claims": list(GOD_ROOM_REVIEW_CHAIN_PROOF_FORBIDDEN_CLAIMS),
         },
     )
 

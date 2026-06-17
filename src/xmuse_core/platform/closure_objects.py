@@ -37,6 +37,10 @@ REQUIRED_FORBIDDEN_CLAIMS = (
     "ready_to_merge",
     "pr_merged",
     "worker_output_is_review_truth",
+    "local_tests_are_review_truth",
+    "full_l8_l10_closure",
+    "overnight_readiness",
+    "natural_peer_god_groupchat",
 )
 
 CONDITION_ORDER = (

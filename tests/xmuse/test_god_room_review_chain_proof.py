@@ -8,9 +8,12 @@ from xmuse_core.platform.closure_objects import (
     ClosureObject,
 )
 from xmuse_core.platform.god_room_review_chain_proof import (
+    GOD_ROOM_REVIEW_CHAIN_PROOF_FORBIDDEN_CLAIMS,
+    admit_review_chain_proof_l10_handoff_evaluation,
     build_god_room_review_chain_proof,
     build_review_chain_proof_l10_handoff_evaluation,
     capture_god_room_review_chain_proof,
+    review_chain_proof_l10_handoff_admission_result,
     review_chain_proof_worker_evidence_bundle_refs,
 )
 from xmuse_core.platform.local_execution_candidate import (
@@ -314,6 +317,216 @@ def test_god_room_review_chain_proof_validates_l9_to_l10_handoff(
     assert "patch_lane_not_executed" not in proof["manual_gaps"]
     assert "patch_lane_not_reviewed" not in proof["manual_gaps"]
     assert (tmp_path / "work" / "review-chain-proof.json").exists()
+
+
+def test_review_chain_l10_handoff_admission_rejects_stale_source_or_scope(
+    tmp_path: Path,
+) -> None:
+    review_closure = _write_review_closure(tmp_path)
+    proof_path = tmp_path / "work" / "review-chain-proof.json"
+    proof = capture_god_room_review_chain_proof(
+        root=tmp_path,
+        review_closure_artifact=review_closure,
+        output_path=proof_path,
+    )
+    handoff = build_review_chain_proof_l10_handoff_evaluation(
+        root=tmp_path,
+        artifact_path=proof_path,
+        review_chain_proof=proof,
+    )
+
+    admitted = admit_review_chain_proof_l10_handoff_evaluation(handoff)
+    stale = admit_review_chain_proof_l10_handoff_evaluation(
+        {
+            **handoff,
+            "review_chain_proof_status": "manual_gap",
+        }
+    )
+    wrong_scope = admit_review_chain_proof_l10_handoff_evaluation(
+        handoff,
+        graph_id="graph-other",
+        lane_id="lane-runtime-evidence-patch",
+    )
+
+    assert admitted["status"] == "ready"
+    assert stale["status"] == "manual_gap"
+    assert stale["source_refs"] == []
+    assert "review-chain proof source status is not chain_ready" in stale["issues"]
+    assert wrong_scope["status"] == "manual_gap"
+    assert wrong_scope["source_refs"] == []
+    assert (
+        "review-chain proof source graph_id does not match current closure graph"
+        in wrong_scope["issues"]
+    )
+
+
+def test_review_chain_l10_handoff_admission_result_preserves_nonready_forbidden_claims(
+    tmp_path: Path,
+) -> None:
+    review_closure = _write_review_closure(tmp_path)
+    proof_path = tmp_path / "work" / "review-chain-proof.json"
+    proof = capture_god_room_review_chain_proof(
+        root=tmp_path,
+        review_closure_artifact=review_closure,
+        output_path=proof_path,
+    )
+    handoff = build_review_chain_proof_l10_handoff_evaluation(
+        root=tmp_path,
+        artifact_path=proof_path,
+        review_chain_proof=proof,
+    )
+    ready_admission = review_chain_proof_l10_handoff_admission_result(
+        handoff,
+        graph_id="graph-runtime",
+        lane_id="lane-runtime-evidence-patch",
+    )
+    assert ready_admission["source_ref_count"] == len(
+        ready_admission["source_refs"]
+    )
+    assert ready_admission["candidate_artifact_ref_count"] == 1
+    assert ready_admission["source_event_lineage_refs"] == [
+        "god-room-event:evt-runtime-freeze"
+    ]
+    assert (
+        ready_admission["bounded_session_gate_summary"]
+        == "GOD room review chain proof carries bounded local execution/review "
+        "session evidence."
+    )
+    assert ready_admission["bounded_session_gate"]["status"] == "verified"
+    assert (
+        ready_admission["current_handoff_summary"]
+        == "GOD room review closure can seed MemoryOS source refs."
+    )
+    assert ready_admission["current_handoff_candidate_artifact_refs"] == [
+        "artifacts/lane-runtime-evidence-patch/result.json"
+    ]
+    assert ready_admission["current_handoff_candidate_artifact_ref_count"] == 1
+    assert ready_admission["worker_evidence_bundle_refs"] == [
+        WORKER_EVIDENCE_BUNDLE_REF
+    ]
+    assert ready_admission["worker_evidence_bundle_ref_count"] == 1
+    assert ready_admission["patch_forward_artifact_refs"] == [
+        (
+            "reports/god_room_patch_forward/"
+            "graph-runtime.lane-runtime-evidence.patch-forward.json"
+        ),
+        (
+            "reports/god_room_review_intake/"
+            "graph-runtime.lane-runtime-evidence-patch.review-intake.json"
+        ),
+        (
+            "reports/god_room_review_verdicts/"
+            "graph-runtime.lane-runtime-evidence-patch.review-verdict.json"
+        ),
+    ]
+    assert ready_admission["patch_forward_artifact_ref_count"] == 3
+    expected_provenance_source_refs = list(
+        dict.fromkeys(
+            [
+                *ready_admission["source_refs"],
+                *ready_admission["patch_forward_artifact_refs"],
+            ]
+        )
+    )
+    assert ready_admission["provenance_source_refs"] == expected_provenance_source_refs
+    assert ready_admission["provenance_source_ref_count"] == len(
+        ready_admission["provenance_source_refs"]
+    )
+    assert ready_admission["source_manual_gaps"] == proof["manual_gaps"]
+    assert ready_admission["source_manual_gap_count"] == len(proof["manual_gaps"])
+
+    nonready = {
+        **handoff,
+        "status": "manual_gap",
+        "issues": ["forged non-ready review-chain L10 handoff"],
+        "forbidden_claims": ["ready_to_merge"],
+    }
+
+    admission = review_chain_proof_l10_handoff_admission_result(
+        nonready,
+        graph_id="graph-runtime",
+        lane_id="lane-runtime-evidence-patch",
+    )
+
+    assert admission["producer_ready"] is False
+    assert admission["ready"] is False
+    assert admission["status"] == "manual_gap"
+    assert admission["summary"] == "forged non-ready review-chain L10 handoff"
+    assert admission["source_refs"] == []
+    assert admission["source_ref_count"] == 0
+    assert admission["candidate_artifact_refs"] == []
+    assert admission["candidate_artifact_ref_count"] == 0
+    assert admission["source_event_lineage_refs"] == []
+    assert (
+        admission["bounded_session_gate_summary"]
+        == "GOD room review chain proof carries bounded local execution/review "
+        "session evidence."
+    )
+    assert admission["bounded_session_gate"]["status"] == "verified"
+    assert (
+        admission["current_handoff_summary"]
+        == "GOD room review closure can seed MemoryOS source refs."
+    )
+    assert admission["current_handoff_candidate_artifact_refs"] == []
+    assert admission["current_handoff_candidate_artifact_ref_count"] == 0
+    assert admission["worker_evidence_bundle_refs"] == []
+    assert admission["worker_evidence_bundle_ref_count"] == 0
+    assert admission["patch_forward_artifact_refs"] == []
+    assert admission["patch_forward_artifact_ref_count"] == 0
+    assert admission["provenance_source_refs"] == []
+    assert admission["provenance_source_ref_count"] == 0
+    assert admission["source_manual_gaps"] == proof["manual_gaps"]
+    assert admission["source_manual_gap_count"] == len(proof["manual_gaps"])
+    assert "server_side_truth" in admission["forbidden_claims"]
+    for claim in GOD_ROOM_REVIEW_CHAIN_PROOF_FORBIDDEN_CLAIMS:
+        assert claim in admission["forbidden_claims"]
+
+    blocked = {
+        **handoff,
+        "status": "blocked",
+        "issues": ["blocked review-chain L10 handoff"],
+        "forbidden_claims": ["ready_to_merge"],
+    }
+    blocked_admission = review_chain_proof_l10_handoff_admission_result(
+        blocked,
+        graph_id="graph-runtime",
+        lane_id="lane-runtime-evidence-patch",
+    )
+
+    assert blocked_admission["producer_ready"] is False
+    assert blocked_admission["ready"] is False
+    assert blocked_admission["status"] == "blocked"
+    assert blocked_admission["summary"] == "blocked review-chain L10 handoff"
+    assert blocked_admission["source_refs"] == []
+    assert blocked_admission["candidate_artifact_refs"] == []
+    assert "server_side_truth" in blocked_admission["forbidden_claims"]
+
+
+def test_review_chain_l10_handoff_rejects_current_review_closure_scope_mismatch(
+    tmp_path: Path,
+) -> None:
+    review_closure = _write_review_closure(tmp_path)
+    proof_path = tmp_path / "work" / "review-chain-proof.json"
+    proof = capture_god_room_review_chain_proof(
+        root=tmp_path,
+        review_closure_artifact=review_closure,
+        output_path=proof_path,
+    )
+    proof["graph_id"] = "graph-other"
+
+    handoff = build_review_chain_proof_l10_handoff_evaluation(
+        root=tmp_path,
+        artifact_path=proof_path,
+        review_chain_proof=proof,
+    )
+
+    assert handoff["status"] == "manual_gap"
+    assert handoff["source_refs"] == []
+    assert (
+        "current review-closure handoff is not admissible: "
+        "review-closure handoff graph_id does not match current closure graph"
+        in handoff["handoff_summary"]
+    )
 
 
 def test_review_chain_l10_handoff_rejects_unverified_worker_bundle_citation_status(
@@ -1880,15 +2093,7 @@ def _write_review_closure(
                     "release_evidence_not_linked",
                     "github_truth_not_checked",
                 ],
-                "forbidden_claims": [
-                    "worker_output_is_review_truth",
-                    "end_to_end_execution_review_closure",
-                    "ready_to_merge",
-                    "pr_merged",
-                    "github_review_truth",
-                    "live_memoryos",
-                    "overnight_safe_recovery",
-                ],
+                "forbidden_claims": list(GOD_ROOM_REVIEW_CHAIN_PROOF_FORBIDDEN_CLAIMS),
             },
             indent=2,
             sort_keys=True,

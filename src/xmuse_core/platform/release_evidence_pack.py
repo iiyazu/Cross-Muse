@@ -24,7 +24,7 @@ from xmuse_core.platform.github_truth_release_gate import (
 )
 from xmuse_core.platform.goal_stage_evidence_capture import capture_goal_stage_evidence
 from xmuse_core.platform.god_room_review_chain_proof import (
-    GOD_ROOM_REVIEW_CHAIN_PROOF_FORBIDDEN_CLAIMS,
+    review_chain_proof_l10_handoff_admission_result,
 )
 from xmuse_core.platform.god_room_runtime_closure_evidence_capture import (
     GOD_ROOM_RUNTIME_CLOSURE_SECTION,
@@ -521,24 +521,26 @@ def _god_room_review_chain_release_linkage(
     handoff_evaluation = chain_details.get("handoff_evaluation")
     if not isinstance(handoff_evaluation, Mapping):
         handoff_evaluation = {}
-    bounded_session_gate_status = _mapping_status(
-        chain_details.get("bounded_session_gate")
+    handoff_admission = review_chain_proof_l10_handoff_admission_result(
+        handoff_evaluation,
+        graph_id=_text(chain_details.get("graph_id")),
+        lane_id=_text(chain_details.get("terminal_lane_id")),
     )
-    handoff_evaluation_status = _text(handoff_evaluation.get("status"))
-    current_handoff_gate_ready = chain_details.get("current_handoff_gate_ready") is True
-    source_manual_gaps = _string_list(chain_details.get("manual_gaps"))
+    bounded_session_gate_status = _text(
+        handoff_admission.get("bounded_session_gate_status")
+    )
+    handoff_evaluation_status = _text(handoff_admission.get("status"))
+    current_handoff_gate_ready = (
+        handoff_admission.get("current_handoff_gate_ready") is True
+    )
+    source_manual_gaps = _string_list(handoff_admission.get("source_manual_gaps"))
     resolved_gap_candidates = {
         "release_evidence_export_not_attempted",
         "release_evidence_not_linked",
     }
     linked = (
         artifact_ref in section_source_refs
-        and _text(chain_details.get("status")) == "chain_ready"
-        and _text(chain_details.get("proof_level")) == "contract_proof"
-        and _text(chain_details.get("server_truth_status")) == "not_server_truth"
-        and handoff_evaluation_status == "ready"
-        and bounded_session_gate_status == "verified"
-        and current_handoff_gate_ready
+        and handoff_admission.get("ready") is True
     )
     resolved_manual_gaps = [
         gap for gap in source_manual_gaps if gap in resolved_gap_candidates
@@ -546,20 +548,14 @@ def _god_room_review_chain_release_linkage(
     retained_manual_gaps = [
         gap for gap in source_manual_gaps if gap not in set(resolved_manual_gaps)
     ]
+    admitted_provenance_refs = _string_list(
+        handoff_admission.get("provenance_source_refs")
+    )
+    linkage_forbidden_claims = _string_list(
+        handoff_admission.get("forbidden_claims")
+    )
     chain_source_refs = (
-        [
-            ref
-            for ref in section_source_refs
-            if ref == artifact_ref
-            or ref.startswith("god-room-review-chain-proof:")
-            or ref.startswith("god-room-event:")
-            or ref.startswith("provider_response_artifact:")
-            or ref.startswith("runner_recovery_proof_artifact:")
-            or ref.startswith("feature_evidence_bundle:")
-            or ref.startswith("worker_evidence_bundle:")
-        ]
-        if linked
-        else []
+        _dedupe([artifact_ref, *admitted_provenance_refs]) if linked else []
     )
     status = "linked_to_replay_bundle" if linked else "manual_gap"
     blocked_reason = None
@@ -597,12 +593,7 @@ def _god_room_review_chain_release_linkage(
         "retained_manual_gaps": _dedupe(retained_manual_gaps),
         "blocked_reason": blocked_reason,
         "affects_pack_decision": False,
-        "forbidden_claims": _dedupe(
-            [
-                *GOD_ROOM_REVIEW_CHAIN_PROOF_FORBIDDEN_CLAIMS,
-                *_string_list(chain_details.get("forbidden_claims")),
-            ]
-        ),
+        "forbidden_claims": _dedupe(linkage_forbidden_claims),
         "summary": (
             "GOD-room review chain proof was indexed into the release evidence "
             "replay bundle as aggregation lineage only."

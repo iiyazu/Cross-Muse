@@ -30,11 +30,12 @@ from xmuse_core.platform.closure_objects import (
     string_list,
 )
 from xmuse_core.platform.god_room_review_chain_proof import (
-    build_review_chain_proof_l10_handoff_evaluation,
+    build_review_chain_proof_l10_handoff_admission_context,
 )
 from xmuse_core.platform.god_room_review_handoff import (
+    admit_review_chain_patch_forward_lineage,
     build_release_handoff_gate_evaluation_for_closure,
-    build_review_closure_handoff_evaluation,
+    build_review_closure_handoff_admission_context,
 )
 from xmuse_core.platform.local_execution_candidate import (
     build_local_execution_candidate_lineage,
@@ -98,6 +99,8 @@ def reconcile_closure(
     )
     review_present = _independent_review_verdict_present(
         root=xmuse_root,
+        graph_id=graph_id,
+        lane_id=lane_id,
         review_closure=current.review_closure,
     )
     patch_forward_present = _patch_forward_lineage_present(
@@ -157,29 +160,23 @@ def reconcile_closure(
             current.release_handoff_ref,
         )
     )
-    source_refs = _source_refs(
-        current.recovery_artifact,
-        *current.execution_candidates,
-        current.review_closure,
-        current.release_handoff,
-    )
+    source_refs = _condition_source_refs(conditions)
     target_refs = dedupe_text(
         (
             f"graph:{graph_id}",
             f"lane:{lane_id}",
-            *_target_refs(
-                current.recovery_artifact,
-                *current.execution_candidates,
-                current.review_closure,
-                current.release_handoff,
-            ),
+            *_condition_target_refs(conditions),
         )
     )
-    owner_refs = _owner_refs(
-        current.recovery_artifact,
-        *current.execution_candidates,
-        current.review_closure,
-        current.release_handoff,
+    owner_refs = _admitted_owner_refs(
+        recovery_artifact=current.recovery_artifact,
+        execution_candidates=current.execution_candidates,
+        review_closure=current.review_closure,
+        release_handoff=current.release_handoff,
+        recovery_present=recovery_present,
+        candidate_present=candidate_present,
+        review_present=review_present,
+        release_evaluated=release_evaluated,
     )
     phase = _phase(conditions)
     metadata = ClosureMetadata(
@@ -600,6 +597,16 @@ def _lane_recovery_allows_progress(
             "blocked",
             "lane recovery artifact decision lane does not match target lane",
         )
+    source_refs = string_list(recovery_artifact.get("source_refs"))
+    if not source_refs:
+        return _condition(
+            RECOVERY_ALLOWS_PROGRESS,
+            "unknown",
+            "manual_gap",
+            "lane recovery artifact missing source refs",
+            proof_level=_proof_level(recovery_artifact),
+            target_refs=(f"lane:{lane_id}",),
+        )
     retry_allowed = decision.get("retry_allowed")
     if retry_allowed is not True:
         reason = _text(decision.get("decision")) or "retry_not_allowed"
@@ -609,8 +616,7 @@ def _lane_recovery_allows_progress(
             "blocked",
             f"lane {lane_id} is blocked by durable recovery artifact: {reason}",
             proof_level=_proof_level(recovery_artifact),
-            source_refs=string_list(recovery_artifact.get("source_refs"))
-            or string_list(decision.get("source_refs")),
+            source_refs=source_refs,
             target_refs=(f"lane:{lane_id}",),
         )
     return _condition(
@@ -619,8 +625,7 @@ def _lane_recovery_allows_progress(
         "ok",
         f"lane {lane_id} retry is allowed by durable recovery artifact",
         proof_level=_proof_level(recovery_artifact),
-        source_refs=string_list(recovery_artifact.get("source_refs"))
-        or string_list(decision.get("source_refs")),
+        source_refs=source_refs,
         target_refs=(f"lane:{lane_id}",),
     )
 
@@ -676,8 +681,7 @@ def _validated_execution_candidate_present(
             severity="ok",
             reason="bounded local execution candidate is present",
             proof_level=_proof_level(boundary),
-            source_refs=string_list(boundary.get("worker_evidence_bundle_refs"))
-            or string_list(lineage.get("source_refs")),
+            source_refs=string_list(boundary.get("worker_evidence_bundle_refs")),
             target_refs=(f"graph:{graph_id}", f"lane:{lane_id}"),
             observed_ref=artifact_ref,
         )
@@ -701,6 +705,8 @@ def _validated_execution_candidate_present(
 def _independent_review_verdict_present(
     *,
     root: Path,
+    graph_id: str,
+    lane_id: str,
     review_closure: Mapping[str, Any] | None,
 ) -> _ConditionBuilder:
     if review_closure is None:
@@ -710,37 +716,32 @@ def _independent_review_verdict_present(
             "manual_gap",
             "review closure artifact is missing",
         )
-    evaluation = build_review_closure_handoff_evaluation(
+    handoff_context = build_review_closure_handoff_admission_context(
         root=root,
         review_closure=review_closure,
+        graph_id=graph_id,
+        lane_id=lane_id,
     )
-    status = _text(evaluation.get("status"))
-    if status == "ready":
+    admission = _mapping(handoff_context.get("admission"))
+    status = _text(admission.get("status"))
+    if admission.get("ready") is True:
         return _condition(
             INDEPENDENT_REVIEW_VERDICT_PRESENT,
             "true",
             "ok",
             "review closure has independent verdict and candidate citation",
             proof_level="contract_proof",
-            source_refs=string_list(evaluation.get("candidate_artifact_refs")),
-            target_refs=(
-                f"graph:{_text(evaluation.get('graph_id'))}",
-                f"lane:{_text(evaluation.get('lane_id'))}",
-            ),
+            source_refs=string_list(admission.get("candidate_artifact_refs")),
+            target_refs=(f"graph:{graph_id}", f"lane:{lane_id}"),
         )
     severity = "blocked" if status == "blocked" else "manual_gap"
     return _condition(
         INDEPENDENT_REVIEW_VERDICT_PRESENT,
         "false",
         severity,
-        "; ".join(string_list(evaluation.get("issues")))
+        "; ".join(string_list(admission.get("issues")))
         or "review closure handoff is not ready",
         proof_level="contract_proof",
-        source_refs=string_list(evaluation.get("candidate_artifact_refs")),
-        target_refs=(
-            f"graph:{_text(evaluation.get('graph_id'))}",
-            f"lane:{_text(evaluation.get('lane_id'))}",
-        ),
     )
 
 
@@ -753,29 +754,40 @@ def _release_handoff_evaluated(
     lane_id: str,
     review_closure: Mapping[str, Any] | None = None,
 ) -> _ConditionBuilder:
-    review_chain_l10_gate: Mapping[str, Any] | None = None
     if (
         release_handoff is not None
         and _text(release_handoff.get("schema_version"))
         == REVIEW_CHAIN_PROOF_SCHEMA_VERSION
         and release_handoff_ref is not None
     ):
-        review_chain_l10_gate = build_review_chain_proof_l10_handoff_evaluation(
+        review_chain_l10_admission = _file_backed_review_chain_l10_admission(
+            release_handoff=release_handoff,
+            release_handoff_ref=release_handoff_ref,
             root=root,
-            artifact_path=root / release_handoff_ref,
-            review_chain_proof=release_handoff,
+            graph_id=graph_id,
+            lane_id=lane_id,
         )
-        l10_status = _text(review_chain_l10_gate.get("status"))
-        if l10_status != "ready":
-            severity = "blocked" if l10_status == "blocked" else "manual_gap"
+        admission_status = _text(review_chain_l10_admission.get("status"))
+        if admission_status != "ready":
+            severity = "blocked" if admission_status == "blocked" else "manual_gap"
             return _condition(
                 RELEASE_HANDOFF_EVALUATED,
                 "false",
                 severity,
-                _text(review_chain_l10_gate.get("handoff_summary"))
+                _text(review_chain_l10_admission.get("summary"))
                 or "review-chain proof L10 handoff is not ready",
                 proof_level="contract_proof",
             )
+        return _condition(
+            RELEASE_HANDOFF_EVALUATED,
+            "true",
+            "ok",
+            _text(review_chain_l10_admission.get("summary"))
+            or "review-chain proof L10 handoff admitted through shared evaluation",
+            proof_level="contract_proof",
+            source_refs=string_list(review_chain_l10_admission.get("source_refs")),
+            target_refs=(f"graph:{graph_id}", f"lane:{lane_id}"),
+        )
 
     gate = build_release_handoff_gate_evaluation_for_closure(
         release_handoff=release_handoff,
@@ -796,13 +808,6 @@ def _release_handoff_evaluated(
             severity,
             reason,
             proof_level="contract_proof",
-        )
-    if review_chain_l10_gate is not None:
-        source_refs = dedupe_text(
-            (
-                *source_refs,
-                *string_list(review_chain_l10_gate.get("source_refs")),
-            )
         )
     return _condition(
         RELEASE_HANDOFF_EVALUATED,
@@ -839,108 +844,89 @@ def _patch_forward_lineage_present(
             "manual_gap",
             "patch-forward lineage requires review-chain proof artifact",
         )
-    issues: list[str] = []
     if release_handoff_ref is not None:
-        l10_gate = build_review_chain_proof_l10_handoff_evaluation(
+        l10_admission = _file_backed_review_chain_l10_admission(
+            release_handoff=release_handoff,
+            release_handoff_ref=release_handoff_ref,
             root=root,
-            artifact_path=root / release_handoff_ref,
-            review_chain_proof=release_handoff,
+            graph_id=graph_id,
+            lane_id=lane_id,
         )
-        l10_status = _text(l10_gate.get("status"))
-        if l10_status != "ready":
-            severity = "blocked" if l10_status == "blocked" else "manual_gap"
+        l10_admission_status = _text(l10_admission.get("status"))
+        if l10_admission_status != "ready":
+            severity = "blocked" if l10_admission_status == "blocked" else "manual_gap"
             return _condition(
                 PATCH_FORWARD_LINEAGE_PRESENT,
                 "false",
                 severity,
-                _text(l10_gate.get("handoff_summary"))
+                _text(l10_admission.get("summary"))
                 or "review-chain proof L10 handoff is not ready",
             )
-    else:
-        if _text(release_handoff.get("status")) != "chain_ready":
-            issues.append("review-chain proof is not chain_ready")
-        if _text(release_handoff.get("proof_level")) != "contract_proof":
-            issues.append("review-chain proof proof level is not contract_proof")
-        if _text(release_handoff.get("server_truth_status")) != "not_server_truth":
-            issues.append("review-chain proof overclaims server truth")
-    if _text(release_handoff.get("graph_id")) != graph_id:
-        issues.append("review-chain proof graph_id does not match current closure graph")
-    if _text(release_handoff.get("terminal_lane_id")) != lane_id:
-        issues.append(
-            "review-chain proof terminal_lane_id does not match current closure lane"
+        patch_forward_refs = string_list(l10_admission.get("patch_forward_artifact_refs"))
+        if not patch_forward_refs:
+            return _condition(
+                PATCH_FORWARD_LINEAGE_PRESENT,
+                "false",
+                "manual_gap",
+                "review-chain proof L10 handoff has no patch-forward refs",
+            )
+        return _condition(
+            PATCH_FORWARD_LINEAGE_PRESENT,
+            "true",
+            "ok",
+            "review-chain proof carries admitted patch-forward lineage",
+            proof_level="contract_proof",
+            source_refs=dedupe_text(
+                (
+                    *patch_forward_refs,
+                    *string_list(l10_admission.get("source_refs")),
+                )
+            ),
+            target_refs=(f"graph:{graph_id}", f"lane:{lane_id}"),
         )
-    session = _mapping(release_handoff.get("local_execution_review_session"))
-    if not session:
-        issues.append("review-chain proof missing local execution review session")
-    elif _text(session.get("status")) != "bounded_session_ready":
-        issues.append("local execution review session is not bounded_session_ready")
-    if session:
-        if _text(session.get("graph_id")) != graph_id:
-            issues.append(
-                "local execution review session graph_id does not match current "
-                "closure graph"
-            )
-        if _text(session.get("terminal_lane_id")) != lane_id:
-            issues.append(
-                "local execution review session terminal_lane_id does not match "
-                "current closure lane"
-            )
-        issues.extend(
-            _patch_forward_review_closure_ref_mismatches(
-                review_closure=review_closure,
-                session=session,
-            )
-        )
-    patch_boundary = _mapping(session.get("patch_forward_artifact_boundary"))
-    patch_boundary_status = _text(patch_boundary.get("status"))
-    if patch_boundary_status not in {
-        "resolved",
-        "resolved_with_retained_manual_gaps",
-    }:
-        issues.append("patch-forward artifact boundary is not resolved")
-    artifact_validation = _mapping(session.get("session_artifact_validation"))
-    if _text(artifact_validation.get("status")) != "validated":
-        issues.append("session artifact validation is not validated")
-    required_refs = (
-        "patch_forward_artifact",
-        "patch_lane_review_intake_artifact",
-        "patch_lane_review_verdict_artifact",
+    patch_forward_admission = admit_review_chain_patch_forward_lineage(
+        release_handoff,
+        graph_id=graph_id,
+        lane_id=lane_id,
+        review_closure=review_closure,
+        root=root,
     )
-    missing_refs = [key for key in required_refs if _text(session.get(key)) is None]
-    if missing_refs:
-        issues.append(
-            "review-chain proof missing patch-forward refs: "
-            + ", ".join(missing_refs)
-        )
-    if issues:
+    if patch_forward_admission["status"] != "ready":
         return _condition(
             PATCH_FORWARD_LINEAGE_PRESENT,
             "false",
-            "manual_gap",
-            "; ".join(dedupe_text(issues)),
+            _text(patch_forward_admission.get("severity")) or "manual_gap",
+            _text(patch_forward_admission.get("summary"))
+            or "review-chain proof patch-forward lineage is not ready",
         )
-    source_refs = dedupe_text(
-        (
-            _text(release_handoff.get("review_closure_artifact")),
-            _text(session.get("patch_forward_artifact")),
-            _text(session.get("patch_lane_review_intake_artifact")),
-            _text(session.get("patch_lane_review_verdict_artifact")),
-            *string_list(session.get("candidate_artifact_refs")),
-            *string_list(session.get("session_source_refs")),
-        )
-    )
     return _condition(
         PATCH_FORWARD_LINEAGE_PRESENT,
         "true",
         "ok",
-        "review-chain proof carries bounded patch-forward lineage",
+        _text(patch_forward_admission.get("summary"))
+        or "review-chain proof carries bounded patch-forward lineage",
         proof_level="contract_proof",
-        source_refs=source_refs,
-        target_refs=(
-            f"graph:{_text(release_handoff.get('graph_id'))}",
-            f"lane:{_text(release_handoff.get('terminal_lane_id'))}",
-        ),
+        source_refs=string_list(patch_forward_admission.get("source_refs")),
+        target_refs=string_list(patch_forward_admission.get("target_refs")),
     )
+
+
+def _file_backed_review_chain_l10_admission(
+    *,
+    release_handoff: Mapping[str, Any],
+    release_handoff_ref: str,
+    root: Path,
+    graph_id: str,
+    lane_id: str,
+) -> dict[str, Any]:
+    handoff_context = build_review_chain_proof_l10_handoff_admission_context(
+        root=root,
+        artifact_path=root / release_handoff_ref,
+        review_chain_proof=release_handoff,
+        graph_id=graph_id,
+        lane_id=lane_id,
+    )
+    return handoff_context["admission"]
 
 
 def _patch_forward_review_closure_ref_mismatches(
@@ -1112,6 +1098,20 @@ def _condition_gaps(conditions: Sequence[ClosureCondition]) -> tuple[str, ...]:
     )
 
 
+def _condition_source_refs(conditions: Sequence[ClosureCondition]) -> tuple[str, ...]:
+    refs: list[object] = []
+    for condition in conditions:
+        refs.extend(condition.source_refs)
+    return dedupe_text(refs)
+
+
+def _condition_target_refs(conditions: Sequence[ClosureCondition]) -> tuple[str, ...]:
+    refs: list[object] = []
+    for condition in conditions:
+        refs.extend(condition.target_refs)
+    return dedupe_text(refs)
+
+
 def _forbidden_claims(*artifacts: Mapping[str, Any] | None) -> tuple[str, ...]:
     claims: list[object] = [*REQUIRED_FORBIDDEN_CLAIMS]
     for artifact in artifacts:
@@ -1121,30 +1121,27 @@ def _forbidden_claims(*artifacts: Mapping[str, Any] | None) -> tuple[str, ...]:
     return dedupe_text(claims)
 
 
-def _source_refs(*artifacts: Mapping[str, Any] | None) -> tuple[str, ...]:
-    refs: list[object] = []
-    for artifact in artifacts:
-        if artifact is None:
-            continue
-        refs.extend(string_list(artifact.get("source_refs")))
-        refs.extend(string_list(artifact.get("candidate_artifact_refs")))
-        refs.extend(string_list(artifact.get("cited_candidate_artifact_refs")))
-    return dedupe_text(refs)
-
-
-def _target_refs(*artifacts: Mapping[str, Any] | None) -> tuple[str, ...]:
-    refs: list[object] = []
-    for artifact in artifacts:
-        if artifact is None:
-            continue
-        refs.extend(string_list(artifact.get("target_refs")))
-        for key in ("graph_id", "feature_graph_id"):
-            if value := _text(artifact.get(key)):
-                refs.append(f"graph:{value}")
-        for key in ("lane_id", "failed_lane_id", "terminal_lane_id"):
-            if value := _text(artifact.get(key)):
-                refs.append(f"lane:{value}")
-    return dedupe_text(refs)
+def _admitted_owner_refs(
+    *,
+    recovery_artifact: Mapping[str, Any] | None,
+    execution_candidates: Sequence[Mapping[str, Any]],
+    review_closure: Mapping[str, Any] | None,
+    release_handoff: Mapping[str, Any] | None,
+    recovery_present: ClosureCondition,
+    candidate_present: ClosureCondition,
+    review_present: ClosureCondition,
+    release_evaluated: ClosureCondition,
+) -> tuple[str, ...]:
+    artifacts: list[Mapping[str, Any] | None] = []
+    if recovery_present.status == "true":
+        artifacts.append(recovery_artifact)
+    if candidate_present.status == "true":
+        artifacts.extend(execution_candidates)
+    if review_present.status == "true":
+        artifacts.append(review_closure)
+    if release_evaluated.status == "true":
+        artifacts.append(release_handoff)
+    return _owner_refs(*artifacts)
 
 
 def _owner_refs(*artifacts: Mapping[str, Any] | None) -> tuple[str, ...]:

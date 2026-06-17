@@ -13,7 +13,11 @@ from xmuse_core.chat.stream_store import PeerTurnLatencyTraceStore
 from xmuse_core.platform.closure_objects import REQUIRED_FORBIDDEN_CLAIMS
 from xmuse_core.platform.closure_reconciler import reconcile_closure
 from xmuse_core.platform.god_room_review_chain_proof import (
+    GOD_ROOM_REVIEW_CHAIN_PROOF_FORBIDDEN_CLAIMS,
     capture_god_room_review_chain_proof,
+)
+from xmuse_core.platform.god_room_review_handoff import (
+    REQUIRED_GOD_ROOM_REVIEW_CLOSURE_FORBIDDEN_CLAIMS,
 )
 from xmuse_core.platform.local_execution_candidate import (
     load_local_execution_candidate_lineage,
@@ -261,6 +265,95 @@ def test_release_evidence_candidates_seed_memoryos_refs_from_review_closure(
     assert memoryos["proof_boundary"] == "candidate_report_is_not_live_memoryos_proof"
 
 
+def test_release_evidence_candidates_reject_review_closure_wrong_payload_lane(
+    tmp_path: Path,
+) -> None:
+    review_closure = _write_god_room_review_closure_artifact(
+        tmp_path / "review-closure.json"
+    )
+
+    report = build_release_evidence_candidate_report(
+        tmp_path,
+        conversation_id="conv-1",
+        env={
+            "XMUSE_LIVE_MEMORYOS_LITE": "1",
+            "XMUSE_MEMORYOS_LITE_URL": "http://memoryos-lite.example",
+        },
+        memoryos_payload={
+            "repo_id": "iiyazu/Cross-Muse",
+            "workspace_id": "xmuse",
+            "god_id": "review",
+            "conversation_id": "conv-1",
+            "thread_id": "thread-1",
+            "blueprint_id": "bp-1",
+            "feature_id": "feature-1",
+            "lane_id": "different-lane",
+            "content": "live evidence",
+            "query": "production evidence",
+            "god_room_review_closure": str(review_closure),
+        },
+    )
+
+    memoryos = report["live_memoryos"]
+    payload_hints = memoryos["suggested_operator_action"]["payload_hints"]
+    assert memoryos["review_closure_artifact_configured"] is True
+    assert memoryos["review_closure_artifact_gate_ready"] is False
+    assert memoryos["review_closure_artifact_summary"] == (
+        "review-closure handoff lane_id does not match current closure lane"
+    )
+    assert "god_room_review_closure_artifact_not_ready" in memoryos["blockers"]
+    assert "god_room_review_closure_artifact" not in memoryos["source_authority"]
+    assert "source_refs" not in payload_hints
+
+
+def test_release_evidence_candidates_reject_nonready_review_closure_handoff_status(
+    tmp_path: Path,
+) -> None:
+    review_closure = _write_god_room_review_closure_artifact(
+        tmp_path / "review-closure.json"
+    )
+    payload = json.loads(review_closure.read_text(encoding="utf-8"))
+    payload["release_evidence_handoff_status"] = "not_ready"
+    review_closure.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    report = build_release_evidence_candidate_report(
+        tmp_path,
+        conversation_id="conv-1",
+        env={
+            "XMUSE_LIVE_MEMORYOS_LITE": "1",
+            "XMUSE_MEMORYOS_LITE_URL": "http://memoryos-lite.example",
+        },
+        memoryos_payload={
+            "repo_id": "iiyazu/Cross-Muse",
+            "workspace_id": "xmuse",
+            "god_id": "review",
+            "conversation_id": "conv-1",
+            "thread_id": "thread-1",
+            "blueprint_id": "bp-1",
+            "feature_id": "feature-1",
+            "lane_id": "lane-runtime-evidence-patch",
+            "content": "live evidence",
+            "query": "production evidence",
+            "god_room_review_closure": str(review_closure),
+        },
+    )
+
+    memoryos = report["live_memoryos"]
+    payload_hints = memoryos["suggested_operator_action"]["payload_hints"]
+    assert memoryos["review_closure_artifact_configured"] is True
+    assert memoryos["review_closure_artifact_gate_ready"] is False
+    assert (
+        "GOD room review closure release handoff is not candidate_input_ready"
+        in memoryos["review_closure_artifact_summary"]
+    )
+    assert "god_room_review_closure_artifact_not_ready" in memoryos["blockers"]
+    assert "god_room_review_closure_artifact" not in memoryos["source_authority"]
+    assert "source_refs" not in payload_hints
+
+
 def test_release_evidence_candidates_seed_memoryos_refs_from_runner_recovery_lineage(
     tmp_path: Path,
 ) -> None:
@@ -374,6 +467,13 @@ def test_release_evidence_candidates_seed_memoryos_refs_from_review_chain_proof(
         ),
     ]
     assert memoryos["review_chain_proof_patch_forward_artifact_ref_count"] == 3
+    assert memoryos["review_chain_proof_source_ref_count"] == len(
+        [
+            ref
+            for ref in payload_hints["source_refs"]
+            if ref != "operator:manual-context"
+        ]
+    )
     assert "god_room_review_chain_proof_artifact" in memoryos["source_authority"]
     assert (
         "god-room-review-chain-proof:graph-runtime:"
@@ -406,6 +506,54 @@ def test_release_evidence_candidates_seed_memoryos_refs_from_review_chain_proof(
         "god-room-event:evt-provider-speak"
     ]
     assert memoryos["proof_boundary"] == "candidate_report_is_not_live_memoryos_proof"
+
+
+def test_release_evidence_candidates_reject_review_chain_wrong_payload_lane(
+    tmp_path: Path,
+) -> None:
+    review_closure = _write_god_room_review_closure_artifact(
+        tmp_path / "review-closure.json",
+        include_runner_recovery_lineage=True,
+    )
+    chain_proof = tmp_path / "review-chain-proof.json"
+    capture_god_room_review_chain_proof(
+        root=tmp_path,
+        review_closure_artifact=review_closure,
+        output_path=chain_proof,
+    )
+
+    report = build_release_evidence_candidate_report(
+        tmp_path,
+        conversation_id="conv-1",
+        env={
+            "XMUSE_LIVE_MEMORYOS_LITE": "1",
+            "XMUSE_MEMORYOS_LITE_URL": "http://memoryos-lite.example",
+        },
+        memoryos_payload={
+            "repo_id": "iiyazu/Cross-Muse",
+            "workspace_id": "xmuse",
+            "god_id": "review",
+            "conversation_id": "conv-1",
+            "thread_id": "thread-1",
+            "blueprint_id": "bp-1",
+            "feature_id": "feature-1",
+            "lane_id": "different-lane",
+            "content": "live evidence",
+            "query": "production evidence",
+            "god_room_review_chain_proof": str(chain_proof),
+        },
+    )
+
+    memoryos = report["live_memoryos"]
+    payload_hints = memoryos["suggested_operator_action"]["payload_hints"]
+    assert memoryos["review_chain_proof_artifact_configured"] is True
+    assert memoryos["review_chain_proof_artifact_gate_ready"] is False
+    assert memoryos["review_chain_proof_artifact_summary"] == (
+        "review-chain proof source terminal_lane_id does not match current closure lane"
+    )
+    assert "god_room_review_chain_proof_artifact_not_ready" in memoryos["blockers"]
+    assert "god_room_review_chain_proof_artifact" not in memoryos["source_authority"]
+    assert "source_refs" not in payload_hints
 
 
 def test_release_evidence_candidates_reject_review_chain_when_current_handoff_fails(
@@ -1271,6 +1419,54 @@ def test_release_evidence_candidates_reject_stale_runtime_closure_handoff(
     assert "source_refs" not in payload_hints
 
 
+def test_release_evidence_candidates_reject_runtime_closure_wrong_payload_lane(
+    tmp_path: Path,
+) -> None:
+    review_closure = _write_god_room_review_closure_artifact(
+        tmp_path / "review-closure.json",
+    )
+    runtime_closure = _write_god_room_runtime_closure_evidence(
+        tmp_path / "runtime-closure.json",
+        review_closure_artifact=review_closure,
+    )
+
+    report = build_release_evidence_candidate_report(
+        tmp_path,
+        conversation_id="conv-1",
+        env={
+            "XMUSE_LIVE_MEMORYOS_LITE": "1",
+            "XMUSE_MEMORYOS_LITE_URL": "http://memoryos-lite.example",
+        },
+        memoryos_payload={
+            "repo_id": "iiyazu/Cross-Muse",
+            "workspace_id": "xmuse",
+            "god_id": "review",
+            "conversation_id": "conv-1",
+            "thread_id": "thread-1",
+            "blueprint_id": "bp-1",
+            "feature_id": "feature-1",
+            "lane_id": "lane-other",
+            "content": "live evidence",
+            "query": "production evidence",
+            "god_room_runtime_closure": str(runtime_closure),
+        },
+    )
+
+    memoryos = report["live_memoryos"]
+    payload_hints = memoryos["suggested_operator_action"]["payload_hints"]
+    assert memoryos["runtime_closure_artifact_configured"] is True
+    assert memoryos["runtime_closure_artifact_gate_ready"] is False
+    assert memoryos["runtime_closure_current_handoff_gate_ready"] is False
+    assert memoryos["runtime_closure_artifact_summary"] == (
+        "GOD room runtime closure evidence current review-closure handoff is "
+        "not gate-ready: review-closure handoff lane_id does not match current "
+        "closure lane"
+    )
+    assert "god_room_runtime_closure_artifact_not_ready" in memoryos["blockers"]
+    assert "god_room_runtime_closure_evidence" not in memoryos["source_authority"]
+    assert "source_refs" not in payload_hints
+
+
 def test_release_evidence_candidates_seed_memoryos_refs_from_closure_object(
     tmp_path: Path,
 ) -> None:
@@ -1283,12 +1479,16 @@ def test_release_evidence_candidates_seed_memoryos_refs_from_closure_object(
             "schema_version": "xmuse.review_closure_handoff_evaluation.v1",
             "source_authority": "review_closure_handoff_evaluation",
             "status": "ready",
+            "graph_id": "graph-runtime",
+            "lane_id": "lane-runtime-evidence-patch",
             "server_truth_status": "not_server_truth",
             "source_refs": [
                 "god-room-review-closure:graph-runtime:failed:terminal",
                 "lane:lane-runtime-evidence-patch",
             ],
-            "forbidden_claims": list(REQUIRED_FORBIDDEN_CLAIMS),
+            "forbidden_claims": list(
+                REQUIRED_GOD_ROOM_REVIEW_CLOSURE_FORBIDDEN_CLAIMS
+            ),
         },
     )
     closure_path.write_text(
@@ -1315,6 +1515,7 @@ def test_release_evidence_candidates_seed_memoryos_refs_from_closure_object(
             "content": "live evidence",
             "query": "production evidence",
             "closure_object": str(closure_path),
+            "owner_refs": ["source_authority:forged_operator_payload"],
         },
     )
 
@@ -1329,6 +1530,9 @@ def test_release_evidence_candidates_seed_memoryos_refs_from_closure_object(
         "closure_object_target_refs"
     ]
     assert memoryos["closure_object_owner_ref_count"] == 1
+    assert memoryos["closure_object_owner_refs"] == [
+        "source_authority:review_closure_handoff_evaluation"
+    ]
     assert memoryos["closure_object_forbidden_claim_count"] >= len(
         REQUIRED_FORBIDDEN_CLAIMS
     )
@@ -1340,6 +1544,10 @@ def test_release_evidence_candidates_seed_memoryos_refs_from_closure_object(
     assert "lane:lane-runtime-evidence-patch" in payload_hints["source_refs"]
     assert "graph:graph-runtime" in payload_hints["target_refs"]
     assert "lane:lane-runtime-evidence-patch" in payload_hints["target_refs"]
+    assert payload_hints["owner_refs"] == [
+        "source_authority:review_closure_handoff_evaluation"
+    ]
+    assert "source_authority:forged_operator_payload" not in payload_hints["owner_refs"]
 
 
 def test_release_evidence_candidates_reject_stale_closure_object(
@@ -1354,11 +1562,15 @@ def test_release_evidence_candidates_reject_stale_closure_object(
             "schema_version": "xmuse.review_closure_handoff_evaluation.v1",
             "source_authority": "review_closure_handoff_evaluation",
             "status": "ready",
+            "graph_id": "graph-runtime",
+            "lane_id": "lane-runtime-evidence-patch",
             "server_truth_status": "not_server_truth",
             "source_refs": [
                 "god-room-review-closure:graph-runtime:failed:terminal",
             ],
-            "forbidden_claims": list(REQUIRED_FORBIDDEN_CLAIMS),
+            "forbidden_claims": list(
+                REQUIRED_GOD_ROOM_REVIEW_CLOSURE_FORBIDDEN_CLAIMS
+            ),
         },
     ).to_dict()
     closure["status"]["evaluator_version"] = "xmuse.closure_controller.v0"
@@ -1400,6 +1612,7 @@ def test_release_evidence_candidates_reject_stale_closure_object(
     assert "closure_object_artifact" not in memoryos["source_authority"]
     assert "source_refs" not in payload_hints
     assert "target_refs" not in payload_hints
+    assert "owner_refs" not in payload_hints
 
 
 def test_release_evidence_candidates_reject_runtime_closure_proof_overclaim(
@@ -1745,7 +1958,7 @@ def test_release_evidence_candidates_cli_writes_operator_candidate_report(
             "--feature-id",
             "feature-1",
             "--lane-id",
-            "lane-1",
+            "lane-runtime-evidence-patch",
             "--content",
             "live evidence",
             "--query",
@@ -1782,7 +1995,7 @@ def test_release_evidence_candidates_cli_writes_operator_candidate_report(
         "thread_id": "thread-1",
         "blueprint_id": "bp-1",
         "feature_id": "feature-1",
-        "lane_id": "lane-1",
+        "lane_id": "lane-runtime-evidence-patch",
         "source_refs": [
             (
                 "god-room-review-closure:graph-runtime:"
@@ -1893,12 +2106,16 @@ def test_release_evidence_candidates_cli_accepts_closure_object(
             "schema_version": "xmuse.review_closure_handoff_evaluation.v1",
             "source_authority": "review_closure_handoff_evaluation",
             "status": "ready",
+            "graph_id": "graph-runtime",
+            "lane_id": "lane-runtime-evidence-patch",
             "server_truth_status": "not_server_truth",
             "source_refs": [
                 "god-room-review-closure:graph-runtime:failed:terminal",
                 "lane:lane-runtime-evidence-patch",
             ],
-            "forbidden_claims": list(REQUIRED_FORBIDDEN_CLAIMS),
+                "forbidden_claims": list(
+                    REQUIRED_GOD_ROOM_REVIEW_CLOSURE_FORBIDDEN_CLAIMS
+                ),
         },
     )
     closure_path.write_text(
@@ -2473,14 +2690,7 @@ def _write_god_room_review_closure_artifact(
             "release_evidence_not_linked",
             "github_truth_not_checked",
         ],
-        "forbidden_claims": [
-            "worker_output_is_review_truth",
-            "end_to_end_execution_review_closure",
-            "ready_to_merge",
-            "pr_merged",
-            "github_review_truth",
-            "live_memoryos",
-        ],
+        "forbidden_claims": list(GOD_ROOM_REVIEW_CHAIN_PROOF_FORBIDDEN_CLAIMS),
     }
     if include_runner_recovery_lineage:
         _write_session_artifact(

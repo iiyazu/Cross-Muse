@@ -42,26 +42,72 @@ runtime、provider invocation、lane authority、review truth 完成。后续生
 Latest handoff truth as of 2026-06-17:
 
 - Current branch: `vision-closure-deliberation-tui`
-- Latest implementation head before docs-only handoff sync:
+- Current local HEAD before the uncommitted admission/source-ref/diagnostic
+  summary/runtime current-handoff/diagnostic-object/release-linkage/
+  independent-review/review-chain-summary/inline-patch-forward-severity
+  /metadata-ref hardening/release-handoff compatibility-admission/gate-adapter
+  /file-backed L10 admission/review-closure admission-context/review-chain L10
+  admission-context/review-closure load-admit context/MemoryOS candidate
+  load-admit reuse/admission-result count projection/release-handoff status
+  centralization/base-contract helper/file-backed patch-forward
+  admission-source/review-chain provenance-source/release-pack provenance
+  consumer/source-manual-gap admission/release-pack forbidden-claim admission
+  /inline patch-forward compatibility admission/review-closure guardrail
+  admission-result/review-chain runtime guardrail/expanded forbidden-claim
+  guardrail refactor slice:
+  `63916be17645cd04f7cf522b206ca0b04d28b55d`
+- Latest implementation head in the local ahead stack:
   `b5225b962b363d5cb2b60459735781333ade0bdf`
 - Remote tracking head / PR #43 head:
   `2c03b2492e9e0a618f21e19120192b0a46765dbf`
-- Local state before docs-only handoff sync: clean and ahead of
-  `origin/vision-closure-deliberation-tui` by 5 commits.
+- Local state after the admission/source-ref/diagnostic summary/runtime
+  current-handoff/diagnostic-object/release-linkage/independent-review
+  review-chain-summary/inline-patch-forward-severity/metadata-ref hardening/
+  release-handoff compatibility-admission/gate-adapter/file-backed L10
+  admission/review-closure admission-context/review-chain L10 admission-context
+  /review-closure load-admit context/MemoryOS candidate load-admit reuse
+  /admission-result count projection/release-handoff status centralization
+  /base-contract helper/file-backed patch-forward admission-source
+  /review-chain provenance-source/release-pack provenance consumer refactor
+  /source-manual-gap admission/release-pack forbidden-claim admission slice:
+  /inline patch-forward compatibility admission/review-closure guardrail
+  admission-result/review-chain runtime guardrail/expanded forbidden-claim
+  guardrail slice: ahead of
+  `origin/vision-closure-deliberation-tui` by 6 commits with uncommitted local
+  changes.
 - PR #43 last checked from GitHub: draft/open/unmerged, merge state `CLEAN`,
   review decision empty.
 - Latest GitHub Actions truth: `xmuse CI` run `27630501256`, success, for
   pushed head `2c03b2492e9e0a618f21e19120192b0a46765dbf` only.
 - Local ahead commits after that pushed head are local-only proof/admission
-  hardening until pushed and rechecked.
-- Latest local focused validation for the implementation head:
-  `uv run pytest tests/xmuse/test_closure_objects.py tests/xmuse/test_closure_reconciler.py tests/xmuse/test_release_evidence_candidates.py -q`
-  -> 78 passed; `uv run ruff check .`, `git diff --check`, and
+  hardening until pushed and rechecked; current uncommitted changes have no CI
+  coverage.
+- Latest local focused validation for the uncommitted admission/source-ref/
+  diagnostic summary/runtime current-handoff/diagnostic-object/release-linkage/
+  independent-review/review-chain-summary/inline-patch-forward-severity
+  /metadata-ref hardening/release-handoff compatibility-admission/gate-adapter
+  /file-backed L10 admission/review-closure admission-context/review-chain L10
+  admission-context/review-closure load-admit context/MemoryOS candidate
+  load-admit reuse/admission-result count projection/release-handoff status
+  centralization/base-contract helper/file-backed patch-forward
+  admission-source/review-chain provenance-source/release-pack provenance
+  consumer/source-manual-gap admission/release-pack forbidden-claim admission
+  /inline patch-forward compatibility admission/review-closure guardrail
+  admission-result/review-chain runtime guardrail/expanded forbidden-claim
+  guardrail refactor slice:
+  `uv run pytest tests/xmuse/test_review_closure_handoff_evaluator.py tests/xmuse/test_closure_reconciler.py tests/xmuse/test_closure_objects.py tests/xmuse/test_god_room_review_chain_proof.py tests/xmuse/test_god_room_runtime_closure_evidence_capture.py tests/xmuse/test_release_evidence_candidates.py tests/xmuse/test_release_evidence_pack.py -q`
+  -> 219 passed; `uv run pytest tests/xmuse/test_package_boundaries.py -q`
+  -> 18 passed; `uv run ruff check .`, `git diff --check`, and
   `test ! -e xmuse/__init__.py` passed.
 
-This latest handoff truth does not change forbidden claims: no `pr_merged`, no
-GitHub review truth, no merge truth, no live MemoryOS trace, no natural peer-GOD
-deliberation closure, and no overnight readiness.
+This latest handoff truth expands required forbidden-claim preservation for
+the controller/refactor path: `local_tests_are_review_truth`,
+`full_l8_l10_closure`, `overnight_readiness`, and
+`natural_peer_god_groupchat` are now part of the closure-level required
+forbidden set and are carried into review-closure/review-chain handoff
+admission fixtures. It does not remove any guardrail or create stronger proof:
+no `pr_merged`, no GitHub review truth, no merge truth, no live MemoryOS trace,
+no natural peer-GOD deliberation closure, and no overnight readiness claim.
 
 - Branch: `vision-closure-deliberation-tui`
 - Local base head before audit reinforcement annotation:
@@ -336,6 +382,135 @@ deliberation closure, and no overnight readiness.
 - Local head at start of x3 ClosureObject condition observed-generation L10
   admission slice:
   `c751db94f190daec1163e15f16b4fd90ca73a751`
+- Local head at start of L10 ClosureObject MemoryOS owner-lineage hint slice:
+  `63916be17645cd04f7cf522b206ca0b04d28b55d`
+- Local head at start of L10 review-chain release-linkage admission
+  consolidation slice:
+  `63916be17645cd04f7cf522b206ca0b04d28b55d`
+- Local head at start of L9-to-L10 review-closure handoff admission
+  consolidation slice:
+  `63916be17645cd04f7cf522b206ca0b04d28b55d`
+- Local head at start of file-backed review-chain release-handoff condition
+  admission consolidation slice:
+  `63916be17645cd04f7cf522b206ca0b04d28b55d`
+- Local head at start of runtime-closure review-chain detail admission
+  consolidation slice:
+  `63916be17645cd04f7cf522b206ca0b04d28b55d`
+- Local head at start of release-evidence-candidate review-chain admission
+  consolidation slice:
+  `63916be17645cd04f7cf522b206ca0b04d28b55d`
+- Local head at start of runtime/candidate review-closure admission
+  consolidation slice:
+  `63916be17645cd04f7cf522b206ca0b04d28b55d`
+- Local head at start of file-backed patch-forward lineage L10 admission
+  consolidation slice:
+  `63916be17645cd04f7cf522b206ca0b04d28b55d`
+- Local head at start of release-pack review-chain copied-scope admission
+  consolidation slice:
+  `63916be17645cd04f7cf522b206ca0b04d28b55d`
+- Local head at start of review-chain L10 producer review-closure admission
+  consolidation slice:
+  `63916be17645cd04f7cf522b206ca0b04d28b55d`
+- Local head at start of review-chain proof artifact producer review-closure
+  admission consolidation slice:
+  `63916be17645cd04f7cf522b206ca0b04d28b55d`
+- Local head at start of review-closure handoff copied forbidden-claim
+  admission hardening slice:
+  `63916be17645cd04f7cf522b206ca0b04d28b55d`
+- Local head at start of MemoryOS candidate lane-scoped provenance admission
+  hardening slice:
+  `63916be17645cd04f7cf522b206ca0b04d28b55d`
+- Local head at start of shared review-closure handoff admission-result
+  consolidation slice:
+  `63916be17645cd04f7cf522b206ca0b04d28b55d`
+- Local head at start of shared review-chain L10 handoff admission-result
+  consolidation slice:
+  `63916be17645cd04f7cf522b206ca0b04d28b55d`
+- Local head at start of inline review-chain release-handoff compatibility
+  admission consolidation slice:
+  `63916be17645cd04f7cf522b206ca0b04d28b55d`
+- Local head at start of release-handoff base admission consolidation slice:
+  `63916be17645cd04f7cf522b206ca0b04d28b55d`
+- Local head at start of review-closure handoff shared non-ready issue
+  consolidation slice:
+  `63916be17645cd04f7cf522b206ca0b04d28b55d`
+- Local head at start of review-closure handoff admitted source-event-lineage
+  refs consolidation slice:
+  `63916be17645cd04f7cf522b206ca0b04d28b55d`
+- Local head at start of review-chain L10 admitted provenance refs
+  consolidation slice:
+  `63916be17645cd04f7cf522b206ca0b04d28b55d`
+- Local head at start of review-chain L10 admitted current-handoff candidate
+  refs consolidation slice:
+  `63916be17645cd04f7cf522b206ca0b04d28b55d`
+- Local head at start of review-chain L10 admitted diagnostic summary
+  consolidation slice:
+  `63916be17645cd04f7cf522b206ca0b04d28b55d`
+- Local head at start of runtime-closure current-handoff admission-result
+  consolidation slice:
+  `63916be17645cd04f7cf522b206ca0b04d28b55d`
+- Local head at start of review-chain L10 bounded-session diagnostic object
+  admission-result consolidation slice:
+  `63916be17645cd04f7cf522b206ca0b04d28b55d`
+- Local head at start of release-pack review-chain admitted source-ref
+  consolidation slice:
+  `63916be17645cd04f7cf522b206ca0b04d28b55d`
+- Local head at start of closure-reconciler independent-review admission-result
+  consolidation slice:
+  `63916be17645cd04f7cf522b206ca0b04d28b55d`
+- Local head at start of review-chain L10 non-ready admission-result summary
+  consolidation slice:
+  `63916be17645cd04f7cf522b206ca0b04d28b55d`
+- Local head at start of closure-reconciler inline patch-forward admission
+  severity consolidation slice:
+  `63916be17645cd04f7cf522b206ca0b04d28b55d`
+- Local head at start of closure-reconciler metadata admitted source-ref
+  consolidation slice:
+  `63916be17645cd04f7cf522b206ca0b04d28b55d`
+- Local head at start of closure-reconciler metadata admitted target/owner-ref
+  consolidation slice:
+  `63916be17645cd04f7cf522b206ca0b04d28b55d`
+- Local head at start of review-chain L10 handoff admission-context
+  consolidation slice:
+  `63916be17645cd04f7cf522b206ca0b04d28b55d`
+- Local head at start of review-closure artifact-ref load-admit context
+  consolidation slice:
+  `63916be17645cd04f7cf522b206ca0b04d28b55d`
+- Local head at start of MemoryOS candidate review-closure load-admit reuse
+  consolidation slice:
+  `63916be17645cd04f7cf522b206ca0b04d28b55d`
+- Local head at start of admission-result count projection consolidation
+  slice:
+  `63916be17645cd04f7cf522b206ca0b04d28b55d`
+- Local head at start of release-handoff status centralization slice:
+  `63916be17645cd04f7cf522b206ca0b04d28b55d`
+- Local head at start of review-closure base-contract helper consolidation
+  slice:
+  `63916be17645cd04f7cf522b206ca0b04d28b55d`
+- Local head at start of file-backed patch-forward admission-source
+  consolidation slice:
+  `63916be17645cd04f7cf522b206ca0b04d28b55d`
+- Local head at start of review-chain provenance-source admission
+  consolidation slice:
+  `63916be17645cd04f7cf522b206ca0b04d28b55d`
+- Local head at start of release-pack review-chain provenance-source consumer
+  consolidation slice:
+  `63916be17645cd04f7cf522b206ca0b04d28b55d`
+- Local head at start of review-chain source-manual-gap admission
+  consolidation slice:
+  `63916be17645cd04f7cf522b206ca0b04d28b55d`
+- Local head at start of release-pack review-chain forbidden-claim admission
+  consolidation slice:
+  `63916be17645cd04f7cf522b206ca0b04d28b55d`
+- Local head at start of inline patch-forward compatibility admission
+  consolidation slice:
+  `63916be17645cd04f7cf522b206ca0b04d28b55d`
+- Local head at start of review-closure guardrail admission-result
+  consolidation slice:
+  `63916be17645cd04f7cf522b206ca0b04d28b55d`
+- Local head at start of review-chain runtime guardrail admission-result
+  consolidation slice:
+  `63916be17645cd04f7cf522b206ca0b04d28b55d`
 - PR: <https://github.com/iiyazu/Cross-Muse/pull/43>
 - PR state last checked: draft/open/unmerged
 - PR merge state last checked: `CLEAN`
@@ -464,6 +639,53 @@ truth_snapshot:
   local_head_at_x3_closure_reconciler_patch_forward_shared_review_chain_handoff_admission_slice: a99d9499984d8544523944f9b0cc623997625db3
   local_head_at_x3_closure_object_observed_generation_l10_admission_slice: ebc5cb4e71a04083d99b5961cac9945215592fac
   local_head_at_x3_closure_object_condition_observed_generation_l10_admission_slice: c751db94f190daec1163e15f16b4fd90ca73a751
+  local_head_at_l10_closure_object_memoryos_owner_lineage_hint_slice: 63916be17645cd04f7cf522b206ca0b04d28b55d
+  local_head_at_l10_review_chain_release_linkage_admission_consolidation_slice: 63916be17645cd04f7cf522b206ca0b04d28b55d
+  local_head_at_l9_l10_review_closure_handoff_admission_consolidation_slice: 63916be17645cd04f7cf522b206ca0b04d28b55d
+  local_head_at_file_backed_review_chain_release_handoff_condition_admission_consolidation_slice: 63916be17645cd04f7cf522b206ca0b04d28b55d
+  local_head_at_runtime_closure_review_chain_detail_admission_consolidation_slice: 63916be17645cd04f7cf522b206ca0b04d28b55d
+  local_head_at_release_evidence_candidate_review_chain_admission_consolidation_slice: 63916be17645cd04f7cf522b206ca0b04d28b55d
+  local_head_at_runtime_candidate_review_closure_admission_consolidation_slice: 63916be17645cd04f7cf522b206ca0b04d28b55d
+  local_head_at_file_backed_patch_forward_lineage_l10_admission_consolidation_slice: 63916be17645cd04f7cf522b206ca0b04d28b55d
+  local_head_at_release_pack_review_chain_copied_scope_admission_consolidation_slice: 63916be17645cd04f7cf522b206ca0b04d28b55d
+  local_head_at_review_chain_l10_producer_review_closure_admission_consolidation_slice: 63916be17645cd04f7cf522b206ca0b04d28b55d
+  local_head_at_review_chain_proof_artifact_producer_review_closure_admission_consolidation_slice: 63916be17645cd04f7cf522b206ca0b04d28b55d
+  local_head_at_review_closure_handoff_copied_forbidden_claim_admission_hardening_slice: 63916be17645cd04f7cf522b206ca0b04d28b55d
+  local_head_at_memoryos_candidate_lane_scoped_provenance_admission_hardening_slice: 63916be17645cd04f7cf522b206ca0b04d28b55d
+  local_head_at_shared_review_closure_handoff_admission_result_consolidation_slice: 63916be17645cd04f7cf522b206ca0b04d28b55d
+  local_head_at_shared_review_chain_l10_handoff_admission_result_consolidation_slice: 63916be17645cd04f7cf522b206ca0b04d28b55d
+  local_head_at_inline_review_chain_release_handoff_compat_admission_consolidation_slice: 63916be17645cd04f7cf522b206ca0b04d28b55d
+  local_head_at_review_chain_proof_admitted_source_refs_only_hardening_slice: 63916be17645cd04f7cf522b206ca0b04d28b55d
+  local_head_at_release_handoff_base_admission_consolidation_slice: 63916be17645cd04f7cf522b206ca0b04d28b55d
+  local_head_at_runtime_closure_review_closure_admitted_source_refs_only_slice: 63916be17645cd04f7cf522b206ca0b04d28b55d
+  local_head_at_review_closure_handoff_shared_nonready_issue_consolidation_slice: 63916be17645cd04f7cf522b206ca0b04d28b55d
+  local_head_at_review_closure_handoff_admitted_candidate_refs_consolidation_slice: 63916be17645cd04f7cf522b206ca0b04d28b55d
+  local_head_at_review_closure_handoff_admitted_source_event_lineage_refs_consolidation_slice: 63916be17645cd04f7cf522b206ca0b04d28b55d
+  local_head_at_review_chain_l10_admitted_provenance_refs_consolidation_slice: 63916be17645cd04f7cf522b206ca0b04d28b55d
+  local_head_at_review_chain_l10_admitted_current_handoff_candidate_refs_consolidation_slice: 63916be17645cd04f7cf522b206ca0b04d28b55d
+  local_head_at_review_chain_l10_admitted_diagnostic_summary_consolidation_slice: 63916be17645cd04f7cf522b206ca0b04d28b55d
+  local_head_at_runtime_closure_current_handoff_admission_result_consolidation_slice: 63916be17645cd04f7cf522b206ca0b04d28b55d
+  local_head_at_review_chain_l10_bounded_session_diagnostic_object_admission_result_consolidation_slice: 63916be17645cd04f7cf522b206ca0b04d28b55d
+  local_head_at_release_pack_review_chain_admitted_source_ref_consolidation_slice: 63916be17645cd04f7cf522b206ca0b04d28b55d
+  local_head_at_closure_reconciler_independent_review_admission_result_consolidation_slice: 63916be17645cd04f7cf522b206ca0b04d28b55d
+  local_head_at_review_chain_l10_nonready_admission_result_summary_consolidation_slice: 63916be17645cd04f7cf522b206ca0b04d28b55d
+  local_head_at_closure_reconciler_inline_patch_forward_admission_severity_consolidation_slice: 63916be17645cd04f7cf522b206ca0b04d28b55d
+  local_head_at_closure_reconciler_metadata_admitted_source_ref_consolidation_slice: 63916be17645cd04f7cf522b206ca0b04d28b55d
+  local_head_at_closure_reconciler_metadata_admitted_target_owner_ref_consolidation_slice: 63916be17645cd04f7cf522b206ca0b04d28b55d
+  local_head_at_review_chain_l10_handoff_admission_context_consolidation_slice: 63916be17645cd04f7cf522b206ca0b04d28b55d
+  local_head_at_review_closure_artifact_ref_load_admit_context_consolidation_slice: 63916be17645cd04f7cf522b206ca0b04d28b55d
+  local_head_at_memoryos_candidate_review_closure_load_admit_reuse_consolidation_slice: 63916be17645cd04f7cf522b206ca0b04d28b55d
+  local_head_at_file_backed_patch_forward_admission_source_consolidation_slice: 63916be17645cd04f7cf522b206ca0b04d28b55d
+  local_head_at_review_chain_provenance_source_admission_consolidation_slice: 63916be17645cd04f7cf522b206ca0b04d28b55d
+  local_head_at_release_pack_review_chain_provenance_source_consumer_consolidation_slice: 63916be17645cd04f7cf522b206ca0b04d28b55d
+  local_head_at_review_chain_source_manual_gap_admission_consolidation_slice: 63916be17645cd04f7cf522b206ca0b04d28b55d
+  local_head_at_release_pack_review_chain_forbidden_claim_admission_consolidation_slice: 63916be17645cd04f7cf522b206ca0b04d28b55d
+  local_head_at_inline_patch_forward_compatibility_admission_consolidation_slice: 63916be17645cd04f7cf522b206ca0b04d28b55d
+  local_head_at_review_closure_guardrail_admission_result_consolidation_slice: 63916be17645cd04f7cf522b206ca0b04d28b55d
+  local_head_at_review_chain_runtime_guardrail_admission_result_consolidation_slice: 63916be17645cd04f7cf522b206ca0b04d28b55d
+  local_head_at_closure_reconciler_lane_recovery_top_level_source_ref_consolidation_slice: 63916be17645cd04f7cf522b206ca0b04d28b55d
+  local_head_at_review_closure_handoff_result_always_admits_slice: 63916be17645cd04f7cf522b206ca0b04d28b55d
+  local_head_at_review_chain_l10_handoff_result_always_admits_slice: 63916be17645cd04f7cf522b206ca0b04d28b55d
   pr: 43
   pr_url: https://github.com/iiyazu/Cross-Muse/pull/43
   pr_state: draft_open_unmerged
@@ -2548,15 +2770,549 @@ Use these as implementation references, not as xmuse package dependencies:
     Hand-built ClosureObjects with apparently satisfied conditions but missing
     or stale per-condition generation metadata therefore remain manual-gap and
     cannot seed MemoryOS provenance.
+    Release evidence candidate reports now also preserve admitted ClosureObject
+    `owner_refs` in the live-MemoryOS suggested payload hints and expose the
+    owner refs alongside the existing count. The refs come only from the
+    `evaluate_closure_object_l10_admission` gate-ready ClosureObject path, not
+    operator payload self-report, and remain provenance hints only. This is L10
+    owner-lineage projection hardening; it does not create live MemoryOS,
+    review truth, GitHub truth, merge truth, or release readiness.
+    Release-pack review-chain linkage now admits copied
+    `xmuse.review_chain_proof_l10_handoff_evaluation.v1` details through the
+    shared review-chain L10 handoff admission helper before treating replay
+    linkage as contract provenance. The release pack no longer decides linkage
+    readiness by independently combining copied `chain_ready`, proof-level,
+    server-truth, bounded-session, and current-handoff fields from runtime
+    closure details; stale or tampered copied details with a non-admissible
+    shared handoff evaluation remain `manual_gap`. This reduces duplicated
+    consumer-specific truth checks and remains L10 aggregation hardening only,
+    not live MemoryOS, GitHub review truth, merge truth, or release readiness.
+    Closure release-handoff gate evaluation now admits copied
+    `xmuse.review_closure_handoff_evaluation.v1` details through the shared
+    review-closure handoff admission helper instead of independently parsing
+    copied status, graph, lane, source-ref, forbidden-claim, and server-truth
+    fields. A handoff produced by the real review-closure evaluator can still
+    seed contract-level release handoff lineage, while tampered copied
+    forbidden claims or stale/mismatched scope fail closed through the shared
+    admission path. This is L9-to-L10 admission consolidation only; it does not
+    create GitHub review truth, merge truth, live MemoryOS proof, or full
+    L8-L10 closure.
+    File-backed review-chain proof release-handoff conditions now consume the
+    shared review-chain L10 handoff evaluation/admission directly after the
+    proof artifact is reloaded from durable storage. When that shared producer
+    fails, the condition preserves its fail-closed summary; when it is ready,
+    expected graph/lane scope is admitted through the same shared L10 admission
+    instead of re-running a second raw-proof gate in the closure reconciler.
+    Non-file-backed compatibility payloads remain shallow contract checks only.
+    This reduces duplicate condition-time parsing without upgrading beyond
+    contract proof or claiming full L8-L10 closure.
+    GOD-room runtime closure evidence now treats review-chain proof
+    release-handoff readiness as ready only after the rebuilt shared L10
+    handoff producer output is also admitted by the shared review-chain L10
+    admission helper. Producer failures keep their original fail-closed issues,
+    while ready producer output is checked for admissible source status, proof
+    level, forbidden claims, bounded session, and source/candidate refs before
+    runtime closure emits review-chain source refs. This keeps runtime closure
+    as an aggregation surface and does not create server-side review truth,
+    merge truth, or live MemoryOS proof.
+    Release evidence candidate reports now also gate review-chain proof
+    MemoryOS provenance hints through that shared L10 handoff admission after
+    rebuilding the producer evaluation. Candidate reports no longer treat the
+    producer status alone as sufficient for source/candidate refs; admitted refs
+    come from the shared admission result, and non-admitted producer output stays
+    candidate-only/manual-gap. This is L10 provenance admission consolidation
+    only and does not create live MemoryOS proof, review truth, GitHub truth,
+    merge truth, release readiness, or full L8-L10 closure.
+    Runtime closure review-closure details and release evidence candidate
+    review-closure MemoryOS provenance hints now also admit the rebuilt
+    `xmuse.review_closure_handoff_evaluation.v1` through the shared L9-to-L10
+    review-closure handoff admission helper before emitting handoff refs. These
+    consumers no longer treat producer `status == ready` alone as the source of
+    truth for gate readiness; graph/lane scope, source refs, candidate refs,
+    forbidden claims, and server-truth overclaims remain centralized in the
+    shared admission path. This is controller/provenance hardening only and does
+    not create live MemoryOS proof, server-side review truth, GitHub truth,
+    merge truth, release readiness, or full L8-L10 closure.
+    Copied `xmuse.review_closure_handoff_evaluation.v1` admission now requires
+    the same inherited local-execution forbidden-claim set as the review-closure
+    producer, including `end_to_end_execution_review_closure`, before source
+    refs can be returned. A copied handoff that drops inherited forbidden claims
+    remains `manual_gap` with no source refs.
+    MemoryOS candidate provenance hints for direct review-closure and
+    review-chain proof artifacts now compare the admitted artifact lane against
+    `memoryos_payload["lane_id"]` when that payload lane is present. A
+    caller-selected artifact from another lane stays candidate/manual-gap and
+    cannot seed MemoryOS source refs. This is lane-scoped provenance admission
+    only; it does not make MemoryOS an L8/L9 authority and does not create live
+    MemoryOS proof, review truth, GitHub truth, merge truth, release readiness,
+    or full L8-L10 closure.
+    Runtime-closure MemoryOS provenance hints now route the current
+    review-closure handoff revalidation through the same shared
+    review-closure admission result, including the caller payload lane when it
+    is present. A runtime closure artifact whose referenced current
+    review-closure handoff is otherwise ready but scoped to a different payload
+    lane now fails closed and cannot seed MemoryOS source refs. This is
+    runtime-closure candidate gating only and does not create live MemoryOS
+    proof, server-side review truth, GitHub truth, merge truth, release
+    readiness, or full L8-L10 closure.
+    Review follow-up tightened the shared helper contracts: copied
+    review-chain release-pack linkage now fails closed when copied graph/lane
+    scope is missing instead of treating absent expected scope as no check, and
+    non-ready review-closure admission-result payloads no longer return copied
+    `source_refs`. This keeps non-admitted handoffs from seeding downstream
+    refs while preserving the same contract-proof boundary.
+    The shared review-chain L10 admission-result helper also preserves the
+    required review-chain forbidden-claim set and `server_side_truth` guardrail
+    even when the producer result is not ready and low-level admission is not
+    attempted. Downstream consumers therefore do not need to re-add those
+    guardrails to avoid accepting copied non-ready handoff metadata.
+    Inline/non-file-backed `xmuse.god_room_lane_review_chain_proof.v1`
+    payloads now use one bounded compatibility admission helper for release
+    handoff status/proof/server-truth/scope/source-ref/candidate-ref/forbidden
+    claim checks. The closure release-handoff gate and patch-forward lineage
+    compatibility branch both consume this helper instead of re-parsing those
+    base fields independently. File-backed review-chain proof artifacts remain
+    on the stronger rebuilt L10 handoff evaluator/admission path; this
+    compatibility helper is contract-proof only and does not create server-side
+    review truth, merge truth, live MemoryOS proof, or full L8-L10 closure.
+    The review-closure producer/admission result is now a shared
+    `god_room_review_handoff` helper used by review-chain proof producers,
+    GOD-room runtime closure evidence, and release-evidence MemoryOS candidate
+    guidance. These consumers no longer each reimplement the
+    producer-ready/admission-ready/summary/source-ref switch for
+    `xmuse.review_closure_handoff_evaluation.v1`; they consume the same shared
+    result while preserving fail-closed `manual_gap`, inherited forbidden
+    claims, and not-server-truth boundaries. This is a contract-proof
+    controller refactor only and does not create live MemoryOS proof, GitHub
+    review truth, merge truth, release readiness, or full L8-L10 closure.
+    The review-chain L10 producer/admission result is now also a shared
+    `god_room_review_chain_proof` helper used by closure reconciler
+    conditions, GOD-room runtime closure evidence, release-evidence MemoryOS
+    candidate guidance, and release-pack review-chain linkage. These consumers
+    no longer each reimplement the producer-ready/admission-ready/status,
+    summary, bounded-session, and source/candidate-ref switch for
+    `xmuse.review_chain_proof_l10_handoff_evaluation.v1`; non-admitted source
+    refs remain withheld. This is review-chain L10 admission consolidation only
+    and does not create live MemoryOS proof, GitHub review truth, merge truth,
+    release readiness, or full L8-L10 closure.
+    Closure reconciler file-backed patch-forward lineage conditions now also
+    admit rebuilt review-chain L10 handoff evaluations through the shared L10
+    admission helper before applying patch-forward-specific session/artifact
+    checks. Expected graph/lane scope for the durable review-chain proof is no
+    longer re-decided by that condition branch. This reduces duplicate
+    condition-time parsing while preserving patch-forward lineage as
+    contract-level evidence only.
+    Release-pack review-chain linkage now passes copied review-chain graph/lane
+    scope into the shared L10 handoff admission helper before treating replay
+    linkage as contract provenance. A copied runtime-closure replay whose
+    embedded handoff evaluation is internally ready but scoped to a different
+    graph/lane remains `manual_gap` through shared admission instead of being
+    accepted by release-pack-local linkage checks. This is copied-artifact
+    hardening only and does not create server-side review truth, merge truth,
+    live MemoryOS proof, release readiness, or full L8-L10 closure.
+    Review-chain L10 handoff production now also admits the rederived current
+    review-closure handoff evaluation through the shared L9-to-L10 admission
+    helper before marking the review-chain L10 handoff ready. A review-chain
+    proof whose own graph/lane scope diverges from the referenced current
+    review-closure handoff remains `manual_gap`, and admitted source refs are
+    carried from the shared admission result. This is producer-side admission
+    consolidation only and does not create server-side review truth, merge
+    truth, live MemoryOS proof, release readiness, or full L8-L10 closure.
+    Review-chain proof artifact production now also admits its freshly built
+    review-closure handoff evaluation through the shared L9-to-L10 admission
+    helper before allowing `chain_ready`. The proof artifact producer no longer
+    treats handoff producer `status == ready` alone as sufficient; admitted
+    source refs come from the shared admission result while unresolved scope,
+    source-ref, forbidden-claim, or server-truth gaps remain fail-closed. This
+    remains contract-proof controller hardening only and does not create
+    server-side review truth, merge truth, live MemoryOS proof, release
+    readiness, or full L8-L10 closure.
+    Follow-up hardening keeps the final review-chain proof payload on the same
+    boundary: `source_refs` copied from the review-closure handoff are taken
+    only from the shared admission result. If the handoff producer is ready but
+    admission is not, raw producer refs are not copied into the proof's
+    source-ref aggregation. This is defensive contract hardening only and does
+    not upgrade the proof level beyond `contract_proof`/`manual_gap`.
+    The release-handoff gate now also routes review-chain proof payloads and
+    `xmuse.release_evidence_candidates.v1` payloads through one shared private
+    base admission check for server-truth overclaims, source refs, candidate
+    artifact ref resolution, and inherited forbidden claims. The
+    release-evidence-candidate branch keeps only its schema-specific graph/lane
+    scope checks, then consumes the same base result; rejected candidate
+    handoffs no longer echo source refs from a manual-gap branch. This reduces
+    duplicate release-handoff parsing inside the controller boundary and remains
+    contract-proof only.
+    GOD-room runtime closure review-closure details now also count current
+    handoff source refs only from the shared review-closure admission result.
+    The detail projection no longer falls back to raw producer
+    `handoff_evaluation.source_refs` when admission withholds refs. This keeps
+    runtime closure source-ref counts aligned with the admitted controller
+    boundary and remains projection hardening, not new authority.
+    The shared review-closure admission result now also owns the canonical
+    non-ready producer issue list. GOD-room runtime closure no longer has a
+    private helper that rebuilds the same "current handoff is not gate-ready"
+    message from the raw handoff evaluation; it consumes
+    `review_closure_handoff_admission_result(...).issues` for producer and
+    admission failures alike. This removes another consumer-local parsing branch
+    while preserving `manual_gap`/`contract_proof` boundaries.
+    The same shared review-closure admission result now carries admitted
+    `candidate_artifact_refs` with the same ready-only semantics as
+    `source_refs`. Runtime closure, release-evidence candidate guidance, and
+    review-chain proof production no longer need to reread review-closure
+    candidate refs from raw handoff evaluations after separately checking
+    admission readiness; non-admitted handoffs expose no source or candidate
+    refs through the shared result. This is controller admission consolidation,
+    not broader release readiness.
+    The shared review-closure and review-chain L10 admission results now also
+    carry admitted `source_event_lineage_refs` with the same ready-only
+    semantics. Release-evidence MemoryOS candidate guidance no longer rereads
+    source-event lineage refs from raw handoff evaluations after admission;
+    non-admitted handoffs expose no source-event lineage refs through the
+    shared result. These refs remain provenance hints only and do not create
+    live MemoryOS, review truth, merge truth, release readiness, or full
+    L8-L10 closure.
+    The shared review-chain L10 admission result now also carries admitted
+    worker-evidence bundle refs and patch-forward artifact refs. GOD-room
+    runtime closure evidence and release-evidence MemoryOS candidate guidance
+    no longer reread those provenance refs from raw handoff evaluations after
+    separately checking admission readiness; non-admitted review-chain L10
+    handoffs expose no worker-bundle or patch-forward refs through the shared
+    result. This remains contract-proof provenance consolidation, not review
+    truth, merge truth, live MemoryOS proof, release readiness, or full L8-L10
+    closure.
+    The shared review-chain L10 admission result now also owns admitted
+    `current_handoff_candidate_artifact_refs`. GOD-room runtime closure
+    evidence no longer reads those refs directly from raw
+    `xmuse.review_chain_proof_l10_handoff_evaluation.v1` payloads after
+    admission; non-admitted review-chain L10 handoffs expose no current-handoff
+    candidate refs through the shared result. This keeps diagnostic candidate
+    lineage behind the same admission boundary and remains contract-proof
+    controller consolidation only.
+    The shared review-chain L10 admission result now also carries the admitted
+    current-handoff and bounded-session diagnostic summaries. GOD-room runtime
+    closure evidence and release-evidence MemoryOS candidate guidance no
+    longer reread those summaries directly from raw
+    `xmuse.review_chain_proof_l10_handoff_evaluation.v1` payloads after
+    admission. This keeps diagnostics aligned with the same contract-proof
+    admission boundary and does not create live MemoryOS proof, review truth,
+    GitHub truth, merge truth, release readiness, or full L8-L10 closure.
+    Release-evidence MemoryOS candidate guidance now also treats runtime
+    closure current review-closure handoff revalidation as an
+    admission-result-shaped payload. The caller no longer reinterprets a
+    synthetic `status`/`handoff_summary` pair when deciding whether the current
+    handoff is ready; it consumes `ready`, `summary`, and admitted refs from the
+    helper that already routes through `review_closure_handoff_admission_result`.
+    This removes another local parsing branch while preserving projection-only,
+    contract-proof semantics.
+    The shared review-chain L10 admission result now also carries the
+    bounded-session diagnostic object itself. GOD-room runtime closure evidence
+    no longer reads `bounded_session_gate` directly from raw
+    `xmuse.review_chain_proof_l10_handoff_evaluation.v1` payloads after
+    admission; the same admitted result that owns readiness, summaries, and refs
+    also owns this diagnostic projection. This is diagnostic consolidation only
+    and does not create review truth, live MemoryOS proof, GitHub truth, merge
+    truth, release readiness, or full L8-L10 closure.
+    Release-pack review-chain release linkage now also uses the shared
+    review-chain L10 admission result as the source-ref authority. The replay
+    section still must prove that the current review-chain proof artifact was
+    indexed, but extra replay-section refs no longer become linkage source refs
+    unless the shared handoff admission already exposed them. This is L10
+    aggregation hardening only; it does not create GitHub truth, merge truth,
+    review truth, live MemoryOS proof, release readiness, or full L8-L10
+    closure.
+    Closure reconciler independent-review conditions now also consume
+    `review_closure_handoff_admission_result` instead of treating raw
+    `build_review_closure_handoff_evaluation` producer status and candidate refs
+    as sufficient. Producer-side `blocked` status is preserved by the shared
+    result, non-ready summaries come from the same canonical issue list, and
+    non-admitted review-closure candidate refs remain withheld from the
+    condition. This is controller admission consolidation only; it does not
+    create review truth, GitHub truth, merge truth, live MemoryOS proof, release
+    readiness, or full L8-L10 closure.
+    The shared review-chain L10 admission-result helper now also owns non-ready
+    producer summary/status handling. Copied or degraded
+    `xmuse.review_chain_proof_l10_handoff_evaluation.v1` payloads no longer
+    surface a stale success-style handoff summary when the producer status is
+    `manual_gap` or `blocked`; source refs, candidate refs, worker-bundle refs,
+    and patch-forward refs remain withheld while required forbidden claims stay
+    preserved. This is shared diagnostic/admission hardening only and does not
+    create review truth, GitHub truth, merge truth, live MemoryOS proof, release
+    readiness, or full L8-L10 closure.
+    ClosureObject metadata refs are now derived from admitted controller
+    conditions instead of re-reading raw `source_refs`,
+    `candidate_artifact_refs`, `cited_candidate_artifact_refs`, `target_refs`,
+    or owner/source-authority fields from every observed artifact. Non-admitted
+    review or release handoff payloads therefore cannot leak forged raw source
+    refs, target refs, or owner lineage into the controller metadata that later
+    L10 provenance admission reads. Non-ready review-closure conditions also no
+    longer echo raw evaluation graph/lane target refs. Observed artifact refs
+    remain separate `status.observed_refs`, and owner refs are copied only from
+    artifacts whose matching controller condition was admitted. This is
+    closure-controller metadata hardening only; it does not create review truth,
+    GitHub truth, merge truth, live MemoryOS proof, release readiness, or full
+    L8-L10 closure.
+    Closure reconciler `ValidatedExecutionCandidatePresent` conditions now also
+    cite only the worker-evidence bundle refs admitted by the validated local
+    execution candidate boundary. The controller no longer falls back to raw
+    local-execution-candidate lineage `source_refs` when that boundary exposes
+    no worker bundle refs. Missing or mismatched worker bundle refs still fail
+    closed inside the candidate boundary. This is L9 condition-source
+    consolidation only; it does not turn worker output or local tests into
+    review truth and does not create release readiness or full L8-L10 closure.
+    Closure reconciler `RecoveryAllowsProgress` for
+    `xmuse.god_room_lane_recovery.v1` artifacts now also cites only top-level
+    artifact `source_refs`. The condition no longer falls back to nested
+    `decision.source_refs`; missing top-level refs become `manual_gap` instead
+    of letting a consumer reconstruct L8 lineage from decision detail. This
+    keeps the legacy lane-recovery artifact writer as the source-ref authority
+    and prevents downstream controller metadata from inheriting non-admitted
+    recovery refs. This is L8 condition-source consolidation only; it does not
+    prove live runner recovery enforcement, review truth, server truth,
+    release readiness, or full L8-L10 closure.
+    Review-closure handoff admission-result projection now always calls the
+    shared `admit_review_closure_handoff_evaluation()` path, even for
+    non-ready copied payloads. The former wrapper-local issue/status/summary
+    branch was removed; shared admission now owns non-ready diagnostic issues,
+    blocked-source severity preservation, manual-gap propagation, and
+    forbidden-claim normalization. Ready-only source refs/candidate refs remain
+    withheld unless the shared admission is ready. This is L9-to-L10 result
+    projection consolidation only; it does not create review truth, GitHub
+    truth, merge truth, live MemoryOS proof, release readiness, or full L8-L10
+    closure.
+    Review-chain L10 handoff admission-result projection now also always calls
+    the shared `admit_review_chain_proof_l10_handoff_evaluation()` path. The
+    previous producer-ready-only admission branch no longer lets non-ready
+    copied handoff payloads keep local fallback summaries, manual-gap counts,
+    bounded-session/current-handoff fields, or forbidden-claim normalization
+    outside the shared admission. Shared admission now preserves copied
+    producer diagnostics for operator summaries while still adding base
+    forbidden-claim, proof-level, server-truth, scope, bounded-session,
+    current-handoff, candidate-ref, and source-ref issues. Ready-only
+    provenance, worker-bundle, patch-forward, source, and candidate refs remain
+    withheld unless the shared admission is ready. This is L10 result
+    projection consolidation only; it does not create review truth, GitHub
+    truth, merge truth, live MemoryOS proof, release readiness, or full L8-L10
+    closure.
+    The legacy inline release-handoff compatibility path now uses one scoped
+    admission helper for both inline review-chain proof payloads and
+    `xmuse.release_evidence_candidates.v1` payloads before applying the shared
+    base handoff checks. This removes duplicated graph/lane scope and
+    base-admission result handling while preserving the existing bounded
+    translator behavior, failure text, forbidden-claim preservation, and
+    server-truth overclaim fail-closed semantics. File-backed review-chain proof
+    artifacts still use the shared L10 handoff evaluator path. This is
+    compatibility-admission refactoring only; it does not create review truth,
+    GitHub truth, merge truth, live MemoryOS proof, release readiness, or full
+    L8-L10 closure.
+    Release-handoff gate conversion now maps admission results through one
+    helper instead of repeating the same ready/non-ready gate dictionary shape
+    for inline review-chain proof, copied review-closure handoff, and release
+    evidence candidate payloads. Closure reconciler release-handoff and
+    patch-forward conditions also share one file-backed review-chain L10
+    evaluation/admission helper, so both conditions rebuild and admit the
+    durable review-chain proof through the same local path before condition
+    classification. This is controller adapter cleanup only; it does not create
+    review truth, GitHub truth, merge truth, live MemoryOS proof, release
+    readiness, or full L8-L10 closure.
+    Review-closure handoff producer consumers now use one
+    `build_review_closure_handoff_admission_context` helper when they need to
+    rebuild a review-closure handoff from an authority artifact and immediately
+    admit it. Runtime closure capture, release evidence candidates, closure
+    reconciler independent-review conditions, and review-chain proof capture no
+    longer repeat the producer build plus graph/lane admission fallback at each
+    callsite. Copied handoff evaluations still use the lower-level shared
+    admission result directly. This is producer/admission routing cleanup only;
+    it does not create review truth, GitHub truth, merge truth, live MemoryOS
+    proof, release readiness, or full L8-L10 closure.
+    Review-chain L10 handoff producer consumers now also use one
+    `build_review_chain_proof_l10_handoff_admission_context` helper when they
+    rebuild a durable review-chain proof artifact and immediately admit its L10
+    handoff. Runtime closure capture, release evidence MemoryOS candidate
+    guidance, and closure reconciler file-backed L10 conditions no longer
+    repeat the producer build plus graph/lane admission fallback at each
+    callsite. Copied review-chain handoff evaluations, including release-pack
+    replay linkage, still use the lower-level shared admission result directly.
+    This is producer/admission routing cleanup only; it does not create review
+    truth, GitHub truth, merge truth, live MemoryOS proof, release readiness,
+    or full L8-L10 closure.
+    Review-closure artifact-ref consumers now also have one
+    `load_and_admit_review_closure_handoff` helper for the load/evaluate/admit
+    boundary. Review-chain L10 proof production consumes that context when it
+    reloads the current review-closure artifact, so missing refs, escaping refs,
+    graph/lane admission, forbidden-claim preservation, server-truth overclaim
+    rejection, and ready-only source/candidate refs stay behind the shared
+    review-closure handoff admission result instead of a producer-local second
+    step. The older load/evaluate helper remains available for copied or
+    diagnostic evaluation-only callers. This is admission-boundary refactoring
+    only; it does not create review truth, GitHub truth, merge truth, live
+    MemoryOS proof, release readiness, or full L8-L10 closure.
+    Release evidence candidate MemoryOS provenance paths now also consume
+    review-closure artifact refs through that shared
+    `load_and_admit_review_closure_handoff` helper. Direct review-closure
+    candidate guidance and runtime-closure current-handoff revalidation no
+    longer rebuild review-closure handoffs from already-loaded payloads at the
+    consumer; escaping/missing artifact refs, graph/lane admission,
+    forbidden-claim preservation, server-truth overclaim rejection, and
+    ready-only source/candidate refs come from the shared review-closure
+    handoff admission result. This is L10 provenance candidate consolidation
+    only; it does not make MemoryOS an L8/L9 authority and does not create live
+    MemoryOS proof, review truth, GitHub truth, merge truth, release readiness,
+    or full L8-L10 closure.
+    The shared review-closure and review-chain L10 admission-result helpers now
+    also expose admitted ref count fields alongside the admitted ref lists.
+    Runtime closure capture and release-evidence MemoryOS candidate guidance
+    consume those admission-result count fields instead of recomputing counts
+    from copied local lists. This keeps source/candidate/current-handoff count
+    projection behind the same admission boundary as ready-only refs. It is
+    diagnostic/provenance projection cleanup only; it does not create review
+    truth, GitHub truth, merge truth, live MemoryOS proof, release readiness,
+    or full L8-L10 closure.
+    The shared review-closure handoff admission result now also carries
+    inherited `source_manual_gaps` and normalized `forbidden_claims`. Runtime
+    closure review-closure details consume those guardrail fields from the
+    shared admission result instead of re-reading the raw review-closure
+    artifact payload after admission. Non-ready review-closure handoffs still
+    expose no ready refs, and missing forbidden claims remain a manual-gap
+    admission issue. The copied review-closure handoff admission path now
+    carries source manual gaps into that shared result, so producer-ready copied
+    handoffs no longer require the higher result helper to reread raw manual-gap
+    fields. This is guardrail projection consolidation only; it does not create
+    review truth, GitHub truth, merge truth, live MemoryOS proof, release
+    readiness, or full L8-L10 closure.
+    Runtime closure review-chain proof details now likewise consume
+    `source_manual_gaps` and normalized `forbidden_claims` from the shared
+    review-chain L10 admission result instead of re-reading the raw
+    review-chain proof payload after admission. Missing source forbidden claims
+    still keep the chain `manual_gap` through the admission issue, while
+    downstream details preserve the required guardrail projection. This is
+    review-chain L10 guardrail projection consolidation only; it does not
+    create review truth, GitHub truth, merge truth, live MemoryOS proof, release
+    readiness, or full L8-L10 closure.
+    The shared review-closure handoff evaluator now also owns the
+    `release_evidence_handoff_status == candidate_input_ready` contract before
+    admitting an L9 review-closure artifact into L10 consumers. Runtime closure
+    capture no longer carries a separate consumer-local check for that status,
+    and direct release-evidence MemoryOS candidate guidance now fails closed
+    through the same shared handoff admission result when the status is missing
+    or non-ready. This is L9-to-L10 handoff contract consolidation only; it does
+    not create review truth, GitHub truth, merge truth, live MemoryOS proof,
+    release readiness, or full L8-L10 closure.
+    The review-closure handoff producer now shares one base contract issue
+    helper between the low-level `build_god_room_review_closure_handoff` gate
+    and the higher-level `build_review_closure_handoff_evaluation` surface.
+    Schema, proof level, server-truth overclaim, release handoff status, and
+    inherited forbidden-claim checks are no longer duplicated in those producer
+    paths; the low-level gate still preserves its fail-fast summaries while the
+    evaluation surface keeps full issue aggregation. This is producer-internal
+    contract consolidation only; it does not create review truth, GitHub truth,
+    merge truth, live MemoryOS proof, release readiness, or full L8-L10
+    closure.
+    Closure reconciler file-backed `PatchForwardLineagePresent` now consumes
+    admitted `patch_forward_artifact_refs` from the shared review-chain L10
+    admission result instead of re-parsing caller-supplied
+    `local_execution_review_session` / `review_closure` projection state.
+    Non-ready file-backed review-chain proofs remain `manual_gap` through the
+    shared L10 admission summary. The legacy inline compatibility path now
+    routes its bounded patch-forward session/ref checks through
+    `admit_review_chain_patch_forward_lineage`, which first consumes the shared
+    inline release-handoff admission and then emits one patch-forward lineage
+    admission result for the controller condition. This removes the controller's
+    local session/ref parser while keeping inline compatibility bounded and
+    contract-proof only; it does not create review truth, GitHub truth, merge
+    truth, live MemoryOS proof, release readiness, or full L8-L10 closure.
+    The shared review-chain L10 admission result now also owns admitted
+    `provenance_source_refs`, the ready-only union of admitted review-chain
+    source refs and patch-forward artifact refs. Release evidence MemoryOS
+    candidate guidance consumes that admitted provenance list/count instead of
+    rebuilding the same union locally from separate admission fields and no
+    longer falls back to generic admitted source refs or local ref counts.
+    Release evidence pack review-chain linkage now also consumes the same
+    admitted provenance refs when linking replay-bundle lineage, instead of
+    rebuilding linkage refs from raw source-ref fields. Non-ready review-chain
+    L10 handoffs expose no provenance source refs. This is provenance admission
+    consolidation only; it does not make MemoryOS or release-pack linkage an
+    authority path and does not create review truth, GitHub truth, merge truth,
+    live MemoryOS proof, release readiness, or full L8-L10 closure.
+    The same review-chain L10 admission result now also carries
+    `source_manual_gaps` from the source review-chain proof as guardrail
+    metadata. Release evidence pack review-chain linkage resolves or retains
+    release-linkage gaps from the admitted manual-gap list, without falling
+    back to raw copied replay details after admission.
+    This preserves inherited manual gaps without letting release-pack linkage
+    become a review truth or release-readiness authority.
+    Release evidence pack review-chain linkage now also takes
+    `forbidden_claims` directly from the shared review-chain L10 admission
+    result instead of prepending or preserving required claims locally. A
+    copied admission payload that lacks guardrails must now be handled by the
+    shared admission result/issue boundary, not repaired by release-pack
+    aggregation. This is guardrail projection consolidation only; it does not
+    create review truth, GitHub truth, merge truth, live MemoryOS proof,
+    release readiness, or full L8-L10 closure.
+    The review-chain L10 handoff producer/admission path now also shares one
+    base contract issue helper for schema/status/proof-level, server-truth, and
+    required-forbidden-claim guardrails. The producer and copied-admission
+    contexts still keep their separate scope, bounded-session, and
+    current-handoff checks, but they no longer duplicate the base guardrail
+    issue construction. This is contract-proof refactor consolidation only; it
+    does not create review truth, GitHub truth, merge truth, live MemoryOS
+    proof, release readiness, or full L8-L10 closure.
+    Copied review-closure handoff admission and generic release-handoff
+    admission now also share one ref/guardrail helper for server-truth
+    overclaim rejection, ready-only source refs, candidate-artifact
+    resolvability, and required forbidden-claim checks. Schema, status, and
+    graph/lane scope checks remain at the specific admission callers, while
+    common ref guardrails no longer have separate parser branches. This is
+    L9-to-L10 admission refactor consolidation only; it does not create review
+    truth, GitHub truth, merge truth, live MemoryOS proof, release readiness,
+    or full L8-L10 closure.
+    The same copied review-closure handoff admission and scoped release-handoff
+    admission paths now share one graph/lane scope issue helper. Each caller
+    still owns its schema/status preconditions and caller-specific issue text,
+    but graph/lane matching no longer has separate parser branches for copied
+    review-closure handoffs versus release-handoff compatibility payloads. This
+    is scope-admission refactor consolidation only; it does not create review
+    truth, GitHub truth, merge truth, live MemoryOS proof, release readiness,
+    or full L8-L10 closure.
+    GOD-room runtime closure review-closure and review-chain detail projection
+    now takes `manual_gaps` and `forbidden_claims` only from the rebuilt shared
+    handoff admission results. The runtime closure capture path no longer
+    falls back to raw artifact guardrail fields after admission; missing or
+    tampered guardrails must flow through the shared admission issue/result
+    boundary. This is runtime-closure guardrail projection consolidation only;
+    it does not create review truth, GitHub truth, merge truth, live MemoryOS
+    proof, release readiness, or full L8-L10 closure.
+    Release evidence pack review-chain linkage now likewise consumes admitted
+    manual gaps, admitted provenance refs, and normalized forbidden claims only
+    from the shared review-chain L10 admission result. It no longer falls back
+    to raw runtime replay `manual_gaps`, generic admission `source_refs`, or a
+    local required-claim list after admission. This removes duplicated
+    compatibility branches while preserving aggregation-only semantics; it does
+    not create review truth, GitHub truth, merge truth, live MemoryOS proof,
+    release readiness, or full L8-L10 closure.
+    Closure-level required forbidden claims now also include
+    `local_tests_are_review_truth`, `full_l8_l10_closure`,
+    `overnight_readiness`, and `natural_peer_god_groupchat`. The review-closure
+    handoff required-claim set is derived from the local-execution candidate
+    claims plus the closure-level required claims, and the review-chain L10
+    required-claim set is derived from that review-closure set plus
+    review-chain-specific `server_side_truth` and
+    `worker_self_review_equals_review_truth` guardrails. The chat API review
+    closure producer and focused production-path fixtures now carry the same
+    expanded required set, so copied or rebuilt handoffs that drop one of these
+    claims fail closed through shared admission instead of passing with an old
+    narrower claim set. This is forbidden-claim admission hardening only; it
+    does not turn local tests or worker output into review truth, does not
+    claim overnight readiness, and does not create GitHub review truth, merge
+    truth, live MemoryOS proof, or full L8-L10 closure.
   - MemoryOS live gate source-ref admission now excludes MemoryOS-owned refs
     from the upstream source-ref count. A live trace must cite a non-MemoryOS
     xmuse source such as conversation, lane, blueprint, review, or release
     lineage; otherwise it remains blocked/manual-gap and keeps `live_memoryos`
     forbidden. This prevents a MemoryOS trace artifact from proving itself.
-  - PR #43 latest verified CI after this slice refresh is for remote head
-  `b154021111400863098f11ed98eeb24d6fad9311` in run `27607281313`; merge
-  state was `CLEAN` when last checked. Local changes after that head remain
-  clean after push verification.
+  - PR #43 latest verified CI after this refresh is for remote head
+  `2c03b2492e9e0a618f21e19120192b0a46765dbf` in run `27630501256`; merge
+  state was `CLEAN` when last checked. Local commits after that head and the
+  current uncommitted diff are local-only and not CI/server verified.
 - Missing production closure:
   - No current live MemoryOS Lite trace proof is established for this branch
     head.
