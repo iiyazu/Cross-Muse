@@ -24,6 +24,11 @@ truth, merge truth, live MemoryOS proof, or full closure.
   runtime-kernel run: human only mentioned Codex architect, Codex created a
   durable review mention, and OpenCode replied through durable callback
   writeback.
+- Codex architect produced a durable `lane_graph` proposal through
+  `chat_emit_proposal` in the 2026-06-18 proposal run. The first run exposed
+  that automatic review triggers lacked readable proposal content for OpenCode;
+  a follow-up fix made the trigger payload reviewable and OpenCode returned a
+  proposal-specific `PASS`.
 - Proposal approval while a runner is active can dispatch real provider work
   against the repository worktree unless a safer execution worktree or dry-run
   mode is used.
@@ -333,23 +338,77 @@ Next direction:
 - Then use the real groupchat to create a small durable decision/proposal rather
   than manually constructing downstream artifacts.
 
+### F13. Automatic review trigger payload needed proposal content
+
+Severity: product blocker for proposal review usefulness, locally fixed.
+
+The first 2026-06-18 Loop 6 proposal run proved that Codex architect could
+create a durable `lane_graph` proposal through `chat_emit_proposal`, but the
+automatic review trigger sent to OpenCode review lacked readable proposal
+content.
+
+Observed before fix:
+
+```text
+proposal_id=prop_f9229b1926b546349803ca5fd93cac5a
+review_inbox=inbox_0af29f72fe114b428d15f8a83ad55223
+review payload keys=reviewable_type, source_message_id, trigger_mode
+OpenCode reply=no inbox item content was delivered
+```
+
+Root cause:
+
+- `_ensure_review_trigger()` created a structurally valid inbox item, but did
+  not include `payload.content`.
+- The OpenCode peer adapter uses `payload.content` as the natural-language
+  request for review turns.
+
+Fix direction applied:
+
+- Build automatic review-trigger payloads from the proposal message envelope and
+  source content.
+- Preserve structured fields: `reviewable_type`, `source_message_id`, and
+  `trigger_mode`.
+
+Observed after fix:
+
+```text
+proposal_id=prop_ab84aa38b9614bdaa628b854559359ed
+review_inbox=inbox_6ae7f911bf2c4b39b325373d178dbe8a
+payload.content includes summary, lane feature_id, lane prompt, references,
+  and source proposal message content
+OpenCode reply starts with **PASS.**
+review delivery_mode=mcp_writeback
+review degraded_reason=null
+```
+
+Impact:
+
+- The groupchat can now produce a durable proposal and route a readable
+  automatic proposal review trigger to OpenCode in local runtime.
+- This still stops before approval and dispatch.
+
+Next direction:
+
+- Before approving any proposal with a live runner, add or verify an isolated
+  execution worktree / no-dispatch guard so Loop 7 cannot write the control
+  worktree.
+
 ## Recommended Next Implementation Order
 
 1. Add a bounded multi-turn reliability gate for the native Codex + OpenCode
    handoff path.
-2. Use the real groupchat to produce a small durable decision/proposal and keep
-   source refs to the chat messages.
-3. Add dry-run/no-dispatch controls for proposal approval while a runner is
+2. Add dry-run/no-dispatch controls for proposal approval while a runner is
    live.
-4. Fix health process discovery so readiness aligns with actual service PIDs
+3. Fix health process discovery so readiness aligns with actual service PIDs
    and endpoint status.
-5. Add a public participant-session mapping to conversation creation/inspection.
-6. Normalize or document black-box response envelopes for chat write/proposal
+4. Add a public participant-session mapping to conversation creation/inspection.
+5. Normalize or document black-box response envelopes for chat write/proposal
    APIs.
-7. Add default gate profile handling for proposal-created lanes.
-8. Add a reliability gate for real app-server soak so mixed pass/fail evidence
+6. Add default gate profile handling for proposal-created lanes.
+7. Add a reliability gate for real app-server soak so mixed pass/fail evidence
    is preserved instead of collapsed into the latest result.
-9. Keep Ray/app-server and soak tests separate from closure claims until a real
+8. Keep Ray/app-server and soak tests separate from closure claims until a real
    candidate/review/handoff producer-consumer path feeds `closure_spine`.
 
 ## 2026-06-18 Repeated Run Notes
@@ -381,6 +440,9 @@ Additional 2026-06-18 runtime-kernel evidence:
   peer scheduler.
 - Codex-to-OpenCode handoff succeeded twice across runner restart/resume in a
   fresh isolated runtime root.
+- Codex architect emitted a durable no-dispatch `lane_graph` proposal through
+  `chat_emit_proposal`; after a payload fix, automatic OpenCode review received
+  readable proposal content and returned a proposal-specific `PASS`.
 - The proof level is local runtime proof only.
 - The current evidence still does not prove isolated fullchain execution,
   independent review passed, GitHub truth, live MemoryOS, or full closure.
