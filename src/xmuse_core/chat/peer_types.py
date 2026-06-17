@@ -7,10 +7,17 @@ from xmuse_core.chat.models import ChatInboxItem, ChatMessage
 
 
 class PeerChatError(RuntimeError):
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        details: dict[str, Any] | None = None,
+    ) -> None:
         super().__init__(f"{code}: {message}")
         self.code = code
         self.message = message
+        self.details = details or {}
 
 
 @dataclass(frozen=True)

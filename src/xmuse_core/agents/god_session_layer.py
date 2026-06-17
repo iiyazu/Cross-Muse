@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from hashlib import sha256
 from pathlib import Path
 
 from xmuse_core.agents.god_session_registry import GodSessionRecord, GodSessionRegistry
@@ -17,6 +18,7 @@ class LiveGodSession:
 
 
 RuntimeKey = AgentRuntime | str
+_UNSET = object()
 
 
 class GodSessionLayer:
@@ -79,6 +81,7 @@ class GodSessionLayer:
         live = self._find_live_session_by_conversation_participant(
             conversation_id,
             participant_id,
+            feature_scope_id=feature_scope_id,
         )
         if live is not None:
             if self._record_peer_metadata_can_migrate(
@@ -135,9 +138,10 @@ class GodSessionLayer:
             record = self._registry.find_by_conversation_participant(
                 conversation_id,
                 participant_id,
+                feature_scope_id=feature_scope_id,
             )
         except KeyError:
-            record = self._create_conversation_record(
+            record = self._legacy_record_for_scope_migration(
                 conversation_id=conversation_id,
                 participant_id=participant_id,
                 role=role,
@@ -147,6 +151,37 @@ class GodSessionLayer:
                 worktree=worktree,
                 feature_scope_id=feature_scope_id,
             )
+            if record is None:
+                record = self._create_conversation_record(
+                    conversation_id=conversation_id,
+                    participant_id=participant_id,
+                    role=role,
+                    agent=agent,
+                    model=model,
+                    prompt_fingerprint=prompt_fingerprint,
+                    worktree=worktree,
+                    feature_scope_id=feature_scope_id,
+                )
+            else:
+                record = self._registry.update_peer_metadata(
+                    record.god_session_id,
+                    **_merged_peer_metadata(
+                        record,
+                        model=model,
+                        prompt_fingerprint=prompt_fingerprint,
+                        worktree=worktree,
+                        feature_scope_id=feature_scope_id,
+                    ),
+                )
+                self._assert_record_shape_matches(
+                    record,
+                    role,
+                    agent,
+                    model=model,
+                    prompt_fingerprint=prompt_fingerprint,
+                    worktree=worktree,
+                    feature_scope_id=feature_scope_id,
+                )
         else:
             if self._record_peer_metadata_can_migrate(
                 record,
@@ -224,6 +259,7 @@ class GodSessionLayer:
         session_address, session_inbox_id = build_conversation_session_identity(
             conversation_id=conversation_id,
             participant_id=participant_id,
+            feature_scope_id=feature_scope_id,
         )
         return self._registry.create(
             role=role,
@@ -238,6 +274,45 @@ class GodSessionLayer:
             worktree=str(worktree) if worktree is not None else None,
             feature_scope_id=feature_scope_id,
         )
+
+    def _legacy_record_for_scope_migration(
+        self,
+        *,
+        conversation_id: str,
+        participant_id: str,
+        role: str,
+        agent: AgentDescriptor,
+        model: str | None = None,
+        prompt_fingerprint: str | None = None,
+        worktree: Path | None = None,
+        feature_scope_id: str | None = None,
+    ) -> GodSessionRecord | None:
+        if feature_scope_id is None:
+            return None
+        try:
+            record = self._registry.find_by_conversation_participant(
+                conversation_id,
+                participant_id,
+            )
+        except KeyError:
+            return None
+        if record.feature_scope_id is not None:
+            return None
+        if (
+            record.role != role
+            or record.agent_name != agent.name
+            or record.runtime != _runtime_value(agent.runtime)
+        ):
+            return None
+        if not self._record_peer_metadata_can_migrate(
+            record,
+            model=model,
+            prompt_fingerprint=prompt_fingerprint,
+            worktree=worktree,
+            feature_scope_id=feature_scope_id,
+        ):
+            return None
+        return record
 
     async def send_message(
         self,
@@ -307,11 +382,16 @@ class GodSessionLayer:
         self,
         conversation_id: str,
         participant_id: str,
+        feature_scope_id: str | None | object = _UNSET,
     ) -> LiveGodSession | None:
         for live in reversed(list(self._live_sessions.values())):
             if (
                 live.record.conversation_id == conversation_id
                 and live.record.participant_id == participant_id
+                and (
+                    feature_scope_id is _UNSET
+                    or live.record.feature_scope_id == feature_scope_id
+                )
             ):
                 return live
         return None
@@ -527,12 +607,31 @@ def build_conversation_session_identity(
     *,
     conversation_id: str,
     participant_id: str,
+    feature_scope_id: str | None = None,
 ) -> tuple[str, str]:
     short_conv = conversation_id.replace("conv_", "")[:12]
-    return (
-        f"@conv_{short_conv}:{participant_id}",
-        f"inbox-{conversation_id}-{participant_id}",
+    address_scope_suffix, inbox_scope_suffix = _feature_scope_identity_suffixes(
+        feature_scope_id
     )
+    return (
+        f"@conv_{short_conv}:{participant_id}{address_scope_suffix}",
+        f"inbox-{conversation_id}-{participant_id}{inbox_scope_suffix}",
+    )
+
+
+def _feature_scope_identity_suffixes(feature_scope_id: str | None) -> tuple[str, str]:
+    if feature_scope_id is None:
+        return "", ""
+    cleaned = feature_scope_id.strip()
+    if not cleaned:
+        return "", ""
+    fragment = "".join(
+        char if char.isalnum() or char in {"-", "_"} else "-"
+        for char in cleaned
+    ).strip("-")
+    digest = sha256(cleaned.encode("utf-8")).hexdigest()[:10]
+    suffix = f"feature-{(fragment or 'scope')[:48]}-{digest}"
+    return f":{suffix}", f"-{suffix}"
 
 
 def _compatible_optional(existing: str | None, expected: str | None) -> bool:

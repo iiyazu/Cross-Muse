@@ -225,10 +225,11 @@ async def run(
                 native_layer=god_session_layer,
             )
             runtime_god_layers.append(peer_god_layer)
+            peer_chat_worktree = _peer_chat_runtime_worktree(xmuse_root)
             peer_chat_scheduler = PeerChatScheduler(
                 db_path=xmuse_root / "chat.db",
                 god_layer=peer_god_layer,
-                worktree=ROOT,
+                worktree=peer_chat_worktree,
                 scheduler_id="platform-runner",
                 claim_ttl_s=240,
                 response_wait_s=180.0,
@@ -1316,6 +1317,14 @@ def main_arg_parser() -> argparse.ArgumentParser:
         help="hold merge/terminate verdicts for external final-action approval",
     )
     parser.add_argument(
+        "--no-auto-merge",
+        action="store_true",
+        help=(
+            "runtime-probe safety mode: hold accepted lanes for final-action "
+            "approval instead of auto-merging into the control branch"
+        ),
+    )
+    parser.add_argument(
         "--god-runtime",
         choices=("codex",),
         default=None,
@@ -1497,6 +1506,12 @@ def _runtime_paths_from_args(args: argparse.Namespace) -> tuple[Path, Path]:
     return xmuse_root, lanes_path
 
 
+def _peer_chat_runtime_worktree(xmuse_root: Path) -> Path:
+    worktree = xmuse_root / "peer_chat_worktree"
+    worktree.mkdir(parents=True, exist_ok=True)
+    return worktree
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
     parser = main_arg_parser()
@@ -1531,7 +1546,9 @@ def main() -> None:
         max_concurrent=args.max_concurrent,
         graph_id=args.graph_id,
         resolution_id=args.resolution_id,
-        require_final_action_approval=args.require_final_action_approval,
+        require_final_action_approval=(
+            args.require_final_action_approval or args.no_auto_merge
+        ),
         god_runtime=args.god_runtime,
         auto_evolve=args.auto_evolve,
         blueprint_path=args.blueprint,

@@ -789,6 +789,118 @@ def test_proposal_approval_requires_execute_collaboration_confirmation(
     assert allowed.status_code == 200
 
 
+def test_proposal_approval_accepts_execute_address_target_confirmation(
+    tmp_path: Path,
+) -> None:
+    conversation_id = _conversation(tmp_path)
+    store = ChatCollaborationStore(tmp_path / "chat.db")
+    run = store.create_request(
+        conversation_id=conversation_id,
+        goal="Require execute confirmation with address target",
+        initiator="architect",
+        targets=["@execute"],
+        callback_target="@architect",
+        question="Confirm whether the artifact is executable.",
+        context_refs=["message:intake"],
+        idempotency_key="execute-address-confirmation-gate",
+        timeout_s=480,
+    )
+    store.record_response(
+        run.run_id,
+        target="@execute",
+        content=json.dumps(
+            {
+                "type": "execute_feasibility_verdict",
+                "status": "executable",
+                "summary": "Lane graph has clear scope and required evidence.",
+                "evidence_refs": ["message:intake", "proposal:lane-v14-address-execute"],
+            }
+        ),
+        response_status="received",
+    )
+    client = TestClient(create_app(tmp_path))
+    proposal = client.post(
+        f"/api/chat/conversations/{conversation_id}/proposals",
+        json={
+            "author": "architect",
+            "proposal_type": "lane_graph",
+            "content": json.dumps(
+                {
+                    "summary": "Address execute confirmation",
+                    "lanes": [
+                        {
+                            "feature_id": "lane-v14-address-execute",
+                            "prompt": "Dispatch after address execute confirms feasibility.",
+                            "depends_on": [],
+                            "capabilities": ["code"],
+                        }
+                    ],
+                }
+            ),
+            "references": [f"collaboration:{run.run_id}"],
+        },
+    )
+    assert proposal.status_code == 201
+
+    allowed = client.post(
+        f"/api/chat/proposals/{proposal.json()['id']}/approve",
+        json={
+            "approved_by": ["architect"],
+            "approval_mode": "auto",
+            "goal_summary": "Address execute confirmed feasibility",
+        },
+    )
+
+    assert allowed.status_code == 200
+
+
+def test_lane_graph_approval_preserves_review_runtime_in_projection(
+    tmp_path: Path,
+) -> None:
+    conversation_id = _conversation(tmp_path)
+    client = TestClient(create_app(tmp_path))
+    proposal = client.post(
+        f"/api/chat/conversations/{conversation_id}/proposals",
+        json={
+            "author": "architect",
+            "proposal_type": "lane_graph",
+            "content": json.dumps(
+                {
+                    "summary": "Preserve review runtime",
+                    "lanes": [
+                        {
+                            "feature_id": "lane-review-runtime-opencode",
+                            "prompt": "Preserve OpenCode review routing.",
+                            "depends_on": [],
+                            "capabilities": ["code"],
+                            "review_runtime": "opencode",
+                        }
+                    ],
+                }
+            ),
+            "references": [],
+        },
+    )
+    assert proposal.status_code == 201
+
+    approved = client.post(
+        f"/api/chat/proposals/{proposal.json()['id']}/approve",
+        json={
+            "approved_by": ["architect"],
+            "approval_mode": "manual",
+            "goal_summary": "Approve review runtime projection",
+        },
+    )
+
+    assert approved.status_code == 200
+    graph_id = f"{approved.json()['id']}-graph-v{approved.json()['version']}"
+    graph = json.loads((tmp_path / "lane_graphs" / f"{graph_id}.json").read_text())
+    assert graph["lanes"][0]["review_runtime"] == "opencode"
+    lanes = json.loads((tmp_path / "feature_lanes.json").read_text())["lanes"]
+    assert lanes[0]["feature_id"] == "lane-review-runtime-opencode"
+    assert lanes[0]["review_runtime"] == "opencode"
+
+
 def test_proposal_approval_rejects_freeform_execute_confirmation(
     tmp_path: Path,
 ) -> None:

@@ -1,5 +1,6 @@
 import asyncio
 import json
+import subprocess
 import time
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -93,7 +94,9 @@ async def test_dispatch_lane_records_cas_metadata(setup):
     lane = orch._sm.get_lane("lane-1")
     assert lane["status"] == "dispatched"
     assert lane["dispatch_status_guard"] == "pending"
-    assert lane["dispatch_projection_revision"] == 0
+    assert lane["dispatch_projection_revision"] == 1
+    assert lane["branch"] == "lane-1"
+    assert lane["base_head_sha"] == "unknown"
     assert lane["runner_id"] == orch._runner_id
     assert isinstance(lane["dispatch_attempt_id"], str)
     assert lane["dispatch_attempt_id"].startswith("dispatch-lane-1-")
@@ -371,7 +374,7 @@ async def test_dispatch_lane_initializes_missing_isolated_worktree(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_dispatch_lane_reuses_existing_worktree_without_git_initialization(setup):
+async def test_dispatch_lane_records_branch_for_existing_non_git_worktree(setup):
     tmp_path, lanes_path = setup
     orch = PlatformOrchestrator(
         lanes_path=lanes_path, xmuse_root=tmp_path, mcp_port=9999,
@@ -387,8 +390,87 @@ async def test_dispatch_lane_reuses_existing_worktree_without_git_initialization
 
     lane = orch._sm.get_lane("lane-1")
     assert lane["worktree"] == str(tmp_path)
-    assert "branch" not in lane
+    assert lane["branch"] == "lane-1"
+    assert lane["base_head_sha"] == "unknown"
     git_output.assert_not_called()
+    create_worktree.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_lane_attaches_existing_detached_git_worktree_to_lane_branch(
+    tmp_path,
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.email", "xmuse@example.invalid"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "xmuse"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-m", "base"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    base_head = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    subprocess.run(
+        ["git", "checkout", "--detach", "HEAD"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+
+    lanes_path = tmp_path / "feature_lanes.json"
+    lanes_path.write_text(json.dumps({"lanes": [
+        {
+            "feature_id": "lane-existing-detached",
+            "status": "pending",
+            "prompt": "fix bug",
+            "worktree": str(repo),
+        },
+    ]}))
+    (tmp_path / "error_knowledge.json").write_text(json.dumps({"entries": []}))
+    (tmp_path / "xmuse" / "god_prompts").mkdir(parents=True)
+    (tmp_path / "xmuse" / "god_prompts" / "execution_god.md").write_text("exec")
+    (tmp_path / "xmuse" / "god_prompts" / "review_god.md").write_text("review")
+    orch = PlatformOrchestrator(
+        lanes_path=lanes_path, xmuse_root=tmp_path, mcp_port=9999,
+    )
+
+    async def fake_spawn(*, god_config, lane_id, prompt, worktree):
+        return SpawnResult(exit_code=1, stdout="", stderr="stop before gate")
+
+    with patch.object(orch, "_create_or_reuse_worktree") as create_worktree:
+        with patch.object(orch._spawner, "spawn", side_effect=fake_spawn):
+            await orch.dispatch_lane("lane-existing-detached")
+
+    lane = orch._sm.get_lane("lane-existing-detached")
+    assert lane["worktree"] == str(repo)
+    assert lane["branch"] == "lane-existing-detached"
+    assert lane["base_head_sha"] == base_head
+    current_branch = subprocess.run(
+        ["git", "branch", "--show-current"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    assert current_branch == "lane-existing-detached"
     create_worktree.assert_not_called()
 
 
@@ -439,7 +521,7 @@ async def test_execution_transport_receives_provider_invocation(setup):
     assert invocation.task_type is TaskCapability.LANE_COORDINATION
     assert invocation.provider_profile_ref == "codex.default"
     lane = orch._sm.get_lane("lane-1")
-    assert "provider_profile_ref" not in lane
+    assert lane["provider_profile_ref"] == "codex.default"
 
 
 @pytest.mark.asyncio
@@ -504,7 +586,7 @@ async def test_execution_transport_prefers_ready_low_cost_worker_and_records_sel
     assert invocation.task_type is TaskCapability.BOUNDED_CODE_WRITING
     assert invocation.provider_profile_ref == "opencode.deepseek_flash_worker"
     lane = orch._sm.get_lane("lane-worker-ready")
-    assert "provider_profile_ref" not in lane
+    assert lane["provider_profile_ref"] == "opencode.deepseek_flash_worker"
     records = ProviderSelectionRecordStore.from_xmuse_root(tmp_path).list_records(
         lane_id="lane-worker-ready"
     )
@@ -579,7 +661,7 @@ async def test_execution_transport_falls_back_to_codex_worker_when_low_cost_work
     assert invocation.task_type is TaskCapability.BOUNDED_CODE_WRITING
     assert invocation.provider_profile_ref == "codex.worker"
     lane = orch._sm.get_lane("lane-worker-fallback")
-    assert "provider_profile_ref" not in lane
+    assert lane["provider_profile_ref"] == "codex.worker"
     records = ProviderSelectionRecordStore.from_xmuse_root(tmp_path).list_records(
         lane_id="lane-worker-fallback"
     )

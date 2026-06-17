@@ -180,6 +180,144 @@ def test_create_conversation_accepts_provider_profile_participants(tmp_path: Pat
             "created_at": payload["participants"][0]["created_at"],
         }
     ]
+    listed = service.list_participants(
+        conversation_id=payload["conversation"]["id"],
+        registry_path=tmp_path / "god_sessions.json",
+    )
+    review = next(
+        participant for participant in listed["participants"]
+        if participant["role"] == "review"
+    )
+    assert review["session"]["provider_id"] == "codex"
+    assert review["session"]["profile_id"] == "review"
+    assert review["session"]["runtime"] == "codex"
+
+
+def test_create_conversation_accepts_explicit_opencode_review_participant(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "chat.db"
+    service = PeerChatService(db)
+
+    payload = service.create_conversation(
+        title="OpenCode review",
+        participants=[
+            {
+                "role": "review",
+                "display_name": "Review OpenCode",
+                "provider_id": "opencode",
+                "profile_id": "review",
+                "cli_kind": "opencode",
+                "model": "gpt-oss",
+            }
+        ],
+    )
+
+    assert payload["participants"] == [
+        {
+            "participant_id": payload["participants"][0]["participant_id"],
+            "conversation_id": payload["conversation"]["id"],
+            "role": "review",
+            "display_name": "Review OpenCode",
+            "provider_id": "opencode",
+            "profile_id": "review",
+            "cli_kind": "opencode",
+            "model": "gpt-oss",
+            "role_template_id": payload["participants"][0]["role_template_id"],
+            "status": "active",
+            "last_seen_at": None,
+            "created_at": payload["participants"][0]["created_at"],
+        }
+    ]
+    listed = service.list_participants(
+        conversation_id=payload["conversation"]["id"],
+        registry_path=tmp_path / "god_sessions.json",
+    )
+    review = next(
+        participant for participant in listed["participants"]
+        if participant["role"] == "review"
+    )
+    assert review["session"]["provider_id"] == "opencode"
+    assert review["session"]["profile_id"] == "review"
+    assert review["session"]["runtime"] == "opencode"
+    listed = service.list_participants(
+        conversation_id=payload["conversation"]["id"],
+        registry_path=tmp_path / "god_sessions.json",
+    )
+    review = next(
+        participant for participant in listed["participants"]
+        if participant["role"] == "review"
+    )
+    assert review["session"]["runtime"] == "opencode"
+    assert review["session"]["model"] == "gpt-oss"
+
+
+def test_create_conversation_infers_review_profile_for_opencode_participant(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "chat.db"
+    service = PeerChatService(db)
+
+    payload = service.create_conversation(
+        title="OpenCode review",
+        participants=[
+            {
+                "role": "review",
+                "display_name": "Review GOD",
+                "provider_id": "opencode",
+                "cli_kind": "opencode",
+                "model": "deepseek-v4-flash",
+            }
+        ],
+    )
+
+    assert payload["participants"] == [
+        {
+            "participant_id": payload["participants"][0]["participant_id"],
+            "conversation_id": payload["conversation"]["id"],
+            "role": "review",
+            "display_name": "Review GOD",
+            "provider_id": "opencode",
+            "profile_id": "review",
+            "cli_kind": "opencode",
+            "model": "deepseek-v4-flash",
+            "role_template_id": payload["participants"][0]["role_template_id"],
+            "status": "active",
+            "last_seen_at": None,
+            "created_at": payload["participants"][0]["created_at"],
+        }
+    ]
+
+
+def test_create_conversation_rejects_explicit_profile_mismatch_for_role(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "chat.db"
+    service = PeerChatService(db)
+
+    with pytest.raises(PeerChatError) as exc_info:
+        service.create_conversation(
+            title="Invalid review",
+            participants=[
+                {
+                    "role": "review",
+                    "display_name": "Review GOD",
+                    "provider_id": "opencode",
+                    "profile_id": "default",
+                    "cli_kind": "opencode",
+                    "model": "deepseek-v4-flash",
+                }
+            ],
+        )
+
+    assert exc_info.value.code == "participant_profile_role_mismatch"
+    assert exc_info.value.details == {
+        "role": "review",
+        "expected_profile_id": "review",
+        "provided_profile_id": "default",
+        "role_profile_map": {"review": "review"},
+    }
+    assert ChatStore(db).list_conversations() == []
 
 
 def test_create_conversation_defaults_to_non_final_quality_participant_models(

@@ -159,6 +159,7 @@ class LaneNode(BaseModel):
     gate_profiles: list[str] = Field(default_factory=list)
     source_lane_id: str | None = None
     feature_group: str | None = None
+    review_runtime: str | None = None
     blueprint_refs: list[str] = Field(default_factory=list)
     acceptance_criteria: list[str] = Field(default_factory=list)
     expected_touched_areas: list[str] = Field(default_factory=list)

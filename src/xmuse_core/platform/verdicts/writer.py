@@ -7,6 +7,7 @@ plane, plus gate-report path resolution.
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -26,6 +27,17 @@ class ReviewPlaneProtocol(Protocol):
         *,
         require_final_action_approval: bool | None = None,
     ) -> Any: ...
+
+
+class ReviewFailurePlaneProtocol(Protocol):
+    """Review plane surface needed to close a failed review task."""
+
+    @property
+    def store(self) -> Any: ...
+
+
+def _utc_now() -> str:
+    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def stable_verdict_id_for_lane(
@@ -113,6 +125,48 @@ def ingest_rework_verdict(
             "review_plane_rework_verdict_ingest_failed",
             lane_id=lane_id,
             task_id=task_id,
+        )
+
+
+def ingest_review_failure_verdict(
+    lane_id: str,
+    reason: str,
+    *,
+    lane: dict[str, Any],
+    review_plane: ReviewFailurePlaneProtocol,
+    evidence_refs: list[str] | None = None,
+) -> None:
+    """Close the current ReviewTask when the review provider emitted no verdict.
+
+    This is not a semantic Review GOD decision.  It records a synthetic verdict
+    with ``status="review_failed"`` so the review task is auditable without
+    treating the failure as merge or rework truth.
+    """
+    task_id = lane.get("review_task_id")
+    if not task_id:
+        return
+    verdict = ReviewVerdict(
+        id=f"verdict-review-failure-{task_id}",
+        lane_id=lane_id,
+        decision=ReviewDecision.TERMINATE,
+        status="review_failed",
+        summary=f"Review provider did not emit a parseable verdict. Reason: {reason}.",
+        evidence_refs=list(evidence_refs or []),
+        terminate_reason=reason,
+        task_id=str(task_id),
+        created_at=_utc_now(),
+    )
+    try:
+        task = review_plane.store.get_task(str(task_id))
+        review_plane.store.save_task_and_verdict(task, verdict)
+    except Exception:
+        log_event(
+            logger,
+            logging.WARNING,
+            "review_plane_failure_verdict_ingest_failed",
+            lane_id=lane_id,
+            task_id=str(task_id),
+            reason=reason,
         )
 
 

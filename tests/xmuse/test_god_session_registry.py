@@ -320,6 +320,48 @@ def test_create_persists_peer_compatibility_metadata(tmp_path):
     assert loaded.feature_scope_id == "feature-a"
 
 
+def test_find_by_conversation_participant_can_select_feature_scope(tmp_path):
+    registry = GodSessionRegistry(tmp_path / "sessions.json")
+    unscoped = registry.create(
+        role="review",
+        agent_name="opencode-review",
+        runtime="opencode",
+        session_address="@conv_a:part_review",
+        session_inbox_id="inbox-conv_a-part_review",
+        conversation_id="conv_a",
+        participant_id="part_review",
+        model="opencode-go/deepseek-v4-flash",
+    )
+    scoped = registry.create(
+        role="review",
+        agent_name="opencode-review",
+        runtime="opencode",
+        session_address="@conv_a:part_review:feature-feature-a",
+        session_inbox_id="inbox-conv_a-part_review:feature-feature-a",
+        conversation_id="conv_a",
+        participant_id="part_review",
+        model="opencode-go/deepseek-v4-flash",
+        prompt_fingerprint="sha256:review",
+        worktree="/repo/review",
+        feature_scope_id="feature-a",
+    )
+
+    assert registry.find_by_conversation_participant(
+        "conv_a",
+        "part_review",
+    ) == unscoped
+    assert registry.find_by_conversation_participant(
+        "conv_a",
+        "part_review",
+        feature_scope_id=None,
+    ) == unscoped
+    assert registry.find_by_conversation_participant(
+        "conv_a",
+        "part_review",
+        feature_scope_id="feature-a",
+    ) == scoped
+
+
 def test_registry_loads_legacy_records_without_peer_metadata(tmp_path):
     path = tmp_path / "sessions.json"
     path.write_text(

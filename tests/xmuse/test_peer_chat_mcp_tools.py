@@ -879,6 +879,67 @@ def test_mcp_collaboration_tools_support_veto_and_dispatch_gate(
     )
 
 
+def test_mcp_collaboration_response_accepts_address_target(
+    tmp_path: Path,
+) -> None:
+    _chat, conv, architect, architect_session = _registered_participant(tmp_path)
+    participants = ParticipantStore(tmp_path / "chat.db")
+    execute = participants.add(
+        conversation_id=conv.id,
+        role="execute",
+        display_name="Execute GOD",
+        cli_kind="codex",
+        model="gpt-5.5",
+    )
+    execute_session = GodSessionRegistry(tmp_path / "god_sessions.json").create(
+        role="execute",
+        agent_name="Execute GOD",
+        runtime="codex",
+        session_address=f"xmuse://{conv.id}/{execute.participant_id}",
+        session_inbox_id=f"inbox-{execute.participant_id}",
+        conversation_id=conv.id,
+        participant_id=execute.participant_id,
+    )
+    client = TestClient(create_app(tmp_path))
+
+    created = json.loads(
+        _mcp_call(
+            client,
+            "chat_create_collaboration_request",
+            {
+                "conversation_id": conv.id,
+                "participant_id": architect.participant_id,
+                "god_session_id": architect_session.god_session_id,
+                "client_request_id": "collab-address-target",
+                "goal": "Confirm executable scope.",
+                "targets": ["@execute"],
+                "callback_target": "@architect",
+                "question": "Return an execute feasibility verdict.",
+                "context_refs": ["message:intake"],
+                "timeout_s": 480,
+            },
+        )
+    )
+
+    response = json.loads(
+        _mcp_call(
+            client,
+            "chat_record_collaboration_response",
+            {
+                "conversation_id": conv.id,
+                "participant_id": execute.participant_id,
+                "god_session_id": execute_session.god_session_id,
+                "run_id": created["run"]["run_id"],
+                "content": "Executable as one lane.",
+                "status": "received",
+            },
+        )
+    )
+
+    assert response["run"]["status"] == "done"
+    assert response["run"]["responses"][0]["target"] == "@execute"
+
+
 def test_mcp_collaboration_tools_reject_spoofed_session_identity(
     tmp_path: Path,
 ) -> None:

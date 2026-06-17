@@ -145,6 +145,53 @@ async def test_runner_can_require_final_action_approval(monkeypatch, tmp_path: P
 
 
 @pytest.mark.asyncio
+async def test_runner_no_auto_merge_enables_final_action_hold(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeOrchestrator:
+        def __init__(
+            self,
+            *,
+            lanes_path: Path,
+            xmuse_root: Path,
+            mcp_port: int,
+            require_final_action_approval: bool,
+            god_runtime: str | None = None,
+            runner_id: str | None = None,
+            memoryos_client=None,
+            review_god_session_layer=None,
+        ) -> None:
+            captured["require_final_action_approval"] = require_final_action_approval
+            self._sm = _FakeStateMachine()
+
+        async def reconcile_status_changes(self) -> None:
+            return None
+
+        async def dispatch_lane(self, lane_id: str) -> None:
+            return None
+
+    monkeypatch.setattr(platform_runner, "PlatformOrchestrator", FakeOrchestrator)
+
+    args = platform_runner.main_arg_parser().parse_args(["--no-auto-merge"])
+
+    await platform_runner.run(
+        lanes_path=tmp_path / "feature_lanes.json",
+        xmuse_root=tmp_path / "xmuse",
+        mcp_port=8100,
+        max_hours=0,
+        max_concurrent=1,
+        require_final_action_approval=(
+            args.require_final_action_approval or args.no_auto_merge
+        ),
+    )
+
+    assert captured["require_final_action_approval"] is True
+
+
+@pytest.mark.asyncio
 async def test_runner_refuses_duplicate_active_writer_lease(
     monkeypatch,
     tmp_path: Path,
@@ -458,6 +505,9 @@ async def test_runner_enables_peer_chat_with_default_codex_launcher(
     assert captured["scheduler_kwargs"]["claim_ttl_s"] >= (
         captured["scheduler_kwargs"]["response_wait_s"]
     )
+    peer_worktree = tmp_path / "xmuse" / "peer_chat_worktree"
+    assert captured["scheduler_kwargs"]["worktree"] == peer_worktree
+    assert peer_worktree.is_dir()
 
 
 @pytest.mark.asyncio
