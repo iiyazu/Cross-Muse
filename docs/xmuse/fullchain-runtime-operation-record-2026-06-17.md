@@ -537,3 +537,96 @@ closure.
 Remaining gap: `god_sessions.json` does not yet persist the OpenCode
 provider-native `sessionID`, so provider-native memory continuity beyond the
 shim process remains unproven.
+
+### Groupchat Proposal And Review Trigger Payload
+
+Initial runtime root:
+
+```text
+.goal-runs/2026-06-18/loop-6-proposal-root-hKdIfX
+```
+
+Goal: have Codex architect create a durable `lane_graph` proposal using
+`chat_emit_proposal`, without approval or dispatch.
+
+Observed initial proposal:
+
+```text
+conversation_id=conv_913110310a3d4244b1995895ae3e1ae3
+proposal_id=prop_f9229b1926b546349803ca5fd93cac5a
+proposal_type=lane_graph
+status=open
+feature_id=proposal-smoke-no-dispatch
+architect tool trace=chat_emit_proposal
+architect delivery_mode=mcp_writeback
+```
+
+No-dispatch check:
+
+```text
+feature_lanes.json exists=false
+lane_graphs.json exists=false
+graph_sets.json exists=false
+```
+
+The automatic review trigger reached OpenCode review, but the review inbox
+payload did not include readable proposal content:
+
+```text
+review_inbox=inbox_0af29f72fe114b428d15f8a83ad55223
+review payload keys=reviewable_type, source_message_id, trigger_mode
+opencode review reply=no inbox item content was delivered
+```
+
+Classification: proposal creation local runtime proof, plus negative evidence
+for the automatic review-trigger payload contract.
+
+After fixing the review-trigger payload, the same path was rerun.
+
+Runtime root:
+
+```text
+.goal-runs/2026-06-18/loop-6-review-payload-root-UfuahZ
+```
+
+Observed fixed proposal path:
+
+```text
+conversation_id=conv_1f3e17988cf748a48e4aed0bf0135601
+proposal_id=prop_ab84aa38b9614bdaa628b854559359ed
+proposal_type=lane_graph
+status=open
+feature_id=proposal-review-payload
+references=chat:msg_d4b3b55f96b24e5c9d070b9fe3c1d560,
+  inbox:inbox_22efbcc395254f2888bf0b5efee6f590
+architect tool trace=chat_emit_proposal
+architect delivery_mode=mcp_writeback
+```
+
+Observed fixed review trigger:
+
+```text
+review_inbox=inbox_6ae7f911bf2c4b39b325373d178dbe8a
+status=read
+payload.content includes summary, lane feature_id, lane prompt, references,
+  and source proposal message content
+opencode message=msg_64c55840555a4cab8ec4dc3ba49f84b5
+opencode reply starts with **PASS.**
+opencode writeback_path=opencode_callback_bridge
+review delivery_mode=mcp_writeback
+review degraded_reason=null
+review tool trace=chat_post_message
+```
+
+No-dispatch check after the fixed run:
+
+```text
+feature_lanes.json exists=false
+lane_graphs.json exists=false
+graph_sets.json exists=false
+```
+
+Classification: local runtime proof that the real groupchat can produce a
+durable proposal and automatically route a readable proposal review trigger to
+OpenCode review. This is not approval, isolated execution, independent review
+truth, merge truth, live MemoryOS, full L8-L10 closure, or full L1-L11 closure.

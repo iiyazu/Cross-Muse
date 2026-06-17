@@ -2214,12 +2214,44 @@ class PeerChatService:
             sender_address=f"@participant:{sender_participant_id}",
             source_message_id=source_message_id,
             item_type="review_trigger",
-            payload={
-                "reviewable_type": reviewable_type,
-                "source_message_id": source_message_id,
-                "trigger_mode": "automatic",
-            },
+            payload=self._review_trigger_payload(
+                conversation_id=conversation_id,
+                source_message_id=source_message_id,
+                reviewable_type=reviewable_type,
+            ),
         )
+
+    def _review_trigger_payload(
+        self,
+        *,
+        conversation_id: str,
+        source_message_id: str,
+        reviewable_type: str,
+    ) -> dict[str, Any]:
+        source_message = next(
+            (
+                message
+                for message in self._chat.list_messages(conversation_id)
+                if message.id == source_message_id
+            ),
+            None,
+        )
+        content = (
+            _review_trigger_content(
+                source_message_id=source_message_id,
+                reviewable_type=reviewable_type,
+                source_content=source_message.content,
+                envelope=source_message.envelope_json,
+            )
+            if source_message is not None
+            else f"Review {reviewable_type} message {source_message_id}."
+        )
+        return {
+            "content": content,
+            "reviewable_type": reviewable_type,
+            "source_message_id": source_message_id,
+            "trigger_mode": "automatic",
+        }
 
     def _has_review_trigger(
         self,
@@ -2247,3 +2279,40 @@ class PeerChatService:
         if len(matches) > 1:
             raise PeerChatError("review_trigger_target_ambiguous", conversation_id)
         return matches[0]
+
+
+def _review_trigger_content(
+    *,
+    source_message_id: str,
+    reviewable_type: str,
+    source_content: str,
+    envelope: dict[str, Any],
+) -> str:
+    sections = [
+        f"Review this {reviewable_type} proposal.",
+        f"Source message: {source_message_id}",
+    ]
+    summary = envelope.get("summary")
+    if isinstance(summary, str) and summary.strip():
+        sections.append(f"Summary: {summary.strip()}")
+    lanes = envelope.get("lanes")
+    if isinstance(lanes, list) and lanes:
+        sections.append("Lanes:")
+        for lane in lanes:
+            if not isinstance(lane, dict):
+                continue
+            feature_id = lane.get("feature_id")
+            prompt = lane.get("prompt")
+            if isinstance(feature_id, str) and feature_id.strip():
+                line = f"- {feature_id.strip()}"
+                if isinstance(prompt, str) and prompt.strip():
+                    line += f": {prompt.strip()}"
+                sections.append(line)
+    references = envelope.get("references")
+    if isinstance(references, list) and references:
+        refs = [ref for ref in references if isinstance(ref, str) and ref.strip()]
+        if refs:
+            sections.append("References: " + ", ".join(refs))
+    if source_content.strip():
+        sections.extend(["Source content:", source_content.strip()])
+    return "\n".join(sections)
