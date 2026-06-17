@@ -138,6 +138,7 @@ async def run_review_god(
     stable_verdict_id: Callable[[str], str],
     ingest_merge_verdict: Callable[[str, str], None],
     ingest_rework_verdict: Callable[[str, str], None],
+    ingest_review_failure_verdict: Callable[[str, str, list[str]], None],
     on_reviewed: Callable[[str], Awaitable[None]],
     on_rejected: Callable[[str], Awaitable[None]],
     provider_invocation: ProviderInvocation | None = None,
@@ -196,6 +197,7 @@ async def run_review_god(
             observer=observer,
             on_reviewed=on_reviewed,
             on_rejected=on_rejected,
+            ingest_rework_verdict=ingest_rework_verdict,
             provider_invocation=provider_invocation,
             provider_session_binding=provider_session_binding,
         )
@@ -243,6 +245,7 @@ async def run_review_god(
                 observer=observer,
                 on_reviewed=on_reviewed,
                 on_rejected=on_rejected,
+                ingest_rework_verdict=ingest_rework_verdict,
                 provider_invocation=provider_invocation,
                 provider_session_binding=None,
             )
@@ -285,6 +288,7 @@ async def run_review_god(
             observer=observer,
             on_reviewed=on_reviewed,
             on_rejected=on_rejected,
+            ingest_rework_verdict=ingest_rework_verdict,
             provider_invocation=provider_invocation,
             provider_session_binding=None,
         )
@@ -300,6 +304,7 @@ async def run_review_god(
         stable_verdict_id=stable_verdict_id,
         ingest_merge_verdict=ingest_merge_verdict,
         ingest_rework_verdict=ingest_rework_verdict,
+        ingest_review_failure_verdict=ingest_review_failure_verdict,
         on_reviewed=on_reviewed,
         on_rejected=on_rejected,
     )
@@ -317,6 +322,7 @@ async def _send_review_request(
     observer: Callable[[RecoveryEvent], None],
     on_reviewed: Callable[[str], Awaitable[None]],
     on_rejected: Callable[[str], Awaitable[None]],
+    ingest_rework_verdict: Callable[[str, str], None],
     provider_invocation: ProviderInvocation | None,
     provider_session_binding: ProviderSessionBindingRecord | None,
 ):
@@ -345,6 +351,7 @@ async def _send_review_request(
         if await _honor_committed_review_state(
             lane_id=lane_id,
             sm=sm,
+            ingest_rework_verdict=ingest_rework_verdict,
             on_reviewed=on_reviewed,
             on_rejected=on_rejected,
         ):
@@ -365,6 +372,7 @@ async def _send_review_request(
         if await _honor_committed_review_state(
             lane_id=lane_id,
             sm=sm,
+            ingest_rework_verdict=ingest_rework_verdict,
             on_reviewed=on_reviewed,
             on_rejected=on_rejected,
         ):
@@ -395,12 +403,14 @@ async def _handle_review_result(
     stable_verdict_id: Callable[[str], str],
     ingest_merge_verdict: Callable[[str, str], None],
     ingest_rework_verdict: Callable[[str, str], None],
+    ingest_review_failure_verdict: Callable[[str, str, list[str]], None],
     on_reviewed: Callable[[str], Awaitable[None]],
     on_rejected: Callable[[str], Awaitable[None]],
 ) -> None:
     if await _honor_committed_review_state(
         lane_id=lane_id,
         sm=sm,
+        ingest_rework_verdict=ingest_rework_verdict,
         on_reviewed=on_reviewed,
         on_rejected=on_rejected,
     ):
@@ -454,6 +464,11 @@ async def _handle_review_result(
 
     current = sm.get_lane(lane_id)
     if current.get("status") == "gated" and not result.stdout.strip():
+        ingest_review_failure_verdict(
+            lane_id,
+            "review_no_verdict",
+            _review_failure_evidence_refs(result),
+        )
         sm.transition(
             lane_id,
             "gate_failed",
@@ -558,6 +573,7 @@ async def _honor_committed_review_state(
     *,
     lane_id: str,
     sm: LaneStateMachine,
+    ingest_rework_verdict: Callable[[str, str], None],
     on_reviewed: Callable[[str], Awaitable[None]],
     on_rejected: Callable[[str], Awaitable[None]],
 ) -> bool:
@@ -574,9 +590,26 @@ async def _honor_committed_review_state(
         await on_reviewed(lane_id)
         return True
     if status == "rejected":
+        ingest_rework_verdict(
+            lane_id,
+            str(
+                current.get("review_summary")
+                or current.get("rework_context")
+                or "Review GOD requested rework through committed lane state."
+            ),
+        )
         await on_rejected(lane_id)
         return True
     return False
+
+
+def _review_failure_evidence_refs(result: Any) -> list[str]:
+    refs: list[str] = []
+    for attr in ("result_log_path", "stdout_log_path", "stderr_log_path", "prompt_log_path"):
+        value = getattr(result, attr, None)
+        if isinstance(value, str) and value:
+            refs.append(value)
+    return refs
 
 
 def _committed_review_status(sm: LaneStateMachine, lane_id: str) -> bool:
@@ -605,6 +638,19 @@ async def _try_configured_review_peer(
 ) -> ConfiguredReviewPeerAttempt:
     review_peer_id = _optional_text(lane.get("review_peer_id"))
     review_peer_defaulted = False
+    runtime_peer_required = False
+    runtime_peer_failure: str | None = None
+    if review_peer_id is None:
+        review_peer_id, runtime_peer_failure = _review_peer_id_for_requested_runtime(
+            xmuse_root=xmuse_root,
+            conversation_id=_optional_text(lane.get("conversation_id")),
+            runtime=_optional_text(lane.get("review_runtime")),
+        )
+        runtime_peer_required = (
+            review_peer_id is not None or runtime_peer_failure is not None
+        )
+        if runtime_peer_failure is not None:
+            review_peer_id = "runtime:opencode"
     if (
         review_peer_id is None
         and default_review_peer_routing_enabled
@@ -619,17 +665,34 @@ async def _try_configured_review_peer(
         review_peer_defaulted = review_peer_id is not None
     if review_peer_id is None:
         return ConfiguredReviewPeerAttempt()
-    mode = "preferred" if review_peer_defaulted else _peer_routing_mode(
-        lane.get("peer_routing_mode")
+    mode = (
+        "required"
+        if runtime_peer_required
+        else "preferred"
+        if review_peer_defaulted
+        else _peer_routing_mode(lane.get("peer_routing_mode"))
     )
     base_metadata = {"peer_routing_mode": mode}
     if not review_peer_defaulted:
         base_metadata["review_peer_id"] = review_peer_id
+    if runtime_peer_required:
+        base_metadata["review_runtime_requested"] = "opencode"
     if mode != lane.get("peer_routing_mode"):
         base_metadata["peer_routing_mode_normalized"] = mode
     sm.update_metadata(lane_id, base_metadata)
 
     peer_request_id = _peer_request_id(review_peer_id, lane_id)
+    if runtime_peer_failure is not None:
+        return _configured_peer_failed(
+            sm,
+            lane_id,
+            mode=mode,
+            review_peer_id=review_peer_id,
+            peer_request_id=peer_request_id,
+            reason=runtime_peer_failure,
+            unavailable=True,
+            review_peer_defaulted=review_peer_defaulted,
+        )
     if persistent_session_layer is None:
         return _configured_peer_failed(
             sm,
@@ -662,12 +725,17 @@ async def _try_configured_review_peer(
         db_path=xmuse_root / "chat.db",
         session_layer=persistent_session_layer,
     )
+    peer_session_scope_id = _configured_review_peer_session_scope(lane_id, lane)
     peer_prompt = _persistent_review_prompt(
         prompt,
         review_request_id=peer_request_id,
         identity_key=f"configured:{review_peer_id}",
     )
-    peer_lock_key = _configured_peer_lock_key(lane, review_peer_id)
+    peer_lock_key = _configured_peer_lock_key(
+        lane_id,
+        lane,
+        review_peer_id,
+    )
     lock = _CONFIGURED_REVIEW_PEER_LOCKS.setdefault(peer_lock_key, asyncio.Lock())
     async with lock:
         result = await service.request(
@@ -681,7 +749,7 @@ async def _try_configured_review_peer(
                 identity_key=f"configured:{review_peer_id}",
             ),
             worktree=_persistent_review_worktree(xmuse_root),
-            feature_scope_id=feature_scope_id_from_lane(lane),
+            feature_scope_id=peer_session_scope_id,
             request_id=peer_request_id,
             message_type="review",
             context=_persistent_review_context(
@@ -735,6 +803,38 @@ async def _try_configured_review_peer(
         unavailable=result.status == "peer_unavailable",
         review_peer_defaulted=review_peer_defaulted,
     )
+
+
+def _review_peer_id_for_requested_runtime(
+    *,
+    xmuse_root: Path,
+    conversation_id: str | None,
+    runtime: str | None,
+) -> tuple[str | None, str | None]:
+    if runtime is None:
+        return None, None
+    if runtime != "opencode":
+        return None, None
+    if conversation_id is None:
+        return None, "missing_conversation_id"
+    try:
+        participants = ParticipantStore(xmuse_root / "chat.db").list_by_conversation(
+            conversation_id
+        )
+    except Exception:
+        return None, "review_peer_lookup_failed"
+    matches = [
+        participant
+        for participant in participants
+        if participant.role == _REVIEW_ROLE
+        and participant.cli_kind == runtime
+        and participant.status == "active"
+    ]
+    if not matches:
+        return None, "review_peer_runtime_unavailable"
+    if len(matches) > 1:
+        return None, "review_peer_runtime_ambiguous"
+    return matches[0].participant_id, None
 
 
 def _configured_peer_failed(
@@ -840,10 +940,21 @@ def _default_review_peer_display_name(feature_scope_id: str) -> str:
     return f"Review GOD [{suffix}-{digest}]"
 
 
-def _configured_peer_lock_key(lane: dict[str, Any], review_peer_id: str) -> str:
+def _configured_peer_lock_key(
+    lane_id: str,
+    lane: dict[str, Any],
+    review_peer_id: str,
+) -> str:
     conversation_id = _optional_text(lane.get("conversation_id")) or "missing-conversation"
-    feature_scope_id = feature_scope_id_from_lane(lane) or "missing-feature"
-    return f"{conversation_id}:{review_peer_id}:{feature_scope_id}"
+    peer_session_scope_id = _configured_review_peer_session_scope(lane_id, lane)
+    return f"{conversation_id}:{review_peer_id}:{peer_session_scope_id}"
+
+
+def _configured_review_peer_session_scope(
+    lane_id: str,
+    lane: dict[str, Any],
+) -> str:
+    return feature_scope_id_from_lane(lane) or f"configured-review:{lane_id}"
 
 
 def _review_peer_participant(

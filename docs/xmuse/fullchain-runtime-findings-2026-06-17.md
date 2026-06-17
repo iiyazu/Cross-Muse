@@ -32,6 +32,55 @@ truth, merge truth, live MemoryOS proof, or full closure.
 - Proposal approval while a runner is active can dispatch real provider work
   against the repository worktree unless a safer execution worktree or dry-run
   mode is used.
+- The 2026-06-18 Loop 7 repro confirmed that approval with an explicit
+  isolated execution worktree projected lanes with `worktree` but no `branch`,
+  causing `merge_context_missing` after execution and review. A targeted fix
+  now attaches existing detached git worktrees to a lane branch during dispatch.
+- Loop 11 showed that a `lane_graph` proposal/resolution containing
+  `review_runtime=opencode` lost that field before runner consumption because
+  the lane graph model/projection omitted it. Loop 12 reran the real Chat API
+  proposal approval path and preserved `review_runtime=opencode` in both the
+  lane graph artifact and `feature_lanes.json`.
+- Loop 13 then consumed a Chat API approved lane through the platform runner in
+  an isolated git worktree and routed `review_runtime=opencode` to a persistent
+  OpenCode review peer. The lane stopped at `awaiting_final_action` under
+  `--no-auto-merge`.
+- After that fix, the same chain moved past `merge_context_missing`, but
+  exposed a new review/rework blocker: the second review invocation exited 0
+  with empty stdout, leaving the lane at `review_no_verdict`. A follow-up
+  review-plane closure fix now records committed MCP rework decisions and
+  synthetic `review_failed` verdicts for empty review stdout in focused
+  coverage. A real local recheck then completed a small isolated lane through
+  `merged` with a `verdict_emitted` review task.
+- The positive Loop 7 review-plane recheck also exposed an integration-target
+  safety issue: `execution_worktree` isolated the worker edits, but auto-merge
+  still advanced the control branch. The local probe commits were removed from
+  the control branch after recording evidence.
+- A follow-up `--no-auto-merge` runner probe held the accepted lane at
+  `awaiting_final_action` with a pending final-action hold and left the control
+  branch HEAD unchanged.
+- The 2026-06-18 groupchat-to-final-action probe bootstrapped a real
+  Codex/OpenCode groupchat, produced a durable architect `lane_graph` proposal,
+  received an OpenCode review callback, approved the proposal, executed the
+  lane, and stopped at final-action hold. The bounded production gap found and
+  imported from that lane was direct `initial_participants` OpenCode support.
+- The same probe showed that peer-chat discussion sessions still used the
+  control repository worktree, while approved lane execution could use an
+  isolated execution worktree. A small follow-up fix now routes peer-chat
+  scheduler turns through `xmuse_root/peer_chat_worktree`, with a short real
+  durable writeback recheck.
+- The 2026-06-18 Loop 5 reliability probe produced one clean local runtime
+  Codex-to-OpenCode handoff from human `@architect` mention to architect
+  writeback to architect-created `@review` mention to OpenCode callback
+  writeback. A first sample from the same run was excluded from clean proof
+  because the human prompt itself contained a bare `@review` token and created
+  a direct review inbox.
+- A follow-up Loop 5 restart/resume and soak probe created a direct
+  `initial_participants` groupchat with Codex architect, OpenCode review, and
+  Codex execute peers. It completed four clean Codex-to-OpenCode handoffs in
+  one durable conversation, including one runner restart between the first and
+  second handoff. The durable result was 16 messages, 8 inbox items, and 8
+  `mcp_writeback` latency traces with no degraded reason.
 
 ## Findings
 
@@ -394,21 +443,888 @@ Next direction:
   execution worktree / no-dispatch guard so Loop 7 cannot write the control
   worktree.
 
+### F14. Existing execution worktree lacked branch metadata
+
+Severity: Loop 7 product blocker, locally fixed.
+
+When Chat API was configured with an explicit `execution_worktree`, approval
+projected a lane with `worktree` only. The runner treated the existing worktree
+as initialized and skipped branch/base metadata setup. After execution and a
+merge-accepting review, merger failed closed:
+
+```text
+merge_failure_reason=merge_context_missing
+merge_failure_detail=missing required integration metadata: branch
+```
+
+Observed before fix:
+
+```text
+runtime_root=.goal-runs/2026-06-18/loop-7-repro-030440/root
+execution_worktree=/tmp/xmuse-loop7-exec-2Pe8dh
+feature_id=proposal-review-payload-loop7-no-collab
+branch missing
+status=failed
+failure_reason=merge_context_missing
+```
+
+Fix direction applied:
+
+- `ensure_lane_worktree()` no longer returns early when a lane has `worktree`
+  but lacks `branch` or `base_head_sha`.
+- Existing detached git worktrees are attached to a feature-scoped branch with
+  `git checkout -B <lane-id>`.
+- Existing non-git worktree paths still avoid forced git initialization and
+  record `base_head_sha=unknown`.
+
+Observed after fix:
+
+```text
+runtime_root=.goal-runs/2026-06-18/loop-7-fixed-032235/root
+execution_worktree=/tmp/xmuse-loop7-fixed-exec-6KzR0I
+branch=proposal-review-payload-loop7-fixed
+base_head_sha=109c4a4eae8b2a0a492fbe8e11d100a0bc76ee98
+original merge_context_missing not repeated
+```
+
+Remaining gap:
+
+- This is local runtime proof only.
+- The fullchain did not complete; it moved to a later review/rework blocker.
+
+### F15. Review/rework loop can end with `review_no_verdict`
+
+Severity: product blocker for fullchain completion, partially mitigated locally.
+
+After the branch metadata fix, the same real chain reached execution and review
+without `merge_context_missing`. The first review requested rework. The second
+execution exited successfully but left no final candidate diff. The second
+review invocation exited 0 with empty stdout, so the runner could not parse the
+required verdict:
+
+```text
+status=gate_failed
+failure_reason=review_no_verdict
+failure_layer=review
+```
+
+Impact:
+
+- Loop 7 can now pass the branch metadata boundary, but it still cannot claim
+  fullchain completion from the earlier failing run.
+- A pending ReviewTask with no verdict is no longer acceptable durable state.
+- Review stdout/fallback handling and rework-loop candidate preservation still
+  need repeated runtime loops before treating this path as reliable.
+
+Fix direction applied locally:
+
+- MCP-committed `rejected` review states now ingest a rework verdict into the
+  current review task before the lane is requeued.
+- A provider result with exit code 0 and empty stdout now fails closed as
+  `review_no_verdict` and records a synthetic review-plane verdict with
+  `status=review_failed` instead of leaving the ReviewTask pending.
+- Focused validation:
+  `uv run pytest tests/xmuse/test_review_plane_orchestrator_integration.py -q`
+  passed with `45 passed`.
+  `uv run pytest tests/xmuse/test_platform_verdicts_writer.py tests/xmuse/test_platform_orchestrator.py -q`
+  passed with `243 passed`.
+
+Runtime recheck:
+
+```text
+runtime_root=.goal-runs/2026-06-18/loop-7-reviewfix-o34mKo
+execution_worktree=/tmp/xmuse-loop7-reviewfix-exec-x74XQV
+feature_id=proposal-review-payload-loop7-reviewfix
+status=merged
+review_task.status=verdict_emitted
+review_verdict.decision=merge
+review_verdict.status=finalized
+```
+
+Boundary:
+
+- The positive runtime recheck did not reproduce the empty-stdout
+  `review_no_verdict` branch. It proves this small lane can complete with a
+  persisted review-plane verdict; it does not prove the empty-stdout failure
+  branch is fixed by runtime evidence.
+
+Next direction:
+
+- Run a focused review/rework reliability loop with a task that leaves a
+  concrete candidate diff.
+- Keep failing closed if review exits 0 without a parseable `Verdict:` line,
+  and preserve the boundary as review noncompliance rather than merge failure.
+- Investigate why worker fallback reports "MCP unavailable" in child-worker
+  turns even though runner MCP is configured.
+
+### F16. Isolated execution worktree does not isolate auto-merge target
+
+Severity: operator safety / PR-scope risk, locally mitigated with no-auto-merge.
+
+The Loop 7 review-plane recheck started Chat API with an explicit
+`execution_worktree`:
+
+```text
+execution_worktree=/tmp/xmuse-loop7-reviewfix-exec-x74XQV
+```
+
+The execution worker correctly made its candidate change on the isolated lane
+branch:
+
+```text
+branch=proposal-review-payload-loop7-reviewfix
+candidate_commit=2f17ee5
+```
+
+However, when Review GOD accepted the lane, runner auto-merge also advanced the
+control branch with local runtime commits:
+
+```text
+f17144a feat(xmuse): merge lane proposal-review-payload-loop7-reviewfix
+2f17ee5 feat(xmuse): apply lane proposal-review-payload-loop7-reviewfix
+```
+
+The control branch was reset back to:
+
+```text
+110dd47b435e44e7b608ac5b880ad4aebcf79ab0
+```
+
+Mitigation applied locally:
+
+- Added runner flag `--no-auto-merge`.
+- The flag maps to the existing final-action approval path, so merge-accepted
+  lanes stop at `awaiting_final_action` instead of auto-merging.
+- Focused validation:
+  `uv run pytest tests/xmuse/test_platform_runner.py::test_runner_no_auto_merge_enables_final_action_hold tests/xmuse/test_platform_runner.py::test_runner_can_require_final_action_approval tests/xmuse/test_platform_orchestrator.py::test_reviewed_lane_enters_final_action_hold_when_enabled -q`
+  passed with `3 passed`.
+
+Runtime recheck:
+
+```text
+runtime_root=.goal-runs/2026-06-18/loop-7-no-auto-merge-9dEsNv
+execution_worktree=/tmp/xmuse-loop7-no-auto-merge-exec-GKbThV
+feature_id=proposal-review-payload-loop7-no-auto-merge
+runner flag=--no-auto-merge
+status=awaiting_final_action
+review_verdict.status=finalized
+final_action_hold.status=pending
+control_HEAD=110dd47b435e44e7b608ac5b880ad4aebcf79ab0
+```
+
+Impact:
+
+- `execution_worktree` prevents direct worker edits in the control worktree,
+  but it does not by itself prevent integration/merge mutations.
+- Runtime probes can still inflate the active branch unless auto-merge is
+  disabled, redirected to a dedicated integration target, or protected by a
+  dry-run/no-merge mode.
+- `--no-auto-merge` now provides the minimum explicit guard for runtime probes,
+  but final-action resolution still needs a separate operator-reviewed path.
+
+Next direction:
+
+- Use `--no-auto-merge` for runtime probes unless the operator explicitly wants
+  local auto-merge.
+- Require an explicit integration target worktree/branch before normal
+  auto-merge is enabled in broader fullchain runs.
+- Surface a visible operator warning when a live runner can merge accepted
+  lanes into the current control branch.
+
+### F17. Direct `initial_participants` rejected explicit OpenCode peers
+
+Severity: groupchat production capability gap, locally fixed.
+
+The bootstrap preset path could materialize an OpenCode peer through
+`provider_overrides`, but the direct `initial_participants` path still rejected
+non-Codex participants before provider identity validation could accept them.
+That left two inconsistent ways to create a GOD groupchat:
+
+```text
+bootstrap provider_overrides -> review cli_kind=opencode works
+direct initial_participants -> cli_kind=opencode rejected
+```
+
+Runtime loop:
+
+```text
+runtime_root=.goal-runs/2026-06-18/loop-6-to-8-groupchat-no-auto-merge-uHnZr9
+conversation_id=conv_d353c349af2e49ea8a19bae9681ccf79
+proposal_id=prop_c7663c8297e3469f80ee446d3031d6f1
+resolution_id=res_9ca3d1595e0649f4a68cc144aa9ad24b
+lane_id=groupchat-opencode-initial-participants
+status=awaiting_final_action
+```
+
+Durable groupchat evidence:
+
+```text
+architect delivery=mcp_writeback with chat_emit_proposal
+OpenCode review delivery=mcp_writeback
+OpenCode review result=PASS
+final_action_hold.status=pending
+```
+
+Fix applied:
+
+- `PeerChatService._normalize_participant_spec()` now allows `opencode` when
+  `provider_id`, `profile_id`, `cli_kind`, and `model` are all explicit and
+  consistent with the role template profile.
+- Participant specs now preserve explicit provider/profile metadata when
+  building the logical bootstrap team.
+- Focused coverage proves a direct OpenCode review participant is created and
+  receives a durable GOD session with `runtime=opencode`.
+
+Validation:
+
+```text
+uv run pytest tests/xmuse/test_peer_chat_service.py tests/xmuse/test_chat_bootstrap_api.py tests/xmuse/test_peer_provider_parity.py tests/xmuse/test_package_boundaries.py -q
+40 passed, 1 warning
+```
+
+Boundary:
+
+- This is local runtime and focused test evidence only.
+- It does not prove GitHub review truth, merge truth, live MemoryOS, or full
+  closure.
+
+### F18. Peer-chat discussion sessions used the control worktree
+
+Severity: runtime isolation boundary, locally fixed for scheduler turns.
+
+The same groupchat-to-final-action probe used a dedicated lane execution
+worktree:
+
+```text
+lane execution worktree=/tmp/xmuse-groupchat-exec-jUcfwj
+branch=codex/groupchat-runtime-loop-20260618-uHnZr9
+```
+
+However, peer-chat discussion sessions for Codex architect and OpenCode review
+were registered with:
+
+```text
+worktree=/home/iiyatu/projects/python/xmuse
+```
+
+Impact:
+
+- The observed architect/review groupchat turns did not edit files, so no
+  control-worktree mutation occurred in this loop.
+- The boundary still matters because a future peer-chat role or prompt bug
+  could inspect or mutate the control worktree during deliberation.
+- Lane execution isolation and peer-chat deliberation isolation are separate
+  concerns.
+
+Fix applied:
+
+- `xmuse-platform-runner` now creates `xmuse_root/peer_chat_worktree` and passes
+  it to `PeerChatScheduler`.
+- A focused runner test asserts the scheduler worktree is runtime-local and
+  exists before the scheduler starts.
+
+Runtime recheck:
+
+```text
+runtime_root=.goal-runs/2026-06-18/loop-peer-chat-scratch-worktree-Lt2CJm
+conversation_id=conv_d13f495e58f6461cae004cbd4862d249
+request=@architect Reply exactly SCRATCH_PEER_READY
+delivery_mode=mcp_writeback
+assistant content=SCRATCH_PEER_READY
+architect session worktree=.goal-runs/2026-06-18/loop-peer-chat-scratch-worktree-Lt2CJm/peer_chat_worktree
+peer_chat_worktree contained no files after the turn
+```
+
+Remaining boundary:
+
+- This fixes the normal peer-chat scheduler path, not every provider invocation
+  path.
+- `ChatDispatchBridge` still needs separate isolation semantics because it can
+  represent approved dispatch work rather than pure discussion.
+
+### F19. Bare role mentions in human prompt text can contaminate handoff proof
+
+Severity: runtime evidence hygiene / prompt-contract risk.
+
+The Loop 5 multi-turn handoff probe intentionally asked Codex architect to hand
+off to OpenCode review. In the first sample, the human prompt included a literal
+`@review` token while describing the desired target. The Chat API mention
+extractor therefore created two paths:
+
+```text
+architect_inbox=inbox_320e9e8fbe334919b846f9461127ee5a
+direct_human_review_inbox=inbox_f0b16b16851e425b82ee758116d3694f
+architect_created_review_inbox=inbox_e45f2e7951a2432ea7d90e9219999813
+```
+
+Impact:
+
+- The run still showed durable Codex and OpenCode MCP/callback writebacks, but
+  it cannot be counted as a clean Codex-to-OpenCode handoff proof because the
+  human message also directly addressed review.
+- The evidence boundary is easy to blur during manual runtime testing because
+  natural language instructions often quote the same role address they are
+  trying to delegate to another peer.
+
+Clean recheck:
+
+```text
+conversation_id=conv_0ce81045529f4c47b7afa8b778c633ad
+human mentions=["@architect"]
+architect_response=ARCHITECT_HANDOFF_TWO_READY
+architect_created_review_inbox=inbox_0f2eda2692164360afd5134e690d71f1
+review_response=OPENCODE_HANDOFF_TWO_READY
+architect_delivery=mcp_writeback
+review_delivery=mcp_writeback
+```
+
+Next direction:
+
+- For proof runs, avoid bare downstream role tokens in human prompt text unless
+  the desired proof is direct multi-mention fanout.
+- Prefer structured target fields or quoted non-mention role names when asking
+  one peer to delegate to another.
+- Consider a future explicit escaping or quoted-role convention so prompts can
+  discuss a role without creating a direct inbox item.
+
+### F20. Codex/OpenCode handoff survives one runner restart and short soak
+
+Severity: positive local runtime reliability evidence, not a blocker.
+
+The follow-up Loop 5 reliability probe used a direct `initial_participants`
+conversation:
+
+```text
+conversation_id=conv_b85095df51a9474b9a8426eb85b6fcc1
+architect=codex gpt-5.4
+review=opencode opencode-go/deepseek-v4-flash
+execute=codex gpt-5.4-mini
+```
+
+The runner was stopped after the first handoff and restarted against the same
+runtime root before the second handoff. Two additional same-runner handoffs
+then exercised a short soak.
+
+Observed:
+
+```text
+message_count=16
+inbox_count=8
+latency_trace_count=8
+architect_traces=4 mcp_writeback degraded_reason=None
+review_traces=4 mcp_writeback degraded_reason=None
+```
+
+Impact:
+
+- The earlier session reuse and scratch-worktree fixes now have stronger local
+  runtime evidence.
+- The prompt-contamination risk from F19 did not repeat when human messages
+  only mentioned `@architect`; all downstream `@review` inboxes were created by
+  Codex through `chat_mention`.
+- OpenCode was observed through the registered peer runtime command:
+  `opencode_persistent --model opencode-go/deepseek-v4-flash --variant max`.
+
+Remaining boundary:
+
+- This is one local restart/resume run plus a short soak, not server-side truth.
+- It does not prove demand-to-completion fullchain, GitHub review truth, merge
+  truth, live MemoryOS, or full closure.
+- The public conversation creation ergonomics still require exact role/profile
+  ids: `architect=god`, `review=review`, `execute=worker`.
+
+Next direction:
+
+- Move the next real loop back to fullchain completion: groupchat demand,
+  proposal, isolated execution, independent review, final-action hold, main
+  Codex audit/import, validation, and small PR.
+- Preserve `--no-auto-merge` until the merge target is explicit and GitHub
+  server truth is checked.
+
+### F21. Collaboration response target matching was too literal
+
+Severity: blocking for dispatch-gated proposals; fixed locally and retested by
+focused tests.
+
+Loop 6 produced collaboration runs with target `@execute`. MCP response
+recording used the participant role `execute`, so the service rejected the
+response with:
+
+```text
+collaboration_target_mismatch: execute
+```
+
+Impact:
+
+- The first profile-ergonomics proposal could not satisfy dispatch gating even
+  though the execute peer was the intended target.
+- This was a contract-shape mismatch between address targets and participant
+  roles, not a proof failure by the execute peer.
+
+Fix:
+
+- Collaboration response recording now accepts either the role or the role
+  address for a target.
+- Dispatch-gate execute confirmation accepts `execute` and `@execute`, but only
+  when the response is still a typed `execute_feasibility_verdict` with
+  non-empty `evidence_refs`.
+
+Remaining boundary:
+
+- Untyped execute responses and responses without evidence refs remain blocked.
+  This is intentional; stdout text or informal approval is not proof.
+
+### F22. Proposal approval can dispatch an isolated worker, but review-plane truth is still not established
+
+Severity: major fullchain blocker.
+
+Loop 6 replacement proposal approval succeeded and dispatched the lane
+`groupchat-initial-participants-profile-inference` into an isolated worktree.
+The execution worker exited `0` and reported focused tests through stdout
+fallback, but the lane ended:
+
+```text
+status=gate_failed
+failure_layer=review
+failure_reason=review_non_zero_exit
+```
+
+Observed review-plane issues:
+
+- The review worker result recorded `runtime=codex` even though the lane
+  proposal requested OpenCode review runtime.
+- The review worker attempted to load a missing superpowers skill path and
+  exited non-zero.
+- No parseable review verdict was recorded in `review_plane.json`.
+
+Impact:
+
+- The run proves dispatch and execution-worker invocation, not review truth.
+- Worker stdout fallback is still only candidate evidence.
+- The final-action path must remain held until review worker selection,
+  instruction hygiene, and verdict recording are made reliable.
+
+Next direction:
+
+- Fix review worker runtime/profile selection or explicitly document the
+  authority that chooses Codex review.
+- Ensure review worker prompts cannot be derailed by unavailable superpowers
+  skill paths.
+- Require a durable review verdict before any final-action or PR claim.
+
+### F23. Direct OpenCode profile inference worked at participant level but initially misreported session profile
+
+Severity: user-facing read-model mismatch; fixed locally and retested in Loop 8.
+
+Loop 7 created a real conversation through REST with an OpenCode `review`
+participant and omitted `profile_id`. The participant payload correctly
+inferred:
+
+```text
+provider_id=opencode
+profile_id=review
+runtime=opencode
+```
+
+However, the public session summary showed `profile_id=default` for the same
+OpenCode session. The peer still replied through durable MCP writeback, so this
+was a metadata/read-model mismatch rather than a delivery failure.
+
+Fix:
+
+- Session summaries now prefer participant authority for provider/profile
+  metadata when the session is bound to a participant.
+
+Loop 8 retest:
+
+```text
+participant_profile_id=review
+session_profile_id=review
+session_runtime=opencode
+reply=OPENCODE_PROFILE_SESSION_RETEST_READY
+delivery_mode=mcp_writeback
+degraded_reason=None
+```
+
+### F24. Direct OpenCode participant ergonomics now have local runtime proof
+
+Severity: positive local runtime evidence, not fullchain completion.
+
+Loop 8 verified the practical entrypoint needed for natural GOD groupchat:
+
+- REST `initial_participants` can omit `profile_id` for an OpenCode `review`
+  peer.
+- The service infers the profile from role.
+- The public participant and session payloads both show
+  `provider_id=opencode`, `profile_id=review`, `runtime=opencode`.
+- A human `@review` mention produced an OpenCode assistant reply through
+  durable MCP writeback.
+
+Observed durable evidence:
+
+```text
+conversation_id=conv_e07a3ef95b8f45478b49516f90ebcdd7
+inbox=inbox_42a360b11f594f0a9942966417bf42b0
+assistant_message=msg_014d38ea077848f48a74bd9440dec346
+delivery_mode=mcp_writeback
+degraded_reason=None
+total_latency_ms=5325
+```
+
+Remaining boundary:
+
+- This proves one direct OpenCode peer turn after profile inference.
+- It does not prove demand-to-completion, review truth, merge truth, live
+  MemoryOS, GitHub truth, full L8-L10 closure, or full L1-L11 closure.
+
+### F25. `review_runtime=opencode` needed required peer routing and artifact-text parsing
+
+Severity: major review-plane blocker; fixed locally and retested.
+
+Loop 9 prepared a gated lane with `review_runtime=opencode` and an active
+OpenCode `review` participant in the same conversation.
+
+Observed:
+
+```text
+review_peer_id=part_42f137b236a24368a37ad0107f6bc207
+review_runtime_requested=opencode
+god_session_runtime=opencode
+peer_delivery_mode=required_peer_failed
+peer_degraded_reason=review_peer_no_verdict
+```
+
+This proved the route could target OpenCode and avoid one-shot Codex, but the
+result was not accepted because persistent review delivery only checked
+`review_verdict` artifacts and `message.message`. The OpenCode persistent path
+can carry usable review text in artifacts such as `stdout`.
+
+Fix:
+
+- `PersistentCliPeerService` now supports OpenCode participants.
+- A lane with `review_runtime=opencode` routes to the unique active OpenCode
+  `review` participant in the same conversation when persistent review is
+  available.
+- Missing or ambiguous OpenCode review peers fail closed as required peer
+  failures instead of silently falling back to one-shot Codex.
+- Persistent review delivery can infer review text from artifact fields
+  (`reply_text`, `message`, `result`, `stdout`) when no structured
+  `review_verdict` artifact is present.
+
+### F26. OpenCode persistent review can now produce a durable local verdict
+
+Severity: positive local runtime evidence, not GitHub review truth.
+
+Loop 10 reran the same shape with native persistent review backend:
+
+```text
+conversation_id=conv_bf447c5ade4043f2925f7d4900202d39
+review_peer_id=part_06825251e025479a8075ce0d38074ec6
+review_runtime_requested=opencode
+```
+
+Observed terminal state:
+
+```text
+status=awaiting_final_action
+peer_delivery_mode=configured_peer
+peer_routing_mode=required
+review_delivery_mode=persistent
+persistent_review_degraded=false
+review_decision=merge
+review_fallback_reason=verdict_merge
+```
+
+Impact:
+
+- An explicit OpenCode review runtime can now be honored by the review plane
+  when an OpenCode review peer exists.
+- The result advances only to final-action hold under `--no-auto-merge`.
+- This reduces the earlier F22 blocker from "review runtime ignored / no
+  durable verdict" to remaining fullchain integration work.
+
+Remaining boundary:
+
+- The loop was a review-runtime probe lane, not a real implementation diff.
+- It is local runtime review evidence, not GitHub review truth or merge truth.
+- It does not prove demand-to-completion, live MemoryOS, full L8-L10 closure,
+  or full L1-L11 closure.
+
+### F27. `review_runtime` proposal intent was dropped before projection
+
+Severity: resolved local projection contract blocker; not fullchain proof.
+
+Loop 11 created and approved a real Chat API `lane_graph` proposal whose
+content and resolution included:
+
+```text
+review_runtime=opencode
+```
+
+Observed failure:
+
+```text
+runtime_root=.goal-runs/2026-06-18/loop-11-review-runtime-projection-1xixbI
+conversation_id=conv_73bc6d581b6b477b9e6e54fe7530e3af
+proposal_id=prop_4c59b2e75ec540f0812ea48d77e053c7
+resolution_id=res_235207bb14184a6a92e2b67a8819ac22
+lane_graph_review_runtime=missing
+projected_review_runtime=missing
+```
+
+Root cause:
+
+- `LaneNode` did not model `review_runtime`.
+- Projection therefore could not carry the field to the runner queue.
+
+Fix:
+
+- `LaneNode` now has optional `review_runtime`.
+- `_lane_payload()` preserves it when present.
+- Focused coverage asserts proposal approval preserves
+  `review_runtime=opencode` in the projection.
+
+Loop 12 rerun:
+
+```text
+runtime_root=.goal-runs/2026-06-18/loop-12-review-runtime-projection-rerun-CGczHM
+conversation_id=conv_50d2e89e91de4b13ae0ca9348b68bc16
+proposal_id=prop_49a2988fab5c49c68874c80239ecf373
+resolution_id=res_71b01fb4e5fc44e39affc463b70810a0
+lane_id=loop12-review-runtime-opencode
+lane_graph_review_runtime=opencode
+projected_review_runtime=opencode
+```
+
+Impact:
+
+- Groupchat-approved lane intent can now reach the runner projection with the
+  OpenCode review-runtime selector intact.
+- This connects the proposal path to the Loop 9-10 review-runtime routing work.
+
+Remaining boundary:
+
+- Loop 12 intentionally did not start the runner, so it proves projection only.
+- It is not review execution proof, GitHub review truth, merge truth, live
+  MemoryOS proof, full L8-L10 closure, or full L1-L11 closure.
+
+### F28. Proposal-created lane can reach persistent OpenCode review and final hold
+
+Severity: positive local runtime evidence; still not GitHub review or merge
+truth.
+
+Loop 13 used the same `review_runtime=opencode` path from a Chat API approved
+`lane_graph` proposal, but let the platform runner consume the lane.
+
+Runtime setup:
+
+```text
+runtime_root=.goal-runs/2026-06-18/loop-13-proposal-runner-opencode-review-WO3US9
+execution_worktree=/tmp/xmuse-loop13-exec-TFCuyC
+conversation_id=conv_721071eda8f84766b8685e08e631e94e
+proposal_id=prop_ad663efb57f248e88f9b717c2df7f9bd
+resolution_id=res_95fa16cb619542aa93c6c7b5ddc69f93
+lane_id=loop13-review-runtime-preservation-worker
+```
+
+Observed runner terminal state:
+
+```text
+status=awaiting_final_action
+review_runtime_requested=opencode
+review_peer_id=part_ec729eefb8bd42139a1831ee17c570bc
+peer_delivery_mode=configured_peer
+peer_routing_mode=required
+review_delivery_mode=persistent
+persistent_review_degraded=false
+review_decision=merge
+review_fallback_reason=verdict_merge
+final_action_hold_id=final-f3f9df2ac3c8
+```
+
+Impact:
+
+- A proposal-created lane can carry OpenCode review intent into runner review.
+- The runner used an isolated git worktree for the execution candidate.
+- `--no-auto-merge` correctly stopped the accepted lane at pending final-action
+  hold instead of mutating the control branch.
+- The OpenCode persistent review path produced a finalized local verdict.
+
+Main Codex audit/import:
+
+- Worker output and OpenCode review were treated as candidate evidence.
+- The control worktree imported only the audited minimal additions:
+  `review_runtime` field classification, lane graph artifact assertion, and
+  classification coverage.
+
+Remaining boundary:
+
+- This was still an operator-created proposal, not a fully natural multi-turn
+  Codex/OpenCode discussion generating the proposal unaided.
+- The final action hold was not resolved or merged.
+- No GitHub PR, GitHub review, GitHub mergeability, live MemoryOS, full L8-L10
+  closure, or full L1-L11 closure was proven.
+
+### F29. Ray/default peer-chat can stream text without durable proposal truth
+
+Severity: open runtime blocker for the Ray/default groupchat path; bypassed by
+native backend for the current loop.
+
+Loop 14 ran a natural `@architect` demand against the Ray/default peer-chat
+path with `XMUSE_RAY_GOD_MCP=0`.
+
+Observed:
+
+```text
+runtime_root=.goal-runs/2026-06-18/loop-14-natural-groupchat-schema-proposal-85SfoR
+conversation_id=conv_04719fb339f84ee5a746cf380c8326ff
+inbox_status=failed
+failure_reason=peer_no_inbox_side_effect
+proposals_count=0
+peer_turn_mcp_tool_traces=[]
+```
+
+Impact:
+
+- Streamed or logged provider text was not counted as groupchat truth.
+- No durable proposal existed.
+- The current maximum-accessible path for the fullchain is the native peer
+  backend, not Ray/default.
+
+Remaining boundary:
+
+- Ray/app-server MCP tool exposure remains a separate backlog item.
+- This does not block the native Codex/OpenCode fullchain loop.
+
+### F30. Configured OpenCode review peer reused the unscoped peer-chat session
+
+Severity: resolved local runtime blocker for native configured OpenCode review.
+
+Loop 15 proved the natural native groupchat path could produce a durable
+proposal and durable OpenCode groupchat review, then failed when the runner
+tried to use the same OpenCode review participant for lane review.
+
+Observed Loop 15 failure:
+
+```text
+runtime_root=.goal-runs/2026-06-18/loop-15-native-natural-groupchat-schema-proposal-pI4XH1
+conversation_id=conv_990194f51ed54237ad65e350ed699899
+proposal_id=prop_550cd2f16f284a619724c097b5f7f3d2
+resolution_id=res_c1b213dd734544b39a41c84b1300d9c3
+lane_id=loop15-chat-emit-proposal-review-runtime-schema
+status=gate_failed
+failure_reason=required_review_peer_unavailable
+peer_degraded_reason=ensure_failed
+review_peer_id=part_a86ccb1e8cb34e88be3db1fc433d8699
+```
+
+Loop 16 refined the cause: even after exact feature-scope lookup support was
+added, proposal-created lanes lacked `feature_scope_id` /
+`feature_plan_feature_id`, so configured review still had no distinct session
+scope and failed closed.
+
+Fix:
+
+- `GodSessionRegistry.find_by_conversation_participant()` can select an exact
+  `feature_scope_id`.
+- `GodSessionLayer` creates distinct session identities for scoped sessions.
+- configured review peers use the lane feature scope when present, otherwise a
+  stable `configured-review:<lane_id>` request scope.
+
+Impact:
+
+- A groupchat OpenCode peer can remain in its unscoped `peer_chat_worktree`
+  session.
+- A lane review for the same participant can use a separate request-scoped
+  OpenCode persistent session.
+- Required OpenCode review still fails closed when no OpenCode review
+  participant exists.
+
+### F31. Natural Codex/OpenCode groupchat can drive a small lane to local final hold
+
+Severity: positive local runtime evidence; still not GitHub truth or full
+closure.
+
+Loop 17 reran the real path with an explicit OpenCode review participant:
+
+```text
+runtime_root=.goal-runs/2026-06-18/loop-17-native-opencode-review-request-scope-Rr4mN8
+conversation_id=conv_5cb1dcf802ea4f59adec3e7271946c19
+proposal_id=prop_27d04454dc264b14bc19fb5281901ce2
+resolution_id=res_db428c1219b64168abe15d82ab8f1e6a
+lane_id=loop17-opencode-chat-emit-proposal-review-runtime-schema
+```
+
+Observed durable groupchat evidence:
+
+```text
+Codex architect tools: chat_read_inbox, chat_post_message, chat_emit_proposal
+OpenCode review tools: chat_post_message
+delivery_mode=mcp_writeback
+chat_streams=[]
+```
+
+Observed runner/review state:
+
+```text
+status=awaiting_final_action
+review_runtime_requested=opencode
+peer_delivery_mode=configured_peer
+review_delivery_mode=persistent
+persistent_review_degraded=false
+review_decision=merge
+final_action_hold_id=final-3c6fadddda94
+```
+
+Impact:
+
+- A real human demand in GOD groupchat produced a durable proposal through
+  Codex MCP tools.
+- OpenCode participated as a registered review peer in the groupchat.
+- Human approval projected the lane to the runner.
+- The runner executed the candidate in an isolated worktree.
+- Configured OpenCode persistent review passed.
+- `--no-auto-merge` held the lane at pending final action instead of mutating
+  the control branch.
+- Main Codex imported only the audited minimal candidate change:
+  explicit `review_runtime` in MCP schema and a focused schema assertion.
+
+Remaining boundary:
+
+- Loop 17 is local runtime proof only.
+- The OpenCode persistent review text reported MCP unavailable inside that CLI
+  session and used stdout output; this is accepted only as local persistent
+  review evidence, not groupchat truth or GitHub review truth.
+- The final action hold remains unresolved.
+- No GitHub PR, GitHub review, GitHub mergeability, live MemoryOS, full L8-L10
+  closure, full L1-L11 closure, or overnight readiness was proven.
+
+Additional manual gap:
+
+- `docs/xmuse/production-closure-gap-ledger.md` is still absent in the current
+  worktree and should be treated as missing evidence, not fabricated truth.
+
 ## Recommended Next Implementation Order
 
-1. Add a bounded multi-turn reliability gate for the native Codex + OpenCode
-   handoff path.
-2. Add dry-run/no-dispatch controls for proposal approval while a runner is
-   live.
-3. Fix health process discovery so readiness aligns with actual service PIDs
+1. Move back to fullchain completion with the current Codex/OpenCode groupchat
+   path: durable demand decision, isolated execution, independent review,
+   final-action hold, main Codex audit/import, validation, then small PR.
+2. Add explicit escaping or structured target handling for proof prompts that
+   discuss downstream role names.
+3. Add a review/rework reliability loop for Loop 7 after branch metadata setup.
+4. Add dry-run/no-dispatch/no-merge controls for proposal approval and runtime
+   probes while a runner is live.
+5. Add an explicit integration target guard before auto-merge can mutate the
+   control branch.
+6. Fix health process discovery so readiness aligns with actual service PIDs
    and endpoint status.
-4. Add a public participant-session mapping to conversation creation/inspection.
-5. Normalize or document black-box response envelopes for chat write/proposal
+7. Add a public participant-session mapping to conversation creation/inspection.
+8. Normalize or document black-box response envelopes for chat write/proposal
    APIs.
-6. Add default gate profile handling for proposal-created lanes.
-7. Add a reliability gate for real app-server soak so mixed pass/fail evidence
+9. Add default gate profile handling for proposal-created lanes.
+10. Add a reliability gate for real app-server soak so mixed pass/fail evidence
    is preserved instead of collapsed into the latest result.
-8. Keep Ray/app-server and soak tests separate from closure claims until a real
+11. Keep Ray/app-server and soak tests separate from closure claims until a real
    candidate/review/handoff producer-consumer path feeds `closure_spine`.
 
 ## 2026-06-18 Repeated Run Notes

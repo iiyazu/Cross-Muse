@@ -151,6 +151,10 @@ def test_peer_chat_mcp_endpoint_exposes_writeback_and_explicit_handoff_tools(
         "reply_to_inbox_item_id"
         in tools["chat_emit_proposal"]["inputSchema"]["properties"]
     )
+    lane_item_properties = tools["chat_emit_proposal"]["inputSchema"]["properties"]["lanes"][
+        "items"
+    ]["properties"]
+    assert lane_item_properties["review_runtime"] == {"type": "string"}
     assert "run_id" in tools["chat_record_collaboration_response"]["inputSchema"]["required"]
 
 

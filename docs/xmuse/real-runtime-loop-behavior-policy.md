@@ -13,6 +13,16 @@ Detailed task decomposition lives in:
 docs/xmuse/real-god-chatgroup-fullchain-loop-decomposition.md
 ```
 
+## `/goal` Prompt Boundary
+
+Keep the `/goal` prompt short. It should name the objective, point to this
+policy and the loop decomposition, state any hard current-session constraints,
+and define the immediate stop conditions.
+
+Do not paste this whole policy into the `/goal` prompt. Do not create a
+separate goal-prompt document. The prompt is an execution handle; this file is
+the behavioral contract.
+
 ## Purpose
 
 Each loop reconciles desired runtime behavior against observed durable state.
@@ -21,6 +31,11 @@ artifact, a real consumer uses it, and the result is verified through the
 smallest relevant real chain.
 
 Passing tests alone is never enough.
+
+This file is the operating policy for the long runtime goal. It is not a
+feature specification, not a test plan, and not a checklist to satisfy by
+paperwork. When runtime evidence conflicts with this document, record the
+evidence, update the policy if needed, and keep the proof boundary explicit.
 
 ## Core Rules
 
@@ -33,6 +48,63 @@ Passing tests alone is never enough.
   exists.
 - Keep each loop to one concrete runtime target.
 - Keep each PR to one implementation domain.
+
+## Evidence Maintenance
+
+Runtime loops must maintain the evidence trail while they run. Before adding new
+runtime notes, delete or mark invalid stale content instead of layering fresh
+claims over known-bad observations.
+
+Primary evidence files for this long goal:
+
+- `docs/xmuse/fullchain-runtime-operation-record-2026-06-17.md`;
+- `docs/xmuse/fullchain-runtime-findings-2026-06-17.md`;
+- `.goal-runs/<date>/<loop-id>/` for raw artifacts and snapshots.
+
+The operation record should capture commands, process boundaries, durable ids,
+and artifact paths. The findings document should capture product-impacting
+failures, current classification, and the next targeted action. Neither file is
+proof by itself; both point back to durable runtime artifacts.
+
+## GitHub Usage Budget
+
+Use GitHub only when it is the authority or when the current loop explicitly
+needs PR/issue state.
+
+Rules:
+
+- run `gh api rate_limit` before GitHub-heavy work;
+- prefer one truth refresh at the start of a loop and one verification at the
+  end;
+- avoid repeated polling of PRs, checks, or runs unless waiting on a live
+  server-side transition is the loop target;
+- do not trigger CI for broad exploratory branches;
+- do not create placeholder PRs for incomplete runtime boundaries;
+- do not mutate PR #43;
+- do not expand an existing PR to absorb unrelated implementation domains;
+- count already-opened PRs against the active goal's PR budget.
+
+GitHub facts are server truth only for the exact resource, head SHA, and time
+inspected. Local tests, worker output, and PR bodies are not GitHub truth.
+
+## PR Anti-Bloat Rules
+
+PR size is controlled by implementation domain, not by emotional attachment to a
+branch.
+
+Split separate domains into separate PRs:
+
+- provider and GOD chatgroup runtime;
+- lane/closure spine execution;
+- review delivery;
+- GitHub truth observation;
+- MemoryOS adapter;
+- TUI or cockpit projection;
+- documentation-only evidence maintenance.
+
+When a loop touches multiple domains, land only the domain required to close the
+current runtime boundary and move the rest to backlog. If a branch starts
+turning into an umbrella PR, stop and split before pushing.
 
 ## Loop Contract
 
@@ -159,6 +231,10 @@ Rules:
 - do not layer skills to avoid direct runtime evidence;
 - if a skill conflicts with xmuse authority-first rules, xmuse rules win.
 
+Use direct repo/runtime inspection as the default. Use brainstorming or other
+skills only when they materially improve the current decision, not as a ritual
+before every patch.
+
 ## Real Groupchat Truth
 
 A GOD chatgroup reply is true only when represented in durable chat state.
@@ -199,6 +275,26 @@ groupchat discussion
 ```
 
 No downstream artifact may be manually fabricated to bypass the groupchat path.
+
+## Runtime Probe Merge Safety
+
+Runtime probes that execute and review real lanes must not auto-merge into the
+control branch unless that merge is the explicit loop target.
+
+Default probe command:
+
+```bash
+uv run xmuse-platform-runner ... --no-auto-merge
+```
+
+`--no-auto-merge` uses the final-action hold path. A merge-accepted lane should
+stop at `awaiting_final_action` with a pending final-action hold. This is the
+expected safe proof boundary for execution/review probes.
+
+If a loop intentionally tests local auto-merge, record the integration target
+before starting the runner and inspect control-branch HEAD afterward. Do not
+leave probe commits on the active control branch unless the operator has
+explicitly authorized that merge.
 
 ## Runtime Proof Levels
 
@@ -273,10 +369,20 @@ Rate-limit guard:
 
 PR budget:
 
-- maximum three PRs for this long goal;
+- define a maximum PR count before implementation starts;
+- maximum three PRs for one long goal unless explicitly lowered by the prompt;
+- when continuing an existing goal, subtract already opened PRs from the budget;
+- if the prompt says the PR budget is full, do not open another PR;
 - no mutation of PR #43;
 - do not expand PR #44 beyond minimal closure spine;
 - split unrelated domains into separate PRs.
+
+Anti-bloat intervention:
+
+- if one PR starts crossing implementation domains, stop and split the work;
+- if a patch drags unrelated history, rebuild the needed slice manually;
+- if the branch starts becoming an umbrella branch, stop before pushing;
+- do not spend GitHub API or CI budget on inner-loop debugging.
 
 ## Completion Definition
 

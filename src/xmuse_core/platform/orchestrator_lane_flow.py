@@ -35,6 +35,7 @@ from xmuse_core.platform.verdict_adapter import adapt_review_verdict
 from xmuse_core.platform.verdicts.writer import (
     gate_report_ref_for_lane,
     ingest_merge_verdict,
+    ingest_review_failure_verdict,
     ingest_rework_verdict,
     stable_verdict_id_for_lane,
 )
@@ -287,18 +288,29 @@ def ensure_lane_worktree(orchestrator, lane: dict[str, Any]) -> dict[str, Any]:
     lane_id = str(lane["feature_id"])
     existing_worktree = lane.get("worktree")
     existing_branch = lane.get("branch")
-    if existing_worktree:
+    if existing_worktree and existing_branch and lane.get("base_head_sha"):
         return lane
 
     branch = str(existing_branch or _safe_lane_ref(lane_id))
-    worktree_base = _compat_symbol(orchestrator, "WORKTREE_BASE", WORKTREE_BASE)
-    worktree = worktree_base / _safe_lane_ref(lane_id)
-    git_output = _compat_symbol(orchestrator, "_git_output", _git_output)
-    base_head_sha = lane.get("base_head_sha") or git_output(
-        ["git", "rev-parse", "HEAD"],
-        cwd=orchestrator._root.parent,
+    worktree = (
+        Path(str(existing_worktree))
+        if existing_worktree
+        else _compat_symbol(orchestrator, "WORKTREE_BASE", WORKTREE_BASE)
+        / _safe_lane_ref(lane_id)
     )
-    orchestrator._create_or_reuse_worktree(worktree=worktree, branch=branch)
+    branch, is_git_worktree = _ensure_existing_worktree_branch(worktree, branch)
+    git_output = _compat_symbol(orchestrator, "_git_output", _git_output)
+    base_head_sha = lane.get("base_head_sha") or _worktree_head_sha(worktree)
+    if base_head_sha is None:
+        if existing_worktree and not is_git_worktree:
+            base_head_sha = "unknown"
+        else:
+            base_head_sha = git_output(
+                ["git", "rev-parse", "HEAD"],
+                cwd=orchestrator._root.parent,
+            )
+    if not existing_worktree:
+        orchestrator._create_or_reuse_worktree(worktree=worktree, branch=branch)
     metadata = {
         "branch": branch,
         "worktree": str(worktree),
@@ -314,6 +326,53 @@ def ensure_lane_worktree(orchestrator, lane: dict[str, Any]) -> dict[str, Any]:
         worktree=str(worktree),
     )
     return updated
+
+
+def _ensure_existing_worktree_branch(worktree: Path, branch: str) -> tuple[str, bool]:
+    git_check = subprocess.run(
+        ["git", "-C", str(worktree), "rev-parse", "--is-inside-work-tree"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if git_check.returncode != 0:
+        return branch, False
+
+    current = subprocess.run(
+        ["git", "-C", str(worktree), "branch", "--show-current"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    current_branch = current.stdout.strip() if current.returncode == 0 else ""
+    if current_branch:
+        return current_branch, True
+
+    checkout = subprocess.run(
+        ["git", "-C", str(worktree), "checkout", "-B", branch],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if checkout.returncode != 0:
+        raise RuntimeError(
+            "failed to attach existing lane worktree to branch "
+            f"{branch}: {checkout.stderr.strip()}"
+        )
+    return branch, True
+
+
+def _worktree_head_sha(worktree: Path) -> str | None:
+    result = subprocess.run(
+        ["git", "-C", str(worktree), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip() or None
+
 
 def create_or_reuse_worktree(orchestrator, *, worktree: Path, branch: str) -> None:
     if worktree.exists():
@@ -581,6 +640,15 @@ async def run_review_god(orchestrator, lane_id: str) -> None:
                 summary,
                 lane=orchestrator._sm.get_lane(target_lane_id),
                 review_plane=orchestrator._review_plane,
+            ),
+            ingest_review_failure_verdict=(
+                lambda target_lane_id, reason, evidence_refs: ingest_review_failure_verdict(
+                    target_lane_id,
+                    reason,
+                    lane=orchestrator._sm.get_lane(target_lane_id),
+                    review_plane=orchestrator._review_plane,
+                    evidence_refs=evidence_refs,
+                )
             ),
             on_reviewed=orchestrator.on_lane_reviewed,
             on_rejected=orchestrator.on_lane_rejected,

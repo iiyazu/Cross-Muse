@@ -735,6 +735,65 @@ async def test_ensure_conversation_session_rejects_live_worktree_change(
 
 
 @pytest.mark.asyncio
+async def test_feature_scoped_conversation_session_does_not_reuse_peer_chat_session(
+    tmp_path,
+    monkeypatch,
+):
+    launcher = FakeLauncher()
+    layer = GodSessionLayer(
+        registry_path=tmp_path / "sessions.json",
+        launchers={AgentRuntime.CODEX: launcher},
+    )
+    spawned_sessions: list[FakeSession] = []
+
+    async def fake_spawn(command, env=None):
+        session = FakeSession()
+        spawned_sessions.append(session)
+        return session
+
+    monkeypatch.setattr(
+        "xmuse_core.agents.god_session_layer.LocalSession.spawn",
+        fake_spawn,
+    )
+    agent = _make_agent()
+    peer_chat_worktree = tmp_path / "peer-chat"
+    lane_review_worktree = tmp_path / "lane-review"
+
+    peer_chat = await layer.ensure_conversation_session(
+        conversation_id="conv_review",
+        participant_id="part_review",
+        role="review",
+        agent=agent,
+        worktree=peer_chat_worktree,
+        model="gpt-5.5",
+        prompt_fingerprint="sha256:peer-chat",
+        feature_scope_id=None,
+    )
+    lane_review = await layer.ensure_conversation_session(
+        conversation_id="conv_review",
+        participant_id="part_review",
+        role="review",
+        agent=agent,
+        worktree=lane_review_worktree,
+        model="gpt-5.5",
+        prompt_fingerprint="sha256:lane-review",
+        feature_scope_id="feature-a",
+    )
+
+    assert lane_review.god_session_id != peer_chat.god_session_id
+    assert lane_review.session_address != peer_chat.session_address
+    assert lane_review.session_inbox_id != peer_chat.session_inbox_id
+    assert lane_review.feature_scope_id == "feature-a"
+    assert peer_chat.feature_scope_id is None
+    assert len(spawned_sessions) == 2
+    assert spawned_sessions[0].aborted is False
+    assert launcher.build_persistent_command_calls == [
+        ("review", peer_chat_worktree),
+        ("review", lane_review_worktree),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_ensure_conversation_session_rejects_registry_mismatch_before_spawn(
     tmp_path,
     monkeypatch,
