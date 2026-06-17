@@ -10,6 +10,7 @@ from typing import Literal
 class AgentRuntime(StrEnum):
     CODEX = "codex"
     CLAUDE_CODE = "claude_code"
+    OPENCODE = "opencode"
 
 
 @dataclass

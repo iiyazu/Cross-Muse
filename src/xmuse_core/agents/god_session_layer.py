@@ -90,6 +90,16 @@ class GodSessionLayer:
             ):
                 await live.session.abort()
                 self._live_sessions.pop(live.record.god_session_id, None)
+                self._registry.update_peer_metadata(
+                    live.record.god_session_id,
+                    **_merged_peer_metadata(
+                        live.record,
+                        model=model,
+                        prompt_fingerprint=prompt_fingerprint,
+                        worktree=worktree,
+                        feature_scope_id=feature_scope_id,
+                    ),
+                )
                 live = None
             else:
                 if not self._session_identity_matches(
@@ -147,10 +157,13 @@ class GodSessionLayer:
             ):
                 record = self._registry.update_peer_metadata(
                     record.god_session_id,
-                    model=model,
-                    prompt_fingerprint=prompt_fingerprint,
-                    worktree=str(worktree) if worktree is not None else None,
-                    feature_scope_id=feature_scope_id,
+                    **_merged_peer_metadata(
+                        record,
+                        model=model,
+                        prompt_fingerprint=prompt_fingerprint,
+                        worktree=worktree,
+                        feature_scope_id=feature_scope_id,
+                    ),
                 )
             self._assert_record_shape_matches(
                 record,
@@ -456,16 +469,19 @@ class GodSessionLayer:
         worktree: Path | None,
         feature_scope_id: str | None,
     ) -> bool:
-        if not any(
-            value is not None for value in (model, prompt_fingerprint, worktree, feature_scope_id)
+        expected_worktree = str(worktree) if worktree is not None else None
+        pairs = (
+            (record.model, model),
+            (record.prompt_fingerprint, prompt_fingerprint),
+            (record.worktree, expected_worktree),
+            (record.feature_scope_id, feature_scope_id),
+        )
+        if any(
+            existing is not None and expected is not None and existing != expected
+            for existing, expected in pairs
         ):
             return False
-        return (
-            record.model is None
-            and record.prompt_fingerprint is None
-            and record.worktree is None
-            and record.feature_scope_id is None
-        )
+        return any(existing is None and expected is not None for existing, expected in pairs)
 
 
 def _runtime_value(runtime: RuntimeKey) -> str:
@@ -525,6 +541,30 @@ def _compatible_optional(existing: str | None, expected: str | None) -> bool:
     if existing is None or expected is None:
         return False
     return existing == expected
+
+
+def _merged_peer_metadata(
+    record: GodSessionRecord,
+    *,
+    model: str | None,
+    prompt_fingerprint: str | None,
+    worktree: Path | None,
+    feature_scope_id: str | None,
+) -> dict[str, str | None]:
+    return {
+        "model": model if model is not None else record.model,
+        "prompt_fingerprint": (
+            prompt_fingerprint
+            if prompt_fingerprint is not None
+            else record.prompt_fingerprint
+        ),
+        "worktree": str(worktree) if worktree is not None else record.worktree,
+        "feature_scope_id": (
+            feature_scope_id
+            if feature_scope_id is not None
+            else record.feature_scope_id
+        ),
+    }
 
 
 def _build_persistent_command(
