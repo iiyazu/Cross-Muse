@@ -60,7 +60,7 @@ async def apply_persistent_review_message(
 ) -> bool:
     verdict = persistent_verdict_payload(message)
     if verdict is None:
-        text = message.message or ""
+        text = _review_text_from_message(message)
         if not text:
             return False
         decision, summary, reason = infer_review_fallback(text)
@@ -178,3 +178,17 @@ def persistent_verdict_payload(message: StdoutMessage) -> dict[str, str] | None:
     if not summary:
         return None
     return {"decision": decision, "summary": summary}
+
+
+def _review_text_from_message(message: StdoutMessage) -> str:
+    candidates = [
+        message.message,
+        message.artifacts.get("reply_text"),
+        message.artifacts.get("message"),
+        message.artifacts.get("result"),
+        message.artifacts.get("stdout"),
+    ]
+    for candidate in candidates:
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate
+    return ""

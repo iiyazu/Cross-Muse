@@ -668,6 +668,7 @@ def test_feature_lane_field_classifications_are_explicit_for_retained_projection
     classifications = projection_module.FEATURE_LANE_FIELD_CLASSIFICATIONS
 
     assert classifications["feature_id"] == "projection"
+    assert classifications["review_runtime"] == "projection"
     assert classifications["prompt_summary"] == "projection"
     assert classifications["prompt_ref"] == "projection"
     assert classifications["status"] == "legacy"

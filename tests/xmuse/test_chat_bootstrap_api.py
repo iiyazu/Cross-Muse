@@ -136,6 +136,41 @@ def test_api_opencode_override_requires_explicit_model(tmp_path) -> None:
     assert response.status_code == 422
 
 
+def test_api_initial_participant_profile_mismatch_returns_role_mapping(
+    tmp_path,
+) -> None:
+    client = TestClient(create_app(tmp_path), raise_server_exceptions=False)
+
+    response = client.post(
+        "/api/chat/conversations",
+        json={
+            "title": "bad review profile",
+            "initial_participants": [
+                {
+                    "role": "review",
+                    "display_name": "Review GOD",
+                    "provider_id": "opencode",
+                    "profile_id": "default",
+                    "cli_kind": "opencode",
+                    "model": "deepseek-v4-flash",
+                }
+            ],
+            "init_mode": "proposal_then_approve",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == {
+        "code": "participant_profile_role_mismatch",
+        "message": "role 'review' must use profile_id 'review', got 'default'",
+        "role": "review",
+        "expected_profile_id": "review",
+        "provided_profile_id": "default",
+        "role_profile_map": {"review": "review"},
+    }
+    assert ChatStore(tmp_path / "chat.db").list_conversations() == []
+
+
 def test_api_invalid_initial_participants_returns_400_without_residual_conversation(
     tmp_path,
 ) -> None:

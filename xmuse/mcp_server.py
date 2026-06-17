@@ -735,6 +735,7 @@ CHAT_TOOL_SCHEMAS: list[dict[str, Any]] = [
                             "depends_on": {"type": "array", "items": {"type": "string"}},
                             "capabilities": {"type": "array", "items": {"type": "string"}},
                             "feature_group": {"type": "string"},
+                            "review_runtime": {"type": "string"},
                         },
                         "required": ["feature_id", "prompt", "depends_on", "capabilities"],
                         "additionalProperties": True,

@@ -13,6 +13,23 @@ Behavior rules live in:
 docs/xmuse/real-runtime-loop-behavior-policy.md
 ```
 
+## How To Use This From `/goal`
+
+The `/goal` prompt should reference this file instead of duplicating it. A goal
+run should start with truth refresh, choose the highest-value reachable loop,
+run the largest safe real chain, then narrow only at the first proven failure
+boundary.
+
+Do not treat the loop list as mandatory staircase work. Do not use it to justify
+an umbrella PR. Each loop must end as one of: runtime proof, classified blocker,
+small scoped patch with rerun evidence, or a small PR if the boundary is
+complete and the PR budget allows it.
+
+This file is a loop target map, not a product spec. The operator may skip,
+merge, or reorder loops when one real runtime run proves adjacent targets or
+exposes a higher-priority blocker. The invariant is that every loop ends with
+recorded durable evidence and a clear next boundary.
+
 ## Tonight's Target
 
 Build and prove the maximum reachable real chain:
@@ -108,6 +125,55 @@ Each loop should produce one of:
 
 Do not create artificial staircase tasks. Prefer the largest real chain that is
 currently safe to run, then narrow only at the first proven failure boundary.
+
+Every loop owns exactly one primary target. Related cleanup is allowed only when
+it is required to rerun that target. Unrelated implementation domains must move
+to backlog or a separate PR.
+
+## Loop Selection Rule
+
+At the start of each loop, choose the largest reachable real chain, not the next
+item in a checklist.
+
+Selection order:
+
+1. If the fullchain can run safely, run it and stop at the first proven failure.
+2. If fullchain cannot run, run the deepest real subchain that includes a real
+   producer and real consumer.
+3. If only a single boundary can run, make that boundary the loop target and
+   preserve the blocker evidence.
+
+After each loop, either advance to the next runtime boundary or split the
+implementation domain into a small PR. Do not keep patching inside one branch
+just because another adjacent problem is visible.
+
+## Runtime Loop Families
+
+The long goal has two primary loop families. They may interleave when one real
+run crosses both boundaries.
+
+Groupchat loops:
+
+- registered CLI peer identity;
+- durable provider sessions;
+- MCP/callback writeback;
+- natural mentions and handoffs;
+- Codex + OpenCode multi-turn discussion;
+- groupchat-produced proposal or decision.
+
+Fullchain loops:
+
+- proposal approval;
+- lane projection from authority to queue;
+- isolated worktree execution;
+- independent review;
+- final-action hold or explicit merge target;
+- main Codex audit/import;
+- validation and small PR.
+
+Stability loops start only after the reachable chain works once. They should
+focus on restart/resume, repeated turns, stale-session recovery, provider
+timeouts, and degraded-state classification.
 
 ## Loop 0: Truth Refresh
 
@@ -284,7 +350,8 @@ Target:
 Approved demand enters real execution in an isolated worktree.
 
 Hard rule:
-Runner or worker must not write the current control worktree.
+Runner or worker must not write the current control worktree. Runtime probes
+must use `--no-auto-merge` unless local auto-merge is the explicit target.
 
 Authority:
 
@@ -296,7 +363,7 @@ Complete when:
 
 - one execution unit runs in the isolated worktree;
 - candidate evidence exists;
-- current worktree is not modified by the worker.
+- current worktree is not modified by the worker or by runner auto-merge.
 
 ## Loop 8: Independent Review Passed
 
@@ -317,6 +384,8 @@ Condition:
 Complete when:
 
 - review passed with evidence;
+- if `--no-auto-merge` is enabled, the lane stops at `awaiting_final_action`
+  with a pending final-action hold;
 - remaining gaps are explicit.
 
 ## Loop 9: Main Codex Audit And Import
@@ -345,12 +414,14 @@ server truth permits.
 
 PR budget:
 
-- maximum three PRs tonight.
+- maximum three PRs for one long goal unless the active prompt lowers it;
+- if the active prompt says PR budget is full, create no new PRs;
+- continuing work must count already opened PRs against the budget.
 
 Expected PR split:
 
-1. PR #44: minimal closure spine foundation only.
-2. Real GOD chatgroup runtime kernel with Codex + OpenCode peer.
+1. Minimal closure spine foundation only.
+2. Real GOD chatgroup runtime kernel with Codex + OpenCode peers.
 3. Fullchain completion integration, or one blocking runner/dispatch safety fix.
 
 Rules:
@@ -377,6 +448,45 @@ Do not mix:
 - TUI.
 
 If a fourth PR appears necessary, stop and report.
+
+## Expected PR Domains
+
+Use these domains as the default split. A branch may skip a domain only when the
+runtime evidence proves it is already complete.
+
+P0: Evidence and policy maintenance.
+Base: current active branch unless the active goal says main-only.
+Gate: docs-only diff, `git diff --check`.
+Waits for: nothing.
+
+P1: Real GOD chatgroup runtime kernel.
+Base: origin/main or the smallest prior required PR.
+Gate: Codex and OpenCode durable peer registration plus at least one real
+writeback path.
+Waits for: provider command availability.
+
+P2: Peer-to-peer handoff and proposal production.
+Base: P1 if P1 changes the runtime contract.
+Gate: human demand produces durable discussion and durable proposal without
+manual proposal construction.
+Waits for: P1.
+
+P3: Fullchain execution and review.
+Base: P2 if it consumes groupchat-produced proposal shape.
+Gate: approved proposal reaches isolated execution and independent review; no
+auto-merge unless explicitly targeted.
+Waits for: P2.
+
+P4: Reliability and recovery.
+Base: the smallest merged runtime branch that contains the working chain.
+Gate: repeated run, restart/resume, stale-session, and timeout evidence.
+Waits for: at least one successful runtime chain.
+
+P5: Downstream projections.
+Base: proven upstream truth only.
+Gate: dashboard/TUI/MemoryOS projections consume evidence; they do not create
+truth.
+Waits for: upstream authority path.
 
 ## Explicit Non-Goals
 

@@ -143,6 +143,12 @@ def _dispatch_queue_store(base_dir: Path) -> ChatDispatchQueueStore:
     return ChatDispatchQueueStore(base_dir / "chat.db")
 
 
+def _peer_chat_error_detail(exc: PeerChatError) -> dict[str, object]:
+    detail: dict[str, object] = {"code": exc.code, "message": exc.message}
+    detail.update(exc.details)
+    return detail
+
+
 def _collaboration_run_refs(references: list[str]) -> list[str]:
     run_ids: list[str] = []
     for reference in references:
@@ -191,7 +197,7 @@ def _collaboration_execute_confirmed(run: CollaborationRun | None) -> bool:
     if run is None:
         return False
     return any(
-        response.target == "execute"
+        response.target in {"execute", "@execute"}
         and response.status == "received"
         and _execute_feasibility_verdict_confirmed(response.content)
         for response in run.responses
@@ -953,7 +959,7 @@ def create_app(
         except PeerChatError as exc:
             raise HTTPException(
                 status_code=400,
-                detail={"code": exc.code, "message": exc.message},
+                detail=_peer_chat_error_detail(exc),
             ) from exc
         payload = result["conversation"]
         payload["bootstrap"] = result["bootstrap"]

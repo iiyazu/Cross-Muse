@@ -382,11 +382,17 @@ class PeerChatService:
                 "address_slug": base.address_slug if base is not None else role,
                 "display_name": spec["display_name"],
                 "template_slug": base.template_slug if base is not None else role,
-                "provider_id": base.provider_id if base is not None else spec["cli_kind"],
+                "provider_id": (
+                    spec.get("provider_id")
+                    or (base.provider_id if base is not None else spec["cli_kind"])
+                ),
                 "profile_id": (
-                    base.profile_id
-                    if base is not None
-                    else provider_profile_id_for_role(role).value
+                    spec.get("profile_id")
+                    or (
+                        base.profile_id
+                        if base is not None
+                        else provider_profile_id_for_role(role).value
+                    )
                 ),
                 "cli_kind": spec["cli_kind"],
                 "model": spec["model"],
@@ -970,8 +976,11 @@ class PeerChatService:
             raise PeerChatError("invalid_arguments", "participant must be an object")
         role = self._required_string(participant.get("role"), "role")
         explicit_cli_kind = self._optional_string(participant.get("cli_kind"))
-        if explicit_cli_kind is not None and explicit_cli_kind != "codex":
+        if explicit_cli_kind is not None and explicit_cli_kind not in {"codex", "opencode"}:
             raise PeerChatError("codex_only_participants", explicit_cli_kind)
+        provider_id = self._optional_string(participant.get("provider_id"))
+        profile_id = self._optional_string(participant.get("profile_id"))
+        model = self._optional_string(participant.get("model"))
         role_template_id = self._optional_string(participant.get("role_template_id"))
         if role_template_id is not None:
             try:
@@ -983,27 +992,69 @@ class PeerChatService:
             if template is None or not template.predefined:
                 raise PeerChatError("role_template_id_required", role)
 
+        expected_profile_id = provider_profile_id_for_role(role)
+        if (
+            profile_id is not None
+            and profile_id != expected_profile_id.value
+        ):
+            raise PeerChatError(
+                "participant_profile_role_mismatch",
+                f"role {role!r} must use profile_id "
+                f"{expected_profile_id.value!r}, got {profile_id!r}",
+                details={
+                    "role": role,
+                    "expected_profile_id": expected_profile_id.value,
+                    "provided_profile_id": profile_id,
+                    "role_profile_map": {role: expected_profile_id.value},
+                },
+            )
+
+        resolved_profile_id = profile_id or expected_profile_id.value
+
         try:
             cli_kind = resolve_codex_cli_kind(
                 cli_kind=explicit_cli_kind,
-                provider_id=self._optional_string(participant.get("provider_id")),
-                profile_id=self._optional_string(participant.get("profile_id")),
-                expected_profile_id=template.profile_id,
+                provider_id=provider_id,
+                profile_id=resolved_profile_id,
+                expected_profile_id=expected_profile_id,
                 subject="xmuse chat participants",
             )
         except ValueError as exc:
             raise PeerChatError("invalid_arguments", str(exc)) from exc
 
+        if cli_kind == "opencode":
+            missing = [
+                field_name
+                for field_name, value in (
+                    ("provider_id", provider_id),
+                    ("cli_kind", explicit_cli_kind),
+                    ("model", model),
+                )
+                if value is None
+            ]
+            if missing:
+                raise PeerChatError(
+                    "invalid_arguments",
+                    "opencode initial_participants require explicit "
+                    "provider_id, cli_kind, and model",
+                )
+
         display_name = self._optional_string(participant.get("display_name")) or f"{role}-god"
-        model = normalize_codex_model_id(
-            self._optional_string(participant.get("model")) or template.default_model,
-            profile_id=template.profile_id,
+        normalized_model = (
+            normalize_codex_model_id(
+                model or template.default_model,
+                profile_id=expected_profile_id,
+            )
+            if cli_kind == "codex"
+            else model
         )
         return {
             "role": role,
             "display_name": display_name,
+            "provider_id": provider_id or cli_kind,
+            "profile_id": resolved_profile_id,
             "cli_kind": cli_kind,
-            "model": model,
+            "model": normalized_model,
             "role_template_id": template.id,
         }
 
@@ -1262,17 +1313,26 @@ class PeerChatService:
 
     def _session_summary(self, record: Any) -> dict[str, Any]:
         provider_id = "codex" if record.runtime == "codex" else str(record.runtime)
+        profile_id = (
+            provider_profile_id_for_role(record.role).value
+            if provider_id == "codex"
+            else "default"
+        )
+        if isinstance(record.participant_id, str) and record.participant_id:
+            try:
+                participant = self._participants.get(record.participant_id)
+            except KeyError:
+                participant = None
+            if participant is not None and participant.conversation_id == record.conversation_id:
+                provider_id = participant.provider_id.value
+                profile_id = participant.profile_id.value
         return {
             "god_session_id": record.god_session_id,
             "conversation_id": record.conversation_id,
             "participant_id": record.participant_id,
             "role": record.role,
             "provider_id": provider_id,
-            "profile_id": (
-                provider_profile_id_for_role(record.role).value
-                if provider_id == "codex"
-                else "default"
-            ),
+            "profile_id": profile_id,
             "runtime": record.runtime,
             "model": record.model,
             "status": record.status,
@@ -1660,12 +1720,13 @@ class PeerChatService:
         )
         store = self._collaboration_store()
         run = self._collaboration_run_for_conversation(store, run_id, conversation_id)
-        if participant.role not in run.targets:
+        response_target = _collaboration_response_target(participant.role, run.targets)
+        if response_target is None:
             raise PeerChatError("collaboration_target_mismatch", participant.role)
         try:
             updated = store.record_response(
                 run_id,
-                target=participant.role,
+                target=response_target,
                 content=str(content),
                 response_status=status,
             )
@@ -2279,6 +2340,17 @@ class PeerChatService:
         if len(matches) > 1:
             raise PeerChatError("review_trigger_target_ambiguous", conversation_id)
         return matches[0]
+
+
+def _collaboration_response_target(role: str, targets: list[str]) -> str | None:
+    """Return the stored collaboration target matching a participant role."""
+    role = role.strip()
+    if role in targets:
+        return role
+    address = f"@{role}"
+    if address in targets:
+        return address
+    return None
 
 
 def _review_trigger_content(
