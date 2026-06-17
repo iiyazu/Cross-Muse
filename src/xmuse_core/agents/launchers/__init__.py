@@ -3,12 +3,14 @@
 from xmuse_core.agents.launchers.base import LauncherAdapter
 from xmuse_core.agents.launchers.claude_code import ClaudeCodeLauncher
 from xmuse_core.agents.launchers.codex import CodexLauncher
+from xmuse_core.agents.launchers.opencode import OpenCodeLauncher
 from xmuse_core.agents.registry import AgentRuntime
 
 __all__ = [
     "ClaudeCodeLauncher",
     "CodexLauncher",
     "LauncherAdapter",
+    "OpenCodeLauncher",
     "build_default_launchers",
 ]
 
@@ -25,4 +27,5 @@ def build_default_launchers(
             **({"model": codex_model} if codex_model else {}),
         ),
         AgentRuntime.CLAUDE_CODE: ClaudeCodeLauncher(),
+        AgentRuntime.OPENCODE: OpenCodeLauncher(mcp_port=mcp_port),
     }

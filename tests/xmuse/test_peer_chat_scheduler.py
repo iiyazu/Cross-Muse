@@ -8,7 +8,10 @@ import pytest
 from xmuse_core.agents.registry import AgentRuntime
 from xmuse_core.chat.inbox_store import ChatInboxStore
 from xmuse_core.chat.participant_store import ParticipantStore
-from xmuse_core.chat.peer_scheduler import PeerChatScheduler
+from xmuse_core.chat.peer_scheduler import (
+    PeerChatScheduler,
+    _peer_session_prompt_fingerprint,
+)
 from xmuse_core.chat.store import ChatStore
 from xmuse_core.chat.stream_store import ChatStreamStore, PeerTurnLatencyTraceStore
 
@@ -118,6 +121,7 @@ async def test_scheduler_claims_and_nudges_oldest_item(tmp_path: Path) -> None:
     assert "chat_emit_proposal" in layer.sent[0][2]
     assert "collaboration:<run_id>" in layer.sent[0][2]
     assert "Human approval is still required before dispatch" in layer.sent[0][2]
+
     assert "Only if MCP tools are unavailable" in layer.sent[0][2]
     assert "This is a group chat" in layer.sent[0][2]
     assert "Architect GOD" in layer.sent[0][2]
@@ -148,6 +152,46 @@ async def test_scheduler_claims_and_nudges_oldest_item(tmp_path: Path) -> None:
     assert claimed.status == "unread"
     assert claimed.claim_owner == "sched-test"
     assert claimed.nudge_count == 1
+
+
+def test_peer_session_prompt_fingerprint_is_stable_across_inbox_content(tmp_path) -> None:
+    chat = ChatStore(tmp_path / "chat.db")
+    conv = chat.create_conversation("Stable fingerprint")
+    participant = ParticipantStore(tmp_path / "chat.db").add(
+        conversation_id=conv.id,
+        role="architect",
+        display_name="Architect GOD",
+        cli_kind="codex",
+        model="gpt-5.5",
+    )
+    first = _peer_session_prompt_fingerprint(participant)
+    first_message = chat.add_message(conv.id, "Human", "human", "@architect first")
+    second_message = chat.add_message(conv.id, "Human", "human", "@architect second")
+
+    ChatInboxStore(tmp_path / "chat.db").create_item(
+        conversation_id=conv.id,
+        target_participant_id=participant.participant_id,
+        target_role=participant.role,
+        target_address="@architect",
+        sender_participant_id=None,
+        sender_address="@human",
+        source_message_id=first_message.id,
+        item_type="mention",
+        payload={"content": "@architect first"},
+    )
+    ChatInboxStore(tmp_path / "chat.db").create_item(
+        conversation_id=conv.id,
+        target_participant_id=participant.participant_id,
+        target_role=participant.role,
+        target_address="@architect",
+        sender_participant_id=None,
+        sender_address="@human",
+        source_message_id=second_message.id,
+        item_type="mention",
+        payload={"content": "@architect second"},
+    )
+
+    assert _peer_session_prompt_fingerprint(participant) == first
 
 
 @pytest.mark.asyncio

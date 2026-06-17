@@ -126,7 +126,7 @@ class PeerChatScheduler:
                 agent=agent,
                 worktree=self._worktree,
                 model=participant.model,
-                prompt_fingerprint=fingerprint_prompt(prompt),
+                prompt_fingerprint=_peer_session_prompt_fingerprint(participant),
                 feature_scope_id=None,
             )
             provider_turn_started_at = self._clock()
@@ -507,12 +507,26 @@ def _first_visible_at(stages: dict[str, dict[str, float]]) -> float | None:
     return min(candidates) if candidates else None
 
 
-def _runtime_for_participant(participant: Participant) -> AgentRuntime | str:
+def _runtime_for_participant(participant: Participant) -> AgentRuntime:
     if participant.cli_kind == "codex":
         return AgentRuntime.CODEX
     if participant.cli_kind == "opencode":
-        return "opencode"
+        return AgentRuntime.OPENCODE
     raise RuntimeError(f"unsupported participant cli_kind: {participant.cli_kind}")
+
+
+def _peer_session_prompt_fingerprint(participant: Participant) -> str:
+    return fingerprint_prompt(
+        "\n".join(
+            [
+                "xmuse-peer-chat-session-v1",
+                f"role={participant.role}",
+                f"display_name={participant.display_name}",
+                f"cli_kind={participant.cli_kind}",
+                f"model={participant.model}",
+            ]
+        )
+    )
 
 
 def _group_chat_context(

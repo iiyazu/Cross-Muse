@@ -954,6 +954,58 @@ async def test_ensure_conversation_session_migrates_legacy_record_metadata(
 
 
 @pytest.mark.asyncio
+async def test_ensure_conversation_session_migrates_bootstrap_record_with_model_only(
+    tmp_path,
+    monkeypatch,
+):
+    registry_path = tmp_path / "sessions.json"
+    layer = GodSessionLayer(
+        registry_path=registry_path,
+        launchers={AgentRuntime.OPENCODE: FakeLauncher()},
+    )
+    bootstrap = layer._registry.create(
+        role="review",
+        agent_name="review-opencode-god",
+        runtime="opencode",
+        session_address="@conv_boot:part_review",
+        session_inbox_id="inbox-conv_boot-part_review",
+        conversation_id="conv_boot",
+        participant_id="part_review",
+        model="deepseek-v4-flash",
+    )
+
+    async def fake_spawn(command, env=None):
+        return FakeSession()
+
+    monkeypatch.setattr(
+        "xmuse_core.agents.god_session_layer.LocalSession.spawn",
+        fake_spawn,
+    )
+
+    record = await layer.ensure_conversation_session(
+        conversation_id="conv_boot",
+        participant_id="part_review",
+        role="review",
+        agent=AgentDescriptor(
+            runtime=AgentRuntime.OPENCODE,
+            name="review-opencode-god",
+            capabilities=["review"],
+        ),
+        worktree=tmp_path,
+        model="deepseek-v4-flash",
+        prompt_fingerprint="sha256:review-opencode",
+        feature_scope_id=None,
+    )
+
+    assert record.god_session_id == bootstrap.god_session_id
+    reloaded = layer._registry.get(record.god_session_id)
+    assert reloaded.model == "deepseek-v4-flash"
+    assert reloaded.prompt_fingerprint == "sha256:review-opencode"
+    assert reloaded.worktree == str(tmp_path)
+    assert reloaded.feature_scope_id is None
+
+
+@pytest.mark.asyncio
 async def test_persistent_peer_uses_role_capability_and_stable_session_prompt(
     tmp_path: Path,
 ) -> None:
