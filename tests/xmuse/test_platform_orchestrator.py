@@ -5413,6 +5413,36 @@ async def test_run_gate_uses_plural_gate_profiles(setup):
 
 
 @pytest.mark.asyncio
+async def test_run_gate_writes_report_when_gate_profiles_missing(setup):
+    tmp_path, lanes_path = setup
+    lanes_path.write_text(json.dumps({"lanes": [
+        {
+            "feature_id": "lane-1",
+            "status": "executed",
+            "prompt": "fix",
+            "worktree": str(tmp_path),
+        },
+    ]}))
+    orch = PlatformOrchestrator(
+        lanes_path=lanes_path, xmuse_root=tmp_path, mcp_port=9999,
+    )
+
+    assert await orch._run_gate("lane-1") is True
+
+    report_path = tmp_path / "logs" / "gates" / "lane-1" / "report.json"
+    assert report_path.exists()
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["passed"] is True
+    assert report["blocking_passed"] is True
+    assert report["profile_ids"] == []
+    assert report["command_results"] == []
+    assert report["resolution_reasons"] == {
+        "gate_profiles": ["gate_profiles_missing"],
+    }
+    assert report["worktree"] == str(tmp_path)
+
+
+@pytest.mark.asyncio
 async def test_reconcile_recovers_review_timeout_by_rerunning_review(setup):
     tmp_path, lanes_path = setup
     lanes_path.write_text(json.dumps({"lanes": [
