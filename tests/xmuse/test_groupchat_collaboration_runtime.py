@@ -903,6 +903,85 @@ def test_lane_graph_approval_preserves_review_runtime_in_projection(
     assert lanes[0]["review_runtime"] == "opencode"
 
 
+def test_lane_graph_approval_metadata_preserves_proposal_lane_authority(
+    tmp_path: Path,
+) -> None:
+    conversation_id = _conversation(tmp_path)
+    client = TestClient(create_app(tmp_path))
+    lane_prompt = (
+        "Post-PR56 latest-main local runtime fullchain stability proof. "
+        "Call query_knowledge, run package-boundary pytest, make no edits, "
+        "then update lane status with bounded evidence."
+    )
+    proposal = client.post(
+        f"/api/chat/conversations/{conversation_id}/proposals",
+        json={
+            "author": "architect",
+            "proposal_type": "lane_graph",
+            "content": json.dumps(
+                {
+                    "summary": "Preserve accepted lane graph",
+                    "lanes": [
+                        {
+                            "feature_id": "loop25r-main-package-boundary-final-hold",
+                            "prompt": lane_prompt,
+                            "depends_on": [],
+                            "capabilities": ["python", "pytest", "xmuse_mcp"],
+                            "review_runtime": "opencode",
+                            "final_action": "no-auto-merge",
+                            "proof_boundary": "local_runtime_proof",
+                        }
+                    ],
+                }
+            ),
+            "references": [],
+        },
+    )
+    assert proposal.status_code == 201
+
+    approved = client.post(
+        f"/api/chat/proposals/{proposal.json()['id']}/approve",
+        json={
+            "approved_by": ["human-operator"],
+            "approval_mode": "manual",
+            "goal_summary": "Approve with supplemental proof metadata",
+            "content": {
+                "final_action": "no-auto-merge",
+                "proof_boundary": "local_runtime_proof",
+                "forbidden_claims": ["github_review_truth", "full_l1_l11_closure"],
+            },
+        },
+    )
+
+    assert approved.status_code == 200
+    resolution = approved.json()
+    assert resolution["content"]["type"] == "lane_graph"
+    assert resolution["content"]["forbidden_claims"] == [
+        "github_review_truth",
+        "full_l1_l11_closure",
+    ]
+    assert resolution["content"]["lanes"][0]["feature_id"] == (
+        "loop25r-main-package-boundary-final-hold"
+    )
+
+    graph_id = f"{resolution['id']}-graph-v{resolution['version']}"
+    graph = json.loads((tmp_path / "lane_graphs" / f"{graph_id}.json").read_text())
+    assert graph["lanes"][0]["feature_id"] == "loop25r-main-package-boundary-final-hold"
+    assert graph["lanes"][0]["prompt"] == lane_prompt
+    assert graph["lanes"][0]["capabilities"] == ["python", "pytest", "xmuse_mcp"]
+    assert graph["lanes"][0]["review_runtime"] == "opencode"
+    assert graph["lanes"][0]["final_action"] == "no-auto-merge"
+    assert graph["lanes"][0]["proof_boundary"] == "local_runtime_proof"
+
+    lanes = json.loads((tmp_path / "feature_lanes.json").read_text())["lanes"]
+    assert lanes[0]["feature_id"] == "loop25r-main-package-boundary-final-hold"
+    assert lanes[0]["capabilities"] == ["python", "pytest", "xmuse_mcp"]
+    assert lanes[0]["review_runtime"] == "opencode"
+    assert lanes[0]["final_action"] == "no-auto-merge"
+    assert lanes[0]["proof_boundary"] == "local_runtime_proof"
+    assert (tmp_path / lanes[0]["prompt_ref"]).read_text(encoding="utf-8") == lane_prompt
+
+
 def test_proposal_approval_rejects_freeform_execute_confirmation(
     tmp_path: Path,
 ) -> None:
