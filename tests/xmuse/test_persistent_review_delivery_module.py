@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import json
+
+import pytest
+
 from xmuse_core.agents.protocol import StdoutMessage
 from xmuse_core.platform.execution import persistent_review_delivery
 from xmuse_core.platform.execution.review_god import (
@@ -8,6 +12,7 @@ from xmuse_core.platform.execution.review_god import (
 from xmuse_core.platform.execution.review_god import (
     _persistent_verdict_payload as legacy_persistent_verdict_payload,
 )
+from xmuse_core.platform.state_machine import LaneStateMachine
 
 
 def test_persistent_review_delivery_module_owns_verdict_payload_parsing() -> None:
@@ -43,3 +48,76 @@ def test_review_god_preserves_persistent_review_delivery_compat_exports() -> Non
         LegacyPersistentReviewReceiveError
         is persistent_review_delivery.PersistentReviewReceiveError
     )
+
+
+@pytest.mark.asyncio
+async def test_apply_persistent_review_message_records_evidence_refs(tmp_path) -> None:
+    lanes_path = tmp_path / "feature_lanes.json"
+    lanes_path.write_text(
+        json.dumps(
+            {
+                "lanes": [
+                    {
+                        "feature_id": "lane-1",
+                        "status": "gated",
+                        "review_task_id": "task-lane-1",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    sm = LaneStateMachine(lanes_path)
+    evidence_refs = [
+        "feature_lanes.json#lane=lane-1",
+        "review_plane.json#task=task-lane-1",
+        "logs/gates/lane-1/report.json",
+    ]
+    captured: dict[str, object] = {}
+
+    def stable_verdict_id(lane_id: str) -> str:
+        assert lane_id == "lane-1"
+        return "verdict-merge-task-lane-1"
+
+    def ingest_merge_verdict(
+        lane_id: str,
+        summary: str,
+        refs: list[str] | None = None,
+    ) -> None:
+        captured["lane_id"] = lane_id
+        captured["summary"] = summary
+        captured["evidence_refs"] = refs
+
+    def ingest_rework_verdict(
+        lane_id: str,
+        summary: str,
+        refs: list[str] | None = None,
+    ) -> None:
+        raise AssertionError(f"unexpected rework verdict for {lane_id}: {summary}")
+
+    async def on_reviewed(lane_id: str) -> None:
+        captured["reviewed"] = lane_id
+
+    async def on_rejected(lane_id: str) -> None:
+        raise AssertionError(f"unexpected rejected lane {lane_id}")
+
+    delivered = await persistent_review_delivery.apply_persistent_review_message(
+        lane_id="lane-1",
+        sm=sm,
+        message=StdoutMessage(type="result", message="No findings.\nVerdict: merge"),
+        stable_verdict_id=stable_verdict_id,
+        ingest_merge_verdict=ingest_merge_verdict,
+        ingest_rework_verdict=ingest_rework_verdict,
+        on_reviewed=on_reviewed,
+        on_rejected=on_rejected,
+        review_request_id="review-request-1",
+        persistent_review_identity="configured:review-peer-1",
+        evidence_refs=[*evidence_refs, evidence_refs[0], ""],
+    )
+
+    lane = sm.get_lane("lane-1")
+    assert delivered is True
+    assert lane["status"] == "reviewed"
+    assert lane["review_evidence_refs"] == evidence_refs
+    assert captured["evidence_refs"] == evidence_refs
+    assert captured["reviewed"] == "lane-1"

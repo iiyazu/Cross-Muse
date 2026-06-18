@@ -50,12 +50,13 @@ async def apply_persistent_review_message(
     sm: LaneStateMachine,
     message: StdoutMessage,
     stable_verdict_id: Callable[[str], str],
-    ingest_merge_verdict: Callable[[str, str], None],
-    ingest_rework_verdict: Callable[[str, str], None],
+    ingest_merge_verdict: Callable[[str, str, list[str] | None], None],
+    ingest_rework_verdict: Callable[[str, str, list[str] | None], None],
     on_reviewed: Callable[[str], Awaitable[None]],
     on_rejected: Callable[[str], Awaitable[None]],
     review_request_id: str,
     persistent_review_identity: str,
+    evidence_refs: list[str] | None = None,
     extra_metadata: dict[str, Any] | None = None,
 ) -> bool:
     verdict = persistent_verdict_payload(message)
@@ -69,6 +70,7 @@ async def apply_persistent_review_message(
         summary = verdict["summary"]
         reason = "persistent_result"
 
+    review_evidence_refs = _dedupe_refs(evidence_refs or [])
     if decision == "reviewed":
         verdict_id = stable_verdict_id(lane_id)
         sm.transition(
@@ -88,9 +90,10 @@ async def apply_persistent_review_message(
                 "review_request_id": review_request_id,
                 "persistent_review_identity": persistent_review_identity,
             }
-            | (extra_metadata or {}),
+            | (extra_metadata or {})
+            | {"review_evidence_refs": review_evidence_refs},
         )
-        ingest_merge_verdict(lane_id, summary)
+        ingest_merge_verdict(lane_id, summary, review_evidence_refs)
         await on_reviewed(lane_id)
         return True
 
@@ -110,9 +113,10 @@ async def apply_persistent_review_message(
             "review_request_id": review_request_id,
             "persistent_review_identity": persistent_review_identity,
         }
-        | (extra_metadata or {}),
+        | (extra_metadata or {})
+        | {"review_evidence_refs": review_evidence_refs},
     )
-    ingest_rework_verdict(lane_id, summary)
+    ingest_rework_verdict(lane_id, summary, review_evidence_refs)
     await on_rejected(lane_id)
     return True
 
@@ -192,3 +196,15 @@ def _review_text_from_message(message: StdoutMessage) -> str:
         if isinstance(candidate, str) and candidate.strip():
             return candidate
     return ""
+
+
+def _dedupe_refs(value: list[str]) -> list[str]:
+    refs: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        ref = str(item).strip()
+        if not ref or ref in seen:
+            continue
+        seen.add(ref)
+        refs.append(ref)
+    return refs
