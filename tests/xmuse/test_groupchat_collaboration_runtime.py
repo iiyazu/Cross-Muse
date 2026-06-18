@@ -26,7 +26,9 @@ class _DispatchBridgeGodLayer:
         db_path: Path,
         *,
         write_back: bool = True,
-        completion_content: str = "DISPATCH_COMPLETED\nDispatched through execute provider.",
+        completion_content: str = (
+            "DISPATCH_ACKNOWLEDGED\nDispatch entry acknowledged."
+        ),
     ) -> None:
         self.db_path = db_path
         self.write_back = write_back
@@ -1377,7 +1379,7 @@ def test_chat_api_dispatch_bridge_rejects_blank_claim_identity(
 
 
 @pytest.mark.asyncio
-async def test_dispatch_bridge_auto_dispatches_gated_entry_through_execute_provider(
+async def test_dispatch_bridge_acknowledges_gated_entry_through_execute_peer(
     tmp_path: Path,
 ) -> None:
     conversation_id = _conversation(tmp_path)
@@ -1414,7 +1416,7 @@ async def test_dispatch_bridge_auto_dispatches_gated_entry_through_execute_provi
     assert context["inbox_item"]["payload"]["dispatch_queue_entry_id"] == entry.entry_id
     reloaded = ChatDispatchQueueStore(tmp_path / "chat.db").get(entry.entry_id)
     assert reloaded.status == "dispatched"
-    assert reloaded.provider_run_ref == f"provider:execute:{execute.participant_id}"
+    assert reloaded.provider_run_ref == f"peer_ack:execute:{execute.participant_id}"
     assert reloaded.dispatch_evidence.startswith("mcp_writeback:")
     inspector = build_conversation_inspector_payload(conversation_id, tmp_path)
     assert inspector["dispatch_queue"]["dispatched"] == 1
@@ -1490,6 +1492,11 @@ async def test_dispatch_bridge_prompt_includes_approved_artifact_context(
     assert outcome.dispatched == 1
     _, _, prompt, context_json, _ = god_layer.sent[0]
     context = json.loads(context_json)
+    assert "chat-plane handoff notice" in prompt
+    assert "must not claim execution" in prompt
+    assert "Do not edit files, run tests" in prompt
+    assert "DISPATCH_ACKNOWLEDGED" in prompt
+    assert "DISPATCH_COMPLETED" not in prompt
     assert "Production TUI closure" in prompt
     assert "Improve xmuse TUI slash commands" in prompt
     assert "Approved production TUI closure work" in prompt
@@ -1587,7 +1594,7 @@ async def test_dispatch_bridge_rejects_progress_only_writeback(
     assert outcome.failed == 1
     reloaded = ChatDispatchQueueStore(tmp_path / "chat.db").get(entry.entry_id)
     assert reloaded.status == "failed"
-    assert reloaded.failure_reason == "dispatch_completion_marker_missing"
+    assert reloaded.failure_reason == "dispatch_ack_marker_missing"
 
 
 @pytest.mark.asyncio

@@ -51,7 +51,7 @@ class _ClosureDispatchGodLayer:
             inbox_item["conversation_id"],
             author=participant_id,
             role="assistant",
-            content="DISPATCH_COMPLETED\nDispatched through execute provider.",
+            content="DISPATCH_ACKNOWLEDGED\nDispatch entry acknowledged.",
             envelope_type="dispatch_result",
             envelope_json={
                 "type": "dispatch_result",
