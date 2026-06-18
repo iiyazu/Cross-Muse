@@ -360,11 +360,17 @@ def _classify_runtime_process(args: list[str]) -> str | None:
 def _is_platform_runner_cmd(args: list[str]) -> bool:
     if "--health-once" in args:
         return False
-    return any(_matches_script_arg(arg, "platform_runner.py") for arg in args)
+    return any(_matches_script_arg(arg, "platform_runner.py") for arg in args) or any(
+        Path(arg).name == "xmuse-platform-runner" for arg in args
+    )
 
 
 def _is_mcp_server_cmd(args: list[str]) -> bool:
-    return any(_matches_script_arg(arg, "mcp_server.py") for arg in args)
+    return (
+        any(_matches_script_arg(arg, "mcp_server.py") for arg in args)
+        or any(Path(arg).name == "xmuse-mcp-server" for arg in args)
+        or ("-m" in args and "xmuse.mcp_server" in args)
+    )
 
 
 def _matches_script_arg(arg: str, script_name: str) -> bool:
