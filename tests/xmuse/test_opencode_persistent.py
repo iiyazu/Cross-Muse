@@ -238,6 +238,48 @@ def test_peer_chat_prompt_requests_callback_for_chinese_collaboration_tool_reque
     assert '"run_id":"collab_5fc77b42f7284d47ab5c6d26ea236e3a"' in prompt
 
 
+def test_peer_chat_prompt_requests_callback_for_chinese_collaboration_tool_fill_request(
+    tmp_path,
+) -> None:
+    config = RunnerConfig(
+        model="opencode-go/deepseek-v4-flash",
+        variant="max",
+        mcp_port=8100,
+        worktree=tmp_path,
+        role="review",
+        timeout_s=30,
+        opencode_binary="opencode",
+    )
+    context = {
+        "inbox_item": {
+            "payload": {
+                "content": (
+                    "请审看协作 run `collab_6b6adc941aa74afb89320099f19a20e1` "
+                    "的 proposal 约束是否完整。请用协作响应工具回填你的"
+                    "审查结论与任何 blocker。"
+                ),
+            },
+        },
+        "group_chat": {
+            "participants": [
+                {"role": "review", "display_name": "review-opencode-god"},
+            ],
+            "recent_messages": [],
+        },
+    }
+
+    prompt = _format_turn_prompt(
+        config,
+        msg_type="peer_chat_nudge",
+        prompt="fallback",
+        context=json.dumps(context, ensure_ascii=False),
+    )
+
+    assert "## Structured Callback" in prompt
+    assert '"callback_action":"chat_record_collaboration_response"' in prompt
+    assert '"run_id":"collab_6b6adc941aa74afb89320099f19a20e1"' in prompt
+
+
 def test_parse_peer_chat_callback_action_accepts_strict_collaboration_json() -> None:
     action = _parse_peer_chat_callback_action(
         json.dumps(
