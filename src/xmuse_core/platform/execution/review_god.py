@@ -673,8 +673,8 @@ async def _try_configured_review_peer(
     receive_timeout_s: float,
     default_review_peer_routing_enabled: bool,
     stable_verdict_id: Callable[[str], str],
-    ingest_merge_verdict: Callable[[str, str], None],
-    ingest_rework_verdict: Callable[[str, str], None],
+    ingest_merge_verdict: Callable[[str, str, list[str] | None], None],
+    ingest_rework_verdict: Callable[[str, str, list[str] | None], None],
     on_reviewed: Callable[[str], Awaitable[None]],
     on_rejected: Callable[[str], Awaitable[None]],
 ) -> ConfiguredReviewPeerAttempt:
@@ -814,6 +814,11 @@ async def _try_configured_review_peer(
             on_rejected=on_rejected,
             review_request_id=peer_request_id,
             persistent_review_identity=f"configured:{review_peer_id}",
+            evidence_refs=_stdout_review_evidence_refs(
+                lane_id,
+                lane=sm.get_lane(lane_id),
+                xmuse_root=xmuse_root,
+            ),
             extra_metadata={
                 "review_peer_id": review_peer_id,
                 "peer_request_id": peer_request_id,
@@ -1052,8 +1057,8 @@ async def _try_persistent_review(
     persistent_session_layer: PersistentReviewSessionLayer,
     receive_timeout_s: float,
     stable_verdict_id: Callable[[str], str],
-    ingest_merge_verdict: Callable[[str, str], None],
-    ingest_rework_verdict: Callable[[str, str], None],
+    ingest_merge_verdict: Callable[[str, str, list[str] | None], None],
+    ingest_rework_verdict: Callable[[str, str, list[str] | None], None],
     on_reviewed: Callable[[str], Awaitable[None]],
     on_rejected: Callable[[str], Awaitable[None]],
 ) -> bool:
@@ -1296,6 +1301,11 @@ async def _try_persistent_review(
         on_rejected=on_rejected,
         review_request_id=review_request_id,
         persistent_review_identity=identity.session_key,
+        evidence_refs=_stdout_review_evidence_refs(
+            lane_id,
+            lane=sm.get_lane(lane_id),
+            xmuse_root=xmuse_root,
+        ),
     )
 
 
