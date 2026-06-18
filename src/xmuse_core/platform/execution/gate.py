@@ -10,6 +10,11 @@ from xmuse_core.observability import log_event
 
 logger = logging.getLogger(__name__)
 
+_WORKTREE_GATE_PROFILE_WARNING = (
+    "gate_profiles.json missing in XMUSE_ROOT; "
+    "using lane worktree xmuse/gate_profiles.json"
+)
+
 
 def get_changed_paths(worktree: Path) -> list[str]:
     try:
@@ -32,13 +37,16 @@ async def run_gate(*, lane_id: str, lane: dict[str, Any], root: Path) -> bool:
         from xmuse_core.gates.resolver import GateProfileResolver
         from xmuse_core.gates.runner import GateRunner
 
-        config_path = root / "gate_profiles.json"
-        if not config_path.exists():
+        config_path, config_repo_root, source_warning = _resolve_gate_config(
+            root=root,
+            worktree=worktree,
+        )
+        if config_path is None:
             log_event(logger, logging.WARNING, "gate_profiles_missing", lane_id=lane_id)
             _write_gate_profiles_missing_report(lane_id=lane_id, root=root, worktree=worktree)
-            return True
+            return False
 
-        config = load_gate_config(config_path, repo_root=root.parent)
+        config = load_gate_config(config_path, repo_root=config_repo_root)
         resolver = GateProfileResolver(config)
 
         explicit_profiles: list[str] = []
@@ -48,6 +56,8 @@ async def run_gate(*, lane_id: str, lane: dict[str, Any], root: Path) -> bool:
             explicit_profiles.append(str(gate_profile))
         changed = get_changed_paths(worktree)
         warnings: list[str] = []
+        if source_warning:
+            warnings.append(source_warning)
         resolver_changed_paths = changed
         if explicit_profiles:
             resolver_changed_paths = []
@@ -66,7 +76,7 @@ async def run_gate(*, lane_id: str, lane: dict[str, Any], root: Path) -> bool:
         )
 
         runner = GateRunner(
-            repo_root=root.parent,
+            repo_root=config_repo_root,
             logs_root=root / "logs" / "gates",
         )
         report = await runner.run(plan)
@@ -91,6 +101,26 @@ async def run_gate(*, lane_id: str, lane: dict[str, Any], root: Path) -> bool:
         return False
 
 
+def _resolve_gate_config(
+    *,
+    root: Path,
+    worktree: Path,
+) -> tuple[Path | None, Path, str | None]:
+    runtime_config = root / "gate_profiles.json"
+    if runtime_config.exists():
+        return runtime_config, root.parent, None
+
+    worktree_config = worktree / "xmuse" / "gate_profiles.json"
+    if worktree_config.exists():
+        return (
+            worktree_config,
+            worktree,
+            _WORKTREE_GATE_PROFILE_WARNING,
+        )
+
+    return None, worktree, None
+
+
 def _write_gate_profiles_missing_report(
     *,
     lane_id: str,
@@ -101,8 +131,8 @@ def _write_gate_profiles_missing_report(
     report_dir.mkdir(parents=True, exist_ok=True)
     report = {
         "feature_id": lane_id,
-        "passed": True,
-        "blocking_passed": True,
+        "passed": False,
+        "blocking_passed": False,
         "profile_ids": [],
         "resolution_reasons": {
             "gate_profiles": ["gate_profiles_missing"],
@@ -111,7 +141,7 @@ def _write_gate_profiles_missing_report(
         "artifact_dir": str(report_dir),
         "worktree": str(worktree),
         "warnings": [
-            "gate_profiles.json missing; gate failed open and wrote this report for review evidence"
+            "gate_profiles.json missing in XMUSE_ROOT and lane worktree; gate failed closed"
         ],
     }
     (report_dir / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
