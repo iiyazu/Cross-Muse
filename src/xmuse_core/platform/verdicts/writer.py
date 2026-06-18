@@ -61,6 +61,7 @@ def ingest_merge_verdict(
     *,
     lane: dict[str, Any],
     review_plane: ReviewPlaneProtocol,
+    evidence_refs: list[str] | None = None,
 ) -> None:
     """Ingest a merge verdict through the review plane for the stdout-fallback path.
 
@@ -80,6 +81,7 @@ def ingest_merge_verdict(
         lane_id=lane_id,
         decision=ReviewDecision.MERGE,
         summary=summary,
+        evidence_refs=_dedupe_refs(evidence_refs or lane.get("review_evidence_refs")),
     )
     try:
         review_plane.ingest_verdict(task_id, verdict)
@@ -99,6 +101,7 @@ def ingest_rework_verdict(
     *,
     lane: dict[str, Any],
     review_plane: ReviewPlaneProtocol,
+    evidence_refs: list[str] | None = None,
 ) -> None:
     """Ingest a rework verdict through the review plane for the stdout-fallback path.
 
@@ -115,6 +118,7 @@ def ingest_rework_verdict(
         lane_id=lane_id,
         decision=ReviewDecision.REWORK,
         summary=summary,
+        evidence_refs=_dedupe_refs(evidence_refs or lane.get("review_evidence_refs")),
     )
     try:
         review_plane.ingest_verdict(task_id, verdict)
@@ -168,6 +172,22 @@ def ingest_review_failure_verdict(
             task_id=str(task_id),
             reason=reason,
         )
+
+
+def _dedupe_refs(value: Any) -> list[str]:
+    refs: list[str] = []
+    seen: set[str] = set()
+    if not isinstance(value, list):
+        return refs
+    for item in value:
+        if not isinstance(item, str):
+            continue
+        ref = item.strip()
+        if not ref or ref in seen:
+            continue
+        seen.add(ref)
+        refs.append(ref)
+    return refs
 
 
 def gate_report_ref_for_lane(lane_id: str, *, xmuse_root: Path) -> str | None:

@@ -136,8 +136,8 @@ async def run_review_god(
     observer: Callable[[RecoveryEvent], None],
     open_review_task: Callable[[str], Any],
     stable_verdict_id: Callable[[str], str],
-    ingest_merge_verdict: Callable[[str, str], None],
-    ingest_rework_verdict: Callable[[str, str], None],
+    ingest_merge_verdict: Callable[[str, str, list[str] | None], None],
+    ingest_rework_verdict: Callable[[str, str, list[str] | None], None],
     ingest_review_failure_verdict: Callable[[str, str, list[str]], None],
     on_reviewed: Callable[[str], Awaitable[None]],
     on_rejected: Callable[[str], Awaitable[None]],
@@ -301,6 +301,7 @@ async def run_review_god(
         sm=sm,
         recovery=recovery,
         observer=observer,
+        xmuse_root=xmuse_root,
         stable_verdict_id=stable_verdict_id,
         ingest_merge_verdict=ingest_merge_verdict,
         ingest_rework_verdict=ingest_rework_verdict,
@@ -400,9 +401,10 @@ async def _handle_review_result(
     sm: LaneStateMachine,
     recovery: RecoveryManager,
     observer: Callable[[RecoveryEvent], None],
+    xmuse_root: Path,
     stable_verdict_id: Callable[[str], str],
-    ingest_merge_verdict: Callable[[str, str], None],
-    ingest_rework_verdict: Callable[[str, str], None],
+    ingest_merge_verdict: Callable[[str, str, list[str] | None], None],
+    ingest_rework_verdict: Callable[[str, str, list[str] | None], None],
     ingest_review_failure_verdict: Callable[[str, str, list[str]], None],
     on_reviewed: Callable[[str], Awaitable[None]],
     on_rejected: Callable[[str], Awaitable[None]],
@@ -481,6 +483,11 @@ async def _handle_review_result(
 
     if current.get("status") == "gated" and result.stdout.strip():
         decision, summary, reason = infer_review_fallback(result.stdout)
+        evidence_refs = _stdout_review_evidence_refs(
+            lane_id,
+            lane=current,
+            xmuse_root=xmuse_root,
+        )
         if decision == "reviewed":
             verdict_id = stable_verdict_id(lane_id)
             sm.transition(
@@ -495,9 +502,10 @@ async def _handle_review_result(
                 )
                 | {
                     "review_verdict_id": verdict_id,
+                    "review_evidence_refs": evidence_refs,
                 },
             )
-            ingest_merge_verdict(lane_id, summary)
+            ingest_merge_verdict(lane_id, summary, evidence_refs)
             await on_reviewed(lane_id)
             return
 
@@ -510,9 +518,10 @@ async def _handle_review_result(
                 summary=summary,
                 fallback="stdout",
                 fallback_reason=reason,
-            ),
+            )
+            | {"review_evidence_refs": evidence_refs},
         )
-        ingest_rework_verdict(lane_id, summary)
+        ingest_rework_verdict(lane_id, summary, evidence_refs)
         await on_rejected(lane_id)
 
 
@@ -609,6 +618,39 @@ def _review_failure_evidence_refs(result: Any) -> list[str]:
         value = getattr(result, attr, None)
         if isinstance(value, str) and value:
             refs.append(value)
+    return refs
+
+
+def _stdout_review_evidence_refs(
+    lane_id: str,
+    *,
+    lane: dict[str, Any],
+    xmuse_root: Path,
+) -> list[str]:
+    refs: list[str] = []
+    if lane_id:
+        refs.append(f"feature_lanes.json#lane={lane_id}")
+    task_id = lane.get("review_task_id")
+    if isinstance(task_id, str) and task_id.strip():
+        refs.append(f"review_plane.json#task={task_id.strip()}")
+    prompt_ref = lane.get("prompt_ref")
+    if isinstance(prompt_ref, str) and prompt_ref.strip():
+        refs.append(prompt_ref.strip())
+    gate_report = xmuse_root / "logs" / "gates" / lane_id / "report.json"
+    if gate_report.exists():
+        refs.append(f"logs/gates/{lane_id}/report.json")
+    return _dedupe_refs(refs)
+
+
+def _dedupe_refs(value: list[str]) -> list[str]:
+    refs: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        ref = str(item).strip()
+        if not ref or ref in seen:
+            continue
+        seen.add(ref)
+        refs.append(ref)
     return refs
 
 
