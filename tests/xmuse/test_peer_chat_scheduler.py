@@ -265,6 +265,87 @@ async def test_scheduler_releases_claim_when_peer_turn_times_out(tmp_path: Path)
 
 
 @pytest.mark.asyncio
+async def test_scheduler_accepts_timeout_after_real_mcp_writeback(tmp_path: Path) -> None:
+    chat = ChatStore(tmp_path / "chat.db")
+    conv = chat.create_conversation("Scheduler timeout after writeback")
+    participant = ParticipantStore(tmp_path / "chat.db").add(
+        conversation_id=conv.id,
+        role="architect",
+        display_name="Architect GOD",
+        cli_kind="codex",
+        model="gpt-5.4",
+    )
+    message = chat.add_message(conv.id, "Human", "human", "@architect")
+    inbox = ChatInboxStore(tmp_path / "chat.db")
+    item = inbox.create_item(
+        conversation_id=conv.id,
+        target_participant_id=participant.participant_id,
+        target_role="architect",
+        target_address="@architect",
+        sender_participant_id=None,
+        sender_address="@human",
+        source_message_id=message.id,
+        item_type="mention",
+        payload={"content": "@architect"},
+    )
+    stream = ChatStreamStore(tmp_path / "chat.db").start_or_reset(
+        conversation_id=conv.id,
+        author=participant.participant_id,
+        role="assistant",
+        request_id=item.id,
+        source_inbox_item_id=item.id,
+    )
+
+    class LateReturningGodLayer(FakeGodLayer):
+        async def receive_message(self, god_session_id):
+            import asyncio
+
+            reply = chat.add_message(
+                conv.id,
+                participant.participant_id,
+                "assistant",
+                "I created the collaboration and routed the peer requests.",
+            )
+            inbox.mark_read(item.id, responded_message_id=reply.id)
+            PeerTurnLatencyTraceStore(tmp_path / "chat.db").record_mcp_tool_stage(
+                conversation_id=conv.id,
+                inbox_item_id=item.id,
+                tool_name="chat_post_message",
+                called_at=1.0,
+            )
+            await asyncio.sleep(1)
+            return self.receive_result
+
+        async def abort_session(self, god_session_id):
+            self.aborted = god_session_id
+
+    layer = LateReturningGodLayer()
+    scheduler = PeerChatScheduler(
+        db_path=tmp_path / "chat.db",
+        god_layer=layer,
+        worktree=tmp_path,
+        scheduler_id="sched-test",
+        response_wait_s=0.01,
+    )
+
+    outcome = await scheduler.tick_once()
+
+    assert outcome.nudged == 1
+    assert outcome.happy_path == 1
+    assert outcome.failed == 0
+    assert layer.aborted == "god-live"
+    updated = inbox.get(item.id)
+    assert updated.status == "read"
+    assert updated.responded_message_id is not None
+    streams = ChatStreamStore(tmp_path / "chat.db")
+    assert streams.list_active(conv.id) == []
+    assert streams.get(stream.id).status == "done"
+    trace = PeerTurnLatencyTraceStore(tmp_path / "chat.db").list_recent(conv.id)[0]
+    assert trace["delivery_mode"] == "mcp_writeback"
+    assert trace["degraded_reason"] == "peer_response_timeout_after_writeback"
+
+
+@pytest.mark.asyncio
 async def test_scheduler_records_success_when_peer_marks_inbox_read(tmp_path: Path) -> None:
     chat = ChatStore(tmp_path / "chat.db")
     conv = chat.create_conversation("Scheduler success")
