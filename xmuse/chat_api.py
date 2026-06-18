@@ -683,6 +683,46 @@ def _project_resolution_into_execution_queue(
     )
 
 
+def _lane_graph_resolution_content(
+    proposal_payload: dict[str, Any],
+    approval_content: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Preserve the accepted lane graph as authority while carrying approval metadata."""
+
+    embedded = proposal_payload.get("resolution_content")
+    if isinstance(embedded, dict):
+        content = dict(embedded)
+    else:
+        content = {
+            key: value
+            for key, value in proposal_payload.items()
+            if key in {"summary", "goal", "lanes"}
+        }
+    content["type"] = "lane_graph"
+    if "lanes" not in content and isinstance(proposal_payload.get("lanes"), list):
+        content["lanes"] = proposal_payload["lanes"]
+    if isinstance(approval_content, dict):
+        for key, value in approval_content.items():
+            if key in {"type", "lanes"}:
+                continue
+            content[key] = value
+    return content
+
+
+def _resolution_content_for_approval(
+    *,
+    proposal_type: str,
+    proposal_payload: dict[str, Any],
+    approval_content: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if proposal_type == "lane_graph":
+        return _lane_graph_resolution_content(proposal_payload, approval_content)
+    if approval_content is not None:
+        return approval_content
+    content = proposal_payload.get("resolution_content")
+    return content if isinstance(content, dict) else {}
+
+
 def _enqueue_structured_dispatch_intent(
     base_dir: Path,
     *,
@@ -1578,8 +1618,14 @@ def create_app(
             )
             content = request.content
             feature_plan_proposal = None
+            proposal_payload: dict[str, Any] = {}
+            try:
+                loaded_payload = json.loads(escalation.normalized_content)
+            except json.JSONDecodeError:
+                loaded_payload = {}
+            if isinstance(loaded_payload, dict):
+                proposal_payload = loaded_payload
             if escalation.normalized_proposal_type == "feature_plan":
-                proposal_payload = json.loads(escalation.normalized_content)
                 _require_current_feature_plan_blueprint(
                     store,
                     conversation_id=proposal.conversation_id,
@@ -1592,12 +1638,12 @@ def create_app(
                     content=content,
                 )
                 content = _feature_plan_resolution_content(feature_plan_proposal)
-            if content is None:
-                try:
-                    proposal_payload = json.loads(escalation.normalized_content)
-                except json.JSONDecodeError:
-                    proposal_payload = {}
-                content = proposal_payload.get("resolution_content") or {}
+            else:
+                content = _resolution_content_for_approval(
+                    proposal_type=escalation.normalized_proposal_type,
+                    proposal_payload=proposal_payload,
+                    approval_content=content,
+                )
             _enforce_collaboration_dispatch_gate(
                 root,
                 conversation_id=proposal.conversation_id,

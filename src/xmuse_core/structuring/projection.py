@@ -17,6 +17,8 @@ FEATURE_LANE_FIELD_CLASSIFICATIONS: dict[str, str] = {
     "feature_id": "projection",
     "task_type": "projection",
     "review_runtime": "projection",
+    "final_action": "projection",
+    "proof_boundary": "projection",
     "status": "legacy",
     "prompt_summary": "projection",
     "prompt_ref": "projection",
@@ -376,6 +378,8 @@ def _lane_payload(
         **({"source_lane_id": node.source_lane_id} if node.source_lane_id else {}),
         **({"feature_group": node.feature_group} if node.feature_group else {}),
         **({"review_runtime": node.review_runtime} if node.review_runtime else {}),
+        **({"final_action": node.final_action} if node.final_action else {}),
+        **({"proof_boundary": node.proof_boundary} if node.proof_boundary else {}),
     }
     if feature_plan_id is not None:
         payload["feature_id"] = scoped_lane_id
