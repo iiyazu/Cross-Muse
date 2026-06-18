@@ -468,6 +468,7 @@ async def test_runner_enables_peer_chat_with_default_codex_launcher(
 
     class FakeOrchestrator:
         def __init__(self, **kwargs) -> None:
+            captured["orchestrator_kwargs"] = kwargs
             self._sm = _FakeStateMachine()
 
         async def reconcile_status_changes(self) -> None:
@@ -508,6 +509,10 @@ async def test_runner_enables_peer_chat_with_default_codex_launcher(
     peer_worktree = tmp_path / "xmuse" / "peer_chat_worktree"
     assert captured["scheduler_kwargs"]["worktree"] == peer_worktree
     assert peer_worktree.is_dir()
+    assert (
+        captured["orchestrator_kwargs"]["review_god_session_layer"]
+        is captured["scheduler_kwargs"]["god_layer"]
+    )
 
 
 @pytest.mark.asyncio
