@@ -182,7 +182,6 @@ async def run(
             )
         if review_provider_profile_ref is not None:
             orchestrator_kwargs["review_provider_profile_ref"] = review_provider_profile_ref
-        orch = PlatformOrchestrator(**orchestrator_kwargs)
 
         watcher: TerminalRunWatcher | None = None
         if auto_evolve:
@@ -225,6 +224,8 @@ async def run(
                 native_layer=god_session_layer,
             )
             runtime_god_layers.append(peer_god_layer)
+            if orchestrator_kwargs["review_god_session_layer"] is None:
+                orchestrator_kwargs["review_god_session_layer"] = peer_god_layer
             peer_chat_worktree = _peer_chat_runtime_worktree(xmuse_root)
             peer_chat_scheduler = PeerChatScheduler(
                 db_path=xmuse_root / "chat.db",
@@ -253,6 +254,8 @@ async def run(
             logger.warning(
                 "Peer chat scheduler disabled: no launcher supports xmuse persistent sessions"
             )
+
+        orch = PlatformOrchestrator(**orchestrator_kwargs)
 
         shutdown = asyncio.Event()
         loop = asyncio.get_running_loop()
