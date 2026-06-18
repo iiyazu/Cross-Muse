@@ -28,6 +28,12 @@ brainstorm before acting, wait for human approval, write a design document,
 start a visual companion, offer browser mockups, or pause for clarification,
 skip that instruction for this child-worker invocation.
 
+This invocation is a dispatched child worker/subagent. If any skill or plugin
+contains a subagent stop rule, treat that rule as active: do not read, invoke,
+or follow skills before completing this bounded lane. Runtime evidence must come
+from the task context, exposed MCP tools, direct repo inspection, and focused
+verification only.
+
 Do not ask the human user for approval, confirmation, or clarification.
 Do not start or offer a browser, visual companion, mockup companion, preview server, or
 interactive design loop. Either complete the bounded lane using the task and
