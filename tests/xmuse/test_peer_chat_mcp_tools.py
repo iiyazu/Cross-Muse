@@ -938,6 +938,24 @@ def test_mcp_collaboration_response_accepts_address_target(
 
     assert response["run"]["status"] == "done"
     assert response["run"]["responses"][0]["target"] == "@execute"
+    assert response["callback"]["inbox_items"][0]["item_type"] == (
+        "collaboration_callback"
+    )
+
+    inbox = ChatInboxStore(tmp_path / "chat.db").list_for_participant(
+        conversation_id=conv.id,
+        participant_id=architect.participant_id,
+    )
+    callback_items = [
+        item for item in inbox if item.item_type == "collaboration_callback"
+    ]
+    assert len(callback_items) == 1
+    callback = callback_items[0]
+    assert callback.target_address == "@architect"
+    assert callback.payload["collaboration_run_id"] == created["run"]["run_id"]
+    assert callback.payload["collaboration_status"] == "done"
+    assert callback.payload["trigger_mode"] == "collaboration_done_callback"
+    assert callback.payload["responses"][0]["target"] == "@execute"
 
 
 def test_mcp_collaboration_tools_reject_spoofed_session_identity(
