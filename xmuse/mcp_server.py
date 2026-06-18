@@ -813,7 +813,13 @@ CHAT_TOOL_SCHEMAS: list[dict[str, Any]] = [
     },
     {
         "name": "chat_record_collaboration_response",
-        "description": "Record this GOD participant's response to a collaboration request.",
+        "description": (
+            "Record this GOD participant's response to a collaboration request. "
+            "For executable dispatch, execute must send content shaped exactly "
+            'like {"type":"execute_feasibility_verdict","status":"executable",'
+            '"summary":"<why dispatch is safe>","evidence_refs":["<ref>"]}; '
+            "looser fields such as verdict=feasible do not satisfy approval gates."
+        ),
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -1107,8 +1113,12 @@ def _peer_chat_tool_schemas() -> list[dict[str, Any]]:
             elif name == "chat_record_collaboration_response":
                 narrowed["description"] = (
                     "Record this GOD's structured response to a collaboration run; "
-                    "execute should use an execute_feasibility_verdict JSON object "
-                    "before emitting a dispatchable proposal."
+                    "execute must use the approval-gate "
+                    "execute_feasibility_verdict JSON object before emitting a "
+                    "dispatchable proposal: "
+                    '{"type":"execute_feasibility_verdict","status":"executable",'
+                    '"summary":"<why dispatch is safe>","evidence_refs":["<ref>"]}. '
+                    "Looser fields such as verdict=feasible do not satisfy dispatch."
                 )
             schemas.append(narrowed)
     return schemas
