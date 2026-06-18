@@ -1126,6 +1126,41 @@ def test_update_lane_status_valid(setup):
     assert status_changes == [("lane-1", "reviewed")]
 
 
+def test_update_lane_status_accepts_bounded_execution_evidence_metadata(tmp_path: Path):
+    lanes_path = tmp_path / "feature_lanes.json"
+    lanes_path.write_text(json.dumps({"lanes": [
+        {
+            "feature_id": "lane-exec",
+            "status": "dispatched",
+            "prompt": "validate package boundaries",
+            "worktree": str(tmp_path / "wt"),
+        },
+    ]}))
+    sm = LaneStateMachine(lanes_path)
+    handler = McpToolHandler(state_machine=sm, xmuse_root=tmp_path)
+
+    result = handler.call("update_lane_status", {
+        "lane_id": "lane-exec",
+        "status": "executed",
+        "audit": {
+            "actor": "codex-child-worker",
+            "reason": "package boundary validation passed",
+            "request_id": "req-exec-1",
+        },
+        "guard": {"current_status": "dispatched"},
+        "metadata": {
+            "tests_run": ["uv run pytest tests/xmuse/test_package_boundaries.py -q"],
+            "changed_files": [],
+        },
+    })
+
+    assert result["status"] == "executed"
+    lane = sm.get_lane("lane-exec")
+    assert lane["tests_run"] == ["uv run pytest tests/xmuse/test_package_boundaries.py -q"]
+    assert lane["changed_files"] == []
+    assert lane["last_mutation_audit"]["tool"] == "update_lane_status"
+
+
 def test_update_lane_status_requires_audit_and_guard(setup):
     handler, sm, _, status_changes = setup
     result = handler.call("update_lane_status", {
@@ -1310,6 +1345,35 @@ def test_update_lane_status_rejects_unsafe_projection_metadata(setup):
     assert "worker_command" in result["error"]
     assert sm.get_lane("lane-1")["status"] == "gated"
     assert status_changes == []
+
+
+def test_update_lane_status_accepts_bounded_scalar_status_metadata(setup):
+    handler, sm, _, status_changes = setup
+    result = handler.call(
+        "update_lane_status",
+        {
+            "lane_id": "lane-1",
+            "status": "reviewed",
+            "audit": {
+                "actor": "review_god",
+                "reason": "record bounded status metadata",
+                "request_id": "req-review-9",
+            },
+            "guard": {"current_status": "gated"},
+            "metadata": {
+                "review_runtime": "opencode",
+                "final_action": "no-auto-merge",
+                "proof_boundary": "local_runtime_proof",
+            },
+        },
+    )
+
+    assert result["status"] == "reviewed"
+    lane = sm.get_lane("lane-1")
+    assert lane["review_runtime"] == "opencode"
+    assert lane["final_action"] == "no-auto-merge"
+    assert lane["proof_boundary"] == "local_runtime_proof"
+    assert status_changes == [("lane-1", "reviewed")]
 
 
 def test_unknown_tool(setup):

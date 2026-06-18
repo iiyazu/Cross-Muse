@@ -38,6 +38,9 @@ from xmuse_core.platform.takeover_actions import (
 )
 from xmuse_core.structuring.models import ReviewGodTakeoverDecision
 
+_MAX_EXECUTION_METADATA_ITEMS = 50
+_MAX_EXECUTION_METADATA_ITEM_CHARS = 1000
+
 
 def _query_terms(query: str) -> set[str]:
     return {t for t in re.findall(r"[a-zA-Z0-9_+-]+", query.lower()) if len(t) > 1}
@@ -361,23 +364,55 @@ def _normalize_lane_update_metadata(metadata: Any) -> dict[str, Any]:
     if not isinstance(metadata, dict):
         return {}
     normalized = dict(metadata)
+    for key in ("changed_files", "tests_run"):
+        if key in normalized:
+            normalized[key] = _normalize_execution_string_list_metadata(
+                normalized[key],
+                field_name=key,
+            )
     safe_fields = {
+        "changed_files",
         "failure_reason",
+        "final_action",
         "final_action_hold_id",
         "gate_passed",
         "merge_failure_detail",
         "merge_failure_reason",
         "merge_sha",
         "patch_lane_id",
+        "proof_boundary",
         "reason",
+        "review_runtime",
         "review_decision",
         "review_evidence_refs",
         "review_history",
         "review_summary",
         "rework_context",
+        "tests_run",
     }
     unexpected = sorted(key for key in normalized if key not in safe_fields)
     if unexpected:
         joined = ", ".join(unexpected)
         raise ValueError(f"unsafe metadata field(s) for update_lane_status: {joined}")
+    return normalized
+
+
+def _normalize_execution_string_list_metadata(value: Any, *, field_name: str) -> list[str]:
+    if not isinstance(value, list):
+        raise ValueError(f"update_lane_status metadata.{field_name} must be a string list")
+    if len(value) > _MAX_EXECUTION_METADATA_ITEMS:
+        raise ValueError(
+            f"update_lane_status metadata.{field_name} exceeds "
+            f"{_MAX_EXECUTION_METADATA_ITEMS} items"
+        )
+    normalized: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            raise ValueError(f"update_lane_status metadata.{field_name} must be a string list")
+        if len(item) > _MAX_EXECUTION_METADATA_ITEM_CHARS:
+            raise ValueError(
+                f"update_lane_status metadata.{field_name} item exceeds "
+                f"{_MAX_EXECUTION_METADATA_ITEM_CHARS} characters"
+            )
+        normalized.append(item)
     return normalized
