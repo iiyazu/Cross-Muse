@@ -435,6 +435,8 @@ def _peer_chat_collaboration_response_run_id(context: str) -> str:
     if not match:
         return ""
     normalized = " ".join(content.lower().split())
+    if "chat_record_collaboration_response" in normalized:
+        return match.group(0)
     if "collaboration response" in normalized:
         return match.group(0)
     if "collaboration" in normalized and re.search(
@@ -455,7 +457,17 @@ def _peer_chat_collaboration_response_run_id(context: str) -> str:
         "collaboration run" in normalized or "collaboration" in normalized
     ):
         return match.group(0)
+    if _looks_like_cjk_collaboration_response_request(content):
+        return match.group(0)
     return ""
+
+
+def _looks_like_cjk_collaboration_response_request(content: str) -> bool:
+    compact = re.sub(r"\s+", "", content)
+    has_collaboration = any(marker in compact for marker in ("协作", "协同"))
+    has_response = any(marker in compact for marker in ("响应", "回复", "意见", "审查"))
+    has_record = any(marker in compact for marker in ("记录", "提交", "写入"))
+    return has_collaboration and has_response and has_record
 
 
 def _parse_opencode_json_output(stdout: str) -> tuple[str, str | None]:
