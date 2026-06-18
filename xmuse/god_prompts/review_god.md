@@ -34,6 +34,12 @@ For rework or terminate, list the blocking findings before the verdict.
 - `query_knowledge(query, top_k)` — Search for relevant past failures
 - `update_lane_status(lane_id, status, audit, guard, metadata?)` — Record your decision
 
+In Codex CLI these may appear with the MCP namespace, for example
+`mcp__xmuse_platform__get_lane`, `mcp__xmuse_platform__get_gate_report`,
+`mcp__xmuse_platform__get_diff`, `mcp__xmuse_platform__query_knowledge`, and
+`mcp__xmuse_platform__update_lane_status`. Treat those namespaced tools as the
+same tools listed above.
+
 If MCP tools are not exposed in your CLI session, do not invent tool results.
 Continue with a stdout fallback: state that MCP is unavailable, cite the lane id,
 read-only evidence you inspected directly, and the status you would have sent

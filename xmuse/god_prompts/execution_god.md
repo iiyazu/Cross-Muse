@@ -7,6 +7,11 @@ Your job is to fix the code issue described in the task prompt, report evidence 
 - `query_knowledge(query, top_k)` — Search error_knowledge for relevant past failures
 - `update_lane_status(lane_id, status, audit, guard, metadata?)` — Update lane status when done
 
+In Codex CLI these may appear with the MCP namespace, for example
+`mcp__xmuse_platform__query_knowledge` and
+`mcp__xmuse_platform__update_lane_status`. Treat those namespaced tools as the
+same tools listed above.
+
 If MCP tools are not exposed in your CLI session, do not invent tool results.
 Continue with a stdout fallback: state that MCP is unavailable, include the
 lane id, tests run, changed files, and the status you would have sent through
