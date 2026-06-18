@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from xmuse_core.platform import run_health
+from xmuse_core.platform import read_contracts, run_health
 from xmuse_core.providers.models import ProviderId, ProviderProfileId, RiskTier, TaskCapability
 from xmuse_core.providers.selection_record import (
     ProviderSelectionRecord,
@@ -1127,6 +1127,38 @@ def test_discover_xmuse_runtime_processes_classifies_runtime_helpers_and_workers
     assert inventory["evidence"] == {"hard": [], "degraded": []}
 
 
+def test_discover_xmuse_runtime_processes_recognizes_entrypoint_runtime_commands(
+    tmp_path: Path,
+) -> None:
+    proc_root = tmp_path / "proc"
+    entries = [
+        (
+            101,
+            1,
+            b"uv\0run\0xmuse-platform-runner\0--xmuse-root\0/tmp/run\0",
+        ),
+        (
+            102,
+            101,
+            b"python\0/tmp/.venv/bin/xmuse-platform-runner\0--xmuse-root\0/tmp/run\0",
+        ),
+        (201, 1, b"python3\0-m\0xmuse.mcp_server\0"),
+    ]
+    for pid, ppid, cmdline in entries:
+        path = proc_root / str(pid)
+        path.mkdir(parents=True)
+        path.joinpath("cmdline").write_bytes(cmdline)
+        path.joinpath("status").write_text(f"Name:\ttest\nPPid:\t{ppid}\n")
+
+    inventory = run_health.discover_xmuse_runtime_processes(proc_root)
+
+    assert inventory["runner_pids"] == [102]
+    assert inventory["mcp_pids"] == [201]
+    assert inventory["counts_by_service"]["runner"] == 1
+    assert inventory["counts_by_service"]["mcp"] == 1
+    assert inventory["warnings"] == []
+
+
 def test_build_run_health_model_exposes_compact_process_inventory_evidence(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1154,6 +1186,30 @@ def test_build_run_health_model_exposes_compact_process_inventory_evidence(
         "missing_mcp_process",
         "duplicate_scheduler_monitor_processes",
     ]
+
+
+def test_read_run_health_snapshot_uses_runtime_process_discovery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lanes_path = tmp_path / "feature_lanes.json"
+    lanes_path.write_text(json.dumps({"lanes": []}), encoding="utf-8")
+    inventory = run_health.build_process_inventory(runner_pids=[11], mcp_pids=[21])
+    monkeypatch.setattr(
+        run_health,
+        "discover_xmuse_runtime_processes",
+        lambda proc_root=Path("/proc"): inventory,
+    )
+
+    snapshot = read_contracts.build_run_health_snapshot(
+        lanes_path=lanes_path,
+        xmuse_root=tmp_path,
+    )
+
+    processes = snapshot["run_health"]["processes"]
+    assert processes["runner_pids"] == [11]
+    assert processes["mcp_pids"] == [21]
+    assert snapshot["run_health"]["warnings"] == []
 
 
 def test_process_inventory_allows_persistent_god_shim_pool() -> None:
