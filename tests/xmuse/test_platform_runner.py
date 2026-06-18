@@ -613,6 +613,11 @@ async def test_runner_builds_dispatch_bridge_with_peer_god_layer(
         captured["dispatch_bridge_kwargs"]["god_layer"]
         is captured["scheduler_kwargs"]["god_layer"]
     )
+    assert (
+        captured["dispatch_bridge_kwargs"]["worktree"]
+        == captured["scheduler_kwargs"]["worktree"]
+    )
+    assert Path(captured["dispatch_bridge_kwargs"]["worktree"]).name == "peer_chat_worktree"
     assert captured["dispatch_bridge_kwargs"]["response_wait_s"] >= 180
 
 
