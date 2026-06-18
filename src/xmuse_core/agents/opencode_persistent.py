@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -280,6 +281,8 @@ def _format_peer_chat_prompt(
 ) -> str:
     request_content = _peer_chat_request_content(context) or fallback_prompt.strip()
     roster = _peer_chat_roster(context)
+    transcript = _peer_chat_recent_transcript(context)
+    collaboration_response_run_id = _peer_chat_collaboration_response_run_id(context)
     sections = [
         "You are an xmuse OpenCode GOD peer in a durable groupchat.",
         f"Role: {config.role}",
@@ -290,19 +293,51 @@ def _format_peer_chat_prompt(
     ]
     if roster:
         sections.extend(["", "## Active Participants", "", roster])
+    if transcript:
+        sections.extend(["", "## Recent Transcript", "", transcript])
+    if collaboration_response_run_id:
+        sections.extend(
+            [
+                "",
+                "## Structured Callback",
+                "",
+                "This request asks you to record a formal collaboration response. "
+                "Prefer returning exactly one JSON object and no markdown:",
+                (
+                    '{"callback_action":"chat_record_collaboration_response",'
+                    f'"run_id":"{collaboration_response_run_id}",'
+                    '"status":"received","content":"<formal response text>",'
+                    '"chat_reply":"<concise groupchat acknowledgement>"}'
+                ),
+                "If you reply in natural language instead, xmuse will still persist "
+                "that reply as the formal collaboration response through the callback "
+                "bridge for this run.",
+                "Preserve exact commands, lane ids, proof boundaries, and forbidden "
+                "claims from the current request and recent transcript. Do not "
+                "substitute or invent a different command.",
+            ]
+        )
+    sections.extend(["", "## Reply Contract", ""])
+    if collaboration_response_run_id:
+        sections.append(
+            "Return one bounded collaboration response for the run above; do not "
+            "ask another GOD to execute the lane from this peer-chat turn."
+        )
+    else:
+        sections.extend(
+            [
+                "Return only the concise natural-language content that should be "
+                "posted as your GOD chat reply.",
+                "If another GOD should act next, mention the exact @role and "
+                "include a concrete handoff request.",
+            ]
+        )
     sections.extend(
         [
-            "",
-            "## Reply Contract",
-            "",
-            "Return only the concise natural-language content that should be posted "
-            "as your GOD chat reply.",
             "Do not call tools. Do not edit files. Do not run tests. Do not inspect "
             "unrelated repository state.",
             "xmuse will write your reply through a durable callback bridge; stdout "
             "alone is not counted as chat truth.",
-            "If another GOD should act next, mention the exact @role and include a "
-            "concrete handoff request.",
         ]
     )
     return "\n".join(sections).strip() + "\n"
@@ -356,6 +391,73 @@ def _peer_chat_roster(context: str) -> str:
     return ", ".join(rows)
 
 
+def _peer_chat_recent_transcript(context: str, limit: int = 6000) -> str:
+    try:
+        parsed = json.loads(context)
+    except json.JSONDecodeError:
+        return ""
+    if not isinstance(parsed, dict):
+        return ""
+    group_chat = parsed.get("group_chat")
+    if not isinstance(group_chat, dict):
+        return ""
+    messages = group_chat.get("recent_messages")
+    if not isinstance(messages, list):
+        return ""
+    rows: list[str] = []
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        content = message.get("content")
+        if not isinstance(content, str) or not content.strip():
+            continue
+        role = message.get("role")
+        author = message.get("author")
+        label = (
+            role.strip()
+            if isinstance(role, str) and role.strip()
+            else author.strip()
+            if isinstance(author, str) and author.strip()
+            else "message"
+        )
+        rows.append(f"{label}: {content.strip()}")
+    transcript = "\n".join(rows).strip()
+    if len(transcript) > limit:
+        return transcript[-limit:]
+    return transcript
+
+
+def _peer_chat_collaboration_response_run_id(context: str) -> str:
+    content = _peer_chat_request_content(context)
+    if not content:
+        return ""
+    match = re.search(r"\bcollab_[A-Za-z0-9]+\b", content)
+    if not match:
+        return ""
+    normalized = " ".join(content.lower().split())
+    if "collaboration response" in normalized:
+        return match.group(0)
+    if "collaboration" in normalized and re.search(
+        r"\b(respond|response|review)\b",
+        normalized,
+    ):
+        return match.group(0)
+    if (
+        "collaboration" in normalized
+        and "record" in normalized
+        and "response" in normalized
+        and ("durable" in normalized or "durably" in normalized)
+    ):
+        return match.group(0)
+    if re.search(r"\brecord\b.*\bformal\b.*\bresponse\b", normalized):
+        return match.group(0)
+    if re.search(r"\bformal\b.*\bresponse\b", normalized) and (
+        "collaboration run" in normalized or "collaboration" in normalized
+    ):
+        return match.group(0)
+    return ""
+
+
 def _parse_opencode_json_output(stdout: str) -> tuple[str, str | None]:
     texts: list[str] = []
     session_id: str | None = None
@@ -401,13 +503,69 @@ def _post_peer_chat_writeback(
     content: str,
     request_id: str | None,
 ) -> dict[str, Any]:
+    expected_run_id = _peer_chat_collaboration_response_run_id(context)
+    callback_action = (
+        _parse_peer_chat_callback_action(
+            content,
+            expected_run_id=expected_run_id,
+        )
+        if expected_run_id
+        else None
+    )
+    if expected_run_id and callback_action is None:
+        callback_action = {
+            "callback_action": "chat_record_collaboration_response",
+            "run_id": expected_run_id,
+            "status": "received",
+            "content": content.strip(),
+            "chat_reply": content.strip(),
+        }
+    if callback_action is not None:
+        response_payload = _build_collaboration_response_payload(
+            context=context,
+            action=callback_action,
+            request_id=request_id,
+        )
+        response_result = _call_mcp_chat_tool(
+            port=config.mcp_port,
+            payload=response_payload,
+        )
+        chat_content = callback_action.get("chat_reply") or callback_action["content"]
+        message_payload = _build_chat_post_message_payload(
+            context=context,
+            content=chat_content,
+            request_id=request_id,
+            callback_action="chat_record_collaboration_response",
+        )
+        message_result = _call_mcp_chat_tool(
+            port=config.mcp_port,
+            payload=message_payload,
+        )
+        return {
+            "status": "ok",
+            "tools": ["chat_record_collaboration_response", "chat_post_message"],
+            "jsonrpc_ids": [response_payload["id"], message_payload["id"]],
+            "collaboration_response": _summarize_mcp_result(response_result),
+            "chat_message": _summarize_mcp_result(message_result),
+        }
+
     payload = _build_chat_post_message_payload(
         context=context,
         content=content,
         request_id=request_id,
     )
+    result = _call_mcp_chat_tool(port=config.mcp_port, payload=payload)
+    return {
+        "status": "ok",
+        "tool": "chat_post_message",
+        "jsonrpc_id": payload["id"],
+        "chat_message": _summarize_mcp_result(result),
+    }
+
+
+def _call_mcp_chat_tool(*, port: int, payload: dict[str, Any]) -> dict[str, Any]:
     req = urllib.request.Request(
-        f"http://127.0.0.1:{config.mcp_port}/mcp/chat",
+        f"http://127.0.0.1:{port}/mcp/chat",
         data=json.dumps(payload).encode("utf-8"),
         headers={"Content-Type": "application/json"},
         method="POST",
@@ -421,14 +579,10 @@ def _post_peer_chat_writeback(
     data = json.loads(response_body) if response_body else {}
     result = data.get("result") if isinstance(data, dict) else None
     if not isinstance(result, dict):
-        raise RuntimeError("MCP chat_post_message response missing result")
+        raise RuntimeError(f"MCP {payload['params']['name']} response missing result")
     if result.get("isError") is True:
-        raise RuntimeError(f"MCP chat_post_message returned isError: {result}")
-    return {
-        "status": "ok",
-        "tool": "chat_post_message",
-        "jsonrpc_id": payload["id"],
-    }
+        raise RuntimeError(f"MCP {payload['params']['name']} returned isError: {result}")
+    return result
 
 
 def _build_chat_post_message_payload(
@@ -436,18 +590,21 @@ def _build_chat_post_message_payload(
     context: str,
     content: str,
     request_id: str | None,
+    callback_action: str | None = None,
 ) -> dict[str, Any]:
-    parsed = json.loads(context)
-    if not isinstance(parsed, dict):
-        raise ValueError("peer chat context must be an object")
-    inbox_item = parsed.get("inbox_item")
-    if not isinstance(inbox_item, dict):
-        raise ValueError("peer chat context missing inbox_item")
+    parsed, inbox_item = _parse_peer_chat_context(context)
     conversation_id = _required_context_text(parsed, "conversation_id")
     participant_id = _required_context_text(parsed, "participant_id")
     god_session_id = _required_context_text(parsed, "god_session_id")
     inbox_item_id = _required_context_text(inbox_item, "id")
     client_request_id = request_id or f"opencode-peer-chat-{uuid.uuid4().hex}"
+    envelope: dict[str, Any] = {
+        "type": "message",
+        "schema_version": 1,
+        "writeback_path": "opencode_callback_bridge",
+    }
+    if callback_action is not None:
+        envelope["callback_action"] = callback_action
     return {
         "jsonrpc": "2.0",
         "id": client_request_id,
@@ -461,14 +618,171 @@ def _build_chat_post_message_payload(
                 "client_request_id": client_request_id,
                 "content": content,
                 "reply_to_inbox_item_id": inbox_item_id,
-                "envelope": {
-                    "type": "message",
-                    "schema_version": 1,
-                    "writeback_path": "opencode_callback_bridge",
-                },
+                "envelope": envelope,
             },
         },
     }
+
+
+def _build_collaboration_response_payload(
+    *,
+    context: str,
+    action: dict[str, str],
+    request_id: str | None,
+) -> dict[str, Any]:
+    parsed, _inbox_item = _parse_peer_chat_context(context)
+    conversation_id = _required_context_text(parsed, "conversation_id")
+    participant_id = _required_context_text(parsed, "participant_id")
+    god_session_id = _required_context_text(parsed, "god_session_id")
+    client_request_id = (
+        f"{request_id}:collaboration_response"
+        if request_id
+        else f"opencode-peer-collaboration-response-{uuid.uuid4().hex}"
+    )
+    return {
+        "jsonrpc": "2.0",
+        "id": client_request_id,
+        "method": "tools/call",
+        "params": {
+            "name": "chat_record_collaboration_response",
+            "arguments": {
+                "conversation_id": conversation_id,
+                "participant_id": participant_id,
+                "god_session_id": god_session_id,
+                "run_id": action["run_id"],
+                "content": action["content"],
+                "status": action.get("status") or "received",
+            },
+        },
+    }
+
+
+def _parse_peer_chat_context(context: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    parsed = json.loads(context)
+    if not isinstance(parsed, dict):
+        raise ValueError("peer chat context must be an object")
+    inbox_item = parsed.get("inbox_item")
+    if not isinstance(inbox_item, dict):
+        raise ValueError("peer chat context missing inbox_item")
+    return parsed, inbox_item
+
+
+def _parse_peer_chat_callback_action(
+    content: str,
+    *,
+    expected_run_id: str | None = None,
+) -> dict[str, str] | None:
+    actions = [
+        action
+        for parsed in _peer_chat_callback_json_objects(content)
+        if (action := _callback_action_from_payload(parsed)) is not None
+    ]
+    if not actions:
+        return None
+    if expected_run_id is not None:
+        actions = [action for action in actions if action["run_id"] == expected_run_id]
+        if not actions:
+            return None
+    run_ids = {action["run_id"] for action in actions}
+    if len(run_ids) != 1:
+        return None
+    return actions[-1]
+
+
+def _peer_chat_callback_json_objects(content: str) -> list[dict[str, Any]]:
+    stripped = content.strip()
+    if not stripped:
+        return []
+    texts = [stripped]
+    fenced = _strip_json_fence(stripped)
+    if fenced != stripped:
+        texts.append(fenced)
+    texts.extend(
+        match.group(1).strip()
+        for match in re.finditer(
+            r"```(?:json)?\s*(.*?)```",
+            stripped,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+    )
+    decoder = json.JSONDecoder()
+    objects: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for text in texts:
+        for index, char in enumerate(text):
+            if char != "{":
+                continue
+            try:
+                parsed, _end = decoder.raw_decode(text[index:])
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(parsed, dict):
+                continue
+            key = json.dumps(parsed, sort_keys=True, ensure_ascii=False)
+            if key in seen:
+                continue
+            seen.add(key)
+            objects.append(parsed)
+    return objects
+
+
+def _callback_action_from_payload(parsed: dict[str, Any]) -> dict[str, str] | None:
+    if parsed.get("callback_action") != "chat_record_collaboration_response":
+        return None
+    run_id = parsed.get("run_id")
+    response_content = parsed.get("content")
+    if not isinstance(run_id, str) or not run_id.strip():
+        return None
+    if not isinstance(response_content, str) or not response_content.strip():
+        return None
+    status = parsed.get("status", "received")
+    if not isinstance(status, str) or status not in {"received", "timeout", "failed"}:
+        status = "received"
+    chat_reply = parsed.get("chat_reply")
+    action = {
+        "callback_action": "chat_record_collaboration_response",
+        "run_id": run_id.strip(),
+        "status": status,
+        "content": response_content.strip(),
+    }
+    if isinstance(chat_reply, str) and chat_reply.strip():
+        action["chat_reply"] = chat_reply.strip()
+    return action
+
+
+def _strip_json_fence(content: str) -> str:
+    if not content.startswith("```"):
+        return content
+    lines = content.splitlines()
+    if len(lines) >= 3 and lines[-1].strip() == "```":
+        return "\n".join(lines[1:-1]).strip()
+    return content
+
+
+def _summarize_mcp_result(result: dict[str, Any]) -> dict[str, Any]:
+    content = result.get("content")
+    if not isinstance(content, list) or not content:
+        return {"status": "ok"}
+    first = content[0]
+    if not isinstance(first, dict):
+        return {"status": "ok"}
+    text = first.get("text")
+    if not isinstance(text, str):
+        return {"status": "ok"}
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return {"status": "ok"}
+    if not isinstance(payload, dict):
+        return {"status": "ok"}
+    summary = {"status": "ok"}
+    for key in ("message", "run"):
+        value = payload.get(key)
+        if isinstance(value, dict):
+            identifier = value.get("id") or value.get("run_id")
+            if isinstance(identifier, str):
+                summary[f"{key}_id"] = identifier
+    return summary
 
 
 def _required_context_text(payload: dict[str, Any], key: str) -> str:
