@@ -837,6 +837,7 @@ async def _try_configured_review_peer(
                 reason="review_peer_no_verdict",
                 unavailable=False,
                 review_peer_defaulted=review_peer_defaulted,
+                peer_result=result,
             )
         return ConfiguredReviewPeerAttempt(attempted=True, delivered=delivered)
 
@@ -849,6 +850,7 @@ async def _try_configured_review_peer(
         reason=result.reason or result.status,
         unavailable=result.status == "peer_unavailable",
         review_peer_defaulted=review_peer_defaulted,
+        peer_result=result,
     )
 
 
@@ -894,7 +896,9 @@ def _configured_peer_failed(
     reason: str,
     unavailable: bool,
     review_peer_defaulted: bool = False,
+    peer_result: Any | None = None,
 ) -> ConfiguredReviewPeerAttempt:
+    peer_metadata = _peer_result_failure_metadata(peer_result)
     if mode == "required":
         sm.transition(
             lane_id,
@@ -911,14 +915,15 @@ def _configured_peer_failed(
                 "peer_routing_mode": mode,
                 "peer_delivery_mode": "required_peer_failed",
                 "peer_degraded_reason": reason,
-            },
+            }
+            | peer_metadata,
         )
         return ConfiguredReviewPeerAttempt(attempted=True, required_failed=True)
     metadata = {
         "peer_routing_mode": mode,
         "peer_delivery_mode": "configured_peer_degraded",
         "peer_degraded_reason": reason,
-    }
+    } | peer_metadata
     if not review_peer_defaulted:
         metadata.update(
             {
@@ -928,6 +933,61 @@ def _configured_peer_failed(
         )
     sm.update_metadata(lane_id, metadata)
     return ConfiguredReviewPeerAttempt(attempted=True)
+
+
+def _peer_result_failure_metadata(peer_result: Any | None) -> dict[str, Any]:
+    if peer_result is None:
+        return {}
+    metadata: dict[str, Any] = {}
+    for attr, key in (
+        ("status", "peer_result_status"),
+        ("reason", "peer_result_reason"),
+        ("error_message", "peer_result_error"),
+    ):
+        value = getattr(peer_result, attr, None)
+        text = _compact_peer_text(value)
+        if text is not None:
+            metadata[key] = text
+
+    message = getattr(peer_result, "message", None)
+    if message is None:
+        return metadata
+
+    for attr, key in (
+        ("type", "peer_result_message_type"),
+        ("request_id", "peer_result_message_request_id"),
+        ("status", "peer_result_message_status"),
+        ("runtime", "peer_result_message_runtime"),
+        ("message", "peer_result_message_excerpt"),
+    ):
+        value = getattr(message, attr, None)
+        text = _compact_peer_text(value)
+        if text is not None:
+            metadata[key] = text
+
+    artifacts = getattr(message, "artifacts", None)
+    if isinstance(artifacts, dict):
+        keys = sorted(str(key) for key in artifacts if isinstance(key, str))
+        if keys:
+            metadata["peer_result_artifact_keys"] = keys[:20]
+        stdout = _compact_peer_text(artifacts.get("stdout"))
+        if stdout is not None:
+            metadata["peer_result_stdout_excerpt"] = stdout
+        reply_text = _compact_peer_text(artifacts.get("reply_text"))
+        if reply_text is not None:
+            metadata["peer_result_reply_excerpt"] = reply_text
+    return metadata
+
+
+def _compact_peer_text(value: Any, *, max_chars: int = 600) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = " ".join(value.split())
+    if not text:
+        return None
+    if len(text) <= max_chars:
+        return text
+    return text[: max_chars - 14].rstrip() + "...<truncated>"
 
 
 async def _ensure_default_review_peer(
