@@ -525,6 +525,59 @@ async def test_execution_transport_receives_provider_invocation(setup):
 
 
 @pytest.mark.asyncio
+async def test_execution_god_tolerates_child_writeback_already_gated(setup):
+    tmp_path, lanes_path = setup
+    lanes_path.write_text(json.dumps({"lanes": [
+        {
+            "feature_id": "lane-1",
+            "status": "dispatched",
+            "prompt": "run package boundary proof",
+            "worktree": str(tmp_path),
+        },
+    ]}))
+    orch = PlatformOrchestrator(
+        lanes_path=lanes_path,
+        xmuse_root=tmp_path,
+        mcp_port=9999,
+    )
+
+    async def fake_send_execute(req):
+        orch._sm.transition(
+            "lane-1",
+            "executed",
+            metadata={
+                "tests_run": ["uv run pytest tests/xmuse/test_package_boundaries.py -q"],
+                "changed_files": [],
+            },
+        )
+        orch._sm.transition("lane-1", "gated", metadata={"gate_passed": True})
+        return ExecuteResponse(
+            exit_code=0,
+            stdout="",
+            stderr="",
+            timed_out=False,
+            provider_result=ProviderInvocationResult(
+                request_id=req.provider_invocation.request_id,
+                provider_id=req.provider_invocation.provider_id,
+                profile_id=req.provider_invocation.profile_id,
+                status=WorkerResultStatus.COMPLETED,
+                evidence_refs=[],
+            ),
+        )
+
+    with patch.object(orch._transport, "send_execute", new=fake_send_execute):
+        with patch.object(orch, "_on_lane_executed", new_callable=AsyncMock) as on_executed:
+            await orch._run_execution_god("lane-1")
+
+    on_executed.assert_not_called()
+    lane = orch._sm.get_lane("lane-1")
+    assert lane["status"] == "gated"
+    assert lane["gate_passed"] is True
+    assert lane["parent_god_role"] == "execute"
+    assert lane["worker_kind"] == "temporary_child_worker"
+
+
+@pytest.mark.asyncio
 async def test_execution_transport_prefers_ready_low_cost_worker_and_records_selection(
     tmp_path,
 ):
