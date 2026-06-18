@@ -8,9 +8,12 @@ from xmuse_core.agents.launchers import OpenCodeLauncher, build_default_launcher
 from xmuse_core.agents.opencode_persistent import (
     RunnerConfig,
     _build_chat_post_message_payload,
+    _build_collaboration_response_payload,
     _format_turn_prompt,
     _opencode_command,
     _parse_opencode_json_output,
+    _parse_peer_chat_callback_action,
+    _post_peer_chat_writeback,
 )
 from xmuse_core.agents.registry import AgentRuntime
 
@@ -136,6 +139,205 @@ def test_peer_chat_prompt_does_not_forward_codex_mcp_tool_instruction(tmp_path) 
     assert "@architect=architect-god" in prompt
     assert "chat_post_message" not in prompt
     assert "Do not call tools." in prompt
+
+
+def test_peer_chat_prompt_requests_callback_for_collaboration_response(
+    tmp_path,
+) -> None:
+    config = RunnerConfig(
+        model="opencode-go/deepseek-v4-flash",
+        variant="max",
+        mcp_port=8100,
+        worktree=tmp_path,
+        role="review",
+        timeout_s=30,
+        opencode_binary="opencode",
+    )
+    context = {
+        "inbox_item": {
+            "payload": {
+                "content": (
+                    "Collaboration run `collab_d2e3b35a2af44f0f9e319706d8c98105`: "
+                    "review scope and proof boundary only. Confirm whether a single "
+                    "lane stays within local runtime contract proof. Record your "
+                    "durable collaboration response against the run."
+                ),
+            },
+        },
+        "group_chat": {
+            "participants": [
+                {"role": "review", "display_name": "review-opencode-god"},
+            ],
+            "recent_messages": [
+                {
+                    "role": "human",
+                    "author": "operator",
+                    "content": (
+                        "The lane must run exactly "
+                        "`uv run pytest tests/xmuse/test_package_boundaries.py -q`."
+                    ),
+                },
+            ],
+        },
+    }
+
+    prompt = _format_turn_prompt(
+        config,
+        msg_type="peer_chat_nudge",
+        prompt="fallback",
+        context=json.dumps(context),
+    )
+
+    assert "## Structured Callback" in prompt
+    assert '"callback_action":"chat_record_collaboration_response"' in prompt
+    assert '"run_id":"collab_d2e3b35a2af44f0f9e319706d8c98105"' in prompt
+    assert "## Recent Transcript" in prompt
+    assert "uv run pytest tests/xmuse/test_package_boundaries.py -q" in prompt
+    assert "Do not substitute or invent a different command" in prompt
+
+
+def test_parse_peer_chat_callback_action_accepts_strict_collaboration_json() -> None:
+    action = _parse_peer_chat_callback_action(
+        json.dumps(
+            {
+                "callback_action": "chat_record_collaboration_response",
+                "run_id": "collab_abc123",
+                "status": "received",
+                "content": "Scope reviewed for baseline.",
+                "chat_reply": "Formal review response recorded.",
+            }
+        )
+    )
+
+    assert action == {
+        "callback_action": "chat_record_collaboration_response",
+        "run_id": "collab_abc123",
+        "status": "received",
+        "content": "Scope reviewed for baseline.",
+        "chat_reply": "Formal review response recorded.",
+    }
+
+
+def test_parse_peer_chat_callback_action_rejects_unexpected_run_id() -> None:
+    assert (
+        _parse_peer_chat_callback_action(
+            json.dumps(
+                {
+                    "callback_action": "chat_record_collaboration_response",
+                    "run_id": "collab_other",
+                    "content": "Other response.",
+                }
+            ),
+            expected_run_id="collab_abc123",
+        )
+        is None
+    )
+
+
+def test_build_collaboration_response_payload_uses_peer_identity() -> None:
+    context = {
+        "conversation_id": "conv_1",
+        "participant_id": "part_review",
+        "god_session_id": "god_review",
+        "inbox_item": {"id": "inbox_1"},
+    }
+    action = {
+        "callback_action": "chat_record_collaboration_response",
+        "run_id": "collab_abc123",
+        "status": "received",
+        "content": "Scope reviewed for baseline.",
+    }
+
+    payload = _build_collaboration_response_payload(
+        context=json.dumps(context),
+        action=action,
+        request_id="req-1",
+    )
+
+    assert payload["params"]["name"] == "chat_record_collaboration_response"
+    assert payload["id"] == "req-1:collaboration_response"
+    assert payload["params"]["arguments"] == {
+        "conversation_id": "conv_1",
+        "participant_id": "part_review",
+        "god_session_id": "god_review",
+        "run_id": "collab_abc123",
+        "content": "Scope reviewed for baseline.",
+        "status": "received",
+    }
+
+
+def test_peer_chat_writeback_records_plain_collaboration_reply(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    from xmuse_core.agents import opencode_persistent
+
+    calls: list[dict[str, Any]] = []
+
+    def fake_call_mcp_chat_tool(*, port: int, payload: dict[str, Any]) -> dict[str, Any]:
+        calls.append({"port": port, "payload": payload})
+        name = payload["params"]["name"]
+        if name == "chat_record_collaboration_response":
+            return {
+                "content": [
+                    {
+                        "text": json.dumps(
+                            {"run": {"run_id": payload["params"]["arguments"]["run_id"]}}
+                        )
+                    }
+                ]
+            }
+        return {"content": [{"text": json.dumps({"message": {"id": "msg_1"}})}]}
+
+    monkeypatch.setattr(
+        opencode_persistent,
+        "_call_mcp_chat_tool",
+        fake_call_mcp_chat_tool,
+    )
+    config = RunnerConfig(
+        model="opencode-go/deepseek-v4-flash",
+        variant="max",
+        mcp_port=8100,
+        worktree=tmp_path,
+        role="review",
+        timeout_s=30,
+        opencode_binary="opencode",
+    )
+    context = {
+        "conversation_id": "conv_1",
+        "participant_id": "part_review",
+        "god_session_id": "god_review",
+        "inbox_item": {
+            "id": "inbox_1",
+            "payload": {
+                "content": (
+                    "Collaboration run `collab_plain123`: review scope and proof "
+                    "boundary only. Record your durable collaboration response "
+                    "against the run."
+                ),
+            },
+        },
+    }
+
+    result = _post_peer_chat_writeback(
+        config=config,
+        context=json.dumps(context),
+        content="Boundary accepted. No blocker raised.",
+        request_id="req-1",
+    )
+
+    assert result["tools"] == ["chat_record_collaboration_response", "chat_post_message"]
+    assert [call["payload"]["params"]["name"] for call in calls] == [
+        "chat_record_collaboration_response",
+        "chat_post_message",
+    ]
+    response_args = calls[0]["payload"]["params"]["arguments"]
+    assert response_args["run_id"] == "collab_plain123"
+    assert response_args["content"] == "Boundary accepted. No blocker raised."
+    message_args = calls[1]["payload"]["params"]["arguments"]
+    assert message_args["envelope"]["callback_action"] == (
+        "chat_record_collaboration_response"
+    )
 
 
 def test_opencode_run_does_not_inherit_persistent_control_stdin(
