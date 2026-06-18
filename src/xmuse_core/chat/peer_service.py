@@ -25,6 +25,7 @@ from xmuse_core.chat.bootstrap_contracts import (
     resolve_groupchat_preset,
 )
 from xmuse_core.chat.bootstrap_store import BootstrapStateStore
+from xmuse_core.chat.collaboration_contracts import CollaborationStatus
 from xmuse_core.chat.envelopes import normalize_envelope
 from xmuse_core.chat.inbox_store import ChatInboxStore
 from xmuse_core.chat.lane_scope import conversation_scoped_lanes
@@ -1727,6 +1728,10 @@ class PeerChatService:
         )
         store = self._collaboration_store()
         run = self._collaboration_run_for_conversation(store, run_id, conversation_id)
+        callback_target = self._resolve_collaboration_callback_target(
+            conversation_id=conversation_id,
+            target=run.callback_target,
+        )
         response_target = _collaboration_response_target(participant.role, run.targets)
         if response_target is None:
             raise PeerChatError("collaboration_target_mismatch", participant.role)
@@ -1739,7 +1744,89 @@ class PeerChatService:
             )
         except ValueError as exc:
             raise PeerChatError("invalid_collaboration_response", str(exc)) from exc
-        return {"run": updated.model_dump(mode="json")}
+        callback: dict[str, Any] | None = None
+        if updated.status is CollaborationStatus.DONE:
+            callback = self._create_collaboration_done_callback(
+                run=updated,
+                callback_target=callback_target,
+            )
+        result = {"run": updated.model_dump(mode="json")}
+        if callback is not None:
+            result["callback"] = callback
+        return result
+
+    def _resolve_collaboration_callback_target(
+        self,
+        *,
+        conversation_id: str,
+        target: str,
+    ):
+        try:
+            return MentionResolver(self._participants).resolve(conversation_id, target)
+        except MentionResolutionError as exc:
+            raise PeerChatError(
+                "collaboration_callback_target_unresolved",
+                target,
+            ) from exc
+
+    def _create_collaboration_done_callback(
+        self,
+        *,
+        run,
+        callback_target,
+    ) -> dict[str, Any]:
+        responses = [
+            response.model_dump(mode="json")
+            for response in run.responses
+        ]
+        content = (
+            f"Collaboration run `{run.run_id}` is done. Review the formal responses "
+            "and continue the requested handoff. If the original request asked for "
+            "a lane_graph proposal, call chat_emit_proposal now with exactly one "
+            f"proposal and `collaboration:{run.run_id}` as a reference. Do not "
+            "merely acknowledge that you will emit a proposal."
+        )
+        payload = self._chat.create_message_inbox_and_log(
+            conversation_id=run.conversation_id,
+            tool_name="chat_collaboration_done_callback",
+            caller_identity=f"collaboration:{run.run_id}",
+            client_request_id=f"collaboration-done:{run.run_id}",
+            author="collaboration-runner",
+            role="system",
+            content=content,
+            envelope_type="collaboration_callback",
+            envelope_json=normalize_envelope(
+                {
+                    "type": "collaboration_callback",
+                    "schema_version": 1,
+                    "collaboration_run_id": run.run_id,
+                    "collaboration_status": run.status.value,
+                },
+                envelope_type="collaboration_callback",
+            ),
+            mentions=[callback_target.normalized],
+            inbox_items=[
+                {
+                    "target_participant_id": callback_target.participant.participant_id,
+                    "target_role": callback_target.participant.role,
+                    "target_address": callback_target.normalized,
+                    "sender_participant_id": None,
+                    "sender_address": f"@collaboration:{run.run_id}",
+                    "item_type": "collaboration_callback",
+                    "payload": {
+                        "content": content,
+                        "collaboration_run_id": run.run_id,
+                        "collaboration_status": run.status.value,
+                        "trigger_mode": "collaboration_done_callback",
+                        "responses": responses,
+                    },
+                }
+            ],
+        )
+        return {
+            "message": payload.get("message"),
+            "inbox_items": payload.get("inbox_items", []),
+        }
 
     def raise_collaboration_blocker(
         self,
