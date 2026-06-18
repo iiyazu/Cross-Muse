@@ -374,6 +374,49 @@ async def test_dispatch_lane_initializes_missing_isolated_worktree(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_dispatch_lane_creates_missing_projected_worktree_path(tmp_path):
+    lanes_path = tmp_path / "feature_lanes.json"
+    projected_worktree = tmp_path / "projected-lane-worktree"
+    lanes_path.write_text(json.dumps({"lanes": [
+        {
+            "feature_id": "lane-projected-worktree",
+            "status": "pending",
+            "prompt": "fix bug",
+            "worktree": str(projected_worktree),
+        },
+    ]}))
+    (tmp_path / "error_knowledge.json").write_text(json.dumps({"entries": []}))
+    (tmp_path / "god_prompts").mkdir(parents=True)
+    (tmp_path / "god_prompts" / "execution_god.md").write_text("exec")
+    (tmp_path / "god_prompts" / "review_god.md").write_text("review")
+    spawn_worktrees: list[Path] = []
+
+    orch = PlatformOrchestrator(
+        lanes_path=lanes_path, xmuse_root=tmp_path, mcp_port=9999,
+    )
+
+    async def fake_spawn(*, god_config, lane_id, prompt, worktree):
+        spawn_worktrees.append(worktree)
+        return SpawnResult(exit_code=-1, stdout="", stderr="stop before gate")
+
+    with patch("xmuse_core.platform.orchestrator._git_output", return_value="base-sha"):
+        with patch.object(orch, "_create_or_reuse_worktree") as create_worktree:
+            create_worktree.side_effect = lambda *, worktree, branch: worktree.mkdir()
+            with patch.object(orch._spawner, "spawn", side_effect=fake_spawn):
+                await orch.dispatch_lane("lane-projected-worktree")
+
+    lane = orch._sm.get_lane("lane-projected-worktree")
+    assert lane["worktree"] == str(projected_worktree)
+    assert lane["branch"] == "lane-projected-worktree"
+    assert lane["base_head_sha"] == "unknown"
+    assert spawn_worktrees == [projected_worktree]
+    create_worktree.assert_called_once_with(
+        worktree=projected_worktree,
+        branch="lane-projected-worktree",
+    )
+
+
+@pytest.mark.asyncio
 async def test_dispatch_lane_records_branch_for_existing_non_git_worktree(setup):
     tmp_path, lanes_path = setup
     orch = PlatformOrchestrator(
