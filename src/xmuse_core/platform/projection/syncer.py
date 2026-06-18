@@ -336,9 +336,11 @@ def _validate_duplicate_lane_ids(data: dict[str, Any]) -> None:
         "resolution_id",
         "conversation_id",
         "failure_reason",
+        "final_action",
         "review_decision",
         "final_action_hold_id",
         "patch_lane_id",
+        "proof_boundary",
     }
     int_fields = {
         "retry_count",
