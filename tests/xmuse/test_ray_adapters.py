@@ -407,6 +407,59 @@ async def test_ray_god_session_layer_uses_actor_for_peer_chat(tmp_path: Path) ->
 
 
 @pytest.mark.asyncio
+async def test_ray_god_session_layer_uses_process_transport_for_opencode(
+    tmp_path: Path,
+) -> None:
+    from xmuse_core.agents.ray_session_layer import RayGodSessionLayer
+
+    captured: list[dict[str, object]] = []
+
+    def actor_factory(**kwargs):
+        captured.append(kwargs)
+        return _FakeRayActor()
+
+    class Launcher:
+        supports_persistent_sessions = True
+
+        def build_persistent_command(self, role: str, worktree: Path) -> list[str]:
+            return ["fake-opencode", "run", role, str(worktree)]
+
+        def build_env(self, role: str):
+            return None
+
+    layer = RayGodSessionLayer(
+        registry_path=tmp_path / "god_sessions.json",
+        db_path=tmp_path / "chat.db",
+        launchers={AgentRuntime.OPENCODE: Launcher()},
+        actor_factory=actor_factory,
+        transport_mode="app-server",
+    )
+    agent = AgentDescriptor(
+        name="Review OpenCode",
+        runtime=AgentRuntime.OPENCODE,
+        capabilities=["review"],
+    )
+
+    await layer.ensure_conversation_session(
+        conversation_id="conv-1",
+        participant_id="part-review",
+        role="review",
+        agent=agent,
+        worktree=tmp_path,
+        model="opencode-go/deepseek-v4-flash",
+    )
+
+    assert captured[0]["transport_mode"] == "process"
+    assert captured[0]["command"] == [
+        "fake-opencode",
+        "run",
+        "review",
+        str(tmp_path),
+    ]
+    assert captured[0]["model"] == "opencode-go/deepseek-v4-flash"
+
+
+@pytest.mark.asyncio
 async def test_ray_god_actor_core_speaks_session_protocol(tmp_path: Path) -> None:
     from xmuse_core.agents.protocol import parse_stdout_line
     from xmuse_core.agents.ray_god_actor import _RayGodActorCore
