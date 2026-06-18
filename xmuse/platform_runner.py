@@ -245,7 +245,7 @@ async def run(
             chat_dispatch_bridge = ChatDispatchBridge(
                 db_path=xmuse_root / "chat.db",
                 god_layer=peer_god_layer,
-                worktree=ROOT,
+                worktree=peer_chat_worktree,
                 bridge_id="platform-runner-dispatch",
                 claim_ttl_s=240,
                 response_wait_s=180.0,
