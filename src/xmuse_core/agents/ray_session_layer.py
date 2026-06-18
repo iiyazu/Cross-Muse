@@ -240,7 +240,10 @@ class RayGodSessionLayer:
             "command": command,
             "db_path": str(self._db_path),
             "worktree": str(worktree),
-            "transport_mode": self._transport_mode,
+            "transport_mode": _actor_transport_mode_for_runtime(
+                self._transport_mode,
+                runtime,
+            ),
             "mcp_port": _persistent_mcp_port(launcher, command),
             "codex_command": _persistent_codex_command(launcher),
             "reasoning_effort": self._reasoning_effort,
@@ -387,6 +390,15 @@ def _ray_god_transport_mode() -> str:
     if normalized in {"process", "process-json", "batch", "codex-persistent"}:
         return "process"
     return "app-server"
+
+
+def _actor_transport_mode_for_runtime(
+    default_transport_mode: str,
+    runtime: RuntimeKey,
+) -> str:
+    if _runtime_value(runtime).strip().lower() == AgentRuntime.CODEX.value:
+        return default_transport_mode
+    return "process"
 
 
 def _ray_god_reasoning_effort() -> str:
