@@ -298,6 +298,8 @@ def ensure_lane_worktree(orchestrator, lane: dict[str, Any]) -> dict[str, Any]:
         else _compat_symbol(orchestrator, "WORKTREE_BASE", WORKTREE_BASE)
         / _safe_lane_ref(lane_id)
     )
+    if not worktree.exists():
+        orchestrator._create_or_reuse_worktree(worktree=worktree, branch=branch)
     branch, is_git_worktree = _ensure_existing_worktree_branch(worktree, branch)
     git_output = _compat_symbol(orchestrator, "_git_output", _git_output)
     base_head_sha = lane.get("base_head_sha") or _worktree_head_sha(worktree)
@@ -309,8 +311,6 @@ def ensure_lane_worktree(orchestrator, lane: dict[str, Any]) -> dict[str, Any]:
                 ["git", "rev-parse", "HEAD"],
                 cwd=orchestrator._root.parent,
             )
-    if not existing_worktree:
-        orchestrator._create_or_reuse_worktree(worktree=worktree, branch=branch)
     metadata = {
         "branch": branch,
         "worktree": str(worktree),
