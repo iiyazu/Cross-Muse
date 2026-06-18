@@ -37,6 +37,37 @@ def test_human_message_routes_by_lowercase_multiword_display_name(tmp_path: Path
     assert result.inbox_items[0].target_participant_id == lead.participant_id
 
 
+def test_human_message_routes_only_active_mentions_outside_inline_code(tmp_path: Path) -> None:
+    db, conv, participants = _conversation(tmp_path)
+    participants.add(
+        conversation_id=conv.id,
+        role="architect",
+        display_name="Architect GOD",
+        cli_kind="codex",
+        model="gpt-5.5",
+    )
+    review = participants.add(
+        conversation_id=conv.id,
+        role="review",
+        display_name="Review GOD",
+        cli_kind="codex",
+        model="gpt-5.5",
+    )
+    service = PeerChatService(db)
+
+    result = service.post_human_message(
+        conversation_id=conv.id,
+        author="Human operator",
+        content="Keep `@architect` as a literal example and ask @review to inspect it.",
+        client_request_id="mixed-inline-code-and-active-mention",
+    )
+
+    assert result.message.mentions == ["@review"]
+    assert len(result.inbox_items) == 1
+    assert result.inbox_items[0].target_participant_id == review.participant_id
+    assert result.inbox_items[0].payload["mention"] == "@review"
+
+
 def test_participant_id_mentions_do_not_cross_conversations(tmp_path: Path) -> None:
     db = tmp_path / "chat.db"
     chat = ChatStore(db)

@@ -85,6 +85,48 @@ def test_rest_message_preserves_unknown_at_text_as_plain_message(tmp_path):
     assert payload["inbox_items"] == []
 
 
+def test_rest_message_inline_code_mention_stays_plain_without_peer_enqueue(tmp_path) -> None:
+    client = TestClient(create_app(tmp_path))
+    conv = client.post("/api/chat/conversations", json={"title": "Chat"}).json()
+
+    response = client.post(
+        f"/api/chat/conversations/{conv['id']}/messages",
+        json={
+            "author": "Human operator",
+            "role": "human",
+            "content": "Document `@architect` literally in the example.",
+            "client_request_id": "rest-inline-code-mention",
+        },
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["mentions"] == []
+    assert payload["inbox_items"] == []
+    assert ChatInboxStore(tmp_path / "chat.db").list_by_conversation(conv["id"]) == []
+
+
+def test_rest_message_escaped_mention_stays_plain_without_peer_enqueue(tmp_path) -> None:
+    client = TestClient(create_app(tmp_path))
+    conv = client.post("/api/chat/conversations", json={"title": "Chat"}).json()
+
+    response = client.post(
+        f"/api/chat/conversations/{conv['id']}/messages",
+        json={
+            "author": "Human operator",
+            "role": "human",
+            "content": r"Keep \@architect as literal text in the docs.",
+            "client_request_id": "rest-escaped-mention",
+        },
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["mentions"] == []
+    assert payload["inbox_items"] == []
+    assert ChatInboxStore(tmp_path / "chat.db").list_by_conversation(conv["id"]) == []
+
+
 def test_thread_message_preserves_unknown_at_text_as_plain_message(tmp_path):
     client = TestClient(create_app(tmp_path))
     conv = client.post("/api/chat/conversations", json={"title": "Thread"}).json()
