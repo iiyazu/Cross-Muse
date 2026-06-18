@@ -71,15 +71,17 @@ class ChatDispatchBridge:
             )
             scheduler_outcome = await scheduler.tick_once()
             if scheduler_outcome.happy_path == 1:
-                if not self._has_dispatch_completion_marker(inbox_item_id):
+                if not self._has_dispatch_ack_marker(inbox_item_id):
                     queue.mark_failed(
                         entry.entry_id,
-                        failure_reason="dispatch_completion_marker_missing",
+                        failure_reason="dispatch_ack_marker_missing",
                     )
                     return ChatDispatchBridgeOutcome(claimed=1, failed=1)
                 queue.mark_dispatched(
                     entry.entry_id,
-                    provider_run_ref=f"provider:{participant.role}:{participant.participant_id}",
+                    provider_run_ref=(
+                        f"peer_ack:{participant.role}:{participant.participant_id}"
+                    ),
                     dispatch_evidence=f"mcp_writeback:{inbox_item_id}",
                 )
                 return ChatDispatchBridgeOutcome(claimed=1, dispatched=1)
@@ -191,7 +193,7 @@ class ChatDispatchBridge:
                 return reason.strip()
         return None
 
-    def _has_dispatch_completion_marker(self, inbox_item_id: str) -> bool:
+    def _has_dispatch_ack_marker(self, inbox_item_id: str) -> bool:
         try:
             item = ChatInboxStore(self._db_path).get(inbox_item_id)
         except KeyError:
@@ -202,7 +204,7 @@ class ChatDispatchBridge:
         for message in messages:
             if message.id != item.responded_message_id:
                 continue
-            return "DISPATCH_COMPLETED" in message.content
+            return "DISPATCH_ACKNOWLEDGED" in message.content
         return False
 
 
@@ -237,7 +239,8 @@ def _dispatch_prompt(
 ) -> str:
     lines = [
         f"@{participant.role}",
-        "Execute this approved xmuse dispatch queue entry through the real provider path.",
+        "Acknowledge this approved xmuse dispatch queue entry as a chat-plane "
+        "handoff notice.",
         "",
         f"- Dispatch entry: {entry.entry_id}",
         f"- Proposal: {entry.proposal_id or 'unknown'}",
@@ -246,14 +249,14 @@ def _dispatch_prompt(
         f"- Artifact: {entry.artifact_ref or 'unknown'}",
         f"- Dispatch policy: {entry.dispatch_policy}",
         "",
-        "Completion contract:",
-        "- This is not an acknowledgement/progress request.",
-        "- Use available Codex tools to inspect/edit the requested worktree files.",
-        "- Run at least one focused verification command when feasible.",
-        "- Do not call chat_post_message until the requested work is complete.",
-        "- The final chat_post_message content must include DISPATCH_COMPLETED, "
-        "files changed, and verification run.",
-        "- If you cannot complete the work, reply with DISPATCH_FAILED and the reason.",
+        "Acknowledgement contract:",
+        "- This chat nudge does not execute the lane and must not claim execution.",
+        "- Do not edit files, run tests, or inspect unrelated repository state.",
+        "- Real worktree execution is handled by the platform lane worker.",
+        "- Reply with chat_post_message only after reading this dispatch context.",
+        "- The reply must include DISPATCH_ACKNOWLEDGED and the dispatch entry id.",
+        "- If you cannot acknowledge the handoff, reply with DISPATCH_ACK_FAILED "
+        "and the reason.",
     ]
     context = artifact_context or {}
     proposal = context.get("proposal")
