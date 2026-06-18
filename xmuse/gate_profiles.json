@@ -1,0 +1,144 @@
+{
+  "schema_version": 1,
+  "defaults": {
+    "full_gate_profile": "strict-product",
+    "full_gate_interval": 20,
+    "unknown_diff_policy": "strict-product",
+    "unclassified_test_policy": "fail"
+  },
+  "command_catalog": {
+    "pytest": {
+      "argv": [
+        "uv",
+        "run",
+        "pytest"
+      ],
+      "cwd": ".",
+      "timeout_s": 300,
+      "allow_extra_args": true
+    }
+  },
+  "profiles": {
+    "strict-product": {
+      "description": "Current xmuse package and runtime boundary smoke gate.",
+      "blocking": true,
+      "env": {
+        "MEMORYOS_MEMORY_ARCH": "v3",
+        "MEMORYOS_RECALL_PIPELINE": "v2",
+        "MEMORYOS_PAGING_MODE": "off",
+        "MEMORYOS_AGENT_KERNEL": "off"
+      },
+      "commands": [
+        {
+          "command": "pytest",
+          "args": [
+            "-q",
+            "tests/xmuse/test_package_boundaries.py"
+          ]
+        }
+      ],
+      "diff_selectors": [
+        "pyproject.toml",
+        ".github/**",
+        "xmuse/gate_profiles.json",
+        "src/xmuse_core/gates/**",
+        "src/xmuse_core/platform/execution/gate.py"
+      ],
+      "test_files": [
+        "tests/xmuse/test_package_boundaries.py",
+        "tests/xmuse/test_gate_profiles.py",
+        "tests/xmuse/test_platform_orchestrator.py"
+      ],
+      "test_nodeids": [],
+      "test_markers": [],
+      "mixed_test_files": []
+    },
+    "xmuse-core": {
+      "description": "xmuse core runtime, peer-chat, feature graph, and platform orchestrator gate.",
+      "blocking": true,
+      "env": {},
+      "commands": [
+        {
+          "command": "pytest",
+          "args": [
+            "-q",
+            "tests/xmuse/test_peer_chat_service.py",
+            "tests/xmuse/test_peer_chat_dashboard.py",
+            "tests/xmuse/test_peer_chat_api.py",
+            "tests/xmuse/test_peer_chat_mcp_tools.py",
+            "tests/xmuse/test_peer_chat_turn_budget.py",
+            "tests/xmuse/test_peer_chat_scheduler.py",
+            "tests/xmuse/test_peer_chat_end_to_end.py",
+            "tests/xmuse/test_god_session_layer.py",
+            "tests/xmuse/test_platform_runner.py",
+            "tests/xmuse/test_feature_plan_graph_set.py",
+            "tests/xmuse/test_feature_graph_builder.py",
+            "tests/xmuse/test_feature_graph_projection.py",
+            "tests/xmuse/test_feature_summary.py"
+          ]
+        }
+      ],
+      "diff_selectors": [
+        "xmuse/**",
+        "src/xmuse_core/**",
+        "tests/xmuse/**"
+      ],
+      "test_files": [
+        "tests/xmuse/test_peer_chat_service.py",
+        "tests/xmuse/test_peer_chat_dashboard.py",
+        "tests/xmuse/test_peer_chat_api.py",
+        "tests/xmuse/test_peer_chat_mcp_tools.py",
+        "tests/xmuse/test_peer_chat_turn_budget.py",
+        "tests/xmuse/test_peer_chat_scheduler.py",
+        "tests/xmuse/test_peer_chat_end_to_end.py",
+        "tests/xmuse/test_god_session_layer.py",
+        "tests/xmuse/test_platform_runner.py",
+        "tests/xmuse/test_feature_plan_graph_set.py",
+        "tests/xmuse/test_feature_graph_builder.py",
+        "tests/xmuse/test_feature_graph_projection.py",
+        "tests/xmuse/test_feature_summary.py"
+      ],
+      "test_nodeids": [],
+      "test_markers": [],
+      "mixed_test_files": []
+    },
+    "historical": {
+      "description": "Historical MemoryOS-era tests kept as nonblocking reference only.",
+      "blocking": false,
+      "env": {},
+      "commands": [
+        {
+          "command": "pytest",
+          "args": [
+            "-q",
+            "tests/test_agent.py",
+            "tests/test_agent_demo.py",
+            "tests/test_cli_agent_demo.py",
+            "tests/test_pagination_hotpath.py",
+            "tests/test_item_retrieval.py",
+            "tests/test_item_tools.py",
+            "tests/test_retrieval.py",
+            "tests/test_rag_pipeline.py"
+          ]
+        }
+      ],
+      "diff_selectors": [
+        "memoryos/**",
+        "tests/test_*.py"
+      ],
+      "test_files": [
+        "tests/test_agent.py",
+        "tests/test_agent_demo.py",
+        "tests/test_cli_agent_demo.py",
+        "tests/test_pagination_hotpath.py",
+        "tests/test_item_retrieval.py",
+        "tests/test_item_tools.py",
+        "tests/test_retrieval.py",
+        "tests/test_rag_pipeline.py"
+      ],
+      "test_nodeids": [],
+      "test_markers": [],
+      "mixed_test_files": []
+    }
+  }
+}

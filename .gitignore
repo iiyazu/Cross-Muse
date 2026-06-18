@@ -23,6 +23,7 @@ xmuse/**/*.sqlite3
 xmuse/**/*.jsonl
 xmuse/**/*.lock
 xmuse/*.json
+!xmuse/gate_profiles.json
 xmuse/approvals/
 xmuse/artifacts/
 xmuse/dispatch/
