@@ -196,6 +196,48 @@ def test_peer_chat_prompt_requests_callback_for_collaboration_response(
     assert "Do not substitute or invent a different command" in prompt
 
 
+def test_peer_chat_prompt_requests_callback_for_chinese_collaboration_tool_request(
+    tmp_path,
+) -> None:
+    config = RunnerConfig(
+        model="opencode-go/deepseek-v4-flash",
+        variant="max",
+        mcp_port=8100,
+        worktree=tmp_path,
+        role="review",
+        timeout_s=30,
+        opencode_binary="opencode",
+    )
+    context = {
+        "inbox_item": {
+            "payload": {
+                "content": (
+                    "请处理协作 run `collab_5fc77b42f7284d47ab5c6d26ea236e3a`。"
+                    "请用 `chat_record_collaboration_response` 记录简明审查意见，"
+                    "聚焦 proposal 形状是否合规、是否需要 blocker。"
+                ),
+            },
+        },
+        "group_chat": {
+            "participants": [
+                {"role": "review", "display_name": "review-opencode-god"},
+            ],
+            "recent_messages": [],
+        },
+    }
+
+    prompt = _format_turn_prompt(
+        config,
+        msg_type="peer_chat_nudge",
+        prompt="fallback",
+        context=json.dumps(context, ensure_ascii=False),
+    )
+
+    assert "## Structured Callback" in prompt
+    assert '"callback_action":"chat_record_collaboration_response"' in prompt
+    assert '"run_id":"collab_5fc77b42f7284d47ab5c6d26ea236e3a"' in prompt
+
+
 def test_parse_peer_chat_callback_action_accepts_strict_collaboration_json() -> None:
     action = _parse_peer_chat_callback_action(
         json.dumps(
@@ -338,6 +380,75 @@ def test_peer_chat_writeback_records_plain_collaboration_reply(
     assert message_args["envelope"]["callback_action"] == (
         "chat_record_collaboration_response"
     )
+
+
+def test_peer_chat_writeback_records_plain_chinese_collaboration_reply(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    from xmuse_core.agents import opencode_persistent
+
+    calls: list[dict[str, Any]] = []
+
+    def fake_call_mcp_chat_tool(*, port: int, payload: dict[str, Any]) -> dict[str, Any]:
+        calls.append({"port": port, "payload": payload})
+        name = payload["params"]["name"]
+        if name == "chat_record_collaboration_response":
+            return {
+                "content": [
+                    {
+                        "text": json.dumps(
+                            {"run": {"run_id": payload["params"]["arguments"]["run_id"]}}
+                        )
+                    }
+                ]
+            }
+        return {"content": [{"text": json.dumps({"message": {"id": "msg_1"}})}]}
+
+    monkeypatch.setattr(
+        opencode_persistent,
+        "_call_mcp_chat_tool",
+        fake_call_mcp_chat_tool,
+    )
+    config = RunnerConfig(
+        model="opencode-go/deepseek-v4-flash",
+        variant="max",
+        mcp_port=8100,
+        worktree=tmp_path,
+        role="review",
+        timeout_s=30,
+        opencode_binary="opencode",
+    )
+    context = {
+        "conversation_id": "conv_1",
+        "participant_id": "part_review",
+        "god_session_id": "god_review",
+        "inbox_item": {
+            "id": "inbox_1",
+            "payload": {
+                "content": (
+                    "请处理协作 run `collab_cn123`。"
+                    "请用 `chat_record_collaboration_response` 记录简明审查意见。"
+                ),
+            },
+        },
+    }
+
+    result = _post_peer_chat_writeback(
+        config=config,
+        context=json.dumps(context, ensure_ascii=False),
+        content="审查通过，无 blocker。",
+        request_id="req-cn",
+    )
+
+    assert result["tools"] == ["chat_record_collaboration_response", "chat_post_message"]
+    assert [call["payload"]["params"]["name"] for call in calls] == [
+        "chat_record_collaboration_response",
+        "chat_post_message",
+    ]
+    response_args = calls[0]["payload"]["params"]["arguments"]
+    assert response_args["run_id"] == "collab_cn123"
+    assert response_args["content"] == "审查通过，无 blocker。"
 
 
 def test_opencode_run_does_not_inherit_persistent_control_stdin(
