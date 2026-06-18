@@ -445,7 +445,11 @@ class CodexAppServerTransport:
                 "When peer discussion produces work that should enter real "
                 "execution, use the structured chat tools: create or reference a "
                 "collaboration run, have execute record a JSON "
-                "execute_feasibility_verdict via chat_record_collaboration_response, "
+                "execute_feasibility_verdict via chat_record_collaboration_response "
+                "using the approval-gate shape "
+                '{"type":"execute_feasibility_verdict","status":"executable",'
+                '"summary":"<why dispatch is safe>","evidence_refs":["<ref>"]}; '
+                "looser fields such as verdict=feasible do not satisfy dispatch. "
                 "then emit a lane_graph proposal with chat_emit_proposal and a "
                 "collaboration:<run_id> reference, passing "
                 "reply_to_inbox_item_id=xmuse_context.inbox_item.id so the proposal "

@@ -100,7 +100,11 @@ class PeerChatScheduler:
                 "For work that should enter real execution, do not rely on chat "
                 "text alone: create or reference a collaboration run, have execute "
                 "record a JSON execute_feasibility_verdict through "
-                "chat_record_collaboration_response, then emit a lane_graph proposal "
+                "chat_record_collaboration_response using the approval-gate shape "
+                '{"type":"execute_feasibility_verdict","status":"executable",'
+                '"summary":"<why dispatch is safe>","evidence_refs":["<ref>"]}; '
+                "looser fields such as verdict=feasible do not satisfy dispatch. "
+                "Then emit a lane_graph proposal "
                 "with chat_emit_proposal, reply_to_inbox_item_id=xmuse_context.inbox_item.id, "
                 "and a collaboration:<run_id> reference. "
                 "Human approval is still required before dispatch. "
