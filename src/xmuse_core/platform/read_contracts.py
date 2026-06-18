@@ -433,9 +433,6 @@ def build_run_health_snapshot(
         "read_only": True,
         "run_health": build_run_health_model(
             lanes_path,
-            live_pids=set(),
-            runner_pids=[],
-            mcp_pids=[],
             xmuse_root=xmuse_root,
         ),
     }
