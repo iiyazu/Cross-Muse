@@ -34,6 +34,7 @@ from xmuse_core.chat.mentions import (
     MentionResolver,
     default_intake_address,
     extract_mentions,
+    has_inactive_mention_candidates,
     normalize_address,
 )
 from xmuse_core.chat.models import ChatCard, ChatMessage, ChatTimelineItem
@@ -1453,6 +1454,7 @@ class PeerChatService:
         if logged is not None:
             return PeerMessageResult.from_json(logged)
 
+        has_inactive_mentions = has_inactive_mention_candidates(content)
         has_all_mention = any(
             normalize_address(raw) == "@all"
             for raw in extract_mentions(content)
@@ -1470,6 +1472,7 @@ class PeerChatService:
                 conversation_id=conversation_id,
                 content=content,
                 mentions=mentions,
+                allow_default_intake=not has_inactive_mentions,
             )
         payload = self._chat.create_message_inbox_and_log(
             conversation_id=conversation_id,
@@ -1502,6 +1505,7 @@ class PeerChatService:
         conversation_id: str,
         content: str,
         mentions: list[Any],
+        allow_default_intake: bool = True,
     ) -> list[dict[str, Any]]:
         if mentions:
             return [
@@ -1516,6 +1520,9 @@ class PeerChatService:
                 }
                 for mention in mentions
             ]
+
+        if not allow_default_intake:
+            return []
 
         default_target = self._resolve_default_intake(conversation_id)
         return [

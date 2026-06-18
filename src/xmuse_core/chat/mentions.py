@@ -31,6 +31,12 @@ class _MentionAlias:
     normalized: str
 
 
+@dataclass(frozen=True)
+class _MentionCandidate:
+    start: int
+    active: bool
+
+
 def normalize_address(value: str) -> str:
     text = value.strip()
     if text.startswith("@"):
@@ -46,7 +52,12 @@ def default_intake_address() -> str:
 def extract_mentions(content: str) -> list[str]:
     seen: set[str] = set()
     mentions: list[str] = []
-    for match in MENTION_RE.finditer(content):
+    for candidate in _iter_mention_candidates(content):
+        if not candidate.active:
+            continue
+        match = MENTION_RE.match(content, candidate.start)
+        if match is None:
+            continue
         raw = match.group(0).strip()
         normalized = normalize_address(raw)
         if normalized in seen:
@@ -54,6 +65,68 @@ def extract_mentions(content: str) -> list[str]:
         seen.add(normalized)
         mentions.append(raw)
     return mentions
+
+
+def has_inactive_mention_candidates(content: str) -> bool:
+    return any(not candidate.active for candidate in _iter_mention_candidates(content))
+
+
+def _iter_mention_candidates(content: str):
+    index = 0
+    while index < len(content):
+        if content[index] == "`" and not _is_escaped(content, index):
+            closing = _find_inline_code_span_end(content, index)
+            if closing is not None:
+                yield from _iter_inactive_code_mentions(content, index, closing)
+                index = closing
+                continue
+        if content[index] == "@" and _looks_like_mention_start(content, index):
+            yield _MentionCandidate(start=index, active=not _is_escaped(content, index))
+        index += 1
+
+
+def _iter_inactive_code_mentions(content: str, start: int, end: int):
+    run_length = _backtick_run_length(content, start)
+    index = start + run_length
+    stop = end - run_length
+    while index < stop:
+        if content[index] == "@" and _looks_like_mention_start(content, index):
+            yield _MentionCandidate(start=index, active=False)
+        index += 1
+
+
+def _find_inline_code_span_end(content: str, start: int) -> int | None:
+    run_length = _backtick_run_length(content, start)
+    index = start + run_length
+    while index < len(content):
+        if content[index] != "`":
+            index += 1
+            continue
+        if _backtick_run_length(content, index) == run_length:
+            return index + run_length
+        index += 1
+    return None
+
+
+def _backtick_run_length(content: str, start: int) -> int:
+    end = start
+    while end < len(content) and content[end] == "`":
+        end += 1
+    return end - start
+
+
+def _looks_like_mention_start(content: str, start: int) -> bool:
+    next_index = start + 1
+    return next_index < len(content) and content[next_index].isalnum()
+
+
+def _is_escaped(content: str, index: int) -> bool:
+    slashes = 0
+    index -= 1
+    while index >= 0 and content[index] == "\\":
+        slashes += 1
+        index -= 1
+    return slashes % 2 == 1
 
 
 class MentionResolver:
@@ -71,15 +144,12 @@ class MentionResolver:
         aliases = self._aliases(active)
         seen: set[str] = set()
         resolved: list[ResolvedMention] = []
-        index = 0
-        while True:
-            start = content.find("@", index)
-            if start == -1:
-                break
-
-            raw, end = self._extract_scoped_raw(content, start, aliases)
+        for candidate in _iter_mention_candidates(content):
+            if not candidate.active:
+                continue
+            start = candidate.start
+            raw, _end = self._extract_scoped_raw(content, start, aliases)
             if raw is None:
-                index = start + 1
                 continue
 
             try:
@@ -87,12 +157,10 @@ class MentionResolver:
             except MentionResolutionError:
                 if strict:
                     raise
-                index = end
                 continue
             if mention.normalized not in seen:
                 seen.add(mention.normalized)
                 resolved.append(mention)
-            index = end
         return resolved
 
     def resolve(self, conversation_id: str, raw: str) -> ResolvedMention:
