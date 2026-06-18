@@ -5509,7 +5509,7 @@ async def test_run_gate_uses_plural_gate_profiles(setup):
 
 
 @pytest.mark.asyncio
-async def test_run_gate_writes_report_when_gate_profiles_missing(setup):
+async def test_run_gate_fails_closed_when_gate_profiles_missing(setup):
     tmp_path, lanes_path = setup
     lanes_path.write_text(json.dumps({"lanes": [
         {
@@ -5523,19 +5523,95 @@ async def test_run_gate_writes_report_when_gate_profiles_missing(setup):
         lanes_path=lanes_path, xmuse_root=tmp_path, mcp_port=9999,
     )
 
-    assert await orch._run_gate("lane-1") is True
+    assert await orch._run_gate("lane-1") is False
 
     report_path = tmp_path / "logs" / "gates" / "lane-1" / "report.json"
     assert report_path.exists()
     report = json.loads(report_path.read_text(encoding="utf-8"))
-    assert report["passed"] is True
-    assert report["blocking_passed"] is True
+    assert report["passed"] is False
+    assert report["blocking_passed"] is False
     assert report["profile_ids"] == []
     assert report["command_results"] == []
     assert report["resolution_reasons"] == {
         "gate_profiles": ["gate_profiles_missing"],
     }
     assert report["worktree"] == str(tmp_path)
+
+
+@pytest.mark.asyncio
+async def test_run_gate_uses_worktree_gate_profiles_when_runtime_root_missing(setup):
+    tmp_path, lanes_path = setup
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "xmuse").mkdir()
+    (repo / "gate_profiles.json").write_text("runtime config must not be used")
+    (repo / "xmuse" / "gate_profiles.json").write_text(json.dumps({
+        "schema_version": 1,
+        "defaults": {
+            "full_gate_profile": "strict-product",
+            "full_gate_interval": 20,
+            "unknown_diff_policy": "strict-product",
+            "unclassified_test_policy": "fail",
+        },
+        "command_catalog": {
+            "noop": {
+                "argv": ["true"],
+                "cwd": ".",
+                "timeout_s": 0,
+                "allow_extra_args": False,
+            }
+        },
+        "profiles": {
+            "strict-product": {
+                "description": "strict",
+                "blocking": True,
+                "env": {},
+                "commands": [{"command": "noop", "args": []}],
+                "diff_selectors": ["**"],
+                "test_files": ["tests/xmuse/test_platform_orchestrator.py"],
+                "test_nodeids": [],
+                "test_markers": [],
+                "mixed_test_files": [],
+            },
+            "historical": {
+                "description": "historical",
+                "blocking": False,
+                "env": {},
+                "commands": [],
+                "diff_selectors": [],
+                "test_files": ["tests/test_agent.py"],
+                "test_nodeids": [],
+                "test_markers": [],
+                "mixed_test_files": [],
+            },
+        },
+    }))
+    lanes_path.write_text(json.dumps({"lanes": [
+        {
+            "feature_id": "lane-1",
+            "status": "executed",
+            "prompt": "fix",
+            "worktree": str(repo),
+        },
+    ]}))
+    orch = PlatformOrchestrator(
+        lanes_path=lanes_path, xmuse_root=tmp_path, mcp_port=9999,
+    )
+
+    assert await orch._run_gate("lane-1") is True
+
+    report_path = tmp_path / "logs" / "gates" / "lane-1" / "report.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["passed"] is True
+    assert report["blocking_passed"] is True
+    assert report["profile_ids"] == ["strict-product"]
+    assert report["resolution_reasons"] == {
+        "strict-product": ["unknown_diff_policy"],
+    }
+    assert report["warnings"] == [
+        "gate_profiles.json missing in XMUSE_ROOT; "
+        "using lane worktree xmuse/gate_profiles.json"
+    ]
 
 
 @pytest.mark.asyncio
