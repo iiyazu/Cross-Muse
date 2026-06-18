@@ -1064,7 +1064,7 @@ async def test_required_configured_review_peer_no_verdict_hard_fails(
             StdoutMessage(
                 type="result",
                 status="success",
-                artifacts={},
+                artifacts={"latency_stages": {"turn_completed": {"at": 1.0}}},
             )
         ]
     )
@@ -1079,6 +1079,11 @@ async def test_required_configured_review_peer_no_verdict_hard_fails(
     assert lane["failure_reason"] == "review_peer_delivery_failed"
     assert lane["peer_delivery_mode"] == "required_peer_failed"
     assert lane["peer_degraded_reason"] == "review_peer_no_verdict"
+    assert lane["peer_result_status"] == "ok"
+    assert lane["peer_result_message_type"] == "result"
+    assert lane["peer_result_message_request_id"] == lane["peer_request_id"]
+    assert lane["peer_result_message_status"] == "success"
+    assert lane["peer_result_artifact_keys"] == ["latency_stages"]
 
 
 @pytest.mark.asyncio
