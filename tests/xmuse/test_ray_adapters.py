@@ -750,6 +750,73 @@ def test_app_server_turn_accumulator_records_first_stream_delta_stage() -> None:
     assert result.artifacts["latency_stages"]["first_stream_delta"] == {"at": 300.2}
 
 
+def test_app_server_turn_accumulator_emits_error_notification() -> None:
+    from xmuse_core.agents.codex_app_server_transport import AppServerTurnAccumulator
+
+    accumulator = AppServerTurnAccumulator(request_id="review-1")
+
+    assert accumulator.feed(
+        {
+            "method": "turn/started",
+            "params": {"turn": {"id": "turn-1"}, "threadId": "thread-1"},
+        }
+    ) is None
+
+    result = accumulator.feed(
+        {
+            "method": "error",
+            "params": {
+                "threadId": "thread-1",
+                "turnId": "turn-1",
+                "error": {
+                    "message": "model is not supported for this account",
+                },
+                "willRetry": False,
+            },
+        }
+    )
+
+    assert result is not None
+    assert result.type == "error"
+    assert result.request_id == "review-1"
+    assert result.runtime == "codex-app-server"
+    assert result.code == "codex_app_server_error"
+    assert result.message == "model is not supported for this account"
+
+
+def test_app_server_turn_accumulator_failed_turn_is_not_success_result() -> None:
+    from xmuse_core.agents.codex_app_server_transport import AppServerTurnAccumulator
+
+    accumulator = AppServerTurnAccumulator(request_id="review-1")
+
+    assert accumulator.feed(
+        {
+            "method": "turn/started",
+            "params": {"turn": {"id": "turn-1"}, "threadId": "thread-1"},
+        }
+    ) is None
+
+    result = accumulator.feed(
+        {
+            "method": "turn/completed",
+            "params": {
+                "threadId": "thread-1",
+                "turn": {
+                    "id": "turn-1",
+                    "status": "failed",
+                    "error": {"message": "provider rejected model"},
+                },
+            },
+        }
+    )
+
+    assert result is not None
+    assert result.type == "error"
+    assert result.request_id == "review-1"
+    assert result.code == "codex_app_server_error"
+    assert result.message == "provider rejected model"
+
+
 def test_app_server_transport_omits_xmuse_mcp_by_default(tmp_path: Path) -> None:
     from xmuse_core.agents.codex_app_server_transport import CodexAppServerTransport
 
