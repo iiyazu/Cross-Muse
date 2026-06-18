@@ -155,6 +155,30 @@ class PeerChatScheduler:
                     timeout=self._response_wait_s,
                 )
             except TimeoutError:
+                refreshed = self._inbox.get(item.id)
+                if refreshed.status == "read" and self._has_real_writeback_message(
+                    item.conversation_id,
+                    refreshed.responded_message_id,
+                    participant_id=participant.participant_id,
+                    inbox_item_id=item.id,
+                ):
+                    await _abort_session_if_supported(self._god_layer, record.god_session_id)
+                    self._finish_active_stream_for_item(item, status="done")
+                    self._record_latency_trace(
+                        item,
+                        trace_start_at=trace_start_at,
+                        delivery_started_at=delivery_started_at,
+                        provider_turn_started_at=provider_turn_started_at,
+                        scheduler_observed_result_at=None,
+                        delivery_mode="mcp_writeback",
+                        degraded_reason="peer_response_timeout_after_writeback",
+                    )
+                    self._inbox.record_nudge_result(
+                        item.id,
+                        owner=self._scheduler_id,
+                        success=True,
+                    )
+                    return PeerChatSchedulerOutcome(nudged=1, happy_path=1)
                 await _abort_session_if_supported(self._god_layer, record.god_session_id)
                 self._finish_active_stream_for_item(item, status="error")
                 self._record_latency_trace(
