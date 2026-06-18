@@ -347,6 +347,23 @@ def test_execution_prompt_has_mcp_unavailable_fallback() -> None:
     assert "stdout fallback" in prompt
     assert "exit with status 0" in prompt
     assert "exit non-zero" in prompt
+    assert "mcp__xmuse_platform__query_knowledge" in prompt
+    assert "mcp__xmuse_platform__update_lane_status" in prompt
+
+
+def test_child_worker_override_suppresses_skill_startup_for_dispatched_subagent(
+    xmuse_root: Path,
+) -> None:
+    prompt = build_execution_prompt(
+        {"feature_id": "lane-child-mcp", "prompt": "run focused verification"},
+        xmuse_root=xmuse_root,
+        skill_prompt_path="xmuse/god_prompts/execution_god.md",
+    )
+
+    assert "dispatched child worker/subagent" in prompt
+    assert "do not read, invoke," in prompt
+    assert "or follow skills" in prompt
+    assert "Runtime evidence must come" in prompt
 
 
 def test_execution_prompt_describes_child_result_contract() -> None:
@@ -366,6 +383,8 @@ def test_review_prompt_has_mcp_unavailable_fallback() -> None:
 
     assert "If MCP tools are not exposed" in prompt
     assert "stdout fallback" in prompt
+    assert "mcp__xmuse_platform__get_lane" in prompt
+    assert "mcp__xmuse_platform__update_lane_status" in prompt
 
 
 def test_build_review_prompt_includes_prior_attempt_context(xmuse_root: Path):
