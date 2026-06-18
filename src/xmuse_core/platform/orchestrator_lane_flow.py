@@ -629,17 +629,23 @@ async def run_review_god(orchestrator, lane_id: str) -> None:
                 target_lane_id,
                 lane=orchestrator._sm.get_lane(target_lane_id),
             ),
-            ingest_merge_verdict=lambda target_lane_id, summary: ingest_merge_verdict(
+            ingest_merge_verdict=lambda target_lane_id,
+            summary,
+            evidence_refs=None: ingest_merge_verdict(
                 target_lane_id,
                 summary,
                 lane=orchestrator._sm.get_lane(target_lane_id),
                 review_plane=orchestrator._review_plane,
+                evidence_refs=evidence_refs,
             ),
-            ingest_rework_verdict=lambda target_lane_id, summary: ingest_rework_verdict(
+            ingest_rework_verdict=lambda target_lane_id,
+            summary,
+            evidence_refs=None: ingest_rework_verdict(
                 target_lane_id,
                 summary,
                 lane=orchestrator._sm.get_lane(target_lane_id),
                 review_plane=orchestrator._review_plane,
+                evidence_refs=evidence_refs,
             ),
             ingest_review_failure_verdict=(
                 lambda target_lane_id, reason, evidence_refs: ingest_review_failure_verdict(
