@@ -46,6 +46,14 @@ class AppServerTurnAccumulator:
                 self.turn_id = _clean_text(turn.get("id")) or self.turn_id
             self._record_stage("codex_app_server_turn_start")
             return None
+        if method == "error" and self._matches_turn(params):
+            return StdoutMessage(
+                type="error",
+                request_id=self.request_id,
+                runtime="codex-app-server",
+                code="codex_app_server_error",
+                message=_error_notification_message(params),
+            )
         if method in {"item/started", "item/completed"} and self._matches_turn(params):
             tool_name = _mcp_tool_name(params)
             if tool_name in {
@@ -71,6 +79,15 @@ class AppServerTurnAccumulator:
                     self._final_text = text
             return None
         if method == "turn/completed" and self._matches_turn(params):
+            turn = params.get("turn")
+            if _turn_completed_failed(turn):
+                return StdoutMessage(
+                    type="error",
+                    request_id=self.request_id,
+                    runtime="codex-app-server",
+                    code="codex_app_server_error",
+                    message=_turn_error_message(turn),
+                )
             return StdoutMessage(
                 type="result",
                 request_id=self.request_id,
@@ -248,7 +265,8 @@ class CodexAppServerTransport:
             self._record_stream_delta(message)
             result = self._active_accumulator.feed(message)
             if result is not None:
-                self._finish_stream(status="done")
+                stream_status = "error" if result.type == "error" else "done"
+                self._finish_stream(status=stream_status)
                 self._active_accumulator = None
                 self._active_turn_request_id = None
                 return result
@@ -481,6 +499,34 @@ def _clean_text(value: object) -> str | None:
         return None
     stripped = value.strip()
     return stripped or None
+
+
+def _error_notification_message(params: dict[str, Any]) -> str:
+    error = params.get("error")
+    if isinstance(error, dict):
+        message = _clean_text(error.get("message"))
+        if message is not None:
+            return message
+    return "codex app-server turn failed"
+
+
+def _turn_completed_failed(turn: object) -> bool:
+    if not isinstance(turn, dict):
+        return False
+    status = _clean_text(turn.get("status"))
+    if status is None:
+        return False
+    return status.lower() in {"failed", "error", "cancelled", "canceled"}
+
+
+def _turn_error_message(turn: object) -> str:
+    if isinstance(turn, dict):
+        error = turn.get("error")
+        if isinstance(error, dict):
+            message = _clean_text(error.get("message"))
+            if message is not None:
+                return message
+    return "codex app-server turn failed"
 
 
 def _parse_context(value: object) -> dict[str, Any]:
