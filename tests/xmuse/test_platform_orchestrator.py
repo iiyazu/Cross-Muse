@@ -5865,9 +5865,12 @@ async def test_reconcile_recovers_review_infra_failure_after_backoff(setup):
 @pytest.mark.asyncio
 async def test_review_god_stdout_fallback_approves_when_mcp_status_missing(setup):
     tmp_path, lanes_path = setup
+    gate_report = tmp_path / "logs" / "gates" / "lane-1" / "report.json"
+    gate_report.parent.mkdir(parents=True, exist_ok=True)
+    gate_report.write_text("{}", encoding="utf-8")
     lanes_path.write_text(json.dumps({"lanes": [
         {"feature_id": "lane-1", "status": "gated", "prompt": "fix",
-         "worktree": str(tmp_path)},
+         "worktree": str(tmp_path), "prompt_ref": "logs/lane_prompts/lane-1.md"},
     ]}))
     orch = PlatformOrchestrator(
         lanes_path=lanes_path,
@@ -5889,6 +5892,17 @@ async def test_review_god_stdout_fallback_approves_when_mcp_status_missing(setup
         "positive_no_findings",
     }
     assert lane["review_decision"] == "merge"
+    assert lane["review_evidence_refs"] == [
+        "feature_lanes.json#lane=lane-1",
+        f"review_plane.json#task={lane['review_task_id']}",
+        "logs/lane_prompts/lane-1.md",
+        "logs/gates/lane-1/report.json",
+    ]
+    review_plane = json.loads((tmp_path / "review_plane.json").read_text())
+    verdict = review_plane["review_verdicts"][0]
+    assert verdict["evidence_refs"] == lane["review_evidence_refs"]
+    final_actions = json.loads((tmp_path / "final_actions.json").read_text())
+    assert final_actions["holds"][0]["verdict_id"] == lane["review_verdict_id"]
 
 
 @pytest.mark.asyncio
