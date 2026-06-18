@@ -64,6 +64,16 @@ _EXECUTE_DEGRADED_SOURCE_COORDINATOR_SESSION = "coordinator_session_delivery"
 _EXECUTE_FAILURE_SOURCE_WORKER_TEST_GATE = "worker_test_gate"
 PERSISTENT_EXECUTE_RECEIVE_TIMEOUT_S = 180.0
 _PERSISTENT_EXECUTE_LOCKS: dict[str, asyncio.Lock] = {}
+_EXECUTION_ALREADY_ADVANCED_STATUSES = {
+    "gated",
+    "gate_failed",
+    "reviewed",
+    "rejected",
+    "reworking",
+    "awaiting_final_action",
+    "merged",
+    "failed",
+}
 
 
 @dataclass(frozen=True)
@@ -281,17 +291,28 @@ async def run_execution_god(
                 record_degradation=record_provider_session_binding_degradation,
             )
             log_event(logger, logging.INFO, "execution_god_completed", lane_id=lane_id)
-            sm.transition(
-                lane_id,
-                "executed",
-                metadata={
-                    "parent_god": god.name,
-                    "parent_god_role": "execute",
-                    "worker_kind": "temporary_child_worker",
-                }
-                | provider_binding_metadata,
-            )
-            await on_executed(lane_id)
+            metadata = {
+                "parent_god": god.name,
+                "parent_god_role": "execute",
+                "worker_kind": "temporary_child_worker",
+            } | provider_binding_metadata
+            current = sm.get_lane(lane_id)
+            current_status = str(current.get("status") or "")
+            if current_status == "dispatched":
+                sm.transition(lane_id, "executed", metadata=metadata)
+                await on_executed(lane_id)
+            elif current_status == "executed":
+                sm.update_metadata(lane_id, metadata)
+                await on_executed(lane_id)
+            elif current_status in _EXECUTION_ALREADY_ADVANCED_STATUSES:
+                sm.update_metadata(lane_id, metadata)
+                log_event(
+                    logger,
+                    logging.INFO,
+                    "execution_god_result_observed_after_child_writeback",
+                    lane_id=lane_id,
+                    current_status=current_status,
+                )
             return
         provider_binding_metadata = _mark_failed_provider_session_binding(
             binding=provider_session_binding,
