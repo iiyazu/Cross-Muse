@@ -12,6 +12,84 @@ Do not read any entry here as proof of:
 - natural peer-GOD groupchat proof;
 - full L8-L10 or L1-L11 closure.
 
+## 2026-06-20 Reusable Fullchain Driver Sentinels
+
+Reusable driver under test:
+
+```text
+scripts/run_fullchain_docs_sentinel.py
+```
+
+Command shape:
+
+```bash
+uv run python scripts/run_fullchain_docs_sentinel.py \
+  --run-root "$RUN_ROOT" \
+  --execution-worktree "$EXEC_ROOT" \
+  --feature-id "$FEATURE_ID" \
+  --proposal-timeout-s 900 \
+  --lane-timeout-s 1200 \
+  --max-hours 0.75
+```
+
+Loop 26i artifact root:
+
+```text
+.goal-runs/2026-06-20/loop-26i-post-main-fullchain-driver-023933/
+```
+
+Observed local runtime chain:
+
+- human demand to `@architect`;
+- durable Codex architect, Codex execute, and OpenCode review participants;
+- execute collaboration response recorded;
+- one `lane_graph` proposal accepted;
+- isolated docs lane executed in
+  `/tmp/loop-26i-post-main-fullchain-driver-023933-exec`;
+- gate passed;
+- OpenCode review peer metadata recorded;
+- lane stopped at `awaiting_final_action`;
+- `final_actions.json` held a pending merge action;
+- services cleaned up and ports were no longer listening.
+
+Post-run stricter driver recomputation showed 26i does not prove healthy
+executor peer handoff because the lane recorded
+`peer_delivery_mode=auto_persistent_fallback` and
+`peer_result_status=delivery_failed`.
+
+Loop 26j artifact root:
+
+```text
+.goal-runs/2026-06-20/loop-26j-strict-fullchain-driver-024845/
+```
+
+Observed local runtime chain:
+
+- human demand to `@architect`;
+- durable Codex architect, Codex execute, and OpenCode review participants;
+- execute collaboration response recorded;
+- accepted proposal dispatched into isolated docs execution;
+- isolated docs lane executed in
+  `/tmp/loop-26j-strict-fullchain-driver-024845-exec`;
+- gate passed;
+- OpenCode review peer metadata recorded;
+- lane stopped at `awaiting_final_action`;
+- `final_actions.json` held a pending merge action;
+- services cleaned up and ports were no longer listening.
+
+Post-run stricter driver recomputation showed 26j does not prove the proposal
+contract because two related `lane_graph` proposals were emitted for the same
+feature id:
+
+```text
+prop_d9dded0ae4504326b972c8b3f7003d53 accepted
+prop_bc94c62ae51249e98d123164b4f0e4b3 open
+```
+
+Classification: local runtime contract evidence only. These runs do not prove
+production readiness, GitHub review truth, merge truth, live MemoryOS, or full
+closure.
+
 ## 2026-06-17 Windows/WSL Run
 
 Runtime root:
