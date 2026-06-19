@@ -466,7 +466,17 @@ def _looks_like_cjk_collaboration_response_request(content: str) -> bool:
     compact = re.sub(r"\s+", "", content)
     has_collaboration = any(marker in compact for marker in ("协作", "协同"))
     has_response = any(marker in compact for marker in ("响应", "回复", "意见", "审查"))
-    has_record = any(marker in compact for marker in ("记录", "提交", "写入"))
+    has_record = any(
+        marker in compact
+        for marker in (
+            "记录",
+            "提交",
+            "写入",
+            "回填",
+            "回写",
+            "登记",
+        )
+    )
     return has_collaboration and has_response and has_record
 
 
