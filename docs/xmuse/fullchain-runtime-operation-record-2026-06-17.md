@@ -7100,3 +7100,95 @@ Caveats:
 - Configured-peer degradation fallback remains a separate review-authority
   question.
 - The final action was intentionally held; no live lane merge is claimed.
+
+## 2026-06-20 Loop 26s: Post-PR119 No-Codex Default Review Main Check
+
+Purpose: verify the PR #119 default-review authority repair after it landed on
+`origin/main`.
+
+Workspace and authority:
+
+```text
+repo_worktree=/tmp/xmuse-postmerge-layered-prompt-main
+base_head_sha=353f61e442ffcae3a97377f54b44b9094e1ebb10
+run_root=/tmp/xmuse-postmerge-layered-prompt-main/.goal-runs/2026-06-20/loop-26s-post-pr119-no-codex-default-review-fallback-2125z
+execution_worktree=/tmp/loop-26s-post-pr119-no-codex-default-review-fallback-2125z-exec
+conversation_id=conv_6414e806c7f14de1881a391603f00ddb
+```
+
+GitHub server facts:
+
+```text
+pr=119
+head_sha=2e71882465250f6894fcd1e7b881a53f54f96e17
+merge_commit=353f61e442ffcae3a97377f54b44b9094e1ebb10
+pr_ci_run=27849001334 success
+main_ci_run=27849053122 success
+```
+
+Runtime command:
+
+```bash
+uv run python scripts/run_fullchain_docs_sentinel.py \
+  --run-root /tmp/xmuse-postmerge-layered-prompt-main/.goal-runs/2026-06-20/loop-26s-post-pr119-no-codex-default-review-fallback-2125z \
+  --execution-worktree /tmp/loop-26s-post-pr119-no-codex-default-review-fallback-2125z-exec \
+  --feature-id loop_26s_post_pr119_no_codex_default_review_fallback_2125z \
+  --proposal-timeout-s 900 \
+  --lane-timeout-s 1200 \
+  --max-hours 0.8
+```
+
+Durable chain:
+
+```text
+collaboration_run=collab_f86f828584dd461ca4b891e5c641c5ee
+proposal_id=prop_6563c68745894161aa994612432a218a
+resolution_id=res_6bb6611b01094500bdbffb0e1591d9cb
+lane_id=loop_26s_post_pr119_no_codex_default_review_fallback_2125z
+review_task_id=rtask_0a720efb53b14258882e7275a1b02a76
+review_verdict_id=verdict-merge-rtask_0a720efb53b14258882e7275a1b02a76
+final_action_hold_id=final-111af2b61178
+```
+
+Final lane state:
+
+```text
+status=awaiting_final_action
+gate_passed=true
+review_decision=merge
+review_delivery_mode=persistent
+persistent_review_degraded=false
+review_peer_defaulted=true
+review_peer_cli_kind=opencode
+review_peer_model=opencode-go/deepseek-v4-flash
+proposal_has_review_runtime=false
+single_related_lane_graph_proposal=true
+```
+
+Execution artifact:
+
+```text
+path=/tmp/loop-26s-post-pr119-no-codex-default-review-fallback-2125z-exec/docs/xmuse/loop_26s_post_pr119_no_codex_default_review_fallback_2125z.md
+matches_expected=true
+```
+
+Cleanup:
+
+```text
+chat_port_listening=false
+mcp_port_listening=false
+loop-26s service process matches after shutdown: none
+```
+
+Classification: bounded post-merge main runtime proof that the PR #119
+default-review authority repair preserves the registered OpenCode review route
+for the docs-only groupchat, proposal, approval, dispatch, isolated execution,
+gate, persistent review, and final-action hold path.
+
+Caveats:
+
+- This is not production readiness, repeated soak, MemoryOS proof, GitHub
+  review truth, natural peer-GOD groupchat completion, or full closure.
+- Configured-peer degradation fallback remains a separate review-authority
+  question.
+- The final action was intentionally held; no live lane merge is claimed.

@@ -7,7 +7,7 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
 
 ## Current Proof Boundary
 
-- Latest main inspected: `f3f7b6dafa94ceae179af26c448f1aae183fd24b`.
+- Latest main inspected: `353f61e442ffcae3a97377f54b44b9094e1ebb10`.
 - Latest peer-reply dependency-set evidence: PR #117 merged the direct
   `peer_reply_drain_callback` coordination repair to main as
   `f3f7b6dafa94ceae179af26c448f1aae183fd24b` after successful PR CI and
@@ -26,20 +26,22 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   is bounded main evidence for a direct handoff-message dependency set, not a
   general workflow dependency planner, production readiness, natural peer-GOD
   groupchat completion, or full closure.
-- Latest default-review authority candidate evidence: Loop 26r on local branch
-  `codex/default-review-no-codex-fallback` removes the legacy empty-conversation
-  Codex default-review auto-create path. Focused RED evidence showed the old
-  path ensured a Codex review session when a conversation had no active
-  OpenCode reviewer. The local candidate now fails closed as
+- Latest default-review authority evidence: PR #119 merged the legacy
+  empty-conversation Codex default-review auto-create removal to main as
+  `353f61e442ffcae3a97377f54b44b9094e1ebb10` after successful PR CI and
+  successful post-merge main CI. Focused RED evidence in Loop 26r showed the
+  old path ensured a Codex review session when a conversation had no active
+  OpenCode reviewer. The merged behavior fails closed as
   `required_review_peer_unavailable` with
   `peer_degraded_reason=review_peer_runtime_unavailable`, creates no Codex
-  review participant, and does not invoke one-shot review. The same candidate
-  ran the docs-only fullchain sentinel with a registered OpenCode reviewer and
-  reached `awaiting_final_action` with `gate_passed=true`,
+  review participant, and does not invoke one-shot review. Loop 26s then ran
+  from post-PR119 main with a registered OpenCode reviewer and reached
+  `awaiting_final_action` with `gate_passed=true`,
   `review_decision=merge`, `review_delivery_mode=persistent`,
   `persistent_review_degraded=false`, `review_peer_cli_kind=opencode`, and all
-  success checks true. This is local candidate proof only until PR CI and
-  post-merge main evidence exist.
+  success checks true. This is bounded main evidence for the default reviewer
+  authority boundary, not production readiness, GitHub review truth, or full
+  closure.
 - Latest collaboration delivery lifecycle evidence: PR #115 merged the
   collaboration request/response/callback inbox lifecycle repair to main as
   `87c6f131d7a9851f1a4c5b023b192323ad8e73e4` after successful PR CI and
@@ -460,9 +462,9 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   OpenCode reviewer case when a production-like active peer roster already
   exists. Loop 26h confirms the normal unique-OpenCode route still works after
   those fail-closed changes. Remaining work is broader review authority
-  behavior. Loop 26r locally removes the empty-conversation legacy Codex
-  fallback and preserves the registered OpenCode fullchain route; remaining
-  work is PR publication and post-merge rerun.
+  behavior. PR #119 plus Loop 26s remove the empty-conversation legacy Codex
+  fallback on main and preserve the registered OpenCode fullchain route.
+  Remaining work is the separate configured-peer degradation fallback question.
 - P3 higher-parallelism stability loop: repeat real groupchat-to-final-hold
   with independent `XMUSE_ROOT` directories, execution worktrees, Chat API
   ports, MCP ports, and runners when increasing concurrency beyond the current
@@ -471,9 +473,9 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
 - P4 ambiguous review authority: multiple active OpenCode review participants
   now have focused fail-closed behavior without relying on proposal text.
   Missing OpenCode review participants also fail closed when an active peer
-  roster exists. Loop 26r locally removes the empty-conversation feature-scoped
-  Codex default-review fallback; keep it out of main claims until PR CI and
-  post-merge main evidence exist.
+  roster exists. PR #119 plus Loop 26s remove the empty-conversation
+  feature-scoped Codex default-review fallback on main. Configured-peer
+  degradation fallback remains a separate review-authority boundary.
 - P5 code-change soak: repeat small real code-change lanes after the
   inspector provider summary PR lands.
 - P6 MemoryOS adapter proof: keep `live_memoryos` forbidden until a real trace
