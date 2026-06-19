@@ -90,6 +90,47 @@ Classification: local runtime contract evidence only. These runs do not prove
 production readiness, GitHub review truth, merge truth, live MemoryOS, or full
 closure.
 
+Loop 26k artifact root:
+
+```text
+.goal-runs/2026-06-20/loop-26k-proposal-idempotency-fullchain-030741/
+```
+
+Observed after adding collaboration lane-graph semantic deduplication:
+
+- human demand to `@architect`;
+- execute collaboration response recorded;
+- one related `lane_graph` proposal existed for the feature id;
+- proposal was accepted and dispatched;
+- isolated docs lane executed in
+  `/tmp/loop-26k-proposal-idempotency-fullchain-030741-exec`;
+- gate passed;
+- executor peer handoff recorded `peer_delivery_mode=configured_peer`;
+- OpenCode review peer metadata recorded;
+- lane stopped at `awaiting_final_action`;
+- `final_actions.json` held a pending merge action;
+- services cleaned up and ports were no longer listening.
+
+Driver success checks were all true:
+
+```text
+single_related_lane_graph_proposal=true
+approved_proposal_accepted=true
+execution_peer_handoff_not_degraded=true
+lane_awaiting_final_action=true
+gate_passed=true
+isolated_note_matches=true
+opencode_review_peer_recorded=true
+review_verdict_finalized=true
+review_task_verdict_emitted=true
+final_action_hold_pending=true
+proposal_has_no_review_runtime=true
+```
+
+Classification: stronger local runtime contract evidence for the docs-only
+sentinel only. It still does not prove production readiness, GitHub review
+truth, merge truth, live MemoryOS, or full closure.
+
 ## 2026-06-17 Windows/WSL Run
 
 Runtime root:
