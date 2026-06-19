@@ -3369,3 +3369,70 @@ Remaining caveats:
   health is ready.
 - This is not GitHub review truth, merge truth, production readiness, live
   MemoryOS proof, overnight soak, full L8-L10 closure, or full L1-L11 closure.
+
+## 2026-06-20 Loop 26c2 Finding: Post-PR105 Sentinel Reaches Final-Action Hold
+
+Status: positive bounded runtime evidence, not a closure claim.
+
+Observed chain:
+
+```text
+human message
+-> Codex architect MCP writeback
+-> Codex execute feasibility writeback
+-> collaboration done callback
+-> architect chat_emit_proposal
+-> accepted proposal/resolution
+-> dispatch bridge handoff
+-> isolated execution worktree
+-> gate pass
+-> OpenCode persistent review verdict=merge
+-> final-action hold
+```
+
+Primary artifacts:
+
+```text
+run_root=/tmp/xmuse-postmerge-layered-prompt-main/.goal-runs/2026-06-20/loop-26c2-post-pr105-fullchain-010549
+driver_output=driver_output.json
+chat_authority=chat.db
+lane_projection=feature_lanes.json#lane=loop26c2_post_pr105_fullchain
+review_authority=review_plane.json#task=rtask_4389b2b67d5942338e26120e8cf60d97
+gate_report=logs/gates/loop26c2_post_pr105_fullchain/report.json
+execution_worktree=/tmp/loop-26c2-post-pr105-fullchain-exec-010549
+```
+
+Confirmed:
+
+- Codex architect and execute sessions recorded
+  `prompt_contract_version=xmuse-peer-chat-prompt-v2` with layered prompt
+  order and prompt fingerprints.
+- The groupchat produced a durable lane_graph proposal via
+  `chat_emit_proposal`.
+- The accepted proposal projected into `feature_lanes.json`.
+- The lane executed in an isolated worktree and changed only
+  `docs/xmuse/post-pr94-review-peer-health-note.md`.
+- The gate report passed `uv run pytest -q tests/xmuse/test_package_boundaries.py`.
+- The registered OpenCode review peer produced a persistent merge verdict with
+  `persistent_review_degraded=false`.
+- The lane stopped at `awaiting_final_action` with
+  `final_action_hold_id=final-b25d00349f94`.
+- Shutdown cleanup left no listeners on ports 8121/8221 and no loop-26c2
+  service processes.
+
+New or continuing caveats:
+
+- The OpenCode review peer's `god_sessions.json` record still lacks a layered
+  prompt contract fingerprint even though persistent review delivery succeeded.
+- This single docs-only sentinel does not prove dynamic member mutation,
+  provider-native restart/resume continuity, MemoryOS, production readiness, or
+  repeated stability.
+- The final action was intentionally held; no lane merge or GitHub server
+  action is claimed.
+
+Next boundary candidate:
+
+- Treat OpenCode review prompt/session metadata as a Phase 2 observability gap:
+  either persist the review peer prompt contract like Codex peer turns, or
+  explicitly classify persistent review as a separate contract with its own
+  authority fields.

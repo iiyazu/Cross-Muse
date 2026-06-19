@@ -5908,3 +5908,144 @@ Classification: positive bounded post-merge main runtime evidence for the
 shape. This is not production readiness, not overnight soak, not GitHub review
 truth, not live MemoryOS proof, not full L8-L10 closure, and not full L1-L11
 closure.
+
+## 2026-06-20 Loop 26c2: Post-PR105 Layered Prompt Fullchain Sentinel
+
+Purpose: rerun the largest safe post-PR105 real chain from current
+`origin/main` after the layered peer-chat prompt contract landed. This loop
+used the docs-only lane shape and stopped at final-action hold.
+
+Workspace and authority:
+
+```text
+repo_worktree=/tmp/xmuse-postmerge-layered-prompt-main
+base_head_sha=8df4415c0586b04adffb4bc30806f9e205b04a12
+run_root=/tmp/xmuse-postmerge-layered-prompt-main/.goal-runs/2026-06-20/loop-26c2-post-pr105-fullchain-010549
+execution_worktree=/tmp/loop-26c2-post-pr105-fullchain-exec-010549
+chat_port=8221
+mcp_port=8121
+feature_id=loop26c2_post_pr105_fullchain
+```
+
+Commands:
+
+```bash
+XMUSE_ROOT="$RUN_ROOT" XMUSE_EXECUTION_WORKTREE="$EXEC_ROOT" CHAT_PORT=8221 \
+  uv run python -c 'import os; from pathlib import Path; import uvicorn; from xmuse.chat_api import create_app; uvicorn.run(create_app(base_dir=Path(os.environ["XMUSE_ROOT"]), execution_worktree=Path(os.environ["XMUSE_EXECUTION_WORKTREE"])), host="127.0.0.1", port=int(os.environ["CHAT_PORT"]), log_level="info")'
+
+XMUSE_ROOT="$RUN_ROOT" \
+  uv run uvicorn xmuse.mcp_server:app --host 127.0.0.1 --port 8121
+
+XMUSE_ROOT="$RUN_ROOT" XMUSE_PEER_GOD_BACKEND=native XMUSE_REVIEW_GOD_BACKEND=native \
+  uv run xmuse-platform-runner --xmuse-root "$RUN_ROOT" \
+  --lanes "$RUN_ROOT/feature_lanes.json" --mcp-port 8121 \
+  --max-concurrent 1 --peer-chat --persistent-review-god \
+  --persistent-review-timeout-s 900 --default-review-peer-routing \
+  --no-auto-merge --peer-chat-post-writeback-grace-s 4
+
+uv run python /tmp/xmuse-main-after-pr86-155349/.goal-runs/2026-06-19/loop-25z70-post-pr94-health-driver.py \
+  --chat-url http://127.0.0.1:8221 \
+  --xmuse-root "$RUN_ROOT" \
+  --feature-id loop26c2_post_pr105_fullchain \
+  --timeout-s 1800 --poll-s 5
+```
+
+Durable chain:
+
+```text
+conversation_id=conv_bf25cd08ed9c4c79b49a8f441393514f
+collaboration_run=collab_2ce7d8c34b6f4f6dbebdc41f7f26d937
+proposal_id=prop_234a14f90d2c4bbb8cb15c362120c3d8
+resolution_id=res_c981024731374ed68ca733079703bdca
+graph_id=res_c981024731374ed68ca733079703bdca-graph-v1
+feature_id=loop26c2_post_pr105_fullchain
+final_action_hold_id=final-b25d00349f94
+```
+
+Chat and MCP writeback:
+
+```text
+architect initial inbox=inbox_e98b26d1fa1942b9921eabea22a9460b
+architect initial status=read
+architect initial responded_message_id=msg_94134560a3e14e07b244bcb41601785e
+architect initial tool_trace=chat_mention
+
+execute feasibility inbox=inbox_4733f0faf0914fa9abe525ed3d144b36
+execute feasibility status=read
+execute feasibility responded_message_id=msg_a4d36e93f1654a619cefa31516d6d5ae
+execute feasibility tool_trace=chat_post_message
+
+collaboration callback inbox=inbox_a1a57d4b883b423f87b57d89f7107f1a
+collaboration callback status=read
+collaboration callback responded_message_id=msg_85fbcf0e0bea48f98f595478252eced5
+collaboration callback tool_trace=chat_emit_proposal
+
+dispatch inbox=inbox_8fc2445191b442d5888afca3a0869cc7
+dispatch status=read
+dispatch responded_message_id=msg_957515b377bd4abab52927396868671b
+dispatch tool_trace=chat_post_message
+```
+
+Final lane authority:
+
+```text
+status=awaiting_final_action
+gate_passed=true
+review_decision=merge
+review_delivery_mode=persistent
+persistent_review_degraded=false
+review_peer_cli_kind=opencode
+review_peer_model=opencode-go/deepseek-v4-flash
+review_peer_id=part_484bb35f90504906b7d67627c525f0bf
+peer_delivery_mode=configured_peer
+review_evidence_refs=feature_lanes.json#lane=loop26c2_post_pr105_fullchain, review_plane.json#task=rtask_4389b2b67d5942338e26120e8cf60d97, logs/lane_prompts/loop26c2_post_pr105_fullchain.md, logs/gates/loop26c2_post_pr105_fullchain/report.json
+```
+
+Layered prompt contract evidence:
+
+```text
+architect.prompt_contract_version=xmuse-peer-chat-prompt-v2
+execute.prompt_contract_version=xmuse-peer-chat-prompt-v2
+layer_order=xmuse_governance_l0, member_identity, roster_and_capabilities, local_context_capsule, tool_and_writeback_contract
+architect.prompt_artifact_fingerprint=sha256:024874a8e5a40f5292e304bbc6b0c5baac359efb63a54e9646ad57b1e8888fd9
+execute.prompt_artifact_fingerprint=sha256:13b65153fab2f47612f12fb48727153848890779c6b37395c3b833cb935b8115
+review.prompt_contract_version=null
+```
+
+Execution and gate artifacts:
+
+```text
+worker_changed_files=docs/xmuse/post-pr94-review-peer-health-note.md
+worker_file_content=Review peer runtime metadata is observable through lane health.
+gate_report=logs/gates/loop26c2_post_pr105_fullchain/report.json
+gate_command=uv run pytest -q tests/xmuse/test_package_boundaries.py
+gate_result=passed
+```
+
+Post-run cleanup:
+
+```text
+8121 listener after shutdown: none
+8221 listener after shutdown: none
+loop-26c2 service and worker process matches after shutdown: none
+```
+
+Classification: positive bounded post-PR105 local runtime proof for:
+
+- layered prompt metadata on Codex architect and execute peers;
+- human -> architect -> execute collaboration -> proposal;
+- accepted lane graph projection;
+- isolated docs-only execution;
+- package-boundary gate;
+- configured OpenCode persistent review;
+- final-action hold.
+
+Caveats:
+
+- This is one bounded docs-only sentinel, not production readiness.
+- The OpenCode review peer produced a persistent review verdict, but the
+  `god_sessions.json` review record still has no layered prompt contract
+  fingerprint.
+- The lane stopped at final-action hold and was not merged.
+- The probe does not prove dynamic member mutation, restart/resume continuity,
+  MemoryOS, overnight stability, GitHub review truth, or full closure.
