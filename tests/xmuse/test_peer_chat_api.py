@@ -29,6 +29,26 @@ def test_rest_message_mention_creates_inbox(tmp_path):
     assert inbox.get(payload["inbox_items"][0]["id"]).status == "unread"
 
 
+def test_rest_message_routes_role_before_capitalized_sentence(tmp_path):
+    client = TestClient(create_app(tmp_path))
+    conv = client.post("/api/chat/conversations", json={"title": "Chat"}).json()
+
+    response = client.post(
+        f"/api/chat/conversations/{conv['id']}/messages",
+        json={
+            "author": "Human operator",
+            "role": "human",
+            "content": "@architect Coordinate a tiny routing fix.",
+            "client_request_id": "rest-leading-capitalized-sentence",
+        },
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["mentions"] == ["@architect"]
+    assert [item["target_role"] for item in payload["inbox_items"]] == ["architect"]
+
+
 def test_rest_message_all_broadcasts_to_active_peers(tmp_path):
     client = TestClient(create_app(tmp_path))
     conv = client.post("/api/chat/conversations", json={"title": "Broadcast"}).json()

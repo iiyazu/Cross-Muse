@@ -37,8 +37,9 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
 
 - Default review peer selection can still choose Codex unless OpenCode is
   explicitly requested for the runtime conversation.
-- Mention parsing still overmatches text such as `@architect Coordinate...`;
-  `@architect,` routed correctly in Loop 25z41.
+- The `@architect Coordinate...` leading mention overmatch observed in Loop
+  25z41 is addressed by Loop 25z42 in `codex/strict-leading-mention-routing`;
+  repeated multi-turn routing stability remains unproven.
 - The successful chain is not yet a repeated multi-turn soak run.
 - Provider-native session continuity and memory persistence are not proven as
   durable product behavior.
@@ -63,9 +64,9 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
 
 ## Next Small Buckets
 
-- P0 docs evidence sync: record Loop 25z41, F84, and this ledger in a docs-only
-  PR based on current `origin/main`.
-- P1 mention parsing: prevent first-token role mentions from consuming
+- P0 docs evidence sync: Loop 25z41, F84, and this ledger were recorded in
+  PR #79.
+- P1 mention parsing: Loop 25z42 addresses first-token role mentions consuming
   following capitalized sentence text.
 - P2 default OpenCode review selection: make the desired review provider
   explicit in product defaults or runtime operator controls.

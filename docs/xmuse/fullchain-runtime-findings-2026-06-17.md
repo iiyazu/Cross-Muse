@@ -1835,3 +1835,84 @@ Remaining gaps:
 - This is one real local code-change loop and related server facts, not
   repeated stability proof, live MemoryOS proof, full closure, production-ready
   groupchat, or overnight readiness.
+
+### F85. Leading role mentions must not consume the following sentence verb
+
+Severity: resolved local groupchat routing blocker.
+
+Loop 25z41 showed that a natural human message such as
+`@architect Coordinate...` could fail to route. Loop 25z42 reproduced the same
+class of failure on current main through the real Chat API.
+
+Prepatch evidence:
+
+```text
+Loop 25z42 prepatch
+runtime_root=/tmp/xmuse-mention-routing-after-pr79/.goal-runs/2026-06-19/loop-25z42-mention-routing-prepatch-115536
+content="@architect Coordinate a tiny routing fix."
+message_status=201
+mentions=[]
+inbox_targets=[]
+
+control_content="@architect, Coordinate a tiny routing fix."
+message_status=201
+mentions=["@architect"]
+inbox_targets=["architect"]
+```
+
+Root cause:
+
+- The mention regex allowed `@role` followed by a capitalized word to be read
+  as one raw mention.
+- Human routing used that raw regex result before participant-aware alias
+  resolution.
+- Chat API preserves unknown human `@text` as a plain message, so the failure
+  mode was fail-open: the message was stored but no durable inbox was created.
+
+Fix:
+
+- `MentionResolver` now resolves leading content with participant-aware alias
+  matching.
+- Human routing uses the resolver for leading route headers and full-content
+  fallback instead of relying on raw regex mentions.
+- Overlong raw mentions shrink to the longest resolvable alias, preserving
+  multi-word display names and explicit ambiguity behavior.
+- Leading `@all` remains a broadcast token.
+
+Postpatch evidence:
+
+```text
+Loop 25z42 postpatch
+runtime_root=/tmp/xmuse-mention-routing-after-pr79/.goal-runs/2026-06-19/loop-25z42-mention-routing-postpatch-120105
+conversation_id=conv_8b0c4ba05f8145a791713448b48ab9c2
+content="@architect Coordinate a tiny routing fix."
+message_status=201
+mentions=["@architect"]
+inbox_targets=["architect"]
+inbox_ids=["inbox_1e25d11673b5436192e9b7ad7963fb82"]
+durable_row=mentions_json='["@architect"]', target_role=architect, status=unread
+```
+
+Validation:
+
+```text
+uv run pytest tests/xmuse/test_peer_chat_service.py \
+  tests/xmuse/test_peer_chat_mentions.py \
+  tests/xmuse/test_peer_chat_api.py \
+  tests/xmuse/test_peer_chat_end_to_end.py::test_default_group_chat_flow_reaches_god_reply_proposal_and_keeps_roles_isolated \
+  tests/xmuse/test_package_boundaries.py -q
+-> 50 passed, 1 warning
+
+uv run ruff check . -> All checks passed
+git diff --check -> pass
+test ! -e xmuse/__init__.py -> pass
+```
+
+Remaining gaps:
+
+- This fixes one natural leading mention failure mode. It is not a multi-turn
+  groupchat stability proof.
+- Default review peer selection can still choose Codex unless OpenCode is
+  explicitly requested.
+- Live MemoryOS proof, GitHub review truth, full closure, production-ready
+  groupchat, and overnight readiness remain unproven.
