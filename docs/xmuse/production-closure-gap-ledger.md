@@ -29,6 +29,18 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   `no_proposals_or_resolutions=true`, `no_open_or_failed_inbox=true`,
   `no_failed_or_timeout_traces=true`, `total_failed_traces=0`, and
   `total_timeout_after_writeback_traces=0`.
+- Latest default review authority evidence: Loop 25z67 showed current main did
+  not default to a registered OpenCode review participant when the proposal
+  omitted `review_runtime`; it reached final-action hold through Codex
+  one-shot fallback with `persistent_review_degraded_reason=missing_feature_identity`.
+  Candidate branch `codex/default-review-opencode-peer-routing` then reran the
+  same shape in Loop 25z68 and reached `awaiting_final_action` with
+  `classification=defaulted_opencode_review_peer`,
+  `proposal_has_review_runtime=false`, `review_peer_defaulted=true`,
+  `review_peer_participant.cli_kind=opencode`,
+  `peer_delivery_mode=configured_peer`, `review_delivery_mode=persistent`, and
+  `persistent_review_degraded=false`. This is local runtime evidence for an
+  unmerged candidate, not GitHub CI/server truth.
 - Latest review-state repeat evidence: Loop 25z65 reran a docs-only lane from
   current `origin/main` at `a8cceabb51022ddf802da276df1e4c37419b65b5` and
   reached `awaiting_final_action` with `review_delivery_mode=persistent`,
@@ -106,9 +118,11 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
 
 ## Manual Gaps
 
-- Default review peer selection can still choose Codex unless OpenCode is
-  explicitly requested or otherwise made authoritative for the runtime
-  conversation.
+- Default review peer selection is locally mitigated on candidate branch
+  `codex/default-review-opencode-peer-routing` for the case where the
+  conversation already has exactly one active OpenCode review participant.
+  This remains unmerged until its small PR has passing server facts and is
+  merged.
 - Groupchat-produced `review_runtime` aliases such as `human_final_hold`,
   `final_hold`, and `review-god` are addressed by PR #81. Explicit provider
   casing such as `OpenCode` is addressed by PR #82.
@@ -170,8 +184,9 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
 
 ## Next Small Buckets
 
-- P0 evidence sync: keep Loop 25z66 evidence small and do not combine it with
-  product changes.
+- P0 default review authority: land the small candidate that reuses a unique
+  registered OpenCode review peer for default review routing, with Loop
+  25z67/25z68 as bounded local runtime evidence.
 - P1 explicit dependency coordination: add a durable coordination primitive for
   waiting on named peer replies before summaries/handoffs when direct drain is
   insufficient.
@@ -179,8 +194,8 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   independent `XMUSE_ROOT` directories and execution worktrees when increasing
   concurrency. Do not share durable stores or one PR branch across parallel
   probes.
-- P3 default review authority: decide when OpenCode should be selected without
-  relying on proposal text.
+- P3 ambiguous review authority: define fail-closed behavior for missing or
+  multiple OpenCode review participants without relying on proposal text.
 - P4 code-change soak: repeat small real code-change lanes after the
   inspector provider summary PR lands.
 - P5 MemoryOS adapter proof: keep `live_memoryos` forbidden until a real trace

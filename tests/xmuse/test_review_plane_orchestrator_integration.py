@@ -258,6 +258,61 @@ async def test_default_review_peer_routing_creates_feature_scoped_review_peer(
 
 
 @pytest.mark.asyncio
+async def test_default_review_peer_routing_reuses_registered_opencode_review_peer(
+    tmp_path: Path,
+) -> None:
+    chat = ChatStore(tmp_path / "chat.db")
+    conversation = chat.create_conversation("Default OpenCode review peer")
+    participant = _add_opencode_review_participant(tmp_path, conversation.id)
+    orch = _make_final_action_orchestrator(
+        tmp_path,
+        [
+            _gated_lane(
+                "lane-default-opencode-review-peer",
+                conversation_id=conversation.id,
+            )
+        ],
+    )
+    orch._default_review_peer_routing_enabled = True
+    persistent = FakePersistentReviewLayer(
+        [
+            StdoutMessage(
+                type="result",
+                status="success",
+                artifacts={
+                    "review_verdict": {
+                        "decision": "merge",
+                        "summary": "Registered OpenCode review peer approves.",
+                    }
+                },
+            )
+        ]
+    )
+    orch._review_god_session_layer = persistent
+
+    with patch.object(orch._spawner, "spawn", new_callable=AsyncMock) as spawn:
+        await orch._run_review_god("lane-default-opencode-review-peer")
+
+    lane = orch._sm.get_lane("lane-default-opencode-review-peer")
+    participants = ParticipantStore(tmp_path / "chat.db").list_by_conversation(
+        conversation.id
+    )
+    review_participants = [item for item in participants if item.role == "review"]
+    assert spawn.await_count == 0
+    assert review_participants == [participant]
+    assert lane["status"] == "awaiting_final_action"
+    assert lane["review_peer_defaulted"] is True
+    assert lane["review_peer_id"] == participant.participant_id
+    assert lane["peer_delivery_mode"] == "configured_peer"
+    assert lane["peer_request_id"] in persistent.sent[0]["request_id"]
+    assert persistent.ensured[0]["participant_id"] == participant.participant_id
+    assert persistent.ensured[0]["feature_scope_id"] == (
+        "configured-review:lane-default-opencode-review-peer"
+    )
+    assert lane.get("persistent_review_degraded_reason") != "missing_feature_identity"
+
+
+@pytest.mark.asyncio
 async def test_default_review_peer_routing_passes_review_timeout_to_peer_service(
     tmp_path: Path,
 ) -> None:

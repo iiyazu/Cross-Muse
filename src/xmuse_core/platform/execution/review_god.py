@@ -999,9 +999,9 @@ async def _ensure_default_review_peer(
     model: str | None,
     feature_scope_id: str | None,
 ) -> str | None:
-    if conversation_id is None or feature_scope_id is None:
+    if conversation_id is None:
         return None
-    lock_key = f"{conversation_id}:{feature_scope_id}"
+    lock_key = f"{conversation_id}:{feature_scope_id or 'conversation-default-review'}"
     lock = _DEFAULT_REVIEW_PEER_LOCKS.setdefault(lock_key, asyncio.Lock())
     async with lock:
         return _ensure_default_review_peer_sync(
@@ -1017,13 +1017,22 @@ def _ensure_default_review_peer_sync(
     xmuse_root: Path,
     conversation_id: str,
     model: str | None,
-    feature_scope_id: str,
+    feature_scope_id: str | None,
 ) -> str | None:
     selected_model = model or DEFAULT_CODEX_REVIEW_MODEL_ID
-    display_name = _default_review_peer_display_name(feature_scope_id)
     store = ParticipantStore(xmuse_root / "chat.db")
     try:
-        for participant in store.list_by_conversation(conversation_id):
+        participants = store.list_by_conversation(conversation_id)
+        opencode_peer_id = _unique_active_review_peer_id(
+            participants,
+            cli_kind="opencode",
+        )
+        if opencode_peer_id is not None:
+            return opencode_peer_id
+        if feature_scope_id is None:
+            return None
+        display_name = _default_review_peer_display_name(feature_scope_id)
+        for participant in participants:
             if (
                 participant.role == _REVIEW_ROLE
                 and participant.display_name == display_name
@@ -1041,6 +1050,19 @@ def _ensure_default_review_peer_sync(
     except Exception:
         return None
     return participant.participant_id
+
+
+def _unique_active_review_peer_id(participants: list[Any], *, cli_kind: str) -> str | None:
+    matches = [
+        participant
+        for participant in participants
+        if participant.role == _REVIEW_ROLE
+        and participant.cli_kind == cli_kind
+        and participant.status == "active"
+    ]
+    if len(matches) != 1:
+        return None
+    return matches[0].participant_id
 
 
 def _default_review_peer_display_name(feature_scope_id: str) -> str:

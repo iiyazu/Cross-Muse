@@ -4818,3 +4818,148 @@ with durable MCP/callback writeback and no proposal/lane side effects. It is
 not production readiness, overnight soak, live MemoryOS proof, GitHub review
 truth, full L8-L10 closure, full L1-L11 closure, or natural peer-GOD
 completion as a finished product claim.
+
+## 2026-06-19 Loop 25z67: default review authority gap
+
+Loop target: test current main's default review authority when a durable
+conversation registers an OpenCode review participant, but the groupchat
+proposal does not include `review_runtime`.
+
+Control head under test:
+
+```text
+HEAD=9f19d84aeeb52043517a40e0c29f72edda2366a6
+```
+
+Run shape:
+
+```text
+RUN_ROOT=/tmp/xmuse-main-after-pr86-155349/.goal-runs/2026-06-19/loop-25z67-default-review-authority-185315
+EXEC_WORKTREE=/tmp/loop-25z67-default-review-authority-185315-exec
+CHAT_PORT=8204
+MCP_PORT=8104
+```
+
+The driver created a conversation with:
+
+```text
+architect=codex/gpt-5.4
+execute=codex/gpt-5.4-mini
+review=opencode/opencode-go/deepseek-v4-flash
+```
+
+The human prompt requested exactly one docs-only lane and explicitly requested
+no `review_runtime` field in the proposal. Durable output:
+
+```text
+conversation_id=conv_a1d50b420a644142bbefca696ed0c97b
+proposal_id=prop_570cd4267a214564814ecf4a5dcbd087
+proposal_has_review_runtime=false
+status=awaiting_final_action
+classification=not_defaulted
+review_peer_defaulted absent
+review_peer_id absent
+review_delivery_mode=one_shot_fallback
+persistent_review_degraded=true
+persistent_review_degraded_reason=missing_feature_identity
+```
+
+The registered review participant existed:
+
+```text
+participant_id=part_dec30b6b6d674a2b9e0d907cbef7ce5a
+role=review
+cli_kind=opencode
+model=opencode-go/deepseek-v4-flash
+status=active
+```
+
+Classification: negative bounded local runtime proof. Main could carry the
+groupchat through proposal, approval, execution, gate, review, and final-action
+hold, but default review authority did not route to the already registered
+OpenCode review peer. The lane fell back to Codex one-shot review because no
+feature-scoped default review identity existed. This is not production
+readiness, GitHub review truth, live MemoryOS proof, full L8-L10 closure, or
+full L1-L11 closure.
+
+Cleanup:
+
+```text
+8104/8204 listeners: none
+loop-25z67 xmuse-platform-runner, MCP, Chat API, codex/opencode processes:
+no matching live process after shutdown checks
+execution worktree: dirty only with the expected probe docs note
+```
+
+## 2026-06-19 Loop 25z68: post-fix default OpenCode review authority
+
+Loop target: repeat the Loop 25z67 scenario after a narrow local change that
+lets default review routing reuse a unique active OpenCode review participant
+already registered in the durable conversation. The proposal still did not
+include `review_runtime`.
+
+Control head under test:
+
+```text
+HEAD=9f19d84aeeb52043517a40e0c29f72edda2366a6
+local branch=codex/default-review-opencode-peer-routing
+local code under test includes unmerged changes in review_god.py
+```
+
+Run shape:
+
+```text
+RUN_ROOT=/tmp/xmuse-main-after-pr86-155349/.goal-runs/2026-06-19/loop-25z68-default-review-authority-postfix-190708
+EXEC_WORKTREE=/tmp/loop-25z68-default-review-authority-postfix-190708-exec
+CHAT_PORT=8205
+MCP_PORT=8105
+```
+
+Final durable summary:
+
+```text
+classification=defaulted_opencode_review_peer
+conversation_id=conv_82c511508d0645c08c11f718837d2a07
+proposal_has_review_runtime=false
+status=awaiting_final_action
+review_peer_defaulted=true
+review_peer_id=part_7ccc1f017c054234a48ed023a801b8df
+review_peer_participant.cli_kind=opencode
+review_peer_participant.model=opencode-go/deepseek-v4-flash
+peer_delivery_mode=configured_peer
+review_delivery_mode=persistent
+persistent_review_degraded=false
+persistent_review_identity=configured:part_7ccc1f017c054234a48ed023a801b8df
+```
+
+The review session record also preserved the OpenCode runtime binding:
+
+```text
+role=review
+runtime=opencode
+participant_id=part_7ccc1f017c054234a48ed023a801b8df
+feature_scope_id=configured-review:loop25z68_default_review_authority
+model=opencode-go/deepseek-v4-flash
+```
+
+The lane wrote only the expected docs note in the isolated execution worktree:
+
+```text
+docs/xmuse/default-review-authority-runtime-note.md
+```
+
+Cleanup:
+
+```text
+8105/8205 listeners: none
+loop-25z68 xmuse-platform-runner, MCP, Chat API, codex/opencode processes:
+no matching live process after shutdown checks
+execution worktree: dirty only with the expected probe docs note
+```
+
+Classification: positive bounded local runtime proof for the targeted default
+review authority fix. It proves that, in this local run, a conversation with a
+registered OpenCode review peer can reach persistent configured-peer review
+without the proposal naming `review_runtime`. This is not GitHub CI/server
+truth, GitHub review truth, production readiness, live MemoryOS proof,
+overnight readiness, full L8-L10 closure, or full L1-L11 closure.
