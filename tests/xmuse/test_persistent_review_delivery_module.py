@@ -121,3 +121,87 @@ async def test_apply_persistent_review_message_records_evidence_refs(tmp_path) -
     assert lane["review_evidence_refs"] == evidence_refs
     assert captured["evidence_refs"] == evidence_refs
     assert captured["reviewed"] == "lane-1"
+
+
+@pytest.mark.asyncio
+async def test_apply_persistent_review_message_is_idempotent_after_native_mcp_review(
+    tmp_path,
+) -> None:
+    lanes_path = tmp_path / "feature_lanes.json"
+    lanes_path.write_text(
+        json.dumps(
+            {
+                "lanes": [
+                    {
+                        "feature_id": "lane-1",
+                        "status": "reviewed",
+                        "review_history": [
+                            {
+                                "decision": "merge",
+                                "summary": "native MCP review accepted",
+                                "fallback": "mcp",
+                                "fallback_reason": "update_lane_status",
+                                "recorded_at": 1.0,
+                            }
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    sm = LaneStateMachine(lanes_path)
+    captured: dict[str, object] = {}
+
+    async def on_reviewed(lane_id: str) -> None:
+        captured["reviewed"] = lane_id
+
+    def ingest_merge_verdict(
+        lane_id: str,
+        summary: str,
+        refs: list[str] | None = None,
+    ) -> None:
+        captured["lane_id"] = lane_id
+        captured["summary"] = summary
+        captured["evidence_refs"] = refs
+
+    def ingest_rework_verdict(
+        lane_id: str,
+        summary: str,
+        refs: list[str] | None = None,
+    ) -> None:
+        raise AssertionError(f"unexpected rework verdict for {lane_id}: {summary}")
+
+    async def on_rejected(lane_id: str) -> None:
+        raise AssertionError(f"unexpected rejected lane {lane_id}")
+
+    delivered = await persistent_review_delivery.apply_persistent_review_message(
+        lane_id="lane-1",
+        sm=sm,
+        message=StdoutMessage(
+            type="result",
+            artifacts={
+                "review_verdict": {
+                    "decision": "merge",
+                    "summary": "callback review accepted",
+                }
+            },
+        ),
+        stable_verdict_id=lambda lane_id: f"verdict-{lane_id}",
+        ingest_merge_verdict=ingest_merge_verdict,
+        ingest_rework_verdict=ingest_rework_verdict,
+        on_reviewed=on_reviewed,
+        on_rejected=on_rejected,
+        review_request_id="review-request-1",
+        persistent_review_identity="configured:review-peer-1",
+        evidence_refs=["review://native-mcp"],
+    )
+
+    lane = sm.get_lane("lane-1")
+    assert delivered is True
+    assert lane["status"] == "reviewed"
+    assert lane["review_verdict_id"] == "verdict-lane-1"
+    assert lane["review_history"][0]["fallback"] == "mcp"
+    assert lane["review_history"][1]["fallback"] == "persistent"
+    assert captured["reviewed"] == "lane-1"
+    assert captured["summary"] == "callback review accepted"

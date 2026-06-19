@@ -81,6 +81,25 @@ truth, merge truth, live MemoryOS proof, or full closure.
   one durable conversation, including one runner restart between the first and
   second handoff. The durable result was 16 messages, 8 inbox items, and 8
   `mcp_writeback` latency traces with no degraded reason.
+- The 2026-06-19 direct OpenCode probe showed that OpenCode can see the xmuse
+  project MCP server when the runtime injects `xmuse-platform` into the
+  worktree `opencode.json` used by `--dir`, and restores the original config
+  afterward. The shim now uses `opencode run --pure --model
+  opencode-go/deepseek-v4-flash --variant max ...`.
+- The 2026-06-19 fullchain repro found that gate subprocesses inherited the
+  platform control-plane `XMUSE_ROOT`, making `test_platform_runner` parser
+  cases fail inside the real gate profile. The gate runner now strips inherited
+  `XMUSE_ROOT` before applying command env.
+- The 2026-06-19 gate-fixed fullchain reached `awaiting_final_action` with
+  OpenCode review, then exposed a same-status callback failure when native MCP
+  set the lane to `reviewed` before structured review callback processing. The
+  persistent review delivery path now updates metadata when the lane is already
+  in the target status.
+- The 2026-06-19 idempotency rerun drove a real human demand through durable
+  Codex/OpenCode groupchat, collaboration, proposal, approval, dispatch,
+  execution, gate, OpenCode persistent review, and final-action hold. The lane
+  stopped at `awaiting_final_action` under `--no-auto-merge`; this is local
+  runtime proof only.
 
 ## Findings
 
@@ -1303,6 +1322,102 @@ Additional manual gap:
 
 - `docs/xmuse/production-closure-gap-ledger.md` is still absent in the current
   worktree and should be treated as missing evidence, not fabricated truth.
+
+### F32. OpenCode reads project MCP config from the worktree passed to `--dir`
+
+Severity: resolved local provider-command blocker for OpenCode MCP exposure.
+
+The 2026-06-19 direct probe showed that OpenCode did not reliably expose the
+xmuse MCP server unless the MCP config existed in the worktree used by `--dir`.
+Global or caller-cwd config was not a safe authority for a persistent provider
+shim.
+
+Fix:
+
+- run OpenCode with `--pure`;
+- temporarily write a runtime `opencode.json` into the requested worktree;
+- preserve project schema/model/provider config where present;
+- inject `mcp.xmuse-platform` with the local `/sse` URL;
+- force permission to `allow` for the bounded runtime invocation;
+- restore or delete the temporary config after the run.
+
+Impact:
+
+- OpenCode can call xmuse MCP tools as a registered provider path in local
+  runtime.
+- The repository's original `opencode.json` is not left mutated by the shim.
+
+Remaining boundary:
+
+- This proves local provider-command MCP exposure only. It is not GitHub truth
+  or review truth.
+- Fullchain artifacts record durable MCP traces, but raw OpenCode provider
+  event streams are still not persisted as first-class review artifacts.
+
+### F33. Gate subprocesses must not inherit platform `XMUSE_ROOT`
+
+Severity: resolved local gate blocker.
+
+Loop 25z31 reached real dispatch and execution, then failed inside the real
+gate profile because command subprocesses inherited the platform control-plane
+`XMUSE_ROOT`. That made tests which intentionally pass their own
+`--xmuse-root` read the wrong runtime root.
+
+Fix:
+
+- copy the process environment for gate commands;
+- remove inherited `XMUSE_ROOT`;
+- apply only the command-specific environment afterward.
+
+Impact:
+
+- Loop 25z33 gate passed both blocking profiles:
+  `strict-product` and `xmuse-core`.
+- Gate commands still receive explicit command env such as MemoryOS safety
+  variables.
+
+Remaining boundary:
+
+- Local gate pass is not GitHub CI truth.
+- The gate profile still warns when `gate_profiles.json` is missing in
+  `XMUSE_ROOT` and falls back to the lane worktree profile.
+
+### F34. Persistent review callback must be idempotent after native MCP writes
+
+Severity: resolved local review-delivery blocker.
+
+Loop 25z32 reached final-action hold with OpenCode review, but runner logs
+recorded:
+
+```text
+InvalidTransitionError: cannot transition <lane> from reviewed to reviewed
+```
+
+Root cause:
+
+- OpenCode used native MCP `update_lane_status` first, moving the lane to
+  `reviewed`.
+- Callback delivery later parsed the structured review verdict and attempted
+  the same transition again.
+
+Fix:
+
+- if the lane is already in the target review status, update review metadata
+  instead of asking the state machine for another same-status transition.
+
+Impact:
+
+- Loop 25z33 recorded review history from MCP, persistent callback, and
+  structured verdict without the same-status exception.
+- The lane stopped at `awaiting_final_action` with a pending hold under
+  `--no-auto-merge`.
+
+Remaining boundary:
+
+- The fix is local runtime proof. It does not prove GitHub review, merge,
+  branch protection, or production readiness.
+- Ctrl-C shutdown after final-action hold still produced Ray atexit noise; this
+  is a cleanup concern, not evidence of lane failure.
 
 ## Recommended Next Implementation Order
 

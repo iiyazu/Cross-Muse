@@ -10,6 +10,7 @@ import sys
 import urllib.error
 import urllib.request
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -198,31 +199,32 @@ def _run_opencode_turn(config: RunnerConfig, message: dict[str, Any]) -> None:
 
 def _run_opencode(config: RunnerConfig, full_prompt: str) -> OpenCodeRunResult:
     global _ACTIVE_CHILD
-    command = _opencode_command(config, full_prompt)
-    process = subprocess.Popen(
-        command,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        cwd=config.worktree,
-        start_new_session=True,
-    )
-    _ACTIVE_CHILD = process
-    try:
-        stdout, stderr = process.communicate(timeout=config.timeout_s)
-    except subprocess.TimeoutExpired as exc:
-        _terminate_process_tree(process)
-        stdout, stderr = _communicate_after_terminate(process)
-        raise subprocess.TimeoutExpired(
-            cmd=exc.cmd,
-            timeout=exc.timeout,
-            output=stdout if stdout is not None else exc.output,
-            stderr=stderr if stderr is not None else exc.stderr,
-        ) from exc
-    finally:
-        if _ACTIVE_CHILD is process:
-            _ACTIVE_CHILD = None
+    with _temporary_runtime_opencode_config(config) as run_cwd:
+        command = _opencode_command(config, full_prompt)
+        process = subprocess.Popen(
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            cwd=run_cwd,
+            start_new_session=True,
+        )
+        _ACTIVE_CHILD = process
+        try:
+            stdout, stderr = process.communicate(timeout=config.timeout_s)
+        except subprocess.TimeoutExpired as exc:
+            _terminate_process_tree(process)
+            stdout, stderr = _communicate_after_terminate(process)
+            raise subprocess.TimeoutExpired(
+                cmd=exc.cmd,
+                timeout=exc.timeout,
+                output=stdout if stdout is not None else exc.output,
+                stderr=stderr if stderr is not None else exc.stderr,
+            ) from exc
+        finally:
+            if _ACTIVE_CHILD is process:
+                _ACTIVE_CHILD = None
     reply_text, session_id = _parse_opencode_json_output(stdout or "")
     return OpenCodeRunResult(
         returncode=process.returncode or 0,
@@ -237,6 +239,7 @@ def _opencode_command(config: RunnerConfig, full_prompt: str) -> list[str]:
     command = [
         config.opencode_binary,
         "run",
+        "--pure",
         "--model",
         config.model,
         "--variant",
@@ -250,6 +253,62 @@ def _opencode_command(config: RunnerConfig, full_prompt: str) -> list[str]:
         command.extend(["--session", config.session_id])
     command.append(full_prompt)
     return command
+
+
+@contextmanager
+def _temporary_runtime_opencode_config(config: RunnerConfig):
+    path = config.worktree / "opencode.json"
+    existed = path.exists()
+    original = path.read_bytes() if existed else b""
+    _write_runtime_opencode_config(config, config_dir=config.worktree)
+    try:
+        yield config.worktree
+    finally:
+        if existed:
+            path.write_bytes(original)
+        else:
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                pass
+
+
+def _write_runtime_opencode_config(config: RunnerConfig, *, config_dir: Path) -> Path:
+    config_dir.mkdir(parents=True, exist_ok=True)
+    runtime_config = _runtime_opencode_config(config)
+    (config_dir / "opencode.json").write_text(
+        json.dumps(runtime_config, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return config_dir
+
+
+def _runtime_opencode_config(config: RunnerConfig) -> dict[str, Any]:
+    project_config = _load_project_opencode_config(config.worktree / "opencode.json")
+    runtime_config: dict[str, Any] = {}
+    for key in ("$schema", "model", "provider"):
+        if key in project_config:
+            runtime_config[key] = project_config[key]
+    runtime_config.setdefault("$schema", "https://opencode.ai/config.json")
+    runtime_config["permission"] = "allow"
+    configured_mcp = project_config.get("mcp")
+    mcp = dict(configured_mcp) if isinstance(configured_mcp, dict) else {}
+    mcp["xmuse-platform"] = {
+        "type": "remote",
+        "url": f"http://127.0.0.1:{config.mcp_port}/sse",
+    }
+    runtime_config["mcp"] = mcp
+    return runtime_config
+
+
+def _load_project_opencode_config(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        parsed = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
 
 
 def _format_turn_prompt(
