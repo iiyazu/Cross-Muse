@@ -298,6 +298,8 @@ def ensure_lane_worktree(orchestrator, lane: dict[str, Any]) -> dict[str, Any]:
         else _compat_symbol(orchestrator, "WORKTREE_BASE", WORKTREE_BASE)
         / _safe_lane_ref(lane_id)
     )
+    if _is_empty_directory(worktree):
+        worktree.rmdir()
     if not worktree.exists():
         orchestrator._create_or_reuse_worktree(worktree=worktree, branch=branch)
     branch, is_git_worktree = _ensure_existing_worktree_branch(worktree, branch)
@@ -360,6 +362,16 @@ def _ensure_existing_worktree_branch(worktree: Path, branch: str) -> tuple[str, 
             f"{branch}: {checkout.stderr.strip()}"
         )
     return branch, True
+
+
+def _is_empty_directory(path: Path) -> bool:
+    if not path.is_dir():
+        return False
+    try:
+        next(path.iterdir())
+    except StopIteration:
+        return True
+    return False
 
 
 def _worktree_head_sha(worktree: Path) -> str | None:
