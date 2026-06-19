@@ -714,7 +714,7 @@ async def test_missing_default_review_peer_does_not_fallback_to_one_shot(
 
 
 @pytest.mark.asyncio
-async def test_default_review_peer_participant_lookup_failure_does_not_persist_peer_metadata(
+async def test_default_review_peer_participant_lookup_failure_fails_closed_without_peer_metadata(
     tmp_path: Path,
 ) -> None:
     chat = ChatStore(tmp_path / "chat.db")
@@ -755,13 +755,17 @@ async def test_default_review_peer_participant_lookup_failure_does_not_persist_p
 
     lane = orch._sm.get_lane("lane-default-peer-lookup-failure")
     assert spawn.await_count == 0
-    assert lane["status"] == "awaiting_final_action"
+    assert persistent.ensured == []
+    assert persistent.sent == []
+    assert lane["status"] == "gate_failed"
+    assert lane["failure_reason"] == "required_review_peer_unavailable"
+    assert lane["failure_layer"] == "review"
     assert lane["peer_routing_mode"] == "preferred"
-    assert lane["peer_delivery_mode"] == "auto_persistent_fallback"
+    assert lane["peer_delivery_mode"] == "configured_peer_failed"
     assert lane["peer_degraded_reason"] == "ensure_failed"
-    assert "review_peer_id" not in lane
-    assert "peer_request_id" not in lane
-    assert "review_peer_defaulted" not in lane
+    assert lane["review_peer_defaulted"] is True
+    assert "review_peer_cli_kind" not in lane
+    assert "review_peer_model" not in lane
 
 
 @pytest.mark.asyncio
@@ -1023,11 +1027,11 @@ async def test_review_runtime_opencode_without_peer_fails_closed(
 
 
 @pytest.mark.asyncio
-async def test_configured_review_peer_preferred_falls_back_to_auto_persistent(
+async def test_configured_review_peer_preferred_failure_fails_closed_before_auto_persistent(
     tmp_path: Path,
 ) -> None:
     chat = ChatStore(tmp_path / "chat.db")
-    conversation = chat.create_conversation("Configured review fallback")
+    conversation = chat.create_conversation("Configured review fail closed")
     participant = _add_review_participant(tmp_path, conversation.id)
     orch = _make_final_action_orchestrator(
         tmp_path,
@@ -1073,20 +1077,21 @@ async def test_configured_review_peer_preferred_falls_back_to_auto_persistent(
 
     lane = orch._sm.get_lane("lane-configured-peer-auto-fallback")
     assert spawn.await_count == 0
-    assert lane["status"] == "awaiting_final_action"
-    assert lane["review_summary"] == "auto persistent approves"
-    assert lane["peer_delivery_mode"] == "auto_persistent_fallback"
+    assert len(persistent.sent) == 1
+    assert lane["status"] == "gate_failed"
+    assert lane["failure_reason"] == "review_peer_delivery_failed"
+    assert lane["peer_delivery_mode"] == "configured_peer_failed"
     assert lane["peer_degraded_reason"] == "request_id_mismatch"
     assert lane["review_peer_cli_kind"] == participant.cli_kind
     assert lane["review_peer_model"] == participant.model
 
 
 @pytest.mark.asyncio
-async def test_configured_review_peer_preferred_falls_back_to_one_shot(
+async def test_configured_review_peer_preferred_failure_fails_closed_before_one_shot(
     tmp_path: Path,
 ) -> None:
     chat = ChatStore(tmp_path / "chat.db")
-    conversation = chat.create_conversation("Configured one-shot fallback")
+    conversation = chat.create_conversation("Configured one-shot fail closed")
     participant = _add_review_participant(tmp_path, conversation.id)
     orch = _make_final_action_orchestrator(
         tmp_path,
@@ -1130,9 +1135,10 @@ async def test_configured_review_peer_preferred_falls_back_to_one_shot(
         await orch._run_review_god("lane-configured-peer-one-shot-fallback")
 
     lane = orch._sm.get_lane("lane-configured-peer-one-shot-fallback")
-    assert spawn.await_count == 1
-    assert lane["status"] == "awaiting_final_action"
-    assert lane["peer_delivery_mode"] == "one_shot_fallback"
+    assert spawn.await_count == 0
+    assert lane["status"] == "gate_failed"
+    assert lane["failure_reason"] == "review_peer_delivery_failed"
+    assert lane["peer_delivery_mode"] == "configured_peer_failed"
     assert lane["peer_degraded_reason"] == "request_id_mismatch"
     assert lane["review_peer_cli_kind"] == participant.cli_kind
     assert lane["review_peer_model"] == participant.model
@@ -1298,7 +1304,7 @@ async def test_required_configured_review_peer_no_verdict_hard_fails(
 
 
 @pytest.mark.asyncio
-async def test_preferred_configured_review_peer_no_verdict_records_degraded_then_fallback(
+async def test_preferred_configured_review_peer_no_verdict_fails_closed(
     tmp_path: Path,
 ) -> None:
     chat = ChatStore(tmp_path / "chat.db")
@@ -1340,9 +1346,10 @@ async def test_preferred_configured_review_peer_no_verdict_records_degraded_then
         await orch._run_review_god("lane-preferred-peer-no-verdict")
 
     lane = orch._sm.get_lane("lane-preferred-peer-no-verdict")
-    assert spawn.await_count == 1
-    assert lane["status"] == "awaiting_final_action"
-    assert lane["peer_delivery_mode"] == "one_shot_fallback"
+    assert spawn.await_count == 0
+    assert lane["status"] == "gate_failed"
+    assert lane["failure_reason"] == "review_peer_delivery_failed"
+    assert lane["peer_delivery_mode"] == "configured_peer_failed"
     assert lane["peer_degraded_reason"] == "review_peer_no_verdict"
 
 
