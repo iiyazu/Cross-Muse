@@ -147,6 +147,21 @@ truth, merge truth, live MemoryOS proof, or full closure.
   inbox items reached durable `mcp_writeback`, and no proposals/resolutions
   were emitted. Remaining groupchat gaps include provider result timeout after
   writeback and missing final-summary gating after downstream peer replies.
+- Loop 25z53 confirmed the final-summary gap: execute and review replies
+  became durable in two conversations, but architect never posted the requested
+  final summary after both replies.
+- Loop 25z54 added a local peer-reply drain callback but exposed that
+  `chat_mention` side effects did not close the current inbox, so scheduler
+  progress still depended on provider final-result behavior.
+- Loop 25z55 added `chat_mention(reply_to_inbox_item_id=...)` as a real
+  handoff writeback and completed two conversations through execute/review
+  replies, callback, and final summary. It still waited for
+  `peer_response_timeout_after_writeback`.
+- Loop 25z56 proved immediate early release after durable writeback improves
+  throughput but can cut off consecutive handoffs in the same provider turn.
+- Loop 25z57 added a short post-writeback grace window and completed the same
+  two-conversation path with `early_writeback_traces` and zero
+  `timeout_after_writeback_traces`, proposals, or resolutions.
 
 ## Findings
 
@@ -2339,9 +2354,9 @@ Remaining gap:
   full conversation-level planner that waits for downstream peer replies before
   allowing summaries or next-stage handoffs.
 
-### F91. Architect final-summary gating is still prompt-level, not authority-level
+### F91. Architect final-summary gating needed durable callback authority
 
-Severity: open product behavior gap.
+Severity: locally mitigated product behavior gap.
 
 Loop 25z52 completed all nine inbox items with durable `mcp_writeback`, but
 the conversation semantics were not fully reliable:
@@ -2362,8 +2377,90 @@ Impact:
 
 Next direction:
 
-- Add a lightweight durable coordination primitive for "wait for these peer
-  inbox replies, then nudge/summarize" rather than relying on the architect to
-  infer completion from prompt text.
+- Keep the new `peer_reply_drain_callback` narrow: it is a direct-peer-reply
+  drain callback, not a general planner or proof authority.
+- Add a stronger coordination primitive later for explicit dependency sets
+  when a future workflow needs more than "all current direct peer mentions from
+  this sender have drained."
 - Keep this separate from lane execution and GitHub truth; projection layers
   must not create proof.
+
+2026-06-19 update:
+
+- Loop 25z53 reproduced the gap with two conversations.
+- Loop 25z55 and Loop 25z57 completed two conversations through
+  execute/review replies, a durable callback to architect, and final summary
+  messages containing `FINAL_SUMMARY_AFTER_BOTH_REPLIES`.
+- This is local runtime proof only and does not make natural peer-GOD groupchat
+  production-ready.
+
+### F92. Handoff side effects must close the current inbox explicitly
+
+Severity: locally resolved scheduler progress blocker.
+
+Loop 25z54 showed that a Codex architect could call `chat_mention` twice and
+create downstream execute/review inbox items, while the original human
+architect inbox remained open. The provider then returned no final result, and
+the scheduler recorded failed delivery before downstream work could proceed.
+
+Local fix:
+
+- `chat_mention` accepts `reply_to_inbox_item_id`.
+- When supplied, it marks the current inbox item read, records
+  `chat_mention` as an MCP tool stage, and enqueues the target peer inbox in
+  the same durable writeback.
+- Peer scheduler and provider prompts now describe this as the handoff path.
+
+Validation:
+
+```text
+uv run pytest tests/xmuse/test_peer_chat_mcp_tools.py \
+  tests/xmuse/test_peer_chat_scheduler.py \
+  tests/xmuse/test_package_boundaries.py \
+  tests/xmuse/test_ray_adapters.py::test_app_server_mcp_instructions_prefer_direct_post -q
+-> 57 passed, 1 warning
+```
+
+Runtime evidence:
+
+- Loop 25z55 completed two conversations through final summary.
+- Loop 25z57 repeated the path after the early-release grace fix.
+
+### F93. Durable writeback early release needs a grace window
+
+Severity: locally resolved throughput/correctness interaction.
+
+Loop 25z55 still waited for provider timeout after durable handoff writeback.
+Loop 25z56 removed that wait but returned immediately after the first
+`chat_mention`, cutting off the second same-turn review handoff and creating a
+premature callback after only execute replied.
+
+Local fix:
+
+- Scheduler detects durable writeback before provider final result.
+- It waits a short post-writeback grace window before aborting the provider
+  turn, allowing consecutive handoff tool calls to land.
+- If the provider returns during the grace window, normal result handling is
+  used; otherwise the turn is recorded as `mcp_writeback` with
+  `peer_writeback_before_provider_result`.
+
+Loop 25z57 evidence:
+
+```text
+alpha:
+  execute_replies=1, review_replies=1
+  callback_read=1, marker_messages=1, final_after_both=true
+  early_writeback_traces=2
+  timeout_after_writeback_traces=0
+
+beta:
+  execute_replies=1, review_replies=1
+  callback_read=1, marker_messages=1, final_after_both=true
+  early_writeback_traces=2
+  timeout_after_writeback_traces=0
+```
+
+Remaining gap:
+
+- This is bounded local runtime evidence. It does not prove production
+  scheduling under load, overnight readiness, live MemoryOS, or full closure.
