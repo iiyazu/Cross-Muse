@@ -192,6 +192,38 @@ def test_collaboration_rejects_unbounded_targets_and_active_target_cascade(
         )
 
 
+def test_collaboration_active_target_cascade_matches_address_targets(
+    tmp_path: Path,
+) -> None:
+    conversation_id = _conversation(tmp_path)
+    store = ChatCollaborationStore(tmp_path / "chat.db")
+
+    store.create_request(
+        conversation_id=conversation_id,
+        goal="First request",
+        initiator="architect",
+        targets=["@review"],
+        callback_target="@architect",
+        question="Review this.",
+        context_refs=[],
+        idempotency_key="outer-address",
+        timeout_s=480,
+    )
+
+    with pytest.raises(ValueError, match="anti-cascade"):
+        store.create_request(
+            conversation_id=conversation_id,
+            goal="Nested request",
+            initiator="review",
+            targets=["execute"],
+            callback_target="review",
+            question="Can you also check execution?",
+            context_refs=[],
+            idempotency_key="nested-address",
+            timeout_s=480,
+        )
+
+
 def test_collaboration_aggregates_responses_and_times_out_missing_targets(
     tmp_path: Path,
 ) -> None:

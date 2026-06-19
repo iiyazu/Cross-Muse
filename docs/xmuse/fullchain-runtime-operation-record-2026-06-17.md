@@ -6583,3 +6583,114 @@ Caveats:
   execution.
 - It does not prove GitHub review truth, live MemoryOS, dynamic roster mutation,
   overnight stability, or full closure.
+
+## 2026-06-20 Loop 26m/26n: Collaboration Delivery Lifecycle Fullchain
+
+Purpose: verify the collaboration request/response/callback delivery lifecycle
+after `chat_create_collaboration_request` became a durable message and target
+inbox producer.
+
+Pre-fix evidence from Loop 26m:
+
+```text
+run_root=/tmp/xmuse-postmerge-layered-prompt-main/.goal-runs/2026-06-20/loop-26m-collaboration-delivery-fullchain-035148
+base_head_sha=a7072f1f43559099592e595c49fbdf8744b49cd5
+conversation_id=conv_30f3d962b2fb43b294dddbb1c8086729
+collaboration_run=collab_852a8ce9cc6d49d5afde82ca9b9d1821
+run_status=done
+response_target=@execute
+lane_status=awaiting_final_action
+review_delivery_mode=persistent
+persistent_review_degraded=false
+```
+
+Loop 26m also showed two stale delivery records in `chat.db`:
+
+```text
+collaboration_request inbox=inbox_161f83ecfe144da6aed10721c3f836a8 status=unread
+collaboration_callback inbox=inbox_c35de00000154f3787a360afbae616b8 status=unread
+missing_trace=chat_record_collaboration_response on request inbox
+missing_trace=chat_emit_proposal on callback inbox
+```
+
+Post-fix validation:
+
+```text
+uv run pytest tests/xmuse/test_mcp_server.py -q -k 'collaboration_request_enqueues_normalized_target_inbox or collaboration_lane_graph_feature'
+-> 2 passed
+
+uv run pytest tests/xmuse/test_mcp_server.py tests/xmuse/test_groupchat_collaboration_runtime.py -q
+-> 56 passed
+
+uv run pytest tests/xmuse/test_package_boundaries.py -q
+-> 16 passed
+
+uv run ruff check .
+-> All checks passed.
+
+git diff --check
+test ! -e xmuse/__init__.py
+-> passed
+```
+
+Post-fix real runtime evidence from Loop 26n:
+
+```text
+run_root=/tmp/xmuse-postmerge-layered-prompt-main/.goal-runs/2026-06-20/loop-26n-collaboration-lifecycle-fullchain-040427
+base_head_sha=a7072f1f43559099592e595c49fbdf8744b49cd5
+conversation_id=conv_bde457d33ee24de88378361eb0b8a155
+collaboration_run=collab_0b3189ec5131426ba8960cc5f98fccb3
+proposal_id=prop_88d39e33ed9546408bc34d5290e438ae
+resolution_id=res_809e579b848c4e1ab19d01f184c35c9c
+lane_id=loop_26n_collaboration_lifecycle_fullchain_040427
+final_action_hold_id=final-27faea15de67
+```
+
+Loop 26n final lane state:
+
+```text
+status=awaiting_final_action
+gate_passed=true
+review_decision=merge
+review_delivery_mode=persistent
+persistent_review_degraded=false
+review_peer_cli_kind=opencode
+review_peer_model=opencode-go/deepseek-v4-flash
+peer_delivery_mode=configured_peer
+proposal_has_review_runtime=false
+single_related_lane_graph_proposal=true
+```
+
+Loop 26n collaboration lifecycle state:
+
+```text
+collaboration_run.status=done
+collaboration_run.targets=["@execute"]
+collaboration_response.target=@execute
+collaboration_request inbox=inbox_94fe14559853429faa7cc82504cf756d status=read
+collaboration_callback inbox=inbox_912b8fd9424543f7ad80dc925b74ec7f status=read responded_message_id=msg_94006e286b36442093fa7b182247b2f2
+dispatch inbox=inbox_fafd0209bea5449a8d6215abb6efb260 status=read responded_message_id=msg_974d2bc93bfa4aa48fdb512170033093
+trace=inbox_94fe14559853429faa7cc82504cf756d chat_record_collaboration_response
+trace=inbox_912b8fd9424543f7ad80dc925b74ec7f chat_emit_proposal
+trace=inbox_fafd0209bea5449a8d6215abb6efb260 chat_post_message
+```
+
+Cleanup:
+
+```text
+chat_port_listening=false
+mcp_port_listening=false
+loop-26n service process matches after shutdown: none
+```
+
+Classification: bounded local runtime proof that the structured collaboration
+request, formal response, callback, proposal, dispatch, isolated execution,
+gate, persistent OpenCode review, and final-action hold path can complete
+without stale collaboration request/callback inbox items for this docs-only
+sentinel shape.
+
+Caveats:
+
+- This is not production readiness, repeated soak, MemoryOS proof, GitHub
+  review truth, natural peer-GOD groupchat completion, or full closure.
+- The final action was intentionally held; no live lane merge is claimed.
