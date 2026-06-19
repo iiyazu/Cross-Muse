@@ -2127,6 +2127,13 @@ class PeerChatService:
         except MentionResolutionError as exc:
             raise PeerChatError(exc.code, exc.target) from exc
         normalized = normalize_envelope(envelope, envelope_type="mention")
+        resolved_reply_to_inbox_item_id = (
+            reply_to_inbox_item_id
+            or self._single_claimed_inbox_item_id(
+                conversation_id=conversation_id,
+                participant_id=participant_id,
+            )
+        )
         try:
             result = self._chat.create_message_inbox_and_log(
                 conversation_id=conversation_id,
@@ -2150,14 +2157,14 @@ class PeerChatService:
                         "payload": {"content": content, "mention": target.raw},
                     }
                 ],
-                reply_to_inbox_item_id=reply_to_inbox_item_id,
+                reply_to_inbox_item_id=resolved_reply_to_inbox_item_id,
                 reply_owner_participant_id=participant_id,
                 turn_budget_action="consume",
             )
-            if reply_to_inbox_item_id:
+            if resolved_reply_to_inbox_item_id:
                 PeerTurnLatencyTraceStore(self._db_path).record_mcp_tool_stage(
                     conversation_id=conversation_id,
-                    inbox_item_id=reply_to_inbox_item_id,
+                    inbox_item_id=resolved_reply_to_inbox_item_id,
                     tool_name="chat_mention",
                     called_at=time.monotonic(),
                 )

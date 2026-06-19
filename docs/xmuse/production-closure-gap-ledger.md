@@ -7,7 +7,27 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
 
 ## Current Proof Boundary
 
-- Latest main inspected: `f03a058a0f0468e3902e2aafeb7b063601df2866`.
+- Latest main inspected: `cae16e00429a4f97e30a07ecb69e5cd977ea16e8`.
+- Latest post-PR101 local fullchain evidence: Loop 25z77 ran on local branch
+  `codex/peer-mention-writeback-autobind` from main
+  `cae16e00429a4f97e30a07ecb69e5cd977ea16e8` after Loop 25z76 exposed that a
+  Codex peer using MCP `/sse` could call `chat_mention` without
+  `reply_to_inbox_item_id`, enqueue execute, and leave the original architect
+  inbox to fail with `peer_response_timeout`. The candidate branch auto-binds
+  `chat_mention` to the participant's single claimed inbox item, matching the
+  existing `chat_emit_proposal` behavior. Loop 25z77 then drove the same
+  docs-only real chain through durable groupchat, execute feasibility,
+  proposal, approval, dispatch, isolated execution, gate, persistent OpenCode
+  review, and final-action hold. The original architect inbox recorded
+  `status=read`, `tool_trace=chat_mention`, and
+  `delivery_mode=mcp_writeback`; all inbox items ended `read`; the lane
+  recorded `gate_passed=true`, `review_decision=merge`,
+  `review_delivery_mode=persistent`, `persistent_review_degraded=false`,
+  `review_peer_defaulted=true`, `review_peer_cli_kind=opencode`,
+  `review_peer_model=opencode-go/deepseek-v4-flash`,
+  `peer_delivery_mode=configured_peer`, and `status=awaiting_final_action`.
+  This is local candidate proof only until pushed, checked by CI, merged, and
+  rerun from post-merge main.
 - Strongest code-change lane runtime evidence: Loop 25z69 ran after PR #93's
   default-review fix from current main, drove one real local code-change lane
   from durable groupchat through execute feasibility, proposal, runtime-driver
@@ -30,21 +50,12 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   `persistent_review_degraded=true` and
   `persistent_review_degraded_reason=missing_feature_identity`, so it is not
   persistent OpenCode review proof or defaulted review peer metadata proof.
-- Latest local candidate fullchain evidence: Loop 25z75 ran on local branch
-  `codex/direct-lane-graph-feature-scope` from current main
-  `f03a058a0f0468e3902e2aafeb7b063601df2866`. The branch projects a
-  `feature_scope_id` for direct lane graphs without treating lane primary
-  `feature_id` as feature scope. The run drove a real durable human demand
-  through Codex/OpenCode groupchat, execute feasibility, proposal, approval,
-  isolated execution, gate, persistent OpenCode review, and final-action hold.
-  The final lane recorded `feature_scope_id=post-pr94-probe`,
-  `gate_passed=true`, `review_decision=merge`,
-  `review_delivery_mode=persistent`, `persistent_review_degraded=false`,
-  `review_peer_defaulted=true`, `review_peer_cli_kind=opencode`,
-  `review_peer_model=opencode-go/deepseek-v4-flash`,
-  `peer_delivery_mode=configured_peer`, and
-  `status=awaiting_final_action`. This is local candidate proof only; it is
-  not CI/server-verified.
+- Latest direct lane graph feature-scope evidence: Loop 25z75 locally proved
+  the direct lane graph `feature_scope_id` fix, then PR #101 merged the small
+  fix to main as `cae16e00429a4f97e30a07ecb69e5cd977ea16e8` after successful
+  PR CI and successful post-merge main CI. Loop 25z76/25z77 both ran from that
+  post-merge main, so `missing_feature_identity` is no longer the current
+  blocker for this docs-only fullchain shape.
 - Latest peer-chat stability evidence: Loop 25z70b ran concurrently with
   Loop 25z70a from the same current main using a separate `XMUSE_ROOT`,
   execution worktree, Chat API port, MCP port, and runner. Across three
@@ -107,13 +118,14 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   `persistent_review_degraded=false`, `review_decision=merge`, and no
   runtime-artifact match for the Loop 25z64 invalid transition noise. This is a
   bounded local repeat, not code-change soak or production readiness.
-- Strongest server facts: PR #99 was merged by GitHub server state as
-  `2325427c0b96f5bc2f804a6f72ef8d5e77782fca` after successful `xmuse CI` on PR
-  head `4a491dfea5cb9d0026d4afa7360cf1b466af6831` in run `27828255039`;
+- Strongest server facts: PR #101 was merged by GitHub server state as
+  `cae16e00429a4f97e30a07ecb69e5cd977ea16e8` after successful `xmuse CI` on PR
+  head `6f3ec0581d538e60090102208bb723fb5b6e6a3d` in run `27829650120`;
   post-merge main `xmuse CI` also passed on
-  `2325427c0b96f5bc2f804a6f72ef8d5e77782fca` in run `27828296247`.
+  `cae16e00429a4f97e30a07ecb69e5cd977ea16e8` in run `27829904982`.
 - Latest merged evidence sync: PR #100 `codex/post-pr99-runtime-evidence-sync`
-  merged to main as `f03a058a0f0468e3902e2aafeb7b063601df2866`.
+  merged to main as `f03a058a0f0468e3902e2aafeb7b063601df2866`; PR #101
+  subsequently merged the direct lane graph feature-scope implementation.
 - Proof type: local runtime proof plus inspected GitHub server facts for small
   PRs. This is not GitHub review truth or production readiness.
 
@@ -206,6 +218,10 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
 - PR #100 `codex/post-pr99-runtime-evidence-sync`: synced post-PR99 runtime
   evidence into the docs and gap ledger. Merged to main as
   `f03a058a0f0468e3902e2aafeb7b063601df2866`.
+- PR #101 `codex/direct-lane-graph-feature-scope`: projected
+  `feature_scope_id` for direct lane graphs without using lane primary
+  `feature_id` as feature scope. Merged to main as
+  `cae16e00429a4f97e30a07ecb69e5cd977ea16e8`.
 
 ## Manual Gaps
 
@@ -254,8 +270,15 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   shape.
 - Loop 25z75 locally repaired the direct lane graph feature-scope gap and
   reached final-action hold with persistent OpenCode review/defaulted peer
-  metadata. This remains a local candidate until the small PR is pushed,
-  checked by CI, merged, and rerun from post-merge main.
+  metadata. PR #101 then merged that small fix and post-merge main CI passed.
+- Loop 25z76 exposed a peer-chat writeback lifecycle gap after PR #101:
+  `chat_mention` over `/sse` could omit `reply_to_inbox_item_id`, enqueue the
+  execute peer, and leave the architect's source inbox to fail with
+  `peer_response_timeout`.
+- Loop 25z77 locally repaired that `chat_mention` current-turn auto-bind gap
+  and reran the fullchain to final-action hold with no failed inbox items.
+  This remains a local candidate until the small PR is pushed, checked by CI,
+  merged, and rerun from post-merge main.
 - Provider result acknowledgement timeout after durable writeback is mitigated
   by early writeback detection plus configurable bounded grace in PR #87.
   Broader production-load behavior is still unproven.
@@ -300,10 +323,10 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
 
 ## Next Small Buckets
 
-- P0 persistent review feature identity: publish the local
-  `codex/direct-lane-graph-feature-scope` candidate as a small PR, verify CI,
-  merge if accepted, and rerun from post-merge main. Keep the current evidence
-  boundary as local candidate proof until then.
+- P0 peer handoff writeback lifecycle: publish the local
+  `codex/peer-mention-writeback-autobind` candidate as a small PR, verify CI,
+  merge if accepted, and rerun from post-merge main. Keep Loop 25z77 as local
+  candidate proof until then.
 - P1 explicit dependency coordination: add a durable coordination primitive for
   waiting on named peer replies before summaries/handoffs when direct drain is
   insufficient.
