@@ -4536,3 +4536,136 @@ durable GOD groupchat through execute feasibility, proposal, approval, isolated
 execution, gate, review verdict, and final-action hold. This is not production
 readiness, GitHub review truth, live MemoryOS proof, full L8-L10 closure, full
 L1-L11 closure, or overnight readiness.
+
+## 2026-06-19 Loop 25z65: post-PR90 review-state repeat
+
+Runtime root:
+
+```text
+/tmp/xmuse-main-after-pr86-155349/.goal-runs/2026-06-19/loop-25z65-post-pr90-review-state-repeat-180741
+```
+
+Execution worktree:
+
+```text
+/tmp/loop-25z65-post-pr90-review-state-repeat-180741-exec
+```
+
+Control head under test:
+
+```text
+origin/main
+HEAD=a8cceabb51022ddf802da276df1e4c37419b65b5
+```
+
+Service shape:
+
+```bash
+XMUSE_ROOT="$RUN_ROOT" XMUSE_EXECUTION_WORKTREE="$EXEC_WORKTREE" \
+  uv run python -c 'import os; from pathlib import Path; import uvicorn; from xmuse.chat_api import create_app; uvicorn.run(create_app(base_dir=Path(os.environ["XMUSE_ROOT"]), execution_worktree=Path(os.environ["XMUSE_EXECUTION_WORKTREE"])), host="127.0.0.1", port=8201, log_level="info")'
+
+XMUSE_ROOT="$RUN_ROOT" uv run xmuse-mcp-server
+
+XMUSE_ROOT="$RUN_ROOT" XMUSE_EXECUTION_WORKTREE="$EXEC_WORKTREE" \
+  XMUSE_PEER_GOD_BACKEND=native XMUSE_REVIEW_GOD_BACKEND=native \
+  XMUSE_RAY_GOD_MCP=0 XMUSE_CHAT_API_URL=http://127.0.0.1:8201 \
+  uv run xmuse-platform-runner --xmuse-root "$RUN_ROOT" --mcp-port 8100 \
+  --peer-chat --peer-chat-post-writeback-grace-s 20 \
+  --persistent-review-god --persistent-review-timeout-s 300 \
+  --max-hours 1.1 --max-concurrent 8 --no-auto-merge
+```
+
+Human demand:
+
+```text
+Create only docs/xmuse/post-pr90-review-state-repeat-note.md in the isolated
+lane worktree, as a no-PR runtime proof lane for post-PR90 review-state
+idempotence. Do not edit product code or broad docs.
+```
+
+Durable ids:
+
+```text
+conversation_id=conv_5e579702d7314c7a9307311c93c70bc6
+proposal_id=prop_6bf73b4d50834e8c94f04306137dbfbe
+resolution_id=res_e0d8e2d6c5934d6cbf67d35b874bec8c
+lane_id=loop25z65_post_pr90_review_state_repeat
+review_task_id=rtask_f8bb921c75bd4ba9b61ba3d006aea38b
+review_verdict_id=verdict-merge-rtask_f8bb921c75bd4ba9b61ba3d006aea38b
+final_action_hold_id=final-9e1f94e1ee47
+```
+
+Lane result:
+
+```text
+status=awaiting_final_action
+base_head_sha=a8cceabb51022ddf802da276df1e4c37419b65b5
+worktree=/tmp/loop-25z65-post-pr90-review-state-repeat-180741-exec
+changed_files:
+  docs/xmuse/post-pr90-review-state-repeat-note.md
+gate_passed=true
+review_runtime=opencode
+review_runtime_requested=opencode
+review_peer_id=part_3ec0415065b349fb9d2fcd116d352eac
+review_delivery_mode=persistent
+persistent_review_degraded=false
+persistent_review_identity=configured:part_3ec0415065b349fb9d2fcd116d352eac
+peer_delivery_mode=configured_peer
+review_decision=merge
+```
+
+Gate evidence:
+
+```text
+logs/gates/loop25z65_post_pr90_review_state_repeat/report.json
+passed=true
+blocking_passed=true
+profile_ids=["strict-product"]
+command=uv run pytest -q tests/xmuse/test_package_boundaries.py
+returncode=0
+```
+
+Lane-scoped worker checks recorded by the final lane:
+
+```text
+uv run python - <<'PY' ... content-check for docs/xmuse/post-pr90-review-state-repeat-note.md ... PY
+git diff --check -- docs/xmuse/post-pr90-review-state-repeat-note.md
+git status --short
+```
+
+Runtime transition-noise search:
+
+```text
+rg "InvalidTransitionError|cannot transition|xmuse_core_operation_failed|review_conflict_ignored|ignored_review" \
+  "$RUN_ROOT"/logs "$RUN_ROOT"/feature_lanes.json "$RUN_ROOT"/review_plane.json \
+  "$RUN_ROOT"/final_actions.json "$RUN_ROOT"/loop_driver_artifacts \
+  --glob '!**/peer_chat_worktree/**'
+-> no matches
+```
+
+Recorded artifacts:
+
+```text
+loop_driver_artifacts/final_lane.json
+review_plane.json
+final_actions.json
+logs/gates/loop25z65_post_pr90_review_state_repeat/report.json
+logs/platform-runner.log
+logs/driver.log
+```
+
+Cleanup:
+
+```text
+8100/8201/8265 listeners: none
+xmuse-platform-runner, xmuse-mcp-server, chat_api, codex exec, opencode run:
+no matching live process after shutdown checks
+```
+
+Classification: positive bounded local runtime repeat for the PR #90
+review-state idempotence fix on a docs-only lane. It reached persistent
+OpenCode review metadata and final-action hold under `--no-auto-merge` without
+the Loop 25z64 invalid transition noise recurring in the runtime artifacts
+searched above. This is not production readiness, GitHub review truth, live
+MemoryOS proof, full L8-L10 closure, full L1-L11 closure, or overnight
+readiness.

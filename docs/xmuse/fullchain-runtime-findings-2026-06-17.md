@@ -162,6 +162,11 @@ truth, merge truth, live MemoryOS proof, or full closure.
 - Loop 25z57 added a short post-writeback grace window and completed the same
   two-conversation path with `early_writeback_traces` and zero
   `timeout_after_writeback_traces`, proposals, or resolutions.
+- Loop 25z65 reran a post-PR90 docs-only lane from current `origin/main` and
+  reached `awaiting_final_action` with `review_delivery_mode=persistent`,
+  `persistent_review_degraded=false`, and no runtime-artifact match for the
+  Loop 25z64 review-state invalid transition noise. This is still bounded local
+  runtime proof, not production readiness or review truth.
 
 ## Findings
 
@@ -2605,7 +2610,7 @@ Remaining gap:
 
 ### F97. Review state transition can emit non-blocking InvalidTransition noise
 
-Severity: non-blocking runtime-state bug / stability gap.
+Severity: locally mitigated runtime-state bug, still bounded.
 
 Loop 25z64 reached final-action hold, but the runner log recorded:
 
@@ -2632,11 +2637,10 @@ Remaining gap:
 - The final lane did not expose `review_delivery_mode=persistent` or
   `persistent_review_degraded=false`, so the run is not complete persistent
   OpenCode delivery proof.
-- A local candidate fix now ignores late persistent rework/rejected verdicts
-  after an accepted review/final-hold state and records
-  `review_conflict_ignored` metadata instead of attempting an invalid state
-  transition.
-- Validation for the candidate fix:
+- PR #90 ignores late persistent rework/rejected verdicts after an accepted
+  review/final-hold state and records ignored-conflict metadata instead of
+  attempting an invalid state transition.
+- Validation for the PR #90 candidate fix:
 
 ```text
 uv run pytest tests/xmuse/test_persistent_review_delivery_module.py -q
@@ -2646,5 +2650,29 @@ uv run pytest tests/xmuse/test_persistent_review_delivery_module.py tests/xmuse/
 -> 80 passed, 1 warning
 ```
 
-- The fix still needs a repeat runtime chain before claiming clean
-  review-state behavior under fullchain load.
+Post-PR90 repeat:
+
+```text
+runtime_root=/tmp/xmuse-main-after-pr86-155349/.goal-runs/2026-06-19/loop-25z65-post-pr90-review-state-repeat-180741
+control_head=a8cceabb51022ddf802da276df1e4c37419b65b5
+lane_id=loop25z65_post_pr90_review_state_repeat
+status=awaiting_final_action
+changed_files=docs/xmuse/post-pr90-review-state-repeat-note.md
+gate_passed=true
+review_delivery_mode=persistent
+persistent_review_degraded=false
+review_decision=merge
+final_action_hold_id=final-9e1f94e1ee47
+InvalidTransition/runtime transition search=no matches
+```
+
+Impact:
+
+- The specific Loop 25z64 invalid transition noise did not recur in one
+  bounded post-PR90 local runtime repeat.
+
+Remaining gap:
+
+- This was a docs-only lane, not a repeated code-change lane and not a soak.
+  It narrows F97 but does not establish production readiness, GitHub review
+  truth, overnight stability, live MemoryOS, or full closure.
