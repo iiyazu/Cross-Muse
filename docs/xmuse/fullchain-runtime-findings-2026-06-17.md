@@ -1521,3 +1521,65 @@ Proof boundary:
 - It does not prove provider peer reply truth, full groupchat completion,
   GitHub review truth, merge truth, live MemoryOS, full L8-L10 closure, full
   L1-L11 closure, or production-ready groupchat.
+
+### F80. Leading-route fix survives a real groupchat-to-final-action rerun
+
+Severity: resolved local fullchain routing issue with remaining ergonomics gaps.
+
+Loop 25z38 reran the full groupchat-to-lane path on the leading mention routing
+fix. The human demand intentionally mentioned `@execute` and `@review` in the
+body, while starting with `@architect`.
+
+Initial durable routing:
+
+```text
+human_mentions=["@architect"]
+initial_inbox_targets=["architect"]
+```
+
+Observed chain:
+
+```text
+human @architect demand
+-> architect durable MCP writeback
+-> architect-created @execute handoff
+-> execute durable MCP writeback and collaboration response
+-> architect callback writeback
+-> lane_graph proposal
+-> human approval
+-> execute dispatch
+-> child Codex MCP query_knowledge/update_lane_status
+-> strict-product package-boundary gate
+-> configured OpenCode persistent review
+-> awaiting_final_action under --no-auto-merge
+```
+
+Lane result:
+
+```text
+lane_id=loop25z38_routing_fix_fullchain
+status=awaiting_final_action
+gate_passed=true
+review_runtime=opencode
+review_delivery_mode=persistent
+persistent_review_degraded=false
+review_decision=merge
+final_action_hold_id=final-c6021aa4fe11
+```
+
+Positive impact:
+
+- The routing fix did not break the existing real groupchat-to-lane path.
+- Body references to `@execute` and `@review` no longer created direct human
+  inbox items.
+- Execute, review, and dispatch turns still entered through durable system
+  handoffs.
+
+Remaining gaps:
+
+- Architect emitted an early proposal before execute response and then a second
+  proposal after execute callback. One duplicate open proposal remained.
+- Gate profile resolution still warned that `gate_profiles.json` was missing in
+  `XMUSE_ROOT` and used the lane worktree config.
+- The proof remains local runtime proof. It is not GitHub review truth, merge
+  truth, live MemoryOS, full closure, or production readiness.

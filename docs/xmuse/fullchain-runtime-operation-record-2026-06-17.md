@@ -2608,3 +2608,156 @@ Claims not made: provider peer reply truth, full groupchat completion, GitHub
 review truth, merge truth, `ready_to_merge`, `pr_merged`, live MemoryOS, full
 L8-L10 closure, full L1-L11 closure, production-ready groupchat, or overnight
 readiness.
+
+### Loop 25z38: routing fix fullchain rerun to final-action hold
+
+Goal: rerun the real groupchat-to-lane chain on the human leading mention
+routing fix. The human demand intentionally mentioned `@execute` and `@review`
+in the body, but only the leading `@architect` mention should route the initial
+turn.
+
+Runtime root:
+
+```text
+.goal-runs/2026-06-19/loop-25z38-routing-fix-fullchain-095859
+```
+
+Execution worktree:
+
+```text
+/tmp/loop-25z38-routing-fix-fullchain-095859-exec
+```
+
+Service commands:
+
+```bash
+XMUSE_ROOT="$RUN_ROOT" XMUSE_EXECUTION_WORKTREE="$EXEC_WORKTREE" \
+  uv run python -c 'import os; from pathlib import Path; import uvicorn; from xmuse.chat_api import create_app; uvicorn.run(create_app(base_dir=Path(os.environ["XMUSE_ROOT"]), execution_worktree=Path(os.environ["XMUSE_EXECUTION_WORKTREE"])), host="127.0.0.1", port=8201, log_level="info")'
+
+XMUSE_ROOT="$RUN_ROOT" uv run xmuse-mcp-server
+
+XMUSE_ROOT="$RUN_ROOT" XMUSE_PEER_GOD_BACKEND=native XMUSE_RAY_GOD_MCP=0 \
+  XMUSE_CHAT_API_URL=http://127.0.0.1:8201 \
+  uv run xmuse-platform-runner --xmuse-root "$RUN_ROOT" --mcp-port 8100 \
+  --peer-chat --persistent-review-god --persistent-review-timeout-s 180 \
+  --max-hours 0.75 --no-auto-merge
+```
+
+Conversation and participants:
+
+```text
+conversation_id=conv_f2884fbc14a849f98a71a924e15f879e
+architect=codex/god gpt-5.4
+execute=codex/worker gpt-5.4-mini
+review=opencode/review opencode-go/deepseek-v4-flash
+human_message_id=msg_1cbc99d035f2405488c8227e19343cb7
+```
+
+Initial routing evidence:
+
+```text
+human_mentions=["@architect"]
+initial_inbox_targets=["architect"]
+artifact=.goal-runs/2026-06-19/loop-25z38-routing-fix-fullchain-095859/initial_routing_snapshot.json
+```
+
+Durable groupchat path:
+
+```text
+architect first writeback=msg_91d31b84bcf04bb789dd268f108710b7
+architect execute handoff=msg_eb27add1bb084f1d9dfb5867694096a6
+collaboration_run=collab_6c22ccf31e1b4611a87804d4fce04921
+execute_response=received for @execute
+proposal_early=prop_29676296a529419e991bec7c07bed578 status=open
+architect callback writeback=msg_d7aacab013894cbd84a0ac03f730aaf8
+proposal_accepted=prop_e2adada1bba54f098e19658697844298 status=accepted
+resolution_id=res_b6f435d726c24bff8a7b7085585da4e8
+```
+
+The first proposal remained open after architect emitted a later proposal from
+the execute callback. This is duplicate proposal noise and remains an open
+groupchat ergonomics gap.
+
+Lane result:
+
+```text
+lane_id=loop25z38_routing_fix_fullchain
+status=awaiting_final_action
+gate_passed=true
+review_runtime=opencode
+review_runtime_requested=opencode
+review_delivery_mode=persistent
+persistent_review_degraded=false
+review_decision=merge
+review_verdict_id=verdict-merge-rtask_0aa1395bab3a4e828ca2eade6673b1b4
+final_action_hold_id=final-c6021aa4fe11
+worktree=/tmp/loop-25z38-routing-fix-fullchain-095859-exec
+```
+
+Child worker evidence:
+
+```text
+command=codex exec -m gpt-5.4 ... -C /tmp/loop-25z38-routing-fix-fullchain-095859-exec
+mcp_tools=query_knowledge, update_lane_status
+test=uv run pytest tests/xmuse/test_package_boundaries.py -q
+result=16 passed in 3.18s
+changed_files=none
+lane_status_update=executed
+```
+
+Gate report:
+
+```text
+logs/gates/loop25z38_routing_fix_fullchain/report.json
+passed=true
+blocking_passed=true
+strict-product: uv run pytest -q tests/xmuse/test_package_boundaries.py -> 0
+warning=gate_profiles.json missing in XMUSE_ROOT; using lane worktree xmuse/gate_profiles.json
+```
+
+Review and final-action artifacts:
+
+```text
+review_plane.json:
+  task_id=rtask_0aa1395bab3a4e828ca2eade6673b1b4
+  status=verdict_emitted
+  verdict.status=finalized
+  verdict.decision=merge
+
+final_actions.json:
+  id=final-c6021aa4fe11
+  action=merge
+  target_status=reviewed
+  status=pending
+```
+
+Durable peer traces:
+
+```text
+delivery_mode=mcp_writeback for architect, execute, review, architect callback,
+review trigger, and execute dispatch turns
+degraded_reason=null for all recorded peer_turn_latency_traces rows
+```
+
+Negative search:
+
+```text
+rg "InvalidTransitionError|cannot transition|reviewed and merged|ready_to_merge=true|pr_merged=true|existing registered session does not match|peer_response_timeout|DISPATCH_FAILED" "$RUN_ROOT" -> no matches
+```
+
+Cleanup:
+
+```text
+8100/8201/8265 listeners: none
+xmuse service processes: none
+Ray service processes from the run: none
+execution worktree git status: clean
+```
+
+Runner shutdown printed asyncio subprocess transport cleanup noise after the
+final-action hold was already recorded. This is not lane failure evidence.
+
+Claims not made: GitHub review truth, merge truth, `ready_to_merge`,
+`pr_merged`, live MemoryOS, full L8-L10 closure, full L1-L11 closure,
+production-ready groupchat, or overnight readiness. The final action remains
+pending under `--no-auto-merge`.
