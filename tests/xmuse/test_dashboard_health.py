@@ -58,7 +58,7 @@ def test_run_health_returns_read_only_operational_model(tmp_path, monkeypatch):
     monkeypatch.setattr(
         module,
         "discover_xmuse_runtime_processes",
-        lambda: build_process_inventory(runner_pids=[111, 222], mcp_pids=[]),
+        lambda **_kwargs: build_process_inventory(runner_pids=[111, 222], mcp_pids=[]),
     )
     client = TestClient(module.create_app(base_dir=tmp_path))
 
@@ -103,7 +103,7 @@ def test_run_health_exposes_review_rework_alignment_summary(tmp_path, monkeypatc
     monkeypatch.setattr(
         module,
         "discover_xmuse_runtime_processes",
-        lambda: build_process_inventory(runner_pids=[], mcp_pids=[]),
+        lambda **_kwargs: build_process_inventory(runner_pids=[], mcp_pids=[]),
     )
     client = TestClient(module.create_app(base_dir=tmp_path))
 
@@ -173,7 +173,7 @@ def test_dashboard_dead_letters_returns_read_only_coordinator_incidents(
     monkeypatch.setattr(
         module,
         "discover_xmuse_runtime_processes",
-        lambda: build_process_inventory(runner_pids=[], mcp_pids=[]),
+        lambda **_kwargs: build_process_inventory(runner_pids=[], mcp_pids=[]),
     )
     client = TestClient(module.create_app(base_dir=tmp_path))
 
@@ -263,7 +263,7 @@ def test_run_health_supports_workspace_scoped_filter(tmp_path, monkeypatch):
     monkeypatch.setattr(
         module,
         "discover_xmuse_runtime_processes",
-        lambda: build_process_inventory(runner_pids=[111], mcp_pids=[222]),
+        lambda **_kwargs: build_process_inventory(runner_pids=[111], mcp_pids=[222]),
     )
     client = TestClient(module.create_app(base_dir=tmp_path))
 
@@ -324,7 +324,7 @@ def test_peer_chat_run_health_drilldown_separates_scoped_lanes_from_global_proce
     monkeypatch.setattr(
         module,
         "discover_xmuse_runtime_processes",
-        lambda: build_process_inventory(runner_pids=[333], mcp_pids=[]),
+        lambda **_kwargs: build_process_inventory(runner_pids=[333], mcp_pids=[]),
     )
     client = TestClient(module.create_app(base_dir=tmp_path))
 
@@ -409,7 +409,7 @@ def test_run_health_workspace_filter_ignores_foreign_and_ambiguous_graph_scopes(
     monkeypatch.setattr(
         module,
         "discover_xmuse_runtime_processes",
-        lambda: build_process_inventory(runner_pids=[], mcp_pids=[]),
+        lambda **_kwargs: build_process_inventory(runner_pids=[], mcp_pids=[]),
     )
     client = TestClient(module.create_app(base_dir=tmp_path))
 
@@ -455,7 +455,7 @@ def test_run_health_conversation_filter_ignores_workspace_id_collision(
     monkeypatch.setattr(
         module,
         "discover_xmuse_runtime_processes",
-        lambda: build_process_inventory(runner_pids=[], mcp_pids=[]),
+        lambda **_kwargs: build_process_inventory(runner_pids=[], mcp_pids=[]),
     )
     client = TestClient(module.create_app(base_dir=tmp_path))
 
@@ -503,7 +503,7 @@ def test_health_includes_read_only_run_health_peer_delivery_model(
     monkeypatch.setattr(
         module,
         "discover_xmuse_runtime_processes",
-        lambda: build_process_inventory(runner_pids=[], mcp_pids=[]),
+        lambda **_kwargs: build_process_inventory(runner_pids=[], mcp_pids=[]),
     )
     client = TestClient(module.create_app(base_dir=tmp_path))
 

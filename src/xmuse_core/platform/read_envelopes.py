@@ -142,7 +142,7 @@ def build_tui_worklist_envelope(
         conversation_id=conversation_id,
         workspace_id=workspace_id,
     )
-    inventory = process_inventory or discover_xmuse_runtime_processes()
+    inventory = process_inventory or discover_xmuse_runtime_processes(xmuse_root=root)
     run_health = build_run_health_model_from_lanes(
         lanes,
         process_inventory=inventory,

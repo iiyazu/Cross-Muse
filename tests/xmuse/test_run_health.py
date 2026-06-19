@@ -1183,7 +1183,7 @@ def test_build_run_health_model_exposes_compact_process_inventory_evidence(
     monkeypatch.setattr(
         run_health,
         "discover_xmuse_runtime_processes",
-        lambda proc_root=Path("/proc"): inventory,
+        lambda proc_root=Path("/proc"), xmuse_root=None: inventory,
     )
 
     model = run_health.build_run_health_model(lanes_path)
@@ -1208,7 +1208,7 @@ def test_read_run_health_snapshot_uses_runtime_process_discovery(
     monkeypatch.setattr(
         run_health,
         "discover_xmuse_runtime_processes",
-        lambda proc_root=Path("/proc"): inventory,
+        lambda proc_root=Path("/proc"), xmuse_root=None: inventory,
     )
 
     snapshot = read_contracts.build_run_health_snapshot(
