@@ -1419,6 +1419,90 @@ Remaining boundary:
 - Ctrl-C shutdown after final-action hold still produced Ray atexit noise; this
   is a cleanup concern, not evidence of lane failure.
 
+### F35. Review summaries must not inflate review acceptance into merge truth
+
+Severity: resolved proof-boundary blocker.
+
+Loop 25z34 reached `awaiting_final_action` with OpenCode persistent review, but
+the review summary persisted to lane metadata, `review_plane.json`, and
+`final_actions.json` said the lane was "reviewed and merged." The authoritative
+state was still a pending final-action hold, so that wording was misleading.
+
+Fix:
+
+- PR #73 adds a review summary sanitizer before review text is persisted into
+  lane metadata, review-plane verdicts, or final-action holds.
+- The persistent review prompt now states that a merge verdict is review
+  acceptance only unless a final-action hold or GitHub server merge evidence is
+  present.
+
+Validation:
+
+- PR #73 branch CI passed and main push CI `27799088742` succeeded.
+- Loop 25z35 showed the persisted summary as `review accepted` rather than
+  "reviewed and merged", `ready_to_merge`, or `pr_merged`.
+
+Remaining boundary:
+
+- This controls wording in review summaries. It does not itself prove review
+  truth, merge truth, or production readiness.
+
+### F36. Persistent review callback must be idempotent after final-action hold
+
+Severity: resolved local fullchain blocker.
+
+Loop 25z35 reproduced a later idempotency edge:
+
+```text
+InvalidTransitionError: cannot transition loop25z35_post_pr73_main_fullchain
+from awaiting_final_action to reviewed
+```
+
+Root cause:
+
+- OpenCode review wrote the lane through MCP and review-plane adaptation created
+  a pending final-action hold.
+- The persistent review result callback then arrived and attempted to drive the
+  lane back through `reviewed`.
+
+Fix:
+
+- PR #74 treats `awaiting_final_action` as an already-committed merge-review
+  state for persistent review callbacks.
+- The callback updates persistent review metadata/history and does not re-ingest
+  the same merge verdict or call `on_reviewed` again.
+
+Validation:
+
+- PR #74 branch CI passed and main push CI `27799697662` succeeded.
+- Loop 25z36 reran the real groupchat-to-lane path through final-action hold
+  creation and reached `awaiting_final_action` with no
+  `InvalidTransitionError`.
+
+Remaining boundary:
+
+- The final-action hold is still pending under `--no-auto-merge`; no local merge
+  or PR merge is claimed from this runtime proof.
+
+### F37. Direct role mentions can widen the initial queue
+
+Severity: open orchestration ergonomics issue.
+
+Loop 25z35 accidentally put `@execute` and `@review` in the human demand text.
+The mention resolver created direct execute/review inbox items in addition to
+the intended architect-led collaboration. The run still produced useful
+evidence, but it was noisier than the desired natural groupchat path.
+
+Loop 25z36 used only `@architect` in the human demand. Architect then created
+the execute/review handoffs itself, and the collaboration queue was clean.
+
+Recommended follow-up:
+
+- Add structured target escaping or prompt guidance for humans who need to refer
+  to roles without routing direct mentions.
+- Do not treat this as a blocker for the current bounded proof, but preserve it
+  as a groupchat usability gap.
+
 ## Recommended Next Implementation Order
 
 1. Move back to fullchain completion with the current Codex/OpenCode groupchat
