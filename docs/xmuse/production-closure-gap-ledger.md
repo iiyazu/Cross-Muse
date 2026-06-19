@@ -309,6 +309,13 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   again reached `awaiting_final_action` and the review session carried
   `xmuse-persistent-review-session-prompt-v1`. This confirms the PR #107 repair
   on current main for the bounded configured OpenCode review path only.
+- Loop 26f on branch `codex/default-review-ambiguous-fail-closed` focused the
+  ambiguous default review authority boundary. With two active OpenCode review
+  participants in `chat.db` and no proposal `review_runtime`, the selector now
+  returns `review_peer_runtime_ambiguous`, does not create a Codex review
+  participant, and the review-plane consumer fails the lane closed as
+  `required_review_peer_unavailable`. This is focused local
+  review-authority proof only, not a fullchain run or production readiness.
 - Provider result acknowledgement timeout after durable writeback is mitigated
   by early writeback detection plus configurable bounded grace in PR #87.
   Broader production-load behavior is still unproven.
@@ -363,15 +370,18 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
 - P2 review peer prompt/session metadata: bounded local configured OpenCode
   persistent review now records a separate review-session prompt authority in
   `god_sessions.json`, and Loop 26e confirmed the behavior on post-PR107 main.
-  Remaining work is broader review authority behavior, especially fail-closed
-  handling for missing or multiple OpenCode review participants.
+  Loop 26f adds focused candidate proof for the multiple-OpenCode-reviewer
+  ambiguity case. Remaining work is the missing-OpenCode-reviewer policy and
+  broader review authority behavior.
 - P3 higher-parallelism stability loop: repeat real groupchat-to-final-hold
   with independent `XMUSE_ROOT` directories, execution worktrees, Chat API
   ports, MCP ports, and runners when increasing concurrency beyond the current
   two-shard evidence. Do not share durable stores or one PR branch across
   parallel probes.
-- P4 ambiguous review authority: define fail-closed behavior for missing or
-  multiple OpenCode review participants without relying on proposal text.
+- P4 ambiguous review authority: multiple active OpenCode review participants
+  now have focused fail-closed candidate behavior without relying on proposal
+  text. Missing OpenCode review participants remain a separate policy boundary
+  because the legacy feature-scoped Codex default-review path still exists.
 - P5 code-change soak: repeat small real code-change lanes after the
   inspector provider summary PR lands.
 - P6 MemoryOS adapter proof: keep `live_memoryos` forbidden until a real trace

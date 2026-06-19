@@ -3547,3 +3547,72 @@ Remaining caveats:
 - This remains bounded local runtime evidence plus GitHub CI truth for the
   exact main head. It is not GitHub review truth, production readiness,
   MemoryOS proof, repeated stability proof, or full closure.
+
+## 2026-06-20 Loop 26f Finding: Ambiguous Default OpenCode Review Authority Fails Closed
+
+Status: bounded focused repair evidence on branch
+`codex/default-review-ambiguous-fail-closed`.
+
+Root boundary:
+
+```text
+authority=chat.db participants table
+producer=default review peer selector
+consumer=review_god configured/default peer delivery path
+condition=conversation has multiple active OpenCode review participants and no proposal review_runtime
+failure_mode=selector must not invent a Codex default reviewer
+```
+
+Observed before the fix:
+
+- A focused durable-store repro with two active OpenCode `review` participants
+  selected a newly created Codex `Review GOD [...]` participant instead of
+  failing closed.
+
+Candidate behavior after the fix:
+
+```text
+run_root=/tmp/xmuse-postmerge-layered-prompt-main/.goal-runs/2026-06-20/loop-26f-default-review-ambiguous-fail-closed-021357
+summary_artifact=selector_summary.json
+selector_selected_participant_id=null
+selector_failure=review_peer_runtime_ambiguous
+created_codex_review_participant=false
+```
+
+Integration-level consumer behavior:
+
+- The default review path transitions the lane to `gate_failed` with
+  `failure_reason=required_review_peer_unavailable`,
+  `peer_delivery_mode=required_peer_failed`, and
+  `peer_degraded_reason=review_peer_runtime_ambiguous`.
+- The persistent peer service is not invoked.
+- The one-shot review fallback is not invoked.
+- The two original OpenCode review participants remain the only review
+  participants in `chat.db`.
+
+Validation:
+
+```text
+uv run pytest tests/xmuse/test_review_plane_orchestrator_integration.py -q -k 'default_review_peer'
+-> 11 passed, 39 deselected
+
+uv run pytest tests/xmuse/test_review_plane_orchestrator_integration.py tests/xmuse/test_persistent_review_session_contracts.py tests/xmuse/test_persistent_cli_peer.py tests/xmuse/test_package_boundaries.py -q
+-> 90 passed
+
+uv run ruff check .
+-> All checks passed.
+
+git diff --check
+-> passed
+
+test ! -e xmuse/__init__.py
+-> passed
+```
+
+Remaining caveats:
+
+- This is focused review-authority proof, not a fullchain run.
+- Missing OpenCode review participants still use the legacy feature-scoped
+  Codex default-review path and remain a separate policy boundary.
+- This does not claim production readiness, GitHub review truth, live
+  MemoryOS, natural peer-GOD groupchat completion, or full closure.

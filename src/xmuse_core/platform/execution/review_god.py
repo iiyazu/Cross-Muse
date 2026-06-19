@@ -703,18 +703,23 @@ async def _try_configured_review_peer(
         and default_review_peer_routing_enabled
         and persistent_session_layer is not None
     ):
-        review_peer_id = await _ensure_default_review_peer(
+        default_peer_failure: str | None = None
+        review_peer_id, default_peer_failure = await _ensure_default_review_peer(
             xmuse_root=xmuse_root,
             conversation_id=_optional_text(lane.get("conversation_id")),
             model=_persistent_model_for_god(god, persistent_session_layer),
             feature_scope_id=feature_scope_id_from_lane(lane),
         )
         review_peer_defaulted = review_peer_id is not None
+        if default_peer_failure is not None:
+            review_peer_id = "default:opencode"
+            review_peer_defaulted = True
+            runtime_peer_failure = default_peer_failure
     if review_peer_id is None:
         return ConfiguredReviewPeerAttempt()
     mode = (
         "required"
-        if runtime_peer_required
+        if runtime_peer_required or runtime_peer_failure is not None
         else "preferred"
         if review_peer_defaulted
         else _peer_routing_mode(lane.get("peer_routing_mode"))
@@ -927,6 +932,7 @@ def _configured_peer_failed(
                 "peer_delivery_mode": "required_peer_failed",
                 "peer_degraded_reason": reason,
             }
+            | ({"review_peer_defaulted": True} if review_peer_defaulted else {})
             | peer_metadata,
         )
         return ConfiguredReviewPeerAttempt(attempted=True, required_failed=True)
@@ -1007,9 +1013,9 @@ async def _ensure_default_review_peer(
     conversation_id: str | None,
     model: str | None,
     feature_scope_id: str | None,
-) -> str | None:
+) -> tuple[str | None, str | None]:
     if conversation_id is None:
-        return None
+        return None, None
     lock_key = f"{conversation_id}:{feature_scope_id or 'conversation-default-review'}"
     lock = _DEFAULT_REVIEW_PEER_LOCKS.setdefault(lock_key, asyncio.Lock())
     async with lock:
@@ -1027,19 +1033,18 @@ def _ensure_default_review_peer_sync(
     conversation_id: str,
     model: str | None,
     feature_scope_id: str | None,
-) -> str | None:
+) -> tuple[str | None, str | None]:
     selected_model = model or DEFAULT_CODEX_REVIEW_MODEL_ID
     store = ParticipantStore(xmuse_root / "chat.db")
     try:
         participants = store.list_by_conversation(conversation_id)
-        opencode_peer_id = _unique_active_review_peer_id(
-            participants,
-            cli_kind="opencode",
-        )
-        if opencode_peer_id is not None:
-            return opencode_peer_id
+        opencode_review_peers = _active_review_peers(participants, cli_kind="opencode")
+        if len(opencode_review_peers) == 1:
+            return opencode_review_peers[0].participant_id, None
+        if len(opencode_review_peers) > 1:
+            return None, "review_peer_runtime_ambiguous"
         if feature_scope_id is None:
-            return None
+            return None, None
         display_name = _default_review_peer_display_name(feature_scope_id)
         for participant in participants:
             if (
@@ -1048,7 +1053,7 @@ def _ensure_default_review_peer_sync(
                 and participant.status == "active"
                 and participant.model == selected_model
             ):
-                return participant.participant_id
+                return participant.participant_id, None
         participant = store.add(
             conversation_id=conversation_id,
             role=_REVIEW_ROLE,
@@ -1057,21 +1062,18 @@ def _ensure_default_review_peer_sync(
             model=selected_model,
         )
     except Exception:
-        return None
-    return participant.participant_id
+        return None, None
+    return participant.participant_id, None
 
 
-def _unique_active_review_peer_id(participants: list[Any], *, cli_kind: str) -> str | None:
-    matches = [
+def _active_review_peers(participants: list[Any], *, cli_kind: str) -> list[Any]:
+    return [
         participant
         for participant in participants
         if participant.role == _REVIEW_ROLE
         and participant.cli_kind == cli_kind
         and participant.status == "active"
     ]
-    if len(matches) != 1:
-        return None
-    return matches[0].participant_id
 
 
 def _default_review_peer_display_name(feature_scope_id: str) -> str:
