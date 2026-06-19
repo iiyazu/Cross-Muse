@@ -104,6 +104,11 @@ truth, merge truth, live MemoryOS proof, or full closure.
   execute collaboration was still running, then emitted exactly one proposal
   after the collaboration reached `done`, approved it, dispatched it, and again
   stopped at `awaiting_final_action` under `--no-auto-merge`.
+- Loop 25z40 moved to a real code-change demand and failed closed because the
+  peer-chat provider worktree was an empty directory. Loop 25z40b reran after
+  making the peer-chat worktree repo-backed, produced a real isolated candidate
+  diff, passed gate, received OpenCode review decision `merge`, and stopped at
+  `awaiting_final_action` under `--no-auto-merge`.
 
 ## Findings
 
@@ -1646,3 +1651,104 @@ Remaining gaps:
 - This is local runtime proof, not GitHub review truth, merge truth, live
   MemoryOS proof, full closure, production-ready groupchat, or overnight
   readiness.
+
+### F82. Peer-chat peers need repo-backed worktrees for real code-change demands
+
+Severity: resolved local groupchat execution-readiness blocker.
+
+Loop 25z40 asked the real groupchat to produce a small code-change lane. The
+human message routed only to architect, architect handed off to execute, and a
+single collaboration-backed proposal was produced. Dispatch approval failed
+closed:
+
+```text
+approval_error.code=dispatch_gate_blocked
+approval_error.message=blocked_execute_not_confirmed
+peer_chat_worktree_entries=[]
+execute_response.status=failed
+execute_response.content.type=execute_feasibility_blocker
+```
+
+Root cause:
+
+- `platform_runner --peer-chat` gave peer providers
+  `xmuse_root/peer_chat_worktree`.
+- That path was created as an empty directory.
+- For discussion-only chains, this was enough to avoid mutating the control
+  worktree.
+- For real code-change demands, execute peers could not inspect repository
+  files and correctly refused feasibility.
+
+Fix:
+
+- The peer-chat runtime worktree is now created as a detached git worktree from
+  the current repository HEAD when possible.
+- Existing non-empty non-git directories are preserved and only warned about.
+- If git worktree creation fails, the old empty-directory fallback remains
+  explicit through runner logs.
+
+Rerun evidence:
+
+```text
+Loop 25z40b
+peer_chat_worktree git rev-parse --is-inside-work-tree -> true
+src/xmuse_core/platform/execution/gate.py -> present
+collaboration_run=collab_a9832c489d72425f8d5064c1bc852a57
+proposal_id=prop_1f67619ee1a245969278e8f8ad2d8b2c
+resolution_id=res_f1b257fda82a4712ac45e15b8c9af7b1
+lane_id=loop25z40_gate_profile_source
+status=awaiting_final_action
+gate_passed=true
+review_runtime=opencode
+review_decision=merge
+final_action_hold_id=final-bab763cf5987
+```
+
+Positive impact:
+
+- Peer chat can now discuss and inspect real repository files without using the
+  mutable control worktree as the provider cwd.
+- The dispatch gate continued to fail closed before the fix and allowed
+  approval only after execute feasibility was recorded.
+- The chain produced a real isolated candidate diff, not just a no-op pytest
+  lane.
+
+Remaining gaps:
+
+- This proves one local runtime code-change lane only.
+- The peer-chat worktree is detached from HEAD and does not include uncommitted
+  local control-branch edits.
+- This is not GitHub review truth, merge truth, live MemoryOS proof, full
+  closure, production-ready groupchat, or overnight readiness.
+
+### F83. Gate reports should identify gate profile source
+
+Severity: resolved local evidence-quality gap.
+
+Repeated runtime runs used `xmuse/gate_profiles.json` from the lane worktree
+when `XMUSE_ROOT/gate_profiles.json` was absent. The warning was visible, but
+runtime audits had to infer the selected authority path from text.
+
+Fix:
+
+- Gate reports now include `gate_profiles_source`.
+- Values identify `source` as `xmuse_root`, `lane_worktree_fallback`, or
+  `missing`.
+- Reports also include the selected path plus both candidate paths.
+
+Rerun/import evidence:
+
+```text
+Loop 25z40b worker candidate changed:
+src/xmuse_core/platform/execution/gate.py
+tests/xmuse/test_platform_orchestrator.py
+
+Main Codex audited and imported the minimal candidate diff.
+Focused validation: 23 passed.
+```
+
+Remaining gaps:
+
+- This makes the fallback explicit; it does not remove the fallback.
+- Server-side CI for this branch is not yet claimed until a PR branch is
+  pushed and checks run.

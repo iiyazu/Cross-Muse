@@ -12,6 +12,7 @@ import math
 import os
 import signal
 import sqlite3
+import subprocess
 import time
 import urllib.error
 import urllib.parse
@@ -1511,8 +1512,48 @@ def _runtime_paths_from_args(args: argparse.Namespace) -> tuple[Path, Path]:
 
 def _peer_chat_runtime_worktree(xmuse_root: Path) -> Path:
     worktree = xmuse_root / "peer_chat_worktree"
+    if _is_git_worktree(worktree):
+        return worktree
+    if worktree.exists():
+        try:
+            next(worktree.iterdir())
+        except StopIteration:
+            worktree.rmdir()
+        else:
+            logger.warning(
+                "Peer chat worktree exists but is not a git worktree: %s",
+                worktree,
+            )
+            return worktree
+    worktree.parent.mkdir(parents=True, exist_ok=True)
+    result = subprocess.run(
+        ["git", "worktree", "add", "--detach", str(worktree), "HEAD"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if result.returncode == 0:
+        return worktree
+    logger.warning(
+        "Failed to create git peer chat worktree at %s: %s",
+        worktree,
+        result.stderr.strip() or result.stdout.strip(),
+    )
     worktree.mkdir(parents=True, exist_ok=True)
     return worktree
+
+
+def _is_git_worktree(path: Path) -> bool:
+    if not path.exists():
+        return False
+    result = subprocess.run(
+        ["git", "-C", str(path), "rev-parse", "--is-inside-work-tree"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    return result.returncode == 0 and result.stdout.strip() == "true"
 
 
 def main() -> None:
