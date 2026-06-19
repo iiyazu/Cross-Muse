@@ -558,6 +558,35 @@ class ChatStore:
                     conn.commit()
                     return json.loads(row["result_json"])
 
+                semantic_duplicate = self._existing_collaboration_lane_graph_result(
+                    conn,
+                    conversation_id=conversation_id,
+                    proposal_type=proposal_type,
+                    content=content,
+                    references=references,
+                )
+                if semantic_duplicate is not None:
+                    conn.execute(
+                        """
+                        insert into chat_request_log (
+                            id, conversation_id, tool_name, caller_identity,
+                            client_request_id, result_json, created_at
+                        )
+                        values (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            self._new_id("req"),
+                            conversation_id,
+                            tool_name,
+                            caller_identity,
+                            client_request_id,
+                            json.dumps(semantic_duplicate),
+                            now,
+                        ),
+                    )
+                    conn.commit()
+                    return semantic_duplicate
+
                 conn.execute(
                     """
                     insert into proposals (
@@ -626,6 +655,113 @@ class ChatStore:
                 conn.rollback()
                 raise
         return result
+
+    def _existing_collaboration_lane_graph_result(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        conversation_id: str,
+        proposal_type: str,
+        content: str,
+        references: list[str],
+    ) -> dict[str, Any] | None:
+        if proposal_type != "lane_graph":
+            return None
+        collaboration_refs = self._collaboration_refs(references)
+        if not collaboration_refs:
+            return None
+        feature_ids = self._lane_graph_feature_ids(content)
+        if not feature_ids:
+            return None
+        rows = conn.execute(
+            """
+            select *
+            from proposals
+            where conversation_id = ?
+              and proposal_type = ?
+              and status in (?, ?)
+            order by rowid asc
+            """,
+            (
+                conversation_id,
+                proposal_type,
+                ProposalStatus.OPEN.value,
+                ProposalStatus.ACCEPTED.value,
+            ),
+        ).fetchall()
+        for row in rows:
+            proposal = self._proposal_from_row(row)
+            if self._collaboration_refs(proposal.references) != collaboration_refs:
+                continue
+            existing_feature_ids = self._lane_graph_feature_ids(proposal.content)
+            if not (existing_feature_ids & feature_ids):
+                continue
+            message = self._proposal_message_for_id(
+                conn,
+                conversation_id=conversation_id,
+                proposal_id=proposal.id,
+            )
+            if message is None:
+                return None
+            return {
+                "proposal": proposal.model_dump(mode="json"),
+                "message": message.model_dump(mode="json"),
+                "semantic_deduplication": {
+                    "reason": "collaboration_lane_graph_feature_overlap",
+                    "collaboration_refs": sorted(collaboration_refs),
+                    "feature_ids": sorted(existing_feature_ids & feature_ids),
+                },
+            }
+        return None
+
+    def _proposal_message_for_id(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        conversation_id: str,
+        proposal_id: str,
+    ) -> ChatMessage | None:
+        rows = conn.execute(
+            """
+            select id, conversation_id, author, role, content, created_at,
+                   envelope_type, envelope_json, mentions_json, reply_to_message_id
+            from messages
+            where conversation_id = ? and envelope_type = 'proposal'
+            order by rowid asc
+            """,
+            (conversation_id,),
+        ).fetchall()
+        for row in rows:
+            message = self._message_from_row(row)
+            if message.envelope_json.get("proposal_id") == proposal_id:
+                return message
+        return None
+
+    def _collaboration_refs(self, references: list[str]) -> set[str]:
+        return {
+            reference.strip()
+            for reference in references
+            if isinstance(reference, str)
+            and reference.strip().startswith("collaboration:")
+        }
+
+    def _lane_graph_feature_ids(self, content: str) -> set[str]:
+        try:
+            payload = json.loads(content)
+        except json.JSONDecodeError:
+            return set()
+        if not isinstance(payload, dict):
+            return set()
+        lanes = payload.get("lanes")
+        if not isinstance(lanes, list):
+            return set()
+        return {
+            feature_id
+            for lane in lanes
+            if isinstance(lane, dict)
+            and isinstance(feature_id := lane.get("feature_id"), str)
+            and feature_id.strip()
+        }
 
     def get_proposal(self, proposal_id: str) -> Proposal:
         with self._connect() as conn:
