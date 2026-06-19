@@ -917,7 +917,9 @@ def health_once(
     live_pids: set[int] | None = None,
 ) -> dict[str, Any]:
     """Return the same operational health summary used by stale repair."""
-    process_inventory = discover_xmuse_runtime_processes()
+    process_inventory = discover_xmuse_runtime_processes(
+        xmuse_root=xmuse_root or lanes_path.parent,
+    )
     live_pid_set = _live_pids() if live_pids is None else live_pids
     summary = build_run_health_model(
         lanes_path,

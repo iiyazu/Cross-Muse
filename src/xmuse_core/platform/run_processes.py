@@ -186,6 +186,8 @@ def build_process_inventory(
 
 def discover_xmuse_runtime_processes(
     proc_root: Path = Path("/proc"),
+    *,
+    xmuse_root: Path | None = None,
 ) -> dict[str, Any]:
     """Discover compact runtime process inventory for xmuse control-plane roles."""
     service_pids: dict[str, set[int]] = {}
@@ -205,6 +207,9 @@ def discover_xmuse_runtime_processes(
             continue
         service_name = _classify_runtime_process(args)
         if service_name is None:
+            continue
+        environ = _read_proc_environ(entry / "environ")
+        if not _matches_xmuse_root(args, environ, xmuse_root):
             continue
         ppid_by_pid[pid] = _read_proc_ppid(entry / "status")
         service_pids.setdefault(service_name, set()).add(pid)
@@ -228,8 +233,10 @@ def list_live_pids(proc_root: Path = Path("/proc")) -> set[int]:
 
 def discover_xmuse_processes(
     proc_root: Path = Path("/proc"),
+    *,
+    xmuse_root: Path | None = None,
 ) -> tuple[list[int], list[int]]:
-    inventory = discover_xmuse_runtime_processes(proc_root)
+    inventory = discover_xmuse_runtime_processes(proc_root, xmuse_root=xmuse_root)
     return list(inventory["runner_pids"]), list(inventory["mcp_pids"])
 
 
@@ -295,6 +302,23 @@ def _read_proc_cmdline(path: Path) -> list[str]:
     ]
 
 
+def _read_proc_environ(path: Path) -> dict[str, str]:
+    try:
+        content = path.read_bytes()
+    except OSError:
+        return {}
+    environ: dict[str, str] = {}
+    for part in content.split(b"\0"):
+        if not part or b"=" not in part:
+            continue
+        key, value = part.split(b"=", 1)
+        environ[key.decode("utf-8", errors="replace")] = value.decode(
+            "utf-8",
+            errors="replace",
+        )
+    return environ
+
+
 def _read_proc_ppid(path: Path) -> int:
     try:
         for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
@@ -320,7 +344,7 @@ def _classify_runtime_process(args: list[str]) -> str | None:
         return "mcp"
     if _matches_script_args(args, "dashboard_api.py"):
         return "dashboard_api"
-    if _matches_script_args(args, "chat_api.py"):
+    if _is_chat_api_cmd(args):
         return "chat_api"
     if _matches_script_args(args, "master_loop.py"):
         return "master_loop_runner"
@@ -357,6 +381,40 @@ def _classify_runtime_process(args: list[str]) -> str | None:
     return None
 
 
+def _matches_xmuse_root(
+    args: list[str],
+    environ: dict[str, str],
+    xmuse_root: Path | None,
+) -> bool:
+    if xmuse_root is None:
+        return True
+    target = _normalized_path_text(xmuse_root)
+    markers = _xmuse_root_markers(args, environ)
+    if not markers:
+        return True
+    return any(_normalized_path_text(marker) == target for marker in markers)
+
+
+def _xmuse_root_markers(args: list[str], environ: dict[str, str]) -> list[str | Path]:
+    markers: list[str | Path] = []
+    env_root = environ.get("XMUSE_ROOT")
+    if env_root:
+        markers.append(env_root)
+    for index, arg in enumerate(args):
+        if arg == "--xmuse-root" and index + 1 < len(args):
+            markers.append(args[index + 1])
+        elif arg.startswith("--xmuse-root="):
+            markers.append(arg.split("=", 1)[1])
+    return markers
+
+
+def _normalized_path_text(value: str | Path) -> str:
+    try:
+        return str(Path(value).expanduser().resolve(strict=False))
+    except (OSError, RuntimeError):
+        return str(value)
+
+
 def _is_platform_runner_cmd(args: list[str]) -> bool:
     if "--health-once" in args:
         return False
@@ -370,6 +428,26 @@ def _is_mcp_server_cmd(args: list[str]) -> bool:
         any(_matches_script_arg(arg, "mcp_server.py") for arg in args)
         or any(Path(arg).name == "xmuse-mcp-server" for arg in args)
         or ("-m" in args and "xmuse.mcp_server" in args)
+        or _is_python_inline_app_cmd(args, "xmuse.mcp_server")
+    )
+
+
+def _is_chat_api_cmd(args: list[str]) -> bool:
+    return _matches_script_args(args, "chat_api.py") or (
+        _is_python_inline_app_cmd(args, "xmuse.chat_api")
+    )
+
+
+def _is_python_inline_app_cmd(args: list[str], module_name: str) -> bool:
+    if not args:
+        return False
+    executable = Path(args[0]).name
+    text = " ".join(args)
+    return (
+        executable.startswith("python")
+        and "-c" in args
+        and module_name in text
+        and "create_app" in text
     )
 
 

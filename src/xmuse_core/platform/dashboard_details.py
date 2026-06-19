@@ -145,7 +145,7 @@ def _build_dashboard_run_health(
         conversation_id=conversation_id,
         workspace_id=workspace_id,
     )
-    process_inventory = discover_xmuse_runtime_processes()
+    process_inventory = discover_xmuse_runtime_processes(xmuse_root=root)
     runner_pids = process_inventory["runner_pids"]
     mcp_pids = process_inventory["mcp_pids"]
     lanes_path = _json_path(root, "feature_lanes.json")
@@ -155,6 +155,7 @@ def _build_dashboard_run_health(
             runner_pids=runner_pids,
             mcp_pids=mcp_pids,
             process_inventory=process_inventory,
+            xmuse_root=root,
         )
 
     lanes = _scoped_run_health_lanes(
@@ -414,7 +415,7 @@ def _build_tui_worklist_envelope(
         root,
         conversation_id=conversation_id,
         workspace_id=workspace_id,
-        process_inventory=discover_xmuse_runtime_processes(),
+        process_inventory=discover_xmuse_runtime_processes(xmuse_root=root),
     ).model_dump(mode="json")
 
 
@@ -880,7 +881,7 @@ def _conversation_run_health_detail(base_dir: Path, conversation_id: str) -> dic
             status_code=status.HTTP_404_NOT_FOUND,
             detail="run health card not found",
         )
-    process_inventory = discover_xmuse_runtime_processes()
+    process_inventory = discover_xmuse_runtime_processes(xmuse_root=base_dir)
     runner_pids = process_inventory["runner_pids"]
     mcp_pids = process_inventory["mcp_pids"]
     lanes = _conversation_scoped_run_health_lanes(

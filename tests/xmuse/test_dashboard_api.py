@@ -142,7 +142,7 @@ def test_tui_worklist_envelope_returns_compact_contract_and_runtime_refs(
     monkeypatch.setattr(
         dashboard_api,
         "discover_xmuse_runtime_processes",
-        lambda: _runtime_inventory(),
+        lambda **_kwargs: _runtime_inventory(),
     )
 
     response = _client(tmp_path).get("/api/tui/worklist-envelope?conversation_id=conv-a")
@@ -298,7 +298,7 @@ def test_tui_worklist_envelope_filters_by_workspace_server_side(
     monkeypatch.setattr(
         dashboard_api,
         "discover_xmuse_runtime_processes",
-        lambda: _runtime_inventory(),
+        lambda **_kwargs: _runtime_inventory(),
     )
 
     response = _client(tmp_path).get("/api/tui/worklist-envelope?workspace_id=workspace-a")
@@ -363,7 +363,7 @@ def test_tui_worklist_envelope_filters_conversation_without_workspace_collision(
     monkeypatch.setattr(
         dashboard_api,
         "discover_xmuse_runtime_processes",
-        lambda: _runtime_inventory(),
+        lambda **_kwargs: _runtime_inventory(),
     )
 
     response = _client(tmp_path).get("/api/tui/worklist-envelope?conversation_id=conv-a")
@@ -419,7 +419,7 @@ def test_tui_worklist_envelope_degrades_when_projection_and_graph_lineage_disagr
     monkeypatch.setattr(
         dashboard_api,
         "discover_xmuse_runtime_processes",
-        lambda: _runtime_inventory(),
+        lambda **_kwargs: _runtime_inventory(),
     )
 
     response = _client(tmp_path).get("/api/tui/worklist-envelope?conversation_id=conv-envelope")
