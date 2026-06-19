@@ -3333,3 +3333,167 @@ Cleanup:
 Claims not made: GitHub review truth, `ready_to_merge`, `pr_merged`, live
 MemoryOS, full L8-L10 closure, full L1-L11 closure, production-ready groupchat,
 or overnight readiness.
+
+### Loop 25z44: review peer display-name runtime exposed by real groupchat
+
+Branch:
+
+```text
+codex/review-runtime-from-chat-peer
+base=origin/main@c02e9dce50b808bbd4aed1ab6d1960e32ca6472b
+```
+
+Runtime root:
+
+```text
+/tmp/xmuse-post-pr80-fullchain-121024/.goal-runs/2026-06-19/loop-25z44-review-runtime-authority-123333
+```
+
+Commands:
+
+```bash
+XMUSE_ROOT="$RUN_ROOT" XMUSE_EXECUTION_WORKTREE="$EXEC_WORKTREE" \
+  uv run python -c 'import os; from pathlib import Path; import uvicorn; from xmuse.chat_api import create_app; uvicorn.run(create_app(base_dir=Path(os.environ["XMUSE_ROOT"]), execution_worktree=Path(os.environ["XMUSE_EXECUTION_WORKTREE"])), host="127.0.0.1", port=8201, log_level="info")'
+
+XMUSE_ROOT="$RUN_ROOT" uv run xmuse-mcp-server
+
+XMUSE_ROOT="$RUN_ROOT" XMUSE_PEER_GOD_BACKEND=native \
+  XMUSE_RAY_GOD_MCP=0 XMUSE_CHAT_API_URL=http://127.0.0.1:8201 \
+  uv run xmuse-platform-runner --xmuse-root "$RUN_ROOT" --mcp-port 8100 \
+  --peer-chat --persistent-review-god --persistent-review-timeout-s 180 \
+  --max-hours 0.75 --no-auto-merge
+```
+
+Driver action:
+
+```text
+Created a real Chat API conversation with review provider override:
+provider_id=opencode, profile_id=review, cli_kind=opencode,
+model=opencode-go/deepseek-v4-flash, display_name=review-god.
+
+Posted natural human message:
+@architect Coordinate a real post-fix fullchain review-runtime slice...
+```
+
+Durable observations:
+
+```text
+conversation_id=conv_4af99a4e53ff49baa3daedc1a380d629
+proposal_id=prop_ee0a49da461b438a845fa15ca0edbd42
+resolution_id=res_b4848df06b7142ef9128f6acdd36f914
+collaboration_run=collab_9fc570479ba9432aa11df3f32b6ba886
+
+human -> architect mention: read, mcp_writeback
+architect -> execute handoff: read, mcp_writeback
+execute -> architect collaboration callback: read, mcp_writeback
+architect proposal turn: chat_emit_proposal recorded
+dispatch bridge -> execute acknowledgement: read, mcp_writeback
+```
+
+Important runtime finding:
+
+```text
+The groupchat-produced lane_graph used review_runtime="review-god".
+The active review participant was display_name=review-god, cli_kind=opencode.
+Projection preserved review_runtime="review-god" into feature_lanes.json.
+```
+
+Pre-fix lane projection:
+
+```text
+feature_id=docs_review_runtime_loop_evidence
+status=dispatched before operator timeout cleanup
+review_runtime=review-god
+god_sessions.review.runtime=opencode
+god_sessions.review.status=starting
+```
+
+The driver timed out before lane execution completed. The subsequent
+`exec_failed` status was caused by operator cleanup after timeout and is not
+counted as a natural business failure.
+
+Artifact paths:
+
+```text
+loop_driver_artifacts/create_conversation_response.json
+loop_driver_artifacts/human_message_response.json
+loop_driver_artifacts/approval_snapshot.json
+loop_driver_artifacts/timeout_runtime_snapshot.json
+feature_lanes.json
+god_sessions.json
+chat.db
+```
+
+### Loop 25z45: focused HTTP projection smoke for review-god alias
+
+Purpose:
+
+```text
+Verify the approval/projection fix for the Loop 25z44 failure boundary without
+claiming a full worker/review/final-hold chain.
+```
+
+Runtime root:
+
+```text
+/tmp/xmuse-post-pr80-fullchain-121024/.goal-runs/2026-06-19/loop-25z45-review-runtime-projection-smoke-124901
+```
+
+Command:
+
+```bash
+XMUSE_ROOT="$RUN_ROOT" \
+  uv run python -c 'import os; from pathlib import Path; import uvicorn; from xmuse.chat_api import create_app; uvicorn.run(create_app(base_dir=Path(os.environ["XMUSE_ROOT"])), host="127.0.0.1", port=8213, log_level="info")'
+```
+
+HTTP chain:
+
+```text
+POST /api/chat/conversations -> 201
+review provider override: opencode/review, display_name=review-god
+
+POST /api/chat/conversations/{conversation_id}/proposals -> 201
+proposal lane review_runtime=review-god
+
+POST /api/chat/proposals/{proposal_id}/approve -> 200
+approval response lane review_runtime=opencode
+feature_lanes.json lane review_runtime=opencode
+```
+
+Artifact paths:
+
+```text
+loop_driver_artifacts/create_conversation_response.json
+loop_driver_artifacts/proposal_response.json
+loop_driver_artifacts/approval_response.json
+loop_driver_artifacts/feature_lanes.json
+loop_driver_artifacts/res_49249c77412a49e89ed50baeb3b40e10-graph-v1.json
+loop_driver_artifacts/god_sessions.json
+```
+
+Validation:
+
+```text
+uv run pytest tests/xmuse/test_groupchat_collaboration_runtime.py::test_lane_graph_approval_uses_opencode_review_peer_for_final_hold_runtime \
+  tests/xmuse/test_groupchat_collaboration_runtime.py::test_lane_graph_approval_uses_opencode_review_peer_display_name_runtime \
+  tests/xmuse/test_groupchat_collaboration_runtime.py::test_lane_graph_approval_preserves_review_runtime_in_projection \
+  tests/xmuse/test_review_plane_orchestrator_integration.py::test_review_runtime_opencode_routes_to_existing_review_peer \
+  tests/xmuse/test_review_plane_orchestrator_integration.py::test_review_runtime_opencode_without_feature_scope_uses_request_scope \
+  tests/xmuse/test_package_boundaries.py -q
+-> 21 passed, 1 warning
+
+uv run ruff check . -> All checks passed
+git diff --check -> pass
+test ! -e xmuse/__init__.py -> pass
+```
+
+Cleanup:
+
+```text
+8201/8100/8213/8265 listeners: none
+```
+
+Claims not made: full chain success, independent OpenCode review pass,
+GitHub review truth, merge truth, `ready_to_merge`, `pr_merged`, live MemoryOS,
+full L8-L10 closure, full L1-L11 closure, production-ready groupchat, or
+overnight readiness.
