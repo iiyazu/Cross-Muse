@@ -6990,3 +6990,113 @@ Caveats:
 - The dependency set remains scoped to a single handoff message target set; a
   general workflow dependency planner is not claimed.
 - The final action was intentionally held; no live lane merge is claimed.
+
+## 2026-06-20 Loop 26r: Remove Empty Codex Default Review Fallback Candidate
+
+Purpose: quarantine the remaining empty-conversation legacy path where default
+review routing could create a Codex review participant when no active OpenCode
+reviewer existed.
+
+Workspace and authority:
+
+```text
+repo_worktree=/tmp/xmuse-postmerge-layered-prompt-main
+branch=codex/default-review-no-codex-fallback
+base_head_sha=3d82fda4342f57c224f9f5c60b4d5193cdcb2a01
+authority=chat.db participants table plus review_god lane state
+```
+
+Focused RED:
+
+```text
+uv run pytest tests/xmuse/test_review_plane_orchestrator_integration.py::test_default_review_peer_routing_empty_conversation_without_opencode_fails_closed -q
+-> failed before fix because persistent.ensured contained one Codex review session
+```
+
+Candidate behavior:
+
+```text
+missing_opencode_review_peer -> review_peer_runtime_unavailable
+lane.status=gate_failed
+failure_reason=required_review_peer_unavailable
+peer_delivery_mode=required_peer_failed
+created_codex_review_participant=false
+one_shot_review_invoked=false
+```
+
+Focused validation:
+
+```text
+uv run pytest tests/xmuse/test_review_plane_orchestrator_integration.py -q -k 'default_review_peer'
+-> 12 passed, 39 deselected
+
+uv run pytest tests/xmuse/test_review_plane_orchestrator_integration.py tests/xmuse/test_persistent_review_session_contracts.py tests/xmuse/test_persistent_cli_peer.py tests/xmuse/test_package_boundaries.py -q
+-> 91 passed
+
+uv run ruff check .
+-> All checks passed.
+
+git diff --check
+test ! -e xmuse/__init__.py
+-> passed
+```
+
+Fullchain non-regression command:
+
+```bash
+uv run python scripts/run_fullchain_docs_sentinel.py \
+  --run-root /tmp/xmuse-postmerge-layered-prompt-main/.goal-runs/2026-06-20/loop-26r-no-codex-default-review-fallback-fullchain-2112z \
+  --execution-worktree /tmp/loop-26r-no-codex-default-review-fallback-fullchain-2112z-exec \
+  --feature-id loop_26r_no_codex_default_review_fallback_2112z \
+  --proposal-timeout-s 900 \
+  --lane-timeout-s 1200 \
+  --max-hours 0.8
+```
+
+Durable chain:
+
+```text
+conversation_id=conv_064004c3996c41ac97c11eeb213493b7
+collaboration_run=collab_9f987fe6a9b84a80b15425edb9cbd04d
+proposal_id=prop_024a3c6de13344fca5ff19dcd3018ad5
+resolution_id=res_71195ad2043c44559911926924af0408
+lane_id=loop_26r_no_codex_default_review_fallback_2112z
+review_task_id=rtask_2bc8208bfde54f5c88d885319781cd2c
+review_verdict_id=verdict-merge-rtask_2bc8208bfde54f5c88d885319781cd2c
+final_action_hold_id=final-8a9e25d0ab8c
+```
+
+Final lane state:
+
+```text
+status=awaiting_final_action
+gate_passed=true
+review_decision=merge
+review_delivery_mode=persistent
+persistent_review_degraded=false
+review_peer_defaulted=true
+review_peer_cli_kind=opencode
+review_peer_model=opencode-go/deepseek-v4-flash
+proposal_has_review_runtime=false
+single_related_lane_graph_proposal=true
+```
+
+Cleanup:
+
+```text
+chat_port_listening=false
+mcp_port_listening=false
+loop-26r service process matches after shutdown: none
+```
+
+Classification: local candidate proof that default review routing no longer
+creates a Codex reviewer when no active OpenCode reviewer exists, plus bounded
+fullchain non-regression for the registered OpenCode review route.
+
+Caveats:
+
+- This is not PR CI, server truth, production readiness, MemoryOS proof,
+  GitHub review truth, natural peer-GOD groupchat completion, or full closure.
+- Configured-peer degradation fallback remains a separate review-authority
+  question.
+- The final action was intentionally held; no live lane merge is claimed.
