@@ -206,6 +206,20 @@ class GodSessionRegistry:
                     return updated
             raise KeyError(god_session_id)
 
+    def promote_running(self, god_session_id: str) -> GodSessionRecord:
+        with self._locked_file():
+            sessions = self.list()
+            for index, record in enumerate(sessions):
+                if record.god_session_id != god_session_id:
+                    continue
+                if record.status != "starting":
+                    return record
+                updated = replace(record, status="running")
+                sessions[index] = updated
+                self._write(sessions)
+                return updated
+            raise KeyError(god_session_id)
+
     def _read(self) -> dict[str, list[dict[str, object]]]:
         if not self.path.exists():
             return {"sessions": []}

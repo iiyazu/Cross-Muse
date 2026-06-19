@@ -310,8 +310,8 @@ def build_conversation_inspector_payload(
 
 
 def _read_session_rows(xmuse_root: Path) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    seen: set[str] = set()
+    rows_by_key: dict[str, dict[str, Any]] = {}
+    ordered_keys: list[str] = []
     for filename in ("active_sessions.json", "god_sessions.json"):
         payload = _read_json(xmuse_root / filename, {})
         raw = payload.get("sessions") if isinstance(payload, dict) else []
@@ -322,8 +322,24 @@ def _read_session_rows(xmuse_root: Path) -> list[dict[str, Any]]:
                 continue
             session_id = str(item.get("god_session_id") or "").strip()
             dedupe_key = session_id or json.dumps(item, sort_keys=True, default=str)
-            if dedupe_key in seen:
+            if dedupe_key not in rows_by_key:
+                ordered_keys.append(dedupe_key)
+                rows_by_key[dedupe_key] = dict(item)
                 continue
-            seen.add(dedupe_key)
-            rows.append(item)
-    return rows
+            rows_by_key[dedupe_key] = _merge_session_rows(
+                rows_by_key[dedupe_key],
+                item,
+            )
+    return [rows_by_key[key] for key in ordered_keys]
+
+
+def _merge_session_rows(
+    current: dict[str, Any],
+    incoming: dict[str, Any],
+) -> dict[str, Any]:
+    merged = dict(current)
+    for key, value in incoming.items():
+        if value is None:
+            continue
+        merged[key] = value
+    return merged
