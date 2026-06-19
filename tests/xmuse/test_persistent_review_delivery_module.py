@@ -379,3 +379,91 @@ async def test_apply_persistent_review_message_is_idempotent_after_final_action_
     assert lane["review_evidence_refs"] == ["review://configured-peer"]
     assert lane["review_history"][-1]["fallback"] == "persistent"
     assert lane["review_history"][-1]["summary"] == "review accepted"
+
+
+@pytest.mark.asyncio
+async def test_apply_persistent_review_message_ignores_late_rework_after_acceptance(
+    tmp_path,
+) -> None:
+    lanes_path = tmp_path / "feature_lanes.json"
+    lanes_path.write_text(
+        json.dumps(
+            {
+                "lanes": [
+                    {
+                        "feature_id": "lane-reviewed",
+                        "status": "reviewed",
+                        "review_decision": "merge",
+                        "review_verdict_id": "verdict-lane-reviewed",
+                        "review_history": [
+                            {
+                                "decision": "merge",
+                                "summary": "review accepted",
+                                "fallback": "mcp",
+                                "fallback_reason": "update_lane_status",
+                                "recorded_at": 1.0,
+                            }
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    sm = LaneStateMachine(lanes_path)
+
+    def ingest_merge_verdict(
+        lane_id: str,
+        summary: str,
+        refs: list[str] | None = None,
+    ) -> None:
+        raise AssertionError(f"unexpected duplicate merge verdict for {lane_id}")
+
+    def ingest_rework_verdict(
+        lane_id: str,
+        summary: str,
+        refs: list[str] | None = None,
+    ) -> None:
+        raise AssertionError(f"late rework must not replace accepted review: {lane_id}")
+
+    async def on_reviewed(lane_id: str) -> None:
+        raise AssertionError(f"unexpected duplicate reviewed callback for {lane_id}")
+
+    async def on_rejected(lane_id: str) -> None:
+        raise AssertionError(f"late rework must not reject accepted lane {lane_id}")
+
+    delivered = await persistent_review_delivery.apply_persistent_review_message(
+        lane_id="lane-reviewed",
+        sm=sm,
+        message=StdoutMessage(
+            type="result",
+            artifacts={
+                "review_verdict": {
+                    "decision": "rework",
+                    "summary": "late structured rework after accepted MCP update",
+                }
+            },
+        ),
+        stable_verdict_id=lambda lane_id: f"verdict-{lane_id}",
+        ingest_merge_verdict=ingest_merge_verdict,
+        ingest_rework_verdict=ingest_rework_verdict,
+        on_reviewed=on_reviewed,
+        on_rejected=on_rejected,
+        review_request_id="review-request-1",
+        persistent_review_identity="configured:review-peer-1",
+        evidence_refs=["review://configured-peer"],
+    )
+
+    lane = sm.get_lane("lane-reviewed")
+    assert delivered is True
+    assert lane["status"] == "reviewed"
+    assert lane["review_decision"] == "merge"
+    assert lane["review_verdict_id"] == "verdict-lane-reviewed"
+    assert lane["review_delivery_mode"] == "persistent"
+    assert lane["persistent_review_degraded"] is False
+    assert lane["review_evidence_refs"] == ["review://configured-peer"]
+    assert lane["review_conflict_ignored"] is True
+    assert lane["review_conflict_ignored_reason"] == "review_already_accepted"
+    assert lane["ignored_review_decision"] == "rework"
+    assert lane["ignored_review_summary"] == "late structured rework after accepted MCP update"
+    assert lane["ignored_review_conflicts"][-1]["decision"] == "rework"
