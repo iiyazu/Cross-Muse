@@ -3928,3 +3928,46 @@ Remaining caveats:
 - It does not claim GitHub review truth, live MemoryOS, production readiness,
   natural peer-GOD groupchat completion, full closure, or live lane merge
   truth.
+
+## 2026-06-20 Loop 26q Finding: PR #117 Repair Holds On Main
+
+Status: bounded post-merge main runtime confirmation.
+
+Primary artifact:
+
+```text
+main_head=f3f7b6dafa94ceae179af26c448f1aae183fd24b
+pr=117
+pr_ci_run=27848017088 success
+main_ci_run=27848097074 success
+run_root=/tmp/xmuse-postmerge-layered-prompt-main/.goal-runs/2026-06-20/loop-26q-postmerge-dependency-set-fullchain-2058z
+driver_output=driver_output.json
+chat_authority=chat.db
+lane_projection=feature_lanes.json#lane=loop_26q_postmerge_dependency_set_fullchain_2058z
+review_authority=review_plane.json#task=rtask_bb92ef3081b94c85b042ac9640bf1cc1
+gate_report=logs/gates/loop_26q_postmerge_dependency_set_fullchain_2058z/report.json
+```
+
+Confirmed:
+
+- PR #117 merged the handoff-scoped peer reply callback repair to main.
+- The post-merge fullchain ran from `f3f7b6dafa94ceae179af26c448f1aae183fd24b`.
+- The groupchat produced exactly one related lane graph proposal.
+- The proposal omitted `review_runtime` and used the registered OpenCode
+  review participant.
+- The isolated execution artifact matched the requested docs-only content.
+- The lane reached `awaiting_final_action` with `gate_passed=true`,
+  `review_decision=merge`, `review_delivery_mode=persistent`,
+  `persistent_review_degraded=false`, and
+  `review_peer_cli_kind=opencode`.
+- The final action remained held, and shutdown cleanup left no Chat API or MCP
+  listener.
+
+Remaining caveats:
+
+- This confirms the bounded docs-only sentinel shape on main, not production
+  readiness or repeated soak.
+- The repair is a direct handoff-message dependency set, not a general
+  workflow dependency planner.
+- It does not claim GitHub review truth, live MemoryOS, natural peer-GOD
+  groupchat completion, full closure, or live lane merge truth.
