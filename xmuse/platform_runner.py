@@ -80,6 +80,7 @@ async def run(
     default_review_peer_routing_enabled: bool = False,
     persistent_execute_god_enabled: bool = False,
     peer_chat_scheduler=None,
+    peer_chat_post_writeback_grace_s: float = 8.0,
     memoryos_url: str | None = None,
     model_policy: CodexModelPolicy | None = None,
     execution_provider_profile_ref: str | None = None,
@@ -235,6 +236,7 @@ async def run(
                 scheduler_id="platform-runner",
                 claim_ttl_s=240,
                 response_wait_s=180.0,
+                post_writeback_grace_s=peer_chat_post_writeback_grace_s,
                 degraded_fallback_enabled=False,
             )
             logger.info(
@@ -1370,6 +1372,15 @@ def main_arg_parser() -> argparse.ArgumentParser:
         help="enable MCP peer-chat scheduler for long-lived GOD sessions",
     )
     parser.add_argument(
+        "--peer-chat-post-writeback-grace-s",
+        type=float,
+        default=8.0,
+        help=(
+            "seconds to keep a peer-chat turn open after a durable MCP writeback "
+            "so the same provider turn can finish a short burst of tool calls"
+        ),
+    )
+    parser.add_argument(
         "--persistent-review-god",
         action="store_true",
         help=(
@@ -1471,6 +1482,13 @@ def validate_args(args: argparse.Namespace) -> None:
     if args.default_review_peer_routing and not args.persistent_review_god:
         raise SystemExit(
             "--default-review-peer-routing requires --persistent-review-god"
+        )
+    if (
+        not math.isfinite(args.peer_chat_post_writeback_grace_s)
+        or args.peer_chat_post_writeback_grace_s < 0
+    ):
+        raise SystemExit(
+            "--peer-chat-post-writeback-grace-s must be a non-negative finite number"
         )
     if args.persistent_review_timeout_s is not None:
         if not args.persistent_review_god:
@@ -1607,6 +1625,7 @@ def main() -> None:
         persistent_review_timeout_s=args.persistent_review_timeout_s,
         default_review_peer_routing_enabled=args.default_review_peer_routing,
         persistent_execute_god_enabled=args.persistent_execute_god,
+        peer_chat_post_writeback_grace_s=args.peer_chat_post_writeback_grace_s,
         memoryos_url=args.memoryos_url,
         model_policy=model_policy,
         execution_provider_profile_ref=args.execution_provider_profile_ref,
