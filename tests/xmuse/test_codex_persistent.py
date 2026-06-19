@@ -77,6 +77,34 @@ def test_codex_persistent_formats_execute_prompt_with_child_result_contract(
     assert "exit non-zero" in prompt
 
 
+def test_codex_peer_chat_uses_layered_xmuse_prompt_when_present(tmp_path: Path) -> None:
+    config = codex_persistent.RunnerConfig(
+        model="gpt-5.5",
+        mcp_port=8100,
+        worktree=tmp_path,
+        role="architect",
+        timeout_s=900,
+    )
+    context = json.dumps(
+        {
+            "xmuse_prompt": {
+                "version": "xmuse-peer-chat-prompt-v2",
+                "text": "## xmuse_governance_l0\n\nDurable chat state is reply truth.\n",
+            }
+        }
+    )
+
+    prompt = codex_persistent._format_turn_prompt(
+        config,
+        msg_type="peer_chat_nudge",
+        prompt="legacy fallback",
+        context=context,
+    )
+
+    assert prompt == "## xmuse_governance_l0\n\nDurable chat state is reply truth.\n"
+    assert "legacy fallback" not in prompt
+
+
 def test_codex_persistent_run_turn_emits_protocol_result(
     tmp_path: Path,
     monkeypatch,

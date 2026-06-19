@@ -212,6 +212,36 @@ def test_peer_chat_prompt_does_not_forward_codex_mcp_tool_instruction(tmp_path) 
     assert "Do not call tools." in prompt
 
 
+def test_opencode_peer_chat_uses_layered_xmuse_prompt_when_present(tmp_path) -> None:
+    config = RunnerConfig(
+        model="opencode-go/deepseek-v4-flash",
+        variant="max",
+        mcp_port=8100,
+        worktree=tmp_path,
+        role="review",
+        timeout_s=30,
+        opencode_binary="opencode",
+    )
+    context = {
+        "xmuse_prompt": {
+            "version": "xmuse-peer-chat-prompt-v2",
+            "text": "## member_identity\n\nRole: review\n",
+        },
+        "inbox_item": {"payload": {"content": "@review fallback"}},
+    }
+
+    prompt = _format_turn_prompt(
+        config,
+        msg_type="peer_chat_nudge",
+        prompt="legacy fallback",
+        context=json.dumps(context),
+    )
+
+    assert prompt == "## member_identity\n\nRole: review\n"
+    assert "legacy fallback" not in prompt
+    assert "@review fallback" not in prompt
+
+
 def test_peer_chat_prompt_requests_callback_for_collaboration_response(
     tmp_path,
 ) -> None:

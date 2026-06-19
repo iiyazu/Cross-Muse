@@ -47,6 +47,10 @@ def test_create_persists_stable_god_session_id(tmp_path):
                 "provider_session_kind": None,
                 "provider_binding_status": None,
                 "provider_binding_failure_reason": None,
+                "prompt_contract_version": None,
+                "prompt_layer_order": None,
+                "prompt_layer_hashes": None,
+                "prompt_artifact_fingerprint": None,
             }
         ]
     }
@@ -120,6 +124,39 @@ def test_update_provider_binding_persists_resume_metadata(tmp_path):
     assert updated.provider_binding_status == "active"
     reloaded = GodSessionRegistry(path).get(created.god_session_id)
     assert reloaded.provider_session_id == "thread-1"
+
+
+def test_update_prompt_contract_persists_layer_metadata(tmp_path):
+    path = tmp_path / "god_sessions.json"
+    registry = GodSessionRegistry(path)
+    created = registry.create(
+        role="architect",
+        agent_name="architect-god",
+        runtime="codex",
+        session_address="@conv:architect",
+        session_inbox_id="inbox-conv-architect",
+    )
+
+    updated = registry.update_prompt_contract(
+        created.god_session_id,
+        prompt_contract_version="xmuse-peer-chat-prompt-v2",
+        prompt_layer_order=["xmuse_governance_l0", "member_identity"],
+        prompt_layer_hashes={
+            "xmuse_governance_l0": "sha256:governance",
+            "member_identity": "sha256:identity",
+        },
+        prompt_artifact_fingerprint="sha256:full",
+    )
+
+    assert updated.prompt_contract_version == "xmuse-peer-chat-prompt-v2"
+    assert updated.prompt_layer_order == ["xmuse_governance_l0", "member_identity"]
+    assert updated.prompt_layer_hashes == {
+        "xmuse_governance_l0": "sha256:governance",
+        "member_identity": "sha256:identity",
+    }
+    assert updated.prompt_artifact_fingerprint == "sha256:full"
+    reloaded = GodSessionRegistry(path).get(created.god_session_id)
+    assert reloaded.prompt_artifact_fingerprint == "sha256:full"
 
 
 def test_promote_running_updates_starting_status_after_writeback(tmp_path):

@@ -305,6 +305,10 @@ def _format_turn_prompt(
     prompt: str,
     context: str,
 ) -> str:
+    if msg_type == "peer_chat_nudge":
+        layered_prompt = _xmuse_layered_prompt(context)
+        if layered_prompt:
+            return layered_prompt
     sections = [
         "You are an xmuse persistent GOD session turn worker.",
         f"Role: {config.role}",
@@ -382,6 +386,20 @@ def _format_turn_prompt(
             ]
         )
     return "\n".join(sections).strip() + "\n"
+
+
+def _xmuse_layered_prompt(context: str) -> str:
+    try:
+        parsed = json.loads(context)
+    except json.JSONDecodeError:
+        return ""
+    if not isinstance(parsed, dict):
+        return ""
+    prompt_artifact = parsed.get("xmuse_prompt")
+    if not isinstance(prompt_artifact, dict):
+        return ""
+    text = prompt_artifact.get("text")
+    return text.strip() + "\n" if isinstance(text, str) and text.strip() else ""
 
 
 def _attach_execute_result(

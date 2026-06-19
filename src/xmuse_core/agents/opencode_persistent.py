@@ -319,6 +319,10 @@ def _format_turn_prompt(
     context: str,
 ) -> str:
     if msg_type == "peer_chat_nudge":
+        layered_prompt = _xmuse_layered_prompt(context)
+        if layered_prompt:
+            return layered_prompt
+    if msg_type == "peer_chat_nudge":
         return _format_peer_chat_prompt(config, context=context, fallback_prompt=prompt)
     sections = [
         "You are an xmuse OpenCode GOD peer turn worker.",
@@ -330,6 +334,20 @@ def _format_turn_prompt(
     if prompt.strip():
         sections.extend(["", "## Task", "", prompt.strip()])
     return "\n".join(sections).strip() + "\n"
+
+
+def _xmuse_layered_prompt(context: str) -> str:
+    try:
+        parsed = json.loads(context)
+    except json.JSONDecodeError:
+        return ""
+    if not isinstance(parsed, dict):
+        return ""
+    prompt_artifact = parsed.get("xmuse_prompt")
+    if not isinstance(prompt_artifact, dict):
+        return ""
+    text = prompt_artifact.get("text")
+    return text.strip() + "\n" if isinstance(text, str) and text.strip() else ""
 
 
 def _format_peer_chat_prompt(

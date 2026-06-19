@@ -21,6 +21,7 @@ class FakeGodLayer:
     def __init__(self) -> None:
         self.ensured = []
         self.sent = []
+        self.prompt_contracts = []
         self.receive_result = type(
             "Message",
             (),
@@ -37,6 +38,9 @@ class FakeGodLayer:
 
     async def send_message(self, god_session_id, message_type, prompt, context, request_id=None):
         self.sent.append((god_session_id, message_type, prompt, context, request_id))
+
+    def record_prompt_contract(self, god_session_id, **kwargs):
+        self.prompt_contracts.append((god_session_id, kwargs))
 
     async def receive_message(self, god_session_id):
         return self.receive_result
@@ -154,6 +158,26 @@ async def test_scheduler_claims_and_nudges_oldest_item(tmp_path: Path) -> None:
         },
     ]
     assert context["group_chat"]["recent_messages"][-1]["content"] == "I am here too."
+    assert context["context_capsule"]["version"] == "xmuse-local-context-capsule-v1"
+    assert context["xmuse_prompt"]["version"] == "xmuse-peer-chat-prompt-v2"
+    assert context["xmuse_prompt"]["layer_order"] == [
+        "xmuse_governance_l0",
+        "member_identity",
+        "roster_and_capabilities",
+        "local_context_capsule",
+        "tool_and_writeback_contract",
+    ]
+    assert context["xmuse_prompt"]["fingerprint"].startswith("sha256:")
+    assert layer.prompt_contracts[0][0] == "god-live"
+    assert layer.prompt_contracts[0][1]["prompt_contract_version"] == (
+        "xmuse-peer-chat-prompt-v2"
+    )
+    assert layer.prompt_contracts[0][1]["prompt_layer_order"] == (
+        context["xmuse_prompt"]["layer_order"]
+    )
+    assert layer.prompt_contracts[0][1]["prompt_artifact_fingerprint"] == (
+        context["xmuse_prompt"]["fingerprint"]
+    )
 
     claimed = inbox.get(item.id)
     assert claimed.status == "unread"

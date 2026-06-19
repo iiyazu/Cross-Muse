@@ -1406,6 +1406,16 @@ def test_inspector_session_health_reads_durable_god_sessions(tmp_path: Path) -> 
         provider_binding_status="active",
         provider_binding_failure_reason=None,
     )
+    registry.update_prompt_contract(
+        session.god_session_id,
+        prompt_contract_version="xmuse-peer-chat-prompt-v2",
+        prompt_layer_order=["xmuse_governance_l0", "member_identity"],
+        prompt_layer_hashes={
+            "xmuse_governance_l0": "sha256:governance",
+            "member_identity": "sha256:identity",
+        },
+        prompt_artifact_fingerprint="sha256:prompt-artifact",
+    )
 
     client = TestClient(create_app(tmp_path))
     response = client.get(f"/api/dashboard/peer-chat/conversations/{conv.id}/inspector")
@@ -1416,6 +1426,12 @@ def test_inspector_session_health_reads_durable_god_sessions(tmp_path: Path) -> 
     assert sh["by_status"]["starting"] == 1
     assert sh["items"][0]["god_session_id"] == session.god_session_id
     assert sh["items"][0]["provider_session_id"] == "thread-architect"
+    assert sh["items"][0]["prompt_contract_version"] == "xmuse-peer-chat-prompt-v2"
+    assert sh["items"][0]["prompt_layer_order"] == [
+        "xmuse_governance_l0",
+        "member_identity",
+    ]
+    assert sh["items"][0]["prompt_artifact_fingerprint"] == "sha256:prompt-artifact"
 
 
 def test_inspector_session_health_prefers_durable_status_for_same_session_id(
