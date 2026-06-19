@@ -7,7 +7,7 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
 
 ## Current Proof Boundary
 
-- Latest main inspected: `94218b269e4a005049e18378ebdc179c1dcada28`.
+- Latest main inspected: `6c962708071895e94458ff947eaed8753c789ce0`.
 - Strongest runtime evidence: Loop 25z49 reached one real local code-change
   lane from durable groupchat through execute feasibility, proposal, OpenCode
   proposal review, human approval, isolated execution, xmuse-core gate,
@@ -15,14 +15,17 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   The lane recorded `review_runtime=opencode`,
   `review_delivery_mode=persistent`, `persistent_review_degraded=false`,
   `gate_passed=true`, and `review_decision=merge`.
-- Latest focused runtime evidence: Loop 25z47 verified through the real Chat
-  API that an approved lane_graph using explicit `review_runtime=OpenCode`
-  projects to canonical `review_runtime=opencode` when the conversation has one
-  active OpenCode review participant.
-- Strongest server facts: PR #82 was merged by GitHub server state as
-  `94218b269e4a005049e18378ebdc179c1dcada28` after successful `xmuse CI` on PR
-  head `c31e974371e468ef3c09bc09f0b09a527dac2007`; post-merge main `xmuse CI`
-  also passed on `94218b269e4a005049e18378ebdc179c1dcada28`.
+- Latest focused runtime evidence: Loop 25z52 verified three-conversation
+  peer-chat fan-out after local scheduler-parallelism changes. Initial
+  architect inbox items were claimed concurrently, all nine inbox items reached
+  durable `mcp_writeback`, and no proposals/resolutions were emitted. The run
+  also preserved open gaps: provider result timeout after writeback and missing
+  architect final-summary gating after downstream peer replies.
+- Strongest server facts: PR #83 was merged by GitHub server state as
+  `6c962708071895e94458ff947eaed8753c789ce0` after successful `xmuse CI` on PR
+  head `c7deb891fb599a5ff5ef288af0d1a05c1ef3e53c`; post-merge main `xmuse CI`
+  also passed on `6c962708071895e94458ff947eaed8753c789ce0` in run
+  `27808670855`.
 - Proof type: local runtime proof plus inspected GitHub server facts for the
   small imported PR. This is not GitHub review truth or production readiness.
 
@@ -52,6 +55,10 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   `OpenCode` provider casing to the active `opencode` review runtime and
   recorded Loop 25z46/25z47/25z48 evidence. Merged to main as
   `94218b269e4a005049e18378ebdc179c1dcada28`.
+- PR #83 `codex/post-pr82-code-lane-rerun`: exposed participant session
+  mappings in conversation create/bootstrap responses and recorded Loop 25z49
+  code-change evidence. Merged to main as
+  `6c962708071895e94458ff947eaed8753c789ce0`.
 
 ## Manual Gaps
 
@@ -61,12 +68,18 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
 - Groupchat-produced `review_runtime` aliases such as `human_final_hold`,
   `final_hold`, and `review-god` are addressed by PR #81. Explicit provider
   casing such as `OpenCode` is addressed by PR #82.
-- Loop 25z49 produced and reviewed a real small code-change candidate, but the
-  imported `participant_sessions` branch has no server facts until pushed and
-  checked.
+- Loop 25z52 locally verified bounded parallel peer-chat inbox consumption
+  across three conversations, but those local changes have no server facts
+  until pushed and checked.
 - The successful Loop 25z49 chain covered one small API ergonomics lane; it is
   not repeated code-change soak or production-load proof.
-- The successful chain is not yet a repeated multi-turn soak run.
+- Loop 25z52 proved durable multi-peer writeback under bounded local
+  parallelism, but did not prove natural groupchat summary ordering or
+  production readiness.
+- Provider result acknowledgement can still time out after durable writeback.
+- Architect final-summary gating still relies on prompt behavior rather than a
+  durable "wait for these peer replies, then summarize" authority.
+- The successful chains are not yet repeated overnight or production-load soak.
 - Provider-native session continuity and memory persistence are not proven as
   durable product behavior.
 - Live MemoryOS proof is absent.
@@ -90,14 +103,15 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
 
 ## Next Small Buckets
 
-- P0 participant session mappings: open a small PR for the Loop 25z49 candidate
-  that exposes `participant_sessions` in conversation create/bootstrap
-  responses.
-- P1 stability loop: repeat real groupchat-to-final-hold with multiple turns
+- P0 peer-chat scheduler reliability: open a small PR for durable writeback
+  delivery classification and bounded scheduler parallelism.
+- P1 architect reply gating: add a durable coordination primitive for
+  waiting on specific peer replies before summaries/handoffs.
+- P2 stability loop: repeat real groupchat-to-final-hold with multiple turns
   and no code changes beyond the target slice.
-- P2 default review authority: decide when OpenCode should be selected without
+- P3 default review authority: decide when OpenCode should be selected without
   relying on proposal text.
-- P3 code-change soak: repeat small real code-change lanes after the
+- P4 code-change soak: repeat small real code-change lanes after the
   participant session PR lands.
-- P4 MemoryOS adapter proof: keep `live_memoryos` forbidden until a real trace
+- P5 MemoryOS adapter proof: keep `live_memoryos` forbidden until a real trace
   id or artifact exists.
