@@ -2953,3 +2953,91 @@ Remaining gap:
 - This is one bounded local post-merge run, not production readiness, repeated
   soak, overnight stability, GitHub review truth, live MemoryOS, full L8-L10
   closure, or full L1-L11 closure.
+
+### F102. Parallel-shard run health is now scoped by `XMUSE_ROOT`
+
+Severity: fixed bounded runtime observability gap.
+
+Loop 25z70's successful two-shard run exposed a false process-health warning:
+Shard A's lane reached final-action hold, but its `run_health` snapshot counted
+both parallel runners and missed the MCP server for the local shard:
+
+```text
+runner_count=2
+mcp_count=0
+warnings=duplicate_runner_processes,missing_mcp_process
+```
+
+Root cause:
+
+- Runtime process discovery was global to the host instead of scoped to the
+  shard-local `XMUSE_ROOT`.
+- Inline Python app processes for Chat API/MCP were not classified precisely
+  enough for the real harness shape.
+
+PR #96 fixed the narrow boundary by passing `xmuse_root` into run-health,
+dashboard, TUI envelope, and `--health-once` process discovery, then filtering
+candidate processes by `XMUSE_ROOT`/`--xmuse-root`. The matcher also recognizes
+the real inline Python app shape without counting shell wrappers as services.
+
+Loop 25z71 reran two isolated shards with separate roots, ports, execution
+worktrees, Chat API instances, MCP servers, and runners:
+
+```text
+shard_a=/tmp/xmuse-main-after-pr86-155349/.goal-runs/2026-06-19/loop-25z71a-scoped-health-processes-202044
+shard_b=/tmp/xmuse-main-after-pr86-155349/.goal-runs/2026-06-19/loop-25z71b-scoped-health-processes-202044
+ports_a=8209/8109
+ports_b=8210/8110
+```
+
+Post-fix `--health-once --health-check-http` result for both shards:
+
+```text
+runner_count=1
+mcp_count=1
+counts_by_service.runner=1
+counts_by_service.mcp=1
+counts_by_service.chat_api=1
+warnings=[]
+```
+
+Focused validation:
+
+```text
+uv run pytest tests/xmuse/test_run_processes.py tests/xmuse/test_run_health.py tests/xmuse/test_platform_runner.py tests/xmuse/test_dashboard_health.py tests/xmuse/test_dashboard_api.py -q
+-> 241 passed, 9 warnings
+
+uv run pytest tests/xmuse/test_package_boundaries.py -q
+-> 16 passed
+
+uv run ruff check .
+-> All checks passed
+
+git diff --check
+-> no output
+
+test ! -e xmuse/__init__.py
+-> passed
+```
+
+GitHub server facts:
+
+- PR #96 `codex/scoped-runtime-process-health` merged to main as
+  `dcf4badf5da82cb472ea0f23d1c825f94d26218b`.
+- PR #96 head `220edc61f11d5171a451225fdc16742f1491d15b` passed `xmuse CI`
+  run `27825635972`.
+- Post-merge main `dcf4badf5da82cb472ea0f23d1c825f94d26218b` passed `xmuse CI`
+  run `27825747726`.
+
+Impact:
+
+- Higher operator-level parallelism is now less noisy because each shard can
+  observe its own runner, MCP server, and Chat API process.
+- This supports the next runtime pressure loops, but it does not by itself
+  prove production readiness or multi-day stability.
+
+Remaining gap:
+
+- The proof is bounded to the two-shard health-observability shape. It is not
+  overnight soak, production readiness, GitHub review truth, live MemoryOS,
+  full L8-L10 closure, or full L1-L11 closure.

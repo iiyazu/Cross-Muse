@@ -5208,3 +5208,104 @@ OpenCode review and health-visible review peer metadata, while one groupchat
 stability shard completed three conversations without proposals or lane side
 effects. This is not production readiness, overnight soak, GitHub review truth,
 live MemoryOS proof, full L8-L10 closure, or full L1-L11 closure.
+
+## 2026-06-19 Loop 25z71: scoped process health for parallel shards
+
+Loop target: repair the process-health false positives exposed by Loop 25z70.
+Loop 25z70's Shard A lane succeeded, but its run-health snapshot saw both
+parallel runners and missed the MCP server:
+
+```text
+runner_count=2
+mcp_count=0
+warnings=duplicate_runner_processes,missing_mcp_process
+```
+
+The authority was the shard-local `XMUSE_ROOT`; the producer was runtime
+process discovery; the consumers were `run_health`, dashboard/TUI read models,
+and `xmuse-platform-runner --health-once`.
+
+Control head before PR:
+
+```text
+branch=codex/scoped-runtime-process-health
+head=220edc61f11d5171a451225fdc16742f1491d15b
+base=0f35f9ad33c6e701b1457b0e5aaa22bc2093e0c4
+```
+
+Runtime probe:
+
+```text
+RUN_A=/tmp/xmuse-main-after-pr86-155349/.goal-runs/2026-06-19/loop-25z71a-scoped-health-processes-202044
+RUN_B=/tmp/xmuse-main-after-pr86-155349/.goal-runs/2026-06-19/loop-25z71b-scoped-health-processes-202044
+EXEC_A=/tmp/loop-25z71a-scoped-health-processes-202044-exec
+EXEC_B=/tmp/loop-25z71b-scoped-health-processes-202044-exec
+ports A=8209/8109
+ports B=8210/8110
+```
+
+Each shard started Chat API, MCP server, and platform runner. Health was read
+with:
+
+```bash
+XMUSE_ROOT="$RUN_A" XMUSE_CHAT_API_URL=http://127.0.0.1:8209 \
+  uv run xmuse-platform-runner --xmuse-root "$RUN_A" --mcp-port 8109 \
+  --health-once --health-check-http > "$RUN_A/health-once-postfix.json"
+
+XMUSE_ROOT="$RUN_B" XMUSE_CHAT_API_URL=http://127.0.0.1:8210 \
+  uv run xmuse-platform-runner --xmuse-root "$RUN_B" --mcp-port 8110 \
+  --health-once --health-check-http > "$RUN_B/health-once-postfix.json"
+```
+
+Post-fix result for both shards:
+
+```text
+runner_count=1
+mcp_count=1
+counts_by_service.runner=1
+counts_by_service.mcp=1
+counts_by_service.chat_api=1
+warnings=[]
+```
+
+Validation:
+
+```text
+uv run pytest tests/xmuse/test_run_processes.py tests/xmuse/test_run_health.py tests/xmuse/test_platform_runner.py tests/xmuse/test_dashboard_health.py tests/xmuse/test_dashboard_api.py -q
+-> 241 passed, 9 warnings
+
+uv run pytest tests/xmuse/test_package_boundaries.py -q
+-> 16 passed
+
+uv run ruff check .
+-> All checks passed
+
+git diff --check
+-> no output
+
+test ! -e xmuse/__init__.py
+-> passed
+```
+
+GitHub server facts:
+
+```text
+PR #96=https://github.com/iiyazu/Cross-Muse/pull/96
+head=220edc61f11d5171a451225fdc16742f1491d15b
+merge_commit=dcf4badf5da82cb472ea0f23d1c825f94d26218b
+PR CI run=27825635972 success
+post-merge main CI run=27825747726 success
+```
+
+Cleanup:
+
+```text
+8109/8110/8209/8210 listeners: none
+loop-25z71 xmuse-platform-runner, MCP, Chat API, codex/opencode processes:
+no matching live process after shutdown checks
+```
+
+Classification: positive bounded local runtime health proof plus inspected
+GitHub server facts for PR #96. It proves scoped process health for this
+parallel-shard shape. It is not production readiness, overnight soak, GitHub
+review truth, live MemoryOS proof, full L8-L10 closure, or full L1-L11 closure.
