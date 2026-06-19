@@ -913,41 +913,29 @@ def _configured_peer_failed(
     peer_result: Any | None = None,
 ) -> ConfiguredReviewPeerAttempt:
     peer_metadata = _peer_result_failure_metadata(peer_result)
-    if mode == "required":
-        sm.transition(
-            lane_id,
-            "gate_failed",
-            metadata={
-                "failure_reason": (
-                    "required_review_peer_unavailable"
-                    if unavailable
-                    else "review_peer_delivery_failed"
-                ),
-                "failure_layer": "review",
-                "review_peer_id": review_peer_id,
-                "peer_request_id": peer_request_id,
-                "peer_routing_mode": mode,
-                "peer_delivery_mode": "required_peer_failed",
-                "peer_degraded_reason": reason,
-            }
-            | ({"review_peer_defaulted": True} if review_peer_defaulted else {})
-            | peer_metadata,
-        )
-        return ConfiguredReviewPeerAttempt(attempted=True, required_failed=True)
-    metadata = {
-        "peer_routing_mode": mode,
-        "peer_delivery_mode": "configured_peer_degraded",
-        "peer_degraded_reason": reason,
-    } | peer_metadata
-    if not review_peer_defaulted:
-        metadata.update(
-            {
-                "review_peer_id": review_peer_id,
-                "peer_request_id": peer_request_id,
-            }
-        )
-    sm.update_metadata(lane_id, metadata)
-    return ConfiguredReviewPeerAttempt(attempted=True)
+    delivery_mode = (
+        "required_peer_failed" if mode == "required" else "configured_peer_failed"
+    )
+    sm.transition(
+        lane_id,
+        "gate_failed",
+        metadata={
+            "failure_reason": (
+                "required_review_peer_unavailable"
+                if unavailable
+                else "review_peer_delivery_failed"
+            ),
+            "failure_layer": "review",
+            "review_peer_id": review_peer_id,
+            "peer_request_id": peer_request_id,
+            "peer_routing_mode": mode,
+            "peer_delivery_mode": delivery_mode,
+            "peer_degraded_reason": reason,
+        }
+        | ({"review_peer_defaulted": True} if review_peer_defaulted else {})
+        | peer_metadata,
+    )
+    return ConfiguredReviewPeerAttempt(attempted=True, required_failed=True)
 
 
 def _peer_result_failure_metadata(peer_result: Any | None) -> dict[str, Any]:

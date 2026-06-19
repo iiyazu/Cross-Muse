@@ -7192,3 +7192,129 @@ Caveats:
 - Configured-peer degradation fallback remains a separate review-authority
   question.
 - The final action was intentionally held; no live lane merge is claimed.
+
+## 2026-06-20 Loop 26t: Configured Review Peer Fail-Closed Candidate
+
+Purpose: close the remaining configured-review-peer degradation fallback
+boundary so a failed configured review peer cannot be replaced by auto
+persistent or one-shot review authority.
+
+Workspace and authority:
+
+```text
+repo_worktree=/tmp/xmuse-postmerge-layered-prompt-main
+branch=codex/review-configured-peer-degradation
+base_head_sha=24fc168672a90de8dd56d512269fee4e021dfeff
+review_authority=lane review metadata / review verdict path
+```
+
+Focused repro before implementation:
+
+```bash
+uv run pytest tests/xmuse/test_review_plane_orchestrator_integration.py -q -k 'configured_review_peer_preferred_failure_fails_closed_before_auto_persistent or configured_review_peer_preferred_failure_fails_closed_before_one_shot or preferred_configured_review_peer_no_verdict_fails_closed'
+```
+
+Result:
+
+```text
+3 failed
+```
+
+Observed old behavior:
+
+```text
+preferred configured peer wrong request id -> second persistent review sent
+preferred configured peer wrong request id -> one-shot spawner invoked
+preferred configured peer no verdict -> one-shot spawner invoked
+```
+
+Candidate behavior after implementation:
+
+```text
+status=gate_failed
+failure_layer=review
+peer_delivery_mode=configured_peer_failed
+failure_reason=review_peer_delivery_failed
+peer_degraded_reason=request_id_mismatch | review_peer_no_verdict
+one_shot_spawn_count=0
+auto_persistent_second_send=false
+```
+
+Validation:
+
+```bash
+uv run pytest tests/xmuse/test_review_plane_orchestrator_integration.py -q
+uv run pytest tests/xmuse/test_review_plane_orchestrator_integration.py tests/xmuse/test_persistent_review_session_contracts.py tests/xmuse/test_persistent_cli_peer.py tests/xmuse/test_package_boundaries.py -q
+uv run ruff check .
+git diff --check
+test ! -e xmuse/__init__.py
+```
+
+Result:
+
+```text
+review integration: 51 passed
+review/session/peer/package focused set: 91 passed
+ruff: All checks passed
+git diff --check: passed
+xmuse/__init__.py: absent
+```
+
+Fullchain command attempted:
+
+```bash
+uv run python scripts/run_fullchain_docs_sentinel.py \
+  --run-root /tmp/xmuse-postmerge-layered-prompt-main/.goal-runs/2026-06-20/loop-26t-configured-review-failclosed-fullchain-2150z \
+  --execution-worktree /tmp/loop-26t-configured-review-failclosed-fullchain-2150z-exec \
+  --feature-id loop_26t_configured_review_failclosed_fullchain_2150z \
+  --proposal-timeout-s 900 \
+  --lane-timeout-s 1200 \
+  --max-hours 0.8
+```
+
+Durable chain reached before blocker:
+
+```text
+conversation_id=conv_cb28b7f8e4234761be49e75139035967
+collaboration_run=collab_c8713869e9474510b4ce0f9aa503dd7e
+proposal_id=prop_7c58e0bb92094d60808ff640f4fcdd69
+resolution_id=res_d3cfaaa19fb34705b34d9ed8bb62ebcf
+lane_id=loop_26t_configured_review_failclosed_fullchain_2150z
+```
+
+Final observed lane state:
+
+```text
+status=exec_failed
+base_head_sha=24fc168672a90de8dd56d512269fee4e021dfeff
+worker_provider_profile_ref=codex.default
+failure_reason=execution_infra_unavailable
+failure_layer=coordinator
+```
+
+Execution blocker:
+
+```text
+OpenAI Codex child worker returned usage_limit on three spawn attempts.
+The lane did not reach gate or review.
+```
+
+Cleanup:
+
+```text
+manual termination was required because the sentinel script did not treat exec_failed as terminal
+chat_port_listening=false
+mcp_port_listening=false
+```
+
+Classification: focused local candidate proof for configured review peer
+fail-closed behavior; fullchain non-regression blocked before review by
+external Codex execution-worker usage limit.
+
+Caveats:
+
+- This is not post-merge proof.
+- This is not production readiness, GitHub review truth, live MemoryOS,
+  natural peer-GOD groupchat completion, or full closure.
+- The sentinel harness terminal-state gap is separate from the configured
+  review peer authority repair.

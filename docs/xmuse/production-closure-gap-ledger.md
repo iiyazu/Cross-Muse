@@ -7,7 +7,25 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
 
 ## Current Proof Boundary
 
-- Latest main inspected: `353f61e442ffcae3a97377f54b44b9094e1ebb10`.
+- Latest main inspected: `24fc168672a90de8dd56d512269fee4e021dfeff`.
+- Latest configured-review-peer degradation candidate evidence: local branch
+  `codex/review-configured-peer-degradation` changes configured review peer
+  failures from degraded fallback to fail-closed review authority. Focused RED
+  evidence showed preferred configured peer failures could previously continue
+  through `auto_persistent_fallback` or `one_shot_fallback` and reach a merge
+  verdict. The candidate now transitions the lane to `gate_failed` with
+  `failure_layer=review`, `peer_delivery_mode=configured_peer_failed`,
+  `failure_reason=review_peer_delivery_failed` for delivery/no-verdict
+  failures, or existing `required_review_peer_unavailable` for unavailable
+  peers. Validation passed for the review integration suite plus persistent
+  review/session/package boundary tests. Loop 26t attempted the docs-only
+  fullchain sentinel from base main `24fc168672a90de8dd56d512269fee4e021dfeff`
+  and produced a durable conversation, proposal, and approved resolution, but
+  execution stopped before review because the child Codex execution worker hit
+  external `usage_limit`; the lane ended `exec_failed` with
+  `failure_reason=execution_infra_unavailable`. This is a bounded local
+  candidate plus blocked fullchain attempt, not post-merge proof, production
+  readiness, GitHub review truth, or full closure.
 - Latest peer-reply dependency-set evidence: PR #117 merged the direct
   `peer_reply_drain_callback` coordination repair to main as
   `f3f7b6dafa94ceae179af26c448f1aae183fd24b` after successful PR CI and
@@ -463,8 +481,11 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   exists. Loop 26h confirms the normal unique-OpenCode route still works after
   those fail-closed changes. Remaining work is broader review authority
   behavior. PR #119 plus Loop 26s remove the empty-conversation legacy Codex
-  fallback on main and preserve the registered OpenCode fullchain route.
-  Remaining work is the separate configured-peer degradation fallback question.
+  fallback on main and preserve the registered OpenCode fullchain route. The
+  local `codex/review-configured-peer-degradation` candidate closes the
+  configured-peer degradation fallback by failing closed before auto persistent
+  or one-shot fallback; remaining work is PR publication, CI, and post-merge
+  rerun when execution authority is available.
 - P3 higher-parallelism stability loop: repeat real groupchat-to-final-hold
   with independent `XMUSE_ROOT` directories, execution worktrees, Chat API
   ports, MCP ports, and runners when increasing concurrency beyond the current
@@ -474,8 +495,10 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   now have focused fail-closed behavior without relying on proposal text.
   Missing OpenCode review participants also fail closed when an active peer
   roster exists. PR #119 plus Loop 26s remove the empty-conversation
-  feature-scoped Codex default-review fallback on main. Configured-peer
-  degradation fallback remains a separate review-authority boundary.
+  feature-scoped Codex default-review fallback on main. The local
+  `codex/review-configured-peer-degradation` candidate changes configured-peer
+  degradation fallback into fail-closed review authority; keep this out of main
+  claims until PR CI and post-merge evidence exist.
 - P5 code-change soak: repeat small real code-change lanes after the
   inspector provider summary PR lands.
 - P6 MemoryOS adapter proof: keep `live_memoryos` forbidden until a real trace
