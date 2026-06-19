@@ -3503,3 +3503,47 @@ Remaining caveats:
   action is claimed.
 - Dynamic member mutation, restart/resume continuity, MemoryOS, production
   readiness, GitHub review truth, and full closure remain unproven.
+
+## 2026-06-20 Loop 26e Finding: Post-Merge Main Preserves Review Contract
+
+Status: positive bounded post-merge main confirmation.
+
+Primary artifacts:
+
+```text
+main_head=91ee4f76e9f4ec3bc0627aa690a2dababcde91ad
+run_root=/tmp/xmuse-postmerge-layered-prompt-main/.goal-runs/2026-06-20/loop-26e-post-pr107-main-014701
+driver_output=driver_output.json
+prompt_contract_summary=post_run_prompt_contracts.json
+chat_authority=chat.db
+lane_projection=feature_lanes.json#lane=loop26e_post_pr107_main
+review_authority=review_plane.json#task=rtask_f151b25e04ab4544bdd002d3bd2de8f0
+gate_report=logs/gates/loop26e_post_pr107_main/report.json
+execution_worktree=/tmp/loop-26e-post-pr107-main-exec-014701
+```
+
+Confirmed:
+
+- Main push CI for `91ee4f76e9f4ec3bc0627aa690a2dababcde91ad` completed
+  successfully in run `27840541595`.
+- The post-merge runtime chain reached `awaiting_final_action`.
+- The configured OpenCode review peer used persistent delivery with
+  `persistent_review_degraded=false` and `review_decision=merge`.
+- The review session recorded
+  `prompt_contract_version=xmuse-persistent-review-session-prompt-v1` and
+  `prompt_layer_order=["persistent_review_session_identity"]`.
+- Shutdown cleanup left no listeners on ports 8123/8223 and no loop-26e
+  service processes.
+
+Boundary result:
+
+- The Loop 26d repair is now confirmed after PR #107 merge on current main.
+- Remaining review authority work should focus on fail-closed behavior for
+  missing or multiple OpenCode review participants, not on the configured
+  review prompt contract metadata path.
+
+Remaining caveats:
+
+- This remains bounded local runtime evidence plus GitHub CI truth for the
+  exact main head. It is not GitHub review truth, production readiness,
+  MemoryOS proof, repeated stability proof, or full closure.

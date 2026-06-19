@@ -304,6 +304,11 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   `persistent_review_degraded=false`. This is bounded local runtime proof only;
   it does not claim natural peer-chat review turns, production readiness,
   restart/resume proof, MemoryOS proof, or full closure.
+- Loop 26e reran the same shape from post-PR107 main
+  `91ee4f76e9f4ec3bc0627aa690a2dababcde91ad` after main CI passed. The chain
+  again reached `awaiting_final_action` and the review session carried
+  `xmuse-persistent-review-session-prompt-v1`. This confirms the PR #107 repair
+  on current main for the bounded configured OpenCode review path only.
 - Provider result acknowledgement timeout after durable writeback is mitigated
   by early writeback detection plus configurable bounded grace in PR #87.
   Broader production-load behavior is still unproven.
@@ -357,9 +362,9 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   insufficient.
 - P2 review peer prompt/session metadata: bounded local configured OpenCode
   persistent review now records a separate review-session prompt authority in
-  `god_sessions.json` through Loop 26d. Remaining work is to preserve that
-  boundary through PR/server verification and then test broader review
-  authority cases such as missing or multiple OpenCode review participants.
+  `god_sessions.json`, and Loop 26e confirmed the behavior on post-PR107 main.
+  Remaining work is broader review authority behavior, especially fail-closed
+  handling for missing or multiple OpenCode review participants.
 - P3 higher-parallelism stability loop: repeat real groupchat-to-final-hold
   with independent `XMUSE_ROOT` directories, execution worktrees, Chat API
   ports, MCP ports, and runners when increasing concurrency beyond the current
