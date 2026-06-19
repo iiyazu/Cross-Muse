@@ -7,23 +7,25 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
 
 ## Current Proof Boundary
 
-- Latest main inspected: `819e95046f82a8be970319b50cd581e44e60b66a`.
-- Latest peer-reply dependency-set candidate evidence: Loop 26p on local
-  branch `codex/peer-reply-dependency-set-callback` changed direct
-  `peer_reply_drain_callback` coordination from sender-global pending mentions
-  to the durable source handoff message. A pre-fix durable-store probe showed
-  one independent unread review handoff could block the callback for a
-  completed execute handoff from another source message. The local candidate
-  rerun produced `dependency_set_id=peer-reply-set:<source_message_id>`,
-  `dependency_targets=["execute"]`, left the unrelated review inbox unread,
-  and emitted the callback for the completed handoff. Loop 26p then ran the
-  docs-only fullchain sentinel from local candidate head and reached
-  `awaiting_final_action` with `gate_passed=true`,
-  `review_decision=merge`, `review_delivery_mode=persistent`,
-  `persistent_review_degraded=false`, `review_peer_cli_kind=opencode`, and
-  all success checks true. This is local candidate proof only; it is not PR
-  CI, server truth, production readiness, natural peer-GOD groupchat
-  completion, or full closure.
+- Latest main inspected: `f3f7b6dafa94ceae179af26c448f1aae183fd24b`.
+- Latest peer-reply dependency-set evidence: PR #117 merged the direct
+  `peer_reply_drain_callback` coordination repair to main as
+  `f3f7b6dafa94ceae179af26c448f1aae183fd24b` after successful PR CI and
+  successful post-merge main CI. The repair scopes pending replies to the
+  durable source handoff message, records
+  `dependency_set_id=peer-reply-set:<source_message_id>`,
+  `source_message_id`, and `dependency_targets`, and avoids sender-global
+  draining across independent handoffs. Loop 26p preserves the local pre/post
+  durable-store probe: before the fix, one independent unread review handoff
+  blocked the callback for a completed execute handoff; after the fix, the
+  execute callback emitted while the unrelated review inbox stayed unread.
+  Loop 26q then ran from post-PR117 main and reached `awaiting_final_action`
+  with `gate_passed=true`, `review_decision=merge`,
+  `review_delivery_mode=persistent`, `persistent_review_degraded=false`,
+  `review_peer_cli_kind=opencode`, and all sentinel success checks true. This
+  is bounded main evidence for a direct handoff-message dependency set, not a
+  general workflow dependency planner, production readiness, natural peer-GOD
+  groupchat completion, or full closure.
 - Latest collaboration delivery lifecycle evidence: PR #115 merged the
   collaboration request/response/callback inbox lifecycle repair to main as
   `87c6f131d7a9851f1a4c5b023b192323ad8e73e4` after successful PR CI and
@@ -398,10 +400,9 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   `persistent_review_degraded=false`; do not report it as complete persistent
   OpenCode delivery proof.
 - Architect final-summary gating is locally mediated by a direct peer-reply
-  drain callback. Loop 26p locally narrows this callback to a durable source
-  handoff message dependency set instead of a sender-global drain, but this is
-  not merged yet and still not a general dependency-set planner for arbitrary
-  workflow stages.
+  drain callback. PR #117 narrows this callback to a durable source handoff
+  message dependency set instead of a sender-global drain, but this is still
+  not a general dependency-set planner for arbitrary workflow stages.
 - The successful chains are not yet repeated overnight or production-load soak.
 - Provider-native session continuity and memory persistence are not proven as
   durable product behavior.
@@ -431,12 +432,12 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   collaboration request/callback inbox lifecycle shape. PR #115 plus Loop 26o
   provide post-merge proof for the latter. Keep broader `/sse` tool-surface
   behavior, repeated soak, and production readiness out of this claim.
-- P1 explicit dependency coordination: local candidate Loop 26p now scopes the
-  direct peer-reply callback to the durable source handoff message and records
-  `dependency_set_id`, `source_message_id`, and `dependency_targets` in the
-  callback payload. Remaining work is PR publication, post-merge rerun, and a
-  broader planner only if future runtime evidence needs dependencies beyond a
-  single handoff message's target set.
+- P1 explicit dependency coordination: PR #117 plus Loop 26q now scope the
+  direct peer-reply callback to the durable source handoff message on main and
+  record `dependency_set_id`, `source_message_id`, and `dependency_targets` in
+  the callback payload. Remaining work is a broader planner only if future
+  runtime evidence needs dependencies beyond a single handoff message's target
+  set.
 - P2 review peer prompt/session metadata: bounded local configured OpenCode
   persistent review now records a separate review-session prompt authority in
   `god_sessions.json`, and Loop 26e confirmed the behavior on post-PR107 main.

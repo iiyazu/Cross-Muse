@@ -6899,3 +6899,94 @@ Caveats:
   MemoryOS proof, GitHub review truth, natural peer-GOD groupchat completion,
   or full closure.
 - The final action was intentionally held; no live lane merge is claimed.
+
+## 2026-06-20 Loop 26q: Post-PR117 Peer Reply Dependency Main Check
+
+Purpose: verify the PR #117 handoff-scoped peer reply callback repair after it
+landed on `origin/main`.
+
+Workspace and authority:
+
+```text
+repo_worktree=/tmp/xmuse-postmerge-layered-prompt-main
+base_head_sha=f3f7b6dafa94ceae179af26c448f1aae183fd24b
+run_root=/tmp/xmuse-postmerge-layered-prompt-main/.goal-runs/2026-06-20/loop-26q-postmerge-dependency-set-fullchain-2058z
+execution_worktree=/tmp/loop-26q-postmerge-dependency-set-fullchain-2058z-exec
+conversation_id=conv_b36cbc5162e7462986079aecdbb7171a
+```
+
+GitHub server facts:
+
+```text
+pr=117
+head_sha=6e66fb82407e29e401f859ed624ef54d5ca52cc5
+merge_commit=f3f7b6dafa94ceae179af26c448f1aae183fd24b
+pr_ci_run=27848017088 success
+main_ci_run=27848097074 success
+```
+
+Runtime command:
+
+```bash
+uv run python scripts/run_fullchain_docs_sentinel.py \
+  --run-root /tmp/xmuse-postmerge-layered-prompt-main/.goal-runs/2026-06-20/loop-26q-postmerge-dependency-set-fullchain-2058z \
+  --execution-worktree /tmp/loop-26q-postmerge-dependency-set-fullchain-2058z-exec \
+  --feature-id loop_26q_postmerge_dependency_set_fullchain_2058z \
+  --proposal-timeout-s 900 \
+  --lane-timeout-s 1200 \
+  --max-hours 0.8
+```
+
+Durable chain:
+
+```text
+collaboration_run=collab_8bcefbde5d1147fb96827c6ffbe7bff7
+proposal_id=prop_e32ea6c2fb4f4a4cbdbb4560d0c6b1c0
+resolution_id=res_c137c05b6def40d3bc3c27f2eafda9e4
+lane_id=loop_26q_postmerge_dependency_set_fullchain_2058z
+review_task_id=rtask_bb92ef3081b94c85b042ac9640bf1cc1
+review_verdict_id=verdict-merge-rtask_bb92ef3081b94c85b042ac9640bf1cc1
+final_action_hold_id=final-616957b7f178
+```
+
+Final lane state:
+
+```text
+status=awaiting_final_action
+gate_passed=true
+review_decision=merge
+review_delivery_mode=persistent
+persistent_review_degraded=false
+review_peer_cli_kind=opencode
+review_peer_model=opencode-go/deepseek-v4-flash
+proposal_has_review_runtime=false
+single_related_lane_graph_proposal=true
+```
+
+Execution artifact:
+
+```text
+path=/tmp/loop-26q-postmerge-dependency-set-fullchain-2058z-exec/docs/xmuse/loop_26q_postmerge_dependency_set_fullchain_2058z.md
+matches_expected=true
+```
+
+Cleanup:
+
+```text
+chat_port_listening=false
+mcp_port_listening=false
+loop-26q service process matches after shutdown: none
+```
+
+Classification: bounded post-merge main runtime proof that PR #117's
+handoff-scoped direct peer reply callback repair does not regress the
+docs-only groupchat, proposal, approval, dispatch, isolated execution, gate,
+persistent OpenCode review, and final-action hold path.
+
+Caveats:
+
+- This is not production readiness, repeated soak, MemoryOS proof, GitHub
+  review truth, natural peer-GOD groupchat completion, or full closure.
+- The dependency set remains scoped to a single handoff message target set; a
+  general workflow dependency planner is not claimed.
+- The final action was intentionally held; no live lane merge is claimed.
