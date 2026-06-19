@@ -5,7 +5,6 @@ import logging
 import os
 import time
 from collections.abc import Awaitable, Callable
-from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
@@ -707,7 +706,6 @@ async def _try_configured_review_peer(
         review_peer_id, default_peer_failure = await _ensure_default_review_peer(
             xmuse_root=xmuse_root,
             conversation_id=_optional_text(lane.get("conversation_id")),
-            model=_persistent_model_for_god(god, persistent_session_layer),
             feature_scope_id=feature_scope_id_from_lane(lane),
         )
         review_peer_defaulted = review_peer_id is not None
@@ -1011,7 +1009,6 @@ async def _ensure_default_review_peer(
     *,
     xmuse_root: Path,
     conversation_id: str | None,
-    model: str | None,
     feature_scope_id: str | None,
 ) -> tuple[str | None, str | None]:
     if conversation_id is None:
@@ -1022,8 +1019,6 @@ async def _ensure_default_review_peer(
         return _ensure_default_review_peer_sync(
             xmuse_root=xmuse_root,
             conversation_id=conversation_id,
-            model=model,
-            feature_scope_id=feature_scope_id,
         )
 
 
@@ -1031,10 +1026,7 @@ def _ensure_default_review_peer_sync(
     *,
     xmuse_root: Path,
     conversation_id: str,
-    model: str | None,
-    feature_scope_id: str | None,
 ) -> tuple[str | None, str | None]:
-    selected_model = model or DEFAULT_CODEX_REVIEW_MODEL_ID
     store = ParticipantStore(xmuse_root / "chat.db")
     try:
         participants = store.list_by_conversation(conversation_id)
@@ -1043,29 +1035,10 @@ def _ensure_default_review_peer_sync(
             return opencode_review_peers[0].participant_id, None
         if len(opencode_review_peers) > 1:
             return None, "review_peer_runtime_ambiguous"
-        if _has_active_peer_roster(participants):
-            return None, "review_peer_runtime_unavailable"
-        if feature_scope_id is None:
-            return None, None
-        display_name = _default_review_peer_display_name(feature_scope_id)
-        for participant in participants:
-            if (
-                participant.role == _REVIEW_ROLE
-                and participant.display_name == display_name
-                and participant.status == "active"
-                and participant.model == selected_model
-            ):
-                return participant.participant_id, None
-        participant = store.add(
-            conversation_id=conversation_id,
-            role=_REVIEW_ROLE,
-            display_name=display_name,
-            cli_kind="codex",
-            model=selected_model,
-        )
+        return None, "review_peer_runtime_unavailable"
     except Exception:
         return None, None
-    return participant.participant_id, None
+    return None, "review_peer_runtime_unavailable"
 
 
 def _active_review_peers(participants: list[Any], *, cli_kind: str) -> list[Any]:
@@ -1076,21 +1049,6 @@ def _active_review_peers(participants: list[Any], *, cli_kind: str) -> list[Any]
         and participant.cli_kind == cli_kind
         and participant.status == "active"
     ]
-
-
-def _has_active_peer_roster(participants: list[Any]) -> bool:
-    return any(
-        participant.role != _REVIEW_ROLE
-        and participant.cli_kind in {"codex", "opencode"}
-        and participant.status == "active"
-        for participant in participants
-    )
-
-
-def _default_review_peer_display_name(feature_scope_id: str) -> str:
-    suffix = _safe_session_fragment(feature_scope_id, max_chars=40)
-    digest = sha256(feature_scope_id.encode("utf-8")).hexdigest()[:10]
-    return f"Review GOD [{suffix}-{digest}]"
 
 
 def _configured_peer_lock_key(
