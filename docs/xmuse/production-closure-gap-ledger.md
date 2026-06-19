@@ -7,7 +7,7 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
 
 ## Current Proof Boundary
 
-- Latest main inspected: `8e9ae4d887f243723561a4ebe01e5ea1817c4963`.
+- Latest main inspected: `a8cceabb51022ddf802da276df1e4c37419b65b5`.
 - Strongest code-change lane runtime evidence: Loop 25z64 reached one real
   local code-change lane from durable groupchat through execute feasibility,
   proposal, runtime-driver approval, isolated execution, xmuse-core gate,
@@ -27,11 +27,17 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   `all_callbacks_created=true`, `all_callbacks_consumed=true`,
   `no_proposals_or_resolutions=true`, `total_failed_traces=0`, and
   `total_timeout_after_writeback_traces=0`.
-- Strongest server facts: PR #89 was merged by GitHub server state as
-  `8e9ae4d887f243723561a4ebe01e5ea1817c4963` after successful `xmuse CI` on PR
-  head `2e94c37575d2fc865dfc10c483519f1e6362ccb8` in run `27818698962`;
+- Latest review-state repeat evidence: Loop 25z65 reran a docs-only lane from
+  current `origin/main` at `a8cceabb51022ddf802da276df1e4c37419b65b5` and
+  reached `awaiting_final_action` with `review_delivery_mode=persistent`,
+  `persistent_review_degraded=false`, `review_decision=merge`, and no
+  runtime-artifact match for the Loop 25z64 invalid transition noise. This is a
+  bounded local repeat, not code-change soak or production readiness.
+- Strongest server facts: PR #90 was merged by GitHub server state as
+  `a8cceabb51022ddf802da276df1e4c37419b65b5` after successful `xmuse CI` on PR
+  head `9f43e633d8cb05de18f714307a3ea7f2ff9d91cb` in run `27819039602`;
   post-merge main `xmuse CI` also passed on
-  `8e9ae4d887f243723561a4ebe01e5ea1817c4963` in run `27818751119`.
+  `a8cceabb51022ddf802da276df1e4c37419b65b5` in run `27819086371`.
 - Proof type: local runtime proof plus inspected GitHub server facts for small
   PRs. This is not GitHub review truth or production readiness.
 
@@ -88,6 +94,10 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   `participants.provider_summary` to the conversation inspector and recorded
   Loop 25z64 fullchain evidence. Merged to main as
   `8e9ae4d887f243723561a4ebe01e5ea1817c4963`.
+- PR #90 `codex/review-state-idempotence`: ignored late rejected/rework review
+  conflicts after accepted review/final-hold state and recorded Loop 25z65
+  repeat evidence. Merged to main as
+  `a8cceabb51022ddf802da276df1e4c37419b65b5`.
 
 ## Manual Gaps
 
@@ -117,10 +127,12 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   final-action hold. It also logged non-blocking review-state transition noise:
   `cannot transition loop25z64_inspector_provider_summary from reviewed to
   rejected`.
-- A local candidate fix now guards late persistent rework/rejected verdicts
-  after accepted review/final-hold state by recording ignored-conflict metadata
-  instead of attempting an invalid transition. It still needs a repeat runtime
-  chain before being promoted to runtime proof.
+- PR #90 guards late persistent rework/rejected verdicts after accepted
+  review/final-hold state by recording ignored-conflict metadata instead of
+  attempting an invalid transition. Loop 25z65 then gave one bounded local
+  repeat without the Loop 25z64 invalid transition noise.
+- Loop 25z65 was docs-only. It is not repeated code-change soak and does not
+  replace Loop 25z64 as the strongest groupchat-produced code lane evidence.
 - Loop 25z64 did not expose `review_delivery_mode=persistent` or
   `persistent_review_degraded=false`; do not report it as complete persistent
   OpenCode delivery proof.
@@ -150,13 +162,14 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
 
 ## Next Small Buckets
 
-- P0 review-state idempotence: land the local candidate fix for late persistent
-  rework/rejected verdicts after accepted review/final-hold state.
+- P0 evidence sync: keep post-PR90 Loop 25z65 evidence small and do not
+  combine it with product changes.
 - P1 explicit dependency coordination: add a durable coordination primitive for
   waiting on named peer replies before summaries/handoffs when direct drain is
   insufficient.
-- P2 stability loop: repeat real groupchat-to-final-hold with multiple turns
-  and no code changes beyond the target slice.
+- P2 parallel stability loop: repeat real groupchat-to-final-hold with
+  multiple independent `XMUSE_ROOT` directories and execution worktrees. Do not
+  share durable stores or one PR branch across parallel probes.
 - P3 default review authority: decide when OpenCode should be selected without
   relying on proposal text.
 - P4 code-change soak: repeat small real code-change lanes after the
