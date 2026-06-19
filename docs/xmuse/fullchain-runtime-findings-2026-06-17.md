@@ -100,6 +100,10 @@ truth, merge truth, live MemoryOS proof, or full closure.
   execution, gate, OpenCode persistent review, and final-action hold. The lane
   stopped at `awaiting_final_action` under `--no-auto-merge`; this is local
   runtime proof only.
+- The 2026-06-19 proposal-readiness rerun kept proposal count at zero while the
+  execute collaboration was still running, then emitted exactly one proposal
+  after the collaboration reached `done`, approved it, dispatched it, and again
+  stopped at `awaiting_final_action` under `--no-auto-merge`.
 
 ## Findings
 
@@ -1477,3 +1481,168 @@ Additional 2026-06-18 runtime-kernel evidence:
 - The proof level is local runtime proof only.
 - The current evidence still does not prove isolated fullchain execution,
   independent review passed, GitHub truth, live MemoryOS, or full closure.
+
+### F79. Human leading route mentions should not widen the queue from body references
+
+Severity: resolved routing ergonomics issue.
+
+Loop 25z37 reproduced the problem with the real Chat API and durable
+`chat.db` state. The human message started with `@architect`, but later
+referred to `@execute` and `@review` in the requirement text. The stored
+message and inbox queue showed:
+
+```text
+message_mentions=["@architect","@execute","@review"]
+inbox_targets=["architect","execute","review"]
+```
+
+Impact:
+
+- A human could intend an architect-led turn while accidentally scheduling
+  execute and review peers immediately.
+- This made natural groupchat prompts noisy when they discussed role names.
+
+Fix:
+
+- Human messages now treat one or more leading mentions as an explicit routing
+  header.
+- Later mentions in the same human message body do not create additional inbox
+  items when a leading routing header exists.
+- Messages that do not start with a mention keep the previous body-mention
+  routing behavior.
+
+Rerun evidence:
+
+```text
+Loop 25z37b
+message_mentions=["@architect"]
+inbox_targets=["architect"]
+```
+
+Proof boundary:
+
+- This is local runtime routing evidence only.
+- It does not prove provider peer reply truth, full groupchat completion,
+  GitHub review truth, merge truth, live MemoryOS, full L8-L10 closure, full
+  L1-L11 closure, or production-ready groupchat.
+
+### F80. Leading-route fix survives a real groupchat-to-final-action rerun
+
+Severity: resolved local fullchain routing issue with remaining ergonomics gaps.
+
+Loop 25z38 reran the full groupchat-to-lane path on the leading mention routing
+fix. The human demand intentionally mentioned `@execute` and `@review` in the
+body, while starting with `@architect`.
+
+Initial durable routing:
+
+```text
+human_mentions=["@architect"]
+initial_inbox_targets=["architect"]
+```
+
+Observed chain:
+
+```text
+human @architect demand
+-> architect durable MCP writeback
+-> architect-created @execute handoff
+-> execute durable MCP writeback and collaboration response
+-> architect callback writeback
+-> lane_graph proposal
+-> human approval
+-> execute dispatch
+-> child Codex MCP query_knowledge/update_lane_status
+-> strict-product package-boundary gate
+-> configured OpenCode persistent review
+-> awaiting_final_action under --no-auto-merge
+```
+
+Lane result:
+
+```text
+lane_id=loop25z38_routing_fix_fullchain
+status=awaiting_final_action
+gate_passed=true
+review_runtime=opencode
+review_delivery_mode=persistent
+persistent_review_degraded=false
+review_decision=merge
+final_action_hold_id=final-c6021aa4fe11
+```
+
+Positive impact:
+
+- The routing fix did not break the existing real groupchat-to-lane path.
+- Body references to `@execute` and `@review` no longer created direct human
+  inbox items.
+- Execute, review, and dispatch turns still entered through durable system
+  handoffs.
+
+Remaining gaps:
+
+- Loop 25z39 adds a readiness guard for proposals that reference a
+  collaboration run and reruns the chain without the duplicate proposal. Keep
+  watching for duplicate proposals that do not carry a collaboration reference.
+- Gate profile resolution still warned that `gate_profiles.json` was missing in
+  `XMUSE_ROOT` and used the lane worktree config.
+- The proof remains local runtime proof. It is not GitHub review truth, merge
+  truth, live MemoryOS, full closure, or production readiness.
+
+### F81. Collaboration-backed proposals must wait for collaboration readiness
+
+Severity: resolved local proposal-authority issue.
+
+Loop 25z38 showed that an architect could emit a `lane_graph` proposal
+referencing a collaboration run while the execute collaboration was still in
+progress, then emit another proposal after the collaboration callback. That
+left one open duplicate proposal and one accepted proposal for the same
+operator demand.
+
+Fix:
+
+- `chat_emit_proposal` now inspects `collaboration:<run_id>` references before
+  writing the proposal.
+- A referenced collaboration run must belong to the same conversation.
+- A referenced collaboration run must be `done`; otherwise proposal emission
+  fails with `collaboration_run_not_ready`.
+- The guard is enforced before review triggers are enqueued, so a not-ready
+  collaboration reference cannot create review work.
+
+Rerun evidence:
+
+```text
+Loop 25z39
+collaboration_run=collab_a0265a7420db4d9b9d87596843e54e0f
+running_window_proposals=0
+saw_running_without_proposal=true
+collaboration_status=done
+proposal_after_done=prop_3997229437eb4e84b32996813dea49c8
+proposal_count_after_done=1
+lane_id=loop25z39_proposal_ready_guard
+status=awaiting_final_action
+gate_passed=true
+review_runtime=opencode
+review_delivery_mode=persistent
+persistent_review_degraded=false
+final_action_hold_id=final-aa3d2b8ca9a7
+```
+
+Positive impact:
+
+- The proposal authority no longer accepts collaboration-backed proposals
+  before the referenced producer has finished.
+- The automatic review trigger is only created after the collaboration-backed
+  proposal is admissible.
+- The real groupchat-to-lane path still reaches final-action hold under
+  `--no-auto-merge`.
+
+Remaining gaps:
+
+- The guard only covers proposals that explicitly reference
+  `collaboration:<run_id>`.
+- Gate profile resolution still falls back from `XMUSE_ROOT` to the lane
+  worktree config.
+- This is local runtime proof, not GitHub review truth, merge truth, live
+  MemoryOS proof, full closure, production-ready groupchat, or overnight
+  readiness.
