@@ -193,6 +193,47 @@ class MentionResolver:
                 resolved.append(mention)
         return resolved
 
+    def resolve_leading_content(
+        self,
+        conversation_id: str,
+        content: str,
+        *,
+        strict: bool = True,
+    ) -> list[ResolvedMention]:
+        active = self._active_participants(conversation_id)
+        aliases = self._aliases(active)
+        seen: set[str] = set()
+        resolved: list[ResolvedMention] = []
+        index = 0
+        length = len(content)
+        while index < length and content[index].isspace():
+            index += 1
+        while index < length:
+            if content[index] != "@" or not _looks_like_mention_start(content, index):
+                break
+            if _is_escaped(content, index):
+                break
+            raw, end = self._extract_scoped_raw(content, index, aliases)
+            if raw is None:
+                break
+            try:
+                mention = self._resolve_active(active, raw)
+            except MentionResolutionError:
+                if strict:
+                    raise
+                break
+            if mention.normalized not in seen:
+                seen.add(mention.normalized)
+                resolved.append(mention)
+            index = end
+            while index < length and content[index].isspace():
+                index += 1
+            if index < length and content[index] in {",", ";"}:
+                index += 1
+                while index < length and content[index].isspace():
+                    index += 1
+        return resolved
+
     def resolve(self, conversation_id: str, raw: str) -> ResolvedMention:
         return self._resolve_active(self._active_participants(conversation_id), raw)
 
@@ -204,6 +245,17 @@ class MentionResolver:
         ]
 
     def _resolve_active(self, active: list[Participant], raw: str) -> ResolvedMention:
+        for candidate_raw in _raw_resolution_candidates(raw):
+            resolved = self._resolve_active_candidate(active, candidate_raw)
+            if resolved is not None:
+                return resolved
+        raise MentionResolutionError("unknown_target", raw)
+
+    def _resolve_active_candidate(
+        self,
+        active: list[Participant],
+        raw: str,
+    ) -> ResolvedMention | None:
         normalized = normalize_address(raw)
         if normalized.startswith("@participant:"):
             participant_id = normalized.removeprefix("@participant:")
@@ -221,7 +273,7 @@ class MentionResolver:
                 or normalize_address(participant.display_name) == normalized
             ]
         if not matches:
-            raise MentionResolutionError("unknown_target", raw)
+            return None
         if len(matches) > 1:
             raise MentionResolutionError("ambiguous_target", raw)
         return ResolvedMention(raw=raw, normalized=normalized, participant=matches[0])
@@ -263,3 +315,21 @@ class MentionResolver:
 
     def _is_mention_char(self, value: str) -> bool:
         return value.isalnum() or value in "_-:"
+
+
+def _raw_resolution_candidates(raw: str):
+    stripped = raw.strip()
+    if not stripped:
+        return
+    yield stripped
+    if " " not in stripped:
+        return
+    if stripped.startswith("@"):
+        body = stripped[1:]
+        prefix = "@"
+    else:
+        body = stripped
+        prefix = ""
+    parts = body.split()
+    for end in range(len(parts) - 1, 0, -1):
+        yield prefix + " ".join(parts[:end])

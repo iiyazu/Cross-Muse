@@ -78,6 +78,25 @@ def test_human_post_treats_leading_mentions_as_routing_header(
     assert result.inbox_items[0].target_participant_id == architect.participant_id
 
 
+def test_human_post_routes_leading_role_before_capitalized_sentence(
+    tmp_path: Path,
+) -> None:
+    db, conv, architect, _review = _conversation(tmp_path)
+    service = PeerChatService(db)
+
+    result = service.post_human_message(
+        conversation_id=conv.id,
+        author="Human operator",
+        content="@architect Coordinate a tiny routing fix.",
+        client_request_id="req-human-leading-capitalized-sentence",
+    )
+
+    assert result.message.mentions == ["@architect"]
+    assert [item.target_role for item in result.inbox_items] == ["architect"]
+    assert result.inbox_items[0].target_participant_id == architect.participant_id
+    assert result.inbox_items[0].payload["mention"] == "@architect"
+
+
 def test_human_post_allows_multiple_leading_route_mentions(tmp_path: Path) -> None:
     db, conv, architect, review = _conversation(tmp_path)
     service = PeerChatService(db)

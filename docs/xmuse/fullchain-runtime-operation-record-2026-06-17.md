@@ -3218,3 +3218,118 @@ Claims not made: GitHub review truth, merge truth, `ready_to_merge`,
 `pr_merged`, live MemoryOS, full L8-L10 closure, full L1-L11 closure,
 production-ready groupchat, or overnight readiness. The final action remains
 pending under `--no-auto-merge`.
+
+### Loop 25z42: leading role mention before capitalized sentence
+
+Goal: verify and fix the Loop 25z41 routing gap where a natural human message
+starting with `@architect Coordinate...` was stored as a plain message without
+durable inbox routing.
+
+Branch:
+
+```text
+codex/strict-leading-mention-routing
+base=origin/main@3a4ec2853ea2099f648513bbb0856415de81b906
+```
+
+Prepatch runtime root:
+
+```text
+/tmp/xmuse-mention-routing-after-pr79/.goal-runs/2026-06-19/loop-25z42-mention-routing-prepatch-115536
+```
+
+Prepatch Chat API command:
+
+```bash
+XMUSE_ROOT="$RUN_ROOT" \
+  uv run python -c 'import os; from pathlib import Path; import uvicorn; from xmuse.chat_api import create_app; uvicorn.run(create_app(base_dir=Path(os.environ["XMUSE_ROOT"])), host="127.0.0.1", port=8211, log_level="warning")'
+```
+
+Prepatch HTTP observation:
+
+```text
+POST /api/chat/conversations -> 201
+conversation_id=conv_2437704332cd445499e09b50602445cc
+
+content="@architect Coordinate a tiny routing fix."
+message_status=201
+mentions=[]
+inbox_targets=[]
+
+content="@architect, Coordinate a tiny routing fix."
+message_status=201
+mentions=["@architect"]
+inbox_targets=["architect"]
+```
+
+Implementation summary:
+
+```text
+src/xmuse_core/chat/mentions.py
+- added participant-aware leading-content resolution
+- preserved longest matching display-name alias behavior
+- allows overlong regex raw mentions to shrink to the longest resolvable alias
+
+src/xmuse_core/chat/peer_service.py
+- human routing now uses MentionResolver for leading and full-content routing
+- @all remains a leading broadcast token
+- MentionResolutionError is converted back to PeerChatError at service boundary
+```
+
+Postpatch runtime root:
+
+```text
+/tmp/xmuse-mention-routing-after-pr79/.goal-runs/2026-06-19/loop-25z42-mention-routing-postpatch-120105
+```
+
+Postpatch Chat API command:
+
+```bash
+XMUSE_ROOT="$RUN_ROOT" \
+  uv run python -c 'import os; from pathlib import Path; import uvicorn; from xmuse.chat_api import create_app; uvicorn.run(create_app(base_dir=Path(os.environ["XMUSE_ROOT"])), host="127.0.0.1", port=8212, log_level="warning")'
+```
+
+Postpatch HTTP and durable-state observation:
+
+```text
+POST /api/chat/conversations -> 201
+conversation_id=conv_8b0c4ba05f8145a791713448b48ab9c2
+
+content="@architect Coordinate a tiny routing fix."
+message_status=201
+mentions=["@architect"]
+inbox_targets=["architect"]
+inbox_ids=["inbox_1e25d11673b5436192e9b7ad7963fb82"]
+
+durable chat.db row:
+mentions_json='["@architect"]'
+target_role=architect
+status=unread
+```
+
+Validation:
+
+```text
+uv run pytest tests/xmuse/test_peer_chat_service.py \
+  tests/xmuse/test_peer_chat_mentions.py \
+  tests/xmuse/test_peer_chat_api.py \
+  tests/xmuse/test_peer_chat_end_to_end.py::test_default_group_chat_flow_reaches_god_reply_proposal_and_keeps_roles_isolated \
+  tests/xmuse/test_package_boundaries.py -q
+-> 50 passed, 1 warning
+
+uv run ruff check .
+-> All checks passed
+
+git diff --check -> pass
+test ! -e xmuse/__init__.py -> pass
+```
+
+Cleanup:
+
+```text
+8211/8212/8201/8100/8265 listeners: none
+```
+
+Claims not made: GitHub review truth, `ready_to_merge`, `pr_merged`, live
+MemoryOS, full L8-L10 closure, full L1-L11 closure, production-ready groupchat,
+or overnight readiness.
