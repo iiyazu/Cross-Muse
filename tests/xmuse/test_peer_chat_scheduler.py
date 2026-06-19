@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
@@ -117,7 +118,8 @@ async def test_scheduler_claims_and_nudges_oldest_item(tmp_path: Path) -> None:
         "Natural-language @mentions inside chat_post_message are display-only"
         in layer.sent[0][2]
     )
-    assert "then call chat_mention" in layer.sent[0][2]
+    assert "call chat_mention with" in layer.sent[0][2]
+    assert "closes your current inbox item" in layer.sent[0][2]
     assert "chat_emit_proposal" in layer.sent[0][2]
     assert "collaboration:<run_id>" in layer.sent[0][2]
     assert '"status":"executable"' in layer.sent[0][2]
@@ -155,6 +157,79 @@ async def test_scheduler_claims_and_nudges_oldest_item(tmp_path: Path) -> None:
     assert claimed.status == "unread"
     assert claimed.claim_owner == "sched-test"
     assert claimed.nudge_count == 1
+
+
+@pytest.mark.asyncio
+async def test_scheduler_releases_turn_after_durable_writeback_before_provider_result(
+    tmp_path: Path,
+) -> None:
+    chat = ChatStore(tmp_path / "chat.db")
+    conv = chat.create_conversation("Scheduler early writeback")
+    participant = ParticipantStore(tmp_path / "chat.db").add(
+        conversation_id=conv.id,
+        role="architect",
+        display_name="Architect GOD",
+        cli_kind="codex",
+        model="gpt-5.4",
+    )
+    message = chat.add_message(conv.id, "Human", "human", "@architect")
+    inbox = ChatInboxStore(tmp_path / "chat.db")
+    item = inbox.create_item(
+        conversation_id=conv.id,
+        target_participant_id=participant.participant_id,
+        target_role="architect",
+        target_address="@architect",
+        sender_participant_id=None,
+        sender_address="@human",
+        source_message_id=message.id,
+        item_type="mention",
+        payload={"content": "@architect"},
+    )
+
+    class SlowGodLayer(FakeGodLayer):
+        async def receive_message(self, god_session_id):
+            await asyncio.sleep(30)
+            return None
+
+    scheduler = PeerChatScheduler(
+        db_path=tmp_path / "chat.db",
+        god_layer=SlowGodLayer(),
+        worktree=tmp_path,
+        scheduler_id="sched-test",
+        response_wait_s=10,
+        post_writeback_grace_s=0.1,
+    )
+    task = asyncio.create_task(scheduler.tick_once())
+    await asyncio.sleep(0.1)
+    result = chat.create_message_inbox_and_log(
+        conversation_id=conv.id,
+        tool_name="chat_mention",
+        caller_identity="god:god-live:architect",
+        client_request_id="handoff-1",
+        author=participant.participant_id,
+        role="assistant",
+        content="Handing off to execute.",
+        envelope_type="mention",
+        envelope_json={"type": "mention"},
+        mentions=["@execute"],
+        inbox_items=[],
+        reply_to_inbox_item_id=item.id,
+        reply_owner_participant_id=participant.participant_id,
+    )
+    PeerTurnLatencyTraceStore(tmp_path / "chat.db").record_mcp_tool_stage(
+        conversation_id=conv.id,
+        inbox_item_id=item.id,
+        tool_name="chat_mention",
+        called_at=100.0,
+    )
+
+    outcome = await asyncio.wait_for(task, timeout=3)
+
+    assert result["message"]["id"] == inbox.get(item.id).responded_message_id
+    assert outcome.happy_path == 1
+    trace = PeerTurnLatencyTraceStore(tmp_path / "chat.db").list_recent(conv.id)[0]
+    assert trace["delivery_mode"] == "mcp_writeback"
+    assert trace["degraded_reason"] == "peer_writeback_before_provider_result"
 
 
 def test_peer_session_prompt_fingerprint_is_stable_across_inbox_content(tmp_path) -> None:
@@ -354,6 +429,7 @@ async def test_scheduler_releases_claim_when_peer_turn_times_out(tmp_path: Path)
         worktree=tmp_path,
         scheduler_id="sched-test",
         response_wait_s=0.01,
+        post_writeback_grace_s=0.01,
     )
 
     outcome = await scheduler.tick_once()
@@ -433,6 +509,7 @@ async def test_scheduler_accepts_timeout_after_real_mcp_writeback(tmp_path: Path
         worktree=tmp_path,
         scheduler_id="sched-test",
         response_wait_s=0.01,
+        post_writeback_grace_s=0.01,
     )
 
     outcome = await scheduler.tick_once()
@@ -449,7 +526,7 @@ async def test_scheduler_accepts_timeout_after_real_mcp_writeback(tmp_path: Path
     assert streams.get(stream.id).status == "done"
     trace = PeerTurnLatencyTraceStore(tmp_path / "chat.db").list_recent(conv.id)[0]
     assert trace["delivery_mode"] == "mcp_writeback"
-    assert trace["degraded_reason"] == "peer_response_timeout_after_writeback"
+    assert trace["degraded_reason"] == "peer_writeback_before_provider_result"
 
 
 @pytest.mark.asyncio

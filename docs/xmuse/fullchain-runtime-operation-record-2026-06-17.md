@@ -4066,3 +4066,189 @@ consumption works and all nine inbox items reached durable `mcp_writeback`
 without proposal/lane leakage. It also preserves the remaining gap that
 provider result acknowledgement and architect final-summary gating are not yet
 strong enough for production-ready natural groupchat claims.
+
+### Loop 25z53: final-summary gating baseline
+
+Runtime root:
+
+```text
+/tmp/xmuse-post-pr84-main-VLltPM/.goal-runs/2026-06-19/loop-25z53-final-summary-gating-baseline-145013
+```
+
+Probe:
+
+- started Chat API on `:8201`, MCP on `:8100`, and
+  `xmuse-platform-runner --peer-chat --persistent-review-god --max-concurrent 4
+  --no-auto-merge`;
+- created two deterministic conversations with Codex architect, Codex execute,
+  and OpenCode review peers;
+- asked architect to hand off to execute and review, then post a final summary
+  beginning with `FINAL_SUMMARY_AFTER_BOTH_REPLIES` only after both replies
+  were durable.
+
+Observed:
+
+```text
+alpha: execute_replies=1, review_replies=1, final_summary_messages=0
+beta:  execute_replies=1, review_replies=1, final_summary_messages=0
+proposals=0
+resolutions=0
+```
+
+Artifacts:
+
+```text
+loop_driver_artifacts/final_snapshot.json
+loop_driver_artifacts/final_summary_gating_eval.json
+```
+
+Classification: negative local runtime evidence. Peer replies became durable,
+but no authority-level follow-up nudged architect to close the final summary.
+
+### Loop 25z54: explicit peer-reply drain callback first run
+
+Runtime root:
+
+```text
+/tmp/xmuse-post-pr84-main-VLltPM/.goal-runs/2026-06-19/loop-25z54-final-summary-callback-rerun-150311
+```
+
+Local change under test:
+
+- when a GOD replies to a direct peer `mention`, `ChatStore` can enqueue a
+  `peer_reply_drain_callback` to the original sender after no unread/claimed
+  direct mentions from that sender remain.
+
+Observed failure:
+
+```text
+architect messages=2 per conversation
+initial architect inbox stayed open
+execute/review inbox items stayed queued
+delivery_mode=failed
+degraded_reason=peer_no_result_message
+```
+
+Classification: negative local runtime evidence. Architect produced
+`chat_mention` side effects but did not close the current human inbox, so
+scheduler progress still depended on provider final-result behavior.
+
+### Loop 25z55: handoff writeback and callback success
+
+Runtime root:
+
+```text
+/tmp/xmuse-post-pr84-main-VLltPM/.goal-runs/2026-06-19/loop-25z55-handoff-reply-callback-rerun-152044
+```
+
+Local changes under test:
+
+- `chat_mention` accepts `reply_to_inbox_item_id`;
+- scheduler recognizes `chat_mention` as a real MCP writeback stage;
+- peer prompts describe handoff as one durable `chat_mention` writeback.
+
+Final durable state:
+
+```text
+alpha:
+  messages=6, inbox=4, open_inbox=0, read_inbox=4
+  execute_replies=1, review_replies=1
+  callback_items=1, callback_read=1
+  marker_messages=1, final_after_both=true
+  proposals=0, resolutions=0
+
+beta:
+  messages=6, inbox=4, open_inbox=0, read_inbox=4
+  execute_replies=1, review_replies=1
+  callback_items=1, callback_read=1
+  marker_messages=1, final_after_both=true
+  proposals=0, resolutions=0
+```
+
+Remaining behavior gap in this run:
+
+```text
+architect traces included peer_response_timeout_after_writeback
+```
+
+Classification: positive local runtime evidence for the two-conversation
+groupchat sequence through final summary. It still showed an efficiency gap:
+the provider result timeout delayed scheduler slot release after durable
+writeback.
+
+### Loop 25z56: early-release regression
+
+Runtime root:
+
+```text
+/tmp/xmuse-post-pr84-main-VLltPM/.goal-runs/2026-06-19/loop-25z56-early-writeback-runtime-153053
+```
+
+Local change under test:
+
+- scheduler returned early after detecting durable MCP writeback before the
+  provider result.
+
+Observed regression:
+
+```text
+initial_handoff_closed=true
+early_writeback_traces=2
+execute_replies=1
+review_replies=0
+callback_created=true before review handoff completed
+```
+
+Classification: negative local runtime evidence. Immediate early release freed
+the scheduler slot, but cut off multi-step same-turn handoffs before the
+architect could enqueue review work.
+
+### Loop 25z57: early-release grace and final-summary success
+
+Runtime root:
+
+```text
+/tmp/xmuse-post-pr84-main-VLltPM/.goal-runs/2026-06-19/loop-25z57-grace-early-writeback-runtime-153705
+```
+
+Local change under test:
+
+- durable writeback still wins over provider final-result delay;
+- scheduler now waits a short post-writeback grace window before aborting the
+  provider turn, allowing consecutive handoff tool calls in the same turn.
+
+Final durable state:
+
+```text
+alpha:
+  messages=6, inbox=4, open_inbox=0, read_inbox=4
+  execute_replies=1, review_replies=1
+  callback_items=1, callback_read=1
+  marker_messages=1, final_after_both=true
+  mcp_writeback_traces=4, early_writeback_traces=2
+  timeout_after_writeback_traces=0
+  proposals=0, resolutions=0
+
+beta:
+  messages=6, inbox=4, open_inbox=0, read_inbox=4
+  execute_replies=1, review_replies=1
+  callback_items=1, callback_read=1
+  marker_messages=1, final_after_both=true
+  mcp_writeback_traces=3, early_writeback_traces=2
+  timeout_after_writeback_traces=0
+  proposals=0, resolutions=0
+```
+
+Artifacts:
+
+```text
+loop_driver_artifacts/final_snapshot.json
+loop_driver_artifacts/final_summary_gating_eval.json
+```
+
+Classification: strongest current local peer-chat evidence. It proves this
+bounded two-conversation runtime path only: human demand to Codex architect
+handoff, Codex execute reply, OpenCode review reply, durable peer-reply drain
+callback, and architect final summary after both replies. It is not server
+truth, review truth, production-ready groupchat, live MemoryOS, overnight
+readiness, or full closure.

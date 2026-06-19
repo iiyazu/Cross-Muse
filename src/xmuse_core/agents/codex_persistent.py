@@ -335,8 +335,11 @@ def _format_turn_prompt(
                 "through the MCP chat tools.",
                 "Natural-language @mentions inside `chat_post_message` are display-only "
                 "and do not enqueue peer work. When another GOD must take over or "
-                "review, first reply with `chat_post_message`, then call `chat_mention` "
-                "with the target GOD's exact @role and a concrete handoff request.",
+                "review, call `chat_mention` with "
+                "`reply_to_inbox_item_id=xmuse_context.inbox_item.id`, the target "
+                "GOD's exact @role, and a concrete handoff request; this closes "
+                "your current inbox item and enqueues the target GOD in one durable "
+                "writeback.",
                 "For work that should enter real execution, use structured chat "
                 "tools rather than plain text: create or reference a collaboration "
                 "run, have execute record a JSON execute_feasibility_verdict with "

@@ -702,6 +702,7 @@ CHAT_TOOL_SCHEMAS: list[dict[str, Any]] = [
                 "target_address": {"type": "string"},
                 "content": {"type": "string"},
                 "envelope": {"type": "object"},
+                "reply_to_inbox_item_id": {"type": "string"},
             },
             "required": [
                 "conversation_id",
@@ -1092,9 +1093,10 @@ def _peer_chat_tool_schemas() -> list[dict[str, Any]]:
             narrowed = json.loads(json.dumps(schema))
             narrowed["description"] = (
                 "Explicitly hand off work to another GOD participant from a peer "
-                "chat turn. Use this only after replying to the current inbox item "
-                "with chat_post_message; natural-language @mentions in "
-                "chat_post_message do not enqueue peer work."
+                "chat turn. Pass reply_to_inbox_item_id=xmuse_context.inbox_item.id "
+                "when the handoff is the durable response to the current inbox item; "
+                "natural-language @mentions in chat_post_message do not enqueue "
+                "peer work."
             )
             schemas.append(narrowed)
         elif name in structured_peer_tool_names:
