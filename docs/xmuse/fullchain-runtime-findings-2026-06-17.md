@@ -3227,7 +3227,7 @@ Remaining caveats:
 
 ### F106. `/sse` peer handoff can omit current inbox id and orphan the turn
 
-Severity: fixed in local candidate branch.
+Severity: fixed in PR #102 and confirmed by bounded post-merge main runtime.
 
 Loop 25z76 reran the fullchain from post-PR101 main
 `cae16e00429a4f97e30a07ecb69e5cd977ea16e8` and exposed a peer-chat
@@ -3258,7 +3258,7 @@ Root cause:
 - `chat_mention` lacked the same current-turn auto-bind rule, so a real peer
   could create a valid handoff without closing its own claimed turn.
 
-Local candidate fix:
+Implemented fix:
 
 - `chat_mention` now resolves `reply_to_inbox_item_id` from the participant's
   single claimed inbox item when the argument is omitted.
@@ -3314,10 +3314,52 @@ operations.cleanup.status=clean
 mcp HTTP health on 8118=ready
 ```
 
+GitHub server facts:
+
+- PR #102 `codex/peer-mention-writeback-autobind` merged to main as
+  `c44a5caf247c2c049ae5af37d74a94f5b9f95ce3`.
+- PR #102 head `d4728c36cb252899a5631d3e0686fee4fb4c47cb` passed `xmuse CI`
+  run `27831639110`.
+- Post-merge main `c44a5caf247c2c049ae5af37d74a94f5b9f95ce3` passed
+  `xmuse CI` run `27831706622`.
+
+Loop 25z78 reran the same fullchain shape from post-merge main
+`c44a5caf247c2c049ae5af37d74a94f5b9f95ce3` and reached:
+
+```text
+architect_inbox=inbox_0cee81f41e2f472c833b0bc6c1b49a72
+status=read
+responded_message_id=msg_98c5bd34e7de49908a4ca22422f260ba
+tool_trace=chat_mention
+delivery_mode=mcp_writeback
+
+feature_id=loop25z78_post_pr102_fullchain
+feature_scope_id=lane_graph:res_efcce0c80fbd4532867c5fc833c5a573-graph-v1
+lane_status=awaiting_final_action
+gate_passed=true
+review_decision=merge
+review_delivery_mode=persistent
+persistent_review_degraded=false
+review_peer_defaulted=true
+review_peer_cli_kind=opencode
+review_peer_model=opencode-go/deepseek-v4-flash
+peer_delivery_mode=configured_peer
+```
+
+Loop 25z78 also recorded:
+
+```text
+inbox status counts: architect/read=3, execute/read=2, review/read=1
+failed inbox count=0
+collaboration_run.status=done
+scheduler_progress.trace_count=5
+chat_dispatch_bridge.status=observed
+operations.cleanup.status=clean
+mcp HTTP health on 8119=ready
+```
+
 Remaining caveats:
 
-- The fix is local candidate evidence until pushed, checked by CI, merged, and
-  rerun from post-merge main.
 - `/sse` still exposes the broader MCP surface and `chat_post_message` can
   still create non-closing status messages when a peer omits
   `reply_to_inbox_item_id`; this was deliberately not changed in the same
