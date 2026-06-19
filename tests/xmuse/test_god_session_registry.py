@@ -122,6 +122,30 @@ def test_update_provider_binding_persists_resume_metadata(tmp_path):
     assert reloaded.provider_session_id == "thread-1"
 
 
+def test_promote_running_updates_starting_status_after_writeback(tmp_path):
+    path = tmp_path / "god_sessions.json"
+    registry = GodSessionRegistry(path)
+
+    created = registry.create(
+        role="reviewer",
+        agent_name="beta",
+        runtime="codex",
+        session_address="addr://reviewer-1",
+        session_inbox_id="inbox-reviewer-1",
+        conversation_id="conv-1",
+        participant_id="part-review-1",
+        model="gpt-5.5",
+    )
+
+    updated = registry.promote_running(created.god_session_id)
+
+    assert updated.status == "running"
+    reloaded = GodSessionRegistry(path).get(created.god_session_id)
+    assert reloaded.status == "running"
+    assert reloaded.participant_id == "part-review-1"
+    assert reloaded.model == "gpt-5.5"
+
+
 def test_create_rejects_duplicate_session_address(tmp_path):
     path = tmp_path / "god_sessions.json"
     registry = GodSessionRegistry(path)
