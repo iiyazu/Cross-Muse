@@ -4039,3 +4039,45 @@ Remaining caveats:
 - It does not claim production readiness, GitHub review truth, live MemoryOS,
   natural peer-GOD groupchat completion, full closure, or live lane merge
   truth.
+
+## 2026-06-20 Loop 26s Finding: PR #119 Repair Holds On Main
+
+Status: bounded post-merge main runtime confirmation.
+
+Primary artifact:
+
+```text
+main_head=353f61e442ffcae3a97377f54b44b9094e1ebb10
+pr=119
+pr_ci_run=27849001334 success
+main_ci_run=27849053122 success
+run_root=/tmp/xmuse-postmerge-layered-prompt-main/.goal-runs/2026-06-20/loop-26s-post-pr119-no-codex-default-review-fallback-2125z
+driver_output=driver_output.json
+chat_authority=chat.db
+lane_projection=feature_lanes.json#lane=loop_26s_post_pr119_no_codex_default_review_fallback_2125z
+review_authority=review_plane.json#task=rtask_0a720efb53b14258882e7275a1b02a76
+gate_report=logs/gates/loop_26s_post_pr119_no_codex_default_review_fallback_2125z/report.json
+```
+
+Confirmed:
+
+- PR #119 merged the no-Codex-default-review fallback repair to main.
+- The post-merge fullchain ran from `353f61e442ffcae3a97377f54b44b9094e1ebb10`.
+- The registered OpenCode review participant remained the selected default
+  review peer.
+- The lane recorded `review_peer_defaulted=true`,
+  `review_peer_cli_kind=opencode`, `review_peer_model=opencode-go/deepseek-v4-flash`,
+  `review_delivery_mode=persistent`, and `persistent_review_degraded=false`.
+- The docs-only isolated execution artifact matched the requested content.
+- The lane reached `awaiting_final_action` and all sentinel success checks were
+  true.
+- Cleanup left no Chat API or MCP listener.
+
+Remaining caveats:
+
+- This confirms the bounded docs-only sentinel shape on main, not production
+  readiness or repeated soak.
+- Configured-peer degradation fallback remains a separate review-authority
+  question.
+- It does not claim GitHub review truth, live MemoryOS, natural peer-GOD
+  groupchat completion, full closure, or live lane merge truth.
