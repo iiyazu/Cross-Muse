@@ -3871,3 +3871,60 @@ Remaining caveats:
   readiness or repeated soak.
 - It does not claim GitHub review truth, live MemoryOS, natural peer-GOD
   groupchat completion, full closure, or live lane merge truth.
+
+## 2026-06-20 Loop 26p Finding: Peer Reply Callback Needs Handoff-Scoped Dependency
+
+Status: local candidate repair with fullchain non-regression proof.
+
+Root-cause evidence:
+
+- Current main used sender-global pending direct mentions to decide when to
+  enqueue `peer_reply_drain_callback`.
+- A durable-store probe with two independent architect handoff messages showed
+  the first execute handoff could complete without callback because a separate
+  review handoff from the same sender remained unread.
+- This makes the callback a sender drain, not a named dependency set.
+
+Local candidate behavior:
+
+- `peer_reply_drain_callback` now scopes pending replies to the replied inbox
+  item's `source_message_id`.
+- The callback payload records:
+  `dependency_set_id=peer-reply-set:<source_message_id>`,
+  `source_message_id`, and `dependency_targets`.
+- The post-fix probe emitted the execute callback while the unrelated review
+  inbox stayed unread.
+
+Runtime proof:
+
+```text
+branch=codex/peer-reply-dependency-set-callback
+base_main=819e95046f82a8be970319b50cd581e44e60b66a
+run_root=/tmp/xmuse-postmerge-layered-prompt-main/.goal-runs/2026-06-20/loop-26p-dependency-set-callback-fullchain-044040
+conversation_id=conv_36963d69e9bd4f6b8b3c9ec3fce8fff0
+collaboration_run=collab_dc46c5918fb040a493300db796651033
+proposal_id=prop_c3f500b569b74b4a95a936fa52f19ce2
+resolution_id=res_7527b86a90b34e68bdce6ecdc6890eba
+lane_id=loop_26p_dependency_set_callback_fullchain_044040
+final_action_hold_id=final-157669a4cbdf
+```
+
+Confirmed:
+
+- The docs-only fullchain sentinel reached `awaiting_final_action`.
+- The isolated execution artifact matched the requested content.
+- The collaboration run ended `done`; collaboration request, callback,
+  review trigger, and dispatch inboxes all ended `read`.
+- The lane recorded `gate_passed=true`, `review_decision=merge`,
+  `review_delivery_mode=persistent`, `persistent_review_degraded=false`, and
+  OpenCode review peer metadata.
+- Cleanup left no Chat API or MCP listener.
+
+Remaining caveats:
+
+- This is local candidate proof only; no PR or CI exists for the candidate yet.
+- This is a handoff-message dependency set, not a general workflow dependency
+  planner.
+- It does not claim GitHub review truth, live MemoryOS, production readiness,
+  natural peer-GOD groupchat completion, full closure, or live lane merge
+  truth.

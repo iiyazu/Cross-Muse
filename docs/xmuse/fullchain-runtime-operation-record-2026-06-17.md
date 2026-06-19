@@ -6771,3 +6771,131 @@ Caveats:
 - This is not production readiness, repeated soak, MemoryOS proof, GitHub
   review truth, natural peer-GOD groupchat completion, or full closure.
 - The final action was intentionally held; no live lane merge is claimed.
+
+## 2026-06-20 Loop 26p: Handoff-Scoped Peer Reply Dependency Candidate
+
+Purpose: repair the P1 coordination gap where direct peer-reply drain callbacks
+used sender-global pending mentions instead of a durable handoff message as the
+dependency set.
+
+Pre-fix durable-store probe:
+
+```text
+producer=ChatStore.create_message_inbox_and_log
+consumer=ChatStore reply_to_inbox_item_id callback creation
+shape=two independent architect handoff messages
+first_handoff_target=execute
+second_handoff_target=review
+observed_before_fix=execute reply produced 0 peer_reply_drain_callback items
+blocking_state=review handoff inbox remained unread
+classification=sender-global drain blocked a completed independent handoff
+```
+
+Candidate change:
+
+```text
+branch=codex/peer-reply-dependency-set-callback
+files=src/xmuse_core/chat/store.py, tests/xmuse/test_peer_chat_mcp_tools.py
+dependency_set_authority=chat_inbox_items.source_message_id
+callback_payload_fields=dependency_set_id, source_message_id, dependency_targets
+```
+
+Post-fix durable-store probe:
+
+```text
+execute_reply_callbacks=1
+dependency_set_id=peer-reply-set:<first source message id>
+dependency_targets=["execute"]
+unrelated_review_inbox_status=unread
+```
+
+Focused validation:
+
+```text
+uv run pytest tests/xmuse/test_peer_chat_mcp_tools.py -q \
+  -k 'peer_replies_enqueue_drain_callback_for_original_sender or peer_reply_drain_callback_is_scoped_to_source_handoff'
+-> 2 passed, 22 deselected, 1 warning
+```
+
+Broad local note:
+
+```text
+uv run pytest tests/xmuse/test_peer_chat_mcp_tools.py tests/xmuse/test_peer_chat_scheduler.py -q
+-> 41 passed, 1 failed, 1 warning
+```
+
+The failure was pre-existing/unrelated to this candidate boundary:
+`test_mcp_collaboration_tools_support_veto_and_dispatch_gate` creates no
+execute participant but asks for `targets=["review", "execute"]`, so
+`chat_create_collaboration_request` returns an error payload instead of
+`run`. This was not folded into the dependency-set candidate.
+
+Fullchain candidate rerun:
+
+```bash
+RUN_ID=loop-26p-dependency-set-callback-fullchain-044040
+RUN_ROOT=/tmp/xmuse-postmerge-layered-prompt-main/.goal-runs/2026-06-20/$RUN_ID
+EXEC_ROOT=/tmp/$RUN_ID-exec
+FEATURE_ID=loop_26p_dependency_set_callback_fullchain_044040
+uv run python scripts/run_fullchain_docs_sentinel.py \
+  --run-root "$RUN_ROOT" \
+  --execution-worktree "$EXEC_ROOT" \
+  --feature-id "$FEATURE_ID" \
+  --proposal-timeout-s 900 \
+  --lane-timeout-s 1200 \
+  --max-hours 0.8
+```
+
+Durable chain:
+
+```text
+base_head_sha=819e95046f82a8be970319b50cd581e44e60b66a
+conversation_id=conv_36963d69e9bd4f6b8b3c9ec3fce8fff0
+collaboration_run=collab_dc46c5918fb040a493300db796651033
+proposal_id=prop_c3f500b569b74b4a95a936fa52f19ce2
+resolution_id=res_7527b86a90b34e68bdce6ecdc6890eba
+lane_id=loop_26p_dependency_set_callback_fullchain_044040
+final_action_hold_id=final-157669a4cbdf
+```
+
+Final lane state:
+
+```text
+status=awaiting_final_action
+gate_passed=true
+review_decision=merge
+review_delivery_mode=persistent
+persistent_review_degraded=false
+review_peer_cli_kind=opencode
+review_peer_model=opencode-go/deepseek-v4-flash
+proposal_has_review_runtime=false
+single_related_lane_graph_proposal=true
+```
+
+Inbox and collaboration state:
+
+```text
+collaboration_run.status=done
+collaboration_run.targets=["@execute"]
+collaboration_request inbox=read
+collaboration_callback inbox=read
+review_trigger inbox=read
+dispatch inbox=read
+```
+
+Cleanup:
+
+```text
+chat_port_listening=false
+mcp_port_listening=false
+```
+
+Classification: local candidate proof for handoff-scoped direct peer-reply
+coordination plus fullchain non-regression on the docs-only sentinel shape.
+
+Caveats:
+
+- This is not PR CI, server truth, production readiness, repeated soak,
+  MemoryOS proof, GitHub review truth, natural peer-GOD groupchat completion,
+  or full closure.
+- The final action was intentionally held; no live lane merge is claimed.

@@ -388,16 +388,20 @@ class ChatStore:
         sender_participant_id = replied_item["sender_participant_id"]
         if not sender_participant_id or replied_item["item_type"] != "mention":
             return None
+        source_message_id = replied_item["source_message_id"]
+        if not source_message_id:
+            return None
         pending = conn.execute(
             """
             select count(*) as count
             from chat_inbox_items
             where conversation_id = ?
               and sender_participant_id = ?
+              and source_message_id = ?
               and item_type = 'mention'
               and status in ('unread', 'claimed')
             """,
-            (replied_item["conversation_id"], sender_participant_id),
+            (replied_item["conversation_id"], sender_participant_id, source_message_id),
         ).fetchone()
         if pending is None or int(pending["count"]) != 0:
             return None
@@ -412,6 +416,21 @@ class ChatStore:
         if target is None:
             return None
         response_target = replied_item["target_participant_id"]
+        dependency_targets = [
+            row["target_role"] or row["target_address"]
+            for row in conn.execute(
+                """
+                select target_role, target_address
+                from chat_inbox_items
+                where conversation_id = ?
+                  and sender_participant_id = ?
+                  and source_message_id = ?
+                  and item_type = 'mention'
+                order by rowid asc
+                """,
+                (replied_item["conversation_id"], sender_participant_id, source_message_id),
+            ).fetchall()
+        ]
         return {
             "target_participant_id": target["participant_id"],
             "target_role": target["role"],
@@ -432,6 +451,9 @@ class ChatStore:
                     "summary now."
                 ),
                 "trigger_mode": "peer_reply_drain_callback",
+                "dependency_set_id": f"peer-reply-set:{source_message_id}",
+                "source_message_id": source_message_id,
+                "dependency_targets": dependency_targets,
                 "completed_inbox_item_id": replied_item["id"],
                 "completed_response_message_id": response_message_id,
                 "pending_peer_inbox_count": 0,
