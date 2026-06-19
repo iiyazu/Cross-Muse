@@ -1017,6 +1017,62 @@ def test_lane_graph_approval_uses_opencode_review_peer_display_name_runtime(
     assert lanes[0]["review_runtime"] == "opencode"
 
 
+def test_lane_graph_approval_canonicalizes_opencode_review_runtime_case(
+    tmp_path: Path,
+) -> None:
+    conversation_id = _conversation(tmp_path)
+    ParticipantStore(tmp_path / "chat.db").add(
+        conversation_id=conversation_id,
+        role="review",
+        display_name="review-god",
+        cli_kind="opencode",
+        model="opencode-go/deepseek-v4-flash",
+    )
+    client = TestClient(create_app(tmp_path))
+    proposal = client.post(
+        f"/api/chat/conversations/{conversation_id}/proposals",
+        json={
+            "author": "architect",
+            "proposal_type": "lane_graph",
+            "content": json.dumps(
+                {
+                    "summary": "Use canonical OpenCode runtime",
+                    "lanes": [
+                        {
+                            "feature_id": "lane-review-runtime-opencode-case",
+                            "prompt": "Review through OpenCode.",
+                            "depends_on": [],
+                            "capabilities": ["code"],
+                            "review_runtime": "OpenCode",
+                        }
+                    ],
+                }
+            ),
+            "references": [],
+        },
+    )
+    assert proposal.status_code == 201
+
+    approved = client.post(
+        f"/api/chat/proposals/{proposal.json()['id']}/approve",
+        json={
+            "approved_by": ["architect"],
+            "approval_mode": "manual",
+            "goal_summary": "Approve canonical OpenCode runtime projection",
+        },
+    )
+
+    assert approved.status_code == 200
+    assert approved.json()["content"]["lanes"][0]["review_runtime"] == "opencode"
+    graph_id = f"{approved.json()['id']}-graph-v{approved.json()['version']}"
+    graph = json.loads((tmp_path / "lane_graphs" / f"{graph_id}.json").read_text())
+    assert graph["lanes"][0]["feature_id"] == "lane-review-runtime-opencode-case"
+    assert graph["lanes"][0]["review_runtime"] == "opencode"
+    lanes = json.loads((tmp_path / "feature_lanes.json").read_text())["lanes"]
+    assert lanes[0]["feature_id"] == "lane-review-runtime-opencode-case"
+    assert lanes[0]["review_runtime"] == "opencode"
+
+
 def test_lane_graph_approval_metadata_preserves_proposal_lane_authority(
     tmp_path: Path,
 ) -> None:

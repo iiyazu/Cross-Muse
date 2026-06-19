@@ -3497,3 +3497,192 @@ Claims not made: full chain success, independent OpenCode review pass,
 GitHub review truth, merge truth, `ready_to_merge`, `pr_merged`, live MemoryOS,
 full L8-L10 closure, full L1-L11 closure, production-ready groupchat, or
 overnight readiness.
+
+### Loop 25z46: post-PR81 fullchain rerun exposed OpenCode casing fallback
+
+Branch:
+
+```text
+codex/post-pr81-fullchain-rerun
+base=origin/main@ff57a06ce3834e35d8afcbcb6d15c2f14ce95ae8
+```
+
+Runtime root:
+
+```text
+/tmp/xmuse-post-pr81-fullchain-main/.goal-runs/2026-06-19/loop-25z46-post-pr81-fullchain-125758
+```
+
+Commands:
+
+```bash
+XMUSE_ROOT="$RUN_ROOT" XMUSE_EXECUTION_WORKTREE="$EXEC_WORKTREE" \
+  uv run python -c 'import os; from pathlib import Path; import uvicorn; from xmuse.chat_api import create_app; uvicorn.run(create_app(base_dir=Path(os.environ["XMUSE_ROOT"]), execution_worktree=Path(os.environ["XMUSE_EXECUTION_WORKTREE"])), host="127.0.0.1", port=8201, log_level="info")'
+
+XMUSE_ROOT="$RUN_ROOT" uv run xmuse-mcp-server
+
+XMUSE_ROOT="$RUN_ROOT" XMUSE_PEER_GOD_BACKEND=native \
+  XMUSE_RAY_GOD_MCP=0 XMUSE_CHAT_API_URL=http://127.0.0.1:8201 \
+  uv run xmuse-platform-runner --xmuse-root "$RUN_ROOT" --mcp-port 8100 \
+  --peer-chat --persistent-review-god --persistent-review-timeout-s 240 \
+  --max-hours 1.0 --no-auto-merge
+```
+
+Durable observations:
+
+```text
+conversation_id=conv_6656eed08af94e068c0eb37297b9e0ee
+proposal_id=prop_4dcb154dd4144efba995b54dcbccc0cb
+resolution_id=res_a13d67ee96c04ba1bf8c90cb71e216d1
+collaboration_run=collab_3f059a7f87954944bc9a729faaf7879d
+
+feature_id=post-pr81-fullchain-ledger-sync-docs
+status=awaiting_final_action
+gate_passed=true
+review_runtime=OpenCode
+review_delivery_mode=one_shot_fallback
+persistent_review_degraded=true
+persistent_review_degraded_reason=missing_feature_identity
+review_decision=merge
+final_action_hold_id=final-1199ff0e330d
+```
+
+Classification: real local fullchain negative routing evidence. The groupchat
+and lane reached final-action hold, but explicit `OpenCode` casing bypassed the
+lowercase `opencode` provider identity and degraded persistent review to a
+fallback path.
+
+### Loop 25z47: focused HTTP projection smoke for OpenCode casing
+
+Purpose:
+
+```text
+Verify that approval/projection canonicalizes explicit review_runtime=OpenCode
+to the active OpenCode review participant runtime, without claiming a fullchain
+execution/review loop.
+```
+
+Runtime root:
+
+```text
+/tmp/xmuse-post-pr81-fullchain-main/.goal-runs/2026-06-19/loop-25z47-opencode-case-projection-smoke-131455
+```
+
+Command:
+
+```bash
+XMUSE_ROOT="$RUN_ROOT" \
+  uv run python -c 'import os; from pathlib import Path; import uvicorn; from xmuse.chat_api import create_app; uvicorn.run(create_app(base_dir=Path(os.environ["XMUSE_ROOT"])), host="127.0.0.1", port=8214, log_level="info")'
+```
+
+HTTP chain:
+
+```text
+POST /api/chat/conversations -> 201
+review provider override: opencode/review, display_name=review-god
+
+POST /api/chat/conversations/{conversation_id}/proposals -> 201
+proposal lane review_runtime=OpenCode
+
+POST /api/chat/proposals/{proposal_id}/approve -> 200
+approval response review_runtime=opencode
+feature_lanes.json review_runtime=opencode
+
+conversation_id=conv_848927cc81394c778f889af2f92d738e
+proposal_id=prop_09c6d82413764fe3963a6ebe2aae6487
+resolution_id=res_048df0afefef417ca54a1f893a08cc06
+```
+
+Classification: real Chat API approval/projection evidence only. It validates
+the authority handoff for casing, not worker execution or independent review.
+
+### Loop 25z48: post-casing-fix fullchain rerun to persistent OpenCode review
+
+Runtime root:
+
+```text
+/tmp/xmuse-post-pr81-fullchain-main/.goal-runs/2026-06-19/loop-25z48-opencode-case-fullchain-131556
+```
+
+Commands:
+
+```bash
+XMUSE_ROOT="$RUN_ROOT" XMUSE_EXECUTION_WORKTREE="$EXEC_WORKTREE" \
+  uv run python -c 'import os; from pathlib import Path; import uvicorn; from xmuse.chat_api import create_app; uvicorn.run(create_app(base_dir=Path(os.environ["XMUSE_ROOT"]), execution_worktree=Path(os.environ["XMUSE_EXECUTION_WORKTREE"])), host="127.0.0.1", port=8201, log_level="info")'
+
+XMUSE_ROOT="$RUN_ROOT" uv run xmuse-mcp-server
+
+XMUSE_ROOT="$RUN_ROOT" XMUSE_PEER_GOD_BACKEND=native \
+  XMUSE_RAY_GOD_MCP=0 XMUSE_CHAT_API_URL=http://127.0.0.1:8201 \
+  uv run xmuse-platform-runner --xmuse-root "$RUN_ROOT" --mcp-port 8100 \
+  --peer-chat --persistent-review-god --persistent-review-timeout-s 240 \
+  --max-hours 1.0 --no-auto-merge
+```
+
+Durable observations:
+
+```text
+conversation_id=conv_78f4da6f5c3b4e11a4c7e50e96275b96
+proposal_id=prop_0a317551f8ef48d5aa4338310427f89b
+resolution_id=res_6ae312c81f34476fa51ee9bbe7765743
+collaboration_run=collab_ecaa21e66b584129924111e4c725bebf
+
+messages=9
+chat_inbox_items=5
+proposals=1
+resolutions=1
+collaboration_runs=1
+peer_turn_latency_traces:
+  mcp_writeback=3 with no degraded reason
+  mcp_writeback=1 with peer_response_timeout_after_writeback
+```
+
+Lane result:
+
+```text
+feature_id=docs-production-closure-gap-ledger-post-pr81-rerun
+status=awaiting_final_action
+gate_passed=true
+review_runtime=opencode
+review_delivery_mode=persistent
+persistent_review_degraded=false
+peer_delivery_mode=configured_peer
+review_peer_id=part_6ed04cc020e145a6a7101938569e37bd
+review_runtime_requested=opencode
+persistent_review_identity=configured:part_6ed04cc020e145a6a7101938569e37bd
+review_decision=merge
+final_action_hold_id=final-d1959362ae2b
+review_task=rtask_935e4743a2cf477da02fd60f80398870
+review_verdict=verdict-merge-rtask_935e4743a2cf477da02fd60f80398870
+```
+
+Gate evidence:
+
+```text
+logs/gates/docs-production-closure-gap-ledger-post-pr81-rerun/report.json
+passed=true
+blocking_passed=true
+command="uv run pytest -q tests/xmuse/test_package_boundaries.py"
+returncode=0
+```
+
+Review evidence refs:
+
+```text
+feature_lanes.json#lane=docs-production-closure-gap-ledger-post-pr81-rerun
+review_plane.json#task=rtask_935e4743a2cf477da02fd60f80398870
+logs/lane_prompts/docs-production-closure-gap-ledger-post-pr81-rerun.md
+logs/gates/docs-production-closure-gap-ledger-post-pr81-rerun/report.json
+```
+
+Classification: real local fullchain evidence for one docs-only lane from
+durable groupchat through proposal, approval, isolated execution, gate,
+persistent OpenCode review, and final-action hold under `--no-auto-merge`.
+This is not production readiness, GitHub review truth, live MemoryOS proof, or
+full L8-L10/L1-L11 closure.
+
+Cleanup:
+
+```text
+8201/8100/8214/8265 listeners: none
+```

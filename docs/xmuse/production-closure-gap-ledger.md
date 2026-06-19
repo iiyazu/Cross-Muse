@@ -7,19 +7,21 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
 
 ## Current Proof Boundary
 
-- Latest main inspected: `c02e9dce50b808bbd4aed1ab6d1960e32ca6472b`.
-- Strongest runtime evidence: Loop 25z41 reached a real local code-change lane
-  from durable groupchat through proposal, approval, isolated execution,
-  persistent OpenCode review writeback, gate pass, and final-action hold under
-  `--no-auto-merge`.
-- Latest focused runtime evidence: Loop 25z45 verified through the real Chat
-  API that an approved lane_graph using the active OpenCode review participant's
-  display name, `review-god`, projects to `review_runtime=opencode`.
-- Strongest server facts: PR #78 was merged by GitHub server state after
-  successful `quality-gates`, `contract-smoke-gates`, and
-  `real-runtime-integration-gate` checks on head
-  `524c1c961881d4f17851361f920d068d5c652874`; post-merge main checks passed on
-  `c5818ba433142765c817bc63fed73ec40141ae06`.
+- Latest main inspected: `ff57a06ce3834e35d8afcbcb6d15c2f14ce95ae8`.
+- Strongest runtime evidence: Loop 25z48 reached one real local docs-only lane
+  from durable groupchat through proposal, approval, isolated execution, gate,
+  persistent OpenCode review, and final-action hold under `--no-auto-merge`.
+  The lane recorded `review_runtime=opencode`,
+  `review_delivery_mode=persistent`, `persistent_review_degraded=false`,
+  `gate_passed=true`, and `review_decision=merge`.
+- Latest focused runtime evidence: Loop 25z47 verified through the real Chat
+  API that an approved lane_graph using explicit `review_runtime=OpenCode`
+  projects to canonical `review_runtime=opencode` when the conversation has one
+  active OpenCode review participant.
+- Strongest server facts: PR #81 was merged by GitHub server state as
+  `ff57a06ce3834e35d8afcbcb6d15c2f14ce95ae8` after successful `xmuse CI` on PR
+  head `063dcff57bf4e325e89d3ec9bd8682427bb26e41`; post-merge main `xmuse CI`
+  also passed on `ff57a06ce3834e35d8afcbcb6d15c2f14ce95ae8`.
 - Proof type: local runtime proof plus inspected GitHub server facts for the
   small imported PR. This is not GitHub review truth or production readiness.
 
@@ -41,17 +43,23 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
 - PR #80 `codex/strict-leading-mention-routing`: fixed leading role mentions
   such as `@architect Coordinate...`. Merged to main as
   `c02e9dce50b808bbd4aed1ab6d1960e32ca6472b`.
+- PR #81 `codex/review-runtime-from-chat-peer`: normalized observed
+  groupchat-produced review aliases such as `human_final_hold`, `final_hold`,
+  and `review-god` to the active OpenCode review runtime. Merged to main as
+  `ff57a06ce3834e35d8afcbcb6d15c2f14ce95ae8`.
 
 ## Manual Gaps
 
 - Default review peer selection can still choose Codex unless OpenCode is
-  explicitly requested for the runtime conversation.
-- Groupchat-produced `review_runtime` aliases such as `human_final_hold` and
-  `review-god` are addressed in `codex/review-runtime-from-chat-peer`; a full
-  execution-to-independent-review rerun remains unproven.
-- The `@architect Coordinate...` leading mention overmatch observed in Loop
-  25z41 is addressed by PR #80; repeated multi-turn routing stability remains
-  unproven.
+  explicitly requested or otherwise made authoritative for the runtime
+  conversation.
+- Groupchat-produced `review_runtime` aliases such as `human_final_hold`,
+  `final_hold`, and `review-god` are addressed by PR #81. Explicit provider
+  casing such as `OpenCode` is addressed in the current
+  `codex/post-pr81-fullchain-rerun` branch and has local projection/fullchain
+  evidence, but no server facts until a small PR is pushed and checked.
+- The successful Loop 25z48 chain covered one docs-only lane; it is not a real
+  code-change soak or production-load proof.
 - The successful chain is not yet a repeated multi-turn soak run.
 - Provider-native session continuity and memory persistence are not proven as
   durable product behavior.
@@ -76,13 +84,13 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
 
 ## Next Small Buckets
 
-- P0 docs evidence sync: Loop 25z41, F84, and this ledger were recorded in
-  PR #79.
-- P1 mention parsing: Loop 25z42 addresses first-token role mentions consuming
-  following capitalized sentence text.
-- P2 review runtime authority: current branch normalizes observed final-hold and
-  review peer display-name aliases to the active OpenCode review runtime.
-- P3 stability loop: repeat real groupchat-to-final-hold with multiple turns
+- P0 provider casing: open a small PR for explicit `OpenCode` to `opencode`
+  canonicalization plus Loop 25z46/25z47/25z48 evidence.
+- P1 stability loop: repeat real groupchat-to-final-hold with multiple turns
   and no code changes beyond the target slice.
+- P2 default review authority: decide when OpenCode should be selected without
+  relying on proposal text.
+- P3 code-change lane rerun: repeat a small real code-change lane after the
+  casing PR lands.
 - P4 MemoryOS adapter proof: keep `live_memoryos` forbidden until a real trace
   id or artifact exists.
