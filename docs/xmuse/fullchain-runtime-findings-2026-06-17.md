@@ -4248,3 +4248,32 @@ Remaining caveats:
 
 - This is harness-efficiency evidence only. It does not prove a fullchain
   success path and does not change product runtime authority.
+
+## 2026-06-20 Loop 26w Finding: PR #123 Harness Repair Lands On Main
+
+Status: bounded post-merge server confirmation.
+
+Primary artifact:
+
+```text
+pr=123
+pr_head=6f145725e8488081c5572ec72060f9d8062ba906
+merge_commit=162da10f4ef1d515a95ea9fc90889494c8e75146
+pr_ci_run=27850584077 success
+main_ci_run=27850614290 success
+```
+
+Confirmed:
+
+- PR #123 merged the docs fullchain sentinel `exec_failed` terminal-state
+  repair to main.
+- GitHub Actions passed on the PR head and on the post-merge main commit.
+- Future docs fullchain sentinel runs should return promptly when the lane
+  reaches `exec_failed`, allowing the existing success checks to report failure
+  instead of waiting for `--lane-timeout-s`.
+
+Remaining caveats:
+
+- This is harness behavior only. It does not prove a fullchain success path,
+  production readiness, GitHub review truth, live MemoryOS, natural peer-GOD
+  groupchat completion, full closure, or live lane merge truth.
