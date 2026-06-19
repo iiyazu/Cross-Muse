@@ -7,7 +7,7 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
 
 ## Current Proof Boundary
 
-- Latest main inspected: `71ba128edfadbaea7ca45ea288e1ee5faf92e6b9`.
+- Latest main inspected: `8e9ae4d887f243723561a4ebe01e5ea1817c4963`.
 - Strongest code-change lane runtime evidence: Loop 25z64 reached one real
   local code-change lane from durable groupchat through execute feasibility,
   proposal, runtime-driver approval, isolated execution, xmuse-core gate,
@@ -27,11 +27,11 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   `all_callbacks_created=true`, `all_callbacks_consumed=true`,
   `no_proposals_or_resolutions=true`, `total_failed_traces=0`, and
   `total_timeout_after_writeback_traces=0`.
-- Strongest server facts: PR #88 was merged by GitHub server state as
-  `71ba128edfadbaea7ca45ea288e1ee5faf92e6b9` after successful `xmuse CI` on PR
-  head `a8144975612b9a57eca5edacb5230a246668e47f` in run `27817335849`;
+- Strongest server facts: PR #89 was merged by GitHub server state as
+  `8e9ae4d887f243723561a4ebe01e5ea1817c4963` after successful `xmuse CI` on PR
+  head `2e94c37575d2fc865dfc10c483519f1e6362ccb8` in run `27818698962`;
   post-merge main `xmuse CI` also passed on
-  `71ba128edfadbaea7ca45ea288e1ee5faf92e6b9` in run `27818452826`.
+  `8e9ae4d887f243723561a4ebe01e5ea1817c4963` in run `27818751119`.
 - Proof type: local runtime proof plus inspected GitHub server facts for small
   PRs. This is not GitHub review truth or production readiness.
 
@@ -84,6 +84,10 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   target participant/session, tightened simple reply guidance, and recorded
   post-PR87 runtime evidence. Merged to main as
   `71ba128edfadbaea7ca45ea288e1ee5faf92e6b9`.
+- PR #89 `codex/inspector-provider-summary`: added
+  `participants.provider_summary` to the conversation inspector and recorded
+  Loop 25z64 fullchain evidence. Merged to main as
+  `8e9ae4d887f243723561a4ebe01e5ea1817c4963`.
 
 ## Manual Gaps
 
@@ -113,6 +117,10 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   final-action hold. It also logged non-blocking review-state transition noise:
   `cannot transition loop25z64_inspector_provider_summary from reviewed to
   rejected`.
+- A local candidate fix now guards late persistent rework/rejected verdicts
+  after accepted review/final-hold state by recording ignored-conflict metadata
+  instead of attempting an invalid transition. It still needs a repeat runtime
+  chain before being promoted to runtime proof.
 - Loop 25z64 did not expose `review_delivery_mode=persistent` or
   `persistent_review_degraded=false`; do not report it as complete persistent
   OpenCode delivery proof.
@@ -142,18 +150,16 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
 
 ## Next Small Buckets
 
-- P0 inspector provider summary: import the audited Loop 25z64 candidate as a
-  separate small PR from main.
+- P0 review-state idempotence: land the local candidate fix for late persistent
+  rework/rejected verdicts after accepted review/final-hold state.
 - P1 explicit dependency coordination: add a durable coordination primitive for
   waiting on named peer replies before summaries/handoffs when direct drain is
   insufficient.
 - P2 stability loop: repeat real groupchat-to-final-hold with multiple turns
   and no code changes beyond the target slice.
-- P3 review-state idempotence: fix incompatible duplicate review transitions
-  after a review verdict has already been recorded.
-- P4 default review authority: decide when OpenCode should be selected without
+- P3 default review authority: decide when OpenCode should be selected without
   relying on proposal text.
-- P5 code-change soak: repeat small real code-change lanes after the
+- P4 code-change soak: repeat small real code-change lanes after the
   inspector provider summary PR lands.
-- P6 MemoryOS adapter proof: keep `live_memoryos` forbidden until a real trace
+- P5 MemoryOS adapter proof: keep `live_memoryos` forbidden until a real trace
   id or artifact exists.
