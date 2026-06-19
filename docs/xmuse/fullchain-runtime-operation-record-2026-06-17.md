@@ -2500,3 +2500,206 @@ recorded lane result.
 Claims not made: GitHub review truth, merge truth, `ready_to_merge`,
 `pr_merged`, live MemoryOS, full L8-L10 closure, full L1-L11 closure,
 production-ready groupchat, or overnight readiness.
+
+### Post-PR72 proof-boundary and final-action callback reruns
+
+#### Loop 25z34: post-PR72 main fullchain proof-boundary check
+
+Runtime root:
+
+```text
+/tmp/xmuse-post-pr72-main/.goal-runs/2026-06-19/loop-25z34-post-pr72-main-fullchain-084618
+```
+
+Observed durable path:
+
+```text
+conversation_id=conv_e2f7d79a008143baaa01f71b9c9f7bdc
+collaboration_run=collab_e63f97be43df48b390c8a79dab7013f6
+execute_response=collab_resp_c1ec7b6f383c46d798ebb964d5fad0df
+review_response=collab_resp_fad30bc1d4074668b772a835132c7183
+proposal_id=prop_3361636d174045af9602a159e83352d2
+resolution_id=res_2a1be59f6b9842deac99f81f9f5c8add
+lane_id=loop25z34_post_pr72_main_fullchain
+```
+
+Lane state:
+
+```text
+status=awaiting_final_action
+gate_passed=true
+review_runtime=opencode
+review_runtime_requested=opencode
+peer_delivery_mode=configured_peer
+review_delivery_mode=persistent
+persistent_review_degraded=false
+final_action_hold_id=final-57b1f8883a1f
+```
+
+Finding: the OpenCode review summary persisted into lane metadata,
+`review_plane.json`, and `final_actions.json` said the lane was "reviewed and
+merged" even though the authoritative state was only `awaiting_final_action`.
+This was a proof-boundary wording defect, not merge truth.
+
+Resulting PR:
+
+```text
+PR #73: https://github.com/iiyazu/Cross-Muse/pull/73
+branch=codex/review-proof-boundary-summary-safety
+head=3d29f1cdb75f6bfc694f6d734c057884a9c59f26
+merge_commit=f00399ee5fef6a5560564b073ce78c5d223d75d8
+merged_at=2026-06-19T01:06:36Z
+main_push_ci=27799088742 success
+```
+
+PR #73 sanitizes durable review summaries before they enter lane metadata,
+review-plane verdicts, or final-action holds.
+
+#### Loop 25z35: post-PR73 main fullchain final-action callback repro
+
+Runtime root:
+
+```text
+/tmp/xmuse-post-pr73-main/.goal-runs/2026-06-19/loop-25z35-post-pr73-main-fullchain-090915
+```
+
+Observed durable path:
+
+```text
+conversation_id=conv_78734df274fc4d60af7c684e0a61a946
+collaboration_run=collab_955dc85c3c1049acbc9a131f70b3e422
+proposal_id=prop_9cac7611b67c4b42ac1059442e2e39e0
+resolution_id=res_87d1c49421bc4ae595b3b5f9c59e2953
+lane_id=loop25z35_post_pr73_main_fullchain
+```
+
+The lane reached execution, gate, OpenCode persistent review, and final-action
+hold creation. PR #73's sanitizer worked: the persisted review summary was
+`review accepted`, with no "reviewed and merged", `ready_to_merge`, or
+`pr_merged` wording in authority-facing stores.
+
+New failure:
+
+```text
+InvalidTransitionError: cannot transition loop25z35_post_pr73_main_fullchain
+from awaiting_final_action to reviewed
+```
+
+Root cause: persistent review callback delivery arrived after the review plane
+had already converted the merge verdict into a pending final-action hold. The
+callback retried `reviewed` instead of treating `awaiting_final_action` as an
+already-committed review state.
+
+Resulting PR:
+
+```text
+PR #74: https://github.com/iiyazu/Cross-Muse/pull/74
+branch=codex/persistent-review-final-action-idempotency
+head=e568f7bb61bd8993eea58db18573ac35556de491
+merge_commit=4adc60a634a11703887d5d4aae42c878ce492e6e
+merged_at=2026-06-19T01:25:30Z
+main_push_ci=27799697662 success
+```
+
+PR #74 makes persistent review callbacks idempotent when a merge review has
+already produced an `awaiting_final_action` hold.
+
+#### Loop 25z36: post-PR74 main fullchain rerun
+
+Runtime root:
+
+```text
+/tmp/xmuse-post-pr74-main/.goal-runs/2026-06-19/loop-25z36-post-pr74-main-fullchain-092635
+```
+
+Service commands:
+
+```bash
+XMUSE_ROOT="$ROOT" uv run xmuse-chat-api
+XMUSE_ROOT="$ROOT" uv run xmuse-mcp-server
+XMUSE_ROOT="$ROOT" XMUSE_PEER_GOD_BACKEND=native XMUSE_RAY_GOD_MCP=0 \
+  XMUSE_CHAT_API_URL=http://127.0.0.1:8201 \
+  uv run xmuse-platform-runner --xmuse-root "$ROOT" --mcp-port 8100 \
+  --peer-chat --persistent-review-god --persistent-review-timeout-s 180 \
+  --max-hours 0.75 --no-auto-merge
+```
+
+Conversation and peer group:
+
+```text
+conversation_id=conv_c177e451d4424777bf4c7554ba40a48f
+architect_participant=part_b70740cbc7b04297aeb1e00d2b2414e8 codex gpt-5.4
+execute_participant=part_0bbed2e0ba6e4777a28e37bfd0c3cb70 codex gpt-5.4-mini
+review_participant=part_b05d71ea233d4ebb898777237d3b69bd opencode opencode-go/deepseek-v4-flash
+```
+
+The human demand mentioned only `@architect`; execute and review were brought
+in by architect handoff rather than by direct human mentions.
+
+Durable groupchat:
+
+```text
+human_message=msg_6c9effdcd4d1482ea743934700c3fa3e
+collaboration_run=collab_3702effdfe2d4bc4b47ce3c9141ce73c
+execute_response=collab_resp_4ac517ee2f34494682d8800404b26346
+review_response=collab_resp_e25767d3afe14a6298eb27cb497723a6
+proposal_id=prop_5c3419819fce4bbe9220f32101a1c4f7
+resolution_id=res_3500bc36a8804f60a5cdbf61303a4295
+```
+
+Lane and review result:
+
+```text
+lane_id=loop25z36_post_pr74_main_fullchain
+status=awaiting_final_action
+gate_passed=true
+review_runtime=opencode
+review_runtime_requested=opencode
+review_peer_id=part_b05d71ea233d4ebb898777237d3b69bd
+peer_delivery_mode=configured_peer
+review_delivery_mode=persistent
+persistent_review_degraded=false
+review_decision=merge
+review_verdict_id=verdict-merge-rtask_8517335ce9734b4ab471c2fd4eea10b2
+final_action_hold_id=final-d94401567174
+```
+
+Gate report:
+
+```text
+logs/gates/loop25z36_post_pr74_main_fullchain/report.json
+passed=true
+blocking_passed=true
+strict-product: uv run pytest -q tests/xmuse/test_package_boundaries.py -> 0
+```
+
+Durable peer trace summary:
+
+```text
+architect delivery_mode=mcp_writeback
+execute delivery_mode=mcp_writeback
+review delivery_mode=mcp_writeback
+degraded_reason=null for all peer_turn_latency_traces rows
+architect callback tool trace includes chat_emit_proposal
+OpenCode review process used --variant max
+```
+
+Negative search:
+
+```text
+rg "InvalidTransitionError|cannot transition|awaiting_final_action to reviewed|reviewed and merged|ready_to_merge=true|pr_merged=true" "$ROOT" -> no matches
+```
+
+Cleanup:
+
+```text
+8100/8201/8265 listeners: none
+xmuse service processes: none
+Ray service processes from the run: none
+```
+
+Claims not made: GitHub review truth, merge truth, `ready_to_merge`,
+`pr_merged`, live MemoryOS, full L8-L10 closure, full L1-L11 closure,
+production-ready groupchat, or overnight readiness. The final-action hold
+remains pending under `--no-auto-merge`; this is not a claim that a local merge
+or PR merge occurred.
