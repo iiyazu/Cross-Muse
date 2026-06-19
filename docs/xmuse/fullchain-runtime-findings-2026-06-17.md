@@ -2831,7 +2831,7 @@ Remaining gap:
 
 ### F100. Review peer runtime identity was not projected in lane health
 
-Severity: observability gap, local candidate fix.
+Severity: observability gap, mitigated on main by PR #94.
 
 Loop 25z69 reran a real code-change lane from main after PR #93's default
 OpenCode review routing merge:
@@ -2856,7 +2856,7 @@ The durable participant and session stores proved which peer handled review,
 but the lane/read-model projection did not persist the review peer runtime
 identity as first-class lane metadata.
 
-Candidate fix:
+Fix:
 
 - Persist `review_peer_cli_kind` and `review_peer_model` on the lane after the
   configured/default review participant is resolved.
@@ -2864,6 +2864,9 @@ Candidate fix:
   summaries.
 - Preserve `peer_delivery_mode` as the delivery truth. Runtime identity fields
   are observability metadata; they are not review truth or merge truth.
+- PR #94 merged this change to main as
+  `2996643e4f13a8ea97af6b6f9675fd697a847716` after successful PR and
+  post-merge main `xmuse CI`.
 
 Focused validation:
 
@@ -2883,8 +2886,70 @@ git diff --check
 
 Remaining gap:
 
-- This is a small local candidate produced from one bounded real code-change
-  run. It is not GitHub CI/server truth until pushed as a small PR and checked
-  by GitHub Actions.
-- It does not claim GitHub review truth, production readiness, live MemoryOS,
-  overnight readiness, full L8-L10 closure, or full L1-L11 closure.
+- The implementation is now in inspected GitHub server state, but the runtime
+  evidence remains bounded. It does not claim GitHub review truth, production
+  readiness, live MemoryOS, overnight readiness, full L8-L10 closure, or full
+  L1-L11 closure.
+
+### F101. Post-PR94 parallel runtime verification succeeded in two isolated shards
+
+Severity: positive bounded local runtime proof.
+
+Loop 25z70 ran from current main after PR #94:
+
+```text
+control_head=2996643e4f13a8ea97af6b6f9675fd697a847716
+shard_a=/tmp/xmuse-main-after-pr86-155349/.goal-runs/2026-06-19/loop-25z70a-post-pr94-health-metadata-195513
+shard_b=/tmp/xmuse-main-after-pr86-155349/.goal-runs/2026-06-19/loop-25z70b-post-pr94-parallel-stability-195513
+```
+
+Shard A drove one docs-only fullchain lane through durable groupchat,
+proposal, runtime-driver approval, isolated execution, gate, persistent
+OpenCode review, and final-action hold. The proposal omitted `review_runtime`:
+
+```text
+classification=post_pr94_health_metadata_visible
+proposal_has_review_runtime=false
+status=awaiting_final_action
+gate_passed=true
+review_decision=merge
+review_peer_defaulted=true
+review_peer_cli_kind=opencode
+review_peer_model=opencode-go/deepseek-v4-flash
+peer_delivery_mode=configured_peer
+review_delivery_mode=persistent
+persistent_review_degraded=false
+run_health_metadata_visible=true
+```
+
+The `run_health.peer_delivery.configured_peer_lanes` and
+`run_health.peer_delivery.default_review_peer_routing` summaries both exposed
+the review peer runtime identity.
+
+Shard B ran three real Codex/OpenCode groupchat conversations concurrently
+with shard A:
+
+```text
+conversation_count=3
+all_final_after_both=true
+all_callbacks_created=true
+all_callbacks_consumed=true
+no_proposals_or_resolutions=true
+no_open_or_failed_inbox=true
+no_failed_or_timeout_traces=true
+total_failed_traces=0
+total_timeout_after_writeback_traces=0
+```
+
+Impact:
+
+- Operator-level parallelism is viable when each shard has its own
+  `XMUSE_ROOT`, ports, execution worktree, Chat API, MCP server, and runner.
+- PR #94's health metadata is visible in a real post-merge fullchain lane, not
+  just focused unit/integration tests.
+
+Remaining gap:
+
+- This is one bounded local post-merge run, not production readiness, repeated
+  soak, overnight stability, GitHub review truth, live MemoryOS, full L8-L10
+  closure, or full L1-L11 closure.
