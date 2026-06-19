@@ -762,7 +762,12 @@ def _apply_lane_graph_review_runtime_authority(
             normalized_lanes.append(lane)
             continue
         review_runtime = str(lane.get("review_runtime") or "").strip().lower()
-        if review_runtime in {"human_final_hold", "final_hold", *review_aliases}:
+        if review_runtime in {
+            "opencode",
+            "human_final_hold",
+            "final_hold",
+            *review_aliases,
+        }:
             normalized_lanes.append({**lane, "review_runtime": authoritative_runtime})
             changed = True
             continue
