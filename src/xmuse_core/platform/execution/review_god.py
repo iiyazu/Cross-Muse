@@ -1043,6 +1043,8 @@ def _ensure_default_review_peer_sync(
             return opencode_review_peers[0].participant_id, None
         if len(opencode_review_peers) > 1:
             return None, "review_peer_runtime_ambiguous"
+        if _has_active_peer_roster(participants):
+            return None, "review_peer_runtime_unavailable"
         if feature_scope_id is None:
             return None, None
         display_name = _default_review_peer_display_name(feature_scope_id)
@@ -1074,6 +1076,15 @@ def _active_review_peers(participants: list[Any], *, cli_kind: str) -> list[Any]
         and participant.cli_kind == cli_kind
         and participant.status == "active"
     ]
+
+
+def _has_active_peer_roster(participants: list[Any]) -> bool:
+    return any(
+        participant.role != _REVIEW_ROLE
+        and participant.cli_kind in {"codex", "opencode"}
+        and participant.status == "active"
+        for participant in participants
+    )
 
 
 def _default_review_peer_display_name(feature_scope_id: str) -> str:

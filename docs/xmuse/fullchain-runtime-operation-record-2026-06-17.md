@@ -6305,3 +6305,71 @@ Caveats:
   feature-scoped Codex default peer path remains for the no-OpenCode case.
 - It does not prove GitHub review truth, live MemoryOS, dynamic roster mutation,
   overnight stability, or full closure.
+
+## 2026-06-20 Loop 26g: Missing OpenCode Default Review Focused Repro
+
+Purpose: test the remaining missing-reviewer boundary after Loop 26f. The
+target was default review routing when a conversation has no active OpenCode
+`review` participant.
+
+Pre-fix evidence:
+
+```text
+run_root=/tmp/xmuse-postmerge-layered-prompt-main/.goal-runs/2026-06-20/loop-26g-missing-opencode-default-review-repro-022052
+selector_summary=selector/selector_summary.json
+consumer_summary=consumer/consumer_summary.json
+selector.active_opencode_review_count=0
+selector.created_codex_review_participant=true
+selector.selector_failure=null
+consumer.lane.status=awaiting_final_action
+consumer.lane.review_peer_cli_kind=codex
+consumer.lane.review_peer_defaulted=true
+consumer.lane.review_delivery_mode=persistent
+consumer.spawn_await_count=0
+```
+
+Closer production-roster repro:
+
+```text
+run_root=/tmp/xmuse-postmerge-layered-prompt-main/.goal-runs/2026-06-20/loop-26g2-missing-opencode-roster-repro-022125
+summary_artifact=selector_summary.json
+condition=active Codex architect/executor participants, no active OpenCode review participant
+selector_selected_participant_id=part_bdc0070c37874d7d89fa7e0557d91228
+selector_failure=null
+created_codex_review_participant=true
+```
+
+Post-fix focused selector evidence:
+
+```text
+branch=codex/default-review-missing-opencode-roster-fail-closed
+run_root=/tmp/xmuse-postmerge-layered-prompt-main/.goal-runs/2026-06-20/loop-26g3-missing-opencode-roster-postfix-022227
+summary_artifact=selector_summary.json
+condition=active Codex architect/executor participants, no active OpenCode review participant
+selector_selected_participant_id=null
+selector_failure=review_peer_runtime_unavailable
+created_codex_review_participant=false
+```
+
+Focused integration validation:
+
+```text
+uv run pytest tests/xmuse/test_review_plane_orchestrator_integration.py -q -k 'default_review_peer'
+-> 12 passed, 39 deselected
+
+uv run pytest tests/xmuse/test_review_plane_orchestrator_integration.py tests/xmuse/test_persistent_review_session_contracts.py tests/xmuse/test_persistent_cli_peer.py tests/xmuse/test_package_boundaries.py -q
+-> 91 passed
+```
+
+Classification: bounded focused runtime/contract proof for the production-like
+roster case. When a real peer roster exists but the OpenCode review participant
+is missing, default review routing no longer creates a Codex replacement
+reviewer.
+
+Caveats:
+
+- This is not a fullchain run and not production readiness.
+- Empty or legacy conversations without any active peer roster still retain the
+  old feature-scoped Codex default-review fallback.
+- It does not prove GitHub review truth, live MemoryOS, dynamic roster mutation,
+  overnight stability, or full closure.

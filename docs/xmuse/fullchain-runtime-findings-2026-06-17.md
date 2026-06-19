@@ -3616,3 +3616,67 @@ Remaining caveats:
   Codex default-review path and remain a separate policy boundary.
 - This does not claim production readiness, GitHub review truth, live
   MemoryOS, natural peer-GOD groupchat completion, or full closure.
+
+## 2026-06-20 Loop 26g Finding: Missing OpenCode Review Peer In A Real Roster Fails Closed
+
+Status: bounded focused repair evidence on branch
+`codex/default-review-missing-opencode-roster-fail-closed`.
+
+Root boundary:
+
+```text
+authority=chat.db participants table
+producer=default review peer selector
+consumer=review_god configured/default peer delivery path
+condition=conversation has active Codex peer roster but no active OpenCode review participant
+failure_mode=selector must not replace the missing OpenCode reviewer with a Codex default reviewer
+```
+
+Observed before the fix:
+
+- Loop 26g showed that an empty conversation with no active OpenCode review
+  participant created a feature-scoped Codex review participant and reached
+  final-action hold through persistent review.
+- Loop 26g2 showed the same selector failure in a more production-like roster:
+  active Codex architect/executor participants existed, no active OpenCode
+  review participant existed, and the selector still created a Codex review
+  participant.
+
+Candidate behavior after the fix:
+
+```text
+run_root=/tmp/xmuse-postmerge-layered-prompt-main/.goal-runs/2026-06-20/loop-26g3-missing-opencode-roster-postfix-022227
+summary_artifact=selector_summary.json
+selector_selected_participant_id=null
+selector_failure=review_peer_runtime_unavailable
+created_codex_review_participant=false
+```
+
+Integration-level consumer behavior:
+
+- A conversation with an active peer roster and no active OpenCode reviewer
+  transitions the lane to `gate_failed`.
+- The lane records `failure_reason=required_review_peer_unavailable`,
+  `peer_delivery_mode=required_peer_failed`, and
+  `peer_degraded_reason=review_peer_runtime_unavailable`.
+- The persistent peer service is not invoked.
+- The one-shot review fallback is not invoked.
+- No Codex review participant is created.
+
+Validation:
+
+```text
+uv run pytest tests/xmuse/test_review_plane_orchestrator_integration.py -q -k 'default_review_peer'
+-> 12 passed, 39 deselected
+
+uv run pytest tests/xmuse/test_review_plane_orchestrator_integration.py tests/xmuse/test_persistent_review_session_contracts.py tests/xmuse/test_persistent_cli_peer.py tests/xmuse/test_package_boundaries.py -q
+-> 91 passed
+```
+
+Remaining caveats:
+
+- This is focused review-authority proof, not a fullchain run.
+- Empty or legacy conversations without an active peer roster still retain the
+  feature-scoped Codex default-review fallback.
+- This does not claim production readiness, GitHub review truth, live
+  MemoryOS, natural peer-GOD groupchat completion, or full closure.
