@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -33,6 +34,61 @@ def _load_module():
 
 
 platform_runner = _load_module()
+
+
+def _empty_peer_chat_worktree(root: Path) -> Path:
+    worktree = root / "peer_chat_worktree"
+    worktree.mkdir(parents=True, exist_ok=True)
+    return worktree
+
+
+def test_peer_chat_runtime_worktree_creates_repo_backed_detached_worktree(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.email", "xmuse@example.invalid"],
+        cwd=repo,
+        check=True,
+    )
+    subprocess.run(["git", "config", "user.name", "xmuse"], cwd=repo, check=True)
+    (repo / "tracked.txt").write_text("repo context\n", encoding="utf-8")
+    subprocess.run(["git", "add", "tracked.txt"], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "commit", "-m", "seed"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    monkeypatch.setattr(platform_runner, "ROOT", repo)
+
+    xmuse_root = tmp_path / "xmuse-root"
+    worktree = platform_runner._peer_chat_runtime_worktree(xmuse_root)
+    try:
+        assert (worktree / "tracked.txt").read_text(encoding="utf-8") == "repo context\n"
+        git_check = subprocess.run(
+            ["git", "-C", str(worktree), "rev-parse", "--is-inside-work-tree"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        assert git_check.stdout.strip() == "true"
+        branch = subprocess.run(
+            ["git", "-C", str(worktree), "branch", "--show-current"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        assert branch.stdout.strip() == ""
+    finally:
+        subprocess.run(
+            ["git", "-C", str(repo), "worktree", "remove", "--force", str(worktree)],
+            check=False,
+            capture_output=True,
+        )
 
 
 class _FakeStateMachine:
@@ -489,6 +545,11 @@ async def test_runner_enables_peer_chat_with_default_codex_launcher(
     monkeypatch.setenv("XMUSE_PEER_GOD_BACKEND", "native")
     monkeypatch.setattr(platform_runner, "PlatformOrchestrator", FakeOrchestrator)
     monkeypatch.setattr(peer_scheduler_module, "PeerChatScheduler", FakePeerScheduler)
+    monkeypatch.setattr(
+        platform_runner,
+        "_peer_chat_runtime_worktree",
+        _empty_peer_chat_worktree,
+    )
 
     await platform_runner.run(
         lanes_path=tmp_path / "feature_lanes.json",
@@ -549,6 +610,11 @@ async def test_runner_uses_ray_peer_god_layer_by_default(
     monkeypatch.setattr(platform_runner, "PlatformOrchestrator", FakeOrchestrator)
     monkeypatch.setattr(peer_scheduler_module, "PeerChatScheduler", FakePeerScheduler)
     monkeypatch.setattr(ray_session_layer_module.RayGodSessionLayer, "prewarm", fake_prewarm)
+    monkeypatch.setattr(
+        platform_runner,
+        "_peer_chat_runtime_worktree",
+        _empty_peer_chat_worktree,
+    )
 
     await platform_runner.run(
         lanes_path=tmp_path / "feature_lanes.json",
@@ -597,6 +663,11 @@ async def test_runner_builds_dispatch_bridge_with_peer_god_layer(
     monkeypatch.setenv("XMUSE_PEER_GOD_BACKEND", "native")
     monkeypatch.setattr(platform_runner, "PlatformOrchestrator", FakeOrchestrator)
     monkeypatch.setattr(peer_scheduler_module, "PeerChatScheduler", FakePeerScheduler)
+    monkeypatch.setattr(
+        platform_runner,
+        "_peer_chat_runtime_worktree",
+        _empty_peer_chat_worktree,
+    )
     monkeypatch.setattr(dispatch_bridge_module, "ChatDispatchBridge", FakeDispatchBridge)
 
     await platform_runner.run(
@@ -679,6 +750,11 @@ async def test_runner_prewarm_ray_peer_god_layer_by_default(
     monkeypatch.setattr(platform_runner, "PlatformOrchestrator", FakeOrchestrator)
     monkeypatch.setattr(peer_scheduler_module, "PeerChatScheduler", FakePeerScheduler)
     monkeypatch.setattr(ray_session_layer_module.RayGodSessionLayer, "prewarm", fake_prewarm)
+    monkeypatch.setattr(
+        platform_runner,
+        "_peer_chat_runtime_worktree",
+        _empty_peer_chat_worktree,
+    )
 
     await platform_runner.run(
         lanes_path=tmp_path / "feature_lanes.json",
@@ -721,6 +797,11 @@ async def test_runner_can_force_native_peer_god_layer(
     monkeypatch.setenv("XMUSE_PEER_GOD_BACKEND", "native")
     monkeypatch.setattr(platform_runner, "PlatformOrchestrator", FakeOrchestrator)
     monkeypatch.setattr(peer_scheduler_module, "PeerChatScheduler", FakePeerScheduler)
+    monkeypatch.setattr(
+        platform_runner,
+        "_peer_chat_runtime_worktree",
+        _empty_peer_chat_worktree,
+    )
 
     await platform_runner.run(
         lanes_path=tmp_path / "feature_lanes.json",
@@ -2159,6 +2240,11 @@ async def test_runner_shutdown_closes_runtime_god_layers(monkeypatch, tmp_path: 
         platform_runner,
         "_has_persistent_session_launcher",
         lambda launchers: True,
+    )
+    monkeypatch.setattr(
+        platform_runner,
+        "_peer_chat_runtime_worktree",
+        _empty_peer_chat_worktree,
     )
 
     await platform_runner.run(

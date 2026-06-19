@@ -5608,6 +5608,12 @@ async def test_run_gate_uses_worktree_gate_profiles_when_runtime_root_missing(se
     assert report["resolution_reasons"] == {
         "strict-product": ["unknown_diff_policy"],
     }
+    assert report["gate_profiles_source"] == {
+        "source": "lane_worktree_fallback",
+        "selected_path": str(repo / "xmuse" / "gate_profiles.json"),
+        "xmuse_root_path": str(tmp_path / "gate_profiles.json"),
+        "lane_worktree_path": str(repo / "xmuse" / "gate_profiles.json"),
+    }
     assert report["warnings"] == [
         "gate_profiles.json missing in XMUSE_ROOT; "
         "using lane worktree xmuse/gate_profiles.json"

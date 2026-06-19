@@ -80,6 +80,12 @@ async def run_gate(*, lane_id: str, lane: dict[str, Any], root: Path) -> bool:
             logs_root=root / "logs" / "gates",
         )
         report = await runner.run(plan)
+        _write_gate_profiles_source_report(
+            lane_id=lane_id,
+            root=root,
+            worktree=worktree,
+            selected_path=config_path,
+        )
         log_event(
             logger,
             logging.INFO,
@@ -140,8 +146,60 @@ def _write_gate_profiles_missing_report(
         "command_results": [],
         "artifact_dir": str(report_dir),
         "worktree": str(worktree),
+        "gate_profiles_source": _gate_profiles_source_payload(
+            root=root,
+            worktree=worktree,
+            selected_path=None,
+        ),
         "warnings": [
             "gate_profiles.json missing in XMUSE_ROOT and lane worktree; gate failed closed"
         ],
     }
     (report_dir / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+
+
+def _write_gate_profiles_source_report(
+    *,
+    lane_id: str,
+    root: Path,
+    worktree: Path,
+    selected_path: Path,
+) -> None:
+    report_path = root / "logs" / "gates" / lane_id / "report.json"
+    try:
+        payload = json.loads(report_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return
+    if not isinstance(payload, dict):
+        return
+    payload["gate_profiles_source"] = _gate_profiles_source_payload(
+        root=root,
+        worktree=worktree,
+        selected_path=selected_path,
+    )
+    report_path.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _gate_profiles_source_payload(
+    *,
+    root: Path,
+    worktree: Path,
+    selected_path: Path | None,
+) -> dict[str, str | None]:
+    runtime_config = root / "gate_profiles.json"
+    worktree_config = worktree / "xmuse" / "gate_profiles.json"
+    if selected_path == runtime_config:
+        source = "xmuse_root"
+    elif selected_path == worktree_config:
+        source = "lane_worktree_fallback"
+    else:
+        source = "missing"
+    return {
+        "source": source,
+        "selected_path": str(selected_path) if selected_path is not None else None,
+        "xmuse_root_path": str(runtime_config),
+        "lane_worktree_path": str(worktree_config),
+    }
