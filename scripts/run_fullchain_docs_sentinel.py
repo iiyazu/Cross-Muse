@@ -380,6 +380,7 @@ def _wait_for_lane(lanes_path: Path, *, feature_id: str, timeout_s: float) -> di
                     "awaiting_final_action",
                     "merged",
                     "gate_failed",
+                    "exec_failed",
                     "rejected",
                     "failed",
                 }:

@@ -28,6 +28,14 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   This is bounded main evidence for the configured review peer authority
   boundary plus a blocked fullchain attempt, not production readiness, GitHub
   review truth, or full closure.
+- Latest fullchain sentinel harness candidate evidence: local branch
+  `codex/fullchain-sentinel-exec-failed-terminal` teaches
+  `scripts/run_fullchain_docs_sentinel.py` to treat `exec_failed` as a terminal
+  lane state. Loop 26t showed the previous harness kept waiting after a lane
+  had already reached `exec_failed` from `execution_infra_unavailable`, forcing
+  manual interruption and cleanup. This is a loop-efficiency/harness repair
+  only; it does not change product runtime authority or provide fullchain
+  success evidence.
 - Latest peer-reply dependency-set evidence: PR #117 merged the direct
   `peer_reply_drain_callback` coordination repair to main as
   `f3f7b6dafa94ceae179af26c448f1aae183fd24b` after successful PR CI and
