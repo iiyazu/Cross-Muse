@@ -18,7 +18,12 @@ def test_project_ready_lanes_materializes_only_dependency_ready_nodes(tmp_path: 
         version=1,
         status="planned",
         lanes=[
-            LaneNode(feature_id="chat", prompt="Build chat", priority=80),
+            LaneNode(
+                feature_id="chat",
+                prompt="Build chat",
+                priority=80,
+                feature_group="chat-core",
+            ),
             LaneNode(
                 feature_id="dashboard",
                 prompt="Build dashboard",
@@ -40,6 +45,8 @@ def test_project_ready_lanes_materializes_only_dependency_ready_nodes(tmp_path: 
     assert projected[0]["resolution_id"] == "res-1"
     assert projected[0]["graph_id"] == "graph-1"
     assert projected[0]["graph_version"] == 1
+    assert projected[0]["feature_scope_id"] == "chat-core"
+    assert projected[1]["feature_scope_id"] == "lane_graph:graph-1"
 
 
 def test_project_ready_lanes_adds_newly_ready_nodes_without_duplication(tmp_path: Path) -> None:

@@ -33,6 +33,7 @@ FEATURE_LANE_FIELD_CLASSIFICATIONS: dict[str, str] = {
     "gate_profiles": "projection",
     "source_lane_id": "projection",
     "feature_group": "projection",
+    "feature_scope_id": "projection",
     "graph_set_id": "projection",
     "graph_set_version": "projection",
     "feature_plan_id": "projection",
@@ -399,9 +400,19 @@ def _lane_payload(
     if plan_feature_id is not None:
         payload["plan_feature_id"] = plan_feature_id
         payload["feature_plan_feature_id"] = plan_feature_id
+    elif feature_plan_id is None:
+        payload["feature_scope_id"] = _direct_lane_graph_feature_scope_id(graph, node)
     criteria = acceptance_criteria if acceptance_criteria is not None else node.acceptance_criteria
     if criteria:
         payload["acceptance_criteria"] = list(criteria)
     if node.blueprint_refs:
         payload["blueprint_refs"] = list(node.blueprint_refs)
     return payload
+
+
+def _direct_lane_graph_feature_scope_id(graph: LaneGraph, node: LaneNode) -> str:
+    """Return a graph-level feature scope for flat lane graph projections."""
+
+    if node.feature_group and node.feature_group.strip():
+        return node.feature_group.strip()
+    return f"lane_graph:{graph.id}"

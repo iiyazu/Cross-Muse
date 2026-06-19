@@ -5499,3 +5499,109 @@ reached final-action hold, but it used one-shot review fallback with
 persistent OpenCode review proof, defaulted review peer metadata proof,
 production readiness, overnight soak, GitHub review truth, live MemoryOS proof,
 full L8-L10 closure, or full L1-L11 closure.
+
+### Loop 25z75: Direct Lane Graph Feature Scope Candidate
+
+Local branch:
+
+```text
+branch=codex/direct-lane-graph-feature-scope
+base_head=f03a058a0f0468e3902e2aafeb7b063601df2866
+run=/tmp/xmuse-main-after-pr86-155349/.goal-runs/2026-06-19/loop-25z75-direct-scope-fullchain-213729
+exec=/tmp/loop-25z75-direct-scope-fullchain-213729-exec
+```
+
+Runtime services:
+
+```bash
+uv run python -c '... uvicorn.run(create_app(run_root, execution_worktree=exec_root), port=8216) ...'
+XMUSE_ROOT="$RUN" uv run uvicorn xmuse.mcp_server:app --host 127.0.0.1 --port 8116
+XMUSE_ROOT="$RUN" XMUSE_PEER_GOD_BACKEND=native XMUSE_REVIEW_GOD_BACKEND=native \
+  uv run xmuse-platform-runner --xmuse-root "$RUN" --lanes "$RUN/feature_lanes.json" \
+  --mcp-port 8116 --max-concurrent 1 --peer-chat --persistent-review-god \
+  --persistent-review-timeout-s 900 --default-review-peer-routing --no-auto-merge
+```
+
+Driver:
+
+```bash
+uv run python .goal-runs/2026-06-19/loop-25z70-post-pr94-health-driver.py \
+  --chat-url http://127.0.0.1:8216 \
+  --xmuse-root "$RUN" \
+  --feature-id loop25z75_direct_scope_fullchain \
+  --timeout-s 1800 --poll-s 5
+```
+
+The run intentionally pre-created the execution worktree directory before
+approval. Projection recreated it as a git worktree during dispatch.
+
+Durable chain:
+
+```text
+conversation_id=conv_63ee7e0b200c42b586031e2d9ad07a80
+collaboration_run=collab_0c0769c0311042d0bf9fd2a7cf48ef1b
+proposal_id=prop_ce5ac39666274dacb5a0a2bf4d6550a3
+resolution_id=res_e6b04d8737b84f6f99c1f710564e907d
+feature_id=loop25z75_direct_scope_fullchain
+feature_group=post-pr94-probe
+feature_scope_id=post-pr94-probe
+```
+
+Final `feature_lanes.json` authority:
+
+```text
+status=awaiting_final_action
+base_head_sha=f03a058a0f0468e3902e2aafeb7b063601df2866
+gate_passed=true
+review_decision=merge
+review_delivery_mode=persistent
+persistent_review_degraded=false
+review_peer_defaulted=true
+review_peer_cli_kind=opencode
+review_peer_model=opencode-go/deepseek-v4-flash
+peer_delivery_mode=configured_peer
+review_fallback=persistent
+```
+
+The driver exited with `classification=not_defaulted` because its
+`final_snapshot.json` was captured before the final persistent-review metadata
+write landed. The later `feature_lanes.json` projection revision recorded the
+configured/default peer metadata above. The race is a harness observation, not
+a lane execution failure.
+
+Post-run health check:
+
+```text
+chat_dispatch_bridge.status=observed
+scheduler_progress.status=observed
+peer_delivery.counts_by_delivery_mode.configured_peer=1
+peer_delivery.degraded_or_fallback_lanes=[]
+operations.cleanup.status=clean
+mcp HTTP health on 8116=ready
+```
+
+Caveat: process discovery reported `mcp_count=0` because this run started MCP
+through `uvicorn xmuse.mcp_server:app --port 8116` rather than the entrypoint
+shape recognized by process discovery. The HTTP health check for the same MCP
+server returned ready.
+
+Execution worktree evidence:
+
+```text
+git -C /tmp/loop-25z75-direct-scope-fullchain-213729-exec status --short
+-> ?? docs/xmuse/post-pr94-review-peer-health-note.md
+```
+
+Cleanup:
+
+```text
+8116/8216 listeners: none
+loop-25z75 service and worker process matches: none after shutdown
+```
+
+Classification: positive bounded local candidate evidence. It shows that a
+direct groupchat-produced `lane_graph` with feature scope metadata can reach
+final-action hold through persistent OpenCode review without the Loop 25z74
+`missing_feature_identity` fallback. This is not CI/server-verified, not
+production readiness, not overnight soak, not GitHub review truth, not live
+MemoryOS proof, not full L8-L10 closure, and not full L1-L11 closure.
