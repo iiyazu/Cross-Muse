@@ -3680,3 +3680,38 @@ Remaining caveats:
   feature-scoped Codex default-review fallback.
 - This does not claim production readiness, GitHub review truth, live
   MemoryOS, natural peer-GOD groupchat completion, or full closure.
+
+## 2026-06-20 Loop 26h Finding: Unique OpenCode Default Review Route Still Works
+
+Status: positive focused post-merge main evidence after PR #109 and PR #110.
+
+Primary artifact:
+
+```text
+main_head=1614cc9dca8e28771ea15a8737d88ffb38f73ba0
+run_root=/tmp/xmuse-postmerge-layered-prompt-main/.goal-runs/2026-06-20/loop-26h-post-pr110-opencode-positive-route-022923
+selector_summary=selector/selector_summary.json
+consumer_summary=consumer/consumer_summary.json
+```
+
+Confirmed:
+
+- A unique active OpenCode `review` participant in `chat.db` remains the
+  selected default review peer.
+- The review route reached `awaiting_final_action` with
+  `review_delivery_mode=persistent`, `persistent_review_degraded=false`,
+  `review_peer_cli_kind=opencode`, and `peer_delivery_mode=configured_peer`.
+- No one-shot fallback or Codex replacement reviewer was used.
+
+Boundary result:
+
+- PR #109 and PR #110 close the ambiguous/missing production-roster failure
+  modes without breaking the positive unique-OpenCode-reviewer path.
+
+Remaining caveats:
+
+- This is focused review-route evidence, not a fullchain run.
+- It used a focused orchestrator route and fake persistent message, not live
+  OpenCode CLI execution.
+- It does not claim production readiness, GitHub review truth, live MemoryOS,
+  natural peer-GOD groupchat completion, or full closure.

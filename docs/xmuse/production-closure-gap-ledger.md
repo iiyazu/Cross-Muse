@@ -326,6 +326,14 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   `required_review_peer_unavailable`. Empty legacy conversations without an
   active peer roster still retain the feature-scoped Codex default-review
   fallback.
+- Loop 26h ran after PR #110 merged to main as
+  `1614cc9dca8e28771ea15a8737d88ffb38f73ba0` and confirmed the positive
+  default review route still selects a unique active OpenCode review
+  participant. The focused route reached `awaiting_final_action` with
+  `review_peer_cli_kind=opencode`, `review_delivery_mode=persistent`,
+  `persistent_review_degraded=false`, and
+  `peer_delivery_mode=configured_peer`. This is focused review-route evidence,
+  not a fullchain run or live OpenCode CLI proof.
 - Provider result acknowledgement timeout after durable writeback is mitigated
   by early writeback detection plus configurable bounded grace in PR #87.
   Broader production-load behavior is still unproven.
@@ -383,8 +391,10 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   Loop 26f adds focused candidate proof for the multiple-OpenCode-reviewer
   ambiguity case. Loop 26g adds focused candidate proof for the missing
   OpenCode reviewer case when a production-like active peer roster already
-  exists. Remaining work is broader review authority behavior and deciding
-  whether to quarantine the empty-conversation legacy Codex fallback.
+  exists. Loop 26h confirms the normal unique-OpenCode route still works after
+  those fail-closed changes. Remaining work is broader review authority
+  behavior and deciding whether to quarantine the empty-conversation legacy
+  Codex fallback.
 - P3 higher-parallelism stability loop: repeat real groupchat-to-final-hold
   with independent `XMUSE_ROOT` directories, execution worktrees, Chat API
   ports, MCP ports, and runners when increasing concurrency beyond the current

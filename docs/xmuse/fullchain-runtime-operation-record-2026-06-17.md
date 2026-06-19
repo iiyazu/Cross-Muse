@@ -6373,3 +6373,55 @@ Caveats:
   old feature-scoped Codex default-review fallback.
 - It does not prove GitHub review truth, live MemoryOS, dynamic roster mutation,
   overnight stability, or full closure.
+
+## 2026-06-20 Loop 26h: Post-PR110 Positive OpenCode Route Check
+
+Purpose: after PR #109 and PR #110 merged, verify the normal default review
+route still selects a unique active OpenCode review participant.
+
+Workspace and authority:
+
+```text
+repo_worktree=/tmp/xmuse-postmerge-layered-prompt-main
+main_head_sha=1614cc9dca8e28771ea15a8737d88ffb38f73ba0
+run_root=/tmp/xmuse-postmerge-layered-prompt-main/.goal-runs/2026-06-20/loop-26h-post-pr110-opencode-positive-route-022923
+selector_summary=selector/selector_summary.json
+consumer_summary=consumer/consumer_summary.json
+authority=chat.db participants table plus review_god lane state
+```
+
+Selector result:
+
+```text
+selected_opencode_reviewer=true
+selector_selected_participant_id=part_39f834a1e76f4383b788775ab7cef4d5
+selector_failure=null
+```
+
+Consumer result:
+
+```text
+lane_id=lane-positive-opencode-default-review
+status=awaiting_final_action
+gate_passed=true
+review_decision=merge
+review_delivery_mode=persistent
+persistent_review_degraded=false
+review_peer_defaulted=true
+review_peer_cli_kind=opencode
+review_peer_model=opencode-go/deepseek-v4-flash
+peer_delivery_mode=configured_peer
+spawn_await_count=0
+```
+
+Classification: positive focused post-merge main check for the default
+OpenCode review route. It confirms the fail-closed changes did not break the
+normal unique-OpenCode-reviewer path.
+
+Caveats:
+
+- This is not a fullchain run and not production readiness.
+- The check used a focused orchestrator/review route, not live provider CLI
+  execution.
+- It does not prove GitHub review truth, live MemoryOS, dynamic roster mutation,
+  overnight stability, or full closure.
