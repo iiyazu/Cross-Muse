@@ -37,6 +37,19 @@ def _find_conversation_graph_ids(xmuse_root: Path, conversation_id: str) -> set[
     return graph_ids
 
 
+def _participant_provider_summary(participant_rows: list[Any]) -> list[dict[str, Any]]:
+    grouped: dict[tuple[str, str], int] = {}
+    for participant in participant_rows:
+        provider_id = str(participant.provider_id)
+        cli_kind = str(participant.cli_kind)
+        key = (provider_id, cli_kind)
+        grouped[key] = grouped.get(key, 0) + 1
+    return [
+        {"provider_id": provider_id, "cli_kind": cli_kind, "count": count}
+        for (provider_id, cli_kind), count in sorted(grouped.items())
+    ]
+
+
 def build_conversation_inspector_payload(
     conversation_id: str,
     xmuse_root: Path,
@@ -217,6 +230,7 @@ def build_conversation_inspector_payload(
         "participants": {
             "total": len(participant_rows),
             "summary": role_counts,
+            "provider_summary": _participant_provider_summary(participant_rows),
             "items": [p.model_dump(mode="json") for p in participant_rows],
             "inbox_summary": inbox_summary,
         },

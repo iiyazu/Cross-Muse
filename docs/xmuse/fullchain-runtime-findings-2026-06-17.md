@@ -2544,3 +2544,93 @@ Remaining gap:
 - This is prompt/tool-contract mitigation, not a hard protocol proof. A future
   coordination primitive should model named dependency sets instead of relying
   on prompt-following for complex multi-peer workflows.
+
+### F96. Groupchat can produce and run one small inspector code lane to final hold
+
+Severity: positive local runtime proof, bounded to one small lane.
+
+Loop 25z64 used the post-PR88 runtime branch to run a real groupchat-produced
+code-change lane. A human demand asked Codex architect to coordinate a small
+conversation inspector/read-model improvement:
+`participants.provider_summary` derived from durable participant rows.
+
+Durable chain observed:
+
+```text
+human -> Codex architect
+Codex architect -> Codex execute feasibility collaboration
+Codex execute -> exact execute_feasibility_verdict
+collaboration callback -> Codex architect chat_emit_proposal
+runtime driver approval -> lane projection
+runner -> isolated execution worktree
+gate -> passed
+review verdict -> merge
+final action -> pending hold
+```
+
+Key ids:
+
+```text
+conversation_id=conv_ef1a169072d14cceb6de94451982e2e3
+proposal_id=prop_b06c970448f44e22a5397dbe5da61e11
+resolution_id=res_861bd80750644822975605a8d3518b20
+lane_id=loop25z64_inspector_provider_summary
+final_action_hold_id=final-7f324c713574
+```
+
+The lane stopped at `awaiting_final_action` under `--no-auto-merge`. The
+candidate changed only:
+
+```text
+src/xmuse_core/chat/inspector_builder.py
+tests/xmuse/test_peer_chat_dashboard.py
+```
+
+Gate evidence:
+
+```text
+266 passed, 2 warnings in 59.95s
+```
+
+Impact:
+
+- This is the strongest current local evidence that a durable GOD groupchat can
+  produce a small code lane and carry it through execution, gate, review
+  verdict, and final hold.
+
+Remaining gap:
+
+- This is one bounded local run, not production readiness, not overnight soak,
+  not GitHub review truth, not live MemoryOS, and not full closure.
+
+### F97. Review state transition can emit non-blocking InvalidTransition noise
+
+Severity: non-blocking runtime-state bug / stability gap.
+
+Loop 25z64 reached final-action hold, but the runner log recorded:
+
+```text
+InvalidTransitionError: cannot transition loop25z64_inspector_provider_summary from reviewed to rejected
+```
+
+The final lane still ended with:
+
+```text
+status=awaiting_final_action
+review_decision=merge
+review_verdict_id=verdict-loop25z64_inspector_provider_summary
+final_action_hold_id=final-7f324c713574
+```
+
+Classification:
+
+- Review verdict/state transition idempotence gap. The same review flow can
+  record an accepted verdict and still attempt a later incompatible transition.
+
+Remaining gap:
+
+- This should be repaired before treating repeated review/final-hold runs as
+  stable. Loop 25z64 should not be reported as clean review-state behavior.
+- The final lane did not expose `review_delivery_mode=persistent` or
+  `persistent_review_degraded=false`, so the run is not complete persistent
+  OpenCode delivery proof.
