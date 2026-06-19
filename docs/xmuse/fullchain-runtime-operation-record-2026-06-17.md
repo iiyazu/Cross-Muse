@@ -2761,3 +2761,132 @@ Claims not made: GitHub review truth, merge truth, `ready_to_merge`,
 `pr_merged`, live MemoryOS, full L8-L10 closure, full L1-L11 closure,
 production-ready groupchat, or overnight readiness. The final action remains
 pending under `--no-auto-merge`.
+
+### Loop 25z39: proposal waits for collaboration readiness
+
+Goal: remove the duplicate proposal observed in Loop 25z38 by requiring
+`lane_graph` proposals that reference `collaboration:<run_id>` to wait until
+the referenced collaboration run is `done`.
+
+Runtime root:
+
+```text
+.goal-runs/2026-06-19/loop-25z39-proposal-ready-guard-101608
+```
+
+Execution worktree:
+
+```text
+/tmp/loop-25z39-proposal-ready-guard-101608-exec
+```
+
+Service commands:
+
+```bash
+XMUSE_ROOT="$RUN_ROOT" XMUSE_EXECUTION_WORKTREE="$EXEC_WORKTREE" \
+  uv run python -c 'import os; from pathlib import Path; import uvicorn; from xmuse.chat_api import create_app; uvicorn.run(create_app(base_dir=Path(os.environ["XMUSE_ROOT"]), execution_worktree=Path(os.environ["XMUSE_EXECUTION_WORKTREE"])), host="127.0.0.1", port=8201, log_level="info")'
+
+XMUSE_ROOT="$RUN_ROOT" uv run xmuse-mcp-server
+
+XMUSE_ROOT="$RUN_ROOT" XMUSE_PEER_GOD_BACKEND=native XMUSE_RAY_GOD_MCP=0 \
+  XMUSE_CHAT_API_URL=http://127.0.0.1:8201 \
+  uv run xmuse-platform-runner --xmuse-root "$RUN_ROOT" --mcp-port 8100 \
+  --peer-chat --persistent-review-god --persistent-review-timeout-s 180 \
+  --max-hours 0.75 --no-auto-merge
+```
+
+Conversation and routing:
+
+```text
+conversation_id=conv_2c464666fb8048bd89644832e430e7fa
+human_message_id=msg_3ac351c9f0784e5ea39a955cd1ed5512
+human_mentions=["@architect"]
+initial_inbox_targets=["architect"]
+artifact=.goal-runs/2026-06-19/loop-25z39-proposal-ready-guard-101608/initial_routing_snapshot.json
+```
+
+Collaboration and proposal timing:
+
+```text
+collaboration_run=collab_a0265a7420db4d9b9d87596843e54e0f
+running_window_proposals=0
+saw_running_without_proposal=true
+execute_response=received
+collaboration_status=done
+proposal_after_done=prop_3997229437eb4e84b32996813dea49c8
+proposal_count_after_done=1
+artifact=.goal-runs/2026-06-19/loop-25z39-proposal-ready-guard-101608/proposal_timing_snapshot.json
+```
+
+Approval:
+
+```text
+proposal_id=prop_3997229437eb4e84b32996813dea49c8
+resolution_id=res_d337544add8e4c578c93072adf6a1518
+approval_mode=runtime_loop_manual_approval_no_auto_merge
+derived_from_proposal_ids=["prop_3997229437eb4e84b32996813dea49c8"]
+```
+
+Lane result:
+
+```text
+lane_id=loop25z39_proposal_ready_guard
+status=awaiting_final_action
+gate_passed=true
+review_runtime=opencode
+review_runtime_requested=opencode
+review_delivery_mode=persistent
+persistent_review_degraded=false
+review_decision=merge
+review_verdict_id=verdict-merge-rtask_acd834dd61c94829a78642c227ac0a68
+final_action_hold_id=final-aa3d2b8ca9a7
+worktree=/tmp/loop-25z39-proposal-ready-guard-101608-exec
+artifact=.goal-runs/2026-06-19/loop-25z39-proposal-ready-guard-101608/final_runtime_snapshot.json
+```
+
+Child worker evidence:
+
+```text
+command=codex exec -m gpt-5.4 ... -C /tmp/loop-25z39-proposal-ready-guard-101608-exec
+mcp_tools=query_knowledge, update_lane_status
+test=uv run pytest tests/xmuse/test_package_boundaries.py -q
+result=16 passed in 3.11s
+changed_files=none
+lane_status_update=executed
+```
+
+Gate report:
+
+```text
+logs/gates/loop25z39_proposal_ready_guard/report.json
+passed=true
+blocking_passed=true
+strict-product: uv run pytest -q tests/xmuse/test_package_boundaries.py -> 0
+warning=gate_profiles.json missing in XMUSE_ROOT; using lane worktree xmuse/gate_profiles.json
+```
+
+Durable peer traces:
+
+```text
+delivery_mode=mcp_writeback for architect, execute, architect callback, review,
+and execute dispatch turns
+degraded_reason=null for all recorded peer_turn_latency_traces rows
+```
+
+Negative search:
+
+```text
+rg "InvalidTransitionError|cannot transition|reviewed and merged|ready_to_merge=true|pr_merged=true|existing registered session does not match|peer_response_timeout|DISPATCH_FAILED|collaboration_run_not_ready" "$RUN_ROOT" --glob '!**/logs/agent_spawns/**' -> no matches
+```
+
+Cleanup:
+
+```text
+8100/8201/8265 listeners: none
+xmuse service processes: none
+```
+
+Claims not made: GitHub review truth, merge truth, `ready_to_merge`,
+`pr_merged`, live MemoryOS, full L8-L10 closure, full L1-L11 closure,
+production-ready groupchat, or overnight readiness. The final action remains
+pending under `--no-auto-merge`.

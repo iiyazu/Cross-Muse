@@ -100,6 +100,10 @@ truth, merge truth, live MemoryOS proof, or full closure.
   execution, gate, OpenCode persistent review, and final-action hold. The lane
   stopped at `awaiting_final_action` under `--no-auto-merge`; this is local
   runtime proof only.
+- The 2026-06-19 proposal-readiness rerun kept proposal count at zero while the
+  execute collaboration was still running, then emitted exactly one proposal
+  after the collaboration reached `done`, approved it, dispatched it, and again
+  stopped at `awaiting_final_action` under `--no-auto-merge`.
 
 ## Findings
 
@@ -1577,9 +1581,68 @@ Positive impact:
 
 Remaining gaps:
 
-- Architect emitted an early proposal before execute response and then a second
-  proposal after execute callback. One duplicate open proposal remained.
+- Loop 25z39 adds a readiness guard for proposals that reference a
+  collaboration run and reruns the chain without the duplicate proposal. Keep
+  watching for duplicate proposals that do not carry a collaboration reference.
 - Gate profile resolution still warned that `gate_profiles.json` was missing in
   `XMUSE_ROOT` and used the lane worktree config.
 - The proof remains local runtime proof. It is not GitHub review truth, merge
   truth, live MemoryOS, full closure, or production readiness.
+
+### F81. Collaboration-backed proposals must wait for collaboration readiness
+
+Severity: resolved local proposal-authority issue.
+
+Loop 25z38 showed that an architect could emit a `lane_graph` proposal
+referencing a collaboration run while the execute collaboration was still in
+progress, then emit another proposal after the collaboration callback. That
+left one open duplicate proposal and one accepted proposal for the same
+operator demand.
+
+Fix:
+
+- `chat_emit_proposal` now inspects `collaboration:<run_id>` references before
+  writing the proposal.
+- A referenced collaboration run must belong to the same conversation.
+- A referenced collaboration run must be `done`; otherwise proposal emission
+  fails with `collaboration_run_not_ready`.
+- The guard is enforced before review triggers are enqueued, so a not-ready
+  collaboration reference cannot create review work.
+
+Rerun evidence:
+
+```text
+Loop 25z39
+collaboration_run=collab_a0265a7420db4d9b9d87596843e54e0f
+running_window_proposals=0
+saw_running_without_proposal=true
+collaboration_status=done
+proposal_after_done=prop_3997229437eb4e84b32996813dea49c8
+proposal_count_after_done=1
+lane_id=loop25z39_proposal_ready_guard
+status=awaiting_final_action
+gate_passed=true
+review_runtime=opencode
+review_delivery_mode=persistent
+persistent_review_degraded=false
+final_action_hold_id=final-aa3d2b8ca9a7
+```
+
+Positive impact:
+
+- The proposal authority no longer accepts collaboration-backed proposals
+  before the referenced producer has finished.
+- The automatic review trigger is only created after the collaboration-backed
+  proposal is admissible.
+- The real groupchat-to-lane path still reaches final-action hold under
+  `--no-auto-merge`.
+
+Remaining gaps:
+
+- The guard only covers proposals that explicitly reference
+  `collaboration:<run_id>`.
+- Gate profile resolution still falls back from `XMUSE_ROOT` to the lane
+  worktree config.
+- This is local runtime proof, not GitHub review truth, merge truth, live
+  MemoryOS proof, full closure, production-ready groupchat, or overnight
+  readiness.

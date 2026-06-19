@@ -1224,6 +1224,21 @@ class PeerChatService:
             raise PeerChatError("unknown_collaboration_run", run_id)
         return run
 
+    def _require_ready_collaboration_references(
+        self,
+        *,
+        conversation_id: str,
+        references: list[str],
+    ) -> None:
+        store = self._collaboration_store()
+        for run_id in _collaboration_reference_run_ids(references):
+            run = self._collaboration_run_for_conversation(store, run_id, conversation_id)
+            if run.status is not CollaborationStatus.DONE:
+                raise PeerChatError(
+                    "collaboration_run_not_ready",
+                    f"{run.run_id}:{run.status.value}",
+                )
+
     def _conversation_exists(self, conversation_id: str) -> bool:
         return any(
             conversation.id == conversation_id
@@ -2200,6 +2215,11 @@ class PeerChatService:
             participant_id=participant_id,
             god_session_id=god_session_id,
         )
+        proposal_references = references or []
+        self._require_ready_collaboration_references(
+            conversation_id=conversation_id,
+            references=proposal_references,
+        )
         payload = self._proposal_emitter().emit_lane_graph_proposal(
             conversation_id=conversation_id,
             participant_id=participant_id,
@@ -2207,7 +2227,7 @@ class PeerChatService:
             client_request_id=client_request_id,
             summary=summary,
             lanes=lanes,
-            references=references or [],
+            references=proposal_references,
             resolution_content=resolution_content,
         )
         resolved_reply_to_inbox_item_id = (
@@ -2244,6 +2264,11 @@ class PeerChatService:
         references: list[str] | None = None,
         resolution_content: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        proposal_references = references or []
+        self._require_ready_collaboration_references(
+            conversation_id=conversation_id,
+            references=proposal_references,
+        )
         payload = self._proposal_emitter().emit_lane_graph_proposal(
             conversation_id=conversation_id,
             participant_id=participant_id,
@@ -2251,7 +2276,7 @@ class PeerChatService:
             client_request_id=client_request_id,
             summary=summary,
             lanes=lanes,
-            references=references or [],
+            references=proposal_references,
             resolution_content=resolution_content,
         )
         self._ensure_review_trigger(
@@ -2483,6 +2508,23 @@ def _collaboration_response_target(role: str, targets: list[str]) -> str | None:
     if address in targets:
         return address
     return None
+
+
+def _collaboration_reference_run_ids(references: list[str]) -> list[str]:
+    run_ids: list[str] = []
+    seen: set[str] = set()
+    for reference in references:
+        if not isinstance(reference, str):
+            continue
+        prefix, separator, raw_run_id = reference.strip().partition(":")
+        if separator != ":" or prefix != "collaboration":
+            continue
+        run_id = raw_run_id.strip()
+        if not run_id or run_id in seen:
+            continue
+        seen.add(run_id)
+        run_ids.append(run_id)
+    return run_ids
 
 
 def _review_trigger_content(
