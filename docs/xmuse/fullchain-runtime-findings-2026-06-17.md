@@ -3041,3 +3041,117 @@ Remaining gap:
 - The proof is bounded to the two-shard health-observability shape. It is not
   overnight soak, production readiness, GitHub review truth, live MemoryOS,
   full L8-L10 closure, or full L1-L11 closure.
+
+### F103. Empty projected lane worktrees must be recreated before execution
+
+Severity: fixed runtime fullchain blocker.
+
+Loop 25z72 raised operator-level parallelism to three isolated shards after
+PR #97. Two groupchat stability shards succeeded:
+
+```text
+total_stability_conversations=6
+all_final_after_both=true
+all_callbacks_created=true
+all_callbacks_consumed=true
+no_proposals_or_resolutions=true
+no_open_or_failed_inbox=true
+no_failed_or_timeout_traces=true
+```
+
+The fullchain shard failed at gate:
+
+```text
+lane_status=gate_failed
+gate_profiles_source=missing
+warning=gate_profiles.json missing in XMUSE_ROOT and lane worktree; gate failed closed
+```
+
+Root cause:
+
+- The runtime harness pre-created an empty `XMUSE_EXECUTION_WORKTREE`.
+- The orchestrator treated the existing empty directory as a lane worktree.
+- The child worker wrote the requested file in that empty directory.
+- Gate failed closed because the worktree had no repo files and no
+  `xmuse/gate_profiles.json`.
+
+PR #98 fixed the boundary by treating empty lane worktree directories as
+uninitialized and recreating them as normal git worktrees. Loop 25z73 verified
+the fix with the same intentional pre-created empty worktree shape:
+
+```text
+exec_is_git_worktree=true
+exec_gate_profiles_exists=true
+base_head_sha=591aa68e470aa5272df5bc46bbfab06a917bd4f4
+gate_passed=true
+```
+
+GitHub server facts:
+
+- PR #98 `codex/recreate-empty-lane-worktree` merged to main as
+  `cae76c1da7d1c38df9884579ba822b8019f3b197`.
+- PR #98 head `17f1d3ef23968c1060b1e09b58668924a87b24a4` passed `xmuse CI`
+  run `27827540774`.
+- Post-merge main `cae76c1da7d1c38df9884579ba822b8019f3b197` passed `xmuse CI`
+  run `27827589417`.
+
+Remaining gap:
+
+- Loop 25z73 then failed at review for a separate untracked-file diff
+  visibility issue. Empty worktree recovery was fixed; fullchain completion
+  still depended on F104.
+
+### F104. Review diff authority now includes untracked lane files
+
+Severity: fixed runtime review blocker.
+
+Loop 25z73 reached review after PR #98 but was rejected:
+
+```text
+lane_status=rejected
+review_decision=rework
+review_delivery_mode=one_shot_fallback
+persistent_review_degraded=true
+persistent_review_degraded_reason=missing_feature_identity
+review_summary=...exists only as an untracked file...
+```
+
+Root cause:
+
+- MCP `get_diff(lane_id)` returned only `git diff HEAD`.
+- The child worker created a new docs file, which was untracked.
+- Review could not see the untracked file in the lane diff, while later merge
+  staging already uses `git add -A`.
+
+PR #99 fixed the boundary by appending `git diff --no-index -- /dev/null
+<path>` patches for untracked files and returning `untracked_paths`.
+
+Loop 25z74 reran the same fullchain shape and reached final-action hold:
+
+```text
+exec_is_git_worktree=true
+exec_gate_profiles_exists=true
+base_head_sha=cae76c1da7d1c38df9884579ba822b8019f3b197
+proposal_has_review_runtime=false
+gate_passed=true
+review_decision=merge
+review_summary=review accepted
+lane_status=awaiting_final_action
+```
+
+GitHub server facts:
+
+- PR #99 `codex/include-untracked-lane-diff` merged to main as
+  `2325427c0b96f5bc2f804a6f72ef8d5e77782fca`.
+- PR #99 head `4a491dfea5cb9d0026d4afa7360cf1b466af6831` passed `xmuse CI`
+  run `27828255039`.
+- Post-merge main `2325427c0b96f5bc2f804a6f72ef8d5e77782fca` passed `xmuse CI`
+  run `27828296247`.
+
+Remaining gap:
+
+- Loop 25z74 used `review_delivery_mode=one_shot_fallback` with
+  `persistent_review_degraded_reason=missing_feature_identity`.
+- It does not prove persistent OpenCode review, defaulted review peer metadata,
+  production readiness, overnight stability, GitHub review truth, live
+  MemoryOS, full L8-L10 closure, or full L1-L11 closure.
