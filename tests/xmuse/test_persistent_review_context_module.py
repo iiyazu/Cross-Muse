@@ -96,6 +96,7 @@ def test_persistent_review_context_grounds_review_in_gate_and_worker_refs(
     assert "cmd=uv run pytest -q tests/xmuse/test_package_boundaries.py" in context
     assert f"- logs/agent_spawns/{lane_id}/run.stdout.log" in context
     assert "do not state that logs, gate reports, or execution artifacts are absent" in context
+    assert "do not say the lane or PR was merged" in context
 
 
 def test_review_god_preserves_persistent_review_compat_exports() -> None:

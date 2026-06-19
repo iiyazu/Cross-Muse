@@ -24,6 +24,36 @@ def test_merge_verdict_enters_final_action_hold_when_human_approval_required() -
     assert result.final_action.target_status == "reviewed"
 
 
+def test_merge_verdict_summary_does_not_claim_merge_truth() -> None:
+    verdict = ReviewVerdict(
+        id="verdict-merge-boundary",
+        lane_id="lane-merge-boundary",
+        decision="merge",
+        status="finalized",
+        summary=(
+            "Verdict: merge. Lane reviewed and merged. "
+            "ready_to_merge=true; pr_merged=true."
+        ),
+        evidence_refs=["gate://lane-merge-boundary"],
+    )
+
+    result = adapt_review_verdict(
+        verdict,
+        lane={"feature_id": "lane-merge-boundary", "prompt": "Implement lane"},
+        require_final_action_approval=True,
+    )
+
+    assert result.final_action is not None
+    summary = result.metadata["review_summary"]
+    assert result.final_action.summary == summary
+    assert "Proof boundary: review acceptance is not merge truth" in summary
+    lowered = summary.lower()
+    assert "reviewed and merged" not in lowered
+    assert "ready_to_merge" not in lowered
+    assert "pr_merged" not in lowered
+    assert result.metadata["review_history"][-1]["summary"] == summary
+
+
 def test_rework_verdict_maps_to_rejected_transition() -> None:
     verdict = ReviewVerdict(
         id="verdict-2",

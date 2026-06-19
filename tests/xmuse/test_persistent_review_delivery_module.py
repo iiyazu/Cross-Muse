@@ -124,6 +124,87 @@ async def test_apply_persistent_review_message_records_evidence_refs(tmp_path) -
 
 
 @pytest.mark.asyncio
+async def test_apply_persistent_review_message_sanitizes_merge_truth_claims(
+    tmp_path,
+) -> None:
+    lanes_path = tmp_path / "feature_lanes.json"
+    lanes_path.write_text(
+        json.dumps(
+            {
+                "lanes": [
+                    {
+                        "feature_id": "lane-merge-boundary",
+                        "status": "gated",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    sm = LaneStateMachine(lanes_path)
+    captured: dict[str, object] = {}
+
+    def ingest_merge_verdict(
+        lane_id: str,
+        summary: str,
+        refs: list[str] | None = None,
+    ) -> None:
+        captured["lane_id"] = lane_id
+        captured["summary"] = summary
+        captured["evidence_refs"] = refs
+
+    def ingest_rework_verdict(
+        lane_id: str,
+        summary: str,
+        refs: list[str] | None = None,
+    ) -> None:
+        raise AssertionError(f"unexpected rework verdict for {lane_id}: {summary}")
+
+    async def on_reviewed(lane_id: str) -> None:
+        captured["reviewed"] = lane_id
+
+    async def on_rejected(lane_id: str) -> None:
+        raise AssertionError(f"unexpected rejected lane {lane_id}")
+
+    delivered = await persistent_review_delivery.apply_persistent_review_message(
+        lane_id="lane-merge-boundary",
+        sm=sm,
+        message=StdoutMessage(
+            type="result",
+            artifacts={
+                "review_verdict": {
+                    "decision": "merge",
+                    "summary": (
+                        "Verdict: merge. Lane reviewed and merged. "
+                        "ready_to_merge=true; pr_merged=true."
+                    ),
+                }
+            },
+        ),
+        stable_verdict_id=lambda lane_id: f"verdict-{lane_id}",
+        ingest_merge_verdict=ingest_merge_verdict,
+        ingest_rework_verdict=ingest_rework_verdict,
+        on_reviewed=on_reviewed,
+        on_rejected=on_rejected,
+        review_request_id="review-request-1",
+        persistent_review_identity="configured:review-peer-1",
+        evidence_refs=["review://configured-peer"],
+    )
+
+    lane = sm.get_lane("lane-merge-boundary")
+    summary = str(lane["review_summary"])
+    assert delivered is True
+    assert lane["status"] == "reviewed"
+    assert "Proof boundary: review acceptance is not merge truth" in summary
+    lowered = summary.lower()
+    assert "reviewed and merged" not in lowered
+    assert "ready_to_merge" not in lowered
+    assert "pr_merged" not in lowered
+    assert str(captured["summary"]) == summary
+    assert lane["review_history"][-1]["summary"] == summary
+
+
+@pytest.mark.asyncio
 async def test_apply_persistent_review_message_is_idempotent_after_native_mcp_review(
     tmp_path,
 ) -> None:

@@ -138,6 +138,9 @@ def review_artifact_grounding_for_prompt(bundle: dict[str, Any]) -> str:
         "provided refs and name the refs used.",
         "- Do not claim GitHub review truth, merge truth, ready_to_merge, "
         "pr_merged, live MemoryOS, or full closure.",
+        "- A merge verdict means review acceptance only. Unless a final-action "
+        "hold was approved or GitHub server merge evidence is present, do not "
+        "say the lane or PR was merged.",
     ]
     status = str(bundle.get("status") or "").strip()
     if status:
