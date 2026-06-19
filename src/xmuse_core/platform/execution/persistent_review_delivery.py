@@ -7,6 +7,7 @@ from typing import Any, Protocol
 
 from xmuse_core.agents.protocol import StdoutMessage
 from xmuse_core.platform.execution.review import infer_review_fallback
+from xmuse_core.platform.review_summary_safety import sanitize_review_summary
 from xmuse_core.platform.state_machine import LaneStateMachine
 from xmuse_core.structuring.models import ReviewDecision
 
@@ -70,6 +71,7 @@ async def apply_persistent_review_message(
         summary = verdict["summary"]
         reason = "persistent_result"
 
+    summary = sanitize_review_summary(summary)
     review_evidence_refs = _dedupe_refs(evidence_refs or [])
     if decision == "reviewed":
         verdict_id = stable_verdict_id(lane_id)
@@ -145,6 +147,7 @@ def review_metadata(
     fallback: str,
     fallback_reason: str,
 ) -> dict[str, Any]:
+    summary = sanitize_review_summary(summary)
     entry = {
         "decision": decision,
         "summary": summary,
