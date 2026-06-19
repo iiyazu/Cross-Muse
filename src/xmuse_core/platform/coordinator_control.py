@@ -171,14 +171,23 @@ class CoordinatorControlService:
                 )
         return outcomes
 
-    async def tick_peer_chat_scheduler(self, peer_chat_scheduler) -> None:
+    async def tick_peer_chat_scheduler(
+        self,
+        peer_chat_scheduler,
+        *,
+        max_concurrent: int = 1,
+    ) -> None:
         try:
-            await peer_chat_scheduler.tick_once()
+            tick_many = getattr(peer_chat_scheduler, "tick_many", None)
+            if callable(tick_many):
+                await tick_many(max_concurrent=max(1, max_concurrent))
+            else:
+                await peer_chat_scheduler.tick_once()
         except Exception as exc:
             logger.exception("peer-chat scheduler tick failed; continuing")
             self.record_degraded(
                 component="peer_chat_scheduler",
-                operation="tick_once",
+                operation="tick_many",
                 error=exc,
             )
 

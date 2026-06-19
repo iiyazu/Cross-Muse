@@ -201,6 +201,29 @@ class PeerChatScheduler:
             scheduler_observed_result_at = self._clock()
             if message is None or getattr(message, "type", None) == "error":
                 reason = _message_failure_reason(message)
+                refreshed = self._inbox.get(item.id)
+                if refreshed.status == "read" and self._has_real_writeback_message(
+                    item.conversation_id,
+                    refreshed.responded_message_id,
+                    participant_id=participant.participant_id,
+                    inbox_item_id=item.id,
+                ):
+                    self._finish_active_stream_for_item(item, status="done")
+                    self._record_latency_trace(
+                        item,
+                        trace_start_at=trace_start_at,
+                        delivery_started_at=delivery_started_at,
+                        provider_turn_started_at=provider_turn_started_at,
+                        scheduler_observed_result_at=scheduler_observed_result_at,
+                        delivery_mode="mcp_writeback",
+                        degraded_reason=_after_writeback_reason(reason),
+                    )
+                    self._inbox.record_nudge_result(
+                        item.id,
+                        owner=self._scheduler_id,
+                        success=True,
+                    )
+                    return PeerChatSchedulerOutcome(nudged=1, happy_path=1)
                 self._finish_active_stream_for_item(item, status="error")
                 self._record_latency_trace(
                     item,
@@ -318,6 +341,19 @@ class PeerChatScheduler:
             transport_latency_stages=transport_latency_stages,
         )
         return PeerChatSchedulerOutcome(nudged=1, happy_path=1)
+
+    async def tick_many(self, *, max_concurrent: int = 1) -> PeerChatSchedulerOutcome:
+        if max_concurrent <= 1 or self._only_inbox_item_id is not None:
+            return await self.tick_once()
+        outcomes = await asyncio.gather(
+            *(self.tick_once() for _ in range(max_concurrent))
+        )
+        return PeerChatSchedulerOutcome(
+            nudged=sum(outcome.nudged for outcome in outcomes),
+            happy_path=sum(outcome.happy_path for outcome in outcomes),
+            failed=sum(outcome.failed for outcome in outcomes),
+            fallback_replies=sum(outcome.fallback_replies for outcome in outcomes),
+        )
 
     def _has_real_writeback_message(
         self,
@@ -638,6 +674,12 @@ def _message_failure_reason(message) -> str:
     if code:
         return str(code)
     return "peer_error_message"
+
+
+def _after_writeback_reason(reason: str) -> str:
+    if not reason:
+        return "peer_error_after_writeback"
+    return f"{reason}_after_writeback"
 
 
 def _stdout_reply_content(message) -> str:

@@ -3818,3 +3818,251 @@ proposal review, human approval, isolated execution, gate, persistent OpenCode
 review, and final-action hold under `--no-auto-merge`. This is not GitHub
 review truth, live MemoryOS proof, production readiness, or full L8-L10/L1-L11
 closure.
+
+## 2026-06-19 Post-PR83 Parallel Peer-Chat Reliability
+
+Baseline:
+
+```text
+origin/main and local HEAD before this slice:
+6c962708071895e94458ff947eaed8753c789ce0
+
+PR #83:
+https://github.com/iiyazu/Cross-Muse/pull/83
+state=MERGED
+head=c7deb891fb599a5ff5ef288af0d1a05c1ef3e53c
+merge_commit=6c962708071895e94458ff947eaed8753c789ce0
+post-merge main run=27808670855
+post-merge main conclusion=success
+
+PR #43:
+state=CLOSED
+mergedAt=null
+headRefName=vision-closure-deliberation-tui
+headRefOid=2c03b2492e9e0a618f21e19120192b0a46765dbf
+```
+
+The following runs used isolated `XMUSE_ROOT` directories under
+`.goal-runs/2026-06-19/`. Ports `8201`, `8100`, and `8265` were clear after
+cleanup. None of these local runs is GitHub review truth, merge truth,
+production readiness, live MemoryOS proof, or full closure proof.
+
+### Loop 25z50: two-conversation parallel groupchat probe
+
+Runtime root:
+
+```text
+/tmp/xmuse-post-pr83-main-U3Tz5c/.goal-runs/2026-06-19/loop-25z50-post-pr83-parallel-groupchat-140846
+```
+
+Service shape:
+
+```bash
+XMUSE_ROOT="$RUN_ROOT" XMUSE_EXECUTION_WORKTREE="$EXEC_WORKTREE" \
+  uv run python -c '... uvicorn.run(create_app(...), port=8201)'
+
+XMUSE_ROOT="$RUN_ROOT" uv run xmuse-mcp-server
+
+XMUSE_ROOT="$RUN_ROOT" XMUSE_PEER_GOD_BACKEND=native \
+  XMUSE_RAY_GOD_MCP=0 XMUSE_CHAT_API_URL=http://127.0.0.1:8201 \
+  uv run xmuse-platform-runner --xmuse-root "$RUN_ROOT" \
+  --mcp-port 8100 --peer-chat --persistent-review-god \
+  --persistent-review-timeout-s 240 --max-hours 0.75 --no-auto-merge
+```
+
+Probe:
+
+- created two deterministic conversations with Codex architect, Codex execute,
+  and OpenCode review participants;
+- verified creation responses included three `participant_sessions`;
+- posted one human `@architect` message per conversation;
+- requested durable groupchat replies only and prohibited proposal/lane output.
+
+Final durable state:
+
+```text
+messages=15
+chat_inbox_items=7
+unread_or_claimed=0
+peer_turn_latency_traces=7
+peer_turn_mcp_tool_traces=12
+proposals=0
+resolutions=0
+```
+
+Evidence artifacts:
+
+```text
+loop_driver_artifacts/failure_parallel_snapshot_manual.json
+loop_driver_artifacts/final_snapshot_after_completion.json
+```
+
+Key finding:
+
+```text
+inbox_b8d0d0df31884926848bd62b7e64b8cb
+target_role=architect
+responded_message_id=msg_392105789d3c44c1a924cc50feb3fd9c
+tool traces included chat_post_message
+recorded delivery_mode=failed
+recorded degraded_reason=codex_exit_1
+```
+
+Classification: durable chat authority had a real assistant writeback, but the
+latency trace followed the provider process exit and marked delivery as failed.
+This was a delivery-classification defect, not absence of durable writeback.
+
+### Local delivery-classification fix
+
+Local change:
+
+- `PeerChatScheduler` now rechecks durable inbox/writeback authority when a
+  provider returns `error`;
+- if the target inbox is `read` and the responded message is a real MCP
+  writeback from the target participant, delivery is recorded as
+  `mcp_writeback`;
+- provider failure is preserved as `*_after_writeback` degraded reason.
+
+Focused validation:
+
+```text
+uv run pytest tests/xmuse/test_peer_chat_scheduler.py -q
+-> 15 passed in 6.44s
+```
+
+Classification: local focused contract validation only. It is not server truth.
+
+### Loop 25z51: triple-conversation probe before scheduler parallelism
+
+Runtime root:
+
+```text
+/tmp/xmuse-post-pr83-main-U3Tz5c/.goal-runs/2026-06-19/loop-25z51-patched-triple-groupchat-142552
+```
+
+Probe:
+
+- same service shape as Loop 25z50;
+- created three deterministic conversations;
+- posted three human `@architect` messages;
+- ran after the delivery-classification fix but before scheduler parallelism.
+
+Interrupted evidence:
+
+```text
+loop_driver_artifacts/head_of_line_blocking_snapshot.json
+loop_driver_artifacts/interrupted_head_of_line_final_snapshot.json
+
+messages=9
+chat_inbox_items=7
+peer_turn_latency_traces=2
+peer_turn_mcp_tool_traces=4
+proposals=0
+resolutions=0
+open_inbox_items=5
+```
+
+Classification: negative local runtime evidence for scheduler throughput.
+The platform runner reported `concurrency=4`, but peer-chat processing still
+awaited one `tick_once()` provider turn before claiming more inbox work,
+causing head-of-line blocking across conversations.
+
+### Local scheduler-parallelism fix
+
+Local change:
+
+- `PeerChatScheduler.tick_many(max_concurrent=...)` concurrently runs bounded
+  `tick_once()` calls over the same durable inbox queue;
+- sqlite claim transactions remain the inbox authority;
+- `only_inbox_item_id` continues to force single-item operation;
+- platform runner passes its existing `--max-concurrent` value to peer-chat
+  scheduler ticks through `CoordinatorControlService`.
+
+Focused validation:
+
+```text
+uv run pytest tests/xmuse/test_peer_chat_scheduler.py -q
+-> 16 passed in 4.63s
+
+uv run pytest tests/xmuse/test_platform_runner.py -q
+-> 66 passed, 1 warning in 8.86s
+```
+
+Classification: local focused validation only.
+
+### Loop 25z52: triple-conversation probe after scheduler parallelism
+
+Runtime root:
+
+```text
+/tmp/xmuse-post-pr83-main-U3Tz5c/.goal-runs/2026-06-19/loop-25z52-patched-parallel-scheduler-143353
+```
+
+Probe:
+
+- same service shape as Loop 25z50;
+- runner used `--max-concurrent 4`;
+- created three deterministic conversations with Codex architect, Codex
+  execute, and OpenCode review participants;
+- posted three human `@architect` messages;
+- prohibited proposal/lane output.
+
+Observed concurrency:
+
+```text
+elapsed_s=16
+initial inbox=3
+claimed=3
+```
+
+This differs from Loop 25z51, where only one peer turn was effectively in
+flight while other conversation inboxes queued behind it.
+
+Final durable state:
+
+```text
+messages=19
+chat_inbox_items=9
+open=0
+peer_turn_latency_traces=9
+peer_turn_mcp_tool_traces=15
+proposals=0
+resolutions=0
+```
+
+Latency trace summary:
+
+```text
+architect traces:
+  3 x delivery_mode=mcp_writeback
+  3 x degraded_reason=peer_response_timeout_after_writeback
+
+execute traces:
+  3 x delivery_mode=mcp_writeback
+  degraded_reason=null
+
+review traces:
+  3 x delivery_mode=mcp_writeback
+  degraded_reason=null
+```
+
+Evidence artifact:
+
+```text
+loop_driver_artifacts/final_snapshot.json
+```
+
+Remaining behavior gap:
+
+- at least one architect summary was posted before the execute/review replies
+  landed;
+- alpha/beta did not produce a later final summary after both peer replies
+  were visible;
+- therefore this is real durable multi-peer groupchat evidence, but not proof
+  that natural groupchat orchestration semantics are production-ready.
+
+Classification: local runtime evidence that bounded parallel peer-chat inbox
+consumption works and all nine inbox items reached durable `mcp_writeback`
+without proposal/lane leakage. It also preserves the remaining gap that
+provider result acknowledgement and architect final-summary gating are not yet
+strong enough for production-ready natural groupchat claims.

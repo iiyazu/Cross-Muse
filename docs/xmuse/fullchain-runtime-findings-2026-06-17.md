@@ -129,6 +129,24 @@ truth, merge truth, live MemoryOS proof, or full closure.
   approval, isolated execution, xmuse-core gate, persistent OpenCode review,
   and final-action hold. The candidate exposed `participant_sessions` in
   conversation create/bootstrap responses.
+- PR #83 merged the participant session mapping API change as
+  `6c962708071895e94458ff947eaed8753c789ce0` after successful PR checks and
+  successful post-merge main `xmuse CI`.
+- Loop 25z50 exposed a peer-chat delivery-classification defect: a Codex
+  architect had already performed durable MCP `chat_post_message`, but the
+  scheduler recorded the turn as `delivery_mode=failed` because the provider
+  returned `codex_exit_1` afterward. A local fix now makes durable writeback
+  authority win while preserving provider failure as `*_after_writeback`.
+- Loop 25z51 exposed peer-chat scheduler head-of-line blocking: platform
+  runner `concurrency=4` did not help because `tick_once()` awaited one
+  provider turn before claiming more inbox work. A local fix now adds
+  `tick_many(max_concurrent=...)` and passes runner concurrency into the
+  peer-chat scheduler.
+- Loop 25z52 reran the three-conversation probe after the scheduler fix. The
+  initial three architect inbox items were claimed concurrently, all nine
+  inbox items reached durable `mcp_writeback`, and no proposals/resolutions
+  were emitted. Remaining groupchat gaps include provider result timeout after
+  writeback and missing final-summary gating after downstream peer replies.
 
 ## Findings
 
@@ -2221,3 +2239,131 @@ Remaining gaps:
 - The imported branch has no server facts until pushed and checked.
 - GitHub review truth, live MemoryOS, production-ready groupchat, full L8-L10
   closure, full L1-L11 closure, and overnight readiness remain unproven.
+
+### F89. Durable peer writeback must outrank provider process exit in delivery classification
+
+Severity: resolved local observability defect.
+
+Loop 25z50 showed a Codex architect turn with a real durable MCP writeback:
+
+```text
+inbox_b8d0d0df31884926848bd62b7e64b8cb
+responded_message_id=msg_392105789d3c44c1a924cc50feb3fd9c
+peer_turn_mcp_tool_traces included chat_post_message
+recorded delivery_mode=failed
+recorded degraded_reason=codex_exit_1
+```
+
+The chat/inbox store was the stronger authority: the inbox was read, the
+responded message existed, and the MCP tool trace showed a real writeback. The
+provider process exit remained useful degradation evidence, but it should not
+override durable delivery truth.
+
+Local fix:
+
+- `PeerChatScheduler` now rechecks durable inbox/writeback state before
+  treating provider `error` results as failed delivery.
+- If writeback is real, the trace records `delivery_mode=mcp_writeback` and
+  preserves the provider failure as `codex_exit_1_after_writeback` or the
+  corresponding `*_after_writeback` reason.
+
+Validation:
+
+```text
+uv run pytest tests/xmuse/test_peer_chat_scheduler.py -q
+-> 15 passed, then 16 passed after the scheduler-parallelism test was added
+```
+
+Remaining gap:
+
+- Provider wrappers can still fail or time out after successful writeback. That
+  is now visible as degraded delivery metadata, not hidden as failed delivery.
+
+### F90. Peer-chat scheduler caused cross-conversation head-of-line blocking
+
+Severity: resolved local throughput blocker for bounded peer-chat fan-out.
+
+Loop 25z51 used three conversations and runner `concurrency=4`, but the
+peer-chat control loop awaited one `tick_once()` provider turn before claiming
+additional inbox work. Snapshot evidence:
+
+```text
+messages=9
+chat_inbox_items=7
+open_inbox_items=5
+proposals=0
+resolutions=0
+```
+
+This meant one slow peer turn could stall unrelated conversations and made the
+groupchat layer feel serial rather than naturally concurrent.
+
+Local fix:
+
+- `PeerChatScheduler.tick_many(max_concurrent=...)` runs bounded concurrent
+  `tick_once()` calls against the same durable inbox queue.
+- sqlite inbox claims remain the authority for exactly-one item ownership.
+- `CoordinatorControlService.tick_peer_chat_scheduler` calls `tick_many` when
+  available and platform runner passes through existing `--max-concurrent`.
+
+Validation:
+
+```text
+uv run pytest tests/xmuse/test_peer_chat_scheduler.py -q
+-> 16 passed in 4.63s
+
+uv run pytest tests/xmuse/test_platform_runner.py -q
+-> 66 passed, 1 warning in 8.86s
+```
+
+Loop 25z52 runtime evidence:
+
+```text
+elapsed_s=16
+initial inbox=3
+claimed=3
+
+final:
+messages=19
+chat_inbox_items=9
+open=0
+peer_turn_latency_traces=9
+peer_turn_mcp_tool_traces=15
+proposals=0
+resolutions=0
+```
+
+Remaining gap:
+
+- `tick_many` claims available inbox items in batches. It does not yet model a
+  full conversation-level planner that waits for downstream peer replies before
+  allowing summaries or next-stage handoffs.
+
+### F91. Architect final-summary gating is still prompt-level, not authority-level
+
+Severity: open product behavior gap.
+
+Loop 25z52 completed all nine inbox items with durable `mcp_writeback`, but
+the conversation semantics were not fully reliable:
+
+- one architect posted a summary before execute/review replies landed;
+- alpha/beta peer replies landed, but no later architect summary closed the
+  shard after both peer replies were visible;
+- all of this happened without proposal or lane leakage, so the issue is
+  groupchat turn orchestration, not execution dispatch.
+
+Impact:
+
+- xmuse can now drive a real multi-peer durable groupchat under bounded
+  parallelism, but it cannot yet claim production-ready natural peer-GOD
+  groupchat behavior.
+- Prompt instructions such as "summarize after both replies land" are not a
+  sufficient authority boundary.
+
+Next direction:
+
+- Add a lightweight durable coordination primitive for "wait for these peer
+  inbox replies, then nudge/summarize" rather than relying on the architect to
+  infer completion from prompt text.
+- Keep this separate from lane execution and GitHub truth; projection layers
+  must not create proof.
