@@ -109,6 +109,18 @@ truth, merge truth, live MemoryOS proof, or full closure.
   making the peer-chat worktree repo-backed, produced a real isolated candidate
   diff, passed gate, received OpenCode review decision `merge`, and stopped at
   `awaiting_final_action` under `--no-auto-merge`.
+- PR #81 normalized groupchat-produced review aliases such as
+  `human_final_hold`, `final_hold`, and `review-god` to the active OpenCode
+  review runtime when exactly one OpenCode review peer is present. GitHub
+  server state merged it as `ff57a06ce3834e35d8afcbcb6d15c2f14ce95ae8` after
+  successful branch and post-merge main CI.
+- Loop 25z46 then exposed a narrower real boundary: explicit
+  `review_runtime=OpenCode` casing still bypassed the lowercase runtime id and
+  degraded persistent review to one-shot fallback.
+- Loop 25z48 reran after the casing fix and reached a docs-only local
+  fullchain final-action hold with `review_runtime=opencode`,
+  `review_delivery_mode=persistent`, `persistent_review_degraded=false`, gate
+  pass, and OpenCode review decision `merge`.
 
 ## Findings
 
@@ -2004,3 +2016,105 @@ Remaining gaps:
   rerun with `review_runtime=opencode`.
 - Production-ready groupchat, GitHub review truth, live MemoryOS, full closure,
   and overnight readiness remain unproven.
+
+### F87. Review runtime canonicalization must include provider casing
+
+Severity: resolved local review-routing blocker for the observed explicit
+`OpenCode` provider form.
+
+PR #81 resolved the observed final-hold and display-name alias forms, but Loop
+25z46 showed that real groupchat output could also emit the intended provider
+name with non-canonical casing:
+
+```text
+Loop 25z46 runtime_root:
+/tmp/xmuse-post-pr81-fullchain-main/.goal-runs/2026-06-19/loop-25z46-post-pr81-fullchain-125758
+
+feature_id=post-pr81-fullchain-ledger-sync-docs
+status=awaiting_final_action
+gate_passed=true
+review_runtime=OpenCode
+review_delivery_mode=one_shot_fallback
+persistent_review_degraded=true
+persistent_review_degraded_reason=missing_feature_identity
+review_decision=merge
+final_action_hold_id=final-1199ff0e330d
+```
+
+Root cause:
+
+- Approval projection lowercased the candidate runtime for comparison, but did
+  not treat explicit `opencode` as a value that should be rewritten to the
+  active review peer's authoritative runtime.
+- Downstream review selection uses the canonical provider/runtime identity.
+  Preserving `OpenCode` kept the lane from binding to the configured OpenCode
+  review peer identity.
+
+Fix:
+
+- During lane_graph approval projection, when a conversation has exactly one
+  active OpenCode review participant, normalize explicit `opencode` casing to
+  the authoritative runtime value.
+- This keeps the earlier alias guard intact and still avoids inventing
+  `review_runtime` when it is missing.
+
+Focused post-fix evidence:
+
+```text
+Loop 25z47 runtime_root:
+/tmp/xmuse-post-pr81-fullchain-main/.goal-runs/2026-06-19/loop-25z47-opencode-case-projection-smoke-131455
+
+proposal lane review_runtime=OpenCode
+approval response review_runtime=opencode
+feature_lanes.json review_runtime=opencode
+```
+
+Fullchain post-fix evidence:
+
+```text
+Loop 25z48 runtime_root:
+/tmp/xmuse-post-pr81-fullchain-main/.goal-runs/2026-06-19/loop-25z48-opencode-case-fullchain-131556
+
+conversation_id=conv_78f4da6f5c3b4e11a4c7e50e96275b96
+proposal_id=prop_0a317551f8ef48d5aa4338310427f89b
+resolution_id=res_6ae312c81f34476fa51ee9bbe7765743
+collaboration_run=collab_ecaa21e66b584129924111e4c725bebf
+feature_id=docs-production-closure-gap-ledger-post-pr81-rerun
+status=awaiting_final_action
+gate_passed=true
+review_runtime=opencode
+review_delivery_mode=persistent
+persistent_review_degraded=false
+peer_delivery_mode=configured_peer
+review_peer_id=part_6ed04cc020e145a6a7101938569e37bd
+review_decision=merge
+review_task=rtask_935e4743a2cf477da02fd60f80398870
+review_verdict=verdict-merge-rtask_935e4743a2cf477da02fd60f80398870
+final_action_hold_id=final-d1959362ae2b
+```
+
+Validation:
+
+```text
+uv run pytest tests/xmuse/test_groupchat_collaboration_runtime.py::test_lane_graph_approval_uses_opencode_review_peer_for_final_hold_runtime \
+  tests/xmuse/test_groupchat_collaboration_runtime.py::test_lane_graph_approval_uses_opencode_review_peer_display_name_runtime \
+  tests/xmuse/test_groupchat_collaboration_runtime.py::test_lane_graph_approval_canonicalizes_opencode_review_runtime_case \
+  tests/xmuse/test_groupchat_collaboration_runtime.py::test_lane_graph_approval_preserves_review_runtime_in_projection \
+  tests/xmuse/test_review_plane_orchestrator_integration.py::test_review_runtime_opencode_routes_to_existing_review_peer \
+  tests/xmuse/test_review_plane_orchestrator_integration.py::test_review_runtime_opencode_without_feature_scope_uses_request_scope \
+  tests/xmuse/test_package_boundaries.py -q
+-> 22 passed, 1 warning
+
+uv run ruff check . -> All checks passed
+git diff --check -> pass
+test ! -e xmuse/__init__.py -> pass
+```
+
+Remaining gaps:
+
+- This proves one docs-only local fullchain loop, not repeated soak.
+- The successful lane stopped at final-action hold under `--no-auto-merge`; it
+  does not prove live merge automation or GitHub review truth.
+- Provider-native memory continuity, live MemoryOS, production-ready
+  groupchat, full L8-L10 closure, full L1-L11 closure, and overnight readiness
+  remain unproven.
