@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from xmuse_core.platform.execution import persistent_review_context
@@ -37,6 +38,64 @@ def test_persistent_review_context_reports_missing_chat_db(tmp_path: Path) -> No
         "conv-1",
         xmuse_root=tmp_path,
     ) == "## Conversation History\n\n- unavailable: chat.db missing"
+
+
+def test_persistent_review_context_grounds_review_in_gate_and_worker_refs(
+    tmp_path: Path,
+) -> None:
+    lane_id = "lane-grounding"
+    gate_report = tmp_path / "logs" / "gates" / lane_id / "report.json"
+    gate_report.parent.mkdir(parents=True)
+    gate_report.write_text(
+        json.dumps(
+            {
+                "passed": True,
+                "blocking_passed": True,
+                "command_results": [
+                    {
+                        "command_id": "pytest",
+                        "profile_id": "strict-product",
+                        "blocking": True,
+                        "returncode": 0,
+                        "argv": [
+                            "uv",
+                            "run",
+                            "pytest",
+                            "-q",
+                            "tests/xmuse/test_package_boundaries.py",
+                        ],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    spawn_log = tmp_path / "logs" / "agent_spawns" / lane_id / "run.stdout.log"
+    spawn_log.parent.mkdir(parents=True)
+    spawn_log.write_text("16 passed", encoding="utf-8")
+
+    context = persistent_review_context.persistent_review_context(
+        {
+            "feature_id": lane_id,
+            "status": "gated",
+            "gate_passed": True,
+            "prompt": "Review the package-boundary lane.",
+            "recent_agent_spawn_refs": [
+                f"logs/agent_spawns/{lane_id}/run.stdout.log",
+            ],
+        },
+        conversation_id="conv-1",
+        xmuse_root=tmp_path,
+        all_lanes=[],
+    )
+
+    assert "## Review Artifact Grounding" in context
+    assert "- Current lane status: gated" in context
+    assert "- Gate passed: True" in context
+    assert f"- Gate report: logs/gates/{lane_id}/report.json" in context
+    assert "cmd=uv run pytest -q tests/xmuse/test_package_boundaries.py" in context
+    assert f"- logs/agent_spawns/{lane_id}/run.stdout.log" in context
+    assert "do not state that logs, gate reports, or execution artifacts are absent" in context
 
 
 def test_review_god_preserves_persistent_review_compat_exports() -> None:
