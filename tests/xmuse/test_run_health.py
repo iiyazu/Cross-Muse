@@ -784,6 +784,8 @@ def test_summarize_run_health_exposes_peer_delivery_degraded_visibility() -> Non
             "feature_id": "configured-success",
             "status": "reviewed",
             "review_peer_id": "peer-reviewer",
+            "review_peer_cli_kind": "codex",
+            "review_peer_model": "gpt-5.5",
             "peer_request_id": "req-configured",
             "peer_routing_mode": "required",
             "peer_delivery_mode": "configured_peer",
@@ -818,6 +820,8 @@ def test_summarize_run_health_exposes_peer_delivery_degraded_visibility() -> Non
         {
             "feature_id": "default-peer-success",
             "status": "reviewed",
+            "review_peer_cli_kind": "opencode",
+            "review_peer_model": "opencode-go/deepseek-v4-flash",
             "peer_routing_mode": "preferred",
             "peer_delivery_mode": "configured_peer",
             "review_peer_defaulted": True,
@@ -845,6 +849,8 @@ def test_summarize_run_health_exposes_peer_delivery_degraded_visibility() -> Non
             "peer_routing_mode": "required",
             "peer_delivery_mode": "configured_peer",
             "review_peer_id": "peer-reviewer",
+            "review_peer_cli_kind": "codex",
+            "review_peer_model": "gpt-5.5",
             "peer_request_id": "req-configured",
             "peer_degraded_reason": None,
             "review_peer_defaulted": False,
@@ -855,6 +861,8 @@ def test_summarize_run_health_exposes_peer_delivery_degraded_visibility() -> Non
             "peer_routing_mode": "preferred",
             "peer_delivery_mode": "configured_peer",
             "review_peer_id": None,
+            "review_peer_cli_kind": "opencode",
+            "review_peer_model": "opencode-go/deepseek-v4-flash",
             "peer_request_id": None,
             "peer_degraded_reason": None,
             "review_peer_defaulted": True,
@@ -880,6 +888,8 @@ def test_summarize_run_health_exposes_peer_delivery_degraded_visibility() -> Non
             "peer_delivery_mode": "configured_peer",
             "peer_routing_mode": "preferred",
             "peer_degraded_reason": None,
+            "review_peer_cli_kind": "opencode",
+            "review_peer_model": "opencode-go/deepseek-v4-flash",
         }
     ]
     assert [item["lane_id"] for item in peer_delivery["degraded_or_fallback_lanes"]] == [

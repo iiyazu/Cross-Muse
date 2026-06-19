@@ -764,6 +764,9 @@ async def _try_configured_review_peer(
             unavailable=True,
             review_peer_defaulted=review_peer_defaulted,
         )
+    participant_metadata = _review_peer_runtime_metadata(participant)
+    if participant_metadata:
+        sm.update_metadata(lane_id, participant_metadata)
 
     service = PersistentCliPeerService(
         db_path=xmuse_root / "chat.db",
@@ -827,6 +830,7 @@ async def _try_configured_review_peer(
                 "peer_routing_mode": mode,
                 "peer_delivery_mode": "configured_peer",
             }
+            | participant_metadata
             | ({"review_peer_defaulted": True} if review_peer_defaulted else {}),
         )
         if not delivered:
@@ -1107,6 +1111,17 @@ def _review_peer_participant(
     if participant.role != _REVIEW_ROLE:
         return "review_peer_role_mismatch"
     return participant
+
+
+def _review_peer_runtime_metadata(participant: Any) -> dict[str, str]:
+    metadata: dict[str, str] = {}
+    cli_kind = _optional_text(getattr(participant, "cli_kind", None))
+    model = _optional_text(getattr(participant, "model", None))
+    if cli_kind is not None:
+        metadata["review_peer_cli_kind"] = cli_kind
+    if model is not None:
+        metadata["review_peer_model"] = model
+    return metadata
 
 
 def _optional_text(value: Any) -> str | None:

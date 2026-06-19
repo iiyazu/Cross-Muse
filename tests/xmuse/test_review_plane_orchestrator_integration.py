@@ -255,6 +255,8 @@ async def test_default_review_peer_routing_creates_feature_scoped_review_peer(
     assert lane["review_peer_id"] == review_participants[0].participant_id
     assert lane["peer_delivery_mode"] == "configured_peer"
     assert lane["peer_request_id"] in persistent.sent[0]["request_id"]
+    assert lane["review_peer_cli_kind"] == review_participants[0].cli_kind
+    assert lane["review_peer_model"] == review_participants[0].model
 
 
 @pytest.mark.asyncio
@@ -305,6 +307,8 @@ async def test_default_review_peer_routing_reuses_registered_opencode_review_pee
     assert lane["review_peer_id"] == participant.participant_id
     assert lane["peer_delivery_mode"] == "configured_peer"
     assert lane["peer_request_id"] in persistent.sent[0]["request_id"]
+    assert lane["review_peer_cli_kind"] == participant.cli_kind
+    assert lane["review_peer_model"] == participant.model
     assert persistent.ensured[0]["participant_id"] == participant.participant_id
     assert persistent.ensured[0]["feature_scope_id"] == (
         "configured-review:lane-default-opencode-review-peer"
@@ -744,6 +748,8 @@ async def test_configured_review_peer_preferred_success_records_peer_metadata(
     assert lane["review_peer_id"] == participant.participant_id
     assert lane["peer_request_id"] in persistent.sent[0]["request_id"]
     assert lane["peer_delivery_mode"] == "configured_peer"
+    assert lane["review_peer_cli_kind"] == participant.cli_kind
+    assert lane["review_peer_model"] == participant.model
     assert "peer_degraded_reason" not in lane
 
 
@@ -925,6 +931,8 @@ async def test_configured_review_peer_preferred_falls_back_to_auto_persistent(
     assert lane["review_summary"] == "auto persistent approves"
     assert lane["peer_delivery_mode"] == "auto_persistent_fallback"
     assert lane["peer_degraded_reason"] == "request_id_mismatch"
+    assert lane["review_peer_cli_kind"] == participant.cli_kind
+    assert lane["review_peer_model"] == participant.model
 
 
 @pytest.mark.asyncio
@@ -980,6 +988,8 @@ async def test_configured_review_peer_preferred_falls_back_to_one_shot(
     assert lane["status"] == "awaiting_final_action"
     assert lane["peer_delivery_mode"] == "one_shot_fallback"
     assert lane["peer_degraded_reason"] == "request_id_mismatch"
+    assert lane["review_peer_cli_kind"] == participant.cli_kind
+    assert lane["review_peer_model"] == participant.model
 
 
 @pytest.mark.asyncio
