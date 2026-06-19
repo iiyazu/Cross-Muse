@@ -131,6 +131,45 @@ Classification: stronger local runtime contract evidence for the docs-only
 sentinel only. It still does not prove production readiness, GitHub review
 truth, merge truth, live MemoryOS, or full closure.
 
+Loop 26l artifact root:
+
+```text
+.goal-runs/2026-06-20/loop-26l-product-driver-success-artifact-032330/
+```
+
+Observed product/tooling demand:
+
+- human demand asked `@architect` to route a real code change through
+  groupchat;
+- architect and execute produced a completed collaboration run with an
+  executable verdict;
+- one related `lane_graph` proposal was accepted;
+- isolated execution changed only `scripts/run_fullchain_docs_sentinel.py`;
+- gate passed;
+- OpenCode persistent review returned merge;
+- lane stopped at `awaiting_final_action`;
+- `final_actions.json` held a pending merge action;
+- services cleaned up and ports were no longer listening.
+
+Candidate diff:
+
+```text
+scripts/run_fullchain_docs_sentinel.py | 17 ++++++++++++++++-
+```
+
+Driver success checks were all true for the product-code run, including
+configured executor handoff, one related proposal, gate pass, finalized review
+verdict, and pending final-action hold.
+
+Residual observation: the conversation also contained an earlier collaboration
+run that remained `running` while the second collaboration run completed and
+fed the accepted proposal. This does not invalidate the accepted lane proof,
+but it is a remaining groupchat lifecycle/idempotency boundary.
+
+Classification: local runtime evidence for a small xmuse code-change demand.
+It still does not prove production readiness, GitHub review truth, merge
+truth, live MemoryOS, or full closure.
+
 ## 2026-06-17 Windows/WSL Run
 
 Runtime root:

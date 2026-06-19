@@ -24,9 +24,15 @@ truth, merge truth, live MemoryOS proof, or full closure.
   proposal, configured executor handoff, isolated docs artifact match, gate
   pass, OpenCode review metadata, finalized verdict, and pending final-action
   hold.
-- Current next boundary: move from docs-only sentinel proof toward a small real
-  xmuse product demand while keeping the same driver-style success matrix and
-  avoiding proposal/PR scope inflation.
+- Loop 26l moved from docs-only sentinel proof to a small real xmuse
+  product/tooling demand. The groupchat produced a code lane that modified only
+  `scripts/run_fullchain_docs_sentinel.py`; isolated execution, gate, OpenCode
+  persistent review, and final-action hold all completed locally.
+- Loop 26l also exposed a residual groupchat lifecycle boundary: the
+  conversation had one older collaboration run still `running` while a later
+  collaboration run completed and fed the accepted proposal. Current next
+  boundary: prevent stale duplicate collaboration runs or classify/expire them
+  durably without weakening proposal proof.
 - Fake groupchat demos passed in the 2026-06-17 run, but only prove the fake
   GOD layer and writeback trace contract.
 - REST + MCP proposal approval reached an isolated `feature_lanes.json`

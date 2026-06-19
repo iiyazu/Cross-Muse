@@ -145,7 +145,9 @@ def main() -> int:
             proposal=proposal,
             lane=lane,
         )
-        snapshot["success_checks"] = _success_checks(snapshot)
+        success_checks = _success_checks(snapshot)
+        snapshot["success_checks"] = success_checks
+        _write_compact_json(artifacts / "success_checks.json", success_checks)
         _write_json(artifacts / "final_snapshot.json", snapshot)
         _write_json(run_root / "driver_output.json", snapshot)
         print(json.dumps(snapshot, indent=2, sort_keys=True))
@@ -666,6 +668,19 @@ def _json_or_none(value: str) -> Any | None:
 def _write_json(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True, default=str) + "\n")
+
+
+def _write_compact_json(path: Path, payload: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        )
+        + "\n"
+    )
 
 
 if __name__ == "__main__":
