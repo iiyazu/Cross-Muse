@@ -2927,6 +2927,169 @@ Claims not made: GitHub review truth, merge truth, `ready_to_merge`,
 production-ready groupchat, or overnight readiness. The final action remains
 pending under `--no-auto-merge`.
 
+### Loop 25z41: durable peer writeback promotes session health
+
+Goal: rerun the real code-change chain after PR #77 from current
+`origin/main`, require OpenCode as the persistent review peer, and verify that
+durable peer writebacks are reflected in peer-chat session health instead of
+leaving successful peers stuck in `starting`.
+
+Runtime root:
+
+```text
+/tmp/xmuse-post-pr77-main-H8rIDc/.goal-runs/2026-06-19/loop-25z41-post-pr77-main-real-code-111357
+```
+
+Execution worktree:
+
+```text
+/tmp/xmuse-post-pr77-main-H8rIDc/.goal-runs/2026-06-19/loop-25z41-post-pr77-main-real-code-111357/peer_chat_worktree
+```
+
+Service commands:
+
+```bash
+XMUSE_ROOT="$RUN_ROOT" XMUSE_EXECUTION_WORKTREE="$EXEC_WORKTREE" \
+  uv run python -c 'import os; from pathlib import Path; import uvicorn; from xmuse.chat_api import create_app; uvicorn.run(create_app(base_dir=Path(os.environ["XMUSE_ROOT"]), execution_worktree=Path(os.environ["XMUSE_EXECUTION_WORKTREE"])), host="127.0.0.1", port=8201, log_level="info")'
+
+XMUSE_ROOT="$RUN_ROOT" uv run xmuse-mcp-server
+
+XMUSE_ROOT="$RUN_ROOT" XMUSE_PEER_GOD_BACKEND=native XMUSE_RAY_GOD_MCP=0 \
+  XMUSE_CHAT_API_URL=http://127.0.0.1:8201 \
+  uv run xmuse-platform-runner --xmuse-root "$RUN_ROOT" --mcp-port 8100 \
+  --peer-chat --persistent-review-god --persistent-review-timeout-s 180 \
+  --max-hours 0.75 --no-auto-merge
+```
+
+Negative precondition evidence:
+
+```text
+default_review_conversation=abandoned
+reason=default bootstrap still selected Codex review peer unless provider override was explicit
+
+message="@architect Coordinate..."
+observed_mentions=[]
+reason=mention parser overmatched the capitalized following word as display-name text
+```
+
+Explicit OpenCode peer conversation:
+
+```text
+conversation_id=conv_680fdda55ff341abbc34e0ad3c617ba0
+architect_participant=part_447bf5116ec643e6a658054d900ce85b
+execute_participant=part_881b8600cbfa4c72b1853fa46b2e9da8
+review_participant=part_81b8b06962554f8db8f99bc157aff543
+review_runtime=opencode
+review_model=opencode-go/deepseek-v4-flash
+```
+
+Durable groupchat and approval:
+
+```text
+human_message_id=msg_d98b9d5899ce496e9afb722049139755
+human_mentions=["@architect"]
+initial_inbox_targets=["architect"]
+execute_collaboration_run=collab_f8ca32b910f64d9a8673b8b4341b149f
+execute_response=collab_resp_2cdddaa615284d0e91277a19de256a0b
+execute_response_type=execute_feasibility_verdict
+execute_response_status=executable
+review_collaboration_response=collab_resp_e53db7d80ff4415780ed665dca2b5982
+proposal_id=prop_3e85d38acb3d479fb6e073f9bd31f96c
+resolution_id=res_b60b447eaa7f45a88060d630d40a53f5
+approval_mode=runtime_loop_manual_approval_no_auto_merge
+```
+
+Lane result:
+
+```text
+lane_id=loop25z41_session_health_writeback_status
+status=awaiting_final_action
+gate_passed=true
+review_runtime=opencode
+review_delivery_mode=persistent
+persistent_review_degraded=false
+review_decision=merge
+final_action_hold_id=final-c93b57b1ffb8
+artifact=/tmp/xmuse-post-pr77-main-H8rIDc/.goal-runs/2026-06-19/loop-25z41-post-pr77-main-real-code-111357/final_runtime_snapshot.json
+```
+
+Worker candidate diff in isolated execution worktree:
+
+```text
+src/xmuse_core/agents/god_session_registry.py
+src/xmuse_core/chat/peer_service.py
+src/xmuse_core/chat/inspector_builder.py
+tests/xmuse/test_god_session_registry.py
+tests/xmuse/test_mcp_server.py
+tests/xmuse/test_peer_chat_dashboard.py
+```
+
+Main Codex audit/import:
+
+```text
+imported=durable session status promotion after authenticated peer writeback
+imported=peer-chat inspector merge that preserves non-null active runtime fields
+worker_output_role=candidate evidence only
+```
+
+Focused validation after import:
+
+```text
+uv run pytest tests/xmuse/test_peer_chat_dashboard.py -k 'session_health or writeback' -q
+-> 6 passed, 32 deselected, 1 warning
+
+uv run pytest tests/xmuse/test_god_session_registry.py \
+  tests/xmuse/test_mcp_server.py::test_chat_emit_proposal_can_complete_current_peer_inbox_item \
+  tests/xmuse/test_mcp_server.py::test_chat_emit_proposal_without_reply_id_closes_single_claimed_inbox_item \
+  tests/xmuse/test_mcp_server.py::test_chat_post_message_reply_marks_inbox_read_with_responded_message_id \
+  tests/xmuse/test_mcp_server.py::test_chat_record_collaboration_response_promotes_session_status_to_running \
+  tests/xmuse/test_package_boundaries.py -q
+-> 35 passed, 1 warning
+
+uv run ruff check .
+-> All checks passed
+
+git diff --check -> pass
+test ! -e xmuse/__init__.py -> pass
+```
+
+GitHub server facts inspected after the small PR:
+
+```text
+PR #78 URL=https://github.com/iiyazu/Cross-Muse/pull/78
+PR #78 head=524c1c961881d4f17851361f920d068d5c652874
+PR #78 state=MERGED
+PR #78 merged_at=2026-06-19T03:40:20Z
+PR #78 merge_commit=c5818ba433142765c817bc63fed73ec40141ae06
+PR #78 checks_run=27803856684
+PR #78 checks=quality-gates success, contract-smoke-gates success, real-runtime-integration-gate success
+main_post_merge_run=27803891559
+main_post_merge_head=c5818ba433142765c817bc63fed73ec40141ae06
+main_post_merge_checks=success
+```
+
+Cleanup:
+
+```text
+8100/8201/8265 listeners: none
+xmuse service processes: none
+```
+
+Remaining manual gaps:
+
+- The default peer-chat bootstrap still selected Codex for the first review
+  conversation unless OpenCode was explicitly requested.
+- The mention parser overmatched `@architect Coordinate...` and failed to
+  route until the mention was written as `@architect,`.
+- This is one successful local runtime code-change loop plus GitHub server
+  facts for the imported PR. It is not repeated stability or production-ready
+  groupchat proof.
+
+Claims not made: GitHub review truth, inferred merge truth beyond the inspected
+PR #78 server state, `ready_to_merge`, `pr_merged` for a live lane, live
+MemoryOS, full L8-L10 closure, full L1-L11 closure, production-ready groupchat,
+or overnight readiness.
+
 ### Loop 25z39: proposal waits for collaboration readiness
 
 Goal: remove the duplicate proposal observed in Loop 25z38 by requiring

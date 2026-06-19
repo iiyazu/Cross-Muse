@@ -1752,3 +1752,86 @@ Remaining gaps:
 - This makes the fallback explicit; it does not remove the fallback.
 - Server-side CI for this branch is not yet claimed until a PR branch is
   pushed and checks run.
+
+### F84. Durable peer writebacks should promote session health
+
+Severity: resolved local peer-chat observability blocker.
+
+Loop 25z41 reached a real code-change lane with explicit OpenCode persistent
+review and durable callback writeback, but the peer-chat health view could
+still report a peer as `starting` after the peer had authenticated and written
+back through MCP.
+
+Evidence:
+
+```text
+Loop 25z41
+conversation_id=conv_680fdda55ff341abbc34e0ad3c617ba0
+execute_collaboration_run=collab_f8ca32b910f64d9a8673b8b4341b149f
+execute_response=collab_resp_2cdddaa615284d0e91277a19de256a0b
+review_collaboration_response=collab_resp_e53db7d80ff4415780ed665dca2b5982
+lane_id=loop25z41_session_health_writeback_status
+status=awaiting_final_action
+gate_passed=true
+review_runtime=opencode
+persistent_review_degraded=false
+review_decision=merge
+final_action_hold_id=final-c93b57b1ffb8
+```
+
+Root cause:
+
+- Runtime activity was durable enough to prove a peer writeback happened.
+- Session health did not consistently promote durable session status from
+  `starting` to `running` when a registered peer wrote back.
+- The inspector could also let stale active-session status hide a stronger
+  durable status.
+
+Fix:
+
+- `GodSessionRegistry` now exposes a running-status promotion path.
+- `PeerChatService` promotes session status after authenticated durable
+  writebacks.
+- The peer-chat inspector merges durable session status with active runtime
+  fields so durable status can improve health without dropping live process
+  details.
+
+Validation:
+
+```text
+uv run pytest tests/xmuse/test_peer_chat_dashboard.py -k 'session_health or writeback' -q
+-> 6 passed, 32 deselected, 1 warning
+
+uv run pytest tests/xmuse/test_god_session_registry.py \
+  tests/xmuse/test_mcp_server.py::test_chat_emit_proposal_can_complete_current_peer_inbox_item \
+  tests/xmuse/test_mcp_server.py::test_chat_emit_proposal_without_reply_id_closes_single_claimed_inbox_item \
+  tests/xmuse/test_mcp_server.py::test_chat_post_message_reply_marks_inbox_read_with_responded_message_id \
+  tests/xmuse/test_mcp_server.py::test_chat_record_collaboration_response_promotes_session_status_to_running \
+  tests/xmuse/test_package_boundaries.py -q
+-> 35 passed, 1 warning
+
+uv run ruff check . -> All checks passed
+git diff --check -> pass
+test ! -e xmuse/__init__.py -> pass
+```
+
+GitHub server facts:
+
+```text
+PR #78=https://github.com/iiyazu/Cross-Muse/pull/78
+head=524c1c961881d4f17851361f920d068d5c652874
+state=MERGED
+merge_commit=c5818ba433142765c817bc63fed73ec40141ae06
+checks_run=27803856684
+checks=quality-gates success, contract-smoke-gates success, real-runtime-integration-gate success
+main_post_merge_run=27803891559 success
+```
+
+Remaining gaps:
+
+- Default review peer selection can still choose Codex unless OpenCode is
+  explicitly requested.
+- Mention parsing still overmatches forms such as `@architect Coordinate...`.
+- This is one real local code-change loop and related server facts, not
+  repeated stability proof, live MemoryOS proof, full closure, production-ready
+  groupchat, or overnight readiness.
