@@ -4214,3 +4214,37 @@ Remaining caveats:
 - This is not production readiness, GitHub review truth, live MemoryOS,
   natural peer-GOD groupchat completion, full closure, or live lane merge
   truth.
+
+## 2026-06-20 Loop 26v Finding: Sentinel Should Stop On Exec Failed
+
+Status: local candidate harness repair.
+
+Observed:
+
+- Loop 26t reached durable lane state `exec_failed` with
+  `failure_reason=execution_infra_unavailable`.
+- `scripts/run_fullchain_docs_sentinel.py` did not classify `exec_failed` as a
+  terminal lane state, so it continued waiting for the lane timeout and had to
+  be interrupted manually after the blocker was already known.
+
+Candidate behavior:
+
+- `_wait_for_lane` now treats `exec_failed` as terminal, alongside
+  `awaiting_final_action`, `merged`, `gate_failed`, `rejected`, and `failed`.
+- A focused RED test protects the observed behavior:
+  `tests/xmuse/test_fullchain_docs_sentinel.py::test_wait_for_lane_treats_exec_failed_as_terminal`.
+
+Validation:
+
+```text
+uv run pytest tests/xmuse/test_fullchain_docs_sentinel.py -q
+-> 1 passed
+
+uv run ruff check scripts/run_fullchain_docs_sentinel.py tests/xmuse/test_fullchain_docs_sentinel.py
+-> All checks passed.
+```
+
+Remaining caveats:
+
+- This is harness-efficiency evidence only. It does not prove a fullchain
+  success path and does not change product runtime authority.

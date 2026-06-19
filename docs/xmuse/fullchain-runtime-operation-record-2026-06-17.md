@@ -7361,3 +7361,56 @@ Caveats:
 - It does not claim production readiness, GitHub review truth, live MemoryOS,
   natural peer-GOD groupchat completion, full closure, or live lane merge
   truth.
+
+## 2026-06-20 Loop 26v: Fullchain Sentinel Exec-Failed Terminal Harness
+
+Purpose: prevent the docs-only fullchain sentinel from waiting for lane timeout
+after a lane has already reached terminal `exec_failed`.
+
+Observed source:
+
+```text
+loop=26t
+run_root=/tmp/xmuse-postmerge-layered-prompt-main/.goal-runs/2026-06-20/loop-26t-configured-review-failclosed-fullchain-2150z
+lane_id=loop_26t_configured_review_failclosed_fullchain_2150z
+status=exec_failed
+failure_reason=execution_infra_unavailable
+failure_layer=coordinator
+```
+
+Focused RED:
+
+```bash
+uv run pytest tests/xmuse/test_fullchain_docs_sentinel.py -q
+```
+
+Result before implementation:
+
+```text
+1 failed
+AssertionError: exec_failed should be treated as terminal
+```
+
+Candidate behavior:
+
+```text
+scripts/run_fullchain_docs_sentinel.py::_wait_for_lane
+terminal status set includes exec_failed
+```
+
+Validation:
+
+```bash
+uv run pytest tests/xmuse/test_fullchain_docs_sentinel.py -q
+uv run ruff check scripts/run_fullchain_docs_sentinel.py tests/xmuse/test_fullchain_docs_sentinel.py
+```
+
+Result:
+
+```text
+1 passed
+ruff: All checks passed
+```
+
+Classification: local harness candidate only. It shortens future failure
+classification loops; it does not provide product runtime proof.
