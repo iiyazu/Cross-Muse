@@ -2744,3 +2744,87 @@ Remaining gap:
 - The temporary driver counted `marker_messages=2` because the human prompt
   contained the marker string; the authoritative pass condition was
   `final_after_both=true`.
+
+### F99. Default review authority skipped registered OpenCode peer
+
+Severity: targeted runtime gap, locally mitigated by candidate fix.
+
+Loop 25z67 ran from current main at:
+
+```text
+HEAD=9f19d84aeeb52043517a40e0c29f72edda2366a6
+runtime_root=/tmp/xmuse-main-after-pr86-155349/.goal-runs/2026-06-19/loop-25z67-default-review-authority-185315
+```
+
+The conversation had an active OpenCode review participant:
+
+```text
+participant_id=part_dec30b6b6d674a2b9e0d907cbef7ce5a
+role=review
+cli_kind=opencode
+model=opencode-go/deepseek-v4-flash
+```
+
+The groupchat-produced proposal did not include `review_runtime`, as requested.
+The lane still reached final-action hold, but review authority did not default
+to the registered OpenCode peer:
+
+```text
+classification=not_defaulted
+proposal_has_review_runtime=false
+status=awaiting_final_action
+review_delivery_mode=one_shot_fallback
+persistent_review_degraded=true
+persistent_review_degraded_reason=missing_feature_identity
+review_peer_defaulted absent
+review_peer_id absent
+```
+
+Candidate fix:
+
+- Default review routing now first reuses a unique active OpenCode review
+  participant already registered in the same conversation.
+- If no unique OpenCode review participant exists, the previous
+  feature-scoped Codex default-review peer behavior remains unchanged.
+- It does not treat `feature_id` as a feature identity.
+
+Focused validation:
+
+```text
+uv run pytest tests/xmuse/test_review_plane_orchestrator_integration.py -q -k 'default_review_peer'
+-> 10 passed, 39 deselected
+
+uv run pytest tests/xmuse/test_run_health.py -q -k 'peer_delivery'
+-> 1 passed, 24 deselected
+```
+
+Post-fix runtime repeat:
+
+```text
+runtime_root=/tmp/xmuse-main-after-pr86-155349/.goal-runs/2026-06-19/loop-25z68-default-review-authority-postfix-190708
+classification=defaulted_opencode_review_peer
+proposal_has_review_runtime=false
+status=awaiting_final_action
+review_peer_defaulted=true
+review_peer_id=part_7ccc1f017c054234a48ed023a801b8df
+review_peer_participant.cli_kind=opencode
+peer_delivery_mode=configured_peer
+review_delivery_mode=persistent
+persistent_review_degraded=false
+```
+
+Impact:
+
+- This closes the narrow default-authority gap for a conversation that already
+  has exactly one registered OpenCode review peer.
+- It improves the natural groupchat path because the proposal no longer has to
+  explicitly smuggle provider selection through `review_runtime` to reach
+  OpenCode review.
+
+Remaining gap:
+
+- This is one bounded local runtime repeat on a docs-only lane, not production
+  readiness, not overnight soak, not GitHub review truth, not live MemoryOS,
+  and not full L8-L10 or full L1-L11 closure.
+- Ambiguous or missing OpenCode review participants still fail closed to the
+  previous default/fallback behavior.
