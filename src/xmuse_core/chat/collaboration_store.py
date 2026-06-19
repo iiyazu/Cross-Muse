@@ -481,6 +481,7 @@ class ChatCollaborationStore:
         clean_target = target.strip()
         if not clean_target:
             return False
+        target_aliases = _target_aliases(clean_target)
         with self._connect() as conn:
             rows = conn.execute(
                 """
@@ -495,7 +496,7 @@ class ChatCollaborationStore:
             ).fetchall()
         for row in rows:
             targets = json.loads(row["targets_json"])
-            if clean_target in targets:
+            if any(stored in target_aliases for stored in targets):
                 return True
         return False
 
@@ -666,6 +667,18 @@ def _required(value: str, name: str) -> str:
     if not clean:
         raise ValueError(f"{name} must not be blank")
     return clean
+
+
+def _target_aliases(target: str) -> set[str]:
+    clean = target.strip()
+    if not clean:
+        return set()
+    aliases = {clean}
+    if clean.startswith("@"):
+        aliases.add(clean[1:])
+    else:
+        aliases.add(f"@{clean}")
+    return aliases
 
 
 def _clean_unique(values: list[str]) -> list[str]:

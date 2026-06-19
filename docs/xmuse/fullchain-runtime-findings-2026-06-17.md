@@ -3742,3 +3742,87 @@ Remaining caveats:
   OpenCode CLI execution.
 - It does not claim production readiness, GitHub review truth, live MemoryOS,
   natural peer-GOD groupchat completion, or full closure.
+
+## 2026-06-20 Loop 26m/26n Finding: Collaboration Delivery Lifecycle Closes
+
+Status: bounded fullchain repair evidence on the collaboration delivery
+lifecycle branch.
+
+Root boundary:
+
+```text
+authority=chat.db collaboration_runs/responses/inbox/tool traces
+producer=chat_create_collaboration_request and chat_record_collaboration_response
+consumer=target peer response path and callback proposal path
+condition=formal response/proposal must terminally consume their delivery inboxes
+failure_mode=done collaboration run leaves stale collaboration_request/callback inbox items
+```
+
+Observed before the fix in Loop 26m:
+
+- The real fullchain reached `awaiting_final_action`, but `chat.db` still had
+  a collaboration request inbox for `@execute` with `status=unread`.
+- The collaboration callback inbox for `@architect` also remained
+  `status=unread`.
+- `peer_turn_mcp_tool_traces` had no
+  `chat_record_collaboration_response` stage for the request inbox and no
+  `chat_emit_proposal` stage for the callback inbox.
+- The driver success checks did not cover this lifecycle gap.
+
+Candidate behavior after the fix:
+
+```text
+run_root=/tmp/xmuse-postmerge-layered-prompt-main/.goal-runs/2026-06-20/loop-26n-collaboration-lifecycle-fullchain-040427
+conversation_id=conv_bde457d33ee24de88378361eb0b8a155
+collaboration_run=collab_0b3189ec5131426ba8960cc5f98fccb3
+collaboration_request_inbox=inbox_94fe14559853429faa7cc82504cf756d status=read
+collaboration_callback_inbox=inbox_912b8fd9424543f7ad80dc925b74ec7f status=read
+callback_responded_message_id=msg_94006e286b36442093fa7b182247b2f2
+dispatch_inbox=inbox_fafd0209bea5449a8d6215abb6efb260 status=read
+```
+
+Trace evidence:
+
+```text
+inbox_94fe14559853429faa7cc82504cf756d -> chat_record_collaboration_response
+inbox_912b8fd9424543f7ad80dc925b74ec7f -> chat_emit_proposal
+inbox_fafd0209bea5449a8d6215abb6efb260 -> chat_post_message
+```
+
+Fullchain result:
+
+```text
+lane_status=awaiting_final_action
+gate_passed=true
+review_decision=merge
+review_delivery_mode=persistent
+persistent_review_degraded=false
+review_peer_cli_kind=opencode
+proposal_has_review_runtime=false
+single_related_lane_graph_proposal=true
+```
+
+Validation:
+
+```text
+uv run pytest tests/xmuse/test_mcp_server.py tests/xmuse/test_groupchat_collaboration_runtime.py -q
+-> 56 passed
+
+uv run pytest tests/xmuse/test_package_boundaries.py -q
+-> 16 passed
+
+uv run ruff check .
+-> All checks passed.
+
+git diff --check
+test ! -e xmuse/__init__.py
+-> passed
+```
+
+Remaining caveats:
+
+- This is one bounded docs-only fullchain sentinel and not production
+  readiness or repeated soak.
+- It does not prove live MemoryOS, GitHub review truth, natural peer-GOD
+  groupchat completion, or full closure.
+- The final action remained held; no live lane merge is claimed.

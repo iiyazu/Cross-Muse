@@ -462,6 +462,126 @@ def test_peer_chat_mcp_structured_execution_proposal_approval_enqueues_dispatch(
     assert entries[0].collaboration_run_id == run_id
 
 
+def test_chat_create_collaboration_request_enqueues_normalized_target_inbox(
+    tmp_path: Path,
+) -> None:
+    server = load_mcp_module()
+    xmuse_root = tmp_path / "xmuse"
+    mcp_client = TestClient(server.create_app(xmuse_root=xmuse_root))
+
+    created = mcp_call(
+        mcp_client,
+        "chat_create_conversation",
+        {"title": "Collaboration target delivery"},
+    )
+    conversation_id = created["conversation"]["id"]
+    participants = {item["role"]: item for item in created["participants"]}
+    registry = GodSessionRegistry(xmuse_root / "god_sessions.json")
+    architect_session = registry.find_by_conversation_participant(
+        conversation_id=conversation_id,
+        participant_id=participants["architect"]["participant_id"],
+    )
+    execute_session = registry.find_by_conversation_participant(
+        conversation_id=conversation_id,
+        participant_id=participants["execute"]["participant_id"],
+    )
+    assert architect_session is not None
+    assert execute_session is not None
+
+    result = mcp_chat_call(
+        mcp_client,
+        "chat_create_collaboration_request",
+        {
+            "conversation_id": conversation_id,
+            "participant_id": participants["architect"]["participant_id"],
+            "god_session_id": architect_session.god_session_id,
+            "client_request_id": "collab-target-delivery",
+            "goal": "Confirm bounded execution scope.",
+            "targets": ["execute", "@execute"],
+            "callback_target": "@architect",
+            "question": "Record an execute_feasibility_verdict for this lane.",
+            "context_refs": ["message:intake"],
+            "idempotency_key": "collab-target-delivery",
+            "timeout_s": 480,
+        },
+    )
+    run = result["run"]
+
+    assert run["targets"] == ["@execute"]
+    assert run["callback_target"] == "@architect"
+    assert result["message"]["envelope_type"] == "collaboration_request"
+    assert [item["target_address"] for item in result["inbox_items"]] == ["@execute"]
+    assert result["inbox_items"][0]["item_type"] == "collaboration_request"
+    assert result["inbox_items"][0]["target_participant_id"] == (
+        participants["execute"]["participant_id"]
+    )
+
+    inbox = ChatInboxStore(xmuse_root / "chat.db").list_for_participant(
+        conversation_id=conversation_id,
+        participant_id=participants["execute"]["participant_id"],
+    )
+    assert len(inbox) == 1
+    assert inbox[0].payload["collaboration_run_id"] == run["run_id"]
+    assert "chat_record_collaboration_response" in inbox[0].payload["content"]
+
+    repeated = mcp_chat_call(
+        mcp_client,
+        "chat_create_collaboration_request",
+        {
+            "conversation_id": conversation_id,
+            "participant_id": participants["architect"]["participant_id"],
+            "god_session_id": architect_session.god_session_id,
+            "client_request_id": "collab-target-delivery",
+            "goal": "Confirm bounded execution scope.",
+            "targets": ["execute", "@execute"],
+            "callback_target": "@architect",
+            "question": "Record an execute_feasibility_verdict for this lane.",
+            "context_refs": ["message:intake"],
+            "idempotency_key": "collab-target-delivery",
+            "timeout_s": 480,
+        },
+    )
+    assert repeated["run"]["run_id"] == run["run_id"]
+    assert len(repeated["inbox_items"]) == 1
+    assert len(
+        ChatInboxStore(xmuse_root / "chat.db").list_for_participant(
+            conversation_id=conversation_id,
+            participant_id=participants["execute"]["participant_id"],
+        )
+    ) == 1
+
+    response = mcp_chat_call(
+        mcp_client,
+        "chat_record_collaboration_response",
+        {
+            "conversation_id": conversation_id,
+            "participant_id": participants["execute"]["participant_id"],
+            "god_session_id": execute_session.god_session_id,
+            "run_id": run["run_id"],
+            "content": json.dumps(
+                {
+                    "type": "execute_feasibility_verdict",
+                    "status": "executable",
+                    "summary": "The lane is bounded and has a focused gate.",
+                    "evidence_refs": ["message:intake"],
+                }
+            ),
+            "status": "received",
+        },
+    )["run"]
+
+    assert response["status"] == "done"
+    assert response["responses"][0]["target"] == "@execute"
+
+    closed_inbox = ChatInboxStore(xmuse_root / "chat.db").get(inbox[0].id)
+    assert closed_inbox.status == "read"
+    stages = PeerTurnLatencyTraceStore(xmuse_root / "chat.db").list_mcp_tool_stages(
+        conversation_id,
+        inbox[0].id,
+    )
+    assert "chat_record_collaboration_response" in stages
+
+
 def test_chat_emit_proposal_deduplicates_collaboration_lane_graph_feature(
     tmp_path: Path,
 ) -> None:
@@ -528,6 +648,15 @@ def test_chat_emit_proposal_deduplicates_collaboration_lane_graph_feature(
     )["run"]
     assert response["status"] == "done"
 
+    callback_items = ChatInboxStore(xmuse_root / "chat.db").list_for_participant(
+        conversation_id=conversation_id,
+        participant_id=participants["architect"]["participant_id"],
+    )
+    callback_item = next(
+        item for item in callback_items if item.item_type == "collaboration_callback"
+    )
+    assert callback_item.status == "unread"
+
     first = mcp_chat_call(
         mcp_client,
         "chat_emit_proposal",
@@ -575,6 +704,15 @@ def test_chat_emit_proposal_deduplicates_collaboration_lane_graph_feature(
         "collaboration_lane_graph_feature_overlap"
     )
     assert second["semantic_deduplication"]["feature_ids"] == ["docs-sentinel"]
+
+    closed_callback = ChatInboxStore(xmuse_root / "chat.db").get(callback_item.id)
+    assert closed_callback.status == "read"
+    assert closed_callback.responded_message_id == first["message"]["id"]
+    stages = PeerTurnLatencyTraceStore(xmuse_root / "chat.db").list_mcp_tool_stages(
+        conversation_id,
+        callback_item.id,
+    )
+    assert "chat_emit_proposal" in stages
 
     chat = ChatStore(xmuse_root / "chat.db")
     proposals = chat.list_proposals(conversation_id)

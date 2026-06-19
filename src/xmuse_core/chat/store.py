@@ -134,6 +134,7 @@ class ChatStore:
         reply_owner_participant_id: str | None = None,
         turn_budget_action: str = "none",
         turn_budget_reset_amount: int = 8,
+        extra_result: dict | None = None,
     ) -> dict:
         now = _utc_now()
         message = ChatMessage(
@@ -351,6 +352,8 @@ class ChatStore:
                     "message": message.model_dump(mode="json"),
                     "inbox_items": created_items,
                 }
+                if extra_result:
+                    result.update(extra_result)
                 conn.execute(
                     """
                     insert into chat_request_log (

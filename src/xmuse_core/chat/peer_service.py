@@ -1754,7 +1754,6 @@ class PeerChatService:
         timeout_s: int = 480,
         orchestration_mode: str = "peer_consensus",
     ) -> dict[str, Any]:
-        del client_request_id
         self._verify_god_identity(
             registry_path=registry_path,
             conversation_id=conversation_id,
@@ -1766,22 +1765,145 @@ class PeerChatService:
             participant_id=participant_id,
             error_code="unknown_participant",
         )
+        caller_identity = f"god:{god_session_id}:{participant_id}"
+        logged = self._chat.get_logged_request_result(
+            conversation_id=conversation_id,
+            tool_name="chat_create_collaboration_request",
+            caller_identity=caller_identity,
+            client_request_id=client_request_id,
+        )
+        if logged is not None:
+            return logged
+
+        target_mentions = self._resolve_collaboration_targets(
+            conversation_id=conversation_id,
+            targets=self._required_string_list(targets, "targets"),
+        )
+        callback = self._resolve_collaboration_callback_target(
+            conversation_id=conversation_id,
+            target=self._required_string(callback_target, "callback_target"),
+        )
+        normalized_idempotency_key = self._optional_string(idempotency_key)
+        store = self._collaboration_store()
+        if normalized_idempotency_key:
+            existing = store.find_by_idempotency_key(
+                conversation_id,
+                normalized_idempotency_key,
+            )
+            if existing is not None:
+                return {"run": existing.model_dump(mode="json")}
+
         try:
-            run = self._collaboration_store().create_request(
+            run = store.create_request(
                 conversation_id=conversation_id,
                 goal=self._required_string(goal, "goal"),
                 initiator=participant.role,
-                targets=self._required_string_list(targets, "targets"),
-                callback_target=self._required_string(callback_target, "callback_target"),
+                targets=[target.normalized for target in target_mentions],
+                callback_target=callback.normalized,
                 question=self._required_string(question, "question"),
                 context_refs=self._optional_string_list(context_refs, "context_refs"),
-                idempotency_key=self._optional_string(idempotency_key),
+                idempotency_key=normalized_idempotency_key,
                 timeout_s=int(timeout_s),
                 orchestration_mode=orchestration_mode,
             )
         except ValueError as exc:
             raise PeerChatError("invalid_collaboration_request", str(exc)) from exc
-        return {"run": run.model_dump(mode="json")}
+        resolved_reply_to_inbox_item_id = self._single_claimed_inbox_item_id(
+            conversation_id=conversation_id,
+            participant_id=participant_id,
+        )
+        content = _collaboration_request_content(
+            run_id=run.run_id,
+            initiator=participant.role,
+            target_addresses=[target.normalized for target in target_mentions],
+            callback_target=callback.normalized,
+            goal=run.goal,
+            question=run.question,
+        )
+        result = self._chat.create_message_inbox_and_log(
+            conversation_id=conversation_id,
+            tool_name="chat_create_collaboration_request",
+            caller_identity=caller_identity,
+            client_request_id=client_request_id,
+            author=participant_id,
+            role="assistant",
+            content=content,
+            envelope_type="collaboration_request",
+            envelope_json=normalize_envelope(
+                {
+                    "type": "collaboration_request",
+                    "schema_version": 1,
+                    "collaboration_run_id": run.run_id,
+                    "collaboration_status": run.status.value,
+                    "targets": run.targets,
+                    "callback_target": run.callback_target,
+                },
+                envelope_type="collaboration_request",
+            ),
+            mentions=[target.normalized for target in target_mentions],
+            inbox_items=[
+                {
+                    "target_participant_id": target.participant.participant_id,
+                    "target_role": target.participant.role,
+                    "target_address": target.normalized,
+                    "sender_participant_id": participant_id,
+                    "sender_address": f"@participant:{participant_id}",
+                    "item_type": "collaboration_request",
+                    "payload": {
+                        "content": _collaboration_request_target_content(
+                            run_id=run.run_id,
+                            target_address=target.normalized,
+                            callback_target=callback.normalized,
+                            goal=run.goal,
+                            question=run.question,
+                            context_refs=run.context_refs,
+                        ),
+                        "collaboration_run_id": run.run_id,
+                        "collaboration_status": run.status.value,
+                        "target": target.normalized,
+                        "callback_target": callback.normalized,
+                        "goal": run.goal,
+                        "question": run.question,
+                        "context_refs": run.context_refs,
+                    },
+                }
+                for target in target_mentions
+            ],
+            reply_to_inbox_item_id=resolved_reply_to_inbox_item_id,
+            reply_owner_participant_id=participant_id,
+            extra_result={"run": run.model_dump(mode="json")},
+        )
+        if resolved_reply_to_inbox_item_id:
+            PeerTurnLatencyTraceStore(self._db_path).record_mcp_tool_stage(
+                conversation_id=conversation_id,
+                inbox_item_id=resolved_reply_to_inbox_item_id,
+                tool_name="chat_create_collaboration_request",
+                called_at=time.monotonic(),
+            )
+            GodSessionRegistry(registry_path).promote_running(god_session_id)
+        return result
+
+    def _resolve_collaboration_targets(
+        self,
+        *,
+        conversation_id: str,
+        targets: list[str],
+    ) -> list[Any]:
+        resolver = MentionResolver(self._participants)
+        resolved = []
+        seen: set[str] = set()
+        for target in targets:
+            try:
+                mention = resolver.resolve(conversation_id, target)
+            except MentionResolutionError as exc:
+                raise PeerChatError(exc.code, exc.target) from exc
+            if mention.normalized in seen:
+                continue
+            seen.add(mention.normalized)
+            resolved.append(mention)
+        if not resolved:
+            raise PeerChatError("invalid_collaboration_request", "targets")
+        return resolved
 
     def record_collaboration_response(
         self,
@@ -1823,6 +1945,19 @@ class PeerChatService:
             )
         except ValueError as exc:
             raise PeerChatError("invalid_collaboration_response", str(exc)) from exc
+        response_inbox_item_id = self._collaboration_inbox_item_id(
+            conversation_id=conversation_id,
+            participant_id=participant_id,
+            run_id=run_id,
+            item_type="collaboration_request",
+        )
+        if response_inbox_item_id:
+            self._mark_inbox_consumed_by_tool(
+                conversation_id=conversation_id,
+                participant_id=participant_id,
+                inbox_item_id=response_inbox_item_id,
+                tool_name="chat_record_collaboration_response",
+            )
         GodSessionRegistry(registry_path).promote_running(god_session_id)
         callback: dict[str, Any] | None = None
         if updated.status is CollaborationStatus.DONE:
@@ -2277,6 +2412,7 @@ class PeerChatService:
             references=proposal_references,
             resolution_content=resolution_content,
         )
+        proposal_message_id = self._proposal_message_id(payload)
         resolved_reply_to_inbox_item_id = (
             reply_to_inbox_item_id
             or self._single_claimed_inbox_item_id(
@@ -2289,13 +2425,20 @@ class PeerChatService:
                 conversation_id=conversation_id,
                 participant_id=participant_id,
                 inbox_item_id=resolved_reply_to_inbox_item_id,
-                responded_message_id=self._proposal_message_id(payload),
+                responded_message_id=proposal_message_id,
                 tool_name="chat_emit_proposal",
             )
             GodSessionRegistry(registry_path).promote_running(god_session_id)
+        self._mark_collaboration_callback_inboxes_for_references(
+            conversation_id=conversation_id,
+            participant_id=participant_id,
+            references=proposal_references,
+            responded_message_id=proposal_message_id,
+            exclude_inbox_item_id=resolved_reply_to_inbox_item_id,
+        )
         self._ensure_review_trigger(
             conversation_id=conversation_id,
-            source_message_id=self._proposal_message_id(payload),
+            source_message_id=proposal_message_id,
             sender_participant_id=participant_id,
             reviewable_type="lane_graph",
         )
@@ -2414,6 +2557,23 @@ class PeerChatService:
         responded_message_id: str,
         tool_name: str,
     ) -> None:
+        self._mark_inbox_consumed_by_tool(
+            conversation_id=conversation_id,
+            participant_id=participant_id,
+            inbox_item_id=inbox_item_id,
+            tool_name=tool_name,
+            responded_message_id=responded_message_id,
+        )
+
+    def _mark_inbox_consumed_by_tool(
+        self,
+        *,
+        conversation_id: str,
+        participant_id: str,
+        inbox_item_id: str,
+        tool_name: str,
+        responded_message_id: str | None = None,
+    ) -> None:
         try:
             item = self._inbox.get(inbox_item_id)
         except KeyError as exc:
@@ -2446,6 +2606,52 @@ class PeerChatService:
         if len(claimed_items) != 1:
             return None
         return claimed_items[0].id
+
+    def _collaboration_inbox_item_id(
+        self,
+        *,
+        conversation_id: str,
+        participant_id: str,
+        run_id: str,
+        item_type: str,
+    ) -> str | None:
+        for item in self._inbox.list_for_participant(
+            conversation_id=conversation_id,
+            participant_id=participant_id,
+            include_claimed=True,
+            limit=100,
+        ):
+            if item.item_type != item_type:
+                continue
+            if item.payload.get("collaboration_run_id") == run_id:
+                return item.id
+        return None
+
+    def _mark_collaboration_callback_inboxes_for_references(
+        self,
+        *,
+        conversation_id: str,
+        participant_id: str,
+        references: list[str],
+        responded_message_id: str,
+        exclude_inbox_item_id: str | None,
+    ) -> None:
+        for run_id in _collaboration_reference_run_ids(references):
+            inbox_item_id = self._collaboration_inbox_item_id(
+                conversation_id=conversation_id,
+                participant_id=participant_id,
+                run_id=run_id,
+                item_type="collaboration_callback",
+            )
+            if not inbox_item_id or inbox_item_id == exclude_inbox_item_id:
+                continue
+            self._mark_inbox_consumed_by_tool(
+                conversation_id=conversation_id,
+                participant_id=participant_id,
+                inbox_item_id=inbox_item_id,
+                tool_name="chat_emit_proposal",
+                responded_message_id=responded_message_id,
+            )
 
     def _proposal_message_id(self, payload: dict[str, Any]) -> str:
         message = payload.get("message")
@@ -2556,6 +2762,48 @@ def _collaboration_response_target(role: str, targets: list[str]) -> str | None:
     if address in targets:
         return address
     return None
+
+
+def _collaboration_request_content(
+    *,
+    run_id: str,
+    initiator: str,
+    target_addresses: list[str],
+    callback_target: str,
+    goal: str,
+    question: str,
+) -> str:
+    targets = ", ".join(target_addresses)
+    return (
+        f"Collaboration run `{run_id}` created by @{initiator} for {targets}.\n\n"
+        f"Goal: {goal}\n\n"
+        f"Question: {question}\n\n"
+        f"Callback target after all responses: {callback_target}."
+    )
+
+
+def _collaboration_request_target_content(
+    *,
+    run_id: str,
+    target_address: str,
+    callback_target: str,
+    goal: str,
+    question: str,
+    context_refs: list[str],
+) -> str:
+    refs = ", ".join(context_refs) if context_refs else "none"
+    return (
+        f"{target_address}\n"
+        f"Record a formal collaboration response for collaboration run `{run_id}` "
+        "using chat_record_collaboration_response.\n\n"
+        f"Goal: {goal}\n\n"
+        f"Question: {question}\n\n"
+        f"Context refs: {refs}\n\n"
+        f"After all targets respond, xmuse will notify {callback_target}. "
+        "For executable dispatch, use the JSON shape "
+        '{"type":"execute_feasibility_verdict","status":"executable",'
+        '"summary":"<why dispatch is safe>","evidence_refs":["<ref>"]}.'
+    )
 
 
 def _collaboration_reference_run_ids(references: list[str]) -> list[str]:
