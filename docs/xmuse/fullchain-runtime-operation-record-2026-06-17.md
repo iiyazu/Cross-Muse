@@ -5804,3 +5804,107 @@ Classification: positive bounded local candidate evidence for the
 shape. This is not CI/server-verified, not production readiness, not overnight
 soak, not GitHub review truth, not live MemoryOS proof, not full L8-L10
 closure, and not full L1-L11 closure.
+
+### Loop 25z78: Post-PR102 Main Fullchain Confirmation
+
+Server and local base:
+
+```text
+PR #102=https://github.com/iiyazu/Cross-Muse/pull/102
+PR #102 head=d4728c36cb252899a5631d3e0686fee4fb4c47cb
+PR #102 state=MERGED
+merge_commit=c44a5caf247c2c049ae5af37d74a94f5b9f95ce3
+main CI run=27831706622 success
+branch=main
+head=c44a5caf247c2c049ae5af37d74a94f5b9f95ce3
+run=/tmp/xmuse-main-after-pr86-155349/.goal-runs/2026-06-19/loop-25z78-post-pr102-fullchain-223300
+exec=/tmp/loop-25z78-post-pr102-fullchain-223300-exec
+ports: chat=8219, mcp=8119
+```
+
+Runtime commands matched Loop 25z77 with the post-merge root/ports:
+
+```bash
+uv run python -c '... uvicorn.run(create_app(run_root, execution_worktree=exec_root), port=8219) ...'
+XMUSE_ROOT="$RUN" uv run uvicorn xmuse.mcp_server:app --host 127.0.0.1 --port 8119
+XMUSE_ROOT="$RUN" XMUSE_PEER_GOD_BACKEND=native XMUSE_REVIEW_GOD_BACKEND=native \
+  uv run xmuse-platform-runner --xmuse-root "$RUN" --lanes "$RUN/feature_lanes.json" \
+  --mcp-port 8119 --max-concurrent 1 --peer-chat --persistent-review-god \
+  --persistent-review-timeout-s 900 --default-review-peer-routing --no-auto-merge \
+  --peer-chat-post-writeback-grace-s 4
+uv run python .goal-runs/2026-06-19/loop-25z70-post-pr94-health-driver.py \
+  --chat-url http://127.0.0.1:8219 \
+  --xmuse-root "$RUN" \
+  --feature-id loop25z78_post_pr102_fullchain \
+  --timeout-s 1800 --poll-s 5
+```
+
+Durable chain:
+
+```text
+conversation_id=conv_5da0b99358704607b93faa47d0f8a7b2
+collaboration_run=collab_592e7a3347de473ca314597e22d84c06
+proposal_id=prop_469f3d8a022945ca8940d9757003dca2
+resolution_id=res_efcce0c80fbd4532867c5fc833c5a573
+feature_id=loop25z78_post_pr102_fullchain
+feature_scope_id=lane_graph:res_efcce0c80fbd4532867c5fc833c5a573-graph-v1
+```
+
+The post-merge handoff closed durably:
+
+```text
+architect_inbox=inbox_0cee81f41e2f472c833b0bc6c1b49a72
+status=read
+responded_message_id=msg_98c5bd34e7de49908a4ca22422f260ba
+tool_trace=chat_mention
+delivery_mode=mcp_writeback
+```
+
+Final lane authority:
+
+```text
+base_head_sha=c44a5caf247c2c049ae5af37d74a94f5b9f95ce3
+status=awaiting_final_action
+gate_passed=true
+review_decision=merge
+review_delivery_mode=persistent
+persistent_review_degraded=false
+review_peer_defaulted=true
+review_peer_cli_kind=opencode
+review_peer_model=opencode-go/deepseek-v4-flash
+peer_delivery_mode=configured_peer
+review_fallback=persistent
+run_health_metadata_visible=true
+```
+
+Post-run checks:
+
+```text
+inbox status counts: architect/read=3, execute/read=2, review/read=1
+failed inbox count=0
+collaboration_run.status=done
+scheduler_progress.status=observed
+scheduler_progress.trace_count=5
+chat_dispatch_bridge.status=observed
+operations.cleanup.status=clean
+mcp HTTP health on 8119=ready
+8119/8219 listeners: none after shutdown
+loop-25z78 service and worker process matches: none after shutdown
+```
+
+Caveat: process discovery again reported `mcp_count=0` for the ad hoc
+`uvicorn xmuse.mcp_server:app --port 8119` process shape, while HTTP health
+for that same MCP server returned ready.
+
+Execution worktree evidence:
+
+```text
+git -C /tmp/loop-25z78-post-pr102-fullchain-223300-exec status --short
+-> ?? docs/xmuse/post-pr94-review-peer-health-note.md
+```
+
+Classification: positive bounded post-merge main runtime evidence for the
+`chat_mention` current-turn auto-bind fix and the same docs-only fullchain
+shape. This is not production readiness, not overnight soak, not GitHub review
+truth, not live MemoryOS proof, not full L8-L10 closure, and not full L1-L11
+closure.
