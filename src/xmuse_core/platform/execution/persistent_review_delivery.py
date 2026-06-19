@@ -75,7 +75,7 @@ async def apply_persistent_review_message(
     review_evidence_refs = _dedupe_refs(evidence_refs or [])
     if decision == "reviewed":
         verdict_id = stable_verdict_id(lane_id)
-        _transition_or_update_same_status(
+        final_action_hold_already_pending = _transition_or_update_same_status(
             sm,
             lane_id,
             "reviewed",
@@ -96,6 +96,8 @@ async def apply_persistent_review_message(
             | (extra_metadata or {})
             | {"review_evidence_refs": review_evidence_refs},
         )
+        if final_action_hold_already_pending:
+            return True
         ingest_merge_verdict(lane_id, summary, review_evidence_refs)
         await on_reviewed(lane_id)
         return True
@@ -131,12 +133,17 @@ def _transition_or_update_same_status(
     status: str,
     *,
     metadata: dict[str, Any],
-) -> None:
+) -> bool:
+    """Return True when a merge review already has a pending final-action hold."""
     lane = sm.get_lane(lane_id)
     if lane.get("status") == status:
         sm.update_metadata(lane_id, metadata)
-        return
+        return False
+    if lane.get("status") == "awaiting_final_action" and status == "reviewed":
+        sm.update_metadata(lane_id, metadata)
+        return True
     sm.transition(lane_id, status, metadata=metadata)
+    return False
 
 
 def review_metadata(
