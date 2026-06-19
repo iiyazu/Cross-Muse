@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from xmuse_core.platform.final_action_gate import PendingFinalAction
+from xmuse_core.platform.review_summary_safety import sanitize_review_summary
 from xmuse_core.structuring.models import ReviewDecision, ReviewVerdict
 
 
@@ -23,6 +24,7 @@ def adapt_review_verdict(
     require_final_action_approval: bool,
 ) -> VerdictAdapterResult:
     metadata = _review_metadata(verdict, lane=lane)
+    safe_summary = sanitize_review_summary(verdict.summary)
 
     if verdict.decision is ReviewDecision.REWORK:
         return VerdictAdapterResult(
@@ -61,7 +63,7 @@ def adapt_review_verdict(
                     verdict_id=verdict.id,
                     action="merge",
                     target_status="reviewed",
-                    summary=verdict.summary,
+                    summary=safe_summary,
                 ),
             )
         return VerdictAdapterResult(transition_status="reviewed", metadata=metadata)
@@ -76,7 +78,9 @@ def adapt_review_verdict(
                 verdict_id=verdict.id,
                 action="terminate",
                 target_status="failed",
-                summary=verdict.terminate_reason or verdict.summary,
+                summary=sanitize_review_summary(
+                    verdict.terminate_reason or verdict.summary
+                ),
             ),
         )
 
@@ -87,12 +91,13 @@ def adapt_review_verdict(
 
 
 def _review_metadata(verdict: ReviewVerdict, *, lane: dict[str, Any]) -> dict[str, Any]:
+    summary = sanitize_review_summary(verdict.summary)
     history = lane.get("review_history")
     if not isinstance(history, list):
         history = []
     entry = {
         "decision": verdict.decision.value,
-        "summary": verdict.summary,
+        "summary": summary,
         "fallback": "structured",
         "fallback_reason": "review_verdict",
         "verdict_id": verdict.id,
@@ -101,7 +106,7 @@ def _review_metadata(verdict: ReviewVerdict, *, lane: dict[str, Any]) -> dict[st
     return {
         "review_verdict_id": verdict.id,
         "review_decision": verdict.decision.value,
-        "review_summary": verdict.summary,
+        "review_summary": summary,
         "review_evidence_refs": list(verdict.evidence_refs),
         "review_history": [*history, entry][-8:],
     }

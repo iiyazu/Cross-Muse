@@ -33,6 +33,7 @@ from xmuse_core.platform.execution.review import (
     spawn_result_transient,
 )
 from xmuse_core.platform.messages import ReviewRequest, Transport
+from xmuse_core.platform.review_summary_safety import sanitize_review_summary
 from xmuse_core.platform.state_machine import LaneStateMachine
 from xmuse_core.providers.adapters.base import ProviderFailureKind, ProviderInvocation
 from xmuse_core.providers.goal_contract import WorkerResultStatus
@@ -483,6 +484,7 @@ async def _handle_review_result(
 
     if current.get("status") == "gated" and result.stdout.strip():
         decision, summary, reason = infer_review_fallback(result.stdout)
+        summary = sanitize_review_summary(summary)
         evidence_refs = _stdout_review_evidence_refs(
             lane_id,
             lane=current,
