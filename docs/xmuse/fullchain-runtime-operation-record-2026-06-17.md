@@ -2762,6 +2762,171 @@ Claims not made: GitHub review truth, merge truth, `ready_to_merge`,
 production-ready groupchat, or overnight readiness. The final action remains
 pending under `--no-auto-merge`.
 
+### Loop 25z40: real code-change lane blocked by empty peer-chat worktree
+
+Goal: move beyond a no-op package-boundary lane and ask the real groupchat to
+produce a small code-change lane for gate profile source evidence.
+
+Runtime root:
+
+```text
+.goal-runs/2026-06-19/loop-25z40-real-code-lane-103636
+```
+
+Execution worktree target:
+
+```text
+/tmp/loop-25z40-real-code-lane-103636-exec
+```
+
+Service commands:
+
+```bash
+XMUSE_ROOT="$RUN_ROOT" XMUSE_EXECUTION_WORKTREE="$EXEC_WORKTREE" \
+  uv run python -c 'import os; from pathlib import Path; import uvicorn; from xmuse.chat_api import create_app; uvicorn.run(create_app(base_dir=Path(os.environ["XMUSE_ROOT"]), execution_worktree=Path(os.environ["XMUSE_EXECUTION_WORKTREE"])), host="127.0.0.1", port=8201, log_level="info")'
+
+XMUSE_ROOT="$RUN_ROOT" uv run xmuse-mcp-server
+
+XMUSE_ROOT="$RUN_ROOT" XMUSE_PEER_GOD_BACKEND=native XMUSE_RAY_GOD_MCP=0 \
+  XMUSE_CHAT_API_URL=http://127.0.0.1:8201 \
+  uv run xmuse-platform-runner --xmuse-root "$RUN_ROOT" --mcp-port 8100 \
+  --peer-chat --persistent-review-god --persistent-review-timeout-s 180 \
+  --max-hours 0.75 --no-auto-merge
+```
+
+Durable path:
+
+```text
+conversation_id=conv_7c035fc1a82b493d92b4734659187368
+human_message_id=msg_e0bd86b0c8404ecf928cf6f298bbf73c
+human_mentions=["@architect"]
+initial_inbox_targets=["architect"]
+collaboration_run=collab_cfffe1fca30d4e7f92a6b56b611ff937
+proposal_id=prop_9fb7912da63d4132b2a58f6d4a1a77c0
+```
+
+Failure boundary:
+
+```text
+boundary=peer_chat_worktree
+peer_chat_worktree_entries=[]
+execute_response.status=failed
+execute_response.content.type=execute_feasibility_blocker
+approval_error.code=dispatch_gate_blocked
+approval_error.message=blocked_execute_not_confirmed
+artifact=.goal-runs/2026-06-19/loop-25z40-real-code-lane-103636/negative_runtime_snapshot.json
+```
+
+The execute peer did not falsely approve dispatch. It reported that
+`peer_chat_worktree` was empty and did not contain the requested repo files.
+The approval path then failed closed through the dispatch gate.
+
+Claims not made: GitHub review truth, merge truth, `ready_to_merge`,
+`pr_merged`, live MemoryOS, full L8-L10 closure, full L1-L11 closure,
+production-ready groupchat, or overnight readiness.
+
+### Loop 25z40b: repo-backed peer-chat worktree rerun to code-change final hold
+
+Goal: rerun Loop 25z40 after making peer-chat runtime worktree repo-backed so
+Codex/OpenCode peers can inspect real repo files without touching the control
+worktree.
+
+Runtime root:
+
+```text
+.goal-runs/2026-06-19/loop-25z40b-peer-worktree-rerun-104924
+```
+
+Execution worktree:
+
+```text
+/tmp/loop-25z40b-peer-worktree-rerun-104924-exec
+```
+
+Pre-run peer worktree evidence:
+
+```text
+peer_chat_worktree=.goal-runs/2026-06-19/loop-25z40b-peer-worktree-rerun-104924/peer_chat_worktree
+git rev-parse --is-inside-work-tree -> true
+branch --show-current -> empty detached worktree
+src/xmuse_core/platform/execution/gate.py -> present
+```
+
+Durable groupchat and approval:
+
+```text
+conversation_id=conv_b8e73ff486c145adb0860bdd36da0ed0
+human_message_id=msg_3da8a2f6fd95472699e23047c3a46694
+human_mentions=["@architect"]
+initial_inbox_targets=["architect"]
+collaboration_run=collab_a9832c489d72425f8d5064c1bc852a57
+proposal_id=prop_1f67619ee1a245969278e8f8ad2d8b2c
+resolution_id=res_f1b257fda82a4712ac45e15b8c9af7b1
+approval_mode=runtime_loop_manual_approval_no_auto_merge
+```
+
+Lane result:
+
+```text
+lane_id=loop25z40_gate_profile_source
+status=awaiting_final_action
+gate_passed=true
+review_runtime=opencode
+review_decision=merge
+final_action_hold_id=final-bab763cf5987
+worktree=/tmp/loop-25z40b-peer-worktree-rerun-104924-exec
+artifact=.goal-runs/2026-06-19/loop-25z40b-peer-worktree-rerun-104924/final_runtime_snapshot.json
+```
+
+Worker candidate diff in isolated execution worktree:
+
+```text
+src/xmuse_core/platform/execution/gate.py | 58 +++++++++++++++++++++++++++++++
+tests/xmuse/test_platform_orchestrator.py |  6 ++++
+2 files changed, 64 insertions(+)
+```
+
+Main Codex audit/import:
+
+```text
+imported=peer-chat repo-backed worktree fix in xmuse/platform_runner.py
+imported=worker candidate gate_profiles_source report metadata
+worker_output_role=candidate evidence only
+```
+
+Focused validation after import:
+
+```text
+uv run pytest tests/xmuse/test_platform_runner.py::test_peer_chat_runtime_worktree_creates_repo_backed_detached_worktree \
+  tests/xmuse/test_platform_runner.py::test_runner_enables_peer_chat_with_default_codex_launcher \
+  tests/xmuse/test_platform_runner.py::test_runner_uses_ray_peer_god_layer_by_default \
+  tests/xmuse/test_platform_runner.py::test_runner_builds_dispatch_bridge_with_peer_god_layer \
+  tests/xmuse/test_platform_runner.py::test_runner_prewarm_ray_peer_god_layer_by_default \
+  tests/xmuse/test_platform_runner.py::test_runner_can_force_native_peer_god_layer \
+  tests/xmuse/test_platform_orchestrator.py::test_run_gate_uses_worktree_gate_profiles_when_runtime_root_missing \
+  tests/xmuse/test_package_boundaries.py -q
+-> 23 passed
+
+uv run ruff check xmuse/platform_runner.py src/xmuse_core/platform/execution/gate.py \
+  tests/xmuse/test_platform_runner.py tests/xmuse/test_platform_orchestrator.py
+-> All checks passed
+
+git diff --check -> pass
+test ! -e xmuse/__init__.py -> pass
+```
+
+Cleanup:
+
+```text
+8100/8201/8265 listeners: none
+xmuse service processes: none
+```
+
+Claims not made: GitHub review truth, merge truth, `ready_to_merge`,
+`pr_merged`, live MemoryOS, full L8-L10 closure, full L1-L11 closure,
+production-ready groupchat, or overnight readiness. The final action remains
+pending under `--no-auto-merge`.
+
 ### Loop 25z39: proposal waits for collaboration readiness
 
 Goal: remove the duplicate proposal observed in Loop 25z38 by requiring
