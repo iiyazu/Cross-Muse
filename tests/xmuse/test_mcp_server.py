@@ -462,6 +462,131 @@ def test_peer_chat_mcp_structured_execution_proposal_approval_enqueues_dispatch(
     assert entries[0].collaboration_run_id == run_id
 
 
+def test_chat_emit_proposal_deduplicates_collaboration_lane_graph_feature(
+    tmp_path: Path,
+) -> None:
+    server = load_mcp_module()
+    xmuse_root = tmp_path / "xmuse"
+    mcp_client = TestClient(server.create_app(xmuse_root=xmuse_root))
+
+    created = mcp_call(
+        mcp_client,
+        "chat_create_conversation",
+        {"title": "Duplicate proposal guard"},
+    )
+    conversation_id = created["conversation"]["id"]
+    participants = {item["role"]: item for item in created["participants"]}
+    registry = GodSessionRegistry(xmuse_root / "god_sessions.json")
+    architect_session = registry.find_by_conversation_participant(
+        conversation_id=conversation_id,
+        participant_id=participants["architect"]["participant_id"],
+    )
+    execute_session = registry.find_by_conversation_participant(
+        conversation_id=conversation_id,
+        participant_id=participants["execute"]["participant_id"],
+    )
+    assert architect_session is not None
+    assert execute_session is not None
+
+    run = mcp_chat_call(
+        mcp_client,
+        "chat_create_collaboration_request",
+        {
+            "conversation_id": conversation_id,
+            "participant_id": participants["architect"]["participant_id"],
+            "god_session_id": architect_session.god_session_id,
+            "client_request_id": "collab-dedup",
+            "goal": "Confirm one bounded docs lane.",
+            "targets": ["execute"],
+            "callback_target": "architect",
+            "question": "Return an execute feasibility verdict.",
+            "context_refs": ["message:latest"],
+            "idempotency_key": "collab-dedup",
+            "timeout_s": 480,
+        },
+    )["run"]
+    run_id = run["run_id"]
+
+    response = mcp_chat_call(
+        mcp_client,
+        "chat_record_collaboration_response",
+        {
+            "conversation_id": conversation_id,
+            "participant_id": participants["execute"]["participant_id"],
+            "god_session_id": execute_session.god_session_id,
+            "run_id": run_id,
+            "content": json.dumps(
+                {
+                    "type": "execute_feasibility_verdict",
+                    "status": "executable",
+                    "summary": "One bounded docs lane is executable.",
+                    "evidence_refs": ["message:latest"],
+                }
+            ),
+            "status": "received",
+        },
+    )["run"]
+    assert response["status"] == "done"
+
+    first = mcp_chat_call(
+        mcp_client,
+        "chat_emit_proposal",
+        {
+            "conversation_id": conversation_id,
+            "participant_id": participants["architect"]["participant_id"],
+            "god_session_id": architect_session.god_session_id,
+            "client_request_id": "proposal-dedup-first",
+            "summary": "Docs sentinel",
+            "lanes": [
+                {
+                    "feature_id": "docs-sentinel",
+                    "prompt": "Create the docs sentinel.",
+                    "depends_on": [],
+                    "capabilities": ["docs"],
+                }
+            ],
+            "references": [f"collaboration:{run_id}"],
+        },
+    )
+    second = mcp_chat_call(
+        mcp_client,
+        "chat_emit_proposal",
+        {
+            "conversation_id": conversation_id,
+            "participant_id": participants["architect"]["participant_id"],
+            "god_session_id": architect_session.god_session_id,
+            "client_request_id": "proposal-dedup-second",
+            "summary": "Docs sentinel duplicate",
+            "lanes": [
+                {
+                    "feature_id": "docs-sentinel",
+                    "prompt": "Create the docs sentinel again.",
+                    "depends_on": [],
+                    "capabilities": ["docs"],
+                }
+            ],
+            "references": [f"collaboration:{run_id}"],
+        },
+    )
+
+    assert second["proposal"]["id"] == first["proposal"]["id"]
+    assert second["message"]["id"] == first["message"]["id"]
+    assert second["semantic_deduplication"]["reason"] == (
+        "collaboration_lane_graph_feature_overlap"
+    )
+    assert second["semantic_deduplication"]["feature_ids"] == ["docs-sentinel"]
+
+    chat = ChatStore(xmuse_root / "chat.db")
+    proposals = chat.list_proposals(conversation_id)
+    assert [proposal.id for proposal in proposals] == [first["proposal"]["id"]]
+    proposal_messages = [
+        message
+        for message in chat.list_messages(conversation_id)
+        if message.envelope_type == "proposal"
+    ]
+    assert [message.id for message in proposal_messages] == [first["message"]["id"]]
+
+
 def test_mcp_health_reports_chat_writeback_endpoint_and_state_files(tmp_path: Path) -> None:
     server = load_mcp_module()
     xmuse_root = tmp_path / "xmuse"
