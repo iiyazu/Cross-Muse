@@ -6246,3 +6246,62 @@ Caveats:
 - The probe does not prove natural peer-GOD groupchat completion, dynamic
   member mutation, restart/resume continuity, MemoryOS, overnight stability,
   GitHub review truth, or full closure.
+
+## 2026-06-20 Loop 26f: Default Review Ambiguity Focused Repro
+
+Purpose: close one review-authority boundary without using proposal text. The
+target was default review routing when the conversation already has multiple
+active OpenCode `review` participants.
+
+Workspace and authority:
+
+```text
+repo_worktree=/tmp/xmuse-postmerge-layered-prompt-main
+branch=codex/default-review-ambiguous-fail-closed
+base_head_sha=b762fd8770d3a911e60e495237da5f5145f3d660
+run_root=/tmp/xmuse-postmerge-layered-prompt-main/.goal-runs/2026-06-20/loop-26f-default-review-ambiguous-fail-closed-021357
+authority=chat.db participants table
+summary_artifact=selector_summary.json
+```
+
+Focused repro shape:
+
+```text
+conversation_id=conv_5d408925f3dc4bdf8391fdd9513ed35d
+existing_opencode_review_participants=2
+selector_selected_participant_id=null
+selector_failure=review_peer_runtime_ambiguous
+created_codex_review_participant=false
+```
+
+Focused integration validation:
+
+```text
+uv run pytest tests/xmuse/test_review_plane_orchestrator_integration.py -q -k 'default_review_peer'
+-> 11 passed, 39 deselected
+
+uv run pytest tests/xmuse/test_review_plane_orchestrator_integration.py tests/xmuse/test_persistent_review_session_contracts.py tests/xmuse/test_persistent_cli_peer.py tests/xmuse/test_package_boundaries.py -q
+-> 90 passed
+
+uv run ruff check .
+-> All checks passed.
+
+git diff --check
+-> passed
+
+test ! -e xmuse/__init__.py
+-> passed
+```
+
+Classification: bounded focused runtime/contract proof for ambiguous default
+OpenCode review authority. It proves the selector and review-plane consumer no
+longer create or use a Codex default review participant when multiple active
+OpenCode review participants exist in the same conversation.
+
+Caveats:
+
+- This is not a fullchain run and not production readiness.
+- It does not close the missing-OpenCode-reviewer policy question; the legacy
+  feature-scoped Codex default peer path remains for the no-OpenCode case.
+- It does not prove GitHub review truth, live MemoryOS, dynamic roster mutation,
+  overnight stability, or full closure.

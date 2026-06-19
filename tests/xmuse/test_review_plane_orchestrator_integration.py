@@ -331,6 +331,63 @@ async def test_default_review_peer_routing_reuses_registered_opencode_review_pee
 
 
 @pytest.mark.asyncio
+async def test_default_review_peer_routing_ambiguous_opencode_fails_closed(
+    tmp_path: Path,
+) -> None:
+    chat = ChatStore(tmp_path / "chat.db")
+    conversation = chat.create_conversation("Ambiguous OpenCode review peer")
+    first = _add_opencode_review_participant(tmp_path, conversation.id)
+    second = _add_opencode_review_participant(tmp_path, conversation.id)
+    orch = _make_final_action_orchestrator(
+        tmp_path,
+        [
+            _gated_lane(
+                "lane-default-opencode-review-peer-ambiguous",
+                conversation_id=conversation.id,
+                feature_plan_feature_id="feature-default-peer-ambiguous",
+            )
+        ],
+    )
+    orch._default_review_peer_routing_enabled = True
+    persistent = FakePersistentReviewLayer(
+        [
+            StdoutMessage(
+                type="result",
+                status="success",
+                artifacts={
+                    "review_verdict": {
+                        "decision": "merge",
+                        "summary": "Ambiguous review peer must not apply.",
+                    }
+                },
+            )
+        ]
+    )
+    orch._review_god_session_layer = persistent
+
+    with patch.object(orch._spawner, "spawn", new_callable=AsyncMock) as spawn:
+        await orch._run_review_god("lane-default-opencode-review-peer-ambiguous")
+
+    lane = orch._sm.get_lane("lane-default-opencode-review-peer-ambiguous")
+    participants = ParticipantStore(tmp_path / "chat.db").list_by_conversation(
+        conversation.id
+    )
+    review_participants = [item for item in participants if item.role == "review"]
+    assert spawn.await_count == 0
+    assert persistent.ensured == []
+    assert persistent.sent == []
+    assert review_participants == [first, second]
+    assert lane["status"] == "gate_failed"
+    assert lane["failure_reason"] == "required_review_peer_unavailable"
+    assert lane["failure_layer"] == "review"
+    assert lane["review_peer_defaulted"] is True
+    assert lane["review_peer_id"] == "default:opencode"
+    assert lane["peer_routing_mode"] == "required"
+    assert lane["peer_delivery_mode"] == "required_peer_failed"
+    assert lane["peer_degraded_reason"] == "review_peer_runtime_ambiguous"
+
+
+@pytest.mark.asyncio
 async def test_default_review_peer_routing_passes_review_timeout_to_peer_service(
     tmp_path: Path,
 ) -> None:
