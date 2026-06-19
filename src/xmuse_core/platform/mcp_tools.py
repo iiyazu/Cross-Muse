@@ -56,6 +56,43 @@ def _text_for_search(value: Any) -> str:
     return str(value)
 
 
+def _untracked_git_diffs(worktree: Path) -> dict[str, Any]:
+    listed = subprocess.run(
+        ["git", "ls-files", "--others", "--exclude-standard"],
+        cwd=worktree,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if listed.returncode != 0:
+        return {
+            "returncode": listed.returncode,
+            "error": listed.stderr.strip() or "git ls-files failed",
+            "paths": [],
+            "diffs": [],
+        }
+    paths = [line.strip() for line in listed.stdout.splitlines() if line.strip()]
+    diffs: list[str] = []
+    for path in paths:
+        diff = subprocess.run(
+            ["git", "diff", "--no-index", "--", "/dev/null", path],
+            cwd=worktree,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if diff.returncode not in {0, 1}:
+            return {
+                "returncode": diff.returncode,
+                "error": diff.stderr.strip() or f"git diff failed for {path}",
+                "paths": paths,
+                "diffs": diffs,
+            }
+        if diff.stdout.strip():
+            diffs.append(diff.stdout)
+    return {"returncode": 0, "paths": paths, "diffs": diffs}
+
+
 class McpToolHandler:
     def __init__(
         self,
@@ -96,7 +133,23 @@ class McpToolHandler:
             ["git", "diff", "HEAD"],
             cwd=worktree, capture_output=True, text=True, timeout=10,
         )
-        return {"diff": result.stdout, "returncode": result.returncode}
+        if result.returncode != 0:
+            return {"diff": result.stdout, "returncode": result.returncode}
+        untracked = _untracked_git_diffs(worktree)
+        if untracked.get("returncode") != 0:
+            return {
+                "diff": result.stdout,
+                "returncode": untracked["returncode"],
+                "error": untracked.get("error", "unable to collect untracked diff"),
+            }
+        diff_parts = [result.stdout.rstrip()]
+        diff_parts.extend(str(item).rstrip() for item in untracked["diffs"])
+        diff = "\n".join(item for item in diff_parts if item)
+        return {
+            "diff": diff,
+            "returncode": 0,
+            "untracked_paths": untracked["paths"],
+        }
 
     def _tool_query_knowledge(self, args: dict[str, Any]) -> dict[str, Any]:
         query = args.get("query", "")
