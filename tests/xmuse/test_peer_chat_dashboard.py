@@ -742,6 +742,46 @@ def test_conversation_inspector_returns_full_summary_with_participants_blueprint
     assert body["current_graph_set"]["id"] == "graph-set-alpha"
 
 
+def test_conversation_inspector_includes_provider_summary_by_provider_and_cli_kind(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "chat.db"
+    chat = ChatStore(db)
+    conv = chat.create_conversation("Provider Mix")
+    participants = ParticipantStore(db)
+    participants.add(
+        conversation_id=conv.id,
+        role="architect",
+        display_name="Architect GOD",
+        cli_kind="codex",
+        model="gpt-5.5",
+    )
+    participants.add(
+        conversation_id=conv.id,
+        role="execute",
+        display_name="Execute GOD",
+        cli_kind="codex",
+        model="gpt-5.5",
+    )
+    participants.add(
+        conversation_id=conv.id,
+        role="review",
+        display_name="Review GOD",
+        cli_kind="opencode",
+        model="gpt-5.5",
+    )
+
+    response = TestClient(create_app(tmp_path)).get(
+        f"/api/dashboard/peer-chat/conversations/{conv.id}/inspector"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["participants"]["provider_summary"] == [
+        {"provider_id": "codex", "cli_kind": "codex", "count": 2},
+        {"provider_id": "opencode", "cli_kind": "opencode", "count": 1},
+    ]
+
+
 def test_conversation_inspector_includes_recent_peer_latency_trace(tmp_path: Path) -> None:
     db = tmp_path / "chat.db"
     chat = ChatStore(db)
@@ -1086,6 +1126,7 @@ def test_conversation_inspector_stable_with_missing_data(tmp_path: Path) -> None
     assert body["conversation"]["id"] == conv.id
     assert body["participants"]["total"] == 0
     assert body["participants"]["summary"] == {}
+    assert body["participants"]["provider_summary"] == []
     assert body["recent_activity"]["message_count"] == 0
     assert body["recent_activity"]["card_count"] == 0
     assert body["current_blueprint"] is None

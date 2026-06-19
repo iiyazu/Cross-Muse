@@ -4392,3 +4392,147 @@ Classification: positive local runtime evidence for a six-conversation
 Codex/OpenCode peer-chat stability path under `--max-concurrent 10`. It is not
 production readiness, live MemoryOS proof, GitHub review truth, full L8-L10
 closure, full L1-L11 closure, or overnight readiness.
+
+## 2026-06-19 Loop 25z64: post-PR88 groupchat-produced code lane
+
+Runtime root:
+
+```text
+/tmp/xmuse-main-after-pr86-155349/.goal-runs/2026-06-19/loop-25z64-post-pr88-fullchain-code-lane-172812
+```
+
+Execution worktree:
+
+```text
+/tmp/loop-25z64-post-pr88-fullchain-code-lane-172812-exec
+```
+
+Control branch and head under test:
+
+```text
+codex/post-pr87-runtime-audit
+HEAD=a8144975612b9a57eca5edacb5230a246668e47f
+```
+
+Service shape:
+
+```bash
+XMUSE_ROOT="$RUN_ROOT" XMUSE_EXECUTION_WORKTREE="$EXEC_WORKTREE" \
+  uv run python -c 'import os; from pathlib import Path; import uvicorn; from xmuse.chat_api import create_app; uvicorn.run(create_app(base_dir=Path(os.environ["XMUSE_ROOT"]), execution_worktree=Path(os.environ["XMUSE_EXECUTION_WORKTREE"])), host="127.0.0.1", port=8201, log_level="info")'
+
+XMUSE_ROOT="$RUN_ROOT" uv run xmuse-mcp-server
+
+XMUSE_ROOT="$RUN_ROOT" XMUSE_EXECUTION_WORKTREE="$EXEC_WORKTREE" \
+  XMUSE_PEER_GOD_BACKEND=native XMUSE_REVIEW_GOD_BACKEND=native \
+  XMUSE_RAY_GOD_MCP=0 XMUSE_CHAT_API_URL=http://127.0.0.1:8201 \
+  uv run xmuse-platform-runner --xmuse-root "$RUN_ROOT" --mcp-port 8100 \
+  --peer-chat --peer-chat-post-writeback-grace-s 20 \
+  --persistent-review-god --persistent-review-timeout-s 300 \
+  --max-hours 1.1 --max-concurrent 8 --no-auto-merge
+```
+
+Human demand:
+
+```text
+Ask architect to coordinate one real code-change fullchain for adding
+participants.provider_summary to the conversation inspector payload, derived
+from durable participant rows and scoped to chat inspector/read-model code.
+```
+
+Durable groupchat and approval:
+
+```text
+conversation_id=conv_ef1a169072d14cceb6de94451982e2e3
+collaboration_run=collab_11773649ef01478cbd570e55bcdcbb8c
+proposal_id=prop_b06c970448f44e22a5397dbe5da61e11
+resolution_id=res_861bd80750644822975605a8d3518b20
+lane_id=loop25z64_inspector_provider_summary
+final_action_hold_id=final-7f324c713574
+```
+
+Groupchat chain:
+
+```text
+human -> architect mention: read, mcp_writeback
+architect -> execute feasibility request: read, mcp_writeback
+execute -> collaboration response: received, executable
+collaboration callback -> architect: read, chat_emit_proposal
+peer reply drain callback -> architect: read, final proposal note
+operator runtime-driver approval -> lane projection
+dispatch bridge -> execute acknowledgement: read, mcp_writeback
+```
+
+Lane result:
+
+```text
+status=awaiting_final_action
+base_head_sha=a8144975612b9a57eca5edacb5230a246668e47f
+worktree=/tmp/loop-25z64-post-pr88-fullchain-code-lane-172812-exec
+changed_files:
+  src/xmuse_core/chat/inspector_builder.py
+  tests/xmuse/test_peer_chat_dashboard.py
+gate_passed=true
+review_runtime=opencode
+review_runtime_requested=opencode
+review_peer_id=part_8f729098cd8a45e5a09094f495d1b604
+review_decision=merge
+review_verdict_id=verdict-loop25z64_inspector_provider_summary
+```
+
+Gate evidence:
+
+```text
+logs/gates/loop25z64_inspector_provider_summary/report.json
+passed=true
+blocking_passed=true
+profile_ids=["xmuse-core"]
+stdout="266 passed, 2 warnings in 59.95s"
+```
+
+Candidate diff:
+
+```text
+src/xmuse_core/chat/inspector_builder.py | 14 +++++++++++
+tests/xmuse/test_peer_chat_dashboard.py  | 41 ++++++++++++++++++++++++++++++++
+```
+
+Recorded artifacts:
+
+```text
+loop_driver_artifacts/conversation_create.json
+loop_driver_artifacts/human_message.json
+loop_driver_artifacts/approval_response.json
+loop_driver_artifacts/final_snapshot.json
+loop_driver_artifacts/final_lane.json
+review_plane.json
+final_actions.json
+logs/platform-runner.log
+logs/driver.log
+```
+
+Observed review-state noise:
+
+```text
+InvalidTransitionError: cannot transition loop25z64_inspector_provider_summary from reviewed to rejected
+```
+
+The lane still reached `awaiting_final_action` with `review_decision=merge`.
+Because the final lane record did not include `review_delivery_mode=persistent`
+or `persistent_review_degraded=false`, this run is not claimed as complete
+persistent OpenCode delivery proof. It is local runtime evidence for a registered
+OpenCode review peer being selected in the lane review path and for the full
+groupchat-produced code lane reaching final-action hold under `--no-auto-merge`.
+
+Cleanup:
+
+```text
+8100/8201/8265 listeners: none
+xmuse-platform-runner, xmuse-mcp-server, chat_api, codex exec, opencode run: no
+matching live process after shutdown checks
+```
+
+Classification: local runtime proof for one small code-change lane from
+durable GOD groupchat through execute feasibility, proposal, approval, isolated
+execution, gate, review verdict, and final-action hold. This is not production
+readiness, GitHub review truth, live MemoryOS proof, full L8-L10 closure, full
+L1-L11 closure, or overnight readiness.
