@@ -922,7 +922,7 @@ def test_health_once_reports_native_persistent_runtime_without_ray(
     monkeypatch.setattr(
         platform_runner,
         "discover_xmuse_runtime_processes",
-        lambda: build_process_inventory(
+        lambda **_kwargs: build_process_inventory(
             runner_pids=[11],
             mcp_pids=[12],
             services={"persistent_god_shim": [21]},
@@ -1785,7 +1785,7 @@ def test_health_once_uses_shared_read_model_process_semantics(
     monkeypatch.setattr(
         platform_runner,
         "discover_xmuse_runtime_processes",
-        lambda: build_process_inventory(runner_pids=[11, 12], mcp_pids=[]),
+        lambda **_kwargs: build_process_inventory(runner_pids=[11, 12], mcp_pids=[]),
     )
 
     summary = platform_runner.health_once(lanes_path, live_pids={11, 12})
@@ -1812,7 +1812,7 @@ def test_health_once_exposes_runtime_operations_contract(
     monkeypatch.setattr(
         platform_runner,
         "discover_xmuse_runtime_processes",
-        lambda: build_process_inventory(
+        lambda **_kwargs: build_process_inventory(
             runner_pids=[11],
             mcp_pids=[12],
             services={"chat_api": [13], "codex_app_server": [21], "raylet": [31]},
@@ -1869,7 +1869,7 @@ def test_health_once_reports_missing_chat_dispatch_bridge_db(
     monkeypatch.setattr(
         platform_runner,
         "discover_xmuse_runtime_processes",
-        lambda: build_process_inventory(runner_pids=[11], mcp_pids=[], services={}),
+        lambda **_kwargs: build_process_inventory(runner_pids=[11], mcp_pids=[], services={}),
     )
 
     summary = platform_runner.health_once(
@@ -1924,7 +1924,7 @@ def test_health_once_exposes_chat_dispatch_bridge_progress(
     monkeypatch.setattr(
         platform_runner,
         "discover_xmuse_runtime_processes",
-        lambda: build_process_inventory(runner_pids=[11], mcp_pids=[], services={}),
+        lambda **_kwargs: build_process_inventory(runner_pids=[11], mcp_pids=[], services={}),
     )
 
     summary = platform_runner.health_once(
@@ -1966,7 +1966,7 @@ def test_health_once_marks_runtime_operations_degraded_and_cleanup_dirty(
     monkeypatch.setattr(
         platform_runner,
         "discover_xmuse_runtime_processes",
-        lambda: build_process_inventory(
+        lambda **_kwargs: build_process_inventory(
             runner_pids=[],
             mcp_pids=[],
             services={
@@ -2007,7 +2007,7 @@ def test_health_once_handles_missing_lane_projection(tmp_path: Path, monkeypatch
     monkeypatch.setattr(
         platform_runner,
         "discover_xmuse_runtime_processes",
-        lambda: build_process_inventory(runner_pids=[], mcp_pids=[]),
+        lambda **_kwargs: build_process_inventory(runner_pids=[], mcp_pids=[]),
     )
 
     summary = platform_runner.health_once(
@@ -2048,7 +2048,7 @@ def test_health_once_includes_review_rework_alignment_summary(
     monkeypatch.setattr(
         platform_runner,
         "discover_xmuse_runtime_processes",
-        lambda: build_process_inventory(runner_pids=[], mcp_pids=[]),
+        lambda **_kwargs: build_process_inventory(runner_pids=[], mcp_pids=[]),
     )
 
     summary = platform_runner.health_once(lanes_path, live_pids=set())
@@ -2106,7 +2106,7 @@ def test_health_once_exposes_takeover_context_reason_breakdown(
     monkeypatch.setattr(
         platform_runner,
         "discover_xmuse_runtime_processes",
-        lambda: build_process_inventory(runner_pids=[], mcp_pids=[]),
+        lambda **_kwargs: build_process_inventory(runner_pids=[], mcp_pids=[]),
     )
 
     summary = platform_runner.health_once(
@@ -2201,7 +2201,7 @@ def test_health_once_exposes_peer_delivery_visibility_read_only(
     monkeypatch.setattr(
         platform_runner,
         "discover_xmuse_runtime_processes",
-        lambda: build_process_inventory(runner_pids=[], mcp_pids=[]),
+        lambda **_kwargs: build_process_inventory(runner_pids=[], mcp_pids=[]),
     )
 
     summary = platform_runner.health_once(lanes_path, live_pids=set())

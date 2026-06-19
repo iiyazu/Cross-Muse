@@ -635,7 +635,9 @@ def build_run_health_model_from_lanes(
     if inventory is None:
         discovered_inventory: dict[str, Any] | None = None
         if runner_pids is None or mcp_pids is None:
-            discovered_inventory = discover_xmuse_runtime_processes()
+            discovered_inventory = discover_xmuse_runtime_processes(
+                xmuse_root=xmuse_root,
+            )
         extra_services = (
             {
                 item["service"]: item["pids"]
