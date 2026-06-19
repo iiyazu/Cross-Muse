@@ -1916,3 +1916,91 @@ Remaining gaps:
   explicitly requested.
 - Live MemoryOS proof, GitHub review truth, full closure, production-ready
   groupchat, and overnight readiness remain unproven.
+
+### F86. Lane review runtime must resolve the active review peer identity
+
+Severity: resolved approval/projection routing blocker for the observed alias
+forms.
+
+Loop 25z43 showed a groupchat-produced lane could carry
+`review_runtime="human_final_hold"`, mixing final-action policy with review
+provider selection. Loop 25z44 then exposed a second real form:
+`review_runtime="review-god"`, matching the active OpenCode review participant's
+display name rather than the provider runtime id.
+
+Observed evidence:
+
+```text
+Loop 25z44 runtime_root:
+/tmp/xmuse-post-pr80-fullchain-121024/.goal-runs/2026-06-19/loop-25z44-review-runtime-authority-123333
+
+conversation_id=conv_4af99a4e53ff49baa3daedc1a380d629
+proposal_id=prop_ee0a49da461b438a845fa15ca0edbd42
+resolution_id=res_b4848df06b7142ef9128f6acdd36f914
+active review participant: display_name=review-god, cli_kind=opencode
+feature_lanes.review_runtime=review-god
+god_sessions.review.runtime=opencode
+god_sessions.review.status=starting
+```
+
+Root cause:
+
+- Lane proposal content is natural groupchat output and may name the review
+  peer by participant display name or final-hold language.
+- Approval projection previously trusted `review_runtime` literally.
+- The review runtime field is consumed downstream as a provider/runtime selector,
+  so display-name aliases can bypass the intended OpenCode review path.
+
+Fix:
+
+- During lane_graph approval projection, if the conversation has exactly one
+  active OpenCode review participant, normalize observed non-runtime values to
+  `opencode`.
+- Accepted aliases are the final-hold placeholders
+  `human_final_hold`/`final_hold`, the review participant role, and the review
+  participant display name, with optional leading `@`.
+- Explicit valid `opencode` remains preserved.
+- Missing `review_runtime` is not rewritten in this slice.
+
+Post-fix evidence:
+
+```text
+Loop 25z45 runtime_root:
+/tmp/xmuse-post-pr80-fullchain-121024/.goal-runs/2026-06-19/loop-25z45-review-runtime-projection-smoke-124901
+
+POST /api/chat/conversations -> review participant display_name=review-god,
+cli_kind=opencode
+POST /api/chat/conversations/{conversation_id}/proposals ->
+lane review_runtime=review-god
+POST /api/chat/proposals/{proposal_id}/approve -> 200
+approval response review_runtime=opencode
+feature_lanes.review_runtime=opencode
+```
+
+Validation:
+
+```text
+uv run pytest tests/xmuse/test_groupchat_collaboration_runtime.py::test_lane_graph_approval_uses_opencode_review_peer_for_final_hold_runtime \
+  tests/xmuse/test_groupchat_collaboration_runtime.py::test_lane_graph_approval_uses_opencode_review_peer_display_name_runtime \
+  tests/xmuse/test_groupchat_collaboration_runtime.py::test_lane_graph_approval_preserves_review_runtime_in_projection \
+  tests/xmuse/test_review_plane_orchestrator_integration.py::test_review_runtime_opencode_routes_to_existing_review_peer \
+  tests/xmuse/test_review_plane_orchestrator_integration.py::test_review_runtime_opencode_without_feature_scope_uses_request_scope \
+  tests/xmuse/test_package_boundaries.py -q
+-> 21 passed, 1 warning
+
+uv run ruff check . -> All checks passed
+git diff --check -> pass
+test ! -e xmuse/__init__.py -> pass
+```
+
+Remaining gaps:
+
+- Loop 25z45 is a focused HTTP approval/projection smoke, not a fullchain
+  worker/review/final-hold proof.
+- Loop 25z44 timed out while the execution worker was still running; the
+  cleanup-induced `exec_failed` is preserved as an operator-interrupted state,
+  not as a natural business verdict.
+- Independent OpenCode lane review after execution still needs a successful
+  rerun with `review_runtime=opencode`.
+- Production-ready groupchat, GitHub review truth, live MemoryOS, full closure,
+  and overnight readiness remain unproven.

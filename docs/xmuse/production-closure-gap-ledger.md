@@ -7,11 +7,14 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
 
 ## Current Proof Boundary
 
-- Latest main inspected: `c5818ba433142765c817bc63fed73ec40141ae06`.
+- Latest main inspected: `c02e9dce50b808bbd4aed1ab6d1960e32ca6472b`.
 - Strongest runtime evidence: Loop 25z41 reached a real local code-change lane
   from durable groupchat through proposal, approval, isolated execution,
   persistent OpenCode review writeback, gate pass, and final-action hold under
   `--no-auto-merge`.
+- Latest focused runtime evidence: Loop 25z45 verified through the real Chat
+  API that an approved lane_graph using the active OpenCode review participant's
+  display name, `review-god`, projects to `review_runtime=opencode`.
 - Strongest server facts: PR #78 was merged by GitHub server state after
   successful `quality-gates`, `contract-smoke-gates`, and
   `real-runtime-integration-gate` checks on head
@@ -32,14 +35,23 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   session health after authenticated writeback and preserved active runtime
   details in inspector output. Merged to main as
   `c5818ba433142765c817bc63fed73ec40141ae06`.
+- PR #79 `codex/post-pr78-evidence-sync`: recorded the post-PR78 fullchain
+  evidence boundary. Merged to main as
+  `3a4ec2853ea2099f648513bbb0856415de81b906`.
+- PR #80 `codex/strict-leading-mention-routing`: fixed leading role mentions
+  such as `@architect Coordinate...`. Merged to main as
+  `c02e9dce50b808bbd4aed1ab6d1960e32ca6472b`.
 
 ## Manual Gaps
 
 - Default review peer selection can still choose Codex unless OpenCode is
   explicitly requested for the runtime conversation.
+- Groupchat-produced `review_runtime` aliases such as `human_final_hold` and
+  `review-god` are addressed in `codex/review-runtime-from-chat-peer`; a full
+  execution-to-independent-review rerun remains unproven.
 - The `@architect Coordinate...` leading mention overmatch observed in Loop
-  25z41 is addressed by Loop 25z42 in `codex/strict-leading-mention-routing`;
-  repeated multi-turn routing stability remains unproven.
+  25z41 is addressed by PR #80; repeated multi-turn routing stability remains
+  unproven.
 - The successful chain is not yet a repeated multi-turn soak run.
 - Provider-native session continuity and memory persistence are not proven as
   durable product behavior.
@@ -68,8 +80,8 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   PR #79.
 - P1 mention parsing: Loop 25z42 addresses first-token role mentions consuming
   following capitalized sentence text.
-- P2 default OpenCode review selection: make the desired review provider
-  explicit in product defaults or runtime operator controls.
+- P2 review runtime authority: current branch normalizes observed final-hold and
+  review peer display-name aliases to the active OpenCode review runtime.
 - P3 stability loop: repeat real groupchat-to-final-hold with multiple turns
   and no code changes beyond the target slice.
 - P4 MemoryOS adapter proof: keep `live_memoryos` forbidden until a real trace

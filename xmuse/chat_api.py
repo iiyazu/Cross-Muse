@@ -709,6 +709,69 @@ def _lane_graph_resolution_content(
     return content
 
 
+def _review_participant_runtime_authority_for_conversation(
+    base_dir: Path,
+    conversation_id: str,
+) -> tuple[str, set[str]] | None:
+    review_participants = [
+        participant
+        for participant in _participant_store(base_dir).list_by_conversation(conversation_id)
+        if participant.role == "review" and participant.status == "active"
+    ]
+    if len(review_participants) != 1:
+        return None
+    review_participant = review_participants[0]
+    if review_participant.cli_kind == "opencode":
+        aliases = {
+            alias
+            for alias in (
+                review_participant.role.strip().lower(),
+                review_participant.display_name.strip().lower(),
+            )
+            if alias
+        }
+        aliases.update({f"@{alias}" for alias in list(aliases) if alias})
+        return "opencode", aliases
+    return None
+
+
+def _apply_lane_graph_review_runtime_authority(
+    base_dir: Path,
+    *,
+    conversation_id: str,
+    proposal_type: str,
+    content: dict[str, Any],
+) -> dict[str, Any]:
+    if proposal_type != "lane_graph":
+        return content
+    lanes = content.get("lanes")
+    if not isinstance(lanes, list):
+        return content
+    authority = _review_participant_runtime_authority_for_conversation(
+        base_dir,
+        conversation_id,
+    )
+    if authority is None:
+        return content
+    authoritative_runtime, review_aliases = authority
+
+    changed = False
+    normalized_lanes: list[Any] = []
+    for lane in lanes:
+        if not isinstance(lane, dict):
+            normalized_lanes.append(lane)
+            continue
+        review_runtime = str(lane.get("review_runtime") or "").strip().lower()
+        if review_runtime in {"human_final_hold", "final_hold", *review_aliases}:
+            normalized_lanes.append({**lane, "review_runtime": authoritative_runtime})
+            changed = True
+            continue
+        normalized_lanes.append(lane)
+    if not changed:
+        return content
+    return {**content, "lanes": normalized_lanes}
+
+
 def _resolution_content_for_approval(
     *,
     proposal_type: str,
@@ -1643,6 +1706,13 @@ def create_app(
                     proposal_type=escalation.normalized_proposal_type,
                     proposal_payload=proposal_payload,
                     approval_content=content,
+                )
+            if isinstance(content, dict):
+                content = _apply_lane_graph_review_runtime_authority(
+                    root,
+                    conversation_id=proposal.conversation_id,
+                    proposal_type=escalation.normalized_proposal_type,
+                    content=content,
                 )
             _enforce_collaboration_dispatch_gate(
                 root,
