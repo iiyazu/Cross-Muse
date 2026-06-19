@@ -244,6 +244,31 @@ class GodSessionLayer:
             prompt_fingerprint=prompt_fingerprint,
         )
 
+    def record_prompt_contract(
+        self,
+        god_session_id: str,
+        *,
+        prompt_contract_version: str | None,
+        prompt_layer_order: list[str] | None,
+        prompt_layer_hashes: dict[str, str] | None,
+        prompt_artifact_fingerprint: str | None,
+    ) -> GodSessionRecord:
+        record = self._registry.update_prompt_contract(
+            god_session_id,
+            prompt_contract_version=prompt_contract_version,
+            prompt_layer_order=prompt_layer_order,
+            prompt_layer_hashes=prompt_layer_hashes,
+            prompt_artifact_fingerprint=prompt_artifact_fingerprint,
+        )
+        live = self._live_sessions.get(god_session_id)
+        if live is not None:
+            self._live_sessions[god_session_id] = LiveGodSession(
+                record=record,
+                session=live.session,
+                worktree=live.worktree,
+            )
+        return record
+
     def _create_conversation_record(
         self,
         *,

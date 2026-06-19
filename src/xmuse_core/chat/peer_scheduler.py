@@ -10,12 +10,14 @@ from pathlib import Path
 
 from xmuse_core.agents.persistent_peer import fingerprint_prompt
 from xmuse_core.agents.registry import AgentDescriptor, AgentRuntime
+from xmuse_core.chat.context_assembler import ContextAssembler
 from xmuse_core.chat.inbox_store import ChatInboxStore
 from xmuse_core.chat.mentions import (
     MentionResolver,
     ResolvedMention,
 )
 from xmuse_core.chat.participant_store import Participant, ParticipantStore
+from xmuse_core.chat.prompt_builder import XmusePromptBuilder
 from xmuse_core.chat.store import ChatStore
 from xmuse_core.chat.stream_store import ChatStreamStore, PeerTurnLatencyTraceStore
 
@@ -50,6 +52,11 @@ class PeerChatScheduler:
         self._participants = ParticipantStore(db_path)
         self._chat = ChatStore(db_path)
         self._latency = PeerTurnLatencyTraceStore(db_path)
+        self._context_assembler = ContextAssembler(
+            participants=self._participants,
+            chat=self._chat,
+        )
+        self._prompt_builder = XmusePromptBuilder()
         self._god_layer = god_layer
         self._worktree = worktree
         self._scheduler_id = scheduler_id
@@ -127,55 +134,13 @@ class PeerChatScheduler:
                 runtime=_runtime_for_participant(participant),
                 capabilities=[participant.role],
             )
-            group_context = _group_chat_context(
-                participants=self._participants,
-                chat=self._chat,
-                conversation_id=item.conversation_id,
+            group_context = self._context_assembler.group_chat_context(
+                item.conversation_id
             )
-            prompt = (
-                "You have unread xmuse chat inbox items in conversation "
-                f"{item.conversation_id}. If xmuse MCP tools are available, "
-                "call chat_post_message directly with "
-                "reply_to_inbox_item_id=xmuse_context.inbox_item.id, using "
-                "xmuse_context.inbox_item.payload.content as the request. "
-                "chat_read_inbox is only for recovery or batch inspection; "
-                "do not call it before simple replies. "
-                "When the inbox request asks you to answer, report, review, "
-                "critique, name a risk, or otherwise reply back to the sender, "
-                "use chat_post_message with reply_to_inbox_item_id; do not use "
-                "chat_mention back to the sender for simple answers. "
-                "Natural-language @mentions inside chat_post_message are display-only "
-                "and do not enqueue peer work. If you need another GOD to take "
-                "over, inspect, or continue the task, call chat_mention with "
-                "reply_to_inbox_item_id=xmuse_context.inbox_item.id, target_address "
-                "set to the target GOD's exact @role, and content containing the "
-                "concrete handoff request; this closes your current inbox item and "
-                "enqueues the target GOD in one durable writeback. "
-                "For work that should enter real execution, do not rely on chat "
-                "text alone: create or reference a collaboration run, have execute "
-                "record a JSON execute_feasibility_verdict through "
-                "chat_record_collaboration_response using the approval-gate shape "
-                '{"type":"execute_feasibility_verdict","status":"executable",'
-                '"summary":"<why dispatch is safe>","evidence_refs":["<ref>"]}; '
-                "looser fields such as verdict=feasible do not satisfy dispatch. "
-                "Then emit a lane_graph proposal "
-                "with chat_emit_proposal, reply_to_inbox_item_id=xmuse_context.inbox_item.id, "
-                "and a collaboration:<run_id> reference. "
-                "Human approval is still required before dispatch. "
-                "Only if MCP tools are unavailable, reply "
-                "directly as your final assistant message based on "
-                "xmuse_context.inbox_item.payload.content; "
-                "xmuse will persist that final answer as the GOD chat reply.\n\n"
-                "This is a group chat, not a private point-to-point chat. "
-                "You can see the participant roster and recent transcript in "
-                "xmuse_context.group_chat. Speak as your assigned role, be aware "
-                "of the other GOD participants, and route messages to GODs with "
-                "chat_mention when actual work should be handed off. Do not greet repeatedly "
-                "or bounce hello messages unless the user explicitly asks for a "
-                "greeting. Do not address @human unless the user explicitly asks "
-                "you to mention the human.\n"
-                f"Current participants: {_participant_roster_text(group_context)}"
-                f"{_inbox_request_preview(item.payload)}"
+            assembled_prompt = self._prompt_builder.build_peer_chat_prompt(
+                participant=participant,
+                inbox_item=item,
+                group_context=group_context,
             )
             record = await self._god_layer.ensure_conversation_session(
                 conversation_id=item.conversation_id,
@@ -187,19 +152,25 @@ class PeerChatScheduler:
                 prompt_fingerprint=_peer_session_prompt_fingerprint(participant),
                 feature_scope_id=None,
             )
+            _record_prompt_contract_if_supported(
+                self._god_layer,
+                record.god_session_id,
+                assembled_prompt.as_session_contract(),
+            )
             provider_turn_started_at = self._clock()
             await self._god_layer.send_message(
                 record.god_session_id,
                 "peer_chat_nudge",
-                prompt=prompt,
+                prompt=assembled_prompt.text,
                 context=json.dumps(
-                    {
-                        "conversation_id": item.conversation_id,
-                        "participant_id": participant.participant_id,
-                        "god_session_id": record.god_session_id,
-                        "inbox_item": item.model_dump(mode="json"),
-                        "group_chat": group_context,
-                    }
+                    self._context_assembler.turn_context(
+                        conversation_id=item.conversation_id,
+                        participant_id=participant.participant_id,
+                        god_session_id=record.god_session_id,
+                        inbox_item=item,
+                        group_chat=group_context,
+                        prompt_artifact=assembled_prompt.as_context_artifact(),
+                    )
                 ),
                 request_id=item.id,
             )
@@ -723,6 +694,17 @@ def _peer_session_prompt_fingerprint(participant: Participant) -> str:
             ]
         )
     )
+
+
+def _record_prompt_contract_if_supported(
+    god_layer,
+    god_session_id: str,
+    prompt_contract: dict[str, object],
+) -> None:
+    recorder = getattr(god_layer, "record_prompt_contract", None)
+    if not callable(recorder):
+        return
+    recorder(god_session_id, **prompt_contract)
 
 
 def _group_chat_context(
