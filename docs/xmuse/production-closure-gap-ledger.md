@@ -282,6 +282,20 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   and reran the fullchain to final-action hold with no failed inbox items.
   PR #102 then merged the fix, and Loop 25z78 reran the same fullchain shape
   from post-merge main with no failed inbox items.
+- Loop 26c2 reran the docs-only fullchain sentinel from post-PR105 main
+  `8df4415c0586b04adffb4bc30806f9e205b04a12` after the layered peer-chat
+  prompt contract landed. It reached `awaiting_final_action` with
+  `gate_passed=true`, `review_decision=merge`,
+  `review_delivery_mode=persistent`, `persistent_review_degraded=false`,
+  `peer_delivery_mode=configured_peer`, and OpenCode review peer metadata.
+  Architect and execute sessions carried `xmuse-peer-chat-prompt-v2` layered
+  prompt fingerprints. This is bounded local runtime proof only; it is not
+  production readiness, restart/resume proof, MemoryOS proof, or full closure.
+- Loop 26c2 also exposed a remaining observability gap: the OpenCode review
+  participant was used as the configured persistent review peer, but the
+  `god_sessions.json` review record did not carry a layered prompt contract
+  fingerprint. Do not claim uniform prompt-contract persistence across all
+  peer roles until that boundary is proven or intentionally split.
 - Provider result acknowledgement timeout after durable writeback is mitigated
   by early writeback detection plus configurable bounded grace in PR #87.
   Broader production-load behavior is still unproven.
@@ -333,14 +347,18 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
 - P1 explicit dependency coordination: add a durable coordination primitive for
   waiting on named peer replies before summaries/handoffs when direct drain is
   insufficient.
-- P2 higher-parallelism stability loop: repeat real groupchat-to-final-hold
+- P2 review peer prompt/session metadata: either persist layered prompt
+  contract metadata for the OpenCode persistent review peer, or define a
+  separate review-delivery prompt authority that makes the missing
+  `god_sessions.json` fingerprint intentional and observable.
+- P3 higher-parallelism stability loop: repeat real groupchat-to-final-hold
   with independent `XMUSE_ROOT` directories, execution worktrees, Chat API
   ports, MCP ports, and runners when increasing concurrency beyond the current
   two-shard evidence. Do not share durable stores or one PR branch across
   parallel probes.
-- P3 ambiguous review authority: define fail-closed behavior for missing or
+- P4 ambiguous review authority: define fail-closed behavior for missing or
   multiple OpenCode review participants without relying on proposal text.
-- P4 code-change soak: repeat small real code-change lanes after the
+- P5 code-change soak: repeat small real code-change lanes after the
   inspector provider summary PR lands.
-- P5 MemoryOS adapter proof: keep `live_memoryos` forbidden until a real trace
+- P6 MemoryOS adapter proof: keep `live_memoryos` forbidden until a real trace
   id or artifact exists.
