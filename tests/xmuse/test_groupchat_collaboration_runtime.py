@@ -903,6 +903,120 @@ def test_lane_graph_approval_preserves_review_runtime_in_projection(
     assert lanes[0]["review_runtime"] == "opencode"
 
 
+def test_lane_graph_approval_uses_opencode_review_peer_for_final_hold_runtime(
+    tmp_path: Path,
+) -> None:
+    conversation_id = _conversation(tmp_path)
+    ParticipantStore(tmp_path / "chat.db").add(
+        conversation_id=conversation_id,
+        role="review",
+        display_name="Review GOD",
+        cli_kind="opencode",
+        model="opencode-go/deepseek-v4-flash",
+    )
+    client = TestClient(create_app(tmp_path))
+    proposal = client.post(
+        f"/api/chat/conversations/{conversation_id}/proposals",
+        json={
+            "author": "architect",
+            "proposal_type": "lane_graph",
+            "content": json.dumps(
+                {
+                    "summary": "Use the registered review peer",
+                    "lanes": [
+                        {
+                            "feature_id": "lane-review-runtime-from-peer",
+                            "prompt": "Review through the registered OpenCode peer.",
+                            "depends_on": [],
+                            "capabilities": ["code"],
+                            "review_runtime": "human_final_hold",
+                            "final_action": "no-auto-merge",
+                        }
+                    ],
+                }
+            ),
+            "references": [],
+        },
+    )
+    assert proposal.status_code == 201
+
+    approved = client.post(
+        f"/api/chat/proposals/{proposal.json()['id']}/approve",
+        json={
+            "approved_by": ["architect"],
+            "approval_mode": "manual",
+            "goal_summary": "Approve review peer runtime projection",
+        },
+    )
+
+    assert approved.status_code == 200
+    assert approved.json()["content"]["lanes"][0]["review_runtime"] == "opencode"
+    graph_id = f"{approved.json()['id']}-graph-v{approved.json()['version']}"
+    graph = json.loads((tmp_path / "lane_graphs" / f"{graph_id}.json").read_text())
+    assert graph["lanes"][0]["feature_id"] == "lane-review-runtime-from-peer"
+    assert graph["lanes"][0]["review_runtime"] == "opencode"
+    assert graph["lanes"][0]["final_action"] == "no-auto-merge"
+    lanes = json.loads((tmp_path / "feature_lanes.json").read_text())["lanes"]
+    assert lanes[0]["feature_id"] == "lane-review-runtime-from-peer"
+    assert lanes[0]["review_runtime"] == "opencode"
+
+
+def test_lane_graph_approval_uses_opencode_review_peer_display_name_runtime(
+    tmp_path: Path,
+) -> None:
+    conversation_id = _conversation(tmp_path)
+    ParticipantStore(tmp_path / "chat.db").add(
+        conversation_id=conversation_id,
+        role="review",
+        display_name="review-god",
+        cli_kind="opencode",
+        model="opencode-go/deepseek-v4-flash",
+    )
+    client = TestClient(create_app(tmp_path))
+    proposal = client.post(
+        f"/api/chat/conversations/{conversation_id}/proposals",
+        json={
+            "author": "architect",
+            "proposal_type": "lane_graph",
+            "content": json.dumps(
+                {
+                    "summary": "Use the named review peer",
+                    "lanes": [
+                        {
+                            "feature_id": "lane-review-runtime-display-name",
+                            "prompt": "Review through review-god.",
+                            "depends_on": [],
+                            "capabilities": ["code"],
+                            "review_runtime": "review-god",
+                        }
+                    ],
+                }
+            ),
+            "references": [],
+        },
+    )
+    assert proposal.status_code == 201
+
+    approved = client.post(
+        f"/api/chat/proposals/{proposal.json()['id']}/approve",
+        json={
+            "approved_by": ["architect"],
+            "approval_mode": "manual",
+            "goal_summary": "Approve review peer display name projection",
+        },
+    )
+
+    assert approved.status_code == 200
+    assert approved.json()["content"]["lanes"][0]["review_runtime"] == "opencode"
+    graph_id = f"{approved.json()['id']}-graph-v{approved.json()['version']}"
+    graph = json.loads((tmp_path / "lane_graphs" / f"{graph_id}.json").read_text())
+    assert graph["lanes"][0]["feature_id"] == "lane-review-runtime-display-name"
+    assert graph["lanes"][0]["review_runtime"] == "opencode"
+    lanes = json.loads((tmp_path / "feature_lanes.json").read_text())["lanes"]
+    assert lanes[0]["feature_id"] == "lane-review-runtime-display-name"
+    assert lanes[0]["review_runtime"] == "opencode"
+
+
 def test_lane_graph_approval_metadata_preserves_proposal_lane_authority(
     tmp_path: Path,
 ) -> None:
