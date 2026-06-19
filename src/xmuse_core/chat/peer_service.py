@@ -34,7 +34,6 @@ from xmuse_core.chat.mentions import (
     MentionResolutionError,
     MentionResolver,
     default_intake_address,
-    extract_leading_mentions,
     extract_mentions,
     has_inactive_mention_candidates,
     normalize_address,
@@ -57,6 +56,21 @@ from xmuse_core.chat.peer_types import PeerChatError, PeerMessageResult
 from xmuse_core.chat.store import ChatStore
 from xmuse_core.chat.stream_store import PeerTurnLatencyTraceStore
 from xmuse_core.providers.registry import normalize_codex_model_id
+
+
+def _has_leading_all_mention(content: str) -> bool:
+    index = 0
+    length = len(content)
+    while index < length and content[index].isspace():
+        index += 1
+    end = index + len("@all")
+    if content[index:end].lower() != "@all":
+        return False
+    return end >= length or not _is_mention_char(content[end])
+
+
+def _is_mention_char(value: str) -> bool:
+    return value.isalnum() or value in "_-:"
 
 
 class PeerChatService:
@@ -1472,7 +1486,7 @@ class PeerChatService:
             return PeerMessageResult.from_json(logged)
 
         has_inactive_mentions = has_inactive_mention_candidates(content)
-        routed_raw_mentions = self._human_routing_mentions(content)
+        routed_raw_mentions = self._human_routing_mentions(conversation_id, content)
         has_all_mention = any(
             normalize_address(raw) == "@all" for raw in routed_raw_mentions
         )
@@ -1520,9 +1534,16 @@ class PeerChatService:
             raise PeerChatError(exc.code, exc.target) from exc
         return resolved
 
-    def _human_routing_mentions(self, content: str) -> list[str]:
-        leading_mentions = extract_leading_mentions(content)
-        return leading_mentions or extract_mentions(content)
+    def _human_routing_mentions(self, conversation_id: str, content: str) -> list[str]:
+        if _has_leading_all_mention(content):
+            return ["@all"]
+        resolver = MentionResolver(self._participants)
+        try:
+            leading_mentions = resolver.resolve_leading_content(conversation_id, content)
+            mentions = leading_mentions or resolver.resolve_content(conversation_id, content)
+        except MentionResolutionError as exc:
+            raise PeerChatError(exc.code, exc.target) from exc
+        return [mention.raw for mention in mentions]
 
     def _resolve_human_mentions(
         self,
@@ -1532,7 +1553,7 @@ class PeerChatService:
         raw_mentions: list[str] | None = None,
     ):
         raw_mentions = (
-            self._human_routing_mentions(content)
+            self._human_routing_mentions(conversation_id, content)
             if raw_mentions is None
             else raw_mentions
         )
