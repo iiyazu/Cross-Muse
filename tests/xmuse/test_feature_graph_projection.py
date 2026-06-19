@@ -671,6 +671,7 @@ def test_feature_lane_field_classifications_are_explicit_for_retained_projection
     assert classifications["review_runtime"] == "projection"
     assert classifications["final_action"] == "projection"
     assert classifications["proof_boundary"] == "projection"
+    assert classifications["feature_scope_id"] == "projection"
     assert classifications["prompt_summary"] == "projection"
     assert classifications["prompt_ref"] == "projection"
     assert classifications["status"] == "legacy"
