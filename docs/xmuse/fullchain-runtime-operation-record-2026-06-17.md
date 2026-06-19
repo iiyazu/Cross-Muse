@@ -4669,3 +4669,152 @@ the Loop 25z64 invalid transition noise recurring in the runtime artifacts
 searched above. This is not production readiness, GitHub review truth, live
 MemoryOS proof, full L8-L10 closure, full L1-L11 closure, or overnight
 readiness.
+
+## 2026-06-19 Loop 25z66: post-PR91 parallel groupchat stability
+
+Loop target: repeat real Codex/OpenCode GOD groupchat stability from current
+main while increasing safe parallelism. This loop did not create or approve
+lane proposals.
+
+Control head under test:
+
+```text
+origin/main
+HEAD=ff6a5fd9f61b86d5c1989fd6f613bcf5e6906009
+```
+
+Parallel shard A:
+
+```text
+RUN_ROOT=/tmp/xmuse-main-after-pr86-155349/.goal-runs/2026-06-19/loop-25z66a-post-pr91-parallel-stability-183602
+EXEC_WORKTREE=/tmp/loop-25z66a-post-pr91-parallel-stability-183602-exec
+CHAT_PORT=8202
+MCP_PORT=8102
+labels=alpha,beta,gamma
+```
+
+Parallel shard B:
+
+```text
+RUN_ROOT=/tmp/xmuse-main-after-pr86-155349/.goal-runs/2026-06-19/loop-25z66b-post-pr91-parallel-stability-183602
+EXEC_WORKTREE=/tmp/loop-25z66b-post-pr91-parallel-stability-183602-exec
+CHAT_PORT=8203
+MCP_PORT=8103
+labels=delta,epsilon,zeta
+```
+
+Service shape per shard:
+
+```bash
+XMUSE_ROOT="$RUN_ROOT" XMUSE_EXECUTION_WORKTREE="$EXEC_WORKTREE" \
+  uv run python -c 'import os; from pathlib import Path; import uvicorn; from xmuse.chat_api import create_app; uvicorn.run(create_app(base_dir=Path(os.environ["XMUSE_ROOT"]), execution_worktree=Path(os.environ["XMUSE_EXECUTION_WORKTREE"])), host="127.0.0.1", port=<chat-port>, log_level="info")'
+
+XMUSE_ROOT="$RUN_ROOT" \
+  uv run python -c 'import os; import uvicorn; from xmuse.mcp_server import create_app; uvicorn.run(create_app(os.environ["XMUSE_ROOT"]), host="127.0.0.1", port=<mcp-port>, log_level="info")'
+
+XMUSE_ROOT="$RUN_ROOT" XMUSE_EXECUTION_WORKTREE="$EXEC_WORKTREE" \
+  XMUSE_PEER_GOD_BACKEND=native XMUSE_REVIEW_GOD_BACKEND=native \
+  XMUSE_RAY_GOD_MCP=0 XMUSE_CHAT_API_URL=http://127.0.0.1:<chat-port> \
+  uv run xmuse-platform-runner --xmuse-root "$RUN_ROOT" \
+  --mcp-port <mcp-port> --peer-chat \
+  --peer-chat-post-writeback-grace-s 20 \
+  --persistent-review-god --persistent-review-timeout-s 300 \
+  --max-hours 0.8 --max-concurrent 4 --no-auto-merge
+```
+
+Driver:
+
+```bash
+uv run python .goal-runs/2026-06-19/loop-25z66-driver.py \
+  --chat-url http://127.0.0.1:<chat-port> \
+  --xmuse-root "$RUN_ROOT" \
+  --labels <labels> \
+  --timeout-s 900 --poll-s 5
+```
+
+The driver used public Chat API calls to create conversations and post human
+`@architect` messages. It inspected durable `chat.db` tables for messages,
+inbox items, proposals, resolutions, and peer latency traces.
+
+Durable conversation ids:
+
+```text
+alpha=conv_4a132f9eefda4380a3e7e8217ea3aba0
+beta=conv_558a261682f24f178733a89fdb73de0e
+gamma=conv_bf0793cdc2aa4a3196ac554dd46cc242
+delta=conv_1294a445dd514c678c339b2daace932b
+epsilon=conv_9d39e49bfeee45a5a4b311b8b8a27c9b
+zeta=conv_f5f5e76c51674944838c6f0c800cc577
+```
+
+Final summary across both shards:
+
+```text
+conversation_count=6
+all_initial_handoff_closed=true
+all_final_after_both=true
+all_callbacks_created=true
+all_callbacks_consumed=true
+no_proposals_or_resolutions=true
+no_open_or_failed_inbox=true
+no_failed_or_timeout_traces=true
+total_failed_traces=0
+total_timeout_after_writeback_traces=0
+```
+
+Per-conversation durable shape:
+
+```text
+messages=6
+inbox=4
+open_inbox=0
+failed_inbox=0
+execute_replies=1
+review_replies=1
+architect_messages=3
+callback_items=1
+callback_read=1
+proposals=0
+resolutions=0
+failed_traces=0
+timeout_after_writeback_traces=0
+```
+
+The driver reported `marker_messages=2` because the human prompt also includes
+the exact final marker string. The pass condition used `final_after_both`,
+which requires a later durable architect message containing the marker after
+both execute and review replies.
+
+Recorded artifacts:
+
+```text
+loop-25z66a.../commands.txt
+loop-25z66a.../loop_driver_artifacts/conversation_posts.json
+loop-25z66a.../loop_driver_artifacts/final_snapshot.json
+loop-25z66a.../loop_driver_artifacts/stability_eval.json
+loop-25z66a.../logs/{chat-api,mcp-server,driver}.log
+
+loop-25z66b.../commands.txt
+loop-25z66b.../loop_driver_artifacts/conversation_posts.json
+loop-25z66b.../loop_driver_artifacts/final_snapshot.json
+loop-25z66b.../loop_driver_artifacts/stability_eval.json
+loop-25z66b.../logs/{chat-api,mcp-server,driver}.log
+```
+
+Cleanup:
+
+```text
+8102/8103/8202/8203 listeners: none
+loop-25z66 xmuse-platform-runner, MCP, Chat API, codex/opencode processes:
+no matching live process after shutdown checks, excluding the check command
+itself
+execution worktrees: clean detached HEAD
+```
+
+Classification: positive bounded local runtime proof for two independent
+parallel groupchat stability shards on current main. It proves that, in this
+run, six real Codex/OpenCode GOD conversations reached the final-summary path
+with durable MCP/callback writeback and no proposal/lane side effects. It is
+not production readiness, overnight soak, live MemoryOS proof, GitHub review
+truth, full L8-L10 closure, full L1-L11 closure, or natural peer-GOD
+completion as a finished product claim.

@@ -167,6 +167,12 @@ truth, merge truth, live MemoryOS proof, or full closure.
   `persistent_review_degraded=false`, and no runtime-artifact match for the
   Loop 25z64 review-state invalid transition noise. This is still bounded local
   runtime proof, not production readiness or review truth.
+- Loop 25z66 reran peer-chat stability after PR #91 from current `origin/main`
+  using two independent runtime roots and port sets in parallel. Six total
+  Codex/OpenCode conversations reached execute reply, OpenCode review reply,
+  peer-reply drain callback, and architect final summary after both replies,
+  with no proposals/resolutions, failed inbox items, failed traces, or
+  writeback timeouts.
 
 ## Findings
 
@@ -2676,3 +2682,65 @@ Remaining gap:
 - This was a docs-only lane, not a repeated code-change lane and not a soak.
   It narrows F97 but does not establish production readiness, GitHub review
   truth, overnight stability, live MemoryOS, or full closure.
+
+### F98. Parallel peer-chat stability works in one bounded two-shard run
+
+Severity: positive local runtime proof, bounded.
+
+Loop 25z66 started two independent runtime shards from current main:
+
+```text
+shard A root=/tmp/xmuse-main-after-pr86-155349/.goal-runs/2026-06-19/loop-25z66a-post-pr91-parallel-stability-183602
+shard B root=/tmp/xmuse-main-after-pr86-155349/.goal-runs/2026-06-19/loop-25z66b-post-pr91-parallel-stability-183602
+control_head=ff6a5fd9f61b86d5c1989fd6f613bcf5e6906009
+```
+
+Each shard ran its own Chat API, MCP server, platform runner, `XMUSE_ROOT`,
+execution worktree, and port pair. Shard A drove alpha/beta/gamma; shard B
+drove delta/epsilon/zeta.
+
+Observed aggregate result:
+
+```text
+conversation_count=6
+all_initial_handoff_closed=true
+all_final_after_both=true
+all_callbacks_created=true
+all_callbacks_consumed=true
+no_proposals_or_resolutions=true
+no_open_or_failed_inbox=true
+no_failed_or_timeout_traces=true
+total_failed_traces=0
+total_timeout_after_writeback_traces=0
+```
+
+Per-conversation shape:
+
+```text
+messages=6
+inbox=4
+execute_replies=1
+review_replies=1
+architect_messages=3
+callback_items=1
+proposals=0
+resolutions=0
+```
+
+Impact:
+
+- This extends Loop 25z63 by proving the same six-conversation stability shape
+  across two independent runtime roots running concurrently.
+- The run is useful evidence that higher operator-level parallelism is viable
+  when each shard has an isolated durable store, execution worktree, and port
+  set.
+
+Remaining gap:
+
+- This is still a bounded local run, not repeated soak, overnight stability,
+  production readiness, or fullchain code-change completion.
+- It did not exercise proposal approval, isolated lane execution, or
+  independent lane review.
+- The temporary driver counted `marker_messages=2` because the human prompt
+  contained the marker string; the authoritative pass condition was
+  `final_after_both=true`.

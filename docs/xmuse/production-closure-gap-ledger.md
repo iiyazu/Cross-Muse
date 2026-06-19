@@ -7,7 +7,7 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
 
 ## Current Proof Boundary
 
-- Latest main inspected: `a8cceabb51022ddf802da276df1e4c37419b65b5`.
+- Latest main inspected: `ff6a5fd9f61b86d5c1989fd6f613bcf5e6906009`.
 - Strongest code-change lane runtime evidence: Loop 25z64 reached one real
   local code-change lane from durable groupchat through execute feasibility,
   proposal, runtime-driver approval, isolated execution, xmuse-core gate,
@@ -18,14 +18,16 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   `status=awaiting_final_action`. The final lane did not include
   `review_delivery_mode=persistent` or `persistent_review_degraded=false`, so
   this does not replace Loop 25z49 as persistent OpenCode delivery proof.
-- Latest peer-chat stability evidence: Loop 25z63 verified a local
-  six-conversation Codex/OpenCode groupchat path under `--max-concurrent 10`
-  and `--peer-chat-post-writeback-grace-s 20`. Each conversation reached human
+- Latest peer-chat stability evidence: Loop 25z66 verified two independent
+  parallel runtime shards from current main, each with its own `XMUSE_ROOT`,
+  execution worktree, Chat API port, and MCP port. Across six total
+  Codex/OpenCode groupchat conversations, each conversation reached human
   demand to Codex architect handoff, Codex execute reply, OpenCode review
   reply, durable peer-reply drain callback, and architect final summary after
-  both replies. The run ended with `all_final_after_both=true`,
+  both replies. The aggregate result was `all_final_after_both=true`,
   `all_callbacks_created=true`, `all_callbacks_consumed=true`,
-  `no_proposals_or_resolutions=true`, `total_failed_traces=0`, and
+  `no_proposals_or_resolutions=true`, `no_open_or_failed_inbox=true`,
+  `no_failed_or_timeout_traces=true`, `total_failed_traces=0`, and
   `total_timeout_after_writeback_traces=0`.
 - Latest review-state repeat evidence: Loop 25z65 reran a docs-only lane from
   current `origin/main` at `a8cceabb51022ddf802da276df1e4c37419b65b5` and
@@ -33,11 +35,11 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   `persistent_review_degraded=false`, `review_decision=merge`, and no
   runtime-artifact match for the Loop 25z64 invalid transition noise. This is a
   bounded local repeat, not code-change soak or production readiness.
-- Strongest server facts: PR #90 was merged by GitHub server state as
-  `a8cceabb51022ddf802da276df1e4c37419b65b5` after successful `xmuse CI` on PR
-  head `9f43e633d8cb05de18f714307a3ea7f2ff9d91cb` in run `27819039602`;
+- Strongest server facts: PR #91 was merged by GitHub server state as
+  `ff6a5fd9f61b86d5c1989fd6f613bcf5e6906009` after successful `xmuse CI` on PR
+  head `a11c0744b20989500eee00a578e147ec8682d9ae` in run `27820350354`;
   post-merge main `xmuse CI` also passed on
-  `a8cceabb51022ddf802da276df1e4c37419b65b5` in run `27819086371`.
+  `ff6a5fd9f61b86d5c1989fd6f613bcf5e6906009` in run `27820486694`.
 - Proof type: local runtime proof plus inspected GitHub server facts for small
   PRs. This is not GitHub review truth or production readiness.
 
@@ -98,6 +100,9 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   conflicts after accepted review/final-hold state and recorded Loop 25z65
   repeat evidence. Merged to main as
   `a8cceabb51022ddf802da276df1e4c37419b65b5`.
+- PR #91 `codex/post-pr90-evidence-sync`: synced post-PR90 runtime evidence
+  and gap ledger updates. Merged to main as
+  `ff6a5fd9f61b86d5c1989fd6f613bcf5e6906009`.
 
 ## Manual Gaps
 
@@ -118,6 +123,9 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
 - Loop 25z63 proved one bounded local six-conversation peer-chat stability path
   after local same-participant delivery serialization and prompt reply-contract
   mitigation. It is not repeated soak and not production readiness.
+- Loop 25z66 proved one bounded local two-shard parallel stability path across
+  six total conversations from current main. It is not repeated soak, not
+  overnight readiness, and not production readiness.
 - Provider result acknowledgement timeout after durable writeback is mitigated
   by early writeback detection plus configurable bounded grace in PR #87.
   Broader production-load behavior is still unproven.
@@ -162,14 +170,15 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
 
 ## Next Small Buckets
 
-- P0 evidence sync: keep post-PR90 Loop 25z65 evidence small and do not
-  combine it with product changes.
+- P0 evidence sync: keep Loop 25z66 evidence small and do not combine it with
+  product changes.
 - P1 explicit dependency coordination: add a durable coordination primitive for
   waiting on named peer replies before summaries/handoffs when direct drain is
   insufficient.
 - P2 parallel stability loop: repeat real groupchat-to-final-hold with
-  multiple independent `XMUSE_ROOT` directories and execution worktrees. Do not
-  share durable stores or one PR branch across parallel probes.
+  independent `XMUSE_ROOT` directories and execution worktrees when increasing
+  concurrency. Do not share durable stores or one PR branch across parallel
+  probes.
 - P3 default review authority: decide when OpenCode should be selected without
   relying on proposal text.
 - P4 code-change soak: repeat small real code-change lanes after the
