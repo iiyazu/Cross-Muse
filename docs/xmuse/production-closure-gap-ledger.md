@@ -7,7 +7,7 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
 
 ## Current Proof Boundary
 
-- Latest main inspected: `1adc2d19089aeacad5953bc577ca093f3441a761`.
+- Latest main inspected: `162da10f4ef1d515a95ea9fc90889494c8e75146`.
 - Latest configured-review-peer degradation evidence: PR #121 merged the
   configured review peer fail-closed repair to main as
   `1adc2d19089aeacad5953bc577ca093f3441a761` after successful PR CI and
@@ -28,14 +28,15 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   This is bounded main evidence for the configured review peer authority
   boundary plus a blocked fullchain attempt, not production readiness, GitHub
   review truth, or full closure.
-- Latest fullchain sentinel harness candidate evidence: local branch
-  `codex/fullchain-sentinel-exec-failed-terminal` teaches
-  `scripts/run_fullchain_docs_sentinel.py` to treat `exec_failed` as a terminal
-  lane state. Loop 26t showed the previous harness kept waiting after a lane
-  had already reached `exec_failed` from `execution_infra_unavailable`, forcing
-  manual interruption and cleanup. This is a loop-efficiency/harness repair
-  only; it does not change product runtime authority or provide fullchain
-  success evidence.
+- Latest fullchain sentinel harness evidence: PR #123 merged the
+  `exec_failed` terminal-state repair for
+  `scripts/run_fullchain_docs_sentinel.py` to main as
+  `162da10f4ef1d515a95ea9fc90889494c8e75146` after successful PR CI and
+  successful post-merge main CI. Loop 26t showed the previous harness kept
+  waiting after a lane had already reached `exec_failed` from
+  `execution_infra_unavailable`, forcing manual interruption and cleanup. This
+  is a loop-efficiency/harness repair only; it does not change product runtime
+  authority or provide fullchain success evidence.
 - Latest peer-reply dependency-set evidence: PR #117 merged the direct
   `peer_reply_drain_callback` coordination repair to main as
   `f3f7b6dafa94ceae179af26c448f1aae183fd24b` after successful PR CI and

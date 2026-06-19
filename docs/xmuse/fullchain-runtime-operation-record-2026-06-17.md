@@ -7414,3 +7414,38 @@ ruff: All checks passed
 
 Classification: local harness candidate only. It shortens future failure
 classification loops; it does not provide product runtime proof.
+
+## 2026-06-20 Loop 26w: Post-PR123 Server Confirmation
+
+Purpose: record GitHub server facts after the fullchain sentinel `exec_failed`
+terminal-state repair landed.
+
+Workspace and authority:
+
+```text
+repo_worktree=/tmp/xmuse-postmerge-layered-prompt-main
+branch=codex/post-pr123-sentinel-evidence
+main_head_sha=162da10f4ef1d515a95ea9fc90889494c8e75146
+```
+
+GitHub server facts:
+
+```text
+pr=123
+head_sha=6f145725e8488081c5572ec72060f9d8062ba906
+merge_commit=162da10f4ef1d515a95ea9fc90889494c8e75146
+pr_ci_run=27850584077 success
+main_ci_run=27850614290 success
+remote_branch_deleted=true
+```
+
+Validation for this docs-only evidence sync:
+
+```bash
+git diff --check
+test ! -e xmuse/__init__.py
+uv run ruff check .
+```
+
+Classification: bounded post-merge GitHub server confirmation for PR #123.
+This does not add product runtime proof.
