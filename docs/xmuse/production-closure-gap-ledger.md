@@ -1,6 +1,6 @@
 # xmuse Production Closure Gap Ledger
 
-Updated: 2026-06-19.
+Updated: 2026-06-20.
 
 This ledger records the current implementation proof boundary for the real
 GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
@@ -26,6 +26,20 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   is bounded main evidence for a direct handoff-message dependency set, not a
   general workflow dependency planner, production readiness, natural peer-GOD
   groupchat completion, or full closure.
+- Latest default-review authority candidate evidence: Loop 26r on local branch
+  `codex/default-review-no-codex-fallback` removes the legacy empty-conversation
+  Codex default-review auto-create path. Focused RED evidence showed the old
+  path ensured a Codex review session when a conversation had no active
+  OpenCode reviewer. The local candidate now fails closed as
+  `required_review_peer_unavailable` with
+  `peer_degraded_reason=review_peer_runtime_unavailable`, creates no Codex
+  review participant, and does not invoke one-shot review. The same candidate
+  ran the docs-only fullchain sentinel with a registered OpenCode reviewer and
+  reached `awaiting_final_action` with `gate_passed=true`,
+  `review_decision=merge`, `review_delivery_mode=persistent`,
+  `persistent_review_degraded=false`, `review_peer_cli_kind=opencode`, and all
+  success checks true. This is local candidate proof only until PR CI and
+  post-merge main evidence exist.
 - Latest collaboration delivery lifecycle evidence: PR #115 merged the
   collaboration request/response/callback inbox lifecycle repair to main as
   `87c6f131d7a9851f1a4c5b023b192323ad8e73e4` after successful PR CI and
@@ -446,18 +460,20 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   OpenCode reviewer case when a production-like active peer roster already
   exists. Loop 26h confirms the normal unique-OpenCode route still works after
   those fail-closed changes. Remaining work is broader review authority
-  behavior and deciding whether to quarantine the empty-conversation legacy
-  Codex fallback.
+  behavior. Loop 26r locally removes the empty-conversation legacy Codex
+  fallback and preserves the registered OpenCode fullchain route; remaining
+  work is PR publication and post-merge rerun.
 - P3 higher-parallelism stability loop: repeat real groupchat-to-final-hold
   with independent `XMUSE_ROOT` directories, execution worktrees, Chat API
   ports, MCP ports, and runners when increasing concurrency beyond the current
   two-shard evidence. Do not share durable stores or one PR branch across
   parallel probes.
 - P4 ambiguous review authority: multiple active OpenCode review participants
-  now have focused fail-closed candidate behavior without relying on proposal
-  text. Missing OpenCode review participants also fail closed when an active
-  peer roster exists. The empty-conversation feature-scoped Codex default-review
-  fallback remains legacy behavior and is not natural groupchat review proof.
+  now have focused fail-closed behavior without relying on proposal text.
+  Missing OpenCode review participants also fail closed when an active peer
+  roster exists. Loop 26r locally removes the empty-conversation feature-scoped
+  Codex default-review fallback; keep it out of main claims until PR CI and
+  post-merge main evidence exist.
 - P5 code-change soak: repeat small real code-change lanes after the
   inspector provider summary PR lands.
 - P6 MemoryOS adapter proof: keep `live_memoryos` forbidden until a real trace

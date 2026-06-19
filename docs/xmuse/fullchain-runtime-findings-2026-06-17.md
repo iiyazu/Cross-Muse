@@ -3971,3 +3971,71 @@ Remaining caveats:
   workflow dependency planner.
 - It does not claim GitHub review truth, live MemoryOS, natural peer-GOD
   groupchat completion, full closure, or live lane merge truth.
+
+## 2026-06-20 Loop 26r Finding: Empty Default Review Must Not Create Codex Peer
+
+Status: local candidate repair with fullchain non-regression proof.
+
+Root boundary:
+
+```text
+authority=chat.db participants table
+producer=default review peer selector
+consumer=review_god configured/default peer delivery path
+condition=conversation has no active OpenCode review participant
+failure_mode=selector must not invent a Codex default reviewer
+```
+
+Observed before the fix:
+
+- `_ensure_default_review_peer_sync` created or reused a feature-scoped Codex
+  `Review GOD [...]` participant when there was no active OpenCode reviewer and
+  no active non-review peer roster.
+- The focused RED test showed the old path ensured a Codex review session
+  instead of failing closed.
+
+Candidate behavior:
+
+- Default review routing now returns
+  `review_peer_runtime_unavailable` whenever no active OpenCode review peer is
+  present.
+- The review consumer transitions the lane to `gate_failed` with
+  `failure_reason=required_review_peer_unavailable`,
+  `peer_delivery_mode=required_peer_failed`, and
+  `peer_degraded_reason=review_peer_runtime_unavailable`.
+- No Codex review participant is created, the persistent peer service is not
+  invoked, and one-shot review is not invoked for the missing-reviewer path.
+- Existing positive default routing still reuses a registered OpenCode review
+  participant.
+
+Runtime non-regression:
+
+```text
+branch=codex/default-review-no-codex-fallback
+base_main=3d82fda4342f57c224f9f5c60b4d5193cdcb2a01
+run_root=/tmp/xmuse-postmerge-layered-prompt-main/.goal-runs/2026-06-20/loop-26r-no-codex-default-review-fallback-fullchain-2112z
+conversation_id=conv_064004c3996c41ac97c11eeb213493b7
+proposal_id=prop_024a3c6de13344fca5ff19dcd3018ad5
+resolution_id=res_71195ad2043c44559911926924af0408
+lane_id=loop_26r_no_codex_default_review_fallback_2112z
+final_action_hold_id=final-8a9e25d0ab8c
+```
+
+Confirmed:
+
+- The docs-only fullchain sentinel reached `awaiting_final_action`.
+- The proposal omitted `review_runtime`.
+- The lane recorded `review_peer_defaulted=true`,
+  `review_peer_cli_kind=opencode`, `review_peer_model=opencode-go/deepseek-v4-flash`,
+  `review_delivery_mode=persistent`, and `persistent_review_degraded=false`.
+- All sentinel success checks were true.
+- Cleanup left no Chat API or MCP listener.
+
+Remaining caveats:
+
+- This is local candidate proof only; no PR CI or post-merge main proof exists
+  yet.
+- It does not resolve every configured-peer degradation fallback question.
+- It does not claim production readiness, GitHub review truth, live MemoryOS,
+  natural peer-GOD groupchat completion, full closure, or live lane merge
+  truth.
