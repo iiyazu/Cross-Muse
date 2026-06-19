@@ -414,9 +414,13 @@ server truth permits.
 
 PR budget:
 
-- maximum three PRs for one long goal unless the active prompt lowers it;
-- if the active prompt says PR budget is full, create no new PRs;
-- continuing work must count already opened PRs against the budget.
+- PR count is dynamic, not a fixed success metric or fixed ceiling;
+- each PR must remain small, domain-scoped, and CI/CD-compatible;
+- create more PRs only when a separate implementation domain or dependency
+  boundary justifies a separate review unit;
+- do not use one PR to absorb unrelated domains;
+- if repeated PRs keep patching the same complex boundary, stop and redesign
+  that boundary instead of opening another patch PR.
 
 Expected PR split:
 
@@ -447,7 +451,8 @@ Do not mix:
 - MemoryOS;
 - TUI.
 
-If a fourth PR appears necessary, stop and report.
+If a new PR would cross unrelated implementation domains, stop and split or
+redesign before pushing.
 
 ## Expected PR Domains
 
