@@ -632,26 +632,28 @@ def test_peer_replies_enqueue_drain_callback_for_original_sender(tmp_path: Path)
         participant_id=review.participant_id,
     )[0]
 
-    _mcp_call(
-        client,
-        "chat_post_message",
-        {
-            "conversation_id": conv.id,
-            "participant_id": review.participant_id,
-            "god_session_id": review_session.god_session_id,
-            "client_request_id": "review-reply",
-            "content": "Proof boundary remains local runtime only.",
-            "reply_to_inbox_item_id": review_item.id,
-        },
+    review_response = json.loads(
+        _mcp_call(
+            client,
+            "chat_post_message",
+            {
+                "conversation_id": conv.id,
+                "participant_id": review.participant_id,
+                "god_session_id": review_session.god_session_id,
+                "client_request_id": "review-reply",
+                "content": "Proof boundary remains local runtime only.",
+                "reply_to_inbox_item_id": review_item.id,
+            },
+        )
     )
 
-    architect_inbox = inbox_store.list_for_participant(
-        conversation_id=conv.id,
-        participant_id=architect.participant_id,
-    )
-    assert [
-        item for item in architect_inbox if item.item_type == "peer_reply_drain_callback"
-    ] == []
+    review_callbacks = [
+        item
+        for item in review_response["inbox_items"]
+        if item["item_type"] == "peer_reply_drain_callback"
+    ]
+    assert len(review_callbacks) == 1
+    assert review_callbacks[0]["payload"]["dependency_targets"] == ["review"]
 
     response = json.loads(
         _mcp_call(
@@ -679,6 +681,7 @@ def test_peer_replies_enqueue_drain_callback_for_original_sender(tmp_path: Path)
     assert callback["target_role"] == "architect"
     assert callback["payload"]["trigger_mode"] == "peer_reply_drain_callback"
     assert callback["payload"]["pending_peer_inbox_count"] == 0
+    assert callback["payload"]["dependency_targets"] == ["execute"]
 
     architect_callbacks = [
         item
@@ -688,7 +691,114 @@ def test_peer_replies_enqueue_drain_callback_for_original_sender(tmp_path: Path)
         )
         if item.item_type == "peer_reply_drain_callback"
     ]
-    assert len(architect_callbacks) == 1
+    assert len(architect_callbacks) == 2
+
+
+def test_peer_reply_drain_callback_is_scoped_to_source_handoff(
+    tmp_path: Path,
+) -> None:
+    _chat, conv, architect, architect_session = _registered_participant(tmp_path)
+    participants = ParticipantStore(tmp_path / "chat.db")
+    execute = participants.add(
+        conversation_id=conv.id,
+        role="execute",
+        display_name="Execute GOD",
+        cli_kind="codex",
+        model="gpt-5.4-mini",
+    )
+    review = participants.add(
+        conversation_id=conv.id,
+        role="review",
+        display_name="Review GOD",
+        cli_kind="opencode",
+        model="opencode-go/deepseek-v4-flash",
+    )
+    registry = GodSessionRegistry(tmp_path / "god_sessions.json")
+    execute_session = registry.create(
+        role="execute",
+        agent_name="Execute GOD",
+        runtime="codex",
+        session_address=f"xmuse://{conv.id}/{execute.participant_id}",
+        session_inbox_id=f"inbox-{execute.participant_id}",
+        conversation_id=conv.id,
+        participant_id=execute.participant_id,
+    )
+    registry.create(
+        role="review",
+        agent_name="Review GOD",
+        runtime="opencode",
+        session_address=f"xmuse://{conv.id}/{review.participant_id}",
+        session_inbox_id=f"inbox-{review.participant_id}",
+        conversation_id=conv.id,
+        participant_id=review.participant_id,
+    )
+    client = TestClient(create_app(tmp_path))
+
+    first = json.loads(
+        _mcp_call(
+            client,
+            "chat_mention",
+            {
+                "conversation_id": conv.id,
+                "participant_id": architect.participant_id,
+                "god_session_id": architect_session.god_session_id,
+                "client_request_id": "ask-execute-independent",
+                "target_address": "@execute",
+                "content": "Implementation-risk note, one sentence.",
+            },
+        )
+    )
+    _mcp_call(
+        client,
+        "chat_mention",
+        {
+            "conversation_id": conv.id,
+            "participant_id": architect.participant_id,
+            "god_session_id": architect_session.god_session_id,
+            "client_request_id": "ask-review-independent",
+            "target_address": "@review",
+            "content": "Proof-boundary critique, one sentence.",
+        },
+    )
+    inbox_store = ChatInboxStore(tmp_path / "chat.db")
+    execute_item = inbox_store.list_for_participant(
+        conversation_id=conv.id,
+        participant_id=execute.participant_id,
+    )[0]
+    review_item = inbox_store.list_for_participant(
+        conversation_id=conv.id,
+        participant_id=review.participant_id,
+    )[0]
+
+    response = json.loads(
+        _mcp_call(
+            client,
+            "chat_post_message",
+            {
+                "conversation_id": conv.id,
+                "participant_id": execute.participant_id,
+                "god_session_id": execute_session.god_session_id,
+                "client_request_id": "execute-independent-reply",
+                "content": "Implementation risk is stale summary gating.",
+                "reply_to_inbox_item_id": execute_item.id,
+            },
+        )
+    )
+
+    callback_items = [
+        item
+        for item in response["inbox_items"]
+        if item["item_type"] == "peer_reply_drain_callback"
+    ]
+    assert len(callback_items) == 1
+    callback = callback_items[0]
+    assert callback["target_participant_id"] == architect.participant_id
+    assert callback["payload"]["dependency_set_id"] == (
+        f"peer-reply-set:{first['message']['id']}"
+    )
+    assert callback["payload"]["source_message_id"] == first["message"]["id"]
+    assert callback["payload"]["dependency_targets"] == ["execute"]
+    assert inbox_store.get(review_item.id).status == "unread"
 
 
 def test_chat_read_inbox_includes_claimed_items_for_verified_session(tmp_path: Path) -> None:
