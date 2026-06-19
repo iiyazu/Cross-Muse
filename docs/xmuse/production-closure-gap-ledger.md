@@ -7,7 +7,7 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
 
 ## Current Proof Boundary
 
-- Latest main inspected: `2325427c0b96f5bc2f804a6f72ef8d5e77782fca`.
+- Latest main inspected: `f03a058a0f0468e3902e2aafeb7b063601df2866`.
 - Strongest code-change lane runtime evidence: Loop 25z69 ran after PR #93's
   default-review fix from current main, drove one real local code-change lane
   from durable groupchat through execute feasibility, proposal, runtime-driver
@@ -30,6 +30,21 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   `persistent_review_degraded=true` and
   `persistent_review_degraded_reason=missing_feature_identity`, so it is not
   persistent OpenCode review proof or defaulted review peer metadata proof.
+- Latest local candidate fullchain evidence: Loop 25z75 ran on local branch
+  `codex/direct-lane-graph-feature-scope` from current main
+  `f03a058a0f0468e3902e2aafeb7b063601df2866`. The branch projects a
+  `feature_scope_id` for direct lane graphs without treating lane primary
+  `feature_id` as feature scope. The run drove a real durable human demand
+  through Codex/OpenCode groupchat, execute feasibility, proposal, approval,
+  isolated execution, gate, persistent OpenCode review, and final-action hold.
+  The final lane recorded `feature_scope_id=post-pr94-probe`,
+  `gate_passed=true`, `review_decision=merge`,
+  `review_delivery_mode=persistent`, `persistent_review_degraded=false`,
+  `review_peer_defaulted=true`, `review_peer_cli_kind=opencode`,
+  `review_peer_model=opencode-go/deepseek-v4-flash`,
+  `peer_delivery_mode=configured_peer`, and
+  `status=awaiting_final_action`. This is local candidate proof only; it is
+  not CI/server-verified.
 - Latest peer-chat stability evidence: Loop 25z70b ran concurrently with
   Loop 25z70a from the same current main using a separate `XMUSE_ROOT`,
   execution worktree, Chat API port, MCP port, and runner. Across three
@@ -97,6 +112,8 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   head `4a491dfea5cb9d0026d4afa7360cf1b466af6831` in run `27828255039`;
   post-merge main `xmuse CI` also passed on
   `2325427c0b96f5bc2f804a6f72ef8d5e77782fca` in run `27828296247`.
+- Latest merged evidence sync: PR #100 `codex/post-pr99-runtime-evidence-sync`
+  merged to main as `f03a058a0f0468e3902e2aafeb7b063601df2866`.
 - Proof type: local runtime proof plus inspected GitHub server facts for small
   PRs. This is not GitHub review truth or production readiness.
 
@@ -186,6 +203,9 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
 - PR #99 `codex/include-untracked-lane-diff`: included untracked new files in
   MCP `get_diff(lane_id)` and recorded Loop 25z74 evidence. Merged to main as
   `2325427c0b96f5bc2f804a6f72ef8d5e77782fca`.
+- PR #100 `codex/post-pr99-runtime-evidence-sync`: synced post-PR99 runtime
+  evidence into the docs and gap ledger. Merged to main as
+  `f03a058a0f0468e3902e2aafeb7b063601df2866`.
 
 ## Manual Gaps
 
@@ -232,6 +252,10 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   `persistent_review_degraded_reason=missing_feature_identity`. Persistent
   OpenCode review and defaulted review peer metadata remain unproven for this
   shape.
+- Loop 25z75 locally repaired the direct lane graph feature-scope gap and
+  reached final-action hold with persistent OpenCode review/defaulted peer
+  metadata. This remains a local candidate until the small PR is pushed,
+  checked by CI, merged, and rerun from post-merge main.
 - Provider result acknowledgement timeout after durable writeback is mitigated
   by early writeback detection plus configurable bounded grace in PR #87.
   Broader production-load behavior is still unproven.
@@ -276,10 +300,10 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
 
 ## Next Small Buckets
 
-- P0 persistent review feature identity: repair the
-  `missing_feature_identity` path so docs-only groupchat-produced lanes can use
-  the registered OpenCode review peer persistently without relying on one-shot
-  fallback.
+- P0 persistent review feature identity: publish the local
+  `codex/direct-lane-graph-feature-scope` candidate as a small PR, verify CI,
+  merge if accepted, and rerun from post-merge main. Keep the current evidence
+  boundary as local candidate proof until then.
 - P1 explicit dependency coordination: add a durable coordination primitive for
   waiting on named peer replies before summaries/handoffs when direct drain is
   insufficient.

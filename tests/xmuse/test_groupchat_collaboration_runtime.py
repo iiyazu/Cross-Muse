@@ -1429,6 +1429,11 @@ def test_proposal_approval_enqueues_agent_auto_dispatch_entry_after_gate(
     assert entry.artifact_ref == "artifact:lane_graph"
     assert entry.dispatch_policy == "real_provider_allowed"
     assert entry.target == "execute"
+    lanes = json.loads((tmp_path / "feature_lanes.json").read_text(encoding="utf-8"))[
+        "lanes"
+    ]
+    assert lanes[0]["feature_id"] == "lane-v14-dispatch-queue"
+    assert lanes[0]["feature_scope_id"] == f"lane_graph:{resolution_id}-graph-v1"
 
     inspector = build_conversation_inspector_payload(conversation_id, tmp_path)
     assert inspector["dispatch_queue"]["entries"][0]["entry_id"] == entry.entry_id

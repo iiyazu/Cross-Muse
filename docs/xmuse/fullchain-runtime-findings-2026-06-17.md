@@ -173,6 +173,14 @@ truth, merge truth, live MemoryOS proof, or full closure.
   peer-reply drain callback, and architect final summary after both replies,
   with no proposals/resolutions, failed inbox items, failed traces, or
   writeback timeouts.
+- Loop 25z75 reran the docs-only fullchain shape on local branch
+  `codex/direct-lane-graph-feature-scope` after adding direct lane graph
+  feature-scope projection. It reached `awaiting_final_action` with
+  `feature_scope_id=post-pr94-probe`, `review_delivery_mode=persistent`,
+  `persistent_review_degraded=false`, `review_peer_defaulted=true`,
+  `review_peer_cli_kind=opencode`, and
+  `review_peer_model=opencode-go/deepseek-v4-flash`. This is local candidate
+  proof only; it is not CI/server-verified.
 
 ## Findings
 
@@ -3155,3 +3163,64 @@ Remaining gap:
 - It does not prove persistent OpenCode review, defaulted review peer metadata,
   production readiness, overnight stability, GitHub review truth, live
   MemoryOS, full L8-L10 closure, or full L1-L11 closure.
+
+### F105. Direct lane graph projection needs feature scope for persistent review
+
+Severity: fixed in local candidate branch.
+
+Loop 25z74 reached final-action hold, but persistent review degraded:
+
+```text
+review_delivery_mode=one_shot_fallback
+persistent_review_degraded=true
+persistent_review_degraded_reason=missing_feature_identity
+review_peer_defaulted=null
+review_peer_cli_kind=null
+review_peer_model=null
+```
+
+Root cause:
+
+- Direct `lane_graph` projection was not a feature-plan graph-set projection.
+- The projected lane could carry `feature_group`, but not a consumer-visible
+  `feature_scope_id`.
+- Persistent GOD identity intentionally refuses to use the lane primary
+  `feature_id` as feature scope.
+- When a groupchat proposal omitted `feature_group`, review routing had no
+  stable feature identity and correctly failed closed to one-shot fallback.
+
+Local candidate fix:
+
+- Project direct lane graphs with `feature_scope_id`.
+- Prefer the lane's explicit `feature_group`.
+- If no `feature_group` exists, derive a graph-level scope
+  `lane_graph:<graph.id>`.
+- Do not change `feature_scope_id_from_lane()` to accept lane primary
+  `feature_id`.
+
+Loop 25z75 reran the real chain with the local candidate and reached:
+
+```text
+feature_scope_id=post-pr94-probe
+status=awaiting_final_action
+gate_passed=true
+review_decision=merge
+review_delivery_mode=persistent
+persistent_review_degraded=false
+review_peer_defaulted=true
+review_peer_cli_kind=opencode
+review_peer_model=opencode-go/deepseek-v4-flash
+peer_delivery_mode=configured_peer
+```
+
+Remaining caveats:
+
+- The driver captured `classification=not_defaulted` before the final
+  persistent-review metadata write landed; the later `feature_lanes.json`
+  projection revision is the authority for the values above.
+- The MCP process detector did not count the ad hoc
+  `uvicorn xmuse.mcp_server:app --port 8116` process shape, although HTTP
+  health for MCP returned ready.
+- This is local candidate evidence only, not GitHub server truth, review
+  truth, production readiness, live MemoryOS proof, overnight soak, full
+  L8-L10 closure, or full L1-L11 closure.
