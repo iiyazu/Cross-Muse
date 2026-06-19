@@ -1377,6 +1377,61 @@ def test_inspector_session_health_reads_durable_god_sessions(tmp_path: Path) -> 
     assert sh["items"][0]["provider_session_id"] == "thread-architect"
 
 
+def test_inspector_session_health_prefers_durable_status_for_same_session_id(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "chat.db"
+    chat = ChatStore(db)
+    conv = chat.create_conversation("Mission")
+    participant = ParticipantStore(db).add(
+        conversation_id=conv.id,
+        role="architect",
+        display_name="Architect",
+        cli_kind="codex",
+        model="gpt-5.5",
+    )
+    registry = GodSessionRegistry(tmp_path / "god_sessions.json")
+    session = registry.create(
+        role="architect",
+        agent_name="architect-god",
+        runtime="codex",
+        session_address="@conv:architect",
+        session_inbox_id="inbox-conv-architect",
+        conversation_id=conv.id,
+        participant_id=participant.participant_id,
+        model="gpt-5.5",
+    )
+    registry.promote_running(session.god_session_id)
+    _write_json(
+        tmp_path / "active_sessions.json",
+        {
+            "sessions": [
+                {
+                    "god_session_id": session.god_session_id,
+                    "conversation_id": conv.id,
+                    "participant_id": participant.participant_id,
+                    "role": "architect",
+                    "status": "starting",
+                    "pid": 12345,
+                    "runtime": "codex",
+                    "model": "gpt-5.5",
+                }
+            ]
+        },
+    )
+
+    client = TestClient(create_app(tmp_path))
+    response = client.get(f"/api/dashboard/peer-chat/conversations/{conv.id}/inspector")
+
+    assert response.status_code == 200
+    sh = response.json()["session_health"]
+    assert sh["total"] == 1
+    assert sh["by_status"]["running"] == 1
+    assert "starting" not in sh["by_status"]
+    assert sh["items"][0]["status"] == "running"
+    assert sh["items"][0]["pid"] == 12345
+
+
 def test_inspector_session_health_empty_when_no_sessions(tmp_path: Path) -> None:
     db = tmp_path / "chat.db"
     chat = ChatStore(db)

@@ -220,6 +220,7 @@ def test_chat_emit_proposal_can_complete_current_peer_inbox_item(tmp_path: Path)
         item.id,
     )
     assert "chat_emit_proposal" in stages
+    assert registry.get(session.god_session_id).status == "running"
 
 
 def test_chat_emit_proposal_without_reply_id_closes_single_claimed_inbox_item(
@@ -284,6 +285,7 @@ def test_chat_emit_proposal_without_reply_id_closes_single_claimed_inbox_item(
         item.id,
     )
     assert "chat_emit_proposal" in stages
+    assert registry.get(session.god_session_id).status == "running"
 
 
 def test_peer_chat_mcp_structured_execution_proposal_approval_enqueues_dispatch(
@@ -549,6 +551,65 @@ def test_chat_post_message_reply_marks_inbox_read_with_responded_message_id(
         item.id,
     )
     assert set(stages) == {"chat_read_inbox", "chat_post_message"}
+    assert registry.get(session.god_session_id).status == "running"
+
+
+def test_chat_record_collaboration_response_promotes_session_status_to_running(
+    tmp_path: Path,
+) -> None:
+    server = load_mcp_module()
+    xmuse_root = tmp_path / "xmuse"
+    mcp_client = TestClient(server.create_app(xmuse_root=xmuse_root))
+
+    created = mcp_call(
+        mcp_client,
+        "chat_create_conversation",
+        {"title": "Collaboration response writeback"},
+    )
+    conversation_id = created["conversation"]["id"]
+    participants = {item["role"]: item for item in created["participants"]}
+    registry = GodSessionRegistry(xmuse_root / "god_sessions.json")
+    architect_session = registry.find_by_conversation_participant(
+        conversation_id=conversation_id,
+        participant_id=participants["architect"]["participant_id"],
+    )
+    execute_session = registry.find_by_conversation_participant(
+        conversation_id=conversation_id,
+        participant_id=participants["execute"]["participant_id"],
+    )
+
+    run = mcp_chat_call(
+        mcp_client,
+        "chat_create_collaboration_request",
+        {
+            "conversation_id": conversation_id,
+            "participant_id": participants["architect"]["participant_id"],
+            "god_session_id": architect_session.god_session_id,
+            "client_request_id": "collab-status-promote",
+            "goal": "Confirm bounded execution scope.",
+            "targets": ["execute"],
+            "callback_target": "architect",
+            "question": "Return an execute feasibility verdict.",
+            "context_refs": ["message:latest"],
+            "timeout_s": 480,
+        },
+    )["run"]
+
+    response = mcp_chat_call(
+        mcp_client,
+        "chat_record_collaboration_response",
+        {
+            "conversation_id": conversation_id,
+            "participant_id": participants["execute"]["participant_id"],
+            "god_session_id": execute_session.god_session_id,
+            "run_id": run["run_id"],
+            "content": "Executable as one bounded lane.",
+            "status": "received",
+        },
+    )["run"]
+
+    assert response["status"] == "done"
+    assert registry.get(execute_session.god_session_id).status == "running"
 
 
 def test_read_provider_inventory_returns_sanitized_static_profile_metadata(

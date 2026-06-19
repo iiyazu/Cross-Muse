@@ -1797,6 +1797,7 @@ class PeerChatService:
             )
         except ValueError as exc:
             raise PeerChatError("invalid_collaboration_response", str(exc)) from exc
+        GodSessionRegistry(registry_path).promote_running(god_session_id)
         callback: dict[str, Any] | None = None
         if updated.status is CollaborationStatus.DONE:
             callback = self._create_collaboration_done_callback(
@@ -2040,6 +2041,7 @@ class PeerChatService:
                 tool_name="chat_post_message",
                 called_at=time.monotonic(),
             )
+            GodSessionRegistry(registry_path).promote_running(god_session_id)
         return result
 
     def _build_god_inbox_items(
@@ -2245,6 +2247,7 @@ class PeerChatService:
                 responded_message_id=self._proposal_message_id(payload),
                 tool_name="chat_emit_proposal",
             )
+            GodSessionRegistry(registry_path).promote_running(god_session_id)
         self._ensure_review_trigger(
             conversation_id=conversation_id,
             source_message_id=self._proposal_message_id(payload),
