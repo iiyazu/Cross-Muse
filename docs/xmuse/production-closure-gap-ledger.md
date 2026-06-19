@@ -316,6 +316,16 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   participant, and the review-plane consumer fails the lane closed as
   `required_review_peer_unavailable`. This is focused local
   review-authority proof only, not a fullchain run or production readiness.
+- Loop 26g on branch
+  `codex/default-review-missing-opencode-roster-fail-closed` focuses the
+  missing OpenCode review authority boundary for a production-like peer roster.
+  When active Codex architect/executor participants exist but no active
+  OpenCode review participant exists, the selector now returns
+  `review_peer_runtime_unavailable`, does not create a Codex review
+  participant, and the review-plane consumer fails the lane closed as
+  `required_review_peer_unavailable`. Empty legacy conversations without an
+  active peer roster still retain the feature-scoped Codex default-review
+  fallback.
 - Provider result acknowledgement timeout after durable writeback is mitigated
   by early writeback detection plus configurable bounded grace in PR #87.
   Broader production-load behavior is still unproven.
@@ -371,8 +381,10 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   persistent review now records a separate review-session prompt authority in
   `god_sessions.json`, and Loop 26e confirmed the behavior on post-PR107 main.
   Loop 26f adds focused candidate proof for the multiple-OpenCode-reviewer
-  ambiguity case. Remaining work is the missing-OpenCode-reviewer policy and
-  broader review authority behavior.
+  ambiguity case. Loop 26g adds focused candidate proof for the missing
+  OpenCode reviewer case when a production-like active peer roster already
+  exists. Remaining work is broader review authority behavior and deciding
+  whether to quarantine the empty-conversation legacy Codex fallback.
 - P3 higher-parallelism stability loop: repeat real groupchat-to-final-hold
   with independent `XMUSE_ROOT` directories, execution worktrees, Chat API
   ports, MCP ports, and runners when increasing concurrency beyond the current
@@ -380,8 +392,9 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   parallel probes.
 - P4 ambiguous review authority: multiple active OpenCode review participants
   now have focused fail-closed candidate behavior without relying on proposal
-  text. Missing OpenCode review participants remain a separate policy boundary
-  because the legacy feature-scoped Codex default-review path still exists.
+  text. Missing OpenCode review participants also fail closed when an active
+  peer roster exists. The empty-conversation feature-scoped Codex default-review
+  fallback remains legacy behavior and is not natural groupchat review proof.
 - P5 code-change soak: repeat small real code-change lanes after the
   inspector provider summary PR lands.
 - P6 MemoryOS adapter proof: keep `live_memoryos` forbidden until a real trace
