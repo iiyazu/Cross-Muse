@@ -2251,3 +2251,252 @@ Main Codex audit/import:
 - Did not resolve the final action hold.
 - Did not claim GitHub review truth, merge truth, live MemoryOS, full L8-L10
   closure, or full L1-L11 closure.
+
+## 2026-06-19 OpenCode project MCP and review idempotency loops
+
+Candidate worktree:
+
+```text
+/tmp/xmuse-opencode-persistent-mcp-25z30
+```
+
+Candidate branch:
+
+```text
+codex/opencode-persistent-project-mcp
+```
+
+Proof level for this section: `local_runtime_proof` only.
+
+### Direct OpenCode project MCP probe
+
+Runtime root:
+
+```text
+/tmp/xmuse-opencode-persistent-mcp-25z30/.goal-runs/2026-06-19/loop-25z30-opencode-persistent-mcp-shim-072722
+```
+
+Command shape:
+
+```bash
+XMUSE_ROOT="$ROOT" uv run xmuse-mcp-server
+printf '%s\n' "$TASK_JSON" |
+  XMUSE_ROOT="$ROOT" uv run python -m xmuse_core.agents.opencode_persistent \
+    --model opencode-go/deepseek-v4-flash --variant max --mcp-port 8100 \
+    --worktree /tmp/xmuse-opencode-persistent-mcp-25z30 \
+    --role review --timeout-s 180
+```
+
+Observed:
+
+```text
+status=success
+opencode command included --pure
+OpenCode emitted tool_use for xmuse-platform_get_status
+temporary worktree opencode.json was restored after the run
+```
+
+Classification: direct provider-command evidence that OpenCode can see the
+project MCP server when runtime MCP config is injected into the `--dir`
+worktree. This is not GitHub truth or product review truth.
+
+### Fullchain repro: gate environment leak
+
+Runtime root:
+
+```text
+/tmp/xmuse-opencode-persistent-mcp-25z30/.goal-runs/2026-06-19/loop-25z31-opencode-review-native-mcp-fullchain-073214
+```
+
+Observed path:
+
+```text
+conversation_id=conv_1f4c1a26f1c948bfbe50e92573810bfb
+proposal_id=prop_605a5862b557420fb918df4dcc7f5c33
+resolution_id=res_d288c6772de444bf800c1a6d69c2ce9b
+lane_id=loop25z31_opencode_review_native_mcp_fullchain
+```
+
+The chain reached real dispatch and execution. The package-boundary command
+passed, but the gate profile failed because the gate subprocess inherited the
+platform control-plane `XMUSE_ROOT`:
+
+```text
+profile_ids=["xmuse-core"]
+2 failed, 241 passed
+failed tests:
+- test_runner_parser_resolves_lanes_from_xmuse_root
+- test_runner_parser_explicit_lanes_override_xmuse_root
+```
+
+Classification: gate execution environment boundary. The targeted fix was to
+strip `XMUSE_ROOT` from gate command subprocess environments before applying
+command-specific env.
+
+### Fullchain repro: persistent review same-status callback
+
+Runtime root:
+
+```text
+/tmp/xmuse-opencode-persistent-mcp-25z30/.goal-runs/2026-06-19/loop-25z32-opencode-review-native-mcp-fullchain-gatefix-075600
+```
+
+Observed path:
+
+```text
+conversation_id=conv_5d175654d23d43868eb094d88dcf85bc
+collaboration_run=collab_f37cb0bbd60c48489b6cc056c5557bc0
+proposal_id=prop_2d581d444e14477baa645b8931d41c5f
+resolution_id=res_1a9b58c7128245a898c826ef60490339
+lane_id=loop25z32_opencode_review_native_mcp_fullchain_gatefix
+review_peer_id=part_f8e6e96092694a038ff8bfec13a12642
+```
+
+Runner state reached:
+
+```text
+status=awaiting_final_action
+gate_passed=true
+review_runtime=opencode
+peer_delivery_mode=configured_peer
+review_decision=merge
+final_action_hold_id=final-27a0e0892978
+```
+
+Gate report:
+
+```text
+strict-product: 16 passed
+xmuse-core: 243 passed, 2 warnings
+```
+
+Observed failure after review verdict delivery:
+
+```text
+InvalidTransitionError: cannot transition loop25z32_opencode_review_native_mcp_fullchain_gatefix from reviewed to reviewed
+```
+
+Root cause: the OpenCode persistent review peer first wrote lane status through
+native MCP `update_lane_status`; callback processing then delivered the
+structured review verdict and attempted the same `reviewed` transition again.
+
+Classification: persistent review callback idempotency boundary. The targeted
+fix lets review delivery update metadata when the lane is already in the target
+status.
+
+### Fullchain rerun after fixes
+
+Runtime root:
+
+```text
+/tmp/xmuse-opencode-persistent-mcp-25z30/.goal-runs/2026-06-19/loop-25z33-opencode-review-native-mcp-idempotent-081617
+```
+
+Service commands:
+
+```bash
+XMUSE_ROOT="$ROOT" uv run xmuse-chat-api
+XMUSE_ROOT="$ROOT" uv run xmuse-mcp-server
+XMUSE_ROOT="$ROOT" XMUSE_PEER_GOD_BACKEND=native XMUSE_RAY_GOD_MCP=0 \
+  XMUSE_CHAT_API_URL=http://127.0.0.1:8201 \
+  uv run xmuse-platform-runner --xmuse-root "$ROOT" --mcp-port 8100 \
+  --peer-chat --persistent-review-god --persistent-review-timeout-s 180 \
+  --max-hours 0.75 --no-auto-merge
+```
+
+Conversation and groupchat:
+
+```text
+conversation_id=conv_4d32ecd005fe4a7a9de2c7f59db90aba
+architect_participant=part_7ec8ff2b601e4144903d26b63681a4b9
+execute_participant=part_44d0ef0aa8ec4bce974810e478041218
+review_participant=part_34fc2292b14940a6903067e9699961f2
+review_runtime=opencode
+review_model=opencode-go/deepseek-v4-flash
+```
+
+Durable collaboration and proposal:
+
+```text
+human_message=msg_9c662bf677c6425b83af4dcd7d3a7caf
+collaboration_run=collab_8e3ab8e6b4ca4ab28840cdb7d93fd699
+execute_response=collab_resp_9127be7170c34b42af3d29b620bfcdc0
+review_response=collab_resp_e854846db4d8499e8aa67a61906406f3
+proposal_id=prop_074abe10c09c4d2bb4d0d47deacf2910
+proposal_references=["collaboration:collab_8e3ab8e6b4ca4ab28840cdb7d93fd699"]
+resolution_id=res_2ddf36a9428e49fe9a438334a91e92a3
+```
+
+Lane and review state:
+
+```text
+lane_id=loop25z33_opencode_review_native_mcp_idempotent
+status=awaiting_final_action
+proof_boundary=local_runtime_proof
+review_runtime=opencode
+review_runtime_requested=opencode
+review_peer_id=part_34fc2292b14940a6903067e9699961f2
+peer_delivery_mode=configured_peer
+review_delivery_mode=persistent
+persistent_review_degraded=false
+review_decision=merge
+review_verdict_id=verdict-merge-rtask_1cb17611dc7c414f91f0ef541a48d5f3
+final_action_hold_id=final-f136441d0d74
+```
+
+Gate report:
+
+```text
+logs/gates/loop25z33_opencode_review_native_mcp_idempotent/report.json
+passed=true
+blocking_passed=true
+strict-product: uv run pytest -q tests/xmuse/test_package_boundaries.py -> 0
+xmuse-core: peer chat / GOD session / platform / feature graph focused suite -> 0
+```
+
+Review artifacts:
+
+```text
+review_plane.json:
+  task_id=rtask_1cb17611dc7c414f91f0ef541a48d5f3
+  status=verdict_emitted
+  verdict.status=finalized
+  verdict.decision=merge
+
+final_actions.json:
+  id=final-f136441d0d74
+  action=merge
+  target_status=reviewed
+  status=pending
+```
+
+Durable peer traces:
+
+```text
+delivery_mode=mcp_writeback for architect, execute, and review turns
+degraded_reason=null for all peer_turn_latency_traces rows
+OpenCode review peer tool traces include chat_read_inbox and chat_post_message
+Architect proposal turn includes chat_emit_proposal
+```
+
+Search result for the old idempotency failure:
+
+```text
+rg "InvalidTransitionError|cannot transition|reviewed to reviewed" "$ROOT" -> no matches
+```
+
+Cleanup:
+
+```text
+8100/8201/8265 listeners: none
+xmuse service processes: none
+Ray service processes from the run: none
+```
+
+The runner was interrupted after the final-action hold had been recorded. Ray
+printed shutdown/atexit noise during Ctrl-C handling; it did not change the
+recorded lane result.
+
+Claims not made: GitHub review truth, merge truth, `ready_to_merge`,
+`pr_merged`, live MemoryOS, full L8-L10 closure, full L1-L11 closure,
+production-ready groupchat, or overnight readiness.

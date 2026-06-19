@@ -118,8 +118,7 @@ class GateRunner:
         worktree: Path,
         command: CommandPlan,
     ) -> tuple[int, str, str]:
-        env = dict(os.environ)
-        env.update(command.env)
+        env = _command_env(command.env)
         cwd = (worktree / command.cwd).resolve()
         process = await asyncio.create_subprocess_exec(
             *command.argv,
@@ -159,6 +158,13 @@ class GateRunner:
 
 def _looks_like_test_path(arg: str) -> bool:
     return arg.startswith("tests/") and ("::" not in arg)
+
+
+def _command_env(command_env: dict[str, str]) -> dict[str, str]:
+    env = dict(os.environ)
+    env.pop("XMUSE_ROOT", None)
+    env.update(command_env)
+    return env
 
 
 def _report_to_json(report: GateReport) -> dict[str, object]:

@@ -73,7 +73,8 @@ async def apply_persistent_review_message(
     review_evidence_refs = _dedupe_refs(evidence_refs or [])
     if decision == "reviewed":
         verdict_id = stable_verdict_id(lane_id)
-        sm.transition(
+        _transition_or_update_same_status(
+            sm,
             lane_id,
             "reviewed",
             metadata=review_metadata(
@@ -97,7 +98,8 @@ async def apply_persistent_review_message(
         await on_reviewed(lane_id)
         return True
 
-    sm.transition(
+    _transition_or_update_same_status(
+        sm,
         lane_id,
         "rejected",
         metadata=review_metadata(
@@ -119,6 +121,20 @@ async def apply_persistent_review_message(
     ingest_rework_verdict(lane_id, summary, review_evidence_refs)
     await on_rejected(lane_id)
     return True
+
+
+def _transition_or_update_same_status(
+    sm: LaneStateMachine,
+    lane_id: str,
+    status: str,
+    *,
+    metadata: dict[str, Any],
+) -> None:
+    lane = sm.get_lane(lane_id)
+    if lane.get("status") == status:
+        sm.update_metadata(lane_id, metadata)
+        return
+    sm.transition(lane_id, status, metadata=metadata)
 
 
 def review_metadata(
