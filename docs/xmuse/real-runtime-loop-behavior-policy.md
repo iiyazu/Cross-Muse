@@ -82,7 +82,8 @@ Rules:
 - do not create placeholder PRs for incomplete runtime boundaries;
 - do not mutate PR #43;
 - do not expand an existing PR to absorb unrelated implementation domains;
-- count already-opened PRs against the active goal's PR budget.
+- allow PR count to grow only when each PR is small, domain-scoped, and
+  validated through the normal CI/CD path.
 
 GitHub facts are server truth only for the exact resource, head SHA, and time
 inspected. Local tests, worker output, and PR bodies are not GitHub truth.
@@ -369,10 +370,13 @@ Rate-limit guard:
 
 PR budget:
 
-- define a maximum PR count before implementation starts;
-- maximum three PRs for one long goal unless explicitly lowered by the prompt;
-- when continuing an existing goal, subtract already opened PRs from the budget;
-- if the prompt says the PR budget is full, do not open another PR;
+- do not use a fixed PR-count ceiling as a substitute for domain control;
+- split by implementation domain and dependency boundary;
+- allow the number of PRs to grow dynamically when runtime evidence shows that
+  separate domains must land separately;
+- stop before creating an umbrella PR or a PR that crosses unrelated domains;
+- if repeated tiny PRs keep exposing the same complex boundary, stop patching
+  and redesign that boundary instead of opening another patch PR;
 - no mutation of PR #43;
 - do not expand PR #44 beyond minimal closure spine;
 - split unrelated domains into separate PRs.
