@@ -4,6 +4,7 @@ import asyncio
 import json
 import time
 from collections.abc import Callable
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -17,6 +18,8 @@ from xmuse_core.chat.mentions import (
 from xmuse_core.chat.participant_store import Participant, ParticipantStore
 from xmuse_core.chat.store import ChatStore
 from xmuse_core.chat.stream_store import ChatStreamStore, PeerTurnLatencyTraceStore
+
+_DURABLE_WRITEBACK = object()
 
 
 @dataclass(frozen=True)
@@ -37,6 +40,7 @@ class PeerChatScheduler:
         scheduler_id: str,
         claim_ttl_s: int = 240,
         response_wait_s: float = 180.0,
+        post_writeback_grace_s: float = 8.0,
         degraded_fallback_enabled: bool = False,
         only_inbox_item_id: str | None = None,
         clock: Callable[[], float] | None = None,
@@ -51,6 +55,7 @@ class PeerChatScheduler:
         self._scheduler_id = scheduler_id
         self._claim_ttl_s = claim_ttl_s
         self._response_wait_s = response_wait_s
+        self._post_writeback_grace_s = max(0.0, post_writeback_grace_s)
         self._degraded_fallback_enabled = degraded_fallback_enabled
         self._only_inbox_item_id = only_inbox_item_id
         self._clock = clock or time.monotonic
@@ -93,10 +98,11 @@ class PeerChatScheduler:
                 "do not call it before simple replies. "
                 "Natural-language @mentions inside chat_post_message are display-only "
                 "and do not enqueue peer work. If you need another GOD to take "
-                "over, inspect, or continue the task, first reply to the current "
-                "inbox item with chat_post_message, then call chat_mention with "
-                "target_address set to the target GOD's exact @role and content "
-                "containing the concrete handoff request. "
+                "over, inspect, or continue the task, call chat_mention with "
+                "reply_to_inbox_item_id=xmuse_context.inbox_item.id, target_address "
+                "set to the target GOD's exact @role, and content containing the "
+                "concrete handoff request; this closes your current inbox item and "
+                "enqueues the target GOD in one durable writeback. "
                 "For work that should enter real execution, do not rely on chat "
                 "text alone: create or reference a collaboration run, have execute "
                 "record a JSON execute_feasibility_verdict through "
@@ -150,10 +156,32 @@ class PeerChatScheduler:
                 request_id=item.id,
             )
             try:
-                message = await asyncio.wait_for(
-                    self._god_layer.receive_message(record.god_session_id),
-                    timeout=self._response_wait_s,
+                message = await self._receive_message_or_durable_writeback(
+                    record.god_session_id,
+                    item=item,
+                    participant=participant,
                 )
+                if message is _DURABLE_WRITEBACK:
+                    await _abort_session_if_supported(
+                        self._god_layer,
+                        record.god_session_id,
+                    )
+                    self._finish_active_stream_for_item(item, status="done")
+                    self._record_latency_trace(
+                        item,
+                        trace_start_at=trace_start_at,
+                        delivery_started_at=delivery_started_at,
+                        provider_turn_started_at=provider_turn_started_at,
+                        scheduler_observed_result_at=None,
+                        delivery_mode="mcp_writeback",
+                        degraded_reason="peer_writeback_before_provider_result",
+                    )
+                    self._inbox.record_nudge_result(
+                        item.id,
+                        owner=self._scheduler_id,
+                        success=True,
+                    )
+                    return PeerChatSchedulerOutcome(nudged=1, happy_path=1)
             except TimeoutError:
                 refreshed = self._inbox.get(item.id)
                 if refreshed.status == "read" and self._has_real_writeback_message(
@@ -342,6 +370,62 @@ class PeerChatScheduler:
         )
         return PeerChatSchedulerOutcome(nudged=1, happy_path=1)
 
+    async def _receive_message_or_durable_writeback(
+        self,
+        god_session_id: str,
+        *,
+        item,
+        participant: Participant,
+    ):
+        receive_task = asyncio.create_task(self._god_layer.receive_message(god_session_id))
+        deadline = time.monotonic() + self._response_wait_s
+        try:
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    receive_task.cancel()
+                    raise TimeoutError
+                try:
+                    return await asyncio.wait_for(
+                        asyncio.shield(receive_task),
+                        timeout=min(1.0, remaining),
+                    )
+                except TimeoutError:
+                    refreshed = self._inbox.get(item.id)
+                    if refreshed.status == "read" and self._has_real_writeback_message(
+                        item.conversation_id,
+                        refreshed.responded_message_id,
+                        participant_id=participant.participant_id,
+                        inbox_item_id=item.id,
+                    ):
+                        grace_result = await self._wait_for_provider_result_during_grace(
+                            receive_task
+                        )
+                        if grace_result is not _DURABLE_WRITEBACK:
+                            return grace_result
+                        receive_task.cancel()
+                        with suppress(asyncio.CancelledError):
+                            await receive_task
+                        return _DURABLE_WRITEBACK
+        except BaseException:
+            if not receive_task.done():
+                receive_task.cancel()
+            raise
+
+    async def _wait_for_provider_result_during_grace(self, receive_task: asyncio.Task):
+        deadline = time.monotonic() + self._post_writeback_grace_s
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return _DURABLE_WRITEBACK
+            try:
+                return await asyncio.wait_for(
+                    asyncio.shield(receive_task),
+                    timeout=min(1.0, remaining),
+                )
+            except TimeoutError:
+                continue
+
     async def tick_many(self, *, max_concurrent: int = 1) -> PeerChatSchedulerOutcome:
         if max_concurrent <= 1 or self._only_inbox_item_id is not None:
             return await self.tick_once()
@@ -378,7 +462,7 @@ class PeerChatScheduler:
         if message.author != participant_id or message.role != "assistant":
             return False
         stages = self._latency.list_mcp_tool_stages(conversation_id, inbox_item_id)
-        return bool({"chat_post_message", "chat_emit_proposal"} & set(stages))
+        return bool({"chat_post_message", "chat_emit_proposal", "chat_mention"} & set(stages))
 
     def _record_latency_trace(
         self,

@@ -2103,6 +2103,7 @@ class PeerChatService:
         target_address: str,
         content: str,
         envelope: dict[str, Any] | None = None,
+        reply_to_inbox_item_id: str | None = None,
     ) -> dict[str, Any]:
         self._verify_god_identity(
             registry_path=registry_path,
@@ -2127,7 +2128,7 @@ class PeerChatService:
             raise PeerChatError(exc.code, exc.target) from exc
         normalized = normalize_envelope(envelope, envelope_type="mention")
         try:
-            return self._chat.create_message_inbox_and_log(
+            result = self._chat.create_message_inbox_and_log(
                 conversation_id=conversation_id,
                 tool_name="chat_mention",
                 caller_identity=caller_identity,
@@ -2149,8 +2150,19 @@ class PeerChatService:
                         "payload": {"content": content, "mention": target.raw},
                     }
                 ],
+                reply_to_inbox_item_id=reply_to_inbox_item_id,
+                reply_owner_participant_id=participant_id,
                 turn_budget_action="consume",
             )
+            if reply_to_inbox_item_id:
+                PeerTurnLatencyTraceStore(self._db_path).record_mcp_tool_stage(
+                    conversation_id=conversation_id,
+                    inbox_item_id=reply_to_inbox_item_id,
+                    tool_name="chat_mention",
+                    called_at=time.monotonic(),
+                )
+                GodSessionRegistry(registry_path).promote_running(god_session_id)
+            return result
         except ValueError as exc:
             if str(exc) == "turn_budget_exhausted":
                 raise PeerChatError("turn_budget_exhausted", conversation_id) from exc

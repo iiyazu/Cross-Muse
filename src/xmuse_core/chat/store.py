@@ -266,6 +266,19 @@ class ChatStore:
                     )
 
                 if reply_to_inbox_item_id is not None:
+                    replied_item = conn.execute(
+                        """
+                        select * from chat_inbox_items
+                        where id = ? and conversation_id = ? and target_participant_id = ?
+                        """,
+                        (
+                            reply_to_inbox_item_id,
+                            conversation_id,
+                            reply_owner_participant_id,
+                        ),
+                    ).fetchone()
+                    if replied_item is None:
+                        raise ValueError("inbox_item_not_owned")
                     updated = conn.execute(
                         """
                         update chat_inbox_items
@@ -282,6 +295,57 @@ class ChatStore:
                     ).rowcount
                     if updated != 1:
                         raise ValueError("inbox_item_not_owned")
+                    callback_item = self._peer_reply_drain_callback_item(
+                        conn,
+                        replied_item=replied_item,
+                        response_message_id=message.id,
+                    )
+                    if callback_item is not None:
+                        item_id = self._new_id("inbox")
+                        conn.execute(
+                            """
+                            insert into chat_inbox_items (
+                                id, conversation_id, target_participant_id, target_role,
+                                target_address, sender_participant_id, sender_address,
+                                source_message_id, item_type, payload_json, status,
+                                created_at, updated_at
+                            )
+                            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unread', ?, ?)
+                            """,
+                            (
+                                item_id,
+                                conversation_id,
+                                callback_item["target_participant_id"],
+                                callback_item.get("target_role"),
+                                callback_item["target_address"],
+                                callback_item.get("sender_participant_id"),
+                                callback_item["sender_address"],
+                                message.id,
+                                callback_item["item_type"],
+                                json.dumps(callback_item["payload"]),
+                                now,
+                                now,
+                            ),
+                        )
+                        created_items.append(
+                            {
+                                "id": item_id,
+                                "conversation_id": conversation_id,
+                                "source_message_id": message.id,
+                                "payload": callback_item["payload"],
+                                "status": "unread",
+                                "claim_owner": None,
+                                "claimed_at": None,
+                                "claim_expires_at": None,
+                                "nudge_count": 0,
+                                "last_nudged_at": None,
+                                "responded_message_id": None,
+                                "failure_reason": None,
+                                "created_at": now,
+                                "updated_at": now,
+                                **callback_item,
+                            }
+                        )
 
                 result = {
                     "message": message.model_dump(mode="json"),
@@ -310,6 +374,66 @@ class ChatStore:
                 conn.rollback()
                 raise
         return result
+
+    def _peer_reply_drain_callback_item(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        replied_item: sqlite3.Row,
+        response_message_id: str,
+    ) -> dict | None:
+        sender_participant_id = replied_item["sender_participant_id"]
+        if not sender_participant_id or replied_item["item_type"] != "mention":
+            return None
+        pending = conn.execute(
+            """
+            select count(*) as count
+            from chat_inbox_items
+            where conversation_id = ?
+              and sender_participant_id = ?
+              and item_type = 'mention'
+              and status in ('unread', 'claimed')
+            """,
+            (replied_item["conversation_id"], sender_participant_id),
+        ).fetchone()
+        if pending is None or int(pending["count"]) != 0:
+            return None
+        target = conn.execute(
+            """
+            select participant_id, role
+            from participants
+            where conversation_id = ? and participant_id = ? and status = 'active'
+            """,
+            (replied_item["conversation_id"], sender_participant_id),
+        ).fetchone()
+        if target is None:
+            return None
+        response_target = replied_item["target_participant_id"]
+        return {
+            "target_participant_id": target["participant_id"],
+            "target_role": target["role"],
+            "target_address": f"@{target['role']}",
+            "sender_participant_id": response_target,
+            "sender_address": (
+                f"@participant:{response_target}"
+                if response_target
+                else "@peer-reply-drain"
+            ),
+            "item_type": "peer_reply_drain_callback",
+            "payload": {
+                "content": (
+                    "All currently pending direct peer replies for your handoffs "
+                    "are now durable in this conversation. Inspect the recent "
+                    "messages and continue the original request. If the request "
+                    "asked for a final summary after peer replies, post that "
+                    "summary now."
+                ),
+                "trigger_mode": "peer_reply_drain_callback",
+                "completed_inbox_item_id": replied_item["id"],
+                "completed_response_message_id": response_message_id,
+                "pending_peer_inbox_count": 0,
+            },
+        }
 
     def reset_turn_budget(self, conversation_id: str, *, amount: int = 8) -> None:
         now = _utc_now()

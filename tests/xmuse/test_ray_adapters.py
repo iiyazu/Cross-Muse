@@ -956,7 +956,8 @@ def test_app_server_mcp_instructions_prefer_direct_post(tmp_path: Path) -> None:
     assert "reply_to_inbox_item_id=xmuse_context.inbox_item.id" in instructions
     assert "chat_read_inbox is only for recovery or batch inspection" in instructions
     assert "Natural-language @mentions inside chat_post_message are display-only" in instructions
-    assert "then call chat_mention" in instructions
+    assert "call chat_mention with" in instructions
+    assert "closes your current inbox item" in instructions
     assert "chat_emit_proposal" in instructions
     assert "collaboration:<run_id>" in instructions
     assert "Human approval remains required before dispatch" in instructions

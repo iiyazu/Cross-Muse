@@ -11,6 +11,7 @@ from xmuse_core.chat.collaboration_store import ChatCollaborationStore
 from xmuse_core.chat.inbox_store import ChatInboxStore
 from xmuse_core.chat.participant_store import ParticipantStore
 from xmuse_core.chat.store import ChatStore
+from xmuse_core.chat.stream_store import PeerTurnLatencyTraceStore
 
 
 def _write_json(path: Path, payload: object) -> None:
@@ -74,6 +75,10 @@ def test_mcp_lists_chat_tools(tmp_path: Path) -> None:
     assert "chat_raise_collaboration_blocker" in names
     assert "chat_resolve_collaboration_blocker" in names
     assert "chat_evaluate_dispatch_gate" in names
+    mention_tool = next(
+        tool for tool in response.json()["result"]["tools"] if tool["name"] == "chat_mention"
+    )
+    assert "reply_to_inbox_item_id" in mention_tool["inputSchema"]["properties"]
 
 
 def test_chat_create_conversation_uses_default_codex_participants(tmp_path: Path) -> None:
@@ -555,6 +560,137 @@ def test_chat_post_message_mentions_do_not_create_followup_inbox(tmp_path: Path)
     ) == []
 
 
+def test_peer_replies_enqueue_drain_callback_for_original_sender(tmp_path: Path) -> None:
+    _chat, conv, architect, architect_session = _registered_participant(tmp_path)
+    participants = ParticipantStore(tmp_path / "chat.db")
+    execute = participants.add(
+        conversation_id=conv.id,
+        role="execute",
+        display_name="Execute GOD",
+        cli_kind="codex",
+        model="gpt-5.4-mini",
+    )
+    review = participants.add(
+        conversation_id=conv.id,
+        role="review",
+        display_name="Review GOD",
+        cli_kind="opencode",
+        model="opencode-go/deepseek-v4-flash",
+    )
+    registry = GodSessionRegistry(tmp_path / "god_sessions.json")
+    execute_session = registry.create(
+        role="execute",
+        agent_name="Execute GOD",
+        runtime="codex",
+        session_address=f"xmuse://{conv.id}/{execute.participant_id}",
+        session_inbox_id=f"inbox-{execute.participant_id}",
+        conversation_id=conv.id,
+        participant_id=execute.participant_id,
+    )
+    review_session = registry.create(
+        role="review",
+        agent_name="Review GOD",
+        runtime="opencode",
+        session_address=f"xmuse://{conv.id}/{review.participant_id}",
+        session_inbox_id=f"inbox-{review.participant_id}",
+        conversation_id=conv.id,
+        participant_id=review.participant_id,
+    )
+    client = TestClient(create_app(tmp_path))
+
+    _mcp_call(
+        client,
+        "chat_mention",
+        {
+            "conversation_id": conv.id,
+            "participant_id": architect.participant_id,
+            "god_session_id": architect_session.god_session_id,
+            "client_request_id": "ask-execute",
+            "target_address": "@execute",
+            "content": "Implementation-risk note, one sentence.",
+        },
+    )
+    _mcp_call(
+        client,
+        "chat_mention",
+        {
+            "conversation_id": conv.id,
+            "participant_id": architect.participant_id,
+            "god_session_id": architect_session.god_session_id,
+            "client_request_id": "ask-review",
+            "target_address": "@review",
+            "content": "Proof-boundary critique, one sentence.",
+        },
+    )
+    inbox_store = ChatInboxStore(tmp_path / "chat.db")
+    execute_item = inbox_store.list_for_participant(
+        conversation_id=conv.id,
+        participant_id=execute.participant_id,
+    )[0]
+    review_item = inbox_store.list_for_participant(
+        conversation_id=conv.id,
+        participant_id=review.participant_id,
+    )[0]
+
+    _mcp_call(
+        client,
+        "chat_post_message",
+        {
+            "conversation_id": conv.id,
+            "participant_id": review.participant_id,
+            "god_session_id": review_session.god_session_id,
+            "client_request_id": "review-reply",
+            "content": "Proof boundary remains local runtime only.",
+            "reply_to_inbox_item_id": review_item.id,
+        },
+    )
+
+    architect_inbox = inbox_store.list_for_participant(
+        conversation_id=conv.id,
+        participant_id=architect.participant_id,
+    )
+    assert [
+        item for item in architect_inbox if item.item_type == "peer_reply_drain_callback"
+    ] == []
+
+    response = json.loads(
+        _mcp_call(
+            client,
+            "chat_post_message",
+            {
+                "conversation_id": conv.id,
+                "participant_id": execute.participant_id,
+                "god_session_id": execute_session.god_session_id,
+                "client_request_id": "execute-reply",
+                "content": "Implementation risk is stale summary gating.",
+                "reply_to_inbox_item_id": execute_item.id,
+            },
+        )
+    )
+
+    callback_items = [
+        item
+        for item in response["inbox_items"]
+        if item["item_type"] == "peer_reply_drain_callback"
+    ]
+    assert len(callback_items) == 1
+    callback = callback_items[0]
+    assert callback["target_participant_id"] == architect.participant_id
+    assert callback["target_role"] == "architect"
+    assert callback["payload"]["trigger_mode"] == "peer_reply_drain_callback"
+    assert callback["payload"]["pending_peer_inbox_count"] == 0
+
+    architect_callbacks = [
+        item
+        for item in inbox_store.list_for_participant(
+            conversation_id=conv.id,
+            participant_id=architect.participant_id,
+        )
+        if item.item_type == "peer_reply_drain_callback"
+    ]
+    assert len(architect_callbacks) == 1
+
+
 def test_chat_read_inbox_includes_claimed_items_for_verified_session(tmp_path: Path) -> None:
     chat, conv, participant, session = _registered_participant(tmp_path)
     source = chat.add_message(conv.id, "Human", "human", "hello @architect")
@@ -634,6 +770,57 @@ def test_chat_mention_surfaces_display_name_routing_and_inbox_delivery(
     }
     assert payload["inbox_items"][0]["conversation_id"] == conv.id
     assert payload["inbox_items"][0]["target_participant_id"] == target.participant_id
+
+
+def test_chat_mention_can_reply_to_current_inbox_item(tmp_path: Path) -> None:
+    chat, conv, sender, session = _registered_participant(tmp_path)
+    target = ParticipantStore(tmp_path / "chat.db").add(
+        conversation_id=conv.id,
+        role="execute",
+        display_name="Execute GOD",
+        cli_kind="codex",
+        model="gpt-5.5",
+    )
+    source = chat.add_message(conv.id, "Human", "human", "@architect hand off")
+    inbox_store = ChatInboxStore(tmp_path / "chat.db")
+    source_item = inbox_store.create_item(
+        conversation_id=conv.id,
+        target_participant_id=sender.participant_id,
+        target_role=sender.role,
+        target_address="@architect",
+        sender_participant_id=None,
+        sender_address="@human",
+        source_message_id=source.id,
+        item_type="mention",
+        payload={"content": source.content},
+    )
+    client = TestClient(create_app(tmp_path))
+
+    payload = json.loads(
+        _mcp_call(
+            client,
+            "chat_mention",
+            {
+                "conversation_id": conv.id,
+                "participant_id": sender.participant_id,
+                "god_session_id": session.god_session_id,
+                "client_request_id": "handoff-reply-1",
+                "target_address": "@execute",
+                "content": "Please inspect the implementation risk.",
+                "reply_to_inbox_item_id": source_item.id,
+            },
+        )
+    )
+
+    replied = inbox_store.get(source_item.id)
+    assert replied.status == "read"
+    assert replied.responded_message_id == payload["message"]["id"]
+    assert payload["inbox_items"][0]["target_participant_id"] == target.participant_id
+    stages = PeerTurnLatencyTraceStore(tmp_path / "chat.db").list_mcp_tool_stages(
+        conv.id,
+        source_item.id,
+    )
+    assert "chat_mention" in stages
 
 
 def test_chat_mention_resolves_participant_id_with_conversation_scope(
