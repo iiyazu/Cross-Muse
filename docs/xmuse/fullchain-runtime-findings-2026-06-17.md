@@ -4081,3 +4081,102 @@ Remaining caveats:
   question.
 - It does not claim GitHub review truth, live MemoryOS, natural peer-GOD
   groupchat completion, full closure, or live lane merge truth.
+
+## 2026-06-20 Loop 26t Finding: Configured Review Peer Fallback Must Fail Closed
+
+Status: local candidate repair with blocked fullchain non-regression attempt.
+
+Root boundary:
+
+```text
+authority=lane review metadata and review verdict authority
+producer=configured review peer delivery path
+consumer=review gate / final-action flow
+condition=a lane has a configured review peer and that peer is unavailable, returns the wrong request id, or returns no verdict
+failure_mode=the review gate must not substitute auto persistent or one-shot review authority and still accept the lane
+```
+
+Observed before the fix:
+
+- Preferred configured peer failures could record a degraded state and then
+  continue through `auto_persistent_fallback` or `one_shot_fallback`.
+- Those fallback paths could produce a merge verdict even though the configured
+  peer did not produce a valid review verdict.
+- Defaulted configured peer participant lookup failure could also reach
+  `awaiting_final_action` through auto persistent fallback.
+
+Candidate behavior:
+
+- Configured review peer failures now transition to `gate_failed`.
+- Delivery/no-verdict failures record
+  `failure_reason=review_peer_delivery_failed`,
+  `failure_layer=review`, and
+  `peer_delivery_mode=configured_peer_failed`.
+- Unavailable peers continue to use the existing
+  `required_review_peer_unavailable` failure reason so state-machine review
+  failure invariants remain intact.
+- The one-shot review spawner is not invoked after configured peer failure.
+- Auto persistent review is not invoked after configured peer failure.
+- Valid peer runtime metadata remains recorded only when the participant lookup
+  succeeds.
+
+Validation:
+
+```text
+uv run pytest tests/xmuse/test_review_plane_orchestrator_integration.py -q -k 'configured_review_peer_preferred_failure_fails_closed_before_auto_persistent or configured_review_peer_preferred_failure_fails_closed_before_one_shot or preferred_configured_review_peer_no_verdict_fails_closed'
+-> RED before implementation: 3 failed
+
+uv run pytest tests/xmuse/test_review_plane_orchestrator_integration.py -q
+-> 51 passed
+
+uv run pytest tests/xmuse/test_review_plane_orchestrator_integration.py tests/xmuse/test_persistent_review_session_contracts.py tests/xmuse/test_persistent_cli_peer.py tests/xmuse/test_package_boundaries.py -q
+-> 91 passed
+
+uv run ruff check .
+-> All checks passed.
+
+git diff --check
+-> passed
+
+test ! -e xmuse/__init__.py
+-> passed
+```
+
+Fullchain attempt:
+
+```text
+branch=codex/review-configured-peer-degradation
+base_main=24fc168672a90de8dd56d512269fee4e021dfeff
+run_root=/tmp/xmuse-postmerge-layered-prompt-main/.goal-runs/2026-06-20/loop-26t-configured-review-failclosed-fullchain-2150z
+conversation_id=conv_cb28b7f8e4234761be49e75139035967
+proposal_id=prop_7c58e0bb92094d60808ff640f4fcdd69
+resolution_id=res_d3cfaaa19fb34705b34d9ed8bb62ebcf
+lane_id=loop_26t_configured_review_failclosed_fullchain_2150z
+lane_status=exec_failed
+failure_reason=execution_infra_unavailable
+failure_layer=coordinator
+worker_provider_profile_ref=codex.default
+```
+
+Classification:
+
+- Loop 26t confirms the groupchat-to-proposal and approval path remained
+  reachable on the candidate branch.
+- It does not confirm execution, gate, or review non-regression because the
+  child Codex execution worker hit external `usage_limit` before producing an
+  execution artifact.
+- The sentinel script also did not treat `exec_failed` as a terminal lane
+  state and had to be interrupted after the blocker was classified; this is a
+  separate harness-efficiency gap.
+- Cleanup after manual termination left no Chat API or MCP listener for this
+  run.
+
+Remaining caveats:
+
+- This is local candidate proof only until PR CI and post-merge main evidence
+  exist.
+- The fullchain proof is blocked by external Codex execution-worker usage
+  limit, not completed.
+- It does not claim production readiness, GitHub review truth, live MemoryOS,
+  natural peer-GOD groupchat completion, full closure, or live lane merge
+  truth.
