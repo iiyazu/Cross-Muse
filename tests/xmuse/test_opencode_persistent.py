@@ -14,6 +14,8 @@ from xmuse_core.agents.opencode_persistent import (
     _parse_opencode_json_output,
     _parse_peer_chat_callback_action,
     _post_peer_chat_writeback,
+    _temporary_runtime_opencode_config,
+    _write_runtime_opencode_config,
 )
 from xmuse_core.agents.registry import AgentRuntime
 
@@ -45,6 +47,7 @@ def test_opencode_persistent_command_uses_canonical_run_form_and_session(tmp_pat
     assert command == [
         "opencode",
         "run",
+        "--pure",
         "--model",
         "opencode-go/deepseek-v4-flash",
         "--variant",
@@ -57,6 +60,74 @@ def test_opencode_persistent_command_uses_canonical_run_form_and_session(tmp_pat
         "ses_123",
         "reply only",
     ]
+
+
+def test_opencode_runtime_config_injects_xmuse_mcp_and_restores_worktree_config(
+    tmp_path,
+) -> None:
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    original_config = {
+        "$schema": "https://opencode.ai/config.json",
+        "agent": {"review": {"mode": "primary"}},
+        "provider": {"example": {"options": {}}},
+        "mcp": {
+            "other": {
+                "type": "remote",
+                "url": "http://127.0.0.1:9999/sse",
+            }
+        },
+    }
+    (worktree / "opencode.json").write_text(
+        json.dumps(original_config),
+        encoding="utf-8",
+    )
+    runtime_config_dir = tmp_path / "runtime-config"
+    config = RunnerConfig(
+        model="opencode-go/deepseek-v4-flash",
+        variant="max",
+        mcp_port=8117,
+        worktree=worktree,
+        role="review",
+        timeout_s=30,
+        opencode_binary="opencode",
+    )
+
+    run_cwd = _write_runtime_opencode_config(config, config_dir=runtime_config_dir)
+
+    assert run_cwd == runtime_config_dir
+    assert json.loads((worktree / "opencode.json").read_text(encoding="utf-8")) == (
+        original_config
+    )
+    runtime_config = json.loads(
+        (runtime_config_dir / "opencode.json").read_text(encoding="utf-8")
+    )
+    assert "agent" not in runtime_config
+    assert runtime_config["permission"] == "allow"
+    assert runtime_config["provider"] == {"example": {"options": {}}}
+    assert runtime_config["mcp"]["other"] == {
+        "type": "remote",
+        "url": "http://127.0.0.1:9999/sse",
+    }
+    assert runtime_config["mcp"]["xmuse-platform"] == {
+        "type": "remote",
+        "url": "http://127.0.0.1:8117/sse",
+    }
+
+    with _temporary_runtime_opencode_config(config) as run_cwd:
+        assert run_cwd == worktree
+        active_config = json.loads(
+            (worktree / "opencode.json").read_text(encoding="utf-8")
+        )
+        assert active_config["permission"] == "allow"
+        assert active_config["mcp"]["xmuse-platform"] == {
+            "type": "remote",
+            "url": "http://127.0.0.1:8117/sse",
+        }
+
+    assert json.loads((worktree / "opencode.json").read_text(encoding="utf-8")) == (
+        original_config
+    )
 
 
 def test_parse_opencode_json_output_collects_text_and_session() -> None:

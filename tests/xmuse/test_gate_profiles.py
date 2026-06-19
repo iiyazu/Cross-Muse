@@ -392,6 +392,32 @@ async def test_gate_runner_executes_commands_and_writes_artifacts(tmp_path, monk
 
 
 @pytest.mark.asyncio
+async def test_gate_runner_does_not_leak_platform_xmuse_root(
+    tmp_path, monkeypatch
+):
+    calls: list[tuple[tuple[str, ...], dict]] = []
+
+    async def fake_exec(*args, **kwargs):
+        calls.append((args, kwargs))
+        return FakeProcess(stdout="ok", returncode=0)
+
+    monkeypatch.setenv("XMUSE_ROOT", "/tmp/platform-runtime-root")
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    config = _loaded_config(tmp_path)
+    plan = GateProfileResolver(config).resolve(
+        feature_id="lane-a",
+        worktree=tmp_path,
+        explicit_profiles=["xmuse-core"],
+        changed_paths=["src/xmuse_core/platform/execution/gate.py"],
+    )
+
+    report = await GateRunner(repo_root=tmp_path).run(plan)
+
+    assert report.passed is True
+    assert "XMUSE_ROOT" not in calls[0][1]["env"]
+
+
+@pytest.mark.asyncio
 async def test_gate_runner_marks_blocking_failure(tmp_path, monkeypatch):
     async def fake_exec(*args, **kwargs):
         return FakeProcess(stderr="boom", returncode=2)
