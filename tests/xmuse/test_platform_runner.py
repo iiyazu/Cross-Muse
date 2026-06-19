@@ -564,6 +564,7 @@ async def test_runner_enables_peer_chat_with_default_codex_launcher(
     assert captured["scheduler_kwargs"]["god_layer"] is not None
     assert captured["scheduler_kwargs"]["degraded_fallback_enabled"] is False
     assert captured["scheduler_kwargs"]["response_wait_s"] >= 180
+    assert captured["scheduler_kwargs"]["post_writeback_grace_s"] == 8.0
     assert captured["scheduler_kwargs"]["claim_ttl_s"] >= (
         captured["scheduler_kwargs"]["response_wait_s"]
     )
@@ -574,6 +575,54 @@ async def test_runner_enables_peer_chat_with_default_codex_launcher(
         captured["orchestrator_kwargs"]["review_god_session_layer"]
         is captured["scheduler_kwargs"]["god_layer"]
     )
+
+
+@pytest.mark.asyncio
+async def test_runner_wires_peer_chat_writeback_grace_override(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeOrchestrator:
+        def __init__(self, **kwargs) -> None:
+            self._sm = _FakeStateMachine()
+
+        async def reconcile_status_changes(self) -> None:
+            return None
+
+        async def dispatch_lane(self, lane_id: str) -> None:
+            return None
+
+    class FakePeerScheduler:
+        def __init__(self, **kwargs) -> None:
+            captured["scheduler_kwargs"] = kwargs
+
+        async def tick_once(self) -> None:
+            return None
+
+    import xmuse_core.chat.peer_scheduler as peer_scheduler_module
+
+    monkeypatch.setenv("XMUSE_PEER_GOD_BACKEND", "native")
+    monkeypatch.setattr(platform_runner, "PlatformOrchestrator", FakeOrchestrator)
+    monkeypatch.setattr(peer_scheduler_module, "PeerChatScheduler", FakePeerScheduler)
+    monkeypatch.setattr(
+        platform_runner,
+        "_peer_chat_runtime_worktree",
+        _empty_peer_chat_worktree,
+    )
+
+    await platform_runner.run(
+        lanes_path=tmp_path / "feature_lanes.json",
+        xmuse_root=tmp_path / "xmuse",
+        mcp_port=8100,
+        max_hours=0,
+        max_concurrent=1,
+        peer_chat_enabled=True,
+        peer_chat_post_writeback_grace_s=20.0,
+    )
+
+    assert captured["scheduler_kwargs"]["post_writeback_grace_s"] == 20.0
 
 
 @pytest.mark.asyncio
@@ -1444,6 +1493,34 @@ def test_platform_runner_rejects_peer_chat_with_chat_driver() -> None:
 def test_platform_runner_rejects_default_review_peer_without_persistent_review() -> None:
     parser = platform_runner.main_arg_parser()
     args = parser.parse_args(["--default-review-peer-routing"])
+
+    with pytest.raises(SystemExit):
+        platform_runner.validate_args(args)
+
+
+def test_platform_runner_defaults_peer_chat_writeback_grace() -> None:
+    args = platform_runner.main_arg_parser().parse_args([])
+
+    platform_runner.validate_args(args)
+    assert args.peer_chat_post_writeback_grace_s == 8.0
+
+
+def test_platform_runner_supports_peer_chat_writeback_grace_override() -> None:
+    args = platform_runner.main_arg_parser().parse_args(
+        ["--peer-chat", "--peer-chat-post-writeback-grace-s", "20"]
+    )
+
+    platform_runner.validate_args(args)
+    assert args.peer_chat_post_writeback_grace_s == 20.0
+
+
+@pytest.mark.parametrize("grace", ["-1", "nan", "inf"])
+def test_platform_runner_rejects_invalid_peer_chat_writeback_grace(
+    grace: str,
+) -> None:
+    args = platform_runner.main_arg_parser().parse_args(
+        ["--peer-chat-post-writeback-grace-s", grace]
+    )
 
     with pytest.raises(SystemExit):
         platform_runner.validate_args(args)
