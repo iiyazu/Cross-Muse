@@ -3,6 +3,8 @@ from pathlib import Path
 import pytest
 
 from xmuse_core.agents.god_session_registry import GodSessionRegistry
+from xmuse_core.chat.collaboration_store import ChatCollaborationStore
+from xmuse_core.chat.inbox_store import ChatInboxStore
 from xmuse_core.chat.participant_store import ParticipantStore
 from xmuse_core.chat.peer_service import PeerChatError, PeerChatService
 from xmuse_core.chat.store import ChatStore
@@ -45,6 +47,142 @@ def test_human_post_resolves_mention_and_creates_inbox(tmp_path: Path) -> None:
     assert result.message.mentions == ["@architect"]
     assert len(result.inbox_items) == 1
     assert result.inbox_items[0].target_participant_id == architect.participant_id
+
+
+def test_human_post_treats_leading_mentions_as_routing_header(
+    tmp_path: Path,
+) -> None:
+    db, conv, architect, _review = _conversation(tmp_path)
+    ParticipantStore(db).add(
+        conversation_id=conv.id,
+        role="execute",
+        display_name="Execute GOD",
+        cli_kind="codex",
+        model="gpt-5.5",
+    )
+    service = PeerChatService(db)
+
+    result = service.post_human_message(
+        conversation_id=conv.id,
+        author="Human operator",
+        content=(
+            "@architect please coordinate this. The requirement text must "
+            "discuss @execute and @review as role examples, but only the "
+            "architect should receive the initial turn."
+        ),
+        client_request_id="req-human-leading-router",
+    )
+
+    assert result.message.mentions == ["@architect"]
+    assert [item.target_role for item in result.inbox_items] == ["architect"]
+    assert result.inbox_items[0].target_participant_id == architect.participant_id
+
+
+def test_human_post_allows_multiple_leading_route_mentions(tmp_path: Path) -> None:
+    db, conv, architect, review = _conversation(tmp_path)
+    service = PeerChatService(db)
+
+    result = service.post_human_message(
+        conversation_id=conv.id,
+        author="Human operator",
+        content="@architect @review compare the safe path.",
+        client_request_id="req-human-leading-multi-router",
+    )
+
+    assert result.message.mentions == ["@architect", "@review"]
+    assert [item.target_participant_id for item in result.inbox_items] == [
+        architect.participant_id,
+        review.participant_id,
+    ]
+
+
+def test_emit_proposal_rejects_not_ready_collaboration_reference(
+    tmp_path: Path,
+) -> None:
+    db, conv, architect, _review = _conversation(tmp_path)
+    run = ChatCollaborationStore(db).create_request(
+        conversation_id=conv.id,
+        goal="Check execution readiness",
+        initiator="architect",
+        targets=["execute"],
+        callback_target="architect",
+        question="Can this lane run?",
+        context_refs=[],
+        idempotency_key="not-ready-proposal",
+        timeout_s=480,
+    )
+    service = PeerChatService(db)
+
+    with pytest.raises(PeerChatError) as error:
+        service.emit_proposal_without_session_for_test(
+            conversation_id=conv.id,
+            participant_id=architect.participant_id,
+            client_request_id="early-proposal",
+            summary="Too early lane",
+            lanes=[
+                {
+                    "feature_id": "early-lane",
+                    "prompt": "Run after collaboration response.",
+                    "depends_on": [],
+                    "capabilities": ["test"],
+                }
+            ],
+            references=[f"collaboration:{run.run_id}"],
+        )
+
+    assert error.value.code == "collaboration_run_not_ready"
+    assert ChatStore(db).list_proposals(conv.id) == []
+    assert ChatInboxStore(db).list_by_conversation(conv.id, include_terminal=True) == []
+
+
+def test_emit_proposal_accepts_done_collaboration_reference(tmp_path: Path) -> None:
+    db, conv, architect, _review = _conversation(tmp_path)
+    collaboration = ChatCollaborationStore(db)
+    run = collaboration.create_request(
+        conversation_id=conv.id,
+        goal="Check execution readiness",
+        initiator="architect",
+        targets=["execute"],
+        callback_target="architect",
+        question="Can this lane run?",
+        context_refs=[],
+        idempotency_key="done-proposal",
+        timeout_s=480,
+    )
+    updated = collaboration.record_response(
+        run.run_id,
+        target="execute",
+        content='{"type":"execute_feasibility_verdict","status":"executable"}',
+        response_status="received",
+    )
+    assert updated.status.value == "done"
+    service = PeerChatService(db)
+
+    result = service.emit_proposal_without_session_for_test(
+        conversation_id=conv.id,
+        participant_id=architect.participant_id,
+        client_request_id="ready-proposal",
+        summary="Ready lane",
+        lanes=[
+            {
+                "feature_id": "ready-lane",
+                "prompt": "Run after collaboration response.",
+                "depends_on": [],
+                "capabilities": ["test"],
+            }
+        ],
+        references=[f"collaboration:{run.run_id}"],
+    )
+
+    assert result["proposal"]["references"] == [f"collaboration:{run.run_id}"]
+    assert len(ChatStore(db).list_proposals(conv.id)) == 1
+    assert [
+        item.item_type
+        for item in ChatInboxStore(db).list_by_conversation(
+            conv.id,
+            include_terminal=True,
+        )
+    ] == ["review_trigger"]
 
 
 def test_ambiguous_mention_fails_without_creating_inbox(tmp_path: Path) -> None:

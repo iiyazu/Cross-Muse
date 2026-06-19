@@ -67,6 +67,36 @@ def extract_mentions(content: str) -> list[str]:
     return mentions
 
 
+def extract_leading_mentions(content: str) -> list[str]:
+    seen: set[str] = set()
+    mentions: list[str] = []
+    index = 0
+    length = len(content)
+    while index < length and content[index].isspace():
+        index += 1
+    while index < length:
+        if content[index] != "@" or not _looks_like_mention_start(content, index):
+            break
+        if _is_escaped(content, index):
+            break
+        match = MENTION_RE.match(content, index)
+        if match is None:
+            break
+        raw = match.group(0).strip()
+        normalized = normalize_address(raw)
+        if normalized not in seen:
+            seen.add(normalized)
+            mentions.append(raw)
+        index = match.end()
+        while index < length and content[index].isspace():
+            index += 1
+        if index < length and content[index] in {",", ";"}:
+            index += 1
+            while index < length and content[index].isspace():
+                index += 1
+    return mentions
+
+
 def has_inactive_mention_candidates(content: str) -> bool:
     return any(not candidate.active for candidate in _iter_mention_candidates(content))
 

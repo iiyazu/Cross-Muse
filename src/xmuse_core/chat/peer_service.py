@@ -34,6 +34,7 @@ from xmuse_core.chat.mentions import (
     MentionResolutionError,
     MentionResolver,
     default_intake_address,
+    extract_leading_mentions,
     extract_mentions,
     has_inactive_mention_candidates,
     normalize_address,
@@ -1223,6 +1224,21 @@ class PeerChatService:
             raise PeerChatError("unknown_collaboration_run", run_id)
         return run
 
+    def _require_ready_collaboration_references(
+        self,
+        *,
+        conversation_id: str,
+        references: list[str],
+    ) -> None:
+        store = self._collaboration_store()
+        for run_id in _collaboration_reference_run_ids(references):
+            run = self._collaboration_run_for_conversation(store, run_id, conversation_id)
+            if run.status is not CollaborationStatus.DONE:
+                raise PeerChatError(
+                    "collaboration_run_not_ready",
+                    f"{run.run_id}:{run.status.value}",
+                )
+
     def _conversation_exists(self, conversation_id: str) -> bool:
         return any(
             conversation.id == conversation_id
@@ -1456,9 +1472,9 @@ class PeerChatService:
             return PeerMessageResult.from_json(logged)
 
         has_inactive_mentions = has_inactive_mention_candidates(content)
+        routed_raw_mentions = self._human_routing_mentions(content)
         has_all_mention = any(
-            normalize_address(raw) == "@all"
-            for raw in extract_mentions(content)
+            normalize_address(raw) == "@all" for raw in routed_raw_mentions
         )
         if has_all_mention:
             mention_values = ["@all"]
@@ -1467,7 +1483,11 @@ class PeerChatService:
                 content=content,
             )
         else:
-            mentions = self._resolve_mentions(conversation_id, content)
+            mentions = self._resolve_human_mentions(
+                conversation_id,
+                content,
+                raw_mentions=routed_raw_mentions,
+            )
             mention_values = [mention.normalized for mention in mentions]
             inbox_items = self._build_human_inbox_items(
                 conversation_id=conversation_id,
@@ -1498,6 +1518,39 @@ class PeerChatService:
             resolved = resolver.resolve_content(conversation_id, content)
         except MentionResolutionError as exc:
             raise PeerChatError(exc.code, exc.target) from exc
+        return resolved
+
+    def _human_routing_mentions(self, content: str) -> list[str]:
+        leading_mentions = extract_leading_mentions(content)
+        return leading_mentions or extract_mentions(content)
+
+    def _resolve_human_mentions(
+        self,
+        conversation_id: str,
+        content: str,
+        *,
+        raw_mentions: list[str] | None = None,
+    ):
+        raw_mentions = (
+            self._human_routing_mentions(content)
+            if raw_mentions is None
+            else raw_mentions
+        )
+        return self._resolve_raw_mentions(conversation_id, raw_mentions)
+
+    def _resolve_raw_mentions(self, conversation_id: str, raw_mentions: list[str]):
+        resolver = MentionResolver(self._participants)
+        resolved = []
+        seen: set[str] = set()
+        for raw in raw_mentions:
+            try:
+                mention = resolver.resolve(conversation_id, raw)
+            except MentionResolutionError as exc:
+                raise PeerChatError(exc.code, exc.target) from exc
+            if mention.normalized in seen:
+                continue
+            seen.add(mention.normalized)
+            resolved.append(mention)
         return resolved
 
     def _build_human_inbox_items(
@@ -2162,6 +2215,11 @@ class PeerChatService:
             participant_id=participant_id,
             god_session_id=god_session_id,
         )
+        proposal_references = references or []
+        self._require_ready_collaboration_references(
+            conversation_id=conversation_id,
+            references=proposal_references,
+        )
         payload = self._proposal_emitter().emit_lane_graph_proposal(
             conversation_id=conversation_id,
             participant_id=participant_id,
@@ -2169,7 +2227,7 @@ class PeerChatService:
             client_request_id=client_request_id,
             summary=summary,
             lanes=lanes,
-            references=references or [],
+            references=proposal_references,
             resolution_content=resolution_content,
         )
         resolved_reply_to_inbox_item_id = (
@@ -2206,6 +2264,11 @@ class PeerChatService:
         references: list[str] | None = None,
         resolution_content: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        proposal_references = references or []
+        self._require_ready_collaboration_references(
+            conversation_id=conversation_id,
+            references=proposal_references,
+        )
         payload = self._proposal_emitter().emit_lane_graph_proposal(
             conversation_id=conversation_id,
             participant_id=participant_id,
@@ -2213,7 +2276,7 @@ class PeerChatService:
             client_request_id=client_request_id,
             summary=summary,
             lanes=lanes,
-            references=references or [],
+            references=proposal_references,
             resolution_content=resolution_content,
         )
         self._ensure_review_trigger(
@@ -2445,6 +2508,23 @@ def _collaboration_response_target(role: str, targets: list[str]) -> str | None:
     if address in targets:
         return address
     return None
+
+
+def _collaboration_reference_run_ids(references: list[str]) -> list[str]:
+    run_ids: list[str] = []
+    seen: set[str] = set()
+    for reference in references:
+        if not isinstance(reference, str):
+            continue
+        prefix, separator, raw_run_id = reference.strip().partition(":")
+        if separator != ":" or prefix != "collaboration":
+            continue
+        run_id = raw_run_id.strip()
+        if not run_id or run_id in seen:
+            continue
+        seen.add(run_id)
+        run_ids.append(run_id)
+    return run_ids
 
 
 def _review_trigger_content(
