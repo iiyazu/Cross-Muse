@@ -7,17 +7,22 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
 
 ## Current Proof Boundary
 
-- Latest main inspected: `ff6a5fd9f61b86d5c1989fd6f613bcf5e6906009`.
-- Strongest code-change lane runtime evidence: Loop 25z64 reached one real
-  local code-change lane from durable groupchat through execute feasibility,
-  proposal, runtime-driver approval, isolated execution, xmuse-core gate,
-  review verdict, and final-action hold under `--no-auto-merge`. The lane
-  recorded `review_runtime=opencode`, `review_runtime_requested=opencode`,
-  `review_peer_id=part_8f729098cd8a45e5a09094f495d1b604`,
-  `gate_passed=true`, `review_decision=merge`, and
-  `status=awaiting_final_action`. The final lane did not include
-  `review_delivery_mode=persistent` or `persistent_review_degraded=false`, so
-  this does not replace Loop 25z49 as persistent OpenCode delivery proof.
+- Latest main inspected: `7468a5ab8797cf0a34528de419ceaf730034e75e`.
+- Strongest code-change lane runtime evidence: Loop 25z69 ran after PR #93's
+  default-review fix from current main, drove one real local code-change lane
+  from durable groupchat through execute feasibility, proposal, runtime-driver
+  approval, isolated execution, xmuse-core gate, persistent OpenCode review,
+  and final-action hold under `--no-auto-merge`. The proposal intentionally
+  omitted `review_runtime`; the lane recorded `proposal_has_review_runtime=false`,
+  `review_peer_defaulted=true`,
+  `review_peer_participant.cli_kind=opencode`,
+  `review_peer_participant.model=opencode-go/deepseek-v4-flash`,
+  `peer_delivery_mode=configured_peer`, `review_delivery_mode=persistent`,
+  `persistent_review_degraded=false`, `gate_passed=true`,
+  `review_decision=merge`, and `status=awaiting_final_action`. Loop 25z69
+  produced a small candidate diff for review-peer runtime metadata; that
+  candidate is local runtime evidence only until landed by a small PR with
+  GitHub server facts.
 - Latest peer-chat stability evidence: Loop 25z66 verified two independent
   parallel runtime shards from current main, each with its own `XMUSE_ROOT`,
   execution worktree, Chat API port, and MCP port. Across six total
@@ -29,29 +34,27 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   `no_proposals_or_resolutions=true`, `no_open_or_failed_inbox=true`,
   `no_failed_or_timeout_traces=true`, `total_failed_traces=0`, and
   `total_timeout_after_writeback_traces=0`.
-- Latest default review authority evidence: Loop 25z67 showed current main did
-  not default to a registered OpenCode review participant when the proposal
-  omitted `review_runtime`; it reached final-action hold through Codex
-  one-shot fallback with `persistent_review_degraded_reason=missing_feature_identity`.
-  Candidate branch `codex/default-review-opencode-peer-routing` then reran the
-  same shape in Loop 25z68 and reached `awaiting_final_action` with
-  `classification=defaulted_opencode_review_peer`,
-  `proposal_has_review_runtime=false`, `review_peer_defaulted=true`,
-  `review_peer_participant.cli_kind=opencode`,
-  `peer_delivery_mode=configured_peer`, `review_delivery_mode=persistent`, and
-  `persistent_review_degraded=false`. This is local runtime evidence for an
-  unmerged candidate, not GitHub CI/server truth.
+- Latest default review authority evidence: PR #93 merged the small fix that
+  reuses a unique active OpenCode review participant when the proposal omits
+  `review_runtime`. GitHub server state reports PR #93 merged as
+  `7468a5ab8797cf0a34528de419ceaf730034e75e` after successful PR checks on
+  head `bc2be0e6e42a208d0e45a1a1d023723b4bfce194`, and post-merge main CI
+  passed on `7468a5ab8797cf0a34528de419ceaf730034e75e`. Loop 25z69 then
+  reran a real code-change lane from that main and confirmed defaulted
+  persistent OpenCode review locally. This is still bounded local runtime proof
+  plus inspected GitHub server facts for the small PR, not GitHub review truth
+  or production readiness.
 - Latest review-state repeat evidence: Loop 25z65 reran a docs-only lane from
   current `origin/main` at `a8cceabb51022ddf802da276df1e4c37419b65b5` and
   reached `awaiting_final_action` with `review_delivery_mode=persistent`,
   `persistent_review_degraded=false`, `review_decision=merge`, and no
   runtime-artifact match for the Loop 25z64 invalid transition noise. This is a
   bounded local repeat, not code-change soak or production readiness.
-- Strongest server facts: PR #91 was merged by GitHub server state as
-  `ff6a5fd9f61b86d5c1989fd6f613bcf5e6906009` after successful `xmuse CI` on PR
-  head `a11c0744b20989500eee00a578e147ec8682d9ae` in run `27820350354`;
+- Strongest server facts: PR #93 was merged by GitHub server state as
+  `7468a5ab8797cf0a34528de419ceaf730034e75e` after successful `xmuse CI` on PR
+  head `bc2be0e6e42a208d0e45a1a1d023723b4bfce194` in run `27822614876`;
   post-merge main `xmuse CI` also passed on
-  `ff6a5fd9f61b86d5c1989fd6f613bcf5e6906009` in run `27820486694`.
+  `7468a5ab8797cf0a34528de419ceaf730034e75e` in run `27822667038`.
 - Proof type: local runtime proof plus inspected GitHub server facts for small
   PRs. This is not GitHub review truth or production readiness.
 
@@ -115,14 +118,20 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
 - PR #91 `codex/post-pr90-evidence-sync`: synced post-PR90 runtime evidence
   and gap ledger updates. Merged to main as
   `ff6a5fd9f61b86d5c1989fd6f613bcf5e6906009`.
+- PR #92 `codex/post-pr91-parallel-stability-evidence`: recorded the
+  post-PR91 two-shard parallel stability evidence. Merged to main as
+  `9f19d84aeeb52043517a40e0c29f72edda2366a6`.
+- PR #93 `codex/default-review-opencode-peer-routing`: defaulted review
+  routing to a unique active OpenCode review peer when the proposal omitted
+  `review_runtime`. Merged to main as
+  `7468a5ab8797cf0a34528de419ceaf730034e75e`.
 
 ## Manual Gaps
 
-- Default review peer selection is locally mitigated on candidate branch
-  `codex/default-review-opencode-peer-routing` for the case where the
-  conversation already has exactly one active OpenCode review participant.
-  This remains unmerged until its small PR has passing server facts and is
-  merged.
+- Default review peer selection for the case where the conversation already
+  has exactly one active OpenCode review participant is now present on main
+  through PR #93. Ambiguous, missing, or inactive review participants remain
+  bounded behavior and must not be reported as general review authority proof.
 - Groupchat-produced `review_runtime` aliases such as `human_final_hold`,
   `final_hold`, and `review-god` are addressed by PR #81. Explicit provider
   casing such as `OpenCode` is addressed by PR #82.
@@ -184,9 +193,10 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
 
 ## Next Small Buckets
 
-- P0 default review authority: land the small candidate that reuses a unique
-  registered OpenCode review peer for default review routing, with Loop
-  25z67/25z68 as bounded local runtime evidence.
+- P0 review peer observability: land the small candidate from Loop 25z69 that
+  persists review peer runtime metadata (`review_peer_cli_kind`,
+  `review_peer_model`) and exposes it in health summaries without treating it
+  as delivery truth.
 - P1 explicit dependency coordination: add a durable coordination primitive for
   waiting on named peer replies before summaries/handoffs when direct drain is
   insufficient.

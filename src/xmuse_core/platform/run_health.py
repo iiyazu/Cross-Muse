@@ -285,6 +285,7 @@ def summarize_peer_delivery_visibility(lanes: list[dict[str, Any]]) -> dict[str,
                         lane.get("peer_degraded_reason")
                     ),
                 }
+                | _review_peer_runtime_item(lane)
             )
         if _is_degraded_or_fallback_lane(lane, peer_delivery_mode):
             degraded_or_fallback_lanes.append(
@@ -807,6 +808,13 @@ def _configured_peer_item(
         "peer_request_id": _optional_text(lane.get("peer_request_id")),
         "peer_degraded_reason": _optional_text(lane.get("peer_degraded_reason")),
         "review_peer_defaulted": lane.get("review_peer_defaulted") is True,
+    } | _review_peer_runtime_item(lane)
+
+
+def _review_peer_runtime_item(lane: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "review_peer_cli_kind": _optional_text(lane.get("review_peer_cli_kind")),
+        "review_peer_model": _optional_text(lane.get("review_peer_model")),
     }
 
 

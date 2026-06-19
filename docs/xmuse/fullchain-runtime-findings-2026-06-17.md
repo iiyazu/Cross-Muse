@@ -2828,3 +2828,63 @@ Remaining gap:
   and not full L8-L10 or full L1-L11 closure.
 - Ambiguous or missing OpenCode review participants still fail closed to the
   previous default/fallback behavior.
+
+### F100. Review peer runtime identity was not projected in lane health
+
+Severity: observability gap, local candidate fix.
+
+Loop 25z69 reran a real code-change lane from main after PR #93's default
+OpenCode review routing merge:
+
+```text
+control_head=7468a5ab8797cf0a34528de419ceaf730034e75e
+runtime_root=/tmp/xmuse-main-after-pr86-155349/.goal-runs/2026-06-19/loop-25z69-code-change-after-pr93-192536
+classification=code_change_defaulted_opencode_review_peer
+proposal_has_review_runtime=false
+status=awaiting_final_action
+review_peer_defaulted=true
+review_peer_id=part_19d36e5e2f644175865795a6823ec22c
+review_peer_participant.cli_kind=opencode
+review_peer_participant.model=opencode-go/deepseek-v4-flash
+peer_delivery_mode=configured_peer
+review_delivery_mode=persistent
+persistent_review_degraded=false
+review_decision=merge
+```
+
+The durable participant and session stores proved which peer handled review,
+but the lane/read-model projection did not persist the review peer runtime
+identity as first-class lane metadata.
+
+Candidate fix:
+
+- Persist `review_peer_cli_kind` and `review_peer_model` on the lane after the
+  configured/default review participant is resolved.
+- Expose those fields in `run_health` configured-peer and default-review-peer
+  summaries.
+- Preserve `peer_delivery_mode` as the delivery truth. Runtime identity fields
+  are observability metadata; they are not review truth or merge truth.
+
+Focused validation:
+
+```text
+uv run pytest -q tests/xmuse/test_review_plane_orchestrator_integration.py::test_default_review_peer_routing_reuses_registered_opencode_review_peer tests/xmuse/test_review_plane_orchestrator_integration.py::test_configured_review_peer_preferred_success_records_peer_metadata tests/xmuse/test_run_health.py::test_summarize_run_health_exposes_peer_delivery_degraded_visibility tests/xmuse/test_platform_runner.py::test_health_once_exposes_peer_delivery_visibility_read_only
+-> 4 passed
+
+uv run pytest -q tests/xmuse/test_review_plane_orchestrator_integration.py -k 'review_peer'
+-> 20 passed, 29 deselected
+
+uv run ruff check src/xmuse_core/platform/execution/review_god.py src/xmuse_core/platform/run_health.py tests/xmuse/test_review_plane_orchestrator_integration.py tests/xmuse/test_run_health.py tests/xmuse/test_platform_runner.py
+-> All checks passed
+
+git diff --check
+-> no output
+```
+
+Remaining gap:
+
+- This is a small local candidate produced from one bounded real code-change
+  run. It is not GitHub CI/server truth until pushed as a small PR and checked
+  by GitHub Actions.
+- It does not claim GitHub review truth, production readiness, live MemoryOS,
+  overnight readiness, full L8-L10 closure, or full L1-L11 closure.
