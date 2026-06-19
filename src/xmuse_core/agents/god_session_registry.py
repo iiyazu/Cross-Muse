@@ -34,6 +34,10 @@ class GodSessionRecord:
     provider_session_kind: str | None = None
     provider_binding_status: str | None = None
     provider_binding_failure_reason: str | None = None
+    prompt_contract_version: str | None = None
+    prompt_layer_order: list[str] | None = None
+    prompt_layer_hashes: dict[str, str] | None = None
+    prompt_artifact_fingerprint: str | None = None
 
 
 class GodSessionRegistry:
@@ -200,6 +204,31 @@ class GodSessionRegistry:
                         provider_session_kind=provider_session_kind,
                         provider_binding_status=provider_binding_status,
                         provider_binding_failure_reason=provider_binding_failure_reason,
+                    )
+                    sessions[index] = updated
+                    self._write(sessions)
+                    return updated
+            raise KeyError(god_session_id)
+
+    def update_prompt_contract(
+        self,
+        god_session_id: str,
+        *,
+        prompt_contract_version: str | None,
+        prompt_layer_order: list[str] | None,
+        prompt_layer_hashes: dict[str, str] | None,
+        prompt_artifact_fingerprint: str | None,
+    ) -> GodSessionRecord:
+        with self._locked_file():
+            sessions = self.list()
+            for index, record in enumerate(sessions):
+                if record.god_session_id == god_session_id:
+                    updated = replace(
+                        record,
+                        prompt_contract_version=prompt_contract_version,
+                        prompt_layer_order=prompt_layer_order,
+                        prompt_layer_hashes=prompt_layer_hashes,
+                        prompt_artifact_fingerprint=prompt_artifact_fingerprint,
                     )
                     sessions[index] = updated
                     self._write(sessions)
