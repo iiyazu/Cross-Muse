@@ -3436,3 +3436,70 @@ Next boundary candidate:
   either persist the review peer prompt contract like Codex peer turns, or
   explicitly classify persistent review as a separate contract with its own
   authority fields.
+
+## 2026-06-20 Loop 26d Finding: Persistent Review Prompt Contract Is Durable
+
+Status: bounded runtime repair evidence, not a production-readiness claim.
+
+Observed chain:
+
+```text
+human message
+-> Codex architect MCP writeback
+-> Codex execute feasibility writeback
+-> collaboration done callback
+-> architect chat_emit_proposal
+-> accepted proposal/resolution
+-> dispatch bridge handoff
+-> isolated execution worktree
+-> gate pass
+-> configured OpenCode persistent review verdict=merge
+-> final-action hold
+```
+
+Primary artifacts:
+
+```text
+run_root=/tmp/xmuse-postmerge-layered-prompt-main/.goal-runs/2026-06-20/loop-26d-review-prompt-contract-012856
+driver_output=driver_output.json
+prompt_contract_summary=post_run_prompt_contracts.json
+chat_authority=chat.db
+lane_projection=feature_lanes.json#lane=loop26d_review_prompt_contract
+review_authority=review_plane.json#task=rtask_80589352f75c43a3b482b377357a617a
+gate_report=logs/gates/loop26d_review_prompt_contract/report.json
+execution_worktree=/tmp/loop-26d-review-prompt-contract-exec-012856
+```
+
+Confirmed:
+
+- The configured OpenCode review participant was selected as the persistent
+  review peer with `review_delivery_mode=persistent` and
+  `persistent_review_degraded=false`.
+- `god_sessions.json` recorded the review session with
+  `prompt_contract_version=xmuse-persistent-review-session-prompt-v1`,
+  `prompt_layer_order=["persistent_review_session_identity"]`, and a prompt
+  fingerprint.
+- The review prompt contract is intentionally separate from the Codex
+  peer-chat contract `xmuse-peer-chat-prompt-v2`.
+- The lane executed in an isolated worktree and changed only
+  `docs/xmuse/post-pr94-review-peer-health-note.md`.
+- The gate report passed `uv run pytest -q tests/xmuse/test_package_boundaries.py`.
+- The lane stopped at `awaiting_final_action` with
+  `final_action_hold_id=final-e55c4317b605`.
+- Shutdown cleanup left no listeners on ports 8122/8222 and no loop-26d
+  service processes.
+
+Boundary result:
+
+- The Loop 26c2 observability gap is repaired for this bounded configured
+  OpenCode persistent review path.
+- This does not convert persistent review delivery into natural peer-chat
+  truth; it records a separate review-session prompt authority.
+
+Remaining caveats:
+
+- This is one bounded docs-only sentinel and not repeated stability proof.
+- The final action was intentionally held; no lane merge or GitHub server
+  action is claimed.
+- Dynamic member mutation, restart/resume continuity, MemoryOS, production
+  readiness, GitHub review truth, and full closure remain unproven.

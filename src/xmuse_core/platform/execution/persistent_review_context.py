@@ -9,6 +9,9 @@ from xmuse_core.platform.agent_spawner import GodConfig
 from xmuse_core.platform.feature_context import build_feature_context_bundle
 from xmuse_core.platform.lane_context import build_lane_context_bundle
 
+PERSISTENT_REVIEW_PROMPT_CONTRACT_VERSION = "xmuse-persistent-review-session-prompt-v1"
+PERSISTENT_REVIEW_PROMPT_LAYER = "persistent_review_session_identity"
+
 
 def review_participant_id(lane_id: str) -> str:
     return f"review-god-{safe_session_fragment(lane_id)}"
@@ -24,6 +27,16 @@ def persistent_review_worktree(xmuse_root: Path) -> Path:
 
 def persistent_peer_prompt_fingerprint(god: GodConfig, *, role: str) -> str:
     return fingerprint_prompt(persistent_peer_session_prompt(god, role=role))
+
+
+def persistent_review_session_prompt_contract(session_prompt: str) -> dict[str, object]:
+    fingerprint = fingerprint_prompt(session_prompt)
+    return {
+        "prompt_contract_version": PERSISTENT_REVIEW_PROMPT_CONTRACT_VERSION,
+        "prompt_layer_order": [PERSISTENT_REVIEW_PROMPT_LAYER],
+        "prompt_layer_hashes": {PERSISTENT_REVIEW_PROMPT_LAYER: fingerprint},
+        "prompt_artifact_fingerprint": fingerprint,
+    }
 
 
 def persistent_peer_session_prompt(

@@ -6049,3 +6049,115 @@ Caveats:
 - The lane stopped at final-action hold and was not merged.
 - The probe does not prove dynamic member mutation, restart/resume continuity,
   MemoryOS, overnight stability, GitHub review truth, or full closure.
+
+## 2026-06-20 Loop 26d: Persistent Review Prompt Contract Metadata
+
+Purpose: rerun the largest safe post-PR106 real chain after adding a distinct
+persistent-review session prompt contract. This loop used the same docs-only
+lane shape and stopped at final-action hold.
+
+Workspace and authority:
+
+```text
+repo_worktree=/tmp/xmuse-postmerge-layered-prompt-main
+base_head_sha=30c48916d99943fdf5d9e670615950bdcbc8f874
+branch=codex/review-peer-prompt-contract-metadata
+run_root=/tmp/xmuse-postmerge-layered-prompt-main/.goal-runs/2026-06-20/loop-26d-review-prompt-contract-012856
+execution_worktree=/tmp/loop-26d-review-prompt-contract-exec-012856
+chat_port=8222
+mcp_port=8122
+feature_id=loop26d_review_prompt_contract
+```
+
+Commands:
+
+```bash
+XMUSE_ROOT="$RUN_ROOT" XMUSE_EXECUTION_WORKTREE="$EXEC_ROOT" CHAT_PORT=8222 \
+  uv run python -c 'import os; from pathlib import Path; import uvicorn; from xmuse.chat_api import create_app; uvicorn.run(create_app(base_dir=Path(os.environ["XMUSE_ROOT"]), execution_worktree=Path(os.environ["XMUSE_EXECUTION_WORKTREE"])), host="127.0.0.1", port=int(os.environ["CHAT_PORT"]), log_level="info")'
+
+XMUSE_ROOT="$RUN_ROOT" \
+  uv run uvicorn xmuse.mcp_server:app --host 127.0.0.1 --port 8122
+
+XMUSE_ROOT="$RUN_ROOT" XMUSE_PEER_GOD_BACKEND=native XMUSE_REVIEW_GOD_BACKEND=native \
+  uv run xmuse-platform-runner --xmuse-root "$RUN_ROOT" \
+  --lanes "$RUN_ROOT/feature_lanes.json" --mcp-port 8122 \
+  --max-concurrent 1 --peer-chat --persistent-review-god \
+  --persistent-review-timeout-s 900 --default-review-peer-routing \
+  --no-auto-merge --peer-chat-post-writeback-grace-s 4
+
+uv run python /tmp/xmuse-main-after-pr86-155349/.goal-runs/2026-06-19/loop-25z70-post-pr94-health-driver.py \
+  --chat-url http://127.0.0.1:8222 \
+  --xmuse-root "$RUN_ROOT" \
+  --feature-id loop26d_review_prompt_contract \
+  --timeout-s 1800 --poll-s 5
+```
+
+Durable chain:
+
+```text
+conversation_id=conv_373ea1b934a84dffb9da25fac162e73a
+collaboration_run=collab_e5a13c307de44da983d1e81cdd5a26eb
+proposal_id=prop_4f777d6291864abfa4e019d7f4a4aaaf
+resolution_id=res_e099d0b0e01849ad9b9691e148d17bc1
+graph_id=res_e099d0b0e01849ad9b9691e148d17bc1-graph-v1
+feature_id=loop26d_review_prompt_contract
+final_action_hold_id=final-e55c4317b605
+```
+
+Final lane authority:
+
+```text
+status=awaiting_final_action
+gate_passed=true
+review_decision=merge
+review_delivery_mode=persistent
+persistent_review_degraded=false
+review_peer_cli_kind=opencode
+review_peer_model=opencode-go/deepseek-v4-flash
+review_peer_id=part_ac0cb757679447ce822a50649355d1cb
+peer_delivery_mode=configured_peer
+review_task_id=rtask_80589352f75c43a3b482b377357a617a
+review_verdict_id=verdict-merge-rtask_80589352f75c43a3b482b377357a617a
+```
+
+Prompt contract evidence from `god_sessions.json`:
+
+```text
+architect.prompt_contract_version=xmuse-peer-chat-prompt-v2
+execute.prompt_contract_version=xmuse-peer-chat-prompt-v2
+review.prompt_contract_version=xmuse-persistent-review-session-prompt-v1
+review.prompt_layer_order=persistent_review_session_identity
+review.prompt_artifact_fingerprint=sha256:0c930d0c723d2f0f309cacfe1a9867289a8dcd8b780b49d6f1ab9459352b84c2
+```
+
+Execution and gate artifacts:
+
+```text
+worker_changed_files=docs/xmuse/post-pr94-review-peer-health-note.md
+worker_file_content=Review peer runtime metadata is observable through lane health; no separate `review_runtime` field is required.
+gate_report=logs/gates/loop26d_review_prompt_contract/report.json
+gate_command=uv run pytest -q tests/xmuse/test_package_boundaries.py
+gate_result=passed
+```
+
+Post-run cleanup:
+
+```text
+8122 listener after shutdown: none
+8222 listener after shutdown: none
+loop-26d service and worker process matches after shutdown: none
+```
+
+Classification: positive bounded local runtime proof that configured OpenCode
+persistent review now records an explicit review-session prompt contract in
+`god_sessions.json` while the fullchain reaches final-action hold.
+
+Caveats:
+
+- This is one bounded docs-only sentinel, not production readiness.
+- The persistent review prompt contract is intentionally separate from
+  `xmuse-peer-chat-prompt-v2`; it does not claim that review delivery is a
+  natural peer-chat turn.
+- The lane stopped at final-action hold and was not merged.
+- The probe does not prove dynamic member mutation, restart/resume continuity,
+  MemoryOS, overnight stability, GitHub review truth, or full closure.
