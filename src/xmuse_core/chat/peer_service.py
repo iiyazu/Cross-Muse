@@ -112,6 +112,7 @@ class PeerChatService:
         return {
             "conversation": conversation.model_dump(mode="json"),
             "participants": bootstrap["participants"],
+            "participant_sessions": bootstrap.get("participant_sessions", []),
             "bootstrap": bootstrap,
         }
 
@@ -186,6 +187,7 @@ class PeerChatService:
                 "participant_plan": [peer.role for peer in draft.default_team],
                 "fork_plan": [],
                 "participants": [],
+                "participant_sessions": [],
                 "init_participant": init_participant.model_dump(mode="json"),
                 "init_session": self._session_summary(init_session),
                 "artifact": artifact,
@@ -301,9 +303,11 @@ class PeerChatService:
             init_participant=init_participant,
             init_session=registry.get(draft.init_session_id),
         )
+        participant_sessions = [self._session_summary(session) for session in sessions]
         return {
             "conversation_id": conversation_id,
             "participants": [participant.model_dump(mode="json") for participant in participants],
+            "participant_sessions": participant_sessions,
             "bootstrap": {
                 **applied.model_dump(mode="json"),
                 "status": applied.status,
@@ -312,6 +316,7 @@ class PeerChatService:
                 "participants": [
                     participant.model_dump(mode="json") for participant in participants
                 ],
+                "participant_sessions": participant_sessions,
                 "init_participant": init_participant.model_dump(mode="json"),
                 "init_session": self._session_summary(registry.get(draft.init_session_id)),
                 "artifact": artifact,
