@@ -4963,3 +4963,122 @@ registered OpenCode review peer can reach persistent configured-peer review
 without the proposal naming `review_runtime`. This is not GitHub CI/server
 truth, GitHub review truth, production readiness, live MemoryOS proof,
 overnight readiness, full L8-L10 closure, or full L1-L11 closure.
+
+## 2026-06-19 Loop 25z69: code-change lane after default OpenCode review merge
+
+Loop target: rerun a real code-change lane from current main after PR #93
+merged the default OpenCode review routing fix. The groupchat proposal again
+omitted `review_runtime`; review should still use the registered OpenCode peer.
+
+Control head under test:
+
+```text
+HEAD=7468a5ab8797cf0a34528de419ceaf730034e75e
+```
+
+Run shape:
+
+```text
+RUN_ROOT=/tmp/xmuse-main-after-pr86-155349/.goal-runs/2026-06-19/loop-25z69-code-change-after-pr93-192536
+EXEC_WORKTREE=/tmp/loop-25z69-code-change-after-pr93-192536-exec
+CHAT_PORT=8206
+MCP_PORT=8106
+```
+
+Service commands:
+
+```bash
+XMUSE_ROOT="$RUN_ROOT" XMUSE_EXECUTION_WORKTREE="$EXEC_WORKTREE" \
+  uv run python -c 'import os; from pathlib import Path; import uvicorn; from xmuse.chat_api import create_app; uvicorn.run(create_app(base_dir=Path(os.environ["XMUSE_ROOT"]), execution_worktree=Path(os.environ["XMUSE_EXECUTION_WORKTREE"])), host="127.0.0.1", port=8206, log_level="info")'
+
+XMUSE_ROOT="$RUN_ROOT" \
+  uv run python -c 'import os; import uvicorn; from xmuse.mcp_server import create_app; uvicorn.run(create_app(os.environ["XMUSE_ROOT"]), host="127.0.0.1", port=8106, log_level="info")'
+
+XMUSE_ROOT="$RUN_ROOT" XMUSE_EXECUTION_WORKTREE="$EXEC_WORKTREE" \
+  XMUSE_PEER_GOD_BACKEND=native XMUSE_REVIEW_GOD_BACKEND=native \
+  XMUSE_RAY_GOD_MCP=0 XMUSE_CHAT_API_URL=http://127.0.0.1:8206 \
+  uv run xmuse-platform-runner --xmuse-root "$RUN_ROOT" --mcp-port 8106 \
+  --peer-chat --peer-chat-post-writeback-grace-s 20 \
+  --persistent-review-god --persistent-review-timeout-s 300 \
+  --default-review-peer-routing --max-hours 1.2 --max-concurrent 4 \
+  --no-auto-merge
+
+uv run python .goal-runs/2026-06-19/loop-25z69-code-change-driver.py \
+  --chat-url http://127.0.0.1:8206 --xmuse-root "$RUN_ROOT" \
+  --feature-id loop25z69_review_peer_metadata --timeout-s 1800 --poll-s 5
+```
+
+Durable result:
+
+```text
+classification=code_change_defaulted_opencode_review_peer
+conversation_id=conv_5d320e51228847408f9883da9844950c
+proposal_id=prop_b75c0d557eb84932bddca7977279ecb3
+resolution_id=res_b317a3806e464d189948c063ebf4161b
+collaboration_run_id=collab_6e15b09450364190b7c3eb5b828302f7
+lane_id=loop25z69_review_peer_metadata
+proposal_has_review_runtime=false
+status=awaiting_final_action
+gate_passed=true
+review_decision=merge
+final_action_hold_id=final-74909d63bc0b
+review_peer_defaulted=true
+review_peer_id=part_19d36e5e2f644175865795a6823ec22c
+review_peer_participant.cli_kind=opencode
+review_peer_participant.model=opencode-go/deepseek-v4-flash
+peer_delivery_mode=configured_peer
+review_delivery_mode=persistent
+persistent_review_degraded=false
+persistent_review_identity=configured:part_19d36e5e2f644175865795a6823ec22c
+```
+
+OpenCode review session:
+
+```text
+role=review
+runtime=opencode
+participant_id=part_19d36e5e2f644175865795a6823ec22c
+feature_scope_id=configured-review:loop25z69_review_peer_metadata
+model=opencode-go/deepseek-v4-flash
+```
+
+The isolated execution worktree produced a small candidate diff:
+
+```text
+src/xmuse_core/platform/execution/review_god.py
+src/xmuse_core/platform/run_health.py
+tests/xmuse/test_platform_runner.py
+tests/xmuse/test_review_plane_orchestrator_integration.py
+tests/xmuse/test_run_health.py
+```
+
+Candidate validation in the execution worktree:
+
+```text
+uv run pytest -q tests/xmuse/test_review_plane_orchestrator_integration.py::test_default_review_peer_routing_reuses_registered_opencode_review_peer tests/xmuse/test_review_plane_orchestrator_integration.py::test_configured_review_peer_preferred_success_records_peer_metadata tests/xmuse/test_run_health.py::test_summarize_run_health_exposes_peer_delivery_degraded_visibility tests/xmuse/test_platform_runner.py::test_health_once_exposes_peer_delivery_visibility_read_only
+-> 4 passed
+
+uv run pytest -q tests/xmuse/test_review_plane_orchestrator_integration.py -k 'review_peer'
+-> 20 passed, 29 deselected
+
+uv run ruff check src/xmuse_core/platform/execution/review_god.py src/xmuse_core/platform/run_health.py tests/xmuse/test_review_plane_orchestrator_integration.py tests/xmuse/test_run_health.py tests/xmuse/test_platform_runner.py
+-> All checks passed
+
+git diff --check
+-> no output
+```
+
+Cleanup:
+
+```text
+8106/8206 listeners: none
+loop-25z69 xmuse-platform-runner, MCP, Chat API, codex/opencode processes:
+no matching live process after shutdown checks
+```
+
+Classification: positive bounded local runtime proof for a real code-change
+lane after PR #93. It also produced a small candidate improvement for review
+peer runtime metadata. The candidate is not GitHub CI/server truth until a
+small PR is opened and GitHub Actions runs on that pushed branch. This is not
+GitHub review truth, production readiness, live MemoryOS proof, overnight
+readiness, full L8-L10 closure, or full L1-L11 closure.

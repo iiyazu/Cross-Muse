@@ -2189,6 +2189,8 @@ def test_health_once_exposes_peer_delivery_visibility_read_only(
             {
                 "feature_id": "default-peer-success",
                 "status": "reviewed",
+                "review_peer_cli_kind": "opencode",
+                "review_peer_model": "opencode-go/deepseek-v4-flash",
                 "peer_routing_mode": "preferred",
                 "peer_delivery_mode": "configured_peer",
                 "review_peer_defaulted": True,
@@ -2218,6 +2220,8 @@ def test_health_once_exposes_peer_delivery_visibility_read_only(
             "peer_delivery_mode": "configured_peer",
             "peer_routing_mode": "preferred",
             "peer_degraded_reason": None,
+            "review_peer_cli_kind": "opencode",
+            "review_peer_model": "opencode-go/deepseek-v4-flash",
         }
     ]
     assert json.loads(lanes_path.read_text(encoding="utf-8")) == original_payload
