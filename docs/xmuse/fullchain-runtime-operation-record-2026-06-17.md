@@ -7318,3 +7318,46 @@ Caveats:
   natural peer-GOD groupchat completion, or full closure.
 - The sentinel harness terminal-state gap is separate from the configured
   review peer authority repair.
+
+## 2026-06-20 Loop 26u: Post-PR121 Server Confirmation
+
+Purpose: record the GitHub server facts after the configured review peer
+degradation repair landed.
+
+Workspace and authority:
+
+```text
+repo_worktree=/tmp/xmuse-postmerge-layered-prompt-main
+branch=codex/post-pr121-review-degradation-evidence
+main_head_sha=1adc2d19089aeacad5953bc577ca093f3441a761
+```
+
+GitHub server facts:
+
+```text
+pr=121
+head_sha=79b09d2c411440ab1fe152c2f67b470bd774816f
+merge_commit=1adc2d19089aeacad5953bc577ca093f3441a761
+pr_ci_run=27850304479 success
+main_ci_run=27850336946 success
+remote_branch_deleted=true
+```
+
+Validation for this docs-only evidence sync:
+
+```bash
+git diff --check
+test ! -e xmuse/__init__.py
+uv run ruff check .
+```
+
+Classification: bounded post-merge GitHub server confirmation for PR #121.
+The runtime path remains at the Loop 26t blocker until execution-worker usage
+limit clears and a post-merge fullchain sentinel can be rerun.
+
+Caveats:
+
+- This entry does not add post-merge runtime proof.
+- It does not claim production readiness, GitHub review truth, live MemoryOS,
+  natural peer-GOD groupchat completion, full closure, or live lane merge
+  truth.
