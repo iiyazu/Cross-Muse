@@ -6161,3 +6161,88 @@ Caveats:
 - The lane stopped at final-action hold and was not merged.
 - The probe does not prove dynamic member mutation, restart/resume continuity,
   MemoryOS, overnight stability, GitHub review truth, or full closure.
+
+## 2026-06-20 Loop 26e: Post-PR107 Main Runtime Confirmation
+
+Purpose: rerun the same largest safe fullchain from post-merge `origin/main`
+after PR #107 landed. This loop confirmed the review-session prompt contract on
+main and stopped at final-action hold.
+
+Workspace and authority:
+
+```text
+repo_worktree=/tmp/xmuse-postmerge-layered-prompt-main
+base_head_sha=91ee4f76e9f4ec3bc0627aa690a2dababcde91ad
+run_root=/tmp/xmuse-postmerge-layered-prompt-main/.goal-runs/2026-06-20/loop-26e-post-pr107-main-014701
+execution_worktree=/tmp/loop-26e-post-pr107-main-exec-014701
+chat_port=8223
+mcp_port=8123
+feature_id=loop26e_post_pr107_main
+```
+
+Durable chain:
+
+```text
+conversation_id=conv_d406ce2e042d472bbfbd08ff79c3bec8
+collaboration_run=collab_7a498f51eee547fc8be9a75f6ac610a0
+proposal_id=prop_bef3017793394b73b50e6a341d7df982
+resolution_id=res_72270aa2d1894ac9b82ad8612ef37de6
+graph_id=res_72270aa2d1894ac9b82ad8612ef37de6-graph-v1
+feature_id=loop26e_post_pr107_main
+final_action_hold_id=final-e3644c2efcca
+```
+
+Final lane authority:
+
+```text
+status=awaiting_final_action
+gate_passed=true
+review_decision=merge
+review_delivery_mode=persistent
+persistent_review_degraded=false
+review_peer_cli_kind=opencode
+review_peer_model=opencode-go/deepseek-v4-flash
+review_peer_id=part_f69a2a8024e0458d9e970c596722aaec
+peer_delivery_mode=configured_peer
+review_task_id=rtask_f151b25e04ab4544bdd002d3bd2de8f0
+review_verdict_id=verdict-merge-rtask_f151b25e04ab4544bdd002d3bd2de8f0
+```
+
+Prompt contract evidence from `post_run_prompt_contracts.json`:
+
+```text
+architect.prompt_contract_version=xmuse-peer-chat-prompt-v2
+execute.prompt_contract_version=xmuse-peer-chat-prompt-v2
+review.prompt_contract_version=xmuse-persistent-review-session-prompt-v1
+review.prompt_layer_order=persistent_review_session_identity
+review.prompt_artifact_fingerprint=sha256:962ecb3f1b5a927c1ed908f44d28709ee3b845a1e9933c5bdd6bb1e4d9a25705
+```
+
+Execution and gate artifacts:
+
+```text
+worker_changed_files=docs/xmuse/post-pr94-review-peer-health-note.md
+worker_file_content=Review peer runtime metadata is observable through lane health.
+gate_report=logs/gates/loop26e_post_pr107_main/report.json
+gate_command=uv run pytest -q tests/xmuse/test_package_boundaries.py
+gate_result=passed
+```
+
+Post-run cleanup:
+
+```text
+8123 listener after shutdown: none
+8223 listener after shutdown: none
+loop-26e service and worker process matches after shutdown: none
+```
+
+Classification: positive bounded post-merge main runtime proof for the
+configured OpenCode persistent review prompt-contract metadata path introduced
+by PR #107.
+
+Caveats:
+
+- This is one bounded docs-only sentinel, not production readiness.
+- The probe does not prove natural peer-GOD groupchat completion, dynamic
+  member mutation, restart/resume continuity, MemoryOS, overnight stability,
+  GitHub review truth, or full closure.
