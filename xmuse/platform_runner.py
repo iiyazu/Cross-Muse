@@ -318,7 +318,10 @@ async def run(
             if chat_driver is not None:
                 control_service.drive_chat(chat_driver)
             if peer_chat_scheduler is not None:
-                await control_service.tick_peer_chat_scheduler(peer_chat_scheduler)
+                await control_service.tick_peer_chat_scheduler(
+                    peer_chat_scheduler,
+                    max_concurrent=max_concurrent,
+                )
             if chat_dispatch_bridge is not None:
                 await _tick_chat_dispatch_bridge(chat_dispatch_bridge, xmuse_root=xmuse_root)
             pending = _candidate_lanes(

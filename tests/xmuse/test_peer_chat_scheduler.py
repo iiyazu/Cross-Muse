@@ -198,6 +198,113 @@ def test_peer_session_prompt_fingerprint_is_stable_across_inbox_content(tmp_path
 
 
 @pytest.mark.asyncio
+async def test_scheduler_tick_many_claims_multiple_inbox_items_concurrently(
+    tmp_path: Path,
+) -> None:
+    chat = ChatStore(tmp_path / "chat.db")
+    participants = ParticipantStore(tmp_path / "chat.db")
+    inbox = ChatInboxStore(tmp_path / "chat.db")
+    items = []
+    participant_by_id = {}
+    for index in range(3):
+        conv = chat.create_conversation(f"Scheduler parallel {index}")
+        participant = participants.add(
+            conversation_id=conv.id,
+            role="architect",
+            display_name=f"Architect GOD {index}",
+            cli_kind="codex",
+            model="gpt-5.4",
+        )
+        participant_by_id[participant.participant_id] = participant
+        message = chat.add_message(conv.id, "Human", "human", "@architect")
+        items.append(
+            inbox.create_item(
+                conversation_id=conv.id,
+                target_participant_id=participant.participant_id,
+                target_role="architect",
+                target_address="@architect",
+                sender_participant_id=None,
+                sender_address="@human",
+                source_message_id=message.id,
+                item_type="mention",
+                payload={"content": "@architect"},
+            )
+        )
+
+    class ConcurrentGodLayer(FakeGodLayer):
+        def __init__(self) -> None:
+            super().__init__()
+            self.context_by_session = {}
+            self.active_receives = 0
+            self.max_active_receives = 0
+
+        async def ensure_conversation_session(self, **kwargs):
+            self.ensured.append(kwargs)
+            return type(
+                "Record",
+                (),
+                {"god_session_id": kwargs["participant_id"]},
+            )()
+
+        async def send_message(
+            self,
+            god_session_id,
+            message_type,
+            prompt,
+            context,
+            request_id=None,
+        ):
+            self.sent.append((god_session_id, message_type, prompt, context, request_id))
+            self.context_by_session[god_session_id] = json.loads(context)
+
+        async def receive_message(self, god_session_id):
+            import asyncio
+
+            self.active_receives += 1
+            self.max_active_receives = max(
+                self.max_active_receives,
+                self.active_receives,
+            )
+            try:
+                await asyncio.sleep(0.02)
+                context = self.context_by_session[god_session_id]
+                item = context["inbox_item"]
+                participant = participant_by_id[context["participant_id"]]
+                reply = chat.add_message(
+                    item["conversation_id"],
+                    participant.participant_id,
+                    "assistant",
+                    f"{participant.display_name}: parallel reply.",
+                )
+                inbox.mark_read(item["id"], responded_message_id=reply.id)
+                PeerTurnLatencyTraceStore(tmp_path / "chat.db").record_mcp_tool_stage(
+                    conversation_id=item["conversation_id"],
+                    inbox_item_id=item["id"],
+                    tool_name="chat_post_message",
+                    called_at=1.0,
+                )
+                return self.receive_result
+            finally:
+                self.active_receives -= 1
+
+    layer = ConcurrentGodLayer()
+    scheduler = PeerChatScheduler(
+        db_path=tmp_path / "chat.db",
+        god_layer=layer,
+        worktree=tmp_path,
+        scheduler_id="sched-test",
+        response_wait_s=0.1,
+    )
+
+    outcome = await scheduler.tick_many(max_concurrent=3)
+
+    assert outcome.happy_path == 3
+    assert outcome.failed == 0
+    assert layer.max_active_receives > 1
+    assert {inbox.get(item.id).status for item in items} == {"read"}
+
+
+@pytest.mark.asyncio
 async def test_scheduler_releases_claim_when_peer_turn_times_out(tmp_path: Path) -> None:
     chat = ChatStore(tmp_path / "chat.db")
     conv = chat.create_conversation("Scheduler timeout")
@@ -409,6 +516,79 @@ async def test_scheduler_records_success_when_peer_marks_inbox_read(tmp_path: Pa
         if msg.author == participant.participant_id
     ]
     assert [reply.id for reply in replies] == [updated.responded_message_id]
+
+
+@pytest.mark.asyncio
+async def test_scheduler_keeps_writeback_truth_when_provider_returns_error(
+    tmp_path: Path,
+) -> None:
+    chat = ChatStore(tmp_path / "chat.db")
+    conv = chat.create_conversation("Scheduler writeback then provider error")
+    participant = ParticipantStore(tmp_path / "chat.db").add(
+        conversation_id=conv.id,
+        role="architect",
+        display_name="Architect GOD",
+        cli_kind="codex",
+        model="gpt-5.4",
+    )
+    message = chat.add_message(conv.id, "Human", "human", "@architect")
+    inbox = ChatInboxStore(tmp_path / "chat.db")
+    item = inbox.create_item(
+        conversation_id=conv.id,
+        target_participant_id=participant.participant_id,
+        target_role="architect",
+        target_address="@architect",
+        sender_participant_id=None,
+        sender_address="@human",
+        source_message_id=message.id,
+        item_type="mention",
+        payload={"content": "@architect"},
+    )
+
+    class ErrorAfterWritebackGodLayer(FakeGodLayer):
+        async def receive_message(self, god_session_id):
+            reply = chat.add_message(
+                conv.id,
+                participant.participant_id,
+                "assistant",
+                "Architect GOD: persisted before provider exit.",
+            )
+            inbox.mark_read(item.id, responded_message_id=reply.id)
+            PeerTurnLatencyTraceStore(tmp_path / "chat.db").record_mcp_tool_stage(
+                conversation_id=conv.id,
+                inbox_item_id=item.id,
+                tool_name="chat_post_message",
+                called_at=1.0,
+            )
+            return type(
+                "Message",
+                (),
+                {
+                    "type": "error",
+                    "code": "codex_exit_1",
+                    "request_id": item.id,
+                },
+            )()
+
+    scheduler = PeerChatScheduler(
+        db_path=tmp_path / "chat.db",
+        god_layer=ErrorAfterWritebackGodLayer(),
+        worktree=tmp_path,
+        scheduler_id="sched-test",
+        response_wait_s=0.1,
+    )
+
+    outcome = await scheduler.tick_once()
+
+    assert outcome.nudged == 1
+    assert outcome.happy_path == 1
+    assert outcome.failed == 0
+    updated = inbox.get(item.id)
+    assert updated.status == "read"
+    assert updated.responded_message_id is not None
+    trace = PeerTurnLatencyTraceStore(tmp_path / "chat.db").list_recent(conv.id)[0]
+    assert trace["delivery_mode"] == "mcp_writeback"
+    assert trace["degraded_reason"] == "codex_exit_1_after_writeback"
 
 
 @pytest.mark.asyncio
