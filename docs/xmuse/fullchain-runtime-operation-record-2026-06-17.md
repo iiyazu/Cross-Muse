@@ -5309,3 +5309,193 @@ Classification: positive bounded local runtime health proof plus inspected
 GitHub server facts for PR #96. It proves scoped process health for this
 parallel-shard shape. It is not production readiness, overnight soak, GitHub
 review truth, live MemoryOS proof, full L8-L10 closure, or full L1-L11 closure.
+
+## 2026-06-19 Loops 25z72-25z74: higher parallelism, empty worktree, and untracked diff
+
+Loop 25z72 increased local operator parallelism to three isolated shards from
+post-PR97 main:
+
+```text
+control_head=591aa68e470aa5272df5bc46bbfab06a917bd4f4
+shard_a=/tmp/xmuse-main-after-pr86-155349/.goal-runs/2026-06-19/loop-25z72a-post-pr97-fullchain-204122
+shard_b=/tmp/xmuse-main-after-pr86-155349/.goal-runs/2026-06-19/loop-25z72b-post-pr97-stability-204122
+shard_c=/tmp/xmuse-main-after-pr86-155349/.goal-runs/2026-06-19/loop-25z72c-post-pr97-stability-204122
+ports A=8211/8111
+ports B=8212/8112
+ports C=8213/8113
+```
+
+Shard B and Shard C each ran three Codex/OpenCode groupchat conversations.
+Both stability shards closed all conversations:
+
+```text
+conversation_count_per_stability_shard=3
+total_stability_conversations=6
+all_initial_handoff_closed=true
+all_final_after_both=true
+all_callbacks_created=true
+all_callbacks_consumed=true
+no_proposals_or_resolutions=true
+no_open_or_failed_inbox=true
+no_failed_or_timeout_traces=true
+```
+
+Shard A drove a docs-only fullchain lane but failed at gate:
+
+```text
+lane_status=gate_failed
+failure_reason=gate_failed
+gate_profiles_source=missing
+warning=gate_profiles.json missing in XMUSE_ROOT and lane worktree; gate failed closed
+```
+
+Root cause: the harness pre-created an empty `XMUSE_EXECUTION_WORKTREE`. The
+orchestrator treated that empty directory as the lane worktree instead of
+replacing it with a git worktree. The child worker wrote the requested note in
+the empty directory, but the gate correctly failed closed because
+`xmuse/gate_profiles.json` was absent.
+
+PR #98 fixed that boundary by recreating empty lane worktree directories as
+normal git worktrees while preserving existing non-empty non-git compatibility.
+Loop 25z73 intentionally pre-created an empty execution worktree again:
+
+```text
+branch=codex/recreate-empty-lane-worktree
+head=17f1d3ef23968c1060b1e09b58668924a87b24a4
+run=/tmp/xmuse-main-after-pr86-155349/.goal-runs/2026-06-19/loop-25z73-empty-worktree-fullchain-205536
+exec=/tmp/loop-25z73-empty-worktree-fullchain-205536-exec
+```
+
+The worktree recovery succeeded and the gate passed:
+
+```text
+exec_is_git_worktree=true
+exec_gate_profiles_exists=true
+base_head_sha=591aa68e470aa5272df5bc46bbfab06a917bd4f4
+gate_passed=true
+```
+
+The same run then reached review and was rejected:
+
+```text
+lane_status=rejected
+review_decision=rework
+review_delivery_mode=one_shot_fallback
+persistent_review_degraded=true
+persistent_review_degraded_reason=missing_feature_identity
+review_summary=The requested docs-only note content is correct and scoped correctly, but it exists only as an untracked file...
+```
+
+Root cause: the MCP `get_diff(lane_id)` tool returned only `git diff HEAD`, so
+review could not see untracked new files even though later merge staging uses
+`git add -A`.
+
+PR #99 fixed that boundary by appending `git diff --no-index -- /dev/null
+<path>` patches for untracked files to the `get_diff` result. Loop 25z74 reran
+the same shape:
+
+```text
+branch=codex/include-untracked-lane-diff
+head=4a491dfea5cb9d0026d4afa7360cf1b466af6831
+run=/tmp/xmuse-main-after-pr86-155349/.goal-runs/2026-06-19/loop-25z74-untracked-diff-fullchain-211119
+exec=/tmp/loop-25z74-untracked-diff-fullchain-211119-exec
+```
+
+Loop 25z74 reached final-action hold:
+
+```text
+proposal_has_review_runtime=false
+exec_is_git_worktree=true
+exec_gate_profiles_exists=true
+base_head_sha=cae76c1da7d1c38df9884579ba822b8019f3b197
+gate_passed=true
+review_decision=merge
+review_summary=review accepted
+lane_status=awaiting_final_action
+health.runner_count=1
+health.mcp_count=1
+health.warnings=null
+```
+
+Remaining bounded caveat:
+
+```text
+review_delivery_mode=one_shot_fallback
+persistent_review_degraded=true
+persistent_review_degraded_reason=missing_feature_identity
+review_peer_defaulted=null
+review_peer_cli_kind=null
+review_peer_model=null
+```
+
+Validation and server facts:
+
+```text
+PR #98=https://github.com/iiyazu/Cross-Muse/pull/98
+PR #98 head=17f1d3ef23968c1060b1e09b58668924a87b24a4
+PR #98 merge_commit=cae76c1da7d1c38df9884579ba822b8019f3b197
+PR #98 CI run=27827540774 success
+post-PR98 main CI run=27827589417 success
+
+PR #99=https://github.com/iiyazu/Cross-Muse/pull/99
+PR #99 head=4a491dfea5cb9d0026d4afa7360cf1b466af6831
+PR #99 merge_commit=2325427c0b96f5bc2f804a6f72ef8d5e77782fca
+PR #99 CI run=27828255039 success
+post-PR99 main CI run=27828296247 success
+```
+
+Local validation for PR #98:
+
+```text
+uv run pytest tests/xmuse/test_platform_orchestrator.py -k 'worktree and dispatch_lane' -q
+-> 5 passed, 236 deselected
+
+uv run pytest tests/xmuse/test_package_boundaries.py -q
+-> 16 passed
+
+uv run ruff check src/xmuse_core/platform/orchestrator_lane_flow.py tests/xmuse/test_platform_orchestrator.py
+-> All checks passed
+
+git diff --check
+-> no output
+
+test ! -e xmuse/__init__.py
+-> passed
+```
+
+Local validation for PR #99:
+
+```text
+uv run pytest tests/xmuse/test_platform_mcp_tools.py -k 'get_diff or get_gate_report' -q
+-> 2 passed, 42 deselected
+
+uv run pytest tests/xmuse/test_package_boundaries.py -q
+-> 16 passed
+
+uv run ruff check src/xmuse_core/platform/mcp_tools.py tests/xmuse/test_platform_mcp_tools.py
+-> All checks passed
+
+git diff --check
+-> no output
+
+test ! -e xmuse/__init__.py
+-> passed
+```
+
+Cleanup:
+
+```text
+8111/8112/8113/8114/8115/8211/8212/8213/8214/8215 listeners: none
+loop-25z72/25z73/25z74 xmuse-platform-runner, MCP, Chat API, codex/opencode
+processes: no matching live process after shutdown checks
+```
+
+Classification: positive bounded local runtime evidence plus inspected GitHub
+server facts. It proves higher parallelism for six groupchat conversations in
+two concurrent stability shards, empty execution worktree recovery, and
+untracked-file review visibility for this docs-only lane shape. Loop 25z74
+reached final-action hold, but it used one-shot review fallback with
+`persistent_review_degraded_reason=missing_feature_identity`. This is not
+persistent OpenCode review proof, defaulted review peer metadata proof,
+production readiness, overnight soak, GitHub review truth, live MemoryOS proof,
+full L8-L10 closure, or full L1-L11 closure.

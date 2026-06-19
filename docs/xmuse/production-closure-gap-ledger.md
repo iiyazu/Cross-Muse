@@ -7,7 +7,7 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
 
 ## Current Proof Boundary
 
-- Latest main inspected: `dcf4badf5da82cb472ea0f23d1c825f94d26218b`.
+- Latest main inspected: `2325427c0b96f5bc2f804a6f72ef8d5e77782fca`.
 - Strongest code-change lane runtime evidence: Loop 25z69 ran after PR #93's
   default-review fix from current main, drove one real local code-change lane
   from durable groupchat through execute feasibility, proposal, runtime-driver
@@ -21,14 +21,15 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   `persistent_review_degraded=false`, `gate_passed=true`,
   `review_decision=merge`, and `status=awaiting_final_action`. PR #94 landed
   the review-peer runtime metadata candidate from that loop.
-- Latest post-merge fullchain evidence: Loop 25z70a ran from PR #94's merged
-  main and reached `awaiting_final_action` on one docs-only fullchain lane with
-  `proposal_has_review_runtime=false`, `review_peer_defaulted=true`,
-  `review_peer_cli_kind=opencode`,
-  `review_peer_model=opencode-go/deepseek-v4-flash`,
-  `peer_delivery_mode=configured_peer`, `review_delivery_mode=persistent`,
-  `persistent_review_degraded=false`, `gate_passed=true`,
-  `review_decision=merge`, and `run_health_metadata_visible=true`.
+- Latest post-merge fullchain evidence: Loop 25z74 ran after PR #98's merged
+  main plus PR #99's local branch fix, intentionally pre-created an empty
+  execution worktree, and reached `awaiting_final_action` on one docs-only
+  fullchain lane with `proposal_has_review_runtime=false`, `gate_passed=true`,
+  `review_decision=merge`, and `review_summary=review accepted`. The run used
+  `review_delivery_mode=one_shot_fallback` with
+  `persistent_review_degraded=true` and
+  `persistent_review_degraded_reason=missing_feature_identity`, so it is not
+  persistent OpenCode review proof or defaulted review peer metadata proof.
 - Latest peer-chat stability evidence: Loop 25z70b ran concurrently with
   Loop 25z70a from the same current main using a separate `XMUSE_ROOT`,
   execution worktree, Chat API port, MCP port, and runner. Across three
@@ -48,6 +49,24 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   `counts_by_service.chat_api=1`, and `warnings=[]`. This makes higher
   operator-level parallelism less noisy; it is still bounded health
   observability proof, not production readiness or soak.
+- Latest higher-parallelism evidence: Loop 25z72 ran three isolated local
+  shards concurrently. Two stability shards completed six total Codex/OpenCode
+  groupchat conversations with final summaries after execute and review
+  replies, all callbacks consumed, no proposals/resolutions, no open/failed
+  inbox items, and no failed/timeout traces. The fullchain shard exposed an
+  empty execution worktree gate failure that PR #98 later fixed.
+- Latest lane worktree recovery evidence: PR #98 merged the small fix that
+  treats an existing empty lane worktree directory as uninitialized and
+  recreates it as a git worktree. Loop 25z73 intentionally pre-created an
+  empty execution worktree and verified `exec_is_git_worktree=true`,
+  `exec_gate_profiles_exists=true`,
+  `base_head_sha=591aa68e470aa5272df5bc46bbfab06a917bd4f4`, and
+  `gate_passed=true`.
+- Latest review diff authority evidence: PR #99 merged the small fix that
+  includes untracked new files in MCP `get_diff(lane_id)` by appending
+  `git diff --no-index -- /dev/null <path>` patches. Loop 25z74 then moved the
+  same docs-only fullchain shape from Loop 25z73's review rework to
+  `review_decision=merge` and `status=awaiting_final_action`.
 - Latest default review authority evidence: PR #93 merged the small fix that
   reuses a unique active OpenCode review participant when the proposal omits
   `review_runtime`. GitHub server state reports PR #93 merged as
@@ -73,11 +92,11 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   `persistent_review_degraded=false`, `review_decision=merge`, and no
   runtime-artifact match for the Loop 25z64 invalid transition noise. This is a
   bounded local repeat, not code-change soak or production readiness.
-- Strongest server facts: PR #96 was merged by GitHub server state as
-  `dcf4badf5da82cb472ea0f23d1c825f94d26218b` after successful `xmuse CI` on PR
-  head `220edc61f11d5171a451225fdc16742f1491d15b` in run `27825635972`;
+- Strongest server facts: PR #99 was merged by GitHub server state as
+  `2325427c0b96f5bc2f804a6f72ef8d5e77782fca` after successful `xmuse CI` on PR
+  head `4a491dfea5cb9d0026d4afa7360cf1b466af6831` in run `27828255039`;
   post-merge main `xmuse CI` also passed on
-  `dcf4badf5da82cb472ea0f23d1c825f94d26218b` in run `27825747726`.
+  `2325427c0b96f5bc2f804a6f72ef8d5e77782fca` in run `27828296247`.
 - Proof type: local runtime proof plus inspected GitHub server facts for small
   PRs. This is not GitHub review truth or production readiness.
 
@@ -158,6 +177,15 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   discovery by `XMUSE_ROOT`/`--xmuse-root` for parallel shards and recorded
   Loop 25z71 evidence. Merged to main as
   `dcf4badf5da82cb472ea0f23d1c825f94d26218b`.
+- PR #97 `codex/post-pr96-scoped-health-evidence`: recorded Loop 25z71 scoped
+  process-health evidence. Merged to main as
+  `591aa68e470aa5272df5bc46bbfab06a917bd4f4`.
+- PR #98 `codex/recreate-empty-lane-worktree`: recreated empty projected lane
+  worktree directories as git worktrees and recorded Loop 25z73 evidence.
+  Merged to main as `cae76c1da7d1c38df9884579ba822b8019f3b197`.
+- PR #99 `codex/include-untracked-lane-diff`: included untracked new files in
+  MCP `get_diff(lane_id)` and recorded Loop 25z74 evidence. Merged to main as
+  `2325427c0b96f5bc2f804a6f72ef8d5e77782fca`.
 
 ## Manual Gaps
 
@@ -192,6 +220,18 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   server, and Chat API without duplicate-runner or missing-MCP warnings for
   the two-shard harness. This is observability proof only; it is not a broader
   scheduling, capacity, or production-load claim.
+- Loop 25z72 proved six groupchat-only conversations across two concurrent
+  stability shards, while the concurrent fullchain shard failed at gate because
+  an empty pre-created execution worktree was treated as initialized. This was
+  a real runtime gap, not a proof of fullchain failure after PR #98/#99.
+- Loop 25z73 verified empty execution worktree recovery through gate pass, then
+  exposed that review could not see untracked new files through
+  `get_diff(lane_id)`. PR #99 addresses that specific diff authority gap.
+- Loop 25z74 reached final-action hold after the untracked diff fix, but it
+  used `review_delivery_mode=one_shot_fallback` with
+  `persistent_review_degraded_reason=missing_feature_identity`. Persistent
+  OpenCode review and defaulted review peer metadata remain unproven for this
+  shape.
 - Provider result acknowledgement timeout after durable writeback is mitigated
   by early writeback detection plus configurable bounded grace in PR #87.
   Broader production-load behavior is still unproven.
@@ -236,17 +276,21 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
 
 ## Next Small Buckets
 
-- P0 explicit dependency coordination: add a durable coordination primitive for
+- P0 persistent review feature identity: repair the
+  `missing_feature_identity` path so docs-only groupchat-produced lanes can use
+  the registered OpenCode review peer persistently without relying on one-shot
+  fallback.
+- P1 explicit dependency coordination: add a durable coordination primitive for
   waiting on named peer replies before summaries/handoffs when direct drain is
   insufficient.
-- P1 higher-parallelism stability loop: repeat real groupchat-to-final-hold
+- P2 higher-parallelism stability loop: repeat real groupchat-to-final-hold
   with independent `XMUSE_ROOT` directories, execution worktrees, Chat API
   ports, MCP ports, and runners when increasing concurrency beyond the current
   two-shard evidence. Do not share durable stores or one PR branch across
   parallel probes.
-- P2 ambiguous review authority: define fail-closed behavior for missing or
+- P3 ambiguous review authority: define fail-closed behavior for missing or
   multiple OpenCode review participants without relying on proposal text.
-- P3 code-change soak: repeat small real code-change lanes after the
+- P4 code-change soak: repeat small real code-change lanes after the
   inspector provider summary PR lands.
-- P4 MemoryOS adapter proof: keep `live_memoryos` forbidden until a real trace
+- P5 MemoryOS adapter proof: keep `live_memoryos` forbidden until a real trace
   id or artifact exists.
