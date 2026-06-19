@@ -47,6 +47,53 @@ def test_human_post_resolves_mention_and_creates_inbox(tmp_path: Path) -> None:
     assert result.inbox_items[0].target_participant_id == architect.participant_id
 
 
+def test_human_post_treats_leading_mentions_as_routing_header(
+    tmp_path: Path,
+) -> None:
+    db, conv, architect, _review = _conversation(tmp_path)
+    ParticipantStore(db).add(
+        conversation_id=conv.id,
+        role="execute",
+        display_name="Execute GOD",
+        cli_kind="codex",
+        model="gpt-5.5",
+    )
+    service = PeerChatService(db)
+
+    result = service.post_human_message(
+        conversation_id=conv.id,
+        author="Human operator",
+        content=(
+            "@architect please coordinate this. The requirement text must "
+            "discuss @execute and @review as role examples, but only the "
+            "architect should receive the initial turn."
+        ),
+        client_request_id="req-human-leading-router",
+    )
+
+    assert result.message.mentions == ["@architect"]
+    assert [item.target_role for item in result.inbox_items] == ["architect"]
+    assert result.inbox_items[0].target_participant_id == architect.participant_id
+
+
+def test_human_post_allows_multiple_leading_route_mentions(tmp_path: Path) -> None:
+    db, conv, architect, review = _conversation(tmp_path)
+    service = PeerChatService(db)
+
+    result = service.post_human_message(
+        conversation_id=conv.id,
+        author="Human operator",
+        content="@architect @review compare the safe path.",
+        client_request_id="req-human-leading-multi-router",
+    )
+
+    assert result.message.mentions == ["@architect", "@review"]
+    assert [item.target_participant_id for item in result.inbox_items] == [
+        architect.participant_id,
+        review.participant_id,
+    ]
+
+
 def test_ambiguous_mention_fails_without_creating_inbox(tmp_path: Path) -> None:
     db, conv, _architect, _review = _conversation(tmp_path)
     participants = ParticipantStore(db)

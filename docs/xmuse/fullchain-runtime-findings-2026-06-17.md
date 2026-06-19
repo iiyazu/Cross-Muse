@@ -1477,3 +1477,47 @@ Additional 2026-06-18 runtime-kernel evidence:
 - The proof level is local runtime proof only.
 - The current evidence still does not prove isolated fullchain execution,
   independent review passed, GitHub truth, live MemoryOS, or full closure.
+
+### F79. Human leading route mentions should not widen the queue from body references
+
+Severity: resolved routing ergonomics issue.
+
+Loop 25z37 reproduced the problem with the real Chat API and durable
+`chat.db` state. The human message started with `@architect`, but later
+referred to `@execute` and `@review` in the requirement text. The stored
+message and inbox queue showed:
+
+```text
+message_mentions=["@architect","@execute","@review"]
+inbox_targets=["architect","execute","review"]
+```
+
+Impact:
+
+- A human could intend an architect-led turn while accidentally scheduling
+  execute and review peers immediately.
+- This made natural groupchat prompts noisy when they discussed role names.
+
+Fix:
+
+- Human messages now treat one or more leading mentions as an explicit routing
+  header.
+- Later mentions in the same human message body do not create additional inbox
+  items when a leading routing header exists.
+- Messages that do not start with a mention keep the previous body-mention
+  routing behavior.
+
+Rerun evidence:
+
+```text
+Loop 25z37b
+message_mentions=["@architect"]
+inbox_targets=["architect"]
+```
+
+Proof boundary:
+
+- This is local runtime routing evidence only.
+- It does not prove provider peer reply truth, full groupchat completion,
+  GitHub review truth, merge truth, live MemoryOS, full L8-L10 closure, full
+  L1-L11 closure, or production-ready groupchat.

@@ -2500,3 +2500,111 @@ recorded lane result.
 Claims not made: GitHub review truth, merge truth, `ready_to_merge`,
 `pr_merged`, live MemoryOS, full L8-L10 closure, full L1-L11 closure,
 production-ready groupchat, or overnight readiness.
+
+### Loop 25z37: human leading mention routing repro and rerun
+
+Goal: verify whether human demand text that starts with `@architect` but later
+mentions `@execute` and `@review` widens the initial peer queue.
+
+Authority:
+
+```text
+chat.db messages and chat_inbox_items
+```
+
+Producer and consumer boundary:
+
+```text
+producer=Chat API / PeerChatService.post_human_message
+consumer=peer scheduler inbox queue
+proof_level=local_runtime_routing_evidence
+```
+
+Pre-fix runtime root:
+
+```text
+.goal-runs/2026-06-19/loop-25z37-role-mention-routing-094947
+```
+
+Service command:
+
+```bash
+XMUSE_ROOT="$RUN_ROOT" uv run python -c 'import os; from pathlib import Path; import uvicorn; from xmuse.chat_api import create_app; uvicorn.run(create_app(base_dir=Path(os.environ["XMUSE_ROOT"])), host="127.0.0.1", port=8201, log_level="info")'
+```
+
+The first three HTTP attempts were harness/schema corrections for provider
+profile ids. They are not product evidence. The corrected request created a
+conversation with:
+
+```text
+architect: codex/god gpt-5.4
+execute: codex/worker gpt-5.4-mini
+review: opencode/review opencode-go/deepseek-v4-flash
+```
+
+Human message:
+
+```text
+@architect please coordinate the implementation. The written requirement needs
+to discuss the @execute and @review roles as examples, but the initial work
+should stay architect-led.
+```
+
+Observed pre-fix durable result:
+
+```text
+conversation_id=conv_ef85f8375d30416bb78b209e2f531127
+message_mentions=["@architect","@execute","@review"]
+inbox_targets=["architect","execute","review"]
+artifact=.goal-runs/2026-06-19/loop-25z37-role-mention-routing-094947/role_mention_repro.json
+```
+
+Classification: routing. A leading architect address plus later role references
+created three initial inbox items.
+
+Targeted fix:
+
+- Human messages now treat a leading `@mention` block as the routing header.
+- If a human message starts with one or more mentions, only that leading block
+  routes inbox items.
+- If a human message does not start with a mention, existing body-mention
+  routing remains unchanged.
+
+Rerun runtime root:
+
+```text
+.goal-runs/2026-06-19/loop-25z37b-leading-routing-rerun-095415
+```
+
+Rerun service command:
+
+```bash
+XMUSE_ROOT="$RUN_ROOT" uv run python -c 'import os; from pathlib import Path; import uvicorn; from xmuse.chat_api import create_app; uvicorn.run(create_app(base_dir=Path(os.environ["XMUSE_ROOT"])), host="127.0.0.1", port=8201, log_level="info")'
+```
+
+Observed rerun durable result:
+
+```text
+conversation_id=conv_8a3f4ae510584709b5dbebac8ec4ea8e
+message_mentions=["@architect"]
+inbox_targets=["architect"]
+artifact=.goal-runs/2026-06-19/loop-25z37b-leading-routing-rerun-095415/role_mention_rerun.json
+```
+
+Validation:
+
+```text
+uv run pytest tests/xmuse/test_peer_chat_service.py \
+  tests/xmuse/test_package_boundaries.py -q
+-> 31 passed
+
+uv run ruff check . -> All checks passed
+git diff --check -> pass
+test ! -e xmuse/__init__.py -> pass
+ports 8100/8201/8265 -> no listeners
+```
+
+Claims not made: provider peer reply truth, full groupchat completion, GitHub
+review truth, merge truth, `ready_to_merge`, `pr_merged`, live MemoryOS, full
+L8-L10 closure, full L1-L11 closure, production-ready groupchat, or overnight
+readiness.

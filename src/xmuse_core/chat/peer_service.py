@@ -34,6 +34,7 @@ from xmuse_core.chat.mentions import (
     MentionResolutionError,
     MentionResolver,
     default_intake_address,
+    extract_leading_mentions,
     extract_mentions,
     has_inactive_mention_candidates,
     normalize_address,
@@ -1456,9 +1457,9 @@ class PeerChatService:
             return PeerMessageResult.from_json(logged)
 
         has_inactive_mentions = has_inactive_mention_candidates(content)
+        routed_raw_mentions = self._human_routing_mentions(content)
         has_all_mention = any(
-            normalize_address(raw) == "@all"
-            for raw in extract_mentions(content)
+            normalize_address(raw) == "@all" for raw in routed_raw_mentions
         )
         if has_all_mention:
             mention_values = ["@all"]
@@ -1467,7 +1468,11 @@ class PeerChatService:
                 content=content,
             )
         else:
-            mentions = self._resolve_mentions(conversation_id, content)
+            mentions = self._resolve_human_mentions(
+                conversation_id,
+                content,
+                raw_mentions=routed_raw_mentions,
+            )
             mention_values = [mention.normalized for mention in mentions]
             inbox_items = self._build_human_inbox_items(
                 conversation_id=conversation_id,
@@ -1498,6 +1503,39 @@ class PeerChatService:
             resolved = resolver.resolve_content(conversation_id, content)
         except MentionResolutionError as exc:
             raise PeerChatError(exc.code, exc.target) from exc
+        return resolved
+
+    def _human_routing_mentions(self, content: str) -> list[str]:
+        leading_mentions = extract_leading_mentions(content)
+        return leading_mentions or extract_mentions(content)
+
+    def _resolve_human_mentions(
+        self,
+        conversation_id: str,
+        content: str,
+        *,
+        raw_mentions: list[str] | None = None,
+    ):
+        raw_mentions = (
+            self._human_routing_mentions(content)
+            if raw_mentions is None
+            else raw_mentions
+        )
+        return self._resolve_raw_mentions(conversation_id, raw_mentions)
+
+    def _resolve_raw_mentions(self, conversation_id: str, raw_mentions: list[str]):
+        resolver = MentionResolver(self._participants)
+        resolved = []
+        seen: set[str] = set()
+        for raw in raw_mentions:
+            try:
+                mention = resolver.resolve(conversation_id, raw)
+            except MentionResolutionError as exc:
+                raise PeerChatError(exc.code, exc.target) from exc
+            if mention.normalized in seen:
+                continue
+            seen.add(mention.normalized)
+            resolved.append(mention)
         return resolved
 
     def _build_human_inbox_items(
