@@ -6,6 +6,22 @@ truth, merge truth, live MemoryOS proof, or full closure.
 
 ## Current Evidence Summary
 
+- Loop 26i/26j introduced a reusable local runtime driver at
+  `scripts/run_fullchain_docs_sentinel.py` for the docs-only fullchain
+  sentinel: Chat API + MCP + platform runner, durable groupchat,
+  collaboration, proposal approval, isolated lane execution, gate, OpenCode
+  review metadata, and final-action hold.
+- Loop 26i reached `awaiting_final_action` with exactly one related proposal,
+  but the executor chat-plane handoff degraded to
+  `auto_persistent_fallback` with `peer_result_status=delivery_failed`. This is
+  not healthy durable executor peer proof.
+- Loop 26j reached `awaiting_final_action` with
+  `peer_delivery_mode=configured_peer`, but the architect emitted two related
+  `lane_graph` proposals for the same feature id. The updated driver now treats
+  duplicate related proposals as a contract failure.
+- Current next boundary: make post-collaboration proposal emission idempotent
+  so one human demand and one collaboration completion can produce at most one
+  related lane_graph proposal.
 - Fake groupchat demos passed in the 2026-06-17 run, but only prove the fake
   GOD layer and writeback trace contract.
 - REST + MCP proposal approval reached an isolated `feature_lanes.json`
