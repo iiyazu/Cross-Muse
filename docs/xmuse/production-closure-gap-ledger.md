@@ -7,28 +7,30 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
 
 ## Current Proof Boundary
 
-- Latest main inspected: `e6eeeddf5911a171bf32dc38b839fa2e7c51d62d`.
-- Strongest runtime evidence: Loop 25z49 reached one real local code-change
-  lane from durable groupchat through execute feasibility, proposal, OpenCode
-  proposal review, human approval, isolated execution, xmuse-core gate,
-  persistent OpenCode review, and final-action hold under `--no-auto-merge`.
-  The lane recorded `review_runtime=opencode`,
+- Latest main inspected: `17a75cbe2cb07b06e05cd40e432e867ea2fd5e8f`.
+- Strongest code-change lane runtime evidence: Loop 25z49 reached one real
+  local code-change lane from durable groupchat through execute feasibility,
+  proposal, OpenCode proposal review, human approval, isolated execution,
+  xmuse-core gate, persistent OpenCode review, and final-action hold under
+  `--no-auto-merge`. The lane recorded `review_runtime=opencode`,
   `review_delivery_mode=persistent`, `persistent_review_degraded=false`,
   `gate_passed=true`, and `review_decision=merge`.
-- Latest focused runtime evidence: Loop 25z57 verified a local
-  two-conversation peer-chat path after local final-summary gating changes:
-  human demand to Codex architect handoff, Codex execute reply, OpenCode review
+- Latest peer-chat stability evidence: Loop 25z63 verified a local
+  six-conversation Codex/OpenCode groupchat path under `--max-concurrent 10`
+  and `--peer-chat-post-writeback-grace-s 20`. Each conversation reached human
+  demand to Codex architect handoff, Codex execute reply, OpenCode review
   reply, durable peer-reply drain callback, and architect final summary after
-  both replies. Both conversations ended with `open_inbox=0`,
-  `marker_messages=1`, `final_after_both=true`, no proposals/resolutions, and
-  zero `timeout_after_writeback_traces`.
-- Strongest server facts: PR #85 was merged by GitHub server state as
-  `e6eeeddf5911a171bf32dc38b839fa2e7c51d62d` after successful `xmuse CI` on PR
-  head `11b20ac07e79629b86eaa148f5581143a341d6bc`; post-merge main `xmuse CI`
-  also passed on `e6eeeddf5911a171bf32dc38b839fa2e7c51d62d` in run
-  `27812808322`.
-- Proof type: local runtime proof plus inspected GitHub server facts for the
-  small imported PR. This is not GitHub review truth or production readiness.
+  both replies. The run ended with `all_final_after_both=true`,
+  `all_callbacks_created=true`, `all_callbacks_consumed=true`,
+  `no_proposals_or_resolutions=true`, `total_failed_traces=0`, and
+  `total_timeout_after_writeback_traces=0`.
+- Strongest server facts: PR #87 was merged by GitHub server state as
+  `17a75cbe2cb07b06e05cd40e432e867ea2fd5e8f` after successful `xmuse CI` on PR
+  head `0c7d96d2053e78fa522d951b37506b2d41b43761` in run `27814843417`;
+  post-merge main `xmuse CI` also passed on
+  `17a75cbe2cb07b06e05cd40e432e867ea2fd5e8f` in run `27815021534`.
+- Proof type: local runtime proof plus inspected GitHub server facts for small
+  PRs. This is not GitHub review truth or production readiness.
 
 ## Recent Small PR Slices
 
@@ -69,6 +71,12 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   `chat_mention(reply_to_inbox_item_id=...)`, direct peer-reply drain
   callbacks, and early durable-writeback release with a short grace window.
   Merged to main as `e6eeeddf5911a171bf32dc38b839fa2e7c51d62d`.
+- PR #86 `codex/post-pr85-evidence-sync`: synced the post-PR85 closure
+  evidence boundary. Merged to main as
+  `a6575c01613e7568248e64c06a4799deb83a3b71`.
+- PR #87 `codex/peer-chat-writeback-grace-tuning`: made peer-chat
+  post-writeback grace configurable and defaulted it to a longer bounded wait.
+  Merged to main as `17a75cbe2cb07b06e05cd40e432e867ea2fd5e8f`.
 
 ## Manual Gaps
 
@@ -86,9 +94,15 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
 - Loop 25z57 proved one bounded local final-summary path with a direct
   peer-reply drain callback. It is not repeated soak and not production
   readiness.
+- Loop 25z63 proved one bounded local six-conversation peer-chat stability path
+  after local same-participant delivery serialization and prompt reply-contract
+  mitigation. It is not repeated soak and not production readiness.
 - Provider result acknowledgement timeout after durable writeback is mitigated
-  by early writeback detection plus a short grace window in PR #85. Broader
-  production-load behavior is still unproven.
+  by early writeback detection plus configurable bounded grace in PR #87.
+  Broader production-load behavior is still unproven.
+- Same participant/session delivery is locally protected in the current
+  candidate branch by a scheduler participant lock. This is not a general
+  dependency-set planner.
 - Architect final-summary gating is locally mediated by a direct peer-reply
   drain callback. A general durable dependency-set planner is still absent.
 - The successful chains are not yet repeated overnight or production-load soak.
@@ -115,8 +129,9 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
 
 ## Next Small Buckets
 
-- P0 stability loop: repeat the PR #85 groupchat-to-final-summary path with
-  more turns/conversations and no implementation changes.
+- P0 peer-chat delivery hardening: land same-participant delivery serialization
+  and simple-reply path guidance, then rerun the six-conversation stability
+  path from main.
 - P1 explicit dependency coordination: add a durable coordination primitive for
   waiting on named peer replies before summaries/handoffs when direct drain is
   insufficient.

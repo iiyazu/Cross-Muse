@@ -4252,3 +4252,143 @@ handoff, Codex execute reply, OpenCode review reply, durable peer-reply drain
 callback, and architect final summary after both replies. It is not server
 truth, review truth, production-ready groupchat, live MemoryOS, overnight
 readiness, or full closure.
+
+## 2026-06-19 Post-PR87 High-Concurrency Peer-Chat Reruns
+
+These runs used latest `origin/main` after PR #87 merged as
+`17a75cbe2cb07b06e05cd40e432e867ea2fd5e8f`, then local candidate changes for
+Loops 25z62 and 25z63. They used isolated `XMUSE_ROOT` directories under
+`.goal-runs/2026-06-19/`.
+
+Service shape:
+
+```bash
+XMUSE_ROOT="$RUN_ROOT" uv run python -m xmuse.chat_api
+XMUSE_ROOT="$RUN_ROOT" uv run xmuse-mcp-server
+XMUSE_ROOT="$RUN_ROOT" XMUSE_PEER_GOD_BACKEND=native XMUSE_RAY_GOD_MCP=0 \
+  XMUSE_CHAT_API_URL=http://127.0.0.1:8201 \
+  uv run xmuse-platform-runner --xmuse-root "$RUN_ROOT" \
+  --mcp-port 8100 --peer-chat --peer-chat-post-writeback-grace-s 20 \
+  --persistent-review-god --persistent-review-timeout-s 300 \
+  --max-hours 1.1 --max-concurrent 10 --no-auto-merge
+```
+
+The driver created six public Chat API conversations per run. Each conversation
+used Codex architect, Codex execute, and OpenCode review participants. The
+driver posted a human `@architect` groupchat demand and inspected durable
+`chat.db` state only.
+
+### Loop 25z61: post-PR87 main high-concurrency negative run
+
+Runtime root:
+
+```text
+/tmp/xmuse-main-after-pr86-155349/.goal-runs/2026-06-19/loop-25z61-post-pr87-main-grace20-highconcurrency-163937
+```
+
+Final durable state:
+
+```text
+conversation_count=6
+all_initial_handoff_closed=true
+all_final_after_both=false
+all_callbacks_created=true
+all_callbacks_consumed=true
+no_proposals_or_resolutions=true
+total_failed_traces=1
+total_timeout_after_writeback_traces=0
+callback_items_by_label={alpha:2,beta:1,gamma:1,delta:1,epsilon:1,zeta:1}
+```
+
+The alpha conversation exposed same-participant concurrent delivery: a normal
+architect mention and a `peer_reply_drain_callback` were delivered to the same
+Codex architect session concurrently. The failed trace reason was:
+
+```text
+readuntil() called while another coroutine is already waiting for incoming data
+```
+
+Classification: negative local runtime evidence for same participant/session
+fan-out. This is a peer-chat scheduler delivery-lifecycle boundary.
+
+### Loop 25z62: participant-lock candidate rerun
+
+Runtime root:
+
+```text
+/tmp/xmuse-main-after-pr86-155349/.goal-runs/2026-06-19/loop-25z62-participant-lock-rerun-165536
+```
+
+Local change under test:
+
+- `PeerChatScheduler` serializes delivery per target participant while keeping
+  cross-participant `tick_many(max_concurrent=...)` fan-out.
+
+Final durable state:
+
+```text
+conversation_count=6
+all_final_after_both=false
+all_callbacks_created=true
+all_callbacks_consumed=true
+no_proposals_or_resolutions=true
+total_failed_traces=2
+total_timeout_after_writeback_traces=0
+callback_items_by_label={alpha:2,beta:1,gamma:2,delta:1,epsilon:1,zeta:1}
+```
+
+The previous `readuntil()` concurrent-read failure did not recur. The run
+instead exposed a prompt/tool-contract gap: peers could answer a simple request
+with `chat_mention` back to the sender, creating extra architect inbox items
+and failed `peer_no_inbox_writeback_message` traces.
+
+Classification: participant serialization locally mitigated the transport
+failure, but the run remained negative for reply semantics.
+
+### Loop 25z63: prompt-contract rerun success
+
+Runtime root:
+
+```text
+/tmp/xmuse-main-after-pr86-155349/.goal-runs/2026-06-19/loop-25z63-prompt-contract-rerun-170840
+```
+
+Local changes under test:
+
+- same participant delivery lock from Loop 25z62;
+- peer prompt now directs answer/report/review/critique/risk replies to use
+  `chat_post_message` with `reply_to_inbox_item_id`, not `chat_mention` back
+  to the sender.
+
+Final durable state:
+
+```text
+conversation_count=6
+all_initial_handoff_closed=true
+all_final_after_both=true
+all_callbacks_created=true
+all_callbacks_consumed=true
+no_proposals_or_resolutions=true
+total_failed_traces=0
+total_timeout_after_writeback_traces=0
+callback_items_by_label={alpha:1,beta:1,gamma:1,delta:1,epsilon:1,zeta:1}
+```
+
+Per-conversation shape:
+
+```text
+messages=6
+inbox=4
+open_inbox=0
+execute_replies=1
+review_replies=1
+callback_items=1
+marker_messages=1
+proposals=0
+resolutions=0
+```
+
+Classification: positive local runtime evidence for a six-conversation
+Codex/OpenCode peer-chat stability path under `--max-concurrent 10`. It is not
+production readiness, live MemoryOS proof, GitHub review truth, full L8-L10
+closure, full L1-L11 closure, or overnight readiness.

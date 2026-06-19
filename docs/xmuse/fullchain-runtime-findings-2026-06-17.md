@@ -2464,3 +2464,83 @@ Remaining gap:
 
 - This is bounded local runtime evidence. It does not prove production
   scheduling under load, overnight readiness, live MemoryOS, or full closure.
+
+### F94. Peer-chat fan-out must serialize delivery per target participant
+
+Severity: locally resolved transport/delivery-lifecycle blocker.
+
+Loop 25z61 reran the six-conversation Codex/OpenCode peer-chat stability path
+after PR #87 merged. Five conversations reached the expected shape, but alpha
+created two architect inbox items for the same participant/session: a normal
+mention and a `peer_reply_drain_callback`. `tick_many(max_concurrent=10)`
+delivered both to the same persistent Codex session concurrently, producing a
+failed trace:
+
+```text
+degraded_reason=readuntil() called while another coroutine is already waiting for incoming data
+```
+
+Local fix:
+
+- `PeerChatScheduler` keeps cross-participant fan-out;
+- delivery to the same `target_participant_id` is serialized with a scheduler
+  participant lock;
+- focused coverage verifies different participants can still run concurrently
+  while two inbox items for the same participant do not overlap provider
+  receives.
+
+Validation:
+
+```text
+uv run pytest tests/xmuse/test_peer_chat_scheduler.py -q
+-> 18 passed
+```
+
+Loop 25z62 evidence:
+
+- the previous concurrent `readuntil()` failure did not recur;
+- the run still failed on a different prompt/tool-contract boundary, with
+  `peer_no_inbox_writeback_message`.
+
+Remaining gap:
+
+- This lock is a local scheduler protection. It is not a general dependency-set
+  planner and does not prove production load or overnight readiness.
+
+### F95. Simple peer replies must not use back-mention as the reply path
+
+Severity: locally mitigated prompt/tool-contract blocker.
+
+Loop 25z62 showed that after same-participant delivery was serialized, peers
+could still answer a simple "name the risk / critique" request by using
+`chat_mention` back to the sender. That created extra architect inbox items and
+left some items read with no durable response message, producing
+`peer_no_inbox_writeback_message` traces and final-summary ordering gaps.
+
+Local fix:
+
+- peer prompt now states that answer/report/review/critique/risk replies must
+  use `chat_post_message` with `reply_to_inbox_item_id`;
+- `chat_mention` back to the sender is explicitly discouraged for simple
+  answers;
+- `chat_mention` remains the handoff tool when another GOD should take over,
+  inspect, or continue work.
+
+Loop 25z63 evidence:
+
+```text
+conversation_count=6
+all_final_after_both=true
+all_callbacks_created=true
+all_callbacks_consumed=true
+no_proposals_or_resolutions=true
+total_failed_traces=0
+total_timeout_after_writeback_traces=0
+callback_items_by_label={alpha:1,beta:1,gamma:1,delta:1,epsilon:1,zeta:1}
+```
+
+Remaining gap:
+
+- This is prompt/tool-contract mitigation, not a hard protocol proof. A future
+  coordination primitive should model named dependency sets instead of relying
+  on prompt-following for complex multi-peer workflows.
