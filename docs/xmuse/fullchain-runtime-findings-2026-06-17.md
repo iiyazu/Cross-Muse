@@ -121,6 +121,14 @@ truth, merge truth, live MemoryOS proof, or full closure.
   fullchain final-action hold with `review_runtime=opencode`,
   `review_delivery_mode=persistent`, `persistent_review_degraded=false`, gate
   pass, and OpenCode review decision `merge`.
+- PR #82 merged the explicit `OpenCode` casing fix as
+  `94218b269e4a005049e18378ebdc179c1dcada28` after successful PR and
+  post-merge main `xmuse CI`.
+- Loop 25z49 then drove a real post-PR82 code-change demand through durable
+  groupchat, execute feasibility, proposal, OpenCode proposal review, human
+  approval, isolated execution, xmuse-core gate, persistent OpenCode review,
+  and final-action hold. The candidate exposed `participant_sessions` in
+  conversation create/bootstrap responses.
 
 ## Findings
 
@@ -2118,3 +2126,98 @@ Remaining gaps:
 - Provider-native memory continuity, live MemoryOS, production-ready
   groupchat, full L8-L10 closure, full L1-L11 closure, and overnight readiness
   remain unproven.
+
+### F88. Conversation creation should expose participant session mappings
+
+Severity: resolved local API ergonomics gap with one real code-change
+fullchain.
+
+Earlier operation finding F3 noted that external clients had to parse
+`god_sessions.json` to map conversation participants to durable GOD sessions.
+Loop 25z49 used that as a real small code-change task after PR #82 landed.
+
+Runtime evidence:
+
+```text
+Loop 25z49 runtime_root:
+/tmp/xmuse-post-pr82-code-lane-5TCIGa/.goal-runs/2026-06-19/loop-25z49-post-pr82-code-lane-134000
+
+conversation_id=conv_d4fc824bbaae4955aafab5fcec53e521
+collaboration_run=collab_9be5084eab334e50ab0e327ea7d3b078
+proposal_id=prop_8afc1aabe2ce40b3acdb06924f66e161
+resolution_id=res_f6262fa36fcf4f078ba78af72957e628
+feature_id=peer-chat-participant-sessions-response
+status=awaiting_final_action
+gate_passed=true
+review_runtime=opencode
+review_delivery_mode=persistent
+persistent_review_degraded=false
+peer_delivery_mode=configured_peer
+review_decision=merge
+review_task=rtask_7cea2ced463e4a579dc22af4b66adeef
+review_verdict=verdict-merge-rtask_7cea2ced463e4a579dc22af4b66adeef
+final_action_hold_id=final-d596ee1cb4ea
+```
+
+Real chain:
+
+- Human mentioned only `@architect`.
+- Architect asked execute for feasibility through a collaboration run.
+- Execute recorded an executable collaboration response.
+- Architect emitted exactly one lane_graph proposal.
+- OpenCode review-god reviewed the proposal trigger and returned PASS.
+- The operator approved the proposal through the public Chat API.
+- The runner dispatched the lane into an isolated execution worktree.
+- Gate passed the selected `xmuse-core` profile.
+- Persistent OpenCode review returned `merge`.
+- The lane stopped at human final-action hold under `--no-auto-merge`.
+
+Implementation candidate:
+
+```text
+src/xmuse_core/chat/peer_service.py
+xmuse/chat_api.py
+tests/xmuse/test_peer_chat_api.py
+```
+
+The change is additive:
+
+- `PeerChatService.create_conversation` returns top-level
+  `participant_sessions` copied from bootstrap output.
+- deterministic bootstrap includes `participant_sessions` for created peers.
+- proposal-then-approve bootstrap starts with an empty participant session list
+  and returns populated mappings after bootstrap apply.
+- Chat API exposes the top-level field while preserving existing
+  `bootstrap.participant_sessions`.
+
+Gate evidence:
+
+```text
+logs/gates/peer-chat-participant-sessions-response/report.json
+passed=true
+blocking_passed=true
+profile_ids=["xmuse-core"]
+pytest returncode=0
+stdout="253 passed, 2 warnings in 70.15s"
+```
+
+Post-import validation:
+
+```text
+uv run pytest tests/xmuse/test_peer_chat_api.py tests/xmuse/test_package_boundaries.py -q
+-> 28 passed, 1 warning
+
+uv run ruff check . -> All checks passed
+git diff --check -> pass
+test ! -e xmuse/__init__.py -> pass
+```
+
+Remaining gaps:
+
+- This is one real code-change fullchain and local validation, not repeated
+  soak.
+- The lane stopped at final-action hold; no live lane merge automation is
+  claimed.
+- The imported branch has no server facts until pushed and checked.
+- GitHub review truth, live MemoryOS, production-ready groupchat, full L8-L10
+  closure, full L1-L11 closure, and overnight readiness remain unproven.

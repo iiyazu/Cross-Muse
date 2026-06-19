@@ -6,6 +6,71 @@ from xmuse_core.chat.inbox_store import ChatInboxStore
 from xmuse_core.chat.peer_service import PeerChatService
 
 
+def _assert_participant_sessions(
+    *,
+    participants: list[dict[str, object]],
+    participant_sessions: list[dict[str, object]],
+    conversation_id: str,
+    tmp_path,
+) -> None:
+    participants_by_role = {str(item["role"]): item for item in participants}
+    sessions_by_role = {str(item["role"]): item for item in participant_sessions}
+
+    assert sessions_by_role.keys() == participants_by_role.keys()
+
+    registry = GodSessionRegistry(tmp_path / "god_sessions.json")
+    for role, participant in participants_by_role.items():
+        session = sessions_by_role[role]
+        assert session["conversation_id"] == conversation_id
+        assert session["participant_id"] == participant["participant_id"]
+        record = registry.get(str(session["god_session_id"]))
+        assert record.participant_id == participant["participant_id"]
+
+
+def test_create_conversation_response_includes_participant_sessions(tmp_path) -> None:
+    client = TestClient(create_app(tmp_path))
+
+    response = client.post("/api/chat/conversations", json={"title": "Chat"})
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["bootstrap"]["participant_sessions"] == payload["participant_sessions"]
+    _assert_participant_sessions(
+        participants=payload["participants"],
+        participant_sessions=payload["participant_sessions"],
+        conversation_id=payload["id"],
+        tmp_path=tmp_path,
+    )
+
+
+def test_bootstrap_apply_response_includes_participant_sessions(tmp_path) -> None:
+    client = TestClient(create_app(tmp_path))
+    created = client.post(
+        "/api/chat/conversations",
+        json={"title": "Bootstrap apply", "init_mode": "proposal_then_approve"},
+    )
+
+    assert created.status_code == 201
+    conversation = created.json()
+    assert conversation["participant_sessions"] == []
+    proposal_id = conversation["bootstrap"]["proposal_id"]
+
+    response = client.post(
+        f"/api/chat/conversations/{conversation['id']}/bootstrap/apply",
+        json={"proposal_id": proposal_id},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["bootstrap"]["participant_sessions"] == payload["participant_sessions"]
+    _assert_participant_sessions(
+        participants=payload["participants"],
+        participant_sessions=payload["participant_sessions"],
+        conversation_id=payload["conversation_id"],
+        tmp_path=tmp_path,
+    )
+
+
 def test_rest_message_mention_creates_inbox(tmp_path):
     client = TestClient(create_app(tmp_path))
     conv = client.post("/api/chat/conversations", json={"title": "Chat"}).json()

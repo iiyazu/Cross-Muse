@@ -3686,3 +3686,135 @@ Cleanup:
 ```text
 8201/8100/8214/8265 listeners: none
 ```
+
+### Loop 25z49: post-PR82 real code-change lane to final hold
+
+Branch:
+
+```text
+codex/post-pr82-code-lane-rerun
+base=origin/main@94218b269e4a005049e18378ebdc179c1dcada28
+```
+
+Runtime root:
+
+```text
+/tmp/xmuse-post-pr82-code-lane-5TCIGa/.goal-runs/2026-06-19/loop-25z49-post-pr82-code-lane-134000
+```
+
+Commands:
+
+```bash
+XMUSE_ROOT="$RUN_ROOT" XMUSE_EXECUTION_WORKTREE="$EXEC_WORKTREE" \
+  uv run python -c 'import os; from pathlib import Path; import uvicorn; from xmuse.chat_api import create_app; uvicorn.run(create_app(base_dir=Path(os.environ["XMUSE_ROOT"]), execution_worktree=Path(os.environ["XMUSE_EXECUTION_WORKTREE"])), host="127.0.0.1", port=8201, log_level="info")'
+
+XMUSE_ROOT="$RUN_ROOT" uv run xmuse-mcp-server
+
+XMUSE_ROOT="$RUN_ROOT" XMUSE_PEER_GOD_BACKEND=native \
+  XMUSE_RAY_GOD_MCP=0 XMUSE_CHAT_API_URL=http://127.0.0.1:8201 \
+  uv run xmuse-platform-runner --xmuse-root "$RUN_ROOT" --mcp-port 8100 \
+  --peer-chat --persistent-review-god --persistent-review-timeout-s 240 \
+  --max-hours 1.0 --no-auto-merge
+```
+
+Human demand:
+
+```text
+Ask architect to coordinate one real code-change fullchain. The requested
+bounded product change was to expose participant_sessions in the conversation
+bootstrap/create response so external clients can map role and participant_id
+to durable god_session_id without parsing god_sessions.json.
+```
+
+Durable groupchat observations:
+
+```text
+conversation_id=conv_d4fc824bbaae4955aafab5fcec53e521
+collaboration_run=collab_9be5084eab334e50ab0e327ea7d3b078
+proposal_id=prop_8afc1aabe2ce40b3acdb06924f66e161
+resolution_id=res_f6262fa36fcf4f078ba78af72957e628
+
+messages=10
+chat_inbox_items=5
+collaboration_runs=1
+collaboration_responses=1
+proposals=1
+resolutions=1
+peer_turn_latency_traces:
+  mcp_writeback=4 with no degraded reason
+  mcp_writeback=1 with peer_response_timeout_after_writeback
+```
+
+Groupchat chain:
+
+```text
+human -> architect mention: read, mcp_writeback
+architect -> execute feasibility request: read, mcp_writeback
+execute -> collaboration response: received, executable
+collaboration callback -> architect: read, proposal emitted
+proposal review trigger -> review-god/OpenCode: read, PASS
+operator approval -> lane projection
+```
+
+Lane result:
+
+```text
+feature_id=peer-chat-participant-sessions-response
+status=awaiting_final_action
+changed_files:
+  src/xmuse_core/chat/peer_service.py
+  xmuse/chat_api.py
+  tests/xmuse/test_peer_chat_api.py
+gate_passed=true
+review_runtime=opencode
+review_delivery_mode=persistent
+persistent_review_degraded=false
+peer_delivery_mode=configured_peer
+review_peer_id=part_f92861d9b05c4f6b92e39880313734f2
+review_runtime_requested=opencode
+persistent_review_identity=configured:part_f92861d9b05c4f6b92e39880313734f2
+review_decision=merge
+final_action_hold_id=final-d596ee1cb4ea
+review_task=rtask_7cea2ced463e4a579dc22af4b66adeef
+review_verdict=verdict-merge-rtask_7cea2ced463e4a579dc22af4b66adeef
+```
+
+Gate evidence:
+
+```text
+logs/gates/peer-chat-participant-sessions-response/report.json
+passed=true
+blocking_passed=true
+profile_ids=["xmuse-core"]
+command="uv run pytest -q tests/xmuse/test_peer_chat_service.py ... tests/xmuse/test_feature_summary.py"
+returncode=0
+stdout="253 passed, 2 warnings in 70.15s"
+```
+
+Post-import local validation:
+
+```text
+uv run pytest tests/xmuse/test_peer_chat_api.py tests/xmuse/test_package_boundaries.py -q
+-> 28 passed, 1 warning
+
+uv run ruff check . -> All checks passed
+git diff --check -> pass
+test ! -e xmuse/__init__.py -> pass
+```
+
+Cleanup:
+
+```text
+8201/8100/8265 listeners: none
+```
+
+The runner emitted Ray shutdown warnings and a `std::bad_alloc` stack after
+operator Ctrl-C during cleanup. This happened after the lane reached
+`awaiting_final_action` and is not counted as a business-chain failure.
+
+Classification: real local fullchain evidence for one small code-change lane
+from durable GOD groupchat through execute feasibility, proposal, OpenCode
+proposal review, human approval, isolated execution, gate, persistent OpenCode
+review, and final-action hold under `--no-auto-merge`. This is not GitHub
+review truth, live MemoryOS proof, production readiness, or full L8-L10/L1-L11
+closure.
