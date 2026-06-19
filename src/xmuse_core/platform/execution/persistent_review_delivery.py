@@ -102,6 +102,28 @@ async def apply_persistent_review_message(
         await on_reviewed(lane_id)
         return True
 
+    current_lane = sm.get_lane(lane_id)
+    if _review_already_accepted(current_lane):
+        sm.update_metadata(
+            lane_id,
+            ignored_review_conflict_metadata(
+                lane=current_lane,
+                decision=ReviewDecision.REWORK.value,
+                summary=summary,
+                fallback="persistent",
+                fallback_reason=reason,
+            )
+            | {
+                "review_delivery_mode": "persistent",
+                "persistent_review_degraded": False,
+                "review_request_id": review_request_id,
+                "persistent_review_identity": persistent_review_identity,
+            }
+            | (extra_metadata or {})
+            | {"review_evidence_refs": review_evidence_refs},
+        )
+        return True
+
     _transition_or_update_same_status(
         sm,
         lane_id,
@@ -125,6 +147,14 @@ async def apply_persistent_review_message(
     ingest_rework_verdict(lane_id, summary, review_evidence_refs)
     await on_rejected(lane_id)
     return True
+
+
+def _review_already_accepted(lane: dict[str, Any]) -> bool:
+    if lane.get("status") not in {"reviewed", "awaiting_final_action"}:
+        return False
+    if lane.get("review_decision") == ReviewDecision.MERGE.value:
+        return True
+    return bool(lane.get("review_verdict_id") or lane.get("final_action_hold_id"))
 
 
 def _transition_or_update_same_status(
@@ -171,6 +201,37 @@ def review_metadata(
         "review_fallback": fallback,
         "review_fallback_reason": fallback_reason,
         "review_history": [*history, entry][-_MAX_REVIEW_HISTORY:],
+    }
+
+
+def ignored_review_conflict_metadata(
+    *,
+    lane: dict[str, Any],
+    decision: str,
+    summary: str,
+    fallback: str,
+    fallback_reason: str,
+) -> dict[str, Any]:
+    summary = sanitize_review_summary(summary)
+    entry = {
+        "decision": decision,
+        "summary": summary,
+        "fallback": fallback,
+        "fallback_reason": fallback_reason,
+        "ignored_reason": "review_already_accepted",
+        "recorded_at": time.time(),
+    }
+    history = lane.get("ignored_review_conflicts")
+    if not isinstance(history, list):
+        history = []
+    return {
+        "review_conflict_ignored": True,
+        "review_conflict_ignored_reason": "review_already_accepted",
+        "ignored_review_decision": decision,
+        "ignored_review_summary": summary,
+        "ignored_review_fallback": fallback,
+        "ignored_review_fallback_reason": fallback_reason,
+        "ignored_review_conflicts": [*history, entry][-_MAX_REVIEW_HISTORY:],
     }
 
 

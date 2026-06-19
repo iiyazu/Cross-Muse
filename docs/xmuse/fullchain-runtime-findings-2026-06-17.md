@@ -2629,8 +2629,22 @@ Classification:
 
 Remaining gap:
 
-- This should be repaired before treating repeated review/final-hold runs as
-  stable. Loop 25z64 should not be reported as clean review-state behavior.
 - The final lane did not expose `review_delivery_mode=persistent` or
   `persistent_review_degraded=false`, so the run is not complete persistent
   OpenCode delivery proof.
+- A local candidate fix now ignores late persistent rework/rejected verdicts
+  after an accepted review/final-hold state and records
+  `review_conflict_ignored` metadata instead of attempting an invalid state
+  transition.
+- Validation for the candidate fix:
+
+```text
+uv run pytest tests/xmuse/test_persistent_review_delivery_module.py -q
+-> 8 passed
+
+uv run pytest tests/xmuse/test_persistent_review_delivery_module.py tests/xmuse/test_platform_runner.py -q
+-> 80 passed, 1 warning
+```
+
+- The fix still needs a repeat runtime chain before claiming clean
+  review-state behavior under fullchain load.
