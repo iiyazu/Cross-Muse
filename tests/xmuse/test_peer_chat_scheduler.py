@@ -114,6 +114,8 @@ async def test_scheduler_claims_and_nudges_oldest_item(tmp_path: Path) -> None:
     assert "call chat_post_message directly" in layer.sent[0][2]
     assert "reply_to_inbox_item_id=xmuse_context.inbox_item.id" in layer.sent[0][2]
     assert "chat_read_inbox is only for recovery or batch inspection" in layer.sent[0][2]
+    assert "answer, report, review" in layer.sent[0][2]
+    assert "do not use chat_mention back to the sender for simple answers" in layer.sent[0][2]
     assert (
         "Natural-language @mentions inside chat_post_message are display-only"
         in layer.sent[0][2]
@@ -376,6 +378,113 @@ async def test_scheduler_tick_many_claims_multiple_inbox_items_concurrently(
     assert outcome.happy_path == 3
     assert outcome.failed == 0
     assert layer.max_active_receives > 1
+    assert {inbox.get(item.id).status for item in items} == {"read"}
+
+
+@pytest.mark.asyncio
+async def test_scheduler_tick_many_serializes_same_participant_delivery(
+    tmp_path: Path,
+) -> None:
+    chat = ChatStore(tmp_path / "chat.db")
+    conv = chat.create_conversation("Scheduler same participant")
+    participant = ParticipantStore(tmp_path / "chat.db").add(
+        conversation_id=conv.id,
+        role="architect",
+        display_name="Architect GOD",
+        cli_kind="codex",
+        model="gpt-5.4",
+    )
+    inbox = ChatInboxStore(tmp_path / "chat.db")
+    items = []
+    for index in range(2):
+        message = chat.add_message(
+            conv.id,
+            "Human",
+            "human",
+            f"@architect request {index}",
+        )
+        items.append(
+            inbox.create_item(
+                conversation_id=conv.id,
+                target_participant_id=participant.participant_id,
+                target_role="architect",
+                target_address="@architect",
+                sender_participant_id=None,
+                sender_address="@human",
+                source_message_id=message.id,
+                item_type="mention",
+                payload={"content": f"@architect request {index}"},
+            )
+        )
+
+    class SameParticipantGodLayer(FakeGodLayer):
+        def __init__(self) -> None:
+            super().__init__()
+            self.context_by_session = {}
+            self.active_receives = 0
+            self.max_active_receives = 0
+
+        async def ensure_conversation_session(self, **kwargs):
+            self.ensured.append(kwargs)
+            return type(
+                "Record",
+                (),
+                {"god_session_id": kwargs["participant_id"]},
+            )()
+
+        async def send_message(
+            self,
+            god_session_id,
+            message_type,
+            prompt,
+            context,
+            request_id=None,
+        ):
+            self.sent.append((god_session_id, message_type, prompt, context, request_id))
+            self.context_by_session[god_session_id] = json.loads(context)
+
+        async def receive_message(self, god_session_id):
+            self.active_receives += 1
+            self.max_active_receives = max(
+                self.max_active_receives,
+                self.active_receives,
+            )
+            try:
+                await asyncio.sleep(0.02)
+                context = self.context_by_session[god_session_id]
+                item = context["inbox_item"]
+                reply = chat.add_message(
+                    item["conversation_id"],
+                    participant.participant_id,
+                    "assistant",
+                    f"serialized reply for {item['id']}",
+                )
+                inbox.mark_read(item["id"], responded_message_id=reply.id)
+                PeerTurnLatencyTraceStore(tmp_path / "chat.db").record_mcp_tool_stage(
+                    conversation_id=item["conversation_id"],
+                    inbox_item_id=item["id"],
+                    tool_name="chat_post_message",
+                    called_at=1.0,
+                )
+                return self.receive_result
+            finally:
+                self.active_receives -= 1
+
+    layer = SameParticipantGodLayer()
+    scheduler = PeerChatScheduler(
+        db_path=tmp_path / "chat.db",
+        god_layer=layer,
+        worktree=tmp_path,
+        scheduler_id="sched-test",
+        response_wait_s=0.1,
+    )
+
+    outcome = await scheduler.tick_many(max_concurrent=2)
+
+    assert outcome.happy_path == 2
+    assert outcome.failed == 0
+    assert layer.max_active_receives == 1
+    assert len(layer.sent) == 2
     assert {inbox.get(item.id).status for item in items} == {"read"}
 
 

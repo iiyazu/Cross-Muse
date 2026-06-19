@@ -59,6 +59,7 @@ class PeerChatScheduler:
         self._degraded_fallback_enabled = degraded_fallback_enabled
         self._only_inbox_item_id = only_inbox_item_id
         self._clock = clock or time.monotonic
+        self._participant_locks: dict[str, asyncio.Lock] = {}
 
     async def tick_once(self) -> PeerChatSchedulerOutcome:
         item = self._inbox.claim_next(
@@ -78,6 +79,49 @@ class PeerChatScheduler:
             if item.target_participant_id is None:
                 raise RuntimeError("inbox item missing target_participant_id")
             participant = self._participants.get(item.target_participant_id)
+            async with self._delivery_lock_for_participant(participant.participant_id):
+                return await self._deliver_claimed_item(
+                    item,
+                    participant=participant,
+                    trace_start_at=trace_start_at,
+                    delivery_started_at=delivery_started_at,
+                    provider_turn_started_at=provider_turn_started_at,
+                    scheduler_observed_result_at=scheduler_observed_result_at,
+                    transport_latency_stages=transport_latency_stages,
+                )
+        except Exception as exc:
+            self._record_latency_trace(
+                item,
+                trace_start_at=trace_start_at,
+                delivery_started_at=delivery_started_at,
+                provider_turn_started_at=provider_turn_started_at,
+                scheduler_observed_result_at=scheduler_observed_result_at,
+                delivery_mode="failed",
+                degraded_reason=str(exc),
+            )
+            self._finish_active_stream_for_item(item, status="error")
+            self._record_failed_nudge(item.id, reason=str(exc))
+            return PeerChatSchedulerOutcome(failed=1)
+
+    def _delivery_lock_for_participant(self, participant_id: str) -> asyncio.Lock:
+        lock = self._participant_locks.get(participant_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._participant_locks[participant_id] = lock
+        return lock
+
+    async def _deliver_claimed_item(
+        self,
+        item,
+        *,
+        participant: Participant,
+        trace_start_at: float,
+        delivery_started_at: float,
+        provider_turn_started_at: float,
+        scheduler_observed_result_at: float | None,
+        transport_latency_stages: dict[str, dict[str, float]],
+    ) -> PeerChatSchedulerOutcome:
+        try:
             agent = AgentDescriptor(
                 name=participant.display_name,
                 runtime=_runtime_for_participant(participant),
@@ -96,6 +140,10 @@ class PeerChatScheduler:
                 "xmuse_context.inbox_item.payload.content as the request. "
                 "chat_read_inbox is only for recovery or batch inspection; "
                 "do not call it before simple replies. "
+                "When the inbox request asks you to answer, report, review, "
+                "critique, name a risk, or otherwise reply back to the sender, "
+                "use chat_post_message with reply_to_inbox_item_id; do not use "
+                "chat_mention back to the sender for simple answers. "
                 "Natural-language @mentions inside chat_post_message are display-only "
                 "and do not enqueue peer work. If you need another GOD to take "
                 "over, inspect, or continue the task, call chat_mention with "
