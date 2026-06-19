@@ -4180,3 +4180,37 @@ Remaining caveats:
 - It does not claim production readiness, GitHub review truth, live MemoryOS,
   natural peer-GOD groupchat completion, full closure, or live lane merge
   truth.
+
+## 2026-06-20 Loop 26u Finding: PR #121 Repair Lands On Main
+
+Status: bounded post-merge server confirmation, with runtime rerun pending.
+
+Primary artifact:
+
+```text
+pr=121
+pr_head=79b09d2c411440ab1fe152c2f67b470bd774816f
+merge_commit=1adc2d19089aeacad5953bc577ca093f3441a761
+pr_ci_run=27850304479 success
+main_ci_run=27850336946 success
+```
+
+Confirmed:
+
+- PR #121 merged the configured review peer fail-closed repair to main.
+- GitHub Actions passed on the PR head and on the post-merge main commit.
+- The merged repair keeps configured peer delivery/no-verdict failures as
+  terminal review failures instead of allowing `auto_persistent_fallback` or
+  `one_shot_fallback` to create a substitute review verdict.
+- The existing unavailable-peer failure reason remains
+  `required_review_peer_unavailable`, preserving the state-machine review
+  failure invariant for `gate_passed=true` lanes.
+
+Remaining caveats:
+
+- No post-merge fullchain runtime rerun is claimed yet. The last candidate
+  fullchain attempt, Loop 26t, was blocked before review by external Codex
+  execution-worker `usage_limit`.
+- This is not production readiness, GitHub review truth, live MemoryOS,
+  natural peer-GOD groupchat completion, full closure, or live lane merge
+  truth.
