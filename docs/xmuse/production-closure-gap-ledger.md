@@ -7,7 +7,7 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
 
 ## Current Proof Boundary
 
-- Latest main inspected: `7468a5ab8797cf0a34528de419ceaf730034e75e`.
+- Latest main inspected: `2996643e4f13a8ea97af6b6f9675fd697a847716`.
 - Strongest code-change lane runtime evidence: Loop 25z69 ran after PR #93's
   default-review fix from current main, drove one real local code-change lane
   from durable groupchat through execute feasibility, proposal, runtime-driver
@@ -19,13 +19,19 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   `review_peer_participant.model=opencode-go/deepseek-v4-flash`,
   `peer_delivery_mode=configured_peer`, `review_delivery_mode=persistent`,
   `persistent_review_degraded=false`, `gate_passed=true`,
-  `review_decision=merge`, and `status=awaiting_final_action`. Loop 25z69
-  produced a small candidate diff for review-peer runtime metadata; that
-  candidate is local runtime evidence only until landed by a small PR with
-  GitHub server facts.
-- Latest peer-chat stability evidence: Loop 25z66 verified two independent
-  parallel runtime shards from current main, each with its own `XMUSE_ROOT`,
-  execution worktree, Chat API port, and MCP port. Across six total
+  `review_decision=merge`, and `status=awaiting_final_action`. PR #94 landed
+  the review-peer runtime metadata candidate from that loop.
+- Latest post-merge fullchain evidence: Loop 25z70a ran from PR #94's merged
+  main and reached `awaiting_final_action` on one docs-only fullchain lane with
+  `proposal_has_review_runtime=false`, `review_peer_defaulted=true`,
+  `review_peer_cli_kind=opencode`,
+  `review_peer_model=opencode-go/deepseek-v4-flash`,
+  `peer_delivery_mode=configured_peer`, `review_delivery_mode=persistent`,
+  `persistent_review_degraded=false`, `gate_passed=true`,
+  `review_decision=merge`, and `run_health_metadata_visible=true`.
+- Latest peer-chat stability evidence: Loop 25z70b ran concurrently with
+  Loop 25z70a from the same current main using a separate `XMUSE_ROOT`,
+  execution worktree, Chat API port, MCP port, and runner. Across three
   Codex/OpenCode groupchat conversations, each conversation reached human
   demand to Codex architect handoff, Codex execute reply, OpenCode review
   reply, durable peer-reply drain callback, and architect final summary after
@@ -44,17 +50,26 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   persistent OpenCode review locally. This is still bounded local runtime proof
   plus inspected GitHub server facts for the small PR, not GitHub review truth
   or production readiness.
+- Latest review peer observability evidence: PR #94 merged the small fix that
+  persists `review_peer_cli_kind` and `review_peer_model` on configured/default
+  review peer lanes and exposes those fields in run health summaries. GitHub
+  server state reports PR #94 merged as
+  `2996643e4f13a8ea97af6b6f9675fd697a847716` after successful PR checks on
+  head `d29c6f434fb22974ba477a1267cf3e3c9b35a8f5`, and post-merge main CI
+  passed on `2996643e4f13a8ea97af6b6f9675fd697a847716`. Loop 25z70a then
+  verified the metadata in a real post-merge fullchain lane's run health
+  summary.
 - Latest review-state repeat evidence: Loop 25z65 reran a docs-only lane from
   current `origin/main` at `a8cceabb51022ddf802da276df1e4c37419b65b5` and
   reached `awaiting_final_action` with `review_delivery_mode=persistent`,
   `persistent_review_degraded=false`, `review_decision=merge`, and no
   runtime-artifact match for the Loop 25z64 invalid transition noise. This is a
   bounded local repeat, not code-change soak or production readiness.
-- Strongest server facts: PR #93 was merged by GitHub server state as
-  `7468a5ab8797cf0a34528de419ceaf730034e75e` after successful `xmuse CI` on PR
-  head `bc2be0e6e42a208d0e45a1a1d023723b4bfce194` in run `27822614876`;
+- Strongest server facts: PR #94 was merged by GitHub server state as
+  `2996643e4f13a8ea97af6b6f9675fd697a847716` after successful `xmuse CI` on PR
+  head `d29c6f434fb22974ba477a1267cf3e3c9b35a8f5` in run `27823935428`;
   post-merge main `xmuse CI` also passed on
-  `7468a5ab8797cf0a34528de419ceaf730034e75e` in run `27822667038`.
+  `2996643e4f13a8ea97af6b6f9675fd697a847716` in run `27824021586`.
 - Proof type: local runtime proof plus inspected GitHub server facts for small
   PRs. This is not GitHub review truth or production readiness.
 
@@ -125,6 +140,9 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   routing to a unique active OpenCode review peer when the proposal omitted
   `review_runtime`. Merged to main as
   `7468a5ab8797cf0a34528de419ceaf730034e75e`.
+- PR #94 `codex/review-peer-runtime-metadata`: persisted configured/default
+  review peer runtime metadata on lanes and exposed it in run health summaries.
+  Merged to main as `2996643e4f13a8ea97af6b6f9675fd697a847716`.
 
 ## Manual Gaps
 
@@ -132,6 +150,10 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   has exactly one active OpenCode review participant is now present on main
   through PR #93. Ambiguous, missing, or inactive review participants remain
   bounded behavior and must not be reported as general review authority proof.
+- Review peer runtime identity is now observable in lane metadata and run
+  health summaries through PR #94, but those fields are metadata only.
+  `peer_delivery_mode`, `review_delivery_mode`, and durable callback evidence
+  remain the delivery authority.
 - Groupchat-produced `review_runtime` aliases such as `human_final_hold`,
   `final_hold`, and `review-god` are addressed by PR #81. Explicit provider
   casing such as `OpenCode` is addressed by PR #82.
@@ -146,9 +168,10 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
 - Loop 25z63 proved one bounded local six-conversation peer-chat stability path
   after local same-participant delivery serialization and prompt reply-contract
   mitigation. It is not repeated soak and not production readiness.
-- Loop 25z66 proved one bounded local two-shard parallel stability path across
-  six total conversations from current main. It is not repeated soak, not
-  overnight readiness, and not production readiness.
+- Loop 25z70 proved one bounded local two-shard parallel runtime path after
+  PR #94: one fullchain docs-only lane plus one three-conversation stability
+  shard. It is not repeated soak, not overnight readiness, and not production
+  readiness.
 - Provider result acknowledgement timeout after durable writeback is mitigated
   by early writeback detection plus configurable bounded grace in PR #87.
   Broader production-load behavior is still unproven.
@@ -193,20 +216,16 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
 
 ## Next Small Buckets
 
-- P0 review peer observability: land the small candidate from Loop 25z69 that
-  persists review peer runtime metadata (`review_peer_cli_kind`,
-  `review_peer_model`) and exposes it in health summaries without treating it
-  as delivery truth.
-- P1 explicit dependency coordination: add a durable coordination primitive for
+- P0 explicit dependency coordination: add a durable coordination primitive for
   waiting on named peer replies before summaries/handoffs when direct drain is
   insufficient.
-- P2 parallel stability loop: repeat real groupchat-to-final-hold with
+- P1 parallel stability loop: repeat real groupchat-to-final-hold with
   independent `XMUSE_ROOT` directories and execution worktrees when increasing
   concurrency. Do not share durable stores or one PR branch across parallel
   probes.
-- P3 ambiguous review authority: define fail-closed behavior for missing or
+- P2 ambiguous review authority: define fail-closed behavior for missing or
   multiple OpenCode review participants without relying on proposal text.
-- P4 code-change soak: repeat small real code-change lanes after the
+- P3 code-change soak: repeat small real code-change lanes after the
   inspector provider summary PR lands.
-- P5 MemoryOS adapter proof: keep `live_memoryos` forbidden until a real trace
+- P4 MemoryOS adapter proof: keep `live_memoryos` forbidden until a real trace
   id or artifact exists.

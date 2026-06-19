@@ -5082,3 +5082,129 @@ peer runtime metadata. The candidate is not GitHub CI/server truth until a
 small PR is opened and GitHub Actions runs on that pushed branch. This is not
 GitHub review truth, production readiness, live MemoryOS proof, overnight
 readiness, full L8-L10 closure, or full L1-L11 closure.
+
+## 2026-06-19 Loop 25z70: post-PR94 parallel runtime verification
+
+Loop target: after PR #94 merged, increase operator-level parallelism with two
+isolated runtime shards from the same current main. Shard A verified the
+review-peer metadata read model in a fullchain lane. Shard B repeated a
+three-conversation groupchat stability probe in parallel.
+
+Control head under test:
+
+```text
+HEAD=2996643e4f13a8ea97af6b6f9675fd697a847716
+```
+
+Shard A:
+
+```text
+RUN_ROOT=/tmp/xmuse-main-after-pr86-155349/.goal-runs/2026-06-19/loop-25z70a-post-pr94-health-metadata-195513
+EXEC_WORKTREE=/tmp/loop-25z70a-post-pr94-health-metadata-195513-exec
+CHAT_PORT=8207
+MCP_PORT=8107
+driver=.goal-runs/2026-06-19/loop-25z70-post-pr94-health-driver.py
+```
+
+Shard B:
+
+```text
+RUN_ROOT=/tmp/xmuse-main-after-pr86-155349/.goal-runs/2026-06-19/loop-25z70b-post-pr94-parallel-stability-195513
+EXEC_WORKTREE=/tmp/loop-25z70b-post-pr94-parallel-stability-195513-exec
+CHAT_PORT=8208
+MCP_PORT=8108
+driver=.goal-runs/2026-06-19/loop-25z66-driver.py --labels kappa,lambda,mu
+```
+
+Both runners used:
+
+```bash
+uv run xmuse-platform-runner --peer-chat \
+  --peer-chat-post-writeback-grace-s 20 \
+  --persistent-review-god --persistent-review-timeout-s 300 \
+  --default-review-peer-routing --max-concurrent 4 --no-auto-merge
+```
+
+Shard A durable result:
+
+```text
+classification=post_pr94_health_metadata_visible
+conversation_id=conv_87a3fb3721de408d8242b57ebc838bef
+proposal_has_review_runtime=false
+lane_id=loop25z70_review_peer_health_metadata
+status=awaiting_final_action
+gate_passed=true
+review_decision=merge
+final_action_hold_id=final-2783eecf0227
+review_peer_defaulted=true
+review_peer_id=part_b3743a676eb146edbba63353b46df258
+review_peer_cli_kind=opencode
+review_peer_model=opencode-go/deepseek-v4-flash
+peer_delivery_mode=configured_peer
+review_delivery_mode=persistent
+persistent_review_degraded=false
+persistent_review_identity=configured:part_b3743a676eb146edbba63353b46df258
+run_health_metadata_visible=true
+```
+
+The `run_health.peer_delivery.configured_peer_lanes` and
+`run_health.peer_delivery.default_review_peer_routing` summaries both exposed:
+
+```text
+review_peer_cli_kind=opencode
+review_peer_model=opencode-go/deepseek-v4-flash
+```
+
+Shard A left only the expected isolated execution artifact:
+
+```text
+/tmp/loop-25z70a-post-pr94-health-metadata-195513-exec
+?? docs/xmuse/post-pr94-review-peer-health-note.md
+```
+
+Shard B durable result:
+
+```text
+conversation_count=3
+labels=kappa,lambda,mu
+all_initial_handoff_closed=true
+all_final_after_both=true
+all_callbacks_created=true
+all_callbacks_consumed=true
+no_proposals_or_resolutions=true
+no_open_or_failed_inbox=true
+no_failed_or_timeout_traces=true
+total_failed_traces=0
+total_timeout_after_writeback_traces=0
+```
+
+Per-conversation shape:
+
+```text
+messages=6
+inbox=4
+execute_replies=1
+review_replies=1
+architect_messages=3
+callback_items=1
+failed_inbox=0
+failed_traces=0
+timeout_after_writeback_traces=0
+```
+
+Cleanup:
+
+```text
+8107/8108/8207/8208 listeners: none
+loop-25z70 xmuse-platform-runner, MCP, Chat API, codex/opencode processes:
+no matching live process after shutdown checks, excluding the check command
+itself
+```
+
+Classification: positive bounded local post-merge runtime proof. It proves
+that, in this run, two isolated runtime shards can run concurrently; one
+fullchain docs-only lane reached final-action hold with persistent defaulted
+OpenCode review and health-visible review peer metadata, while one groupchat
+stability shard completed three conversations without proposals or lane side
+effects. This is not production readiness, overnight soak, GitHub review truth,
+live MemoryOS proof, full L8-L10 closure, or full L1-L11 closure.
