@@ -78,6 +78,7 @@ class PersistentCliPeerService:
         session_prompt: str | None = None,
         worktree: Path,
         feature_scope_id: str | None = None,
+        prompt_contract: dict[str, object] | None = None,
     ) -> PeerHandle:
         try:
             participant = self._participants.get(participant_id)
@@ -129,6 +130,11 @@ class PersistentCliPeerService:
                 "session_compatibility_mismatch",
                 str(exc),
             ) from exc
+        _record_prompt_contract_if_supported(
+            self._session_layer,
+            record.god_session_id,
+            prompt_contract,
+        )
         return PeerHandle(
             conversation_id=conversation_id,
             participant_id=participant_id,
@@ -248,6 +254,7 @@ class PersistentCliPeerService:
         context: str,
         feature_scope_id: str | None = None,
         timeout_s: float = 180.0,
+        prompt_contract: dict[str, object] | None = None,
     ) -> PeerRequestResult:
         try:
             handle = await self.ensure_peer(
@@ -258,6 +265,7 @@ class PersistentCliPeerService:
                 session_prompt=session_prompt,
                 worktree=worktree,
                 feature_scope_id=feature_scope_id,
+                prompt_contract=prompt_contract,
             )
         except Exception as exc:
             return PeerRequestResult(
@@ -284,3 +292,16 @@ class PersistentCliPeerService:
 
 def fingerprint_prompt(prompt: str) -> str:
     return f"sha256:{sha256(prompt.encode('utf-8')).hexdigest()}"
+
+
+def _record_prompt_contract_if_supported(
+    session_layer: PersistentPeerSessionLayer,
+    god_session_id: str,
+    prompt_contract: dict[str, object] | None,
+) -> None:
+    if prompt_contract is None:
+        return
+    recorder = getattr(session_layer, "record_prompt_contract", None)
+    if not callable(recorder):
+        return
+    recorder(god_session_id, **prompt_contract)

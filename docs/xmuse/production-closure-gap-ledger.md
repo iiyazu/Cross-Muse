@@ -296,6 +296,14 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   `god_sessions.json` review record did not carry a layered prompt contract
   fingerprint. Do not claim uniform prompt-contract persistence across all
   peer roles until that boundary is proven or intentionally split.
+- Loop 26d locally repaired that configured OpenCode persistent review
+  observability gap for the bounded docs-only fullchain shape. The review
+  session now records `xmuse-persistent-review-session-prompt-v1` with
+  `persistent_review_session_identity` in `god_sessions.json`, while the lane
+  reached `awaiting_final_action` with persistent review and
+  `persistent_review_degraded=false`. This is bounded local runtime proof only;
+  it does not claim natural peer-chat review turns, production readiness,
+  restart/resume proof, MemoryOS proof, or full closure.
 - Provider result acknowledgement timeout after durable writeback is mitigated
   by early writeback detection plus configurable bounded grace in PR #87.
   Broader production-load behavior is still unproven.
@@ -347,10 +355,11 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
 - P1 explicit dependency coordination: add a durable coordination primitive for
   waiting on named peer replies before summaries/handoffs when direct drain is
   insufficient.
-- P2 review peer prompt/session metadata: either persist layered prompt
-  contract metadata for the OpenCode persistent review peer, or define a
-  separate review-delivery prompt authority that makes the missing
-  `god_sessions.json` fingerprint intentional and observable.
+- P2 review peer prompt/session metadata: bounded local configured OpenCode
+  persistent review now records a separate review-session prompt authority in
+  `god_sessions.json` through Loop 26d. Remaining work is to preserve that
+  boundary through PR/server verification and then test broader review
+  authority cases such as missing or multiple OpenCode review participants.
 - P3 higher-parallelism stability loop: repeat real groupchat-to-final-hold
   with independent `XMUSE_ROOT` directories, execution worktrees, Chat API
   ports, MCP ports, and runners when increasing concurrency beyond the current

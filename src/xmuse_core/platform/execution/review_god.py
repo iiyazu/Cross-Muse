@@ -69,6 +69,9 @@ _persistent_review_prompt = persistent_review_context.persistent_review_prompt
 _persistent_review_request_degraded_reason = (
     persistent_review_context.persistent_review_request_degraded_reason
 )
+_persistent_review_session_prompt_contract = (
+    persistent_review_context.persistent_review_session_prompt_contract
+)
 _persistent_review_worktree = persistent_review_context.persistent_review_worktree
 _review_request_id = persistent_review_context.review_request_id
 _safe_session_fragment = persistent_review_context.safe_session_fragment
@@ -773,6 +776,11 @@ async def _try_configured_review_peer(
         session_layer=persistent_session_layer,
     )
     peer_session_scope_id = _configured_review_peer_session_scope(lane_id, lane)
+    peer_session_prompt = _persistent_peer_session_prompt(
+        god,
+        role=_REVIEW_ROLE,
+        identity_key=f"configured:{review_peer_id}",
+    )
     peer_prompt = _persistent_review_prompt(
         prompt,
         review_request_id=peer_request_id,
@@ -790,11 +798,7 @@ async def _try_configured_review_peer(
             participant_id=review_peer_id,
             model=participant.model,
             prompt=peer_prompt,
-            session_prompt=_persistent_peer_session_prompt(
-                god,
-                role=_REVIEW_ROLE,
-                identity_key=f"configured:{review_peer_id}",
-            ),
+            session_prompt=peer_session_prompt,
             worktree=_persistent_review_worktree(xmuse_root),
             feature_scope_id=peer_session_scope_id,
             request_id=peer_request_id,
@@ -806,6 +810,7 @@ async def _try_configured_review_peer(
                 all_lanes=sm.get_lanes(),
             ),
             timeout_s=receive_timeout_s,
+            prompt_contract=_persistent_review_session_prompt_contract(peer_session_prompt),
         )
     if result.ok and result.message is not None:
         delivered = await _apply_persistent_review_message(
@@ -1196,6 +1201,7 @@ async def _try_persistent_review(
                 capabilities=["review"],
                 session_config=SessionConfig(persistent_role=_REVIEW_ROLE),
             )
+            session_prompt = _persistent_peer_session_prompt(god, role=_REVIEW_ROLE)
             try:
                 record = await persistent_session_layer.ensure_conversation_session(
                     conversation_id=identity.conversation_id,
@@ -1218,6 +1224,11 @@ async def _try_persistent_review(
                     review_request_id=review_request_id,
                 )
                 raise
+            _record_prompt_contract_if_supported(
+                persistent_session_layer,
+                record.god_session_id,
+                _persistent_review_session_prompt_contract(session_prompt),
+            )
             sm.update_metadata(
                 lane_id,
                 {
@@ -1428,3 +1439,14 @@ def _persistent_model_for_god(
             profile_id=ProviderProfileId.REVIEW,
         )
     return None
+
+
+def _record_prompt_contract_if_supported(
+    persistent_session_layer: PersistentReviewSessionLayer,
+    god_session_id: str,
+    prompt_contract: dict[str, object],
+) -> None:
+    recorder = getattr(persistent_session_layer, "record_prompt_contract", None)
+    if not callable(recorder):
+        return
+    recorder(god_session_id, **prompt_contract)

@@ -97,6 +97,7 @@ class FakePersistentReviewLayer:
     ) -> None:
         self.ensured: list[dict[str, object]] = []
         self.sent: list[dict[str, object]] = []
+        self.prompt_contracts: list[tuple[str, dict[str, object]]] = []
         self.received = list(received or [])
         self.fail_ensure = fail_ensure
         self.fail_send = fail_send
@@ -124,6 +125,9 @@ class FakePersistentReviewLayer:
         self.sent.append(dict(kwargs))
         if self.fail_send:
             raise RuntimeError("persistent delivery failed")
+
+    def record_prompt_contract(self, god_session_id, **kwargs) -> None:
+        self.prompt_contracts.append((god_session_id, dict(kwargs)))
 
     async def receive_message(self, god_session_id: str):
         if self.fail_receive:
@@ -312,6 +316,16 @@ async def test_default_review_peer_routing_reuses_registered_opencode_review_pee
     assert persistent.ensured[0]["participant_id"] == participant.participant_id
     assert persistent.ensured[0]["feature_scope_id"] == (
         "configured-review:lane-default-opencode-review-peer"
+    )
+    assert persistent.prompt_contracts[0][0] == persistent.sent[0]["god_session_id"]
+    assert persistent.prompt_contracts[0][1]["prompt_contract_version"] == (
+        "xmuse-persistent-review-session-prompt-v1"
+    )
+    assert persistent.prompt_contracts[0][1]["prompt_layer_order"] == [
+        "persistent_review_session_identity"
+    ]
+    assert persistent.prompt_contracts[0][1]["prompt_artifact_fingerprint"] == (
+        persistent.ensured[0]["prompt_fingerprint"]
     )
     assert lane.get("persistent_review_degraded_reason") != "missing_feature_identity"
 
@@ -1395,6 +1409,13 @@ async def test_persistent_review_receives_lane_prompt_when_no_diff_is_available(
 
     sent = persistent.sent[0]
     assert "Implement the durable review transcript export." in sent["context"]
+    assert persistent.prompt_contracts[0][0] == sent["god_session_id"]
+    assert persistent.prompt_contracts[0][1]["prompt_contract_version"] == (
+        "xmuse-persistent-review-session-prompt-v1"
+    )
+    assert persistent.prompt_contracts[0][1]["prompt_artifact_fingerprint"] == (
+        persistent.ensured[0]["prompt_fingerprint"]
+    )
 
 
 @pytest.mark.asyncio
