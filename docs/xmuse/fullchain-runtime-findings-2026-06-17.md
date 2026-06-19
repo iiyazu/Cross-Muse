@@ -3224,3 +3224,106 @@ Remaining caveats:
 - This is local candidate evidence only, not GitHub server truth, review
   truth, production readiness, live MemoryOS proof, overnight soak, full
   L8-L10 closure, or full L1-L11 closure.
+
+### F106. `/sse` peer handoff can omit current inbox id and orphan the turn
+
+Severity: fixed in local candidate branch.
+
+Loop 25z76 reran the fullchain from post-PR101 main
+`cae16e00429a4f97e30a07ecb69e5cd977ea16e8` and exposed a peer-chat
+writeback lifecycle gap:
+
+```text
+conversation_id=conv_b37a70d053e34116975b621741d496f6
+architect_inbox=inbox_827781d38702404f84837a2926447b80
+status=failed
+failure_reason=peer_response_timeout
+responded_message_id=null
+```
+
+The Codex architect peer connected through MCP `/sse` and called
+`chat_mention` without `reply_to_inbox_item_id`. The mention did enqueue the
+execute inbox, but it did not close the current architect inbox. The run later
+recovered enough to create a collaboration response, proposal, approval, and a
+dispatched lane, but the chain was polluted by the failed original turn and a
+stale extra collaboration run, so it is failure evidence rather than success
+evidence.
+
+Root cause:
+
+- `/mcp/chat` exposes narrowed peer-chat schemas, but the persistent Codex peer
+  in this path used `/sse`.
+- `chat_emit_proposal` already auto-binds a missing `reply_to_inbox_item_id`
+  to the participant's single claimed inbox item.
+- `chat_mention` lacked the same current-turn auto-bind rule, so a real peer
+  could create a valid handoff without closing its own claimed turn.
+
+Local candidate fix:
+
+- `chat_mention` now resolves `reply_to_inbox_item_id` from the participant's
+  single claimed inbox item when the argument is omitted.
+- The fix records the `chat_mention` MCP tool stage against the resolved inbox
+  and promotes the GOD session to running.
+- `chat_post_message` was intentionally not auto-bound because Loop 25z76
+  showed peers can emit progress/status messages before an actual handoff or
+  proposal; auto-closing those messages would risk ending the turn too early.
+
+Focused regression:
+
+```text
+uv run pytest \
+  tests/xmuse/test_mcp_server.py::test_sse_chat_mention_without_reply_id_closes_single_claimed_inbox_item \
+  tests/xmuse/test_mcp_server.py::test_chat_emit_proposal_without_reply_id_closes_single_claimed_inbox_item \
+  tests/xmuse/test_peer_chat_mcp_tools.py::test_chat_mention_can_reply_to_current_inbox_item \
+  -q
+-> 3 passed, 1 warning
+```
+
+Loop 25z77 reran the same real chain on local branch
+`codex/peer-mention-writeback-autobind` and reached:
+
+```text
+architect_inbox=inbox_7a30a7b71b734cee967e8c11e9b9624f
+status=read
+responded_message_id=msg_f1f8682f027540bf9eee072384978e80
+tool_trace=chat_mention
+delivery_mode=mcp_writeback
+
+feature_id=loop25z77_mention_autobind_fullchain
+feature_scope_id=post-pr94-fullchain-verification
+lane_status=awaiting_final_action
+gate_passed=true
+review_decision=merge
+review_delivery_mode=persistent
+persistent_review_degraded=false
+review_peer_defaulted=true
+review_peer_cli_kind=opencode
+review_peer_model=opencode-go/deepseek-v4-flash
+peer_delivery_mode=configured_peer
+```
+
+Loop 25z77 also recorded:
+
+```text
+inbox status counts: architect/read=3, execute/read=2, review/read=1
+failed inbox count=0
+collaboration_run.status=done
+scheduler_progress.trace_count=5
+chat_dispatch_bridge.status=observed
+operations.cleanup.status=clean
+mcp HTTP health on 8118=ready
+```
+
+Remaining caveats:
+
+- The fix is local candidate evidence until pushed, checked by CI, merged, and
+  rerun from post-merge main.
+- `/sse` still exposes the broader MCP surface and `chat_post_message` can
+  still create non-closing status messages when a peer omits
+  `reply_to_inbox_item_id`; this was deliberately not changed in the same
+  patch.
+- The MCP process detector still misses ad hoc
+  `uvicorn xmuse.mcp_server:app --port <port>` process shapes even when HTTP
+  health is ready.
+- This is not GitHub review truth, merge truth, production readiness, live
+  MemoryOS proof, overnight soak, full L8-L10 closure, or full L1-L11 closure.

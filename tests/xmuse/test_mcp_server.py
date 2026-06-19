@@ -288,6 +288,77 @@ def test_chat_emit_proposal_without_reply_id_closes_single_claimed_inbox_item(
     assert registry.get(session.god_session_id).status == "running"
 
 
+def test_sse_chat_mention_without_reply_id_closes_single_claimed_inbox_item(
+    tmp_path: Path,
+) -> None:
+    server = load_mcp_module()
+    xmuse_root = tmp_path / "xmuse"
+    mcp_client = TestClient(server.create_app(xmuse_root=xmuse_root))
+    created = mcp_call(mcp_client, "chat_create_conversation", {"title": "SSE handoff"})
+    conversation_id = created["conversation"]["id"]
+    participants = {item["role"]: item for item in created["participants"]}
+    architect = participants["architect"]
+    execute = participants["execute"]
+    registry = GodSessionRegistry(xmuse_root / "god_sessions.json")
+    session = registry.find_by_conversation_participant(
+        conversation_id=conversation_id,
+        participant_id=architect["participant_id"],
+    )
+    assert session is not None
+    chat = ChatStore(xmuse_root / "chat.db")
+    human = chat.add_message(conversation_id, "human", "human", "@architect hand off")
+    inbox = ChatInboxStore(xmuse_root / "chat.db")
+    item = inbox.create_item(
+        conversation_id=conversation_id,
+        target_participant_id=architect["participant_id"],
+        target_role="architect",
+        target_address="@architect",
+        sender_participant_id=None,
+        sender_address="@human",
+        source_message_id=human.id,
+        item_type="mention",
+        payload={"content": human.content},
+    )
+    claimed = inbox.claim_next(owner="scheduler-test", item_id=item.id)
+    assert claimed is not None
+    assert claimed.status == "claimed"
+
+    response = mcp_client.post(
+        "/sse",
+        json={
+            "jsonrpc": "2.0",
+            "id": "sse-chat-mention",
+            "method": "tools/call",
+            "params": {
+                "name": "chat_mention",
+                "arguments": {
+                    "conversation_id": conversation_id,
+                    "participant_id": architect["participant_id"],
+                    "god_session_id": session.god_session_id,
+                    "client_request_id": "handoff-without-reply-id",
+                    "target_address": "@execute",
+                    "content": "Please record the execute feasibility verdict.",
+                },
+            },
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    result = response.json()["result"]
+    assert result["isError"] is False, result
+    payload = result["structuredContent"]
+    updated = inbox.get(item.id)
+    assert updated.status == "read"
+    assert updated.responded_message_id == payload["message"]["id"]
+    assert payload["inbox_items"][0]["target_participant_id"] == execute["participant_id"]
+    stages = PeerTurnLatencyTraceStore(xmuse_root / "chat.db").list_mcp_tool_stages(
+        conversation_id,
+        item.id,
+    )
+    assert "chat_mention" in stages
+    assert registry.get(session.god_session_id).status == "running"
+
+
 def test_peer_chat_mcp_structured_execution_proposal_approval_enqueues_dispatch(
     tmp_path: Path,
 ) -> None:

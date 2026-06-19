@@ -5605,3 +5605,202 @@ final-action hold through persistent OpenCode review without the Loop 25z74
 `missing_feature_identity` fallback. This is not CI/server-verified, not
 production readiness, not overnight soak, not GitHub review truth, not live
 MemoryOS proof, not full L8-L10 closure, and not full L1-L11 closure.
+
+### Loop 25z76: Post-PR101 Main Fullchain Regression Exposed Orphan Handoff
+
+Branch and base:
+
+```text
+branch=main
+head=cae16e00429a4f97e30a07ecb69e5cd977ea16e8
+run=/tmp/xmuse-main-after-pr86-155349/.goal-runs/2026-06-19/loop-25z76-post-pr101-fullchain-215700
+exec=/tmp/loop-25z76-post-pr101-fullchain-215700-exec
+ports: chat=8217, mcp=8117
+```
+
+Runtime services:
+
+```bash
+uv run python -c '... uvicorn.run(create_app(run_root, execution_worktree=exec_root), port=8217) ...'
+XMUSE_ROOT="$RUN" uv run uvicorn xmuse.mcp_server:app --host 127.0.0.1 --port 8117
+XMUSE_ROOT="$RUN" XMUSE_PEER_GOD_BACKEND=native XMUSE_REVIEW_GOD_BACKEND=native \
+  uv run xmuse-platform-runner --xmuse-root "$RUN" --lanes "$RUN/feature_lanes.json" \
+  --mcp-port 8117 --max-concurrent 1 --peer-chat --persistent-review-god \
+  --persistent-review-timeout-s 900 --default-review-peer-routing --no-auto-merge \
+  --peer-chat-post-writeback-grace-s 4
+uv run python .goal-runs/2026-06-19/loop-25z70-post-pr94-health-driver.py \
+  --chat-url http://127.0.0.1:8217 \
+  --xmuse-root "$RUN" \
+  --feature-id loop25z76_post_pr101_fullchain \
+  --timeout-s 1800 --poll-s 5
+```
+
+Durable state:
+
+```text
+conversation_id=conv_b37a70d053e34116975b621741d496f6
+architect_inbox=inbox_827781d38702404f84837a2926447b80
+stale_collaboration_run=collab_b9e7ee25c0c14defa9c8bb0ffdc4ce58
+active_collaboration_run=collab_f628dabcf6e74bf3b8d29dc51789b883
+proposal_id=prop_3e765c5a9acd4585b32662a159cf5116
+resolution_id=res_68f5f87988b14b7b894792d1cc5d0bbc
+```
+
+Observed failure boundary:
+
+- The Codex architect peer used MCP `/sse`.
+- It called `chat_post_message` and `chat_mention` without
+  `reply_to_inbox_item_id`.
+- `chat_mention` created the execute inbox, but the original architect inbox
+  remained open and eventually became:
+
+```text
+status=failed
+failure_reason=peer_response_timeout
+responded_message_id=null
+```
+
+The chain later produced a collaboration response, proposal, approval, and a
+dispatched lane, but the run was already polluted by the failed original
+architect turn and a stale extra collaboration run. The services were stopped
+after classification, so this loop is failure evidence, not success evidence.
+
+Cleanup:
+
+```text
+8117/8217 listeners: none
+loop-25z76 service and worker process matches: none after shutdown
+```
+
+Classification: real runtime failure at the peer-chat MCP writeback/delivery
+lifecycle boundary. It is not a fullchain success, not CI/server proof, not
+production readiness, not GitHub review truth, not live MemoryOS proof, not
+full L8-L10 closure, and not full L1-L11 closure.
+
+### Loop 25z77: Mention Writeback Auto-Bind Candidate Rerun
+
+Local branch:
+
+```text
+branch=codex/peer-mention-writeback-autobind
+base=cae16e00429a4f97e30a07ecb69e5cd977ea16e8
+run=/tmp/xmuse-main-after-pr86-155349/.goal-runs/2026-06-19/loop-25z77-mention-autobind-fullchain-222000
+exec=/tmp/loop-25z77-mention-autobind-fullchain-222000-exec
+ports: chat=8218, mcp=8118
+```
+
+Candidate change:
+
+```text
+src/xmuse_core/chat/peer_service.py
+```
+
+`chat_mention` now mirrors the existing `chat_emit_proposal` behavior: when a
+peer omits `reply_to_inbox_item_id` and exactly one inbox item for that
+participant is currently claimed, the handoff is bound to that inbox item and
+closes the current turn. `chat_post_message` was not auto-bound because Loop
+25z76 showed the peer can emit progress/status messages before a real handoff;
+auto-closing those would risk ending the turn too early.
+
+Focused contract validation:
+
+```bash
+uv run pytest \
+  tests/xmuse/test_mcp_server.py::test_sse_chat_mention_without_reply_id_closes_single_claimed_inbox_item \
+  tests/xmuse/test_mcp_server.py::test_chat_emit_proposal_without_reply_id_closes_single_claimed_inbox_item \
+  tests/xmuse/test_peer_chat_mcp_tools.py::test_chat_mention_can_reply_to_current_inbox_item \
+  -q
+```
+
+Result:
+
+```text
+3 passed, 1 warning
+```
+
+Runtime commands matched Loop 25z76 with the new root/ports:
+
+```bash
+uv run python -c '... uvicorn.run(create_app(run_root, execution_worktree=exec_root), port=8218) ...'
+XMUSE_ROOT="$RUN" uv run uvicorn xmuse.mcp_server:app --host 127.0.0.1 --port 8118
+XMUSE_ROOT="$RUN" XMUSE_PEER_GOD_BACKEND=native XMUSE_REVIEW_GOD_BACKEND=native \
+  uv run xmuse-platform-runner --xmuse-root "$RUN" --lanes "$RUN/feature_lanes.json" \
+  --mcp-port 8118 --max-concurrent 1 --peer-chat --persistent-review-god \
+  --persistent-review-timeout-s 900 --default-review-peer-routing --no-auto-merge \
+  --peer-chat-post-writeback-grace-s 4
+uv run python .goal-runs/2026-06-19/loop-25z70-post-pr94-health-driver.py \
+  --chat-url http://127.0.0.1:8218 \
+  --xmuse-root "$RUN" \
+  --feature-id loop25z77_mention_autobind_fullchain \
+  --timeout-s 1800 --poll-s 5
+```
+
+Durable chain:
+
+```text
+conversation_id=conv_9906b4e095fe4e00bb447b0916551215
+collaboration_run=collab_1727b67079964abaac851687236e1ab4
+proposal_id=prop_2761fda359474a539aa8108e04c95bd4
+resolution_id=res_1b353282a1fe488dbf27f93c9751a853
+feature_id=loop25z77_mention_autobind_fullchain
+feature_group=post-pr94-fullchain-verification
+feature_scope_id=post-pr94-fullchain-verification
+```
+
+The previously failing handoff now closed durably:
+
+```text
+architect_inbox=inbox_7a30a7b71b734cee967e8c11e9b9624f
+status=read
+responded_message_id=msg_f1f8682f027540bf9eee072384978e80
+tool_trace=chat_mention
+delivery_mode=mcp_writeback
+```
+
+Final lane authority:
+
+```text
+status=awaiting_final_action
+gate_passed=true
+review_decision=merge
+review_delivery_mode=persistent
+persistent_review_degraded=false
+review_peer_defaulted=true
+review_peer_cli_kind=opencode
+review_peer_model=opencode-go/deepseek-v4-flash
+peer_delivery_mode=configured_peer
+review_fallback=persistent
+run_health_metadata_visible=true
+```
+
+Post-run checks:
+
+```text
+inbox status counts: architect/read=3, execute/read=2, review/read=1
+failed inbox count=0
+collaboration_run.status=done
+scheduler_progress.status=observed
+scheduler_progress.trace_count=5
+chat_dispatch_bridge.status=observed
+operations.cleanup.status=clean
+mcp HTTP health on 8118=ready
+8118/8218 listeners: none after shutdown
+loop-25z77 service and worker process matches: none after shutdown
+```
+
+Caveat: process discovery again reported `mcp_count=0` for the ad hoc
+`uvicorn xmuse.mcp_server:app --port 8118` process shape, while HTTP health
+for that same MCP server returned ready.
+
+Execution worktree evidence:
+
+```text
+git -C /tmp/loop-25z77-mention-autobind-fullchain-222000-exec status --short
+-> ?? docs/xmuse/post-pr94-review-peer-health-note.md
+```
+
+Classification: positive bounded local candidate evidence for the
+`chat_mention` current-turn auto-bind fix and the same docs-only fullchain
+shape. This is not CI/server-verified, not production readiness, not overnight
+soak, not GitHub review truth, not live MemoryOS proof, not full L8-L10
+closure, and not full L1-L11 closure.
