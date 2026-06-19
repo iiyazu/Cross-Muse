@@ -1071,6 +1071,10 @@ def create_app(
             ) from exc
         payload = result["conversation"]
         payload["bootstrap"] = result["bootstrap"]
+        payload["participant_sessions"] = result.get(
+            "participant_sessions",
+            payload["bootstrap"].get("participant_sessions", []),
+        )
         listed = _peer_service(root).list_participants(
             conversation_id=str(payload["id"]),
             registry_path=root / "god_sessions.json",
