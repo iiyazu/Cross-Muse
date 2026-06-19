@@ -1,5 +1,6 @@
 import hashlib
 import json
+import subprocess
 from dataclasses import asdict
 from pathlib import Path
 
@@ -151,6 +152,48 @@ def test_get_gate_report(setup):
     handler, _, _, _ = setup
     result = handler.call("get_gate_report", {"lane_id": "lane-1"})
     assert result["passed"] is True
+
+
+def test_get_diff_includes_untracked_new_files(setup):
+    handler, _, tmp_path, _ = setup
+    worktree = tmp_path / "wt"
+    subprocess.run(["git", "init"], cwd=worktree, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.email", "xmuse@example.invalid"],
+        cwd=worktree,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "xmuse"],
+        cwd=worktree,
+        check=True,
+        capture_output=True,
+    )
+    tracked = worktree / "README.md"
+    tracked.write_text("base\n", encoding="utf-8")
+    subprocess.run(["git", "add", "README.md"], cwd=worktree, check=True)
+    subprocess.run(
+        ["git", "commit", "-m", "base"],
+        cwd=worktree,
+        check=True,
+        capture_output=True,
+    )
+    tracked.write_text("base\nchanged\n", encoding="utf-8")
+    untracked = worktree / "docs" / "xmuse" / "lane-note.md"
+    untracked.parent.mkdir(parents=True)
+    untracked.write_text("review-visible note\n", encoding="utf-8")
+
+    result = handler.call("get_diff", {"lane_id": "lane-1"})
+
+    assert result["returncode"] == 0
+    assert result["untracked_paths"] == ["docs/xmuse/lane-note.md"]
+    assert "diff --git a/README.md b/README.md" in result["diff"]
+    assert "diff --git a/docs/xmuse/lane-note.md b/docs/xmuse/lane-note.md" in result[
+        "diff"
+    ]
+    assert "new file mode" in result["diff"]
+    assert "+review-visible note" in result["diff"]
 
 
 def test_query_knowledge(setup):
