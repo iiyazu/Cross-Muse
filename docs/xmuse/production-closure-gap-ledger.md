@@ -7,23 +7,26 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
 
 ## Current Proof Boundary
 
-- Latest main inspected: `a7072f1f43559099592e595c49fbdf8744b49cd5`.
-- Latest collaboration delivery lifecycle evidence: Loop 26n ran from current
-  main plus the local collaboration lifecycle repair candidate and reached
-  `awaiting_final_action` on a docs-only fullchain sentinel. The durable
-  collaboration run `collab_0b3189ec5131426ba8960cc5f98fccb3` was `done`,
-  target `@execute` recorded a formal response, the collaboration request
-  inbox ended `read` with a `chat_record_collaboration_response` trace, the
-  collaboration callback inbox ended `read` with a `chat_emit_proposal` trace,
-  the dispatch inbox ended `read` with a `chat_post_message` trace, and the
-  lane recorded `gate_passed=true`, `review_decision=merge`,
-  `review_delivery_mode=persistent`, `persistent_review_degraded=false`,
-  `review_peer_cli_kind=opencode`, and `status=awaiting_final_action`.
-  Loop 26m is the preserved pre-fix failure evidence: the same fullchain shape
-  reached final-action hold while leaving stale unread collaboration
-  request/callback inbox items. This is bounded local runtime proof for the
-  candidate repair only; it is not production readiness, live MemoryOS,
-  GitHub review truth, natural peer-GOD groupchat completion, or full closure.
+- Latest main inspected: `87c6f131d7a9851f1a4c5b023b192323ad8e73e4`.
+- Latest collaboration delivery lifecycle evidence: PR #115 merged the
+  collaboration request/response/callback inbox lifecycle repair to main as
+  `87c6f131d7a9851f1a4c5b023b192323ad8e73e4` after successful PR CI and
+  successful post-merge main CI. Loop 26o then ran from that post-merge main
+  and reached `awaiting_final_action` on a docs-only fullchain sentinel. The
+  durable collaboration run `collab_fd442c340eed442fa393fdfd6df0d768` was
+  `done`, target `@execute` recorded a formal response, the collaboration
+  request inbox ended `read` with a `chat_record_collaboration_response`
+  trace, the collaboration callback inbox ended `read` with a
+  `chat_emit_proposal` trace, the dispatch inbox ended `read` with a
+  `chat_post_message` trace, and the lane recorded `gate_passed=true`,
+  `review_decision=merge`, `review_delivery_mode=persistent`,
+  `persistent_review_degraded=false`, `review_peer_cli_kind=opencode`, and
+  `status=awaiting_final_action`. Loop 26m is the preserved pre-fix failure
+  evidence: the same fullchain shape reached final-action hold while leaving
+  stale unread collaboration request/callback inbox items. This is bounded
+  local runtime proof plus inspected GitHub server facts for the small PR; it
+  is not production readiness, live MemoryOS, GitHub review truth, natural
+  peer-GOD groupchat completion, or full closure.
 - Latest post-PR102 main fullchain evidence: PR #102 merged the
   `chat_mention` current-turn auto-bind fix to main as
   `c44a5caf247c2c049ae5af37d74a94f5b9f95ce3` after successful PR CI and
@@ -357,8 +360,9 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   remained `unread`. Loop 26n locally repaired that candidate path by marking
   the formal response as consumption of the request inbox and marking a
   proposal with `collaboration:<run_id>` as consumption of the callback inbox.
-  The post-fix fullchain reached final-action hold with all inbox items
-  terminal. This is not repeated stability proof.
+  PR #115 merged the repair, and Loop 26o reran the same bounded fullchain
+  shape from post-merge main with all inbox items terminal. This is not
+  repeated stability proof.
 - Provider result acknowledgement timeout after durable writeback is mitigated
   by early writeback detection plus configurable bounded grace in PR #87.
   Broader production-load behavior is still unproven.
@@ -404,11 +408,10 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
 ## Next Small Buckets
 
 - P0 peer handoff/writeback lifecycle: complete on main for the bounded
-  `chat_mention` current-turn auto-bind gap. A local candidate now also closes
-  the structured collaboration request/callback inbox lifecycle for the
-  bounded docs-only fullchain shape in Loop 26n. Keep broader `/sse`
-  tool-surface behavior, repeated soak, and production readiness out of this
-  claim until a small PR lands and post-merge evidence exists.
+  `chat_mention` current-turn auto-bind gap and the bounded structured
+  collaboration request/callback inbox lifecycle shape. PR #115 plus Loop 26o
+  provide post-merge proof for the latter. Keep broader `/sse` tool-surface
+  behavior, repeated soak, and production readiness out of this claim.
 - P1 explicit dependency coordination: add a durable coordination primitive for
   waiting on named peer replies before summaries/handoffs when direct drain is
   insufficient.

@@ -3826,3 +3826,48 @@ Remaining caveats:
 - It does not prove live MemoryOS, GitHub review truth, natural peer-GOD
   groupchat completion, or full closure.
 - The final action remained held; no live lane merge is claimed.
+
+## 2026-06-20 Loop 26o Finding: PR #115 Repair Holds On Main
+
+Status: bounded post-merge main runtime confirmation.
+
+Primary artifact:
+
+```text
+main_head=87c6f131d7a9851f1a4c5b023b192323ad8e73e4
+run_root=/tmp/xmuse-postmerge-layered-prompt-main/.goal-runs/2026-06-20/loop-26o-post-pr115-collaboration-lifecycle-041707
+driver_output=driver_output.json
+chat_authority=chat.db
+lane_projection=feature_lanes.json#lane=loop_26o_post_pr115_collaboration_lifecycle_041707
+review_authority=review_plane.json#task=rtask_9d57b537404040c7a5b7abd1a3b69836
+gate_report=logs/gates/loop_26o_post_pr115_collaboration_lifecycle_041707/report.json
+```
+
+Confirmed:
+
+- The fullchain ran from post-PR115 main and reached `awaiting_final_action`.
+- The collaboration run ended `done` with target `@execute`.
+- The `collaboration_request` inbox ended `read` and had a
+  `chat_record_collaboration_response` trace.
+- The `collaboration_callback` inbox ended `read`, referenced the proposal
+  message, and had a `chat_emit_proposal` trace.
+- The dispatch inbox ended `read` and had a `chat_post_message` trace.
+- The lane recorded `gate_passed=true`, `review_decision=merge`,
+  `review_delivery_mode=persistent`, `persistent_review_degraded=false`, and
+  OpenCode review peer metadata.
+- Shutdown cleanup left no Chat API or MCP listener and no loop-26o service
+  process.
+
+Observed non-blocking cleanup note:
+
+- `platform_runner.log` emitted a Python asyncio subprocess transport cleanup
+  warning after shutdown. The driver still exited successfully and cleanup
+  checks passed, so this is not classified as a blocker for the collaboration
+  lifecycle proof.
+
+Remaining caveats:
+
+- This is one bounded docs-only post-merge runtime check, not production
+  readiness or repeated soak.
+- It does not claim GitHub review truth, live MemoryOS, natural peer-GOD
+  groupchat completion, full closure, or live lane merge truth.

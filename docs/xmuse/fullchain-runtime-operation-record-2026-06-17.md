@@ -6694,3 +6694,80 @@ Caveats:
 - This is not production readiness, repeated soak, MemoryOS proof, GitHub
   review truth, natural peer-GOD groupchat completion, or full closure.
 - The final action was intentionally held; no live lane merge is claimed.
+
+## 2026-06-20 Loop 26o: Post-PR115 Collaboration Lifecycle Main Check
+
+Purpose: verify the PR #115 collaboration lifecycle repair after it landed on
+`origin/main`.
+
+Workspace and authority:
+
+```text
+repo_worktree=/tmp/xmuse-postmerge-layered-prompt-main
+base_head_sha=87c6f131d7a9851f1a4c5b023b192323ad8e73e4
+run_root=/tmp/xmuse-postmerge-layered-prompt-main/.goal-runs/2026-06-20/loop-26o-post-pr115-collaboration-lifecycle-041707
+execution_worktree=/tmp/loop-26o-post-pr115-collaboration-lifecycle-041707-exec
+conversation_id=conv_81e48f1b8b0d43e8b902254fc788ba5e
+```
+
+Durable chain:
+
+```text
+collaboration_run=collab_fd442c340eed442fa393fdfd6df0d768
+proposal_id=prop_48599913802f4b48ad9da895dfb90e88
+resolution_id=res_c61bd2acf98b42a8a57e17e9f69457b3
+lane_id=loop_26o_post_pr115_collaboration_lifecycle_041707
+final_action_hold_id=final-5a1dd9895d92
+```
+
+Final lane state:
+
+```text
+status=awaiting_final_action
+gate_passed=true
+review_decision=merge
+review_delivery_mode=persistent
+persistent_review_degraded=false
+review_peer_cli_kind=opencode
+review_peer_model=opencode-go/deepseek-v4-flash
+peer_delivery_mode=configured_peer
+proposal_has_review_runtime=false
+single_related_lane_graph_proposal=true
+```
+
+Collaboration lifecycle state:
+
+```text
+collaboration_run.status=done
+collaboration_run.targets=["@execute"]
+collaboration_response.target=@execute
+collaboration_request inbox=inbox_e540a9a9fb29497bbb8b0ffe4dd208e4 status=read
+collaboration_callback inbox=inbox_3d71989df8214f478fd3855ede128719 status=read responded_message_id=msg_8810f6a9e9c14132add0475210b5ce87
+dispatch inbox=inbox_9823e84400fc45dea6d4ff6415187296 status=read responded_message_id=msg_90516359292f4ef0a31ba050354780b9
+trace=inbox_e540a9a9fb29497bbb8b0ffe4dd208e4 chat_record_collaboration_response
+trace=inbox_3d71989df8214f478fd3855ede128719 chat_emit_proposal
+trace=inbox_9823e84400fc45dea6d4ff6415187296 chat_post_message
+```
+
+Cleanup:
+
+```text
+chat_port_listening=false
+mcp_port_listening=false
+loop-26o service process matches after shutdown: none
+```
+
+Note: `platform_runner.log` ended with a Python asyncio subprocess transport
+cleanup warning after shutdown. The driver exited successfully, all success
+checks passed, and ports/processes were clean. Treat the warning as cleanup
+noise to watch, not as runtime proof or production readiness.
+
+Classification: bounded post-merge main runtime proof for PR #115's
+collaboration request/response/callback inbox lifecycle repair on the docs-only
+fullchain sentinel shape.
+
+Caveats:
+
+- This is not production readiness, repeated soak, MemoryOS proof, GitHub
+  review truth, natural peer-GOD groupchat completion, or full closure.
+- The final action was intentionally held; no live lane merge is claimed.
