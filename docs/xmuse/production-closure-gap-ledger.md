@@ -546,6 +546,11 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   is bounded local runtime proof for one small code-change lane only. The
   architect callback needed a scheduler retry after one timeout, so stability
   remains unproven.
+- Loop 27m repairs the evidence-retention side of that retry caveat:
+  `peer_turn_latency_traces` now preserves every scheduler attempt for a
+  retried inbox item instead of overwriting the earlier failed attempt with a
+  later success. This makes future retry dependence durable and auditable; it
+  does not prove the callback path no longer needs retry.
 - The successful chains are not yet repeated overnight or production-load soak.
 - Provider-native session continuity and memory persistence are not proven as
   durable product behavior.

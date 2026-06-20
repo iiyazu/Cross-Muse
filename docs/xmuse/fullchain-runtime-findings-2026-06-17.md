@@ -4891,3 +4891,64 @@ Remaining caveats:
 - This does not prove provider-native OpenCode resume, live MemoryOS, GitHub
   review truth, natural peer-GOD groupchat completion, full L8-L10 closure, or
   full L1-L11 closure.
+
+## 2026-06-20 Loop 27m Finding: Retry Attempts Must Remain Auditable
+
+Status: targeted candidate repair with focused validation.
+
+Boundary:
+
+```text
+phase=Phase 2/3 runtime observability
+target=preserve every peer latency attempt for a retried inbox item
+authority=peer_turn_latency_traces rows in chat.db
+producer=PeerChatScheduler._record_latency_trace
+consumer=peer progress/read surfaces and operator runtime audit
+failure_boundary=delivery lifecycle observability
+```
+
+Observed problem:
+
+- Loop 27l reached final-action hold, but the architect collaboration callback
+  needed one scheduler retry.
+- The final callback inbox had `nudge_count=1` and a successful
+  `chat_emit_proposal` writeback.
+- The final `peer_turn_latency_traces` table retained only the successful retry
+  row because trace ids were keyed as `peer_latency_<inbox_item_id>` and
+  written with upsert semantics.
+- That made the earlier timeout harder to audit from durable state after the
+  retry succeeded.
+
+Repair:
+
+- `PeerTurnLatencyTraceStore.record` now appends per scheduler attempt.
+- The first attempt keeps `peer_latency_<inbox_item_id>` for compatibility.
+- Later attempts use `peer_latency_<inbox_item_id>_attempt_N`.
+- Existing `list_recent` read surfaces continue to consume the same table and
+  now see both failed and successful attempts.
+
+Validation:
+
+```bash
+uv run pytest tests/xmuse/test_peer_chat_scheduler.py::test_scheduler_preserves_latency_trace_for_retry_attempt -q
+uv run pytest tests/xmuse/test_peer_chat_scheduler.py -q
+uv run pytest tests/xmuse/test_peer_chat_api.py tests/xmuse/test_tui_adapter.py -q
+uv run ruff check src/xmuse_core/chat/stream_store.py tests/xmuse/test_peer_chat_scheduler.py
+```
+
+Results:
+
+```text
+1 passed
+21 passed
+45 passed, 1 warning
+ruff: All checks passed
+```
+
+Remaining caveats:
+
+- This repairs evidence retention only; it does not eliminate callback retry
+  dependence.
+- It is not repeated stability, production readiness, live MemoryOS, GitHub
+  review truth, natural peer-GOD groupchat completion, full L8-L10 closure, or
+  full L1-L11 closure.
