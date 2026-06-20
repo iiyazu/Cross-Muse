@@ -15,6 +15,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+from xmuse_core.chat.inbox_store import ChatInboxStore
 from xmuse_core.chat.participant_store import ParticipantStore
 from xmuse_core.chat.store import ChatStore
 
@@ -120,6 +121,16 @@ def main() -> int:
             timeout_s=args.proposal_timeout_s,
         )
         _write_json(artifacts / "proposal.json", proposal)
+        proposal_review_trigger = _wait_for_proposal_review_trigger_terminal(
+            run_root / "chat.db",
+            conversation_id=conversation_id,
+            proposal_id=str(proposal["id"]),
+            timeout_s=args.proposal_review_timeout_s,
+        )
+        _write_json(
+            artifacts / "proposal_review_trigger.json",
+            proposal_review_trigger,
+        )
 
         approval = _post_json(
             f"http://127.0.0.1:{chat_port}/api/chat/proposals/{proposal['id']}/approve",
@@ -182,6 +193,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--chat-port", type=int, default=None)
     parser.add_argument("--mcp-port", type=int, default=None)
     parser.add_argument("--proposal-timeout-s", type=float, default=900.0)
+    parser.add_argument("--proposal-review-timeout-s", type=float, default=900.0)
     parser.add_argument("--lane-timeout-s", type=float, default=1200.0)
     parser.add_argument("--max-hours", type=float, default=0.75)
     parser.add_argument("--architect-model", default="gpt-5.4")
@@ -379,6 +391,62 @@ def _wait_for_open_lane_graph_proposal(
             return payload
         time.sleep(5)
     raise TimeoutError(f"no open lane_graph proposal for {conversation_id}")
+
+
+def _wait_for_proposal_review_trigger_terminal(
+    db_path: Path,
+    *,
+    conversation_id: str,
+    proposal_id: str,
+    timeout_s: float,
+) -> dict[str, Any]:
+    deadline = time.monotonic() + timeout_s
+    latest: dict[str, Any] | None = None
+    while time.monotonic() < deadline:
+        trigger = _proposal_review_trigger(
+            db_path,
+            conversation_id=conversation_id,
+            proposal_id=proposal_id,
+        )
+        if trigger is not None:
+            latest = trigger.model_dump(mode="json")
+            if trigger.status == "read":
+                return latest
+            if trigger.status == "failed":
+                raise RuntimeError(
+                    f"proposal review trigger failed: {trigger.id}:{trigger.failure_reason}"
+                )
+        time.sleep(5)
+    if latest is not None:
+        raise TimeoutError(
+            f"proposal review trigger did not finish: {latest['id']}:{latest['status']}"
+        )
+    raise TimeoutError(f"no proposal review trigger for {proposal_id}")
+
+
+def _proposal_review_trigger(
+    db_path: Path,
+    *,
+    conversation_id: str,
+    proposal_id: str,
+):
+    proposal_message_id = None
+    for message in ChatStore(db_path).list_messages(conversation_id):
+        if (
+            message.envelope_type == "proposal"
+            and message.envelope_json.get("proposal_id") == proposal_id
+        ):
+            proposal_message_id = message.id
+            break
+    if proposal_message_id is None:
+        return None
+    for item in ChatInboxStore(db_path).list_by_conversation(
+        conversation_id,
+        include_terminal=True,
+    ):
+        if item.item_type == "review_trigger" and item.source_message_id == proposal_message_id:
+            return item
+    return None
 
 
 def _wait_for_lane(lanes_path: Path, *, feature_id: str, timeout_s: float) -> dict[str, Any]:
