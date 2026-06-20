@@ -68,6 +68,8 @@ def test_main_writes_expected_note_content_into_command_artifacts(
             architect_model="gpt-5.4",
             executor_model="gpt-5.4-mini",
             peer_chat_post_writeback_grace_s=sentinel.DEFAULT_PEER_CHAT_POST_WRITEBACK_GRACE_S,
+            peer_god_backend="ray",
+            ray_god_mcp=True,
         ),
     )
 
@@ -88,8 +90,12 @@ def test_main_writes_expected_note_content_into_command_artifacts(
 
     assert commands_json["expected_note_content"] == expected_note_content
     assert commands_json["peer_chat_post_writeback_grace_s"] == 8.0
+    assert commands_json["peer_god_backend"] == "ray"
+    assert commands_json["ray_god_mcp"] is True
     assert f"expected_note_content={expected_note_content}\n" in commands_txt
     assert "peer_chat_post_writeback_grace_s=8.0\n" in commands_txt
+    assert "peer_god_backend=ray\n" in commands_txt
+    assert "ray_god_mcp=True\n" in commands_txt
 
 
 def test_start_runner_uses_configured_peer_chat_writeback_grace(
@@ -113,6 +119,8 @@ def test_start_runner_uses_configured_peer_chat_writeback_grace(
         logs_dir=tmp_path / "logs",
         max_hours=0.75,
         peer_chat_post_writeback_grace_s=13.5,
+        peer_god_backend="ray",
+        ray_god_mcp=True,
     )
 
     command = captured["command"]
@@ -120,6 +128,9 @@ def test_start_runner_uses_configured_peer_chat_writeback_grace(
     assert isinstance(command, list)
     flag_index = command.index("--peer-chat-post-writeback-grace-s")
     assert command[flag_index + 1] == "13.5"
+    env = captured["env"]
+    assert env["XMUSE_PEER_GOD_BACKEND"] == "ray"
+    assert env["XMUSE_RAY_GOD_MCP"] == "1"
 
 
 def test_wait_for_proposal_review_trigger_waits_until_read(

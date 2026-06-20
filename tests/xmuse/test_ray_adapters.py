@@ -121,6 +121,7 @@ async def test_codex_app_server_exposes_xmuse_mcp_chat_tools(tmp_path: Path) -> 
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=Path.cwd(),
+            limit=1024 * 1024,
         )
         await _app_server_request(
             proc,
@@ -165,9 +166,16 @@ async def test_codex_app_server_exposes_xmuse_mcp_chat_tools(tmp_path: Path) -> 
     xmuse_server = servers["xmuse-platform"]
     assert xmuse_server["serverInfo"]["name"] == "xmuse-mcp"
     assert set(xmuse_server["tools"]) == {
-        "chat_read_inbox",
-        "chat_post_message",
+        "chat_create_collaboration_request",
+        "chat_emit_proposal",
+        "chat_evaluate_dispatch_gate",
+        "chat_inspect_conversation",
         "chat_mention",
+        "chat_read_inbox",
+        "chat_record_collaboration_response",
+        "chat_resolve_collaboration_blocker",
+        "chat_raise_collaboration_blocker",
+        "chat_post_message",
     }
     post_schema = xmuse_server["tools"]["chat_post_message"]["inputSchema"]
     assert "reply_to_inbox_item_id" in post_schema["required"]
@@ -690,7 +698,7 @@ def test_app_server_turn_accumulator_emits_result_from_agent_message_delta() -> 
 def test_app_server_turn_accumulator_emits_latency_stages_from_mcp_events() -> None:
     from xmuse_core.agents.codex_app_server_transport import AppServerTurnAccumulator
 
-    clock_values = iter([200.0, 200.2, 200.5, 201.0, 201.5])
+    clock_values = iter([200.0, 200.2, 200.5, 201.0, 201.5, 202.0])
     accumulator = AppServerTurnAccumulator(
         request_id="inbox-1",
         clock=lambda: next(clock_values),
@@ -735,6 +743,18 @@ def test_app_server_turn_accumulator_emits_latency_stages_from_mcp_events() -> N
             },
         }
     ) is None
+    assert accumulator.feed(
+        {
+            "method": "item/started",
+            "params": {
+                "turnId": "turn-1",
+                "item": {
+                    "type": "mcpToolCall",
+                    "toolName": "chat_record_collaboration_response",
+                },
+            },
+        }
+    ) is None
 
     result = accumulator.feed(
         {
@@ -750,6 +770,7 @@ def test_app_server_turn_accumulator_emits_latency_stages_from_mcp_events() -> N
         "chat_read_inbox": {"at": 200.5},
         "chat_post_message": {"at": 201.0},
         "chat_mention": {"at": 201.5},
+        "chat_record_collaboration_response": {"at": 202.0},
     }
 
 
@@ -960,6 +981,12 @@ def test_app_server_mcp_instructions_prefer_direct_post(tmp_path: Path) -> None:
     assert "closes your current inbox item" in instructions
     assert "chat_emit_proposal" in instructions
     assert "collaboration:<run_id>" in instructions
+    assert "do not return the JSON as final assistant text or streamed stdout" in (
+        instructions
+    )
+    assert "do not also call chat_mention for the same target" in instructions
+    assert "If mcp_tools_ready has appeared, MCP tools are available" in instructions
+    assert "do not say you cannot perform durable writeback" in instructions
     assert "Human approval remains required before dispatch" in instructions
     assert "call chat_read_inbox" not in instructions
 

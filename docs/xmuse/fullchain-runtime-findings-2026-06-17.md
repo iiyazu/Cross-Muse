@@ -6,6 +6,26 @@ truth, merge truth, live MemoryOS proof, or full closure.
 
 ## Current Evidence Summary
 
+- Loop 28l is the strongest candidate-branch local Ray/MCP app-server
+  fullchain proof so far. From branch
+  `codex/fullchain-sentinel-peer-backend-config`, based on `origin/main`
+  `629757b280d17b8fd3dd1adebfc6e919c717ce1d`, the reusable sentinel ran with
+  `--peer-god-backend ray --ray-god-mcp`. The durable chain included
+  `chat_create_collaboration_request`, `chat_record_collaboration_response`,
+  `chat_emit_proposal`, OpenCode proposal review writeback, approval, dispatch
+  handoff acknowledgment, isolated docs execution, gate pass, persistent
+  OpenCode review, matching final-action verdict id, and pending final-action
+  hold. All reusable sentinel success checks were true. This remains
+  candidate-branch local runtime proof only, not merged-main proof, server CI
+  proof, production readiness, GitHub review truth, live MemoryOS proof, live
+  lane merge truth, repeated soak, product completion, or full closure.
+- Loop 28g-28k are the failure/repair trail for Loop 28l. Loop 28g exposed
+  missing backend disclosure in sentinel command artifacts; Loop 28h exposed
+  Ray/MCP collaboration writeback failure and duplicate direct mention; Loop
+  28i exposed a canonical `review_verdict_id` overwrite by late persistent
+  review merge delivery; Loop 28j/28k exposed that collaboration retries need
+  explicit durable-writeback feedback when the provider responds with plain
+  text.
 - Loop 28c exposed a real dynamic-member provider-resume boundary on main head
   `363229d3296d35e5da0d3533008a29b19685c720`: the dynamic OpenCode reviewer
   wrote durable chat replies in two turns across a runner restart, and the
@@ -274,6 +294,48 @@ truth, merge truth, live MemoryOS proof, or full closure.
   proof only; it is not CI/server-verified.
 
 ## Findings
+
+## 2026-06-20 Loop 28g-28l Finding: Ray/MCP Fullchain Needs Explicit Backend Proof, Durable Collaboration Retry Feedback, And Stable Verdict IDs
+
+Hypothesis confirmed:
+
+- The reusable fullchain sentinel can exercise the Ray/Codex app-server GOD
+  backend with xmuse MCP tools and reach final-action hold when command
+  artifacts declare the peer backend, collaboration prompts forbid plain-text
+  substitute responses, retry prompts include the prior durable-writeback
+  failure, MCP tool traces count collaboration/proposal/review tools, and late
+  persistent review delivery preserves the canonical lane verdict id.
+
+Confirmed failure boundaries:
+
+- Backend proof boundary: before Loop 28g, the sentinel did not disclose the
+  exercised peer GOD backend in durable command artifacts.
+- Collaboration authority boundary: Loop 28h and Loop 28j/28k showed plain
+  provider text or duplicate mention side effects cannot substitute for durable
+  `chat_record_collaboration_response`.
+- Review verdict authority boundary: Loop 28i showed late persistent review
+  merge delivery could overwrite the lane's canonical `review_verdict_id` after
+  the final-action hold was created.
+
+Loop 28l result:
+
+- Ray backend was active: platform log recorded
+  `Peer chat scheduler enabled (god_backend=RayGodSessionLayer)`.
+- MCP tool traces included `chat_create_collaboration_request`,
+  `chat_record_collaboration_response`, `chat_emit_proposal`,
+  `chat_read_inbox`, and `chat_post_message`.
+- The lane reached `awaiting_final_action` with `gate_passed=true`,
+  `review_delivery_mode=persistent`, `persistent_review_degraded=false`, and
+  OpenCode review metadata.
+- Final-action hold `final-e1ecfa2fd29e` and lane state agreed on
+  `verdict-merge-rtask_8cd0144245a04607a5a3eda0e3c9357e`.
+
+Residual limits:
+
+- This is candidate-branch local runtime proof only. It does not prove
+  merged-main behavior, GitHub server truth, production readiness, live
+  MemoryOS, live lane merge truth, repeated soak, full product completion, or
+  full closure.
 
 ### F1. Computer Use plugin unavailable
 

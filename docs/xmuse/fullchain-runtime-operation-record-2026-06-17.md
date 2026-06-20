@@ -142,6 +142,106 @@ Classification: bounded post-merge main local runtime proof for the docs-only
 sentinel shape. It is not production readiness, GitHub review truth, live
 MemoryOS proof, fullchain product completion, or full closure.
 
+## 2026-06-20 Loop 28g-28l: Ray/MCP App-Server Fullchain Boundary
+
+Scope: rerun the reusable fullchain sentinel against the Ray/Codex app-server
+GOD backend with xmuse MCP tools enabled, then patch only confirmed authority
+boundaries. This is candidate-branch local runtime evidence from
+`codex/fullchain-sentinel-peer-backend-config`, based on `origin/main`
+`629757b280d17b8fd3dd1adebfc6e919c717ce1d`.
+
+Loop sequence:
+
+- Loop 28g reran the sentinel with native backend and a 30 second writeback
+  grace. It reached final-action hold but exposed that the sentinel command
+  artifact did not declare which peer GOD backend was exercised.
+- Loop 28h reran with Ray/MCP and exposed a real collaboration contract
+  failure: architect created a collaboration request but also duplicated a
+  direct `@execute` mention, and execute streamed a verdict instead of calling
+  durable `chat_record_collaboration_response`.
+- Loop 28i confirmed that prompt/tool-contract tightening could make the
+  Ray/MCP path reach proposal, approval, execution, gate, persistent review,
+  and final-action hold, but the driver failed because a late persistent
+  review merge result overwrote the canonical `review_verdict_id` after the
+  final-action hold.
+- Loop 28j/28k confirmed a remaining collaboration writeback boundary: execute
+  could still produce plain final text rather than durable collaboration
+  writeback when retrying a failed collaboration request.
+- Loop 28l added explicit collaboration retry feedback and succeeded.
+
+Loop 28l artifact root:
+
+```text
+.goal-runs/2026-06-20/loop-28l-ray-mcp-retry-feedback-20260620T100733Z/
+```
+
+Command shape:
+
+```bash
+uv run python scripts/run_fullchain_docs_sentinel.py \
+  --run-root .goal-runs/2026-06-20/loop-28l-ray-mcp-retry-feedback-20260620T100733Z \
+  --execution-worktree /tmp/loop-28l-ray-mcp-retry-feedback-20260620T100733Z-exec \
+  --feature-id loop_28l_ray_mcp_retry_feedback_20260620T100733Z \
+  --proposal-timeout-s 900 \
+  --proposal-review-timeout-s 900 \
+  --lane-timeout-s 1200 \
+  --max-hours 0.75 \
+  --peer-chat-post-writeback-grace-s 30.0 \
+  --peer-god-backend ray \
+  --ray-god-mcp
+```
+
+Observed:
+
+- `commands.json` recorded `peer_god_backend=ray`, `ray_god_mcp=true`, Chat
+  API port `54155`, MCP port `42369`, and expected isolated note content.
+- The platform log recorded
+  `Peer chat scheduler enabled (god_backend=RayGodSessionLayer)`.
+- Human demand reached Codex architect through Chat API/MCP.
+- Architect called `chat_create_collaboration_request` for execute, and execute
+  called `chat_record_collaboration_response`.
+- Collaboration run `collab_964bbe42e28a4e109ae939b4cf34c7d7` reached `done`
+  with one received execute feasibility response.
+- Architect called `chat_emit_proposal`; proposal
+  `prop_2f537e5d678e46d6b52f84d0f96b9082` was accepted.
+- OpenCode review peer recorded `chat_read_inbox` and `chat_post_message`.
+- Dispatch handoff to execute recorded `chat_post_message`.
+- Isolated execution wrote
+  `/tmp/loop-28l-ray-mcp-retry-feedback-20260620T100733Z-exec/docs/xmuse/loop_28l_ray_mcp_retry_feedback_20260620T100733Z.md`
+  with exactly:
+
+```text
+Post-main fullchain sentinel loop_28l_ray_mcp_retry_feedback_20260620T100733Z reached isolated execution.
+```
+
+- The lane reached `awaiting_final_action` with `gate_passed=true`,
+  `review_delivery_mode=persistent`, `persistent_review_degraded=false`,
+  `review_peer_cli_kind=opencode`, and
+  `review_peer_model=opencode-go/deepseek-v4-flash`.
+- Final-action hold `final-e1ecfa2fd29e` stayed pending with verdict id
+  `verdict-merge-rtask_8cd0144245a04607a5a3eda0e3c9357e`.
+
+Driver success checks were all true:
+
+```text
+single_related_lane_graph_proposal=true
+approved_proposal_accepted=true
+execution_peer_handoff_not_degraded=true
+lane_awaiting_final_action=true
+gate_passed=true
+isolated_note_matches=true
+opencode_review_peer_recorded=true
+review_verdict_finalized=true
+review_task_verdict_emitted=true
+final_action_hold_pending=true
+proposal_has_no_review_runtime=true
+```
+
+Classification: candidate-branch local runtime proof for the Ray/MCP app-server
+sentinel path. It is not merged-main proof, server CI proof, production
+readiness, GitHub review truth, live MemoryOS proof, live lane merge truth,
+repeated soak, full product completion, or full closure.
+
 ## 2026-06-20 Reusable Fullchain Driver Sentinels
 
 Reusable driver under test:

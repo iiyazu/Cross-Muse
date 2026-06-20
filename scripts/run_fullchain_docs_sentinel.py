@@ -45,6 +45,8 @@ def main() -> int:
         feature_id=feature_id,
         note_path=note_path,
         peer_chat_post_writeback_grace_s=args.peer_chat_post_writeback_grace_s,
+        peer_god_backend=args.peer_god_backend,
+        ray_god_mcp=args.ray_god_mcp,
     )
     _write_json(artifacts / "commands.json", commands)
     (run_root / "commands.txt").write_text(
@@ -68,6 +70,8 @@ def main() -> int:
                 logs_dir=run_root / "logs",
                 max_hours=args.max_hours,
                 peer_chat_post_writeback_grace_s=args.peer_chat_post_writeback_grace_s,
+                peer_god_backend=args.peer_god_backend,
+                ray_god_mcp=args.ray_god_mcp,
             )
         )
 
@@ -210,6 +214,21 @@ def _parse_args() -> argparse.Namespace:
             "so provider-native result artifacts can be consumed"
         ),
     )
+    parser.add_argument(
+        "--peer-god-backend",
+        choices=["native", "ray", "auto"],
+        default="native",
+        help=(
+            "peer-chat GOD backend for the sentinel; native is a bounded shim, "
+            "ray exercises Codex app-server peer sessions"
+        ),
+    )
+    parser.add_argument(
+        "--ray-god-mcp",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="enable xmuse MCP tools for Ray/Codex app-server GOD turns",
+    )
     return parser.parse_args()
 
 
@@ -222,6 +241,8 @@ def _commands_payload(
     feature_id: str,
     note_path: str,
     peer_chat_post_writeback_grace_s: float,
+    peer_god_backend: str,
+    ray_god_mcp: bool,
 ) -> dict[str, Any]:
     return {
         "run_root": str(run_root),
@@ -232,6 +253,8 @@ def _commands_payload(
         "note_path": note_path,
         "expected_note_content": _expected_note_content(feature_id),
         "peer_chat_post_writeback_grace_s": peer_chat_post_writeback_grace_s,
+        "peer_god_backend": peer_god_backend,
+        "ray_god_mcp": ray_god_mcp,
     }
 
 
@@ -290,13 +313,15 @@ def _start_runner(
     logs_dir: Path,
     max_hours: float,
     peer_chat_post_writeback_grace_s: float,
+    peer_god_backend: str,
+    ray_god_mcp: bool,
 ) -> subprocess.Popen[bytes]:
     logs_dir.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
     env["XMUSE_ROOT"] = str(run_root)
     env["XMUSE_CHAT_API_URL"] = f"http://127.0.0.1:{chat_port}"
-    env["XMUSE_PEER_GOD_BACKEND"] = "native"
-    env["XMUSE_RAY_GOD_MCP"] = "0"
+    env["XMUSE_PEER_GOD_BACKEND"] = peer_god_backend
+    env["XMUSE_RAY_GOD_MCP"] = "1" if ray_god_mcp else "0"
     return _spawn(
         [
             sys.executable,

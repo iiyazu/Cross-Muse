@@ -137,6 +137,7 @@ class PeerChatScheduler:
             group_context = self._context_assembler.group_chat_context(
                 item.conversation_id
             )
+            group_context = self._with_retry_feedback(group_context, item)
             assembled_prompt = self._prompt_builder.build_peer_chat_prompt(
                 participant=participant,
                 inbox_item=item,
@@ -575,6 +576,49 @@ class PeerChatScheduler:
             success=False,
             reason=reason,
         )
+
+    def _with_retry_feedback(self, group_context: dict, item) -> dict:
+        feedback = self._retry_feedback_for_item(item)
+        if feedback is None:
+            return group_context
+        enriched = dict(group_context)
+        guidance = list(enriched.get("turn_guidance") or [])
+        guidance.append(feedback)
+        enriched["turn_guidance"] = guidance
+        capsule = dict(enriched.get("context_capsule") or {})
+        capsule["degraded_state"] = {
+            "inbox_item_id": item.id,
+            "nudge_count": item.nudge_count,
+            "retry_feedback": feedback,
+        }
+        enriched["context_capsule"] = capsule
+        enriched["retry_feedback"] = feedback
+        return enriched
+
+    def _retry_feedback_for_item(self, item) -> str | None:
+        if int(getattr(item, "nudge_count", 0) or 0) <= 0:
+            return None
+        if getattr(item, "item_type", None) != "collaboration_request":
+            return None
+        reason = self._last_delivery_failure_reason(item) or "peer_no_inbox_side_effect"
+        return (
+            f"Retry feedback for this same collaboration_request: the previous "
+            f"attempt failed with {reason}. Plain final text or stream output was "
+            "not accepted as durable reply truth. For this retry, call "
+            "chat_record_collaboration_response for the collaboration run named in "
+            "xmuse_context.inbox_item.payload.content. Do not answer with plain text. "
+            "If mcp_tools_ready appears, MCP tools are available; do not say durable "
+            "writeback is unavailable."
+        )
+
+    def _last_delivery_failure_reason(self, item) -> str | None:
+        for trace in self._latency.list_recent(item.conversation_id, limit=20):
+            if trace.get("inbox_item_id") != item.id:
+                continue
+            reason = trace.get("degraded_reason")
+            if isinstance(reason, str) and reason.strip():
+                return reason.strip()
+        return None
 
     def _post_degraded_fallback_if_enabled(
         self,
