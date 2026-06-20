@@ -7,17 +7,17 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
 
 ## Current Proof Boundary
 
-- Latest main inspected: `fdf050ff42042a1e41ffe224941a41dea9774ea0`
-  (PR #139 pending-review runtime evidence merge). Latest candidate-branch
-  reusable sentinel proof is Loop 27q from branch
-  `codex/wait-for-proposal-review-in-sentinel` at the same base head plus the
-  local harness update. Loop 27q waited for automatic proposal review trigger
-  `inbox_ffe0e282eafd4bb9a3ab08c05646cd34` to reach `read` before approval,
+- Latest main inspected: `419f00d4cd4c8227a33302658608f9d9532f07b6`
+  (PR #140 wait-before-approval sentinel merge). Latest post-merge main
+  reusable sentinel proof is Loop 27r from that head. Loop 27r waited for
+  automatic proposal review trigger
+  `inbox_9487fcb303564ded8f5fd395f53ba6a8` to reach `read` before approval,
   then reached isolated docs execution, gate, persistent OpenCode review, and
-  final-action hold. This is bounded candidate-branch harness/runtime-loop
-  proof for the docs-only sentinel shape; it does not prove production
-  readiness, provider-native OpenCode resume, live MemoryOS, GitHub review
-  truth, live lane merge truth, repeated soak, or full closure.
+  final-action hold. This is bounded post-merge main runtime proof for the
+  docs-only sentinel shape; it does not prove production readiness,
+  provider-native OpenCode resume, live MemoryOS, GitHub review truth beyond
+  inspected PR/main check facts, live lane merge truth, repeated soak, or full
+  closure.
 - Latest natural groupchat proposal evidence: Loop 27h recorded collaboration
   run `collab_ecd70e7a9edb4719ae8ea881b4f88177` with targets `@execute` and
   `@review`, `status=done`, and two peer responses. Architect proposal
@@ -588,6 +588,19 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   `final-f332e8015da2` pending. This is local candidate-branch proof for the
   reusable sentinel harness, not merged main proof and not production
   readiness.
+- PR #140 merged the reusable sentinel harness update to main as
+  `419f00d4cd4c8227a33302658608f9d9532f07b6` after successful PR CI
+  `27865014142` and successful post-merge main CI `27865045744`. Loop 27r then
+  reran the merged harness from that main head and confirmed the
+  wait-before-approval path on main: automatic review trigger
+  `inbox_9487fcb303564ded8f5fd395f53ba6a8` reached `read`, proposal
+  `prop_e0e1eab878b4465c8eb5945c60894f5d` was approved into resolution
+  `res_bd24e8deb99444589850c5f611b94315`, the lane reached
+  `awaiting_final_action`, OpenCode review verdict
+  `verdict-merge-rtask_6d7f18ac90b8473c9a827b4fa15eee2e` finalized, and final
+  hold `final-45abee1aa897` remained pending. This is post-merge main proof
+  for the docs-only sentinel harness only, not production readiness or full
+  closure.
 - The successful chains are not yet repeated overnight or production-load soak.
 - Provider-native session continuity and memory persistence are not proven as
   durable product behavior.
