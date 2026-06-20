@@ -581,6 +581,87 @@ async def test_scheduler_releases_claim_when_peer_turn_times_out(tmp_path: Path)
 
 
 @pytest.mark.asyncio
+async def test_scheduler_preserves_latency_trace_for_retry_attempt(
+    tmp_path: Path,
+) -> None:
+    chat = ChatStore(tmp_path / "chat.db")
+    conv = chat.create_conversation("Scheduler retry latency")
+    participant = ParticipantStore(tmp_path / "chat.db").add(
+        conversation_id=conv.id,
+        role="architect",
+        display_name="Architect GOD",
+        cli_kind="codex",
+        model="gpt-5.4",
+    )
+    message = chat.add_message(conv.id, "Human", "human", "@architect")
+    inbox = ChatInboxStore(tmp_path / "chat.db")
+    item = inbox.create_item(
+        conversation_id=conv.id,
+        target_participant_id=participant.participant_id,
+        target_role="architect",
+        target_address="@architect",
+        sender_participant_id=None,
+        sender_address="@human",
+        source_message_id=message.id,
+        item_type="mention",
+        payload={"content": "@architect"},
+    )
+
+    class RetryGodLayer(FakeGodLayer):
+        def __init__(self) -> None:
+            super().__init__()
+            self.receive_attempts = 0
+
+        async def receive_message(self, god_session_id):
+            self.receive_attempts += 1
+            if self.receive_attempts == 1:
+                await asyncio.sleep(1)
+                return None
+            reply = chat.add_message(
+                conv.id,
+                participant.participant_id,
+                "assistant",
+                "Architect GOD: retry writeback succeeded.",
+            )
+            inbox.mark_read(item.id, responded_message_id=reply.id)
+            PeerTurnLatencyTraceStore(tmp_path / "chat.db").record_mcp_tool_stage(
+                conversation_id=conv.id,
+                inbox_item_id=item.id,
+                tool_name="chat_post_message",
+                called_at=100.0,
+            )
+            return self.receive_result
+
+        async def abort_session(self, god_session_id):
+            self.aborted = god_session_id
+
+    layer = RetryGodLayer()
+    scheduler = PeerChatScheduler(
+        db_path=tmp_path / "chat.db",
+        god_layer=layer,
+        worktree=tmp_path,
+        scheduler_id="sched-test",
+        response_wait_s=0.01,
+        post_writeback_grace_s=0.01,
+    )
+
+    first = await scheduler.tick_once()
+    second = await scheduler.tick_once()
+
+    assert first.failed == 1
+    assert second.happy_path == 1
+    assert inbox.get(item.id).nudge_count == 1
+    traces = PeerTurnLatencyTraceStore(tmp_path / "chat.db").list_recent(conv.id)
+    assert [trace["delivery_mode"] for trace in traces] == [
+        "mcp_writeback",
+        "failed",
+    ]
+    assert traces[0]["id"] == f"peer_latency_{item.id}_attempt_2"
+    assert traces[1]["id"] == f"peer_latency_{item.id}"
+    assert traces[1]["degraded_reason"] == "peer_response_timeout"
+
+
+@pytest.mark.asyncio
 async def test_scheduler_accepts_timeout_after_real_mcp_writeback(tmp_path: Path) -> None:
     chat = ChatStore(tmp_path / "chat.db")
     conv = chat.create_conversation("Scheduler timeout after writeback")
