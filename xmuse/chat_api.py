@@ -55,6 +55,11 @@ from xmuse_core.chat.participant_store import (
 from xmuse_core.chat.peer_proposals import classify_structured_proposal
 from xmuse_core.chat.peer_service import PeerChatError, PeerChatService
 from xmuse_core.chat.protocol_v2 import DeliberationMessageV1
+from xmuse_core.chat.roster_events import (
+    ROSTER_EVENT_ENVELOPE_TYPE,
+    participant_added_event_payload,
+    roster_event_content,
+)
 from xmuse_core.chat.store import ChatStore
 from xmuse_core.platform.read_contracts import build_execution_drilldown_refs
 from xmuse_core.platform.run_health import summarize_run_health
@@ -469,6 +474,14 @@ def _add_participants(
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except sqlite3.IntegrityError as exc:
             raise HTTPException(status_code=404, detail="conversation not found") from exc
+        _store(base_dir).add_message(
+            conversation_id,
+            author="xmuse-system",
+            role="system",
+            content=roster_event_content(created_participant),
+            envelope_type=ROSTER_EVENT_ENVELOPE_TYPE,
+            envelope_json=participant_added_event_payload(created_participant),
+        )
         payload = created_participant.model_dump(mode="json")
         payload["session"] = None
         created.append(payload)

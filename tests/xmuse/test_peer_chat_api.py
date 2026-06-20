@@ -1,3 +1,6 @@
+import json
+import sqlite3
+
 from fastapi.testclient import TestClient
 
 from xmuse.chat_api import create_app
@@ -153,6 +156,54 @@ def test_chat_timeline_projects_peer_progress_from_durable_inbox_and_trace(tmp_p
     assert event["stage_names"] == ["chat_read_inbox"]
     assert payload["peer_progress_counts"]["failed"] == 1
     assert payload["recent_peer_progress_events"] == progress_events[-5:]
+
+
+def test_dynamic_participant_add_records_visible_roster_event(tmp_path) -> None:
+    client = TestClient(create_app(tmp_path))
+    conv = client.post("/api/chat/conversations", json={"title": "Dynamic roster"}).json()
+
+    response = client.post(
+        f"/api/chat/conversations/{conv['id']}/participants",
+        json={
+            "role": "review",
+            "display_name": "opencode-review-god",
+            "cli_kind": "opencode",
+            "model": "opencode-go/deepseek-v4-flash",
+        },
+    )
+
+    assert response.status_code == 201
+    participant = response.json()
+
+    timeline = client.get(f"/api/chat/conversations/{conv['id']}/messages").json()
+
+    assert timeline["messages"] == []
+    assert timeline["roster_event_counts"] == {"total": 1, "participant_added": 1}
+    assert timeline["recent_roster_events"] == timeline["roster_events"][-5:]
+    event = timeline["roster_events"][0]
+    assert event["source_authority"] == "participants"
+    assert event["action"] == "participant_added"
+    assert event["participant_id"] == participant["participant_id"]
+    assert event["role"] == "review"
+    assert event["display_name"] == "opencode-review-god"
+    assert event["cli_kind"] == "opencode"
+    assert event["model"] == "opencode-go/deepseek-v4-flash"
+
+    with sqlite3.connect(tmp_path / "chat.db") as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            """
+            select envelope_type, envelope_json
+            from messages
+            where id = ?
+            """,
+            (event["message_id"],),
+        ).fetchone()
+    assert row is not None
+    assert row["envelope_type"] == "roster_event"
+    envelope = json.loads(row["envelope_json"])
+    assert envelope["source_authority"] == "participants"
+    assert envelope["participant_id"] == participant["participant_id"]
 
 
 def test_rest_message_routes_role_before_capitalized_sentence(tmp_path):
