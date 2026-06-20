@@ -57,6 +57,7 @@ from xmuse_core.chat.peer_progress import (
 )
 from xmuse_core.chat.peer_proposals import PeerProposalEmitter
 from xmuse_core.chat.peer_types import PeerChatError, PeerMessageResult
+from xmuse_core.chat.roster_events import build_roster_events, roster_event_counts
 from xmuse_core.chat.store import ChatStore
 from xmuse_core.chat.stream_store import PeerTurnLatencyTraceStore
 from xmuse_core.providers.registry import normalize_codex_model_id
@@ -873,6 +874,7 @@ class PeerChatService:
         messages = self._natural_messages(conversation_id)
         cards = self._cards_for_conversation(conversation_id)
         peer_progress_events = self._peer_progress_events(conversation_id)
+        roster_events = self._roster_events(conversation_id)
         items = [
             ChatTimelineItem(
                 kind="message",
@@ -903,6 +905,9 @@ class PeerChatService:
             "peer_progress_events": peer_progress_events,
             "peer_progress_counts": peer_progress_counts(peer_progress_events),
             "recent_peer_progress_events": peer_progress_events[-5:],
+            "roster_events": roster_events,
+            "roster_event_counts": roster_event_counts(roster_events),
+            "recent_roster_events": roster_events[-5:],
         }
         if conversation is None:
             return payload
@@ -917,6 +922,7 @@ class PeerChatService:
                 participants=participants,
                 sessions=sessions,
                 peer_progress_events=peer_progress_events,
+                roster_events=roster_events,
             )
         )
         payload["conversation_id"] = conversation.id
@@ -941,11 +947,17 @@ class PeerChatService:
         sessions: list[dict[str, Any]],
         api_href_template: str = "/api/chat/conversations/{conversation_id}/messages",
         peer_progress_events: list[dict[str, Any]] | None = None,
+        roster_events: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         peer_progress = (
             peer_progress_events
             if peer_progress_events is not None
             else self._peer_progress_events(conversation.id)
+        )
+        roster = (
+            roster_events
+            if roster_events is not None
+            else self._roster_events(conversation.id)
         )
         return {
             "id": conversation.id,
@@ -955,6 +967,7 @@ class PeerChatService:
                 conversation.created_at,
                 messages=messages,
                 cards=cards,
+                roster_events=roster,
             ),
             "href": f"/dashboard/peer-chat/conversations/{conversation.id}",
             "dashboard_href": f"/dashboard/peer-chat/conversations/{conversation.id}",
@@ -964,6 +977,8 @@ class PeerChatService:
             "card_counts": self._card_counts(cards),
             "peer_progress_counts": peer_progress_counts(peer_progress),
             "recent_peer_progress_events": peer_progress[-5:],
+            "roster_event_counts": roster_event_counts(roster),
+            "recent_roster_events": roster[-5:],
             "recent_messages": [
                 self._message_summary(message) for message in messages[-5:]
             ],
@@ -1317,6 +1332,9 @@ class PeerChatService:
             ),
         )
 
+    def _roster_events(self, conversation_id: str) -> list[dict[str, Any]]:
+        return build_roster_events(self._chat.list_messages(conversation_id))
+
     def _natural_messages(self, conversation_id: str) -> list[ChatMessage]:
         return [
             message
@@ -1343,10 +1361,16 @@ class PeerChatService:
         *,
         messages: list[ChatMessage],
         cards: list[ChatCard],
+        roster_events: list[dict[str, Any]] | None = None,
     ) -> str:
         timestamps = [created_at]
         timestamps.extend(message.created_at for message in messages)
         timestamps.extend(card.created_at for card in cards)
+        timestamps.extend(
+            str(event["created_at"])
+            for event in (roster_events or [])
+            if isinstance(event.get("created_at"), str)
+        )
         return max(timestamps)
 
     def _linked_session_ids(self, sessions: list[dict[str, Any]]) -> list[str]:

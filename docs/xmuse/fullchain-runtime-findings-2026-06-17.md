@@ -4386,3 +4386,62 @@ Remaining caveats:
   existing durable stores.
 - It does not prove repeated groupchat reliability, production readiness, live
   MemoryOS, GitHub review truth, natural peer-GOD completion, or full closure.
+
+## 2026-06-20 Loop 27b Finding: Dynamic Member Add Was Silent
+
+Status: local candidate branch repair, not server verified.
+
+Boundary:
+
+```text
+phase=Phase 2 natural agents groupchat kernel
+target=dynamic member event is durable and visible through Chat API / read model
+authority=participants + messages(envelope_type=roster_event)
+producer=POST /api/chat/conversations/{conversation_id}/participants
+consumer=PeerChatService conversation timeline
+failure_boundary=read-model/event production contract
+```
+
+Observed before repair:
+
+- The API successfully added a new OpenCode review participant.
+- `chat.db` contained the new row in `participants`.
+- `chat.db.messages` contained no roster event for the add.
+- The `/messages` timeline exposed no `roster_events`, `recent_roster_events`,
+  or `roster_event_counts`.
+
+Candidate repair:
+
+- Added a small `roster_events` helper that builds durable roster-event
+  envelopes and projects them from `ChatMessage` rows.
+- The dynamic participant API path writes a `roster_event` system message after
+  the participant row is created.
+- `PeerChatService.list_conversation_timeline()` now exposes `roster_events`,
+  `roster_event_counts`, and `recent_roster_events`.
+- Natural `messages` remain filtered to human/assistant chat messages; roster
+  events are a separate read-model projection.
+
+Post-repair evidence:
+
+```text
+messages[0].envelope_type=roster_event
+roster_event_counts={'total': 1, 'participant_added': 1}
+recent_roster_events[0].source_authority=participants
+recent_roster_events[0].participant_id=<new participant id>
+recent_roster_events[0].cli_kind=opencode
+```
+
+Validation so far:
+
+```text
+uv run pytest tests/xmuse/test_peer_chat_api.py -q
+uv run ruff check src/xmuse_core/chat/roster_events.py src/xmuse_core/chat/peer_service.py xmuse/chat_api.py tests/xmuse/test_peer_chat_api.py
+```
+
+Remaining caveats:
+
+- This proves only dynamic member-add event durability and projection in a local
+  API/runtime probe.
+- It does not prove restart/session restore, multi-turn natural groupchat,
+  groupchat proposal production, production readiness, live MemoryOS, GitHub
+  review truth, or full closure.
