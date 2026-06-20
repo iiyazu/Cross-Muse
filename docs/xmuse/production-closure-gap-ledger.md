@@ -19,18 +19,20 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   provider-native OpenCode resume on main/fullchain, live MemoryOS, GitHub
   review truth beyond inspected PR/main check facts, live lane merge truth,
   repeated soak, or full closure.
-- Latest provider-native OpenCode session evidence: Loop 28a on branch
-  `codex/native-opencode-provider-session-binding` ran a focused two-turn real
-  OpenCode probe from base
-  `4919e9807d074069190d71127c6fbf10408f7d19`. The first turn persisted
-  `provider_session_id=ses_11bda827fffekK9seMPaDldLtf` in
+- Latest provider-native OpenCode session evidence: PR #142 merged native
+  provider-session binding to main as
+  `2fde89eda05b6a34da9364bb0b9a426c1c0749b0`, with successful PR CI
+  `27865756181` and successful post-merge main CI `27865780027`. Loop 28b then
+  ran a focused two-turn real OpenCode probe from that main head. The first
+  turn persisted
+  `provider_session_id=ses_11bd29d58ffe2SlCF666g6EGe2` in
   `god_sessions.json` with `provider_session_kind=opencode_session` and
   `provider_binding_status=active`. After aborting the local shim and creating
   a fresh native `GodSessionLayer`, the same
-  `god_session_id=god-4a912088e72e4e79addda3e00d8b2367` was restored, the
+  `god_session_id=god-439c97c471694fd2a70db80c515ff7aa` was restored, the
   second turn reused the provider session, and provider stdout contained a
-  `sessionID`. This is candidate-branch focused provider-session proof only,
-  not post-merge main fullchain proof or production readiness.
+  `sessionID`. This is post-merge main focused provider-session proof, not
+  fullchain groupchat-to-lane proof or production readiness.
 - Latest natural groupchat proposal evidence: Loop 27h recorded collaboration
   run `collab_ecd70e7a9edb4719ae8ea881b4f88177` with targets `@execute` and
   `@review`, `status=done`, and two peer responses. Architect proposal
@@ -622,9 +624,17 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   provider session. This closes the direct producer/consumer binding gap
   exposed by Loop 27g for one focused probe, but it is not yet post-merge main
   fullchain evidence.
+- PR #142 merged that repair to main as
+  `2fde89eda05b6a34da9364bb0b9a426c1c0749b0` after successful PR CI
+  `27865756181` and successful post-merge main CI `27865780027`. Loop 28b then
+  reran the focused provider-session probe from that main head and confirmed
+  persisted `provider_session_id`, `provider_binding_status=active`, same GOD
+  session restore, and second-turn provider session reuse. This upgrades Loop
+  28a to post-merge main focused proof only; fullchain groupchat-to-lane
+  provider-resume evidence remains absent.
 - The successful chains are not yet repeated overnight or production-load soak.
-- Provider-native OpenCode session continuity has focused candidate-branch
-  proof only; post-merge main fullchain evidence is still absent. Memory
+- Provider-native OpenCode session continuity has focused post-merge main
+  proof only; fullchain groupchat-to-lane evidence is still absent. Memory
   persistence is not proven as durable product behavior.
 - Live MemoryOS proof is absent.
 - GitHub review truth is absent.
@@ -696,8 +706,8 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   locally repairs the structured-tool latency false-failed classification for
   that sentinel shape. Loop 27l adds one bounded non-docs code-change lane.
   Loop 28a adds focused candidate-branch proof for provider-native OpenCode
-  resume after GOD layer restart. Remaining work is post-merge main fullchain
-  provider-resume evidence, repeated stability, broader code-change lanes, and
-  any production-load claim.
+  resume after GOD layer restart, and Loop 28b upgrades that to focused
+  post-merge main proof. Remaining work is fullchain provider-resume evidence,
+  repeated stability, broader code-change lanes, and any production-load claim.
 - P6 MemoryOS adapter proof: keep `live_memoryos` forbidden until a real trace
   id or artifact exists.
