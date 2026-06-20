@@ -203,11 +203,12 @@ class PeerChatScheduler:
                     return PeerChatSchedulerOutcome(nudged=1, happy_path=1)
             except TimeoutError:
                 refreshed = self._inbox.get(item.id)
-                if refreshed.status == "read" and self._has_real_writeback_message(
+                if refreshed.status == "read" and self._has_durable_writeback(
                     item.conversation_id,
                     refreshed.responded_message_id,
                     participant_id=participant.participant_id,
                     inbox_item_id=item.id,
+                    item_type=getattr(item, "item_type", None),
                 ):
                     await _abort_session_if_supported(self._god_layer, record.god_session_id)
                     self._finish_active_stream_for_item(item, status="done")
@@ -249,11 +250,12 @@ class PeerChatScheduler:
             if message is None or getattr(message, "type", None) == "error":
                 reason = _message_failure_reason(message)
                 refreshed = self._inbox.get(item.id)
-                if refreshed.status == "read" and self._has_real_writeback_message(
+                if refreshed.status == "read" and self._has_durable_writeback(
                     item.conversation_id,
                     refreshed.responded_message_id,
                     participant_id=participant.participant_id,
                     inbox_item_id=item.id,
+                    item_type=getattr(item, "item_type", None),
                 ):
                     self._finish_active_stream_for_item(item, status="done")
                     self._record_latency_trace(
@@ -339,11 +341,12 @@ class PeerChatScheduler:
                 self._finish_active_stream_for_item(item, status="error")
                 self._record_failed_nudge(item.id, reason="peer_no_inbox_side_effect")
                 return PeerChatSchedulerOutcome(failed=1)
-            if not self._has_real_writeback_message(
+            if not self._has_durable_writeback(
                 item.conversation_id,
                 refreshed.responded_message_id,
                 participant_id=participant.participant_id,
                 inbox_item_id=item.id,
+                item_type=getattr(item, "item_type", None),
             ):
                 self._finish_active_stream_for_item(item, status="error")
                 self._record_latency_trace(
@@ -411,11 +414,12 @@ class PeerChatScheduler:
                     )
                 except TimeoutError:
                     refreshed = self._inbox.get(item.id)
-                    if refreshed.status == "read" and self._has_real_writeback_message(
+                    if refreshed.status == "read" and self._has_durable_writeback(
                         item.conversation_id,
                         refreshed.responded_message_id,
                         participant_id=participant.participant_id,
                         inbox_item_id=item.id,
+                        item_type=getattr(item, "item_type", None),
                     ):
                         grace_result = await self._wait_for_provider_result_during_grace(
                             receive_task
@@ -458,6 +462,28 @@ class PeerChatScheduler:
             fallback_replies=sum(outcome.fallback_replies for outcome in outcomes),
         )
 
+    def _has_durable_writeback(
+        self,
+        conversation_id: str,
+        responded_message_id: str | None,
+        *,
+        participant_id: str,
+        inbox_item_id: str,
+        item_type: str | None,
+    ) -> bool:
+        if self._has_real_writeback_message(
+            conversation_id,
+            responded_message_id,
+            participant_id=participant_id,
+            inbox_item_id=inbox_item_id,
+        ):
+            return True
+        stages = set(self._latency.list_mcp_tool_stages(conversation_id, inbox_item_id))
+        return (
+            item_type == "collaboration_request"
+            and "chat_record_collaboration_response" in stages
+        )
+
     def _has_real_writeback_message(
         self,
         conversation_id: str,
@@ -481,7 +507,15 @@ class PeerChatScheduler:
         if message.author != participant_id or message.role != "assistant":
             return False
         stages = self._latency.list_mcp_tool_stages(conversation_id, inbox_item_id)
-        return bool({"chat_post_message", "chat_emit_proposal", "chat_mention"} & set(stages))
+        return bool(
+            {
+                "chat_create_collaboration_request",
+                "chat_emit_proposal",
+                "chat_mention",
+                "chat_post_message",
+            }
+            & set(stages)
+        )
 
     def _record_latency_trace(
         self,

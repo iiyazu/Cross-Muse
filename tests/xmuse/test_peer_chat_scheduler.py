@@ -868,6 +868,69 @@ async def test_scheduler_records_success_when_peer_closes_inbox_with_proposal(
 
 
 @pytest.mark.asyncio
+async def test_scheduler_accepts_collaboration_request_tool_writeback(
+    tmp_path: Path,
+) -> None:
+    chat = ChatStore(tmp_path / "chat.db")
+    conv = chat.create_conversation("Scheduler collaboration request writeback")
+    participant = ParticipantStore(tmp_path / "chat.db").add(
+        conversation_id=conv.id,
+        role="architect",
+        display_name="Architect GOD",
+        cli_kind="codex",
+        model="gpt-5.4",
+    )
+    message = chat.add_message(conv.id, "Human", "human", "@architect")
+    inbox = ChatInboxStore(tmp_path / "chat.db")
+    item = inbox.create_item(
+        conversation_id=conv.id,
+        target_participant_id=participant.participant_id,
+        target_role="architect",
+        target_address="@architect",
+        sender_participant_id=None,
+        sender_address="@human",
+        source_message_id=message.id,
+        item_type="mention",
+        payload={"content": "@architect"},
+    )
+
+    class CollaborationRequestGodLayer(FakeGodLayer):
+        async def receive_message(self, god_session_id):
+            reply = chat.add_message(
+                conv.id,
+                participant.participant_id,
+                "assistant",
+                "Collaboration run created for @execute.",
+                envelope_type="collaboration_request",
+                envelope_json={"type": "collaboration_request"},
+            )
+            inbox.mark_read(item.id, responded_message_id=reply.id)
+            PeerTurnLatencyTraceStore(tmp_path / "chat.db").record_mcp_tool_stage(
+                conversation_id=conv.id,
+                inbox_item_id=item.id,
+                tool_name="chat_create_collaboration_request",
+                called_at=100.0,
+            )
+            return self.receive_result
+
+    scheduler = PeerChatScheduler(
+        db_path=tmp_path / "chat.db",
+        god_layer=CollaborationRequestGodLayer(),
+        worktree=tmp_path,
+        scheduler_id="sched-test",
+        response_wait_s=0.1,
+    )
+
+    outcome = await scheduler.tick_once()
+
+    assert outcome.happy_path == 1
+    assert outcome.failed == 0
+    trace = PeerTurnLatencyTraceStore(tmp_path / "chat.db").list_recent(conv.id)[0]
+    assert trace["delivery_mode"] == "mcp_writeback"
+    assert trace["degraded_reason"] is None
+
+
+@pytest.mark.asyncio
 async def test_scheduler_rejects_read_without_real_writeback_message(
     tmp_path: Path,
 ) -> None:
@@ -914,6 +977,61 @@ async def test_scheduler_rejects_read_without_real_writeback_message(
     trace = PeerTurnLatencyTraceStore(tmp_path / "chat.db").list_recent(conv.id)[0]
     assert trace["delivery_mode"] == "failed"
     assert trace["degraded_reason"] == "peer_no_inbox_writeback_message"
+
+
+@pytest.mark.asyncio
+async def test_scheduler_accepts_structured_collaboration_response_writeback(
+    tmp_path: Path,
+) -> None:
+    chat = ChatStore(tmp_path / "chat.db")
+    conv = chat.create_conversation("Scheduler structured collaboration writeback")
+    participant = ParticipantStore(tmp_path / "chat.db").add(
+        conversation_id=conv.id,
+        role="execute",
+        display_name="Execute GOD",
+        cli_kind="codex",
+        model="gpt-5.4",
+    )
+    message = chat.add_message(conv.id, "Architect", "assistant", "Collaboration request")
+    inbox = ChatInboxStore(tmp_path / "chat.db")
+    item = inbox.create_item(
+        conversation_id=conv.id,
+        target_participant_id=participant.participant_id,
+        target_role="execute",
+        target_address="@execute",
+        sender_participant_id=None,
+        sender_address="@architect",
+        source_message_id=message.id,
+        item_type="collaboration_request",
+        payload={"content": "Use chat_record_collaboration_response."},
+    )
+
+    class StructuredWritebackGodLayer(FakeGodLayer):
+        async def receive_message(self, god_session_id):
+            inbox.mark_read(item.id)
+            PeerTurnLatencyTraceStore(tmp_path / "chat.db").record_mcp_tool_stage(
+                conversation_id=conv.id,
+                inbox_item_id=item.id,
+                tool_name="chat_record_collaboration_response",
+                called_at=100.0,
+            )
+            return self.receive_result
+
+    scheduler = PeerChatScheduler(
+        db_path=tmp_path / "chat.db",
+        god_layer=StructuredWritebackGodLayer(),
+        worktree=tmp_path,
+        scheduler_id="sched-test",
+        response_wait_s=0.1,
+    )
+
+    outcome = await scheduler.tick_once()
+
+    assert outcome.happy_path == 1
+    assert outcome.failed == 0
+    trace = PeerTurnLatencyTraceStore(tmp_path / "chat.db").list_recent(conv.id)[0]
+    assert trace["delivery_mode"] == "mcp_writeback"
+    assert trace["degraded_reason"] is None
 
 
 @pytest.mark.asyncio
