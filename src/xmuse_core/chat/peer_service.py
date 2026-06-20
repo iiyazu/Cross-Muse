@@ -51,6 +51,10 @@ from xmuse_core.chat.participant_store import (
 )
 from xmuse_core.chat.peer_cards import PeerChatCardAssembler
 from xmuse_core.chat.peer_forks import PeerForkStore
+from xmuse_core.chat.peer_progress import (
+    build_peer_progress_events,
+    peer_progress_counts,
+)
 from xmuse_core.chat.peer_proposals import PeerProposalEmitter
 from xmuse_core.chat.peer_types import PeerChatError, PeerMessageResult
 from xmuse_core.chat.store import ChatStore
@@ -868,6 +872,7 @@ class PeerChatService:
         conversation = self._conversation(conversation_id)
         messages = self._natural_messages(conversation_id)
         cards = self._cards_for_conversation(conversation_id)
+        peer_progress_events = self._peer_progress_events(conversation_id)
         items = [
             ChatTimelineItem(
                 kind="message",
@@ -895,6 +900,9 @@ class PeerChatService:
             "messages": [message.model_dump(mode="json") for message in messages],
             "cards": [card.model_dump(mode="json") for card in cards],
             "items": [item.model_dump(mode="json") for item in items],
+            "peer_progress_events": peer_progress_events,
+            "peer_progress_counts": peer_progress_counts(peer_progress_events),
+            "recent_peer_progress_events": peer_progress_events[-5:],
         }
         if conversation is None:
             return payload
@@ -908,6 +916,7 @@ class PeerChatService:
                 cards=cards,
                 participants=participants,
                 sessions=sessions,
+                peer_progress_events=peer_progress_events,
             )
         )
         payload["conversation_id"] = conversation.id
@@ -931,7 +940,13 @@ class PeerChatService:
         participants: list[Participant],
         sessions: list[dict[str, Any]],
         api_href_template: str = "/api/chat/conversations/{conversation_id}/messages",
+        peer_progress_events: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
+        peer_progress = (
+            peer_progress_events
+            if peer_progress_events is not None
+            else self._peer_progress_events(conversation.id)
+        )
         return {
             "id": conversation.id,
             "title": conversation.title,
@@ -947,6 +962,8 @@ class PeerChatService:
             "participants": self._participant_group_summary(participants),
             "inbox_counts": self._inbox_counts(conversation.id),
             "card_counts": self._card_counts(cards),
+            "peer_progress_counts": peer_progress_counts(peer_progress),
+            "recent_peer_progress_events": peer_progress[-5:],
             "recent_messages": [
                 self._message_summary(message) for message in messages[-5:]
             ],
@@ -1289,6 +1306,16 @@ class PeerChatService:
             if item.status in counts:
                 counts[item.status] += 1
         return counts
+
+    def _peer_progress_events(self, conversation_id: str) -> list[dict[str, Any]]:
+        return build_peer_progress_events(
+            db_path=self._db_path,
+            conversation_id=conversation_id,
+            inbox_items=self._inbox.list_by_conversation(
+                conversation_id,
+                include_terminal=True,
+            ),
+        )
 
     def _natural_messages(self, conversation_id: str) -> list[ChatMessage]:
         return [

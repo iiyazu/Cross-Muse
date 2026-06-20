@@ -4,6 +4,7 @@ from xmuse.chat_api import create_app
 from xmuse_core.agents.god_session_registry import GodSessionRegistry
 from xmuse_core.chat.inbox_store import ChatInboxStore
 from xmuse_core.chat.peer_service import PeerChatService
+from xmuse_core.chat.stream_store import PeerTurnLatencyTraceStore
 
 
 def _assert_participant_sessions(
@@ -92,6 +93,66 @@ def test_rest_message_mention_creates_inbox(tmp_path):
 
     inbox = ChatInboxStore(tmp_path / "chat.db")
     assert inbox.get(payload["inbox_items"][0]["id"]).status == "unread"
+
+
+def test_chat_timeline_projects_peer_progress_from_durable_inbox_and_trace(tmp_path):
+    client = TestClient(create_app(tmp_path))
+    conv = client.post("/api/chat/conversations", json={"title": "Peer progress"}).json()
+    message = client.post(
+        f"/api/chat/conversations/{conv['id']}/messages",
+        json={
+            "author": "Human operator",
+            "role": "human",
+            "content": "@architect please handle this",
+            "client_request_id": "rest-peer-progress",
+        },
+    ).json()
+    item_id = message["inbox_items"][0]["id"]
+    inbox = ChatInboxStore(tmp_path / "chat.db")
+    claimed = inbox.claim_next(owner="sched-test", item_id=item_id)
+
+    running = client.get(f"/api/chat/conversations/{conv['id']}/messages").json()
+    running_event = running["peer_progress_events"][0]
+    assert running_event["source_authority"] == "chat_inbox_items"
+    assert running_event["source_id"] == item_id
+    assert running_event["status"] == "running"
+    assert running_event["target_role"] == "architect"
+
+    failed = inbox.mark_failed(item_id, reason="peer_no_inbox_writeback_message")
+    PeerTurnLatencyTraceStore(tmp_path / "chat.db").record(
+        conversation_id=conv["id"],
+        inbox_item_id=item_id,
+        participant_id=failed.target_participant_id,
+        target_role=failed.target_role,
+        message_created_at=failed.created_at,
+        inbox_claimed_at=claimed.claimed_at,
+        delivery_started_at=10.0,
+        provider_turn_started_at=10.1,
+        first_delta_at=10.2,
+        writeback_at=11.5,
+        total_latency_ms=1500,
+        delivery_mode="failed",
+        degraded_reason="peer_no_inbox_writeback_message",
+        stage_timings={"chat_read_inbox": {"at": 10.2}},
+    )
+
+    timeline = client.get(f"/api/chat/conversations/{conv['id']}/messages")
+
+    assert timeline.status_code == 200
+    payload = timeline.json()
+    progress_events = payload["peer_progress_events"]
+    assert len(progress_events) == 1
+    event = progress_events[0]
+    assert event["source_authority"] == "peer_turn_latency_traces"
+    assert event["source_id"] == f"peer_latency_{item_id}"
+    assert event["inbox_item_id"] == item_id
+    assert event["status"] == "failed"
+    assert event["delivery_mode"] == "failed"
+    assert event["degraded_reason"] == "peer_no_inbox_writeback_message"
+    assert event["latency_ms"] == 1500
+    assert event["stage_names"] == ["chat_read_inbox"]
+    assert payload["peer_progress_counts"]["failed"] == 1
+    assert payload["recent_peer_progress_events"] == progress_events[-5:]
 
 
 def test_rest_message_routes_role_before_capitalized_sentence(tmp_path):
