@@ -395,6 +395,40 @@ def _mark_review_trigger_read_for_approved_proposal(
             inbox.mark_read(item.id, responded_message_id=proposal_message_id)
 
 
+def _reject_pending_review_trigger_for_dispatchable_proposal(
+    base_dir: Path,
+    *,
+    conversation_id: str,
+    proposal_id: str,
+    proposal_type: str,
+    references: list[str],
+) -> None:
+    if proposal_type != "lane_graph" or not _collaboration_run_refs(references):
+        return
+    store = _store(base_dir)
+    proposal_message_id = None
+    for message in store.list_messages(conversation_id):
+        if (
+            message.envelope_type == "proposal"
+            and message.envelope_json.get("proposal_id") == proposal_id
+        ):
+            proposal_message_id = message.id
+            break
+    if proposal_message_id is None:
+        return
+    inbox = ChatInboxStore(base_dir / "chat.db")
+    for item in inbox.list_by_conversation(conversation_id, include_terminal=True):
+        if (
+            item.item_type == "review_trigger"
+            and item.source_message_id == proposal_message_id
+            and item.status in {"unread", "claimed"}
+        ):
+            raise PeerChatError(
+                "proposal_review_pending",
+                f"{item.id}:{item.status}",
+            )
+
+
 def _public_peer_participants(payload: dict[str, object]) -> list[dict[str, object]]:
     participants = payload.get("participants")
     if not isinstance(participants, list):
@@ -1744,6 +1778,13 @@ def create_app(
                     proposal_type=escalation.normalized_proposal_type,
                     content=content,
                 )
+            _reject_pending_review_trigger_for_dispatchable_proposal(
+                root,
+                conversation_id=proposal.conversation_id,
+                proposal_id=proposal_id,
+                proposal_type=escalation.normalized_proposal_type,
+                references=proposal.references,
+            )
             _enforce_collaboration_dispatch_gate(
                 root,
                 conversation_id=proposal.conversation_id,

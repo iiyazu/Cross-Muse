@@ -57,3 +57,7 @@ def test_lane_graph_review_trigger_includes_readable_proposal_content(tmp_path):
     assert "Add peer chat" in trigger.payload["content"]
     assert "lane-peer-chat" in trigger.payload["content"]
     assert "memory://conversation/conv/messages/msg_1" in trigger.payload["content"]
+    assert "chat_raise_collaboration_blocker" in trigger.payload["content"]
+    assert "A plain chat_post_message recommendation cannot block dispatch" in (
+        trigger.payload["content"]
+    )
