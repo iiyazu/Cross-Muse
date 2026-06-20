@@ -32,6 +32,7 @@ def main() -> int:
     execution_worktree.mkdir(parents=True, exist_ok=True)
     artifacts = run_root / "loop_driver_artifacts"
     artifacts.mkdir(parents=True, exist_ok=True)
+    repo_head_sha = _repo_head_sha()
 
     chat_port = args.chat_port or _free_port()
     mcp_port = args.mcp_port or _free_port()
@@ -44,6 +45,7 @@ def main() -> int:
         mcp_port=mcp_port,
         feature_id=feature_id,
         note_path=note_path,
+        repo_head_sha=repo_head_sha,
         peer_chat_post_writeback_grace_s=args.peer_chat_post_writeback_grace_s,
         peer_god_backend=args.peer_god_backend,
         ray_god_mcp=args.ray_god_mcp,
@@ -240,6 +242,7 @@ def _commands_payload(
     mcp_port: int,
     feature_id: str,
     note_path: str,
+    repo_head_sha: str,
     peer_chat_post_writeback_grace_s: float,
     peer_god_backend: str,
     ray_god_mcp: bool,
@@ -251,11 +254,31 @@ def _commands_payload(
         "mcp_port": mcp_port,
         "feature_id": feature_id,
         "note_path": note_path,
+        "repo_head_sha": repo_head_sha,
         "expected_note_content": _expected_note_content(feature_id),
         "peer_chat_post_writeback_grace_s": peer_chat_post_writeback_grace_s,
         "peer_god_backend": peer_god_backend,
         "ray_god_mcp": ray_god_mcp,
     }
+
+
+def _repo_head_sha() -> str:
+    result = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"git rev-parse HEAD failed: {result.stderr.strip() or result.stdout.strip()}"
+        )
+    head_sha = result.stdout.strip()
+    if not head_sha:
+        raise RuntimeError("git rev-parse HEAD returned an empty SHA")
+    return head_sha
 
 
 def _start_chat_api(

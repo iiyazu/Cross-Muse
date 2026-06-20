@@ -51,6 +51,12 @@ def test_main_writes_expected_note_content_into_command_artifacts(
     run_root = tmp_path / "run-root"
     execution_worktree = tmp_path / "execution-worktree"
     feature_id = "docs-sentinel-note"
+    repo_head_sha_calls = 0
+
+    def fake_repo_head_sha() -> str:
+        nonlocal repo_head_sha_calls
+        repo_head_sha_calls += 1
+        return "abc123repohead"
 
     monkeypatch.setattr(
         sentinel,
@@ -72,6 +78,7 @@ def test_main_writes_expected_note_content_into_command_artifacts(
             ray_god_mcp=True,
         ),
     )
+    monkeypatch.setattr(sentinel, "_repo_head_sha", fake_repo_head_sha)
 
     def stop_after_command_artifacts(*_args, **_kwargs):
         raise RuntimeError("stop after commands")
@@ -88,11 +95,14 @@ def test_main_writes_expected_note_content_into_command_artifacts(
     commands_txt = (run_root / "commands.txt").read_text(encoding="utf-8")
     expected_note_content = sentinel._expected_note_content(feature_id)
 
+    assert repo_head_sha_calls == 1
     assert commands_json["expected_note_content"] == expected_note_content
+    assert commands_json["repo_head_sha"] == "abc123repohead"
     assert commands_json["peer_chat_post_writeback_grace_s"] == 8.0
     assert commands_json["peer_god_backend"] == "ray"
     assert commands_json["ray_god_mcp"] is True
     assert f"expected_note_content={expected_note_content}\n" in commands_txt
+    assert "repo_head_sha=abc123repohead\n" in commands_txt
     assert "peer_chat_post_writeback_grace_s=8.0\n" in commands_txt
     assert "peer_god_backend=ray\n" in commands_txt
     assert "ray_god_mcp=True\n" in commands_txt
