@@ -7,8 +7,8 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
 
 ## Current Proof Boundary
 
-- Latest main inspected: `019f580674eb731787c3f21a23122c53968b8953`
-  (`origin/main`, PR #147 merge; PR #43 remains closed/draft/unmerged with
+- Latest main inspected: `fadbff6580f87f55a8db5e13f17758f5c2ae7571`
+  (`origin/main`, PR #148 merge; PR #43 remains closed/draft/unmerged with
   head branch preserved). Latest focused dynamic-member OpenCode provider-resume proof
   remains Loop 28e from pre-PR144 main head
   `363229d3296d35e5da0d3533008a29b19685c720`: Chat API, MCP, and
@@ -21,7 +21,34 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   provider-resume boundary as local runtime proof only. It does not prove
   fullchain demand completion, production readiness, live MemoryOS, GitHub
   review truth, live lane merge truth, repeated soak, or full closure.
-- Latest candidate Ray/MCP app-server non-docs code-change fullchain proof is
+- PR #148 merged the Loop 28n candidate as main commit
+  `fadbff6580f87f55a8db5e13f17758f5c2ae7571` after PR-head Actions run
+  `27869062425` succeeded for
+  `4c936feeeb3798981e5c17d5d5869156621802e1`. Main push Actions run
+  `27869086652` then succeeded for `fadbff6580f87f55a8db5e13f17758f5c2ae7571`.
+  This is GitHub server truth for those checks and SHAs only. It is not
+  GitHub review truth, production readiness, live MemoryOS, live lane merge
+  truth, repeated soak, fullchain product completion, or full closure.
+- Latest post-merge main Ray/MCP app-server fullchain proof is Loop 28o from
+  main head `fadbff6580f87f55a8db5e13f17758f5c2ae7571` after PR #148 merged.
+  The reusable sentinel ran with `--peer-god-backend ray --ray-god-mcp` and
+  `peer_chat_post_writeback_grace_s=30.0`; `commands.json` and `commands.txt`
+  both recorded
+  `repo_head_sha=fadbff6580f87f55a8db5e13f17758f5c2ae7571`, proving the
+  newly merged command-artifact field is present in post-merge runtime
+  artifacts. The durable chain produced collaboration run
+  `collab_6b4d4cade4544dc48cf8604f22b6b746`, one accepted lane-graph
+  proposal `prop_ddf876aaba4547afb72010bfe8dd96dd`, approval, dispatch
+  acknowledgement, isolated docs execution, gate pass, persistent OpenCode
+  review, finalized verdict
+  `verdict-merge-rtask_9d242854be644229abed098727959f90`, and pending
+  final-action hold `final-194098e886c2`. All reusable sentinel success checks
+  were true, and cleanup confirmed the Chat API and MCP ports were no longer
+  listening. This is post-merge main local runtime proof for the docs-only
+  sentinel shape and command-artifact field; it is not production readiness,
+  live MemoryOS, GitHub review truth, live lane merge truth, repeated soak,
+  fullchain product completion, or full closure.
+- Latest candidate Ray/MCP app-server non-docs code-change fullchain proof was
   Loop 28n on branch `codex/ray-mcp-codechange-head-evidence`, based on
   `origin/main` `019f580674eb731787c3f21a23122c53968b8953`. The real
   groupchat produced collaboration run
@@ -43,7 +70,7 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   is not merged-main proof, server CI proof, production readiness, live
   MemoryOS, GitHub review truth, live lane merge truth, repeated soak,
   fullchain product completion, or full closure.
-- Latest post-merge main Ray/MCP app-server fullchain proof is Loop 28m from
+- Previous post-merge main Ray/MCP app-server fullchain proof was Loop 28m from
   main head `4cdc9c756924b806d10cf960e66144033d8bfd15` after PR #146 merged.
   The sentinel ran with `--peer-god-backend ray --ray-god-mcp` and
   `peer_chat_post_writeback_grace_s=30.0`; `commands.json` recorded

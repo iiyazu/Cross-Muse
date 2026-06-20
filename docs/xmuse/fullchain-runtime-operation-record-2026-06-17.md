@@ -324,6 +324,102 @@ docs-only sentinel shape. It is not server CI proof of the runtime artifact,
 production readiness, GitHub review truth, live MemoryOS proof, live lane merge
 truth, repeated soak, full product completion, or full closure.
 
+## 2026-06-20 Loop 28o: Post-PR148 Main Repo Head Artifact Proof
+
+Purpose: verify that PR #148's `repo_head_sha` command-artifact field is present
+in a post-merge main reusable Ray/MCP sentinel run, while preserving the normal
+final-action hold proof boundary.
+
+GitHub facts:
+
+```text
+PR #148: https://github.com/iiyazu/Cross-Muse/pull/148
+PR #148 head: 4c936feeeb3798981e5c17d5d5869156621802e1
+PR #148 merged_at: 2026-06-20T10:58:16Z
+PR #148 merge_commit/main_head: fadbff6580f87f55a8db5e13f17758f5c2ae7571
+PR-head Actions run: 27869062425 -> success
+main push Actions run: 27869086652 -> success
+```
+
+Runtime command:
+
+```bash
+uv run python scripts/run_fullchain_docs_sentinel.py \
+  --run-root .goal-runs/2026-06-20/loop-28o-post-pr148-repo-head-evidence-20260620T1059Z \
+  --execution-worktree /tmp/loop-28o-post-pr148-repo-head-evidence-20260620T1059Z-exec \
+  --feature-id loop_28o_post_pr148_repo_head_evidence_20260620T1059Z \
+  --proposal-timeout-s 900 \
+  --proposal-review-timeout-s 900 \
+  --lane-timeout-s 1200 \
+  --max-hours 0.75 \
+  --peer-chat-post-writeback-grace-s 30.0 \
+  --peer-god-backend ray \
+  --ray-god-mcp
+```
+
+Command artifact check:
+
+```text
+commands.json repo_head_sha=fadbff6580f87f55a8db5e13f17758f5c2ae7571
+commands.txt repo_head_sha=fadbff6580f87f55a8db5e13f17758f5c2ae7571
+```
+
+Durable chain:
+
+```text
+conversation_id=conv_fe451c5d9ce744089f99d926d881b640
+collaboration_run=collab_6b4d4cade4544dc48cf8604f22b6b746
+proposal_id=prop_ddf876aaba4547afb72010bfe8dd96dd
+resolution_id=res_c2b9ba618020405b97ea12d89736fda9
+lane_id=loop_28o_post_pr148_repo_head_evidence_20260620T1059Z
+review_task_id=rtask_9d242854be644229abed098727959f90
+review_verdict_id=verdict-merge-rtask_9d242854be644229abed098727959f90
+final_action_hold_id=final-194098e886c2
+```
+
+Lane result:
+
+```text
+status=awaiting_final_action
+gate_passed=true
+review_decision=merge
+review_delivery_mode=persistent
+persistent_review_degraded=false
+review_peer_cli_kind=opencode
+review_peer_model=opencode-go/deepseek-v4-flash
+proposal_has_review_runtime=false
+```
+
+Driver success checks were all true:
+
+```text
+single_related_lane_graph_proposal=true
+approved_proposal_accepted=true
+execution_peer_handoff_not_degraded=true
+lane_awaiting_final_action=true
+gate_passed=true
+isolated_note_matches=true
+opencode_review_peer_recorded=true
+review_verdict_finalized=true
+review_task_verdict_emitted=true
+final_action_hold_pending=true
+proposal_has_no_review_runtime=true
+```
+
+Cleanup:
+
+```text
+chat_port=43901 listening=false
+mcp_port=50535 listening=false
+```
+
+Classification: post-merge main local runtime proof for the reusable Ray/MCP
+docs-only sentinel shape and the newly merged `repo_head_sha` command artifact.
+The GitHub facts above are server truth only for the inspected PR/check/main
+SHAs. This is not production readiness, GitHub review truth, live MemoryOS
+proof, live lane merge truth, repeated soak, full product completion, or full
+closure.
+
 ## 2026-06-20 Loop 28n: Candidate Ray/MCP Non-Docs Code-Change Lane
 
 Purpose: move beyond docs-only Ray/MCP sentinel proof by having the real

@@ -6,6 +6,21 @@ truth, merge truth, live MemoryOS proof, or full closure.
 
 ## Current Evidence Summary
 
+- Loop 28o is the latest post-merge main Ray/MCP app-server fullchain proof.
+  From main head `fadbff6580f87f55a8db5e13f17758f5c2ae7571` after PR #148
+  merged and main push Actions run `27869086652` succeeded for that SHA, the
+  reusable sentinel ran with `--peer-god-backend ray --ray-god-mcp`. It
+  recorded
+  `repo_head_sha=fadbff6580f87f55a8db5e13f17758f5c2ae7571` in both
+  `commands.json` and `commands.txt`, then completed durable collaboration,
+  one accepted lane-graph proposal, approval, dispatch acknowledgement,
+  isolated docs execution, gate pass, persistent OpenCode review, finalized
+  verdict, and pending final-action hold. All reusable sentinel success checks
+  were true and cleanup found no Chat API or MCP listener. This is local
+  post-merge runtime proof for the sentinel shape and command-artifact field,
+  plus server truth for the inspected PR/main CI checks only. It is not
+  production readiness, GitHub review truth, live MemoryOS proof, live lane
+  merge truth, repeated soak, product completion, or full closure.
 - Loop 28n is the strongest candidate-branch local Ray/MCP app-server
   non-docs code-change proof so far. From branch
   `codex/ray-mcp-codechange-head-evidence`, based on `origin/main`
@@ -312,6 +327,46 @@ truth, merge truth, live MemoryOS proof, or full closure.
   proof only; it is not CI/server-verified.
 
 ## Findings
+
+## 2026-06-20 Loop 28o Finding: PR #148 Repo Head Artifact Survives Post-Merge Main Runtime
+
+Hypothesis confirmed:
+
+- After PR #148 merged, the reusable fullchain sentinel records the merged main
+  repository HEAD in durable command artifacts and still reaches the Ray/MCP
+  docs-only final-action hold path.
+
+Server facts inspected:
+
+- PR #148 merged at `2026-06-20T10:58:16Z` with merge commit
+  `fadbff6580f87f55a8db5e13f17758f5c2ae7571`.
+- PR-head Actions run `27869062425` succeeded for
+  `4c936feeeb3798981e5c17d5d5869156621802e1`.
+- Main push Actions run `27869086652` succeeded for
+  `fadbff6580f87f55a8db5e13f17758f5c2ae7571`.
+
+Post-merge runtime evidence:
+
+- Command artifacts recorded
+  `repo_head_sha=fadbff6580f87f55a8db5e13f17758f5c2ae7571` in both
+  `commands.json` and `commands.txt`.
+- Conversation `conv_fe451c5d9ce744089f99d926d881b640` produced one accepted
+  lane-graph proposal `prop_ddf876aaba4547afb72010bfe8dd96dd`.
+- Lane `loop_28o_post_pr148_repo_head_evidence_20260620T1059Z` reached
+  `awaiting_final_action` with `gate_passed=true`.
+- Review verdict
+  `verdict-merge-rtask_9d242854be644229abed098727959f90` was finalized by the
+  configured OpenCode review peer.
+- Final-action hold `final-194098e886c2` stayed pending.
+- Cleanup confirmed `chat_port_listening=false` and
+  `mcp_port_listening=false`.
+
+Residual limits:
+
+- This proves post-merge local runtime behavior for the docs-only sentinel
+  shape and repo-head command artifact. It does not prove production readiness,
+  live MemoryOS, GitHub review truth, live lane merge truth, repeated soak,
+  broad product completion, or full closure.
 
 ## 2026-06-20 Loop 28n Finding: Ray/MCP Groupchat Can Drive A Small Non-Docs Code-Change Lane
 
