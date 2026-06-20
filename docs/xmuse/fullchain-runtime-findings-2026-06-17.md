@@ -4183,7 +4183,8 @@ Remaining caveats:
 
 ## 2026-06-20 Loop 26u Finding: PR #121 Repair Lands On Main
 
-Status: bounded post-merge server confirmation, with runtime rerun pending.
+Status: bounded post-merge server confirmation. The runtime rerun gap recorded
+here was later closed for the docs-only sentinel shape by Loop 26x.
 
 Primary artifact:
 
@@ -4208,9 +4209,8 @@ Confirmed:
 
 Remaining caveats:
 
-- No post-merge fullchain runtime rerun is claimed yet. The last candidate
-  fullchain attempt, Loop 26t, was blocked before review by external Codex
-  execution-worker `usage_limit`.
+- At the time of Loop 26u, no post-merge fullchain runtime rerun was claimed
+  yet. Loop 26x later closed that specific docs-only sentinel rerun gap.
 - This is not production readiness, GitHub review truth, live MemoryOS,
   natural peer-GOD groupchat completion, full closure, or live lane merge
   truth.
@@ -4277,3 +4277,52 @@ Remaining caveats:
 - This is harness behavior only. It does not prove a fullchain success path,
   production readiness, GitHub review truth, live MemoryOS, natural peer-GOD
   groupchat completion, full closure, or live lane merge truth.
+
+## 2026-06-20 Loop 26x Finding: Post-PR124 Fullchain Sentinel Reaches Hold
+
+Status: bounded post-merge main runtime confirmation for the docs-only
+sentinel shape.
+
+Primary artifact:
+
+```text
+main_head=050385b32ce62c6868773555271f25b8debe26f8
+run_root=/tmp/xmuse-postmerge-layered-prompt-main/.goal-runs/2026-06-20/loop-26x-post-pr124-fullchain-rerun-1117cst
+driver_output=driver_output.json
+chat_authority=chat.db
+lane_projection=feature_lanes.json#lane=loop_26x_post_pr124_fullchain_rerun_1117cst
+review_authority=review_plane.json#task=rtask_9d7ea699c64c429d9e28ec29bef8a118
+gate_report=logs/gates/loop_26x_post_pr124_fullchain_rerun_1117cst/report.json
+```
+
+Confirmed:
+
+- The post-PR124 fullchain ran from
+  `050385b32ce62c6868773555271f25b8debe26f8`.
+- The conversation contained the expected human, Codex architect, Codex
+  executor, and OpenCode reviewer participants.
+- The groupchat produced collaboration run
+  `collab_6cac3eac965d4821bc019470084d11df`.
+- The Codex architect emitted exactly one related lane graph proposal,
+  `prop_0c8c276523bf4b739a6a936a40d34c04`, referencing that collaboration
+  run.
+- The runtime driver approved resolution
+  `res_22c0304fb52841a58733749759a447d2`.
+- Isolated execution created
+  `docs/xmuse/loop_26x_post_pr124_fullchain_rerun_1117cst.md` in the execution
+  worktree with the expected content.
+- The lane reached `awaiting_final_action` with `gate_passed=true`,
+  `review_decision=merge`, `review_delivery_mode=persistent`,
+  `persistent_review_degraded=false`, and
+  `review_peer_cli_kind=opencode`.
+- The review task emitted finalized verdict
+  `verdict-merge-rtask_9d7ea699c64c429d9e28ec29bef8a118`.
+- All sentinel success checks were true.
+- Cleanup left no Chat API or MCP listener.
+
+Remaining caveats:
+
+- This confirms the bounded docs-only sentinel shape only.
+- It does not claim production readiness, GitHub review truth, live MemoryOS,
+  natural peer-GOD groupchat completion, full closure, or live lane merge
+  truth.

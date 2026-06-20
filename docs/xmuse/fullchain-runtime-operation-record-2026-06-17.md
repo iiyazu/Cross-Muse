@@ -7352,8 +7352,8 @@ uv run ruff check .
 ```
 
 Classification: bounded post-merge GitHub server confirmation for PR #121.
-The runtime path remains at the Loop 26t blocker until execution-worker usage
-limit clears and a post-merge fullchain sentinel can be rerun.
+The runtime path remained at the Loop 26t blocker until Loop 26x later reran
+the docs-only sentinel successfully from post-PR124 main.
 
 Caveats:
 
@@ -7449,3 +7449,100 @@ uv run ruff check .
 
 Classification: bounded post-merge GitHub server confirmation for PR #123.
 This does not add product runtime proof.
+
+## 2026-06-20 Loop 26x: Post-PR124 Fullchain Sentinel Rerun
+
+Purpose: rerun the docs-only fullchain sentinel from latest main after PR #121,
+PR #123, and PR #124 landed, verifying that the earlier Codex execution-worker
+usage-limit blocker has cleared.
+
+Workspace and authority:
+
+```text
+repo_worktree=/tmp/xmuse-postmerge-layered-prompt-main
+branch=codex/post-pr124-fullchain-rerun
+base_head_sha=050385b32ce62c6868773555271f25b8debe26f8
+run_root=/tmp/xmuse-postmerge-layered-prompt-main/.goal-runs/2026-06-20/loop-26x-post-pr124-fullchain-rerun-1117cst
+execution_worktree=/tmp/loop-26x-post-pr124-fullchain-rerun-1117cst-exec
+conversation_id=conv_a086f7a07892470696e76787581f1508
+```
+
+Runtime command:
+
+```bash
+uv run python scripts/run_fullchain_docs_sentinel.py \
+  --run-root /tmp/xmuse-postmerge-layered-prompt-main/.goal-runs/2026-06-20/loop-26x-post-pr124-fullchain-rerun-1117cst \
+  --execution-worktree /tmp/loop-26x-post-pr124-fullchain-rerun-1117cst-exec \
+  --feature-id loop_26x_post_pr124_fullchain_rerun_1117cst \
+  --proposal-timeout-s 900 \
+  --lane-timeout-s 1200 \
+  --max-hours 0.8
+```
+
+Durable chain:
+
+```text
+collaboration_run=collab_6cac3eac965d4821bc019470084d11df
+proposal_id=prop_0c8c276523bf4b739a6a936a40d34c04
+resolution_id=res_22c0304fb52841a58733749759a447d2
+lane_id=loop_26x_post_pr124_fullchain_rerun_1117cst
+review_task_id=rtask_9d7ea699c64c429d9e28ec29bef8a118
+review_verdict_id=verdict-merge-rtask_9d7ea699c64c429d9e28ec29bef8a118
+final_action_hold_id=final-510ce5ed0227
+```
+
+Final lane state:
+
+```text
+status=awaiting_final_action
+gate_passed=true
+review_decision=merge
+review_delivery_mode=persistent
+persistent_review_degraded=false
+review_peer_defaulted=true
+review_peer_cli_kind=opencode
+review_peer_model=opencode-go/deepseek-v4-flash
+proposal_has_review_runtime=false
+single_related_lane_graph_proposal=true
+```
+
+Execution artifact:
+
+```text
+path=/tmp/loop-26x-post-pr124-fullchain-rerun-1117cst-exec/docs/xmuse/loop_26x_post_pr124_fullchain_rerun_1117cst.md
+matches_expected=true
+```
+
+Success checks:
+
+```text
+approved_proposal_accepted=true
+execution_peer_handoff_not_degraded=true
+final_action_hold_pending=true
+gate_passed=true
+isolated_note_matches=true
+lane_awaiting_final_action=true
+opencode_review_peer_recorded=true
+proposal_has_no_review_runtime=true
+review_task_verdict_emitted=true
+review_verdict_finalized=true
+single_related_lane_graph_proposal=true
+```
+
+Cleanup:
+
+```text
+chat_port_listening=false
+mcp_port_listening=false
+loop-26x service process matches after shutdown: none
+```
+
+Classification: bounded post-merge main runtime proof that the docs-only
+groupchat, proposal, approval, dispatch, isolated execution, gate, persistent
+OpenCode review, and final-action hold path works after PR #121 and PR #123.
+
+Caveats:
+
+- This is not production readiness, repeated soak, MemoryOS proof, GitHub
+  review truth, natural peer-GOD groupchat completion, or full closure.
+- The final action was intentionally held; no live lane merge is claimed.
