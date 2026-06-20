@@ -7,7 +7,25 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
 
 ## Current Proof Boundary
 
-- Latest main inspected: `162da10f4ef1d515a95ea9fc90889494c8e75146`.
+- Latest main inspected: `050385b32ce62c6868773555271f25b8debe26f8`.
+- Latest post-PR124 fullchain sentinel evidence: Loop 26x ran from current
+  main `050385b32ce62c6868773555271f25b8debe26f8` after PR #121, PR #123,
+  and PR #124 landed. The docs-only runtime sentinel reached
+  `awaiting_final_action` with `gate_passed=true`, `review_decision=merge`,
+  `review_delivery_mode=persistent`, `persistent_review_degraded=false`,
+  `review_peer_cli_kind=opencode`,
+  `review_peer_model=opencode-go/deepseek-v4-flash`, and all sentinel success
+  checks true. The durable chain includes human request, Codex architect,
+  Codex execute peer, OpenCode review peer, collaboration run
+  `collab_6cac3eac965d4821bc019470084d11df`, lane proposal
+  `prop_0c8c276523bf4b739a6a936a40d34c04`, approved resolution
+  `res_22c0304fb52841a58733749759a447d2`, isolated execution artifact, gate
+  report, review task `rtask_9d7ea699c64c429d9e28ec29bef8a118`, finalized
+  review verdict, and pending final-action hold `final-510ce5ed0227`.
+  Cleanup reported no Chat API or MCP listener. This is bounded docs-only
+  fullchain runtime proof for the sentinel shape, not production readiness,
+  natural peer-GOD groupchat completion, live MemoryOS, GitHub review truth,
+  live lane merge truth, or full closure.
 - Latest configured-review-peer degradation evidence: PR #121 merged the
   configured review peer fail-closed repair to main as
   `1adc2d19089aeacad5953bc577ca093f3441a761` after successful PR CI and
@@ -23,11 +41,11 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   conversation, proposal, and approved resolution, but execution stopped
   before review because the child Codex execution worker hit external
   `usage_limit`; the lane ended `exec_failed` with
-  `failure_reason=execution_infra_unavailable`. No post-merge fullchain rerun
-  is claimed for PR #121 while the execution-worker usage limit remains active.
-  This is bounded main evidence for the configured review peer authority
-  boundary plus a blocked fullchain attempt, not production readiness, GitHub
-  review truth, or full closure.
+  `failure_reason=execution_infra_unavailable`. Loop 26x later reran the
+  docs-only sentinel from post-PR124 main and reached final-action hold with
+  persistent OpenCode review. This is bounded main evidence for the configured
+  review peer authority boundary plus post-merge sentinel non-regression, not
+  production readiness, GitHub review truth, or full closure.
 - Latest fullchain sentinel harness evidence: PR #123 merged the
   `exec_failed` terminal-state repair for
   `scripts/run_fullchain_docs_sentinel.py` to main as
@@ -494,8 +512,9 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   behavior. PR #119 plus Loop 26s remove the empty-conversation legacy Codex
   fallback on main and preserve the registered OpenCode fullchain route. The
   PR #121 closes the configured-peer degradation fallback on main by failing
-  closed before auto persistent or one-shot fallback; remaining work is a
-  post-merge fullchain rerun when execution authority is available.
+  closed before auto persistent or one-shot fallback. Loop 26x then confirms
+  the post-PR124 docs-only sentinel still reaches final-action hold with
+  persistent OpenCode review.
 - P3 higher-parallelism stability loop: repeat real groupchat-to-final-hold
   with independent `XMUSE_ROOT` directories, execution worktrees, Chat API
   ports, MCP ports, and runners when increasing concurrency beyond the current
@@ -507,8 +526,8 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   roster exists. PR #119 plus Loop 26s remove the empty-conversation
   feature-scoped Codex default-review fallback on main. PR #121 changes
   configured-peer degradation fallback into fail-closed review authority on
-  main; post-merge fullchain runtime remains pending while execution-worker
-  usage limit blocks the sentinel.
+  main; Loop 26x confirms the post-PR124 docs-only sentinel reaches
+  final-action hold with persistent OpenCode review after that repair.
 - P5 code-change soak: repeat small real code-change lanes after the
   inspector provider summary PR lands.
 - P6 MemoryOS adapter proof: keep `live_memoryos` forbidden until a real trace
