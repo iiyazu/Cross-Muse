@@ -524,6 +524,15 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   execute collaboration response recorded
   `peer_no_inbox_writeback_message` because `chat_record_collaboration_response`
   did not also create a chat message.
+- Loop 27j is candidate-branch local runtime proof on
+  `codex/collab-response-latency-success` that structured MCP tool writebacks
+  no longer become false failed latency traces for the bounded sentinel shape.
+  The same docs-only groupchat-to-final-hold chain reached
+  `awaiting_final_action`; the architect `chat_create_collaboration_request`,
+  execute `chat_record_collaboration_response`, architect `chat_emit_proposal`,
+  and execute dispatch `chat_post_message` turns all recorded
+  `delivery_mode=mcp_writeback`. This is observability/lifecycle proof only,
+  not a new production-readiness or broad soak claim.
 - The successful chains are not yet repeated overnight or production-load soak.
 - Provider-native session continuity and memory persistence are not proven as
   durable product behavior.
@@ -591,8 +600,10 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
 - P5a natural dynamic groupchat continuity: Loop 27g proves bounded xmuse GOD
   session restore plus second-turn dynamic OpenCode writeback. Loop 27h proves
   one natural multi-agent Codex/OpenCode discussion that produces a durable
-  proposal and reaches final-action hold for a docs-only lane. Remaining work
-  is provider-native OpenCode resume evidence, repeated stability, broader
-  non-docs code-change lanes, and any production-load claim.
+  proposal and reaches final-action hold for a docs-only lane. Loop 27j
+  locally repairs the structured-tool latency false-failed classification for
+  that sentinel shape. Remaining work is provider-native OpenCode resume
+  evidence, repeated stability, broader non-docs code-change lanes, and any
+  production-load claim.
 - P6 MemoryOS adapter proof: keep `live_memoryos` forbidden until a real trace
   id or artifact exists.
