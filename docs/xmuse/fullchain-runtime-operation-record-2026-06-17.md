@@ -242,6 +242,88 @@ sentinel path. It is not merged-main proof, server CI proof, production
 readiness, GitHub review truth, live MemoryOS proof, live lane merge truth,
 repeated soak, full product completion, or full closure.
 
+## 2026-06-20 Loop 28m: Post-PR146 Main Ray/MCP Sentinel
+
+PR #146 merged the Loop 28g-28l Ray/MCP fullchain proof-boundary repair to
+main as `4cdc9c756924b806d10cf960e66144033d8bfd15` after GitHub Actions run
+`27868290309` succeeded for head `eaa9e1a76ab99812eae2890db176950293abace3`.
+
+Artifact root:
+
+```text
+.goal-runs/2026-06-20/loop-28m-post-pr146-ray-mcp-sentinel-20260620T1025Z/
+```
+
+Command shape:
+
+```bash
+uv run python scripts/run_fullchain_docs_sentinel.py \
+  --run-root .goal-runs/2026-06-20/loop-28m-post-pr146-ray-mcp-sentinel-20260620T1025Z \
+  --execution-worktree /tmp/loop-28m-post-pr146-ray-mcp-sentinel-20260620T1025Z-exec \
+  --feature-id loop_28m_post_pr146_ray_mcp_sentinel_20260620T1025Z \
+  --proposal-timeout-s 900 \
+  --proposal-review-timeout-s 900 \
+  --lane-timeout-s 1200 \
+  --max-hours 0.75 \
+  --peer-chat-post-writeback-grace-s 30.0 \
+  --peer-god-backend ray \
+  --ray-god-mcp
+```
+
+Observed from main head `4cdc9c756924b806d10cf960e66144033d8bfd15`:
+
+- `commands.json` recorded `peer_god_backend=ray`, `ray_god_mcp=true`, Chat
+  API port `45247`, and MCP port `50087`.
+- The platform log recorded
+  `Peer chat scheduler enabled (god_backend=RayGodSessionLayer)`.
+- Collaboration run `collab_528370bd49ec4f959b6b1db2b23dd63d` reached `done`.
+- Execute recorded collaboration response
+  `collab_resp_7379c74a753f4b1ebb4e9761f3500df6`.
+- MCP tool traces included `chat_create_collaboration_request`,
+  `chat_record_collaboration_response`, `chat_emit_proposal`, and
+  `chat_post_message` for review/dispatch writebacks.
+- Architect emitted exactly one accepted lane-graph proposal
+  `prop_5a683380ddf34a8daf46fe7339363b1c`.
+- Isolated execution wrote
+  `/tmp/loop-28m-post-pr146-ray-mcp-sentinel-20260620T1025Z-exec/docs/xmuse/loop_28m_post_pr146_ray_mcp_sentinel_20260620T1025Z.md`
+  with exactly:
+
+```text
+Post-main fullchain sentinel loop_28m_post_pr146_ray_mcp_sentinel_20260620T1025Z reached isolated execution.
+```
+
+- The lane reached `awaiting_final_action` with `gate_passed=true`,
+  `review_delivery_mode=persistent`, `persistent_review_degraded=false`,
+  `review_peer_cli_kind=opencode`, and
+  `review_peer_model=opencode-go/deepseek-v4-flash`.
+- Review task `rtask_4cec538df5234b5ca21c86ab4d38edef` emitted finalized
+  verdict `verdict-merge-rtask_4cec538df5234b5ca21c86ab4d38edef`.
+- Final-action hold `final-56ae19d3dacd` stayed pending with the same verdict
+  id.
+- Cleanup check found `chat_port=45247 listening=False` and
+  `mcp_port=50087 listening=False`.
+
+Driver success checks were all true:
+
+```text
+single_related_lane_graph_proposal=true
+approved_proposal_accepted=true
+execution_peer_handoff_not_degraded=true
+lane_awaiting_final_action=true
+gate_passed=true
+isolated_note_matches=true
+opencode_review_peer_recorded=true
+review_verdict_finalized=true
+review_task_verdict_emitted=true
+final_action_hold_pending=true
+proposal_has_no_review_runtime=true
+```
+
+Classification: post-merge main local runtime proof for the Ray/MCP app-server
+docs-only sentinel shape. It is not server CI proof of the runtime artifact,
+production readiness, GitHub review truth, live MemoryOS proof, live lane merge
+truth, repeated soak, full product completion, or full closure.
+
 ## 2026-06-20 Reusable Fullchain Driver Sentinels
 
 Reusable driver under test:
