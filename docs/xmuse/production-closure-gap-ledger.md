@@ -7,7 +7,10 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
 
 ## Current Proof Boundary
 
-- Latest main inspected: `050385b32ce62c6868773555271f25b8debe26f8`.
+- Latest main inspected: `c2f9bf57e3b0de235949439ada0f3395b87a4f76`
+  (PR #125 docs-only evidence merge). The latest fullchain runtime proof
+  remains Loop 26x from `050385b32ce62c6868773555271f25b8debe26f8`; PR #125
+  does not add new runtime capability evidence.
 - Latest post-PR124 fullchain sentinel evidence: Loop 26x ran from current
   main `050385b32ce62c6868773555271f25b8debe26f8` after PR #121, PR #123,
   and PR #124 landed. The docs-only runtime sentinel reached

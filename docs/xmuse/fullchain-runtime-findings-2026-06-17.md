@@ -4326,3 +4326,63 @@ Remaining caveats:
 - It does not claim production readiness, GitHub review truth, live MemoryOS,
   natural peer-GOD groupchat completion, full closure, or live lane merge
   truth.
+
+## 2026-06-20 Loop 27a Finding: Peer Progress Trace Was Durable But Not Visible
+
+Status: local candidate branch repair, not server verified.
+
+Boundary:
+
+```text
+phase=Phase 2 natural agents groupchat kernel
+target=durable progress events visible through Chat API / read model
+authority=chat_inbox_items + peer_turn_latency_traces
+producer=PeerChatScheduler durable inbox/latency writers
+consumer=PeerChatService conversation timeline
+failure_boundary=read-model projection
+```
+
+Observed before repair:
+
+- Loop 26x `chat.db` contained durable `peer_turn_latency_traces`.
+- `PeerChatService.list_conversation_timeline()` returned messages/cards/items
+  but no `peer_progress_events` or latency trace projection.
+- The first focused guard failed with
+  `KeyError: 'peer_progress_events'`.
+
+Candidate repair:
+
+- Added a small `peer_progress` read-projection module.
+- `PeerChatService` now exposes `peer_progress_events`,
+  `peer_progress_counts`, and `recent_peer_progress_events` from durable inbox
+  rows and latency traces.
+- The trace/stream reads use read-only SQLite connections so the Chat API
+  projection does not create authority or perform schema writes.
+
+Post-repair evidence:
+
+```text
+Loop 26x artifact projection:
+peer_progress_counts {'failed': 1, 'done': 4, 'total': 5}
+trace_authority_events 2
+statuses ['failed', 'done', 'done', 'done', 'done']
+```
+
+Validation:
+
+```text
+uv run pytest tests/xmuse/test_peer_chat_api.py -q
+uv run pytest tests/xmuse/test_peer_chat_end_to_end.py -q
+uv run pytest tests/xmuse/test_peer_chat_dashboard.py::test_dashboard_peer_chat_runtime_timeline_projects_inspector_state tests/xmuse/test_peer_chat_dashboard.py::test_conversation_inspector_links_dashboard_runtime_timeline -q
+uv run pytest tests/xmuse/test_package_boundaries.py -q
+uv run ruff check .
+git diff --check
+test ! -e xmuse/__init__.py
+```
+
+Remaining caveats:
+
+- This is not a new progress authority; it is a consumer projection over
+  existing durable stores.
+- It does not prove repeated groupchat reliability, production readiness, live
+  MemoryOS, GitHub review truth, natural peer-GOD completion, or full closure.
