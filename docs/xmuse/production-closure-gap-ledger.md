@@ -482,6 +482,14 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   drain callback. PR #117 narrows this callback to a durable source handoff
   message dependency set instead of a sender-global drain, but this is still
   not a general dependency-set planner for arbitrary workflow stages.
+- Loop 27f proves one bounded local dynamic OpenCode review participant
+  writeback turn from current main: dynamic member add, targeted
+  `@participant:<id>` inbox delivery, durable assistant message, MCP
+  `chat_post_message` trace, latency trace with `delivery_mode=mcp_writeback`,
+  and Chat API progress projection. This narrows the dynamic-member writeback
+  gap only. It does not prove provider-native session resume across restart,
+  multi-turn natural Codex/OpenCode discussion, groupchat proposal production,
+  production readiness, live MemoryOS, GitHub review truth, or full closure.
 - The successful chains are not yet repeated overnight or production-load soak.
 - Provider-native session continuity and memory persistence are not proven as
   durable product behavior.
@@ -546,5 +554,9 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   final-action hold with persistent OpenCode review after that repair.
 - P5 code-change soak: repeat small real code-change lanes after the
   inspector provider summary PR lands.
+- P5a natural dynamic groupchat continuity: extend Loop 27f from one dynamic
+  OpenCode writeback turn to multi-turn Codex/OpenCode discussion, including
+  restart/session restore and provider-native resume evidence before claiming
+  natural peer-GOD groupchat.
 - P6 MemoryOS adapter proof: keep `live_memoryos` forbidden until a real trace
   id or artifact exists.

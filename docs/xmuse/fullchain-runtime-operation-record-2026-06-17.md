@@ -7027,6 +7027,99 @@ Caveats:
   specific dynamic member, repeated multi-turn reliability, production
   readiness, live MemoryOS, GitHub review truth, or full closure.
 
+## 2026-06-20 Loop 27f: Dynamic OpenCode Member Live Writeback
+
+Purpose: prove the next Phase 2 boundary after dynamic roster/session/context
+work: a dynamically added OpenCode review member can receive a real peer-chat
+turn and write back through the production MCP callback path.
+
+Superseded probe:
+
+```text
+loop=loop-27e-dynamic-opencode-writeback-20260620T042910Z
+classification=probe_driver_exception
+reason=probe SQL selected missing participants.active column
+product_chain_started=false
+```
+
+Runtime command shape:
+
+```bash
+uv run python - <<'PY'
+# bounded probe driver starting Chat API, MCP, platform_runner --peer-chat,
+# creating a conversation with Codex architect/executor, dynamically adding
+# an OpenCode review participant, posting @participant:<id>, then polling
+# chat.db for inbox/message/MCP/latency artifacts.
+PY
+```
+
+Authority and artifacts:
+
+```text
+repo_worktree=/tmp/xmuse-postmerge-layered-prompt-main
+base_head=7d576bedaca182fd7784cd2914356074731a2bfb
+run_root=/tmp/xmuse-postmerge-layered-prompt-main/.goal-runs/2026-06-20/loop-27f-dynamic-opencode-latency-trace-20260620T043247Z
+summary=.goal-runs/2026-06-20/loop-27f-dynamic-opencode-latency-trace-20260620T043247Z/loop_driver_artifacts/summary.json
+final_snapshot=.goal-runs/2026-06-20/loop-27f-dynamic-opencode-latency-trace-20260620T043247Z/loop_driver_artifacts/final_snapshot.json
+timeline=.goal-runs/2026-06-20/loop-27f-dynamic-opencode-latency-trace-20260620T043247Z/loop_driver_artifacts/timeline.json
+```
+
+Durable ids:
+
+```text
+conversation_id=conv_c73d15c965dd48f9b6f70bc584684169
+dynamic_participant_id=part_1a69ceae3198458eb7ae0fe71ef36d73
+god_session_id=god-bfb4d4bb311145b284f6ad24c0776baa
+inbox_item_id=inbox_a45aa387b3654e929cc5cb8034633b75
+assistant_message_id=msg_d7eaaa7961fb4ac0bd345e020838e746
+```
+
+Observed durable state:
+
+```text
+participant.cli_kind=opencode
+participant.model=opencode-go/deepseek-v4-flash
+god_session.prompt_contract_version=xmuse-peer-chat-prompt-v2
+god_session.prompt_layer_order=[
+  xmuse_governance_l0,
+  member_identity,
+  roster_and_capabilities,
+  local_context_capsule,
+  tool_and_writeback_contract
+]
+inbox.status=read
+inbox.claim_owner=platform-runner
+inbox.responded_message_id=msg_d7eaaa7961fb4ac0bd345e020838e746
+assistant_message.author=part_1a69ceae3198458eb7ae0fe71ef36d73
+mcp_tool_trace=chat_post_message
+latency.delivery_mode=mcp_writeback
+latency.degraded_reason=peer_writeback_before_provider_result
+timeline.peer_progress_events[0].source_authority=peer_turn_latency_traces
+timeline.peer_progress_events[0].status=degraded
+roster_event_counts.participant_added=1
+```
+
+Cleanup:
+
+```text
+chat_port_listening_after_cleanup=false
+mcp_port_listening_after_cleanup=false
+```
+
+Classification: bounded local runtime proof that a dynamically added OpenCode
+review participant can receive a real peer-chat turn through the platform
+runner and produce a durable assistant reply through `chat_post_message`.
+
+Caveats:
+
+- This proves one dynamic OpenCode member writeback turn, not provider-native
+  session resume across process restart.
+- The progress read model classified the turn as degraded because writeback was
+  observed before the provider result was consumed; the durable message and MCP
+  writeback are still present.
+- This is not multi-turn natural groupchat, groupchat proposal production,
+  production readiness, live MemoryOS, GitHub review truth, or full closure.
+
 ## 2026-06-20 Loop 26o: Post-PR115 Collaboration Lifecycle Main Check
 
 Purpose: verify the PR #115 collaboration lifecycle repair after it landed on

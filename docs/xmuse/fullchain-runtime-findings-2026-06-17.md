@@ -4551,3 +4551,61 @@ Remaining caveats:
 - It does not prove repeated multi-turn reliability, groupchat proposal
   production, production readiness, live MemoryOS, GitHub review truth, or full
   closure.
+
+## 2026-06-20 Loop 27f Finding: Dynamic OpenCode Member Live Writeback Holds
+
+Status: local runtime probe; no code repair needed for this boundary.
+
+Boundary:
+
+```text
+phase=Phase 2 natural agents groupchat kernel
+target=dynamically added OpenCode member performs durable MCP/callback writeback
+authority=chat.db messages + chat_inbox_items + peer_turn_mcp_tool_traces + peer_turn_latency_traces + god_sessions.json
+producer=Chat API dynamic participant add + human @participant mention + PeerChatScheduler + real OpenCode persistent shim
+consumer=MCP /mcp/chat chat_post_message + PeerChatService timeline progress projection
+failure_boundary=none found for one-turn dynamic OpenCode writeback
+```
+
+Observed:
+
+- The probe started real Chat API, MCP, and `xmuse.platform_runner --peer-chat`
+  services under an isolated `XMUSE_ROOT`.
+- The conversation began with Codex architect and Codex executor participants,
+  then dynamically added an OpenCode review participant.
+- The dynamic participant had
+  `model=opencode-go/deepseek-v4-flash`.
+- A human message targeted the dynamic member through `@participant:<id>`.
+- `god_sessions.json` recorded the dynamic OpenCode GOD session with
+  `xmuse-peer-chat-prompt-v2` and the expected ordered prompt layers.
+- `chat.db.messages` contained a durable assistant reply authored by the
+  dynamic participant.
+- The target inbox item reached `status=read` and pointed to the assistant
+  message through `responded_message_id`.
+- `peer_turn_mcp_tool_traces` recorded `chat_post_message` for the inbox item.
+- `peer_turn_latency_traces` recorded `delivery_mode=mcp_writeback` with
+  `degraded_reason=peer_writeback_before_provider_result`.
+- The Chat API timeline projected a peer progress event from
+  `peer_turn_latency_traces` and preserved the dynamic roster event.
+
+Primary artifact:
+
+```text
+.goal-runs/2026-06-20/loop-27f-dynamic-opencode-latency-trace-20260620T043247Z/loop_driver_artifacts/final_snapshot.json
+```
+
+Classification:
+
+- No implementation change is needed for this specific one-turn dynamic
+  OpenCode writeback boundary.
+- The `peer_writeback_before_provider_result` degradation label remains an
+  observability caveat, not a failed writeback, because the durable reply, MCP
+  trace, inbox terminal state, and latency trace all exist.
+
+Remaining caveats:
+
+- This is not provider-native session resume proof across restart.
+- This is not multi-turn natural Codex/OpenCode groupchat.
+- This is not groupchat-produced proposal or blueprint/lane execution proof.
+- It does not prove production readiness, live MemoryOS, GitHub review truth,
+  natural peer-GOD groupchat completion, or full closure.
