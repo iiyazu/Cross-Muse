@@ -6826,6 +6826,80 @@ Caveats:
   readiness, natural peer-GOD groupchat completion, live MemoryOS, GitHub
   review truth, live lane merge truth, or full closure.
 
+## 2026-06-20 Loop 27b: Dynamic Member Roster Event Candidate
+
+Purpose: close the Phase 2 read/write gap where dynamically adding a groupchat
+member updated `participants` but left no durable roster event for Chat API
+consumers.
+
+Workspace and authority:
+
+```text
+repo_worktree=/tmp/xmuse-postmerge-layered-prompt-main
+branch=codex/groupchat-dynamic-member-events
+base_head_sha=aa7cd90e1e9b8d8b7ce208bf2bf1f4d5968dee0b
+authority=participants + messages(envelope_type=roster_event)
+producer=POST /api/chat/conversations/{conversation_id}/participants
+consumer=PeerChatService.list_conversation_timeline / GET /messages
+proof_level=local_runtime_proof candidate
+```
+
+Pre-fix probe:
+
+```bash
+uv run python - <<'PY'
+# FastAPI TestClient creates a conversation in a temporary XMUSE_ROOT,
+# POSTs a new OpenCode review participant, then inspects chat.db and the
+# /messages timeline.
+PY
+```
+
+Observed before repair:
+
+```text
+add_status=201
+participants included the new opencode review peer
+messages=[]
+timeline_message_count=0
+timeline_item_kinds=[]
+roster_event_fields={}
+```
+
+Candidate repair:
+
+```text
+src/xmuse_core/chat/roster_events.py
+xmuse/chat_api.py
+src/xmuse_core/chat/peer_service.py
+tests/xmuse/test_peer_chat_api.py
+```
+
+Post-fix probe:
+
+```text
+add_status=201
+timeline_message_count=0
+messages[0].envelope_type=roster_event
+messages[0].author=xmuse-system
+roster_event_counts={'total': 1, 'participant_added': 1}
+recent_roster_events[0].source_authority=participants
+recent_roster_events[0].action=participant_added
+recent_roster_events[0].cli_kind=opencode
+recent_roster_events[0].model=opencode-go/deepseek-v4-flash
+```
+
+Focused validation so far:
+
+```bash
+uv run pytest tests/xmuse/test_peer_chat_api.py -q
+uv run ruff check src/xmuse_core/chat/roster_events.py src/xmuse_core/chat/peer_service.py xmuse/chat_api.py tests/xmuse/test_peer_chat_api.py
+```
+
+Classification: local candidate proof that the dynamic member add path now
+produces a durable roster event and the Chat API timeline exposes it. This is
+not production readiness, natural peer-GOD groupchat completion, MemoryOS
+proof, GitHub review truth, or full closure.
+
 ## 2026-06-20 Loop 26o: Post-PR115 Collaboration Lifecycle Main Check
 
 Purpose: verify the PR #115 collaboration lifecycle repair after it landed on

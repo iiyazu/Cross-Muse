@@ -7,10 +7,22 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
 
 ## Current Proof Boundary
 
-- Latest main inspected: `c2f9bf57e3b0de235949439ada0f3395b87a4f76`
-  (PR #125 docs-only evidence merge). The latest fullchain runtime proof
-  remains Loop 26x from `050385b32ce62c6868773555271f25b8debe26f8`; PR #125
-  does not add new runtime capability evidence.
+- Latest main inspected: `aa7cd90e1e9b8d8b7ce208bf2bf1f4d5968dee0b`
+  (PR #126 peer progress read-projection merge). The latest fullchain runtime
+  proof remains Loop 26x from
+  `050385b32ce62c6868773555271f25b8debe26f8`; PR #126 adds server-verified
+  code and CI for durable peer-progress projection, but does not add a new
+  fullchain runtime proof.
+- Latest local dynamic-member evidence: Loop 27b on branch
+  `codex/groupchat-dynamic-member-events` confirmed that the pre-fix dynamic
+  add path wrote only `participants` and exposed no roster event through the
+  timeline. The local candidate now writes a durable
+  `messages.envelope_type=roster_event` system message after dynamic
+  participant creation and exposes `roster_events`, `roster_event_counts`, and
+  `recent_roster_events` from `PeerChatService.list_conversation_timeline()`.
+  This is local candidate evidence only until a small PR is server-verified; it
+  does not prove restart/session restore, natural peer-GOD completion,
+  production readiness, live MemoryOS, GitHub review truth, or full closure.
 - Latest post-PR124 fullchain sentinel evidence: Loop 26x ran from current
   main `050385b32ce62c6868773555271f25b8debe26f8` after PR #121, PR #123,
   and PR #124 landed. The docs-only runtime sentinel reached
