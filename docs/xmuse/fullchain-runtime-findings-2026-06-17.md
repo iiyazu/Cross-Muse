@@ -5074,3 +5074,55 @@ Remaining caveats:
 - This does not prove repeated soak, production readiness, live MemoryOS,
   GitHub review truth, natural peer-GOD completion, full L8-L10 closure, or
   full L1-L11 closure.
+
+## 2026-06-20 Loop 27p Finding: Post-PR138 Runtime Fails Closed Before Approval
+
+Status: post-merge main runtime proof for the pending-proposal-review boundary.
+
+Boundary:
+
+```text
+phase=Phase 3 proposal review before dispatchable approval
+target=old immediate-approval driver must fail closed until automatic proposal review is handled
+authority=chat.db review_trigger inbox state + Chat API approval response
+producer=Codex architect proposal emitted from completed collaboration run
+consumer=Chat API proposal approval path
+result=confirmed fail-closed
+```
+
+Observed durable chain:
+
+- PR #138 merged as `0a90caf623ea85311b617d8034b0787eb1611372`.
+- PR CI run `27864200633` succeeded for head
+  `413616e5baa5b5f0496175075a070ae6fedc4bff`.
+- Main CI run `27864227027` succeeded for merge commit `0a90caf`.
+- Runtime conversation `conv_e12986f5836941b5a38e6301b62f3df1` received the
+  code-change demand.
+- Architect created collaboration run
+  `collab_7509e6e5a7e24c41ad7db9d725c764fc`.
+- Execute recorded a JSON `execute_feasibility_verdict` and the collaboration
+  run reached `done`.
+- Architect emitted proposal `prop_2bc98f02d7f445a08a6c5fadf96d3152`.
+- Automatic review trigger
+  `inbox_1f50a6d5d8c74cd2ba0c868de6007a0d` existed with status `unread`.
+- Approval returned 400 with `detail.code=proposal_review_pending`.
+- No resolution row was created and no dispatch/lane projection happened.
+
+Interpretation:
+
+- The unsafe Loop 27n shape is now blocked before approval side effects when
+  proposal review is still pending.
+- This confirms PR #138 changed runtime behavior in the desired fail-closed
+  direction.
+- The chain is now intentionally blocked earlier; the next productive change is
+  not another dispatch patch, but a harness/driver update that waits for
+  proposal review and consumes structured blocker/veto outcomes.
+
+Remaining caveats:
+
+- This loop does not reach execution, review, or final-action hold.
+- This does not prove the review peer will always use
+  `chat_raise_collaboration_blocker` for no-dispatch findings; that remains the
+  next runtime observation after the harness waits for review completion.
+- No production readiness, live MemoryOS, GitHub review truth, full L8-L10
+  closure, or full L1-L11 closure is claimed.

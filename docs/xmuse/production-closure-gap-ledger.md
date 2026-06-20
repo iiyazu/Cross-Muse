@@ -568,6 +568,15 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   Focused regression suites passed locally, but this is not post-merge runtime
   proof. The next runtime loop should wait for proposal review completion and
   structured blocker/veto outcomes instead of immediately approving.
+- PR #138 merged that candidate and main CI passed. Loop 27p reran the old
+  immediate-approval runtime shape on post-PR138 main and confirmed it now
+  fails closed before approval side effects with
+  `proposal_review_pending` against unread review trigger
+  `inbox_1f50a6d5d8c74cd2ba0c868de6007a0d`. No resolution, dispatch, lane
+  projection, execution, or final-action hold was produced in that loop. This
+  is desired boundary proof, not completion proof. The next bucket is to update
+  the runtime harness/driver to wait for proposal review completion and
+  structured veto/blocker outcomes.
 - The successful chains are not yet repeated overnight or production-load soak.
 - Provider-native session continuity and memory persistence are not proven as
   durable product behavior.
