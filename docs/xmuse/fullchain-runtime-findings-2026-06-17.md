@@ -4952,3 +4952,65 @@ Remaining caveats:
 - It is not repeated stability, production readiness, live MemoryOS, GitHub
   review truth, natural peer-GOD groupchat completion, full L8-L10 closure, or
   full L1-L11 closure.
+
+## 2026-06-20 Loop 27n Finding: Post-PR136 Rerun Reaches Hold Without Callback Retry
+
+Status: bounded latest-main runtime observation; no code repair in this loop.
+
+Boundary:
+
+```text
+phase=Phase 2/3 natural groupchat to execution/review harness
+target=post-PR136 rerun of the code-change sentinel shape
+authority=chat.db collaboration/proposal/inbox/latency records + feature_lanes projection + gate/review/final_action artifacts
+producer=human @architect demand + Codex architect + Codex execute + OpenCode review + lane worker
+consumer=platform runner gate/review/final-action path
+failure_boundary=none for callback retry in this run; new caveat at pre-dispatch review/veto semantics
+```
+
+Observed:
+
+- The run started from main at
+  `cad8b7b40c916f756432591f86dee38da416fafa`.
+- Durable collaboration run
+  `collab_d68e4c215e80431487ae33d8407db163` completed.
+- Architect emitted proposal
+  `prop_c45500ea19164801aff4fa31fb202f86`.
+- Resolution `res_4387ec6d53284833aa68a5744cc9eb2c` approved the lane.
+- Lane `loop_27n_code_change_sentinel_post136_20260620t065337z` reached
+  `awaiting_final_action`.
+- Gate passed and persistent OpenCode review produced finalized merge verdict
+  `verdict-loop_27n_code_change_sentinel_post136_20260620t065337z`.
+- Final hold `final-55b46d51c6b5` remained pending.
+- All five peer inboxes in the run had `nudge_count=0`.
+- The architect callback inbox
+  `inbox_fd69b2a178784db0ad69841af03b48dd` completed in one attempt with
+  `chat_read_inbox` and `chat_emit_proposal` stages.
+
+Interpretation:
+
+- Loop 27l's callback retry did not reproduce in this post-PR136 run.
+- This strengthens callback stability evidence but does not prove repeated
+  soak or production readiness.
+- The lane was partly stale: the script already had the requested
+  `expected_note_content` behavior from PR #135, so the execution candidate
+  only changed `tests/xmuse/test_fullchain_docs_sentinel.py`.
+
+New caveat:
+
+- The proposal review path detected the request as effectively no-op and
+  recommended against dispatch, but that did not become an active veto before
+  driver approval.
+- The final lane metadata recorded `review_conflict_ignored=true` with
+  `ignored_review_decision=rework` and
+  `ignored_review_fallback_reason=unknown_review_text` after a merge verdict
+  had already been accepted.
+- Treat pre-dispatch proposal review/no-op/veto semantics as the next boundary
+  before using this shape as stronger production proof.
+
+Remaining caveats:
+
+- This is not a new product-code feature delivery.
+- It is not repeated soak, production readiness, provider-native OpenCode
+  resume, live MemoryOS, GitHub review truth, natural peer-GOD groupchat
+  completion, full L8-L10 closure, or full L1-L11 closure.
