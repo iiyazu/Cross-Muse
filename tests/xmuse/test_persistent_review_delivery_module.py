@@ -382,6 +382,89 @@ async def test_apply_persistent_review_message_is_idempotent_after_final_action_
 
 
 @pytest.mark.asyncio
+async def test_apply_persistent_review_message_preserves_committed_verdict_id(
+    tmp_path,
+) -> None:
+    lanes_path = tmp_path / "feature_lanes.json"
+    lanes_path.write_text(
+        json.dumps(
+            {
+                "lanes": [
+                    {
+                        "feature_id": "lane-final-hold",
+                        "status": "awaiting_final_action",
+                        "review_task_id": "task-1",
+                        "review_verdict_id": "verdict-canonical",
+                        "final_action_hold_id": "final-1",
+                        "review_history": [
+                            {
+                                "decision": "merge",
+                                "summary": "review accepted",
+                                "fallback": "structured",
+                                "fallback_reason": "review_verdict",
+                                "verdict_id": "verdict-canonical",
+                                "recorded_at": 2.0,
+                            },
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    sm = LaneStateMachine(lanes_path)
+
+    def ingest_merge_verdict(
+        lane_id: str,
+        summary: str,
+        refs: list[str] | None = None,
+    ) -> None:
+        raise AssertionError(f"unexpected duplicate merge verdict for {lane_id}")
+
+    def ingest_rework_verdict(
+        lane_id: str,
+        summary: str,
+        refs: list[str] | None = None,
+    ) -> None:
+        raise AssertionError(f"unexpected rework verdict for {lane_id}: {summary}")
+
+    async def on_reviewed(lane_id: str) -> None:
+        raise AssertionError(f"unexpected duplicate reviewed callback for {lane_id}")
+
+    async def on_rejected(lane_id: str) -> None:
+        raise AssertionError(f"unexpected rejected lane {lane_id}")
+
+    delivered = await persistent_review_delivery.apply_persistent_review_message(
+        lane_id="lane-final-hold",
+        sm=sm,
+        message=StdoutMessage(
+            type="result",
+            artifacts={
+                "review_verdict": {
+                    "decision": "merge",
+                    "summary": "late persistent review accepted",
+                }
+            },
+        ),
+        stable_verdict_id=lambda lane_id: f"verdict-stable-{lane_id}",
+        ingest_merge_verdict=ingest_merge_verdict,
+        ingest_rework_verdict=ingest_rework_verdict,
+        on_reviewed=on_reviewed,
+        on_rejected=on_rejected,
+        review_request_id="review-request-1",
+        persistent_review_identity="configured:review-peer-1",
+        evidence_refs=["review://configured-peer"],
+    )
+
+    lane = sm.get_lane("lane-final-hold")
+    assert delivered is True
+    assert lane["status"] == "awaiting_final_action"
+    assert lane["review_verdict_id"] == "verdict-canonical"
+    assert lane["final_action_hold_id"] == "final-1"
+    assert lane["review_history"][-1]["fallback"] == "persistent"
+
+
+@pytest.mark.asyncio
 async def test_apply_persistent_review_message_ignores_late_rework_after_acceptance(
     tmp_path,
 ) -> None:

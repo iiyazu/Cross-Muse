@@ -141,11 +141,13 @@ def _context_capsule_layer(group_context: dict[str, Any], inbox_item: Any) -> Pr
             recent_messages = raw_messages[-8:]
     transcript = _recent_transcript_text(recent_messages)
     request_preview = _inbox_request_preview(getattr(inbox_item, "payload", {}))
+    retry_feedback = _retry_feedback_text(group_context)
     content = (
         "Local context capsule version: xmuse-local-context-capsule-v1\n"
         "Use this capsule as bounded durable context. It may be enriched by "
         "MemoryOS only after live MemoryOS proof exists.\n"
         f"Recent transcript:\n{transcript}\n"
+        f"{retry_feedback}"
         f"{request_preview}"
     ).strip()
     return PromptLayer(
@@ -184,13 +186,21 @@ def _tool_writeback_layer() -> PromptLayer:
             "{\"type\":\"execute_feasibility_verdict\",\"status\":\"executable\","
             "\"summary\":\"<why dispatch is safe>\",\"evidence_refs\":[\"<ref>\"]}; "
             "looser fields such as verdict=feasible do not satisfy dispatch. "
+            "If your current inbox item is a collaboration_request or asks you "
+            "to use chat_record_collaboration_response, call that tool; do not "
+            "return the JSON as final assistant text or streamed stdout. "
+            "If you call chat_create_collaboration_request, do not also call "
+            "chat_mention for the same target: the collaboration tool already "
+            "creates the target inbox and callback. "
             "Then emit a lane_graph proposal with chat_emit_proposal, "
             "reply_to_inbox_item_id=xmuse_context.inbox_item.id, and a "
             "collaboration:<run_id> reference. Human approval is still required "
             "before dispatch.\n"
             "Only if MCP tools are unavailable, reply directly as your final "
             "assistant message based on xmuse_context.inbox_item.payload.content; "
-            "xmuse may persist that final answer as a degraded GOD chat reply."
+            "xmuse may persist that final answer as a degraded GOD chat reply. "
+            "If mcp_tools_ready has appeared, MCP tools are available; do not say "
+            "you cannot perform durable writeback."
         ),
         metadata={"writeback_truth": "mcp_or_callback"},
     )
@@ -232,6 +242,13 @@ def _inbox_request_preview(payload: dict[str, object]) -> str:
     if not isinstance(content, str) or not content.strip():
         return "Current inbox request: none"
     return "Current inbox request:\n" + _bounded(content.strip(), max_chars=8000)
+
+
+def _retry_feedback_text(group_context: dict[str, Any]) -> str:
+    feedback = group_context.get("retry_feedback")
+    if not isinstance(feedback, str) or not feedback.strip():
+        return ""
+    return "Retry feedback:\n" + _bounded(feedback.strip(), max_chars=1600) + "\n"
 
 
 def _bounded(text: str, *, max_chars: int) -> str:

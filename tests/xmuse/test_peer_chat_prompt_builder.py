@@ -69,6 +69,11 @@ def test_peer_chat_prompt_builder_emits_ordered_auditable_layers(tmp_path: Path)
     assert "@review=OpenCode Review GOD" in assembled.text
     assert "Local context capsule version: xmuse-local-context-capsule-v1" in assembled.text
     assert "chat_emit_proposal" in assembled.text
+    assert "do not return the JSON as final assistant text or streamed stdout" in (
+        assembled.text
+    )
+    assert "do not also call chat_mention for the same target" in assembled.text
+    assert "If mcp_tools_ready has appeared, MCP tools are available" in assembled.text
 
 
 def test_context_assembler_turn_context_carries_prompt_artifact(tmp_path: Path) -> None:
@@ -114,3 +119,45 @@ def test_context_assembler_turn_context_carries_prompt_artifact(tmp_path: Path) 
     assert context["context_capsule"]["version"] == "xmuse-local-context-capsule-v1"
     assert context["xmuse_prompt"]["version"] == PROMPT_CONTRACT_VERSION
     assert context["xmuse_prompt"]["text"] == assembled.text
+
+
+def test_prompt_builder_includes_retry_feedback(tmp_path: Path) -> None:
+    chat = ChatStore(tmp_path / "chat.db")
+    conv = chat.create_conversation("Prompt retry")
+    participants = ParticipantStore(tmp_path / "chat.db")
+    execute = participants.add(
+        conversation_id=conv.id,
+        role="execute",
+        display_name="Execute GOD",
+        cli_kind="codex",
+        model="gpt-5.4",
+    )
+    msg = chat.add_message(conv.id, "architect", "assistant", "@execute")
+    item = ChatInboxStore(tmp_path / "chat.db").create_item(
+        conversation_id=conv.id,
+        target_participant_id=execute.participant_id,
+        target_role="execute",
+        target_address="@execute",
+        sender_participant_id=None,
+        sender_address="@architect",
+        source_message_id=msg.id,
+        item_type="collaboration_request",
+        payload={"content": "Use chat_record_collaboration_response."},
+    )
+    group_context = ContextAssembler(
+        participants=participants,
+        chat=chat,
+    ).group_chat_context(conv.id)
+    group_context["retry_feedback"] = (
+        "Previous attempt failed with peer_no_inbox_side_effect; call "
+        "chat_record_collaboration_response."
+    )
+
+    assembled = XmusePromptBuilder().build_peer_chat_prompt(
+        participant=execute,
+        inbox_item=item,
+        group_context=group_context,
+    )
+
+    assert "Retry feedback:" in assembled.text
+    assert "Previous attempt failed with peer_no_inbox_side_effect" in assembled.text

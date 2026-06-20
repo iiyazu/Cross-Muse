@@ -7,8 +7,9 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
 
 ## Current Proof Boundary
 
-- Latest main inspected: `e235b9be7b7ebb6c643b9713a2fb1333f009634c`
-  (PR #144 merge). Latest focused dynamic-member OpenCode provider-resume proof
+- Latest main inspected: `629757b280d17b8fd3dd1adebfc6e919c717ce1d`
+  (`origin/main`, PR #145 merge; PR #43 remains closed/draft/unmerged with
+  head branch preserved). Latest focused dynamic-member OpenCode provider-resume proof
   remains Loop 28e from pre-PR144 main head
   `363229d3296d35e5da0d3533008a29b19685c720`: Chat API, MCP, and
   `xmuse.platform_runner --peer-chat` ran with a dynamically added OpenCode
@@ -20,6 +21,26 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   provider-resume boundary as local runtime proof only. It does not prove
   fullchain demand completion, production readiness, live MemoryOS, GitHub
   review truth, live lane merge truth, repeated soak, or full closure.
+- Latest candidate Ray/MCP app-server fullchain proof is Loop 28l on branch
+  `codex/fullchain-sentinel-peer-backend-config`, based on
+  `origin/main` `629757b280d17b8fd3dd1adebfc6e919c717ce1d`. The sentinel ran
+  with `--peer-god-backend ray --ray-god-mcp` and
+  `peer_chat_post_writeback_grace_s=30.0`; `commands.json` recorded
+  `peer_god_backend=ray`, `ray_god_mcp=true`, Chat API port `54155`, and MCP
+  port `42369`. The platform log shows
+  `Peer chat scheduler enabled (god_backend=RayGodSessionLayer)`. The durable
+  chain produced one collaboration run
+  `collab_964bbe42e28a4e109ae939b4cf34c7d7`, one
+  `chat_record_collaboration_response`, one accepted lane-graph proposal
+  `prop_2f537e5d678e46d6b52f84d0f96b9082`, OpenCode proposal review
+  writeback, approval, dispatch handoff acknowledgment, isolated docs
+  execution, gate pass, persistent OpenCode review, finalized verdict
+  `verdict-merge-rtask_8cd0144245a04607a5a3eda0e3c9357e`, and pending
+  final-action hold `final-e1ecfa2fd29e`. All reusable sentinel success checks
+  were true. This is candidate-branch local runtime proof only; it is not
+  merged-main proof, server CI proof, production readiness, live MemoryOS,
+  GitHub review truth, live lane merge truth, repeated soak, fullchain product
+  completion, or full closure.
 - Latest post-merge main reusable fullchain sentinel proof is Loop 28f from
   main head `e235b9be7b7ebb6c643b9713a2fb1333f009634c` after PR #144. The
   reusable sentinel ran with `peer_chat_post_writeback_grace_s=8.0`, completed
