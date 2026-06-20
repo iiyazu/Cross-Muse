@@ -6,6 +6,22 @@ truth, merge truth, live MemoryOS proof, or full closure.
 
 ## Current Evidence Summary
 
+- Loop 28n is the strongest candidate-branch local Ray/MCP app-server
+  non-docs code-change proof so far. From branch
+  `codex/ray-mcp-codechange-head-evidence`, based on `origin/main`
+  `019f580674eb731787c3f21a23122c53968b8953`, real groupchat produced a
+  collaboration run, execute feasibility response, exactly one accepted
+  lane-graph proposal, proposal review PASS, approval, dispatch acknowledgement,
+  isolated execution, gate pass, persistent OpenCode review, finalized verdict,
+  and pending final-action hold for a candidate that changes only
+  `scripts/run_fullchain_docs_sentinel.py` and
+  `tests/xmuse/test_fullchain_docs_sentinel.py`. The one-off driver returned
+  `2` because its own changed-files parser sliced `git status --porcelain`
+  incorrectly; manual audit confirmed the candidate scope was correct and
+  services cleaned up. This is candidate-branch local runtime proof only, not
+  merged-main proof, server CI proof, production readiness, GitHub review truth,
+  live MemoryOS proof, live lane merge truth, repeated soak, product completion,
+  or full closure.
 - Loop 28m is the strongest post-merge main local Ray/MCP app-server fullchain
   proof so far. From main head
   `4cdc9c756924b806d10cf960e66144033d8bfd15` after PR #146, the reusable
@@ -296,6 +312,42 @@ truth, merge truth, live MemoryOS proof, or full closure.
   proof only; it is not CI/server-verified.
 
 ## Findings
+
+## 2026-06-20 Loop 28n Finding: Ray/MCP Groupchat Can Drive A Small Non-Docs Code-Change Lane
+
+Hypothesis confirmed:
+
+- After PR #146 and PR #147, the Ray/Codex app-server peer path with xmuse MCP
+  can move beyond docs-only sentinel proof and produce a small scoped xmuse
+  code-change candidate through the same durable groupchat -> proposal ->
+  execution -> gate -> OpenCode review -> final-action hold chain.
+
+Durable evidence:
+
+- Collaboration run `collab_28ac5266c7004201b0d14edf78c72571` reached `done`.
+- Execute response `collab_resp_eee868fc716442d897294022b02df428` was received.
+- Proposal `prop_5f219cdd2b9e4200b6351e4d3db3ba09` was accepted.
+- Lane `loop_28n_ray_mcp_codechange_head_20260620T1038Z` reached
+  `awaiting_final_action` with `gate_passed=true`.
+- Review verdict
+  `verdict-merge-rtask_16b31833348d446bb7d9c72469455a4f` was finalized by the
+  configured OpenCode review peer.
+- Candidate changed files were exactly:
+  `scripts/run_fullchain_docs_sentinel.py` and
+  `tests/xmuse/test_fullchain_docs_sentinel.py`.
+
+Driver limitation:
+
+- The one-off code-change driver reported `candidate_changed_files_scoped=false`
+  and exited `2`, but the cause was a driver-only parser bug in
+  `git status --porcelain` handling. Manual audit artifact
+  `manual_candidate_audit.json` confirmed the real diff scope and cleanup.
+
+Residual limits:
+
+- This is one candidate-branch local code-change lane. It does not prove
+  merged-main behavior, server CI, production readiness, live MemoryOS, live
+  lane merge truth, repeated soak, broad product completion, or full closure.
 
 ## 2026-06-20 Loop 28g-28m Finding: Ray/MCP Fullchain Needs Explicit Backend Proof, Durable Collaboration Retry Feedback, And Stable Verdict IDs
 

@@ -324,6 +324,130 @@ docs-only sentinel shape. It is not server CI proof of the runtime artifact,
 production readiness, GitHub review truth, live MemoryOS proof, live lane merge
 truth, repeated soak, full product completion, or full closure.
 
+## 2026-06-20 Loop 28n: Candidate Ray/MCP Non-Docs Code-Change Lane
+
+Purpose: move beyond docs-only Ray/MCP sentinel proof by having the real
+groupchat produce a small xmuse code-change lane, then isolate, gate, review,
+and hold it for main-Codex import.
+
+Branch:
+
+```text
+codex/ray-mcp-codechange-head-evidence
+base=origin/main@019f580674eb731787c3f21a23122c53968b8953
+```
+
+Runtime command:
+
+```bash
+uv run python .goal-runs/2026-06-20/loop-28n-ray-mcp-codechange-head-20260620T1038Z/code_change_driver.py \
+  --run-root .goal-runs/2026-06-20/loop-28n-ray-mcp-codechange-head-20260620T1038Z/runtime \
+  --execution-worktree /tmp/loop-28n-ray-mcp-codechange-head-20260620T1038Z-exec \
+  --feature-id loop_28n_ray_mcp_codechange_head_20260620T1038Z \
+  --proposal-timeout-s 900 \
+  --proposal-review-timeout-s 900 \
+  --lane-timeout-s 1200 \
+  --max-hours 0.75 \
+  --peer-chat-post-writeback-grace-s 30.0 \
+  --peer-god-backend ray \
+  --ray-god-mcp
+```
+
+Human demand:
+
+- ask architect to coordinate exactly one real code-change fullchain;
+- require execute feasibility verdict through
+  `chat_record_collaboration_response`;
+- require one lane-graph proposal;
+- candidate scope limited to `scripts/run_fullchain_docs_sentinel.py` and
+  `tests/xmuse/test_fullchain_docs_sentinel.py`;
+- target change: record `repo_head_sha` in both `commands.json` and
+  `commands.txt` when the sentinel starts.
+
+Durable chain:
+
+```text
+conversation_id=conv_021e08684c0c43e7b7f575211eee14c4
+collaboration_run=collab_28ac5266c7004201b0d14edf78c72571
+collaboration_response=collab_resp_eee868fc716442d897294022b02df428
+proposal_id=prop_5f219cdd2b9e4200b6351e4d3db3ba09
+resolution_id=res_bba8d0e9755443498e2c11f4e205394c
+lane_id=loop_28n_ray_mcp_codechange_head_20260620T1038Z
+review_task_id=rtask_16b31833348d446bb7d9c72469455a4f
+review_verdict_id=verdict-merge-rtask_16b31833348d446bb7d9c72469455a4f
+final_action_hold_id=final-4b6e9294a75c
+```
+
+Peer/MCP trace:
+
+```text
+chat_create_collaboration_request
+chat_record_collaboration_response
+chat_emit_proposal
+chat_post_message (proposal review)
+chat_post_message (dispatch acknowledgement)
+```
+
+Lane result:
+
+```text
+status=awaiting_final_action
+gate_passed=true
+review_decision=merge
+review_delivery_mode=persistent
+persistent_review_degraded=false
+review_peer_cli_kind=opencode
+review_peer_model=opencode-go/deepseek-v4-flash
+proposal_has_review_runtime=false
+```
+
+Candidate diff:
+
+```text
+scripts/run_fullchain_docs_sentinel.py
+tests/xmuse/test_fullchain_docs_sentinel.py
+```
+
+Focused lane gate:
+
+```text
+uv run pytest tests/xmuse/test_fullchain_docs_sentinel.py -q
+```
+
+Driver note:
+
+- the one-off driver exited `2` because
+  `candidate_changed_files_scoped=false`;
+- root cause was a driver-only parser bug: it sliced `git status --porcelain`
+  output with `line[3:]`, turning ` M scripts/...` into `cripts/...`;
+- manual audit artifact
+  `.goal-runs/2026-06-20/loop-28n-ray-mcp-codechange-head-20260620T1038Z/runtime/loop_driver_artifacts/manual_candidate_audit.json`
+  confirmed the real `git diff --name-only` set was exactly the two expected
+  files and both Chat API and MCP ports were no longer listening.
+
+Post-import local validation on branch
+`codex/ray-mcp-codechange-head-evidence`:
+
+```text
+uv run pytest tests/xmuse/test_fullchain_docs_sentinel.py tests/xmuse/test_package_boundaries.py -q
+-> 20 passed
+
+uv run ruff check .
+-> All checks passed
+
+git diff --check
+test ! -e xmuse/__init__.py
+-> passed
+```
+
+Classification: candidate-branch local runtime proof for one small non-docs
+xmuse code-change lane from durable Ray/MCP groupchat through execute
+collaboration, proposal, OpenCode proposal review, approval, isolated
+execution, gate, persistent OpenCode review, and final-action hold. It is not
+merged-main proof, server CI proof, production readiness, live MemoryOS,
+GitHub review truth, live lane merge truth, repeated soak, full product
+completion, or full closure.
+
 ## 2026-06-20 Reusable Fullchain Driver Sentinels
 
 Reusable driver under test:

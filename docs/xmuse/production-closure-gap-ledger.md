@@ -7,8 +7,8 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
 
 ## Current Proof Boundary
 
-- Latest main inspected: `4cdc9c756924b806d10cf960e66144033d8bfd15`
-  (`origin/main`, PR #146 merge; PR #43 remains closed/draft/unmerged with
+- Latest main inspected: `019f580674eb731787c3f21a23122c53968b8953`
+  (`origin/main`, PR #147 merge; PR #43 remains closed/draft/unmerged with
   head branch preserved). Latest focused dynamic-member OpenCode provider-resume proof
   remains Loop 28e from pre-PR144 main head
   `363229d3296d35e5da0d3533008a29b19685c720`: Chat API, MCP, and
@@ -21,6 +21,28 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   provider-resume boundary as local runtime proof only. It does not prove
   fullchain demand completion, production readiness, live MemoryOS, GitHub
   review truth, live lane merge truth, repeated soak, or full closure.
+- Latest candidate Ray/MCP app-server non-docs code-change fullchain proof is
+  Loop 28n on branch `codex/ray-mcp-codechange-head-evidence`, based on
+  `origin/main` `019f580674eb731787c3f21a23122c53968b8953`. The real
+  groupchat produced collaboration run
+  `collab_28ac5266c7004201b0d14edf78c72571`, execute response
+  `collab_resp_eee868fc716442d897294022b02df428`, exactly one accepted
+  lane-graph proposal `prop_5f219cdd2b9e4200b6351e4d3db3ba09`, proposal
+  review PASS, approval, dispatch acknowledgement, isolated execution,
+  gate pass, persistent OpenCode review, finalized verdict
+  `verdict-merge-rtask_16b31833348d446bb7d9c72469455a4f`, and pending
+  final-action hold `final-4b6e9294a75c`. The candidate changed only
+  `scripts/run_fullchain_docs_sentinel.py` and
+  `tests/xmuse/test_fullchain_docs_sentinel.py` to record `repo_head_sha` in
+  sentinel command artifacts. Driver exit was `2` because the one-off driver
+  parsed `git status --porcelain` with a bad slice and reported a false
+  `cripts/...` path; manual audit artifact
+  `loop_driver_artifacts/manual_candidate_audit.json` confirmed the real
+  changed-file set was exactly the two expected files and cleanup found no Chat
+  API or MCP listener. This is candidate-branch local runtime proof only; it
+  is not merged-main proof, server CI proof, production readiness, live
+  MemoryOS, GitHub review truth, live lane merge truth, repeated soak,
+  fullchain product completion, or full closure.
 - Latest post-merge main Ray/MCP app-server fullchain proof is Loop 28m from
   main head `4cdc9c756924b806d10cf960e66144033d8bfd15` after PR #146 merged.
   The sentinel ran with `--peer-god-backend ray --ray-god-mcp` and
