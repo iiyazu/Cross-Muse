@@ -189,6 +189,24 @@ def test_dynamic_participant_add_records_visible_roster_event(tmp_path) -> None:
     assert event["cli_kind"] == "opencode"
     assert event["model"] == "opencode-go/deepseek-v4-flash"
 
+    session = participant["session"]
+    assert session["participant_id"] == participant["participant_id"]
+    assert session["role"] == "review"
+    assert session["runtime"] == "opencode"
+    assert session["provider_id"] == "opencode"
+    assert session["profile_id"] == "review"
+    assert session["model"] == "opencode-go/deepseek-v4-flash"
+
+    restarted_client = TestClient(create_app(tmp_path))
+    listed = restarted_client.get(f"/api/chat/conversations/{conv['id']}/participants").json()
+    listed_participant = next(
+        item
+        for item in listed["participants"]
+        if item["participant_id"] == participant["participant_id"]
+    )
+    assert listed_participant["session"]["god_session_id"] == session["god_session_id"]
+    assert listed_participant["session"]["runtime"] == "opencode"
+
     with sqlite3.connect(tmp_path / "chat.db") as conn:
         conn.row_factory = sqlite3.Row
         row = conn.execute(

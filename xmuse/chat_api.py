@@ -474,6 +474,14 @@ def _add_participants(
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except sqlite3.IntegrityError as exc:
             raise HTTPException(status_code=404, detail="conversation not found") from exc
+        try:
+            session = _peer_service(base_dir).ensure_participant_session(
+                conversation_id=conversation_id,
+                participant=created_participant,
+                registry_path=base_dir / "god_sessions.json",
+            )
+        except PeerChatError as exc:
+            raise HTTPException(status_code=409, detail=exc.message) from exc
         _store(base_dir).add_message(
             conversation_id,
             author="xmuse-system",
@@ -483,7 +491,7 @@ def _add_participants(
             envelope_json=participant_added_event_payload(created_participant),
         )
         payload = created_participant.model_dump(mode="json")
-        payload["session"] = None
+        payload["session"] = session
         created.append(payload)
     return created
 
