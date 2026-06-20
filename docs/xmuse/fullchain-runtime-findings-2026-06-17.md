@@ -31,6 +31,14 @@ truth, merge truth, live MemoryOS proof, or full closure.
   verdict, and pending final-action hold. This is harness/runtime-loop proof
   only; it is not production readiness, GitHub review truth, live MemoryOS
   proof, repeated soak, or full closure.
+- Loop 27r is post-PR140 main local runtime proof for the merged reusable
+  sentinel harness. From main head
+  `419f00d4cd4c8227a33302658608f9d9532f07b6`, the run waited for automatic
+  review trigger `inbox_9487fcb303564ded8f5fd395f53ba6a8` to reach `read`,
+  then approved proposal `prop_e0e1eab878b4465c8eb5945c60894f5d`, dispatched
+  isolated docs execution, passed the gate, finalized persistent OpenCode
+  review, and stopped at pending final-action hold. This remains bounded
+  docs-only runtime proof, not production readiness or full closure.
 - Loop 26i/26j introduced a reusable local runtime driver at
   `scripts/run_fullchain_docs_sentinel.py` for the docs-only fullchain
   sentinel: Chat API + MCP + platform runner, durable groupchat,
@@ -5194,3 +5202,65 @@ Next boundary:
 - Land the harness update behind a small PR.
 - Continue using the wait-before-approval sentinel as the baseline fullchain
   probe for subsequent groupchat/execution changes.
+
+## 2026-06-20 Loop 27r Finding: Post-PR140 Main Confirms Wait-Before-Approval Sentinel
+
+Status: post-merge main runtime proof for the reusable sentinel harness.
+
+Boundary:
+
+```text
+phase=Phase 3 proposal review before dispatchable approval
+target=post-merge main sentinel waits for automatic proposal review before approving
+authority=GitHub PR/main CI facts + chat.db review_trigger inbox state + Chat API approval response + lane/review/final-action artifacts
+producer=Codex architect proposal emitted from completed collaboration run
+consumer=reusable fullchain sentinel driver and Chat API proposal approval path
+result=confirmed post-merge wait-then-approve path
+```
+
+Observed durable chain:
+
+- PR #140 merged as `419f00d4cd4c8227a33302658608f9d9532f07b6`.
+- PR CI run `27865014142` succeeded for head
+  `1e33f0273d08f83aa5a007b1af61883a4818e189`.
+- Main CI run `27865045744` succeeded for merge commit `419f00d`.
+- Runtime conversation `conv_758e55557d55489792da6b314c0ed12d` received the
+  docs-only sentinel demand.
+- Architect created collaboration run
+  `collab_32e88f4991b4424a99618853b6e928fa`.
+- Architect emitted proposal `prop_e0e1eab878b4465c8eb5945c60894f5d`.
+- Automatic review trigger
+  `inbox_9487fcb303564ded8f5fd395f53ba6a8` reached `status=read` before
+  approval, with review response message
+  `msg_b5412cab19c2455dbd1655df7ae408bc`.
+- Approval created resolution
+  `res_bd24e8deb99444589850c5f611b94315`.
+- Lane `loop_27r_post_pr140_main_sentinel_20260620T080409Z` reached
+  `awaiting_final_action` with `gate_passed=true`,
+  `review_decision=merge`, `review_delivery_mode=persistent`,
+  `persistent_review_degraded=false`,
+  `review_peer_cli_kind=opencode`, and
+  `review_peer_model=opencode-go/deepseek-v4-flash`.
+- Review task `rtask_6d7f18ac90b8473c9a827b4fa15eee2e` emitted finalized
+  verdict `verdict-merge-rtask_6d7f18ac90b8473c9a827b4fa15eee2e`.
+- Final-action hold `final-45abee1aa897` remained `pending`.
+- Cleanup reported no Chat API or MCP listener; recorded pid files no longer
+  resolved to live processes.
+
+Interpretation:
+
+- Loop 27r upgrades Loop 27q from candidate-branch runtime proof to
+  post-merge main runtime proof for the reusable sentinel harness.
+- The baseline sentinel now follows the intended sequence: proposal, automatic
+  review trigger, review read, approval, lane execution, independent review,
+  final-action hold.
+- This is still a docs-only sentinel shape. It does not prove production
+  readiness, repeated soak, live MemoryOS, GitHub review truth beyond inspected
+  PR/main check facts, full L8-L10 closure, or full L1-L11 closure.
+
+Next boundary:
+
+- Use this post-merge wait-before-approval sentinel as the baseline fullchain
+  probe before broader groupchat/execution changes.
+- Move the next implementation work back to Phase 1-3 product boundaries
+  rather than further harness patching unless a new runtime failure appears.

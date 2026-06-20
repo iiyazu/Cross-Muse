@@ -6908,6 +6908,110 @@ Classification:
 - This is harness/runtime-loop evidence, not production readiness, GitHub
   review truth, live MemoryOS proof, repeated soak, or full closure.
 
+## 2026-06-20 Loop 27r: Post-PR140 Main Sentinel Rerun
+
+Target:
+
+```text
+Verify the merged reusable fullchain sentinel harness on post-PR140 main.
+```
+
+Runtime command:
+
+```bash
+uv run python scripts/run_fullchain_docs_sentinel.py \
+  --run-root .goal-runs/2026-06-20/loop-27r-post-pr140-main-sentinel-20260620T080409Z/runtime \
+  --execution-worktree /tmp/loop-27r-post-pr140-main-sentinel-20260620T080409Z-exec \
+  --feature-id loop_27r_post_pr140_main_sentinel_20260620T080409Z \
+  --proposal-timeout-s 900 \
+  --proposal-review-timeout-s 900 \
+  --lane-timeout-s 1200 \
+  --max-hours 0.75
+```
+
+Git / server context:
+
+```text
+pr_140=https://github.com/iiyazu/Cross-Muse/pull/140
+pr_140_head=1e33f0273d08f83aa5a007b1af61883a4818e189
+pr_140_merge_commit=419f00d4cd4c8227a33302658608f9d9532f07b6
+pr_140_ci=27865014142 success
+main_ci=27865045744 success
+```
+
+Durable chain:
+
+```text
+conversation_id=conv_758e55557d55489792da6b314c0ed12d
+collaboration_run=collab_32e88f4991b4424a99618853b6e928fa
+proposal_id=prop_e0e1eab878b4465c8eb5945c60894f5d
+review_trigger_inbox=inbox_9487fcb303564ded8f5fd395f53ba6a8
+review_trigger_status=read
+review_trigger_responded_message_id=msg_b5412cab19c2455dbd1655df7ae408bc
+resolution_id=res_bd24e8deb99444589850c5f611b94315
+feature_id=loop_27r_post_pr140_main_sentinel_20260620T080409Z
+lane_status=awaiting_final_action
+gate_passed=true
+review_task=rtask_6d7f18ac90b8473c9a827b4fa15eee2e
+review_verdict=verdict-merge-rtask_6d7f18ac90b8473c9a827b4fa15eee2e
+review_decision=merge
+review_delivery_mode=persistent
+persistent_review_degraded=false
+review_peer_cli_kind=opencode
+review_peer_model=opencode-go/deepseek-v4-flash
+final_action_hold=final-45abee1aa897 pending
+```
+
+Execution artifact:
+
+```text
+/tmp/loop-27r-post-pr140-main-sentinel-20260620T080409Z-exec/docs/xmuse/loop_27r_post_pr140_main_sentinel_20260620T080409Z.md
+```
+
+Driver success checks:
+
+```text
+single_related_lane_graph_proposal=true
+approved_proposal_accepted=true
+execution_peer_handoff_not_degraded=true
+lane_awaiting_final_action=true
+gate_passed=true
+isolated_note_matches=true
+opencode_review_peer_recorded=true
+review_verdict_finalized=true
+review_task_verdict_emitted=true
+final_action_hold_pending=true
+proposal_has_no_review_runtime=true
+```
+
+Runtime artifact paths:
+
+```text
+.goal-runs/2026-06-20/loop-27r-post-pr140-main-sentinel-20260620T080409Z/runtime/loop_driver_artifacts/proposal_review_trigger.json
+.goal-runs/2026-06-20/loop-27r-post-pr140-main-sentinel-20260620T080409Z/runtime/loop_driver_artifacts/approval_response.json
+.goal-runs/2026-06-20/loop-27r-post-pr140-main-sentinel-20260620T080409Z/runtime/loop_driver_artifacts/success_checks.json
+.goal-runs/2026-06-20/loop-27r-post-pr140-main-sentinel-20260620T080409Z/runtime/review_plane.json
+.goal-runs/2026-06-20/loop-27r-post-pr140-main-sentinel-20260620T080409Z/runtime/final_actions.json
+.goal-runs/2026-06-20/loop-27r-post-pr140-main-sentinel-20260620T080409Z/runtime/chat.db
+```
+
+Cleanup:
+
+```text
+chat_port_listening=false
+mcp_port_listening=false
+service process pid files no longer resolve to live processes
+```
+
+Classification:
+
+- Post-merge main local runtime proof that the PR #140 sentinel harness waits
+  for automatic proposal review, approves only after the trigger is read, and
+  then reaches isolated execution, gate, persistent OpenCode review, and
+  final-action hold for this docs-only sentinel shape.
+- This is not production readiness, repeated soak, GitHub review truth, live
+  MemoryOS proof, full L8-L10 closure, or full L1-L11 closure.
+
 ## 2026-06-20 Loop 27o: Pending Proposal Review Approval Guard Candidate
 
 Target:
