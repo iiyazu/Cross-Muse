@@ -4445,3 +4445,61 @@ Remaining caveats:
 - It does not prove restart/session restore, multi-turn natural groupchat,
   groupchat proposal production, production readiness, live MemoryOS, GitHub
   review truth, or full closure.
+
+## 2026-06-20 Loop 27c Finding: Dynamic Member Add Had No Session Binding
+
+Status: local candidate branch repair, not server verified.
+
+Boundary:
+
+```text
+phase=Phase 2 natural agents groupchat kernel
+target=dynamic member add creates a durable session binding restored after restart
+authority=participants + god_sessions.json
+producer=POST /api/chat/conversations/{conversation_id}/participants
+consumer=GET /api/chat/conversations/{conversation_id}/participants after app restart
+failure_boundary=session identity
+```
+
+Observed before repair:
+
+- Post-PR127 dynamic member add returned `session: null`.
+- `god_sessions.json` contained no session for the new participant.
+- A restarted Chat API read of `/participants` still returned the dynamic
+  member with `session: null`.
+
+Candidate repair:
+
+- Added `PeerChatService.ensure_participant_session()` as the public wrapper
+  around the existing durable peer session creation path.
+- The dynamic participant API path now creates or restores a GOD session before
+  recording the roster event.
+- The API response returns the session summary, and a restarted participant read
+  restores the same `god_session_id`.
+
+Post-repair evidence:
+
+```text
+add_session.runtime=opencode
+add_session.provider_id=opencode
+add_session.profile_id=review
+registry_session_count_for_dynamic=1
+restarted listed_participant.session.god_session_id == add_session.god_session_id
+```
+
+Validation so far:
+
+```text
+uv run pytest tests/xmuse/test_peer_chat_api.py tests/xmuse/test_peer_chat_service.py tests/xmuse/test_package_boundaries.py -q
+uv run ruff check src/xmuse_core/chat/peer_service.py xmuse/chat_api.py tests/xmuse/test_peer_chat_api.py
+git diff --check
+test ! -e xmuse/__init__.py
+```
+
+Remaining caveats:
+
+- This proves durable GOD session binding, not provider-native resume into a
+  live CLI process.
+- It does not prove multi-turn natural groupchat, groupchat proposal
+  production, production readiness, live MemoryOS, GitHub review truth, or full
+  closure.

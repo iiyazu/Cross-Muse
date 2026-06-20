@@ -6900,6 +6900,66 @@ produces a durable roster event and the Chat API timeline exposes it. This is
 not production readiness, natural peer-GOD groupchat completion, MemoryOS
 proof, GitHub review truth, or full closure.
 
+## 2026-06-20 Loop 27c: Dynamic Member Session Binding Candidate
+
+Purpose: close the Phase 2 gap where dynamically adding a groupchat member
+created a participant and roster event but no durable GOD session binding.
+
+Workspace and authority:
+
+```text
+repo_worktree=/tmp/xmuse-postmerge-layered-prompt-main
+branch=codex/dynamic-member-session-binding
+base_head_sha=88602453fed774e1ceb2f3492b28879016c241db
+authority=participants + god_sessions.json
+producer=POST /api/chat/conversations/{conversation_id}/participants
+consumer=GET /api/chat/conversations/{conversation_id}/participants after app restart
+proof_level=local_runtime_proof candidate
+```
+
+Pre-fix probe from post-PR127 main:
+
+```text
+add_status=201
+add_session=None
+registry_session_count_for_dynamic=0
+listed_dynamic[0].session=None
+```
+
+Candidate repair:
+
+```text
+src/xmuse_core/chat/peer_service.py
+xmuse/chat_api.py
+tests/xmuse/test_peer_chat_api.py
+```
+
+Post-fix probe:
+
+```text
+add_status=201
+add_session.god_session_id=god-...
+add_session.runtime=opencode
+add_session.provider_id=opencode
+add_session.profile_id=review
+registry_session_count_for_dynamic=1
+restarted GET /participants returns same god_session_id
+```
+
+Focused validation so far:
+
+```bash
+uv run pytest tests/xmuse/test_peer_chat_api.py tests/xmuse/test_peer_chat_service.py tests/xmuse/test_package_boundaries.py -q
+uv run ruff check src/xmuse_core/chat/peer_service.py xmuse/chat_api.py tests/xmuse/test_peer_chat_api.py
+git diff --check
+test ! -e xmuse/__init__.py
+```
+
+Classification: local candidate proof that dynamic member add now creates a
+durable session binding and the restarted participant read model restores it.
+This is not provider-native resume proof, natural peer-GOD completion,
+production readiness, live MemoryOS, GitHub review truth, or full closure.
+
 ## 2026-06-20 Loop 26o: Post-PR115 Collaboration Lifecycle Main Check
 
 Purpose: verify the PR #115 collaboration lifecycle repair after it landed on

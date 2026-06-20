@@ -773,6 +773,27 @@ class PeerChatService:
             ],
         }
 
+    def ensure_participant_session(
+        self,
+        *,
+        conversation_id: str,
+        participant: Participant,
+        registry_path: Path | None = None,
+    ) -> dict[str, Any]:
+        if not self._conversation_exists(conversation_id):
+            raise PeerChatError("unknown_conversation", conversation_id)
+        if participant.conversation_id != conversation_id:
+            raise PeerChatError("participant_conversation_mismatch", participant.participant_id)
+        if participant.status != "active":
+            raise PeerChatError("participant_inactive", participant.participant_id)
+        registry = GodSessionRegistry(registry_path or self._base_dir / "god_sessions.json")
+        session = self._ensure_peer_god_session(
+            conversation_id=conversation_id,
+            participant=participant,
+            registry=registry,
+        )
+        return self._session_summary(session)
+
     def fork_participant(
         self,
         *,
