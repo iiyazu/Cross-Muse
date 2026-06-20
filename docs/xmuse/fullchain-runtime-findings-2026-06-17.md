@@ -5315,3 +5315,49 @@ Next boundary:
 - After merge, rerun a natural groupchat or sentinel path that includes a
   restarted OpenCode participant to upgrade this from focused provider proof
   to main fullchain evidence.
+
+## 2026-06-20 Loop 28b Finding: Post-PR142 Main Provider Session Binding Holds
+
+Status: post-merge main focused runtime proof for Phase 2 provider-native
+session continuity.
+
+Boundary:
+
+```text
+phase=Phase 2 natural groupchat session continuity
+target=confirm merged native OpenCode provider session persistence and resume
+authority=GitHub PR/main CI facts + god_sessions.json provider binding fields + real OpenCode stdout sessionID artifacts
+producer=real OpenCode persistent shim result artifacts
+consumer=native GodSessionLayer restart path + OpenCodeLauncher persistent command
+result=confirmed for one focused two-turn provider probe from main
+```
+
+Observed runtime chain:
+
+- PR #142 merged as `2fde89eda05b6a34da9364bb0b9a426c1c0749b0`.
+- PR CI run `27865756181` and post-merge main CI run `27865780027` succeeded.
+- The post-merge focused probe used
+  `.goal-runs/2026-06-20/loop-28b-post-pr142-main-opencode-session-binding-20260620T083641Z`.
+- First native OpenCode turn returned provider session
+  `ses_11bd29d58ffe2SlCF666g6EGe2`.
+- `god_sessions.json` persisted that value as
+  `provider_session_kind=opencode_session` with
+  `provider_binding_status=active`.
+- After aborting the local shim and creating a fresh `GodSessionLayer`, the
+  same `god_session_id=god-439c97c471694fd2a70db80c515ff7aa` was restored.
+- The second real OpenCode turn used the persisted session id; the probe
+  recorded `second_turn_reused_provider_session=true` and
+  `second_stdout_contains_session_id=true`.
+
+Interpretation:
+
+- Loop 28b upgrades Loop 28a from candidate-branch focused proof to
+  post-merge main focused proof for native OpenCode provider-session binding.
+- This still does not prove the full natural groupchat -> proposal -> lane
+  path resumes provider-native OpenCode sessions after service restart.
+
+Next boundary:
+
+- Use a natural groupchat or sentinel path that includes a restarted OpenCode
+  participant to connect this provider-session proof back into the larger
+  Phase 2/3 chain.

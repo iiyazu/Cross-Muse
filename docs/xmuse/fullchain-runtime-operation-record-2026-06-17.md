@@ -7068,6 +7068,68 @@ Caveats:
 - This does not prove live MemoryOS, production readiness, repeated soak,
   GitHub review truth, full L8-L10 closure, or full L1-L11 closure.
 
+## 2026-06-20 Loop 28b: Post-PR142 Main OpenCode Provider Session Binding
+
+Purpose: rerun the focused native OpenCode provider-session probe from
+post-merge main after PR #142 landed.
+
+Workspace and authority:
+
+```text
+repo_worktree=/tmp/xmuse-goal-main-20260620
+branch=codex/loop28b-post-pr142-provider-session-evidence
+base_head_sha=2fde89eda05b6a34da9364bb0b9a426c1c0749b0
+run_root=.goal-runs/2026-06-20/loop-28b-post-pr142-main-opencode-session-binding-20260620T083641Z
+registry=.goal-runs/2026-06-20/loop-28b-post-pr142-main-opencode-session-binding-20260620T083641Z/runtime/god_sessions.json
+proof_artifact=.goal-runs/2026-06-20/loop-28b-post-pr142-main-opencode-session-binding-20260620T083641Z/runtime-proof.json
+```
+
+GitHub server facts:
+
+```text
+pr_142=https://github.com/iiyazu/Cross-Muse/pull/142
+pr_142_head=caf00935295d7c8c33936ce5132fff53c64dd1fc
+pr_142_merge_commit=2fde89eda05b6a34da9364bb0b9a426c1c0749b0
+pr_142_ci=27865756181 success
+main_ci=27865780027 success
+```
+
+Runtime command shape:
+
+```bash
+uv run python - <<'PY'
+# post-merge focused runtime probe:
+# 1. spawn native GodSessionLayer with OpenCodeLauncher from main;
+# 2. send one real OpenCode turn;
+# 3. persist returned opencode_session_id into god_sessions.json;
+# 4. abort the local shim;
+# 5. create a fresh GodSessionLayer from the same registry;
+# 6. send a second real OpenCode turn through --session-id.
+PY
+```
+
+Durable/provider evidence:
+
+```text
+god_session_id=god-439c97c471694fd2a70db80c515ff7aa
+provider_session_id=ses_11bd29d58ffe2SlCF666g6EGe2
+same_god_session_after_restart=true
+provider_binding_active=true
+provider_binding_resumed_in_registry=true
+second_turn_reused_provider_session=true
+second_stdout_contains_session_id=true
+```
+
+Classification: post-merge main focused runtime proof that native OpenCode
+provider session binding persists and resumes across local GOD layer restart.
+
+Caveats:
+
+- This is not fullchain groupchat-to-lane proof; it exercises the provider
+  session continuity boundary directly.
+- This does not prove live MemoryOS, production readiness, repeated soak,
+  GitHub review truth, full L8-L10 closure, or full L1-L11 closure.
+
 ## 2026-06-20 Loop 27o: Pending Proposal Review Approval Guard Candidate
 
 Target:
