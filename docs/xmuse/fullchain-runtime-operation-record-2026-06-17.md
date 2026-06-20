@@ -7197,6 +7197,115 @@ Caveats:
   group discussion, proposal production, production readiness, live MemoryOS,
   GitHub review truth, or full closure.
 
+## 2026-06-20 Loop 27h: Natural Groupchat Proposal Fullchain Probe
+
+Purpose: extend Phase 2 dynamic-member continuity into a Phase 3 natural
+groupchat-produced proposal consumed by the execution harness.
+
+Runtime command shape:
+
+```bash
+uv run python - <<'PY'
+# bounded probe driver:
+# 1. start Chat API, MCP, and xmuse.platform_runner --peer-chat
+# 2. create human, Codex architect, Codex execute, and OpenCode review members
+# 3. post one human @architect demand requiring peer_consensus collaboration
+# 4. let architect create a structured collaboration request to @execute/@review
+# 5. wait for durable peer responses and collaboration callback
+# 6. let architect emit one lane_graph proposal with collaboration reference
+# 7. approve the proposal and wait for isolated execution, gate, persistent
+#    OpenCode review, and final-action hold
+# 8. snapshot durable state and clean up services
+PY
+```
+
+Authority and artifacts:
+
+```text
+repo_worktree=/tmp/xmuse-postmerge-layered-prompt-main
+branch=codex/natural-groupchat-proposal-probe
+base_head=9b76b8cece4ea20d75bb0ed875fb602bdd363265
+run_root=/tmp/xmuse-postmerge-layered-prompt-main/.goal-runs/2026-06-20/loop-27h-natural-groupchat-proposal-20260620T045459Z
+summary=.goal-runs/2026-06-20/loop-27h-natural-groupchat-proposal-20260620T045459Z/loop_driver_artifacts/summary.json
+final_snapshot=.goal-runs/2026-06-20/loop-27h-natural-groupchat-proposal-20260620T045459Z/loop_driver_artifacts/final_snapshot.json
+lane=.goal-runs/2026-06-20/loop-27h-natural-groupchat-proposal-20260620T045459Z/loop_driver_artifacts/lane.json
+proposal=.goal-runs/2026-06-20/loop-27h-natural-groupchat-proposal-20260620T045459Z/loop_driver_artifacts/proposal.json
+timeline=.goal-runs/2026-06-20/loop-27h-natural-groupchat-proposal-20260620T045459Z/loop_driver_artifacts/timeline.json
+execution_worktree=/tmp/loop-27h-natural-groupchat-proposal-20260620T045459Z-exec
+```
+
+Runtime ports:
+
+```text
+chat_port=38749
+mcp_port=36325
+```
+
+Durable ids:
+
+```text
+conversation_id=conv_2919a995464c41a9846ff81e2dd7bfda
+collaboration_run=collab_ecd70e7a9edb4719ae8ea881b4f88177
+proposal_id=prop_08dd65de7b444c82b2e93a8024424ccf
+feature_id=loop_27h_natural_groupchat_proposal_20260620t045459z
+execution_note=docs/xmuse/loop_27h_natural_groupchat_proposal_20260620t045459z.md
+```
+
+Observed durable state:
+
+```text
+collaboration_run.status=done
+collaboration_run.orchestration_mode=peer_consensus
+collaboration_run.targets=["@execute", "@review"]
+collaboration_run.callback_target=@architect
+collaboration_response_counts=[2]
+proposal_count=1
+proposal_type=lane_graph
+proposal.references=["collaboration:collab_ecd70e7a9edb4719ae8ea881b4f88177"]
+lane.status=awaiting_final_action
+gate_passed=true
+review_decision=merge
+review_delivery_mode=persistent
+persistent_review_degraded=false
+review_peer_cli_kind=opencode
+review_peer_model=opencode-go/deepseek-v4-flash
+execution_note_matches=true
+```
+
+Execution artifact:
+
+```text
+path=/tmp/loop-27h-natural-groupchat-proposal-20260620T045459Z-exec/docs/xmuse/loop_27h_natural_groupchat_proposal_20260620t045459z.md
+content=Natural groupchat proposal loop_27h_natural_groupchat_proposal_20260620t045459z reached isolated execution.
+```
+
+Observed caveats:
+
+```text
+architect collaboration-request latency.delivery_mode=failed
+architect collaboration-request latency.degraded_reason=peer_response_timeout
+execute collaboration response latency.degraded_reason=peer_no_inbox_writeback_message
+```
+
+Cleanup:
+
+```text
+chat_port_listening_after_cleanup=false
+mcp_port_listening_after_cleanup=false
+```
+
+Classification: bounded local runtime proof that a natural Codex/OpenCode
+peer-consensus groupchat can produce a durable proposal that the execution
+harness consumes through isolated execution, gate, persistent OpenCode review,
+and final-action hold.
+
+Caveats:
+
+- This remains docs-only local runtime proof, not production readiness.
+- This does not prove provider-native OpenCode resume, live MemoryOS, GitHub
+  review truth, repeated stability, broad code-change completion, or full
+  closure.
+
 ## 2026-06-20 Loop 26o: Post-PR115 Collaboration Lifecycle Main Check
 
 Purpose: verify the PR #115 collaboration lifecycle repair after it landed on

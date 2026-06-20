@@ -6,6 +6,17 @@ truth, merge truth, live MemoryOS proof, or full closure.
 
 ## Current Evidence Summary
 
+- Loop 27h is the strongest local Phase 2/3 proof so far for a natural
+  groupchat-produced proposal. From main head
+  `9b76b8cece4ea20d75bb0ed875fb602bdd363265`, the run started real Chat API,
+  MCP, and `xmuse.platform_runner --peer-chat`, accepted a human `@architect`
+  demand, completed one `peer_consensus` collaboration with Codex execute and
+  OpenCode review, emitted one durable `lane_graph` proposal, approved it,
+  dispatched isolated docs execution, passed the gate, completed persistent
+  OpenCode review, and held the lane at `awaiting_final_action`. This is
+  bounded local runtime proof only, not production readiness, GitHub review
+  truth, live MemoryOS, provider-native OpenCode resume, repeated soak, or full
+  closure.
 - Loop 26i/26j introduced a reusable local runtime driver at
   `scripts/run_fullchain_docs_sentinel.py` for the docs-only fullchain
   sentinel: Chat API + MCP + platform runner, durable groupchat,
@@ -4662,3 +4673,71 @@ Remaining caveats:
 - This is not groupchat-produced proposal or blueprint/lane execution proof.
 - It does not prove production readiness, live MemoryOS, GitHub review truth,
   natural peer-GOD groupchat completion, or full closure.
+
+## 2026-06-20 Loop 27h Finding: Natural Groupchat Proposal Reaches Final-Action Hold
+
+Status: local runtime probe; no code repair needed for this boundary.
+
+Boundary:
+
+```text
+phase=Phase 2/3 natural groupchat to execution harness
+target=natural Codex/OpenCode peer consensus produces a durable proposal consumed by lane execution and review
+authority=chat.db collaboration/proposal records + feature_lanes projection + isolated execution worktree + gate/review artifacts
+producer=human @architect demand + Codex architect + Codex execute + OpenCode review + Chat API approval
+consumer=platform runner lane execution/gate/persistent OpenCode review/final-action hold
+failure_boundary=none found for the bounded docs-only proposal chain
+```
+
+Observed:
+
+- The probe ran from worktree `/tmp/xmuse-postmerge-layered-prompt-main` at
+  `9b76b8cece4ea20d75bb0ed875fb602bdd363265`.
+- Real Chat API, MCP, and `xmuse.platform_runner --peer-chat` services started
+  under an isolated runtime root.
+- Human mentioned only `@architect`.
+- Codex architect created collaboration run
+  `collab_ecd70e7a9edb4719ae8ea881b4f88177` with targets `@execute` and
+  `@review`, callback target `@architect`, and `orchestration_mode=peer_consensus`.
+- Codex execute recorded the requested executable feasibility response.
+- OpenCode review recorded a low-risk/no-objection review response.
+- The collaboration run reached `status=done` with two responses.
+- Architect emitted proposal `prop_08dd65de7b444c82b2e93a8024424ccf` of type
+  `lane_graph`, with reference
+  `collaboration:collab_ecd70e7a9edb4719ae8ea881b4f88177`.
+- After approval, feature
+  `loop_27h_natural_groupchat_proposal_20260620t045459z` reached
+  `status=awaiting_final_action`.
+- The lane recorded `gate_passed=true`, `review_decision=merge`,
+  `review_delivery_mode=persistent`, `persistent_review_degraded=false`,
+  `review_peer_cli_kind=opencode`, and
+  `review_peer_model=opencode-go/deepseek-v4-flash`.
+- The isolated execution note matched the required fixed sentence.
+- Cleanup found no Chat API or MCP listeners.
+
+Primary artifact:
+
+```text
+/tmp/xmuse-postmerge-layered-prompt-main/.goal-runs/2026-06-20/loop-27h-natural-groupchat-proposal-20260620T045459Z/loop_driver_artifacts/summary.json
+```
+
+Classification:
+
+- No implementation change is needed for this bounded natural groupchat
+  proposal-to-final-hold boundary.
+- This strengthens Phase 3 evidence from reusable sentinel runs to a natural
+  peer-consensus proposal path, while still staying inside a docs-only isolated
+  lane.
+
+Remaining caveats:
+
+- The architect collaboration-request turn recorded `delivery_mode=failed` and
+  `degraded_reason=peer_response_timeout` even though the durable
+  collaboration request was created and later consumed.
+- The execute collaboration-response turn recorded
+  `degraded_reason=peer_no_inbox_writeback_message` because a structured
+  `chat_record_collaboration_response` did not also create a chat message.
+- This is not provider-native OpenCode resume proof.
+- This is not repeated stability, broad non-docs code-change proof, production
+  readiness, live MemoryOS, GitHub review truth, natural peer-GOD groupchat
+  completion, or full closure.
