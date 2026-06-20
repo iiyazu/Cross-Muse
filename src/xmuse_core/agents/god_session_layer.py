@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from hashlib import sha256
+from inspect import Parameter, signature
 from pathlib import Path
 
 from xmuse_core.agents.god_session_registry import GodSessionRecord, GodSessionRegistry
@@ -42,7 +43,14 @@ class GodSessionLayer:
         runtime = _runtime_value(agent.runtime)
         launcher = _launcher_for_runtime(self._launchers, agent.runtime)
         _assert_launcher_supports_persistent_sessions(launcher, runtime)
-        command = _build_persistent_command(launcher, role, worktree)
+        command = _build_persistent_command(
+            launcher,
+            role,
+            worktree,
+            provider_session_id=(
+                _active_provider_session_id(live.record) if live is not None else None
+            ),
+        )
         env = launcher.build_env(role)
         session = await LocalSession.spawn(command, env=env)
         if live is not None:
@@ -124,7 +132,12 @@ class GodSessionLayer:
             runtime = _runtime_value(agent.runtime)
             launcher = _launcher_for_runtime(self._launchers, agent.runtime)
             _assert_launcher_supports_persistent_sessions(launcher, runtime)
-            command = _build_persistent_command(launcher, role, worktree)
+            command = _build_persistent_command(
+                launcher,
+                role,
+                worktree,
+                provider_session_id=_active_provider_session_id(live.record),
+            )
             env = launcher.build_env(role)
             session = await LocalSession.spawn(command, env=env)
             self._live_sessions[live.record.god_session_id] = LiveGodSession(
@@ -213,7 +226,12 @@ class GodSessionLayer:
         runtime = _runtime_value(agent.runtime)
         launcher = _launcher_for_runtime(self._launchers, agent.runtime)
         _assert_launcher_supports_persistent_sessions(launcher, runtime)
-        command = _build_persistent_command(launcher, role, worktree)
+        command = _build_persistent_command(
+            launcher,
+            role,
+            worktree,
+            provider_session_id=_active_provider_session_id(record),
+        )
         env = launcher.build_env(role)
         session = await LocalSession.spawn(command, env=env)
         self._live_sessions[record.god_session_id] = LiveGodSession(
@@ -377,7 +395,9 @@ class GodSessionLayer:
                 f"god_session_id '{god_session_id}' is registered but has no live "
                 "transport attached in this process"
             )
-        return await live.session.receive()
+        message = await live.session.receive()
+        self._persist_provider_binding_from_message(live, message)
+        return message
 
     async def abort_session(self, god_session_id: str) -> None:
         live = self._live_sessions.get(god_session_id)
@@ -588,6 +608,37 @@ class GodSessionLayer:
             return False
         return any(existing is None and expected is not None for existing, expected in pairs)
 
+    def _persist_provider_binding_from_message(
+        self,
+        live: LiveGodSession,
+        message: object,
+    ) -> None:
+        provider_session_id = _opencode_provider_session_id_from_message(
+            live.record,
+            message,
+        )
+        if provider_session_id is None:
+            return
+        if (
+            live.record.provider_session_id == provider_session_id
+            and live.record.provider_session_kind == "opencode_session"
+            and live.record.provider_binding_status == "active"
+            and live.record.provider_binding_failure_reason is None
+        ):
+            return
+        record = self._registry.update_provider_binding(
+            live.record.god_session_id,
+            provider_session_id=provider_session_id,
+            provider_session_kind="opencode_session",
+            provider_binding_status="active",
+            provider_binding_failure_reason=None,
+        )
+        self._live_sessions[live.record.god_session_id] = LiveGodSession(
+            record=record,
+            session=live.session,
+            worktree=live.worktree,
+        )
+
 
 def _runtime_value(runtime: RuntimeKey) -> str:
     return runtime.value if isinstance(runtime, AgentRuntime) else str(runtime)
@@ -695,8 +746,55 @@ def _build_persistent_command(
     launcher: object,
     role: str,
     worktree: Path,
+    *,
+    provider_session_id: str | None = None,
 ) -> list[str]:
     builder = getattr(launcher, "build_persistent_command", None)
     if callable(builder):
+        if provider_session_id and _builder_accepts_provider_session_id(builder):
+            return list(
+                builder(role, worktree, provider_session_id=provider_session_id)
+            )
         return list(builder(role, worktree))
     raise RuntimeError("persistent launcher is missing build_persistent_command")
+
+
+def _builder_accepts_provider_session_id(builder: object) -> bool:
+    try:
+        parameters = signature(builder).parameters
+    except (TypeError, ValueError):
+        return False
+    if "provider_session_id" in parameters:
+        return True
+    return any(
+        parameter.kind == Parameter.VAR_KEYWORD
+        for parameter in parameters.values()
+    )
+
+
+def _active_provider_session_id(record: GodSessionRecord) -> str | None:
+    if record.provider_binding_status != "active":
+        return None
+    if record.provider_session_kind != "opencode_session":
+        return None
+    value = record.provider_session_id
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
+def _opencode_provider_session_id_from_message(
+    record: GodSessionRecord,
+    message: object,
+) -> str | None:
+    if record.runtime != AgentRuntime.OPENCODE.value:
+        return None
+    artifacts = getattr(message, "artifacts", None)
+    if not isinstance(artifacts, dict):
+        return None
+    value = artifacts.get("opencode_session_id")
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped or None
