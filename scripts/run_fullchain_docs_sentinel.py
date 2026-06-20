@@ -21,6 +21,7 @@ from xmuse_core.chat.store import ChatStore
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 OPENCODE_MODEL = "opencode-go/deepseek-v4-flash"
+DEFAULT_PEER_CHAT_POST_WRITEBACK_GRACE_S = 8.0
 
 
 def main() -> int:
@@ -43,6 +44,7 @@ def main() -> int:
         mcp_port=mcp_port,
         feature_id=feature_id,
         note_path=note_path,
+        peer_chat_post_writeback_grace_s=args.peer_chat_post_writeback_grace_s,
     )
     _write_json(artifacts / "commands.json", commands)
     (run_root / "commands.txt").write_text(
@@ -65,6 +67,7 @@ def main() -> int:
                 chat_port=chat_port,
                 logs_dir=run_root / "logs",
                 max_hours=args.max_hours,
+                peer_chat_post_writeback_grace_s=args.peer_chat_post_writeback_grace_s,
             )
         )
 
@@ -198,6 +201,15 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--max-hours", type=float, default=0.75)
     parser.add_argument("--architect-model", default="gpt-5.4")
     parser.add_argument("--executor-model", default="gpt-5.4-mini")
+    parser.add_argument(
+        "--peer-chat-post-writeback-grace-s",
+        type=float,
+        default=DEFAULT_PEER_CHAT_POST_WRITEBACK_GRACE_S,
+        help=(
+            "seconds to keep a peer-chat turn open after durable MCP writeback "
+            "so provider-native result artifacts can be consumed"
+        ),
+    )
     return parser.parse_args()
 
 
@@ -209,6 +221,7 @@ def _commands_payload(
     mcp_port: int,
     feature_id: str,
     note_path: str,
+    peer_chat_post_writeback_grace_s: float,
 ) -> dict[str, Any]:
     return {
         "run_root": str(run_root),
@@ -218,6 +231,7 @@ def _commands_payload(
         "feature_id": feature_id,
         "note_path": note_path,
         "expected_note_content": _expected_note_content(feature_id),
+        "peer_chat_post_writeback_grace_s": peer_chat_post_writeback_grace_s,
     }
 
 
@@ -275,6 +289,7 @@ def _start_runner(
     chat_port: int,
     logs_dir: Path,
     max_hours: float,
+    peer_chat_post_writeback_grace_s: float,
 ) -> subprocess.Popen[bytes]:
     logs_dir.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
@@ -301,7 +316,7 @@ def _start_runner(
             "--no-auto-merge",
             "--require-final-action-approval",
             "--peer-chat-post-writeback-grace-s",
-            "1.0",
+            str(peer_chat_post_writeback_grace_s),
         ],
         env=env,
         stdout_path=logs_dir / "platform_runner.log",

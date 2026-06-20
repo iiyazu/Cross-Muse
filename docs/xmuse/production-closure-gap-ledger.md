@@ -7,18 +7,27 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
 
 ## Current Proof Boundary
 
-- Latest main inspected: `4919e9807d074069190d71127c6fbf10408f7d19`
-  (PR #141 docs-only Loop 27r evidence merge). Latest post-merge main
-  reusable sentinel behavior proof remains Loop 27r from the PR #140 product
-  head `419f00d4cd4c8227a33302658608f9d9532f07b6`. Loop 27r waited for
-  automatic proposal review trigger
+- Latest main inspected: `363229d3296d35e5da0d3533008a29b19685c720`
+  (PR #143 docs evidence merge). Latest focused dynamic-member OpenCode
+  provider-resume proof is Loop 28e from that main head: Chat API, MCP, and
+  `xmuse.platform_runner --peer-chat` ran with a dynamically added OpenCode
+  reviewer, two human mentions, and a runner restart between turns. Both turns
+  produced durable writebacks with `degraded_reason=null`, the same
+  `god_session_id` restored after restart, and the second turn reused
+  `provider_session_id=ses_11bbe39bdffeIgPpauTAgyu7Im` with
+  `provider_binding_status=active`. This closes the focused dynamic-member
+  provider-resume boundary as local runtime proof only. It does not prove
+  fullchain demand completion, production readiness, live MemoryOS, GitHub
+  review truth, live lane merge truth, repeated soak, or full closure.
+- Latest post-merge main reusable sentinel behavior proof remains Loop 27r from
+  the PR #140 product head `419f00d4cd4c8227a33302658608f9d9532f07b6`. Loop
+  27r waited for automatic proposal review trigger
   `inbox_9487fcb303564ded8f5fd395f53ba6a8` to reach `read` before approval,
   then reached isolated docs execution, gate, persistent OpenCode review, and
   final-action hold. This is bounded post-merge main runtime proof for the
-  docs-only sentinel shape; it does not prove production readiness,
-  provider-native OpenCode resume on main/fullchain, live MemoryOS, GitHub
-  review truth beyond inspected PR/main check facts, live lane merge truth,
-  repeated soak, or full closure.
+  docs-only sentinel shape; it does not prove production readiness, live
+  MemoryOS, GitHub review truth beyond inspected PR/main check facts, live lane
+  merge truth, repeated soak, or full closure.
 - Latest provider-native OpenCode session evidence: PR #142 merged native
   provider-session binding to main as
   `2fde89eda05b6a34da9364bb0b9a426c1c0749b0`, with successful PR CI

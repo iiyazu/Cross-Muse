@@ -6,6 +6,26 @@ truth, merge truth, live MemoryOS proof, or full closure.
 
 ## Current Evidence Summary
 
+- Loop 28c exposed a real dynamic-member provider-resume boundary on main head
+  `363229d3296d35e5da0d3533008a29b19685c720`: the dynamic OpenCode reviewer
+  wrote durable chat replies in two turns across a runner restart, and the
+  same GOD session restored, but the scheduler recorded
+  `peer_writeback_before_provider_result` and never persisted a native
+  OpenCode `provider_session_id`. The failure was not provider writeback; it
+  was the peer scheduler cancelling the provider result before artifacts could
+  be consumed.
+- Loop 28d confirmed the causal hypothesis by rerunning the same dynamic
+  OpenCode reviewer/restart shape with a 30 second post-writeback grace window.
+  The run persisted `provider_session_id=ses_11bc210a4ffe21N9s1zThP0MwM`,
+  restored the same GOD session after restart, and reused the same native
+  OpenCode session on turn 2 with no degraded reason.
+- Loop 28e reran the same focused path with the target default 8 second grace
+  window. The run persisted
+  `provider_session_id=ses_11bbe39bdffeIgPpauTAgyu7Im`, restored the same GOD
+  session, reused the same native OpenCode session on turn 2, and recorded no
+  degraded reason. This closes the focused dynamic-member OpenCode resume
+  boundary as local runtime proof only; it does not prove fullchain completion,
+  production readiness, GitHub review truth, live MemoryOS, or full closure.
 - Loop 27h is the strongest local Phase 2/3 proof so far for a natural
   groupchat-produced proposal. From main head
   `9b76b8cece4ea20d75bb0ed875fb602bdd363265`, the run started real Chat API,
