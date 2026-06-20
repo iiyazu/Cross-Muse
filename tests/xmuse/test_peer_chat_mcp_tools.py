@@ -1036,6 +1036,22 @@ def test_mcp_collaboration_tools_support_veto_and_dispatch_gate(
         conversation_id=conv.id,
         participant_id=review.participant_id,
     )
+    execute = participants.add(
+        conversation_id=conv.id,
+        role="execute",
+        display_name="Execute GOD",
+        cli_kind="codex",
+        model="gpt-5.5",
+    )
+    GodSessionRegistry(tmp_path / "god_sessions.json").create(
+        role="execute",
+        agent_name="Execute GOD",
+        runtime="codex",
+        session_address=f"xmuse://{conv.id}/{execute.participant_id}",
+        session_inbox_id=f"inbox-{execute.participant_id}",
+        conversation_id=conv.id,
+        participant_id=execute.participant_id,
+    )
     client = TestClient(create_app(tmp_path))
 
     created = json.loads(
@@ -1080,7 +1096,7 @@ def test_mcp_collaboration_tools_support_veto_and_dispatch_gate(
     run_id = created["run"]["run_id"]
     assert replay["run"]["run_id"] == run_id
     assert created["run"]["status"] == "running"
-    assert created["run"]["targets"] == ["review", "execute"]
+    assert created["run"]["targets"] == ["@review", "@execute"]
 
     response = json.loads(
         _mcp_call(
@@ -1097,7 +1113,7 @@ def test_mcp_collaboration_tools_support_veto_and_dispatch_gate(
         )
     )
     assert response["run"]["status"] == "partial"
-    assert response["run"]["responses"][0]["target"] == "review"
+    assert response["run"]["responses"][0]["target"] == "@review"
 
     blocker = json.loads(
         _mcp_call(
