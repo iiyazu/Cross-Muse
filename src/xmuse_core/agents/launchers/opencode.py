@@ -38,8 +38,14 @@ class OpenCodeLauncher:
             str(worktree),
         ]
 
-    def build_persistent_command(self, role: str, worktree: Path) -> list[str]:
-        return [
+    def build_persistent_command(
+        self,
+        role: str,
+        worktree: Path,
+        *,
+        provider_session_id: str | None = None,
+    ) -> list[str]:
+        command = [
             sys.executable,
             "-m",
             "xmuse_core.agents.opencode_persistent",
@@ -56,6 +62,9 @@ class OpenCodeLauncher:
             "--opencode-binary",
             self.opencode_binary,
         ]
+        if provider_session_id:
+            command.extend(["--session-id", provider_session_id])
+        return command
 
     def format_prompt(self, task: str, context: str) -> str:
         if context:

@@ -78,7 +78,13 @@ def _parse_args() -> RunnerConfig:
     parser.add_argument("--role", required=True)
     parser.add_argument("--timeout-s", type=float, default=900.0)
     parser.add_argument("--opencode-binary", default="opencode")
+    parser.add_argument("--session-id")
     args = parser.parse_args()
+    session_id = (
+        args.session_id.strip()
+        if isinstance(args.session_id, str) and args.session_id.strip()
+        else None
+    )
     return RunnerConfig(
         model=args.model,
         variant=args.variant,
@@ -87,6 +93,7 @@ def _parse_args() -> RunnerConfig:
         role=args.role,
         timeout_s=args.timeout_s,
         opencode_binary=args.opencode_binary,
+        session_id=session_id,
     )
 
 

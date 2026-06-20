@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +12,7 @@ from xmuse_core.agents.opencode_persistent import (
     _build_collaboration_response_payload,
     _format_turn_prompt,
     _opencode_command,
+    _parse_args,
     _parse_opencode_json_output,
     _parse_peer_chat_callback_action,
     _post_peer_chat_writeback,
@@ -28,6 +30,41 @@ def test_default_launchers_include_opencode_persistent_launcher() -> None:
     assert launcher.supports_persistent_sessions is True
     assert launcher.persistent_model() == "opencode-go/deepseek-v4-flash"
     assert "--mcp-port" in launcher.build_persistent_command("review", Path("."))
+
+
+def test_opencode_persistent_launcher_passes_provider_session_id(tmp_path) -> None:
+    launcher = OpenCodeLauncher(mcp_port=8111)
+
+    command = launcher.build_persistent_command(
+        "review",
+        tmp_path,
+        provider_session_id="ses_opencode_123",
+    )
+
+    assert command[-2:] == ["--session-id", "ses_opencode_123"]
+
+
+def test_opencode_persistent_parse_args_accepts_initial_session_id(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "opencode_persistent",
+            "--worktree",
+            str(tmp_path),
+            "--role",
+            "review",
+            "--session-id",
+            " ses_opencode_123 ",
+        ],
+    )
+
+    config = _parse_args()
+
+    assert config.session_id == "ses_opencode_123"
 
 
 def test_opencode_persistent_command_uses_canonical_run_form_and_session(tmp_path) -> None:

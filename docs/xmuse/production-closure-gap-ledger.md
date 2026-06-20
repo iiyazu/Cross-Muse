@@ -7,17 +7,30 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
 
 ## Current Proof Boundary
 
-- Latest main inspected: `419f00d4cd4c8227a33302658608f9d9532f07b6`
-  (PR #140 wait-before-approval sentinel merge). Latest post-merge main
-  reusable sentinel proof is Loop 27r from that head. Loop 27r waited for
+- Latest main inspected: `4919e9807d074069190d71127c6fbf10408f7d19`
+  (PR #141 docs-only Loop 27r evidence merge). Latest post-merge main
+  reusable sentinel behavior proof remains Loop 27r from the PR #140 product
+  head `419f00d4cd4c8227a33302658608f9d9532f07b6`. Loop 27r waited for
   automatic proposal review trigger
   `inbox_9487fcb303564ded8f5fd395f53ba6a8` to reach `read` before approval,
   then reached isolated docs execution, gate, persistent OpenCode review, and
   final-action hold. This is bounded post-merge main runtime proof for the
   docs-only sentinel shape; it does not prove production readiness,
-  provider-native OpenCode resume, live MemoryOS, GitHub review truth beyond
-  inspected PR/main check facts, live lane merge truth, repeated soak, or full
-  closure.
+  provider-native OpenCode resume on main/fullchain, live MemoryOS, GitHub
+  review truth beyond inspected PR/main check facts, live lane merge truth,
+  repeated soak, or full closure.
+- Latest provider-native OpenCode session evidence: Loop 28a on branch
+  `codex/native-opencode-provider-session-binding` ran a focused two-turn real
+  OpenCode probe from base
+  `4919e9807d074069190d71127c6fbf10408f7d19`. The first turn persisted
+  `provider_session_id=ses_11bda827fffekK9seMPaDldLtf` in
+  `god_sessions.json` with `provider_session_kind=opencode_session` and
+  `provider_binding_status=active`. After aborting the local shim and creating
+  a fresh native `GodSessionLayer`, the same
+  `god_session_id=god-4a912088e72e4e79addda3e00d8b2367` was restored, the
+  second turn reused the provider session, and provider stdout contained a
+  `sessionID`. This is candidate-branch focused provider-session proof only,
+  not post-merge main fullchain proof or production readiness.
 - Latest natural groupchat proposal evidence: Loop 27h recorded collaboration
   run `collab_ecd70e7a9edb4719ae8ea881b4f88177` with targets `@execute` and
   `@review`, `status=done`, and two peer responses. Architect proposal
@@ -601,9 +614,18 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   hold `final-45abee1aa897` remained pending. This is post-merge main proof
   for the docs-only sentinel harness only, not production readiness or full
   closure.
+- Loop 28a repairs the focused provider-native OpenCode resume gap on the
+  candidate branch `codex/native-opencode-provider-session-binding`. The
+  native OpenCode shim returned a real provider `sessionID`, `GodSessionLayer`
+  persisted it into `god_sessions.json`, a fresh layer restored the same GOD
+  session after local shim abort, and the next real OpenCode turn reused the
+  provider session. This closes the direct producer/consumer binding gap
+  exposed by Loop 27g for one focused probe, but it is not yet post-merge main
+  fullchain evidence.
 - The successful chains are not yet repeated overnight or production-load soak.
-- Provider-native session continuity and memory persistence are not proven as
-  durable product behavior.
+- Provider-native OpenCode session continuity has focused candidate-branch
+  proof only; post-merge main fullchain evidence is still absent. Memory
+  persistence is not proven as durable product behavior.
 - Live MemoryOS proof is absent.
 - GitHub review truth is absent.
 - Groupchat production readiness is absent.
@@ -673,7 +695,9 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   proposal and reaches final-action hold for a docs-only lane. Loop 27j
   locally repairs the structured-tool latency false-failed classification for
   that sentinel shape. Loop 27l adds one bounded non-docs code-change lane.
-  Remaining work is provider-native OpenCode resume evidence, repeated
-  stability, broader code-change lanes, and any production-load claim.
+  Loop 28a adds focused candidate-branch proof for provider-native OpenCode
+  resume after GOD layer restart. Remaining work is post-merge main fullchain
+  provider-resume evidence, repeated stability, broader code-change lanes, and
+  any production-load claim.
 - P6 MemoryOS adapter proof: keep `live_memoryos` forbidden until a real trace
   id or artifact exists.

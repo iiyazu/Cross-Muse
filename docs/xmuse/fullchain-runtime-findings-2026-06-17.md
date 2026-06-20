@@ -5264,3 +5264,54 @@ Next boundary:
   probe before broader groupchat/execution changes.
 - Move the next implementation work back to Phase 1-3 product boundaries
   rather than further harness patching unless a new runtime failure appears.
+
+## 2026-06-20 Loop 28a Finding: Native OpenCode Provider Session Binding Holds
+
+Status: candidate-branch focused runtime proof for Phase 2 provider-native
+session continuity.
+
+Boundary:
+
+```text
+phase=Phase 2 natural groupchat session continuity
+target=persist OpenCode provider session id from peer output and resume it after local GOD layer restart
+authority=god_sessions.json provider binding fields + real OpenCode stdout sessionID artifacts
+producer=real OpenCode persistent shim result artifacts
+consumer=native GodSessionLayer restart path + OpenCodeLauncher persistent command
+result=confirmed for one focused two-turn provider probe
+```
+
+Observed runtime chain:
+
+- Branch `codex/native-opencode-provider-session-binding` ran from base
+  `4919e9807d074069190d71127c6fbf10408f7d19`.
+- The focused probe used
+  `.goal-runs/2026-06-20/loop-28a-native-opencode-session-binding-20260620T082733Z`.
+- First native OpenCode turn returned provider session
+  `ses_11bda827fffekK9seMPaDldLtf`.
+- `god_sessions.json` persisted that value as
+  `provider_session_kind=opencode_session` with
+  `provider_binding_status=active`.
+- After aborting the local shim and creating a fresh `GodSessionLayer`, the
+  same `god_session_id=god-4a912088e72e4e79addda3e00d8b2367` was restored.
+- The second real OpenCode turn used the persisted session id; the probe
+  recorded `second_turn_reused_provider_session=true` and
+  `second_stdout_contains_session_id=true`.
+
+Interpretation:
+
+- Loop 27g proved xmuse GOD session continuity across restart but left
+  provider-native OpenCode continuity unproven because `provider_session_id`
+  stayed null.
+- Loop 28a repairs that specific missing consumer path: OpenCode shim output is
+  now consumed by `GodSessionLayer`, persisted in `god_sessions.json`, and fed
+  back into the OpenCode persistent command on restart.
+- This is still candidate-branch focused proof. It is not post-merge main
+  fullchain proof and does not upgrade production readiness.
+
+Next boundary:
+
+- Land the scoped provider-session binding repair behind a small PR.
+- After merge, rerun a natural groupchat or sentinel path that includes a
+  restarted OpenCode participant to upgrade this from focused provider proof
+  to main fullchain evidence.

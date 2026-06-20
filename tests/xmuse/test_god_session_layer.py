@@ -7,7 +7,7 @@ import pytest
 from xmuse_core.agents.god_session_layer import GodSessionLayer
 from xmuse_core.agents.god_session_registry import GodSessionRecord
 from xmuse_core.agents.persistent_peer import PersistentCliPeerService
-from xmuse_core.agents.protocol import parse_stdout_line
+from xmuse_core.agents.protocol import StdoutMessage, parse_stdout_line
 from xmuse_core.agents.registry import AgentDescriptor, AgentRuntime, SessionConfig
 from xmuse_core.chat.participant_store import ParticipantStore
 from xmuse_core.chat.store import ChatStore
@@ -99,6 +99,27 @@ class FakePersistentCommandLauncher(FakeLauncher):
     def build_persistent_command(self, role: str, worktree: Path) -> list[str]:
         self.build_persistent_command_calls.append((role, worktree))
         return ["fake-persistent-agent", role, str(worktree)]
+
+
+class ProviderSessionAwareLauncher(FakeLauncher):
+    def __init__(self) -> None:
+        super().__init__()
+        self.build_persistent_command_calls: list[tuple[str, Path, str | None]] = []
+
+    def build_persistent_command(
+        self,
+        role: str,
+        worktree: Path,
+        *,
+        provider_session_id: str | None = None,
+    ) -> list[str]:
+        self.build_persistent_command_calls.append(
+            (role, worktree, provider_session_id)
+        )
+        command = ["fake-persistent-agent", role, str(worktree)]
+        if provider_session_id is not None:
+            command.extend(["--session-id", provider_session_id])
+        return command
 
 
 class MisconfiguredPersistentLauncher:
@@ -416,6 +437,137 @@ async def test_receive_message_routes_by_god_session_id(tmp_path, monkeypatch):
     message = await layer.receive_message(record.god_session_id)
 
     assert message == {"type": "result", "status": "success"}
+
+
+@pytest.mark.asyncio
+async def test_receive_message_persists_opencode_provider_session_id(
+    tmp_path,
+    monkeypatch,
+):
+    launcher = FakeLauncher()
+    layer = GodSessionLayer(
+        registry_path=tmp_path / "god_sessions.json",
+        launchers={AgentRuntime.OPENCODE: launcher},
+    )
+    session = FakeSession()
+    session.received_messages.append(
+        StdoutMessage(
+            type="result",
+            runtime="opencode",
+            status="success",
+            artifacts={"opencode_session_id": " ses_opencode_123 "},
+        )
+    )
+
+    async def fake_spawn(command, env=None):
+        return session
+
+    monkeypatch.setattr(
+        "xmuse_core.agents.god_session_layer.LocalSession.spawn",
+        fake_spawn,
+    )
+
+    record = await layer.ensure_conversation_session(
+        conversation_id="conv_opencode",
+        participant_id="part_review",
+        role="review",
+        agent=AgentDescriptor(
+            runtime=AgentRuntime.OPENCODE,
+            name="review-opencode-god",
+            capabilities=["review"],
+        ),
+        worktree=tmp_path,
+        model="opencode-go/deepseek-v4-flash",
+        prompt_fingerprint="sha256:review",
+    )
+
+    message = await layer.receive_message(record.god_session_id)
+
+    assert isinstance(message, StdoutMessage)
+    reloaded = layer._registry.get(record.god_session_id)
+    assert reloaded.provider_session_id == "ses_opencode_123"
+    assert reloaded.provider_session_kind == "opencode_session"
+    assert reloaded.provider_binding_status == "active"
+    assert reloaded.provider_binding_failure_reason is None
+
+
+@pytest.mark.asyncio
+async def test_ensure_conversation_session_resumes_active_opencode_provider_session(
+    tmp_path,
+    monkeypatch,
+):
+    registry_path = tmp_path / "god_sessions.json"
+    first_launcher = FakeLauncher()
+    first_layer = GodSessionLayer(
+        registry_path=registry_path,
+        launchers={AgentRuntime.OPENCODE: first_launcher},
+    )
+    session = FakeSession()
+    session.received_messages.append(
+        StdoutMessage(
+            type="result",
+            runtime="opencode",
+            status="success",
+            artifacts={"opencode_session_id": "ses_opencode_resume"},
+        )
+    )
+    spawned_commands: list[list[str]] = []
+
+    async def first_spawn(command, env=None):
+        spawned_commands.append(command)
+        return session
+
+    monkeypatch.setattr(
+        "xmuse_core.agents.god_session_layer.LocalSession.spawn",
+        first_spawn,
+    )
+    agent = AgentDescriptor(
+        runtime=AgentRuntime.OPENCODE,
+        name="review-opencode-god",
+        capabilities=["review"],
+    )
+
+    first = await first_layer.ensure_conversation_session(
+        conversation_id="conv_opencode_restart",
+        participant_id="part_review",
+        role="review",
+        agent=agent,
+        worktree=tmp_path,
+        model="opencode-go/deepseek-v4-flash",
+        prompt_fingerprint="sha256:review",
+    )
+    await first_layer.receive_message(first.god_session_id)
+
+    restart_launcher = ProviderSessionAwareLauncher()
+    restarted_layer = GodSessionLayer(
+        registry_path=registry_path,
+        launchers={AgentRuntime.OPENCODE: restart_launcher},
+    )
+
+    async def restart_spawn(command, env=None):
+        spawned_commands.append(command)
+        return FakeSession()
+
+    monkeypatch.setattr(
+        "xmuse_core.agents.god_session_layer.LocalSession.spawn",
+        restart_spawn,
+    )
+
+    second = await restarted_layer.ensure_conversation_session(
+        conversation_id="conv_opencode_restart",
+        participant_id="part_review",
+        role="review",
+        agent=agent,
+        worktree=tmp_path,
+        model="opencode-go/deepseek-v4-flash",
+        prompt_fingerprint="sha256:review",
+    )
+
+    assert second.god_session_id == first.god_session_id
+    assert restart_launcher.build_persistent_command_calls == [
+        ("review", tmp_path, "ses_opencode_resume")
+    ]
+    assert spawned_commands[-1][-2:] == ["--session-id", "ses_opencode_resume"]
 
 
 @pytest.mark.asyncio
