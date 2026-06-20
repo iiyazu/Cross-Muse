@@ -26,6 +26,17 @@ truth, merge truth, live MemoryOS proof, or full closure.
   degraded reason. This closes the focused dynamic-member OpenCode resume
   boundary as local runtime proof only; it does not prove fullchain completion,
   production readiness, GitHub review truth, live MemoryOS, or full closure.
+- Loop 28f is the latest post-PR144 main fullchain sentinel proof. From main
+  head `e235b9be7b7ebb6c643b9713a2fb1333f009634c`, the reusable sentinel ran
+  with `peer_chat_post_writeback_grace_s=8.0`, completed human demand to Codex
+  architect, Codex execute collaboration, one durable lane-graph proposal,
+  OpenCode proposal review, approval, dispatch, isolated docs execution, gate,
+  persistent OpenCode review verdict, and final-action hold. All driver
+  success checks were true. Residual boundary: the same run still recorded
+  `peer_writeback_before_provider_result` on two Codex architect
+  tool-writeback turns. This does not invalidate the docs-only fullchain
+  sentinel result, but it remains a provider-result drain/lifecycle cleanup
+  target before claiming cleaner natural groupchat operation.
 - Loop 27h is the strongest local Phase 2/3 proof so far for a natural
   groupchat-produced proposal. From main head
   `9b76b8cece4ea20d75bb0ed875fb602bdd363265`, the run started real Chat API,

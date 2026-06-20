@@ -74,6 +74,74 @@ Classification: local runtime proof for this focused dynamic-member provider
 resume boundary. It is not production readiness, live MemoryOS proof, GitHub
 review truth, fullchain completion, or full closure.
 
+## 2026-06-20 Loop 28f: Post-PR144 Main Fullchain Sentinel
+
+Artifact root:
+
+```text
+.goal-runs/2026-06-20/loop-28f-post-pr144-fullchain-sentinel-20260620T090714Z/
+```
+
+Command shape:
+
+```bash
+uv run python scripts/run_fullchain_docs_sentinel.py \
+  --run-root .goal-runs/2026-06-20/loop-28f-post-pr144-fullchain-sentinel-20260620T090714Z \
+  --execution-worktree /tmp/loop-28f-post-pr144-fullchain-sentinel-20260620T090714Z-exec \
+  --feature-id loop_28f_post_pr144_fullchain_20260620t090714z \
+  --proposal-timeout-s 900 \
+  --proposal-review-timeout-s 900 \
+  --lane-timeout-s 1200 \
+  --max-hours 0.75
+```
+
+Observed from main head `e235b9be7b7ebb6c643b9713a2fb1333f009634c`:
+
+- the reusable sentinel recorded
+  `peer_chat_post_writeback_grace_s=8.0` in `commands.json`;
+- human demand reached Codex architect;
+- architect created collaboration run
+  `collab_3bb5670b35d04f16a23183151a44f018` for Codex execute;
+- collaboration reached `done`;
+- architect emitted exactly one related `lane_graph` proposal
+  `prop_a5bb2f3d7c7f4310869b7fa2926dbac0`;
+- OpenCode proposal review trigger reached `read`;
+- approval projected one docs-only lane;
+- dispatch queue entry reached `dispatched`;
+- isolated execution wrote the expected docs artifact under
+  `/tmp/loop-28f-post-pr144-fullchain-sentinel-20260620T090714Z-exec`;
+- gate passed;
+- persistent OpenCode review emitted finalized merge verdict
+  `verdict-merge-rtask_b2955e590c9c423ebc24c347a7923343`;
+- lane stopped at `awaiting_final_action` with pending hold
+  `final-5703db958f60`;
+- cleanup found no Chat API or MCP listener.
+
+Driver success checks were all true:
+
+```text
+single_related_lane_graph_proposal=true
+approved_proposal_accepted=true
+execution_peer_handoff_not_degraded=true
+lane_awaiting_final_action=true
+gate_passed=true
+isolated_note_matches=true
+opencode_review_peer_recorded=true
+review_verdict_finalized=true
+review_task_verdict_emitted=true
+final_action_hold_pending=true
+proposal_has_no_review_runtime=true
+```
+
+Residual observation: two Codex architect tool-writeback turns in the same run
+still recorded `degraded_reason=peer_writeback_before_provider_result`. The
+fullchain sentinel completed despite that degradation, but this remains a
+provider-result drain/lifecycle boundary for cleaner natural groupchat traces.
+
+Classification: bounded post-merge main local runtime proof for the docs-only
+sentinel shape. It is not production readiness, GitHub review truth, live
+MemoryOS proof, fullchain product completion, or full closure.
+
 ## 2026-06-20 Reusable Fullchain Driver Sentinels
 
 Reusable driver under test:
