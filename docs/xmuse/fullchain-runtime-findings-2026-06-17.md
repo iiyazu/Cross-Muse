@@ -17,6 +17,12 @@ truth, merge truth, live MemoryOS proof, or full closure.
   bounded local runtime proof only, not production readiness, GitHub review
   truth, live MemoryOS, provider-native OpenCode resume, repeated soak, or full
   closure.
+- Loop 27j is candidate-branch local runtime proof for a targeted
+  observability/lifecycle repair after Loop 27h: structured MCP tool writebacks
+  for `chat_create_collaboration_request` and
+  `chat_record_collaboration_response` now count as durable writeback success
+  for peer latency classification. The sentinel reached final-action hold and
+  all four peer turns recorded `delivery_mode=mcp_writeback`.
 - Loop 26i/26j introduced a reusable local runtime driver at
   `scripts/run_fullchain_docs_sentinel.py` for the docs-only fullchain
   sentinel: Chat API + MCP + platform runner, durable groupchat,
@@ -4741,3 +4747,71 @@ Remaining caveats:
 - This is not repeated stability, broad non-docs code-change proof, production
   readiness, live MemoryOS, GitHub review truth, natural peer-GOD groupchat
   completion, or full closure.
+
+## 2026-06-20 Loop 27j Finding: Structured Tool Writebacks Stop False Failed Latency
+
+Status: candidate-branch local runtime proof after a targeted scheduler repair.
+
+Boundary:
+
+```text
+phase=Phase 2/3 natural groupchat lifecycle observability
+target=structured MCP tools count as durable writeback success for peer latency classification
+authority=chat.db inbox + peer_turn_mcp_tool_traces + peer_turn_latency_traces
+producer=PeerChatService MCP tools for collaboration request/response/proposal/dispatch
+consumer=PeerChatScheduler latency classification and progress projections
+failure_boundary=structured-tool delivery lifecycle false failed trace
+```
+
+Root cause:
+
+- Scheduler writeback success only accepted assistant-message side effects from
+  `chat_post_message`, `chat_emit_proposal`, or `chat_mention`.
+- `chat_create_collaboration_request` creates a durable assistant message and
+  consumes the source inbox, but its MCP stage was not accepted as real
+  writeback.
+- `chat_record_collaboration_response` intentionally records a structured
+  response and consumes a `collaboration_request` inbox without creating an
+  assistant chat message, so it also failed the old message-only predicate.
+
+Candidate repair:
+
+- Add a durable writeback predicate that keeps existing real-message checks and
+  recognizes:
+  - `chat_create_collaboration_request` when it points to a real assistant
+    message by the target participant.
+  - `chat_record_collaboration_response` for `collaboration_request` inboxes
+    with a recorded MCP tool stage.
+- Keep fake or unrelated `responded_message_id` reads rejected.
+
+Runtime evidence:
+
+- Loop 27i first confirmed the execute collaboration response no longer
+  produced `peer_no_inbox_writeback_message`, but the architect collaboration
+  request still recorded a failed timeout trace.
+- Loop 27j reran after extending the same predicate to
+  `chat_create_collaboration_request`.
+- The docs-only sentinel reached `awaiting_final_action` with
+  `gate_passed=true`, `review_decision=merge`,
+  `review_delivery_mode=persistent`, and `persistent_review_degraded=false`.
+- Latency traces for architect collaboration request, execute collaboration
+  response, architect proposal callback, and execute dispatch acknowledgement
+  all recorded `delivery_mode=mcp_writeback`.
+
+Primary artifact:
+
+```text
+/tmp/xmuse-goal-main-20260620/.goal-runs/2026-06-20/loop-27j-structured-tool-latency-success-20260620T052938Z/loop_driver_artifacts/final_snapshot.json
+```
+
+Remaining caveats:
+
+- This is candidate-branch local runtime proof until the branch has server-side
+  PR/merge facts.
+- The three structured turns still report
+  `degraded_reason=peer_writeback_before_provider_result`; that is an
+  observability caveat about provider-result timing, not a failed durable
+  writeback.
+- This is not provider-native OpenCode resume proof, production readiness, live
+  MemoryOS, GitHub review truth, repeated stability, broad non-docs code-change
+  proof, natural peer-GOD groupchat completion, or full closure.

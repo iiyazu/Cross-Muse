@@ -7306,6 +7306,128 @@ Caveats:
   review truth, repeated stability, broad code-change completion, or full
   closure.
 
+## 2026-06-20 Loop 27j: Structured Tool Latency Repair Candidate
+
+Purpose: rerun the reusable docs-only sentinel after repairing scheduler
+latency classification for structured MCP tool writebacks.
+
+Preceding evidence:
+
+```text
+Loop 27h exposed:
+- chat_create_collaboration_request produced durable side effects but the
+  architect turn recorded delivery_mode=failed / peer_response_timeout.
+- chat_record_collaboration_response consumed the execute collaboration request
+  but recorded peer_no_inbox_writeback_message because it has no assistant
+  message id.
+
+Loop 27i candidate rerun after the first patch:
+- execute chat_record_collaboration_response recorded delivery_mode=mcp_writeback.
+- architect chat_create_collaboration_request still recorded a failed timeout
+  trace, so the same boundary needed one broader structured-tool predicate.
+```
+
+Focused RED/GREEN guard:
+
+```bash
+uv run pytest \
+  tests/xmuse/test_peer_chat_scheduler.py::test_scheduler_accepts_collaboration_request_tool_writeback \
+  tests/xmuse/test_peer_chat_scheduler.py::test_scheduler_accepts_structured_collaboration_response_writeback \
+  tests/xmuse/test_peer_chat_scheduler.py::test_scheduler_rejects_read_without_real_writeback_message \
+  tests/xmuse/test_peer_chat_scheduler.py::test_scheduler_rejects_read_pointing_to_unrelated_message \
+  -q
+```
+
+Result:
+
+```text
+4 passed in 1.12s
+```
+
+Runtime command:
+
+```bash
+uv run python scripts/run_fullchain_docs_sentinel.py \
+  --run-root /tmp/xmuse-goal-main-20260620/.goal-runs/2026-06-20/loop-27j-structured-tool-latency-success-20260620T052938Z \
+  --execution-worktree /tmp/loop-27j-structured-tool-latency-success-20260620T052938Z-exec \
+  --feature-id loop_27j_structured_tool_latency_success_20260620t052938z \
+  --proposal-timeout-s 900 \
+  --lane-timeout-s 1200 \
+  --max-hours 0.8
+```
+
+Authority and artifacts:
+
+```text
+repo_worktree=/tmp/xmuse-goal-main-20260620
+branch=codex/collab-response-latency-success
+base_head=c23c1fdbd68d12490327101994be89e15a1cc37c
+run_root=/tmp/xmuse-goal-main-20260620/.goal-runs/2026-06-20/loop-27j-structured-tool-latency-success-20260620T052938Z
+final_snapshot=.goal-runs/2026-06-20/loop-27j-structured-tool-latency-success-20260620T052938Z/loop_driver_artifacts/final_snapshot.json
+cleanup=.goal-runs/2026-06-20/loop-27j-structured-tool-latency-success-20260620T052938Z/loop_driver_artifacts/cleanup.json
+execution_worktree=/tmp/loop-27j-structured-tool-latency-success-20260620T052938Z-exec
+```
+
+Durable ids:
+
+```text
+conversation_id=conv_a74f15bf7227455f905f36b9a3afe9a8
+collaboration_run=collab_594466ffed7347cc869d3089f23eccb1
+proposal_id=prop_14abe5a75c3842158cc458075be143b4
+resolution_id=res_6750f01f9930455b98fad2ccf0e266fd
+lane_id=loop_27j_structured_tool_latency_success_20260620t052938z
+review_task_id=rtask_1dbc8856a9e34b05b271cf33205cca5c
+review_verdict_id=verdict-merge-rtask_1dbc8856a9e34b05b271cf33205cca5c
+final_action_hold_id=final-35c87adbaca5
+```
+
+Final lane state:
+
+```text
+status=awaiting_final_action
+gate_passed=true
+review_decision=merge
+review_delivery_mode=persistent
+persistent_review_degraded=false
+review_peer_cli_kind=opencode
+review_peer_model=opencode-go/deepseek-v4-flash
+single_related_lane_graph_proposal=true
+execution_note_matches=true
+```
+
+Peer latency evidence:
+
+```text
+architect chat_create_collaboration_request -> delivery_mode=mcp_writeback
+execute chat_record_collaboration_response -> delivery_mode=mcp_writeback
+architect chat_emit_proposal callback -> delivery_mode=mcp_writeback
+execute chat_post_message dispatch ack -> delivery_mode=mcp_writeback
+failed latency traces for this run: 0
+```
+
+Cleanup:
+
+```text
+chat_port=56005 closed
+mcp_port=57505 closed
+cleanup.chat_port_listening=false
+cleanup.mcp_port_listening=false
+```
+
+Classification: candidate-branch local runtime proof that structured MCP tool
+writebacks are no longer misclassified as failed peer turns in the bounded
+docs-only fullchain sentinel.
+
+Caveats:
+
+- This is not server-side proof until the branch receives PR/CI/merge facts.
+- The structured tool turns still record
+  `degraded_reason=peer_writeback_before_provider_result`, which is a
+  provider-result timing caveat, not failed durable writeback.
+- This is not production readiness, provider-native OpenCode resume, live
+  MemoryOS, GitHub review truth, repeated stability, broad code-change
+  completion, or full closure.
+
 ## 2026-06-20 Loop 26o: Post-PR115 Collaboration Lifecycle Main Check
 
 Purpose: verify the PR #115 collaboration lifecycle repair after it landed on
