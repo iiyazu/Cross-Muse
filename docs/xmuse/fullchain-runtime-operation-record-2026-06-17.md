@@ -7012,6 +7012,62 @@ Classification:
 - This is not production readiness, repeated soak, GitHub review truth, live
   MemoryOS proof, full L8-L10 closure, or full L1-L11 closure.
 
+## 2026-06-20 Loop 28a: Native OpenCode Provider Session Binding
+
+Purpose: close the Phase 2 provider-native session continuity gap exposed by
+Loop 27g, where xmuse restored the same GOD session across restart but
+`provider_session_id` remained null.
+
+Workspace and authority:
+
+```text
+repo_worktree=/tmp/xmuse-goal-main-20260620
+branch=codex/native-opencode-provider-session-binding
+base_head_sha=4919e9807d074069190d71127c6fbf10408f7d19
+run_root=.goal-runs/2026-06-20/loop-28a-native-opencode-session-binding-20260620T082733Z
+registry=.goal-runs/2026-06-20/loop-28a-native-opencode-session-binding-20260620T082733Z/runtime/god_sessions.json
+proof_artifact=.goal-runs/2026-06-20/loop-28a-native-opencode-session-binding-20260620T082733Z/runtime-proof.json
+```
+
+Runtime command shape:
+
+```bash
+uv run python - <<'PY'
+# focused runtime probe:
+# 1. spawn native GodSessionLayer with OpenCodeLauncher;
+# 2. send one real OpenCode turn;
+# 3. persist returned opencode_session_id into god_sessions.json;
+# 4. abort the local shim;
+# 5. create a fresh GodSessionLayer from the same registry;
+# 6. send a second real OpenCode turn through --session-id.
+PY
+```
+
+Durable/provider evidence:
+
+```text
+god_session_id=god-4a912088e72e4e79addda3e00d8b2367
+provider_session_id=ses_11bda827fffekK9seMPaDldLtf
+same_god_session_after_restart=true
+provider_binding_active=true
+provider_binding_resumed_in_registry=true
+second_turn_reused_provider_session=true
+second_stdout_contains_session_id=true
+```
+
+Classification: candidate-branch focused runtime proof that the native
+OpenCode persistent peer can persist a real provider `sessionID` into
+`god_sessions.json` and pass it back to the OpenCode shim on restart.
+
+Caveats:
+
+- This is not post-merge main proof until the branch lands and is rerun from
+  main.
+- This is not fullchain groupchat-to-lane proof; it exercises the provider
+  session continuity boundary directly.
+- This does not prove live MemoryOS, production readiness, repeated soak,
+  GitHub review truth, full L8-L10 closure, or full L1-L11 closure.
+
 ## 2026-06-20 Loop 27o: Pending Proposal Review Approval Guard Candidate
 
 Target:
