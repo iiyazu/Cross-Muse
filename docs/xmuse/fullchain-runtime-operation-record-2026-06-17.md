@@ -6843,6 +6843,95 @@ code-change lane. It proves this lane shape only. It is not production
 readiness, repeated soak, provider-native session resume, live MemoryOS,
 GitHub review truth, natural peer-GOD groupchat completion, or full closure.
 
+## 2026-06-20 Loop 27m: Preserve Peer Latency Retry Attempts
+
+Purpose: close the observability gap exposed by Loop 27l where the architect
+collaboration callback first timed out and later succeeded on scheduler retry,
+but the final `peer_turn_latency_traces` table retained only the successful
+retry for that inbox item.
+
+Workspace and authority:
+
+```text
+repo_worktree=/tmp/xmuse-goal-main-20260620
+branch=codex/preserve-peer-latency-retry-attempts
+base_head_sha=eed99b0258dcc862719c38d571055b6fd85b3b33
+observed_runtime_db=/tmp/xmuse-loop27l-main-893e911-runtime/.goal-runs/2026-06-20/loop-27l-code-change-sentinel-commands-post134-20260620T061200Z/runtime/chat.db
+```
+
+Boundary:
+
+```text
+target=peer latency retry-attempt observability
+authority=peer_turn_latency_traces rows in chat.db
+producer=PeerChatScheduler._record_latency_trace
+consumer=peer progress/read surfaces and operator runtime audit
+failure_boundary=delivery lifecycle observability
+```
+
+Observed Loop 27l durable state:
+
+```text
+callback_inbox=inbox_3998e10ac68740cb91c063f619d7f6b4
+final_status=read
+nudge_count=1
+responded_message_id=msg_568c1d81b1d946dba66b9abd1fa3bbcf
+final_latency_row_id=peer_latency_inbox_3998e10ac68740cb91c063f619d7f6b4
+final_delivery_mode=mcp_writeback
+final_degraded_reason=peer_writeback_before_provider_result
+```
+
+Root cause:
+
+```text
+PeerTurnLatencyTraceStore.record used id=peer_latency_<inbox_item_id> and
+upserted on that primary key. A retry for the same inbox item overwrote the
+earlier failed attempt instead of preserving both attempts.
+```
+
+Focused reproduction:
+
+```bash
+uv run pytest tests/xmuse/test_peer_chat_scheduler.py::test_scheduler_preserves_latency_trace_for_retry_attempt -q
+```
+
+Result before repair:
+
+```text
+failed: list_recent returned only ['mcp_writeback'] instead of preserving
+['mcp_writeback', 'failed'] for the same inbox retry sequence.
+```
+
+Repair:
+
+```text
+PeerTurnLatencyTraceStore.record is append-only per scheduler attempt.
+The first trace keeps id peer_latency_<inbox_item_id> for compatibility.
+Retries use peer_latency_<inbox_item_id>_attempt_N.
+```
+
+Focused validation:
+
+```bash
+uv run pytest tests/xmuse/test_peer_chat_scheduler.py::test_scheduler_preserves_latency_trace_for_retry_attempt -q
+uv run pytest tests/xmuse/test_peer_chat_scheduler.py -q
+uv run pytest tests/xmuse/test_peer_chat_api.py tests/xmuse/test_tui_adapter.py -q
+uv run ruff check src/xmuse_core/chat/stream_store.py tests/xmuse/test_peer_chat_scheduler.py
+```
+
+Result:
+
+```text
+new focused test: 1 passed
+peer scheduler tests: 21 passed
+peer progress/TUI focused tests: 45 passed, 1 warning
+ruff touched files: All checks passed
+```
+
+Classification: targeted observability repair for retry-attempt evidence. This
+does not prove the callback will no longer need retry; it makes future retry
+dependence durable and auditable instead of overwritten by a later success.
+
 ## 2026-06-20 Loop 27a: Peer Progress Read Projection Candidate
 
 Target:

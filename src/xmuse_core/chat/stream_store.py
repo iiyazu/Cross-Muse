@@ -216,25 +216,25 @@ class PeerTurnLatencyTraceStore:
         degraded_reason: str | None,
         stage_timings: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        trace = {
-            "id": f"peer_latency_{inbox_item_id}",
-            "conversation_id": conversation_id,
-            "inbox_item_id": inbox_item_id,
-            "participant_id": participant_id,
-            "target_role": target_role,
-            "message_created_at": message_created_at,
-            "inbox_claimed_at": inbox_claimed_at,
-            "delivery_started_at": delivery_started_at,
-            "provider_turn_started_at": provider_turn_started_at,
-            "first_delta_at": first_delta_at,
-            "writeback_at": writeback_at,
-            "total_latency_ms": total_latency_ms,
-            "delivery_mode": delivery_mode,
-            "degraded_reason": degraded_reason,
-            "stage_timings": stage_timings or {},
-        }
-        stage_timings_json = json.dumps(trace["stage_timings"], sort_keys=True)
         with self._connect() as conn:
+            trace = {
+                "id": self._next_latency_trace_id(conn, inbox_item_id),
+                "conversation_id": conversation_id,
+                "inbox_item_id": inbox_item_id,
+                "participant_id": participant_id,
+                "target_role": target_role,
+                "message_created_at": message_created_at,
+                "inbox_claimed_at": inbox_claimed_at,
+                "delivery_started_at": delivery_started_at,
+                "provider_turn_started_at": provider_turn_started_at,
+                "first_delta_at": first_delta_at,
+                "writeback_at": writeback_at,
+                "total_latency_ms": total_latency_ms,
+                "delivery_mode": delivery_mode,
+                "degraded_reason": degraded_reason,
+                "stage_timings": stage_timings or {},
+            }
+            stage_timings_json = json.dumps(trace["stage_timings"], sort_keys=True)
             conn.execute(
                 """
                 insert into peer_turn_latency_traces (
@@ -244,18 +244,6 @@ class PeerTurnLatencyTraceStore:
                     total_latency_ms, delivery_mode, degraded_reason, stage_timings_json
                 )
                 values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                on conflict(id) do update set
-                    participant_id = excluded.participant_id,
-                    target_role = excluded.target_role,
-                    inbox_claimed_at = excluded.inbox_claimed_at,
-                    delivery_started_at = excluded.delivery_started_at,
-                    provider_turn_started_at = excluded.provider_turn_started_at,
-                    first_delta_at = excluded.first_delta_at,
-                    writeback_at = excluded.writeback_at,
-                    total_latency_ms = excluded.total_latency_ms,
-                    delivery_mode = excluded.delivery_mode,
-                    degraded_reason = excluded.degraded_reason,
-                    stage_timings_json = excluded.stage_timings_json
                 """,
                 (
                     trace["id"],
@@ -276,6 +264,33 @@ class PeerTurnLatencyTraceStore:
                 ),
             )
         return trace
+
+    def _next_latency_trace_id(
+        self,
+        conn: sqlite3.Connection,
+        inbox_item_id: str,
+    ) -> str:
+        base_id = f"peer_latency_{inbox_item_id}"
+        row = conn.execute(
+            """
+            select count(*) as attempts from peer_turn_latency_traces
+            where inbox_item_id = ?
+            """,
+            (inbox_item_id,),
+        ).fetchone()
+        attempts = int(row["attempts"] if row is not None else 0)
+        if attempts == 0:
+            return base_id
+        attempt = attempts + 1
+        while True:
+            candidate = f"{base_id}_attempt_{attempt}"
+            existing = conn.execute(
+                "select 1 from peer_turn_latency_traces where id = ?",
+                (candidate,),
+            ).fetchone()
+            if existing is None:
+                return candidate
+            attempt += 1
 
     def list_recent(self, conversation_id: str, *, limit: int = 20) -> list[dict[str, Any]]:
         with self._connect() as conn:
