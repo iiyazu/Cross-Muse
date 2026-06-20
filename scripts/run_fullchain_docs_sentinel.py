@@ -35,14 +35,14 @@ def main() -> int:
     mcp_port = args.mcp_port or _free_port()
     feature_id = args.feature_id
     note_path = f"docs/xmuse/{feature_id}.md"
-    commands = {
-        "run_root": str(run_root),
-        "execution_worktree": str(execution_worktree),
-        "chat_port": chat_port,
-        "mcp_port": mcp_port,
-        "feature_id": feature_id,
-        "note_path": note_path,
-    }
+    commands = _commands_payload(
+        run_root=run_root,
+        execution_worktree=execution_worktree,
+        chat_port=chat_port,
+        mcp_port=mcp_port,
+        feature_id=feature_id,
+        note_path=note_path,
+    )
     _write_json(artifacts / "commands.json", commands)
     (run_root / "commands.txt").write_text(
         "\n".join(f"{key}={value}" for key, value in commands.items()) + "\n",
@@ -187,6 +187,26 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--architect-model", default="gpt-5.4")
     parser.add_argument("--executor-model", default="gpt-5.4-mini")
     return parser.parse_args()
+
+
+def _commands_payload(
+    *,
+    run_root: Path,
+    execution_worktree: Path,
+    chat_port: int,
+    mcp_port: int,
+    feature_id: str,
+    note_path: str,
+) -> dict[str, Any]:
+    return {
+        "run_root": str(run_root),
+        "execution_worktree": str(execution_worktree),
+        "chat_port": chat_port,
+        "mcp_port": mcp_port,
+        "feature_id": feature_id,
+        "note_path": note_path,
+        "expected_note_content": _expected_note_content(feature_id),
+    }
 
 
 def _start_chat_api(
