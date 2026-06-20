@@ -490,6 +490,13 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   gap only. It does not prove provider-native session resume across restart,
   multi-turn natural Codex/OpenCode discussion, groupchat proposal production,
   production readiness, live MemoryOS, GitHub review truth, or full closure.
+- Loop 27g extends Loop 27f to a bounded two-turn dynamic OpenCode continuity
+  probe with a full Chat API/MCP/platform-runner restart between turns. The
+  restarted participants read model restored the same dynamic participant
+  `god_session_id`, and both turns produced durable assistant messages, MCP
+  traces, and latency traces. This proves xmuse GOD session continuity for this
+  shape only. It does not prove provider-native OpenCode resume because
+  `provider_session_id` remained null.
 - The successful chains are not yet repeated overnight or production-load soak.
 - Provider-native session continuity and memory persistence are not proven as
   durable product behavior.
@@ -554,9 +561,9 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   final-action hold with persistent OpenCode review after that repair.
 - P5 code-change soak: repeat small real code-change lanes after the
   inspector provider summary PR lands.
-- P5a natural dynamic groupchat continuity: extend Loop 27f from one dynamic
-  OpenCode writeback turn to multi-turn Codex/OpenCode discussion, including
-  restart/session restore and provider-native resume evidence before claiming
-  natural peer-GOD groupchat.
+- P5a natural dynamic groupchat continuity: Loop 27g now proves bounded xmuse
+  GOD session restore plus second-turn dynamic OpenCode writeback. Remaining
+  work is provider-native OpenCode resume evidence and natural multi-agent
+  Codex/OpenCode discussion that produces a durable proposal.
 - P6 MemoryOS adapter proof: keep `live_memoryos` forbidden until a real trace
   id or artifact exists.

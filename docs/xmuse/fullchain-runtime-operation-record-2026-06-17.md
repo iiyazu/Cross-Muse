@@ -7120,6 +7120,83 @@ Caveats:
 - This is not multi-turn natural groupchat, groupchat proposal production,
   production readiness, live MemoryOS, GitHub review truth, or full closure.
 
+## 2026-06-20 Loop 27g: Dynamic OpenCode Restart Continuity
+
+Purpose: extend Loop 27f from one dynamic OpenCode writeback turn to two turns
+with a full Chat API, MCP, and platform runner restart between turns.
+
+Runtime command shape:
+
+```bash
+uv run python - <<'PY'
+# bounded probe driver:
+# 1. start Chat API, MCP, platform_runner --peer-chat
+# 2. create Codex architect/executor conversation
+# 3. dynamically add OpenCode review participant
+# 4. run turn 1 to latency trace
+# 5. stop all services
+# 6. restart Chat API, MCP, platform_runner with the same XMUSE_ROOT
+# 7. verify participant read model restores the same god_session_id
+# 8. run turn 2 to latency trace
+PY
+```
+
+Authority and artifacts:
+
+```text
+repo_worktree=/tmp/xmuse-postmerge-layered-prompt-main
+base_head=27ceac95e70240e7d6252c546581729970320e30
+run_root=/tmp/xmuse-postmerge-layered-prompt-main/.goal-runs/2026-06-20/loop-27g-dynamic-opencode-restart-continuity-20260620T044530Z
+summary=.goal-runs/2026-06-20/loop-27g-dynamic-opencode-restart-continuity-20260620T044530Z/loop_driver_artifacts/summary.json
+final_snapshot=.goal-runs/2026-06-20/loop-27g-dynamic-opencode-restart-continuity-20260620T044530Z/loop_driver_artifacts/final_snapshot.json
+participants_after_restart=.goal-runs/2026-06-20/loop-27g-dynamic-opencode-restart-continuity-20260620T044530Z/loop_driver_artifacts/participants_after_restart.json
+```
+
+Durable ids:
+
+```text
+conversation_id=conv_5665b62e7fc7434987a346544310f6da
+dynamic_participant_id=part_c4f601e5ed1a496391d0143fec3a4ff0
+first_god_session_id=god-b63bd610c13c4240bceaa4f0f46597b7
+restored_god_session_id=god-b63bd610c13c4240bceaa4f0f46597b7
+turn1_inbox_item_id=inbox_537d9822bbf94501b3dfd1703016af6d
+turn2_inbox_item_id=inbox_ec9562b505564e7e8ff4d04c83004e12
+```
+
+Observed durable state:
+
+```text
+same_god_session_after_restart=true
+turn1_terminal_reason=turn1_latency_trace_after_inbox_read
+turn2_terminal_reason=turn2_latency_trace_after_inbox_read
+dynamic_assistant_messages=2
+dynamic_inbox_items=2
+dynamic_mcp_traces=3
+dynamic_latency_traces=2
+turn1.delivery_mode=mcp_writeback
+turn2.delivery_mode=mcp_writeback
+provider_session_ids=[null]
+```
+
+Cleanup:
+
+```text
+chat_port_listening_after_cleanup=false
+mcp_port_listening_after_cleanup=false
+```
+
+Classification: bounded local runtime proof that xmuse restores the dynamic
+OpenCode participant's GOD session after service restart and can deliver a
+second durable MCP writeback turn to that participant.
+
+Caveats:
+
+- This proves xmuse GOD session continuity, not OpenCode provider-native
+  session resume; `provider_session_id` remained null.
+- This is still targeted two-turn continuity, not broad natural Codex/OpenCode
+  group discussion, proposal production, production readiness, live MemoryOS,
+  GitHub review truth, or full closure.
+
 ## 2026-06-20 Loop 26o: Post-PR115 Collaboration Lifecycle Main Check
 
 Purpose: verify the PR #115 collaboration lifecycle repair after it landed on

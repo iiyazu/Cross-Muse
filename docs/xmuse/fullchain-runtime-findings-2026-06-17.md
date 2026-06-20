@@ -4609,3 +4609,56 @@ Remaining caveats:
 - This is not groupchat-produced proposal or blueprint/lane execution proof.
 - It does not prove production readiness, live MemoryOS, GitHub review truth,
   natural peer-GOD groupchat completion, or full closure.
+
+## 2026-06-20 Loop 27g Finding: Dynamic OpenCode GOD Session Restores After Restart
+
+Status: local runtime probe; no code repair needed for this boundary.
+
+Boundary:
+
+```text
+phase=Phase 2 natural agents groupchat kernel
+target=dynamic OpenCode member keeps xmuse GOD session binding across service restart and can write back again
+authority=god_sessions.json + Chat API participants read model + chat.db messages/inbox + peer_turn_mcp_tool_traces + peer_turn_latency_traces
+producer=Chat API dynamic participant add + service restart + PeerChatScheduler + real OpenCode persistent shim
+consumer=Chat API participant read model + MCP /mcp/chat chat_post_message + PeerChatService timeline progress projection
+failure_boundary=none found for xmuse GOD session restore and second-turn dynamic OpenCode writeback
+```
+
+Observed:
+
+- The probe ran turn 1 for a dynamically added OpenCode review participant,
+  waited for durable latency trace, then stopped Chat API, MCP, and the platform
+  runner.
+- The probe restarted Chat API, MCP, and the platform runner with the same
+  `XMUSE_ROOT`.
+- The restarted participants read model returned the same dynamic participant
+  with the same `god_session_id`.
+- Turn 2 targeted the same dynamic participant and reached durable assistant
+  writeback.
+- Both dynamic turn inbox items reached `status=read`.
+- Both dynamic turn latency traces recorded `delivery_mode=mcp_writeback`.
+- The dynamic participant produced two durable assistant messages.
+- The dynamic participant's `provider_session_id` remained null, so
+  provider-native OpenCode resume is still not proven.
+
+Primary artifact:
+
+```text
+.goal-runs/2026-06-20/loop-27g-dynamic-opencode-restart-continuity-20260620T044530Z/loop_driver_artifacts/summary.json
+```
+
+Classification:
+
+- No implementation change is needed for xmuse GOD session restore and
+  second-turn dynamic OpenCode writeback.
+- Provider-native OpenCode session persistence remains a separate unproven
+  boundary because native `sessionID` is not recorded as product authority.
+
+Remaining caveats:
+
+- This is not provider-native OpenCode resume proof.
+- This is not natural multi-agent Codex/OpenCode discussion.
+- This is not groupchat-produced proposal or blueprint/lane execution proof.
+- It does not prove production readiness, live MemoryOS, GitHub review truth,
+  natural peer-GOD groupchat completion, or full closure.
