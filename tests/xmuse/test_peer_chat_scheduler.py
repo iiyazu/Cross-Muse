@@ -1116,6 +1116,72 @@ async def test_scheduler_accepts_structured_collaboration_response_writeback(
 
 
 @pytest.mark.asyncio
+async def test_scheduler_retries_collaboration_request_with_writeback_feedback(
+    tmp_path: Path,
+) -> None:
+    chat = ChatStore(tmp_path / "chat.db")
+    conv = chat.create_conversation("Scheduler collaboration retry")
+    participant = ParticipantStore(tmp_path / "chat.db").add(
+        conversation_id=conv.id,
+        role="execute",
+        display_name="Execute GOD",
+        cli_kind="codex",
+        model="gpt-5.4",
+    )
+    message = chat.add_message(conv.id, "Architect", "assistant", "Collaboration request")
+    inbox = ChatInboxStore(tmp_path / "chat.db")
+    item = inbox.create_item(
+        conversation_id=conv.id,
+        target_participant_id=participant.participant_id,
+        target_role="execute",
+        target_address="@execute",
+        sender_participant_id=None,
+        sender_address="@architect",
+        source_message_id=message.id,
+        item_type="collaboration_request",
+        payload={"content": "Use chat_record_collaboration_response."},
+    )
+
+    class RetryGodLayer(FakeGodLayer):
+        def __init__(self) -> None:
+            super().__init__()
+            self.received = 0
+
+        async def receive_message(self, god_session_id):
+            self.received += 1
+            if self.received == 1:
+                return self.receive_result
+            inbox.mark_read(item.id)
+            PeerTurnLatencyTraceStore(tmp_path / "chat.db").record_mcp_tool_stage(
+                conversation_id=conv.id,
+                inbox_item_id=item.id,
+                tool_name="chat_record_collaboration_response",
+                called_at=100.0,
+            )
+            return self.receive_result
+
+    god_layer = RetryGodLayer()
+    scheduler = PeerChatScheduler(
+        db_path=tmp_path / "chat.db",
+        god_layer=god_layer,
+        worktree=tmp_path,
+        scheduler_id="sched-test",
+        response_wait_s=0.1,
+    )
+
+    first = await scheduler.tick_once()
+    second = await scheduler.tick_once()
+
+    assert first.failed == 1
+    assert second.happy_path == 1
+    assert len(god_layer.sent) == 2
+    retry_prompt = god_layer.sent[1][2]
+    assert "Retry feedback for this same collaboration_request" in retry_prompt
+    assert "Plain final text or stream output was not accepted" in retry_prompt
+    assert "chat_record_collaboration_response" in retry_prompt
+
+
+@pytest.mark.asyncio
 async def test_scheduler_rejects_read_pointing_to_unrelated_message(
     tmp_path: Path,
 ) -> None:

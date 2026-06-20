@@ -57,9 +57,11 @@ class AppServerTurnAccumulator:
         if method in {"item/started", "item/completed"} and self._matches_turn(params):
             tool_name = _mcp_tool_name(params)
             if tool_name in {
+                "chat_create_collaboration_request",
                 "chat_emit_proposal",
                 "chat_mention",
                 "chat_post_message",
+                "chat_record_collaboration_response",
                 "chat_read_inbox",
             }:
                 self._record_stage(tool_name)
@@ -439,9 +441,10 @@ class CodexAppServerTransport:
     def _base_instructions(self) -> str:
         return (
             f"You are {self._display_name}, a persistent xmuse GOD peer with role "
-            f"{self._role}. Keep chat replies concise and useful. Prefer direct "
-            "natural-language replies for peer chat. Do not call tools in peer chat "
-            "turns unless this transport explicitly enables xmuse MCP."
+            f"{self._role}. Keep chat replies concise and useful. When xmuse MCP is "
+            "enabled, MCP writeback is the normal peer-chat path; direct final text "
+            "is only for degraded no-tool turns. Do not call tools in peer chat turns "
+            "unless this transport explicitly enables xmuse MCP."
         )
 
     def _developer_instructions(self) -> str:
@@ -469,13 +472,20 @@ class CodexAppServerTransport:
                 '{"type":"execute_feasibility_verdict","status":"executable",'
                 '"summary":"<why dispatch is safe>","evidence_refs":["<ref>"]}; '
                 "looser fields such as verdict=feasible do not satisfy dispatch. "
+                "If the current inbox item is a collaboration_request or asks you "
+                "to use chat_record_collaboration_response, call that tool; do "
+                "not return the JSON as final assistant text or streamed stdout. "
+                "If you call chat_create_collaboration_request, do not also call "
+                "chat_mention for the same target because the collaboration tool "
+                "already creates the target inbox and callback. "
                 "then emit a lane_graph proposal with chat_emit_proposal and a "
                 "collaboration:<run_id> reference, passing "
                 "reply_to_inbox_item_id=xmuse_context.inbox_item.id so the proposal "
                 "closes the current inbox item. Human approval remains required before "
                 "dispatch. "
                 "Only return a direct final assistant message if MCP tools are not "
-                "available."
+                "available. If mcp_tools_ready has appeared, MCP tools are available; "
+                "do not say you cannot perform durable writeback."
             )
         return (
             "For xmuse peer_chat_nudge turns, answer the user-facing chat request "

@@ -74,7 +74,12 @@ async def apply_persistent_review_message(
     summary = sanitize_review_summary(summary)
     review_evidence_refs = _dedupe_refs(evidence_refs or [])
     if decision == "reviewed":
-        verdict_id = stable_verdict_id(lane_id)
+        current_lane = sm.get_lane(lane_id)
+        verdict_id = _existing_or_stable_verdict_id(
+            current_lane,
+            lane_id=lane_id,
+            stable_verdict_id=stable_verdict_id,
+        )
         final_action_hold_already_pending = _transition_or_update_same_status(
             sm,
             lane_id,
@@ -147,6 +152,18 @@ async def apply_persistent_review_message(
     ingest_rework_verdict(lane_id, summary, review_evidence_refs)
     await on_rejected(lane_id)
     return True
+
+
+def _existing_or_stable_verdict_id(
+    lane: dict[str, Any],
+    *,
+    lane_id: str,
+    stable_verdict_id: Callable[[str], str],
+) -> str:
+    existing = lane.get("review_verdict_id")
+    if isinstance(existing, str) and existing.strip():
+        return existing.strip()
+    return stable_verdict_id(lane_id)
 
 
 def _review_already_accepted(lane: dict[str, Any]) -> bool:
