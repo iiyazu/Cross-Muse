@@ -67,6 +67,7 @@ def test_main_writes_expected_note_content_into_command_artifacts(
             max_hours=0.75,
             architect_model="gpt-5.4",
             executor_model="gpt-5.4-mini",
+            peer_chat_post_writeback_grace_s=sentinel.DEFAULT_PEER_CHAT_POST_WRITEBACK_GRACE_S,
         ),
     )
 
@@ -86,7 +87,39 @@ def test_main_writes_expected_note_content_into_command_artifacts(
     expected_note_content = sentinel._expected_note_content(feature_id)
 
     assert commands_json["expected_note_content"] == expected_note_content
+    assert commands_json["peer_chat_post_writeback_grace_s"] == 8.0
     assert f"expected_note_content={expected_note_content}\n" in commands_txt
+    assert "peer_chat_post_writeback_grace_s=8.0\n" in commands_txt
+
+
+def test_start_runner_uses_configured_peer_chat_writeback_grace(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_spawn(command, *, env, stdout_path):
+        captured["command"] = command
+        captured["env"] = env
+        captured["stdout_path"] = stdout_path
+        return object()
+
+    monkeypatch.setattr(sentinel, "_spawn", fake_spawn)
+
+    result = sentinel._start_runner(
+        run_root=tmp_path / "run-root",
+        mcp_port=43112,
+        chat_port=43111,
+        logs_dir=tmp_path / "logs",
+        max_hours=0.75,
+        peer_chat_post_writeback_grace_s=13.5,
+    )
+
+    command = captured["command"]
+    assert result is not None
+    assert isinstance(command, list)
+    flag_index = command.index("--peer-chat-post-writeback-grace-s")
+    assert command[flag_index + 1] == "13.5"
 
 
 def test_wait_for_proposal_review_trigger_waits_until_read(

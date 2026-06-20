@@ -12,6 +12,68 @@ Do not read any entry here as proof of:
 - natural peer-GOD groupchat proof;
 - full L8-L10 or L1-L11 closure.
 
+## 2026-06-20 Dynamic OpenCode Provider-Resume Peer-Chat Evidence
+
+Loop 28c artifact root:
+
+```text
+.goal-runs/2026-06-20/loop-28c-dynamic-opencode-provider-resume-fullpath-20260620T084600Z/
+```
+
+Observed from main head `363229d3296d35e5da0d3533008a29b19685c720`:
+
+- Chat API, MCP, and `xmuse.platform_runner --peer-chat` were started;
+- a conversation was created with Codex architect/executor participants;
+- an OpenCode review participant was added dynamically;
+- turn 1 and turn 2 both produced durable assistant messages after a runner
+  restart;
+- the same `god_session_id=god-96aec7c07fc94ea594976ef4031fc0b4` was restored
+  for the dynamic participant;
+- both latency traces recorded `delivery_mode=mcp_writeback` but
+  `degraded_reason=peer_writeback_before_provider_result`;
+- `god_sessions.json` did not persist an OpenCode `provider_session_id`.
+
+Classification: real local runtime failure. The scheduler consumed durable
+writeback but cancelled the provider result before native OpenCode artifacts
+could be harvested.
+
+Loop 28d artifact root:
+
+```text
+.goal-runs/2026-06-20/loop-28d-dynamic-opencode-provider-resume-long-grace-20260620T085516Z/
+```
+
+Observed after rerunning the same dynamic-member/restart shape with
+`--peer-chat-post-writeback-grace-s 30.0`:
+
+- turn 1 and turn 2 both ended `status=read`;
+- both latency traces recorded `delivery_mode=mcp_writeback` and
+  `degraded_reason=null`;
+- the dynamic participant restored the same GOD session after restart;
+- OpenCode provider binding was active with
+  `provider_session_id=ses_11bc210a4ffe21N9s1zThP0MwM`;
+- turn 2 reused that same provider-native OpenCode session id.
+
+Loop 28e artifact root:
+
+```text
+.goal-runs/2026-06-20/loop-28e-dynamic-opencode-provider-resume-default-grace-20260620T085927Z/
+```
+
+Observed with the target default grace of `8.0` seconds:
+
+- turn 1 and turn 2 both ended `status=read`;
+- both latency traces recorded `delivery_mode=mcp_writeback` and
+  `degraded_reason=null`;
+- OpenCode provider binding was active with
+  `provider_session_id=ses_11bbe39bdffeIgPpauTAgyu7Im`;
+- turn 2 reused the same provider-native OpenCode session id;
+- services cleaned up after the run.
+
+Classification: local runtime proof for this focused dynamic-member provider
+resume boundary. It is not production readiness, live MemoryOS proof, GitHub
+review truth, fullchain completion, or full closure.
+
 ## 2026-06-20 Reusable Fullchain Driver Sentinels
 
 Reusable driver under test:
