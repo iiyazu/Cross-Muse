@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 
 from scripts import run_fullchain_docs_sentinel as sentinel
+from xmuse_core.chat.inbox_store import ChatInboxStore
+from xmuse_core.chat.store import ChatStore
 
 
 def test_wait_for_lane_treats_exec_failed_as_terminal(
@@ -60,6 +62,7 @@ def test_main_writes_expected_note_content_into_command_artifacts(
             chat_port=43111,
             mcp_port=43112,
             proposal_timeout_s=900.0,
+            proposal_review_timeout_s=900.0,
             lane_timeout_s=1200.0,
             max_hours=0.75,
             architect_model="gpt-5.4",
@@ -84,3 +87,57 @@ def test_main_writes_expected_note_content_into_command_artifacts(
 
     assert commands_json["expected_note_content"] == expected_note_content
     assert f"expected_note_content={expected_note_content}\n" in commands_txt
+
+
+def test_wait_for_proposal_review_trigger_waits_until_read(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    chat = ChatStore(tmp_path / "chat.db")
+    conv = chat.create_conversation("Review wait")
+    proposal = chat.create_proposal(
+        conversation_id=conv.id,
+        author="architect",
+        proposal_type="lane_graph",
+        content=json.dumps({"summary": "review me", "lanes": []}),
+        references=["collaboration:run-1"],
+    )
+    message = chat.add_message(
+        conv.id,
+        "architect",
+        "assistant",
+        "[proposal] review me",
+        envelope_type="proposal",
+        envelope_json={"proposal_id": proposal.id},
+    )
+    inbox = ChatInboxStore(tmp_path / "chat.db")
+    trigger = inbox.create_item(
+        conversation_id=conv.id,
+        target_participant_id="review-participant",
+        target_role="review",
+        target_address="@review",
+        sender_participant_id="architect-participant",
+        sender_address="@architect",
+        source_message_id=message.id,
+        item_type="review_trigger",
+        payload={"content": "Review this proposal."},
+    )
+    sleeps = 0
+
+    def mark_read_after_first_sleep(_seconds: float) -> None:
+        nonlocal sleeps
+        sleeps += 1
+        inbox.mark_read(trigger.id, responded_message_id=message.id)
+
+    monkeypatch.setattr(sentinel.time, "sleep", mark_read_after_first_sleep)
+
+    result = sentinel._wait_for_proposal_review_trigger_terminal(
+        tmp_path / "chat.db",
+        conversation_id=conv.id,
+        proposal_id=proposal.id,
+        timeout_s=30,
+    )
+
+    assert sleeps == 1
+    assert result["id"] == trigger.id
+    assert result["status"] == "read"
