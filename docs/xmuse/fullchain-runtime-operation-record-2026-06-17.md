@@ -6695,6 +6695,94 @@ Caveats:
   review truth, natural peer-GOD groupchat completion, or full closure.
 - The final action was intentionally held; no live lane merge is claimed.
 
+## 2026-06-20 Loop 27p: Post-PR138 Pending Review Runtime Boundary
+
+Target:
+
+```text
+Verify post-merge main fail-closed behavior for collaboration-backed proposal
+approval while automatic proposal review is still pending.
+```
+
+Runtime command:
+
+```bash
+uv run python .goal-runs/2026-06-20/loop-27n-code-change-sentinel-post136-20260620T065337Z/code_change_driver.py \
+  --run-root .goal-runs/2026-06-20/loop-27p-post-pr138-pending-review-boundary-20260620T072800Z/runtime \
+  --execution-worktree /tmp/loop-27p-post-pr138-pending-review-boundary-20260620T072800Z-exec \
+  --feature-id loop_27p_post_pr138_pending_review_boundary_20260620t072800z \
+  --proposal-timeout-s 900 \
+  --lane-timeout-s 1200 \
+  --max-hours 0.75
+```
+
+Git / server context:
+
+```text
+main_merge_commit=0a90caf623ea85311b617d8034b0787eb1611372
+pr_138=https://github.com/iiyazu/Cross-Muse/pull/138
+pr_138_head=413616e5baa5b5f0496175075a070ae6fedc4bff
+pr_138_ci=27864200633 success
+main_ci=27864227027 success
+```
+
+Durable chain before fail-closed approval:
+
+```text
+conversation_id=conv_e12986f5836941b5a38e6301b62f3df1
+collaboration_run=collab_7509e6e5a7e24c41ad7db9d725c764fc
+collaboration_status=done
+proposal_id=prop_2bc98f02d7f445a08a6c5fadf96d3152
+proposal_status=open
+review_trigger_inbox=inbox_1f50a6d5d8c74cd2ba0c868de6007a0d
+review_trigger_status=unread
+resolution_count=0
+```
+
+Observed approval boundary:
+
+```text
+POST /api/chat/proposals/prop_2bc98f02d7f445a08a6c5fadf96d3152/approve
+status=400
+detail.code=proposal_review_pending
+detail.message=inbox_1f50a6d5d8c74cd2ba0c868de6007a0d:unread
+```
+
+Runtime artifact paths:
+
+```text
+.goal-runs/2026-06-20/loop-27p-post-pr138-pending-review-boundary-20260620T072800Z/runtime/loop_driver_artifacts/failure.json
+.goal-runs/2026-06-20/loop-27p-post-pr138-pending-review-boundary-20260620T072800Z/runtime/loop_driver_artifacts/proposal.json
+.goal-runs/2026-06-20/loop-27p-post-pr138-pending-review-boundary-20260620T072800Z/runtime/chat.db
+```
+
+Cleanup:
+
+```text
+chat_port_listening=false
+mcp_port_listening=false
+matched xmuse/ray service processes after shutdown: none observed
+```
+
+Classification:
+
+- Post-merge local runtime proof that PR #138 changes the old immediate
+  approval driver shape from unsafe dispatch to fail-closed
+  `proposal_review_pending`.
+- This run intentionally stops before lane projection, isolated execution,
+  gate, final review, or final-action hold.
+- The next implementation boundary is harness/driver behavior: it must wait for
+  proposal review completion and structured blocker/veto outcomes before
+  approving dispatchable collaboration-backed proposals.
+
+Forbidden claims preserved:
+
+- no production readiness;
+- no GitHub review truth;
+- no live MemoryOS;
+- no full groupchat-to-completion proof for this loop;
+- no full L8-L10 or L1-L11 closure.
+
 ## 2026-06-20 Loop 27o: Pending Proposal Review Approval Guard Candidate
 
 Target:
