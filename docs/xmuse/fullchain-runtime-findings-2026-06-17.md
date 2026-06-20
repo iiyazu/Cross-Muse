@@ -4815,3 +4815,79 @@ Remaining caveats:
 - This is not provider-native OpenCode resume proof, production readiness, live
   MemoryOS, GitHub review truth, repeated stability, broad non-docs code-change
   proof, natural peer-GOD groupchat completion, or full closure.
+
+## 2026-06-20 Loop 27k/27l Finding: Non-Docs Code-Change Lane Reaches Final Hold
+
+Status: one baseline gate repair merged, followed by bounded local runtime proof
+for a real code-change lane.
+
+Boundary:
+
+```text
+phase=Phase 2/3 natural groupchat to code-change execution
+target=human demand -> groupchat collaboration -> proposal -> isolated code change -> gate -> OpenCode review -> final-action hold
+authority=chat.db collaboration/proposal records + graph/lane projection + execution worktree diff + gate report + review_plane/final_actions artifacts
+producer=human @architect demand + Codex architect + Codex execute + OpenCode review + lane worker
+consumer=platform runner gate/review/final-action path + main Codex import/audit
+failure_boundary=baseline gate contract, then none for post-PR134 bounded lane
+```
+
+Loop 27k observed failure:
+
+- The groupchat produced collaboration run
+  `collab_d6bac849094a42f987e4b2563fecedee`, proposal
+  `prop_5ef31b378e354f8caaf7e5399cf68c85`, and a scoped code diff touching only
+  `scripts/run_fullchain_docs_sentinel.py` and
+  `tests/xmuse/test_fullchain_docs_sentinel.py`.
+- The lane stopped at `gate_failed`, not review/final hold.
+- Gate report selected the `xmuse-core` profile and failed on
+  `test_mcp_collaboration_tools_support_veto_and_dispatch_gate`.
+- Root cause: the old test asked for collaboration targets `review` and
+  `execute`, but registered only architect and review participants. Current
+  MCP collaboration behavior correctly fails closed on unknown targets and
+  normalizes target names to `@role`.
+
+Repair:
+
+- PR #134, `test: align collaboration target setup`, registered the execute
+  participant used by the test and aligned assertions to normalized
+  `@review` / `@execute` targets.
+- PR #134 server facts: head
+  `e4a36b70f5668c9e6bd872e4e1fbc1750d045424`, merge commit
+  `893e911cce242a6ff8a08b060855ed9d63c3a8f1`, PR CI run
+  `27862441719` success, main CI run `27862466582` success.
+
+Loop 27l post-repair proof:
+
+- Rerun from detached `origin/main` at
+  `893e911cce242a6ff8a08b060855ed9d63c3a8f1`.
+- Durable collaboration run:
+  `collab_2d33039bacfc499c848f72fd4c3fc0d1`.
+- Durable proposal:
+  `prop_e0c5c21371ba4ea5a699212c1ba23dc2`.
+- Accepted resolution:
+  `res_8c8a08462ccd492686184b64ceba63b5`.
+- Lane:
+  `loop_27l_code_change_sentinel_commands_post134_20260620t061200z`.
+- Review task/verdict:
+  `rtask_dacd3cd9e6cf411f8f0c374435e620b3` /
+  `verdict-merge-rtask_dacd3cd9e6cf411f8f0c374435e620b3`.
+- Final hold: `final-e8aea6a8d2ff`.
+- Final lane state: `awaiting_final_action`, `gate_passed=true`,
+  `review_decision=merge`, `review_delivery_mode=persistent`,
+  `persistent_review_degraded=false`, `review_peer_cli_kind=opencode`.
+- Candidate diff remained scoped to the sentinel runner script and its focused
+  test, adding `expected_note_content` to command artifacts.
+
+Remaining caveats:
+
+- This is one bounded non-docs code-change lane, not repeated soak or
+  production readiness.
+- The Loop 27l architect collaboration callback first recorded a
+  `peer_response_timeout` and then succeeded on scheduler retry with
+  `chat_emit_proposal`; this retry behavior remains a stability caveat.
+- `review_peer_defaulted=true` means the registered OpenCode review peer was
+  selected by default routing, not by provider-native session continuity proof.
+- This does not prove provider-native OpenCode resume, live MemoryOS, GitHub
+  review truth, natural peer-GOD groupchat completion, full L8-L10 closure, or
+  full L1-L11 closure.

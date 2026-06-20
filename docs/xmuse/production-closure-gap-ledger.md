@@ -533,6 +533,19 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   and execute dispatch `chat_post_message` turns all recorded
   `delivery_mode=mcp_writeback`. This is observability/lifecycle proof only,
   not a new production-readiness or broad soak claim.
+- Loop 27k attempted the first small non-docs groupchat-produced code-change
+  lane for sentinel command artifacts. Groupchat collaboration, proposal,
+  approval, and isolated execution produced a scoped two-file candidate, but
+  the lane stopped at `gate_failed` because the selected `xmuse-core` gate hit
+  a baseline MCP collaboration test setup gap. PR #134 repaired that test
+  setup and merged with PR CI and main CI success.
+- Loop 27l reran the same non-docs code-change lane from post-PR134 main and
+  reached `awaiting_final_action` with `gate_passed=true`,
+  `review_decision=merge`, `review_delivery_mode=persistent`,
+  `persistent_review_degraded=false`, and OpenCode review peer metadata. This
+  is bounded local runtime proof for one small code-change lane only. The
+  architect callback needed a scheduler retry after one timeout, so stability
+  remains unproven.
 - The successful chains are not yet repeated overnight or production-load soak.
 - Provider-native session continuity and memory persistence are not proven as
   durable product behavior.
@@ -595,15 +608,17 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   configured-peer degradation fallback into fail-closed review authority on
   main; Loop 26x confirms the post-PR124 docs-only sentinel reaches
   final-action hold with persistent OpenCode review after that repair.
-- P5 code-change soak: repeat small real code-change lanes after the
-  inspector provider summary PR lands.
+- P5 code-change soak: Loop 27l provides one bounded post-PR134 non-docs
+  code-change lane to final-action hold. Remaining work is repeated small
+  code-change lanes, broader code-change shapes, and production-load/stability
+  evidence without callback retry dependence.
 - P5a natural dynamic groupchat continuity: Loop 27g proves bounded xmuse GOD
   session restore plus second-turn dynamic OpenCode writeback. Loop 27h proves
   one natural multi-agent Codex/OpenCode discussion that produces a durable
   proposal and reaches final-action hold for a docs-only lane. Loop 27j
   locally repairs the structured-tool latency false-failed classification for
-  that sentinel shape. Remaining work is provider-native OpenCode resume
-  evidence, repeated stability, broader non-docs code-change lanes, and any
-  production-load claim.
+  that sentinel shape. Loop 27l adds one bounded non-docs code-change lane.
+  Remaining work is provider-native OpenCode resume evidence, repeated
+  stability, broader code-change lanes, and any production-load claim.
 - P6 MemoryOS adapter proof: keep `live_memoryos` forbidden until a real trace
   id or artifact exists.

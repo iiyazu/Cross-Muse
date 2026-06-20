@@ -6695,6 +6695,154 @@ Caveats:
   review truth, natural peer-GOD groupchat completion, or full closure.
 - The final action was intentionally held; no live lane merge is claimed.
 
+## 2026-06-20 Loop 27k/27l: First Non-Docs Code-Change Sentinel
+
+Purpose: move beyond docs-only sentinel proof by having natural groupchat drive
+a small xmuse code change through proposal, isolated execution, gate, OpenCode
+review, and final-action hold.
+
+### Loop 27k: baseline gate blocker
+
+Workspace and authority:
+
+```text
+repo_worktree=/tmp/xmuse-goal-main-20260620
+base_head_sha=ca17c4a91ad7594b069a2b265c9d0d63acbf8a2a
+run_root=/tmp/xmuse-goal-main-20260620/.goal-runs/2026-06-20/loop-27k-code-change-sentinel-commands-20260620T054915Z/runtime
+execution_worktree=/tmp/loop-27k-code-change-sentinel-commands-20260620T054915Z-exec
+conversation_id=conv_f98eb31ee9d448f9a9f47ff9f5c4d526
+```
+
+Runtime command:
+
+```bash
+uv run python .goal-runs/2026-06-20/loop-27k-code-change-sentinel-commands-20260620T054915Z/code_change_driver.py \
+  --run-root .goal-runs/2026-06-20/loop-27k-code-change-sentinel-commands-20260620T054915Z/runtime \
+  --execution-worktree /tmp/loop-27k-code-change-sentinel-commands-20260620T054915Z-exec \
+  --feature-id loop_27k_code_change_sentinel_commands_20260620t054915z \
+  --proposal-timeout-s 900 \
+  --lane-timeout-s 1200 \
+  --max-hours 0.75
+```
+
+Durable chain:
+
+```text
+collaboration_run=collab_d6bac849094a42f987e4b2563fecedee
+proposal_id=prop_5ef31b378e354f8caaf7e5399cf68c85
+resolution_id=res_7c01b40ba0554a7e88ce6b9aef6b835f
+lane_id=loop_27k_code_change_sentinel_commands_20260620t054915z
+```
+
+Outcome:
+
+```text
+status=gate_failed
+gate_passed=false
+changed_files=scripts/run_fullchain_docs_sentinel.py, tests/xmuse/test_fullchain_docs_sentinel.py
+candidate_diff_scoped=true
+```
+
+Gate authority:
+
+```text
+gate_report=.goal-runs/2026-06-20/loop-27k-code-change-sentinel-commands-20260620T054915Z/runtime/logs/gates/loop_27k_code_change_sentinel_commands_20260620t054915z/report.json
+failing_node=tests/xmuse/test_peer_chat_mcp_tools.py::test_mcp_collaboration_tools_support_veto_and_dispatch_gate
+root_cause=test registered review target but omitted execute target while asking collaboration_request for ["review", "execute"]
+```
+
+Repair:
+
+```text
+pr=134
+title=test: align collaboration target setup
+head_sha=e4a36b70f5668c9e6bd872e4e1fbc1750d045424
+merge_commit=893e911cce242a6ff8a08b060855ed9d63c3a8f1
+pr_ci_run=27862441719 success
+main_ci_run=27862466582 success
+remote_branch_deleted=true
+```
+
+### Loop 27l: post-PR134 successful code-change chain
+
+Workspace and authority:
+
+```text
+repo_worktree=/tmp/xmuse-loop27l-main-893e911-runtime
+base_head_sha=893e911cce242a6ff8a08b060855ed9d63c3a8f1
+run_root=/tmp/xmuse-loop27l-main-893e911-runtime/.goal-runs/2026-06-20/loop-27l-code-change-sentinel-commands-post134-20260620T061200Z/runtime
+execution_worktree=/tmp/loop-27l-code-change-sentinel-commands-post134-20260620T061200Z-exec
+conversation_id=conv_6440e9fc2a7b4ca0aa46d06b0bdd4c8b
+```
+
+Runtime command:
+
+```bash
+uv run python .goal-runs/2026-06-20/loop-27l-code-change-sentinel-commands-post134-20260620T061200Z/code_change_driver.py \
+  --run-root .goal-runs/2026-06-20/loop-27l-code-change-sentinel-commands-post134-20260620T061200Z/runtime \
+  --execution-worktree /tmp/loop-27l-code-change-sentinel-commands-post134-20260620T061200Z-exec \
+  --feature-id loop_27l_code_change_sentinel_commands_post134_20260620t061200z \
+  --proposal-timeout-s 900 \
+  --lane-timeout-s 1200 \
+  --max-hours 0.75
+```
+
+Durable chain:
+
+```text
+collaboration_run=collab_2d33039bacfc499c848f72fd4c3fc0d1
+proposal_id=prop_e0c5c21371ba4ea5a699212c1ba23dc2
+resolution_id=res_8c8a08462ccd492686184b64ceba63b5
+lane_id=loop_27l_code_change_sentinel_commands_post134_20260620t061200z
+review_task_id=rtask_dacd3cd9e6cf411f8f0c374435e620b3
+review_verdict_id=verdict-merge-rtask_dacd3cd9e6cf411f8f0c374435e620b3
+final_action_hold_id=final-e8aea6a8d2ff
+```
+
+Final lane state:
+
+```text
+status=awaiting_final_action
+gate_passed=true
+review_decision=merge
+review_delivery_mode=persistent
+persistent_review_degraded=false
+review_peer_cli_kind=opencode
+review_peer_model=opencode-go/deepseek-v4-flash
+proposal_has_review_runtime=false
+```
+
+Execution candidate:
+
+```text
+changed_files=scripts/run_fullchain_docs_sentinel.py, tests/xmuse/test_fullchain_docs_sentinel.py
+command_artifacts_add_expected_note_content=true
+driver_success_checks_all_true=true
+```
+
+Success checks:
+
+```text
+approved_proposal_accepted=true
+changed_files_scoped=true
+execution_peer_handoff_not_degraded=true
+final_action_hold_pending=true
+gate_passed=true
+lane_awaiting_final_action=true
+opencode_review_peer_recorded=true
+proposal_has_no_review_runtime=true
+review_task_verdict_emitted=true
+review_verdict_finalized=true
+script_records_expected_note_content=true
+test_records_expected_note_content=true
+worktree_exists=true
+```
+
+Classification: bounded local runtime proof for one small non-docs xmuse
+code-change lane. It proves this lane shape only. It is not production
+readiness, repeated soak, provider-native session resume, live MemoryOS,
+GitHub review truth, natural peer-GOD groupchat completion, or full closure.
+
 ## 2026-06-20 Loop 27a: Peer Progress Read Projection Candidate
 
 Target:
