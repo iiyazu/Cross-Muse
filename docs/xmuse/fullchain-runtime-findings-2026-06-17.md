@@ -5014,3 +5014,63 @@ Remaining caveats:
 - It is not repeated soak, production readiness, provider-native OpenCode
   resume, live MemoryOS, GitHub review truth, natural peer-GOD groupchat
   completion, full L8-L10 closure, or full L1-L11 closure.
+
+## 2026-06-20 Loop 27o Finding: Pending Proposal Review Must Block Collaboration Approval
+
+Status: candidate repair with focused regression; awaiting PR/server truth and
+post-merge runtime rerun.
+
+Boundary:
+
+```text
+phase=Phase 3 proposal review before dispatchable approval
+target=prevent collaboration-backed lane_graph approval from racing ahead of automatic proposal review
+authority=chat.db proposal message + review_trigger inbox state + collaboration dispatch gate
+producer=PeerChatService lane_graph proposal emission
+consumer=Chat API proposal approval path
+failure_boundary=prompt/tool contract + approval lifecycle race
+```
+
+Confirmed hypothesis:
+
+- Loop 27n showed the driver approving a collaboration-backed proposal before
+  OpenCode proposal review finished.
+- Current source confirmed the approval path marked pending review triggers read
+  after approval and did not reject unread/claimed proposal review triggers.
+- Current source also confirmed the review trigger payload did not tell the
+  reviewer that dispatch-blocking findings must be written through
+  `chat_raise_collaboration_blocker`.
+
+Candidate repair:
+
+- `xmuse/chat_api.py` now rejects collaboration-backed `lane_graph` approval
+  with `proposal_review_pending` while the related automatic `review_trigger`
+  is `unread` or `claimed`.
+- `src/xmuse_core/chat/peer_service.py` now instructs proposal reviewers to use
+  `chat_raise_collaboration_blocker` with `severity="veto"` and
+  `blocks_dispatch=true` for no-dispatch findings, and states that a plain
+  `chat_post_message` recommendation cannot block dispatch.
+
+Validation:
+
+```text
+test_collaboration_proposal_approval_blocks_pending_review_trigger: passed
+test_lane_graph_review_trigger_includes_readable_proposal_content: passed
+test_chat_review_trigger.py + test_peer_chat_review_trigger.py: 8 passed
+selected collaboration approval gate tests: 4 passed
+test_groupchat_collaboration_runtime.py: 35 passed
+peer scheduler/API/TUI adapter regression set: 66 passed
+touched-file ruff: passed
+```
+
+Remaining caveats:
+
+- This is not yet post-merge runtime proof.
+- A reviewer that ignores the prompt and writes only free text still does not
+  create dispatch-blocking authority; that is intentional because plain text is
+  not a veto source. The next runtime loop should make the driver wait for
+  review trigger completion and then observe whether the review peer uses the
+  structured blocker tool for no-dispatch findings.
+- This does not prove repeated soak, production readiness, live MemoryOS,
+  GitHub review truth, natural peer-GOD completion, full L8-L10 closure, or
+  full L1-L11 closure.

@@ -6695,6 +6695,95 @@ Caveats:
   review truth, natural peer-GOD groupchat completion, or full closure.
 - The final action was intentionally held; no live lane merge is claimed.
 
+## 2026-06-20 Loop 27o: Pending Proposal Review Approval Guard Candidate
+
+Target:
+
+```text
+Phase 3 pre-dispatch proposal review/veto semantics.
+```
+
+Authority / producer / consumer:
+
+```text
+authority=chat.db proposal message + review_trigger inbox item + collaboration dispatch gate
+producer=PeerChatService lane_graph proposal emission with collaboration reference
+consumer=Chat API proposal approval path
+condition=collaboration-backed dispatchable lane_graph approval must fail closed while its automatic proposal review trigger is unread/claimed
+proof_level=contract_proof + focused regression after Loop 27n runtime caveat
+```
+
+Root-cause hypothesis:
+
+```text
+Loop 27n approval raced ahead of the automatic OpenCode proposal review because
+the approval path treated a pending review_trigger as clearable bookkeeping
+instead of a pre-dispatch review obligation for collaboration-backed lane_graph
+work. The review prompt also did not state that a "do not dispatch" review must
+use chat_raise_collaboration_blocker to create dispatch-blocking authority.
+```
+
+Candidate changes:
+
+```text
+xmuse/chat_api.py:
+  - reject collaboration-backed lane_graph approval with proposal_review_pending
+    when the related review_trigger is unread or claimed.
+  - keep ordinary non-collaboration manual approval behavior unchanged.
+
+src/xmuse_core/chat/peer_service.py:
+  - add review-trigger instructions that blocking/no-dispatch recommendations
+    must call chat_raise_collaboration_blocker with severity="veto" and
+    blocks_dispatch=true.
+  - explicitly state that a plain chat_post_message recommendation cannot block
+    dispatch.
+```
+
+Focused validation:
+
+```bash
+uv run pytest tests/xmuse/test_chat_review_trigger.py::test_collaboration_proposal_approval_blocks_pending_review_trigger -q
+uv run pytest tests/xmuse/test_peer_chat_review_trigger.py::test_lane_graph_review_trigger_includes_readable_proposal_content -q
+uv run pytest tests/xmuse/test_chat_review_trigger.py tests/xmuse/test_peer_chat_review_trigger.py -q
+uv run pytest tests/xmuse/test_groupchat_collaboration_runtime.py::test_proposal_approval_references_collaboration_gate_and_blocks_active_veto \
+  tests/xmuse/test_groupchat_collaboration_runtime.py::test_blocked_collaboration_gate_leaves_no_approval_side_effects \
+  tests/xmuse/test_groupchat_collaboration_runtime.py::test_proposal_approval_requires_execute_collaboration_confirmation \
+  tests/xmuse/test_groupchat_collaboration_runtime.py::test_proposal_approval_rejects_freeform_execute_confirmation -q
+uv run pytest tests/xmuse/test_groupchat_collaboration_runtime.py -q
+uv run pytest tests/xmuse/test_peer_chat_scheduler.py tests/xmuse/test_peer_chat_api.py tests/xmuse/test_tui_adapter.py -q
+uv run ruff check xmuse/chat_api.py src/xmuse_core/chat/peer_service.py tests/xmuse/test_chat_review_trigger.py tests/xmuse/test_peer_chat_review_trigger.py
+```
+
+Results:
+
+```text
+1 passed, 1 warning
+1 passed
+8 passed, 1 warning
+4 passed, 1 warning
+35 passed, 1 warning
+66 passed, 1 warning
+ruff: All checks passed
+```
+
+Classification:
+
+- Candidate contract repair for the Loop 27n pre-dispatch review race.
+- This is not post-merge runtime proof and not a fullchain rerun.
+- Expected next runtime behavior: the old immediate-approval driver shape
+  should fail closed with `proposal_review_pending` until the proposal review
+  trigger is handled. The next loop should update the driver/harness to wait for
+  proposal review and structured veto/blocker outcomes instead of bypassing
+  them.
+
+Forbidden claims preserved:
+
+- no production readiness;
+- no GitHub review truth;
+- no live MemoryOS;
+- no natural peer-GOD groupchat completion;
+- no full L8-L10 or L1-L11 closure.
+
 ## 2026-06-20 Loop 27k/27l: First Non-Docs Code-Change Sentinel
 
 Purpose: move beyond docs-only sentinel proof by having natural groupchat drive
