@@ -6783,6 +6783,131 @@ Forbidden claims preserved:
 - no full groupchat-to-completion proof for this loop;
 - no full L8-L10 or L1-L11 closure.
 
+## 2026-06-20 Loop 27q: Sentinel Waits For Proposal Review
+
+Target:
+
+```text
+Update the reusable fullchain sentinel harness so it waits for automatic
+proposal review completion before approving a collaboration-backed lane_graph
+proposal.
+```
+
+Runtime command:
+
+```bash
+uv run python scripts/run_fullchain_docs_sentinel.py \
+  --run-root .goal-runs/2026-06-20/loop-27q-sentinel-waits-proposal-review-20260620T074200Z/runtime \
+  --execution-worktree /tmp/loop-27q-sentinel-waits-proposal-review-20260620T074200Z-exec \
+  --feature-id loop_27q_sentinel_waits_proposal_review_20260620t074200z \
+  --proposal-timeout-s 900 \
+  --proposal-review-timeout-s 900 \
+  --lane-timeout-s 1200 \
+  --max-hours 0.75
+```
+
+Git context:
+
+```text
+base_head=fdf050ff42042a1e41ffe224941a41dea9774ea0
+branch=codex/wait-for-proposal-review-in-sentinel
+```
+
+Durable chain:
+
+```text
+conversation_id=conv_1e0b6025d3bb483ba738667b86794b40
+collaboration_run=collab_d2ff4b25ad8d48feb2d4b0060fb20e99
+proposal_id=prop_3f0d6f5a3eff4f0f89dd7aa293b18bfe
+review_trigger_inbox=inbox_ffe0e282eafd4bb9a3ab08c05646cd34
+review_trigger_status=read
+review_trigger_responded_message_id=msg_0cc980effd7d4e1a8663740c6ad46740
+resolution_id=res_f1223814dc59499098333f664cde140e
+feature_id=loop_27q_sentinel_waits_proposal_review_20260620t074200z
+lane_status=awaiting_final_action
+gate_passed=true
+review_task=rtask_5f80f70b11d1432c9e2997d9e31a4b03
+review_verdict=verdict-merge-rtask_5f80f70b11d1432c9e2997d9e31a4b03
+review_decision=merge
+review_delivery_mode=persistent
+persistent_review_degraded=false
+review_peer_cli_kind=opencode
+review_peer_model=opencode-go/deepseek-v4-flash
+final_action_hold=final-f332e8015da2 pending
+```
+
+Execution artifact:
+
+```text
+/tmp/loop-27q-sentinel-waits-proposal-review-20260620T074200Z-exec/docs/xmuse/loop_27q_sentinel_waits_proposal_review_20260620t074200z.md
+```
+
+Driver success checks:
+
+```text
+single_related_lane_graph_proposal=true
+approved_proposal_accepted=true
+execution_peer_handoff_not_degraded=true
+lane_awaiting_final_action=true
+gate_passed=true
+isolated_note_matches=true
+opencode_review_peer_recorded=true
+review_verdict_finalized=true
+review_task_verdict_emitted=true
+final_action_hold_pending=true
+proposal_has_no_review_runtime=true
+```
+
+Runtime artifact paths:
+
+```text
+.goal-runs/2026-06-20/loop-27q-sentinel-waits-proposal-review-20260620T074200Z/runtime/loop_driver_artifacts/proposal_review_trigger.json
+.goal-runs/2026-06-20/loop-27q-sentinel-waits-proposal-review-20260620T074200Z/runtime/loop_driver_artifacts/approval_response.json
+.goal-runs/2026-06-20/loop-27q-sentinel-waits-proposal-review-20260620T074200Z/runtime/loop_driver_artifacts/success_checks.json
+.goal-runs/2026-06-20/loop-27q-sentinel-waits-proposal-review-20260620T074200Z/runtime/review_plane.json
+.goal-runs/2026-06-20/loop-27q-sentinel-waits-proposal-review-20260620T074200Z/runtime/final_actions.json
+.goal-runs/2026-06-20/loop-27q-sentinel-waits-proposal-review-20260620T074200Z/runtime/chat.db
+```
+
+Cleanup:
+
+```text
+chat_port_listening=false
+mcp_port_listening=false
+```
+
+Branch validation:
+
+```bash
+uv run pytest tests/xmuse/test_fullchain_docs_sentinel.py -q
+uv run pytest tests/xmuse/test_chat_review_trigger.py tests/xmuse/test_peer_chat_review_trigger.py tests/xmuse/test_groupchat_collaboration_runtime.py tests/xmuse/test_package_boundaries.py -q
+uv run ruff check .
+git diff --check
+test ! -e xmuse/__init__.py
+```
+
+Results:
+
+```text
+3 passed
+59 passed, 1 warning
+ruff: All checks passed
+git diff --check: passed
+xmuse/__init__.py absent
+```
+
+Classification:
+
+- Candidate-branch local runtime proof that the reusable sentinel harness can
+  wait for automatic proposal review completion before approving a dispatchable
+  collaboration-backed proposal.
+- The loop moved beyond Loop 27p's expected fail-closed
+  `proposal_review_pending` boundary, approved only after the trigger was read,
+  and reached isolated execution, gate, persistent OpenCode review, and
+  final-action hold.
+- This is harness/runtime-loop evidence, not production readiness, GitHub
+  review truth, live MemoryOS proof, repeated soak, or full closure.
+
 ## 2026-06-20 Loop 27o: Pending Proposal Review Approval Guard Candidate
 
 Target:

@@ -7,15 +7,15 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
 
 ## Current Proof Boundary
 
-- Latest main inspected: `9b76b8cece4ea20d75bb0ed875fb602bdd363265`
-  (PR #131 dynamic OpenCode restart-continuity evidence merge). Latest local
-  fullchain runtime proof is Loop 27h from worktree
-  `/tmp/xmuse-postmerge-layered-prompt-main` at the same head. Loop 27h drove
-  one natural `peer_consensus` groupchat from human `@architect` demand through
-  durable Codex/OpenCode collaboration responses, architect-emitted
-  `lane_graph` proposal, human approval, isolated docs execution, gate,
-  persistent OpenCode review, and final-action hold. This is bounded local
-  runtime proof for that docs-only shape; it does not prove production
+- Latest main inspected: `fdf050ff42042a1e41ffe224941a41dea9774ea0`
+  (PR #139 pending-review runtime evidence merge). Latest candidate-branch
+  reusable sentinel proof is Loop 27q from branch
+  `codex/wait-for-proposal-review-in-sentinel` at the same base head plus the
+  local harness update. Loop 27q waited for automatic proposal review trigger
+  `inbox_ffe0e282eafd4bb9a3ab08c05646cd34` to reach `read` before approval,
+  then reached isolated docs execution, gate, persistent OpenCode review, and
+  final-action hold. This is bounded candidate-branch harness/runtime-loop
+  proof for the docs-only sentinel shape; it does not prove production
   readiness, provider-native OpenCode resume, live MemoryOS, GitHub review
   truth, live lane merge truth, repeated soak, or full closure.
 - Latest natural groupchat proposal evidence: Loop 27h recorded collaboration
@@ -577,6 +577,17 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   is desired boundary proof, not completion proof. The next bucket is to update
   the runtime harness/driver to wait for proposal review completion and
   structured veto/blocker outcomes.
+- Loop 27q is the candidate-branch update for that harness/driver bucket. The
+  reusable sentinel now waits for the related automatic `review_trigger` to
+  reach terminal `read` state before approving. The run approved proposal
+  `prop_3f0d6f5a3eff4f0f89dd7aa293b18bfe` only after
+  `inbox_ffe0e282eafd4bb9a3ab08c05646cd34` was `read`, created resolution
+  `res_f1223814dc59499098333f664cde140e`, reached
+  `awaiting_final_action`, recorded finalized OpenCode review verdict
+  `verdict-merge-rtask_5f80f70b11d1432c9e2997d9e31a4b03`, and left final hold
+  `final-f332e8015da2` pending. This is local candidate-branch proof for the
+  reusable sentinel harness, not merged main proof and not production
+  readiness.
 - The successful chains are not yet repeated overnight or production-load soak.
 - Provider-native session continuity and memory persistence are not proven as
   durable product behavior.

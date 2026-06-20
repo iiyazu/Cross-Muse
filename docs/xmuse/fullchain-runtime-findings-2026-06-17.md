@@ -23,6 +23,14 @@ truth, merge truth, live MemoryOS proof, or full closure.
   `chat_record_collaboration_response` now count as durable writeback success
   for peer latency classification. The sentinel reached final-action hold and
   all four peer turns recorded `delivery_mode=mcp_writeback`.
+- Loop 27q is candidate-branch local runtime proof that the reusable fullchain
+  sentinel harness now waits for the automatic proposal review trigger to reach
+  terminal read state before approval. The run approved only after
+  `review_trigger` `inbox_ffe0e282eafd4bb9a3ab08c05646cd34` was `read`, then
+  reached isolated docs execution, gate pass, persistent OpenCode review
+  verdict, and pending final-action hold. This is harness/runtime-loop proof
+  only; it is not production readiness, GitHub review truth, live MemoryOS
+  proof, repeated soak, or full closure.
 - Loop 26i/26j introduced a reusable local runtime driver at
   `scripts/run_fullchain_docs_sentinel.py` for the docs-only fullchain
   sentinel: Chat API + MCP + platform runner, durable groupchat,
@@ -5126,3 +5134,63 @@ Remaining caveats:
   next runtime observation after the harness waits for review completion.
 - No production readiness, live MemoryOS, GitHub review truth, full L8-L10
   closure, or full L1-L11 closure is claimed.
+
+## 2026-06-20 Loop 27q Finding: Sentinel Waits For Proposal Review Before Approval
+
+Status: candidate-branch runtime proof for the reusable sentinel harness.
+
+Boundary:
+
+```text
+phase=Phase 3 proposal review before dispatchable approval
+target=harness waits for automatic proposal review completion before approving a collaboration-backed lane_graph
+authority=chat.db review_trigger inbox state + Chat API approval response + feature_lanes/review/final-action artifacts
+producer=Codex architect proposal emitted from completed collaboration run
+consumer=reusable fullchain sentinel driver and Chat API proposal approval path
+result=confirmed wait-then-approve path
+```
+
+Observed durable chain:
+
+- Base head was `fdf050ff42042a1e41ffe224941a41dea9774ea0`.
+- Runtime conversation `conv_1e0b6025d3bb483ba738667b86794b40` received the
+  docs-only sentinel demand.
+- Architect created collaboration run
+  `collab_d2ff4b25ad8d48feb2d4b0060fb20e99`.
+- Architect emitted proposal `prop_3f0d6f5a3eff4f0f89dd7aa293b18bfe`.
+- Automatic review trigger
+  `inbox_ffe0e282eafd4bb9a3ab08c05646cd34` reached `status=read` before
+  approval.
+- Approval created resolution
+  `res_f1223814dc59499098333f664cde140e`.
+- Lane `loop_27q_sentinel_waits_proposal_review_20260620t074200z` reached
+  `awaiting_final_action` with `gate_passed=true`,
+  `review_decision=merge`, `review_delivery_mode=persistent`,
+  `persistent_review_degraded=false`,
+  `review_peer_cli_kind=opencode`, and
+  `review_peer_model=opencode-go/deepseek-v4-flash`.
+- Review task `rtask_5f80f70b11d1432c9e2997d9e31a4b03` emitted finalized
+  verdict `verdict-merge-rtask_5f80f70b11d1432c9e2997d9e31a4b03`.
+- Final-action hold `final-f332e8015da2` remained `pending`.
+- Cleanup reported no Chat API or MCP listener.
+- Branch validation passed:
+  `uv run pytest tests/xmuse/test_fullchain_docs_sentinel.py -q`,
+  `uv run pytest tests/xmuse/test_chat_review_trigger.py tests/xmuse/test_peer_chat_review_trigger.py tests/xmuse/test_groupchat_collaboration_runtime.py tests/xmuse/test_package_boundaries.py -q`,
+  `uv run ruff check .`, `git diff --check`, and
+  `test ! -e xmuse/__init__.py`.
+
+Interpretation:
+
+- Loop 27p proved the old immediate-approval shape now fails closed while
+  proposal review is pending.
+- Loop 27q proves the reusable harness can follow the new contract: wait for
+  proposal review, approve only afterward, and continue to final-action hold.
+- This is still a docs-only sentinel shape and a candidate-branch harness
+  change. It does not prove production readiness, repeated soak, live MemoryOS,
+  GitHub review truth, full L8-L10 closure, or full L1-L11 closure.
+
+Next boundary:
+
+- Land the harness update behind a small PR.
+- Continue using the wait-before-approval sentinel as the baseline fullchain
+  probe for subsequent groupchat/execution changes.
