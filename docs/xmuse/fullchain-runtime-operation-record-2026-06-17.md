@@ -6932,6 +6932,117 @@ Classification: targeted observability repair for retry-attempt evidence. This
 does not prove the callback will no longer need retry; it makes future retry
 dependence durable and auditable instead of overwritten by a later success.
 
+## 2026-06-20 Loop 27n: Post-PR136 Code-Change Chain Rerun
+
+Purpose: rerun the largest reachable code-change sentinel shape from latest
+main after PR #136 to observe whether the Loop 27l collaboration callback retry
+reproduces and whether the execution/review/final-action path still reaches
+the safe hold boundary.
+
+Workspace and authority:
+
+```text
+repo_worktree=/tmp/xmuse-goal-main-20260620
+base_head_sha=cad8b7b40c916f756432591f86dee38da416fafa
+run_root=/tmp/xmuse-goal-main-20260620/.goal-runs/2026-06-20/loop-27n-code-change-sentinel-post136-20260620T065337Z/runtime
+execution_worktree=/tmp/loop-27n-code-change-sentinel-post136-20260620T065337Z-exec
+conversation_id=conv_7ef31239eb4d4e2693a64c96c2c426b4
+```
+
+Runtime command:
+
+```bash
+uv run python .goal-runs/2026-06-20/loop-27n-code-change-sentinel-post136-20260620T065337Z/code_change_driver.py \
+  --run-root .goal-runs/2026-06-20/loop-27n-code-change-sentinel-post136-20260620T065337Z/runtime \
+  --execution-worktree /tmp/loop-27n-code-change-sentinel-post136-20260620T065337Z-exec \
+  --feature-id loop_27n_code_change_sentinel_post136_20260620t065337z \
+  --proposal-timeout-s 900 \
+  --lane-timeout-s 1200 \
+  --max-hours 0.75
+```
+
+Durable chain:
+
+```text
+collaboration_run=collab_d68e4c215e80431487ae33d8407db163
+proposal_id=prop_c45500ea19164801aff4fa31fb202f86
+resolution_id=res_4387ec6d53284833aa68a5744cc9eb2c
+lane_id=loop_27n_code_change_sentinel_post136_20260620t065337z
+review_task_id=rtask_a24953dc176b46cbad36ae4fe3eebcbf
+review_verdict_id=verdict-loop_27n_code_change_sentinel_post136_20260620t065337z
+final_action_hold_id=final-55b46d51c6b5
+```
+
+Final lane state:
+
+```text
+status=awaiting_final_action
+gate_passed=true
+review_decision=merge
+review_delivery_mode=persistent
+persistent_review_degraded=false
+review_peer_cli_kind=opencode
+review_peer_model=opencode-go/deepseek-v4-flash
+review_peer_defaulted=true
+```
+
+Callback and latency observations:
+
+```text
+architect_mention_inbox=inbox_3677d7b37c47469dbaac1b0221d4c722 nudge_count=0 delivery_mode=mcp_writeback
+execute_collaboration_inbox=inbox_0422d682380f46da89a2911c2f0c9e53 nudge_count=0 delivery_mode=mcp_writeback
+architect_callback_inbox=inbox_fd69b2a178784db0ad69841af03b48dd nudge_count=0 delivery_mode=mcp_writeback stages=chat_read_inbox,chat_emit_proposal
+review_trigger_inbox=inbox_ca1b845c3f074254924c11611ad7a364 nudge_count=0 delivery_mode=mcp_writeback
+dispatch_inbox=inbox_59d28d8f31cb468f8181d42860b01079 nudge_count=0 delivery_mode=mcp_writeback
+```
+
+Success checks:
+
+```text
+approved_proposal_accepted=true
+changed_files_scoped=true
+execution_peer_handoff_not_degraded=true
+final_action_hold_pending=true
+gate_passed=true
+lane_awaiting_final_action=true
+opencode_review_peer_recorded=true
+proposal_has_no_review_runtime=true
+review_task_verdict_emitted=true
+review_verdict_finalized=true
+script_records_expected_note_content=true
+test_records_expected_note_content=true
+worktree_exists=true
+```
+
+Execution candidate:
+
+```text
+changed_files=tests/xmuse/test_fullchain_docs_sentinel.py
+script_already_had_expected_note_content=true
+test_records_expected_note_content=true
+```
+
+Cleanup:
+
+```text
+chat_port_listening=false
+mcp_port_listening=false
+```
+
+Classification: bounded post-PR136 local runtime proof that the same
+groupchat-to-final-hold shape still reaches final-action hold and that the
+Loop 27l callback retry did not reproduce in this run. This is not a new
+production feature delivery because the main script already contained the
+requested behavior and the candidate only broadened focused test coverage.
+
+Caveat:
+
+- The proposal review path observed the lane as effectively no-op and
+  recommended against dispatch, but it did not create an active veto before the
+  driver approval. The final review still accepted the candidate and recorded
+  an ignored review conflict after acceptance. Treat pre-dispatch no-op review
+  and veto semantics as the next evidence boundary.
+
 ## 2026-06-20 Loop 27a: Peer Progress Read Projection Candidate
 
 Target:

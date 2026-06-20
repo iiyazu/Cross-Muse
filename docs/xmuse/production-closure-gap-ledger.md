@@ -551,6 +551,15 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   retried inbox item instead of overwriting the earlier failed attempt with a
   later success. This makes future retry dependence durable and auditable; it
   does not prove the callback path no longer needs retry.
+- Loop 27n reran the same sentinel shape from post-PR136 main and reached
+  final-action hold without any peer inbox retry (`nudge_count=0` for the
+  architect mention, execute collaboration response, architect callback,
+  review trigger, and dispatch acknowledgement). This strengthens stability
+  evidence for the callback path only. It also exposed a new caveat:
+  pre-dispatch proposal review identified the lane as effectively no-op and
+  recommended against dispatch, but no active veto blocked the driver approval.
+  The execution candidate only changed a focused test because the production
+  script already had the requested behavior.
 - The successful chains are not yet repeated overnight or production-load soak.
 - Provider-native session continuity and memory persistence are not proven as
   durable product behavior.
