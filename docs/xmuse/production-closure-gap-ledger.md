@@ -560,6 +560,14 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   recommended against dispatch, but no active veto blocked the driver approval.
   The execution candidate only changed a focused test because the production
   script already had the requested behavior.
+- Loop 27o is a candidate repair for that caveat: collaboration-backed
+  `lane_graph` approval now fails closed with `proposal_review_pending` while
+  the related automatic review trigger is unread/claimed, and review-trigger
+  content now instructs reviewers to use `chat_raise_collaboration_blocker`
+  with `severity="veto"` and `blocks_dispatch=true` for no-dispatch findings.
+  Focused regression suites passed locally, but this is not post-merge runtime
+  proof. The next runtime loop should wait for proposal review completion and
+  structured blocker/veto outcomes instead of immediately approving.
 - The successful chains are not yet repeated overnight or production-load soak.
 - Provider-native session continuity and memory persistence are not proven as
   durable product behavior.

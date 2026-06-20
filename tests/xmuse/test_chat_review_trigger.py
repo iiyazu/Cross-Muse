@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import json
+
 from fastapi.testclient import TestClient
 
 from xmuse.chat_api import create_app
+from xmuse_core.chat.collaboration_store import ChatCollaborationStore
 from xmuse_core.chat.inbox_store import ChatInboxStore
 from xmuse_core.chat.peer_service import PeerChatService
+from xmuse_core.chat.store import ChatStore
 
 
 def test_lane_graph_proposal_auto_triggers_single_review_inbox_item(tmp_path) -> None:
@@ -155,6 +159,70 @@ def test_approval_marks_related_review_trigger_read(tmp_path) -> None:
     review_items = _review_inbox_items(tmp_path, conversation_id)
     assert [item.status for item in review_items] == ["read"]
     assert review_items[0].responded_message_id == proposal["message"]["id"]
+
+
+def test_collaboration_proposal_approval_blocks_pending_review_trigger(tmp_path) -> None:
+    client = TestClient(create_app(tmp_path))
+    service = PeerChatService(tmp_path / "chat.db")
+    created = service.create_conversation(title="Pending Review Blocks Approval")
+    conversation_id = created["conversation"]["id"]
+    architect_id = _participant_id_for_role(service, conversation_id, "architect")
+    collaboration = ChatCollaborationStore(tmp_path / "chat.db")
+    run = collaboration.create_request(
+        conversation_id=conversation_id,
+        goal="Approve only after review trigger is handled",
+        initiator="architect",
+        targets=["execute"],
+        callback_target="architect",
+        question="Confirm this lane can execute.",
+        context_refs=[],
+        idempotency_key="pending-review-approval",
+        timeout_s=480,
+    )
+    collaboration.record_response(
+        run.run_id,
+        target="execute",
+        content=json.dumps(
+            {
+                "type": "execute_feasibility_verdict",
+                "status": "executable",
+                "summary": "The lane has scoped work and enough evidence.",
+                "evidence_refs": ["collaboration:pending-review-approval"],
+            }
+        ),
+        response_status="received",
+    )
+    proposal = service.emit_proposal_without_session_for_test(
+        conversation_id=conversation_id,
+        participant_id=architect_id,
+        client_request_id="req-pending-review-before-approval",
+        summary="Approval must wait for proposal review",
+        lanes=[
+            {
+                "feature_id": "feature-pending-review-before-approval",
+                "prompt": "Do not approve before the review trigger is handled.",
+                "depends_on": [],
+                "capabilities": ["code"],
+            }
+        ],
+        references=[f"collaboration:{run.run_id}"],
+    )
+
+    response = client.post(
+        f"/api/chat/proposals/{proposal['proposal']['id']}/approve",
+        json={
+            "approved_by": ["human"],
+            "approval_mode": "runtime_loop_manual_approval_no_auto_merge",
+            "goal_summary": "This approval must wait for proposal review",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "proposal_review_pending"
+    assert ChatStore(tmp_path / "chat.db").list_resolutions(conversation_id) == []
+    review_items = _review_inbox_items(tmp_path, conversation_id)
+    assert [item.status for item in review_items] == ["unread"]
+    assert review_items[0].responded_message_id is None
 
 
 def test_manual_review_mention_and_auto_review_trigger_do_not_conflict(tmp_path) -> None:

@@ -2905,6 +2905,13 @@ def _review_trigger_content(
     sections = [
         f"Review this {reviewable_type} proposal.",
         f"Source message: {source_message_id}",
+        (
+            "If this proposal should not dispatch, call "
+            "chat_raise_collaboration_blocker with severity=\"veto\", "
+            "blocks_dispatch=true, affected_ref=\"proposal:"
+            f"{source_message_id}\", and a concrete suggested_fix. A plain "
+            "chat_post_message recommendation cannot block dispatch."
+        ),
     ]
     summary = envelope.get("summary")
     if isinstance(summary, str) and summary.strip():
