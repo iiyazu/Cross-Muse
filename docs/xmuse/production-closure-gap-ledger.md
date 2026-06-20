@@ -7,12 +7,29 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
 
 ## Current Proof Boundary
 
-- Latest main inspected: `28cd878aa94c16e2b49d09cf806896e97322c88a`
-  (PR #128 dynamic member session-binding merge). The latest fullchain runtime
-  proof remains Loop 26x from
-  `050385b32ce62c6868773555271f25b8debe26f8`; PR #128 adds server-verified
-  code and CI for dynamic member session binding/restored participant read
-  models, but does not add a new fullchain runtime proof.
+- Latest main inspected: `9b76b8cece4ea20d75bb0ed875fb602bdd363265`
+  (PR #131 dynamic OpenCode restart-continuity evidence merge). Latest local
+  fullchain runtime proof is Loop 27h from worktree
+  `/tmp/xmuse-postmerge-layered-prompt-main` at the same head. Loop 27h drove
+  one natural `peer_consensus` groupchat from human `@architect` demand through
+  durable Codex/OpenCode collaboration responses, architect-emitted
+  `lane_graph` proposal, human approval, isolated docs execution, gate,
+  persistent OpenCode review, and final-action hold. This is bounded local
+  runtime proof for that docs-only shape; it does not prove production
+  readiness, provider-native OpenCode resume, live MemoryOS, GitHub review
+  truth, live lane merge truth, repeated soak, or full closure.
+- Latest natural groupchat proposal evidence: Loop 27h recorded collaboration
+  run `collab_ecd70e7a9edb4719ae8ea881b4f88177` with targets `@execute` and
+  `@review`, `status=done`, and two peer responses. Architect proposal
+  `prop_08dd65de7b444c82b2e93a8024424ccf` referenced the collaboration run,
+  was approved, and projected feature
+  `loop_27h_natural_groupchat_proposal_20260620t045459z`. The lane reached
+  `awaiting_final_action` with `gate_passed=true`,
+  `review_decision=merge`, `review_delivery_mode=persistent`,
+  `persistent_review_degraded=false`, `review_peer_cli_kind=opencode`, and
+  `review_peer_model=opencode-go/deepseek-v4-flash`. The isolated execution
+  note matched the required content, and cleanup found no Chat API or MCP
+  listener.
 - Latest local dynamic-member context evidence: Loop 27d on branch
   `codex/groupchat-context-capsule-proof` confirmed that a dynamically added
   OpenCode review participant mentioned by `@participant:<id>` receives a
@@ -497,6 +514,16 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   traces, and latency traces. This proves xmuse GOD session continuity for this
   shape only. It does not prove provider-native OpenCode resume because
   `provider_session_id` remained null.
+- Loop 27h extends the strongest Phase 2/3 boundary from dynamic member
+  continuity into a natural groupchat-produced proposal and execution chain:
+  human demand to Codex architect, structured peer consensus with Codex execute
+  and OpenCode review, durable proposal, approval, isolated execution, gate,
+  persistent OpenCode review, and final-action hold. It also preserves
+  observability caveats: the architect collaboration-request turn recorded a
+  `peer_response_timeout` latency trace despite durable side effects, and the
+  execute collaboration response recorded
+  `peer_no_inbox_writeback_message` because `chat_record_collaboration_response`
+  did not also create a chat message.
 - The successful chains are not yet repeated overnight or production-load soak.
 - Provider-native session continuity and memory persistence are not proven as
   durable product behavior.
@@ -561,9 +588,11 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
   final-action hold with persistent OpenCode review after that repair.
 - P5 code-change soak: repeat small real code-change lanes after the
   inspector provider summary PR lands.
-- P5a natural dynamic groupchat continuity: Loop 27g now proves bounded xmuse
-  GOD session restore plus second-turn dynamic OpenCode writeback. Remaining
-  work is provider-native OpenCode resume evidence and natural multi-agent
-  Codex/OpenCode discussion that produces a durable proposal.
+- P5a natural dynamic groupchat continuity: Loop 27g proves bounded xmuse GOD
+  session restore plus second-turn dynamic OpenCode writeback. Loop 27h proves
+  one natural multi-agent Codex/OpenCode discussion that produces a durable
+  proposal and reaches final-action hold for a docs-only lane. Remaining work
+  is provider-native OpenCode resume evidence, repeated stability, broader
+  non-docs code-change lanes, and any production-load claim.
 - P6 MemoryOS adapter proof: keep `live_memoryos` forbidden until a real trace
   id or artifact exists.
