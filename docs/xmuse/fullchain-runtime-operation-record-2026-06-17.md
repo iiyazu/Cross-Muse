@@ -6695,6 +6695,137 @@ Caveats:
   review truth, natural peer-GOD groupchat completion, or full closure.
 - The final action was intentionally held; no live lane merge is claimed.
 
+## 2026-06-20 Loop 27a: Peer Progress Read Projection Candidate
+
+Target:
+
+```text
+Phase 2 durable progress events visible through Chat API / read model.
+```
+
+Authority / producer / consumer:
+
+```text
+authority=chat_inbox_items + peer_turn_latency_traces
+producer=PeerChatScheduler durable inbox/latency writers
+consumer=PeerChatService conversation timeline / Chat API messages endpoint
+proof_level=local_runtime_artifact_projection + focused contract guard
+```
+
+Pre-fix artifact inspection:
+
+```bash
+uv run python - <<'PY'
+from pathlib import Path
+from xmuse_core.chat.peer_service import PeerChatService
+root = Path('.goal-runs/2026-06-20/loop-26x-post-pr124-fullchain-rerun-1117cst')
+conv = 'conv_a086f7a07892470696e76787581f1508'
+payload = PeerChatService(root / 'chat.db').list_conversation_timeline(conv)
+print('has_peer_progress_events', 'peer_progress_events' in payload)
+print('has_latency_traces', 'peer_turn_latency_traces' in payload or 'latency_traces' in payload)
+PY
+```
+
+Observed:
+
+```text
+has_peer_progress_events=False
+has_latency_traces=False
+```
+
+Durable trace inspection of the same Loop 26x `chat.db` showed:
+
+```text
+chat_streams=0
+peer_turn_latency_traces=2
+trace_modes:
+- failed / peer_no_inbox_writeback_message: 1
+- mcp_writeback / None: 1
+```
+
+Focused RED:
+
+```bash
+uv run pytest tests/xmuse/test_peer_chat_api.py::test_chat_timeline_projects_peer_progress_from_durable_inbox_and_trace -q
+```
+
+Observed before implementation:
+
+```text
+FAILED KeyError: 'peer_progress_events'
+```
+
+Candidate branch:
+
+```text
+branch=codex/groupchat-progress-event-contract
+base=origin/main@c2f9bf57e3b0de235949439ada0f3395b87a4f76
+```
+
+Candidate behavior:
+
+- `PeerChatService.list_conversation_timeline()` now exposes
+  `peer_progress_events`, `peer_progress_counts`, and
+  `recent_peer_progress_events`.
+- The projection consumes existing durable inbox rows and
+  `peer_turn_latency_traces` through read-only SQLite queries.
+- The projection does not make stdout, worker output, or UI state into truth.
+
+Post-fix artifact projection check:
+
+```bash
+uv run python - <<'PY'
+from pathlib import Path
+from xmuse_core.chat.peer_service import PeerChatService
+root = Path('.goal-runs/2026-06-20/loop-26x-post-pr124-fullchain-rerun-1117cst')
+conv = 'conv_a086f7a07892470696e76787581f1508'
+payload = PeerChatService(root / 'chat.db').list_conversation_timeline(conv)
+print('peer_progress_counts', payload.get('peer_progress_counts'))
+print('trace_authority_events', sum(1 for e in payload.get('peer_progress_events', []) if e.get('source_authority') == 'peer_turn_latency_traces'))
+print('statuses', [e.get('status') for e in payload.get('peer_progress_events', [])])
+PY
+```
+
+Observed:
+
+```text
+peer_progress_counts {'failed': 1, 'done': 4, 'total': 5}
+trace_authority_events 2
+statuses ['failed', 'done', 'done', 'done', 'done']
+```
+
+Validation:
+
+```text
+uv run pytest tests/xmuse/test_peer_chat_api.py -q
+-> 13 passed
+
+uv run pytest tests/xmuse/test_peer_chat_end_to_end.py -q
+-> 3 passed
+
+uv run pytest tests/xmuse/test_peer_chat_dashboard.py::test_dashboard_peer_chat_runtime_timeline_projects_inspector_state tests/xmuse/test_peer_chat_dashboard.py::test_conversation_inspector_links_dashboard_runtime_timeline -q
+-> 2 passed
+
+uv run pytest tests/xmuse/test_package_boundaries.py -q
+-> 16 passed
+
+uv run ruff check .
+-> All checks passed.
+
+git diff --check
+-> passed
+
+test ! -e xmuse/__init__.py
+-> passed
+```
+
+Caveats:
+
+- This is a local candidate branch until PR and CI/server facts exist.
+- This is a read contract for peer progress visibility, not production
+  readiness, natural peer-GOD groupchat completion, live MemoryOS, GitHub
+  review truth, live lane merge truth, or full closure.
+
 ## 2026-06-20 Loop 26o: Post-PR115 Collaboration Lifecycle Main Check
 
 Purpose: verify the PR #115 collaboration lifecycle repair after it landed on
