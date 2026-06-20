@@ -4503,3 +4503,51 @@ Remaining caveats:
 - It does not prove multi-turn natural groupchat, groupchat proposal
   production, production readiness, live MemoryOS, GitHub review truth, or full
   closure.
+
+## 2026-06-20 Loop 27d Finding: Dynamic Member Context Capsule Path Already Holds
+
+Status: local runtime probe; no code repair needed for this boundary.
+
+Boundary:
+
+```text
+phase=Phase 2 natural agents groupchat kernel
+target=newly added member consumes local context capsule and layered prompt
+authority=chat.db messages/inbox + participants + scheduler provider context
+producer=Chat API + PeerChatScheduler
+consumer=god_layer.send_message prompt/context payload
+failure_boundary=none found for prompt/context delivery
+```
+
+Observed:
+
+- A dynamically added OpenCode review participant was mentioned by
+  `@participant:<id>`.
+- `PeerChatScheduler` delivered the turn to an OpenCode runtime descriptor with
+  `model=opencode-go/deepseek-v4-flash`.
+- The provider context contained `context_capsule.version =
+  xmuse-local-context-capsule-v1`.
+- The context capsule recent messages included the earlier human demand, the
+  roster event, and the current targeted mention.
+- The group roster included the dynamically added member.
+- The prompt text contained the dynamic member and the earlier demand.
+- The prompt artifact exposed the expected ordered layers:
+  `xmuse_governance_l0`, `member_identity`, `roster_and_capabilities`,
+  `local_context_capsule`, and `tool_and_writeback_contract`.
+- The scheduler recorded prompt contract metadata for the GOD session.
+
+Classification:
+
+- No implementation change is needed for this specific prompt/context
+  consumption boundary.
+- The probe failed the turn overall because the capture GOD layer did not
+  perform durable MCP/callback writeback; that is outside this boundary and does
+  not contradict context delivery.
+
+Remaining caveats:
+
+- This is not live provider resume proof.
+- This is not durable reply/writeback proof for the dynamic member.
+- It does not prove repeated multi-turn reliability, groupchat proposal
+  production, production readiness, live MemoryOS, GitHub review truth, or full
+  closure.

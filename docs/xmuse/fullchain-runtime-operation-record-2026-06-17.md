@@ -6960,6 +6960,73 @@ durable session binding and the restarted participant read model restores it.
 This is not provider-native resume proof, natural peer-GOD completion,
 production readiness, live MemoryOS, GitHub review truth, or full closure.
 
+## 2026-06-20 Loop 27d: Dynamic Member Context Capsule Probe
+
+Purpose: verify whether a newly added dynamic member consumes the local context
+capsule and layered prompt when the scheduler delivers a turn.
+
+Workspace and authority:
+
+```text
+repo_worktree=/tmp/xmuse-postmerge-layered-prompt-main
+branch=codex/groupchat-context-capsule-proof
+base_head_sha=28cd878aa94c16e2b49d09cf806896e97322c88a
+authority=chat.db messages/inbox + participants + scheduler provider context
+producer=Chat API conversation/messages/participants + PeerChatScheduler
+consumer=god_layer.send_message prompt/context payload
+proof_level=local_runtime_probe
+```
+
+Probe shape:
+
+```text
+1. create conversation through Chat API
+2. post human context message
+3. dynamically add OpenCode review participant
+4. mention that participant by @participant:<id>
+5. run PeerChatScheduler for that inbox item with a capture GOD layer
+6. inspect the prompt/context passed to send_message
+```
+
+Observed:
+
+```text
+outcome=PeerChatSchedulerOutcome(nudged=0, happy_path=0, failed=1, fallback_replies=0)
+ensured_runtime=opencode
+ensured_model=opencode-go/deepseek-v4-flash
+context_participant_id=<dynamic participant id>
+context_capsule_version=xmuse-local-context-capsule-v1
+recent_message_count=3
+recent_contents included:
+- Initial demand: keep dynamic member informed.
+- dynamic-context-review-god joined the groupchat as review via opencode.
+- @participant:<id> review the latest demand with context.
+roster_roles included init/architect/review/execute/dynamic review
+prompt_has_dynamic_member=True
+prompt_has_initial_demand=True
+prompt_layer_order=[
+  xmuse_governance_l0,
+  member_identity,
+  roster_and_capabilities,
+  local_context_capsule,
+  tool_and_writeback_contract
+]
+prompt_contract_version=xmuse-peer-chat-prompt-v2
+```
+
+Classification: no code patch needed for this boundary. The scheduler already
+passes the dynamic member a bounded local context capsule and inspectable
+layered prompt. The failed outcome is expected because the capture GOD layer did
+not perform MCP/callback writeback; this probe targets prompt/context delivery,
+not reply truth.
+
+Caveats:
+
+- This is local runtime probe evidence only.
+- It does not prove provider-native live resume, MCP writeback success for this
+  specific dynamic member, repeated multi-turn reliability, production
+  readiness, live MemoryOS, GitHub review truth, or full closure.
+
 ## 2026-06-20 Loop 26o: Post-PR115 Collaboration Lifecycle Main Check
 
 Purpose: verify the PR #115 collaboration lifecycle repair after it landed on

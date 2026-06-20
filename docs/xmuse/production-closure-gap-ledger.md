@@ -7,20 +7,21 @@ GOD chatgroup and demand-to-completion chain. It is not a readiness claim.
 
 ## Current Proof Boundary
 
-- Latest main inspected: `88602453fed774e1ceb2f3492b28879016c241db`
-  (PR #127 dynamic roster event merge). The latest fullchain runtime proof
-  remains Loop 26x from
-  `050385b32ce62c6868773555271f25b8debe26f8`; PR #127 adds server-verified
-  code and CI for dynamic member roster-event durability/projection, but does
-  not add a new fullchain runtime proof.
-- Latest local dynamic-member session evidence: Loop 27c on branch
-  `codex/dynamic-member-session-binding` confirmed that post-PR127 dynamic
-  member add still returned `session: null`, wrote no `god_sessions.json`
-  record for the dynamic participant, and remained sessionless after a
-  restarted `/participants` read. The local candidate creates/restores the GOD
-  session during dynamic add and the restarted read model returns the same
-  `god_session_id`. This is local candidate evidence only until a small PR is
-  server-verified; it does not prove provider-native resume into a live CLI,
+- Latest main inspected: `28cd878aa94c16e2b49d09cf806896e97322c88a`
+  (PR #128 dynamic member session-binding merge). The latest fullchain runtime
+  proof remains Loop 26x from
+  `050385b32ce62c6868773555271f25b8debe26f8`; PR #128 adds server-verified
+  code and CI for dynamic member session binding/restored participant read
+  models, but does not add a new fullchain runtime proof.
+- Latest local dynamic-member context evidence: Loop 27d on branch
+  `codex/groupchat-context-capsule-proof` confirmed that a dynamically added
+  OpenCode review participant mentioned by `@participant:<id>` receives a
+  scheduler provider context containing `xmuse-local-context-capsule-v1`,
+  recent messages including the prior human demand and roster event, the full
+  active roster including itself, and an auditable
+  `xmuse-peer-chat-prompt-v2` layer order. No code patch was needed for this
+  boundary. This is local prompt/context delivery evidence only; it does not
+  prove live provider resume, durable writeback for that dynamic member,
   natural peer-GOD completion, production readiness, live MemoryOS, GitHub
   review truth, or full closure.
 - Latest post-PR124 fullchain sentinel evidence: Loop 26x ran from current
