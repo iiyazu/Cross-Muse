@@ -122,6 +122,18 @@ class AcceptanceSpineStore:
             ).fetchall()
         return [self._from_row(row) for row in rows]
 
+    def _has_intake(self, *, conversation_id: str, intake_message_id: str) -> bool:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                select 1 from acceptance_spines
+                where conversation_id = ?
+                  and intake_message_id = ?
+                """,
+                (conversation_id, intake_message_id),
+            ).fetchone()
+        return row is not None
+
     def attach_proposal_from_references(
         self,
         *,
@@ -131,6 +143,11 @@ class AcceptanceSpineStore:
     ) -> AcceptanceSpine | None:
         intake_message_id = _intake_message_id_from_refs(references)
         if intake_message_id is None:
+            return None
+        if not self._has_intake(
+            conversation_id=conversation_id,
+            intake_message_id=intake_message_id,
+        ):
             return None
         return self.attach_proposal(
             conversation_id=conversation_id,
