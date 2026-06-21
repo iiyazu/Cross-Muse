@@ -337,6 +337,9 @@ def _format_turn_prompt(
                 "participant_id, and god_session_id.",
                 "Then respond with `chat_post_message` and mark the inbox item read "
                 "through the MCP chat tools.",
+                "If the inbox request explicitly asks for `chat_emit_proposal`, call "
+                "`chat_emit_proposal` directly instead of `chat_post_message`; that "
+                "tool is the durable writeback for proposal turns.",
                 "Natural-language @mentions inside `chat_post_message` are display-only "
                 "and do not enqueue peer work. When another GOD must take over or "
                 "review, call `chat_mention` with "
