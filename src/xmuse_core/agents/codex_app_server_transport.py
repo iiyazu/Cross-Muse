@@ -594,6 +594,8 @@ def _mcp_tool_name(params: dict[str, Any]) -> str | None:
     if direct:
         return direct
     tool = item.get("tool")
+    if isinstance(tool, str):
+        return _clean_text(tool)
     if isinstance(tool, dict):
         return _clean_text(tool.get("name"))
     call = item.get("call")

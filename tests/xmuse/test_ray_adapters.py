@@ -732,7 +732,7 @@ def test_app_server_turn_accumulator_emits_latency_stages_from_mcp_events() -> N
             "method": "item/started",
             "params": {
                 "turnId": "turn-1",
-                "item": {"type": "mcpToolCall", "toolName": "chat_post_message"},
+                "item": {"type": "mcpToolCall", "tool": "chat_post_message"},
             },
         }
     ) is None
