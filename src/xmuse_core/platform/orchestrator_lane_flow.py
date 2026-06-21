@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -35,6 +36,7 @@ from xmuse_core.platform.verdict_adapter import adapt_review_verdict
 from xmuse_core.platform.verdicts.writer import (
     gate_report_ref_for_lane,
     ingest_merge_verdict,
+    ingest_review_failure_verdict,
     ingest_rework_verdict,
     stable_verdict_id_for_lane,
 )
@@ -53,6 +55,10 @@ def _compat_symbol(orchestrator, name: str, fallback: Any) -> Any:
     if module is None:
         return fallback
     return getattr(module, name, fallback)
+
+
+def _repo_root_for(orchestrator) -> Path:
+    return Path(getattr(orchestrator, "_repo_root", orchestrator._root.parent))
 
 
 def _lane_graph_id(lane: dict[str, Any] | None) -> str | None:
@@ -287,18 +293,42 @@ def ensure_lane_worktree(orchestrator, lane: dict[str, Any]) -> dict[str, Any]:
     lane_id = str(lane["feature_id"])
     existing_worktree = lane.get("worktree")
     existing_branch = lane.get("branch")
-    if existing_worktree:
-        return lane
-
-    branch = str(existing_branch or _safe_lane_ref(lane_id))
-    worktree_base = _compat_symbol(orchestrator, "WORKTREE_BASE", WORKTREE_BASE)
-    worktree = worktree_base / _safe_lane_ref(lane_id)
-    git_output = _compat_symbol(orchestrator, "_git_output", _git_output)
-    base_head_sha = lane.get("base_head_sha") or git_output(
-        ["git", "rev-parse", "HEAD"],
-        cwd=orchestrator._root.parent,
+    existing_worktree_path = (
+        Path(str(existing_worktree)) if existing_worktree else None
     )
-    orchestrator._create_or_reuse_worktree(worktree=worktree, branch=branch)
+    branch = str(existing_branch or _safe_lane_ref(lane_id))
+    worktree = existing_worktree_path or (
+        _compat_symbol(orchestrator, "WORKTREE_BASE", WORKTREE_BASE)
+        / _safe_lane_ref(lane_id)
+    )
+    git_output = _compat_symbol(orchestrator, "_git_output", _git_output)
+    if not worktree.exists():
+        base_head_sha = lane.get("base_head_sha") or git_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=_repo_root_for(orchestrator),
+        )
+        orchestrator._create_or_reuse_worktree(worktree=worktree, branch=branch)
+    else:
+        if _is_reclaimable_placeholder_worktree(worktree):
+            base_head_sha = lane.get("base_head_sha") or git_output(
+                ["git", "rev-parse", "HEAD"],
+                cwd=_repo_root_for(orchestrator),
+            )
+            orchestrator._create_or_reuse_worktree(worktree=worktree, branch=branch)
+        else:
+            base_head_sha = lane.get("base_head_sha")
+        branch, is_git_worktree = _ensure_existing_worktree_branch(worktree, branch)
+        base_head_sha = (
+            None if base_head_sha == "unknown" else base_head_sha
+        ) or _worktree_head_sha(worktree)
+        if base_head_sha is None:
+            if existing_worktree and not is_git_worktree:
+                base_head_sha = "unknown"
+            else:
+                base_head_sha = git_output(
+                    ["git", "rev-parse", "HEAD"],
+                    cwd=_repo_root_for(orchestrator),
+                )
     metadata = {
         "branch": branch,
         "worktree": str(worktree),
@@ -315,13 +345,74 @@ def ensure_lane_worktree(orchestrator, lane: dict[str, Any]) -> dict[str, Any]:
     )
     return updated
 
+
+def _is_reclaimable_placeholder_worktree(worktree: Path) -> bool:
+    if not worktree.exists() or not worktree.is_dir():
+        return False
+    if _worktree_head_sha(worktree) is not None:
+        return False
+    entries = list(worktree.iterdir())
+    if not entries:
+        return True
+    return all(entry.name == ".pytest_cache" for entry in entries)
+
+
+def _ensure_existing_worktree_branch(worktree: Path, branch: str) -> tuple[str, bool]:
+    git_check = subprocess.run(
+        ["git", "-C", str(worktree), "rev-parse", "--is-inside-work-tree"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if git_check.returncode != 0:
+        return branch, False
+
+    current = subprocess.run(
+        ["git", "-C", str(worktree), "branch", "--show-current"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    current_branch = current.stdout.strip() if current.returncode == 0 else ""
+    if current_branch:
+        return current_branch, True
+
+    checkout = subprocess.run(
+        ["git", "-C", str(worktree), "checkout", "-B", branch],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if checkout.returncode != 0:
+        raise RuntimeError(
+            "failed to attach existing lane worktree to branch "
+            f"{branch}: {checkout.stderr.strip()}"
+        )
+    return branch, True
+
+
+def _worktree_head_sha(worktree: Path) -> str | None:
+    result = subprocess.run(
+        ["git", "-C", str(worktree), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip() or None
+
+
 def create_or_reuse_worktree(orchestrator, *, worktree: Path, branch: str) -> None:
     if worktree.exists():
-        return
+        if not _is_reclaimable_placeholder_worktree(worktree):
+            return
+        shutil.rmtree(worktree)
+    repo_root = _repo_root_for(orchestrator)
     worktree.parent.mkdir(parents=True, exist_ok=True)
     result = subprocess.run(
         ["git", "worktree", "add", "-b", branch, str(worktree), "HEAD"],
-        cwd=orchestrator._root.parent,
+        cwd=repo_root,
         capture_output=True,
         text=True,
         timeout=60,
@@ -330,7 +421,7 @@ def create_or_reuse_worktree(orchestrator, *, worktree: Path, branch: str) -> No
         return
     fallback = subprocess.run(
         ["git", "worktree", "add", str(worktree), branch],
-        cwd=orchestrator._root.parent,
+        cwd=repo_root,
         capture_output=True,
         text=True,
         timeout=60,
@@ -570,17 +661,32 @@ async def run_review_god(orchestrator, lane_id: str) -> None:
                 target_lane_id,
                 lane=orchestrator._sm.get_lane(target_lane_id),
             ),
-            ingest_merge_verdict=lambda target_lane_id, summary: ingest_merge_verdict(
-                target_lane_id,
-                summary,
-                lane=orchestrator._sm.get_lane(target_lane_id),
-                review_plane=orchestrator._review_plane,
+            ingest_merge_verdict=lambda target_lane_id, summary, evidence_refs=None: (
+                ingest_merge_verdict(
+                    target_lane_id,
+                    summary,
+                    lane=orchestrator._sm.get_lane(target_lane_id),
+                    review_plane=orchestrator._review_plane,
+                    evidence_refs=evidence_refs,
+                )
             ),
-            ingest_rework_verdict=lambda target_lane_id, summary: ingest_rework_verdict(
-                target_lane_id,
-                summary,
-                lane=orchestrator._sm.get_lane(target_lane_id),
-                review_plane=orchestrator._review_plane,
+            ingest_rework_verdict=lambda target_lane_id, summary, evidence_refs=None: (
+                ingest_rework_verdict(
+                    target_lane_id,
+                    summary,
+                    lane=orchestrator._sm.get_lane(target_lane_id),
+                    review_plane=orchestrator._review_plane,
+                    evidence_refs=evidence_refs,
+                )
+            ),
+            ingest_review_failure_verdict=(
+                lambda target_lane_id, reason, evidence_refs: ingest_review_failure_verdict(
+                    target_lane_id,
+                    reason,
+                    lane=orchestrator._sm.get_lane(target_lane_id),
+                    review_plane=orchestrator._review_plane,
+                    evidence_refs=evidence_refs,
+                )
             ),
             on_reviewed=orchestrator.on_lane_reviewed,
             on_rejected=orchestrator.on_lane_rejected,

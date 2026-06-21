@@ -338,14 +338,26 @@ def _format_turn_prompt(
                 "review, first reply with `chat_post_message`, then call `chat_mention` "
                 "with the target GOD's exact @role and a concrete handoff request.",
                 "For work that should enter real execution, use structured chat "
-                "tools rather than plain text: create or reference a collaboration "
-                "run, have execute record a JSON execute_feasibility_verdict with "
-                "`chat_record_collaboration_response`, then emit a lane_graph "
-                "proposal with `chat_emit_proposal` and a `collaboration:<run_id>` "
-                "reference, passing "
+                "tools rather than plain text: if the inbox payload does not already "
+                "contain a durable `collab_*` run_id returned by "
+                "`chat_create_collaboration_request`, call "
+                "`chat_create_collaboration_request` first and use only its returned "
+                "run_id. Never invent or guess a collaboration run_id in chat text. "
+                "Have execute record a JSON execute_feasibility_verdict with "
+                "`chat_record_collaboration_response` for that returned run_id, then "
+                "emit a lane_graph proposal with `chat_emit_proposal` and a "
+                "`collaboration:<run_id>` reference, passing "
                 "`reply_to_inbox_item_id=xmuse_context.inbox_item.id` so the proposal "
                 "closes the current inbox item. Human approval remains required before "
                 "dispatch.",
+                "When acting as the execute peer in chat, record whether the requested "
+                "lane is dispatchable in the later execution worktree. Do not run "
+                "tests, edit files, or treat the scratch peer_chat_worktree as the "
+                "lane worktree during a peer_chat_nudge. The execute verdict JSON "
+                "must include `type`, `verdict`, `command`, `proof_boundary`, and "
+                "a `summary` or `notes`; use `command`, not `allowed_command`, and "
+                "set `execution_performed` false when peer chat did not run the "
+                "command.",
                 "If MCP tools are unavailable, return one concise natural-language "
                 "assistant reply on stdout. The scheduler will publish that stdout as "
                 "the GOD reply.",
@@ -361,14 +373,25 @@ def _format_turn_prompt(
                 "",
                 "You are a temporary child worker delegated by the persistent Execute GOD.",
                 "Preserve the lane request id, lane id, and feature context in your evidence.",
+                "Before declaring MCP unavailable, attempt the required MCP tool call. "
+                "In Codex the tools may appear as namespaced calls such as "
+                "`mcp__xmuse_platform.query_knowledge` and "
+                "`mcp__xmuse_platform.update_lane_status`; call them directly when "
+                "visible. Do not decide tools are unavailable from prompt text alone.",
                 "This shim emits structured `artifacts.execute_result` with "
                 "`lane_request_id`, `execute_request_id`, `lane_id`, `exit_code`, "
                 "`stdout`, `stderr`, and `timed_out`; do not rely on the runner "
                 "parsing free-form status text.",
                 "",
-                "If MCP tools are not exposed, use the stdout fallback: state that MCP "
-                "is unavailable, include the lane id, tests run, changed files, and "
-                "the status you would have sent through `update_lane_status`.",
+                "If the lane contract explicitly requires MCP calls or MCP writeback "
+                "and those tools are not exposed, do not run tests or edit files. "
+                "Use the stdout fallback to report status `exec_failed`, "
+                "`failure_reason=child_mcp_required_but_unavailable`, and exit "
+                "non-zero.",
+                "For lanes that do not require MCP writeback, use the stdout fallback: "
+                "state that MCP is unavailable, include the lane id, tests run, "
+                "changed files, and the status you would have sent through "
+                "`update_lane_status`.",
                 "The runner does not parse execution stdout status. If your fallback "
                 "status is `executed`, exit with status 0; if it is `exec_failed`, "
                 "exit non-zero.",

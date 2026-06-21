@@ -65,6 +65,7 @@ class StateSchemaValidator:
     _LIST_FIELDS = {
         "capabilities",
         "depends_on",
+        "evidence_refs",
         "gate_profiles",
         "review_evidence_refs",
     }

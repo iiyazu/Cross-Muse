@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -62,6 +63,7 @@ _COMPONENT = "orchestrator.execution_god"
 _EXECUTE_ROLE = "execute"
 _EXECUTE_DEGRADED_SOURCE_COORDINATOR_SESSION = "coordinator_session_delivery"
 _EXECUTE_FAILURE_SOURCE_WORKER_TEST_GATE = "worker_test_gate"
+_CHILD_MCP_REQUIRED_TOOLS = ("query_knowledge", "update_lane_status")
 PERSISTENT_EXECUTE_RECEIVE_TIMEOUT_S = 180.0
 _PERSISTENT_EXECUTE_LOCKS: dict[str, asyncio.Lock] = {}
 
@@ -262,6 +264,35 @@ async def run_execution_god(
     provider_result = result.provider_result
 
     if provider_result is not None:
+        current = sm.get_lane(lane_id)
+        if (
+            provider_result.status is WorkerResultStatus.COMPLETED
+            and current["status"] == "dispatched"
+            and _lane_requires_child_mcp_writeback(current)
+        ):
+            sm.transition(
+                lane_id,
+                "exec_failed",
+                metadata=_child_mcp_missing_writeback_metadata(result),
+            )
+            return
+        stdout_failure = _execution_result_declares_exec_failed(result)
+        if (
+            provider_result.status is WorkerResultStatus.COMPLETED
+            and stdout_failure is not None
+        ):
+            provider_binding_metadata = _mark_failed_provider_session_binding(
+                binding=provider_session_binding,
+                writer=provider_session_binding_writer,
+                failure_kind=ProviderFailureKind.CONTRACT_VIOLATION,
+                record_degradation=record_provider_session_binding_degradation,
+            )
+            sm.transition(
+                lane_id,
+                "exec_failed",
+                metadata=stdout_failure | provider_binding_metadata,
+            )
+            return
         failure_metadata = _execution_provider_failure_metadata(
             god,
             provider_result.failure_kind,
@@ -281,17 +312,25 @@ async def run_execution_god(
                 record_degradation=record_provider_session_binding_degradation,
             )
             log_event(logger, logging.INFO, "execution_god_completed", lane_id=lane_id)
-            sm.transition(
-                lane_id,
-                "executed",
-                metadata={
-                    "parent_god": god.name,
-                    "parent_god_role": "execute",
-                    "worker_kind": "temporary_child_worker",
-                }
-                | provider_binding_metadata,
-            )
-            await on_executed(lane_id)
+            metadata = {
+                "parent_god": god.name,
+                "parent_god_role": "execute",
+                "worker_kind": "temporary_child_worker",
+            } | provider_binding_metadata
+            if current["status"] == "dispatched":
+                if _lane_requires_child_mcp_writeback(current):
+                    sm.transition(
+                        lane_id,
+                        "exec_failed",
+                        metadata=metadata
+                        | _child_mcp_missing_writeback_metadata(result),
+                    )
+                    return
+                sm.transition(lane_id, "executed", metadata=metadata)
+                await on_executed(lane_id)
+            elif current["status"] == "executed":
+                sm.update_metadata(lane_id, metadata)
+                await on_executed(lane_id)
             return
         provider_binding_metadata = _mark_failed_provider_session_binding(
             binding=provider_session_binding,
@@ -321,6 +360,21 @@ async def run_execution_god(
     current = sm.get_lane(lane_id)
     if current["status"] == "dispatched":
         if result.exit_code == 0:
+            if _lane_requires_child_mcp_writeback(current):
+                sm.transition(
+                    lane_id,
+                    "exec_failed",
+                    metadata=_child_mcp_missing_writeback_metadata(result),
+                )
+                return
+            stdout_failure = _execution_result_declares_exec_failed(result)
+            if stdout_failure is not None:
+                sm.transition(
+                    lane_id,
+                    "exec_failed",
+                    metadata=stdout_failure,
+                )
+                return
             log_event(logger, logging.INFO, "execution_god_completed", lane_id=lane_id)
             sm.transition(
                 lane_id,
@@ -344,6 +398,152 @@ async def run_execution_god(
             )
     elif current["status"] == "executed" and result.exit_code == 0:
         await on_executed(lane_id)
+
+
+def _lane_requires_child_mcp_writeback(lane: dict[str, Any]) -> bool:
+    for flag in (
+        "child_mcp_writeback_required",
+        "requires_child_mcp_writeback",
+        "mcp_writeback_required",
+    ):
+        value = lane.get(flag)
+        if value is True:
+            return True
+        if isinstance(value, str) and value.strip().lower() in {"1", "true", "yes"}:
+            return True
+
+    for key in ("prompt", "task_prompt", "instructions"):
+        value = lane.get(key)
+        if not isinstance(value, str):
+            continue
+        text = value.lower()
+        if not all(tool in text for tool in _CHILD_MCP_REQUIRED_TOOLS):
+            continue
+        if "mcp" not in text:
+            continue
+        if any(
+            marker in text
+            for marker in (
+                "call ",
+                "must ",
+                "require",
+                "before ",
+                "after ",
+                "first",
+                "tool",
+            )
+        ):
+            return True
+    return False
+
+
+def _child_mcp_missing_writeback_metadata(result: Any) -> dict[str, Any]:
+    unavailable = _execution_result_declares_child_mcp_unavailable(result)
+    rejected = _execution_result_declares_child_mcp_writeback_rejected(result)
+    return {
+        "failure_reason": (
+            "child_mcp_required_but_unavailable"
+            if unavailable
+            else "child_mcp_writeback_rejected"
+            if rejected
+            else "child_mcp_required_but_missing_writeback"
+        ),
+        "failure_layer": "worker",
+        "execute_failure_source": _EXECUTE_FAILURE_SOURCE_WORKER_TEST_GATE,
+        "child_mcp_required": True,
+        "child_mcp_tools_required": list(_CHILD_MCP_REQUIRED_TOOLS),
+        "stdout_fallback_rejected": unavailable,
+    }
+
+
+def _execution_result_declares_exec_failed(result: Any) -> dict[str, Any] | None:
+    text = "\n".join(
+        value
+        for value in (
+            getattr(result, "stdout", None),
+            getattr(result, "stderr", None),
+        )
+        if isinstance(value, str)
+    )
+    if not text:
+        return None
+    if not re.search(r"(?im)^\s*status\s*=\s*`?exec_failed`?\s*$", text):
+        return None
+    reason_match = re.search(
+        r"(?im)^\s*failure_reason\s*=\s*`?([^`\n]+)`?\s*$",
+        text,
+    )
+    reason = reason_match.group(1).strip() if reason_match else "stdout_exec_failed"
+    return {
+        "failure_reason": reason or "stdout_exec_failed",
+        "failure_layer": "worker",
+        "execute_failure_source": _EXECUTE_FAILURE_SOURCE_WORKER_TEST_GATE,
+        "stdout_fallback_rejected": True,
+    }
+
+
+def _execution_result_declares_child_mcp_unavailable(result: Any) -> bool:
+    text = "\n".join(
+        value
+        for value in (
+            getattr(result, "stdout", None),
+            getattr(result, "stderr", None),
+        )
+        if isinstance(value, str)
+    ).lower()
+    if not text:
+        return False
+    if any(
+        marker in text
+        for marker in (
+            "mcp: xmuse-platform/query_knowledge started",
+            "mcp: xmuse-platform/update_lane_status started",
+            "mcp__xmuse_platform.query_knowledge",
+            "mcp__xmuse_platform.update_lane_status",
+        )
+    ):
+        return False
+    if "mcp unavailable" in text:
+        return True
+    if not all(tool in text for tool in _CHILD_MCP_REQUIRED_TOOLS):
+        return False
+    return any(
+        marker in text
+        for marker in (
+            "not exposed",
+            "not available",
+            "not callable",
+            "unavailable",
+            "no tool-call channel",
+            "no tool call channel",
+            "tools are genuinely unavailable",
+        )
+    )
+
+
+def _execution_result_declares_child_mcp_writeback_rejected(result: Any) -> bool:
+    text = "\n".join(
+        value
+        for value in (
+            getattr(result, "stdout", None),
+            getattr(result, "stderr", None),
+        )
+        if isinstance(value, str)
+    ).lower()
+    if not text:
+        return False
+    if "update_lane_status" not in text:
+        return False
+    return any(
+        marker in text
+        for marker in (
+            "state guard mismatch",
+            "guard mismatch",
+            "writeback blocker",
+            "writeback rejected",
+            "rejected",
+        )
+    )
 
 
 def _upsert_successful_provider_session_binding(

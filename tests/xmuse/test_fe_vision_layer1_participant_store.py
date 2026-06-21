@@ -340,8 +340,10 @@ class TestRoleTemplateStoreSeeding:
         assert t is not None
         assert "Execute GOD" in t.prompt
         assert '"type": "execute_feasibility_verdict"' in t.prompt
-        assert '"status": "executable"' in t.prompt
-        assert '"evidence_refs": ["<proposal/artifact/blocker refs>"]' in t.prompt
+        assert '"verdict": "dispatchable"' in t.prompt
+        assert '"command": "<exact later execution command>"' in t.prompt
+        assert '"proof_boundary": "local runtime contract proof only"' in t.prompt
+        assert "not `allowed_command`" in t.prompt
 
     def test_seeding_idempotent(self, db_path, chat_store):
         # Constructing a second RoleTemplateStore on the same DB must not
@@ -371,7 +373,8 @@ class TestRoleTemplateStoreSeeding:
 
         assert refreshed is not None
         assert '"type": "execute_feasibility_verdict"' in refreshed.prompt
-        assert '"status": "executable"' in refreshed.prompt
+        assert '"command": "<exact later execution command>"' in refreshed.prompt
+        assert '"proof_boundary": "local runtime contract proof only"' in refreshed.prompt
 
 
 # ---------------------------------------------------------------------------

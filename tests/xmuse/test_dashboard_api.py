@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -40,6 +41,16 @@ def _write_json(path: Path, payload: object) -> None:
 
 def _client(tmp_path: Path) -> TestClient:
     return TestClient(create_app(base_dir=tmp_path))
+
+
+def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
 
 
 def _runtime_inventory() -> dict[str, object]:
@@ -722,7 +733,16 @@ def test_approve_accepts_merged_lane(tmp_path):
 def test_approve_awaiting_final_action_merge_resolves_hold(tmp_path):
     _write_json(
         tmp_path / "feature_lanes.json",
-        {"lanes": [{"feature_id": "ready", "status": "awaiting_final_action", "prompt": "ready"}]},
+        {
+            "lanes": [
+                {
+                    "feature_id": "ready",
+                    "status": "awaiting_final_action",
+                    "prompt": "ready",
+                    "changed_files": ["src/xmuse_core/platform/example.py"],
+                }
+            ]
+        },
     )
     _write_json(
         tmp_path / "final_actions.json",
@@ -740,6 +760,18 @@ def test_approve_awaiting_final_action_merge_resolves_hold(tmp_path):
             ]
         },
     )
+    _write_json(
+        tmp_path / "logs" / "gates" / "ready" / "report.json",
+        {
+            "feature_id": "ready",
+            "passed": True,
+            "blocking_passed": True,
+            "profile_ids": ["xmuse-core"],
+            "command_results": [
+                {"command": "uv run pytest tests/xmuse/test_example.py", "exit_code": 0}
+            ],
+        },
+    )
 
     response = _client(tmp_path).post("/api/lanes/ready/approve")
 
@@ -749,6 +781,537 @@ def test_approve_awaiting_final_action_merge_resolves_hold(tmp_path):
     assert data["lanes"][0]["status"] == "merged"
     holds = json.loads((tmp_path / "final_actions.json").read_text(encoding="utf-8"))
     assert holds["holds"][0]["status"] == "approved"
+
+
+def test_approve_awaiting_final_action_merge_rejects_probe_without_gate_evidence(tmp_path):
+    _write_json(
+        tmp_path / "feature_lanes.json",
+        {
+            "lanes": [
+                {
+                    "feature_id": "probe",
+                    "status": "awaiting_final_action",
+                    "prompt": "probe only",
+                    "changed_files": [],
+                    "tests_run": ["not run: runner-spawned MCP writeback probe"],
+                }
+            ]
+        },
+    )
+    _write_json(
+        tmp_path / "final_actions.json",
+        {
+            "holds": [
+                {
+                    "id": "final-probe",
+                    "lane_id": "probe",
+                    "verdict_id": "verdict-probe",
+                    "action": "merge",
+                    "target_status": "reviewed",
+                    "status": "pending",
+                    "summary": "review accepted",
+                }
+            ]
+        },
+    )
+    _write_json(
+        tmp_path / "logs" / "gates" / "probe" / "report.json",
+        {
+            "feature_id": "probe",
+            "passed": True,
+            "blocking_passed": True,
+            "profile_ids": [],
+            "warnings": [
+                "gate_profiles.json missing; no gate commands were run and lane passed open"
+            ],
+            "command_results": [],
+        },
+    )
+
+    response = _client(tmp_path).post("/api/lanes/probe/approve")
+
+    assert response.status_code == 409
+    assert "merge final action requires" in response.json()["detail"]
+    data = json.loads((tmp_path / "feature_lanes.json").read_text(encoding="utf-8"))
+    assert data["lanes"][0]["status"] == "awaiting_final_action"
+    holds = json.loads((tmp_path / "final_actions.json").read_text(encoding="utf-8"))
+    assert holds["holds"][0]["status"] == "pending"
+
+
+def test_approve_awaiting_final_action_merge_requires_claimed_file_in_worktree(tmp_path):
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    (worktree / "tracked.txt").write_text("base\n", encoding="utf-8")
+    _git(worktree, "init")
+    _git(worktree, "config", "user.email", "xmuse@example.test")
+    _git(worktree, "config", "user.name", "xmuse test")
+    _git(worktree, "add", "tracked.txt")
+    _git(worktree, "commit", "-m", "base")
+
+    _write_json(
+        tmp_path / "feature_lanes.json",
+        {
+            "lanes": [
+                {
+                    "feature_id": "claimed-missing",
+                    "status": "awaiting_final_action",
+                    "prompt": "ready",
+                    "worktree": str(worktree),
+                    "changed_files": ["runtime_artifacts/missing.txt"],
+                }
+            ]
+        },
+    )
+    _write_json(
+        tmp_path / "final_actions.json",
+        {
+            "holds": [
+                {
+                    "id": "final-missing",
+                    "lane_id": "claimed-missing",
+                    "verdict_id": "verdict-missing",
+                    "action": "merge",
+                    "target_status": "reviewed",
+                    "status": "pending",
+                    "summary": "merge now",
+                }
+            ]
+        },
+    )
+    _write_json(
+        tmp_path / "logs" / "gates" / "claimed-missing" / "report.json",
+        {
+            "feature_id": "claimed-missing",
+            "passed": True,
+            "blocking_passed": True,
+            "profile_ids": ["xmuse-core"],
+            "command_results": [{"command": "python -c pass", "exit_code": 0}],
+        },
+    )
+
+    response = _client(tmp_path).post("/api/lanes/claimed-missing/approve")
+
+    assert response.status_code == 409
+    assert "changed_files_not_in_worktree" in response.json()["detail"]
+    data = json.loads((tmp_path / "feature_lanes.json").read_text(encoding="utf-8"))
+    assert data["lanes"][0]["status"] == "awaiting_final_action"
+    holds = json.loads((tmp_path / "final_actions.json").read_text(encoding="utf-8"))
+    assert holds["holds"][0]["status"] == "pending"
+
+
+def test_approve_awaiting_final_action_merge_accepts_untracked_worker_output(tmp_path):
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    (worktree / "tracked.txt").write_text("base\n", encoding="utf-8")
+    _git(worktree, "init")
+    _git(worktree, "config", "user.email", "xmuse@example.test")
+    _git(worktree, "config", "user.name", "xmuse test")
+    _git(worktree, "add", "tracked.txt")
+    _git(worktree, "commit", "-m", "base")
+    artifact = worktree / "runtime_artifacts" / "loop7k.txt"
+    artifact.parent.mkdir()
+    artifact.write_text("LOOP7K\n", encoding="utf-8")
+
+    _write_json(
+        tmp_path / "feature_lanes.json",
+        {
+            "lanes": [
+                {
+                    "feature_id": "untracked-ready",
+                    "status": "awaiting_final_action",
+                    "prompt": "ready",
+                    "worktree": str(worktree),
+                    "changed_files": ["runtime_artifacts/loop7k.txt"],
+                }
+            ]
+        },
+    )
+    _write_json(
+        tmp_path / "final_actions.json",
+        {
+            "holds": [
+                {
+                    "id": "final-untracked",
+                    "lane_id": "untracked-ready",
+                    "verdict_id": "verdict-untracked",
+                    "action": "merge",
+                    "target_status": "reviewed",
+                    "status": "pending",
+                    "summary": "merge now",
+                }
+            ]
+        },
+    )
+    _write_json(
+        tmp_path / "logs" / "gates" / "untracked-ready" / "report.json",
+        {
+            "feature_id": "untracked-ready",
+            "passed": True,
+            "blocking_passed": True,
+            "profile_ids": ["xmuse-core"],
+            "command_results": [{"command": "python -c pass", "exit_code": 0}],
+        },
+    )
+
+    response = _client(tmp_path).post("/api/lanes/untracked-ready/approve")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "merged"
+    data = json.loads((tmp_path / "feature_lanes.json").read_text(encoding="utf-8"))
+    assert data["lanes"][0]["status"] == "merged"
+    holds = json.loads((tmp_path / "final_actions.json").read_text(encoding="utf-8"))
+    assert holds["holds"][0]["status"] == "approved"
+
+
+def test_approve_awaiting_final_action_merge_applies_import_to_target_worktree(tmp_path):
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    (worktree / "tracked.txt").write_text("base\n", encoding="utf-8")
+    _git(worktree, "init")
+    _git(worktree, "config", "user.email", "xmuse@example.test")
+    _git(worktree, "config", "user.name", "xmuse test")
+    _git(worktree, "add", "tracked.txt")
+    _git(worktree, "commit", "-m", "base")
+    artifact = worktree / "runtime_artifacts" / "loop7l.txt"
+    artifact.parent.mkdir()
+    artifact.write_text("LOOP7L\n", encoding="utf-8")
+
+    target_worktree = tmp_path / "target"
+    target_worktree.mkdir()
+    _write_json(
+        tmp_path / "feature_lanes.json",
+        {
+            "lanes": [
+                {
+                    "feature_id": "import-ready",
+                    "status": "awaiting_final_action",
+                    "prompt": "ready",
+                    "worktree": str(worktree),
+                    "final_action_import_target": str(target_worktree),
+                    "changed_files": ["runtime_artifacts/loop7l.txt"],
+                }
+            ]
+        },
+    )
+    _write_json(
+        tmp_path / "final_actions.json",
+        {
+            "holds": [
+                {
+                    "id": "final-import",
+                    "lane_id": "import-ready",
+                    "verdict_id": "verdict-import",
+                    "action": "merge",
+                    "target_status": "reviewed",
+                    "status": "pending",
+                    "summary": "merge now",
+                }
+            ]
+        },
+    )
+    _write_json(
+        tmp_path / "logs" / "gates" / "import-ready" / "report.json",
+        {
+            "feature_id": "import-ready",
+            "passed": True,
+            "blocking_passed": True,
+            "profile_ids": ["xmuse-core"],
+            "command_results": [{"command": "python -c pass", "exit_code": 0}],
+        },
+    )
+    _write_json(
+        tmp_path / "final_action_import_decisions.json",
+        {
+            "decisions": [
+                {
+                    "id": "decision-import",
+                    "lane_id": "import-ready",
+                    "hold_id": "final-import",
+                    "decision": "apply_to_target_worktree",
+                    "status": "approved",
+                    "source_worktree": str(worktree),
+                    "target_worktree": str(target_worktree),
+                    "decided_by": "main-goal-agent",
+                    "reason": "explicit target worktree selected for local import proof",
+                    "created_at": "2026-06-21T00:00:00Z",
+                    "forbidden_claims": ["github_server_merge"],
+                }
+            ]
+        },
+    )
+
+    response = _client(tmp_path).post("/api/lanes/import-ready/approve")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "merged"
+    assert (target_worktree / "runtime_artifacts" / "loop7l.txt").read_text(
+        encoding="utf-8"
+    ) == "LOOP7L\n"
+    imports = json.loads((tmp_path / "final_action_imports.json").read_text(encoding="utf-8"))
+    assert imports["imports"][0]["status"] == "applied"
+    assert imports["imports"][0]["hold_id"] == "final-import"
+    assert imports["imports"][0]["changed_files"] == ["runtime_artifacts/loop7l.txt"]
+    assert imports["imports"][0]["target_worktree"] == str(target_worktree)
+    assert imports["imports"][0]["import_decision"]["id"] == "decision-import"
+    assert imports["imports"][0]["import_decision"]["decided_by"] == "main-goal-agent"
+    assert "github_server_merge" in imports["imports"][0]["forbidden_claims"]
+
+
+def test_approve_awaiting_final_action_merge_rejects_dirty_target_conflict(
+    tmp_path,
+):
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    (worktree / "tracked.txt").write_text("base\n", encoding="utf-8")
+    _git(worktree, "init")
+    _git(worktree, "config", "user.email", "xmuse@example.test")
+    _git(worktree, "config", "user.name", "xmuse test")
+    _git(worktree, "add", "tracked.txt")
+    _git(worktree, "commit", "-m", "base")
+    artifact = worktree / "runtime_artifacts" / "loop7p.txt"
+    artifact.parent.mkdir()
+    artifact.write_text("LOOP7P_SOURCE\n", encoding="utf-8")
+
+    target_worktree = tmp_path / "target"
+    target_worktree.mkdir()
+    (target_worktree / "runtime_artifacts").mkdir()
+    target_artifact = target_worktree / "runtime_artifacts" / "loop7p.txt"
+    target_artifact.write_text("LOOP7P_TARGET_BASE\n", encoding="utf-8")
+    _git(target_worktree, "init")
+    _git(target_worktree, "config", "user.email", "xmuse@example.test")
+    _git(target_worktree, "config", "user.name", "xmuse test")
+    _git(target_worktree, "add", "runtime_artifacts/loop7p.txt")
+    _git(target_worktree, "commit", "-m", "target base")
+    target_artifact.write_text("LOOP7P_TARGET_DIRTY\n", encoding="utf-8")
+
+    _write_json(
+        tmp_path / "feature_lanes.json",
+        {
+            "lanes": [
+                {
+                    "feature_id": "dirty-target-conflict",
+                    "status": "awaiting_final_action",
+                    "prompt": "ready",
+                    "worktree": str(worktree),
+                    "final_action_import_target": str(target_worktree),
+                    "changed_files": ["runtime_artifacts/loop7p.txt"],
+                }
+            ]
+        },
+    )
+    _write_json(
+        tmp_path / "final_actions.json",
+        {
+            "holds": [
+                {
+                    "id": "final-dirty-target",
+                    "lane_id": "dirty-target-conflict",
+                    "verdict_id": "verdict-dirty-target",
+                    "action": "merge",
+                    "target_status": "reviewed",
+                    "status": "pending",
+                    "summary": "merge now",
+                }
+            ]
+        },
+    )
+    _write_json(
+        tmp_path / "logs" / "gates" / "dirty-target-conflict" / "report.json",
+        {
+            "feature_id": "dirty-target-conflict",
+            "passed": True,
+            "blocking_passed": True,
+            "profile_ids": ["xmuse-core"],
+            "command_results": [{"command": "python -c pass", "exit_code": 0}],
+        },
+    )
+    _write_json(
+        tmp_path / "final_action_import_decisions.json",
+        {
+            "decisions": [
+                {
+                    "id": "decision-dirty-target",
+                    "lane_id": "dirty-target-conflict",
+                    "hold_id": "final-dirty-target",
+                    "decision": "apply_to_target_worktree",
+                    "status": "approved",
+                    "source_worktree": str(worktree),
+                    "target_worktree": str(target_worktree),
+                    "decided_by": "main-goal-agent",
+                    "reason": "audit source-root style import conflict before apply",
+                    "created_at": "2026-06-21T00:00:00Z",
+                    "forbidden_claims": ["github_server_merge"],
+                }
+            ]
+        },
+    )
+
+    response = _client(tmp_path).post("/api/lanes/dirty-target-conflict/approve")
+
+    assert response.status_code == 409
+    assert "final_action_import_target_dirty_conflict" in response.json()["detail"]
+    assert "runtime_artifacts/loop7p.txt" in response.json()["detail"]
+    assert target_artifact.read_text(encoding="utf-8") == "LOOP7P_TARGET_DIRTY\n"
+    assert not (tmp_path / "final_action_imports.json").exists()
+    data = json.loads((tmp_path / "feature_lanes.json").read_text(encoding="utf-8"))
+    assert data["lanes"][0]["status"] == "awaiting_final_action"
+    holds = json.loads((tmp_path / "final_actions.json").read_text(encoding="utf-8"))
+    assert holds["holds"][0]["status"] == "pending"
+
+
+def test_approve_awaiting_final_action_merge_requires_import_decision_for_target(
+    tmp_path,
+):
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    (worktree / "tracked.txt").write_text("base\n", encoding="utf-8")
+    _git(worktree, "init")
+    _git(worktree, "config", "user.email", "xmuse@example.test")
+    _git(worktree, "config", "user.name", "xmuse test")
+    _git(worktree, "add", "tracked.txt")
+    _git(worktree, "commit", "-m", "base")
+    artifact = worktree / "runtime_artifacts" / "loop7n.txt"
+    artifact.parent.mkdir()
+    artifact.write_text("LOOP7N\n", encoding="utf-8")
+
+    target_worktree = tmp_path / "target"
+    target_worktree.mkdir()
+    _write_json(
+        tmp_path / "feature_lanes.json",
+        {
+            "lanes": [
+                {
+                    "feature_id": "import-without-decision",
+                    "status": "awaiting_final_action",
+                    "prompt": "ready",
+                    "worktree": str(worktree),
+                    "final_action_import_target": str(target_worktree),
+                    "changed_files": ["runtime_artifacts/loop7n.txt"],
+                }
+            ]
+        },
+    )
+    _write_json(
+        tmp_path / "final_actions.json",
+        {
+            "holds": [
+                {
+                    "id": "final-no-decision",
+                    "lane_id": "import-without-decision",
+                    "verdict_id": "verdict-no-decision",
+                    "action": "merge",
+                    "target_status": "reviewed",
+                    "status": "pending",
+                    "summary": "merge now",
+                }
+            ]
+        },
+    )
+    _write_json(
+        tmp_path / "logs" / "gates" / "import-without-decision" / "report.json",
+        {
+            "feature_id": "import-without-decision",
+            "passed": True,
+            "blocking_passed": True,
+            "profile_ids": ["xmuse-core"],
+            "command_results": [{"command": "python -c pass", "exit_code": 0}],
+        },
+    )
+
+    response = _client(tmp_path).post("/api/lanes/import-without-decision/approve")
+
+    assert response.status_code == 409
+    assert "final_action_import_decision_missing" in response.json()["detail"]
+    assert not (target_worktree / "runtime_artifacts" / "loop7n.txt").exists()
+    data = json.loads((tmp_path / "feature_lanes.json").read_text(encoding="utf-8"))
+    assert data["lanes"][0]["status"] == "awaiting_final_action"
+    holds = json.loads((tmp_path / "final_actions.json").read_text(encoding="utf-8"))
+    assert holds["holds"][0]["status"] == "pending"
+
+
+def test_approve_awaiting_final_action_merge_rejects_import_decision_for_other_hold(
+    tmp_path,
+):
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    (worktree / "tracked.txt").write_text("base\n", encoding="utf-8")
+    _git(worktree, "init")
+    _git(worktree, "config", "user.email", "xmuse@example.test")
+    _git(worktree, "config", "user.name", "xmuse test")
+    _git(worktree, "add", "tracked.txt")
+    _git(worktree, "commit", "-m", "base")
+    artifact = worktree / "runtime_artifacts" / "loop7n-wrong-hold.txt"
+    artifact.parent.mkdir()
+    artifact.write_text("LOOP7N\n", encoding="utf-8")
+
+    target_worktree = tmp_path / "target"
+    target_worktree.mkdir()
+    _write_json(
+        tmp_path / "feature_lanes.json",
+        {
+            "lanes": [
+                {
+                    "feature_id": "wrong-hold-decision",
+                    "status": "awaiting_final_action",
+                    "prompt": "ready",
+                    "worktree": str(worktree),
+                    "final_action_import_target": str(target_worktree),
+                    "changed_files": ["runtime_artifacts/loop7n-wrong-hold.txt"],
+                }
+            ]
+        },
+    )
+    _write_json(
+        tmp_path / "final_actions.json",
+        {
+            "holds": [
+                {
+                    "id": "final-current",
+                    "lane_id": "wrong-hold-decision",
+                    "verdict_id": "verdict-current",
+                    "action": "merge",
+                    "target_status": "reviewed",
+                    "status": "pending",
+                    "summary": "merge now",
+                }
+            ]
+        },
+    )
+    _write_json(
+        tmp_path / "final_action_import_decisions.json",
+        {
+            "decisions": [
+                {
+                    "id": "decision-other-hold",
+                    "lane_id": "wrong-hold-decision",
+                    "hold_id": "final-other",
+                    "decision": "apply_to_target_worktree",
+                    "status": "approved",
+                    "source_worktree": str(worktree),
+                    "target_worktree": str(target_worktree),
+                    "decided_by": "main-goal-agent",
+                    "reason": "stale decision for another hold",
+                    "created_at": "2026-06-21T00:00:00Z",
+                }
+            ]
+        },
+    )
+    _write_json(
+        tmp_path / "logs" / "gates" / "wrong-hold-decision" / "report.json",
+        {
+            "feature_id": "wrong-hold-decision",
+            "passed": True,
+            "blocking_passed": True,
+            "profile_ids": ["xmuse-core"],
+            "command_results": [{"command": "python -c pass", "exit_code": 0}],
+        },
+    )
+
+    response = _client(tmp_path).post("/api/lanes/wrong-hold-decision/approve")
+
+    assert response.status_code == 409
+    assert "final_action_import_decision_missing" in response.json()["detail"]
+    assert not (target_worktree / "runtime_artifacts" / "loop7n-wrong-hold.txt").exists()
 
 
 def test_metrics_treats_merged_lane_as_completed(tmp_path):

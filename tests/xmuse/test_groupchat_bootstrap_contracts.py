@@ -92,6 +92,23 @@ def test_opencode_requires_explicit_model() -> None:
         )
 
 
+def test_logical_peer_accepts_grok_with_explicit_model() -> None:
+    peer = LogicalPeerSpec(
+        role="review",
+        address_slug="review",
+        display_name="review-grok-god",
+        template_slug="review",
+        provider_id="grok",
+        profile_id="review",
+        cli_kind="grok",
+        model="grok-composer-2.5-fast",
+    )
+
+    assert peer.provider_id == "grok"
+    assert peer.cli_kind == "grok"
+    assert peer.model == "grok-composer-2.5-fast"
+
+
 def test_deterministic_ids_are_stable() -> None:
     assert BootstrapInitMode.PROPOSAL_THEN_APPROVE.value == "proposal_then_approve"
     assert bootstrap_apply_id("conv-1", "proposal-1") == "bootstrap-apply:conv-1:proposal-1"

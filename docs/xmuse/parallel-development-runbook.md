@@ -1,12 +1,23 @@
 # xmuse 并行开发运行手册
 
-更新日期: 2026-06-02
+更新日期: 2026-06-20
 
 ## 目的
 
 本手册用于在多个 Codex session 中并行开发 xmuse，同时保持《解耦开发协议》的边界。
 目标是让多数 session 能独立推进、独立测试、低冲突合并，而不是让多个 agent 共同
 争抢同一条端到端执行链。
+
+## `/goal` 模式下的从属边界
+
+当本手册被 Codex `/goal` runtime loop 使用时，它从属于
+`docs/xmuse/real-runtime-loop-behavior-policy.md`。不要用 S0-S8 batch 来选择或扩大
+任务范围；单个 `/goal` 必须先选择一个 `active_boundary`。
+
+并行 session 只能作为该 boundary 之下的 bounded observe / diagnose / review /
+verify / candidate lane。每个 session 必须有 allowed files、expected artifact、
+无重叠写入范围和 no-auto-merge 约束；只有主 `/goal` 可以导入候选结果、改变
+`active_boundary`、提交 PR/merge，或改写 durable authority。
 
 ## 总原则
 
@@ -23,6 +34,7 @@
 
 ```text
 docs/xmuse/解耦开发协议.md
+docs/xmuse/real-runtime-loop-behavior-policy.md
 docs/xmuse/code-quality-and-archive-policy.md
 xmuse/HANDOFF.md
 xmuse/CODEX_GOAL_HANDOFF.md
@@ -90,7 +102,7 @@ tests/fixtures/xmuse/contracts/cards/
 | planning runs | `xmuse/planning_runs.sqlite3` | planning lifecycle 权威 |
 | feature plans | `xmuse/feature_plans/` | 2a 输出 |
 | graph sets/lane graphs | `xmuse/lane_graphs/` | 2b 输出 |
-| lane projection/status | `xmuse/feature_lanes.json` | Stage 0 执行事实源 |
+| lane projection/status | `xmuse/feature_lanes.json` | Stage 0 runner-visible execution projection；coordinator/state-machine guarded |
 | read envelopes/cards | read model/card stores | TUI/dashboard 契约 |
 
 ## 推荐 Session 划分

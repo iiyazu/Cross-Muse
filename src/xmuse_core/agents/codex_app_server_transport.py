@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -9,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from xmuse_core.agents.protocol import StdoutMessage
+from xmuse_core.runtime.paths import default_xmuse_root
 
 APP_SERVER_STREAM_LIMIT_BYTES = 16 * 1024 * 1024
 
@@ -155,6 +157,7 @@ class CodexAppServerTransport:
             stderr=asyncio.subprocess.PIPE,
             cwd=self._worktree,
             limit=APP_SERVER_STREAM_LIMIT_BYTES,
+            env=self._environment(),
         )
         await self._request(
             "initialize",
@@ -375,6 +378,25 @@ class CodexAppServerTransport:
             "developerInstructions": self._developer_instructions(),
         }
 
+    def _environment(self) -> dict[str, str]:
+        env = os.environ.copy()
+        codex_home = default_xmuse_root("xmuse") / ".codex_app_home"
+        data_home = codex_home / ".local" / "share"
+        config_home = codex_home / ".config"
+        cache_home = codex_home / ".cache"
+
+        for path in (codex_home, data_home, config_home, cache_home):
+            try:
+                path.mkdir(parents=True, exist_ok=True)
+            except OSError:
+                continue
+
+        env["HOME"] = str(codex_home)
+        env["XDG_DATA_HOME"] = str(data_home)
+        env["XDG_CONFIG_HOME"] = str(config_home)
+        env["XDG_CACHE_HOME"] = str(cache_home)
+        return env
+
     async def _request(self, method: str, params: dict[str, Any]) -> Any:
         request_id = await self._send_request(method, params)
         while True:
@@ -443,14 +465,20 @@ class CodexAppServerTransport:
                 "set to that GOD's exact @role and content containing the concrete "
                 "handoff request. "
                 "When peer discussion produces work that should enter real "
-                "execution, use the structured chat tools: create or reference a "
-                "collaboration run, have execute record a JSON "
-                "execute_feasibility_verdict via chat_record_collaboration_response, "
-                "then emit a lane_graph proposal with chat_emit_proposal and a "
-                "collaboration:<run_id> reference, passing "
+                "execution, use the structured chat tools: if the inbox payload does "
+                "not already contain a durable `collab_*` run_id returned by "
+                "chat_create_collaboration_request, call chat_create_collaboration_request "
+                "first and use only its returned run_id. Never invent or guess a "
+                "collaboration run_id in chat text. Have execute record a JSON "
+                "execute_feasibility_verdict via chat_record_collaboration_response "
+                "for that returned run_id, then emit a lane_graph proposal with "
+                "chat_emit_proposal and a collaboration:<run_id> reference, passing "
                 "reply_to_inbox_item_id=xmuse_context.inbox_item.id so the proposal "
                 "closes the current inbox item. Human approval remains required before "
-                "dispatch. "
+                "dispatch. The execute verdict JSON must include `type`, `verdict`, "
+                "`command`, `proof_boundary`, and a `summary` or `notes`; use "
+                "`command`, not `allowed_command`, and set `execution_performed` "
+                "false when peer chat did not run the command. "
                 "Only return a direct final assistant message if MCP tools are not "
                 "available."
             )

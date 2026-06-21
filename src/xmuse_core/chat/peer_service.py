@@ -25,6 +25,7 @@ from xmuse_core.chat.bootstrap_contracts import (
     resolve_groupchat_preset,
 )
 from xmuse_core.chat.bootstrap_store import BootstrapStateStore
+from xmuse_core.chat.collaboration_contracts import CollaborationRun, CollaborationStatus
 from xmuse_core.chat.envelopes import normalize_envelope
 from xmuse_core.chat.inbox_store import ChatInboxStore
 from xmuse_core.chat.lane_scope import conversation_scoped_lanes
@@ -382,11 +383,17 @@ class PeerChatService:
                 "address_slug": base.address_slug if base is not None else role,
                 "display_name": spec["display_name"],
                 "template_slug": base.template_slug if base is not None else role,
-                "provider_id": base.provider_id if base is not None else spec["cli_kind"],
+                "provider_id": (
+                    spec.get("provider_id")
+                    or (base.provider_id if base is not None else spec["cli_kind"])
+                ),
                 "profile_id": (
-                    base.profile_id
-                    if base is not None
-                    else provider_profile_id_for_role(role).value
+                    spec.get("profile_id")
+                    or (
+                        base.profile_id
+                        if base is not None
+                        else provider_profile_id_for_role(role).value
+                    )
                 ),
                 "cli_kind": spec["cli_kind"],
                 "model": spec["model"],
@@ -970,8 +977,15 @@ class PeerChatService:
             raise PeerChatError("invalid_arguments", "participant must be an object")
         role = self._required_string(participant.get("role"), "role")
         explicit_cli_kind = self._optional_string(participant.get("cli_kind"))
-        if explicit_cli_kind is not None and explicit_cli_kind != "codex":
+        if explicit_cli_kind is not None and explicit_cli_kind not in {
+            "codex",
+            "grok",
+            "opencode",
+        }:
             raise PeerChatError("codex_only_participants", explicit_cli_kind)
+        provider_id = self._optional_string(participant.get("provider_id"))
+        profile_id = self._optional_string(participant.get("profile_id"))
+        model = self._optional_string(participant.get("model"))
         role_template_id = self._optional_string(participant.get("role_template_id"))
         if role_template_id is not None:
             try:
@@ -983,27 +997,69 @@ class PeerChatService:
             if template is None or not template.predefined:
                 raise PeerChatError("role_template_id_required", role)
 
+        expected_profile_id = provider_profile_id_for_role(role)
+        if (
+            profile_id is not None
+            and profile_id != expected_profile_id.value
+        ):
+            raise PeerChatError(
+                "participant_profile_role_mismatch",
+                f"role {role!r} must use profile_id "
+                f"{expected_profile_id.value!r}, got {profile_id!r}",
+                details={
+                    "role": role,
+                    "expected_profile_id": expected_profile_id.value,
+                    "provided_profile_id": profile_id,
+                    "role_profile_map": {role: expected_profile_id.value},
+                },
+            )
+
+        resolved_profile_id = profile_id or expected_profile_id.value
+
         try:
             cli_kind = resolve_codex_cli_kind(
                 cli_kind=explicit_cli_kind,
-                provider_id=self._optional_string(participant.get("provider_id")),
-                profile_id=self._optional_string(participant.get("profile_id")),
-                expected_profile_id=template.profile_id,
+                provider_id=provider_id,
+                profile_id=resolved_profile_id,
+                expected_profile_id=expected_profile_id,
                 subject="xmuse chat participants",
             )
         except ValueError as exc:
             raise PeerChatError("invalid_arguments", str(exc)) from exc
 
+        if cli_kind in {"grok", "opencode"}:
+            missing = [
+                field_name
+                for field_name, value in (
+                    ("provider_id", provider_id),
+                    ("cli_kind", explicit_cli_kind),
+                    ("model", model),
+                )
+                if value is None
+            ]
+            if missing:
+                raise PeerChatError(
+                    "invalid_arguments",
+                    f"{cli_kind} initial_participants require explicit "
+                    "provider_id, cli_kind, and model",
+                )
+
         display_name = self._optional_string(participant.get("display_name")) or f"{role}-god"
-        model = normalize_codex_model_id(
-            self._optional_string(participant.get("model")) or template.default_model,
-            profile_id=template.profile_id,
+        normalized_model = (
+            normalize_codex_model_id(
+                model or template.default_model,
+                profile_id=expected_profile_id,
+            )
+            if cli_kind == "codex"
+            else model
         )
         return {
             "role": role,
             "display_name": display_name,
+            "provider_id": provider_id or cli_kind,
+            "profile_id": resolved_profile_id,
             "cli_kind": cli_kind,
-            "model": model,
+            "model": normalized_model,
             "role_template_id": template.id,
         }
 
@@ -1170,6 +1226,40 @@ class PeerChatService:
             raise PeerChatError("unknown_collaboration_run", run_id)
         return run
 
+    def _collaboration_run_refs(self, references: list[str]) -> list[str]:
+        run_ids: list[str] = []
+        for reference in references:
+            if not isinstance(reference, str):
+                continue
+            clean = reference.strip()
+            if not clean.startswith("collaboration:"):
+                continue
+            run_id = clean.removeprefix("collaboration:").strip()
+            if run_id:
+                run_ids.append(run_id)
+        return run_ids
+
+    def _enforce_collaboration_refs_ready_for_proposal(
+        self,
+        *,
+        conversation_id: str,
+        references: list[str],
+    ) -> None:
+        run_ids = self._collaboration_run_refs(references)
+        if not run_ids:
+            return
+        store = self._collaboration_store()
+        for run_id in run_ids:
+            run = self._collaboration_run_for_conversation(store, run_id, conversation_id)
+            if run.status is not CollaborationStatus.DONE:
+                raise PeerChatError("collaboration_not_done", run_id)
+        accepted = self._chat.accepted_proposals_for_references(
+            conversation_id=conversation_id,
+            references=references,
+        )
+        if accepted:
+            raise PeerChatError("collaboration_proposal_already_accepted", accepted[-1].id)
+
     def _conversation_exists(self, conversation_id: str) -> bool:
         return any(
             conversation.id == conversation_id
@@ -1262,17 +1352,26 @@ class PeerChatService:
 
     def _session_summary(self, record: Any) -> dict[str, Any]:
         provider_id = "codex" if record.runtime == "codex" else str(record.runtime)
+        profile_id = (
+            provider_profile_id_for_role(record.role).value
+            if provider_id == "codex"
+            else "default"
+        )
+        if isinstance(record.participant_id, str) and record.participant_id:
+            try:
+                participant = self._participants.get(record.participant_id)
+            except KeyError:
+                participant = None
+            if participant is not None and participant.conversation_id == record.conversation_id:
+                provider_id = participant.provider_id.value
+                profile_id = participant.profile_id.value
         return {
             "god_session_id": record.god_session_id,
             "conversation_id": record.conversation_id,
             "participant_id": record.participant_id,
             "role": record.role,
             "provider_id": provider_id,
-            "profile_id": (
-                provider_profile_id_for_role(record.role).value
-                if provider_id == "codex"
-                else "default"
-            ),
+            "profile_id": profile_id,
             "runtime": record.runtime,
             "model": record.model,
             "status": record.status,
@@ -1660,17 +1759,26 @@ class PeerChatService:
         )
         store = self._collaboration_store()
         run = self._collaboration_run_for_conversation(store, run_id, conversation_id)
-        if participant.role not in run.targets:
+        response_target = _collaboration_response_target(participant.role, run.targets)
+        if response_target is None:
             raise PeerChatError("collaboration_target_mismatch", participant.role)
         try:
             updated = store.record_response(
                 run_id,
-                target=participant.role,
+                target=response_target,
                 content=str(content),
                 response_status=status,
             )
         except ValueError as exc:
             raise PeerChatError("invalid_collaboration_response", str(exc)) from exc
+        if (
+            run.status is not CollaborationStatus.DONE
+            and updated.status is CollaborationStatus.DONE
+        ):
+            self._ensure_collaboration_done_callback_inbox(
+                run=updated,
+                sender_participant_id=participant.participant_id,
+            )
         return {"run": updated.model_dump(mode="json")}
 
     def raise_collaboration_blocker(
@@ -2007,16 +2115,38 @@ class PeerChatService:
             participant_id=participant_id,
             god_session_id=god_session_id,
         )
+        caller_identity = f"god:{god_session_id}:{participant_id}"
+        proposal_references = references or []
+        if (
+            self._chat.get_logged_tool_result(
+                conversation_id=conversation_id,
+                tool_name="chat_emit_proposal",
+                caller_identity=caller_identity,
+                client_request_id=client_request_id,
+            )
+            is None
+        ):
+            self._enforce_collaboration_refs_ready_for_proposal(
+                conversation_id=conversation_id,
+                references=proposal_references,
+            )
         payload = self._proposal_emitter().emit_lane_graph_proposal(
             conversation_id=conversation_id,
             participant_id=participant_id,
-            caller_identity=f"god:{god_session_id}:{participant_id}",
+            caller_identity=caller_identity,
             client_request_id=client_request_id,
             summary=summary,
             lanes=lanes,
-            references=references or [],
+            references=proposal_references,
             resolution_content=resolution_content,
         )
+        proposal = payload.get("proposal")
+        if isinstance(proposal, dict) and isinstance(proposal.get("id"), str):
+            self._chat.supersede_open_proposals_for_references(
+                conversation_id=conversation_id,
+                references=proposal_references,
+                keep_proposal_id=proposal["id"],
+            )
         resolved_reply_to_inbox_item_id = (
             reply_to_inbox_item_id
             or self._single_claimed_inbox_item_id(
@@ -2221,6 +2351,81 @@ class PeerChatService:
             ),
         )
 
+    def _ensure_collaboration_done_callback_inbox(
+        self,
+        *,
+        run: CollaborationRun,
+        sender_participant_id: str,
+    ) -> None:
+        source_message_id = self._latest_message_id(run.conversation_id)
+        if source_message_id is None:
+            return
+        target = self._resolve_collaboration_callback_target(run)
+        if self._has_collaboration_callback_inbox(
+            conversation_id=run.conversation_id,
+            run_id=run.run_id,
+            target_participant_id=target.participant.participant_id,
+        ):
+            return
+        self._inbox.create_item(
+            conversation_id=run.conversation_id,
+            target_participant_id=target.participant.participant_id,
+            target_role=target.participant.role,
+            target_address=target.normalized,
+            sender_participant_id=sender_participant_id,
+            sender_address=f"@participant:{sender_participant_id}",
+            source_message_id=source_message_id,
+            item_type="collaboration_callback",
+            payload={
+                "content": (
+                    f"Collaboration run `{run.run_id}` is done. Review the formal "
+                    "responses and continue the requested handoff. If the original "
+                    "request asked for a lane_graph proposal, call chat_emit_proposal "
+                    "now with exactly one proposal and "
+                    f"`collaboration:{run.run_id}` as a reference. Do not merely "
+                    "acknowledge that you will emit a proposal."
+                ),
+                "collaboration_run_id": run.run_id,
+                "collaboration_status": run.status.value,
+                "trigger_mode": "collaboration_done_callback",
+                "responses": [
+                    response.model_dump(mode="json") for response in run.responses
+                ],
+            },
+        )
+
+    def _latest_message_id(self, conversation_id: str) -> str | None:
+        messages = self._chat.list_messages(conversation_id)
+        if not messages:
+            return None
+        return messages[-1].id
+
+    def _resolve_collaboration_callback_target(self, run: CollaborationRun):
+        resolver = MentionResolver(self._participants)
+        try:
+            return resolver.resolve(run.conversation_id, run.callback_target)
+        except MentionResolutionError as exc:
+            raise PeerChatError(exc.code, exc.target) from exc
+
+    def _has_collaboration_callback_inbox(
+        self,
+        *,
+        conversation_id: str,
+        run_id: str,
+        target_participant_id: str,
+    ) -> bool:
+        for item in self._inbox.list_by_conversation(
+            conversation_id,
+            include_terminal=True,
+        ):
+            if item.target_participant_id != target_participant_id:
+                continue
+            if item.item_type != "collaboration_callback":
+                continue
+            if item.payload.get("collaboration_run_id") == run_id:
+                return True
+        return False
+
     def _review_trigger_payload(
         self,
         *,
@@ -2279,6 +2484,17 @@ class PeerChatService:
         if len(matches) > 1:
             raise PeerChatError("review_trigger_target_ambiguous", conversation_id)
         return matches[0]
+
+
+def _collaboration_response_target(role: str, targets: list[str]) -> str | None:
+    """Return the stored collaboration target matching a participant role."""
+    role = role.strip()
+    if role in targets:
+        return role
+    address = f"@{role}"
+    if address in targets:
+        return address
+    return None
 
 
 def _review_trigger_content(

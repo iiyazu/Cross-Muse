@@ -240,7 +240,10 @@ class RayGodSessionLayer:
             "command": command,
             "db_path": str(self._db_path),
             "worktree": str(worktree),
-            "transport_mode": self._transport_mode,
+            "transport_mode": _transport_mode_for_runtime(
+                runtime,
+                default_mode=self._transport_mode,
+            ),
             "mcp_port": _persistent_mcp_port(launcher, command),
             "codex_command": _persistent_codex_command(launcher),
             "reasoning_effort": self._reasoning_effort,
@@ -315,6 +318,16 @@ def _build_persistent_command(launcher: object, role: str, worktree: Path) -> li
 
 def _runtime_value(runtime: RuntimeKey) -> str:
     return runtime.value if isinstance(runtime, AgentRuntime) else str(runtime)
+
+
+def _transport_mode_for_runtime(
+    runtime: RuntimeKey,
+    *,
+    default_mode: str,
+) -> str:
+    if _runtime_value(runtime) == AgentRuntime.OPENCODE.value:
+        return "process"
+    return default_mode
 
 
 def _find_launcher_for_runtime(

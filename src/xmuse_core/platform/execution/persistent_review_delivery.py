@@ -50,17 +50,18 @@ async def apply_persistent_review_message(
     sm: LaneStateMachine,
     message: StdoutMessage,
     stable_verdict_id: Callable[[str], str],
-    ingest_merge_verdict: Callable[[str, str], None],
-    ingest_rework_verdict: Callable[[str, str], None],
+    ingest_merge_verdict: Callable[[str, str, list[str] | None], None],
+    ingest_rework_verdict: Callable[[str, str, list[str] | None], None],
     on_reviewed: Callable[[str], Awaitable[None]],
     on_rejected: Callable[[str], Awaitable[None]],
     review_request_id: str,
     persistent_review_identity: str,
     extra_metadata: dict[str, Any] | None = None,
+    evidence_refs: list[str] | None = None,
 ) -> bool:
     verdict = persistent_verdict_payload(message)
     if verdict is None:
-        text = message.message or ""
+        text = _review_text_from_message(message)
         if not text:
             return False
         decision, summary, reason = infer_review_fallback(text)
@@ -69,6 +70,9 @@ async def apply_persistent_review_message(
         summary = verdict["summary"]
         reason = "persistent_result"
 
+    refs = _dedupe_refs(
+        evidence_refs or _string_list(sm.get_lane(lane_id).get("review_evidence_refs"))
+    )
     if decision == "reviewed":
         verdict_id = stable_verdict_id(lane_id)
         sm.transition(
@@ -83,6 +87,7 @@ async def apply_persistent_review_message(
             )
             | {
                 "review_verdict_id": verdict_id,
+                "review_evidence_refs": refs,
                 "review_delivery_mode": "persistent",
                 "persistent_review_degraded": False,
                 "review_request_id": review_request_id,
@@ -90,7 +95,7 @@ async def apply_persistent_review_message(
             }
             | (extra_metadata or {}),
         )
-        ingest_merge_verdict(lane_id, summary)
+        ingest_merge_verdict(lane_id, summary, refs)
         await on_reviewed(lane_id)
         return True
 
@@ -105,6 +110,7 @@ async def apply_persistent_review_message(
             fallback_reason=reason,
         )
         | {
+            "review_evidence_refs": refs,
             "review_delivery_mode": "persistent",
             "persistent_review_degraded": False,
             "review_request_id": review_request_id,
@@ -112,7 +118,7 @@ async def apply_persistent_review_message(
         }
         | (extra_metadata or {}),
     )
-    ingest_rework_verdict(lane_id, summary)
+    ingest_rework_verdict(lane_id, summary, refs)
     await on_rejected(lane_id)
     return True
 
@@ -178,3 +184,35 @@ def persistent_verdict_payload(message: StdoutMessage) -> dict[str, str] | None:
     if not summary:
         return None
     return {"decision": decision, "summary": summary}
+
+
+def _review_text_from_message(message: StdoutMessage) -> str:
+    candidates = [
+        message.message,
+        message.artifacts.get("reply_text"),
+        message.artifacts.get("message"),
+        message.artifacts.get("result"),
+        message.artifacts.get("stdout"),
+    ]
+    for candidate in candidates:
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate
+    return ""
+
+
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, str)]
+
+
+def _dedupe_refs(value: list[str]) -> list[str]:
+    refs: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        ref = item.strip()
+        if not ref or ref in seen:
+            continue
+        seen.add(ref)
+        refs.append(ref)
+    return refs

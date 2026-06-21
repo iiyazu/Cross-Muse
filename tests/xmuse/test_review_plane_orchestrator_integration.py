@@ -181,6 +181,16 @@ def _add_review_participant(tmp_path: Path, conversation_id: str):
     )
 
 
+def _add_opencode_review_participant(tmp_path: Path, conversation_id: str):
+    return ParticipantStore(tmp_path / "chat.db").add(
+        conversation_id=conversation_id,
+        role="review",
+        display_name="Review OpenCode",
+        cli_kind="opencode",
+        model="opencode-go/deepseek-v4-flash",
+    )
+
+
 def _add_architect_participant(tmp_path: Path, conversation_id: str):
     return ParticipantStore(tmp_path / "chat.db").add(
         conversation_id=conversation_id,
@@ -683,6 +693,129 @@ async def test_configured_review_peer_preferred_success_records_peer_metadata(
 
 
 @pytest.mark.asyncio
+async def test_review_runtime_opencode_routes_to_existing_review_peer(
+    tmp_path: Path,
+) -> None:
+    chat = ChatStore(tmp_path / "chat.db")
+    conversation = chat.create_conversation("OpenCode review runtime")
+    participant = _add_opencode_review_participant(tmp_path, conversation.id)
+    orch = _make_final_action_orchestrator(
+        tmp_path,
+        [
+            _gated_lane(
+                "lane-opencode-review-runtime",
+                conversation_id=conversation.id,
+                feature_plan_feature_id="feature-opencode-review",
+                review_runtime="opencode",
+            )
+        ],
+    )
+    persistent = FakePersistentReviewLayer(
+        [
+            StdoutMessage(
+                type="result",
+                status="success",
+                artifacts={
+                    "stdout": "Findings: none\nVerdict: merge",
+                },
+            )
+        ]
+    )
+    orch._review_god_session_layer = persistent
+
+    with patch.object(orch._spawner, "spawn", new_callable=AsyncMock) as spawn:
+        await orch._run_review_god("lane-opencode-review-runtime")
+
+    lane = orch._sm.get_lane("lane-opencode-review-runtime")
+    assert spawn.await_count == 0
+    assert lane["status"] == "awaiting_final_action"
+    assert lane["review_peer_id"] == participant.participant_id
+    assert lane["review_runtime_requested"] == "opencode"
+    assert lane["peer_routing_mode"] == "required"
+    assert lane["peer_delivery_mode"] == "configured_peer"
+    assert "Verdict: merge" in lane["review_summary"]
+    assert persistent.ensured[0]["participant_id"] == participant.participant_id
+
+
+@pytest.mark.asyncio
+async def test_review_runtime_opencode_without_feature_scope_uses_request_scope(
+    tmp_path: Path,
+) -> None:
+    chat = ChatStore(tmp_path / "chat.db")
+    conversation = chat.create_conversation("OpenCode review runtime request scope")
+    participant = _add_opencode_review_participant(tmp_path, conversation.id)
+    orch = _make_final_action_orchestrator(
+        tmp_path,
+        [
+            _gated_lane(
+                "lane-opencode-review-runtime-no-feature",
+                conversation_id=conversation.id,
+                review_runtime="opencode",
+            )
+        ],
+    )
+    persistent = FakePersistentReviewLayer(
+        [
+            StdoutMessage(
+                type="result",
+                status="success",
+                artifacts={
+                    "stdout": "Findings: none\nVerdict: merge",
+                },
+            )
+        ]
+    )
+    orch._review_god_session_layer = persistent
+
+    with patch.object(orch._spawner, "spawn", new_callable=AsyncMock) as spawn:
+        await orch._run_review_god("lane-opencode-review-runtime-no-feature")
+
+    lane = orch._sm.get_lane("lane-opencode-review-runtime-no-feature")
+    assert spawn.await_count == 0
+    assert lane["status"] == "awaiting_final_action"
+    assert lane["review_peer_id"] == participant.participant_id
+    assert lane["review_runtime_requested"] == "opencode"
+    assert lane["peer_delivery_mode"] == "configured_peer"
+    assert persistent.ensured[0]["feature_scope_id"] == (
+        "configured-review:lane-opencode-review-runtime-no-feature"
+    )
+
+
+@pytest.mark.asyncio
+async def test_review_runtime_opencode_without_peer_fails_closed(
+    tmp_path: Path,
+) -> None:
+    chat = ChatStore(tmp_path / "chat.db")
+    conversation = chat.create_conversation("Missing OpenCode review runtime")
+    orch = _make_final_action_orchestrator(
+        tmp_path,
+        [
+            _gated_lane(
+                "lane-opencode-review-runtime-missing",
+                conversation_id=conversation.id,
+                feature_plan_feature_id="feature-opencode-review-missing",
+                review_runtime="opencode",
+            )
+        ],
+    )
+    orch._review_god_session_layer = FakePersistentReviewLayer()
+
+    with patch.object(orch._spawner, "spawn", new_callable=AsyncMock) as spawn:
+        await orch._run_review_god("lane-opencode-review-runtime-missing")
+
+    lane = orch._sm.get_lane("lane-opencode-review-runtime-missing")
+    assert spawn.await_count == 0
+    assert lane["status"] == "gate_failed"
+    assert lane["failure_reason"] == "required_review_peer_unavailable"
+    assert lane["failure_layer"] == "review"
+    assert lane["review_peer_id"] == "runtime:opencode"
+    assert lane["review_runtime_requested"] == "opencode"
+    assert lane["peer_routing_mode"] == "required"
+    assert lane["peer_delivery_mode"] == "required_peer_failed"
+    assert lane["peer_degraded_reason"] == "review_peer_runtime_unavailable"
+
+
+@pytest.mark.asyncio
 async def test_configured_review_peer_preferred_falls_back_to_auto_persistent(
     tmp_path: Path,
 ) -> None:
@@ -946,6 +1079,87 @@ async def test_required_configured_review_peer_no_verdict_hard_fails(
     assert lane["failure_reason"] == "review_peer_delivery_failed"
     assert lane["peer_delivery_mode"] == "required_peer_failed"
     assert lane["peer_degraded_reason"] == "review_peer_no_verdict"
+
+
+@pytest.mark.asyncio
+async def test_configured_review_peer_honors_committed_callback_reviewed_status(
+    tmp_path: Path,
+) -> None:
+    chat = ChatStore(tmp_path / "chat.db")
+    conversation = chat.create_conversation("Configured callback review")
+    participant = _add_review_participant(tmp_path, conversation.id)
+    lane_id = "lane-configured-callback-reviewed"
+    orch = _make_final_action_orchestrator(
+        tmp_path,
+        [
+            _gated_lane(
+                lane_id,
+                conversation_id=conversation.id,
+                review_peer_id=participant.participant_id,
+                peer_routing_mode="required",
+                feature_plan_feature_id="feature-callback-review",
+            )
+        ],
+    )
+    (tmp_path / "logs" / "gates" / lane_id).mkdir(parents=True)
+    (tmp_path / "logs" / "gates" / lane_id / "report.json").write_text(
+        json.dumps({"passed": True}),
+        encoding="utf-8",
+    )
+    orch._review_god_session_layer = FakePersistentReviewLayer()
+
+    class CommittingPeerService:
+        def __init__(self, **kwargs) -> None:
+            self.kwargs = kwargs
+
+        async def request(self, **kwargs) -> PeerRequestResult:
+            request_id = str(kwargs["request_id"])
+            orch._sm.transition(
+                lane_id,
+                "reviewed",
+                metadata={
+                    "review_decision": "merge",
+                    "review_summary": "OpenCode callback committed merge.",
+                    "review_evidence_refs": [
+                        f"feature_lanes.json#lane={lane_id}",
+                        f"logs/gates/{lane_id}/report.json",
+                    ],
+                },
+            )
+            return PeerRequestResult(
+                status="ok",
+                request_id=request_id,
+                message=StdoutMessage(
+                    type="result",
+                    request_id=request_id,
+                    status="success",
+                    artifacts={},
+                ),
+            )
+
+    with patch(
+        "xmuse_core.platform.execution.review_god.PersistentCliPeerService",
+        CommittingPeerService,
+    ), patch.object(orch._spawner, "spawn", new_callable=AsyncMock) as spawn:
+        await orch._run_review_god(lane_id)
+
+    lane = orch._sm.get_lane(lane_id)
+    assert spawn.await_count == 0
+    assert lane["status"] == "awaiting_final_action"
+    assert lane["review_decision"] == "merge"
+    assert lane["review_summary"] == "OpenCode callback committed merge."
+    assert lane["review_verdict_id"].startswith("verdict-merge-")
+    assert lane["peer_delivery_mode"] == "configured_peer"
+    assert lane["review_delivery_mode"] == "persistent"
+    assert lane["persistent_review_degraded"] is False
+    assert lane["persistent_review_identity"] == f"configured:{participant.participant_id}"
+    review_plane = json.loads((tmp_path / "review_plane.json").read_text())
+    assert review_plane["review_verdicts"][0]["evidence_refs"] == [
+        f"feature_lanes.json#lane={lane_id}",
+        f"logs/gates/{lane_id}/report.json",
+    ]
+    final_actions = json.loads((tmp_path / "final_actions.json").read_text())
+    assert final_actions["holds"][0]["verdict_id"] == lane["review_verdict_id"]
 
 
 @pytest.mark.asyncio
@@ -1232,7 +1446,18 @@ async def test_persistent_review_receives_gate_report_in_session_context(
         await orch._run_review_god("lane-gate-context")
 
     sent = persistent.sent[0]
+    lane = orch._sm.get_lane("lane-gate-context")
+    expected_refs = [
+        "feature_lanes.json#lane=lane-gate-context",
+        f"review_plane.json#task={lane['review_task_id']}",
+        "logs/lane_prompts/lane-gate-context.md",
+        "logs/gates/lane-gate-context/report.json",
+    ]
     assert "Gate report: logs/gates/lane-gate-context/report.json" in sent["context"]
+    assert lane["review_evidence_refs"] == expected_refs
+    review_plane = json.loads((tmp_path / "review_plane.json").read_text())
+    verdict = review_plane["review_verdicts"][0]
+    assert verdict["evidence_refs"] == expected_refs
 
 
 @pytest.mark.asyncio
@@ -1713,6 +1938,75 @@ async def test_rework_verdict_from_stdout_fallback_is_ingested_in_review_plane(
     assert verdict.lane_id == "lane-rw"
     assert verdict.decision == ReviewDecision.REWORK
     assert task.status == ReviewTaskStatus.VERDICT_EMITTED
+
+
+@pytest.mark.asyncio
+async def test_committed_mcp_rework_is_ingested_in_review_plane(
+    tmp_path: Path,
+) -> None:
+    """A Review GOD MCP rejection closes the current ReviewTask as rework."""
+    orch = _make_orchestrator(tmp_path, [_gated_lane("lane-mcp-rw")])
+
+    async def _spawn_and_commit_rework(**_kwargs):
+        orch._sm.transition(
+            "lane-mcp-rw",
+            "rejected",
+            metadata={
+                "review_decision": "rework",
+                "review_summary": "keep contract coverage",
+            },
+        )
+        return SpawnResult(exit_code=0, stdout="", stderr="")
+
+    with patch.object(orch._spawner, "spawn", new_callable=AsyncMock) as spawn:
+        spawn.side_effect = _spawn_and_commit_rework
+        with patch.object(orch, "dispatch_lane", new_callable=AsyncMock):
+            await orch._run_review_god("lane-mcp-rw")
+
+    lane = orch._sm.get_lane("lane-mcp-rw")
+    task_id = lane.get("review_task_id")
+    assert task_id is not None
+    task = orch._review_plane.store.get_task(task_id)
+    assert task.status == ReviewTaskStatus.VERDICT_EMITTED
+    assert task.verdict_id is not None
+    verdict = orch._review_plane.store.get_verdict(task.verdict_id)
+    assert verdict.decision == ReviewDecision.REWORK
+    assert verdict.summary == "keep contract coverage"
+
+
+@pytest.mark.asyncio
+async def test_empty_review_stdout_closes_review_task_with_failure_verdict(
+    tmp_path: Path,
+) -> None:
+    """A successful provider exit with no verdict is auditable, but not approval."""
+    orch = _make_orchestrator(tmp_path, [_gated_lane("lane-no-verdict")])
+
+    review_result = SpawnResult(
+        exit_code=0,
+        stdout="",
+        stderr="transport transcript only",
+        stdout_log_path="logs/agent_spawns/lane-no-verdict/stdout.log",
+        stderr_log_path="logs/agent_spawns/lane-no-verdict/stderr.log",
+        result_log_path="logs/agent_spawns/lane-no-verdict/result.json",
+    )
+
+    with patch.object(orch._spawner, "spawn", new_callable=AsyncMock, return_value=review_result):
+        await orch._run_review_god("lane-no-verdict")
+
+    lane = orch._sm.get_lane("lane-no-verdict")
+    assert lane["status"] == "gate_failed"
+    assert lane["failure_reason"] == "review_no_verdict"
+    task_id = lane.get("review_task_id")
+    assert task_id is not None
+    task = orch._review_plane.store.get_task(task_id)
+    assert task.status == ReviewTaskStatus.VERDICT_EMITTED
+    assert task.verdict_id is not None
+    verdict = orch._review_plane.store.get_verdict(task.verdict_id)
+    assert verdict.decision == ReviewDecision.TERMINATE
+    assert verdict.status == "review_failed"
+    assert verdict.terminate_reason == "review_no_verdict"
+    assert verdict.evidence_refs == []
+    assert "review_summary" not in lane
 
 
 @pytest.mark.asyncio

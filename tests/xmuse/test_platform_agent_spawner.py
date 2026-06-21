@@ -28,6 +28,7 @@ def test_agent_spawner_uses_configurable_codex_model(monkeypatch) -> None:
     )
 
     assert command[:4] == ["codex", "exec", "-m", "gpt-5.4"]
+    assert "--ignore-user-config" in command
 
 
 def test_agent_spawner_normalizes_reserved_final_quality_model_env(monkeypatch) -> None:
@@ -45,6 +46,7 @@ def test_agent_spawner_normalizes_reserved_final_quality_model_env(monkeypatch) 
     )
 
     assert command[:4] == ["codex", "exec", "-m", "gpt-5.4"]
+    assert "--ignore-user-config" in command
 
 
 def test_agent_spawner_uses_explicit_model_and_worker_metadata(monkeypatch) -> None:
@@ -64,6 +66,7 @@ def test_agent_spawner_uses_explicit_model_and_worker_metadata(monkeypatch) -> N
     env = spawner._build_env(god_config, "lane-tiered")
 
     assert command[:4] == ["codex", "exec", "-m", "gpt-5.4"]
+    assert "--ignore-user-config" in command
     assert env["XMUSE_GOD_MODEL"] == "gpt-5.4"
     assert env["XMUSE_WORKER_MODEL"] == "gpt-5.4-mini"
     assert env["XMUSE_DELEGATION_MODE"] == "bounded_worker"
@@ -108,6 +111,7 @@ def test_agent_spawner_build_command_passes_explicit_provider_binding_to_service
         "resume",
         "codex-session-11111111-2222-3333-4444-555555555555",
     ]
+    assert "--ignore-user-config" in command
     assert command[-2:] == ["-C", str(tmp_path)]
 
 
@@ -127,6 +131,7 @@ def test_agent_spawner_normalizes_reserved_final_quality_explicit_models() -> No
     env = spawner._build_env(god_config, "lane-tiered")
 
     assert command[:4] == ["codex", "exec", "-m", "gpt-5.4"]
+    assert "--ignore-user-config" in command
     assert env["XMUSE_GOD_MODEL"] == "gpt-5.4"
     assert env["XMUSE_WORKER_MODEL"] == "gpt-5.4-mini"
 
@@ -146,6 +151,7 @@ def test_agent_spawner_defaults_to_local_codex_config_model(monkeypatch) -> None
     )
 
     assert command[:4] == ["codex", "exec", "-m", "gpt-5.4"]
+    assert "--ignore-user-config" in command
 
 
 def test_agent_spawner_rejects_claude_runtime() -> None:

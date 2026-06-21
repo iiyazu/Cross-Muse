@@ -35,8 +35,8 @@ class PeerChatScheduler:
         god_layer,
         worktree: Path,
         scheduler_id: str,
-        claim_ttl_s: int = 240,
-        response_wait_s: float = 180.0,
+        claim_ttl_s: int = 360,
+        response_wait_s: float = 300.0,
         degraded_fallback_enabled: bool = False,
         only_inbox_item_id: str | None = None,
         clock: Callable[[], float] | None = None,
@@ -98,11 +98,23 @@ class PeerChatScheduler:
                 "target_address set to the target GOD's exact @role and content "
                 "containing the concrete handoff request. "
                 "For work that should enter real execution, do not rely on chat "
-                "text alone: create or reference a collaboration run, have execute "
-                "record a JSON execute_feasibility_verdict through "
-                "chat_record_collaboration_response, then emit a lane_graph proposal "
-                "with chat_emit_proposal, reply_to_inbox_item_id=xmuse_context.inbox_item.id, "
-                "and a collaboration:<run_id> reference. "
+                "text alone: if the inbox payload does not already contain a durable "
+                "`collab_*` run_id returned by chat_create_collaboration_request, "
+                "call chat_create_collaboration_request first and use only its returned "
+                "run_id. Never invent or guess a collaboration run_id in chat text. "
+                "Have execute record a JSON execute_feasibility_verdict through "
+                "chat_record_collaboration_response for that returned run_id, then "
+                "emit a lane_graph proposal with chat_emit_proposal, "
+                "reply_to_inbox_item_id=xmuse_context.inbox_item.id, and a "
+                "collaboration:<run_id> reference. "
+                "In peer chat, execute feasibility is a dispatchability judgment for "
+                "the later lane execution worktree; do not run tests, edit files, or "
+                "treat the scratch peer_chat_worktree as the lane worktree. "
+                "The execute verdict JSON must include `type`, `verdict`, `command`, "
+                "`proof_boundary`, and a `summary` or `notes`; set `verdict` to the "
+                "exact string `dispatchable` for positive dispatchability judgments, "
+                "use `command`, not `allowed_command`, and set `execution_performed` "
+                "false when peer chat did not run the command. "
                 "Human approval is still required before dispatch. "
                 "Only if MCP tools are unavailable, reply "
                 "directly as your final assistant message based on "
@@ -510,6 +522,8 @@ def _first_visible_at(stages: dict[str, dict[str, float]]) -> float | None:
 def _runtime_for_participant(participant: Participant) -> AgentRuntime:
     if participant.cli_kind == "codex":
         return AgentRuntime.CODEX
+    if participant.cli_kind == "grok":
+        return AgentRuntime.GROK
     if participant.cli_kind == "opencode":
         return AgentRuntime.OPENCODE
     raise RuntimeError(f"unsupported participant cli_kind: {participant.cli_kind}")

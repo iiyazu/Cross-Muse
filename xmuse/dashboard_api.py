@@ -18,6 +18,7 @@ from xmuse_core.chat.store import ChatStore
 from xmuse_core.platform import dashboard_details as _dashboard_details
 from xmuse_core.platform.dashboard_api_models import LaneCreate, LaneReject
 from xmuse_core.platform.dashboard_details import (
+    FinalActionApprovalError,
     _aggregation_summary,
     _build_dashboard_run_health,
     _build_lineage_graph,
@@ -302,7 +303,13 @@ def create_app(base_dir: Path | str = DEFAULT_BASE_DIR) -> FastAPI:
         def mutate(lane: dict[str, Any]) -> None:
             status_value = lane.get("status") or "pending"
             if status_value == "awaiting_final_action":
-                resolved = _resolve_pending_final_action(root, feature_id)
+                try:
+                    resolved = _resolve_pending_final_action(root, feature_id, lane=lane)
+                except FinalActionApprovalError as exc:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail=str(exc),
+                    ) from exc
                 if resolved is None:
                     raise HTTPException(
                         status_code=status.HTTP_409_CONFLICT,

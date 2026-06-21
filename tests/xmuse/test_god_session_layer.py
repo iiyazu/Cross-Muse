@@ -101,6 +101,25 @@ class FakePersistentCommandLauncher(FakeLauncher):
         return ["fake-persistent-agent", role, str(worktree)]
 
 
+class ResumeAwarePersistentLauncher(FakeLauncher):
+    def __init__(self) -> None:
+        super().__init__()
+        self.build_persistent_command_calls: list[tuple[str, Path, str | None]] = []
+
+    def build_persistent_command(
+        self,
+        role: str,
+        worktree: Path,
+        *,
+        provider_session_id: str | None = None,
+    ) -> list[str]:
+        self.build_persistent_command_calls.append((role, worktree, provider_session_id))
+        command = ["fake-persistent-agent", role, str(worktree)]
+        if provider_session_id is not None:
+            command.extend(["--session-id", provider_session_id])
+        return command
+
+
 class MisconfiguredPersistentLauncher:
     supports_persistent_sessions = True
 
@@ -196,6 +215,87 @@ async def test_ensure_session_prefers_persistent_command_builder(tmp_path, monke
     assert launcher.build_persistent_command_calls == [("review", tmp_path)]
     assert launcher.build_command_calls == []
     assert launcher.build_env_calls == ["review"]
+
+
+@pytest.mark.asyncio
+async def test_receive_message_records_grok_provider_session_id(tmp_path, monkeypatch):
+    session = FakeSession()
+    message = parse_stdout_line(
+        '{"type":"result","status":"success","runtime":"grok",'
+        '"artifacts":{"grok_session_id":"019ee5e1-4782-7631-ab92-d18213ba2cf8"}}'
+    )
+    assert message is not None
+    session.received_messages.append(message)
+
+    async def fake_spawn(command, env=None):
+        return session
+
+    monkeypatch.setattr(
+        "xmuse_core.agents.god_session_layer.LocalSession.spawn",
+        fake_spawn,
+    )
+    layer = GodSessionLayer(
+        registry_path=tmp_path / "god_sessions.json",
+        launchers={AgentRuntime.GROK: FakePersistentCommandLauncher()},
+    )
+    record = await layer.ensure_conversation_session(
+        conversation_id="conv-grok",
+        participant_id="part-grok",
+        role="review",
+        agent=AgentDescriptor(
+            runtime=AgentRuntime.GROK,
+            name="review-grok",
+            capabilities=["review"],
+        ),
+        worktree=tmp_path,
+        model="grok-composer-2.5-fast",
+    )
+
+    received = await layer.receive_message(record.god_session_id)
+    updated = layer._registry.get(record.god_session_id)
+
+    assert received is message
+    assert updated.provider_session_id == "019ee5e1-4782-7631-ab92-d18213ba2cf8"
+    assert updated.provider_session_kind == "grok_cli_session"
+    assert updated.provider_binding_status == "active"
+
+
+@pytest.mark.asyncio
+async def test_ensure_conversation_session_updates_lifecycle_status(tmp_path, monkeypatch):
+    session = FakeSession()
+
+    async def fake_spawn(command, env=None):
+        return session
+
+    monkeypatch.setattr(
+        "xmuse_core.agents.god_session_layer.LocalSession.spawn",
+        fake_spawn,
+    )
+    registry_path = tmp_path / "god_sessions.json"
+    layer = GodSessionLayer(
+        registry_path=registry_path,
+        launchers={AgentRuntime.GROK: FakePersistentCommandLauncher()},
+    )
+
+    record = await layer.ensure_conversation_session(
+        conversation_id="conv-grok",
+        participant_id="part-grok",
+        role="review",
+        agent=AgentDescriptor(
+            runtime=AgentRuntime.GROK,
+            name="review-grok",
+            capabilities=["review"],
+        ),
+        worktree=tmp_path,
+        model="grok-composer-2.5-fast",
+    )
+
+    assert layer._registry.get(record.god_session_id).status == "running"
+
+    await layer.abort_session(record.god_session_id)
+
+    assert session.aborted is True
+    assert layer._registry.get(record.god_session_id).status == "stopped"
 
 
 @pytest.mark.asyncio
@@ -632,6 +732,71 @@ async def test_ensure_conversation_session_reuses_registry_record_after_restart(
 
 
 @pytest.mark.asyncio
+async def test_ensure_conversation_session_resumes_grok_provider_session_after_restart(
+    tmp_path,
+    monkeypatch,
+):
+    registry_path = tmp_path / "sessions.json"
+    launcher = ResumeAwarePersistentLauncher()
+    first_layer = GodSessionLayer(
+        registry_path=registry_path,
+        launchers={AgentRuntime.GROK: launcher},
+    )
+    spawned_commands: list[list[str]] = []
+
+    async def fake_spawn(command, env=None):
+        spawned_commands.append(command)
+        return FakeSession()
+
+    monkeypatch.setattr(
+        "xmuse_core.agents.god_session_layer.LocalSession.spawn",
+        fake_spawn,
+    )
+    agent = AgentDescriptor(
+        runtime=AgentRuntime.GROK,
+        name="review-grok",
+        capabilities=["review"],
+        session_config=SessionConfig(),
+    )
+
+    first = await first_layer.ensure_conversation_session(
+        conversation_id="conv_restart_grok",
+        participant_id="part_review_grok",
+        role="review",
+        agent=agent,
+        worktree=tmp_path,
+        model="grok-composer-2.5-fast",
+    )
+    first_layer._registry.update_provider_binding(
+        first.god_session_id,
+        provider_session_id="grok-session-123",
+        provider_session_kind="grok_cli_session",
+        provider_binding_status="active",
+        provider_binding_failure_reason=None,
+    )
+    restarted_layer = GodSessionLayer(
+        registry_path=registry_path,
+        launchers={AgentRuntime.GROK: launcher},
+    )
+
+    second = await restarted_layer.ensure_conversation_session(
+        conversation_id="conv_restart_grok",
+        participant_id="part_review_grok",
+        role="review",
+        agent=agent,
+        worktree=tmp_path,
+        model="grok-composer-2.5-fast",
+    )
+
+    assert second.god_session_id == first.god_session_id
+    assert launcher.build_persistent_command_calls == [
+        ("review", tmp_path, None),
+        ("review", tmp_path, "grok-session-123"),
+    ]
+    assert spawned_commands[-1][-2:] == ["--session-id", "grok-session-123"]
+
+
+@pytest.mark.asyncio
 async def test_ensure_conversation_session_respawns_dead_peer_with_same_handle(
     tmp_path,
     monkeypatch,
@@ -732,6 +897,65 @@ async def test_ensure_conversation_session_rejects_live_worktree_change(
     assert spawned_sessions[0].aborted is False
     assert launcher.build_persistent_command_calls == [("review", first_worktree)]
     assert launcher.build_command_calls == []
+
+
+@pytest.mark.asyncio
+async def test_feature_scoped_conversation_session_does_not_reuse_peer_chat_session(
+    tmp_path,
+    monkeypatch,
+):
+    launcher = FakeLauncher()
+    layer = GodSessionLayer(
+        registry_path=tmp_path / "sessions.json",
+        launchers={AgentRuntime.CODEX: launcher},
+    )
+    spawned_sessions: list[FakeSession] = []
+
+    async def fake_spawn(command, env=None):
+        session = FakeSession()
+        spawned_sessions.append(session)
+        return session
+
+    monkeypatch.setattr(
+        "xmuse_core.agents.god_session_layer.LocalSession.spawn",
+        fake_spawn,
+    )
+    agent = _make_agent()
+    peer_chat_worktree = tmp_path / "peer-chat"
+    lane_review_worktree = tmp_path / "lane-review"
+
+    peer_chat = await layer.ensure_conversation_session(
+        conversation_id="conv_review",
+        participant_id="part_review",
+        role="review",
+        agent=agent,
+        worktree=peer_chat_worktree,
+        model="gpt-5.5",
+        prompt_fingerprint="sha256:peer-chat",
+        feature_scope_id=None,
+    )
+    lane_review = await layer.ensure_conversation_session(
+        conversation_id="conv_review",
+        participant_id="part_review",
+        role="review",
+        agent=agent,
+        worktree=lane_review_worktree,
+        model="gpt-5.5",
+        prompt_fingerprint="sha256:lane-review",
+        feature_scope_id="feature-a",
+    )
+
+    assert lane_review.god_session_id != peer_chat.god_session_id
+    assert lane_review.session_address != peer_chat.session_address
+    assert lane_review.session_inbox_id != peer_chat.session_inbox_id
+    assert lane_review.feature_scope_id == "feature-a"
+    assert peer_chat.feature_scope_id is None
+    assert len(spawned_sessions) == 2
+    assert spawned_sessions[0].aborted is False
+    assert launcher.build_persistent_command_calls == [
+        ("review", peer_chat_worktree),
+        ("review", lane_review_worktree),
+    ]
 
 
 @pytest.mark.asyncio

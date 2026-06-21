@@ -51,6 +51,18 @@ class FakeClock:
         return self._values.pop(0)
 
 
+def test_scheduler_default_budget_covers_codex_multi_action_turn(tmp_path: Path) -> None:
+    scheduler = PeerChatScheduler(
+        db_path=tmp_path / "chat.db",
+        god_layer=FakeGodLayer(),
+        worktree=tmp_path,
+        scheduler_id="sched-test",
+    )
+
+    assert scheduler._response_wait_s >= 300
+    assert scheduler._claim_ttl_s >= scheduler._response_wait_s
+
+
 @pytest.mark.asyncio
 async def test_scheduler_claims_and_nudges_oldest_item(tmp_path: Path) -> None:
     chat = ChatStore(tmp_path / "chat.db")
@@ -119,6 +131,8 @@ async def test_scheduler_claims_and_nudges_oldest_item(tmp_path: Path) -> None:
     )
     assert "then call chat_mention" in layer.sent[0][2]
     assert "chat_emit_proposal" in layer.sent[0][2]
+    assert "chat_create_collaboration_request first" in layer.sent[0][2]
+    assert "Never invent or guess a collaboration run_id" in layer.sent[0][2]
     assert "collaboration:<run_id>" in layer.sent[0][2]
     assert "Human approval is still required before dispatch" in layer.sent[0][2]
 
@@ -820,6 +834,10 @@ def test_peer_chat_nudge_prompt_has_short_turn_contract(tmp_path: Path) -> None:
     assert "chat_post_message" in prompt
     assert "chat_mention" in prompt
     assert "display-only" in prompt
+    assert "dispatchable in the later execution worktree" in prompt
+    assert "`command`, not `allowed_command`" in prompt
+    assert "`proof_boundary`" in prompt
+    assert "scratch peer_chat_worktree" in prompt
     assert "If MCP tools are unavailable" in prompt
 
 

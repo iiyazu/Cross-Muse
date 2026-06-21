@@ -2,8 +2,10 @@
 """REST API for the xmuse chat-plane MVP."""
 
 import json
+import re
 import sqlite3
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +40,7 @@ from xmuse_core.chat.api_models import (
 )
 from xmuse_core.chat.collaboration_contracts import (
     CollaborationRun,
+    CollaborationStatus,
     DispatchGateDecision,
 )
 from xmuse_core.chat.collaboration_store import ChatCollaborationStore
@@ -45,6 +48,7 @@ from xmuse_core.chat.deliberation_engine import DeliberationFreezeGuard
 from xmuse_core.chat.dispatch_queue import ChatDispatchQueueStore
 from xmuse_core.chat.health_cards import build_run_health_chat_card
 from xmuse_core.chat.inbox_store import ChatInboxStore
+from xmuse_core.chat.models import Proposal, ProposalStatus
 from xmuse_core.chat.participant_store import (
     ParticipantStore,
     RoleTemplate,
@@ -143,6 +147,12 @@ def _dispatch_queue_store(base_dir: Path) -> ChatDispatchQueueStore:
     return ChatDispatchQueueStore(base_dir / "chat.db")
 
 
+def _peer_chat_error_detail(exc: PeerChatError) -> dict[str, object]:
+    detail: dict[str, object] = {"code": exc.code, "message": exc.message}
+    detail.update(exc.details)
+    return detail
+
+
 def _collaboration_run_refs(references: list[str]) -> list[str]:
     run_ids: list[str] = []
     for reference in references:
@@ -187,11 +197,61 @@ def _collaboration_run_or_none(
         return None
 
 
+def _enforce_collaboration_proposal_freshness(
+    store: ChatStore,
+    collaboration_store: ChatCollaborationStore,
+    proposal: Proposal,
+) -> None:
+    for run_id in _collaboration_run_refs(proposal.references):
+        run = _collaboration_run_or_none(collaboration_store, run_id)
+        if run is None or run.conversation_id != proposal.conversation_id:
+            raise PeerChatError("dispatch_gate_blocked", "blocked_unknown_run")
+        if run.status is not CollaborationStatus.DONE:
+            raise PeerChatError("dispatch_gate_blocked", "blocked_collaboration_not_done")
+        if _proposal_created_before_collaboration_done(proposal, run):
+            raise PeerChatError("dispatch_gate_blocked", "blocked_stale_collaboration_proposal")
+        if _newer_open_collaboration_proposal_exists(store, proposal, run_id):
+            raise PeerChatError(
+                "dispatch_gate_blocked",
+                "blocked_newer_collaboration_proposal_exists",
+            )
+
+
+def _proposal_created_before_collaboration_done(
+    proposal: Proposal,
+    run: CollaborationRun,
+) -> bool:
+    proposal_ts = _parse_utc_timestamp(proposal.created_at)
+    run_done_ts = _parse_utc_timestamp(run.updated_at)
+    return proposal_ts < run_done_ts
+
+
+def _newer_open_collaboration_proposal_exists(
+    store: ChatStore,
+    proposal: Proposal,
+    run_id: str,
+) -> bool:
+    proposal_ts = _parse_utc_timestamp(proposal.created_at)
+    collaboration_ref = f"collaboration:{run_id}"
+    for other in store.list_proposals(proposal.conversation_id):
+        if other.id == proposal.id or other.status is not ProposalStatus.OPEN:
+            continue
+        if collaboration_ref not in other.references:
+            continue
+        if _parse_utc_timestamp(other.created_at) >= proposal_ts:
+            return True
+    return False
+
+
+def _parse_utc_timestamp(value: str) -> datetime:
+    return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(UTC)
+
+
 def _collaboration_execute_confirmed(run: CollaborationRun | None) -> bool:
     if run is None:
         return False
     return any(
-        response.target == "execute"
+        response.target in {"execute", "@execute"}
         and response.status == "received"
         and _execute_feasibility_verdict_confirmed(response.content)
         for response in run.responses
@@ -205,17 +265,73 @@ def _execute_feasibility_verdict_confirmed(content: str) -> bool:
         return False
     if not isinstance(payload, dict):
         return False
-    if payload.get("type") != "execute_feasibility_verdict":
+    verdict_type = payload.get("type") or payload.get("response_type")
+    if verdict_type != "execute_feasibility_verdict":
         return False
-    if payload.get("status") != "executable":
+    if payload.get("status") == "executable":
+        summary = payload.get("summary")
+        if not isinstance(summary, str) or not summary.strip():
+            return False
+        evidence_refs = payload.get("evidence_refs")
+        if not isinstance(evidence_refs, list):
+            return False
+        return any(isinstance(ref, str) and bool(ref.strip()) for ref in evidence_refs)
+    verdict_confirms = _execute_verdict_text_confirms_dispatchability(
+        payload.get("verdict")
+    )
+    if (
+        payload.get("dispatchable") is not True
+        and payload.get("feasible") is not True
+        and not verdict_confirms
+    ):
+        return False
+    command = payload.get("command") or payload.get("later_execution_command")
+    if not isinstance(command, str) or not command.strip():
+        return False
+    proof_boundary = payload.get("proof_boundary")
+    if not isinstance(proof_boundary, str) or not proof_boundary.strip():
         return False
     summary = payload.get("summary")
-    if not isinstance(summary, str) or not summary.strip():
+    notes = payload.get("notes")
+    if (
+        not isinstance(summary, str)
+        or not summary.strip()
+    ) and not (
+        isinstance(notes, str)
+        and notes.strip()
+        or isinstance(notes, list)
+        and any(isinstance(note, str) and note.strip() for note in notes)
+    ):
         return False
-    evidence_refs = payload.get("evidence_refs")
-    if not isinstance(evidence_refs, list):
+    return True
+
+
+def _execute_verdict_text_confirms_dispatchability(value: object) -> bool:
+    if not isinstance(value, str):
         return False
-    return any(isinstance(ref, str) and bool(ref.strip()) for ref in evidence_refs)
+    tokens = [
+        token
+        for token in re.split(r"[^a-z0-9]+", value.strip().lower())
+        if token
+    ]
+    if not tokens:
+        return False
+    negative_tokens = {
+        "blocked",
+        "cannot",
+        "denied",
+        "deny",
+        "failed",
+        "failure",
+        "non",
+        "not",
+        "reject",
+        "rejected",
+        "unsafe",
+    }
+    if any(token in negative_tokens for token in tokens):
+        return False
+    return any(token in {"dispatchable", "feasible", "executable"} for token in tokens)
 
 
 def _conversation_exists(store: ChatStore, conversation_id: str) -> bool:
@@ -669,12 +785,121 @@ def _project_resolution_into_execution_queue(
     if isinstance(content, dict) and content.get("type") in {"mission_blueprint", "feature_plan"}:
         return
     graph = build_lane_graph(resolution)
+    graph = _with_approved_proposal_execution_contract(base_dir, resolution, graph)
     LaneGraphStore(base_dir / "lane_graphs").save(graph)
     project_ready_lanes(
         graph,
         base_dir / "feature_lanes.json",
         operational_metadata={"worktree": str(execution_worktree)},
     )
+
+
+def _with_approved_proposal_execution_contract(
+    base_dir: Path,
+    resolution: object,
+    graph: Any,
+) -> Any:
+    content = getattr(resolution, "content", None)
+    if not isinstance(content, dict) or content.get("type") != "lane_graph":
+        return graph
+    source_refs = _approved_proposal_execution_source_refs(base_dir, resolution)
+    lanes = [
+        lane.model_copy(
+            update={
+                "prompt": _approved_proposal_execution_prompt(
+                    lane.prompt,
+                    base_dir=base_dir,
+                    resolution=resolution,
+                    source_refs=source_refs,
+                )
+            }
+        )
+        for lane in graph.lanes
+    ]
+    return graph.model_copy(
+        update={
+            "source_refs": _dedupe_text([*graph.source_refs, *source_refs]),
+            "lanes": lanes,
+        }
+    )
+
+
+def _approved_proposal_execution_source_refs(base_dir: Path, resolution: object) -> list[str]:
+    refs = [
+        f"resolution:{getattr(resolution, 'id', '')}",
+        f"conversation:{getattr(resolution, 'conversation_id', '')}",
+        f"runtime_root:{base_dir}",
+        f"chat_db:{base_dir / 'chat.db'}",
+    ]
+    content = getattr(resolution, "content", None)
+    if isinstance(content, dict):
+        refs.extend(
+            str(ref).strip()
+            for ref in content.get("references", [])
+            if isinstance(ref, str) and ref.strip()
+        )
+    proposal_ids = [
+        str(proposal_id).strip()
+        for proposal_id in getattr(resolution, "derived_from_proposal_ids", [])
+        if str(proposal_id).strip()
+    ]
+    store = _store(base_dir)
+    for proposal_id in proposal_ids:
+        refs.append(f"proposal:{proposal_id}")
+        try:
+            proposal = store.get_proposal(proposal_id)
+        except KeyError:
+            continue
+        refs.extend(proposal.references)
+        try:
+            payload = json.loads(proposal.content)
+        except json.JSONDecodeError:
+            payload = {}
+        if isinstance(payload, dict):
+            refs.extend(
+                str(ref).strip()
+                for ref in payload.get("references", [])
+                if isinstance(ref, str) and ref.strip()
+            )
+    for summary_path in sorted(base_dir.glob("loop*_summary.json")):
+        refs.append(f"runtime_artifact:{summary_path}")
+    return _dedupe_text([ref for ref in refs if ref])
+
+
+def _approved_proposal_execution_prompt(
+    original_prompt: str,
+    *,
+    base_dir: Path,
+    resolution: object,
+    source_refs: list[str],
+) -> str:
+    original = original_prompt.strip()
+    if original.startswith("Approved proposal execution contract"):
+        return original
+    proposal_ids = ", ".join(
+        str(proposal_id)
+        for proposal_id in getattr(resolution, "derived_from_proposal_ids", [])
+    )
+    lines = [
+        "Approved proposal execution contract",
+        "",
+        f"- resolution_id: {getattr(resolution, 'id', '')}",
+        f"- conversation_id: {getattr(resolution, 'conversation_id', '')}",
+        f"- proposal_ids: {proposal_ids or 'none'}",
+        f"- xmuse_runtime_root: {base_dir}",
+        "- Treat the original proposal prompt as source context. After approval, "
+        "no-dispatch wording describes the proposal-production loop, not this "
+        "execution/review continuation.",
+        "- Prefer durable xmuse runtime refs and artifacts over checked-out docs "
+        "when they conflict.",
+        "- durable_source_refs:",
+        *[f"  - {ref}" for ref in source_refs],
+        "",
+        "Original proposal lane prompt:",
+        "",
+        original,
+    ]
+    return "\n".join(lines).strip()
 
 
 def _enqueue_structured_dispatch_intent(
@@ -953,7 +1178,7 @@ def create_app(
         except PeerChatError as exc:
             raise HTTPException(
                 status_code=400,
-                detail={"code": exc.code, "message": exc.message},
+                detail=_peer_chat_error_detail(exc),
             ) from exc
         payload = result["conversation"]
         payload["bootstrap"] = result["bootstrap"]
@@ -1598,6 +1823,11 @@ def create_app(
                 proposal_id=proposal_id,
                 proposal_type=escalation.normalized_proposal_type,
                 references=proposal.references,
+            )
+            _enforce_collaboration_proposal_freshness(
+                store,
+                _collaboration_store(root),
+                proposal,
             )
             resolution = store.approve_proposal(
                 proposal_id=proposal_id,

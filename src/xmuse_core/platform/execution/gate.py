@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import subprocess
 from pathlib import Path
@@ -34,6 +35,7 @@ async def run_gate(*, lane_id: str, lane: dict[str, Any], root: Path) -> bool:
         config_path = root / "gate_profiles.json"
         if not config_path.exists():
             log_event(logger, logging.WARNING, "gate_profiles_missing", lane_id=lane_id)
+            _write_gate_profiles_missing_report(lane_id=lane_id, root=root, worktree=worktree)
             return True
 
         config = load_gate_config(config_path, repo_root=root.parent)
@@ -87,3 +89,33 @@ async def run_gate(*, lane_id: str, lane: dict[str, Any], root: Path) -> bool:
             exc_info=True,
         )
         return False
+
+
+def _write_gate_profiles_missing_report(
+    *,
+    lane_id: str,
+    root: Path,
+    worktree: Path,
+) -> None:
+    artifact_dir = root / "logs" / "gates" / lane_id
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    report = {
+        "feature_id": lane_id,
+        "passed": True,
+        "blocking_passed": True,
+        "nonblocking_failures": [],
+        "profile_ids": [],
+        "resolution_reasons": {
+            "gate_profiles": ["gate_profiles_missing"],
+        },
+        "warnings": [
+            "gate_profiles.json missing; no gate commands were run and lane passed open"
+        ],
+        "artifact_dir": str(artifact_dir),
+        "worktree": str(worktree),
+        "command_results": [],
+    }
+    (artifact_dir / "report.json").write_text(
+        json.dumps(report, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )

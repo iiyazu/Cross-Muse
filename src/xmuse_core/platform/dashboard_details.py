@@ -1,7 +1,10 @@
 """Dashboard API read-model and drill-down helpers."""
 from __future__ import annotations
 
+import hashlib
 import json
+import shutil
+import subprocess
 from datetime import UTC, datetime
 from json import JSONDecodeError
 from pathlib import Path
@@ -1328,15 +1331,360 @@ def _read_self_evolution_entries(base_dir: Path, file_name: str, key: str) -> li
     return entries if isinstance(entries, list) else []
 
 
-def _resolve_pending_final_action(base_dir: Path, feature_id: str) -> tuple[str, str] | None:
+class FinalActionApprovalError(ValueError):
+    pass
+
+
+def _resolve_pending_final_action(
+    base_dir: Path,
+    feature_id: str,
+    *,
+    lane: dict[str, Any] | None = None,
+) -> tuple[str, str] | None:
     store = FinalActionGateStore(base_dir / "final_actions.json")
     for hold in store.list_actions():
         if hold.lane_id == feature_id and hold.status == "pending":
             action = hold.action
+            if action == "merge":
+                lane_payload = lane or {}
+                _validate_merge_final_action_evidence(base_dir, feature_id, lane_payload)
+                _record_final_action_import(base_dir, hold, lane_payload)
             store.resolve(hold.id, status="approved", resolved_by="human")
             if action == "merge":
                 return "merged", hold.id
             if action == "terminate":
                 return "failed", hold.id
             return None
+    return None
+
+
+def _validate_merge_final_action_evidence(
+    base_dir: Path,
+    feature_id: str,
+    lane: dict[str, Any],
+) -> None:
+    blockers: list[str] = []
+    changed_files = lane.get("changed_files")
+    if not isinstance(changed_files, list) or not changed_files:
+        blockers.append("changed_files")
+    elif not _changed_files_visible_in_worktree(lane, changed_files):
+        blockers.append("changed_files_not_in_worktree")
+
+    report = _read_gate_report_for_lane(base_dir, feature_id, lane)
+    profile_ids = report.get("profile_ids") if report else None
+    command_results = report.get("command_results") if report else None
+    if not report:
+        blockers.append("gate_report")
+    elif not profile_ids:
+        blockers.append("gate_profile_ids")
+    elif not isinstance(command_results, list) or not command_results:
+        blockers.append("gate_command_results")
+
+    if blockers:
+        raise FinalActionApprovalError(
+            "merge final action requires changed_files and gate profile evidence; "
+            f"missing: {', '.join(blockers)}"
+        )
+
+
+def _record_final_action_import(
+    base_dir: Path,
+    hold: Any,
+    lane: dict[str, Any],
+) -> None:
+    changed_files = _safe_changed_files(lane.get("changed_files"))
+    source_worktree = _optional_path(lane.get("worktree"))
+    target_worktree = _optional_path(lane.get("final_action_import_target"))
+    import_decision: dict[str, Any] | None = None
+    imported_files: list[dict[str, Any]] = []
+    status_value = "audit_only"
+
+    if target_worktree is not None:
+        import_decision = _resolve_final_action_import_decision(
+            base_dir,
+            hold=hold,
+            lane=lane,
+            target_worktree=target_worktree,
+        )
+        if source_worktree is None or not source_worktree.exists():
+            raise FinalActionApprovalError("final_action_import_source_worktree_missing")
+        if not target_worktree.exists() or not target_worktree.is_dir():
+            raise FinalActionApprovalError("final_action_import_target_missing")
+        dirty_conflicts = _target_dirty_conflicting_paths(target_worktree, changed_files)
+        if dirty_conflicts:
+            raise FinalActionApprovalError(
+                "final_action_import_target_dirty_conflict: "
+                + ", ".join(dirty_conflicts)
+            )
+        for changed_file in changed_files:
+            source_path = _safe_child_path(source_worktree, changed_file)
+            target_path = _safe_child_path(target_worktree, changed_file)
+            if not source_path.exists() or not source_path.is_file():
+                raise FinalActionApprovalError(
+                    f"final_action_import_source_file_missing: {changed_file}"
+                )
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source_path, target_path)
+            imported_files.append(
+                {
+                    "path": changed_file,
+                    "source_sha256": _sha256_file(source_path),
+                    "target_sha256": _sha256_file(target_path),
+                    "bytes": target_path.stat().st_size,
+                }
+            )
+        status_value = "applied"
+
+    _append_final_action_import_record(
+        base_dir,
+        {
+            "id": f"import-{hold.id}",
+            "hold_id": hold.id,
+            "lane_id": hold.lane_id,
+            "verdict_id": hold.verdict_id,
+            "action": hold.action,
+            "status": status_value,
+            "created_at": utc_now(),
+            "source_worktree": str(source_worktree) if source_worktree else None,
+            "target_worktree": str(target_worktree) if target_worktree else None,
+            "changed_files": changed_files,
+            "imported_files": imported_files,
+            "import_decision": import_decision,
+            "proof_level": "local_final_action_import",
+            "forbidden_claims": [
+                "github_server_merge",
+                "github_server_truth",
+                "source_root_merge_unless_target_worktree_is_source_root",
+                "full_xmuse_closure",
+            ],
+        },
+    )
+
+
+def _resolve_final_action_import_decision(
+    base_dir: Path,
+    *,
+    hold: Any,
+    lane: dict[str, Any],
+    target_worktree: Path,
+) -> dict[str, Any]:
+    data = _read_json(_json_path(base_dir, "final_action_import_decisions.json"), {})
+    decisions = data.get("decisions", [])
+    if not isinstance(decisions, list):
+        raise FinalActionApprovalError("final_action_import_decisions_malformed")
+
+    lane_id = str(hold.lane_id)
+    hold_id = str(hold.id)
+    target = str(target_worktree)
+    candidates = [
+        decision
+        for decision in decisions
+        if isinstance(decision, dict)
+        and decision.get("lane_id") == lane_id
+        and decision.get("target_worktree") == target
+        and decision.get("decision") == "apply_to_target_worktree"
+        and decision.get("status", "approved") == "approved"
+        and _import_decision_matches_hold(decision, hold_id=hold_id)
+    ]
+    if not candidates:
+        raise FinalActionApprovalError("final_action_import_decision_missing")
+
+    decision = dict(candidates[-1])
+    for required in ("decided_by", "reason"):
+        value = decision.get(required)
+        if not isinstance(value, str) or not value.strip():
+            raise FinalActionApprovalError(
+                f"final_action_import_decision_missing_{required}"
+            )
+    if decision.get("source_worktree") not in {None, lane.get("worktree")}:
+        raise FinalActionApprovalError("final_action_import_decision_source_mismatch")
+
+    return {
+        key: decision[key]
+        for key in (
+            "id",
+            "lane_id",
+            "hold_id",
+            "final_action_hold_id",
+            "decision",
+            "status",
+            "target_worktree",
+            "source_worktree",
+            "decided_by",
+            "reason",
+            "created_at",
+            "forbidden_claims",
+        )
+        if key in decision
+    }
+
+
+def _import_decision_matches_hold(decision: dict[str, Any], *, hold_id: str) -> bool:
+    hold_values = [
+        value
+        for value in (
+            decision.get("hold_id"),
+            decision.get("final_action_hold_id"),
+        )
+        if value is not None
+    ]
+    if not hold_values:
+        return True
+    return any(value == hold_id for value in hold_values)
+
+
+def _safe_changed_files(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    files = [item for item in value if isinstance(item, str) and item]
+    for file_path in files:
+        path = Path(file_path)
+        if path.is_absolute() or ".." in path.parts:
+            raise FinalActionApprovalError("final_action_import_changed_file_escapes_worktree")
+    return files
+
+
+def _optional_path(value: Any) -> Path | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return Path(value)
+
+
+def _safe_child_path(root: Path, relative_path: str) -> Path:
+    root_resolved = root.resolve()
+    child = (root_resolved / relative_path).resolve()
+    try:
+        child.relative_to(root_resolved)
+    except ValueError as exc:
+        raise FinalActionApprovalError(
+            "final_action_import_changed_file_escapes_worktree"
+        ) from exc
+    return child
+
+
+def _target_dirty_conflicting_paths(
+    target_worktree: Path,
+    changed_files: list[str],
+) -> list[str]:
+    if not _is_git_worktree(target_worktree):
+        return []
+    result = subprocess.run(
+        ["git", "status", "--porcelain", "--untracked-files=all"],
+        cwd=target_worktree,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if result.returncode != 0:
+        raise FinalActionApprovalError("final_action_import_target_dirty_check_failed")
+    dirty_paths = _git_status_paths(result.stdout)
+    return sorted(dirty_paths & set(changed_files))
+
+
+def _is_git_worktree(path: Path) -> bool:
+    result = subprocess.run(
+        ["git", "rev-parse", "--is-inside-work-tree"],
+        cwd=path,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    return result.returncode == 0 and result.stdout.strip() == "true"
+
+
+def _git_status_paths(status_output: str) -> set[str]:
+    paths: set[str] = set()
+    for line in status_output.splitlines():
+        if len(line) < 4:
+            continue
+        raw_path = line[3:]
+        if " -> " in raw_path:
+            paths.update(part for part in raw_path.split(" -> ") if part)
+        elif raw_path:
+            paths.add(raw_path)
+    return paths
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _append_final_action_import_record(base_dir: Path, record: dict[str, Any]) -> None:
+    path = _json_path(base_dir, "final_action_imports.json")
+    data = _read_json(path, {"imports": []})
+    imports = data.setdefault("imports", [])
+    if not isinstance(imports, list):
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="final_action_imports.json imports must be a list",
+        )
+    data["imports"] = [
+        item
+        for item in imports
+        if not (isinstance(item, dict) and item.get("hold_id") == record["hold_id"])
+    ]
+    data["imports"].append(record)
+    _write_json(path, data)
+
+
+def _changed_files_visible_in_worktree(
+    lane: dict[str, Any],
+    changed_files: list[Any],
+) -> bool:
+    worktree_value = lane.get("worktree")
+    if not isinstance(worktree_value, str) or not worktree_value.strip():
+        return True
+    worktree = Path(worktree_value)
+    if not worktree.exists():
+        return False
+    claimed = {item for item in changed_files if isinstance(item, str) and item}
+    if not claimed:
+        return False
+    visible = set(_git_changed_files(worktree))
+    return claimed.issubset(visible)
+
+
+def _git_changed_files(worktree: Path) -> list[str]:
+    diff = subprocess.run(
+        ["git", "diff", "--name-only", "HEAD"],
+        cwd=worktree,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    untracked = subprocess.run(
+        ["git", "ls-files", "--others", "--exclude-standard"],
+        cwd=worktree,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if diff.returncode != 0 or untracked.returncode != 0:
+        return []
+    return [
+        *[line for line in diff.stdout.splitlines() if line],
+        *[line for line in untracked.stdout.splitlines() if line],
+    ]
+
+
+def _read_gate_report_for_lane(
+    base_dir: Path,
+    feature_id: str,
+    lane: dict[str, Any],
+) -> dict[str, Any] | None:
+    candidates: list[Path] = []
+    ref = lane.get("gate_report_ref")
+    if isinstance(ref, str) and ref.strip():
+        ref_path = Path(ref)
+        candidates.append(ref_path if ref_path.is_absolute() else base_dir / ref_path)
+    candidates.append(base_dir / "logs" / "gates" / feature_id / "report.json")
+
+    for path in candidates:
+        payload = _read_json(path, None)
+        if isinstance(payload, dict):
+            return payload
     return None

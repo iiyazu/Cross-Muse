@@ -11,7 +11,7 @@ class ParticipantInit(BaseModel):
     role: str = Field(min_length=1)
     provider_id: ProviderId | None = None
     profile_id: ProviderProfileId | None = None
-    cli_kind: Literal["codex", "opencode"] | None = None
+    cli_kind: Literal["codex", "grok", "opencode"] | None = None
     model: str | None = None
     role_template_id: str | None = None
     display_name: str | None = None
@@ -37,7 +37,7 @@ class ParticipantInit(BaseModel):
 class ProviderOverride(BaseModel):
     provider_id: ProviderId
     profile_id: ProviderProfileId
-    cli_kind: Literal["codex", "opencode"]
+    cli_kind: Literal["codex", "grok", "opencode"]
     model: str = Field(min_length=1)
     template_slug: str | None = None
     display_name: str | None = None

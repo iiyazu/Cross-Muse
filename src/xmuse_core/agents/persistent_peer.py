@@ -87,19 +87,30 @@ class PersistentCliPeerService:
             raise PeerCompatibilityError("conversation_mismatch", participant_id)
         if participant.status != "active":
             raise PeerCompatibilityError("participant_inactive", participant_id)
-        if participant.cli_kind != "codex":
+        if participant.cli_kind == "codex":
+            runtime = AgentRuntime.CODEX
+            normalized_model = normalize_codex_model_id(
+                model,
+                profile_id=participant.profile_id,
+            )
+        elif participant.cli_kind == "grok":
+            runtime = AgentRuntime.GROK
+            normalized_model = model.strip()
+            if not normalized_model:
+                raise PeerCompatibilityError("model_required", participant.cli_kind)
+        elif participant.cli_kind == "opencode":
+            runtime = AgentRuntime.OPENCODE
+            normalized_model = model.strip()
+            if not normalized_model:
+                raise PeerCompatibilityError("model_required", participant.cli_kind)
+        else:
             raise PeerCompatibilityError("runtime_mismatch", participant.cli_kind)
-        normalized_model = normalize_codex_model_id(
-            model,
-            profile_id=participant.profile_id,
-        )
         if participant.model != normalized_model:
             raise PeerCompatibilityError(
                 "model_mismatch",
                 f"participant model {participant.model!r} != requested {normalized_model!r}",
             )
 
-        runtime = AgentRuntime.CODEX
         prompt_fingerprint = fingerprint_prompt(
             session_prompt if session_prompt is not None else prompt
         )

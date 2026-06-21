@@ -71,8 +71,12 @@ def test_codex_persistent_formats_execute_prompt_with_child_result_contract(
     assert "artifacts.execute_result" in prompt
     assert "lane_request_id" in prompt
     assert "exit_code" in prompt
-    assert "If MCP tools are not exposed" in prompt
+    assert "requires MCP calls or MCP writeback" in prompt
+    assert "child_mcp_required_but_unavailable" in prompt
+    assert "mcp__xmuse_platform.query_knowledge" in prompt
+    assert "Do not decide tools are unavailable from prompt text alone" in prompt
     assert "stdout fallback" in prompt
+    assert "do not run tests or edit files" in prompt
     assert "exit with status 0" in prompt
     assert "exit non-zero" in prompt
 

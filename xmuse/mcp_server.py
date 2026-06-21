@@ -735,6 +735,7 @@ CHAT_TOOL_SCHEMAS: list[dict[str, Any]] = [
                             "depends_on": {"type": "array", "items": {"type": "string"}},
                             "capabilities": {"type": "array", "items": {"type": "string"}},
                             "feature_group": {"type": "string"},
+                            "review_runtime": {"type": "string"},
                         },
                         "required": ["feature_id", "prompt", "depends_on", "capabilities"],
                         "additionalProperties": True,
@@ -771,7 +772,9 @@ CHAT_TOOL_SCHEMAS: list[dict[str, Any]] = [
     {
         "name": "chat_create_collaboration_request",
         "description": (
-            "Create a bounded structured GOD collaboration request with response aggregation."
+            "Create a bounded durable structured GOD collaboration request with "
+            "response aggregation. Use the returned collab_* run_id; do not invent "
+            "run ids in chat text."
         ),
         "inputSchema": {
             "type": "object",
@@ -1100,14 +1103,20 @@ def _peer_chat_tool_schemas() -> list[dict[str, Any]]:
                 )
             elif name == "chat_create_collaboration_request":
                 narrowed["description"] = (
-                    "Create a bounded peer collaboration run before asking review or "
-                    "execute for dispatchable work."
+                    "Create a bounded durable peer collaboration run before asking "
+                    "review or execute for dispatchable work. Use the returned "
+                    "collab_* run_id only; never invent a run_id in chat text."
                 )
             elif name == "chat_record_collaboration_response":
                 narrowed["description"] = (
                     "Record this GOD's structured response to a collaboration run; "
                     "execute should use an execute_feasibility_verdict JSON object "
-                    "before emitting a dispatchable proposal."
+                    "before emitting a dispatchable proposal. Dispatchable execute "
+                    "verdicts must include type, verdict, command, proof_boundary, "
+                    "and summary or notes; set verdict to the exact string "
+                    "dispatchable for positive judgments, use command, not "
+                    "allowed_command, and set execution_performed false when peer "
+                    "chat did not run the command."
                 )
             schemas.append(narrowed)
     return schemas

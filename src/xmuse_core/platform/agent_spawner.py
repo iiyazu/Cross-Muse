@@ -126,6 +126,7 @@ class AgentSpawner:
                 "exec",
                 "-m",
                 model,
+                "--ignore-user-config",
                 "--dangerously-bypass-approvals-and-sandbox",
                 "-c",
                 'mcp_servers.xmuse-platform.type="sse"',

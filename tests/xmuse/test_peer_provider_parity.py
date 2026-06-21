@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
 
 from xmuse_core.agents.god_session_layer import GodSessionLayer
+from xmuse_core.agents.launchers import GrokLauncher
 from xmuse_core.agents.ray_session_layer import RayGodSessionLayer
-from xmuse_core.agents.registry import AgentDescriptor
+from xmuse_core.agents.registry import AgentDescriptor, AgentRuntime
 from xmuse_core.chat.participant_store import ParticipantStore
 from xmuse_core.chat.peer_scheduler import _runtime_for_participant
 from xmuse_core.providers.models import ProviderId, RiskTier, TaskCapability
@@ -43,6 +45,62 @@ def test_peer_scheduler_maps_opencode_participant_to_opencode_runtime(tmp_path) 
     )
 
     assert _runtime_for_participant(participant) == "opencode"
+
+
+def test_participant_store_accepts_grok_god_peer(tmp_path) -> None:
+    store = ParticipantStore(tmp_path / "chat.db")
+    _seed_conversation(tmp_path / "chat.db", "conv-grok")
+
+    participant = store.add(
+        conversation_id="conv-grok",
+        role="review",
+        display_name="review-grok",
+        cli_kind="grok",
+        model="grok-composer-2.5-fast",
+    )
+
+    assert participant.provider_id is ProviderId.GROK
+    assert participant.cli_kind == "grok"
+    assert participant.model == "grok-composer-2.5-fast"
+    assert store.get(participant.participant_id).provider_id is ProviderId.GROK
+
+
+def test_peer_scheduler_maps_grok_participant_to_grok_runtime(tmp_path) -> None:
+    store = ParticipantStore(tmp_path / "chat.db")
+    _seed_conversation(tmp_path / "chat.db", "conv-grok-runtime")
+    participant = store.add(
+        conversation_id="conv-grok-runtime",
+        role="review",
+        display_name="review-grok",
+        cli_kind="grok",
+        model="grok-composer-2.5-fast",
+    )
+
+    assert _runtime_for_participant(participant) == AgentRuntime.GROK
+
+
+def test_default_launchers_include_grok_persistent_launcher() -> None:
+    from xmuse_core.agents.launchers import build_default_launchers
+
+    launchers = build_default_launchers(mcp_port=8111)
+
+    launcher = launchers[AgentRuntime.GROK]
+    assert isinstance(launcher, GrokLauncher)
+    assert launcher.supports_persistent_sessions is True
+    assert launcher.persistent_model() == "grok-composer-2.5-fast"
+    command = launcher.build_persistent_command("review", Path("/tmp/worktree"))
+    assert command[:3] == [
+        sys.executable,
+        "-m",
+        "xmuse_core.agents.grok_persistent",
+    ]
+    assert "--mcp-port" in command
+    resume_command = launcher.build_persistent_command(
+        "review",
+        Path("/tmp/worktree"),
+        provider_session_id="grok-session-123",
+    )
+    assert resume_command[-2:] == ["--session-id", "grok-session-123"]
 
 
 @pytest.mark.asyncio
@@ -82,6 +140,45 @@ async def test_god_session_layer_supports_opencode_persistent_peer_session(
     assert record.runtime == "opencode"
     assert len(sessions) == 1
     assert layer.persistent_model_for_runtime("opencode") == "gpt-oss"
+
+
+@pytest.mark.asyncio
+async def test_god_session_layer_supports_grok_persistent_peer_session(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    sessions: list[DummyLocalSession] = []
+
+    async def spawn(_command, env):
+        session = DummyLocalSession(env=env)
+        sessions.append(session)
+        return session
+
+    monkeypatch.setattr(
+        "xmuse_core.agents.god_session_layer.LocalSession.spawn",
+        spawn,
+    )
+
+    layer = GodSessionLayer(
+        registry_path=tmp_path / "god_sessions.json",
+        launchers={"grok": DummyLauncher("grok-composer-2.5-fast")},
+    )
+    record = await layer.ensure_conversation_session(
+        conversation_id="conv-grok",
+        participant_id="part-grok",
+        role="review",
+        agent=AgentDescriptor(
+            name="review-grok",
+            runtime="grok",
+            capabilities=["review"],
+        ),
+        worktree=tmp_path,
+        model="grok-composer-2.5-fast",
+    )
+
+    assert record.runtime == "grok"
+    assert len(sessions) == 1
+    assert layer.persistent_model_for_runtime("grok") == "grok-composer-2.5-fast"
 
 
 @pytest.mark.asyncio

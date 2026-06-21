@@ -10,6 +10,8 @@ from uuid import uuid4
 
 from xmuse_core.chat.participant_store import INIT_GOD_ROLE
 
+_UNSET = object()
+
 
 @dataclass
 class GodSessionRecord:
@@ -114,14 +116,18 @@ class GodSessionRegistry:
         self,
         conversation_id: str,
         participant_id: str,
+        feature_scope_id: str | None | object = _UNSET,
     ) -> GodSessionRecord:
         for record in self.list():
-            if (
-                record.conversation_id == conversation_id
-                and record.participant_id == participant_id
-            ):
-                return record
-        raise KeyError(f"{conversation_id}:{participant_id}")
+            if record.conversation_id != conversation_id:
+                continue
+            if record.participant_id != participant_id:
+                continue
+            if feature_scope_id is not _UNSET and record.feature_scope_id != feature_scope_id:
+                continue
+            return record
+        suffix = "" if feature_scope_id is _UNSET else f":{feature_scope_id}"
+        raise KeyError(f"{conversation_id}:{participant_id}{suffix}")
 
     def find_by_conversation_role(
         self,
@@ -145,6 +151,19 @@ class GodSessionRegistry:
             for index, record in enumerate(sessions):
                 if record.god_session_id == god_session_id:
                     updated = replace(record, assignment_feature_id=feature_id)
+                    sessions[index] = updated
+                    self._write(sessions)
+                    return updated
+            raise KeyError(god_session_id)
+
+    def update_status(self, god_session_id: str, status: str) -> GodSessionRecord:
+        if not status.strip():
+            raise ValueError("status must be non-empty")
+        with self._locked_file():
+            sessions = self.list()
+            for index, record in enumerate(sessions):
+                if record.god_session_id == god_session_id:
+                    updated = replace(record, status=status)
                     sessions[index] = updated
                     self._write(sessions)
                     return updated

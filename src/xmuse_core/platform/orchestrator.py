@@ -350,6 +350,7 @@ class PlatformOrchestrator:
         review_provider_profile_ref: str | None = None,
         provider_service: RunnerProviderService | None = None,
         provider_session_binding_store: ProviderSessionBindingStore | None = None,
+        repo_root: Path | None = None,
         feature_graph_status_store: FeatureGraphStatusStore | None = None,
         feature_graph_artifact_store: FeatureGraphArtifactStore | None = None,
         feature_graph_max_rework_attempts: int = 2,
@@ -400,6 +401,7 @@ class PlatformOrchestrator:
         self._transport = SpawnerTransport(self._spawner)
         self._review_god_session_layer = review_god_session_layer
         self._runner_id = runner_id or f"runner-{os.getpid()}"
+        self._repo_root = repo_root or xmuse_root.parent
         self._persistent_review_receive_timeout_s = persistent_review_receive_timeout_s
         self._default_review_peer_routing_enabled = default_review_peer_routing_enabled
         self._persistent_execute_enabled = persistent_execute_enabled

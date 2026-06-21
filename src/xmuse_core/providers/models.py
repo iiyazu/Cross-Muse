@@ -27,6 +27,7 @@ def _require_unique_non_empty(
 
 class ProviderId(StrEnum):
     CODEX = "codex"
+    GROK = "grok"
     OPENCODE = "opencode"
 
 

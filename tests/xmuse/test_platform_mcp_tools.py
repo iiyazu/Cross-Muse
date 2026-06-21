@@ -1,5 +1,6 @@
 import hashlib
 import json
+import subprocess
 from dataclasses import asdict
 from pathlib import Path
 
@@ -35,6 +36,16 @@ from xmuse_core.structuring.models import (
     ReviewTaskStatus,
     ReviewVerdict,
 )
+
+
+def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
 
 
 @pytest.fixture
@@ -151,6 +162,49 @@ def test_get_gate_report(setup):
     handler, _, _, _ = setup
     result = handler.call("get_gate_report", {"lane_id": "lane-1"})
     assert result["passed"] is True
+
+
+def test_get_diff_reports_untracked_worker_outputs(tmp_path: Path):
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    (worktree / "tracked.txt").write_text("base\n", encoding="utf-8")
+    _git(worktree, "init")
+    _git(worktree, "config", "user.email", "xmuse@example.test")
+    _git(worktree, "config", "user.name", "xmuse test")
+    _git(worktree, "add", "tracked.txt")
+    _git(worktree, "commit", "-m", "base")
+
+    artifact = worktree / "runtime_artifacts" / "loop7k.txt"
+    artifact.parent.mkdir()
+    artifact.write_text("LOOP7K\n", encoding="utf-8")
+
+    lanes_path = tmp_path / "feature_lanes.json"
+    lanes_path.write_text(
+        json.dumps(
+            {
+                "lanes": [
+                    {
+                        "feature_id": "lane-untracked",
+                        "status": "reviewed",
+                        "prompt": "review artifact",
+                        "worktree": str(worktree),
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    handler = McpToolHandler(
+        state_machine=LaneStateMachine(lanes_path),
+        xmuse_root=tmp_path,
+    )
+
+    result = handler.call("get_diff", {"lane_id": "lane-untracked"})
+
+    assert result["returncode"] == 0
+    assert result["untracked_files"] == ["runtime_artifacts/loop7k.txt"]
+    assert "runtime_artifacts/loop7k.txt" in result["status_short"]
+    assert result["has_untracked"] is True
 
 
 def test_query_knowledge(setup):
@@ -1126,6 +1180,43 @@ def test_update_lane_status_valid(setup):
     assert status_changes == [("lane-1", "reviewed")]
 
 
+def test_update_lane_status_accepts_bounded_execution_evidence_metadata(tmp_path: Path):
+    lanes_path = tmp_path / "feature_lanes.json"
+    lanes_path.write_text(json.dumps({"lanes": [
+        {
+            "feature_id": "lane-exec",
+            "status": "dispatched",
+            "prompt": "validate package boundaries",
+            "worktree": str(tmp_path / "wt"),
+        },
+    ]}))
+    sm = LaneStateMachine(lanes_path)
+    handler = McpToolHandler(state_machine=sm, xmuse_root=tmp_path)
+
+    result = handler.call("update_lane_status", {
+        "lane_id": "lane-exec",
+        "status": "executed",
+        "audit": {
+            "actor": "codex-child-worker",
+            "reason": "package boundary validation passed",
+            "request_id": "req-exec-1",
+        },
+        "guard": {"current_status": "dispatched"},
+        "metadata": {
+            "tests_run": ["uv run pytest tests/xmuse/test_package_boundaries.py -q"],
+            "changed_files": [],
+            "evidence_refs": ["runtime_artifacts/package-boundary-proof.txt"],
+        },
+    })
+
+    assert result["status"] == "executed"
+    lane = sm.get_lane("lane-exec")
+    assert lane["tests_run"] == ["uv run pytest tests/xmuse/test_package_boundaries.py -q"]
+    assert lane["changed_files"] == []
+    assert lane["evidence_refs"] == ["runtime_artifacts/package-boundary-proof.txt"]
+    assert lane["last_mutation_audit"]["tool"] == "update_lane_status"
+
+
 def test_update_lane_status_requires_audit_and_guard(setup):
     handler, sm, _, status_changes = setup
     result = handler.call("update_lane_status", {
@@ -1310,6 +1401,35 @@ def test_update_lane_status_rejects_unsafe_projection_metadata(setup):
     assert "worker_command" in result["error"]
     assert sm.get_lane("lane-1")["status"] == "gated"
     assert status_changes == []
+
+
+def test_update_lane_status_accepts_bounded_scalar_status_metadata(setup):
+    handler, sm, _, status_changes = setup
+    result = handler.call(
+        "update_lane_status",
+        {
+            "lane_id": "lane-1",
+            "status": "reviewed",
+            "audit": {
+                "actor": "review_god",
+                "reason": "record bounded status metadata",
+                "request_id": "req-review-9",
+            },
+            "guard": {"current_status": "gated"},
+            "metadata": {
+                "review_runtime": "opencode",
+                "final_action": "no-auto-merge",
+                "proof_boundary": "local_runtime_proof",
+            },
+        },
+    )
+
+    assert result["status"] == "reviewed"
+    lane = sm.get_lane("lane-1")
+    assert lane["review_runtime"] == "opencode"
+    assert lane["final_action"] == "no-auto-merge"
+    assert lane["proof_boundary"] == "local_runtime_proof"
+    assert status_changes == [("lane-1", "reviewed")]
 
 
 def test_unknown_tool(setup):

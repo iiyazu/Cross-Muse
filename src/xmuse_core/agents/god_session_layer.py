@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import inspect
 from dataclasses import dataclass
+from hashlib import sha256
 from pathlib import Path
 
 from xmuse_core.agents.god_session_registry import GodSessionRecord, GodSessionRegistry
@@ -17,6 +19,7 @@ class LiveGodSession:
 
 
 RuntimeKey = AgentRuntime | str
+_UNSET = object()
 
 
 class GodSessionLayer:
@@ -44,12 +47,13 @@ class GodSessionLayer:
         env = launcher.build_env(role)
         session = await LocalSession.spawn(command, env=env)
         if live is not None:
+            updated = self._registry.update_status(live.record.god_session_id, "running")
             self._live_sessions[live.record.god_session_id] = LiveGodSession(
-                record=live.record,
+                record=updated,
                 session=session,
                 worktree=worktree,
             )
-            return live.record
+            return updated
         record = self._registry.create(
             role=role,
             agent_name=agent.name,
@@ -57,6 +61,7 @@ class GodSessionLayer:
             session_address=f"@{role}",
             session_inbox_id=f"inbox-{role}",
         )
+        record = self._registry.update_status(record.god_session_id, "running")
         self._live_sessions[record.god_session_id] = LiveGodSession(
             record=record,
             session=session,
@@ -79,6 +84,7 @@ class GodSessionLayer:
         live = self._find_live_session_by_conversation_participant(
             conversation_id,
             participant_id,
+            feature_scope_id=feature_scope_id,
         )
         if live is not None:
             if self._record_peer_metadata_can_migrate(
@@ -121,23 +127,30 @@ class GodSessionLayer:
             runtime = _runtime_value(agent.runtime)
             launcher = _launcher_for_runtime(self._launchers, agent.runtime)
             _assert_launcher_supports_persistent_sessions(launcher, runtime)
-            command = _build_persistent_command(launcher, role, worktree)
+            command = _build_persistent_command(
+                launcher,
+                role,
+                worktree,
+                provider_session_id=_provider_session_id_for_resume(live.record),
+            )
             env = launcher.build_env(role)
             session = await LocalSession.spawn(command, env=env)
+            updated = self._registry.update_status(live.record.god_session_id, "running")
             self._live_sessions[live.record.god_session_id] = LiveGodSession(
-                record=live.record,
+                record=updated,
                 session=session,
                 worktree=worktree,
             )
-            return live.record
+            return updated
 
         try:
             record = self._registry.find_by_conversation_participant(
                 conversation_id,
                 participant_id,
+                feature_scope_id=feature_scope_id,
             )
         except KeyError:
-            record = self._create_conversation_record(
+            record = self._legacy_record_for_scope_migration(
                 conversation_id=conversation_id,
                 participant_id=participant_id,
                 role=role,
@@ -147,6 +160,37 @@ class GodSessionLayer:
                 worktree=worktree,
                 feature_scope_id=feature_scope_id,
             )
+            if record is None:
+                record = self._create_conversation_record(
+                    conversation_id=conversation_id,
+                    participant_id=participant_id,
+                    role=role,
+                    agent=agent,
+                    model=model,
+                    prompt_fingerprint=prompt_fingerprint,
+                    worktree=worktree,
+                    feature_scope_id=feature_scope_id,
+                )
+            else:
+                record = self._registry.update_peer_metadata(
+                    record.god_session_id,
+                    **_merged_peer_metadata(
+                        record,
+                        model=model,
+                        prompt_fingerprint=prompt_fingerprint,
+                        worktree=worktree,
+                        feature_scope_id=feature_scope_id,
+                    ),
+                )
+                self._assert_record_shape_matches(
+                    record,
+                    role,
+                    agent,
+                    model=model,
+                    prompt_fingerprint=prompt_fingerprint,
+                    worktree=worktree,
+                    feature_scope_id=feature_scope_id,
+                )
         else:
             if self._record_peer_metadata_can_migrate(
                 record,
@@ -178,9 +222,15 @@ class GodSessionLayer:
         runtime = _runtime_value(agent.runtime)
         launcher = _launcher_for_runtime(self._launchers, agent.runtime)
         _assert_launcher_supports_persistent_sessions(launcher, runtime)
-        command = _build_persistent_command(launcher, role, worktree)
+        command = _build_persistent_command(
+            launcher,
+            role,
+            worktree,
+            provider_session_id=_provider_session_id_for_resume(record),
+        )
         env = launcher.build_env(role)
         session = await LocalSession.spawn(command, env=env)
+        record = self._registry.update_status(record.god_session_id, "running")
         self._live_sessions[record.god_session_id] = LiveGodSession(
             record=record,
             session=session,
@@ -224,6 +274,7 @@ class GodSessionLayer:
         session_address, session_inbox_id = build_conversation_session_identity(
             conversation_id=conversation_id,
             participant_id=participant_id,
+            feature_scope_id=feature_scope_id,
         )
         return self._registry.create(
             role=role,
@@ -238,6 +289,45 @@ class GodSessionLayer:
             worktree=str(worktree) if worktree is not None else None,
             feature_scope_id=feature_scope_id,
         )
+
+    def _legacy_record_for_scope_migration(
+        self,
+        *,
+        conversation_id: str,
+        participant_id: str,
+        role: str,
+        agent: AgentDescriptor,
+        model: str | None = None,
+        prompt_fingerprint: str | None = None,
+        worktree: Path | None = None,
+        feature_scope_id: str | None = None,
+    ) -> GodSessionRecord | None:
+        if feature_scope_id is None:
+            return None
+        try:
+            record = self._registry.find_by_conversation_participant(
+                conversation_id,
+                participant_id,
+            )
+        except KeyError:
+            return None
+        if record.feature_scope_id is not None:
+            return None
+        if (
+            record.role != role
+            or record.agent_name != agent.name
+            or record.runtime != _runtime_value(agent.runtime)
+        ):
+            return None
+        if not self._record_peer_metadata_can_migrate(
+            record,
+            model=model,
+            prompt_fingerprint=prompt_fingerprint,
+            worktree=worktree,
+            feature_scope_id=feature_scope_id,
+        ):
+            return None
+        return record
 
     async def send_message(
         self,
@@ -277,13 +367,17 @@ class GodSessionLayer:
                 f"god_session_id '{god_session_id}' is registered but has no live "
                 "transport attached in this process"
             )
-        return await live.session.receive()
+        message = await live.session.receive()
+        if message is not None:
+            self._record_provider_session_from_message(live, message)
+        return message
 
     async def abort_session(self, god_session_id: str) -> None:
         live = self._live_sessions.get(god_session_id)
         if live is None:
             return
         await live.session.abort()
+        self._registry.update_status(god_session_id, "stopped")
         self._live_sessions.pop(god_session_id, None)
 
     def persistent_model_for_runtime(self, runtime: AgentRuntime | str) -> str | None:
@@ -297,6 +391,37 @@ class GodSessionLayer:
         value = getattr(launcher, "model", None)
         return value if isinstance(value, str) and value.strip() else None
 
+    def _record_provider_session_from_message(self, live: LiveGodSession, message) -> None:
+        if _runtime_value(live.record.runtime) != AgentRuntime.GROK.value:
+            return
+        if getattr(message, "type", None) != "result":
+            return
+        artifacts = getattr(message, "artifacts", None)
+        if not isinstance(artifacts, dict):
+            return
+        raw_session_id = artifacts.get("grok_session_id") or artifacts.get("provider_session_id")
+        if not isinstance(raw_session_id, str) or not raw_session_id.strip():
+            return
+        provider_session_id = raw_session_id.strip()
+        if (
+            live.record.provider_session_id == provider_session_id
+            and live.record.provider_session_kind == "grok_cli_session"
+            and live.record.provider_binding_status == "active"
+        ):
+            return
+        updated = self._registry.update_provider_binding(
+            live.record.god_session_id,
+            provider_session_id=provider_session_id,
+            provider_session_kind="grok_cli_session",
+            provider_binding_status="active",
+            provider_binding_failure_reason=None,
+        )
+        self._live_sessions[live.record.god_session_id] = LiveGodSession(
+            record=updated,
+            session=live.session,
+            worktree=live.worktree,
+        )
+
     def _find_live_session_by_role(self, role: str) -> LiveGodSession | None:
         for live in reversed(list(self._live_sessions.values())):
             if live.record.role == role:
@@ -307,11 +432,16 @@ class GodSessionLayer:
         self,
         conversation_id: str,
         participant_id: str,
+        feature_scope_id: str | None | object = _UNSET,
     ) -> LiveGodSession | None:
         for live in reversed(list(self._live_sessions.values())):
             if (
                 live.record.conversation_id == conversation_id
                 and live.record.participant_id == participant_id
+                and (
+                    feature_scope_id is _UNSET
+                    or live.record.feature_scope_id == feature_scope_id
+                )
             ):
                 return live
         return None
@@ -527,12 +657,31 @@ def build_conversation_session_identity(
     *,
     conversation_id: str,
     participant_id: str,
+    feature_scope_id: str | None = None,
 ) -> tuple[str, str]:
     short_conv = conversation_id.replace("conv_", "")[:12]
-    return (
-        f"@conv_{short_conv}:{participant_id}",
-        f"inbox-{conversation_id}-{participant_id}",
+    address_scope_suffix, inbox_scope_suffix = _feature_scope_identity_suffixes(
+        feature_scope_id
     )
+    return (
+        f"@conv_{short_conv}:{participant_id}{address_scope_suffix}",
+        f"inbox-{conversation_id}-{participant_id}{inbox_scope_suffix}",
+    )
+
+
+def _feature_scope_identity_suffixes(feature_scope_id: str | None) -> tuple[str, str]:
+    if feature_scope_id is None:
+        return "", ""
+    cleaned = feature_scope_id.strip()
+    if not cleaned:
+        return "", ""
+    fragment = "".join(
+        char if char.isalnum() or char in {"-", "_"} else "-"
+        for char in cleaned
+    ).strip("-")
+    digest = sha256(cleaned.encode("utf-8")).hexdigest()[:10]
+    suffix = f"feature-{(fragment or 'scope')[:48]}-{digest}"
+    return f":{suffix}", f"-{suffix}"
 
 
 def _compatible_optional(existing: str | None, expected: str | None) -> bool:
@@ -571,8 +720,39 @@ def _build_persistent_command(
     launcher: object,
     role: str,
     worktree: Path,
+    *,
+    provider_session_id: str | None = None,
 ) -> list[str]:
     builder = getattr(launcher, "build_persistent_command", None)
     if callable(builder):
+        if provider_session_id and _builder_accepts_provider_session_id(builder):
+            return list(
+                builder(
+                    role,
+                    worktree,
+                    provider_session_id=provider_session_id,
+                )
+            )
         return list(builder(role, worktree))
     raise RuntimeError("persistent launcher is missing build_persistent_command")
+
+
+def _builder_accepts_provider_session_id(builder: object) -> bool:
+    try:
+        signature = inspect.signature(builder)
+    except (TypeError, ValueError):
+        return False
+    return "provider_session_id" in signature.parameters
+
+
+def _provider_session_id_for_resume(record: GodSessionRecord) -> str | None:
+    if _runtime_value(record.runtime) != AgentRuntime.GROK.value:
+        return None
+    if record.provider_session_kind != "grok_cli_session":
+        return None
+    if record.provider_binding_status != "active":
+        return None
+    provider_session_id = record.provider_session_id
+    if not isinstance(provider_session_id, str) or not provider_session_id.strip():
+        return None
+    return provider_session_id.strip()

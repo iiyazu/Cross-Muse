@@ -1,6 +1,6 @@
 # xmuse 文档入口
 
-更新日期: 2026-06-10
+更新日期: 2026-06-21
 
 本目录是 xmuse 当前阶段的文档入口。旧的 `docs/superpowers/specs/` 和
 `docs/superpowers/plans/` 仍保留原路径，因为测试、lane graph 和历史记录会引用
@@ -31,6 +31,8 @@ GOD groupchat deliberation
 | 文档 | 用途 |
 |---|---|
 | `docs/xmuse/mainline-contracts.md` | 当前产品主线合同：GOD 群聊、blueprint freeze、laneDAG、review/GitHub gate、REST-first MemoryOS |
+| `docs/xmuse/real-runtime-loop-behavior-policy.md` | 真实运行链路长 goal 的行为规范：非 TDD-first、authority/producer/consumer/evidence-first、GitHub 额度、PR 防膨胀和 superpowers 使用边界 |
+| `docs/xmuse/real-god-chatgroup-fullchain-loop-decomposition.md` | 真实 GOD 群聊到需求完成的循环目标拆解：吸收 clowder-ai 的 turn lifecycle、严格 mention、MCP writeback reconciliation，启用 Grok 注册为当前非 Codex GOD peer 任务，但保留 xmuse durable inbox 与中心化执行权威 |
 | `docs/xmuse/deep-research-02-next-goal.md` | 第二轮深度研究转化目标，定义 #13-#19 的下一阶段任务 |
 | `docs/xmuse/contract-smoke-gates.md` | #19 合同 smoke CI：无 secrets 的 lint、format、typecheck、主线合约测试和 SLO smoke |
 | `docs/xmuse/deep-research-03-next-goal.md` | 第三轮真实运行层目标：GitHub 服务器 gate、MemoryOS Lite 互操作、provider/runtime soak 分层和 broad-suite 债务 |

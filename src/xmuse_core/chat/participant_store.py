@@ -40,20 +40,22 @@ def _new_id(prefix: str) -> str:
 # Pydantic models (match FRONTEND_VISION.md type signatures exactly)
 # ---------------------------------------------------------------------------
 
-CliKind = Literal["codex", "opencode"]
+CliKind = Literal["codex", "grok", "opencode"]
 INIT_GOD_ROLE = "init"
 INIT_GOD_DISPLAY_NAME = "init-god"
 
 
 def _require_supported_cli_kind(cli_kind: str) -> CliKind:
-    normalized = cli_kind.strip()
-    if normalized not in {"codex", "opencode"}:
+    normalized = cli_kind.strip().lower()
+    if normalized not in {"codex", "grok", "opencode"}:
         raise ValueError(f"unsupported xmuse chat participant cli_kind: {cli_kind!r}")
     return normalized  # type: ignore[return-value]
 
 
 def _read_cli_kind(cli_kind: str) -> CliKind:
     normalized = cli_kind.strip().lower()
+    if normalized == "grok":
+        return "grok"
     if normalized == "opencode":
         return "opencode"
     # Older chat.db files may contain unsupported runtime ids. Fall back to the
@@ -109,6 +111,8 @@ def provider_profile_id_for_template_slug(slug: str) -> ProviderProfileId:
 
 
 def provider_id_for_cli_kind(cli_kind: CliKind) -> ProviderId:
+    if cli_kind == "grok":
+        return ProviderId.GROK
     if cli_kind == "opencode":
         return ProviderId.OPENCODE
     return ProviderId.CODEX
@@ -148,6 +152,8 @@ def resolve_codex_cli_kind(
 
     if normalized_cli_kind is not None:
         return normalized_cli_kind
+    if normalized_provider_id is ProviderId.GROK:
+        return "grok"
     if normalized_provider_id is ProviderId.OPENCODE:
         return "opencode"
     return "codex"
@@ -564,16 +570,20 @@ _PREDEFINED_TEMPLATES: list[dict] = [
             "commands outside the allowed tool set.\n\n"
             "When you respond, emit ONE of:\n"
             '  {"type": "message", "text": "<status update>"}\n'
-            '  {"type": "execute_feasibility_verdict", "status": "executable", '
+            '  {"type": "execute_feasibility_verdict", '
+            '"verdict": "dispatchable", '
+            '"command": "<exact later execution command>", '
+            '"proof_boundary": "local runtime contract proof only", '
             '"summary": "<why this can be dispatched>", '
-            '"evidence_refs": ["<proposal/artifact/blocker refs>"]}\n'
+            '"execution_performed": false}\n'
             '  {"type": "execute_feasibility_verdict", "status": "blocked", '
             '"summary": "<why dispatch is blocked>", '
             '"evidence_refs": ["<proposal/artifact/blocker refs>"]}\n'
             '  {"type": "done", "summary": "<what was implemented>"}\n\n'
             "Use execute_feasibility_verdict when asked to confirm whether a "
             "collaboration proposal can enter real-provider dispatch. "
-            "Executable verdicts require at least one concrete evidence ref. "
+            "Dispatchable verdicts must use `command`, not `allowed_command`, "
+            "and must include an explicit `proof_boundary`. "
             "Always output ONLY the JSON object, no markdown fence, no commentary."
         ),
         "cli_kind": "codex",

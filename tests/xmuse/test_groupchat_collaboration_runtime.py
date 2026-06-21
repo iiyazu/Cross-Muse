@@ -15,96 +15,12 @@ from xmuse_core.chat.collaboration_store import ChatCollaborationStore
 from xmuse_core.chat.dispatch_bridge import ChatDispatchBridge
 from xmuse_core.chat.dispatch_queue import ChatDispatchQueueStore
 from xmuse_core.chat.inspector_builder import build_conversation_inspector_payload
-from xmuse_core.chat.participant_store import ParticipantStore
 from xmuse_core.chat.store import ChatStore
-from xmuse_core.chat.stream_store import PeerTurnLatencyTraceStore
-
-
-class _DispatchBridgeGodLayer:
-    def __init__(
-        self,
-        db_path: Path,
-        *,
-        write_back: bool = True,
-        completion_content: str = "DISPATCH_COMPLETED\nDispatched through execute provider.",
-    ) -> None:
-        self.db_path = db_path
-        self.write_back = write_back
-        self.completion_content = completion_content
-        self.sent: list[tuple[str, str, str, str, str | None]] = []
-
-    async def ensure_conversation_session(self, **kwargs):
-        participant_id = str(kwargs["participant_id"])
-        return type("Record", (), {"god_session_id": f"god-{participant_id}"})()
-
-    async def send_message(
-        self,
-        god_session_id,
-        message_type,
-        prompt,
-        context,
-        request_id=None,
-    ):
-        self.sent.append((god_session_id, message_type, prompt, context, request_id))
-
-    async def receive_message(self, god_session_id):
-        if not self.write_back:
-            return type("Message", (), {"type": "result", "status": "success"})()
-        context = json.loads(self.sent[-1][3])
-        inbox_item = context["inbox_item"]
-        participant_id = context["participant_id"]
-        message = ChatStore(self.db_path).add_message(
-            inbox_item["conversation_id"],
-            author=participant_id,
-            role="assistant",
-            content=self.completion_content,
-            envelope_type="dispatch_result",
-            envelope_json={
-                "type": "dispatch_result",
-                "source_inbox_item_id": inbox_item["id"],
-            },
-        )
-        from xmuse_core.chat.inbox_store import ChatInboxStore
-
-        ChatInboxStore(self.db_path).mark_read(
-            inbox_item["id"],
-            responded_message_id=message.id,
-        )
-        PeerTurnLatencyTraceStore(self.db_path).record_mcp_tool_stage(
-            conversation_id=inbox_item["conversation_id"],
-            inbox_item_id=inbox_item["id"],
-            tool_name="chat_post_message",
-            called_at=1.0,
-        )
-        return type(
-            "Message",
-            (),
-            {
-                "type": "result",
-                "status": "success",
-                "artifacts": {
-                    "latency_stages": {
-                        "codex_app_server_turn_start": {"at": 1.0},
-                        "chat_post_message": {"at": 1.1},
-                    }
-                },
-            },
-        )()
 
 
 def _conversation(tmp_path: Path) -> str:
     chat = ChatStore(tmp_path / "chat.db")
     return chat.create_conversation("V14 runtime").id
-
-
-def _execute_participant(tmp_path: Path, conversation_id: str):
-    return ParticipantStore(tmp_path / "chat.db").add(
-        conversation_id=conversation_id,
-        role="execute",
-        display_name="Execute GOD",
-        cli_kind="codex",
-        model="gpt-5.5",
-    )
 
 
 def test_collaboration_request_is_bounded_durable_and_idempotent(tmp_path: Path) -> None:
@@ -574,8 +490,47 @@ def test_proposal_approval_references_collaboration_gate_and_blocks_active_veto(
         ),
         response_status="received",
     )
-    allowed = client.post(
+    store.record_response(
+        run.run_id,
+        target="review",
+        content="Review veto resolved; dispatch gate can now use fresh proposal authority.",
+        response_status="received",
+    )
+    stale = client.post(
         f"/api/chat/proposals/{proposal_id}/approve",
+        json={
+            "approved_by": ["architect"],
+            "approval_mode": "auto",
+            "goal_summary": "Old proposal remains stale after review veto is resolved",
+        },
+    )
+    assert stale.status_code == 400
+    assert stale.json()["detail"]["message"] == "blocked_stale_collaboration_proposal"
+
+    fresh_proposal = client.post(
+        f"/api/chat/conversations/{conversation_id}/proposals",
+        json={
+            "author": "architect",
+            "proposal_type": "lane_graph",
+            "content": json.dumps(
+                {
+                    "summary": "Dispatchable TUI work after collaboration done",
+                    "lanes": [
+                        {
+                            "feature_id": "lane-v14-tui",
+                            "prompt": "Update TUI dispatch visibility.",
+                            "depends_on": [],
+                            "capabilities": ["code"],
+                        }
+                    ],
+                }
+            ),
+            "references": [f"collaboration:{run.run_id}"],
+        },
+    )
+    assert fresh_proposal.status_code == 201
+    allowed = client.post(
+        f"/api/chat/proposals/{fresh_proposal.json()['id']}/approve",
         json={
             "approved_by": ["architect"],
             "approval_mode": "auto",
@@ -778,8 +733,41 @@ def test_proposal_approval_requires_execute_collaboration_confirmation(
         ),
         response_status="received",
     )
-    allowed = client.post(
+    stale = client.post(
         f"/api/chat/proposals/{proposal.json()['id']}/approve",
+        json={
+            "approved_by": ["architect"],
+            "approval_mode": "auto",
+            "goal_summary": "Execute confirmed feasibility on stale proposal",
+        },
+    )
+    assert stale.status_code == 400
+    assert stale.json()["detail"]["message"] == "blocked_stale_collaboration_proposal"
+
+    fresh_proposal = client.post(
+        f"/api/chat/conversations/{conversation_id}/proposals",
+        json={
+            "author": "architect",
+            "proposal_type": "lane_graph",
+            "content": json.dumps(
+                {
+                    "summary": "Needs execute confirmation after collaboration done",
+                    "lanes": [
+                        {
+                            "feature_id": "lane-v14-needs-execute",
+                            "prompt": "Dispatch after execute confirms feasibility.",
+                            "depends_on": [],
+                            "capabilities": ["code"],
+                        }
+                    ],
+                }
+            ),
+            "references": [f"collaboration:{run.run_id}"],
+        },
+    )
+    assert fresh_proposal.status_code == 201
+    allowed = client.post(
+        f"/api/chat/proposals/{fresh_proposal.json()['id']}/approve",
         json={
             "approved_by": ["architect"],
             "approval_mode": "auto",
@@ -787,6 +775,465 @@ def test_proposal_approval_requires_execute_collaboration_confirmation(
         },
     )
     assert allowed.status_code == 200
+
+
+def test_proposal_approval_rejects_proposal_created_before_collaboration_done(
+    tmp_path: Path,
+) -> None:
+    conversation_id = _conversation(tmp_path)
+    store = ChatCollaborationStore(tmp_path / "chat.db")
+    run = store.create_request(
+        conversation_id=conversation_id,
+        goal="Reject stale proposal authority",
+        initiator="architect",
+        targets=["@execute"],
+        callback_target="@architect",
+        question="Confirm execution feasibility before proposal authority.",
+        context_refs=["message:intake"],
+        idempotency_key="stale-collaboration-proposal",
+        timeout_s=480,
+    )
+    client = TestClient(create_app(tmp_path))
+    proposal = client.post(
+        f"/api/chat/conversations/{conversation_id}/proposals",
+        json={
+            "author": "architect",
+            "proposal_type": "lane_graph",
+            "content": json.dumps(
+                {
+                    "summary": "Created before collaboration completes",
+                    "lanes": [
+                        {
+                            "feature_id": "stale-collaboration-proposal",
+                            "prompt": "This proposal must not become authority.",
+                            "depends_on": [],
+                            "capabilities": ["test"],
+                        }
+                    ],
+                }
+            ),
+            "references": [f"collaboration:{run.run_id}"],
+        },
+    )
+    assert proposal.status_code == 201
+
+    store.record_response(
+        run.run_id,
+        target="@execute",
+        content=json.dumps(
+            {
+                "type": "execute_feasibility_verdict",
+                "verdict": "dispatchable",
+                "command": "uv run pytest tests/xmuse/test_package_boundaries.py -q",
+                "proof_boundary": "local runtime contract proof only",
+                "notes": "Execution is feasible after the proposal was created.",
+            }
+        ),
+        response_status="received",
+    )
+    blocked = client.post(
+        f"/api/chat/proposals/{proposal.json()['id']}/approve",
+        json={
+            "approved_by": ["architect"],
+            "approval_mode": "auto",
+            "goal_summary": "Stale proposal must not dispatch",
+        },
+    )
+
+    assert blocked.status_code == 400
+    assert blocked.json()["detail"]["code"] == "dispatch_gate_blocked"
+    assert blocked.json()["detail"]["message"] == "blocked_stale_collaboration_proposal"
+    assert ChatStore(tmp_path / "chat.db").list_resolutions(conversation_id) == []
+
+
+def test_proposal_approval_accepts_dispatchable_execute_verdict(
+    tmp_path: Path,
+) -> None:
+    conversation_id = _conversation(tmp_path)
+    store = ChatCollaborationStore(tmp_path / "chat.db")
+    run = store.create_request(
+        conversation_id=conversation_id,
+        goal="Accept provider-style dispatchability verdict",
+        initiator="architect",
+        targets=["@execute"],
+        callback_target="@architect",
+        question="Confirm whether the artifact is dispatchable.",
+        context_refs=["message:intake"],
+        idempotency_key="execute-dispatchable-confirmation-gate",
+        timeout_s=480,
+    )
+    store.record_response(
+        run.run_id,
+        target="@execute",
+        content=json.dumps(
+            {
+                "type": "execute_feasibility_verdict",
+                "dispatchable": True,
+                "scope": "dispatchability judgment only for later lane execution worktree work",
+                "later_execution_command": (
+                    "uv run pytest tests/xmuse/test_package_boundaries.py -q"
+                ),
+                "proof_boundary": "local runtime contract proof only",
+                "notes": [
+                    "No tests run during peer chat.",
+                    "No files edited during peer chat.",
+                ],
+            }
+        ),
+        response_status="received",
+    )
+    client = TestClient(create_app(tmp_path))
+    proposal = client.post(
+        f"/api/chat/conversations/{conversation_id}/proposals",
+        json={
+            "author": "architect",
+            "proposal_type": "lane_graph",
+            "content": json.dumps(
+                {
+                    "summary": "Provider-style execute confirmation",
+                    "lanes": [
+                        {
+                            "feature_id": "lane-v14-dispatchable-execute",
+                            "prompt": "Run one bounded command later.",
+                            "depends_on": [],
+                            "capabilities": ["test"],
+                        }
+                    ],
+                }
+            ),
+            "references": [f"collaboration:{run.run_id}"],
+        },
+    )
+    assert proposal.status_code == 201
+
+    allowed = client.post(
+        f"/api/chat/proposals/{proposal.json()['id']}/approve",
+        json={
+            "approved_by": ["architect"],
+            "approval_mode": "auto",
+            "goal_summary": "Execute confirmed provider-style dispatchability",
+        },
+    )
+
+    assert allowed.status_code == 200
+
+
+def test_proposal_approval_accepts_response_type_dispatchable_verdict(
+    tmp_path: Path,
+) -> None:
+    conversation_id = _conversation(tmp_path)
+    store = ChatCollaborationStore(tmp_path / "chat.db")
+    run = store.create_request(
+        conversation_id=conversation_id,
+        goal="Accept natural provider dispatchability verdict",
+        initiator="architect",
+        targets=["@execute"],
+        callback_target="@architect",
+        question="Confirm whether the artifact is dispatchable.",
+        context_refs=["message:intake"],
+        idempotency_key="execute-response-type-dispatchable-gate",
+        timeout_s=480,
+    )
+    store.record_response(
+        run.run_id,
+        target="@execute",
+        content=json.dumps(
+            {
+                "response_type": "execute_feasibility_verdict",
+                "verdict": "dispatchable",
+                "scope": "later lane execution worktree only",
+                "command": "uv run pytest tests/xmuse/test_package_boundaries.py -q",
+                "proof_boundary": "local runtime contract proof only",
+                "peer_chat_actions_taken": [
+                    "did_not_run_tests",
+                    "did_not_edit_files",
+                    "did_not_treat_peer_chat_worktree_as_lane_worktree",
+                ],
+                "notes": "This is a dispatchability judgment for later execution only.",
+            }
+        ),
+        response_status="received",
+    )
+    client = TestClient(create_app(tmp_path))
+    proposal = client.post(
+        f"/api/chat/conversations/{conversation_id}/proposals",
+        json={
+            "author": "architect",
+            "proposal_type": "lane_graph",
+            "content": json.dumps(
+                {
+                    "summary": "Natural provider execute confirmation",
+                    "lanes": [
+                        {
+                            "feature_id": "lane-v14-response-type-execute",
+                            "prompt": "Run one bounded command later.",
+                            "depends_on": [],
+                            "capabilities": ["test"],
+                        }
+                    ],
+                }
+            ),
+            "references": [f"collaboration:{run.run_id}"],
+        },
+    )
+    assert proposal.status_code == 201
+
+    allowed = client.post(
+        f"/api/chat/proposals/{proposal.json()['id']}/approve",
+        json={
+            "approved_by": ["architect"],
+            "approval_mode": "auto",
+            "goal_summary": "Execute confirmed natural dispatchability",
+        },
+    )
+
+    assert allowed.status_code == 200
+
+
+def test_proposal_approval_accepts_provider_expanded_dispatchable_verdict(
+    tmp_path: Path,
+) -> None:
+    conversation_id = _conversation(tmp_path)
+    store = ChatCollaborationStore(tmp_path / "chat.db")
+    run = store.create_request(
+        conversation_id=conversation_id,
+        goal="Accept provider-expanded dispatchability verdict",
+        initiator="architect",
+        targets=["@execute"],
+        callback_target="@architect",
+        question="Confirm whether the artifact is dispatchable.",
+        context_refs=["message:intake"],
+        idempotency_key="execute-expanded-dispatchable-gate",
+        timeout_s=480,
+    )
+    store.record_response(
+        run.run_id,
+        target="@execute",
+        content=json.dumps(
+            {
+                "type": "execute_feasibility_verdict",
+                "verdict": (
+                    "dispatchable_for_later_lane_execution_worktree_pending_human_approval"
+                ),
+                "command": "uv run pytest tests/xmuse/test_package_boundaries.py -q",
+                "proof_boundary": "local runtime proof only",
+                "execution_performed": False,
+                "summary": "Provider confirms dispatchability for a later lane worktree.",
+            }
+        ),
+        response_status="received",
+    )
+    client = TestClient(create_app(tmp_path))
+    proposal = client.post(
+        f"/api/chat/conversations/{conversation_id}/proposals",
+        json={
+            "author": "architect",
+            "proposal_type": "lane_graph",
+            "content": json.dumps(
+                {
+                    "summary": "Expanded provider execute confirmation",
+                    "lanes": [
+                        {
+                            "feature_id": "lane-v14-expanded-execute",
+                            "prompt": "Run one bounded command later.",
+                            "depends_on": [],
+                            "capabilities": ["test"],
+                        }
+                    ],
+                }
+            ),
+            "references": [f"collaboration:{run.run_id}"],
+        },
+    )
+    assert proposal.status_code == 201
+
+    allowed = client.post(
+        f"/api/chat/proposals/{proposal.json()['id']}/approve",
+        json={
+            "approved_by": ["architect"],
+            "approval_mode": "auto",
+            "goal_summary": "Execute confirmed expanded provider dispatchability",
+        },
+    )
+
+    assert allowed.status_code == 200
+
+
+def test_proposal_approval_accepts_execute_address_target_confirmation(
+    tmp_path: Path,
+) -> None:
+    conversation_id = _conversation(tmp_path)
+    store = ChatCollaborationStore(tmp_path / "chat.db")
+    run = store.create_request(
+        conversation_id=conversation_id,
+        goal="Require execute confirmation with address target",
+        initiator="architect",
+        targets=["@execute"],
+        callback_target="@architect",
+        question="Confirm whether the artifact is executable.",
+        context_refs=["message:intake"],
+        idempotency_key="execute-address-confirmation-gate",
+        timeout_s=480,
+    )
+    store.record_response(
+        run.run_id,
+        target="@execute",
+        content=json.dumps(
+            {
+                "type": "execute_feasibility_verdict",
+                "status": "executable",
+                "summary": "Lane graph has clear scope and required evidence.",
+                "evidence_refs": ["message:intake", "proposal:lane-v14-address-execute"],
+            }
+        ),
+        response_status="received",
+    )
+    client = TestClient(create_app(tmp_path))
+    proposal = client.post(
+        f"/api/chat/conversations/{conversation_id}/proposals",
+        json={
+            "author": "architect",
+            "proposal_type": "lane_graph",
+            "content": json.dumps(
+                {
+                    "summary": "Address execute confirmation",
+                    "lanes": [
+                        {
+                            "feature_id": "lane-v14-address-execute",
+                            "prompt": "Dispatch after address execute confirms feasibility.",
+                            "depends_on": [],
+                            "capabilities": ["code"],
+                        }
+                    ],
+                }
+            ),
+            "references": [f"collaboration:{run.run_id}"],
+        },
+    )
+    assert proposal.status_code == 201
+
+    allowed = client.post(
+        f"/api/chat/proposals/{proposal.json()['id']}/approve",
+        json={
+            "approved_by": ["architect"],
+            "approval_mode": "auto",
+            "goal_summary": "Address execute confirmed feasibility",
+        },
+    )
+
+    assert allowed.status_code == 200
+
+
+def test_lane_graph_approval_preserves_review_runtime_in_projection(
+    tmp_path: Path,
+) -> None:
+    conversation_id = _conversation(tmp_path)
+    client = TestClient(create_app(tmp_path))
+    proposal = client.post(
+        f"/api/chat/conversations/{conversation_id}/proposals",
+        json={
+            "author": "architect",
+            "proposal_type": "lane_graph",
+            "content": json.dumps(
+                {
+                    "summary": "Preserve review runtime",
+                    "lanes": [
+                        {
+                            "feature_id": "lane-review-runtime-opencode",
+                            "prompt": "Preserve OpenCode review routing.",
+                            "depends_on": [],
+                            "capabilities": ["code"],
+                            "review_runtime": "opencode",
+                        }
+                    ],
+                }
+            ),
+            "references": [],
+        },
+    )
+    assert proposal.status_code == 201
+
+    approved = client.post(
+        f"/api/chat/proposals/{proposal.json()['id']}/approve",
+        json={
+            "approved_by": ["architect"],
+            "approval_mode": "manual",
+            "goal_summary": "Approve review runtime projection",
+        },
+    )
+
+    assert approved.status_code == 200
+    graph_id = f"{approved.json()['id']}-graph-v{approved.json()['version']}"
+    graph = json.loads((tmp_path / "lane_graphs" / f"{graph_id}.json").read_text())
+    assert graph["lanes"][0]["review_runtime"] == "opencode"
+    lanes = json.loads((tmp_path / "feature_lanes.json").read_text())["lanes"]
+    assert lanes[0]["feature_id"] == "lane-review-runtime-opencode"
+    assert lanes[0]["review_runtime"] == "opencode"
+
+
+def test_lane_graph_approval_carries_execution_evidence_contract(
+    tmp_path: Path,
+) -> None:
+    conversation_id = _conversation(tmp_path)
+    client = TestClient(create_app(tmp_path))
+    proposal = client.post(
+        f"/api/chat/conversations/{conversation_id}/proposals",
+        json={
+            "author": "architect",
+            "proposal_type": "lane_graph",
+            "content": json.dumps(
+                {
+                    "type": "lane_graph",
+                    "summary": "Loop evidence continuation",
+                    "lanes": [
+                        {
+                            "feature_id": "lane-loop8-evidence",
+                            "prompt": (
+                                "Document the bounded proposal proof; do not "
+                                "execute or approve in this loop."
+                            ),
+                            "depends_on": [],
+                            "capabilities": ["docs"],
+                            "review_runtime": "grok",
+                        }
+                    ],
+                }
+            ),
+            "references": ["message:review-ready", "runtime_artifact:loop6-summary"],
+        },
+    )
+    assert proposal.status_code == 201
+
+    approved = client.post(
+        f"/api/chat/proposals/{proposal.json()['id']}/approve",
+        json={
+            "approved_by": ["architect"],
+            "approval_mode": "manual",
+            "goal_summary": "Continue approved proposal into execution evidence",
+        },
+    )
+
+    assert approved.status_code == 200
+    resolution = approved.json()
+    proposal_ref = f"proposal:{proposal.json()['id']}"
+    graph_id = f"{resolution['id']}-graph-v{resolution['version']}"
+    graph = json.loads((tmp_path / "lane_graphs" / f"{graph_id}.json").read_text())
+    lane_prompt = graph["lanes"][0]["prompt"]
+    assert "Approved proposal execution contract" in lane_prompt
+    assert f"resolution_id: {resolution['id']}" in lane_prompt
+    assert proposal_ref in lane_prompt
+    assert "message:review-ready" in lane_prompt
+    assert f"xmuse_runtime_root: {tmp_path}" in lane_prompt
+    assert "Original proposal lane prompt:" in lane_prompt
+    assert "do not execute or approve in this loop" in lane_prompt
+
+    lanes = json.loads((tmp_path / "feature_lanes.json").read_text())["lanes"]
+    projected = lanes[0]
+    prompt_ref = projected["prompt_ref"]
+    prompt_artifact = (tmp_path / prompt_ref).read_text(encoding="utf-8")
+    assert "Approved proposal execution contract" in prompt_artifact
+    assert proposal_ref in prompt_artifact
+    assert projected["prompt_summary"].startswith("Approved proposal execution contract")
 
 
 def test_proposal_approval_rejects_freeform_execute_confirmation(
@@ -909,6 +1356,74 @@ def test_proposal_approval_rejects_blocked_execute_verdict(
             "approved_by": ["architect"],
             "approval_mode": "auto",
             "goal_summary": "Blocked execute verdict must not dispatch",
+        },
+    )
+
+    assert blocked.status_code == 400
+    assert blocked.json()["detail"]["message"] == "blocked_execute_not_confirmed"
+    assert ChatStore(tmp_path / "chat.db").list_resolutions(conversation_id) == []
+
+
+def test_proposal_approval_rejects_negative_expanded_execute_verdict(
+    tmp_path: Path,
+) -> None:
+    conversation_id = _conversation(tmp_path)
+    store = ChatCollaborationStore(tmp_path / "chat.db")
+    run = store.create_request(
+        conversation_id=conversation_id,
+        goal="Reject negative provider-expanded execute verdict",
+        initiator="architect",
+        targets=["@execute"],
+        callback_target="@architect",
+        question="Confirm feasibility with typed evidence.",
+        context_refs=[],
+        idempotency_key="negative-expanded-execute-verdict",
+        timeout_s=480,
+    )
+    store.record_response(
+        run.run_id,
+        target="@execute",
+        content=json.dumps(
+            {
+                "type": "execute_feasibility_verdict",
+                "verdict": "not_dispatchable_until_review_veto_resolved",
+                "command": "uv run pytest tests/xmuse/test_package_boundaries.py -q",
+                "proof_boundary": "local runtime proof only",
+                "summary": "Provider says dispatch is still blocked.",
+            }
+        ),
+        response_status="received",
+    )
+    client = TestClient(create_app(tmp_path))
+    proposal = client.post(
+        f"/api/chat/conversations/{conversation_id}/proposals",
+        json={
+            "author": "architect",
+            "proposal_type": "lane_graph",
+            "content": json.dumps(
+                {
+                    "summary": "Negative expanded verdict is not enough",
+                    "lanes": [
+                        {
+                            "feature_id": "lane-v14-negative-expanded",
+                            "prompt": "Do not dispatch on negative expanded verdict.",
+                            "depends_on": [],
+                            "capabilities": ["code"],
+                        }
+                    ],
+                }
+            ),
+            "references": [f"collaboration:{run.run_id}"],
+        },
+    )
+    assert proposal.status_code == 201
+
+    blocked = client.post(
+        f"/api/chat/proposals/{proposal.json()['id']}/approve",
+        json={
+            "approved_by": ["architect"],
+            "approval_mode": "auto",
+            "goal_summary": "Negative expanded verdict must not dispatch",
         },
     )
 
@@ -1265,11 +1780,10 @@ def test_chat_api_dispatch_bridge_rejects_blank_claim_identity(
 
 
 @pytest.mark.asyncio
-async def test_dispatch_bridge_auto_dispatches_gated_entry_through_execute_provider(
+async def test_dispatch_bridge_records_lane_worker_handoff_without_peer_nudge(
     tmp_path: Path,
 ) -> None:
     conversation_id = _conversation(tmp_path)
-    execute = _execute_participant(tmp_path, conversation_id)
     entry = ChatDispatchQueueStore(tmp_path / "chat.db").enqueue_agent_auto_dispatch(
         conversation_id=conversation_id,
         proposal_id="proposal-real-provider",
@@ -1277,11 +1791,28 @@ async def test_dispatch_bridge_auto_dispatches_gated_entry_through_execute_provi
         collaboration_run_id="collab-real-provider",
         artifact_ref="artifact:lane_graph",
     )
-    god_layer = _DispatchBridgeGodLayer(tmp_path / "chat.db")
+    lane_worktree = tmp_path / "lane-worktree"
+    lanes_path = tmp_path / "feature_lanes.json"
+    lanes_path.write_text(
+        json.dumps(
+            {
+                "lanes": [
+                    {
+                        "feature_id": "lane-real-provider",
+                        "resolution_id": "resolution-real-provider",
+                        "worktree": str(lane_worktree),
+                        "status": "awaiting_final_action",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
     bridge = ChatDispatchBridge(
         db_path=tmp_path / "chat.db",
-        god_layer=god_layer,
+        god_layer=object(),
         worktree=tmp_path,
+        lanes_path=lanes_path,
         bridge_id="dispatch-bridge-test",
         response_wait_s=0.1,
     )
@@ -1291,29 +1822,35 @@ async def test_dispatch_bridge_auto_dispatches_gated_entry_through_execute_provi
     assert outcome.claimed == 1
     assert outcome.dispatched == 1
     assert outcome.failed == 0
-    assert god_layer.sent
-    god_session_id, message_type, prompt, context_json, request_id = god_layer.sent[0]
-    context = json.loads(context_json)
-    assert god_session_id == f"god-{execute.participant_id}"
-    assert message_type == "peer_chat_nudge"
-    assert request_id == context["inbox_item"]["id"]
-    assert "reply_to_inbox_item_id=xmuse_context.inbox_item.id" in prompt
-    assert context["inbox_item"]["item_type"] == "dispatch"
-    assert context["inbox_item"]["payload"]["dispatch_queue_entry_id"] == entry.entry_id
     reloaded = ChatDispatchQueueStore(tmp_path / "chat.db").get(entry.entry_id)
     assert reloaded.status == "dispatched"
-    assert reloaded.provider_run_ref == f"provider:execute:{execute.participant_id}"
-    assert reloaded.dispatch_evidence.startswith("mcp_writeback:")
+    assert reloaded.provider_run_ref == "lane_worker:lane-real-provider"
+    assert reloaded.dispatch_evidence.startswith("dispatch_handoff:")
+    assert ":feature_lanes:lane-real-provider:awaiting_final_action" in (
+        reloaded.dispatch_evidence
+    )
+    messages = ChatStore(tmp_path / "chat.db").list_messages(conversation_id)
+    handoff = [msg for msg in messages if msg.envelope_type == "dispatch_handoff"]
+    assert len(handoff) == 1
+    envelope = handoff[0].envelope_json or {}
+    assert envelope["dispatch_queue_entry_id"] == entry.entry_id
+    assert envelope["lane_worker_authority"] == "feature_lanes"
+    assert envelope["lane_id"] == "lane-real-provider"
+    assert envelope["lane_status"] == "awaiting_final_action"
+    assert envelope["execution_worktree"] == str(lane_worktree)
+    assert "LANE_WORKER_HANDOFF" in handoff[0].content
+    assert f"- Execution worktree: {lane_worktree}" in handoff[0].content
+    assert "This message is not peer-chat execution truth." in handoff[0].content
+    assert "DISPATCH_COMPLETED" not in handoff[0].content
     inspector = build_conversation_inspector_payload(conversation_id, tmp_path)
     assert inspector["dispatch_queue"]["dispatched"] == 1
 
 
 @pytest.mark.asyncio
-async def test_dispatch_bridge_prompt_includes_approved_artifact_context(
+async def test_dispatch_bridge_handoff_includes_approved_artifact_context(
     tmp_path: Path,
 ) -> None:
     conversation_id = _conversation(tmp_path)
-    _execute_participant(tmp_path, conversation_id)
     chat = ChatStore(tmp_path / "chat.db")
     proposal = chat.create_proposal(
         conversation_id,
@@ -1364,11 +1901,27 @@ async def test_dispatch_bridge_prompt_includes_approved_artifact_context(
         collaboration_run_id="run-dispatch-context",
         artifact_ref="artifact:lane_graph",
     )
-    god_layer = _DispatchBridgeGodLayer(tmp_path / "chat.db")
+    lanes_path = tmp_path / "feature_lanes.json"
+    lanes_path.write_text(
+        json.dumps(
+            {
+                "lanes": [
+                    {
+                        "feature_id": "tui-command-dashboard",
+                        "resolution_id": resolution.id,
+                        "worktree": str(tmp_path / "lane-worktree"),
+                        "status": "pending",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
     bridge = ChatDispatchBridge(
         db_path=tmp_path / "chat.db",
-        god_layer=god_layer,
+        god_layer=object(),
         worktree=tmp_path,
+        lanes_path=lanes_path,
         bridge_id="dispatch-bridge-test",
         response_wait_s=0.1,
     )
@@ -1376,25 +1929,26 @@ async def test_dispatch_bridge_prompt_includes_approved_artifact_context(
     outcome = await bridge.tick_once(conversation_id=conversation_id)
 
     assert outcome.dispatched == 1
-    _, _, prompt, context_json, _ = god_layer.sent[0]
-    context = json.loads(context_json)
-    assert "Production TUI closure" in prompt
-    assert "Improve xmuse TUI slash commands" in prompt
-    assert "Approved production TUI closure work" in prompt
-    assert context["inbox_item"]["payload"]["proposal"]["id"] == proposal.id
-    assert context["inbox_item"]["payload"]["resolution"]["id"] == resolution.id
-    assert context["inbox_item"]["payload"]["resolution"]["content"]["summary"] == (
-        "Production TUI closure"
+    handoff = next(
+        msg
+        for msg in ChatStore(tmp_path / "chat.db").list_messages(conversation_id)
+        if msg.envelope_type == "dispatch_handoff"
     )
-    assert context["inbox_item"]["payload"]["dispatch_queue_entry_id"] == entry.entry_id
+    assert "Production TUI closure" in handoff.content
+    assert "Improve xmuse TUI slash commands" in handoff.content
+    assert "Approved production TUI closure work" in handoff.content
+    envelope = handoff.envelope_json or {}
+    assert envelope["proposal"]["id"] == proposal.id
+    assert envelope["resolution"]["id"] == resolution.id
+    assert envelope["resolution"]["content"]["summary"] == "Production TUI closure"
+    assert envelope["dispatch_queue_entry_id"] == entry.entry_id
 
 
 @pytest.mark.asyncio
-async def test_dispatch_bridge_dispatches_its_item_not_older_unread_chat(
+async def test_dispatch_bridge_does_not_consume_older_unread_chat(
     tmp_path: Path,
 ) -> None:
     conversation_id = _conversation(tmp_path)
-    execute = _execute_participant(tmp_path, conversation_id)
     chat = ChatStore(tmp_path / "chat.db")
     older_message = chat.add_message(
         conversation_id,
@@ -1406,7 +1960,7 @@ async def test_dispatch_bridge_dispatches_its_item_not_older_unread_chat(
 
     older_item = ChatInboxStore(tmp_path / "chat.db").create_item(
         conversation_id=conversation_id,
-        target_participant_id=execute.participant_id,
+        target_participant_id="execute-participant",
         target_role="execute",
         target_address="@execute",
         sender_participant_id=None,
@@ -1422,11 +1976,26 @@ async def test_dispatch_bridge_dispatches_its_item_not_older_unread_chat(
         collaboration_run_id="collab-specific-dispatch",
         artifact_ref="artifact:lane_graph",
     )
-    god_layer = _DispatchBridgeGodLayer(tmp_path / "chat.db")
+    lanes_path = tmp_path / "feature_lanes.json"
+    lanes_path.write_text(
+        json.dumps(
+            {
+                "lanes": [
+                    {
+                        "feature_id": "lane-specific-dispatch",
+                        "resolution_id": "resolution-specific-dispatch",
+                        "worktree": str(tmp_path / "lane-worktree"),
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
     bridge = ChatDispatchBridge(
         db_path=tmp_path / "chat.db",
-        god_layer=god_layer,
+        god_layer=object(),
         worktree=tmp_path,
+        lanes_path=lanes_path,
         bridge_id="dispatch-bridge-test",
         response_wait_s=0.1,
     )
@@ -1434,36 +2003,30 @@ async def test_dispatch_bridge_dispatches_its_item_not_older_unread_chat(
     outcome = await bridge.tick_once(conversation_id=conversation_id)
 
     assert outcome.dispatched == 1
-    sent_context = json.loads(god_layer.sent[0][3])
-    assert sent_context["inbox_item"]["id"] != older_item.id
-    assert sent_context["inbox_item"]["item_type"] == "dispatch"
-    assert sent_context["inbox_item"]["payload"]["dispatch_queue_entry_id"] == entry.entry_id
     assert ChatInboxStore(tmp_path / "chat.db").get(older_item.id).status == "unread"
+    messages = ChatStore(tmp_path / "chat.db").list_messages(conversation_id)
+    handoff = [msg for msg in messages if msg.envelope_type == "dispatch_handoff"]
+    assert len(handoff) == 1
+    assert (handoff[0].envelope_json or {})["dispatch_queue_entry_id"] == entry.entry_id
 
 
 @pytest.mark.asyncio
-async def test_dispatch_bridge_rejects_progress_only_writeback(
+async def test_dispatch_bridge_fails_entry_without_lane_worker_projection(
     tmp_path: Path,
 ) -> None:
     conversation_id = _conversation(tmp_path)
-    _execute_participant(tmp_path, conversation_id)
     entry = ChatDispatchQueueStore(tmp_path / "chat.db").enqueue_agent_auto_dispatch(
         conversation_id=conversation_id,
-        proposal_id="proposal-progress-only",
-        resolution_id="resolution-progress-only",
-        collaboration_run_id="collab-progress-only",
+        proposal_id="proposal-missing-lane",
+        resolution_id="resolution-missing-lane",
+        collaboration_run_id="collab-missing-lane",
         artifact_ref="artifact:lane_graph",
-    )
-    god_layer = _DispatchBridgeGodLayer(
-        tmp_path / "chat.db",
-        completion_content=(
-            "I have claimed the task and will update after implementation."
-        ),
     )
     bridge = ChatDispatchBridge(
         db_path=tmp_path / "chat.db",
-        god_layer=god_layer,
+        god_layer=object(),
         worktree=tmp_path,
+        lanes_path=tmp_path / "feature_lanes.json",
         bridge_id="dispatch-bridge-test",
         response_wait_s=0.1,
     )
@@ -1475,38 +2038,9 @@ async def test_dispatch_bridge_rejects_progress_only_writeback(
     assert outcome.failed == 1
     reloaded = ChatDispatchQueueStore(tmp_path / "chat.db").get(entry.entry_id)
     assert reloaded.status == "failed"
-    assert reloaded.failure_reason == "dispatch_completion_marker_missing"
-
-
-@pytest.mark.asyncio
-async def test_dispatch_bridge_fails_entry_without_mcp_writeback(
-    tmp_path: Path,
-) -> None:
-    conversation_id = _conversation(tmp_path)
-    _execute_participant(tmp_path, conversation_id)
-    entry = ChatDispatchQueueStore(tmp_path / "chat.db").enqueue_agent_auto_dispatch(
-        conversation_id=conversation_id,
-        proposal_id="proposal-no-writeback",
-        resolution_id="resolution-no-writeback",
-        collaboration_run_id="collab-no-writeback",
-        artifact_ref="artifact:lane_graph",
-    )
-    bridge = ChatDispatchBridge(
-        db_path=tmp_path / "chat.db",
-        god_layer=_DispatchBridgeGodLayer(tmp_path / "chat.db", write_back=False),
-        worktree=tmp_path,
-        bridge_id="dispatch-bridge-test",
-        response_wait_s=0.1,
-    )
-
-    outcome = await bridge.tick_once(conversation_id=conversation_id)
-
-    assert outcome.claimed == 1
-    assert outcome.dispatched == 0
-    assert outcome.failed == 1
-    reloaded = ChatDispatchQueueStore(tmp_path / "chat.db").get(entry.entry_id)
-    assert reloaded.status == "failed"
-    assert reloaded.failure_reason == "peer_no_inbox_side_effect"
+    assert reloaded.failure_reason == "lane_worker_projection_missing"
+    messages = ChatStore(tmp_path / "chat.db").list_messages(conversation_id)
+    assert [msg for msg in messages if msg.envelope_type == "dispatch_handoff"] == []
 
 
 def test_dispatch_queue_reclaims_stale_processing_entry(tmp_path: Path) -> None:

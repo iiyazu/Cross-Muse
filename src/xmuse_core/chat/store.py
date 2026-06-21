@@ -20,7 +20,7 @@ from xmuse_core.chat.participant_store import _new_id as _ps_new_id
 
 
 def _utc_now() -> str:
-    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 class ChatStore:
@@ -520,6 +520,69 @@ class ChatStore:
         with self._connect() as conn:
             rows = conn.execute(query, params).fetchall()
         return [self._proposal_from_row(row) for row in rows]
+
+    def get_logged_tool_result(
+        self,
+        *,
+        conversation_id: str,
+        tool_name: str,
+        caller_identity: str,
+        client_request_id: str,
+    ) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                select result_json from chat_request_log
+                where conversation_id = ? and tool_name = ?
+                  and caller_identity = ? and client_request_id = ?
+                """,
+                (conversation_id, tool_name, caller_identity, client_request_id),
+            ).fetchone()
+        if row is None:
+            return None
+        return json.loads(row["result_json"])
+
+    def accepted_proposals_for_references(
+        self,
+        *,
+        conversation_id: str,
+        references: list[str],
+    ) -> list[Proposal]:
+        collaboration_refs = _collaboration_refs(references)
+        if not collaboration_refs:
+            return []
+        return [
+            proposal
+            for proposal in self.list_proposals(conversation_id)
+            if proposal.status is ProposalStatus.ACCEPTED
+            and bool(collaboration_refs & _collaboration_refs(proposal.references))
+        ]
+
+    def supersede_open_proposals_for_references(
+        self,
+        *,
+        conversation_id: str,
+        references: list[str],
+        keep_proposal_id: str,
+    ) -> list[str]:
+        collaboration_refs = _collaboration_refs(references)
+        if not collaboration_refs:
+            return []
+        superseded_ids = [
+            proposal.id
+            for proposal in self.list_proposals(conversation_id)
+            if proposal.id != keep_proposal_id
+            and proposal.status is ProposalStatus.OPEN
+            and bool(collaboration_refs & _collaboration_refs(proposal.references))
+        ]
+        if not superseded_ids:
+            return []
+        with self._connect() as conn:
+            conn.executemany(
+                "update proposals set status = ? where id = ?",
+                [(ProposalStatus.SUPERSEDED.value, proposal_id) for proposal_id in superseded_ids],
+            )
+        return superseded_ids
 
     def approve_proposal(
         self,
@@ -1090,3 +1153,11 @@ class ChatStore:
         existing = {str(row["name"]) for row in rows}
         if column_name not in existing:
             conn.execute(f"alter table {table_name} add column {column_name} {definition}")
+
+
+def _collaboration_refs(references: list[str]) -> set[str]:
+    return {
+        reference.strip()
+        for reference in references
+        if isinstance(reference, str) and reference.strip().startswith("collaboration:")
+    }

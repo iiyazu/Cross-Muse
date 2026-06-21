@@ -32,6 +32,20 @@ def _mcp_call(client: TestClient, name: str, arguments: dict):
     return response.json()["result"]["content"][0]["text"]
 
 
+def _mcp_structured(client: TestClient, name: str, arguments: dict) -> dict:
+    response = client.post(
+        "/mcp",
+        json={
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": name, "arguments": arguments},
+        },
+    )
+    assert response.status_code == 200
+    return response.json()["result"]["structuredContent"]
+
+
 def _registered_participant(tmp_path: Path):
     chat = ChatStore(tmp_path / "chat.db")
     conv = chat.create_conversation("MCP")
@@ -877,6 +891,421 @@ def test_mcp_collaboration_tools_support_veto_and_dispatch_gate(
     assert stored.blockers[0].resolution_evidence == (
         "inspector:/discussion-and-blockers-visible"
     )
+
+
+def test_mcp_collaboration_response_accepts_address_target(
+    tmp_path: Path,
+) -> None:
+    _chat, conv, architect, architect_session = _registered_participant(tmp_path)
+    participants = ParticipantStore(tmp_path / "chat.db")
+    execute = participants.add(
+        conversation_id=conv.id,
+        role="execute",
+        display_name="Execute GOD",
+        cli_kind="codex",
+        model="gpt-5.5",
+    )
+    execute_session = GodSessionRegistry(tmp_path / "god_sessions.json").create(
+        role="execute",
+        agent_name="Execute GOD",
+        runtime="codex",
+        session_address=f"xmuse://{conv.id}/{execute.participant_id}",
+        session_inbox_id=f"inbox-{execute.participant_id}",
+        conversation_id=conv.id,
+        participant_id=execute.participant_id,
+    )
+    client = TestClient(create_app(tmp_path))
+
+    created = json.loads(
+        _mcp_call(
+            client,
+            "chat_create_collaboration_request",
+            {
+                "conversation_id": conv.id,
+                "participant_id": architect.participant_id,
+                "god_session_id": architect_session.god_session_id,
+                "client_request_id": "collab-address-target",
+                "goal": "Confirm executable scope.",
+                "targets": ["@execute"],
+                "callback_target": "@architect",
+                "question": "Return an execute feasibility verdict.",
+                "context_refs": ["message:intake"],
+                "timeout_s": 480,
+            },
+        )
+    )
+
+    response = json.loads(
+        _mcp_call(
+            client,
+            "chat_record_collaboration_response",
+            {
+                "conversation_id": conv.id,
+                "participant_id": execute.participant_id,
+                "god_session_id": execute_session.god_session_id,
+                "run_id": created["run"]["run_id"],
+                "content": "Executable as one lane.",
+                "status": "received",
+            },
+        )
+    )
+
+    assert response["run"]["status"] == "done"
+    assert response["run"]["responses"][0]["target"] == "@execute"
+
+
+def test_mcp_collaboration_done_creates_callback_inbox(
+    tmp_path: Path,
+) -> None:
+    chat, conv, architect, architect_session = _registered_participant(tmp_path)
+    chat.add_message(
+        conversation_id=conv.id,
+        author="human",
+        role="human",
+        content="@architect coordinate the collaboration.",
+    )
+    participants = ParticipantStore(tmp_path / "chat.db")
+    execute = participants.add(
+        conversation_id=conv.id,
+        role="execute",
+        display_name="Execute GOD",
+        cli_kind="codex",
+        model="gpt-5.5",
+    )
+    review = participants.add(
+        conversation_id=conv.id,
+        role="review",
+        display_name="Review GOD",
+        cli_kind="opencode",
+        model="opencode-go/deepseek-v4-flash",
+    )
+    registry = GodSessionRegistry(tmp_path / "god_sessions.json")
+    execute_session = registry.create(
+        role="execute",
+        agent_name="Execute GOD",
+        runtime="codex",
+        session_address=f"xmuse://{conv.id}/{execute.participant_id}",
+        session_inbox_id=f"inbox-{execute.participant_id}",
+        conversation_id=conv.id,
+        participant_id=execute.participant_id,
+    )
+    review_session = registry.create(
+        role="review",
+        agent_name="Review GOD",
+        runtime="opencode",
+        session_address=f"xmuse://{conv.id}/{review.participant_id}",
+        session_inbox_id=f"inbox-{review.participant_id}",
+        conversation_id=conv.id,
+        participant_id=review.participant_id,
+    )
+    client = TestClient(create_app(tmp_path))
+
+    created = json.loads(
+        _mcp_call(
+            client,
+            "chat_create_collaboration_request",
+            {
+                "conversation_id": conv.id,
+                "participant_id": architect.participant_id,
+                "god_session_id": architect_session.god_session_id,
+                "client_request_id": "collab-callback",
+                "goal": "Complete a bounded collaboration.",
+                "targets": ["execute", "review"],
+                "callback_target": "architect",
+                "question": "Return bounded formal responses.",
+                "timeout_s": 480,
+            },
+        )
+    )
+    run_id = created["run"]["run_id"]
+
+    first = json.loads(
+        _mcp_call(
+            client,
+            "chat_record_collaboration_response",
+            {
+                "conversation_id": conv.id,
+                "participant_id": execute.participant_id,
+                "god_session_id": execute_session.god_session_id,
+                "run_id": run_id,
+                "content": "Executable as one bounded lane.",
+                "status": "received",
+            },
+        )
+    )
+
+    assert first["run"]["status"] == "partial"
+    inbox = ChatInboxStore(tmp_path / "chat.db")
+    assert [
+        item
+        for item in inbox.list_by_conversation(conv.id)
+        if item.item_type == "collaboration_callback"
+    ] == []
+
+    second = json.loads(
+        _mcp_call(
+            client,
+            "chat_record_collaboration_response",
+            {
+                "conversation_id": conv.id,
+                "participant_id": review.participant_id,
+                "god_session_id": review_session.god_session_id,
+                "run_id": run_id,
+                "content": "Review response preserves the bounded proof boundary.",
+                "status": "received",
+            },
+        )
+    )
+
+    assert second["run"]["status"] == "done"
+    callbacks = [
+        item
+        for item in inbox.list_by_conversation(conv.id)
+        if item.item_type == "collaboration_callback"
+    ]
+    assert len(callbacks) == 1
+    callback = callbacks[0]
+    assert callback.target_participant_id == architect.participant_id
+    assert callback.target_role == "architect"
+    assert callback.target_address == "@architect"
+    assert callback.payload["collaboration_run_id"] == run_id
+    assert callback.payload["collaboration_status"] == "done"
+    assert callback.payload["trigger_mode"] == "collaboration_done_callback"
+    assert "collaboration:" + run_id in callback.payload["content"]
+    assert "call chat_emit_proposal now" in callback.payload["content"]
+    assert "Do not merely acknowledge" in callback.payload["content"]
+    assert [response["target"] for response in callback.payload["responses"]] == [
+        "execute",
+        "review",
+    ]
+
+    replay = json.loads(
+        _mcp_call(
+            client,
+            "chat_record_collaboration_response",
+            {
+                "conversation_id": conv.id,
+                "participant_id": review.participant_id,
+                "god_session_id": review_session.god_session_id,
+                "run_id": run_id,
+                "content": "Duplicate response should not create another callback.",
+                "status": "received",
+            },
+        )
+    )
+    assert replay["run"]["status"] == "done"
+    callbacks_after_replay = [
+        item
+        for item in inbox.list_by_conversation(conv.id, include_terminal=True)
+        if item.item_type == "collaboration_callback"
+    ]
+    assert len(callbacks_after_replay) == 1
+
+
+def test_mcp_emit_proposal_rejects_active_collaboration_reference(
+    tmp_path: Path,
+) -> None:
+    _chat, conv, architect, architect_session = _registered_participant(tmp_path)
+    ParticipantStore(tmp_path / "chat.db").add(
+        conversation_id=conv.id,
+        role="review",
+        display_name="Review GOD",
+        cli_kind="opencode",
+        model="opencode-go/deepseek-v4-flash",
+    )
+    run = ChatCollaborationStore(tmp_path / "chat.db").create_request(
+        conversation_id=conv.id,
+        goal="Do not propose before collaboration is done.",
+        initiator="architect",
+        targets=["@execute", "@review"],
+        callback_target="@architect",
+        question="Confirm execution and review scope first.",
+        context_refs=[],
+        idempotency_key="active-collab-proposal",
+        timeout_s=480,
+    )
+
+    result = _mcp_structured(
+        TestClient(create_app(tmp_path)),
+        "chat_emit_proposal",
+        {
+            "conversation_id": conv.id,
+            "participant_id": architect.participant_id,
+            "god_session_id": architect_session.god_session_id,
+            "client_request_id": "proposal-before-collab-done",
+            "summary": "This must wait for collaboration completion.",
+            "lanes": [
+                {
+                    "feature_id": "wait-for-collaboration",
+                    "prompt": "Run after collaboration completes.",
+                    "depends_on": [],
+                    "capabilities": ["test"],
+                }
+            ],
+            "references": [f"collaboration:{run.run_id}"],
+        },
+    )
+
+    assert result["error"]["code"] == "collaboration_not_done"
+    assert ChatStore(tmp_path / "chat.db").list_proposals(conv.id) == []
+
+
+def test_mcp_emit_proposal_supersedes_prior_open_collaboration_proposal(
+    tmp_path: Path,
+) -> None:
+    _chat, conv, architect, architect_session = _registered_participant(tmp_path)
+    ParticipantStore(tmp_path / "chat.db").add(
+        conversation_id=conv.id,
+        role="review",
+        display_name="Review GOD",
+        cli_kind="opencode",
+        model="opencode-go/deepseek-v4-flash",
+    )
+    collaboration = ChatCollaborationStore(tmp_path / "chat.db")
+    run = collaboration.create_request(
+        conversation_id=conv.id,
+        goal="Allow exactly one active proposal per collaboration.",
+        initiator="architect",
+        targets=["@execute"],
+        callback_target="@architect",
+        question="Confirm execution feasibility.",
+        context_refs=[],
+        idempotency_key="supersede-open-proposal",
+        timeout_s=480,
+    )
+    collaboration.record_response(
+        run.run_id,
+        target="@execute",
+        content="Executable after collaboration completion.",
+        response_status="received",
+    )
+    client = TestClient(create_app(tmp_path))
+    base_args = {
+        "conversation_id": conv.id,
+        "participant_id": architect.participant_id,
+        "god_session_id": architect_session.god_session_id,
+        "lanes": [
+            {
+                "feature_id": "single-active-proposal",
+                "prompt": "Run one bounded command.",
+                "depends_on": [],
+                "capabilities": ["test"],
+            }
+        ],
+        "references": [f"collaboration:{run.run_id}"],
+    }
+
+    first = json.loads(
+        _mcp_call(
+            client,
+            "chat_emit_proposal",
+            {
+                **base_args,
+                "client_request_id": "first-after-collab-done",
+                "summary": "First proposal after collaboration done.",
+            },
+        )
+    )
+    second = json.loads(
+        _mcp_call(
+            client,
+            "chat_emit_proposal",
+            {
+                **base_args,
+                "client_request_id": "second-after-collab-done",
+                "summary": "Second proposal supersedes the first open one.",
+            },
+        )
+    )
+
+    chat = ChatStore(tmp_path / "chat.db")
+    assert chat.get_proposal(first["proposal"]["id"]).status == "superseded"
+    assert chat.get_proposal(second["proposal"]["id"]).status == "open"
+
+
+def test_mcp_emit_proposal_rejects_collaboration_with_accepted_proposal(
+    tmp_path: Path,
+) -> None:
+    _chat, conv, architect, architect_session = _registered_participant(tmp_path)
+    ParticipantStore(tmp_path / "chat.db").add(
+        conversation_id=conv.id,
+        role="review",
+        display_name="Review GOD",
+        cli_kind="opencode",
+        model="opencode-go/deepseek-v4-flash",
+    )
+    collaboration = ChatCollaborationStore(tmp_path / "chat.db")
+    run = collaboration.create_request(
+        conversation_id=conv.id,
+        goal="Reject proposals after the collaboration already has authority.",
+        initiator="architect",
+        targets=["@execute"],
+        callback_target="@architect",
+        question="Confirm execution feasibility.",
+        context_refs=[],
+        idempotency_key="accepted-proposal",
+        timeout_s=480,
+    )
+    collaboration.record_response(
+        run.run_id,
+        target="@execute",
+        content="Executable after collaboration completion.",
+        response_status="received",
+    )
+    client = TestClient(create_app(tmp_path))
+    first = json.loads(
+        _mcp_call(
+            client,
+            "chat_emit_proposal",
+            {
+                "conversation_id": conv.id,
+                "participant_id": architect.participant_id,
+                "god_session_id": architect_session.god_session_id,
+                "client_request_id": "accepted-first",
+                "summary": "First proposal will become authority.",
+                "lanes": [
+                    {
+                        "feature_id": "accepted-proposal-authority",
+                        "prompt": "Run one bounded command.",
+                        "depends_on": [],
+                        "capabilities": ["test"],
+                    }
+                ],
+                "references": [f"collaboration:{run.run_id}"],
+            },
+        )
+    )
+    ChatStore(tmp_path / "chat.db").approve_proposal(
+        first["proposal"]["id"],
+        approved_by=["human"],
+        approval_mode="manual",
+        goal_summary="Accept first proposal.",
+        content={"type": "lane_graph", "lanes": []},
+    )
+
+    result = _mcp_structured(
+        client,
+        "chat_emit_proposal",
+        {
+            "conversation_id": conv.id,
+            "participant_id": architect.participant_id,
+            "god_session_id": architect_session.god_session_id,
+            "client_request_id": "accepted-second",
+            "summary": "Second proposal must not stay open after approval.",
+            "lanes": [
+                {
+                    "feature_id": "accepted-proposal-duplicate",
+                    "prompt": "Do not create this duplicate.",
+                    "depends_on": [],
+                    "capabilities": ["test"],
+                }
+            ],
+            "references": [f"collaboration:{run.run_id}"],
+        },
+    )
+
+    assert result["error"]["code"] == "collaboration_proposal_already_accepted"
+    assert len(ChatStore(tmp_path / "chat.db").list_proposals(conv.id)) == 1
 
 
 def test_mcp_collaboration_tools_reject_spoofed_session_identity(

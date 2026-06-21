@@ -1,5 +1,6 @@
 import asyncio
 import json
+import subprocess
 import time
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -93,7 +94,9 @@ async def test_dispatch_lane_records_cas_metadata(setup):
     lane = orch._sm.get_lane("lane-1")
     assert lane["status"] == "dispatched"
     assert lane["dispatch_status_guard"] == "pending"
-    assert lane["dispatch_projection_revision"] == 0
+    assert lane["dispatch_projection_revision"] == 1
+    assert lane["branch"] == "lane-1"
+    assert lane["base_head_sha"] == "unknown"
     assert lane["runner_id"] == orch._runner_id
     assert isinstance(lane["dispatch_attempt_id"], str)
     assert lane["dispatch_attempt_id"].startswith("dispatch-lane-1-")
@@ -371,7 +374,130 @@ async def test_dispatch_lane_initializes_missing_isolated_worktree(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_dispatch_lane_reuses_existing_worktree_without_git_initialization(setup):
+async def test_dispatch_lane_creates_missing_projected_worktree_before_spawn(tmp_path):
+    lanes_path = tmp_path / "feature_lanes.json"
+    projected_worktree = tmp_path / "projected-exec-worktree"
+    lanes_path.write_text(json.dumps({"lanes": [
+        {
+            "feature_id": "lane-projected-worktree",
+            "status": "pending",
+            "prompt": "run bounded command",
+            "worktree": str(projected_worktree),
+            "branch": "lane-projected-worktree",
+            "base_head_sha": "projected-base",
+        },
+    ]}))
+    (tmp_path / "error_knowledge.json").write_text(json.dumps({"entries": []}))
+    (tmp_path / "god_prompts").mkdir(parents=True)
+    (tmp_path / "god_prompts" / "execution_god.md").write_text("exec")
+    (tmp_path / "god_prompts" / "review_god.md").write_text("review")
+    spawn_worktrees: list[Path] = []
+
+    orch = PlatformOrchestrator(
+        lanes_path=lanes_path, xmuse_root=tmp_path, mcp_port=9999,
+    )
+
+    async def fake_spawn(*, god_config, lane_id, prompt, worktree):
+        spawn_worktrees.append(worktree)
+        return SpawnResult(exit_code=-1, stdout="", stderr="stop before gate")
+
+    with patch.object(orch, "_create_or_reuse_worktree") as create_worktree:
+        create_worktree.side_effect = lambda *, worktree, branch: worktree.mkdir()
+        with patch.object(orch._spawner, "spawn", side_effect=fake_spawn):
+            await orch.dispatch_lane("lane-projected-worktree")
+
+    lane = orch._sm.get_lane("lane-projected-worktree")
+    assert lane["worktree"] == str(projected_worktree)
+    assert lane["branch"] == "lane-projected-worktree"
+    assert lane["base_head_sha"] == "projected-base"
+    assert spawn_worktrees == [projected_worktree]
+    create_worktree.assert_called_once_with(
+        worktree=projected_worktree,
+        branch="lane-projected-worktree",
+    )
+
+
+@pytest.mark.asyncio
+async def test_dispatch_lane_reclaims_empty_projected_worktree_before_spawn(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.email", "xmuse@example.invalid"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "xmuse"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-m", "base"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    base_head = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+    xmuse_root = tmp_path / "xmuse"
+    xmuse_root.mkdir()
+    lanes_path = xmuse_root / "feature_lanes.json"
+    projected_worktree = tmp_path / "projected-empty-worktree"
+    projected_worktree.mkdir()
+    lanes_path.write_text(json.dumps({"lanes": [
+        {
+            "feature_id": "lane-empty-projected-worktree",
+            "status": "pending",
+            "prompt": "run bounded command",
+            "worktree": str(projected_worktree),
+            "branch": "lane-empty-projected-worktree",
+        },
+    ]}))
+    (xmuse_root / "error_knowledge.json").write_text(json.dumps({"entries": []}))
+    (xmuse_root / "god_prompts").mkdir(parents=True)
+    (xmuse_root / "god_prompts" / "execution_god.md").write_text("exec")
+    (xmuse_root / "god_prompts" / "review_god.md").write_text("review")
+    spawn_worktrees: list[Path] = []
+
+    orch = PlatformOrchestrator(
+        lanes_path=lanes_path,
+        xmuse_root=xmuse_root,
+        repo_root=repo,
+        mcp_port=9999,
+    )
+
+    async def fake_spawn(*, god_config, lane_id, prompt, worktree):
+        spawn_worktrees.append(worktree)
+        return SpawnResult(exit_code=-1, stdout="", stderr="stop before gate")
+
+    with patch.object(orch._spawner, "spawn", side_effect=fake_spawn):
+        await orch.dispatch_lane("lane-empty-projected-worktree")
+
+    lane = orch._sm.get_lane("lane-empty-projected-worktree")
+    assert lane["worktree"] == str(projected_worktree)
+    assert lane["branch"] == "lane-empty-projected-worktree"
+    assert lane["base_head_sha"] == base_head
+    assert spawn_worktrees == [projected_worktree]
+    inside_worktree = subprocess.run(
+        ["git", "-C", str(projected_worktree), "rev-parse", "--is-inside-work-tree"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    assert inside_worktree == "true"
+
+
+@pytest.mark.asyncio
+async def test_dispatch_lane_records_branch_for_existing_non_git_worktree(setup):
     tmp_path, lanes_path = setup
     orch = PlatformOrchestrator(
         lanes_path=lanes_path, xmuse_root=tmp_path, mcp_port=9999,
@@ -387,8 +513,87 @@ async def test_dispatch_lane_reuses_existing_worktree_without_git_initialization
 
     lane = orch._sm.get_lane("lane-1")
     assert lane["worktree"] == str(tmp_path)
-    assert "branch" not in lane
+    assert lane["branch"] == "lane-1"
+    assert lane["base_head_sha"] == "unknown"
     git_output.assert_not_called()
+    create_worktree.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_lane_attaches_existing_detached_git_worktree_to_lane_branch(
+    tmp_path,
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.email", "xmuse@example.invalid"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "xmuse"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-m", "base"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    base_head = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    subprocess.run(
+        ["git", "checkout", "--detach", "HEAD"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+
+    lanes_path = tmp_path / "feature_lanes.json"
+    lanes_path.write_text(json.dumps({"lanes": [
+        {
+            "feature_id": "lane-existing-detached",
+            "status": "pending",
+            "prompt": "fix bug",
+            "worktree": str(repo),
+        },
+    ]}))
+    (tmp_path / "error_knowledge.json").write_text(json.dumps({"entries": []}))
+    (tmp_path / "xmuse" / "god_prompts").mkdir(parents=True)
+    (tmp_path / "xmuse" / "god_prompts" / "execution_god.md").write_text("exec")
+    (tmp_path / "xmuse" / "god_prompts" / "review_god.md").write_text("review")
+    orch = PlatformOrchestrator(
+        lanes_path=lanes_path, xmuse_root=tmp_path, mcp_port=9999,
+    )
+
+    async def fake_spawn(*, god_config, lane_id, prompt, worktree):
+        return SpawnResult(exit_code=1, stdout="", stderr="stop before gate")
+
+    with patch.object(orch, "_create_or_reuse_worktree") as create_worktree:
+        with patch.object(orch._spawner, "spawn", side_effect=fake_spawn):
+            await orch.dispatch_lane("lane-existing-detached")
+
+    lane = orch._sm.get_lane("lane-existing-detached")
+    assert lane["worktree"] == str(repo)
+    assert lane["branch"] == "lane-existing-detached"
+    assert lane["base_head_sha"] == base_head
+    current_branch = subprocess.run(
+        ["git", "branch", "--show-current"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    assert current_branch == "lane-existing-detached"
     create_worktree.assert_not_called()
 
 
@@ -410,6 +615,172 @@ async def test_execution_god_timeout_marks_exec_failed(setup):
 
     lane = orch._sm.get_lane("lane-1")
     assert lane["status"] == "exec_failed"
+
+
+@pytest.mark.asyncio
+async def test_execution_god_rejects_stdout_success_when_child_mcp_is_required(setup):
+    tmp_path, lanes_path = setup
+    lanes_path.write_text(json.dumps({"lanes": [
+        {
+            "feature_id": "lane-1",
+            "status": "dispatched",
+            "prompt": (
+                "Before running the command, call xmuse MCP query_knowledge first. "
+                "After the command completes, call update_lane_status."
+            ),
+            "worktree": str(tmp_path),
+        },
+    ]}))
+    orch = PlatformOrchestrator(
+        lanes_path=lanes_path, xmuse_root=tmp_path, mcp_port=9999,
+    )
+    fallback_result = SpawnResult(
+        exit_code=0,
+        stdout=(
+            "MCP unavailable in this session: the listed xmuse tool calls "
+            "(`query_knowledge`, `update_lane_status`) were not exposed.\n"
+            "Fallback status: executed."
+        ),
+        stderr="",
+    )
+
+    with patch.object(orch._spawner, "spawn", new_callable=AsyncMock,
+                      return_value=fallback_result):
+        with patch.object(orch, "_on_lane_executed", new_callable=AsyncMock) as executed:
+            await orch._run_execution_god("lane-1")
+
+    executed.assert_not_called()
+    lane = orch._sm.get_lane("lane-1")
+    assert lane["status"] == "exec_failed"
+    assert lane["failure_reason"] == "child_mcp_required_but_unavailable"
+    assert lane["failure_layer"] == "worker"
+    assert lane["child_mcp_required"] is True
+    assert lane["stdout_fallback_rejected"] is True
+    assert lane["provider_profile_ref"] == "codex.default"
+
+
+@pytest.mark.asyncio
+async def test_execution_god_rejects_zero_exit_mcp_required_not_callable_stdout(setup):
+    tmp_path, lanes_path = setup
+    lanes_path.write_text(json.dumps({"lanes": [
+        {
+            "feature_id": "lane-1",
+            "status": "dispatched",
+            "prompt": (
+                "Before running the command, call xmuse MCP query_knowledge first. "
+                "After the command completes, call update_lane_status."
+            ),
+            "worktree": str(tmp_path),
+        },
+    ]}))
+    orch = PlatformOrchestrator(
+        lanes_path=lanes_path, xmuse_root=tmp_path, mcp_port=9999,
+    )
+    fallback_result = SpawnResult(
+        exit_code=0,
+        stdout=(
+            "status=exec_failed\n"
+            "xmuse MCP tools `query_knowledge` and `update_lane_status` "
+            "are not callable in this session.\n"
+            "tests_run=none\n"
+            "changed_files=none\n"
+        ),
+        stderr="",
+    )
+
+    with patch.object(orch._spawner, "spawn", new_callable=AsyncMock,
+                      return_value=fallback_result):
+        with patch.object(orch, "_on_lane_executed", new_callable=AsyncMock) as executed:
+            await orch._run_execution_god("lane-1")
+
+    executed.assert_not_called()
+    lane = orch._sm.get_lane("lane-1")
+    assert lane["status"] == "exec_failed"
+    assert lane["failure_reason"] == "child_mcp_required_but_unavailable"
+    assert lane["stdout_fallback_rejected"] is True
+
+
+@pytest.mark.asyncio
+async def test_execution_god_honors_zero_exit_stdout_exec_failed_contract(setup):
+    tmp_path, lanes_path = setup
+    lanes_path.write_text(json.dumps({"lanes": [
+        {
+            "feature_id": "lane-1",
+            "status": "dispatched",
+            "prompt": "run focused proof",
+            "worktree": str(tmp_path),
+        },
+    ]}))
+    orch = PlatformOrchestrator(
+        lanes_path=lanes_path, xmuse_root=tmp_path, mcp_port=9999,
+    )
+    fallback_result = SpawnResult(
+        exit_code=0,
+        stdout=(
+            "status=`exec_failed`\n"
+            "failure_reason=`focused_test_cap_reached`\n"
+            "Tests run:\n"
+            "1. `uv run pytest -q tests/xmuse/test_lane.py` -> failed\n"
+        ),
+        stderr="",
+    )
+
+    with patch.object(orch._spawner, "spawn", new_callable=AsyncMock,
+                      return_value=fallback_result):
+        with patch.object(orch, "_on_lane_executed", new_callable=AsyncMock) as executed:
+            await orch._run_execution_god("lane-1")
+
+    executed.assert_not_called()
+    lane = orch._sm.get_lane("lane-1")
+    assert lane["status"] == "exec_failed"
+    assert lane["failure_reason"] == "focused_test_cap_reached"
+    assert lane["failure_layer"] == "worker"
+    assert lane["execute_failure_source"] == "worker_test_gate"
+    assert lane["stdout_fallback_rejected"] is True
+
+
+@pytest.mark.asyncio
+async def test_execution_god_classifies_mcp_writeback_guard_rejection(setup):
+    tmp_path, lanes_path = setup
+    lanes_path.write_text(json.dumps({"lanes": [
+        {
+            "feature_id": "lane-final-hold-name",
+            "status": "dispatched",
+            "prompt": (
+                "First call xmuse MCP query_knowledge. "
+                "After the command completes, call update_lane_status."
+            ),
+            "worktree": str(tmp_path),
+        },
+    ]}))
+    orch = PlatformOrchestrator(
+        lanes_path=lanes_path, xmuse_root=tmp_path, mcp_port=9999,
+    )
+    guard_rejected_result = SpawnResult(
+        exit_code=0,
+        stdout=(
+            "mcp__xmuse_platform.query_knowledge completed\n"
+            "mcp__xmuse_platform.update_lane_status completed\n"
+            "Writeback blocker: update_lane_status was rejected with "
+            "state guard mismatch for update_lane_status: expected status final-hold.\n"
+        ),
+        stderr="",
+    )
+
+    with patch.object(
+        orch._spawner,
+        "spawn",
+        new_callable=AsyncMock,
+        return_value=guard_rejected_result,
+    ):
+        with patch.object(orch, "_on_lane_executed", new_callable=AsyncMock) as executed:
+            await orch._run_execution_god("lane-final-hold-name")
+
+    executed.assert_not_called()
+    lane = orch._sm.get_lane("lane-final-hold-name")
+    assert lane["status"] == "exec_failed"
+    assert lane["failure_reason"] == "child_mcp_writeback_rejected"
+    assert lane["stdout_fallback_rejected"] is False
 
 
 @pytest.mark.asyncio
@@ -439,7 +810,63 @@ async def test_execution_transport_receives_provider_invocation(setup):
     assert invocation.task_type is TaskCapability.LANE_COORDINATION
     assert invocation.provider_profile_ref == "codex.default"
     lane = orch._sm.get_lane("lane-1")
-    assert "provider_profile_ref" not in lane
+    assert lane["provider_profile_ref"] == "codex.default"
+
+
+@pytest.mark.asyncio
+async def test_execution_provider_result_tolerates_mcp_executed_writeback(setup):
+    tmp_path, lanes_path = setup
+    lanes_path.write_text(json.dumps({"lanes": [
+        {
+            "feature_id": "lane-1",
+            "status": "dispatched",
+            "prompt": "run focused proof",
+            "worktree": str(tmp_path),
+        },
+    ]}))
+    orch = PlatformOrchestrator(
+        lanes_path=lanes_path,
+        xmuse_root=tmp_path,
+        mcp_port=9999,
+    )
+
+    async def fake_send_execute(req):
+        orch._sm.transition(
+            "lane-1",
+            "executed",
+            metadata={
+                "last_mutation_audit": {
+                    "actor": "codex-child-worker",
+                    "reason": "mcp writeback",
+                    "request_id": req.provider_invocation.request_id,
+                    "tool": "update_lane_status",
+                }
+            },
+        )
+        return ExecuteResponse(
+            exit_code=0,
+            stdout="",
+            stderr="",
+            timed_out=False,
+            provider_result=ProviderInvocationResult(
+                request_id=req.provider_invocation.request_id,
+                provider_id=req.provider_invocation.provider_id,
+                profile_id=req.provider_invocation.profile_id,
+                status=WorkerResultStatus.COMPLETED,
+                evidence_refs=[],
+            ),
+        )
+
+    with patch.object(orch._transport, "send_execute", new=fake_send_execute):
+        with patch.object(orch, "_on_lane_executed", new_callable=AsyncMock) as executed:
+            await orch._run_execution_god("lane-1")
+
+    executed.assert_awaited_once_with("lane-1")
+    lane = orch._sm.get_lane("lane-1")
+    assert lane["status"] == "executed"
+    assert lane["parent_god"] == "execution-god"
+    assert lane["worker_kind"] == "temporary_child_worker"
+    assert lane["last_mutation_audit"]["tool"] == "update_lane_status"
 
 
 @pytest.mark.asyncio
@@ -504,7 +931,7 @@ async def test_execution_transport_prefers_ready_low_cost_worker_and_records_sel
     assert invocation.task_type is TaskCapability.BOUNDED_CODE_WRITING
     assert invocation.provider_profile_ref == "opencode.deepseek_flash_worker"
     lane = orch._sm.get_lane("lane-worker-ready")
-    assert "provider_profile_ref" not in lane
+    assert lane["provider_profile_ref"] == "opencode.deepseek_flash_worker"
     records = ProviderSelectionRecordStore.from_xmuse_root(tmp_path).list_records(
         lane_id="lane-worker-ready"
     )
@@ -579,7 +1006,7 @@ async def test_execution_transport_falls_back_to_codex_worker_when_low_cost_work
     assert invocation.task_type is TaskCapability.BOUNDED_CODE_WRITING
     assert invocation.provider_profile_ref == "codex.worker"
     lane = orch._sm.get_lane("lane-worker-fallback")
-    assert "provider_profile_ref" not in lane
+    assert lane["provider_profile_ref"] == "codex.worker"
     records = ProviderSelectionRecordStore.from_xmuse_root(tmp_path).list_records(
         lane_id="lane-worker-fallback"
     )
@@ -5245,6 +5672,35 @@ async def test_gate_failure_transition_is_rejected_without_failure_reason(setup)
 
 
 @pytest.mark.asyncio
+async def test_run_gate_writes_report_when_gate_profiles_missing(setup):
+    tmp_path, lanes_path = setup
+    report_path = tmp_path / "logs" / "gates" / "lane-1" / "report.json"
+    report_path.unlink()
+    lanes_path.write_text(json.dumps({"lanes": [
+        {
+            "feature_id": "lane-1",
+            "status": "executed",
+            "prompt": "fix",
+            "worktree": str(tmp_path),
+        },
+    ]}))
+    orch = PlatformOrchestrator(
+        lanes_path=lanes_path, xmuse_root=tmp_path, mcp_port=9999,
+    )
+
+    assert await orch._run_gate("lane-1") is True
+
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["passed"] is True
+    assert report["blocking_passed"] is True
+    assert report["profile_ids"] == []
+    assert report["command_results"] == []
+    assert report["resolution_reasons"] == {
+        "gate_profiles": ["gate_profiles_missing"],
+    }
+
+
+@pytest.mark.asyncio
 async def test_run_gate_uses_plural_gate_profiles(setup):
     tmp_path, lanes_path = setup
     (tmp_path / "gate_profiles.json").write_text(json.dumps({
@@ -5807,6 +6263,17 @@ async def test_review_god_stdout_fallback_approves_when_mcp_status_missing(setup
         "positive_no_findings",
     }
     assert lane["review_decision"] == "merge"
+    assert lane["review_evidence_refs"] == [
+        "feature_lanes.json#lane=lane-1",
+        f"review_plane.json#task={lane['review_task_id']}",
+        "logs/lane_prompts/lane-1.md",
+        "logs/gates/lane-1/report.json",
+    ]
+    review_plane = json.loads((tmp_path / "review_plane.json").read_text())
+    verdict = review_plane["review_verdicts"][0]
+    assert verdict["evidence_refs"] == lane["review_evidence_refs"]
+    final_actions = json.loads((tmp_path / "final_actions.json").read_text())
+    assert final_actions["holds"][0]["verdict_id"] == lane["review_verdict_id"]
 
 
 @pytest.mark.asyncio

@@ -324,6 +324,7 @@ def _validate_duplicate_lane_ids(data: dict[str, Any]) -> None:
     list_fields = {
         "capabilities",
         "depends_on",
+        "evidence_refs",
         "gate_profiles",
         "review_evidence_refs",
     }

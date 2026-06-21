@@ -1,13 +1,28 @@
 # Goal Stage Harness
 
+更新日期: 2026-06-20
+
 Purpose:
 
-- 把每个 `/goal` 阶段任务从“口头约束”变成可执行的、有可追溯产物的流程。
+- 把每个已固化、可重复的 `/goal` stage 从“口头约束”变成可执行的、
+  有可追溯产物的流程。
 - 强制通过脚本产出 `result.json` 和 `manifest.jsonl`，避免阶段越权越写。
+
+## 适用边界
+
+Stage manifest 只用于已经稳定、可重复、可预先描述输入输出的阶段。探索型
+runtime loop 不强制 stage 化；它应先遵循
+`docs/xmuse/real-runtime-loop-behavior-policy.md` 的 `/goal` runtime reconciler
+状态机，通过真实 xmuse 链路发现 active boundary，并在 operation record /
+findings 中记录 loop entry。
+
+当同一个 active boundary 已经有稳定命令、稳定 authority、稳定 producer /
+consumer 和稳定 expected artifact 后，才把它沉淀为 stage manifest。不要为了
+流程整齐而把未知 runtime blocker 预先拆成假阶段。
 
 ## 固化规则
 
-- 每个阶段必须有 stage manifest（JSON）。
+- 每个已固化、可重复 stage 必须有 stage manifest（JSON）。
 - 阶段前置必须先调用脚本：
 
 ```bash
