@@ -10,6 +10,7 @@ from xmuse_core.chat.acceptance_spine import AcceptanceSpineStatus, AcceptanceSp
 from xmuse_core.chat.dispatch_queue import ChatDispatchQueueStore
 from xmuse_core.chat.peer_service import PeerChatService
 from xmuse_core.chat.store import ChatStore
+from xmuse_core.platform.execution.github_ops import GitHubServerSideTruthEvidence
 from xmuse_core.platform.final_action_gate import FinalActionGateStore
 from xmuse_core.platform.review_plane import ReviewPlaneController
 from xmuse_core.structuring.models import ReviewDecision, ReviewVerdict
@@ -186,6 +187,78 @@ def test_final_action_approval_with_github_evidence_accepts_spine(
     assert spine.blocked_reason is None
 
 
+def test_final_action_approval_with_server_gate_producer_accepts_spine(
+    tmp_path: Path,
+) -> None:
+    intake_message_id, hold = _create_spine_with_pending_final_action(tmp_path)
+
+    FinalActionGateStore(tmp_path / "final_actions.json").resolve_with_github_gate_evidence(
+        hold.id,
+        status="approved",
+        resolved_by="human",
+        repo="iiyazu/Cross-Muse",
+        pull_request_number=42,
+        required_checks=["quality-gates", "contract-smoke-gates"],
+        collector=_StaticGithubTruthCollector(_complete_server_truth()),
+    )
+
+    spine = AcceptanceSpineStore(tmp_path / "chat.db").get_by_intake_message(
+        intake_message_id
+    )
+    final_action = FinalActionGateStore(tmp_path / "final_actions.json").get(hold.id)
+    gate_payload = json.loads(
+        (tmp_path / "github_gate_evidence.json").read_text(encoding="utf-8")
+    )
+
+    assert spine.status is AcceptanceSpineStatus.ACCEPTED
+    assert spine.github_gate_evidence_ref == final_action.github_gate_evidence_ref
+    assert spine.github_gate_evidence_ref is not None
+    assert spine.manual_gaps == []
+    assert gate_payload["items"][0]["can_accept"] is True
+    assert gate_payload["items"][0]["evidence"]["proof_level"] == "server_side_merge_proof"
+
+    api_payload = TestClient(create_app(tmp_path)).get(
+        f"/api/chat/conversations/{spine.conversation_id}/acceptance-spines"
+    ).json()
+    api_item = api_payload["items"][0]
+    assert api_payload["source_authority"] == "chat_store"
+    assert api_item["final_action_ref"] == f"final_actions.json#hold={hold.id}"
+    assert api_item["github_gate_evidence_ref"] == final_action.github_gate_evidence_ref
+    assert api_item["manual_gaps"] == []
+
+
+def test_final_action_approval_with_server_gate_gap_keeps_spine_blocked(
+    tmp_path: Path,
+) -> None:
+    intake_message_id, hold = _create_spine_with_pending_final_action(tmp_path)
+
+    FinalActionGateStore(tmp_path / "final_actions.json").resolve_with_github_gate_evidence(
+        hold.id,
+        status="approved",
+        resolved_by="human",
+        repo="iiyazu/Cross-Muse",
+        pull_request_number=42,
+        required_checks=["quality-gates"],
+        collector=_StaticGithubTruthCollector(_manual_gap_truth()),
+    )
+
+    spine = AcceptanceSpineStore(tmp_path / "chat.db").get_by_intake_message(
+        intake_message_id
+    )
+    final_action = FinalActionGateStore(tmp_path / "final_actions.json").get(hold.id)
+    gate_payload = json.loads(
+        (tmp_path / "github_gate_evidence.json").read_text(encoding="utf-8")
+    )
+
+    assert spine.status is AcceptanceSpineStatus.BLOCKED
+    assert spine.github_gate_evidence_ref is None
+    assert spine.manual_gaps == ["github_gate_unverified"]
+    assert final_action.github_gate_evidence_ref is None
+    assert final_action.github_gate_gap_ref is not None
+    assert gate_payload["items"][0]["can_accept"] is False
+    assert gate_payload["items"][0]["gap_reason"] == "missing server-side truth"
+
+
 def test_final_action_rejection_fails_spine(tmp_path: Path) -> None:
     intake_message_id, hold = _create_spine_with_pending_final_action(tmp_path)
 
@@ -265,3 +338,50 @@ def _create_spine_with_pending_final_action(tmp_path: Path):
 
     hold = FinalActionGateStore(tmp_path / "final_actions.json").list_actions()[0]
     return intake.message.id, hold
+
+
+class _StaticGithubTruthCollector:
+    def __init__(self, evidence: GitHubServerSideTruthEvidence) -> None:
+        self._evidence = evidence
+
+    def collect(
+        self,
+        *,
+        repo: str,
+        pull_request_number: int,
+        required_checks: list[str],
+    ) -> GitHubServerSideTruthEvidence:
+        assert repo == self._evidence.repo
+        assert pull_request_number == self._evidence.pull_request_number
+        assert required_checks == self._evidence.required_checks
+        return self._evidence
+
+
+def _complete_server_truth() -> GitHubServerSideTruthEvidence:
+    return GitHubServerSideTruthEvidence(
+        repo="iiyazu/Cross-Muse",
+        pull_request_number=42,
+        required_checks=["quality-gates", "contract-smoke-gates"],
+        proof_level="server_side_merge_proof",
+        workflow_run_id=111,
+        check_suite_id=222,
+        check_run_ids=[111, 112],
+        expected_source_app="github-actions",
+        branch_protection_snapshot={"required_status_checks": ["quality-gates"]},
+        review_event_id=789,
+        reviewer_login="reviewer",
+        code_owner_review_verified=True,
+        merge_commit_sha="abc123",
+        merged_at="2026-06-10T15:00:00Z",
+        merge_event_id="merge-event-1",
+    )
+
+
+def _manual_gap_truth() -> GitHubServerSideTruthEvidence:
+    return GitHubServerSideTruthEvidence(
+        repo="iiyazu/Cross-Muse",
+        pull_request_number=42,
+        required_checks=["quality-gates"],
+        proof_level="manual_gap",
+        gap_reason="missing server-side truth",
+    )

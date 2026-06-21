@@ -52,6 +52,11 @@ The current verified chain is partial but real:
     approved without GitHub/server evidence stays `blocked`; approved with an
     explicit evidence ref becomes `accepted`; rejected/failed/cancelled becomes
     `failed`.
+11. A minimal GitHub gate evidence producer now persists read-only
+    GitHub/server truth captures to `github_gate_evidence.json`. Complete
+    `server_side_merge_proof` captures produce a `github_gate_evidence_ref`
+    that lets final-action approval accept the spine; incomplete captures are
+    durable gap refs and keep the spine blocked.
 
 ## GitHub Main Audit Absorption
 
@@ -104,8 +109,8 @@ The audit also sharpened the current risk ledger:
 The deeper audit finding has now been partially absorbed locally: xmuse has a
 minimal durable acceptance spine for intake -> proposal -> approval/verdict ->
 dispatch evidence -> review-plane verdict -> final-action hold/manual GitHub
-gap -> final-action terminal outcome. It does not yet prove a real
-GitHub/server gate evidence producer.
+gap -> GitHub gate evidence producer -> final-action terminal outcome. It does
+not yet prove live authenticated GitHub runtime invocation of that producer.
 
 ## Baseline Evidence
 
@@ -146,6 +151,10 @@ Latest important runtime evidence before this baseline:
   approved without GitHub evidence remains blocked, approved with an explicit
   GitHub evidence ref becomes accepted, and rejected final action becomes
   failed.
+- Focused GitHub gate producer verification now proves:
+  final-action approval with complete server-side merge proof persists
+  `github_gate_evidence.json` and accepts the spine; final-action approval with
+  only a manual gap persists a gap ref and keeps the spine blocked.
 
 ## Forbidden Claims
 
@@ -175,10 +184,11 @@ independent review verdict
 -> accepted / blocked / failed terminal spine status
 ```
 
-The review verdict, final-action hold, manual GitHub gap, and final-action
-resolution outcomes are now wired. The next boundary is narrower: add or reuse
-a real GitHub/server gate evidence producer so `github_gate_evidence_ref` is
-not caller-supplied by hand.
+The review verdict, final-action hold, manual GitHub gap, final-action
+resolution outcomes, and local GitHub gate evidence producer contract are now
+wired. The next boundary is narrower: invoke that producer from the real
+long-running GitHub/final-action path with authenticated read-only server
+access, then record the resulting evidence or gap on the same spine.
 
 When using the existing Loop 2H runtime:
 
@@ -199,6 +209,9 @@ When using the existing Loop 2H runtime:
 
 Focused verification for this snapshot passed:
 
+- `uv run pytest tests/xmuse/test_acceptance_spine.py tests/xmuse/test_github_server_gate_contract.py tests/xmuse/test_github_server_truth_capture.py -q`
+- `uv run pytest tests/xmuse/test_review_plane_controller.py tests/xmuse/test_run_terminal_aggregation.py -q`
+- `uv run ruff check src/xmuse_core/platform/github_gate_evidence.py src/xmuse_core/platform/final_action_gate.py tests/xmuse/test_acceptance_spine.py`
 - `uv run pytest tests/xmuse/test_acceptance_spine.py tests/xmuse/test_review_plane_controller.py tests/xmuse/test_run_terminal_aggregation.py -q`
 - `uv run ruff check src/xmuse_core/chat/acceptance_spine.py src/xmuse_core/platform/final_action_gate.py tests/xmuse/test_acceptance_spine.py`
 - `uv run pytest tests/xmuse/test_acceptance_spine.py tests/xmuse/test_review_plane_controller.py -q`

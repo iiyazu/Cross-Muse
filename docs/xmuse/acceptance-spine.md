@@ -24,6 +24,7 @@ human post_human_message intake
 -> review_plane verdict attaches review_verdict_ref
 -> final-action hold attaches final_action_ref
 -> missing GitHub/server truth attaches github_gate_unverified manual gap
+-> GitHub gate evidence producer captures server-side truth or a durable gap
 -> final-action resolution updates accepted / blocked / failed terminal status
 -> chat API can read spine status
 ```
@@ -56,6 +57,11 @@ The authority is `chat.db` through chat/control-plane stores:
   final action without a GitHub/server evidence ref remains blocked; approved
   final action with an explicit evidence ref becomes accepted; rejected,
   failed, or cancelled final action becomes failed.
+- `GitHubGateEvidenceStore` captures read-only GitHub/server truth evidence in
+  `github_gate_evidence.json`. `FinalActionGateStore.resolve_with_github_gate_evidence`
+  passes a `github_gate_evidence_ref` to the spine only when the captured record
+  is a complete `server_side_merge_proof`; incomplete evidence is persisted as a
+  gap ref on the final action and leaves the spine blocked.
 
 Dashboard, TUI, timeline, provider stdout, fake/sentinel scripts, and copied
 GitHub text are not acceptance authorities.
@@ -79,9 +85,10 @@ The current record tracks:
 - `manual_gaps`;
 - `blocked_reason`.
 
-The current implementation records a GitHub/server gate manual gap. It does not
-claim server-side GitHub truth until a real producer writes
-`github_gate_evidence_ref`.
+The current implementation records a GitHub/server gate manual gap and can now
+produce a durable GitHub gate evidence ref from an injected read-only
+server-truth collector. Manual gaps are persisted in `github_gate_evidence.json`
+but are not accepted evidence refs.
 
 ## Status Semantics
 
@@ -101,26 +108,28 @@ Current implemented statuses:
 
 Terminal final-action rules:
 
-- `approved` / `accepted` / `resolved` without `github_gate_evidence_ref` keeps
-  `status = blocked` and `manual_gaps = ["github_gate_unverified"]`;
-- `approved` / `accepted` / `resolved` with `github_gate_evidence_ref` sets
-  `status = accepted` and clears the GitHub manual gap;
+- `approved` / `accepted` / `resolved` without `github_gate_evidence_ref`, or
+  with only a GitHub gate gap ref, keeps `status = blocked` and
+  `manual_gaps = ["github_gate_unverified"]`;
+- `approved` / `accepted` / `resolved` with a valid `github_gate_evidence_ref`
+  sets `status = accepted` and clears the GitHub manual gap;
 - `rejected` / `failed` / `cancelled` / `canceled` sets `status = failed`.
 
 Other lifecycle statuses are reserved for the broader closure path and must not
 be claimed until their producer writes them.
 
-## Remaining Boundary
+## Current Boundary
 
-The next implementation boundary is not another provider adapter. It is to
-replace caller-supplied GitHub/server evidence refs with a real gate evidence
-producer:
+The local producer/consumer contract is implemented:
 
 ```text
 GitHub/server gate evidence
+-> github_gate_evidence.json
 -> github_gate_evidence_ref
 -> accepted terminal status
 ```
 
-Use focused tests around the changed producer/consumer contract. Do not run the
-full suite by default for this boundary.
+The remaining runtime boundary is to invoke the producer from the real long-run
+GitHub/final-action path with authenticated read-only server access. Until that
+path captures a complete `server_side_merge_proof`, xmuse must keep the spine
+blocked with `github_gate_unverified`.
