@@ -1647,13 +1647,13 @@ async def test_real_ray_codex_app_server_proposal_review_dispatch_completion(
             collaboration = ChatCollaborationStore(db_path)
             run = collaboration.create_request(
                 conversation_id=conversation_id,
-                goal="Dispatch a bounded real-provider P2 lane after proposal review.",
+                goal="Create one bounded P4 lane proposal before dispatch.",
                 initiator="human",
                 targets=["execute"],
                 callback_target="architect",
-                question="Confirm this one-lane P2 dispatch is executable.",
-                context_refs=["test:p2-real-provider-proposal-review-dispatch"],
-                idempotency_key="p2-real-provider-proposal-review-dispatch",
+                question="Confirm this one-lane P4 proposal is executable.",
+                context_refs=["test:p4-real-provider-proposal-review-dispatch"],
+                idempotency_key="p4-real-provider-proposal-review-dispatch",
                 timeout_s=480,
             )
             run = collaboration.record_response(
@@ -1663,9 +1663,9 @@ async def test_real_ray_codex_app_server_proposal_review_dispatch_completion(
                     {
                         "type": "execute_feasibility_verdict",
                         "status": "executable",
-                        "summary": "The P2 lane is bounded to proposal review dispatch evidence.",
+                        "summary": "The P4 lane is bounded to proposal writeback evidence.",
                         "evidence_refs": [
-                            "test:p2-real-provider-proposal-review-dispatch"
+                            "test:p4-real-provider-proposal-review-dispatch"
                         ],
                     }
                 ),
@@ -1681,33 +1681,49 @@ async def test_real_ray_codex_app_server_proposal_review_dispatch_completion(
                     "content": (
                         "@architect Use MCP tool chat_emit_proposal now. "
                         "Do not use chat_post_message for this proposal turn.\n"
-                        "client_request_id: p2-real-provider-proposal\n"
-                        "summary: P4 final-action blocked probe\n"
-                        "lanes: [{\"feature_id\":\"p2-real-provider-dispatch-slice\","
-                        "\"prompt\":\"Probe final-action blocked path after dispatch.\","
+                        "client_request_id: p4-real-provider-proposal\n"
+                        "summary: P4 proposal review dispatch probe\n"
+                        "lanes: [{\"feature_id\":\"p4-real-provider-dispatch-slice\","
+                        "\"prompt\":\"Probe one durable proposal before dispatch.\","
                         "\"depends_on\":[],"
                         "\"capabilities\":[\"code\",\"test\"]}]\n"
                         f"references: [\"collaboration:{run.run_id}\"]"
                     ),
-                    "client_request_id": "p2-real-provider-human",
+                    "client_request_id": "p4-real-provider-human",
                 },
             )
             request.raise_for_status()
             request_payload = request.json()
             inbox_item_id = request_payload["inbox_items"][0]["id"]
 
-            proposals = await _wait_for_proposal_count(
+            proposal_or_trace = await _wait_for_proposal_or_terminal_trace(
                 db_path,
                 conversation_id,
-                1,
+                inbox_item_id,
                 attempts=1800,
             )
+            if proposal_or_trace["kind"] != "proposal":
+                report = {
+                    "conversation_id": conversation_id,
+                    "architect_id": architect_id,
+                    "inbox_item_id": inbox_item_id,
+                    "result": _classify_first_proposal_probe(proposal_or_trace),
+                }
+                print(
+                    "XMUSE_REAL_P4_FULL_PROPOSAL_GATE_REPORT "
+                    + json.dumps(report, sort_keys=True)
+                )
+                raise AssertionError(
+                    "expected complete P4 proposal turn to persist a proposal"
+                )
+            proposals = ChatStore(db_path).list_proposals(conversation_id)
+            assert proposals
             proposal = proposals[0]
             assert proposal.proposal_type == "lane_graph"
             assert proposal.references == [f"collaboration:{run.run_id}"]
             proposal_payload = json.loads(proposal.content)
             assert proposal_payload["lanes"][0]["feature_id"] == (
-                "p2-real-provider-dispatch-slice"
+                "p4-real-provider-dispatch-slice"
             )
             await _wait_for_read_inbox_count(
                 db_path,
@@ -1757,7 +1773,7 @@ async def test_real_ray_codex_app_server_proposal_review_dispatch_completion(
                         "conversation_id": conversation_id,
                         "participant_id": review_id,
                         "god_session_id": review_session.god_session_id,
-                        "client_request_id": "p2-real-provider-review",
+                        "client_request_id": "p4-real-provider-review",
                         "content": (
                             "Review verdict: dispatch allowed. The proposal is backed "
                             "by executable collaboration evidence."
@@ -1774,7 +1790,7 @@ async def test_real_ray_codex_app_server_proposal_review_dispatch_completion(
                 json={
                     "approved_by": ["human-1"],
                     "approval_mode": "manual",
-                    "goal_summary": "Approve P2 real provider dispatch slice",
+                    "goal_summary": "Approve P4 real provider dispatch slice",
                 },
             )
             approved.raise_for_status()
@@ -1835,12 +1851,12 @@ async def test_real_ray_codex_app_server_proposal_review_dispatch_completion(
 
             spine_store = AcceptanceSpineStore(db_path)
             spine = spine_store.list_by_conversation(conversation_id)[0]
-            assert spine.intake_message_id == request_payload["message"]["id"]
+            assert spine.intake_message_id == request_payload["id"]
             assert spine.proposal_id == proposal.id
             assert spine.dispatch_item_id == dispatched.entry_id
             assert dispatched.dispatch_evidence in spine.execution_evidence_refs
 
-            review_verdict_ref = "review_plane.json#verdict=real-p3-dispatch-completion"
+            review_verdict_ref = "review_plane.json#verdict=real-p4-dispatch-completion"
             attached_review = spine_store.attach_review_verdict_for_resolution(
                 resolution_id=approved.json()["id"],
                 review_verdict_ref=review_verdict_ref,
@@ -1849,8 +1865,8 @@ async def test_real_ray_codex_app_server_proposal_review_dispatch_completion(
             final_actions_path = tmp_path / "final_actions.json"
             final_action_store = FinalActionGateStore(final_actions_path)
             hold = final_action_store.create_hold(
-                lane_id="p2-real-provider-dispatch-slice",
-                verdict_id="real-p3-dispatch-completion",
+                lane_id="p4-real-provider-dispatch-slice",
+                verdict_id="real-p4-dispatch-completion",
                 action="merge",
                 target_status="accepted",
                 summary="Real dispatch completion requires GitHub gate evidence.",
@@ -1905,7 +1921,7 @@ async def test_real_ray_codex_app_server_proposal_review_dispatch_completion(
                 "github_gate_gap_ref": resolved_hold.github_gate_gap_ref,
             }
             print(
-                "XMUSE_REAL_P3_DISPATCH_COMPLETION_REPORT "
+                "XMUSE_REAL_P4_DISPATCH_COMPLETION_REPORT "
                 + json.dumps(report, sort_keys=True)
             )
     finally:
