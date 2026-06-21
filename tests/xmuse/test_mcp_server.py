@@ -378,8 +378,13 @@ def test_peer_chat_mcp_structured_execution_proposal_approval_enqueues_dispatch(
         conversation_id=conversation_id,
         participant_id=participants["execute"]["participant_id"],
     )
+    review_session = registry.find_by_conversation_participant(
+        conversation_id=conversation_id,
+        participant_id=participants["review"]["participant_id"],
+    )
     assert architect_session is not None
     assert execute_session is not None
+    assert review_session is not None
 
     run = mcp_chat_call(
         mcp_client,
@@ -441,6 +446,34 @@ def test_peer_chat_mcp_structured_execution_proposal_approval_enqueues_dispatch(
             "references": [f"collaboration:{run_id}"],
         },
     )["proposal"]
+    review_items = [
+        item
+        for item in ChatInboxStore(xmuse_root / "chat.db").list_by_conversation(
+            conversation_id,
+            include_terminal=True,
+        )
+        if item.item_type == "review_trigger"
+    ]
+    assert len(review_items) == 1
+
+    review_message = mcp_chat_call(
+        mcp_client,
+        "chat_post_message",
+        {
+            "conversation_id": conversation_id,
+            "participant_id": participants["review"]["participant_id"],
+            "god_session_id": review_session.god_session_id,
+            "client_request_id": "review-execution-closure",
+            "content": (
+                "Review verdict: executable. Dispatch may proceed with the "
+                "collaboration feasibility evidence."
+            ),
+            "reply_to_inbox_item_id": review_items[0].id,
+        },
+    )["message"]
+    review_item = ChatInboxStore(xmuse_root / "chat.db").get(review_items[0].id)
+    assert review_item.status == "read"
+    assert review_item.responded_message_id == review_message["id"]
 
     from xmuse.chat_api import create_app as create_chat_app
     from xmuse_core.chat.dispatch_queue import ChatDispatchQueueStore
