@@ -195,14 +195,27 @@ failed before proposal persistence. The failed full-P4 trace now contains
 MCP tool call. Evidence:
 `docs/xmuse/real-provider-soak-evidence-2026-06-21.md#p4-first-proposal-probe`.
 
+P4 tool-choice stability follow-up: one complete real Ray/Codex app-server P4
+run reached durable proposal writeback, manual review approval, dispatch MCP
+writeback, AcceptanceSpine linkage, and a final-action hold with
+`blocked/github_gate_unverified`. A later rerun still reached proposal/review
+approval but exposed an execute dispatch acknowledgement flake:
+`mcp_tools_ready` and streamed text were observed, but no `chat_post_message`
+tool trace, so the dispatch queue failed with `peer_no_inbox_side_effect`.
+The dispatch prompt now explicitly forbids claiming MCP writeback tools are
+unavailable and requires both acknowledgement and failure acknowledgement to use
+`chat_post_message`; the targeted rerun passed after that hardening. Evidence:
+`docs/xmuse/real-provider-soak-evidence-2026-06-21.md#p4-tool-choice-stability-and-final-action-gate`.
+
 Tasks:
 
-- stabilize the complete P4 proposal turn from `mcp_tools_ready` to
-  `chat_emit_proposal`; the blocker is model/tool selection after MCP readiness,
-  not final-action/GitHub gate logic;
-- rerun the real provider proposal/review/dispatch completion path through the
-  spine binding and final-action/GitHub gate blocked assertion only after the
-  first proposal writeback is stable again;
+- preserve the complete P4 real-provider gate as current RC evidence:
+  proposal -> review -> dispatch -> final-action hold ->
+  `blocked/github_gate_unverified`;
+- use further reruns only to build soak confidence or verify a concrete
+  production-closure change, not as blind flake hunting;
+- add or prove a producer-owned `server_side_merge_proof` path before raising
+  the claim from blocked RC evidence to accepted production closure;
 - run one bounded long-running demand through the acceptance-gated path;
 - record the runtime root, command, PR or no-PR outcome, final-action record,
   GitHub gate evidence record, and resulting spine status;
