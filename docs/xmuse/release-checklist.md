@@ -1,79 +1,92 @@
 # xmuse Release Checklist
 
-Date: 2026-06-04
+Updated: 2026-06-21
 
-Scope: Post-PathA release candidate packaging. This checklist documents the gates and
-boundaries for making xmuse understandable, installable, and demo-runnable by a new
-developer. It does not add runtime semantics, broaden CI, or archive legacy code.
+## Release Decision
 
-## Default CI Gates
+Current decision: do not cut a full production release yet.
 
-Default CI runs the scoped V10 gates:
+Current claim level:
 
-```bash
-uv sync --frozen --all-groups
-uv run ruff check \
-  src/xmuse_core/providers/models.py \
-  src/xmuse_core/providers/registry.py \
-  src/xmuse_core/platform/provider_read_contracts.py \
-  tests/xmuse/test_provider_read_contracts_module.py \
-  tests/xmuse/test_quality_gates_phase3.py
-uv run pytest -q \
-  tests/xmuse/test_package_boundaries.py \
-  tests/xmuse/test_split_export_contract.py::test_project_pyproject_has_no_local_memoryos_source_or_dependency \
-  tests/xmuse/test_provider_models.py \
-  tests/xmuse/test_provider_policy.py \
-  tests/xmuse/test_provider_support_level.py \
-  tests/xmuse/test_provider_read_contracts_module.py \
-  tests/xmuse/test_quality_gates_phase3.py \
-  tests/xmuse/test_platform_runner.py::test_health_once_handles_missing_lane_projection \
-  tests/xmuse/test_full_chain_real_run.py::test_real_runtime_restart_resume_smoke_with_fake_app_server
-uv run mypy \
-  src/xmuse_core/providers/models.py \
-  src/xmuse_core/providers/registry.py \
-  src/xmuse_core/platform/provider_read_contracts.py
+```text
+xmuse production-closure short path accepted
 ```
 
-Release packaging adds a local contract check:
+This means `main` has durable GOD groupchat plus a minimal
+AcceptanceSpine/GoalRun closure path, and the short
+`xmuse-platform-runner --goal --acceptance-gate --github-live-capture` path can
+end as `accepted` only through producer-owned live GitHub server-side evidence.
 
-```bash
-uv run pytest -q tests/xmuse/test_release_candidate_packaging.py
-uv run python scripts/demo_fake_groupchat.py
-```
+It does not mean full release-ready.
 
-## Manual Real Runtime Gate
+## Claimable Now
 
-The real Ray/Codex/MCP gate is manual and must not be replaced by fake demo success:
+- Durable GOD groupchat remains the control plane for human intake, peer/GOD
+  deliberation, scheduler dispatch, and evidence writeback.
+- Minimal AcceptanceSpine/GoalRun records durable intake, proposal, dispatch,
+  review, final action, GitHub gate evidence, and terminal
+  `accepted` / `blocked` / `failed` status.
+- `xmuse-platform-runner --goal --acceptance-gate` produces a blocked terminal
+  result when GitHub server-side truth is missing.
+- `xmuse-platform-runner --goal --acceptance-gate --github-live-capture` can
+  produce an accepted terminal result when the producer captures a complete
+  `server_side_merge_proof` for the same final action.
+- GitHub required checks are known through authenticated read-only server
+  evidence. PR review enforcement is absent on `main`, so xmuse uses verified
+  internal review truth instead of pretending GitHub requires reviews.
 
-```bash
-export XMUSE_PEER_GOD_BACKEND=ray
-export XMUSE_EXECUTE_GOD_BACKEND=ray
-export XMUSE_REVIEW_GOD_BACKEND=ray
-export XMUSE_RAY_GOD_TRANSPORT=app-server
-export XMUSE_RAY_GOD_EFFORT=low
-export XMUSE_RAY_GOD_MCP=1
-export XMUSE_CHAT_API_URL=http://127.0.0.1:8201
+## Forbidden Claims
 
-uv run pytest -q tests/xmuse/test_full_chain_real_run.py::test_real_ray_codex_app_server_mcp_writeback_soak_restart_resume
-```
+Do not claim:
 
-## Provider Support Levels
+- full production release ready;
+- multi-hour real-provider/Ray/Codex soak complete;
+- long-running GOD groupchat stability across real provider sessions;
+- GitHub PR/CodeOwner review enforcement is enabled on `main`;
+- fake demos, stdout, dashboard, TUI, or copied GitHub text are acceptance
+  truth;
+- `uv run mypy xmuse/platform_runner.py` is clean;
+- a formal versioned release has been cut.
 
-| Provider | Level | Release stance |
-| --- | --- | --- |
-| Codex = PRIMARY | Production groupchat GOD provider | Required for real Ray/Codex/MCP writeback proof. |
-| OpenCode = SECONDARY | Bounded worker / bounded deliberation only | Requires `DEEPSEEK_API_KEY`; no persistent GOD session or MCP writeback; deliberation may only emit propose/ask/challenge and cannot write state. |
-| Claude Code = launcher only | Not a provider adapter | Not selectable through provider policy. |
-| Fake = TEST ONLY | Demo and CI smoke only | Useful for onboarding; not production evidence. |
+## Durable Evidence
 
-## Known Limitations
+- RC baseline:
+  `docs/xmuse/rc-closure-baseline-2026-06-21.md`
+- GitHub server-side required-check evidence:
+  `docs/xmuse/github-server-side-gate-live-evidence-2026-06-21.md`
+- P2 blocked path evidence:
+  `docs/xmuse/acceptance-gated-runner-evidence-2026-06-21.md`
+- P3 accepted live path evidence:
+  `docs/xmuse/acceptance-gated-live-capture-evidence-2026-06-21.md`
+- P3 runtime root:
+  `.goal-runs/2026-06-21/stage3-live-pr155-accepted`
+- P3 spine:
+  `chat.db#acceptance_spine=goalrun_3db27db05d3a40af821632e075e880e6`
+- P3 final action:
+  `final_actions.json#hold=final-80798c437229`
+- P3 GitHub gate evidence:
+  `github_gate_evidence.json#evidence=ghgate_de02b6e176e449b687be296eb7a230ec`
+- P3 bound PR/head/merge:
+  PR `155`, reviewed head `1798e0a31cd1a80163a5e70287e8b0d1684e0aee`,
+  merge commit `4fd40a735e62be255e787ce93bdc3d5653d0255e`
 
-- Chat API and MCP have no auth layer.
-- Real Ray/Codex/MCP readiness is manual and environment-dependent.
-- Fake groupchat demo proves local scheduler/store semantics only.
-- Full-repo ruff and broad mypy remain outside default CI due historical unrelated debt.
-- TUI and dashboard are inspection surfaces, not production gate evidence.
-- Legacy master loop, Hermes, and historical shell scripts remain present but are not current
-  groupchat mainline.
-- Schema migrations, MCP RBAC, cleanup daemon/process killing, and legacy archive/delete work
-  are not part of this release packaging goal.
+## Required Checks And Gate State
+
+- Branch protection for `main` requires the repository's configured checks.
+- Live GitHub evidence confirms required checks can be read from server-side
+  APIs, not only from copied UI text.
+- `required_pull_request_reviews = null`; GitHub is not the source of review
+  enforcement for this repository state.
+- Acceptance requires producer-owned `server_side_merge_proof`. Any missing,
+  arbitrary, stale, mismatched, or unverifiable GitHub ref must leave the spine
+  `blocked/github_gate_unverified`.
+
+## Full Release Blockers
+
+- No multi-hour real-provider/Ray/Codex soak has been accepted.
+- Release packaging/versioning has not been cut from the current claim level.
+- `uv run mypy xmuse/platform_runner.py` has existing type debt and is not a
+  clean release gate.
+- Chat API and MCP still need production auth/RBAC before external deployment.
+- Dashboard and TUI are inspection surfaces only; they are not acceptance
+  authority or release evidence.

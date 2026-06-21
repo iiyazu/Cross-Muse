@@ -75,5 +75,8 @@ this branch.
 ## Boundary
 
 This closes the minimal P2 command path for a blocked run. It does not claim
-production readiness or an accepted demand. A future accepted run still requires
-producer-owned `server_side_merge_proof` for the same final action.
+production readiness or an accepted demand. It remains the negative proof that
+manual approval, copied GitHub text, and stdout summaries cannot accept a spine
+without producer-backed `server_side_merge_proof`. The paired accepted short
+path is recorded in
+`docs/xmuse/acceptance-gated-live-capture-evidence-2026-06-21.md`.

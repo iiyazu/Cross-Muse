@@ -4,7 +4,9 @@ Updated: 2026-06-21
 
 These tasks start from the RC baseline in
 `docs/xmuse/rc-closure-baseline-2026-06-21.md`. They define what remains before
-xmuse can claim production-grade closure.
+xmuse can claim production-grade closure. As of 2026-06-21, P0-P3 establish a
+short-run production-closure path with live GitHub accepted evidence. They do
+not establish full release readiness or a multi-hour provider soak.
 
 ## P0 - Close Live GitHub Server Gate Evidence
 
@@ -38,6 +40,12 @@ Acceptance:
 
 Goal: no real runtime path can mark a demand accepted without producer-owned
 GitHub gate evidence.
+
+Status: closed for the short acceptance-gated runtime on 2026-06-21. Final
+action approval without producer-owned `server_side_merge_proof` remains
+blocked, and the opt-in live capture path accepts only through
+`resolve_with_github_gate_evidence()` and authority-verified
+`github_gate_evidence.json` records.
 
 Tasks:
 
@@ -117,13 +125,23 @@ Acceptance:
 
 Goal: distinguish a production closure claim from a release candidate claim.
 
+Status: release decision recorded on 2026-06-21. xmuse is not full
+release-ready. The current claim is `production-closure short path accepted`:
+durable GOD groupchat plus minimal AcceptanceSpine/GoalRun plus opt-in live
+GitHub server-side gate accepted path. Full release remains blocked on
+multi-hour real-provider soak evidence, release packaging/versioning, and known
+type debt including `uv run mypy xmuse/platform_runner.py`.
+
 Tasks:
 
 - update `docs/xmuse/release-checklist.md` with AcceptanceSpine/GitHub gate
-  requirements;
-- decide whether to cut a release or keep the project at RC;
-- ensure README and docs do not overstate production readiness;
-- record release evidence or the reason release remains blocked.
+  requirements; done on 2026-06-21;
+- decide whether to cut a release or keep the project at RC; decision: do not
+  cut a full release yet;
+- ensure README and docs do not overstate production readiness; current wording
+  uses the short-path claim level;
+- record release evidence or the reason release remains blocked; current
+  blockers are recorded in `docs/xmuse/release-checklist.md`.
 
 Acceptance:
 

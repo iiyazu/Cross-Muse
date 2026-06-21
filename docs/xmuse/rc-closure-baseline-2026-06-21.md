@@ -8,7 +8,7 @@ This document freezes the staged closure claim for `main` at:
 
 ## Closure Claim
 
-xmuse can now be staged as:
+This baseline originally staged xmuse as:
 
 ```text
 xmuse RC: durable GOD groupchat + AcceptanceSpine closure skeleton
@@ -17,6 +17,18 @@ xmuse RC: durable GOD groupchat + AcceptanceSpine closure skeleton
 This means the project has crossed from a durable groupchat runtime into a
 minimal GoalRun/AcceptanceSpine closure contract. It does not mean production
 GitHub-gated delivery is complete.
+
+After P0-P3 on 2026-06-21, the stronger current claim is recorded in
+`docs/xmuse/release-checklist.md`:
+
+```text
+xmuse production-closure short path accepted
+```
+
+That stronger claim is limited to a short `--goal --acceptance-gate` path with
+opt-in live GitHub server-side capture. It does not supersede the remaining
+full-release blockers: multi-hour real-provider soak, release
+packaging/versioning, and known type debt.
 
 ## Completed RC Facts
 
@@ -43,9 +55,11 @@ GitHub-gated delivery is complete.
 
 Do not claim:
 
-- production GitHub-gated delivery complete;
-- live GitHub branch protection / required-check / CodeOwner enforcement closed;
-- real long-running final-action runtime uniquely invokes the GitHub producer;
+- full production release ready;
+- multi-hour real-provider/Ray/Codex soak complete;
+- live GitHub PR/CodeOwner review enforcement closed when the repository has
+  `required_pull_request_reviews = null`;
+- real long-running final-action runtime has been soaked for many hours;
 - a formal release has been cut;
 - fake demo, stdout, dashboard, TUI, or copied GitHub text is acceptance truth;
 - `accepted` is valid without producer-backed `server_side_merge_proof`.
@@ -63,17 +77,19 @@ real long-run final-action path
 -> accepted / blocked / failed terminal spine state
 ```
 
-Until that path captures complete `server_side_merge_proof`, xmuse must keep
-the spine blocked with `github_gate_unverified`.
+The short opt-in live capture path has captured complete
+`server_side_merge_proof` and can end as `accepted`; runs without that producer
+evidence must still remain blocked with `github_gate_unverified`.
 
 ## Next Cut
 
 The next product cut should not expand providers, TUI, or dashboard first. It
 should close the live GitHub gate and real final-action invocation boundary:
 
-1. Close or explicitly re-block issue #37 with current authenticated GitHub
-   evidence.
-2. Ensure every real final-action runtime path calls
-   `resolve_with_github_gate_evidence()` or an equivalent producer-owned path.
-3. Expose one operator-facing acceptance-gated runtime contract that returns
-   only durable `accepted`, `blocked`, or `failed` terminal truth.
+1. Run a bounded multi-hour real-provider soak through the same
+   acceptance-gated path and keep the terminal state durable.
+2. Decide release packaging/versioning only after the soak evidence is accepted
+   or explicitly blocked.
+3. Pay down known release blockers such as the existing
+   `uv run mypy xmuse/platform_runner.py` type debt before claiming a full
+   production release.
