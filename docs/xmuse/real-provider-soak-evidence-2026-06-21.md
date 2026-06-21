@@ -753,3 +753,94 @@ is diagnostic even if it fails:
   streaming text instead of using durable writeback;
 - if it contains `chat_emit_proposal`, P4 can resume from the final-action gate
   assertion path.
+
+## P4 First-Proposal Probe
+
+Status: `first_proposal_probe_accepted/full_p4_still_blocked`.
+
+The small real-provider first-proposal probe succeeded: a real Ray/Codex
+app-server architect persisted a durable `lane_graph` proposal through
+`chat_emit_proposal`.
+
+Command:
+
+```bash
+timeout 420 uv run pytest \
+  tests/xmuse/test_full_chain_real_run.py::test_real_ray_codex_app_server_first_proposal_probe \
+  -q -s \
+  --basetemp=.goal-runs/2026-06-21/p4-first-proposal-probe-pytest
+```
+
+Observed result:
+
+```text
+1 passed, 4 warnings in 197.48s
+```
+
+Report:
+
+```json
+{
+  "architect_id": "part_6f23ca6b80a04fd49de5160388bd564a",
+  "conversation_id": "conv_7c49a999ce2c489db6ac2c1f97246ce3",
+  "inbox_item_id": "inbox_74df691aa5b3428b91ff4ffda0c27116",
+  "result": {
+    "classification": "proposal_persisted",
+    "proposal_id": "prop_c776c4dfe72c4cdc9f0db7893856f0f4"
+  }
+}
+```
+
+Runtime root:
+
+```text
+.goal-runs/2026-06-21/p4-first-proposal-probe-pytest/test_real_ray_codex_app_server0
+```
+
+After the successful probe, the full P4 final-action blocked path was attempted
+twice. Both attempts still failed before proposal persistence. The useful new
+fact from #166 is that the failure is now classified as app-server MCP-ready
+but no tool call:
+
+```text
+observed stages:
+codex_app_server_turn_start
+first_visible
+inbox_claim
+mcp_tools_ready
+provider_session_started
+ray_actor_delivery_start
+stream_started
+trace_persisted
+```
+
+No `chat_emit_proposal`, no MCP tool trace, no stream delta, and no proposal row
+were recorded. The first failed full-P4 attempt used:
+
+```text
+.goal-runs/2026-06-21/p4-final-gate-after-probe-pytest/test_real_ray_codex_app_server0
+```
+
+and produced failed spine:
+
+```text
+chat.db#acceptance_spine=goalrun_aa32e1ff06944d778977c8fc4330f19b
+```
+
+The second failed full-P4 attempt used:
+
+```text
+.goal-runs/2026-06-21/p4-final-gate-after-probe-pytest-2/test_real_ray_codex_app_server0
+```
+
+and produced failed spine:
+
+```text
+chat.db#acceptance_spine=goalrun_3fe82c41ae4c40ee91f2a96a3e0cc2fb
+```
+
+This narrows the next blocker: first-proposal writeback can succeed in a small
+probe, but the complete P4 setup remains unstable at model/tool selection after
+MCP readiness. P4 remains blocked until the full path consistently reaches
+`chat_emit_proposal`, then continues through dispatch completion and the
+final-action GitHub manual-gap gate.

@@ -188,11 +188,18 @@ is aborted. The next failed real proposal turn should show whether xmuse saw
 `mcp_tools_ready`, turn start, stream delta, or MCP tool-call events. Evidence:
 `docs/xmuse/real-provider-soak-evidence-2026-06-21.md#p4-app-server-first-event-diagnostics`.
 
+P4 first-proposal probe follow-up: a small real-provider probe reached durable
+`chat_emit_proposal` and persisted a proposal, but the complete P4 path still
+failed before proposal persistence. The failed full-P4 trace now contains
+`mcp_tools_ready` and `codex_app_server_turn_start`, but no stream delta and no
+MCP tool call. Evidence:
+`docs/xmuse/real-provider-soak-evidence-2026-06-21.md#p4-first-proposal-probe`.
+
 Tasks:
 
-- run a small real-provider first-proposal probe and classify the failed or
-  successful trace by app-server partial stages before rerunning the full P4
-  path;
+- stabilize the complete P4 proposal turn from `mcp_tools_ready` to
+  `chat_emit_proposal`; the blocker is model/tool selection after MCP readiness,
+  not final-action/GitHub gate logic;
 - rerun the real provider proposal/review/dispatch completion path through the
   spine binding and final-action/GitHub gate blocked assertion only after the
   first proposal writeback is stable again;

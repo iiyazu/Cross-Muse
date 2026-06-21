@@ -312,6 +312,61 @@ async def _wait_for_proposal_count(
     raise AssertionError(f"expected {expected} proposals")
 
 
+async def _wait_for_proposal_or_terminal_trace(
+    db_path: Path,
+    conversation_id: str,
+    inbox_item_id: str,
+    *,
+    attempts: int = 1800,
+) -> dict[str, object]:
+    last_trace: dict[str, object] | None = None
+    for _ in range(attempts):
+        proposals = ChatStore(db_path).list_proposals(conversation_id)
+        if proposals:
+            return {"kind": "proposal", "proposal": proposals[0]}
+        for trace in PeerTurnLatencyTraceStore(db_path).list_recent(conversation_id):
+            if trace["inbox_item_id"] != inbox_item_id:
+                continue
+            last_trace = trace
+            if trace["delivery_mode"] in {"failed", "mcp_writeback", "stdout_fallback"}:
+                return {"kind": "trace", "trace": trace}
+        await asyncio.sleep(0.1)
+    if last_trace is not None:
+        return {"kind": "trace", "trace": last_trace}
+    raise AssertionError("expected proposal or terminal trace")
+
+
+def _classify_first_proposal_probe(result: dict[str, object]) -> dict[str, object]:
+    if result["kind"] == "proposal":
+        proposal = result["proposal"]
+        return {
+            "classification": "proposal_persisted",
+            "proposal_id": getattr(proposal, "id", None),
+        }
+    trace = result["trace"]
+    assert isinstance(trace, dict)
+    raw_stages = trace.get("stage_timings")
+    stages = raw_stages if isinstance(raw_stages, dict) else {}
+    observed = sorted(stages)
+    if "chat_emit_proposal" in stages:
+        classification = "chat_emit_proposal_observed"
+    elif "first_stream_delta" in stages:
+        classification = "streamed_text_without_tool"
+    elif "mcp_tools_ready" in stages:
+        classification = "mcp_ready_without_tool"
+    elif "codex_app_server_turn_start" in stages:
+        classification = "turn_started_without_mcp_ready"
+    else:
+        classification = "no_appserver_event"
+    return {
+        "classification": classification,
+        "delivery_mode": trace.get("delivery_mode"),
+        "degraded_reason": trace.get("degraded_reason"),
+        "trace_id": trace.get("id"),
+        "observed_stages": observed,
+    }
+
+
 async def _wait_for_review_trigger_count(
     db_path: Path,
     conversation_id: str,
@@ -1375,6 +1430,156 @@ async def test_real_ray_codex_app_server_mcp_writeback_restart_resume(
 
 
 @pytest.mark.asyncio
+async def test_real_ray_codex_app_server_first_proposal_probe(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    if shutil.which("codex") is None:
+        pytest.skip("codex CLI is not installed")
+
+    db_path = tmp_path / "chat.db"
+    lanes_path = tmp_path / "feature_lanes.json"
+    lanes_path.write_text(json.dumps({"lanes": []}), encoding="utf-8")
+    chat_port = _free_port()
+    mcp_port = _free_port()
+
+    monkeypatch.setenv("XMUSE_PEER_GOD_BACKEND", "ray")
+    monkeypatch.setenv("XMUSE_RAY_GOD_TRANSPORT", "app-server")
+    monkeypatch.setenv("XMUSE_RAY_GOD_MCP", "1")
+    monkeypatch.setenv("XMUSE_RAY_GOD_EFFORT", "low")
+    monkeypatch.delenv("XMUSE_DEGRADED_LOCAL_GOD_MODE", raising=False)
+
+    chat_server, chat_task = await _serve_app(create_chat_app(tmp_path), port=chat_port)
+    mcp_server, mcp_task = await _serve_app(create_mcp_app(tmp_path), port=mcp_port)
+
+    async def start_runner() -> asyncio.Task:
+        return asyncio.create_task(
+            platform_runner.run(
+                lanes_path=lanes_path,
+                xmuse_root=tmp_path,
+                mcp_port=mcp_port,
+                max_hours=1,
+                max_concurrent=1,
+                peer_chat_enabled=True,
+                peer_chat_dispatch_response_wait_s=300.0,
+            )
+        )
+
+    async def stop_runner(task: asyncio.Task) -> None:
+        task.cancel()
+        try:
+            await asyncio.wait_for(task, timeout=10)
+        except (TimeoutError, asyncio.CancelledError):
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+
+    try:
+        runner_task = await start_runner()
+        async with httpx.AsyncClient(
+            base_url=f"http://127.0.0.1:{chat_port}",
+            timeout=30.0,
+        ) as client:
+            created = await client.post(
+                "/api/chat/conversations",
+                json={"title": "Real Codex first proposal probe"},
+            )
+            created.raise_for_status()
+            conversation = created.json()
+            conversation_id = conversation["id"]
+            participants = {
+                participant["role"]: participant
+                for participant in conversation["participants"]
+            }
+            architect_id = participants["architect"]["participant_id"]
+
+            collaboration = ChatCollaborationStore(db_path)
+            run = collaboration.create_request(
+                conversation_id=conversation_id,
+                goal="Probe a bounded real-provider proposal writeback.",
+                initiator="human",
+                targets=["execute"],
+                callback_target="architect",
+                question="Confirm this one-lane proposal probe is executable.",
+                context_refs=["test:p4-first-proposal-probe"],
+                idempotency_key="p4-first-proposal-probe",
+                timeout_s=480,
+            )
+            run = collaboration.record_response(
+                run.run_id,
+                target="execute",
+                content=json.dumps(
+                    {
+                        "type": "execute_feasibility_verdict",
+                        "status": "executable",
+                        "summary": "The P4 probe is bounded to proposal writeback.",
+                        "evidence_refs": ["test:p4-first-proposal-probe"],
+                    }
+                ),
+                response_status="received",
+            )
+            assert run.status.value == "done"
+
+            request = await client.post(
+                f"/api/chat/conversations/{conversation_id}/messages",
+                json={
+                    "author": "human-1",
+                    "role": "human",
+                    "content": (
+                        "@architect Use MCP tool chat_emit_proposal now. "
+                        "Do not use chat_post_message for this proposal turn.\n"
+                        "client_request_id: p4-first-proposal-probe\n"
+                        "summary: P4 first proposal probe\n"
+                        "lanes: [{\"feature_id\":\"p4-first-proposal-probe\","
+                        "\"prompt\":\"Probe first proposal durable writeback.\","
+                        "\"depends_on\":[],\"capabilities\":[\"code\",\"test\"]}]\n"
+                        f"references: [\"collaboration:{run.run_id}\"]"
+                    ),
+                    "client_request_id": "p4-first-proposal-human",
+                },
+            )
+            request.raise_for_status()
+            request_payload = request.json()
+            inbox_item_id = request_payload["inbox_items"][0]["id"]
+
+            result = await _wait_for_proposal_or_terminal_trace(
+                db_path,
+                conversation_id,
+                inbox_item_id,
+                attempts=1800,
+            )
+            report = {
+                "conversation_id": conversation_id,
+                "architect_id": architect_id,
+                "inbox_item_id": inbox_item_id,
+                "result": _classify_first_proposal_probe(result),
+            }
+            if result["kind"] == "proposal":
+                proposal = result["proposal"]
+                assert proposal.proposal_type == "lane_graph"
+                assert proposal.references == [f"collaboration:{run.run_id}"]
+            else:
+                trace = result["trace"]
+                assert isinstance(trace, dict)
+                assert trace.get("delivery_mode") == "failed"
+                assert trace.get("degraded_reason") in {
+                    "provider_no_mcp_writeback_before_deadline",
+                    "provider_turn_cancelled_before_mcp_writeback",
+                    "peer_no_inbox_side_effect",
+                    "peer_no_inbox_writeback_message",
+                }
+            print(
+                "XMUSE_REAL_P4_FIRST_PROPOSAL_PROBE_REPORT "
+                + json.dumps(report, sort_keys=True)
+            )
+    finally:
+        if "runner_task" in locals() and not runner_task.done():
+            await stop_runner(runner_task)
+        await _stop_server(chat_server, chat_task)
+        await _stop_server(mcp_server, mcp_task)
+
+
+@pytest.mark.asyncio
 async def test_real_ray_codex_app_server_proposal_review_dispatch_completion(
     tmp_path: Path,
     monkeypatch,
@@ -1477,10 +1682,10 @@ async def test_real_ray_codex_app_server_proposal_review_dispatch_completion(
                         "@architect Use MCP tool chat_emit_proposal now. "
                         "Do not use chat_post_message for this proposal turn.\n"
                         "client_request_id: p2-real-provider-proposal\n"
-                        "summary: P2 real provider dispatch slice\n"
+                        "summary: P4 final-action blocked probe\n"
                         "lanes: [{\"feature_id\":\"p2-real-provider-dispatch-slice\","
-                        "\"prompt\":\"Verify real provider proposal review dispatch "
-                        "queue evidence.\",\"depends_on\":[],"
+                        "\"prompt\":\"Probe final-action blocked path after dispatch.\","
+                        "\"depends_on\":[],"
                         "\"capabilities\":[\"code\",\"test\"]}]\n"
                         f"references: [\"collaboration:{run.run_id}\"]"
                     ),
