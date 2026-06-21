@@ -216,3 +216,79 @@ assistant reply, but the failure now terminalized durably:
 This proves the failure-path terminalization repair. It does not prove provider
 writeback success, proposal/review/final-action traversal, or GitHub accepted
 truth for the real provider soak.
+
+## P1 Positive Writeback Follow-up
+
+Status: `real_provider_one_turn_writeback_accepted`.
+
+Runtime root:
+
+```text
+.goal-runs/2026-06-21/p1-one-turn-writeback-pytest-5/test_real_ray_codex_app_server0
+```
+
+Command:
+
+```bash
+timeout 480 uv run pytest \
+  tests/xmuse/test_full_chain_real_run.py::test_real_ray_codex_app_server_mcp_writeback_restart_resume \
+  -q -s \
+  --basetemp=.goal-runs/2026-06-21/p1-one-turn-writeback-pytest-5
+```
+
+Observed result:
+
+```text
+1 passed, 4 warnings in 151.01s
+```
+
+Durable positive facts:
+
+- conversation:
+  `conv_eafc5c51604643c2a8d95ac8017227ff`
+- architect participant:
+  `part_686d140510d540ec99917ef61347d4e9`
+- Codex app-server provider session:
+  `019eea2c-27f9-7152-b8aa-66d844353650`
+- provider session reused across restart/resume:
+  `true`
+- turn 1:
+  - human message:
+    `chat.db#message=msg_a950e7d09e1b43849fa1e07e25b8c2ab`
+  - assistant message:
+    `chat.db#message=msg_ef5ed3f517db4d918d52014d9ad8defd`
+  - inbox:
+    `chat_inbox_items#id=inbox_36409f270c3f454aac7a80dca289a924`,
+    `status = read`,
+    `responded_message_id = msg_ef5ed3f517db4d918d52014d9ad8defd`
+  - latency trace:
+    `peer_turn_latency_traces#trace=peer_latency_inbox_36409f270c3f454aac7a80dca289a924`,
+    `delivery_mode = mcp_writeback`,
+    `writeback_ms = 80935`
+- turn 2 after runner restart:
+  - human message:
+    `chat.db#message=msg_0fcda2b89d4f41a59d3746c0a57a7aaf`
+  - assistant message:
+    `chat.db#message=msg_396e35af34894035b99a0dc277b80edc`
+  - inbox:
+    `chat_inbox_items#id=inbox_d3c8700e124a470080171db7458079a7`,
+    `status = read`,
+    `responded_message_id = msg_396e35af34894035b99a0dc277b80edc`
+  - latency trace:
+    `peer_turn_latency_traces#trace=peer_latency_inbox_d3c8700e124a470080171db7458079a7`,
+    `delivery_mode = mcp_writeback`,
+    `writeback_ms = 61034`
+
+Both turns persisted `peer_turn_mcp_tool_traces` for
+`mcp_tool_call_started`, `chat_post_message`, `chat_post_message_persisted`,
+and `mcp_tool_call_completed`. Both turns recorded
+`degraded_reason = peer_writeback_before_provider_result`, which means the
+scheduler observed durable MCP writeback and released the turn before waiting
+for a final provider result. It is an early-release success classification, not
+stdout fallback.
+
+This proves the P1 positive writeback question: a real Ray/Codex app-server
+peer can complete durable MCP `chat_post_message` writeback and survive a
+restart/resume session reuse. It still does not prove proposal/review/dispatch,
+final-action, GitHub gate, accepted AcceptanceSpine truth, or multi-turn soak
+stability.

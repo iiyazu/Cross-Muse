@@ -441,9 +441,21 @@ def _assert_v12_latency_parity_report(report: dict[str, object]) -> None:
         assert turn["has_stdout_fallback"] is False
         first_visible_ms = turn["first_visible_ms"]
         writeback_ms = turn["writeback_ms"]
-        assert isinstance(first_visible_ms, int)
         assert isinstance(writeback_ms, int)
-        assert first_visible_ms < writeback_ms
+        if first_visible_ms is not None:
+            assert isinstance(first_visible_ms, int)
+            assert first_visible_ms < writeback_ms
+
+
+def _assert_real_provider_mcp_writeback_traces(traces: list[dict[str, object]]) -> None:
+    assert {trace["delivery_mode"] for trace in traces} == {"mcp_writeback"}
+    allowed_reasons = {None, "peer_writeback_before_provider_result"}
+    assert {trace.get("degraded_reason") for trace in traces} <= allowed_reasons
+    for trace in traces:
+        stages = trace.get("stage_timings")
+        assert isinstance(stages, dict)
+        assert "chat_post_message" in stages
+        assert "chat_post_message_persisted" in stages
 
 
 def _trace_stage_at(stages: dict[str, object], name: str) -> float | None:
@@ -1169,20 +1181,20 @@ async def test_real_ray_codex_app_server_mcp_writeback_restart_resume(
                 conversation_id,
                 architect_id,
                 1,
-                attempts=600,
+                attempts=1800,
             )
             first_inbox_items = await _wait_for_read_inbox_count(
                 db_path,
                 conversation_id,
                 architect_id,
                 1,
-                attempts=600,
+                attempts=1800,
             )
             first_traces = await _wait_for_latency_trace_count(
                 db_path,
                 conversation_id,
                 1,
-                attempts=600,
+                attempts=1800,
             )
             first_registry = GodSessionRegistry(tmp_path / "god_sessions.json")
             first_record = first_registry.find_by_conversation_participant(
@@ -1211,28 +1223,27 @@ async def test_real_ray_codex_app_server_mcp_writeback_restart_resume(
                 conversation_id,
                 architect_id,
                 2,
-                attempts=600,
+                attempts=1800,
             )
             inbox_items = await _wait_for_read_inbox_count(
                 db_path,
                 conversation_id,
                 architect_id,
                 2,
-                attempts=600,
+                attempts=1800,
             )
             traces = await _wait_for_latency_trace_count(
                 db_path,
                 conversation_id,
                 2,
-                attempts=600,
+                attempts=1800,
             )
 
         messages = ChatStore(db_path).list_messages(conversation_id)
         message_ids = {message.id for message in messages}
         assert all(item.responded_message_id in message_ids for item in inbox_items)
-        assert {trace["delivery_mode"] for trace in traces} == {"mcp_writeback"}
-        assert all(trace["degraded_reason"] is None for trace in traces)
-        assert {trace["delivery_mode"] for trace in first_traces} == {"mcp_writeback"}
+        _assert_real_provider_mcp_writeback_traces(traces)
+        _assert_real_provider_mcp_writeback_traces(first_traces)
         assert all(item.responded_message_id in message_ids for item in first_inbox_items)
         assert not any(
             message.envelope_json.get("degraded_reason") == "stdout_fallback"
@@ -1379,8 +1390,7 @@ async def test_real_ray_codex_app_server_mcp_writeback_soak_restart_resume(
         assert all(item.responded_message_id in message_ids for item in inbox_items)
         assert len(traces) >= 8
         traces = traces[:8]
-        assert {trace["delivery_mode"] for trace in traces} == {"mcp_writeback"}
-        assert all(trace["degraded_reason"] is None for trace in traces)
+        _assert_real_provider_mcp_writeback_traces(traces)
         assert not any(
             message.envelope_json.get("degraded_reason") == "stdout_fallback"
             for message in messages

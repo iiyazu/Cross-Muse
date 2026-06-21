@@ -207,6 +207,7 @@ class PeerChatScheduler:
                         scheduler_observed_result_at=None,
                         delivery_mode="mcp_writeback",
                         degraded_reason="peer_writeback_before_provider_result",
+                        transport_latency_stages=transport_latency_stages,
                     )
                     self._inbox.record_nudge_result(
                         item.id,
@@ -238,6 +239,7 @@ class PeerChatScheduler:
                         scheduler_observed_result_at=None,
                         delivery_mode="mcp_writeback",
                         degraded_reason="peer_response_timeout_after_writeback",
+                        transport_latency_stages=transport_latency_stages,
                     )
                     self._inbox.record_nudge_result(
                         item.id,
@@ -299,6 +301,7 @@ class PeerChatScheduler:
                         scheduler_observed_result_at=scheduler_observed_result_at,
                         delivery_mode="mcp_writeback",
                         degraded_reason=_after_writeback_reason(reason),
+                        transport_latency_stages=transport_latency_stages,
                     )
                     self._inbox.record_nudge_result(
                         item.id,

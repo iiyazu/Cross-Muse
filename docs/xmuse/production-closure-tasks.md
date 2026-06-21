@@ -131,10 +131,21 @@ does not prove that the real provider positive path succeeds; it narrows the
 next failure to provider output, MCP transport, chat store persistence, or
 scheduler observation.
 
+Positive writeback follow-up: P1 is now accepted for the bounded one-turn /
+restart-resume path. Evidence:
+`docs/xmuse/real-provider-soak-evidence-2026-06-21.md#p1-positive-writeback-follow-up`.
+The focused real Ray/Codex app-server test produced two durable MCP
+`chat_post_message` replies, read inbox items with `responded_message_id`,
+`mcp_writeback` latency traces, `chat_post_message_persisted` tool stages, and
+provider session reuse across restart/resume. This closes only the first
+positive writeback question. P3 remains blocked until the real provider path
+continues through proposal/review/dispatch, final-action, and GitHub gate
+evidence.
+
 Tasks:
 
-- rerun a one-turn real-provider writeback check and classify the blocker from
-  the new stages before attempting a multi-turn soak;
+- connect the accepted real provider writeback path to proposal, review, and
+  dispatch evidence before attempting a multi-turn soak;
 - run one bounded long-running demand through the acceptance-gated path;
 - record the runtime root, command, PR or no-PR outcome, final-action record,
   GitHub gate evidence record, and resulting spine status;

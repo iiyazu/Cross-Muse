@@ -76,6 +76,12 @@ Do not claim:
   `chat.db#acceptance_spine=goalrun_42cf37320c0443a3a2d0b7ef46fa5c2b`,
   `final_actions.json#hold=final-877f3007706e`,
   `github_gate_evidence.json#evidence=ghgate_5f6231d8efc440d8b92e3942608c8bd8`
+- P1 real provider writeback evidence:
+  `.goal-runs/2026-06-21/p1-one-turn-writeback-pytest-5/test_real_ray_codex_app_server0`,
+  provider session `019eea2c-27f9-7152-b8aa-66d844353650`,
+  traces
+  `peer_latency_inbox_36409f270c3f454aac7a80dca289a924` and
+  `peer_latency_inbox_d3c8700e124a470080171db7458079a7`
 
 ## Required Checks And Gate State
 
@@ -91,10 +97,12 @@ Do not claim:
 ## Full Release Blockers
 
 - No multi-hour real-provider/Ray/Codex soak has been accepted. The 2026-06-21
-  bounded real-provider soak is blocked before the first durable MCP
-  `chat_post_message` reply. Provider response timeout/cancellation failures
-  now terminalize the claimed inbox item and original intake AcceptanceSpine,
-  but the successful bounded soak still has not been rerun.
+  bounded real-provider soak originally blocked before the first durable MCP
+  `chat_post_message` reply. P1 later proved a focused real Ray/Codex
+  restart/resume path can produce durable MCP `chat_post_message` replies and
+  `mcp_writeback` traces, but the provider path has not yet been connected
+  through proposal/review/dispatch, final-action, GitHub gate, or multi-turn
+  soak acceptance.
 - Release packaging/versioning has not been cut from the current claim level.
 - `uv run mypy xmuse/platform_runner.py` has existing type debt and is not a
   clean release gate.
