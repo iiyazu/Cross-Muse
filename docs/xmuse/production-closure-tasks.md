@@ -61,6 +61,12 @@ Acceptance:
 
 Goal: operators have one durable way to run a demand to terminal truth.
 
+Status: minimal blocked-path command implemented on 2026-06-21. Evidence:
+`docs/xmuse/acceptance-gated-runner-evidence-2026-06-21.md`. The command can
+create a durable human intake spine, proposal, dispatch evidence, review
+verdict, final-action hold, and producer-owned GitHub gate evidence. Without
+`server_side_merge_proof`, the terminal result is `blocked/github_gate_unverified`.
+
 Candidate shape:
 
 ```bash

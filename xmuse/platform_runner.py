@@ -23,10 +23,16 @@ from pathlib import Path
 from typing import Any
 
 from xmuse_core.agents.memoryos_client import MemoryOSClient
+from xmuse_core.chat.dispatch_queue import ChatDispatchQueueStore
 from xmuse_core.chat.driver import ChatDriver
+from xmuse_core.chat.peer_service import PeerChatService
+from xmuse_core.chat.store import ChatStore
 from xmuse_core.platform.coordinator_control import CoordinatorControlService
+from xmuse_core.platform.execution.github_ops import GitHubServerSideTruthEvidence
+from xmuse_core.platform.final_action_gate import FinalActionGateStore
 from xmuse_core.platform.model_policy import CodexModelPolicy, resolve_codex_model_policy
 from xmuse_core.platform.orchestrator import PlatformOrchestrator
+from xmuse_core.platform.review_plane import ReviewPlaneController
 from xmuse_core.platform.run_health import (
     DEFAULT_STALE_AFTER_S,
     build_run_health_model,
@@ -39,6 +45,7 @@ from xmuse_core.runtime.paths import default_xmuse_root, resolve_xmuse_root
 from xmuse_core.self_evolution import SelfEvolutionController
 from xmuse_core.self_evolution.watcher import TerminalRunWatcher
 from xmuse_core.structuring.blueprint_execution import BlueprintAutomationService
+from xmuse_core.structuring.models import ReviewDecision, ReviewVerdict
 from xmuse_core.structuring.ready_set import (
     build_graph_ready_set,
     build_ready_set_parity_evidence,
@@ -57,6 +64,229 @@ logger = logging.getLogger(__name__)
 PLANNING_AUTOMATION_WORKER_ID = "platform-runner"
 WRITER_LEASE_TTL_S = 60.0
 WRITER_LEASE_RENEW_INTERVAL_S = WRITER_LEASE_TTL_S / 3
+REQUIRED_GITHUB_CHECKS = [
+    "quality-gates",
+    "contract-smoke-gates",
+    "real-runtime-integration-gate",
+]
+
+
+class _ManualGapGithubGateCollector:
+    def __init__(self, *, reason: str, head_sha: str) -> None:
+        self._reason = reason
+        self._head_sha = head_sha
+
+    def collect(
+        self,
+        *,
+        repo: str,
+        pull_request_number: int,
+        required_checks: list[str],
+    ) -> GitHubServerSideTruthEvidence:
+        return GitHubServerSideTruthEvidence(
+            repo=repo,
+            pull_request_number=pull_request_number,
+            required_checks=required_checks,
+            proof_level="manual_gap",
+            internal_review_artifact="acceptance_gate_runner",
+            internal_reviewer=PLANNING_AUTOMATION_WORKER_ID,
+            internal_reviewed_head_sha=self._head_sha,
+            internal_review_verified=True,
+            gap_reason=self._reason,
+        )
+
+
+def run_acceptance_gated_goal(
+    *,
+    goal: str,
+    xmuse_root: Path,
+    github_repo: str,
+    github_pull_request: int,
+    required_checks: list[str] | None = None,
+    head_sha: str | None = None,
+) -> dict[str, Any]:
+    """Run the smallest durable acceptance-gated goal path.
+
+    This entrypoint is intentionally short-running. It creates the same durable
+    stores used by the chat/control-plane path and resolves the final action
+    through the GitHub gate evidence producer. Without a complete server-side
+    merge proof, the terminal state remains blocked.
+    """
+
+    clean_goal = goal.strip() if isinstance(goal, str) else ""
+    if not clean_goal:
+        raise ValueError("goal is required")
+    if github_pull_request <= 0:
+        raise ValueError("github_pull_request must be positive")
+    clean_repo = github_repo.strip() if isinstance(github_repo, str) else ""
+    if not clean_repo:
+        raise ValueError("github_repo is required")
+    clean_checks = list(required_checks or REQUIRED_GITHUB_CHECKS)
+    if not clean_checks or any(not check.strip() for check in clean_checks):
+        raise ValueError("required_checks must contain non-empty check names")
+    clean_head_sha = (head_sha or _current_git_head_sha(ROOT)).strip()
+    if not clean_head_sha:
+        raise ValueError("head_sha is required")
+
+    xmuse_root.mkdir(parents=True, exist_ok=True)
+    chat_db_path = xmuse_root / "chat.db"
+    lanes_path = xmuse_root / "feature_lanes.json"
+    review_plane_path = xmuse_root / "review_plane.json"
+    final_actions_path = xmuse_root / "final_actions.json"
+    github_gate_evidence_path = xmuse_root / "github_gate_evidence.json"
+
+    peer_service = PeerChatService(chat_db_path)
+    conversation = peer_service.create_conversation(
+        title="Acceptance-gated platform runner goal"
+    )["conversation"]
+    conversation_id = str(conversation["id"])
+    intake = peer_service.post_human_message(
+        conversation_id=conversation_id,
+        author="Human operator",
+        content=clean_goal,
+        client_request_id=f"acceptance-gate-{uuid.uuid4().hex[:12]}",
+    )
+
+    chat_store = ChatStore(chat_db_path)
+    proposal = chat_store.create_proposal(
+        conversation_id=conversation_id,
+        author=PLANNING_AUTOMATION_WORKER_ID,
+        proposal_type="acceptance_gate_runtime_contract",
+        content=json.dumps(
+            {
+                "summary": clean_goal,
+                "runner": "xmuse-platform-runner",
+                "acceptance_gate": True,
+            },
+            ensure_ascii=False,
+        ),
+        references=[f"intake_message:{intake.message.id}"],
+    )
+    resolution = chat_store.approve_proposal(
+        proposal.id,
+        approved_by=[PLANNING_AUTOMATION_WORKER_ID],
+        approval_mode="acceptance_gate_runner",
+        goal_summary=clean_goal,
+        content={
+            "type": "acceptance_gate_runtime_contract",
+            "goal": clean_goal,
+        },
+    )
+
+    dispatch_store = ChatDispatchQueueStore(chat_db_path)
+    dispatch = dispatch_store.enqueue_agent_auto_dispatch(
+        conversation_id=conversation_id,
+        proposal_id=proposal.id,
+        resolution_id=resolution.id,
+        collaboration_run_id=None,
+        artifact_ref=f"chat.db#proposal={proposal.id}",
+        target="execute",
+        dispatch_policy="acceptance_gate_short_run",
+    )
+    claimed = dispatch_store.claim_next_auto_dispatch(
+        conversation_id=conversation_id,
+        claimed_by=PLANNING_AUTOMATION_WORKER_ID,
+    )
+    if claimed is None:
+        raise RuntimeError("acceptance-gated dispatch item was not claimable")
+    dispatch_store.mark_dispatched(
+        dispatch.entry_id,
+        provider_run_ref=f"platform_runner.acceptance_gate#head={clean_head_sha}",
+        dispatch_evidence=f"chat_dispatch_queue#entry={dispatch.entry_id}",
+    )
+
+    lane_id = f"acceptance-gate-{uuid.uuid4().hex[:12]}"
+    graph_id = f"acceptance-graph-{uuid.uuid4().hex[:12]}"
+    lanes_path.write_text(
+        json.dumps(
+            {
+                "lanes": [
+                    {
+                        "feature_id": lane_id,
+                        "status": "gated",
+                        "prompt": clean_goal,
+                        "graph_id": graph_id,
+                        "resolution_id": resolution.id,
+                    }
+                ]
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    review_controller = ReviewPlaneController(
+        lanes_path=lanes_path,
+        store_path=review_plane_path,
+        final_actions_path=final_actions_path,
+        require_final_action_approval=True,
+    )
+    task = review_controller.open_review_task(lane_id)
+    verdict_id = f"verdict-{uuid.uuid4().hex[:12]}"
+    review_controller.ingest_verdict(
+        task.task_id,
+        ReviewVerdict(
+            id=verdict_id,
+            lane_id=lane_id,
+            decision=ReviewDecision.MERGE,
+            summary="Acceptance-gated short run reached final-action review.",
+            evidence_refs=[
+                f"chat_dispatch_queue#entry={dispatch.entry_id}",
+                f"platform_runner.acceptance_gate#head={clean_head_sha}",
+            ],
+        ),
+    )
+
+    final_action_store = FinalActionGateStore(final_actions_path)
+    hold = next(
+        action
+        for action in final_action_store.list_actions()
+        if action.lane_id == lane_id and action.verdict_id == verdict_id
+    )
+    resolved_hold = final_action_store.resolve_with_github_gate_evidence(
+        hold.id,
+        status="approved",
+        resolved_by=PLANNING_AUTOMATION_WORKER_ID,
+        repo=clean_repo,
+        pull_request_number=github_pull_request,
+        required_checks=clean_checks,
+        collector=_ManualGapGithubGateCollector(
+            reason="server_side_merge_proof unavailable for acceptance-gated short run",
+            head_sha=clean_head_sha,
+        ),
+        evidence_store_path=github_gate_evidence_path,
+    )
+
+    from xmuse_core.chat.acceptance_spine import AcceptanceSpineStatus, AcceptanceSpineStore
+
+    spine = AcceptanceSpineStore(chat_db_path).list_by_conversation(conversation_id)[0]
+    if spine.status is AcceptanceSpineStatus.ACCEPTED:
+        terminal_status = "accepted"
+    elif spine.status is AcceptanceSpineStatus.FAILED:
+        terminal_status = "failed"
+    else:
+        terminal_status = "blocked"
+    github_ref = resolved_hold.github_gate_evidence_ref or resolved_hold.github_gate_gap_ref
+    return {
+        "status": terminal_status,
+        "blocked_reason": spine.blocked_reason,
+        "conversation_id": conversation_id,
+        "spine_id": spine.spine_id,
+        "lane_id": lane_id,
+        "final_action_id": hold.id,
+        "durable_refs": {
+            "chat_db": str(chat_db_path),
+            "spine_ref": f"chat.db#acceptance_spine={spine.spine_id}",
+            "intake_message_ref": f"chat.db#message={intake.message.id}",
+            "proposal_ref": f"chat.db#proposal={proposal.id}",
+            "dispatch_ref": f"chat_dispatch_queue#entry={dispatch.entry_id}",
+            "review_verdict_ref": f"review_plane.json#verdict={verdict_id}",
+            "final_action_ref": f"final_actions.json#hold={hold.id}",
+            "github_gate_evidence_ref": github_ref,
+        },
+    }
 
 
 async def run(
@@ -1460,6 +1690,47 @@ def main_arg_parser() -> argparse.ArgumentParser:
         help="optional MemoryOS API base URL for lane context and execution memory",
     )
     parser.add_argument(
+        "--goal",
+        default=None,
+        help="short human demand for one acceptance-gated platform runner closure",
+    )
+    parser.add_argument(
+        "--acceptance-gate",
+        action="store_true",
+        help=(
+            "run one short durable goal through the AcceptanceSpine/final-action/"
+            "GitHub gate producer and exit"
+        ),
+    )
+    parser.add_argument(
+        "--github-repo",
+        default="iiyazu/Cross-Muse",
+        help="GitHub owner/repo used by --acceptance-gate evidence capture",
+    )
+    parser.add_argument(
+        "--github-pr",
+        type=int,
+        default=None,
+        help="GitHub pull request number bound to --acceptance-gate evidence",
+    )
+    parser.add_argument(
+        "--github-head-sha",
+        default=None,
+        help=(
+            "head SHA bound to --acceptance-gate evidence; defaults to current "
+            "repository HEAD"
+        ),
+    )
+    parser.add_argument(
+        "--github-required-check",
+        action="append",
+        default=None,
+        help=(
+            "required check name for --acceptance-gate evidence; repeat to "
+            "override the default xmuse required checks"
+        ),
+    )
+    parser.add_argument(
         "--health-once",
         action="store_true",
         help="print a JSON run health summary and exit without starting the runner",
@@ -1479,6 +1750,15 @@ def main_arg_parser() -> argparse.ArgumentParser:
 
 
 def validate_args(args: argparse.Namespace) -> None:
+    if args.goal and not args.acceptance_gate:
+        raise SystemExit("--goal requires --acceptance-gate")
+    if args.acceptance_gate:
+        if not args.goal or not args.goal.strip():
+            raise SystemExit("--acceptance-gate requires --goal")
+        if args.github_pr is None or args.github_pr <= 0:
+            raise SystemExit("--acceptance-gate requires a positive --github-pr")
+        if args.health_once:
+            raise SystemExit("--acceptance-gate and --health-once are mutually exclusive")
     if args.peer_chat and args.chat_driver:
         raise SystemExit("--peer-chat and --chat-driver are mutually exclusive")
     if args.default_review_peer_routing and not args.persistent_review_god:
@@ -1579,6 +1859,18 @@ def _is_git_worktree(path: Path) -> bool:
     return result.returncode == 0 and result.stdout.strip() == "true"
 
 
+def _current_git_head_sha(cwd: Path) -> str:
+    result = subprocess.run(
+        ["git", "-C", str(cwd), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if result.returncode != 0:
+        return ""
+    return result.stdout.strip()
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
     parser = main_arg_parser()
@@ -1586,6 +1878,25 @@ def main() -> None:
     validate_args(args)
     model_policy = _model_policy_from_args(args)
     xmuse_root, lanes_path = _runtime_paths_from_args(args)
+
+    if args.acceptance_gate:
+        print(
+            json.dumps(
+                run_acceptance_gated_goal(
+                    goal=args.goal,
+                    xmuse_root=xmuse_root,
+                    github_repo=args.github_repo,
+                    github_pull_request=args.github_pr,
+                    required_checks=args.github_required_check
+                    or REQUIRED_GITHUB_CHECKS,
+                    head_sha=args.github_head_sha,
+                ),
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return
 
     if args.health_once:
         print(

@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from xmuse_core.chat.acceptance_spine import AcceptanceSpineStore
 from xmuse_core.chat.dispatch_queue import ChatDispatchQueueStore
 from xmuse_core.chat.store import ChatStore
 from xmuse_core.platform.run_health import build_process_inventory
@@ -1567,6 +1568,80 @@ def test_runner_parser_supports_health_once() -> None:
     assert args.health_once is True
     assert args.health_check_http is True
     assert args.stale_after_s == 120
+
+
+def test_runner_parser_supports_acceptance_gated_goal() -> None:
+    args = platform_runner.main_arg_parser().parse_args(
+        [
+            "--goal",
+            "Run a bounded acceptance gate smoke.",
+            "--acceptance-gate",
+            "--github-pr",
+            "154",
+        ]
+    )
+
+    platform_runner.validate_args(args)
+    assert args.goal == "Run a bounded acceptance gate smoke."
+    assert args.acceptance_gate is True
+    assert args.github_pr == 154
+
+
+def test_acceptance_gated_goal_run_blocks_without_server_side_merge_proof(
+    tmp_path: Path,
+) -> None:
+    xmuse_root = tmp_path / "runtime"
+
+    result = platform_runner.run_acceptance_gated_goal(
+        goal="Record a short acceptance-gated smoke task.",
+        xmuse_root=xmuse_root,
+        github_repo="iiyazu/Cross-Muse",
+        github_pull_request=154,
+        required_checks=[
+            "quality-gates",
+            "contract-smoke-gates",
+            "real-runtime-integration-gate",
+        ],
+        head_sha="abc123",
+    )
+
+    assert result["status"] == "blocked"
+    assert result["blocked_reason"] == "github_gate_unverified"
+
+    gate_payload = json.loads(
+        (xmuse_root / "github_gate_evidence.json").read_text(encoding="utf-8")
+    )
+    final_actions = json.loads(
+        (xmuse_root / "final_actions.json").read_text(encoding="utf-8")
+    )
+    hold = final_actions["holds"][0]
+    evidence = gate_payload["items"][0]
+    assert evidence["final_action_id"] == hold["id"]
+    assert evidence["repo"] == "iiyazu/Cross-Muse"
+    assert evidence["pull_request_number"] == 154
+    assert evidence["required_checks"] == [
+        "quality-gates",
+        "contract-smoke-gates",
+        "real-runtime-integration-gate",
+    ]
+    assert evidence["can_accept"] is False
+    assert evidence["evidence"]["proof_level"] == "manual_gap"
+    assert evidence["evidence"]["internal_reviewed_head_sha"] == "abc123"
+    assert hold.get("github_gate_evidence_ref") is None
+    assert hold["github_gate_gap_ref"] == (
+        f"github_gate_evidence.json#evidence={evidence['id']}"
+    )
+
+    spines = AcceptanceSpineStore(xmuse_root / "chat.db").list_by_conversation(
+        result["conversation_id"]
+    )
+    assert len(spines) == 1
+    assert spines[0].status.value == "blocked"
+    assert spines[0].blocked_reason == "github_gate_unverified"
+    assert spines[0].github_gate_evidence_ref is None
+    assert result["durable_refs"]["github_gate_evidence_ref"] == (
+        f"github_gate_evidence.json#evidence={evidence['id']}"
+    )
 
 
 def test_runner_parser_resolves_lanes_from_xmuse_root(tmp_path: Path) -> None:
