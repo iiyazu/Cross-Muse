@@ -53,6 +53,24 @@ those stores. The printed JSON is not authority. The durable refs in `chat.db`,
 `final_actions.json`, `review_plane.json`, and `github_gate_evidence.json` are
 authority.
 
+By default the command records a GitHub gate `manual_gap` and remains blocked.
+Live GitHub capture is opt-in:
+
+```bash
+uv run xmuse-platform-runner \
+  --goal "<human demand>" \
+  --acceptance-gate \
+  --github-pr <number> \
+  --github-live-capture \
+  --internal-review-artifact <path> \
+  --internal-reviewer <id> \
+  --internal-reviewed-head-sha <sha>
+```
+
+The live mode uses read-only `gh api` calls through
+`GitHubCliServerSideTruthClient`. It can accept only when the producer writes a
+durable `server_side_merge_proof` record for the same final action.
+
 ## Authority
 
 The authority is `chat.db` through chat/control-plane stores:
@@ -161,3 +179,6 @@ The minimal `--goal --acceptance-gate` runner now invokes that producer for a
 short real run. Its first smoke is recorded in
 `docs/xmuse/acceptance-gated-runner-evidence-2026-06-21.md` and correctly ends
 as `blocked/github_gate_unverified` because it has no `server_side_merge_proof`.
+The first opt-in live GitHub capture smoke is recorded in
+`docs/xmuse/acceptance-gated-live-capture-evidence-2026-06-21.md` and ends as
+`accepted` because the producer captured a complete `server_side_merge_proof`.

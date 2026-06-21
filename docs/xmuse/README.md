@@ -46,6 +46,7 @@ GOD groupchat deliberation
 | `docs/xmuse/production-closure-tasks.md` | 从 RC closure skeleton 走向生产级闭环的中等粒度任务清单 |
 | `docs/xmuse/acceptance-spine.md` | 当前最小 durable GoalRun/AcceptanceSpine 合同与实现边界：串起 human intake、proposal、approval/verdict、dispatch 和证据 refs |
 | `docs/xmuse/acceptance-gated-runner-evidence-2026-06-21.md` | 2026-06-21 `xmuse-platform-runner --goal --acceptance-gate` 短真实 smoke：durable refs、GitHub gate manual gap 和 blocked 终态 |
+| `docs/xmuse/acceptance-gated-live-capture-evidence-2026-06-21.md` | 2026-06-21 `--github-live-capture` 短真实 smoke：producer-owned `server_side_merge_proof` 和 accepted 终态 |
 | `docs/xmuse/mainline-contracts.md` | 当前产品主线合同：GOD 群聊、blueprint freeze、laneDAG、review/GitHub gate、REST-first MemoryOS |
 | `docs/xmuse/real-runtime-loop-behavior-policy.md` | 真实运行链路长 goal 的行为规范：非 TDD-first、authority/producer/consumer/evidence-first、GitHub 额度、PR 防膨胀和 superpowers 使用边界 |
 | `docs/xmuse/real-god-chatgroup-fullchain-loop-decomposition.md` | 今晚真实 GOD 群聊到需求完成的循环目标拆解：每轮选最大可运行真实链路，失败后按边界修补/重构/拆 PR |

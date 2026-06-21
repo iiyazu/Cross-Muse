@@ -11,6 +11,7 @@ import pytest
 from xmuse_core.chat.acceptance_spine import AcceptanceSpineStore
 from xmuse_core.chat.dispatch_queue import ChatDispatchQueueStore
 from xmuse_core.chat.store import ChatStore
+from xmuse_core.platform.execution.github_ops import GitHubServerSideTruthEvidence
 from xmuse_core.platform.run_health import build_process_inventory
 from xmuse_core.structuring.models import (
     FeatureGraphSet,
@@ -41,6 +42,71 @@ def _empty_peer_chat_worktree(root: Path) -> Path:
     worktree = root / "peer_chat_worktree"
     worktree.mkdir(parents=True, exist_ok=True)
     return worktree
+
+
+class _StaticGithubTruthCollector:
+    def __init__(self, evidence: GitHubServerSideTruthEvidence) -> None:
+        self._evidence = evidence
+
+    def collect(
+        self,
+        *,
+        repo: str,
+        pull_request_number: int,
+        required_checks: list[str],
+    ) -> GitHubServerSideTruthEvidence:
+        assert repo == self._evidence.repo
+        assert pull_request_number == self._evidence.pull_request_number
+        assert required_checks == self._evidence.required_checks
+        return self._evidence
+
+
+def _complete_server_side_merge_truth() -> GitHubServerSideTruthEvidence:
+    return GitHubServerSideTruthEvidence(
+        repo="iiyazu/Cross-Muse",
+        pull_request_number=155,
+        required_checks=[
+            "quality-gates",
+            "contract-smoke-gates",
+            "real-runtime-integration-gate",
+        ],
+        proof_level="server_side_merge_proof",
+        workflow_run_id=82564030146,
+        check_run_ids=[82564030146, 82564030153, 82564030160],
+        expected_source_app="github-actions",
+        branch_protection_snapshot={
+            "required_status_checks": {
+                "strict": True,
+                "checks": [
+                    {"context": "quality-gates"},
+                    {"context": "contract-smoke-gates"},
+                    {"context": "real-runtime-integration-gate"},
+                ],
+            },
+            "required_pull_request_reviews": None,
+        },
+        internal_review_artifact="acceptance_gate_runner",
+        internal_reviewer="platform-runner",
+        internal_reviewed_head_sha="abc123",
+        internal_review_verified=True,
+        merge_commit_sha="4fd40a735e62be255e787ce93bdc3d5653d0255e",
+        merged_at="2026-06-21T10:56:19Z",
+        merge_event_id="PR_kwDOExample",
+    )
+
+
+def _incomplete_server_side_truth() -> GitHubServerSideTruthEvidence:
+    return GitHubServerSideTruthEvidence(
+        repo="iiyazu/Cross-Muse",
+        pull_request_number=155,
+        required_checks=[
+            "quality-gates",
+            "contract-smoke-gates",
+            "real-runtime-integration-gate",
+        ],
+        proof_level="manual_gap",
+        gap_reason="missing server-side truth: merge_truth",
+    )
 
 
 def test_peer_chat_runtime_worktree_creates_repo_backed_detached_worktree(
@@ -1587,6 +1653,53 @@ def test_runner_parser_supports_acceptance_gated_goal() -> None:
     assert args.github_pr == 154
 
 
+def test_runner_parser_supports_opt_in_live_github_capture(tmp_path: Path) -> None:
+    review_artifact = tmp_path / "internal-review.json"
+    review_artifact.write_text('{"review":"accepted"}\n', encoding="utf-8")
+    args = platform_runner.main_arg_parser().parse_args(
+        [
+            "--goal",
+            "Run live capture.",
+            "--acceptance-gate",
+            "--github-pr",
+            "155",
+            "--github-live-capture",
+            "--internal-review-artifact",
+            str(review_artifact),
+            "--internal-reviewer",
+            "platform-runner",
+            "--internal-reviewed-head-sha",
+            "abc123",
+        ]
+    )
+
+    platform_runner.validate_args(args)
+    assert args.github_live_capture is True
+    assert args.internal_review_artifact == review_artifact
+    assert args.internal_reviewer == "platform-runner"
+    assert args.internal_reviewed_head_sha == "abc123"
+
+
+def test_runner_rejects_live_capture_without_internal_review_artifact() -> None:
+    args = platform_runner.main_arg_parser().parse_args(
+        [
+            "--goal",
+            "Run live capture.",
+            "--acceptance-gate",
+            "--github-pr",
+            "155",
+            "--github-live-capture",
+            "--internal-reviewer",
+            "platform-runner",
+            "--internal-reviewed-head-sha",
+            "abc123",
+        ]
+    )
+
+    with pytest.raises(SystemExit):
+        platform_runner.validate_args(args)
+
+
 def test_acceptance_gated_goal_run_blocks_without_server_side_merge_proof(
     tmp_path: Path,
 ) -> None:
@@ -1642,6 +1755,83 @@ def test_acceptance_gated_goal_run_blocks_without_server_side_merge_proof(
     assert result["durable_refs"]["github_gate_evidence_ref"] == (
         f"github_gate_evidence.json#evidence={evidence['id']}"
     )
+
+
+def test_acceptance_gated_goal_run_accepts_with_server_side_merge_proof(
+    tmp_path: Path,
+) -> None:
+    xmuse_root = tmp_path / "runtime"
+
+    result = platform_runner.run_acceptance_gated_goal(
+        goal="Record an accepted acceptance-gated smoke task.",
+        xmuse_root=xmuse_root,
+        github_repo="iiyazu/Cross-Muse",
+        github_pull_request=155,
+        required_checks=[
+            "quality-gates",
+            "contract-smoke-gates",
+            "real-runtime-integration-gate",
+        ],
+        head_sha="abc123",
+        github_gate_collector=_StaticGithubTruthCollector(
+            _complete_server_side_merge_truth()
+        ),
+    )
+
+    assert result["status"] == "accepted"
+    assert result["blocked_reason"] is None
+
+    gate_payload = json.loads(
+        (xmuse_root / "github_gate_evidence.json").read_text(encoding="utf-8")
+    )
+    final_actions = json.loads(
+        (xmuse_root / "final_actions.json").read_text(encoding="utf-8")
+    )
+    hold = final_actions["holds"][0]
+    evidence = gate_payload["items"][0]
+    assert evidence["final_action_id"] == hold["id"]
+    assert evidence["can_accept"] is True
+    assert evidence["evidence"]["proof_level"] == "server_side_merge_proof"
+    assert hold["github_gate_evidence_ref"] == (
+        f"github_gate_evidence.json#evidence={evidence['id']}"
+    )
+    assert hold.get("github_gate_gap_ref") is None
+
+    spines = AcceptanceSpineStore(xmuse_root / "chat.db").list_by_conversation(
+        result["conversation_id"]
+    )
+    assert len(spines) == 1
+    assert spines[0].status.value == "accepted"
+    assert spines[0].blocked_reason is None
+    assert spines[0].github_gate_evidence_ref == hold["github_gate_evidence_ref"]
+
+
+def test_acceptance_gated_live_capture_gap_stays_blocked(tmp_path: Path) -> None:
+    xmuse_root = tmp_path / "runtime"
+
+    result = platform_runner.run_acceptance_gated_goal(
+        goal="Record a blocked live capture smoke task.",
+        xmuse_root=xmuse_root,
+        github_repo="iiyazu/Cross-Muse",
+        github_pull_request=155,
+        required_checks=[
+            "quality-gates",
+            "contract-smoke-gates",
+            "real-runtime-integration-gate",
+        ],
+        head_sha="abc123",
+        github_gate_collector=_StaticGithubTruthCollector(
+            _incomplete_server_side_truth()
+        ),
+    )
+
+    gate_payload = json.loads(
+        (xmuse_root / "github_gate_evidence.json").read_text(encoding="utf-8")
+    )
+    assert result["status"] == "blocked"
+    assert result["blocked_reason"] == "github_gate_unverified"
+    assert gate_payload["items"][0]["can_accept"] is False
+    assert gate_payload["items"][0]["evidence"]["proof_level"] == "manual_gap"
 
 
 def test_runner_parser_resolves_lanes_from_xmuse_root(tmp_path: Path) -> None:

@@ -92,6 +92,12 @@ Acceptance:
 Goal: demonstrate the production path with real configured peers and GitHub
 capture, not only deterministic test doubles.
 
+Status: short-run live GitHub capture accepted path implemented on 2026-06-21.
+Evidence: `docs/xmuse/acceptance-gated-live-capture-evidence-2026-06-21.md`.
+The command uses opt-in read-only `gh api` capture and can produce
+producer-owned `server_side_merge_proof`. This proves the short acceptance-gated
+terminal path, not a multi-hour provider soak.
+
 Tasks:
 
 - run one bounded long-running demand through the acceptance-gated path;
