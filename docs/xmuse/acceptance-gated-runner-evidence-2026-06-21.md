@@ -7,11 +7,11 @@ This artifact records the first short real `xmuse-platform-runner --goal
 
 ```bash
 uv run xmuse-platform-runner \
-  --xmuse-root /home/iiyatu/.config/superpowers/worktrees/xmuse/production-closure-stage2-gate/.goal-runs/2026-06-21/stage2-pre-pr-smoke-absolute \
-  --goal "Record a short acceptance-gated smoke task before PR." \
+  --xmuse-root /home/iiyatu/.config/superpowers/worktrees/xmuse/production-closure-stage2-gate/.goal-runs/2026-06-21/stage2-pr155-smoke \
+  --goal "Record a short acceptance-gated smoke task for PR 155." \
   --acceptance-gate \
-  --github-pr 154 \
-  --github-head-sha d36c301536673c32d2c3c6a33adb541ae2ca1be8
+  --github-pr 155 \
+  --github-head-sha c8628ff6dfdf88bde079e668b13e491b69ff7542
 ```
 
 The runtime root is ignored by git and contains the durable stores for this
@@ -27,35 +27,35 @@ smoke run.
 ## Durable Refs
 
 - runtime root:
-  `.goal-runs/2026-06-21/stage2-pre-pr-smoke-absolute`
+  `.goal-runs/2026-06-21/stage2-pr155-smoke`
 - chat db:
-  `.goal-runs/2026-06-21/stage2-pre-pr-smoke-absolute/chat.db`
+  `.goal-runs/2026-06-21/stage2-pr155-smoke/chat.db`
 - spine:
-  `chat.db#acceptance_spine=goalrun_5baf39d3f46c4b8abaab085c791769d5`
+  `chat.db#acceptance_spine=goalrun_0ad9767e0a8b42eba4f40dea25070ab1`
 - intake message:
-  `chat.db#message=msg_1e5b563c91aa4aa485957bf56a9dac30`
+  `chat.db#message=msg_31e7ebeff4c4409cbbd7686342b43ef1`
 - proposal:
-  `chat.db#proposal=prop_7aad205777f044de92330e0c15d5f69c`
+  `chat.db#proposal=prop_6aa9a3ea606942199f92841a75862f94`
 - dispatch:
-  `chat_dispatch_queue#entry=dispatch:conv_a63448d28e5e412d972a10605288d4e4:res_e6c636467cf3490298d24a3aae7f4fac:execute`
+  `chat_dispatch_queue#entry=dispatch:conv_8d1212226ab14f368fe33b5ee0249e9d:res_2a7e0af7fe1c4d798c23a0581ea9421c:execute`
 - review verdict:
-  `review_plane.json#verdict=verdict-c66bcaf4725b`
+  `review_plane.json#verdict=verdict-5d94316f19cb`
 - final action:
-  `final_actions.json#hold=final-06d605c869f9`
+  `final_actions.json#hold=final-c700010d7aa4`
 - GitHub gate evidence:
-  `github_gate_evidence.json#evidence=ghgate_44c2b8aa4e2c46159ae5e77360749442`
+  `github_gate_evidence.json#evidence=ghgate_3bee2f613d3a41f7be12fe667aff0629`
 
 ## Evidence Facts
 
 `github_gate_evidence.json` persisted:
 
-- `final_action_id = final-06d605c869f9`
+- `final_action_id = final-c700010d7aa4`
 - `repo = iiyazu/Cross-Muse`
-- `pull_request_number = 154`
+- `pull_request_number = 155`
 - `required_checks = quality-gates, contract-smoke-gates,
   real-runtime-integration-gate`
 - `internal_reviewed_head_sha =
-  d36c301536673c32d2c3c6a33adb541ae2ca1be8`
+  c8628ff6dfdf88bde079e668b13e491b69ff7542`
 - `proof_level = manual_gap`
 - `can_accept = false`
 - `gap_reason = server_side_merge_proof unavailable for acceptance-gated short run`
@@ -65,8 +65,12 @@ smoke run.
 - `status = approved`
 - `resolved_by = platform-runner`
 - `github_gate_gap_ref =
-  github_gate_evidence.json#evidence=ghgate_44c2b8aa4e2c46159ae5e77360749442`
+  github_gate_evidence.json#evidence=ghgate_3bee2f613d3a41f7be12fe667aff0629`
 - no `github_gate_evidence_ref`
+
+An earlier pre-PR smoke against PR #154 also ended as
+`blocked/github_gate_unverified`. The PR #155 run above is the evidence bound to
+this branch.
 
 ## Boundary
 
