@@ -58,6 +58,8 @@ Do not claim:
   `docs/xmuse/acceptance-gated-runner-evidence-2026-06-21.md`
 - P3 accepted live path evidence:
   `docs/xmuse/acceptance-gated-live-capture-evidence-2026-06-21.md`
+- Real provider bounded soak evidence:
+  `docs/xmuse/real-provider-soak-evidence-2026-06-21.md`
 - P3 runtime root:
   `.goal-runs/2026-06-21/stage3-live-pr155-accepted`
 - P3 spine:
@@ -69,6 +71,11 @@ Do not claim:
 - P3 bound PR/head/merge:
   PR `155`, reviewed head `1798e0a31cd1a80163a5e70287e8b0d1684e0aee`,
   merge commit `4fd40a735e62be255e787ce93bdc3d5653d0255e`
+- Real provider bounded soak terminal:
+  `blocked/github_gate_unverified`,
+  `chat.db#acceptance_spine=goalrun_42cf37320c0443a3a2d0b7ef46fa5c2b`,
+  `final_actions.json#hold=final-877f3007706e`,
+  `github_gate_evidence.json#evidence=ghgate_5f6231d8efc440d8b92e3942608c8bd8`
 
 ## Required Checks And Gate State
 
@@ -83,7 +90,9 @@ Do not claim:
 
 ## Full Release Blockers
 
-- No multi-hour real-provider/Ray/Codex soak has been accepted.
+- No multi-hour real-provider/Ray/Codex soak has been accepted. The 2026-06-21
+  bounded real-provider soak is blocked before the first durable MCP
+  `chat_post_message` reply.
 - Release packaging/versioning has not been cut from the current claim level.
 - `uv run mypy xmuse/platform_runner.py` has existing type debt and is not a
   clean release gate.

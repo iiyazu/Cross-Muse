@@ -106,6 +106,13 @@ The command uses opt-in read-only `gh api` capture and can produce
 producer-owned `server_side_merge_proof`. This proves the short acceptance-gated
 terminal path, not a multi-hour provider soak.
 
+Update: bounded real-provider/Ray/Codex soak was attempted on 2026-06-21 and is
+blocked. Evidence:
+`docs/xmuse/real-provider-soak-evidence-2026-06-21.md`. The run entered the
+Ray/Codex app-server path and persisted groupchat/session state, but failed
+before the first durable MCP `chat_post_message` reply. The claim level is not
+raised.
+
 Tasks:
 
 - run one bounded long-running demand through the acceptance-gated path;
