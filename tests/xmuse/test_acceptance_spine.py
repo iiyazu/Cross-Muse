@@ -190,6 +190,26 @@ def test_final_action_approval_with_direct_github_evidence_ref_stays_blocked(
     assert final_action.github_gate_gap_ref == "github:pr:42#checks=abc123"
 
 
+def test_acceptance_spine_direct_final_action_ref_without_producer_record_stays_blocked(
+    tmp_path: Path,
+) -> None:
+    intake_message_id, hold = _create_spine_with_pending_final_action(tmp_path)
+
+    AcceptanceSpineStore(tmp_path / "chat.db").resolve_final_action(
+        final_action_ref=f"final_actions.json#hold={hold.id}",
+        status="approved",
+        github_gate_evidence_ref="github:pr:42#checks=abc123",
+    )
+
+    spine = AcceptanceSpineStore(tmp_path / "chat.db").get_by_intake_message(
+        intake_message_id
+    )
+    assert spine.status is AcceptanceSpineStatus.BLOCKED
+    assert spine.github_gate_evidence_ref is None
+    assert spine.manual_gaps == ["github_gate_unverified"]
+    assert spine.blocked_reason == "github_gate_unverified"
+
+
 def test_final_action_approval_with_server_gate_producer_accepts_spine(
     tmp_path: Path,
 ) -> None:

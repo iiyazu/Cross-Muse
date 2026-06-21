@@ -401,6 +401,7 @@ class AcceptanceSpineStore:
         final_action_ref: str,
         status: str,
         github_gate_evidence_ref: str | None = None,
+        github_gate_evidence_store_path: Path | str | None = None,
     ) -> AcceptanceSpine | None:
         now = _utc_now()
         normalized_status = status.strip().lower()
@@ -424,7 +425,17 @@ class AcceptanceSpineStore:
             blocked_reason: str | None = None
             github_ref: str | None = None
             if normalized_status in {"approved", "accepted", "resolved"}:
-                if clean_github_ref:
+                final_action_id = _final_action_id_from_ref(final_action_ref)
+                evidence_store_path = (
+                    Path(github_gate_evidence_store_path)
+                    if github_gate_evidence_store_path is not None
+                    else self._path.parent / "github_gate_evidence.json"
+                )
+                if clean_github_ref and _is_accepted_github_gate_ref(
+                    clean_github_ref,
+                    evidence_store_path=evidence_store_path,
+                    final_action_id=final_action_id,
+                ):
                     next_status = AcceptanceSpineStatus.ACCEPTED
                     manual_gaps = _remove_values(manual_gaps, {"github_gate_unverified"})
                     github_ref = clean_github_ref
@@ -553,6 +564,48 @@ def create_acceptance_spine_schema(conn: sqlite3.Connection) -> None:
             on acceptance_spines(dispatch_item_id);
         """
     )
+
+
+def _final_action_id_from_ref(final_action_ref: str) -> str | None:
+    _, separator, final_action_id = final_action_ref.partition("#hold=")
+    if not separator:
+        return None
+    clean_final_action_id = final_action_id.strip()
+    return clean_final_action_id or None
+
+
+def _is_accepted_github_gate_ref(
+    ref: str,
+    *,
+    evidence_store_path: Path,
+    final_action_id: str | None,
+) -> bool:
+    if final_action_id is None:
+        return False
+    prefix = f"{evidence_store_path.name}#evidence="
+    if not ref.startswith(prefix):
+        return False
+    evidence_id = ref.removeprefix(prefix).strip()
+    if not evidence_id or not evidence_store_path.exists():
+        return False
+    try:
+        payload = json.loads(evidence_store_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(payload, dict):
+        return False
+    for item in payload.get("items", []):
+        if not isinstance(item, dict) or item.get("id") != evidence_id:
+            continue
+        if item.get("final_action_id") != final_action_id:
+            return False
+        evidence = item.get("evidence")
+        return (
+            item.get("can_accept") is True
+            and isinstance(evidence, dict)
+            and evidence.get("proof_level") == "server_side_merge_proof"
+        )
+    return False
 
 
 def insert_acceptance_spine_for_intake(
