@@ -194,11 +194,18 @@ class GitHubServerSideTruthEvidence(BaseModel):
 
     @property
     def has_server_enforcement_truth(self) -> bool:
-        if self.branch_protection_snapshot:
+        if _branch_protection_requires_checks(
+            self.branch_protection_snapshot,
+            required_checks=self.required_checks,
+        ):
             return True
         if not self.ruleset_snapshot:
             return False
-        return _rulesets_apply_to_branch(self.ruleset_snapshot, base_branch="main")
+        return _rulesets_require_checks(
+            self.ruleset_snapshot,
+            base_branch="main",
+            required_checks=self.required_checks,
+        )
 
     @property
     def requires_github_review_truth(self) -> bool:
@@ -775,12 +782,92 @@ def _requires_pull_request_review(payload: Any) -> bool:
     )
 
 
+def _branch_protection_requires_checks(
+    payload: Any,
+    *,
+    required_checks: list[str],
+) -> bool:
+    if not required_checks or not isinstance(payload, dict):
+        return False
+    status_policy = payload.get("required_status_checks")
+    if not isinstance(status_policy, dict):
+        return False
+    observed = _required_check_names_from_status_policy(status_policy)
+    return set(required_checks).issubset(observed)
+
+
+def _required_check_names_from_status_policy(payload: dict[str, Any]) -> set[str]:
+    names: set[str] = set()
+    contexts = payload.get("contexts")
+    if isinstance(contexts, list):
+        names.update(item for item in contexts if isinstance(item, str) and item.strip())
+    checks = payload.get("checks")
+    if isinstance(checks, list):
+        for item in checks:
+            if not isinstance(item, dict):
+                continue
+            context = item.get("context")
+            if isinstance(context, str) and context.strip():
+                names.add(context)
+    return names
+
+
 def _rulesets_require_code_owner_review(payload: Any, *, base_branch: str) -> bool:
     return _rulesets_require_pull_request_review(
         payload,
         base_branch=base_branch,
         code_owner_only=True,
     )
+
+
+def _rulesets_require_checks(
+    payload: Any,
+    *,
+    base_branch: str,
+    required_checks: list[str],
+) -> bool:
+    if not required_checks or not isinstance(payload, dict):
+        return False
+    rulesets = payload.get("rulesets")
+    if not isinstance(rulesets, list):
+        return False
+    required = set(required_checks)
+    for ruleset in rulesets:
+        if not isinstance(ruleset, dict):
+            continue
+        if ruleset.get("enforcement") != "active":
+            continue
+        if ruleset.get("target") != "branch":
+            continue
+        if not _ruleset_applies_to_branch(ruleset, base_branch=base_branch):
+            continue
+        observed = _ruleset_required_check_names(ruleset)
+        if required.issubset(observed):
+            return True
+    return False
+
+
+def _ruleset_required_check_names(ruleset: dict[str, Any]) -> set[str]:
+    names: set[str] = set()
+    rules = ruleset.get("rules")
+    if not isinstance(rules, list):
+        return names
+    for rule in rules:
+        if not isinstance(rule, dict) or rule.get("type") != "required_status_checks":
+            continue
+        parameters = rule.get("parameters")
+        if not isinstance(parameters, dict):
+            continue
+        checks = parameters.get("required_status_checks")
+        if not isinstance(checks, list):
+            continue
+        for item in checks:
+            if not isinstance(item, dict):
+                continue
+            context = item.get("context")
+            if isinstance(context, str) and context.strip():
+                names.add(context)
+    return names
 
 
 def _rulesets_require_pull_request_review(
