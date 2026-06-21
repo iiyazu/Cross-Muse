@@ -44,6 +44,7 @@ GOD groupchat deliberation
 | `docs/xmuse/self-iteration-runtime-closure-goal-prompt.md` | 可直接用于 `/goal` 的简洁自迭代闭环 prompt，详细任务引用 plan 文档 |
 | `docs/xmuse/self-iteration-runtime-closure.md` | 自迭代 runtime 闭环 replay artifact，记录 speech-act、blueprint、laneDAG、runtime contract、review、GitHub 和 MemoryOS 证据 |
 | `docs/xmuse/goal-stage-harness.md` | `/goal` 阶段统一执行/证据/失败分类规范与标准 manifest schema |
+| `docs/xmuse/mainline-test-quarantine.md` | 当前主线测试与历史/兼容测试隔离规则：默认 pytest 是 mainline signal，`--include-legacy-compat` 显式运行 quarantine |
 | `docs/xmuse/vision-runtime-evidence-closure-plan.md` | 2fdb299 之后愿景 runtime evidence closure 的详细任务、验收标准和执行行为规范 |
 | `docs/xmuse/vision-runtime-evidence-closure-goal-prompt.md` | 可直接用于 `/goal` 的简洁愿景 runtime evidence closure prompt，详细任务引用 plan 文档 |
 | `docs/xmuse/vision-runtime-evidence-closure.md` | 愿景 runtime evidence closure 证据 artifact，记录 CI、merge 语义、GitHub server gap、live MemoryOS trace 和 real runtime soak 边界 |

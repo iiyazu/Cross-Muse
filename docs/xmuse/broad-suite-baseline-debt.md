@@ -7,6 +7,10 @@ not a broad-suite green claim.
 
 The contract smoke gate is not a broad-suite green claim.
 
+The default `uv run pytest -q` is the current mainline signal. Tests listed in
+`docs/xmuse/mainline-test-quarantine.md` remain available through
+`--include-legacy-compat`, but are not part of the default mainline gate.
+
 | ID | Owner file | Repro command | Current failure summary | Priority | Closure rule |
 | --- | --- | --- | --- | --- | --- |
 | DR03-DEBT-001 | `docs/xmuse/contract-smoke-gates.md` | `uv run ruff format --check .` | Historical format drift remains outside the scoped contract format gate. | P1 | Full-repo format check passes or a staged reformat plan is merged and documented. |
