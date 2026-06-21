@@ -99,6 +99,7 @@ class FinalActionGateStore:
                     hold_id=hold_id,
                     status=status,
                     github_gate_evidence_ref=accepted_github_ref,
+                    github_gate_evidence_store_path=github_gate_evidence_store_path,
                 )
                 return action
         raise KeyError(f"unknown final action hold: {hold_id}")
@@ -186,6 +187,7 @@ class FinalActionGateStore:
         hold_id: str,
         status: str,
         github_gate_evidence_ref: str | None,
+        github_gate_evidence_store_path: Path | str | None,
     ) -> None:
         chat_db_path = self._path.parent / "chat.db"
         if not chat_db_path.exists():
@@ -194,4 +196,5 @@ class FinalActionGateStore:
             final_action_ref=f"{self._path.name}#hold={hold_id}",
             status=status,
             github_gate_evidence_ref=github_gate_evidence_ref,
+            github_gate_evidence_store_path=github_gate_evidence_store_path,
         )
