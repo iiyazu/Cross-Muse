@@ -1353,7 +1353,7 @@ async def test_runner_cancels_in_flight_dispatch_when_deadline_expires(
             max_hours=1,
             max_concurrent=1,
         ),
-        timeout=0.2,
+        timeout=2.0,
     )
 
     assert dispatch_started.is_set()

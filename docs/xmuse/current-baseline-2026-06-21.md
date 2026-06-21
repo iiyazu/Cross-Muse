@@ -34,6 +34,13 @@ The current verified chain is partial but real:
    for `in_progress`, `verdict_emitted`, `failed_classified`, and
    `interrupted_retryable`; runner deadline shutdown cancels in-flight dispatch
    instead of waiting forever.
+7. A bounded local proof now covers the minimal positive authority chain from a
+   real `chat.db` human demand message, to a source-linked lane-graph proposal,
+   to approval/projection, to `xmuse.platform_runner.run` lane consumption, to a
+   durable merge verdict and pending final-action hold. The proof uses
+   deterministic test doubles only at the external CLI execution/review
+   boundary, so it is a local runtime/control-plane proof, not a natural
+   peer-GOD or live provider proof.
 
 ## Baseline Evidence
 
@@ -55,6 +62,14 @@ Latest important runtime evidence before this baseline:
   OpenCode review peer. The lane reached `gate_failed` and the review task
   reached `failed_classified(required_review_peer_unavailable)` with
   attempt/runner/provider/evidence refs in `review_plane.json`.
+- A fresh bounded local positive proof at
+  `.goal-runs/2026-06-21/minimal-groupchat-fullchain-proof-runner/` writes
+  `minimal-fullchain-proof.json` and `summary.json`. It proves:
+  `human_demand` message in `chat.db` -> proposal references that message ->
+  approved resolution -> projected lane in `feature_lanes.json` and lane graph
+  store -> `xmuse.platform_runner.run` consumption -> durable
+  `review_plane.json` task `verdict_emitted` with merge verdict -> pending
+  `final_actions.json` hold under final-action safety mode.
 
 ## Forbidden Claims
 
@@ -63,24 +78,28 @@ This baseline does not prove:
 - full autonomous overnight readiness;
 - complete final-action closure for the current lane;
 - a durable accepted review verdict for the historical pending review task;
-- a passed/accepted review verdict from the fresh runtime proof;
+- a passed/accepted review verdict from a real external Review GOD / live
+  provider runtime proof;
 - that Grok is a full platform orchestrator runtime;
 - that OpenCode is available;
 - that stdout or summaries alone are sufficient proof.
+- natural peer-GOD groupchat; the bounded local proof uses deterministic
+  external-boundary doubles and explicitly forbids that claim.
 
 ## Next Entry Point
 
-Resume from the review-continuation boundary as a positive verdict proof pass:
+Resume from the bounded local positive proof boundary toward a real external
+provider positive proof pass:
 
 1. Start `xmuse-mcp-server` for the same runtime root when using the existing
    Loop 2H runtime.
-2. Run the platform runner long enough to force a review attempt to emit a
-   durable passed verdict, or explicitly record the next classified
-   review/provider/transport blocker.
+2. Run the platform runner long enough to force a real external Review GOD or
+   configured peer to emit a durable passed verdict, or explicitly record the
+   next classified review/provider/transport blocker.
 3. Inspect `review_plane.json`, `feature_lanes.json`, state history, and spawn
    logs before claiming runtime closure.
-4. Patch only if the runtime proof contradicts the durable terminality
-   contract.
+4. Patch only if the runtime proof contradicts the durable terminality or
+   minimal fullchain authority contract.
 
 ## Baseline Verification
 
@@ -88,6 +107,7 @@ Focused verification for this snapshot passed:
 
 - `git diff --check`
 - `uv run ruff check .`
+- `uv run pytest tests/xmuse/test_groupchat_minimal_fullchain_proof.py -q`
 - `uv run pytest tests/xmuse/test_grok_persistent.py tests/xmuse/test_peer_provider_parity.py tests/xmuse/test_groupchat_collaboration_runtime.py tests/xmuse/test_platform_runner.py tests/xmuse/test_platform_orchestrator.py tests/xmuse/test_review_plane_orchestrator_integration.py -q`
 
 Before the mainline quarantine, full-suite verification was not green:
@@ -116,7 +136,7 @@ Historical/compatibility failures are now isolated by
 mainline signal; latest result after quarantine:
 
 - `uv run pytest -q`
-- result: `3726 passed, 49 skipped, 12 warnings`
+- result: `3727 passed, 49 skipped, 12 warnings`
 
 The isolated compatibility set remains explicit and enumerable:
 
