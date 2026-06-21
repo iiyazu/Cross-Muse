@@ -501,6 +501,47 @@ class AcceptanceSpineStore:
             )
         return self.get_by_intake_message(str(row["intake_message_id"]))
 
+    def mark_intake_failed(
+        self,
+        *,
+        intake_message_id: str,
+        blocked_reason: str,
+        evidence_ref: str | None = None,
+    ) -> AcceptanceSpine | None:
+        now = _utc_now()
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                select execution_evidence_refs_json
+                from acceptance_spines
+                where intake_message_id = ?
+                """,
+                (intake_message_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            evidence_refs = _json_list(row["execution_evidence_refs_json"])
+            if evidence_ref and evidence_ref not in evidence_refs:
+                evidence_refs.append(evidence_ref)
+            conn.execute(
+                """
+                update acceptance_spines
+                set status = ?,
+                    execution_evidence_refs_json = ?,
+                    blocked_reason = ?,
+                    updated_at = ?
+                where intake_message_id = ?
+                """,
+                (
+                    AcceptanceSpineStatus.FAILED.value,
+                    json.dumps(evidence_refs),
+                    blocked_reason,
+                    now,
+                    intake_message_id,
+                ),
+            )
+        return self.get_by_intake_message(intake_message_id)
+
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self._path)
         conn.row_factory = sqlite3.Row
