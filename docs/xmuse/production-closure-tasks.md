@@ -163,10 +163,23 @@ acknowledgement, and marked the dispatch queue entry `dispatched` with
 blocked for final-action, GitHub gate evidence, accepted AcceptanceSpine truth,
 and multi-turn soak stability.
 
+Final-action blocked-path follow-up: the `chat_emit_proposal` reply path now
+binds the proposal to the replied intake AcceptanceSpine even when the model
+does not include an `intake_message:<id>` reference. The deterministic
+acceptance-gated runner still proves that final-action approval without
+producer-owned `server_side_merge_proof` terminalizes as
+`blocked/github_gate_unverified`. Two attempts to extend the real dispatch
+completion test through final-action/GitHub gate on 2026-06-21 failed before
+the first provider MCP proposal writeback with
+`provider_turn_cancelled_before_mcp_writeback`; therefore this does not raise
+the real-provider claim level. Evidence:
+`docs/xmuse/real-provider-soak-evidence-2026-06-21.md#p4-final-action-blocked-path-attempt`.
+
 Tasks:
 
-- connect the accepted real provider dispatch completion path to final-action
-  and GitHub gate evidence before attempting a multi-turn soak;
+- rerun the real provider proposal/review/dispatch completion path through the
+  new spine binding and final-action/GitHub gate blocked assertion once Codex
+  app-server writeback is stable again;
 - run one bounded long-running demand through the acceptance-gated path;
 - record the runtime root, command, PR or no-PR outcome, final-action record,
   GitHub gate evidence record, and resulting spine status;
