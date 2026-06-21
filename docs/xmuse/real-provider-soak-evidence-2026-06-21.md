@@ -175,3 +175,44 @@ provider fails to write back:
    separate classifier command;
 4. rerun the same bounded soak and only then consider enabling live GitHub
    capture for an accepted release signal.
+
+Follow-up status: the provider response timeout cut begins by terminalizing
+timeouts at the peer-chat scheduler boundary. A timed-out claimed inbox item now
+records `failure_reason = provider_no_mcp_writeback_before_deadline`, persists a
+failed latency trace, and attaches that trace ref to the original intake
+AcceptanceSpine as a failed terminal state. This is a failure-path durability
+repair only; it does not make the real provider soak accepted and does not raise
+the release claim level until the same bounded soak is rerun successfully.
+
+Follow-up verification:
+
+```text
+.goal-runs/2026-06-21/provider-terminalization-soak-pytest-2/test_real_ray_codex_app_server0
+```
+
+The same bounded real-provider soak still failed before the first durable
+assistant reply, but the failure now terminalized durably:
+
+- conversation:
+  `conv_95125d5982f9471ca6940a397d1e49cb`
+- human intake message:
+  `chat.db#message=msg_c31af50481b849ac8ac611aca6fffd22`
+- inbox item:
+  `chat_inbox_items#id=inbox_86ee4299d62741e9a7049bd78dbf627f`
+- inbox status:
+  `failed`
+- inbox failure reason:
+  `provider_turn_cancelled_before_mcp_writeback`
+- stream:
+  `chat_streams#id=stream_inbox_86ee4299d62741e9a7049bd78dbf627f`,
+  `status = error`
+- failed latency trace:
+  `peer_turn_latency_traces#trace=peer_latency_inbox_86ee4299d62741e9a7049bd78dbf627f`
+- original intake spine:
+  `chat.db#acceptance_spine=goalrun_00f50043ea414cada59118792d12f28b`,
+  `status = failed`,
+  `blocked_reason = provider_turn_cancelled_before_mcp_writeback`
+
+This proves the failure-path terminalization repair. It does not prove provider
+writeback success, proposal/review/final-action traversal, or GitHub accepted
+truth for the real provider soak.

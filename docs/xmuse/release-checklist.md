@@ -92,7 +92,9 @@ Do not claim:
 
 - No multi-hour real-provider/Ray/Codex soak has been accepted. The 2026-06-21
   bounded real-provider soak is blocked before the first durable MCP
-  `chat_post_message` reply.
+  `chat_post_message` reply. Provider response timeout/cancellation failures
+  now terminalize the claimed inbox item and original intake AcceptanceSpine,
+  but the successful bounded soak still has not been rerun.
 - Release packaging/versioning has not been cut from the current claim level.
 - `uv run mypy xmuse/platform_runner.py` has existing type debt and is not a
   clean release gate.
