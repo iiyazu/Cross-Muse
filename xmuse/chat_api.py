@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
+from xmuse_core.chat.acceptance_spine import AcceptanceSpineStore
 from xmuse_core.chat.api_models import (
     BlueprintFreezeRequest,
     BootstrapApplyCreate,
@@ -145,6 +146,10 @@ def _collaboration_store(base_dir: Path) -> ChatCollaborationStore:
 
 def _dispatch_queue_store(base_dir: Path) -> ChatDispatchQueueStore:
     return ChatDispatchQueueStore(base_dir / "chat.db")
+
+
+def _acceptance_spine_store(base_dir: Path) -> AcceptanceSpineStore:
+    return AcceptanceSpineStore(base_dir / "chat.db")
 
 
 def _peer_chat_error_detail(exc: PeerChatError) -> dict[str, object]:
@@ -1594,6 +1599,21 @@ def create_app(
     @app.get("/api/chat/conversations/{conversation_id}/messages")
     def list_messages(conversation_id: str) -> dict[str, object]:
         return _chat_timeline_payload(root, conversation_id)
+
+    @app.get("/api/chat/conversations/{conversation_id}/acceptance-spines")
+    def list_acceptance_spines(conversation_id: str) -> dict[str, object]:
+        if not _conversation_exists(_store(root), conversation_id):
+            raise HTTPException(status_code=404, detail="conversation not found")
+        return {
+            "conversation_id": conversation_id,
+            "source_authority": "chat_store",
+            "items": [
+                spine.model_dump(mode="json")
+                for spine in _acceptance_spine_store(root).list_by_conversation(
+                    conversation_id
+                )
+            ],
+        }
 
     @app.post(
         "/api/chat/conversations/{conversation_id}/messages",

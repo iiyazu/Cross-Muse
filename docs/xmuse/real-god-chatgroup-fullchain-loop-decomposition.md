@@ -58,6 +58,70 @@ the current implementation, run the largest safe chain, inspect durable state,
 and refactor only where runtime evidence shows the existing boundary cannot
 hold.
 
+## GitHub Main Audit Checkpoint
+
+Before selecting the next implementation loop, refresh GitHub mainline truth.
+A 2026-06-21 GPT-5.5 Pro audit of `origin/main` at
+`88cb2d9 fix: guard final-action target imports` found that mainline groupchat
+has moved beyond the older local Grok branch shape:
+
+- dynamic participants are intended to be real session-bound peers, not roster
+  text;
+- peer progress, roster changes, collaboration, proposal review, and dispatch
+  gates are part of the groupchat control plane;
+- structured MCP/callback writeback is the successful truth path;
+- proposal review pending gates and execute feasibility verdicts are governance
+  gates, not prompt-only advice;
+- peer reply drain callbacks and proposal semantic dedupe are part of runtime
+  closure and retry hygiene;
+- deliberation/freeze guardrails are the direction for turning speech into
+  auditable decisions.
+
+If the active branch is behind or diverged from `origin/main`, the first loop is
+not another feature patch. The first loop is branch realignment:
+
+```text
+preserve local useful changes
+-> rebase/merge or recreate on origin/main
+-> rerun focused groupchat/Grok proof
+-> then choose the next failing runtime boundary
+```
+
+Do not claim audited mainline capabilities on a diverged local branch. Do not
+continue implementing broad groupchat behavior on the older branch unless the
+loop target is explicitly "port this mainline capability back with focused
+evidence".
+
+## Acceptance Spine Checkpoint
+
+The first local AcceptanceSpine/GoalRun cut is now implemented:
+
+```text
+human post_human_message intake
+-> durable acceptance_spines row
+-> source-linked proposal_id
+-> approved resolution verdict ref
+-> dispatch queue entry
+-> dispatch evidence refs
+-> read-only Chat API status
+```
+
+This is a product-control-plane improvement, not a fullchain success claim. It
+does not yet close independent review verdicts, final-action targets, or
+GitHub/server gate evidence.
+
+For the next loop, prefer the smallest real path that extends the same spine:
+
+```text
+review_plane verdict
+-> final_actions hold/target ref
+-> GitHub/server gate evidence ref or manual gap
+-> accepted / blocked / failed terminal status
+```
+
+Do not add provider scope or UI scope until this same demand record can show
+where closure stopped.
+
 ## Current Implementation Baseline
 
 The current implementation has useful production-shaped parts, but the real GOD
@@ -71,6 +135,8 @@ Known implemented parts:
 - provider adapters and policy/registry boundaries;
 - blueprint / feature / lane projection and execution machinery;
 - platform runner, isolated execution, review, and final-action hold pieces;
+- minimal durable AcceptanceSpine/GoalRun rows for human intake, proposal,
+  approval/verdict, dispatch queue, dispatch evidence, and read-only API status;
 - dashboard/TUI read-model surfaces.
 
 Current unproven or fragile boundaries:
@@ -80,6 +146,8 @@ Current unproven or fragile boundaries:
 - MCP/callback writeback as the only successful reply truth;
 - proposal production from real chat instead of manual construction;
 - groupchat-produced proposal flowing through execution and review;
+- independent review verdicts and final-action/GitHub gate evidence linked back
+  into the same acceptance spine;
 - repeated-run stability, stale-session recovery, and timeout handling.
 
 Therefore the first runtime assumption is:

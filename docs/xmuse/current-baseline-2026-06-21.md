@@ -41,6 +41,63 @@ The current verified chain is partial but real:
    deterministic test doubles only at the external CLI execution/review
    boundary, so it is a local runtime/control-plane proof, not a natural
    peer-GOD or live provider proof.
+8. The first durable AcceptanceSpine/GoalRun slice is implemented in `chat.db`:
+   human `post_human_message` intake creates a spine; source-linked proposals,
+   approved resolutions, dispatch queue entries, dispatch evidence refs, and a
+   read-only Chat API endpoint now attach to the same demand record.
+
+## GitHub Main Audit Absorption
+
+A GPT-5.5 Pro audit against GitHub `origin/main` on 2026-06-21 identified a
+more advanced mainline groupchat shape than this local working branch currently
+contains. The audited mainline head is:
+
+```text
+88cb2d9 fix: guard final-action target imports
+```
+
+The current local branch `codex/groupchat-proposal-review-payload` is not a
+safe substitute for that mainline state. At the time this baseline was updated,
+`git rev-list --left-right --count HEAD...origin/main` reported:
+
+```text
+5	112
+```
+
+That means further groupchat development on this branch must first account for
+mainline drift. In particular, the audit found mainline work around:
+
+- dynamic groupchat members bound to durable GOD sessions;
+- roster and peer-progress timeline events;
+- proposal-review pending gates before dispatch approval;
+- structured MCP peer tools counted as durable writeback evidence;
+- writeback grace handling for provider result delays;
+- collaboration/peer-reply drain callbacks back to the originator;
+- semantic lane-graph proposal deduplication;
+- deliberation freeze/decision guardrails.
+
+These are accepted as the correct design direction for xmuse: groupchat is a
+durable collaboration governance plane, not a chat transcript wrapper. However,
+they must not be claimed as present on this local branch unless the code is
+rebased/merged onto `origin/main` or the specific mainline changes are
+re-applied and verified here.
+
+The audit also sharpened the current risk ledger:
+
+- plain human messages can still enter the timeline without enqueuing peer
+  work unless they go through mention/collaboration dispatch paths;
+- timeline consumers must not assume `items` is the complete event stream when
+  progress/roster/runtime events are exposed separately;
+- review pending gates prove state was handled, not review quality;
+- durable writeback detection remains fragile when it depends on tool-stage
+  names rather than the writeback mutation itself;
+- semantic proposal deduplication needs an explicit revision/update route to
+  avoid suppressing intentional revised proposals.
+
+The deeper audit finding has now been partially absorbed locally: xmuse has a
+minimal durable acceptance spine for intake -> proposal -> approval/verdict ->
+dispatch evidence. It does not yet prove independent review verdict closure,
+final-action completion, or GitHub/server gate evidence.
 
 ## Baseline Evidence
 
@@ -70,6 +127,10 @@ Latest important runtime evidence before this baseline:
   store -> `xmuse.platform_runner.run` consumption -> durable
   `review_plane.json` task `verdict_emitted` with merge verdict -> pending
   `final_actions.json` hold under final-action safety mode.
+- Focused acceptance-spine verification now proves:
+  `post_human_message` -> `acceptance_spines.intake_message_id` ->
+  source-linked proposal -> approved `resolution:<id>` verdict ref ->
+  dispatch queue ref -> dispatch evidence refs -> read-only Chat API status.
 
 ## Forbidden Claims
 
@@ -88,23 +149,38 @@ This baseline does not prove:
 
 ## Next Entry Point
 
-Resume from the bounded local positive proof boundary toward a real external
-provider positive proof pass:
+The next loop should continue from the AcceptanceSpine boundary, not from more
+provider expansion. Keep the GitHub mainline drift risk visible, but the next
+small product cut is:
+
+```text
+independent review verdict
+-> final-action hold/target ref
+-> GitHub/server gate evidence ref or explicit manual gap
+-> accepted / blocked / failed terminal spine status
+```
+
+When using the existing Loop 2H runtime:
 
 1. Start `xmuse-mcp-server` for the same runtime root when using the existing
    Loop 2H runtime.
 2. Run the platform runner long enough to force a real external Review GOD or
-   configured peer to emit a durable passed verdict, or explicitly record the
-   next classified review/provider/transport blocker.
-3. Inspect `review_plane.json`, `feature_lanes.json`, state history, and spawn
-   logs before claiming runtime closure.
-4. Patch only if the runtime proof contradicts the durable terminality or
+   configured peer to emit a durable passed verdict, then link that verdict to
+   the acceptance spine; otherwise explicitly record the next classified
+   review/provider/transport blocker.
+3. Link final-action hold/target evidence and GitHub/server gate evidence or a
+   manual gap to the same spine.
+4. Inspect `acceptance_spines`, `review_plane.json`, `feature_lanes.json`,
+   state history, and spawn logs before claiming runtime closure.
+5. Patch only if the runtime proof contradicts the durable terminality or
    minimal fullchain authority contract.
 
 ## Baseline Verification
 
 Focused verification for this snapshot passed:
 
+- `uv run pytest tests/xmuse/test_acceptance_spine.py tests/xmuse/test_chat_default_intake.py tests/xmuse/test_peer_chat_store.py tests/xmuse/test_peer_chat_mcp_tools.py::test_mcp_emit_proposal_supersedes_prior_open_collaboration_proposal -q`
+- `uv run ruff check src/xmuse_core/chat/acceptance_spine.py src/xmuse_core/chat/store.py src/xmuse_core/chat/dispatch_queue.py src/xmuse_core/chat/peer_service.py src/xmuse_core/chat/__init__.py xmuse/chat_api.py tests/xmuse/test_acceptance_spine.py`
 - `git diff --check`
 - `uv run ruff check .`
 - `uv run pytest tests/xmuse/test_groupchat_minimal_fullchain_proof.py -q`

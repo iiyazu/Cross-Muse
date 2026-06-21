@@ -7,6 +7,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from xmuse_core.chat.acceptance_spine import (
+    AcceptanceSpineStore,
+    create_acceptance_spine_schema,
+    insert_acceptance_spine_for_intake,
+)
 from xmuse_core.chat.models import (
     ChatMessage,
     Conversation,
@@ -216,6 +221,14 @@ class ChatStore:
                         message.reply_to_message_id,
                     ),
                 )
+                if tool_name == "post_human_message" and role == "human":
+                    insert_acceptance_spine_for_intake(
+                        conn,
+                        spine_id=self._new_id("goalrun"),
+                        conversation_id=conversation_id,
+                        intake_message_id=message.id,
+                        now=now,
+                    )
 
                 created_items = []
                 for item in inbox_items:
@@ -381,6 +394,11 @@ class ChatStore:
                     proposal.accepted_resolution_id,
                 ),
             )
+        AcceptanceSpineStore(self._path).attach_proposal_from_references(
+            conversation_id=conversation_id,
+            proposal_id=proposal.id,
+            references=references,
+        )
         return proposal
 
     def create_proposal_message_and_log(
@@ -501,6 +519,11 @@ class ChatStore:
             except Exception:
                 conn.rollback()
                 raise
+        AcceptanceSpineStore(self._path).attach_proposal_from_references(
+            conversation_id=conversation_id,
+            proposal_id=proposal.id,
+            references=references,
+        )
         return result
 
     def get_proposal(self, proposal_id: str) -> Proposal:
@@ -657,6 +680,10 @@ class ChatStore:
                 resolution_content=resolution_content,
                 resolution_id=resolution.id,
             )
+        AcceptanceSpineStore(self._path).attach_verdict_for_proposal(
+            proposal_id=proposal.id,
+            verdict_ref=f"resolution:{resolution.id}",
+        )
         return resolution
 
     def _content_for_approved_proposal(
@@ -1053,6 +1080,7 @@ class ChatStore:
                 """,
                 ("chat_store_v1", _utc_now()),
             )
+            create_acceptance_spine_schema(conn)
         self._seed_role_templates()
 
     def _seed_role_templates(self) -> None:
