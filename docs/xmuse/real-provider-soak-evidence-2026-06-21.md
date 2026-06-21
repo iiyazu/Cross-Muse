@@ -596,3 +596,110 @@ This attempt does not invalidate the prior P3 dispatch-completion evidence, but
 it also does not prove real-provider final-action closure. The next real
 provider cut should first restore stable proposal MCP writeback, then rerun the
 same extended test until it reaches the deterministic final-action blocked gate.
+
+## P4 Proposal-Writeback Stability Attempt
+
+Status: `blocked/provider_no_mcp_writeback_before_deadline`.
+
+This follow-up addressed a prompt-contract conflict discovered after the first
+P4 attempts: generic peer-chat instructions said to call `chat_post_message`
+directly, while the P4 request explicitly required `chat_emit_proposal` and
+forbade `chat_post_message`. xmuse now states that an explicit
+`chat_emit_proposal` request takes priority over ordinary reply writeback, and
+that `chat_emit_proposal` is the durable writeback for proposal turns.
+
+Fast deterministic checks:
+
+```bash
+uv run pytest \
+  tests/xmuse/test_ray_adapters.py::test_app_server_mcp_instructions_prefer_direct_post \
+  tests/xmuse/test_peer_chat_prompt_builder.py::test_peer_chat_prompt_builder_emits_ordered_auditable_layers \
+  -q
+
+uv run ruff check \
+  src/xmuse_core/agents/codex_app_server_transport.py \
+  src/xmuse_core/chat/prompt_builder.py \
+  src/xmuse_core/agents/codex_persistent.py \
+  tests/xmuse/test_full_chain_real_run.py \
+  tests/xmuse/test_ray_adapters.py \
+  tests/xmuse/test_peer_chat_prompt_builder.py
+```
+
+Observed result:
+
+```text
+2 passed in 1.19s
+All checks passed!
+```
+
+The real P4 test was attempted twice from this branch.
+
+First attempt:
+
+```bash
+timeout 900 uv run pytest \
+  tests/xmuse/test_full_chain_real_run.py::test_real_ray_codex_app_server_proposal_review_dispatch_completion \
+  -q -s \
+  --basetemp=.goal-runs/2026-06-21/p4-real-final-gate-stability-pytest
+```
+
+Observed result:
+
+```text
+FAILED ... AssertionError: expected 1 proposals
+1 failed, 4 warnings in 205.98s
+```
+
+Durable negative facts:
+
+- runtime root:
+  `.goal-runs/2026-06-21/p4-real-final-gate-stability-pytest/test_real_ray_codex_app_server0`;
+- conversation `conv_e8fec5d907ab4ac5abd3a8981b4e3343`;
+- architect inbox `inbox_93ba1badadb94446a8be8d4e3955d6c6`;
+- inbox status `failed`;
+- latency trace `delivery_mode = failed`;
+- latency trace `degraded_reason = provider_turn_cancelled_before_mcp_writeback`;
+- zero proposal rows;
+- zero MCP tool traces;
+- empty stream content.
+
+Second attempt temporarily doubled only the first proposal wait window to
+separate a short test deadline from a provider writeback failure:
+
+```bash
+timeout 900 uv run pytest \
+  tests/xmuse/test_full_chain_real_run.py::test_real_ray_codex_app_server_proposal_review_dispatch_completion \
+  -q -s \
+  --basetemp=.goal-runs/2026-06-21/p4-real-final-gate-stability-pytest-2
+```
+
+Observed result:
+
+```text
+FAILED ... AssertionError: expected 1 proposals
+1 failed, 4 warnings in 386.98s
+```
+
+Durable negative facts:
+
+- runtime root:
+  `.goal-runs/2026-06-21/p4-real-final-gate-stability-pytest-2/test_real_ray_codex_app_server0`;
+- conversation `conv_0f8ed01f968c4c7faa4247370ef79b22`;
+- architect inbox `inbox_4cdc38c53ae14a839bd73f531ff0d108`;
+- inbox status `failed`;
+- latency trace `delivery_mode = failed`;
+- latency trace `degraded_reason = provider_no_mcp_writeback_before_deadline`;
+- failed intake spine
+  `chat.db#acceptance_spine=goalrun_7ac67c2c6d024a72a099121fca0de107`;
+- the spine contains execution evidence ref
+  `peer_turn_latency_traces#trace=peer_latency_inbox_4cdc38c53ae14a839bd73f531ff0d108`;
+- zero proposal rows;
+- zero MCP tool traces;
+- empty stream content.
+
+The temporary longer wait was not kept as a default because it did not produce
+proposal writeback and would make the focused real-provider gate slower. The
+current blocker is therefore not final-action/GitHub gate logic; it is the real
+Codex app-server provider failing to produce any MCP tool event or stream delta
+for this proposal turn. P4 remains blocked until that first proposal writeback
+is stable again.

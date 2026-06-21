@@ -69,6 +69,8 @@ def test_peer_chat_prompt_builder_emits_ordered_auditable_layers(tmp_path: Path)
     assert "@review=OpenCode Review GOD" in assembled.text
     assert "Local context capsule version: xmuse-local-context-capsule-v1" in assembled.text
     assert "chat_emit_proposal" in assembled.text
+    assert "If the inbox request explicitly asks for chat_emit_proposal" in assembled.text
+    assert "that tool is the durable writeback for proposal turns" in assembled.text
     assert "do not return the JSON as final assistant text or streamed stdout" in (
         assembled.text
     )

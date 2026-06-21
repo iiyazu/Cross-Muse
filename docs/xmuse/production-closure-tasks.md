@@ -175,11 +175,21 @@ the first provider MCP proposal writeback with
 the real-provider claim level. Evidence:
 `docs/xmuse/real-provider-soak-evidence-2026-06-21.md#p4-final-action-blocked-path-attempt`.
 
+P4 proposal-writeback stability follow-up: the prompt contract now explicitly
+prioritizes `chat_emit_proposal` over ordinary `chat_post_message` when the
+inbox request asks for proposal emission. A focused real-provider rerun still
+failed before any proposal, MCP tool trace, or stream delta was produced, ending
+as `provider_no_mcp_writeback_before_deadline`. Evidence:
+`docs/xmuse/real-provider-soak-evidence-2026-06-21.md#p4-proposal-writeback-stability-attempt`.
+
 Tasks:
 
+- diagnose the Codex app-server provider boundary for the first proposal turn:
+  prove whether the turn receives MCP tool availability events, any stream
+  delta, or an active-turn error before rerunning the full P4 path;
 - rerun the real provider proposal/review/dispatch completion path through the
-  new spine binding and final-action/GitHub gate blocked assertion once Codex
-  app-server writeback is stable again;
+  spine binding and final-action/GitHub gate blocked assertion only after the
+  first proposal writeback is stable again;
 - run one bounded long-running demand through the acceptance-gated path;
 - record the runtime root, command, PR or no-PR outcome, final-action record,
   GitHub gate evidence record, and resulting spine status;
