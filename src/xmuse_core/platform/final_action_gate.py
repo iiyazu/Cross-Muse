@@ -8,6 +8,10 @@ from typing import Any
 from pydantic import BaseModel
 
 from xmuse_core.chat.acceptance_spine import AcceptanceSpineStore
+from xmuse_core.platform.github_gate_evidence import (
+    GitHubGateEvidenceStore,
+    GitHubGateTruthCollector,
+)
 
 
 class PendingFinalAction(BaseModel):
@@ -20,6 +24,7 @@ class PendingFinalAction(BaseModel):
     summary: str
     resolved_by: str | None = None
     github_gate_evidence_ref: str | None = None
+    github_gate_gap_ref: str | None = None
 
 
 class FinalActionGateStore:
@@ -63,6 +68,7 @@ class FinalActionGateStore:
         status: str,
         resolved_by: str | None = None,
         github_gate_evidence_ref: str | None = None,
+        github_gate_gap_ref: str | None = None,
     ) -> PendingFinalAction:
         data = self._read()
         for item in data.get("holds", []):
@@ -71,6 +77,8 @@ class FinalActionGateStore:
                 item["resolved_by"] = resolved_by
                 if github_gate_evidence_ref:
                     item["github_gate_evidence_ref"] = github_gate_evidence_ref
+                if github_gate_gap_ref:
+                    item["github_gate_gap_ref"] = github_gate_gap_ref
                 self._write(data)
                 action = PendingFinalAction(**item)
                 self._update_acceptance_spine_for_resolution(
@@ -80,6 +88,44 @@ class FinalActionGateStore:
                 )
                 return action
         raise KeyError(f"unknown final action hold: {hold_id}")
+
+    def resolve_with_github_gate_evidence(
+        self,
+        hold_id: str,
+        *,
+        status: str,
+        resolved_by: str | None = None,
+        repo: str,
+        pull_request_number: int,
+        required_checks: list[str],
+        collector: GitHubGateTruthCollector,
+        evidence_store_path: Path | str | None = None,
+    ) -> PendingFinalAction:
+        github_gate_evidence_ref: str | None = None
+        github_gate_gap_ref: str | None = None
+        if status.strip().lower() in {"approved", "accepted", "resolved"}:
+            store = GitHubGateEvidenceStore(
+                evidence_store_path or self._path.parent / "github_gate_evidence.json"
+            )
+            record = store.capture_for_final_action(
+                final_action_id=hold_id,
+                repo=repo,
+                pull_request_number=pull_request_number,
+                required_checks=required_checks,
+                collector=collector,
+            )
+            record_ref = store.ref_for(record)
+            if record.can_accept:
+                github_gate_evidence_ref = record_ref
+            else:
+                github_gate_gap_ref = record_ref
+        return self.resolve(
+            hold_id,
+            status=status,
+            resolved_by=resolved_by,
+            github_gate_evidence_ref=github_gate_evidence_ref,
+            github_gate_gap_ref=github_gate_gap_ref,
+        )
 
     def get(self, hold_id: str) -> PendingFinalAction:
         for item in self._read().get("holds", []):
