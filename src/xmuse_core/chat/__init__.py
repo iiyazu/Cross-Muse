@@ -1,5 +1,10 @@
 """xmuse chat-plane models and persistence."""
 
+from xmuse_core.chat.acceptance_spine import (
+    AcceptanceSpine,
+    AcceptanceSpineStatus,
+    AcceptanceSpineStore,
+)
 from xmuse_core.chat.models import (
     ChatMessage,
     Conversation,
@@ -28,6 +33,9 @@ def __getattr__(name: str):
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 __all__ = [
+    "AcceptanceSpine",
+    "AcceptanceSpineStatus",
+    "AcceptanceSpineStore",
     "ChatMessage",
     "ChatStore",
     "PeerForkRecord",

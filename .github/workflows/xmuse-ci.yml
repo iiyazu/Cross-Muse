@@ -133,7 +133,11 @@ jobs:
       - name: Runtime gate lint
         run: >-
           uv run ruff check
+          src/xmuse_core/chat/acceptance_spine.py
           src/xmuse_core/integrations/memoryos_lite_interop.py
+          src/xmuse_core/platform/final_action_gate.py
+          src/xmuse_core/platform/github_gate_evidence.py
+          tests/xmuse/test_acceptance_spine.py
           tests/xmuse/test_github_server_gate_contract.py
           tests/xmuse/test_memoryos_lite_interop.py
           tests/xmuse/test_real_runtime_integration_gate.py
@@ -141,6 +145,7 @@ jobs:
       - name: Runtime integration focused tests
         run: >-
           uv run pytest -q
+          tests/xmuse/test_acceptance_spine.py
           tests/xmuse/test_github_server_gate_contract.py
           tests/xmuse/test_memoryos_lite_interop.py
           tests/xmuse/test_real_runtime_integration_gate.py

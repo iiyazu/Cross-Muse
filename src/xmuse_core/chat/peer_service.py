@@ -9,6 +9,7 @@ from typing import Any
 
 from xmuse_core.agents.god_session_layer import build_conversation_session_identity
 from xmuse_core.agents.god_session_registry import GodSessionRegistry
+from xmuse_core.chat.acceptance_spine import AcceptanceSpineStore
 from xmuse_core.chat.bootstrap_contracts import (
     AppliedBootstrap,
     BootstrapDraft,
@@ -2749,7 +2750,7 @@ class PeerChatService:
             review_participant_id=review_participant.participant_id,
         ):
             return
-        self._inbox.create_item(
+        trigger = self._inbox.create_item(
             conversation_id=conversation_id,
             target_participant_id=review_participant.participant_id,
             target_role=review_participant.role,
@@ -2764,6 +2765,22 @@ class PeerChatService:
                 reviewable_type=reviewable_type,
             ),
         )
+        proposal_id = self._proposal_id_from_message(conversation_id, source_message_id)
+        if proposal_id is not None:
+            AcceptanceSpineStore(self._db_path).attach_review_trigger_for_proposal(
+                proposal_id=proposal_id,
+                review_trigger_inbox_id=trigger.id,
+            )
+
+    def _proposal_id_from_message(self, conversation_id: str, message_id: str) -> str | None:
+        for message in self._chat.list_messages(conversation_id):
+            if message.id != message_id:
+                continue
+            envelope = message.envelope_json or {}
+            proposal_id = envelope.get("proposal_id")
+            if isinstance(proposal_id, str) and proposal_id:
+                return proposal_id
+        return None
 
     def _review_trigger_payload(
         self,

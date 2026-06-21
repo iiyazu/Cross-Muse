@@ -7,6 +7,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from xmuse_core.chat.acceptance_spine import AcceptanceSpineStore
+
 
 def _utc_now() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
@@ -88,6 +90,10 @@ class ChatDispatchQueueStore:
                     now,
                 ),
             )
+        AcceptanceSpineStore(self._path).attach_dispatch_for_proposal(
+            proposal_id=proposal_id,
+            dispatch_item_id=entry_id,
+        )
         return self.get(entry_id)
 
     def claim_next_auto_dispatch(
@@ -171,6 +177,10 @@ class ChatDispatchQueueStore:
             ).rowcount
         if updated != 1:
             raise ValueError("dispatch queue entry must be processing to mark dispatched")
+        AcceptanceSpineStore(self._path).attach_execution_evidence_for_dispatch(
+            dispatch_item_id=entry_id,
+            evidence_refs=[provider_run_ref, dispatch_evidence],
+        )
         return self.get(entry_id)
 
     def mark_failed(
@@ -195,6 +205,10 @@ class ChatDispatchQueueStore:
             ).rowcount
         if updated != 1:
             raise ValueError("dispatch queue entry must be queued or processing to mark failed")
+        AcceptanceSpineStore(self._path).mark_dispatch_failed(
+            dispatch_item_id=entry_id,
+            blocked_reason=failure_reason,
+        )
         return self.get(entry_id)
 
     def get(self, entry_id: str) -> ChatDispatchQueueEntry:

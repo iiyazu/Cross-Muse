@@ -33,6 +33,33 @@ REQUIRED_SERVER_CHECKS = {
 }
 
 
+def _branch_protection_snapshot(
+    required_checks: set[str] | list[str] | None = None,
+    *,
+    review_policy: dict[str, object] | None = None,
+) -> dict[str, object]:
+    checks = sorted(required_checks or REQUIRED_SERVER_CHECKS)
+    return {
+        "required_status_checks": {
+            "strict": True,
+            "checks": [{"context": check} for check in checks],
+        },
+        "required_pull_request_reviews": review_policy,
+    }
+
+
+def _required_status_checks_rule(
+    required_checks: set[str] | list[str] | None = None,
+) -> dict[str, object]:
+    checks = sorted(required_checks or REQUIRED_SERVER_CHECKS)
+    return {
+        "type": "required_status_checks",
+        "parameters": {
+            "required_status_checks": [{"context": check} for check in checks],
+        },
+    }
+
+
 class _FakeReadOnlyGitHubTruthClient:
     def __init__(self, snapshot: GitHubServerSideTruthSnapshot | None) -> None:
         self.snapshot = snapshot
@@ -160,12 +187,41 @@ def test_local_contract_gap_does_not_allow_pr_merged_event() -> None:
     assert can_emit_pr_merged(evidence) is False
 
 
+def test_branch_protection_snapshot_must_require_all_expected_checks() -> None:
+    snapshot = GitHubServerSideTruthSnapshot(
+        workflow_run_id=123,
+        check_suite_id=456,
+        check_run_ids=[111, 112, 113],
+        expected_source_app="github-actions",
+        branch_protection_snapshot=_branch_protection_snapshot({"quality-gates"}),
+        review_event_id=789,
+        reviewer_login="reviewer",
+        code_owner_review_verified=True,
+        merge_commit_sha="abc123",
+        merged_at="2026-06-10T15:00:00Z",
+        merge_event_id="merge-event-1",
+    )
+
+    evidence = build_github_server_side_truth_from_snapshot(
+        repo="iiyazu/Cross-Muse",
+        pull_request_number=42,
+        required_checks=sorted(REQUIRED_SERVER_CHECKS),
+        snapshot=snapshot,
+    )
+
+    assert evidence.proof_level == "manual_gap"
+    assert evidence.has_server_enforcement_truth is False
+    assert evidence.gap_reason is not None
+    assert "server_enforcement_truth" in evidence.gap_reason
+    assert can_emit_pr_merged(evidence) is False
+
+
 def test_fake_server_side_truth_collector_never_emits_merge_truth() -> None:
     collector = FakeGitHubServerSideTruthCollector(
         workflow_run_id=123,
         check_suite_id=456,
         check_run_ids=[111, 112, 113],
-        branch_protection_snapshot={"required_status_checks": sorted(REQUIRED_SERVER_CHECKS)},
+        branch_protection_snapshot=_branch_protection_snapshot(),
         review_event_id=789,
         reviewer_login="reviewer",
         code_owner_review_verified=True,
@@ -202,7 +258,7 @@ def test_server_side_merge_proof_requires_real_merge_truth_fields() -> None:
             workflow_run_id=123,
             check_suite_id=456,
             expected_source_app="github-actions",
-            branch_protection_snapshot={"required_status_checks": sorted(REQUIRED_SERVER_CHECKS)},
+            branch_protection_snapshot=_branch_protection_snapshot(),
             review_event_id=789,
             reviewer_login="reviewer",
             code_owner_review_verified=True,
@@ -219,7 +275,7 @@ def test_server_side_merge_truth_allows_pr_merged_event() -> None:
         check_suite_id=456,
         check_run_ids=[111, 112, 113],
         expected_source_app="github-actions",
-        branch_protection_snapshot={"required_status_checks": sorted(REQUIRED_SERVER_CHECKS)},
+        branch_protection_snapshot=_branch_protection_snapshot(),
         review_event_id=789,
         reviewer_login="reviewer",
         code_owner_review_verified=True,
@@ -270,7 +326,7 @@ def test_pr_merged_gate_requires_all_required_check_runs() -> None:
         check_suite_id=None,
         check_run_ids=[111],
         expected_source_app="github-actions",
-        branch_protection_snapshot={"required_status_checks": sorted(REQUIRED_SERVER_CHECKS)},
+        branch_protection_snapshot=_branch_protection_snapshot(),
         ruleset_snapshot=None,
         review_event_id=789,
         reviewer_login="reviewer",
@@ -295,7 +351,7 @@ def test_contract_proof_with_injected_merge_fields_cannot_emit_pr_merged() -> No
         check_suite_id=456,
         check_run_ids=[111, 112, 113],
         expected_source_app="github-actions",
-        branch_protection_snapshot={"required_status_checks": sorted(REQUIRED_SERVER_CHECKS)},
+        branch_protection_snapshot=_branch_protection_snapshot(),
         ruleset_snapshot=None,
         review_event_id=789,
         reviewer_login="reviewer",
@@ -316,7 +372,7 @@ def test_server_side_snapshot_normalizer_promotes_complete_read_only_evidence() 
         check_suite_id=456,
         check_run_ids=[111, 112, 113],
         expected_source_app="github-actions",
-        branch_protection_snapshot={"required_status_checks": sorted(REQUIRED_SERVER_CHECKS)},
+        branch_protection_snapshot=_branch_protection_snapshot(),
         review_event_id=789,
         reviewer_login="reviewer",
         code_owner_review_verified=True,
@@ -345,7 +401,7 @@ def test_server_side_snapshot_normalizer_keeps_incomplete_snapshot_as_gap() -> N
         check_suite_id=456,
         check_run_ids=[111, 112, 113],
         expected_source_app="github-actions",
-        branch_protection_snapshot={"required_status_checks": sorted(REQUIRED_SERVER_CHECKS)},
+        branch_protection_snapshot=_branch_protection_snapshot(),
         code_owner_review_verified=False,
         merge_commit_sha="abc123",
         merged_at="2026-06-10T15:00:00Z",
@@ -373,10 +429,7 @@ def test_server_side_snapshot_accepts_internal_review_when_github_review_not_req
         check_suite_id=456,
         check_run_ids=[111, 112, 113],
         expected_source_app="github-actions",
-        branch_protection_snapshot={
-            "required_status_checks": sorted(REQUIRED_SERVER_CHECKS),
-            "required_pull_request_reviews": None,
-        },
+        branch_protection_snapshot=_branch_protection_snapshot(review_policy=None),
         internal_review_artifact="docs/xmuse/opencode-in-long-runtime-evidence-closure.md",
         internal_reviewer="opencode-in-review",
         internal_reviewed_head_sha="abc123",
@@ -406,13 +459,12 @@ def test_internal_review_does_not_replace_required_github_review() -> None:
         check_suite_id=456,
         check_run_ids=[111, 112, 113],
         expected_source_app="github-actions",
-        branch_protection_snapshot={
-            "required_status_checks": sorted(REQUIRED_SERVER_CHECKS),
-            "required_pull_request_reviews": {
+        branch_protection_snapshot=_branch_protection_snapshot(
+            review_policy={
                 "required_approving_review_count": 1,
                 "require_code_owner_reviews": True,
-            },
-        },
+            }
+        ),
         internal_review_artifact="docs/xmuse/opencode-in-long-runtime-evidence-closure.md",
         internal_reviewer="opencode-in-review",
         internal_reviewed_head_sha="abc123",
@@ -472,7 +524,7 @@ def test_read_only_collector_normalizes_client_snapshot_without_mutation() -> No
         check_suite_id=456,
         check_run_ids=[111, 112, 113],
         expected_source_app="github-actions",
-        branch_protection_snapshot={"required_status_checks": sorted(REQUIRED_SERVER_CHECKS)},
+        branch_protection_snapshot=_branch_protection_snapshot(),
         review_event_id=789,
         reviewer_login="reviewer",
         code_owner_review_verified=True,
@@ -521,7 +573,7 @@ def test_read_only_collector_keeps_partial_client_snapshot_as_gap() -> None:
         check_suite_id=456,
         check_run_ids=[111, 112, 113],
         expected_source_app="github-actions",
-        branch_protection_snapshot={"required_status_checks": sorted(REQUIRED_SERVER_CHECKS)},
+        branch_protection_snapshot=_branch_protection_snapshot(),
         merge_commit_sha="abc123",
         merged_at="2026-06-10T15:00:00Z",
         merge_event_id="merge-event-1",
@@ -646,6 +698,7 @@ def test_gh_cli_truth_client_uses_ruleset_snapshot_when_branch_protection_missin
                         }
                     },
                     "rules": [
+                        _required_status_checks_rule(),
                         {
                             "type": "pull_request",
                             "parameters": {"require_code_owner_review": True},
@@ -723,6 +776,7 @@ def test_gh_cli_truth_client_does_not_use_ruleset_for_different_branch() -> None
                         }
                     },
                     "rules": [
+                        _required_status_checks_rule(),
                         {
                             "type": "pull_request",
                             "parameters": {"require_code_owner_review": True},
@@ -800,6 +854,7 @@ def test_gh_cli_truth_client_does_not_use_ruleset_excluding_base_branch() -> Non
                         }
                     },
                     "rules": [
+                        _required_status_checks_rule(),
                         {
                             "type": "pull_request",
                             "parameters": {"require_code_owner_review": True},
@@ -874,6 +929,7 @@ def test_gh_cli_truth_client_accepts_ruleset_branch_pattern_for_base_branch() ->
                         }
                     },
                     "rules": [
+                        _required_status_checks_rule(),
                         {
                             "type": "pull_request",
                             "parameters": {"require_code_owner_review": True},
