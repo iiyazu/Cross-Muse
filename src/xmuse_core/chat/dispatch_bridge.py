@@ -253,8 +253,12 @@ def _dispatch_prompt(
         "- This chat nudge does not execute the lane and must not claim execution.",
         "- Do not edit files, run tests, or inspect unrelated repository state.",
         "- Real worktree execution is handled by the platform lane worker.",
-        "- Reply with chat_post_message only after reading this dispatch context.",
-        "- The reply must include DISPATCH_ACKNOWLEDGED and the dispatch entry id.",
+        "- You must call the MCP tool chat_post_message exactly once after reading "
+        "this dispatch context.",
+        "- Do not answer with plain text; a plain text acknowledgement is not a "
+        "durable dispatch acknowledgement.",
+        "- The chat_post_message content must include DISPATCH_ACKNOWLEDGED and "
+        "the dispatch entry id.",
         "- If you cannot acknowledge the handoff, reply with DISPATCH_ACK_FAILED "
         "and the reason.",
     ]

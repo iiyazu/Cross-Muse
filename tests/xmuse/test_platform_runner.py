@@ -793,6 +793,7 @@ async def test_runner_builds_dispatch_bridge_with_peer_god_layer(
         max_hours=0,
         max_concurrent=1,
         peer_chat_enabled=True,
+        peer_chat_dispatch_response_wait_s=321.0,
     )
 
     assert captured["dispatch_bridge_kwargs"]["bridge_id"] == "platform-runner-dispatch"
@@ -805,7 +806,7 @@ async def test_runner_builds_dispatch_bridge_with_peer_god_layer(
         == captured["scheduler_kwargs"]["worktree"]
     )
     assert Path(captured["dispatch_bridge_kwargs"]["worktree"]).name == "peer_chat_worktree"
-    assert captured["dispatch_bridge_kwargs"]["response_wait_s"] >= 180
+    assert captured["dispatch_bridge_kwargs"]["response_wait_s"] == 321.0
 
 
 @pytest.mark.asyncio
