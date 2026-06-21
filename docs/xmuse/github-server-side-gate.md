@@ -1,6 +1,6 @@
 # GitHub Server-Side Gate
 
-Updated: 2026-06-10
+Updated: 2026-06-21
 
 This document is the repository-side contract for GitHub settings that must be
 configured on the server. Repository files can prove the desired configuration,
@@ -42,6 +42,13 @@ The xmuse mainline follows a Clowder-style review split:
 ownership but is not required to be the active review gate in single-maintainer
 mode.
 
+As of the 2026-06-21 live evidence capture, GitHub branch protection for `main`
+does not require pull request reviews (`required_pull_request_reviews = null`).
+That is an explicit policy state, not CodeOwner review enforcement. Production
+closure therefore uses verified xmuse internal review truth when GitHub does not
+require PR review, and must not claim GitHub CodeOwner/PR review enforcement
+unless branch protection or an applicable ruleset later proves it.
+
 ## Required PR Evidence
 
 `.github/pull_request_template.md` must keep the mainline evidence fields,
@@ -80,6 +87,9 @@ Runtime proof:
   verified xmuse internal review truth when GitHub does not require it;
 - a real PR with missing `review_evidence_bundle` is rejected by the merge
   process.
+
+Current live evidence is recorded in
+`docs/xmuse/github-server-side-gate-live-evidence-2026-06-21.md`.
 
 ## Server-Side Truth Evidence Model
 

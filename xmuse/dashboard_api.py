@@ -319,7 +319,9 @@ def create_app(base_dir: Path | str = DEFAULT_BASE_DIR) -> FastAPI:
                         status_code=status.HTTP_409_CONFLICT,
                         detail="no pending final action hold for lane",
                     )
-                lane["status"], lane["final_action_hold_id"] = resolved
+                lane["status"], lane["final_action_hold_id"], blocker_reason = resolved
+                if blocker_reason:
+                    lane["blocker_reason"] = blocker_reason
             elif status_value not in {"done", "merged"}:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,

@@ -736,7 +736,9 @@ def test_approve_accepts_merged_lane(tmp_path):
     assert response.json()["approval_status"] == "approved"
 
 
-def test_approve_awaiting_final_action_merge_resolves_hold(tmp_path):
+def test_approve_awaiting_final_action_merge_without_github_proof_stays_blocked(
+    tmp_path,
+):
     _write_json(
         tmp_path / "feature_lanes.json",
         {"lanes": [{"feature_id": "ready", "status": "awaiting_final_action", "prompt": "ready"}]},
@@ -761,11 +763,14 @@ def test_approve_awaiting_final_action_merge_resolves_hold(tmp_path):
     response = _client(tmp_path).post("/api/lanes/ready/approve")
 
     assert response.status_code == 200
-    assert response.json()["status"] == "merged"
+    assert response.json()["status"] == "blocked"
+    assert response.json()["blocker_reason"] == "github_gate_unverified"
     data = json.loads((tmp_path / "feature_lanes.json").read_text(encoding="utf-8"))
-    assert data["lanes"][0]["status"] == "merged"
+    assert data["lanes"][0]["status"] == "blocked"
+    assert data["lanes"][0]["blocker_reason"] == "github_gate_unverified"
     holds = json.loads((tmp_path / "final_actions.json").read_text(encoding="utf-8"))
     assert holds["holds"][0]["status"] == "approved"
+    assert holds["holds"][0]["github_gate_gap_ref"] == "github_gate_unverified"
 
 
 def test_approve_awaiting_final_action_merge_applies_import_to_target_worktree(tmp_path):
@@ -837,7 +842,8 @@ def test_approve_awaiting_final_action_merge_applies_import_to_target_worktree(t
     response = _client(tmp_path).post("/api/lanes/import-ready/approve")
 
     assert response.status_code == 200
-    assert response.json()["status"] == "merged"
+    assert response.json()["status"] == "blocked"
+    assert response.json()["blocker_reason"] == "github_gate_unverified"
     assert (target_worktree / "runtime_artifacts" / "loop7r.txt").read_text(
         encoding="utf-8"
     ) == "LOOP7R\n"
@@ -847,6 +853,9 @@ def test_approve_awaiting_final_action_merge_applies_import_to_target_worktree(t
     assert imports["imports"][0]["target_worktree"] == str(target_worktree)
     assert imports["imports"][0]["import_decision"]["id"] == "decision-import"
     assert "github_server_merge" in imports["imports"][0]["forbidden_claims"]
+    holds = json.loads((tmp_path / "final_actions.json").read_text(encoding="utf-8"))
+    assert holds["holds"][0]["status"] == "approved"
+    assert holds["holds"][0]["github_gate_gap_ref"] == "github_gate_unverified"
 
 
 def test_approve_awaiting_final_action_merge_requires_import_decision_for_target(

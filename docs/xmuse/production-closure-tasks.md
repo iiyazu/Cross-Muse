@@ -11,6 +11,12 @@ xmuse can claim production-grade closure.
 Goal: close issue #37 or leave it explicitly blocked with fresh command
 evidence.
 
+Status: closed for required-check enforcement on 2026-06-21 by
+`docs/xmuse/github-server-side-gate-live-evidence-2026-06-21.md`. GitHub
+PR/CodeOwner review enforcement is explicitly absent
+(`required_pull_request_reviews = null`), and xmuse policy uses verified
+internal review truth when GitHub does not require PR review.
+
 Tasks:
 
 - capture authenticated read-only GitHub evidence for `main` branch protection
