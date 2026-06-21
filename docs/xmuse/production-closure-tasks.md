@@ -142,10 +142,21 @@ positive writeback question. P3 remains blocked until the real provider path
 continues through proposal/review/dispatch, final-action, and GitHub gate
 evidence.
 
+Proposal/review/dispatch follow-up: P2 is now accepted for the bounded
+real-provider control-plane path. Evidence:
+`docs/xmuse/real-provider-soak-evidence-2026-06-21.md#p2-positive-proposal--review--dispatch-follow-up`.
+The focused real Ray/Codex app-server test produced a durable `lane_graph`
+proposal via `chat_emit_proposal`, handled the automatic review trigger, approved
+the collaboration-backed proposal, and enqueued an execute dispatch intent. This
+closes the next positive control-plane question. P3 remains blocked until the
+real provider path continues through actual execute-provider dispatch
+completion, final-action, GitHub gate evidence, accepted AcceptanceSpine truth,
+and multi-turn soak stability.
+
 Tasks:
 
-- connect the accepted real provider writeback path to proposal, review, and
-  dispatch evidence before attempting a multi-turn soak;
+- connect the accepted real provider dispatch queue path to actual
+  execute-provider dispatch completion before attempting a multi-turn soak;
 - run one bounded long-running demand through the acceptance-gated path;
 - record the runtime root, command, PR or no-PR outcome, final-action record,
   GitHub gate evidence record, and resulting spine status;

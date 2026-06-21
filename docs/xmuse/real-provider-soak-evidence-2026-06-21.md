@@ -292,3 +292,97 @@ peer can complete durable MCP `chat_post_message` writeback and survive a
 restart/resume session reuse. It still does not prove proposal/review/dispatch,
 final-action, GitHub gate, accepted AcceptanceSpine truth, or multi-turn soak
 stability.
+
+## P2 Positive Proposal / Review / Dispatch Follow-up
+
+Status: `real_provider_proposal_review_dispatch_accepted`.
+
+Runtime root:
+
+```text
+.goal-runs/2026-06-21/p2-real-provider-proposal-dispatch-pytest/test_real_ray_codex_app_server0
+```
+
+Command:
+
+```bash
+timeout 480 uv run pytest \
+  tests/xmuse/test_full_chain_real_run.py::test_real_ray_codex_app_server_proposal_review_dispatch \
+  -q -s \
+  --basetemp=.goal-runs/2026-06-21/p2-real-provider-proposal-dispatch-pytest
+```
+
+Observed result:
+
+```text
+1 passed, 4 warnings in 89.26s
+```
+
+Report:
+
+```json
+{
+  "conversation_id": "conv_bc4fa83561b042a489e80078e05882d5",
+  "delivery_mode": "mcp_writeback",
+  "dispatch_entry_id": "dispatch:conv_bc4fa83561b042a489e80078e05882d5:res_3d19e6d8154b44769aef4d187f74f323:execute",
+  "proposal_id": "prop_038ab28b77f94083959d22f37d527a9c",
+  "provider_session_kind": "codex_app_server_thread",
+  "resolution_id": "res_3d19e6d8154b44769aef4d187f74f323"
+}
+```
+
+Durable positive facts:
+
+- architect Codex app-server provider session:
+  `019eea3d-fed6-7e32-9f2f-5cb39afa860d`;
+- human intake:
+  `chat.db#message=msg_a6c9cae7ea9a483abc3423c53ce0254e`;
+- architect inbox:
+  `chat_inbox_items#id=inbox_bef9bc6485af44b48166039d4087c06b`,
+  `status = read`,
+  `responded_message_id = msg_183b1337a5d44b8f92a8991ef0c1b26e`;
+- real provider proposal message:
+  `chat.db#message=msg_183b1337a5d44b8f92a8991ef0c1b26e`;
+- lane graph proposal:
+  `chat.db#proposal=prop_038ab28b77f94083959d22f37d527a9c`,
+  `status = accepted`,
+  `references = ["collaboration:collab_2fc0fe6651a94142859445efc7d7809b"]`;
+- automatic review trigger:
+  `chat_inbox_items#id=inbox_27e4675cda2b4aeaa1f6e55a79d370f0`,
+  `status = read`,
+  `responded_message_id = msg_94b4ed03bc26460c8ad237f2bd9cca0e`;
+- review message:
+  `chat.db#message=msg_94b4ed03bc26460c8ad237f2bd9cca0e`;
+- approval resolution:
+  `chat.db#resolution=res_3d19e6d8154b44769aef4d187f74f323`;
+- dispatch queue entry:
+  `chat_dispatch_queue#entry=dispatch:conv_bc4fa83561b042a489e80078e05882d5:res_3d19e6d8154b44769aef4d187f74f323:execute`,
+  `status = queued`,
+  `proposal_id = prop_038ab28b77f94083959d22f37d527a9c`,
+  `collaboration_run_id = collab_2fc0fe6651a94142859445efc7d7809b`;
+- latency trace:
+  `peer_turn_latency_traces#trace=peer_latency_inbox_bef9bc6485af44b48166039d4087c06b`,
+  `delivery_mode = mcp_writeback`,
+  `degraded_reason = peer_writeback_before_provider_result`;
+- MCP tool trace:
+  `peer_turn_mcp_tool_traces#peer_mcp_tool_inbox_bef9bc6485af44b48166039d4087c06b_chat_emit_proposal`.
+
+The observed provider stages were:
+
+```text
+chat_emit_proposal
+codex_app_server_turn_start
+inbox_claim
+provider_session_started
+ray_actor_delivery_start
+scheduler_observed_durable_writeback
+trace_persisted
+```
+
+This proves the P2 positive control-plane question: a real Ray/Codex app-server
+architect can produce a durable `lane_graph` proposal through
+`chat_emit_proposal`; the automatic review trigger can be handled durably; and
+approval of the collaboration-backed proposal enqueues an execute dispatch
+intent. It still does not prove final-action, GitHub gate acceptance, actual
+execute-provider dispatch completion, accepted AcceptanceSpine truth, or
+multi-turn soak stability.
