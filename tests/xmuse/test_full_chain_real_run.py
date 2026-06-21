@@ -20,6 +20,8 @@ from xmuse_core.agents import codex_persistent
 from xmuse_core.agents.god_session_registry import GodSessionRegistry
 from xmuse_core.agents.ray_session_layer import RayGodSessionLayer
 from xmuse_core.agents.registry import AgentDescriptor, AgentRuntime
+from xmuse_core.chat.collaboration_store import ChatCollaborationStore
+from xmuse_core.chat.dispatch_queue import ChatDispatchQueueStore
 from xmuse_core.chat.inbox_store import ChatInboxStore
 from xmuse_core.chat.participant_store import Participant, ParticipantStore
 from xmuse_core.chat.store import ChatStore
@@ -265,6 +267,51 @@ async def _wait_for_read_inbox_count(
             return items
         await asyncio.sleep(0.1)
     raise AssertionError(f"expected {expected} read inbox items")
+
+
+async def _wait_for_proposal_count(
+    db_path: Path,
+    conversation_id: str,
+    expected: int,
+    *,
+    attempts: int = 600,
+) -> list:
+    for _ in range(attempts):
+        proposals = ChatStore(db_path).list_proposals(conversation_id)
+        if len(proposals) >= expected:
+            return proposals
+        await asyncio.sleep(0.1)
+    raise AssertionError(f"expected {expected} proposals")
+
+
+async def _wait_for_review_trigger_count(
+    db_path: Path,
+    conversation_id: str,
+    expected: int,
+    *,
+    attempts: int = 600,
+) -> list:
+    for _ in range(attempts):
+        items = _review_inbox_items(db_path, conversation_id)
+        if len(items) >= expected:
+            return items
+        await asyncio.sleep(0.1)
+    raise AssertionError(f"expected {expected} review trigger inbox items")
+
+
+async def _wait_for_dispatch_entry_count(
+    db_path: Path,
+    conversation_id: str,
+    expected: int,
+    *,
+    attempts: int = 120,
+) -> list:
+    for _ in range(attempts):
+        entries = ChatDispatchQueueStore(db_path).list_entries(conversation_id)
+        if len(entries) >= expected:
+            return entries
+        await asyncio.sleep(0.1)
+    raise AssertionError(f"expected {expected} dispatch queue entries")
 
 
 async def _post_architect_turn_and_wait(
@@ -1271,6 +1318,234 @@ async def test_real_ray_codex_app_server_mcp_writeback_restart_resume(
         )
     finally:
         if "runner_task" in locals():
+            await stop_runner(runner_task)
+        await _stop_server(chat_server, chat_task)
+        await _stop_server(mcp_server, mcp_task)
+
+
+@pytest.mark.asyncio
+async def test_real_ray_codex_app_server_proposal_review_dispatch(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    if shutil.which("codex") is None:
+        pytest.skip("codex CLI is not installed")
+
+    db_path = tmp_path / "chat.db"
+    lanes_path = tmp_path / "feature_lanes.json"
+    lanes_path.write_text(json.dumps({"lanes": []}), encoding="utf-8")
+    chat_port = _free_port()
+    mcp_port = _free_port()
+
+    monkeypatch.setenv("XMUSE_PEER_GOD_BACKEND", "ray")
+    monkeypatch.setenv("XMUSE_RAY_GOD_TRANSPORT", "app-server")
+    monkeypatch.setenv("XMUSE_RAY_GOD_MCP", "1")
+    monkeypatch.setenv("XMUSE_RAY_GOD_EFFORT", "low")
+    monkeypatch.delenv("XMUSE_DEGRADED_LOCAL_GOD_MODE", raising=False)
+
+    chat_server, chat_task = await _serve_app(create_chat_app(tmp_path), port=chat_port)
+    mcp_server, mcp_task = await _serve_app(create_mcp_app(tmp_path), port=mcp_port)
+
+    async def start_runner() -> asyncio.Task:
+        return asyncio.create_task(
+            platform_runner.run(
+                lanes_path=lanes_path,
+                xmuse_root=tmp_path,
+                mcp_port=mcp_port,
+                max_hours=1,
+                max_concurrent=1,
+                peer_chat_enabled=True,
+            )
+        )
+
+    async def stop_runner(task: asyncio.Task) -> None:
+        task.cancel()
+        try:
+            await asyncio.wait_for(task, timeout=10)
+        except (TimeoutError, asyncio.CancelledError):
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+
+    try:
+        runner_task = await start_runner()
+        async with httpx.AsyncClient(
+            base_url=f"http://127.0.0.1:{chat_port}",
+            timeout=30.0,
+        ) as client:
+            created = await client.post(
+                "/api/chat/conversations",
+                json={"title": "Real Codex proposal review dispatch"},
+            )
+            created.raise_for_status()
+            conversation = created.json()
+            conversation_id = conversation["id"]
+            participants = {
+                participant["role"]: participant
+                for participant in conversation["participants"]
+            }
+            architect_id = participants["architect"]["participant_id"]
+            review_id = participants["review"]["participant_id"]
+
+            collaboration = ChatCollaborationStore(db_path)
+            run = collaboration.create_request(
+                conversation_id=conversation_id,
+                goal="Dispatch a bounded real-provider P2 lane after proposal review.",
+                initiator="human",
+                targets=["execute"],
+                callback_target="architect",
+                question="Confirm this one-lane P2 dispatch is executable.",
+                context_refs=["test:p2-real-provider-proposal-review-dispatch"],
+                idempotency_key="p2-real-provider-proposal-review-dispatch",
+                timeout_s=480,
+            )
+            run = collaboration.record_response(
+                run.run_id,
+                target="execute",
+                content=json.dumps(
+                    {
+                        "type": "execute_feasibility_verdict",
+                        "status": "executable",
+                        "summary": "The P2 lane is bounded to proposal review dispatch evidence.",
+                        "evidence_refs": [
+                            "test:p2-real-provider-proposal-review-dispatch"
+                        ],
+                    }
+                ),
+                response_status="received",
+            )
+            assert run.status.value == "done"
+
+            request = await client.post(
+                f"/api/chat/conversations/{conversation_id}/messages",
+                json={
+                    "author": "human-1",
+                    "role": "human",
+                    "content": (
+                        "@architect Call the MCP tool chat_emit_proposal exactly once now. "
+                        "Do not call chat_post_message. Use client_request_id "
+                        "`p2-real-provider-proposal`, summary `P2 real provider dispatch "
+                        "slice`, lanes exactly [{\"feature_id\":\"p2-real-provider-"
+                        "dispatch-slice\",\"prompt\":\"Verify real provider proposal "
+                        "review dispatch queue evidence.\",\"depends_on\":[],"
+                        "\"capabilities\":[\"code\",\"test\"]}], and references exactly "
+                        f"[\"collaboration:{run.run_id}\"]."
+                    ),
+                    "client_request_id": "p2-real-provider-human",
+                },
+            )
+            request.raise_for_status()
+            request_payload = request.json()
+            inbox_item_id = request_payload["inbox_items"][0]["id"]
+
+            proposals = await _wait_for_proposal_count(
+                db_path,
+                conversation_id,
+                1,
+                attempts=1800,
+            )
+            proposal = proposals[0]
+            assert proposal.proposal_type == "lane_graph"
+            assert proposal.references == [f"collaboration:{run.run_id}"]
+            proposal_payload = json.loads(proposal.content)
+            assert proposal_payload["lanes"][0]["feature_id"] == (
+                "p2-real-provider-dispatch-slice"
+            )
+            await _wait_for_read_inbox_count(
+                db_path,
+                conversation_id,
+                architect_id,
+                1,
+                attempts=1800,
+            )
+            traces = await _wait_for_latency_trace_count(
+                db_path,
+                conversation_id,
+                1,
+                attempts=1800,
+            )
+            proposal_trace = next(
+                trace
+                for trace in traces
+                if trace["inbox_item_id"] == inbox_item_id
+            )
+            assert proposal_trace["delivery_mode"] == "mcp_writeback"
+            assert proposal_trace.get("degraded_reason") in {
+                None,
+                "peer_writeback_before_provider_result",
+            }
+            stages = proposal_trace.get("stage_timings")
+            assert isinstance(stages, dict)
+            assert "chat_emit_proposal" in stages
+
+            review_items = await _wait_for_review_trigger_count(
+                db_path,
+                conversation_id,
+                1,
+                attempts=1800,
+            )
+            registry = GodSessionRegistry(tmp_path / "god_sessions.json")
+            review_session = registry.find_by_conversation_participant(
+                conversation_id=conversation_id,
+                participant_id=review_id,
+            )
+            assert review_session is not None
+            async with httpx.AsyncClient(timeout=30.0) as mcp_client:
+                review_message = await _http_mcp_call(
+                    mcp_client,
+                    f"http://127.0.0.1:{mcp_port}/mcp",
+                    "chat_post_message",
+                    {
+                        "conversation_id": conversation_id,
+                        "participant_id": review_id,
+                        "god_session_id": review_session.god_session_id,
+                        "client_request_id": "p2-real-provider-review",
+                        "content": (
+                            "Review verdict: dispatch allowed. The proposal is backed "
+                            "by executable collaboration evidence."
+                        ),
+                        "reply_to_inbox_item_id": review_items[0].id,
+                    },
+                )
+            review_item = ChatInboxStore(db_path).get(review_items[0].id)
+            assert review_item.status == "read"
+            assert review_item.responded_message_id == review_message["message"]["id"]
+
+            await stop_runner(runner_task)
+
+            approved = await client.post(
+                f"/api/chat/proposals/{proposal.id}/approve",
+                json={
+                    "approved_by": ["human-1"],
+                    "approval_mode": "manual",
+                    "goal_summary": "Approve P2 real provider dispatch slice",
+                },
+            )
+            approved.raise_for_status()
+            entries = await _wait_for_dispatch_entry_count(
+                db_path,
+                conversation_id,
+                1,
+            )
+            assert entries[0].status == "queued"
+            assert entries[0].proposal_id == proposal.id
+            assert entries[0].collaboration_run_id == run.run_id
+
+            report = {
+                "conversation_id": conversation_id,
+                "proposal_id": proposal.id,
+                "resolution_id": approved.json()["id"],
+                "dispatch_entry_id": entries[0].entry_id,
+                "provider_session_kind": registry.find_by_conversation_participant(
+                    conversation_id,
+                    architect_id,
+                ).provider_session_kind,
+                "delivery_mode": proposal_trace["delivery_mode"],
+                "observed_stages": sorted(stages),
+            }
+            print("XMUSE_REAL_P2_PROPOSAL_DISPATCH_REPORT " + json.dumps(report, sort_keys=True))
+    finally:
+        if "runner_task" in locals() and not runner_task.done():
             await stop_runner(runner_task)
         await _stop_server(chat_server, chat_task)
         await _stop_server(mcp_server, mcp_task)
