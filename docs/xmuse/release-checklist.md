@@ -117,6 +117,12 @@ Do not claim:
   no app-server event, MCP-ready/no-tool, streamed-text/no-tool, and
   proposal-tool-call cases. This is diagnostic only and does not raise the
   claim level.
+- P4 first-proposal probe:
+  `.goal-runs/2026-06-21/p4-first-proposal-probe-pytest/test_real_ray_codex_app_server0`
+  persisted proposal `prop_c776c4dfe72c4cdc9f0db7893856f0f4` through a real
+  Ray/Codex app-server `chat_emit_proposal` turn. Full P4 still failed before
+  proposal persistence; its trace now classifies the blocker as
+  `mcp_tools_ready` / no MCP tool call.
 
 ## Required Checks And Gate State
 
@@ -145,10 +151,11 @@ Do not claim:
   acceptance-gated runner still blocks final action without producer-owned
   GitHub proof. The proposal-turn prompt contract now removes the ordinary
   reply/proposal tool conflict, but the real app-server path still fails before
-  the first proposal MCP tool event. Timeout/cancellation traces now retain
-  app-server partial stages for the next probe, but the real provider path has
-  not yet completed final-action, GitHub gate, accepted AcceptanceSpine truth,
-  or multi-turn soak acceptance.
+  the first proposal MCP tool event in the complete P4 setup. A small
+  first-proposal probe can persist `chat_emit_proposal`, so the current blocker
+  is stabilizing full-P4 model/tool selection after `mcp_tools_ready`. The real
+  provider path has not yet completed final-action, GitHub gate, accepted
+  AcceptanceSpine truth, or multi-turn soak acceptance.
 - Release packaging/versioning has not been cut from the current claim level.
 - `uv run mypy xmuse/platform_runner.py` has existing type debt and is not a
   clean release gate.
