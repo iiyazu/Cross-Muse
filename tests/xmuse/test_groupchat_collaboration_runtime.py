@@ -1781,6 +1781,8 @@ async def test_dispatch_bridge_prompt_includes_approved_artifact_context(
     assert "chat-plane handoff notice" in prompt
     assert "must not claim execution" in prompt
     assert "Do not edit files, run tests" in prompt
+    assert "must call the MCP tool chat_post_message exactly once" in prompt
+    assert "plain text acknowledgement is not a durable dispatch acknowledgement" in prompt
     assert "DISPATCH_ACKNOWLEDGED" in prompt
     assert "DISPATCH_COMPLETED" not in prompt
     assert "Production TUI closure" in prompt

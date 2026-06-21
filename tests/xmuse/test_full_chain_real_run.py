@@ -314,6 +314,29 @@ async def _wait_for_dispatch_entry_count(
     raise AssertionError(f"expected {expected} dispatch queue entries")
 
 
+async def _wait_for_dispatch_entry_status(
+    db_path: Path,
+    conversation_id: str,
+    expected_status: str,
+    *,
+    attempts: int = 1800,
+):
+    last_entries = []
+    for _ in range(attempts):
+        entries = ChatDispatchQueueStore(db_path).list_entries(conversation_id)
+        last_entries = entries
+        for entry in entries:
+            if entry.status == expected_status:
+                return entry
+            if entry.status == "failed":
+                raise AssertionError(
+                    f"dispatch entry failed: {entry.entry_id}:{entry.failure_reason}"
+                )
+        await asyncio.sleep(0.1)
+    statuses = [f"{entry.entry_id}:{entry.status}" for entry in last_entries]
+    raise AssertionError(f"expected dispatch entry status {expected_status}: {statuses}")
+
+
 async def _post_architect_turn_and_wait(
     client: httpx.AsyncClient,
     *,
@@ -1324,7 +1347,7 @@ async def test_real_ray_codex_app_server_mcp_writeback_restart_resume(
 
 
 @pytest.mark.asyncio
-async def test_real_ray_codex_app_server_proposal_review_dispatch(
+async def test_real_ray_codex_app_server_proposal_review_dispatch_completion(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -1355,6 +1378,7 @@ async def test_real_ray_codex_app_server_proposal_review_dispatch(
                 max_hours=1,
                 max_concurrent=1,
                 peer_chat_enabled=True,
+                peer_chat_dispatch_response_wait_s=300.0,
             )
         )
 
@@ -1511,8 +1535,6 @@ async def test_real_ray_codex_app_server_proposal_review_dispatch(
             assert review_item.status == "read"
             assert review_item.responded_message_id == review_message["message"]["id"]
 
-            await stop_runner(runner_task)
-
             approved = await client.post(
                 f"/api/chat/proposals/{proposal.id}/approve",
                 json={
@@ -1531,19 +1553,73 @@ async def test_real_ray_codex_app_server_proposal_review_dispatch(
             assert entries[0].proposal_id == proposal.id
             assert entries[0].collaboration_run_id == run.run_id
 
+            dispatched = await _wait_for_dispatch_entry_status(
+                db_path,
+                conversation_id,
+                "dispatched",
+                attempts=1800,
+            )
+            assert dispatched.entry_id == entries[0].entry_id
+            assert dispatched.proposal_id == proposal.id
+            assert dispatched.resolution_id == approved.json()["id"]
+            assert dispatched.provider_run_ref == (
+                f"peer_ack:execute:{participants['execute']['participant_id']}"
+            )
+            assert dispatched.dispatch_evidence is not None
+            assert dispatched.dispatch_evidence.startswith("mcp_writeback:")
+            dispatch_inbox_id = dispatched.dispatch_evidence.removeprefix(
+                "mcp_writeback:"
+            )
+            dispatch_inbox = ChatInboxStore(db_path).get(dispatch_inbox_id)
+            assert dispatch_inbox.item_type == "dispatch"
+            assert dispatch_inbox.status == "read"
+            assert dispatch_inbox.responded_message_id is not None
+            dispatch_ack_message = next(
+                message
+                for message in ChatStore(db_path).list_messages(conversation_id)
+                if message.id == dispatch_inbox.responded_message_id
+            )
+            assert dispatch_ack_message.author == participants["execute"]["participant_id"]
+            assert "DISPATCH_ACKNOWLEDGED" in dispatch_ack_message.content
+            assert dispatched.entry_id in dispatch_ack_message.content
+            dispatch_traces = await _wait_for_latency_trace_count(
+                db_path,
+                conversation_id,
+                2,
+                attempts=1800,
+            )
+            dispatch_trace = next(
+                trace
+                for trace in dispatch_traces
+                if trace["inbox_item_id"] == dispatch_inbox_id
+            )
+            assert dispatch_trace["delivery_mode"] == "mcp_writeback"
+            dispatch_stages = dispatch_trace.get("stage_timings")
+            assert isinstance(dispatch_stages, dict)
+            assert "chat_post_message" in dispatch_stages
+            assert "chat_post_message_persisted" in dispatch_stages
+
             report = {
                 "conversation_id": conversation_id,
                 "proposal_id": proposal.id,
                 "resolution_id": approved.json()["id"],
-                "dispatch_entry_id": entries[0].entry_id,
+                "dispatch_entry_id": dispatched.entry_id,
+                "dispatch_inbox_id": dispatch_inbox_id,
+                "dispatch_status": dispatched.status,
+                "dispatch_provider_run_ref": dispatched.provider_run_ref,
+                "dispatch_evidence": dispatched.dispatch_evidence,
                 "provider_session_kind": registry.find_by_conversation_participant(
                     conversation_id,
                     architect_id,
                 ).provider_session_kind,
                 "delivery_mode": proposal_trace["delivery_mode"],
                 "observed_stages": sorted(stages),
+                "dispatch_observed_stages": sorted(dispatch_stages),
             }
-            print("XMUSE_REAL_P2_PROPOSAL_DISPATCH_REPORT " + json.dumps(report, sort_keys=True))
+            print(
+                "XMUSE_REAL_P3_DISPATCH_COMPLETION_REPORT "
+                + json.dumps(report, sort_keys=True)
+            )
     finally:
         if "runner_task" in locals() and not runner_task.done():
             await stop_runner(runner_task)
