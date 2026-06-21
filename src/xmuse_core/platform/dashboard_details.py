@@ -998,7 +998,7 @@ def _runtime_timeline_events(
             targets = _string_items(run.get("targets"))
             target_text = ", ".join(targets) if targets else "none"
             responses = int(run.get("response_count") or 0)
-            blockers = int(run.get("blocker_count") or 0)
+            blocker_count = int(run.get("blocker_count") or 0)
             events.append(
                 _runtime_event(
                     conversation_id=conversation_id,
@@ -1007,7 +1007,7 @@ def _runtime_timeline_events(
                     title="Discussion run",
                     summary=(
                         f"{run_id} {status} {mode} targets={target_text} "
-                        f"responses={responses} blockers={blockers}"
+                        f"responses={responses} blockers={blocker_count}"
                     ),
                     status=status,
                     created_at=_row_timestamp(run, "updated_at", "created_at"),
@@ -1341,18 +1341,23 @@ def _resolve_pending_final_action(
     feature_id: str,
     *,
     lane: dict[str, Any] | None = None,
-) -> tuple[str, str] | None:
+) -> tuple[str, str, str | None] | None:
     store = FinalActionGateStore(base_dir / "final_actions.json")
     for hold in store.list_actions():
         if hold.lane_id == feature_id and hold.status == "pending":
             action = hold.action
             if action == "merge":
                 _record_final_action_import(base_dir, hold, lane or {})
+                store.resolve(
+                    hold.id,
+                    status="approved",
+                    resolved_by="human",
+                    github_gate_gap_ref="github_gate_unverified",
+                )
+                return "blocked", hold.id, "github_gate_unverified"
             store.resolve(hold.id, status="approved", resolved_by="human")
-            if action == "merge":
-                return "merged", hold.id
             if action == "terminate":
-                return "failed", hold.id
+                return "failed", hold.id, None
             return None
     return None
 

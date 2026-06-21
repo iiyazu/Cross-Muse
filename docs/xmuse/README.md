@@ -53,6 +53,7 @@ GOD groupchat deliberation
 | `docs/xmuse/deep-research-03-next-goal.md` | 第三轮真实运行层目标：GitHub 服务器 gate、MemoryOS Lite 互操作、provider/runtime soak 分层和 broad-suite 债务 |
 | `docs/xmuse/real-runtime-integration-gate.md` | 第三轮无 secrets focused gate，区分 contract proof 与 runtime proof |
 | `docs/xmuse/github-server-side-gate.md` | GitHub branch protection、required checks、CODEOWNER review 和 PR evidence 的服务器侧配置合同 |
+| `docs/xmuse/github-server-side-gate-live-evidence-2026-06-21.md` | 2026-06-21 authenticated read-only GitHub server evidence：main branch protection、required checks、workflow/check-run visibility、rulesets=0 和 PR/CodeOwner review policy 状态 |
 | `docs/xmuse/broad-suite-baseline-debt.md` | 全仓 format、legacy chat API、live MemoryOS Lite、real provider/Ray/Codex 缺口登记表 |
 | `docs/xmuse/memoryos-lite-runtime-compatibility.md` | MemoryOS Lite 公共 API payload、ContextPackage 解析、namespace/session 持久绑定与 live opt-in 兼容闭环 |
 | `docs/xmuse/self-iteration-runtime-closure-plan.md` | 下一轮自迭代 runtime 闭环的详细任务、验收标准和执行行为规范 |
