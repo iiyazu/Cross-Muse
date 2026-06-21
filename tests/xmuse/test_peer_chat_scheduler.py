@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from xmuse_core.agents.registry import AgentRuntime
+from xmuse_core.chat.acceptance_spine import AcceptanceSpineStatus, AcceptanceSpineStore
 from xmuse_core.chat.inbox_store import ChatInboxStore
 from xmuse_core.chat.participant_store import ParticipantStore
 from xmuse_core.chat.peer_scheduler import (
@@ -513,7 +514,9 @@ async def test_scheduler_tick_many_serializes_same_participant_delivery(
 
 
 @pytest.mark.asyncio
-async def test_scheduler_releases_claim_when_peer_turn_times_out(tmp_path: Path) -> None:
+async def test_scheduler_terminalizes_claim_and_spine_when_peer_turn_times_out(
+    tmp_path: Path,
+) -> None:
     chat = ChatStore(tmp_path / "chat.db")
     conv = chat.create_conversation("Scheduler timeout")
     participant = ParticipantStore(tmp_path / "chat.db").add(
@@ -524,6 +527,10 @@ async def test_scheduler_releases_claim_when_peer_turn_times_out(tmp_path: Path)
         model="gpt-5.4",
     )
     message = chat.add_message(conv.id, "Human", "human", "@architect")
+    AcceptanceSpineStore(tmp_path / "chat.db").create_for_intake(
+        conversation_id=conv.id,
+        intake_message_id=message.id,
+    )
     inbox = ChatInboxStore(tmp_path / "chat.db")
     item = inbox.create_item(
         conversation_id=conv.id,
@@ -571,17 +578,99 @@ async def test_scheduler_releases_claim_when_peer_turn_times_out(tmp_path: Path)
     assert outcome.happy_path == 0
     assert outcome.failed == 1
     updated = inbox.get(item.id)
-    assert updated.status == "unread"
-    assert updated.nudge_count == 1
-    assert updated.failure_reason is None
+    assert updated.status == "failed"
+    assert updated.nudge_count == 0
+    assert updated.failure_reason == "provider_no_mcp_writeback_before_deadline"
     assert layer.aborted == "god-live"
     streams = ChatStreamStore(tmp_path / "chat.db")
     assert streams.list_active(conv.id) == []
     assert streams.get(stream.id).status == "error"
+    trace = PeerTurnLatencyTraceStore(tmp_path / "chat.db").list_recent(conv.id)[0]
+    assert trace["delivery_mode"] == "failed"
+    assert trace["degraded_reason"] == "provider_no_mcp_writeback_before_deadline"
+    spine = AcceptanceSpineStore(tmp_path / "chat.db").get_by_intake_message(message.id)
+    assert spine.status is AcceptanceSpineStatus.FAILED
+    assert spine.blocked_reason == "provider_no_mcp_writeback_before_deadline"
+    assert spine.execution_evidence_refs == [
+        f"peer_turn_latency_traces#trace={trace['id']}"
+    ]
 
 
 @pytest.mark.asyncio
-async def test_scheduler_preserves_latency_trace_for_retry_attempt(
+async def test_scheduler_terminalizes_claim_and_spine_when_peer_turn_is_cancelled(
+    tmp_path: Path,
+) -> None:
+    chat = ChatStore(tmp_path / "chat.db")
+    conv = chat.create_conversation("Scheduler cancellation")
+    participant = ParticipantStore(tmp_path / "chat.db").add(
+        conversation_id=conv.id,
+        role="architect",
+        display_name="Architect GOD",
+        cli_kind="codex",
+        model="gpt-5.4",
+    )
+    message = chat.add_message(conv.id, "Human", "human", "@architect")
+    AcceptanceSpineStore(tmp_path / "chat.db").create_for_intake(
+        conversation_id=conv.id,
+        intake_message_id=message.id,
+    )
+    inbox = ChatInboxStore(tmp_path / "chat.db")
+    item = inbox.create_item(
+        conversation_id=conv.id,
+        target_participant_id=participant.participant_id,
+        target_role="architect",
+        target_address="@architect",
+        sender_participant_id=None,
+        sender_address="@human",
+        source_message_id=message.id,
+        item_type="mention",
+        payload={"content": "@architect"},
+    )
+
+    class HangingGodLayer(FakeGodLayer):
+        async def receive_message(self, god_session_id):
+            await asyncio.sleep(60)
+            return None
+
+        async def abort_session(self, god_session_id):
+            self.aborted = god_session_id
+
+    layer = HangingGodLayer()
+    scheduler = PeerChatScheduler(
+        db_path=tmp_path / "chat.db",
+        god_layer=layer,
+        worktree=tmp_path,
+        scheduler_id="sched-test",
+        response_wait_s=180.0,
+    )
+    task = asyncio.create_task(scheduler.tick_once())
+    for _ in range(50):
+        if layer.sent:
+            break
+        await asyncio.sleep(0.01)
+    assert layer.sent
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    updated = inbox.get(item.id)
+    assert updated.status == "failed"
+    assert updated.failure_reason == "provider_turn_cancelled_before_mcp_writeback"
+    assert layer.aborted == "god-live"
+    trace = PeerTurnLatencyTraceStore(tmp_path / "chat.db").list_recent(conv.id)[0]
+    assert trace["delivery_mode"] == "failed"
+    assert trace["degraded_reason"] == "provider_turn_cancelled_before_mcp_writeback"
+    spine = AcceptanceSpineStore(tmp_path / "chat.db").get_by_intake_message(message.id)
+    assert spine.status is AcceptanceSpineStatus.FAILED
+    assert spine.blocked_reason == "provider_turn_cancelled_before_mcp_writeback"
+    assert spine.execution_evidence_refs == [
+        f"peer_turn_latency_traces#trace={trace['id']}"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_scheduler_preserves_latency_trace_for_terminal_timeout(
     tmp_path: Path,
 ) -> None:
     chat = ChatStore(tmp_path / "chat.db")
@@ -646,19 +735,13 @@ async def test_scheduler_preserves_latency_trace_for_retry_attempt(
     )
 
     first = await scheduler.tick_once()
-    second = await scheduler.tick_once()
-
     assert first.failed == 1
-    assert second.happy_path == 1
-    assert inbox.get(item.id).nudge_count == 1
+    assert inbox.get(item.id).status == "failed"
+    assert inbox.get(item.id).failure_reason == "provider_no_mcp_writeback_before_deadline"
     traces = PeerTurnLatencyTraceStore(tmp_path / "chat.db").list_recent(conv.id)
-    assert [trace["delivery_mode"] for trace in traces] == [
-        "mcp_writeback",
-        "failed",
-    ]
-    assert traces[0]["id"] == f"peer_latency_{item.id}_attempt_2"
-    assert traces[1]["id"] == f"peer_latency_{item.id}"
-    assert traces[1]["degraded_reason"] == "peer_response_timeout"
+    assert [trace["delivery_mode"] for trace in traces] == ["failed"]
+    assert traces[0]["id"] == f"peer_latency_{item.id}"
+    assert traces[0]["degraded_reason"] == "provider_no_mcp_writeback_before_deadline"
 
 
 @pytest.mark.asyncio
@@ -1632,7 +1715,7 @@ async def test_scheduler_degraded_fallback_posts_visible_reply_on_timeout(
     )
     assert reply.author == participant.participant_id
     assert "快速确认兜底" in reply.content
-    assert "peer_response_timeout" in reply.content
+    assert "provider_no_mcp_writeback_before_deadline" in reply.content
     streams = ChatStreamStore(tmp_path / "chat.db")
     assert streams.list_active(conv.id) == []
     assert streams.get(stream.id).status == "error"

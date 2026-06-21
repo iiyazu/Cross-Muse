@@ -10,6 +10,7 @@ from pathlib import Path
 
 from xmuse_core.agents.persistent_peer import fingerprint_prompt
 from xmuse_core.agents.registry import AgentDescriptor, AgentRuntime
+from xmuse_core.chat.acceptance_spine import AcceptanceSpineStore
 from xmuse_core.chat.context_assembler import ContextAssembler
 from xmuse_core.chat.inbox_store import ChatInboxStore
 from xmuse_core.chat.mentions import (
@@ -128,6 +129,7 @@ class PeerChatScheduler:
         scheduler_observed_result_at: float | None,
         transport_latency_stages: dict[str, dict[str, float]],
     ) -> PeerChatSchedulerOutcome:
+        record = None
         try:
             agent = AgentDescriptor(
                 name=participant.display_name,
@@ -230,22 +232,27 @@ class PeerChatScheduler:
                     return PeerChatSchedulerOutcome(nudged=1, happy_path=1)
                 await _abort_session_if_supported(self._god_layer, record.god_session_id)
                 self._finish_active_stream_for_item(item, status="error")
-                self._record_latency_trace(
+                reason = "provider_no_mcp_writeback_before_deadline"
+                trace = self._record_latency_trace(
                     item,
                     trace_start_at=trace_start_at,
                     delivery_started_at=delivery_started_at,
                     provider_turn_started_at=provider_turn_started_at,
                     scheduler_observed_result_at=None,
                     delivery_mode="failed",
-                    degraded_reason="peer_response_timeout",
+                    degraded_reason=reason,
                 )
                 if self._post_degraded_fallback_if_enabled(
                     item,
                     participant=participant,
-                    reason="peer_response_timeout",
+                    reason=reason,
                 ):
                     return PeerChatSchedulerOutcome(fallback_replies=1)
-                self._record_failed_nudge(item.id, reason="peer_response_timeout")
+                self._terminalize_claimed_item_failure(
+                    item,
+                    reason=reason,
+                    trace=trace,
+                )
                 return PeerChatSchedulerOutcome(failed=1)
             scheduler_observed_result_at = self._clock()
             if message is None or getattr(message, "type", None) == "error":
@@ -365,6 +372,27 @@ class PeerChatScheduler:
                     reason="peer_no_inbox_writeback_message",
                 )
                 return PeerChatSchedulerOutcome(failed=1)
+        except asyncio.CancelledError:
+            reason = "provider_turn_cancelled_before_mcp_writeback"
+            if record is not None:
+                await _abort_session_if_supported(self._god_layer, record.god_session_id)
+            self._finish_active_stream_for_item(item, status="error")
+            trace = self._record_latency_trace(
+                item,
+                trace_start_at=trace_start_at,
+                delivery_started_at=delivery_started_at,
+                provider_turn_started_at=provider_turn_started_at,
+                scheduler_observed_result_at=scheduler_observed_result_at,
+                delivery_mode="failed",
+                degraded_reason=reason,
+                transport_latency_stages=transport_latency_stages,
+            )
+            self._terminalize_claimed_item_failure(
+                item,
+                reason=reason,
+                trace=trace,
+            )
+            raise
         except Exception as exc:
             self._record_latency_trace(
                 item,
@@ -529,7 +557,7 @@ class PeerChatScheduler:
         delivery_mode: str,
         degraded_reason: str | None,
         transport_latency_stages: dict[str, dict[str, float]] | None = None,
-    ) -> None:
+    ) -> dict[str, object]:
         writeback_at = self._clock()
         mcp_tool_stages = self._latency.list_mcp_tool_stages(item.conversation_id, item.id)
         first_delta_at = _stage_at(transport_latency_stages, "first_stream_delta")
@@ -542,7 +570,7 @@ class PeerChatScheduler:
             transport_latency_stages=transport_latency_stages,
             mcp_tool_stages=mcp_tool_stages,
         )
-        self._latency.record(
+        return self._latency.record(
             conversation_id=item.conversation_id,
             inbox_item_id=item.id,
             participant_id=item.target_participant_id,
@@ -557,6 +585,26 @@ class PeerChatScheduler:
             delivery_mode=delivery_mode,
             degraded_reason=degraded_reason,
             stage_timings=stage_timings,
+        )
+
+    def _terminalize_claimed_item_failure(
+        self,
+        item,
+        *,
+        reason: str,
+        trace: dict[str, object] | None = None,
+    ) -> None:
+        self._inbox.mark_failed(item.id, reason=reason)
+        trace_id = trace.get("id") if isinstance(trace, dict) else None
+        evidence_ref = (
+            f"peer_turn_latency_traces#trace={trace_id}"
+            if isinstance(trace_id, str) and trace_id
+            else None
+        )
+        AcceptanceSpineStore(self._db_path).mark_intake_failed(
+            intake_message_id=item.source_message_id,
+            blocked_reason=reason,
+            evidence_ref=evidence_ref,
         )
 
     def _finish_active_stream_for_item(self, item, *, status: str) -> None:
