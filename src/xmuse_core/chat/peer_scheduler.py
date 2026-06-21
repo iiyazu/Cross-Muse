@@ -247,6 +247,12 @@ class PeerChatScheduler:
                         success=True,
                     )
                     return PeerChatSchedulerOutcome(nudged=1, happy_path=1)
+                transport_latency_stages.update(
+                    await _active_latency_stages_if_supported(
+                        self._god_layer,
+                        record.god_session_id,
+                    )
+                )
                 await _abort_session_if_supported(self._god_layer, record.god_session_id)
                 self._finish_active_stream_for_item(item, status="error")
                 reason = "provider_no_mcp_writeback_before_deadline"
@@ -258,6 +264,7 @@ class PeerChatScheduler:
                     scheduler_observed_result_at=None,
                     delivery_mode="failed",
                     degraded_reason=reason,
+                    transport_latency_stages=transport_latency_stages,
                 )
                 if self._post_degraded_fallback_if_enabled(
                     item,
@@ -408,6 +415,12 @@ class PeerChatScheduler:
         except asyncio.CancelledError:
             reason = "provider_turn_cancelled_before_mcp_writeback"
             if record is not None:
+                transport_latency_stages.update(
+                    await _active_latency_stages_if_supported(
+                        self._god_layer,
+                        record.god_session_id,
+                    )
+                )
                 await _abort_session_if_supported(self._god_layer, record.god_session_id)
             self._finish_active_stream_for_item(item, status="error")
             trace = self._record_latency_trace(
@@ -947,6 +960,26 @@ async def _abort_session_if_supported(god_layer, god_session_id: str) -> None:
     if not callable(abort):
         return
     await abort(god_session_id)
+
+
+async def _active_latency_stages_if_supported(
+    god_layer,
+    god_session_id: str,
+) -> dict[str, dict[str, float]]:
+    getter = getattr(god_layer, "active_latency_stages", None)
+    if not callable(getter):
+        return {}
+    stages = await getter(god_session_id)
+    if not isinstance(stages, dict):
+        return {}
+    clean: dict[str, dict[str, float]] = {}
+    for name, stage in stages.items():
+        if not isinstance(name, str) or not isinstance(stage, dict):
+            continue
+        at = stage.get("at")
+        if isinstance(at, (int, float)):
+            clean[name] = {"at": float(at)}
+    return clean
 
 
 def _message_failure_reason(message) -> str:

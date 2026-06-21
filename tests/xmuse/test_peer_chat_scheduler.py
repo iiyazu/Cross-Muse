@@ -559,6 +559,14 @@ async def test_scheduler_terminalizes_claim_and_spine_when_peer_turn_times_out(
             await asyncio.sleep(1)
             return None
 
+        async def active_latency_stages(self, god_session_id):
+            assert god_session_id == "god-live"
+            return {
+                "mcp_tools_ready": {"at": 10.0},
+                "codex_app_server_turn_start": {"at": 10.5},
+                "first_stream_delta": {"at": 11.0},
+            }
+
         async def abort_session(self, god_session_id):
             self.aborted = god_session_id
 
@@ -588,6 +596,9 @@ async def test_scheduler_terminalizes_claim_and_spine_when_peer_turn_times_out(
     trace = PeerTurnLatencyTraceStore(tmp_path / "chat.db").list_recent(conv.id)[0]
     assert trace["delivery_mode"] == "failed"
     assert trace["degraded_reason"] == "provider_no_mcp_writeback_before_deadline"
+    assert trace["stage_timings"]["mcp_tools_ready"] == {"at": 10.0}
+    assert trace["stage_timings"]["codex_app_server_turn_start"] == {"at": 10.5}
+    assert trace["stage_timings"]["first_stream_delta"] == {"at": 11.0}
     spine = AcceptanceSpineStore(tmp_path / "chat.db").get_by_intake_message(message.id)
     assert spine.status is AcceptanceSpineStatus.FAILED
     assert spine.blocked_reason == "provider_no_mcp_writeback_before_deadline"
@@ -632,6 +643,10 @@ async def test_scheduler_terminalizes_claim_and_spine_when_peer_turn_is_cancelle
             await asyncio.sleep(60)
             return None
 
+        async def active_latency_stages(self, god_session_id):
+            assert god_session_id == "god-live"
+            return {"mcp_tools_ready": {"at": 20.0}}
+
         async def abort_session(self, god_session_id):
             self.aborted = god_session_id
 
@@ -661,6 +676,7 @@ async def test_scheduler_terminalizes_claim_and_spine_when_peer_turn_is_cancelle
     trace = PeerTurnLatencyTraceStore(tmp_path / "chat.db").list_recent(conv.id)[0]
     assert trace["delivery_mode"] == "failed"
     assert trace["degraded_reason"] == "provider_turn_cancelled_before_mcp_writeback"
+    assert trace["stage_timings"]["mcp_tools_ready"] == {"at": 20.0}
     spine = AcceptanceSpineStore(tmp_path / "chat.db").get_by_intake_message(message.id)
     assert spine.status is AcceptanceSpineStatus.FAILED
     assert spine.blocked_reason == "provider_turn_cancelled_before_mcp_writeback"
