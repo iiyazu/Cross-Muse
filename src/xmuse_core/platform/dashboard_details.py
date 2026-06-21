@@ -1,7 +1,10 @@
 """Dashboard API read-model and drill-down helpers."""
 from __future__ import annotations
 
+import hashlib
 import json
+import shutil
+import subprocess
 from datetime import UTC, datetime
 from json import JSONDecodeError
 from pathlib import Path
@@ -1329,11 +1332,22 @@ def _read_self_evolution_entries(base_dir: Path, file_name: str, key: str) -> li
     return entries if isinstance(entries, list) else []
 
 
-def _resolve_pending_final_action(base_dir: Path, feature_id: str) -> tuple[str, str] | None:
+class FinalActionApprovalError(ValueError):
+    pass
+
+
+def _resolve_pending_final_action(
+    base_dir: Path,
+    feature_id: str,
+    *,
+    lane: dict[str, Any] | None = None,
+) -> tuple[str, str] | None:
     store = FinalActionGateStore(base_dir / "final_actions.json")
     for hold in store.list_actions():
         if hold.lane_id == feature_id and hold.status == "pending":
             action = hold.action
+            if action == "merge":
+                _record_final_action_import(base_dir, hold, lane or {})
             store.resolve(hold.id, status="approved", resolved_by="human")
             if action == "merge":
                 return "merged", hold.id
@@ -1341,3 +1355,302 @@ def _resolve_pending_final_action(base_dir: Path, feature_id: str) -> tuple[str,
                 return "failed", hold.id
             return None
     return None
+
+
+def _record_final_action_import(
+    base_dir: Path,
+    hold: Any,
+    lane: dict[str, Any],
+) -> None:
+    target_worktree = _optional_path(lane.get("final_action_import_target"))
+    if target_worktree is None:
+        return
+
+    changed_files = _safe_changed_files(lane.get("changed_files"))
+    source_worktree = _optional_path(lane.get("worktree"))
+    import_decision = _resolve_final_action_import_decision(
+        base_dir,
+        hold=hold,
+        lane=lane,
+        target_worktree=target_worktree,
+    )
+    if source_worktree is None or not source_worktree.exists():
+        raise FinalActionApprovalError("final_action_import_source_worktree_missing")
+    if not target_worktree.exists() or not target_worktree.is_dir():
+        raise FinalActionApprovalError("final_action_import_target_missing")
+    dirty_conflicts = _target_dirty_conflicting_paths(target_worktree, changed_files)
+    if dirty_conflicts:
+        raise FinalActionApprovalError(
+            "final_action_import_target_dirty_conflict: " + ", ".join(dirty_conflicts)
+        )
+
+    import_plan = _preflight_final_action_import_files(
+        source_worktree,
+        target_worktree,
+        changed_files,
+    )
+    imported_files: list[dict[str, Any]] = []
+    for changed_file, source_path, target_path in import_plan:
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source_path, target_path)
+        imported_files.append(
+            {
+                "path": changed_file,
+                "source_sha256": _sha256_file(source_path),
+                "target_sha256": _sha256_file(target_path),
+                "bytes": target_path.stat().st_size,
+            }
+        )
+
+    _append_final_action_import_record(
+        base_dir,
+        {
+            "id": f"import-{hold.id}",
+            "hold_id": hold.id,
+            "lane_id": hold.lane_id,
+            "verdict_id": hold.verdict_id,
+            "action": hold.action,
+            "status": "applied",
+            "created_at": utc_now(),
+            "source_worktree": str(source_worktree),
+            "target_worktree": str(target_worktree),
+            "changed_files": changed_files,
+            "imported_files": imported_files,
+            "import_decision": import_decision,
+            "proof_level": "local_final_action_import",
+            "forbidden_claims": [
+                "github_server_merge",
+                "github_server_truth",
+                "source_root_merge_unless_target_worktree_is_source_root",
+                "full_xmuse_closure",
+            ],
+        },
+    )
+
+
+def _resolve_final_action_import_decision(
+    base_dir: Path,
+    *,
+    hold: Any,
+    lane: dict[str, Any],
+    target_worktree: Path,
+) -> dict[str, Any]:
+    data = _read_json(_json_path(base_dir, "final_action_import_decisions.json"), {})
+    decisions = data.get("decisions", [])
+    if not isinstance(decisions, list):
+        raise FinalActionApprovalError("final_action_import_decisions_malformed")
+
+    lane_id = str(hold.lane_id)
+    hold_id = str(hold.id)
+    target = str(target_worktree)
+    candidates = [
+        decision
+        for decision in decisions
+        if isinstance(decision, dict)
+        and decision.get("lane_id") == lane_id
+        and decision.get("target_worktree") == target
+        and decision.get("decision") == "apply_to_target_worktree"
+        and decision.get("status", "approved") == "approved"
+        and _import_decision_matches_hold(decision, hold_id=hold_id)
+    ]
+    if not candidates:
+        raise FinalActionApprovalError("final_action_import_decision_missing")
+
+    decision = dict(candidates[-1])
+    for required in ("decided_by", "reason"):
+        value = decision.get(required)
+        if not isinstance(value, str) or not value.strip():
+            raise FinalActionApprovalError(
+                f"final_action_import_decision_missing_{required}"
+            )
+    if decision.get("source_worktree") not in {None, lane.get("worktree")}:
+        raise FinalActionApprovalError("final_action_import_decision_source_mismatch")
+
+    return {
+        key: decision[key]
+        for key in (
+            "id",
+            "lane_id",
+            "hold_id",
+            "final_action_hold_id",
+            "decision",
+            "status",
+            "target_worktree",
+            "source_worktree",
+            "decided_by",
+            "reason",
+            "created_at",
+            "forbidden_claims",
+        )
+        if key in decision
+    }
+
+
+def _import_decision_matches_hold(decision: dict[str, Any], *, hold_id: str) -> bool:
+    hold_values = [
+        value
+        for value in (
+            decision.get("hold_id"),
+            decision.get("final_action_hold_id"),
+        )
+        if value is not None
+    ]
+    if not hold_values:
+        return False
+    return any(value == hold_id for value in hold_values)
+
+
+def _safe_changed_files(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        raise FinalActionApprovalError("final_action_import_changed_files_missing")
+    files: list[str] = []
+    for item in value:
+        if not isinstance(item, str) or not item:
+            raise FinalActionApprovalError("final_action_import_changed_files_malformed")
+        files.append(item)
+    if not files:
+        raise FinalActionApprovalError("final_action_import_changed_files_empty")
+    for file_path in files:
+        path = Path(file_path)
+        if path.is_absolute() or ".." in path.parts:
+            raise FinalActionApprovalError(
+                "final_action_import_changed_file_escapes_worktree"
+            )
+    return files
+
+
+def _preflight_final_action_import_files(
+    source_worktree: Path,
+    target_worktree: Path,
+    changed_files: list[str],
+) -> list[tuple[str, Path, Path]]:
+    import_plan: list[tuple[str, Path, Path]] = []
+    for changed_file in changed_files:
+        source_path = _safe_child_path(source_worktree, changed_file)
+        target_path = _safe_child_path(target_worktree, changed_file)
+        if not source_path.exists() or not source_path.is_file():
+            raise FinalActionApprovalError(
+                f"final_action_import_source_file_missing: {changed_file}"
+            )
+        _preflight_final_action_import_target_path(
+            target_worktree,
+            target_path,
+            changed_file,
+        )
+        import_plan.append((changed_file, source_path, target_path))
+    return import_plan
+
+
+def _preflight_final_action_import_target_path(
+    target_worktree: Path,
+    target_path: Path,
+    changed_file: str,
+) -> None:
+    root = target_worktree.resolve()
+    try:
+        relative_target = target_path.relative_to(root)
+    except ValueError as exc:
+        raise FinalActionApprovalError(
+            "final_action_import_changed_file_escapes_worktree"
+        ) from exc
+    current = root
+    for part in relative_target.parts[:-1]:
+        current = current / part
+        if current.exists() and not current.is_dir():
+            raise FinalActionApprovalError(
+                "final_action_import_target_parent_not_directory: " + changed_file
+            )
+    if target_path.exists() and not target_path.is_file():
+        raise FinalActionApprovalError(
+            "final_action_import_target_path_not_file: " + changed_file
+        )
+
+
+def _optional_path(value: Any) -> Path | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return Path(value)
+
+
+def _safe_child_path(root: Path, relative_path: str) -> Path:
+    root_resolved = root.resolve()
+    child = (root_resolved / relative_path).resolve()
+    try:
+        child.relative_to(root_resolved)
+    except ValueError as exc:
+        raise FinalActionApprovalError(
+            "final_action_import_changed_file_escapes_worktree"
+        ) from exc
+    return child
+
+
+def _target_dirty_conflicting_paths(
+    target_worktree: Path,
+    changed_files: list[str],
+) -> list[str]:
+    _require_git_worktree_root(target_worktree)
+    result = subprocess.run(
+        ["git", "status", "--porcelain", "--untracked-files=all"],
+        cwd=target_worktree,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if result.returncode != 0:
+        raise FinalActionApprovalError("final_action_import_target_dirty_check_failed")
+    dirty_paths = _git_status_paths(result.stdout)
+    return sorted(dirty_paths & set(changed_files))
+
+
+def _require_git_worktree_root(path: Path) -> None:
+    result = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        cwd=path,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if result.returncode != 0:
+        raise FinalActionApprovalError("final_action_import_target_not_git_worktree")
+    root = Path(result.stdout.strip()).resolve()
+    if path.resolve() != root:
+        raise FinalActionApprovalError("final_action_import_target_not_git_worktree_root")
+
+
+def _git_status_paths(status_output: str) -> set[str]:
+    paths: set[str] = set()
+    for line in status_output.splitlines():
+        if len(line) < 4:
+            continue
+        raw_path = line[3:]
+        if " -> " in raw_path:
+            paths.update(part for part in raw_path.split(" -> ") if part)
+        elif raw_path:
+            paths.add(raw_path)
+    return paths
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _append_final_action_import_record(base_dir: Path, record: dict[str, Any]) -> None:
+    path = _json_path(base_dir, "final_action_imports.json")
+    data = _read_json(path, {"imports": []})
+    imports = data.setdefault("imports", [])
+    if not isinstance(imports, list):
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="final_action_imports.json imports must be a list",
+        )
+    data["imports"] = [
+        item
+        for item in imports
+        if not (isinstance(item, dict) and item.get("hold_id") == record["hold_id"])
+    ]
+    data["imports"].append(record)
+    _write_json(path, data)

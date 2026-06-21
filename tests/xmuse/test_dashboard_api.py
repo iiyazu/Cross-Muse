@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -40,6 +41,22 @@ def _write_json(path: Path, payload: object) -> None:
 
 def _client(tmp_path: Path) -> TestClient:
     return TestClient(create_app(base_dir=tmp_path))
+
+
+def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _init_git_repo(path: Path) -> None:
+    _git(path, "init")
+    _git(path, "config", "user.email", "xmuse@example.test")
+    _git(path, "config", "user.name", "xmuse test")
 
 
 def _runtime_inventory() -> dict[str, object]:
@@ -749,6 +766,694 @@ def test_approve_awaiting_final_action_merge_resolves_hold(tmp_path):
     assert data["lanes"][0]["status"] == "merged"
     holds = json.loads((tmp_path / "final_actions.json").read_text(encoding="utf-8"))
     assert holds["holds"][0]["status"] == "approved"
+
+
+def test_approve_awaiting_final_action_merge_applies_import_to_target_worktree(tmp_path):
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    (worktree / "tracked.txt").write_text("base\n", encoding="utf-8")
+    _init_git_repo(worktree)
+    _git(worktree, "add", "tracked.txt")
+    _git(worktree, "commit", "-m", "base")
+    artifact = worktree / "runtime_artifacts" / "loop7r.txt"
+    artifact.parent.mkdir()
+    artifact.write_text("LOOP7R\n", encoding="utf-8")
+
+    target_worktree = tmp_path / "target"
+    target_worktree.mkdir()
+    _init_git_repo(target_worktree)
+    _write_json(
+        tmp_path / "feature_lanes.json",
+        {
+            "lanes": [
+                {
+                    "feature_id": "import-ready",
+                    "status": "awaiting_final_action",
+                    "prompt": "ready",
+                    "worktree": str(worktree),
+                    "final_action_import_target": str(target_worktree),
+                    "changed_files": ["runtime_artifacts/loop7r.txt"],
+                }
+            ]
+        },
+    )
+    _write_json(
+        tmp_path / "final_actions.json",
+        {
+            "holds": [
+                {
+                    "id": "final-import",
+                    "lane_id": "import-ready",
+                    "verdict_id": "verdict-import",
+                    "action": "merge",
+                    "target_status": "reviewed",
+                    "status": "pending",
+                    "summary": "merge now",
+                }
+            ]
+        },
+    )
+    _write_json(
+        tmp_path / "final_action_import_decisions.json",
+        {
+            "decisions": [
+                {
+                    "id": "decision-import",
+                    "lane_id": "import-ready",
+                    "hold_id": "final-import",
+                    "decision": "apply_to_target_worktree",
+                    "status": "approved",
+                    "source_worktree": str(worktree),
+                    "target_worktree": str(target_worktree),
+                    "decided_by": "main-goal-agent",
+                    "reason": "explicit target worktree selected for local import proof",
+                    "created_at": "2026-06-21T00:00:00Z",
+                    "forbidden_claims": ["github_server_merge"],
+                }
+            ]
+        },
+    )
+
+    response = _client(tmp_path).post("/api/lanes/import-ready/approve")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "merged"
+    assert (target_worktree / "runtime_artifacts" / "loop7r.txt").read_text(
+        encoding="utf-8"
+    ) == "LOOP7R\n"
+    imports = json.loads((tmp_path / "final_action_imports.json").read_text(encoding="utf-8"))
+    assert imports["imports"][0]["status"] == "applied"
+    assert imports["imports"][0]["hold_id"] == "final-import"
+    assert imports["imports"][0]["target_worktree"] == str(target_worktree)
+    assert imports["imports"][0]["import_decision"]["id"] == "decision-import"
+    assert "github_server_merge" in imports["imports"][0]["forbidden_claims"]
+
+
+def test_approve_awaiting_final_action_merge_requires_import_decision_for_target(
+    tmp_path,
+):
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    (worktree / "tracked.txt").write_text("base\n", encoding="utf-8")
+    _init_git_repo(worktree)
+    _git(worktree, "add", "tracked.txt")
+    _git(worktree, "commit", "-m", "base")
+    artifact = worktree / "runtime_artifacts" / "loop7r-missing-decision.txt"
+    artifact.parent.mkdir()
+    artifact.write_text("LOOP7R\n", encoding="utf-8")
+
+    target_worktree = tmp_path / "target"
+    target_worktree.mkdir()
+    _write_json(
+        tmp_path / "feature_lanes.json",
+        {
+            "lanes": [
+                {
+                    "feature_id": "import-without-decision",
+                    "status": "awaiting_final_action",
+                    "prompt": "ready",
+                    "worktree": str(worktree),
+                    "final_action_import_target": str(target_worktree),
+                    "changed_files": ["runtime_artifacts/loop7r-missing-decision.txt"],
+                }
+            ]
+        },
+    )
+    _write_json(
+        tmp_path / "final_actions.json",
+        {
+            "holds": [
+                {
+                    "id": "final-no-decision",
+                    "lane_id": "import-without-decision",
+                    "verdict_id": "verdict-no-decision",
+                    "action": "merge",
+                    "target_status": "reviewed",
+                    "status": "pending",
+                    "summary": "merge now",
+                }
+            ]
+        },
+    )
+
+    response = _client(tmp_path).post("/api/lanes/import-without-decision/approve")
+
+    assert response.status_code == 409
+    assert "final_action_import_decision_missing" in response.json()["detail"]
+    assert not (target_worktree / "runtime_artifacts" / "loop7r-missing-decision.txt").exists()
+    data = json.loads((tmp_path / "feature_lanes.json").read_text(encoding="utf-8"))
+    assert data["lanes"][0]["status"] == "awaiting_final_action"
+    holds = json.loads((tmp_path / "final_actions.json").read_text(encoding="utf-8"))
+    assert holds["holds"][0]["status"] == "pending"
+
+
+def test_approve_awaiting_final_action_merge_rejects_dirty_target_conflict(
+    tmp_path,
+):
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    (worktree / "tracked.txt").write_text("base\n", encoding="utf-8")
+    _init_git_repo(worktree)
+    _git(worktree, "add", "tracked.txt")
+    _git(worktree, "commit", "-m", "base")
+    artifact = worktree / "runtime_artifacts" / "loop7r-conflict.txt"
+    artifact.parent.mkdir()
+    artifact.write_text("LOOP7R_SOURCE\n", encoding="utf-8")
+
+    target_worktree = tmp_path / "target"
+    target_worktree.mkdir()
+    (target_worktree / "runtime_artifacts").mkdir()
+    target_artifact = target_worktree / "runtime_artifacts" / "loop7r-conflict.txt"
+    target_artifact.write_text("LOOP7R_TARGET_BASE\n", encoding="utf-8")
+    _init_git_repo(target_worktree)
+    _git(target_worktree, "add", "runtime_artifacts/loop7r-conflict.txt")
+    _git(target_worktree, "commit", "-m", "target base")
+    target_artifact.write_text("LOOP7R_TARGET_DIRTY\n", encoding="utf-8")
+
+    _write_json(
+        tmp_path / "feature_lanes.json",
+        {
+            "lanes": [
+                {
+                    "feature_id": "dirty-target-conflict",
+                    "status": "awaiting_final_action",
+                    "prompt": "ready",
+                    "worktree": str(worktree),
+                    "final_action_import_target": str(target_worktree),
+                    "changed_files": ["runtime_artifacts/loop7r-conflict.txt"],
+                }
+            ]
+        },
+    )
+    _write_json(
+        tmp_path / "final_actions.json",
+        {
+            "holds": [
+                {
+                    "id": "final-dirty-target",
+                    "lane_id": "dirty-target-conflict",
+                    "verdict_id": "verdict-dirty-target",
+                    "action": "merge",
+                    "target_status": "reviewed",
+                    "status": "pending",
+                    "summary": "merge now",
+                }
+            ]
+        },
+    )
+    _write_json(
+        tmp_path / "final_action_import_decisions.json",
+        {
+            "decisions": [
+                {
+                    "id": "decision-dirty-target",
+                    "lane_id": "dirty-target-conflict",
+                    "hold_id": "final-dirty-target",
+                    "decision": "apply_to_target_worktree",
+                    "status": "approved",
+                    "source_worktree": str(worktree),
+                    "target_worktree": str(target_worktree),
+                    "decided_by": "main-goal-agent",
+                    "reason": "audit source-root style import conflict before apply",
+                    "created_at": "2026-06-21T00:00:00Z",
+                    "forbidden_claims": ["github_server_merge"],
+                }
+            ]
+        },
+    )
+
+    response = _client(tmp_path).post("/api/lanes/dirty-target-conflict/approve")
+
+    assert response.status_code == 409
+    assert "final_action_import_target_dirty_conflict" in response.json()["detail"]
+    assert "runtime_artifacts/loop7r-conflict.txt" in response.json()["detail"]
+    assert target_artifact.read_text(encoding="utf-8") == "LOOP7R_TARGET_DIRTY\n"
+    assert not (tmp_path / "final_action_imports.json").exists()
+    data = json.loads((tmp_path / "feature_lanes.json").read_text(encoding="utf-8"))
+    assert data["lanes"][0]["status"] == "awaiting_final_action"
+    holds = json.loads((tmp_path / "final_actions.json").read_text(encoding="utf-8"))
+    assert holds["holds"][0]["status"] == "pending"
+
+
+def test_approve_awaiting_final_action_merge_rejects_non_git_target(tmp_path):
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    artifact = worktree / "runtime_artifacts" / "loop7r-non-git.txt"
+    artifact.parent.mkdir()
+    artifact.write_text("LOOP7R_SOURCE\n", encoding="utf-8")
+
+    target_worktree = tmp_path / "target"
+    target_worktree.mkdir()
+    target_artifact = target_worktree / "runtime_artifacts" / "loop7r-non-git.txt"
+
+    _write_json(
+        tmp_path / "feature_lanes.json",
+        {
+            "lanes": [
+                {
+                    "feature_id": "non-git-target",
+                    "status": "awaiting_final_action",
+                    "prompt": "ready",
+                    "worktree": str(worktree),
+                    "final_action_import_target": str(target_worktree),
+                    "changed_files": ["runtime_artifacts/loop7r-non-git.txt"],
+                }
+            ]
+        },
+    )
+    _write_json(
+        tmp_path / "final_actions.json",
+        {
+            "holds": [
+                {
+                    "id": "final-non-git-target",
+                    "lane_id": "non-git-target",
+                    "verdict_id": "verdict-non-git-target",
+                    "action": "merge",
+                    "target_status": "reviewed",
+                    "status": "pending",
+                    "summary": "merge now",
+                }
+            ]
+        },
+    )
+    _write_json(
+        tmp_path / "final_action_import_decisions.json",
+        {
+            "decisions": [
+                {
+                    "id": "decision-non-git-target",
+                    "lane_id": "non-git-target",
+                    "hold_id": "final-non-git-target",
+                    "decision": "apply_to_target_worktree",
+                    "status": "approved",
+                    "source_worktree": str(worktree),
+                    "target_worktree": str(target_worktree),
+                    "decided_by": "main-goal-agent",
+                    "reason": "target must be a git worktree before local import",
+                }
+            ]
+        },
+    )
+
+    response = _client(tmp_path).post("/api/lanes/non-git-target/approve")
+
+    assert response.status_code == 409
+    assert "final_action_import_target_not_git_worktree" in response.json()["detail"]
+    assert not target_artifact.exists()
+    assert not (tmp_path / "final_action_imports.json").exists()
+    data = json.loads((tmp_path / "feature_lanes.json").read_text(encoding="utf-8"))
+    assert data["lanes"][0]["status"] == "awaiting_final_action"
+    holds = json.loads((tmp_path / "final_actions.json").read_text(encoding="utf-8"))
+    assert holds["holds"][0]["status"] == "pending"
+
+
+def test_approve_awaiting_final_action_merge_preflights_all_sources_before_copy(
+    tmp_path,
+):
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    first_artifact = worktree / "runtime_artifacts" / "loop7r-first.txt"
+    first_artifact.parent.mkdir()
+    first_artifact.write_text("FIRST\n", encoding="utf-8")
+
+    target_worktree = tmp_path / "target"
+    target_worktree.mkdir()
+    _init_git_repo(target_worktree)
+    first_target = target_worktree / "runtime_artifacts" / "loop7r-first.txt"
+
+    _write_json(
+        tmp_path / "feature_lanes.json",
+        {
+            "lanes": [
+                {
+                    "feature_id": "partial-copy-risk",
+                    "status": "awaiting_final_action",
+                    "prompt": "ready",
+                    "worktree": str(worktree),
+                    "final_action_import_target": str(target_worktree),
+                    "changed_files": [
+                        "runtime_artifacts/loop7r-first.txt",
+                        "runtime_artifacts/loop7r-missing.txt",
+                    ],
+                }
+            ]
+        },
+    )
+    _write_json(
+        tmp_path / "final_actions.json",
+        {
+            "holds": [
+                {
+                    "id": "final-partial-copy-risk",
+                    "lane_id": "partial-copy-risk",
+                    "verdict_id": "verdict-partial-copy-risk",
+                    "action": "merge",
+                    "target_status": "reviewed",
+                    "status": "pending",
+                    "summary": "merge now",
+                }
+            ]
+        },
+    )
+    _write_json(
+        tmp_path / "final_action_import_decisions.json",
+        {
+            "decisions": [
+                {
+                    "id": "decision-partial-copy-risk",
+                    "lane_id": "partial-copy-risk",
+                    "hold_id": "final-partial-copy-risk",
+                    "decision": "apply_to_target_worktree",
+                    "status": "approved",
+                    "source_worktree": str(worktree),
+                    "target_worktree": str(target_worktree),
+                    "decided_by": "main-goal-agent",
+                    "reason": "preflight all changed files before copying",
+                }
+            ]
+        },
+    )
+
+    response = _client(tmp_path).post("/api/lanes/partial-copy-risk/approve")
+
+    assert response.status_code == 409
+    assert "final_action_import_source_file_missing" in response.json()["detail"]
+    assert "runtime_artifacts/loop7r-missing.txt" in response.json()["detail"]
+    assert not first_target.exists()
+    assert not (tmp_path / "final_action_imports.json").exists()
+    data = json.loads((tmp_path / "feature_lanes.json").read_text(encoding="utf-8"))
+    assert data["lanes"][0]["status"] == "awaiting_final_action"
+    holds = json.loads((tmp_path / "final_actions.json").read_text(encoding="utf-8"))
+    assert holds["holds"][0]["status"] == "pending"
+
+
+def test_approve_awaiting_final_action_merge_requires_decision_bound_to_hold(
+    tmp_path,
+):
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    artifact = worktree / "runtime_artifacts" / "loop7r-unbound-decision.txt"
+    artifact.parent.mkdir()
+    artifact.write_text("LOOP7R\n", encoding="utf-8")
+
+    target_worktree = tmp_path / "target"
+    target_worktree.mkdir()
+    _init_git_repo(target_worktree)
+
+    _write_json(
+        tmp_path / "feature_lanes.json",
+        {
+            "lanes": [
+                {
+                    "feature_id": "unbound-decision",
+                    "status": "awaiting_final_action",
+                    "prompt": "ready",
+                    "worktree": str(worktree),
+                    "final_action_import_target": str(target_worktree),
+                    "changed_files": ["runtime_artifacts/loop7r-unbound-decision.txt"],
+                }
+            ]
+        },
+    )
+    _write_json(
+        tmp_path / "final_actions.json",
+        {
+            "holds": [
+                {
+                    "id": "final-unbound-decision",
+                    "lane_id": "unbound-decision",
+                    "verdict_id": "verdict-unbound-decision",
+                    "action": "merge",
+                    "target_status": "reviewed",
+                    "status": "pending",
+                    "summary": "merge now",
+                }
+            ]
+        },
+    )
+    _write_json(
+        tmp_path / "final_action_import_decisions.json",
+        {
+            "decisions": [
+                {
+                    "id": "decision-unbound",
+                    "lane_id": "unbound-decision",
+                    "decision": "apply_to_target_worktree",
+                    "status": "approved",
+                    "source_worktree": str(worktree),
+                    "target_worktree": str(target_worktree),
+                    "decided_by": "main-goal-agent",
+                    "reason": "old broad approval must not satisfy a new hold",
+                }
+            ]
+        },
+    )
+
+    response = _client(tmp_path).post("/api/lanes/unbound-decision/approve")
+
+    assert response.status_code == 409
+    assert "final_action_import_decision_missing" in response.json()["detail"]
+    assert not (target_worktree / "runtime_artifacts" / "loop7r-unbound-decision.txt").exists()
+    data = json.loads((tmp_path / "feature_lanes.json").read_text(encoding="utf-8"))
+    assert data["lanes"][0]["status"] == "awaiting_final_action"
+    holds = json.loads((tmp_path / "final_actions.json").read_text(encoding="utf-8"))
+    assert holds["holds"][0]["status"] == "pending"
+
+
+def test_approve_awaiting_final_action_merge_rejects_empty_changed_files(tmp_path):
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+
+    target_worktree = tmp_path / "target"
+    target_worktree.mkdir()
+    _init_git_repo(target_worktree)
+
+    _write_json(
+        tmp_path / "feature_lanes.json",
+        {
+            "lanes": [
+                {
+                    "feature_id": "empty-import",
+                    "status": "awaiting_final_action",
+                    "prompt": "ready",
+                    "worktree": str(worktree),
+                    "final_action_import_target": str(target_worktree),
+                    "changed_files": [],
+                }
+            ]
+        },
+    )
+    _write_json(
+        tmp_path / "final_actions.json",
+        {
+            "holds": [
+                {
+                    "id": "final-empty-import",
+                    "lane_id": "empty-import",
+                    "verdict_id": "verdict-empty-import",
+                    "action": "merge",
+                    "target_status": "reviewed",
+                    "status": "pending",
+                    "summary": "merge now",
+                }
+            ]
+        },
+    )
+    _write_json(
+        tmp_path / "final_action_import_decisions.json",
+        {
+            "decisions": [
+                {
+                    "id": "decision-empty-import",
+                    "lane_id": "empty-import",
+                    "hold_id": "final-empty-import",
+                    "decision": "apply_to_target_worktree",
+                    "status": "approved",
+                    "source_worktree": str(worktree),
+                    "target_worktree": str(target_worktree),
+                    "decided_by": "main-goal-agent",
+                    "reason": "empty imports are not durable local import proof",
+                }
+            ]
+        },
+    )
+
+    response = _client(tmp_path).post("/api/lanes/empty-import/approve")
+
+    assert response.status_code == 409
+    assert "final_action_import_changed_files_empty" in response.json()["detail"]
+    assert not (tmp_path / "final_action_imports.json").exists()
+    data = json.loads((tmp_path / "feature_lanes.json").read_text(encoding="utf-8"))
+    assert data["lanes"][0]["status"] == "awaiting_final_action"
+    holds = json.loads((tmp_path / "final_actions.json").read_text(encoding="utf-8"))
+    assert holds["holds"][0]["status"] == "pending"
+
+
+def test_approve_awaiting_final_action_merge_rejects_git_subdirectory_target(
+    tmp_path,
+):
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    artifact = worktree / "runtime_artifacts" / "loop7r-subdir.txt"
+    artifact.parent.mkdir()
+    artifact.write_text("LOOP7R_SOURCE\n", encoding="utf-8")
+
+    target_repo = tmp_path / "target-repo"
+    target_repo.mkdir()
+    _init_git_repo(target_repo)
+    target_worktree = target_repo / "nested"
+    target_worktree.mkdir()
+    target_artifact = target_worktree / "runtime_artifacts" / "loop7r-subdir.txt"
+    target_artifact.parent.mkdir()
+    target_artifact.write_text("LOOP7R_TARGET_DIRTY\n", encoding="utf-8")
+
+    _write_json(
+        tmp_path / "feature_lanes.json",
+        {
+            "lanes": [
+                {
+                    "feature_id": "subdir-target",
+                    "status": "awaiting_final_action",
+                    "prompt": "ready",
+                    "worktree": str(worktree),
+                    "final_action_import_target": str(target_worktree),
+                    "changed_files": ["runtime_artifacts/loop7r-subdir.txt"],
+                }
+            ]
+        },
+    )
+    _write_json(
+        tmp_path / "final_actions.json",
+        {
+            "holds": [
+                {
+                    "id": "final-subdir-target",
+                    "lane_id": "subdir-target",
+                    "verdict_id": "verdict-subdir-target",
+                    "action": "merge",
+                    "target_status": "reviewed",
+                    "status": "pending",
+                    "summary": "merge now",
+                }
+            ]
+        },
+    )
+    _write_json(
+        tmp_path / "final_action_import_decisions.json",
+        {
+            "decisions": [
+                {
+                    "id": "decision-subdir-target",
+                    "lane_id": "subdir-target",
+                    "hold_id": "final-subdir-target",
+                    "decision": "apply_to_target_worktree",
+                    "status": "approved",
+                    "source_worktree": str(worktree),
+                    "target_worktree": str(target_worktree),
+                    "decided_by": "main-goal-agent",
+                    "reason": "target must be the git worktree root",
+                }
+            ]
+        },
+    )
+
+    response = _client(tmp_path).post("/api/lanes/subdir-target/approve")
+
+    assert response.status_code == 409
+    assert "final_action_import_target_not_git_worktree_root" in response.json()["detail"]
+    assert target_artifact.read_text(encoding="utf-8") == "LOOP7R_TARGET_DIRTY\n"
+    assert not (tmp_path / "final_action_imports.json").exists()
+    data = json.loads((tmp_path / "feature_lanes.json").read_text(encoding="utf-8"))
+    assert data["lanes"][0]["status"] == "awaiting_final_action"
+    holds = json.loads((tmp_path / "final_actions.json").read_text(encoding="utf-8"))
+    assert holds["holds"][0]["status"] == "pending"
+
+
+def test_approve_awaiting_final_action_merge_preflights_target_path_types(
+    tmp_path,
+):
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    first_artifact = worktree / "runtime_artifacts" / "loop7r-target-first.txt"
+    second_artifact = worktree / "runtime_artifacts" / "loop7r-target-second.txt"
+    first_artifact.parent.mkdir()
+    first_artifact.write_text("FIRST\n", encoding="utf-8")
+    second_artifact.write_text("SECOND\n", encoding="utf-8")
+
+    target_worktree = tmp_path / "target"
+    target_worktree.mkdir()
+    _init_git_repo(target_worktree)
+    first_target = target_worktree / "runtime_artifacts" / "loop7r-target-first.txt"
+    second_target = target_worktree / "runtime_artifacts" / "loop7r-target-second.txt"
+    second_target.mkdir(parents=True)
+
+    _write_json(
+        tmp_path / "feature_lanes.json",
+        {
+            "lanes": [
+                {
+                    "feature_id": "target-path-type",
+                    "status": "awaiting_final_action",
+                    "prompt": "ready",
+                    "worktree": str(worktree),
+                    "final_action_import_target": str(target_worktree),
+                    "changed_files": [
+                        "runtime_artifacts/loop7r-target-first.txt",
+                        "runtime_artifacts/loop7r-target-second.txt",
+                    ],
+                }
+            ]
+        },
+    )
+    _write_json(
+        tmp_path / "final_actions.json",
+        {
+            "holds": [
+                {
+                    "id": "final-target-path-type",
+                    "lane_id": "target-path-type",
+                    "verdict_id": "verdict-target-path-type",
+                    "action": "merge",
+                    "target_status": "reviewed",
+                    "status": "pending",
+                    "summary": "merge now",
+                }
+            ]
+        },
+    )
+    _write_json(
+        tmp_path / "final_action_import_decisions.json",
+        {
+            "decisions": [
+                {
+                    "id": "decision-target-path-type",
+                    "lane_id": "target-path-type",
+                    "hold_id": "final-target-path-type",
+                    "decision": "apply_to_target_worktree",
+                    "status": "approved",
+                    "source_worktree": str(worktree),
+                    "target_worktree": str(target_worktree),
+                    "decided_by": "main-goal-agent",
+                    "reason": "preflight target path types before copying",
+                }
+            ]
+        },
+    )
+
+    response = _client(tmp_path).post("/api/lanes/target-path-type/approve")
+
+    assert response.status_code == 409
+    assert "final_action_import_target_path_not_file" in response.json()["detail"]
+    assert "runtime_artifacts/loop7r-target-second.txt" in response.json()["detail"]
+    assert not first_target.exists()
+    assert second_target.is_dir()
+    assert not (second_target / "loop7r-target-second.txt").exists()
+    assert not (tmp_path / "final_action_imports.json").exists()
+    data = json.loads((tmp_path / "feature_lanes.json").read_text(encoding="utf-8"))
+    assert data["lanes"][0]["status"] == "awaiting_final_action"
+    holds = json.loads((tmp_path / "final_actions.json").read_text(encoding="utf-8"))
+    assert holds["holds"][0]["status"] == "pending"
 
 
 def test_metrics_treats_merged_lane_as_completed(tmp_path):
