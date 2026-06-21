@@ -698,7 +698,9 @@ def test_app_server_turn_accumulator_emits_result_from_agent_message_delta() -> 
 def test_app_server_turn_accumulator_emits_latency_stages_from_mcp_events() -> None:
     from xmuse_core.agents.codex_app_server_transport import AppServerTurnAccumulator
 
-    clock_values = iter([200.0, 200.2, 200.5, 201.0, 201.5, 202.0])
+    clock_values = iter(
+        [200.0, 200.2, 200.5, 201.0, 201.5, 202.0, 202.5, 203.0, 203.5]
+    )
     accumulator = AppServerTurnAccumulator(
         request_id="inbox-1",
         clock=lambda: next(clock_values),
@@ -728,6 +730,15 @@ def test_app_server_turn_accumulator_emits_latency_stages_from_mcp_events() -> N
     assert accumulator.feed(
         {
             "method": "item/started",
+            "params": {
+                "turnId": "turn-1",
+                "item": {"type": "mcpToolCall", "toolName": "chat_post_message"},
+            },
+        }
+    ) is None
+    assert accumulator.feed(
+        {
+            "method": "item/completed",
             "params": {
                 "turnId": "turn-1",
                 "item": {"type": "mcpToolCall", "toolName": "chat_post_message"},
@@ -767,10 +778,13 @@ def test_app_server_turn_accumulator_emits_latency_stages_from_mcp_events() -> N
     assert result.artifacts["latency_stages"] == {
         "mcp_tools_ready": {"at": 200.0},
         "codex_app_server_turn_start": {"at": 200.2},
-        "chat_read_inbox": {"at": 200.5},
-        "chat_post_message": {"at": 201.0},
-        "chat_mention": {"at": 201.5},
-        "chat_record_collaboration_response": {"at": 202.0},
+        "mcp_tool_call_detected": {"at": 200.5},
+        "mcp_tool_call_started": {"at": 201.0},
+        "chat_read_inbox": {"at": 201.5},
+        "chat_post_message": {"at": 202.0},
+        "mcp_tool_call_completed": {"at": 202.5},
+        "chat_mention": {"at": 203.0},
+        "chat_record_collaboration_response": {"at": 203.5},
     }
 
 

@@ -121,8 +121,20 @@ gap for timeout failures only; P3 remains blocked until the bounded real
 provider soak is rerun and reaches durable writeback/review/final-action/GitHub
 gate evidence.
 
+Instrumentation follow-up: the real provider writeback path now records
+additional peer-turn stages for the next positive-path repair:
+`provider_session_started`, `provider_raw_result_received`,
+`mcp_tool_call_detected`, `mcp_tool_call_started`,
+`mcp_tool_call_completed`, `chat_post_message_persisted`, and
+`scheduler_observed_durable_writeback`. This is diagnostic evidence only. It
+does not prove that the real provider positive path succeeds; it narrows the
+next failure to provider output, MCP transport, chat store persistence, or
+scheduler observation.
+
 Tasks:
 
+- rerun a one-turn real-provider writeback check and classify the blocker from
+  the new stages before attempting a multi-turn soak;
 - run one bounded long-running demand through the acceptance-gated path;
 - record the runtime root, command, PR or no-PR outcome, final-action record,
   GitHub gate evidence record, and resulting spine status;

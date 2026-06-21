@@ -161,6 +161,11 @@ class PeerChatScheduler:
                 assembled_prompt.as_session_contract(),
             )
             provider_turn_started_at = self._clock()
+            _put_latency_stage(
+                transport_latency_stages,
+                "provider_session_started",
+                provider_turn_started_at,
+            )
             await self._god_layer.send_message(
                 record.god_session_id,
                 "peer_chat_nudge",
@@ -184,6 +189,11 @@ class PeerChatScheduler:
                     participant=participant,
                 )
                 if message is _DURABLE_WRITEBACK:
+                    _put_latency_stage(
+                        transport_latency_stages,
+                        "scheduler_observed_durable_writeback",
+                        self._clock(),
+                    )
                     await _abort_session_if_supported(
                         self._god_layer,
                         record.god_session_id,
@@ -213,6 +223,11 @@ class PeerChatScheduler:
                     inbox_item_id=item.id,
                     item_type=getattr(item, "item_type", None),
                 ):
+                    _put_latency_stage(
+                        transport_latency_stages,
+                        "scheduler_observed_durable_writeback",
+                        self._clock(),
+                    )
                     await _abort_session_if_supported(self._god_layer, record.god_session_id)
                     self._finish_active_stream_for_item(item, status="done")
                     self._record_latency_trace(
@@ -255,6 +270,11 @@ class PeerChatScheduler:
                 )
                 return PeerChatSchedulerOutcome(failed=1)
             scheduler_observed_result_at = self._clock()
+            _put_latency_stage(
+                transport_latency_stages,
+                "provider_raw_result_received",
+                scheduler_observed_result_at,
+            )
             if message is None or getattr(message, "type", None) == "error":
                 reason = _message_failure_reason(message)
                 refreshed = self._inbox.get(item.id)
@@ -265,6 +285,11 @@ class PeerChatScheduler:
                     inbox_item_id=item.id,
                     item_type=getattr(item, "item_type", None),
                 ):
+                    _put_latency_stage(
+                        transport_latency_stages,
+                        "scheduler_observed_durable_writeback",
+                        scheduler_observed_result_at,
+                    )
                     self._finish_active_stream_for_item(item, status="done")
                     self._record_latency_trace(
                         item,
@@ -299,7 +324,7 @@ class PeerChatScheduler:
                     return PeerChatSchedulerOutcome(fallback_replies=1)
                 self._record_failed_nudge(item.id, reason=reason)
                 return PeerChatSchedulerOutcome(failed=1)
-            transport_latency_stages = _latency_stages_from_message(message)
+            transport_latency_stages.update(_latency_stages_from_message(message))
             refreshed = self._inbox.get(item.id)
             if refreshed.status != "read":
                 if self._degraded_fallback_enabled and self._post_stdout_reply_if_available(
@@ -372,6 +397,11 @@ class PeerChatScheduler:
                     reason="peer_no_inbox_writeback_message",
                 )
                 return PeerChatSchedulerOutcome(failed=1)
+            _put_latency_stage(
+                transport_latency_stages,
+                "scheduler_observed_durable_writeback",
+                scheduler_observed_result_at,
+            )
         except asyncio.CancelledError:
             reason = "provider_turn_cancelled_before_mcp_writeback"
             if record is not None:
@@ -745,6 +775,15 @@ def _latency_stages_from_message(message) -> dict[str, dict[str, float]]:
         if isinstance(at, (int, float)):
             stages[name] = {"at": float(at)}
     return stages
+
+
+def _put_latency_stage(
+    stages: dict[str, dict[str, float]],
+    name: str,
+    at: float | None,
+) -> None:
+    if at is not None and name not in stages:
+        stages[name] = {"at": float(at)}
 
 
 def _build_stage_timings(
