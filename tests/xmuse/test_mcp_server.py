@@ -884,7 +884,10 @@ def test_chat_post_message_reply_marks_inbox_read_with_responded_message_id(
         conversation_id,
         item.id,
     )
-    assert set(stages) == {"chat_read_inbox", "chat_post_message"}
+    assert {"chat_read_inbox", "chat_post_message"}.issubset(stages)
+    assert "mcp_tool_call_started" in stages
+    assert "mcp_tool_call_completed" in stages
+    assert "chat_post_message_persisted" in stages
     assert registry.get(session.god_session_id).status == "running"
 
 

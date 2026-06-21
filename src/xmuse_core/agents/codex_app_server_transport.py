@@ -64,6 +64,11 @@ class AppServerTurnAccumulator:
                 "chat_record_collaboration_response",
                 "chat_read_inbox",
             }:
+                self._record_stage("mcp_tool_call_detected")
+                if method == "item/started":
+                    self._record_stage("mcp_tool_call_started")
+                else:
+                    self._record_stage("mcp_tool_call_completed")
                 self._record_stage(tool_name)
             return None
         if method == "item/agentMessage/delta" and self._matches_turn(params):

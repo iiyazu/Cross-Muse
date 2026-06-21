@@ -2253,6 +2253,13 @@ class PeerChatService:
             conversation_id=conversation_id,
             content=content,
         )
+        if reply_to_inbox_item_id:
+            PeerTurnLatencyTraceStore(self._db_path).record_mcp_tool_stage(
+                conversation_id=conversation_id,
+                inbox_item_id=reply_to_inbox_item_id,
+                tool_name="mcp_tool_call_started",
+                called_at=time.monotonic(),
+            )
         result = self._chat.create_message_inbox_and_log(
             conversation_id=conversation_id,
             tool_name="chat_post_message",
@@ -2269,11 +2276,25 @@ class PeerChatService:
             reply_owner_participant_id=participant_id,
         )
         if reply_to_inbox_item_id:
-            PeerTurnLatencyTraceStore(self._db_path).record_mcp_tool_stage(
+            latency = PeerTurnLatencyTraceStore(self._db_path)
+            called_at = time.monotonic()
+            latency.record_mcp_tool_stage(
                 conversation_id=conversation_id,
                 inbox_item_id=reply_to_inbox_item_id,
                 tool_name="chat_post_message",
-                called_at=time.monotonic(),
+                called_at=called_at,
+            )
+            latency.record_mcp_tool_stage(
+                conversation_id=conversation_id,
+                inbox_item_id=reply_to_inbox_item_id,
+                tool_name="chat_post_message_persisted",
+                called_at=called_at,
+            )
+            latency.record_mcp_tool_stage(
+                conversation_id=conversation_id,
+                inbox_item_id=reply_to_inbox_item_id,
+                tool_name="mcp_tool_call_completed",
+                called_at=called_at,
             )
             GodSessionRegistry(registry_path).promote_running(god_session_id)
         return result

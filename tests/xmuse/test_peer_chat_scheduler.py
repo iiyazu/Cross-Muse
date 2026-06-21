@@ -1354,6 +1354,18 @@ async def test_scheduler_records_latency_trace_with_injected_clock(tmp_path: Pat
                 tool_name="chat_post_message",
                 called_at=100.9,
             )
+            for tool_stage in (
+                "mcp_tool_call_detected",
+                "mcp_tool_call_started",
+                "mcp_tool_call_completed",
+                "chat_post_message_persisted",
+            ):
+                PeerTurnLatencyTraceStore(tmp_path / "chat.db").record_mcp_tool_stage(
+                    conversation_id=conv.id,
+                    inbox_item_id=item.id,
+                    tool_name=tool_stage,
+                    called_at=100.9,
+                )
             return type(
                 "Message",
                 (),
@@ -1365,8 +1377,12 @@ async def test_scheduler_records_latency_trace_with_injected_clock(tmp_path: Pat
                     "artifacts": {
                         "latency_stages": {
                             "codex_app_server_turn_start": {"at": 100.45},
+                            "provider_session_started": {"at": 100.4},
                             "mcp_tools_ready": {"at": 100.5},
                             "first_stream_delta": {"at": 100.6},
+                            "mcp_tool_call_detected": {"at": 100.9},
+                            "mcp_tool_call_started": {"at": 100.9},
+                            "mcp_tool_call_completed": {"at": 100.9},
                             "chat_post_message": {"at": 100.9},
                         }
                     },
@@ -1399,10 +1415,17 @@ async def test_scheduler_records_latency_trace_with_injected_clock(tmp_path: Pat
         "inbox_claim": {"at": 100.0},
         "ray_actor_delivery_start": {"at": 100.1},
         "codex_app_server_turn_start": {"at": 100.45},
+        "provider_session_started": {"at": 100.4},
         "mcp_tools_ready": {"at": 100.5},
         "first_stream_delta": {"at": 100.6},
         "first_visible": {"at": 100.6},
+        "mcp_tool_call_detected": {"at": 100.9},
+        "mcp_tool_call_started": {"at": 100.9},
+        "mcp_tool_call_completed": {"at": 100.9},
         "chat_post_message": {"at": 100.9},
+        "chat_post_message_persisted": {"at": 100.9},
+        "provider_raw_result_received": {"at": 101.0},
+        "scheduler_observed_durable_writeback": {"at": 101.0},
         "scheduler_observed_result": {"at": 101.0},
         "trace_persisted": {"at": 101.3},
     }
