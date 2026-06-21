@@ -171,6 +171,15 @@ class RayGodSessionLayer:
         await self._refresh_provider_binding(live)
         return message
 
+    async def active_latency_stages(self, god_session_id: str) -> dict[str, dict[str, float]]:
+        live = self._live_sessions.get(god_session_id)
+        if live is None:
+            return {}
+        stages = await _call_actor(live.actor, "active_latency_stages")
+        if not isinstance(stages, dict):
+            return {}
+        return _clean_latency_stages(stages)
+
     async def abort_session(self, god_session_id: str) -> None:
         live = self._live_sessions.pop(god_session_id, None)
         if live is None:
@@ -433,6 +442,17 @@ async def _call_actor(actor: Any, method_name: str, *args, **kwargs):
 
 def _looks_like_ray_object_ref(value: Any) -> bool:
     return type(value).__name__ == "ObjectRef" and hasattr(value, "hex")
+
+
+def _clean_latency_stages(stages: dict[Any, Any]) -> dict[str, dict[str, float]]:
+    clean: dict[str, dict[str, float]] = {}
+    for name, stage in stages.items():
+        if not isinstance(name, str) or not isinstance(stage, dict):
+            continue
+        at = stage.get("at")
+        if isinstance(at, (int, float)):
+            clean[name] = {"at": float(at)}
+    return clean
 
 
 __all__ = ["RayGodSessionLayer"]
