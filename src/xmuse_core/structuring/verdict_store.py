@@ -136,6 +136,52 @@ class VerdictStore:
             self._write_unsafe(data)
             return ReviewTask.model_validate(target)
 
+    def mark_task_in_progress(
+        self,
+        task_id: str,
+        *,
+        updated_at: str,
+        review_attempt_id: str | None = None,
+        runner_id: str | None = None,
+        started_at: str | None = None,
+        provider_runtime: str | None = None,
+        provider_model: str | None = None,
+    ) -> ReviewTask:
+        """Atomically mark *task_id* as an active review attempt."""
+        with _locked(self._path):
+            data = self._read_unsafe()
+            target = self._find_task_row(data, task_id)
+            target["status"] = ReviewTaskStatus.IN_PROGRESS
+            target["updated_at"] = updated_at
+            target["review_attempt_id"] = review_attempt_id
+            target["runner_id"] = runner_id
+            target["started_at"] = started_at
+            target["provider_runtime"] = provider_runtime
+            target["provider_model"] = provider_model
+            self._write_unsafe(data)
+            return ReviewTask.model_validate(target)
+
+    def mark_task_terminal(
+        self,
+        task_id: str,
+        *,
+        status: ReviewTaskStatus,
+        terminal_reason: str,
+        updated_at: str,
+        spawn_log_refs: list[str] | None = None,
+    ) -> ReviewTask:
+        """Atomically terminalize *task_id* without emitting a verdict."""
+        with _locked(self._path):
+            data = self._read_unsafe()
+            target = self._find_task_row(data, task_id)
+            target["status"] = status
+            target["terminal_reason"] = terminal_reason
+            target["updated_at"] = updated_at
+            if spawn_log_refs is not None:
+                target["spawn_log_refs"] = list(spawn_log_refs)
+            self._write_unsafe(data)
+            return ReviewTask.model_validate(target)
+
     def get_task(self, task_id: str) -> ReviewTask:
         for row in self._read().get("review_tasks", []):
             if isinstance(row, dict) and row.get("task_id") == task_id:
@@ -192,6 +238,10 @@ class VerdictStore:
         self,
         task: ReviewTask,
         verdict: ReviewVerdict,
+        *,
+        task_status: ReviewTaskStatus = ReviewTaskStatus.VERDICT_EMITTED,
+        terminal_reason: str | None = None,
+        spawn_log_refs: list[str] | None = None,
     ) -> tuple[ReviewTask, ReviewVerdict]:
         """Persist *task* and *verdict* atomically in a single locked write.
 
@@ -227,8 +277,10 @@ class VerdictStore:
         # Stamp the task as verdict_emitted and link it to the verdict.
         linked_task = task.model_copy(
             update={
-                "status": ReviewTaskStatus.VERDICT_EMITTED,
+                "status": task_status,
                 "verdict_id": verdict.id,
+                "terminal_reason": terminal_reason,
+                "spawn_log_refs": list(spawn_log_refs or task.spawn_log_refs),
             }
         )
 
@@ -259,6 +311,12 @@ class VerdictStore:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _find_task_row(self, data: dict[str, Any], task_id: str) -> dict[str, Any]:
+        for row in data.get("review_tasks", []):
+            if isinstance(row, dict) and row.get("task_id") == task_id:
+                return row
+        raise KeyError(f"unknown review task: {task_id}")
 
     def _read(self) -> dict[str, Any]:
         """Thread-safe read (acquires lock internally)."""

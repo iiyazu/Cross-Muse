@@ -791,11 +791,15 @@ Authority:
 
 - review artifact / review verdict record;
 - cited candidate artifact.
+- review task terminal state in the review plane store.
 
 Condition:
 
 - review must cite the candidate;
 - review terminal state must be passed, not merely terminal failed;
+- if review does not produce a passed verdict, the review task must still end
+  as `failed_classified` or `interrupted_retryable` with a terminal reason and
+  evidence refs;
 - worker self-report is not review truth.
 
 Complete when:

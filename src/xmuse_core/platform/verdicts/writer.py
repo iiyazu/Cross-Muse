@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from xmuse_core.observability import log_event
-from xmuse_core.structuring.models import ReviewDecision, ReviewVerdict
+from xmuse_core.structuring.models import ReviewDecision, ReviewTaskStatus, ReviewVerdict
 
 logger = logging.getLogger(__name__)
 
@@ -162,7 +162,13 @@ def ingest_review_failure_verdict(
     )
     try:
         task = review_plane.store.get_task(str(task_id))
-        review_plane.store.save_task_and_verdict(task, verdict)
+        review_plane.store.save_task_and_verdict(
+            task,
+            verdict,
+            task_status=ReviewTaskStatus.FAILED_CLASSIFIED,
+            terminal_reason=reason,
+            spawn_log_refs=list(evidence_refs or []),
+        )
     except Exception:
         log_event(
             logger,

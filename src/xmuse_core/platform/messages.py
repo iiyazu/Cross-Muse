@@ -96,6 +96,10 @@ class ReviewVerdict:
     timed_out: bool = False
     transport_error: str | None = None
     provider_result: ProviderInvocationResult | None = None
+    prompt_log_path: str | None = None
+    stdout_log_path: str | None = None
+    stderr_log_path: str | None = None
+    result_log_path: str | None = None
 
     @property
     def stdout(self) -> str:

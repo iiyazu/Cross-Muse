@@ -810,6 +810,7 @@ async def test_runner_ticks_blueprint_automation_without_blocking_dispatch(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
+    original_sleep = asyncio.sleep
     captured: dict[str, object] = {
         "dispatches": [],
         "planning_worker_ids": [],
@@ -853,7 +854,7 @@ async def test_runner_ticks_blueprint_automation_without_blocking_dispatch(
             return None
 
     async def _fast_sleep(_: float) -> None:
-        return None
+        await original_sleep(0)
 
     monkeypatch.setattr(platform_runner, "PlatformOrchestrator", FakeOrchestrator)
     monkeypatch.setattr(
@@ -883,6 +884,7 @@ async def test_runner_dispatches_actor_session_groups_under_one_writer_lease(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
+    original_sleep = asyncio.sleep
     captured: dict[str, object] = {
         "dispatches": [],
         "feature_groups": [],
@@ -936,7 +938,7 @@ async def test_runner_dispatches_actor_session_groups_under_one_writer_lease(
             lane["status"] = "dispatched"
 
     async def _fast_sleep(_: float) -> None:
-        return None
+        await original_sleep(0)
 
     monkeypatch.setattr(platform_runner, "PlatformOrchestrator", FakeOrchestrator)
     monkeypatch.setattr(platform_runner.asyncio, "get_running_loop", lambda: FakeLoop())
@@ -971,7 +973,7 @@ async def test_runner_schedules_ready_lanes_before_slow_reconcile(
 
     class FakeLoop:
         def __init__(self) -> None:
-            self._times = iter((0.0, 0.0, 3601.0))
+            self._times = iter((0.0, 0.0, 0.0, 3601.0))
 
         def add_signal_handler(self, *args, **kwargs) -> None:
             return None
@@ -1293,6 +1295,66 @@ async def test_runner_cancels_in_flight_dispatch_when_lease_lost(
             max_hours=1,
             max_concurrent=1,
         )
+
+    assert dispatch_started.is_set()
+    assert dispatch_cancelled.is_set()
+
+
+@pytest.mark.asyncio
+async def test_runner_cancels_in_flight_dispatch_when_deadline_expires(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    original_sleep = asyncio.sleep
+    dispatch_started = asyncio.Event()
+    dispatch_cancelled = asyncio.Event()
+    never_release = asyncio.Event()
+
+    class FakeLoop:
+        def __init__(self) -> None:
+            self._times = iter((0.0, 0.0, 3601.0))
+
+        def add_signal_handler(self, *args, **kwargs) -> None:
+            return None
+
+        def time(self) -> float:
+            return next(self._times)
+
+    class FakeOrchestrator:
+        def __init__(self, **kwargs) -> None:
+            self._sm = _FakeStateMachine(
+                [{"feature_id": "lane-1", "status": "pending", "priority": 1}]
+            )
+
+        async def reconcile_status_changes(self) -> None:
+            return None
+
+        async def dispatch_lane(self, lane_id: str) -> None:
+            dispatch_started.set()
+            try:
+                await never_release.wait()
+            except asyncio.CancelledError:
+                dispatch_cancelled.set()
+                raise
+
+    async def fast_sleep(_: float) -> None:
+        await dispatch_started.wait()
+        await original_sleep(0)
+
+    monkeypatch.setattr(platform_runner, "PlatformOrchestrator", FakeOrchestrator)
+    monkeypatch.setattr(platform_runner.asyncio, "get_running_loop", lambda: FakeLoop())
+    monkeypatch.setattr(platform_runner.asyncio, "sleep", fast_sleep)
+
+    await asyncio.wait_for(
+        platform_runner.run(
+            lanes_path=tmp_path / "feature_lanes.json",
+            xmuse_root=tmp_path / "xmuse",
+            mcp_port=8100,
+            max_hours=1,
+            max_concurrent=1,
+        ),
+        timeout=0.2,
+    )
 
     assert dispatch_started.is_set()
     assert dispatch_cancelled.is_set()

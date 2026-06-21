@@ -813,6 +813,11 @@ async def test_review_runtime_opencode_without_peer_fails_closed(
     assert lane["peer_routing_mode"] == "required"
     assert lane["peer_delivery_mode"] == "required_peer_failed"
     assert lane["peer_degraded_reason"] == "review_peer_runtime_unavailable"
+    task_id = lane.get("review_task_id")
+    assert task_id is not None
+    task = orch._review_plane.store.get_task(task_id)
+    assert task.status == ReviewTaskStatus.FAILED_CLASSIFIED
+    assert task.terminal_reason == "required_review_peer_unavailable"
 
 
 @pytest.mark.asyncio
@@ -1975,6 +1980,31 @@ async def test_committed_mcp_rework_is_ingested_in_review_plane(
 
 
 @pytest.mark.asyncio
+async def test_review_task_is_marked_in_progress_before_transport_send(
+    tmp_path: Path,
+) -> None:
+    """Review attempts are durable before waiting on the provider transport."""
+    orch = _make_orchestrator(tmp_path, [_gated_lane("lane-review-running")])
+
+    async def _spawn_after_task_started(**_kwargs):
+        lane = orch._sm.get_lane("lane-review-running")
+        task_id = lane.get("review_task_id")
+        assert task_id is not None
+        task = orch._review_plane.store.get_task(task_id)
+        assert task.status == ReviewTaskStatus.IN_PROGRESS
+        assert task.review_attempt_id == lane["review_attempt_id"]
+        assert task.runner_id == lane["review_runner_id"]
+        assert task.provider_runtime == "codex"
+        assert task.provider_model
+        return SpawnResult(exit_code=0, stdout="LGTM", stderr="")
+
+    with patch.object(orch._spawner, "spawn", new_callable=AsyncMock) as spawn:
+        spawn.side_effect = _spawn_after_task_started
+        with patch.object(orch, "dispatch_lane", new_callable=AsyncMock):
+            await orch._run_review_god("lane-review-running")
+
+
+@pytest.mark.asyncio
 async def test_empty_review_stdout_closes_review_task_with_failure_verdict(
     tmp_path: Path,
 ) -> None:
@@ -1999,14 +2029,113 @@ async def test_empty_review_stdout_closes_review_task_with_failure_verdict(
     task_id = lane.get("review_task_id")
     assert task_id is not None
     task = orch._review_plane.store.get_task(task_id)
-    assert task.status == ReviewTaskStatus.VERDICT_EMITTED
+    assert task.status == ReviewTaskStatus.FAILED_CLASSIFIED
+    assert task.terminal_reason == "review_no_verdict"
     assert task.verdict_id is not None
     verdict = orch._review_plane.store.get_verdict(task.verdict_id)
     assert verdict.decision == ReviewDecision.TERMINATE
     assert verdict.status == "review_failed"
     assert verdict.terminate_reason == "review_no_verdict"
-    assert verdict.evidence_refs == []
+    assert verdict.evidence_refs == [
+        "logs/agent_spawns/lane-no-verdict/result.json",
+        "logs/agent_spawns/lane-no-verdict/stdout.log",
+        "logs/agent_spawns/lane-no-verdict/stderr.log",
+    ]
     assert "review_summary" not in lane
+
+
+@pytest.mark.asyncio
+async def test_review_timeout_terminalizes_task_as_classified_failure(
+    tmp_path: Path,
+) -> None:
+    """A timeout closes the ReviewTask instead of leaving it pending."""
+    orch = _make_orchestrator(tmp_path, [_gated_lane("lane-review-timeout-task")])
+
+    review_result = SpawnResult(
+        exit_code=-1,
+        stdout="",
+        stderr="timed out",
+        timed_out=True,
+        stdout_log_path="logs/agent_spawns/lane-review-timeout-task/stdout.log",
+        stderr_log_path="logs/agent_spawns/lane-review-timeout-task/stderr.log",
+        result_log_path="logs/agent_spawns/lane-review-timeout-task/result.json",
+    )
+
+    with patch.object(orch._spawner, "spawn", new_callable=AsyncMock, return_value=review_result):
+        await orch._run_review_god("lane-review-timeout-task")
+
+    lane = orch._sm.get_lane("lane-review-timeout-task")
+    assert lane["status"] == "gate_failed"
+    assert lane["failure_reason"] == "review_timeout"
+    task_id = lane.get("review_task_id")
+    assert task_id is not None
+    task = orch._review_plane.store.get_task(task_id)
+    assert task.status == ReviewTaskStatus.FAILED_CLASSIFIED
+    assert task.terminal_reason == "review_timeout"
+    assert task.verdict_id is not None
+    verdict = orch._review_plane.store.get_verdict(task.verdict_id)
+    assert verdict.status == "review_failed"
+    assert verdict.terminate_reason == "review_timeout"
+    assert verdict.evidence_refs == [
+        "logs/agent_spawns/lane-review-timeout-task/result.json",
+        "logs/agent_spawns/lane-review-timeout-task/stdout.log",
+        "logs/agent_spawns/lane-review-timeout-task/stderr.log",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_review_spawn_exception_terminalizes_task_as_classified_failure(
+    tmp_path: Path,
+) -> None:
+    """A spawn exception closes the ReviewTask with a classified reason."""
+    orch = _make_orchestrator(tmp_path, [_gated_lane("lane-review-spawn-failed")])
+
+    async def _spawn_failed(**_kwargs):
+        raise RuntimeError("spawn failed")
+
+    with patch.object(orch._spawner, "spawn", new_callable=AsyncMock) as spawn:
+        spawn.side_effect = _spawn_failed
+        await orch._run_review_god("lane-review-spawn-failed")
+
+    lane = orch._sm.get_lane("lane-review-spawn-failed")
+    assert lane["status"] == "gate_failed"
+    assert lane["failure_reason"] == "review_spawn_failed"
+    task_id = lane.get("review_task_id")
+    assert task_id is not None
+    task = orch._review_plane.store.get_task(task_id)
+    assert task.status == ReviewTaskStatus.FAILED_CLASSIFIED
+    assert task.terminal_reason == "review_spawn_failed"
+    assert task.review_attempt_id == lane["review_attempt_id"]
+    assert task.runner_id == lane["review_runner_id"]
+    assert task.verdict_id is not None
+    verdict = orch._review_plane.store.get_verdict(task.verdict_id)
+    assert verdict.status == "review_failed"
+    assert verdict.terminate_reason == "review_spawn_failed"
+
+
+@pytest.mark.asyncio
+async def test_review_cancel_terminalizes_task_as_interrupted_retryable(
+    tmp_path: Path,
+) -> None:
+    """Runner cancellation leaves a recoverable durable terminal task state."""
+    orch = _make_orchestrator(tmp_path, [_gated_lane("lane-review-cancelled")])
+
+    async def _cancelled_spawn(**_kwargs):
+        raise asyncio.CancelledError()
+
+    with patch.object(orch._spawner, "spawn", new_callable=AsyncMock) as spawn:
+        spawn.side_effect = _cancelled_spawn
+        with pytest.raises(asyncio.CancelledError):
+            await orch._run_review_god("lane-review-cancelled")
+
+    lane = orch._sm.get_lane("lane-review-cancelled")
+    task_id = lane.get("review_task_id")
+    assert task_id is not None
+    task = orch._review_plane.store.get_task(task_id)
+    assert task.status == ReviewTaskStatus.INTERRUPTED_RETRYABLE
+    assert task.terminal_reason == "review_interrupted"
+    assert task.review_attempt_id == lane["review_attempt_id"]
+    assert task.runner_id == lane["review_runner_id"]
 
 
 @pytest.mark.asyncio

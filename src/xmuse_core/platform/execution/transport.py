@@ -73,6 +73,10 @@ class SubprocessTransport(Transport):
             exit_code=result.exit_code,
             timed_out=result.timed_out,
             provider_result=provider_result,
+            prompt_log_path=result.prompt_log_path,
+            stdout_log_path=result.stdout_log_path,
+            stderr_log_path=result.stderr_log_path,
+            result_log_path=result.result_log_path,
         )
 
     async def spawn_god(

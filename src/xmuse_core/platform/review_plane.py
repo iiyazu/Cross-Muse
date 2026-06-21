@@ -184,7 +184,7 @@ class ReviewPlaneController:
         existing = [
             t
             for t in self._store.list_tasks_for_lane(lane_id)
-            if t.status == ReviewTaskStatus.PENDING
+            if t.status in {ReviewTaskStatus.PENDING, ReviewTaskStatus.IN_PROGRESS}
         ]
         if existing:
             return existing[-1]
@@ -210,6 +210,59 @@ class ReviewPlaneController:
         cannot silently overwrite the cancellation.
         """
         return self._store.cancel_task(task_id, updated_at=_utc_now())
+
+    def mark_review_task_in_progress(
+        self,
+        task_id: str,
+        *,
+        review_attempt_id: str | None = None,
+        runner_id: str | None = None,
+        provider_runtime: str | None = None,
+        provider_model: str | None = None,
+    ) -> ReviewTask:
+        """Persist that Review GOD has started attempting *task_id*."""
+        now = _utc_now()
+        return self._store.mark_task_in_progress(
+            task_id,
+            updated_at=now,
+            started_at=now,
+            review_attempt_id=review_attempt_id,
+            runner_id=runner_id,
+            provider_runtime=provider_runtime,
+            provider_model=provider_model,
+        )
+
+    def classify_review_task_failure(
+        self,
+        task_id: str,
+        *,
+        reason: str,
+        evidence_refs: list[str] | None = None,
+    ) -> ReviewTask:
+        """Close a review task with a classified provider/control failure."""
+        return self._store.mark_task_terminal(
+            task_id,
+            status=ReviewTaskStatus.FAILED_CLASSIFIED,
+            terminal_reason=reason,
+            spawn_log_refs=evidence_refs,
+            updated_at=_utc_now(),
+        )
+
+    def mark_review_task_interrupted(
+        self,
+        task_id: str,
+        *,
+        reason: str,
+        evidence_refs: list[str] | None = None,
+    ) -> ReviewTask:
+        """Close a started review task as retryable after runner interruption."""
+        return self._store.mark_task_terminal(
+            task_id,
+            status=ReviewTaskStatus.INTERRUPTED_RETRYABLE,
+            terminal_reason=reason,
+            spawn_log_refs=evidence_refs,
+            updated_at=_utc_now(),
+        )
 
     # ------------------------------------------------------------------
     # Verdict ingestion

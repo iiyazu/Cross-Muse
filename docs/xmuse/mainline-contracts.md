@@ -90,6 +90,24 @@ acceptance criteria, gate profiles, source refs, and memory context.
 Review verdicts are authoritative only when backed by evidence. Patch-forward
 creates a new auditable lane and links it to the failed lane.
 
+Review tasks are durable work items, not stdout interpretations. Once a gated
+lane opens a review task and starts a review attempt, the task must move from
+`pending` to `in_progress` with `review_attempt_id`, `runner_id`,
+`started_at`, provider runtime/model, and any spawn log refs that become
+available. Every started review attempt must end in one of:
+
+- `verdict_emitted` for a parseable Review GOD merge/rework verdict;
+- `failed_classified` for provider/control failures such as
+  `review_no_verdict`, `review_parse_failed`, `review_spawn_failed`,
+  `review_timeout`, or `review_non_zero_exit`;
+- `interrupted_retryable` for runner shutdown, cancellation, or recoverable
+  interruption before a verdict is available.
+
+`feature_lanes.json` may expose the lane status, but the review task terminal
+state lives in the review plane store. A runner exit must not leave a started
+review task permanently `pending` or `in_progress` without a classified
+terminal reason.
+
 ### 5. GitHub Merge Gate
 
 GitHub is part of the control plane. A lane/feature PR must carry blueprint,
@@ -137,4 +155,3 @@ Every mainline change should keep these gates meaningful:
 - focused contract tests for the touched contract surface;
 - package boundary tests when runtime/core imports are touched;
 - explicit notes for any known broad-suite baseline failures.
-

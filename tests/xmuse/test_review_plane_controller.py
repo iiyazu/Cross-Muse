@@ -99,6 +99,26 @@ def test_open_review_task_is_idempotent(tmp_path):
     assert task1.task_id == task2.task_id
 
 
+def test_open_review_task_reuses_in_progress_task(tmp_path):
+    ctrl = _make_controller(
+        tmp_path,
+        [_lane("lane-1", "gated")],
+    )
+
+    task1 = ctrl.open_review_task("lane-1")
+    started = ctrl.mark_review_task_in_progress(
+        task1.task_id,
+        review_attempt_id="review-attempt-1",
+        runner_id="runner-1",
+        provider_runtime="codex",
+        provider_model="gpt-5.5",
+    )
+    task2 = ctrl.open_review_task("lane-1")
+
+    assert started.status == ReviewTaskStatus.IN_PROGRESS
+    assert task2.task_id == task1.task_id
+
+
 def test_open_review_task_captures_gate_report_ref(tmp_path):
     ctrl = _make_controller(
         tmp_path,

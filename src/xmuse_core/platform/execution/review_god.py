@@ -181,7 +181,15 @@ async def run_review_god(
         on_reviewed=on_reviewed,
         on_rejected=on_rejected,
     )
-    if configured_peer_attempt.delivered or configured_peer_attempt.required_failed:
+    if configured_peer_attempt.delivered:
+        return
+    if configured_peer_attempt.required_failed:
+        current = sm.get_lane(lane_id)
+        ingest_review_failure_verdict(
+            lane_id,
+            str(current.get("failure_reason") or "review_peer_delivery_failed"),
+            _stdout_review_evidence_refs(lane_id, lane=current, xmuse_root=xmuse_root),
+        )
         return
 
     result = None
@@ -200,6 +208,7 @@ async def run_review_god(
             stable_verdict_id=stable_verdict_id,
             ingest_merge_verdict=ingest_merge_verdict,
             ingest_rework_verdict=ingest_rework_verdict,
+            ingest_review_failure_verdict=ingest_review_failure_verdict,
             provider_invocation=provider_invocation,
             provider_session_binding=provider_session_binding,
         )
@@ -250,6 +259,7 @@ async def run_review_god(
                 stable_verdict_id=stable_verdict_id,
                 ingest_merge_verdict=ingest_merge_verdict,
                 ingest_rework_verdict=ingest_rework_verdict,
+                ingest_review_failure_verdict=ingest_review_failure_verdict,
                 provider_invocation=provider_invocation,
                 provider_session_binding=None,
             )
@@ -295,6 +305,7 @@ async def run_review_god(
             stable_verdict_id=stable_verdict_id,
             ingest_merge_verdict=ingest_merge_verdict,
             ingest_rework_verdict=ingest_rework_verdict,
+            ingest_review_failure_verdict=ingest_review_failure_verdict,
             provider_invocation=provider_invocation,
             provider_session_binding=None,
         )
@@ -332,6 +343,7 @@ async def _send_review_request(
     stable_verdict_id: Callable[[str], str],
     ingest_merge_verdict: Callable[[str, str, list[str] | None], None],
     ingest_rework_verdict: Callable[[str, str, list[str] | None], None],
+    ingest_review_failure_verdict: Callable[[str, str, list[str]], None],
     provider_invocation: ProviderInvocation | None,
     provider_session_binding: ProviderSessionBindingRecord | None,
 ):
@@ -367,6 +379,7 @@ async def _send_review_request(
             on_rejected=on_rejected,
         ):
             return None
+        ingest_review_failure_verdict(lane_id, "review_infra_unavailable", [])
         sm.transition(
             lane_id,
             "gate_failed",
@@ -390,13 +403,17 @@ async def _send_review_request(
             on_rejected=on_rejected,
         ):
             return None
+        failure_reason = (
+            "review_infra_unavailable"
+            if is_spawn_transient(exc)
+            else "review_spawn_failed"
+        )
+        ingest_review_failure_verdict(lane_id, failure_reason, [])
         sm.transition(
             lane_id,
             "gate_failed",
             metadata={
-                "failure_reason": "review_infra_unavailable"
-                if is_spawn_transient(exc)
-                else "review_spawn_failed",
+                "failure_reason": failure_reason,
                 "failure_layer": "review",
                 "review_infra_reason": review_infra_reason_from_exception(exc),
                 "review_retry_after_at": time.time() + REVIEW_INFRA_RETRY_DELAY_S,
@@ -436,14 +453,25 @@ async def _handle_review_result(
 
     provider_result = result.provider_result
     if provider_result is not None and provider_result.status is not WorkerResultStatus.COMPLETED:
+        metadata = _review_provider_failure_metadata(provider_result.failure_kind)
+        ingest_review_failure_verdict(
+            lane_id,
+            metadata["failure_reason"],
+            _review_failure_evidence_refs(result),
+        )
         sm.transition(
             lane_id,
             "gate_failed",
-            metadata=_review_provider_failure_metadata(provider_result.failure_kind),
+            metadata=metadata,
         )
         return
 
     if result.timed_out:
+        ingest_review_failure_verdict(
+            lane_id,
+            "review_timeout",
+            _review_failure_evidence_refs(result),
+        )
         sm.transition(
             lane_id,
             "gate_failed",
@@ -457,6 +485,11 @@ async def _handle_review_result(
     if result.exit_code != 0:
         infra_reason = review_infra_failure_reason(result)
         if infra_reason is not None:
+            ingest_review_failure_verdict(
+                lane_id,
+                "review_infra_unavailable",
+                _review_failure_evidence_refs(result),
+            )
             sm.transition(
                 lane_id,
                 "gate_failed",
@@ -468,6 +501,11 @@ async def _handle_review_result(
                 },
             )
             return
+        ingest_review_failure_verdict(
+            lane_id,
+            "review_non_zero_exit",
+            _review_failure_evidence_refs(result),
+        )
         sm.transition(
             lane_id,
             "gate_failed",

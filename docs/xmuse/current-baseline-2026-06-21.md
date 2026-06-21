@@ -29,9 +29,11 @@ The current verified chain is partial but real:
 4. A Grok-reviewed proposal has been accepted and projected into a lane graph.
 5. The platform runner can pick up the projected lane and reach execution and
    review boundaries when the MCP server topology is correct.
-6. The latest active boundary is review continuation: a gated lane with a
-   pending review task has not yet been proven to reach a durable
-   `verdict_emitted` state.
+6. The latest code-level boundary is review continuation terminality: a gated
+   lane that starts a review attempt now has a durable review task lifecycle
+   for `in_progress`, `verdict_emitted`, `failed_classified`, and
+   `interrupted_retryable`; runner deadline shutdown cancels in-flight dispatch
+   instead of waiting forever.
 
 ## Baseline Evidence
 
@@ -43,7 +45,16 @@ Latest important runtime evidence before this baseline:
 - The second Loop 2H runner attempt with the MCP server running recovered the
   lane from `gate_failed` to `gated`.
 - A later Loop 2H-R2 attempt started `review_god`, but interruption left the
-  durable review task pending and did not prove a verdict.
+  durable review task pending and did not prove a verdict. The current
+  code-level contract now prevents that class of unclassified hanging task,
+  including runner deadline shutdown paths that previously could wait
+  indefinitely on in-flight dispatch.
+- A fresh local runtime proof at
+  `.goal-runs/2026-06-21/review-terminality-runtime-proof-2/` ran
+  `xmuse-platform-runner` against a gated lane requiring an unavailable
+  OpenCode review peer. The lane reached `gate_failed` and the review task
+  reached `failed_classified(required_review_peer_unavailable)` with
+  attempt/runner/provider/evidence refs in `review_plane.json`.
 
 ## Forbidden Claims
 
@@ -51,23 +62,25 @@ This baseline does not prove:
 
 - full autonomous overnight readiness;
 - complete final-action closure for the current lane;
-- a durable accepted review verdict for the pending review task;
+- a durable accepted review verdict for the historical pending review task;
+- a passed/accepted review verdict from the fresh runtime proof;
 - that Grok is a full platform orchestrator runtime;
 - that OpenCode is available;
 - that stdout or summaries alone are sufficient proof.
 
 ## Next Entry Point
 
-Resume from the review-continuation boundary:
+Resume from the review-continuation boundary as a positive verdict proof pass:
 
 1. Start `xmuse-mcp-server` for the same runtime root when using the existing
    Loop 2H runtime.
-2. Run the platform runner long enough to force the pending review task to
-   either emit a durable verdict or expose a classified review/provider/transport
-   blocker.
+2. Run the platform runner long enough to force a review attempt to emit a
+   durable passed verdict, or explicitly record the next classified
+   review/provider/transport blocker.
 3. Inspect `review_plane.json`, `feature_lanes.json`, state history, and spawn
-   logs before patching.
-4. Patch only the first proven authority / producer / consumer boundary.
+   logs before claiming runtime closure.
+4. Patch only if the runtime proof contradicts the durable terminality
+   contract.
 
 ## Baseline Verification
 
@@ -103,7 +116,7 @@ Historical/compatibility failures are now isolated by
 mainline signal; latest result after quarantine:
 
 - `uv run pytest -q`
-- result: `3720 passed, 49 skipped, 12 warnings`
+- result: `3726 passed, 49 skipped, 12 warnings`
 
 The isolated compatibility set remains explicit and enumerable:
 

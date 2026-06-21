@@ -382,7 +382,12 @@ async def run(
                     pass
 
         if in_flight:
-            await asyncio.gather(*in_flight, return_exceptions=True)
+            for task in list(in_flight):
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*list(in_flight), return_exceptions=True)
+            in_flight.clear()
+            in_flight_lane_ids.clear()
         logger.info("Platform shutting down")
     finally:
         control_service.record_lifecycle(

@@ -51,6 +51,8 @@ class ReviewTaskStatus(StrEnum):
     PENDING = "pending"
     IN_PROGRESS = "in_progress"
     VERDICT_EMITTED = "verdict_emitted"
+    FAILED_CLASSIFIED = "failed_classified"
+    INTERRUPTED_RETRYABLE = "interrupted_retryable"
     CANCELLED = "cancelled"
 
 
@@ -84,5 +86,12 @@ class ReviewTask(BaseModel):
     gate_report_ref: str | None = None
     status: ReviewTaskStatus = ReviewTaskStatus.PENDING
     verdict_id: str | None = None
+    review_attempt_id: str | None = None
+    runner_id: str | None = None
+    started_at: str | None = None
+    provider_runtime: str | None = None
+    provider_model: str | None = None
+    spawn_log_refs: list[str] = Field(default_factory=list)
+    terminal_reason: str | None = None
     created_at: str
     updated_at: str | None = None

@@ -1,6 +1,7 @@
 """Lane execution and review flow helpers for PlatformOrchestrator."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import shutil
@@ -628,72 +629,86 @@ async def run_review_god(orchestrator, lane_id: str) -> None:
             model=provider_model,
             prompt_fingerprint=fingerprint_prompt(prompt),
         )
-        await execution_review_god.run_review_god(
-            lane_id=lane_id,
-            lane=lane,
-            god=GodConfig(
-                name=god.name,
-                runtime=orchestrator._provider_service.runtime_for_invocation(
-                    provider_invocation
-                ),
-                timeout_s=god.timeout_s,
-                skill_prompt_path=god.skill_prompt_path,
-                model=provider_model,
+        review_god_config = GodConfig(
+            name=god.name,
+            runtime=orchestrator._provider_service.runtime_for_invocation(
+                provider_invocation
             ),
-            prompt=prompt,
-            worktree=Path(lane.get("worktree", ".")),
-            xmuse_root=orchestrator._root,
-            sm=orchestrator._sm,
-            recovery=orchestrator._recovery,
-            transport=orchestrator._transport,
-            persistent_session_layer=orchestrator._review_god_session_layer,
-            persistent_review_receive_timeout_s=(
-                orchestrator._persistent_review_receive_timeout_s
-                if orchestrator._persistent_review_receive_timeout_s is not None
-                else execution_review_god.PERSISTENT_REVIEW_RECEIVE_TIMEOUT_S
-            ),
-            default_review_peer_routing_enabled=(
-                orchestrator._default_review_peer_routing_enabled
-            ),
-            observer=orchestrator._lane_recovery_observer(lane_id),
-            open_review_task=orchestrator._open_review_task,
-            stable_verdict_id=lambda target_lane_id: stable_verdict_id_for_lane(
-                target_lane_id,
-                lane=orchestrator._sm.get_lane(target_lane_id),
-            ),
-            ingest_merge_verdict=lambda target_lane_id, summary, evidence_refs=None: (
-                ingest_merge_verdict(
-                    target_lane_id,
-                    summary,
-                    lane=orchestrator._sm.get_lane(target_lane_id),
-                    review_plane=orchestrator._review_plane,
-                    evidence_refs=evidence_refs,
-                )
-            ),
-            ingest_rework_verdict=lambda target_lane_id, summary, evidence_refs=None: (
-                ingest_rework_verdict(
-                    target_lane_id,
-                    summary,
-                    lane=orchestrator._sm.get_lane(target_lane_id),
-                    review_plane=orchestrator._review_plane,
-                    evidence_refs=evidence_refs,
-                )
-            ),
-            ingest_review_failure_verdict=(
-                lambda target_lane_id, reason, evidence_refs: ingest_review_failure_verdict(
-                    target_lane_id,
-                    reason,
-                    lane=orchestrator._sm.get_lane(target_lane_id),
-                    review_plane=orchestrator._review_plane,
-                    evidence_refs=evidence_refs,
-                )
-            ),
-            on_reviewed=orchestrator.on_lane_reviewed,
-            on_rejected=orchestrator.on_lane_rejected,
-            provider_invocation=provider_invocation,
-            provider_session_binding=session_route.provider_session_binding,
-            provider_session_binding_writer=orchestrator._provider_session_binding_store,
+            timeout_s=god.timeout_s,
+            skill_prompt_path=god.skill_prompt_path,
+            model=provider_model,
         )
+        try:
+            await execution_review_god.run_review_god(
+                lane_id=lane_id,
+                lane=lane,
+                god=review_god_config,
+                prompt=prompt,
+                worktree=Path(lane.get("worktree", ".")),
+                xmuse_root=orchestrator._root,
+                sm=orchestrator._sm,
+                recovery=orchestrator._recovery,
+                transport=orchestrator._transport,
+                persistent_session_layer=orchestrator._review_god_session_layer,
+                persistent_review_receive_timeout_s=(
+                    orchestrator._persistent_review_receive_timeout_s
+                    if orchestrator._persistent_review_receive_timeout_s is not None
+                    else execution_review_god.PERSISTENT_REVIEW_RECEIVE_TIMEOUT_S
+                ),
+                default_review_peer_routing_enabled=(
+                    orchestrator._default_review_peer_routing_enabled
+                ),
+                observer=orchestrator._lane_recovery_observer(lane_id),
+                open_review_task=lambda target_lane_id: open_review_task_for_attempt(
+                    orchestrator,
+                    target_lane_id,
+                    god=review_god_config,
+                ),
+                stable_verdict_id=lambda target_lane_id: stable_verdict_id_for_lane(
+                    target_lane_id,
+                    lane=orchestrator._sm.get_lane(target_lane_id),
+                ),
+                ingest_merge_verdict=lambda target_lane_id, summary, evidence_refs=None: (
+                    ingest_merge_verdict(
+                        target_lane_id,
+                        summary,
+                        lane=orchestrator._sm.get_lane(target_lane_id),
+                        review_plane=orchestrator._review_plane,
+                        evidence_refs=evidence_refs,
+                    )
+                ),
+                ingest_rework_verdict=lambda target_lane_id, summary, evidence_refs=None: (
+                    ingest_rework_verdict(
+                        target_lane_id,
+                        summary,
+                        lane=orchestrator._sm.get_lane(target_lane_id),
+                        review_plane=orchestrator._review_plane,
+                        evidence_refs=evidence_refs,
+                    )
+                ),
+                ingest_review_failure_verdict=(
+                    lambda target_lane_id, reason, evidence_refs: ingest_review_failure_verdict(
+                        target_lane_id,
+                        reason,
+                        lane=orchestrator._sm.get_lane(target_lane_id),
+                        review_plane=orchestrator._review_plane,
+                        evidence_refs=evidence_refs,
+                    )
+                ),
+                on_reviewed=orchestrator.on_lane_reviewed,
+                on_rejected=orchestrator.on_lane_rejected,
+                provider_invocation=provider_invocation,
+                provider_session_binding=session_route.provider_session_binding,
+                provider_session_binding_writer=orchestrator._provider_session_binding_store,
+            )
+        except asyncio.CancelledError:
+            mark_review_task_interrupted(
+                orchestrator,
+                lane_id,
+                reason="review_interrupted",
+                evidence_refs=[],
+            )
+            raise
 
 def open_review_task(orchestrator, lane_id: str) -> None:
     # Open a ReviewTask so the review plane has a persistent audit record.
@@ -709,6 +724,61 @@ def open_review_task(orchestrator, lane_id: str) -> None:
             logging.WARNING,
             "review_plane_open_task_failed",
             lane_id=lane_id,
+        )
+
+
+def open_review_task_for_attempt(
+    orchestrator,
+    lane_id: str,
+    *,
+    god: GodConfig,
+) -> None:
+    open_review_task(orchestrator, lane_id)
+    try:
+        lane = orchestrator._sm.get_lane(lane_id)
+        task_id = lane.get("review_task_id")
+        if not isinstance(task_id, str) or not task_id:
+            return
+        orchestrator._review_plane.mark_review_task_in_progress(
+            task_id,
+            review_attempt_id=_optional_text(lane.get("review_attempt_id")),
+            runner_id=_optional_text(lane.get("review_runner_id")),
+            provider_runtime=god.runtime,
+            provider_model=god.model,
+        )
+    except Exception:
+        log_event(
+            logger,
+            logging.WARNING,
+            "review_plane_mark_in_progress_failed",
+            lane_id=lane_id,
+        )
+
+
+def mark_review_task_interrupted(
+    orchestrator,
+    lane_id: str,
+    *,
+    reason: str,
+    evidence_refs: list[str] | None = None,
+) -> None:
+    try:
+        lane = orchestrator._sm.get_lane(lane_id)
+        task_id = lane.get("review_task_id")
+        if not isinstance(task_id, str) or not task_id:
+            return
+        orchestrator._review_plane.mark_review_task_interrupted(
+            task_id,
+            reason=reason,
+            evidence_refs=evidence_refs,
+        )
+    except Exception:
+        log_event(
+            logger,
+            logging.WARNING,
+            "review_plane_mark_interrupted_failed",
+            lane_id=lane_id,
+            reason=reason,
         )
 
 

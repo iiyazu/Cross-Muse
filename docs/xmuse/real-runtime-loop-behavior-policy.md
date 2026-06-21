@@ -193,6 +193,10 @@ merge policy, keep the loop single-threaded.
 - Do not use fake producers to prove production behavior.
 - Do not count stdout, terminal logs, worker summaries, or skill output as
   durable product truth.
+- Do not leave a started review task in `pending` or `in_progress` after the
+  runner exits, times out, is cancelled, or observes a provider/control-plane
+  failure. The review plane must hold either a durable verdict or a classified
+  terminal reason.
 - Preserve inherited `manual_gaps` and `forbidden_claims` unless stronger proof
   exists.
 - Keep each loop to one concrete runtime target.

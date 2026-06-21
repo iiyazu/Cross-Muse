@@ -12,6 +12,62 @@ Do not read any entry here as proof of:
 - natural peer-GOD groupchat proof;
 - full L8-L10 or L1-L11 closure.
 
+## 2026-06-21 Review Task Terminality Runtime Proof
+
+loop_id: `review-terminality-runtime-proof-2`
+
+active_boundary:
+
+```text
+authority: review_plane.json, feature_lanes.json, runner.log, .goal-runs/2026-06-21/review-terminality-runtime-proof-2/review-terminality-runtime-summary.json
+producer: xmuse-platform-runner reconcile of a gated lane requiring an unavailable OpenCode review peer
+consumer: ReviewPlaneController / VerdictStore durable review task lifecycle
+expected_artifact: review task leaves in_progress and reaches failed_classified with terminal_reason and evidence refs
+proof_level: local_runtime_runner_reconcile
+forbidden_claims: no accepted review verdict, no final-action hold, no GitHub/server truth, no OpenCode availability
+```
+
+Command shape:
+
+```bash
+XMUSE_ROOT=.goal-runs/2026-06-21/review-terminality-runtime-proof-2 \
+XMUSE_RAY_GOD_MCP=0 \
+uv run xmuse-platform-runner \
+  --xmuse-root .goal-runs/2026-06-21/review-terminality-runtime-proof-2 \
+  --lanes .goal-runs/2026-06-21/review-terminality-runtime-proof-2/feature_lanes.json \
+  --mcp-port 8100 \
+  --max-hours 0.001 \
+  --max-concurrent 1 \
+  --no-auto-merge
+```
+
+Observed artifacts:
+
+```text
+summary=.goal-runs/2026-06-21/review-terminality-runtime-proof-2/review-terminality-runtime-summary.json
+lane_status=gate_failed
+lane_failure_reason=required_review_peer_unavailable
+review_task_status=failed_classified
+review_task_terminal_reason=required_review_peer_unavailable
+verdict_status=review_failed
+provider_runtime=codex
+provider_model=gpt-5.4
+evidence_refs=[
+  feature_lanes.json#lane=review-terminality-required-peer,
+  review_plane.json#task=rtask_99285c3361c9448a8787eb4c8ab5a086,
+  logs/lane_prompts/review-terminality-required-peer.md
+]
+```
+
+classification:
+
+```text
+The review task terminality contract is proven for a real platform-runner
+reconcile path that starts Review GOD but cannot route to the required review
+peer. The durable review task closed as failed_classified instead of remaining
+pending or in_progress.
+```
+
 ## 2026-06-21 Loop 7R-R: Clean worktree PR candidate for final-action import guard
 
 loop_id: `loop-7rr-clean-worktree-pr-candidate-20260621`
