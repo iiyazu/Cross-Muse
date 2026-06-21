@@ -30,6 +30,7 @@ class AcceptanceSpineStatus(StrEnum):
     FINAL_ACTION_RECORDED = "final_action_recorded"
     GITHUB_GATE_PENDING = "github_gate_pending"
     GITHUB_GATE_VERIFIED = "github_gate_verified"
+    ACCEPTED = "accepted"
     BLOCKED = "blocked"
     FAILED = "failed"
     CANCELLED = "cancelled"
@@ -377,6 +378,70 @@ class AcceptanceSpineStore:
             )
         return self.get_by_intake_message(str(row["intake_message_id"]))
 
+    def resolve_final_action(
+        self,
+        *,
+        final_action_ref: str,
+        status: str,
+        github_gate_evidence_ref: str | None = None,
+    ) -> AcceptanceSpine | None:
+        now = _utc_now()
+        normalized_status = status.strip().lower()
+        clean_github_ref = (
+            github_gate_evidence_ref.strip()
+            if isinstance(github_gate_evidence_ref, str)
+            else ""
+        )
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                select intake_message_id, manual_gaps_json
+                from acceptance_spines
+                where final_action_ref = ?
+                """,
+                (final_action_ref,),
+            ).fetchone()
+            if row is None:
+                return None
+            manual_gaps = _json_list(row["manual_gaps_json"])
+            blocked_reason: str | None = None
+            github_ref: str | None = None
+            if normalized_status in {"approved", "accepted", "resolved"}:
+                if clean_github_ref:
+                    next_status = AcceptanceSpineStatus.ACCEPTED
+                    manual_gaps = _remove_values(manual_gaps, {"github_gate_unverified"})
+                    github_ref = clean_github_ref
+                else:
+                    next_status = AcceptanceSpineStatus.BLOCKED
+                    manual_gaps = _merge_values(manual_gaps, ["github_gate_unverified"])
+                    blocked_reason = "github_gate_unverified"
+            elif normalized_status in {"rejected", "failed", "cancelled", "canceled"}:
+                next_status = AcceptanceSpineStatus.FAILED
+                blocked_reason = f"final_action_{normalized_status}"
+            else:
+                next_status = AcceptanceSpineStatus.BLOCKED
+                blocked_reason = f"final_action_{normalized_status or 'unknown'}"
+            conn.execute(
+                """
+                update acceptance_spines
+                set status = ?,
+                    github_gate_evidence_ref = ?,
+                    manual_gaps_json = ?,
+                    blocked_reason = ?,
+                    updated_at = ?
+                where final_action_ref = ?
+                """,
+                (
+                    next_status.value,
+                    github_ref,
+                    json.dumps(manual_gaps),
+                    blocked_reason,
+                    now,
+                    final_action_ref,
+                ),
+            )
+        return self.get_by_intake_message(str(row["intake_message_id"]))
+
     def mark_dispatch_failed(
         self,
         *,
@@ -529,9 +594,17 @@ def _json_list(value: object) -> list[str]:
 
 
 def _merge_json_list(existing_json: object, new_values: list[str]) -> list[str]:
-    merged = _json_list(existing_json)
+    return _merge_values(_json_list(existing_json), new_values)
+
+
+def _merge_values(existing: list[str], new_values: list[str]) -> list[str]:
+    merged = [*existing]
     for value in new_values:
         clean = value.strip() if isinstance(value, str) else ""
         if clean and clean not in merged:
             merged.append(clean)
     return merged
+
+
+def _remove_values(existing: list[str], values: set[str]) -> list[str]:
+    return [value for value in existing if value not in values]

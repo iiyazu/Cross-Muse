@@ -7,6 +7,8 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from xmuse_core.chat.acceptance_spine import AcceptanceSpineStore
+
 
 class PendingFinalAction(BaseModel):
     id: str
@@ -17,6 +19,7 @@ class PendingFinalAction(BaseModel):
     status: str = "pending"
     summary: str
     resolved_by: str | None = None
+    github_gate_evidence_ref: str | None = None
 
 
 class FinalActionGateStore:
@@ -59,14 +62,23 @@ class FinalActionGateStore:
         *,
         status: str,
         resolved_by: str | None = None,
+        github_gate_evidence_ref: str | None = None,
     ) -> PendingFinalAction:
         data = self._read()
         for item in data.get("holds", []):
             if item.get("id") == hold_id:
                 item["status"] = status
                 item["resolved_by"] = resolved_by
+                if github_gate_evidence_ref:
+                    item["github_gate_evidence_ref"] = github_gate_evidence_ref
                 self._write(data)
-                return PendingFinalAction(**item)
+                action = PendingFinalAction(**item)
+                self._update_acceptance_spine_for_resolution(
+                    hold_id=hold_id,
+                    status=status,
+                    github_gate_evidence_ref=github_gate_evidence_ref,
+                )
+                return action
         raise KeyError(f"unknown final action hold: {hold_id}")
 
     def get(self, hold_id: str) -> PendingFinalAction:
@@ -85,4 +97,20 @@ class FinalActionGateStore:
         self._path.write_text(
             json.dumps(data, indent=2, ensure_ascii=False) + "\n",
             encoding="utf-8",
+        )
+
+    def _update_acceptance_spine_for_resolution(
+        self,
+        *,
+        hold_id: str,
+        status: str,
+        github_gate_evidence_ref: str | None,
+    ) -> None:
+        chat_db_path = self._path.parent / "chat.db"
+        if not chat_db_path.exists():
+            return
+        AcceptanceSpineStore(chat_db_path).resolve_final_action(
+            final_action_ref=f"{self._path.name}#hold={hold_id}",
+            status=status,
+            github_gate_evidence_ref=github_gate_evidence_ref,
         )

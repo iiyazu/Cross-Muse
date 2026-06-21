@@ -24,6 +24,7 @@ human post_human_message intake
 -> review_plane verdict attaches review_verdict_ref
 -> final-action hold attaches final_action_ref
 -> missing GitHub/server truth attaches github_gate_unverified manual gap
+-> final-action resolution updates accepted / blocked / failed terminal status
 -> chat API can read spine status
 ```
 
@@ -51,6 +52,10 @@ The authority is `chat.db` through chat/control-plane stores:
 - GitHub/server gate evidence is not faked. When final-action is held without
   server-side gate evidence, the spine records `github_gate_unverified` in
   `manual_gaps`.
+- `FinalActionGateStore.resolve` updates the spine terminal outcome. Approved
+  final action without a GitHub/server evidence ref remains blocked; approved
+  final action with an explicit evidence ref becomes accepted; rejected,
+  failed, or cancelled final action becomes failed.
 
 Dashboard, TUI, timeline, provider stdout, fake/sentinel scripts, and copied
 GitHub text are not acceptance authorities.
@@ -90,7 +95,17 @@ Current implemented statuses:
 - `reviewed`: an independent review-plane verdict ref is linked;
 - `blocked`: a final-action hold or GitHub/server manual gap blocks terminal
   closure;
+- `accepted`: final action is approved with an explicit GitHub/server gate
+  evidence ref;
 - `failed`: a dispatch queue failure is linked back to the demand.
+
+Terminal final-action rules:
+
+- `approved` / `accepted` / `resolved` without `github_gate_evidence_ref` keeps
+  `status = blocked` and `manual_gaps = ["github_gate_unverified"]`;
+- `approved` / `accepted` / `resolved` with `github_gate_evidence_ref` sets
+  `status = accepted` and clears the GitHub manual gap;
+- `rejected` / `failed` / `cancelled` / `canceled` sets `status = failed`.
 
 Other lifecycle statuses are reserved for the broader closure path and must not
 be claimed until their producer writes them.
@@ -98,13 +113,13 @@ be claimed until their producer writes them.
 ## Remaining Boundary
 
 The next implementation boundary is not another provider adapter. It is to
-replace the manual GitHub/server gap with a real gate evidence producer, then
-resolve the final-action hold into a terminal accepted/failed outcome:
+replace caller-supplied GitHub/server evidence refs with a real gate evidence
+producer:
 
 ```text
 GitHub/server gate evidence
--> final-action resolution
--> accepted / blocked / failed terminal status
+-> github_gate_evidence_ref
+-> accepted terminal status
 ```
 
 Use focused tests around the changed producer/consumer contract. Do not run the
