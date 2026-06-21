@@ -253,14 +253,16 @@ def _dispatch_prompt(
         "- This chat nudge does not execute the lane and must not claim execution.",
         "- Do not edit files, run tests, or inspect unrelated repository state.",
         "- Real worktree execution is handled by the platform lane worker.",
+        "- xmuse MCP tools are configured for this dispatch turn; do not claim "
+        "that MCP writeback tools are unavailable.",
         "- You must call the MCP tool chat_post_message exactly once after reading "
         "this dispatch context.",
         "- Do not answer with plain text; a plain text acknowledgement is not a "
         "durable dispatch acknowledgement.",
         "- The chat_post_message content must include DISPATCH_ACKNOWLEDGED and "
         "the dispatch entry id.",
-        "- If you cannot acknowledge the handoff, reply with DISPATCH_ACK_FAILED "
-        "and the reason.",
+        "- If you cannot acknowledge the handoff, still call chat_post_message; "
+        "the content must include DISPATCH_ACK_FAILED and the reason.",
     ]
     context = artifact_context or {}
     proposal = context.get("proposal")
