@@ -49,6 +49,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from xmuse_core.chat.acceptance_spine import AcceptanceSpineStore
 from xmuse_core.platform.final_action_gate import FinalActionGateStore
 from xmuse_core.platform.review_aggregation import RunTerminalAggregator
 from xmuse_core.platform.review_evidence_bundle import ReviewEvidenceBundleAssembler
@@ -152,9 +153,11 @@ class ReviewPlaneController:
         clarification_store_path: Path | str | None = None,
     ) -> None:
         self._lanes_path = Path(lanes_path)
+        self._store_path = Path(store_path)
         self._sm = LaneStateMachine(self._lanes_path)
-        self._store = VerdictStore(Path(store_path))
-        self._final_action_store = FinalActionGateStore(Path(final_actions_path))
+        self._store = VerdictStore(self._store_path)
+        self._final_actions_path = Path(final_actions_path)
+        self._final_action_store = FinalActionGateStore(self._final_actions_path)
         self._require_final_action_approval = require_final_action_approval
         self._clarification_store: ClarificationStore | None = (
             ClarificationStore(Path(clarification_store_path))
@@ -267,6 +270,12 @@ class ReviewPlaneController:
         # concurrent reader) could observe a verdict with no corresponding
         # verdict_emitted task.
         task, verdict = self._store.save_task_and_verdict(task, verdict)
+        review_verdict_ref = f"{self._store_path.name}#verdict={verdict.id}"
+        if task.resolution_id:
+            self._attach_acceptance_spine_review_verdict(
+                resolution_id=task.resolution_id,
+                review_verdict_ref=review_verdict_ref,
+            )
 
         lane = self._sm.get_lane(verdict.lane_id)
         use_final_action = (
@@ -282,15 +291,55 @@ class ReviewPlaneController:
 
         # Persist the final-action hold if one was produced
         if result.final_action is not None:
-            self._final_action_store.create_hold(
+            hold = self._final_action_store.create_hold(
                 lane_id=result.final_action.lane_id,
                 verdict_id=result.final_action.verdict_id,
                 action=result.final_action.action,
                 target_status=result.final_action.target_status,
                 summary=result.final_action.summary,
             )
+            self._attach_acceptance_spine_final_action_hold(
+                review_verdict_ref=review_verdict_ref,
+                hold_id=hold.id,
+            )
 
         return result
+
+    def _acceptance_spine_store(self) -> AcceptanceSpineStore | None:
+        chat_db_path = self._store_path.parent / "chat.db"
+        if not chat_db_path.exists():
+            return None
+        return AcceptanceSpineStore(chat_db_path)
+
+    def _attach_acceptance_spine_review_verdict(
+        self,
+        *,
+        resolution_id: str,
+        review_verdict_ref: str,
+    ) -> None:
+        store = self._acceptance_spine_store()
+        if store is None:
+            return
+        store.attach_review_verdict_for_resolution(
+            resolution_id=resolution_id,
+            review_verdict_ref=review_verdict_ref,
+        )
+
+    def _attach_acceptance_spine_final_action_hold(
+        self,
+        *,
+        review_verdict_ref: str,
+        hold_id: str,
+    ) -> None:
+        store = self._acceptance_spine_store()
+        if store is None:
+            return
+        store.attach_final_action_for_review_verdict(
+            review_verdict_ref=review_verdict_ref,
+            final_action_ref=f"{self._final_actions_path.name}#hold={hold_id}",
+            manual_gaps=["github_gate_unverified"],
+            blocked_reason="final_action_pending",
+        )
 
     # ------------------------------------------------------------------
     # Lineage queries

@@ -21,6 +21,9 @@ human post_human_message intake
 -> proposal approval attaches resolution:<id> as verdict ref
 -> dispatch queue enqueue attaches dispatch_item_id
 -> dispatch mark_dispatched attaches provider/dispatch evidence refs
+-> review_plane verdict attaches review_verdict_ref
+-> final-action hold attaches final_action_ref
+-> missing GitHub/server truth attaches github_gate_unverified manual gap
 -> chat API can read spine status
 ```
 
@@ -43,6 +46,11 @@ The authority is `chat.db` through chat/control-plane stores:
 - `PeerChatService` attaches review-trigger inbox refs when proposal review
   triggers are created;
 - `ChatDispatchQueueStore` attaches dispatch and dispatch evidence refs.
+- `ReviewPlaneController.ingest_verdict` attaches durable review verdict refs
+  and final-action hold refs when the review plane emits a verdict;
+- GitHub/server gate evidence is not faked. When final-action is held without
+  server-side gate evidence, the spine records `github_gate_unverified` in
+  `manual_gaps`.
 
 Dashboard, TUI, timeline, provider stdout, fake/sentinel scripts, and copied
 GitHub text are not acceptance authorities.
@@ -66,9 +74,9 @@ The current record tracks:
 - `manual_gaps`;
 - `blocked_reason`.
 
-Only the first half of the full target is wired today. `final_action_ref`,
-`github_gate_evidence_ref`, and independent review verdict closure remain next
-boundaries.
+The current implementation records a GitHub/server gate manual gap. It does not
+claim server-side GitHub truth until a real producer writes
+`github_gate_evidence_ref`.
 
 ## Status Semantics
 
@@ -79,6 +87,9 @@ Current implemented statuses:
 - `review_pending`: a proposal review trigger inbox exists;
 - `review_cleared`: the proposal has an approved resolution/verdict ref;
 - `dispatched`: a dispatch queue item exists and may carry dispatch evidence;
+- `reviewed`: an independent review-plane verdict ref is linked;
+- `blocked`: a final-action hold or GitHub/server manual gap blocks terminal
+  closure;
 - `failed`: a dispatch queue failure is linked back to the demand.
 
 Other lifecycle statuses are reserved for the broader closure path and must not
@@ -87,12 +98,12 @@ be claimed until their producer writes them.
 ## Remaining Boundary
 
 The next implementation boundary is not another provider adapter. It is to
-connect the rest of the durable closure path:
+replace the manual GitHub/server gap with a real gate evidence producer, then
+resolve the final-action hold into a terminal accepted/failed outcome:
 
 ```text
-independent review verdict
--> final action hold/target
--> GitHub/server gate evidence or explicit manual gap
+GitHub/server gate evidence
+-> final-action resolution
 -> accepted / blocked / failed terminal status
 ```
 
