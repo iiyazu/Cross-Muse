@@ -133,6 +133,76 @@ def test_chat_api_reads_acceptance_spine_status(tmp_path: Path) -> None:
 def test_acceptance_spine_tracks_review_verdict_final_action_and_github_gap(
     tmp_path: Path,
 ) -> None:
+    intake_message_id, hold = _create_spine_with_pending_final_action(tmp_path)
+
+    spine = AcceptanceSpineStore(tmp_path / "chat.db").get_by_intake_message(
+        intake_message_id
+    )
+    assert spine.review_verdict_ref == "review_plane.json#verdict=verdict-spine-review"
+    assert spine.final_action_ref == f"final_actions.json#hold={hold.id}"
+    assert spine.manual_gaps == ["github_gate_unverified"]
+    assert spine.status is AcceptanceSpineStatus.BLOCKED
+    assert spine.blocked_reason == "final_action_pending"
+
+
+def test_final_action_approval_without_github_evidence_keeps_spine_blocked(
+    tmp_path: Path,
+) -> None:
+    intake_message_id, hold = _create_spine_with_pending_final_action(tmp_path)
+
+    FinalActionGateStore(tmp_path / "final_actions.json").resolve(
+        hold.id,
+        status="approved",
+        resolved_by="human",
+    )
+
+    spine = AcceptanceSpineStore(tmp_path / "chat.db").get_by_intake_message(
+        intake_message_id
+    )
+    assert spine.status is AcceptanceSpineStatus.BLOCKED
+    assert spine.github_gate_evidence_ref is None
+    assert spine.manual_gaps == ["github_gate_unverified"]
+    assert spine.blocked_reason == "github_gate_unverified"
+
+
+def test_final_action_approval_with_github_evidence_accepts_spine(
+    tmp_path: Path,
+) -> None:
+    intake_message_id, hold = _create_spine_with_pending_final_action(tmp_path)
+
+    FinalActionGateStore(tmp_path / "final_actions.json").resolve(
+        hold.id,
+        status="approved",
+        resolved_by="human",
+        github_gate_evidence_ref="github:pr:42#checks=abc123",
+    )
+
+    spine = AcceptanceSpineStore(tmp_path / "chat.db").get_by_intake_message(
+        intake_message_id
+    )
+    assert spine.status is AcceptanceSpineStatus.ACCEPTED
+    assert spine.github_gate_evidence_ref == "github:pr:42#checks=abc123"
+    assert spine.manual_gaps == []
+    assert spine.blocked_reason is None
+
+
+def test_final_action_rejection_fails_spine(tmp_path: Path) -> None:
+    intake_message_id, hold = _create_spine_with_pending_final_action(tmp_path)
+
+    FinalActionGateStore(tmp_path / "final_actions.json").resolve(
+        hold.id,
+        status="rejected",
+        resolved_by="human",
+    )
+
+    spine = AcceptanceSpineStore(tmp_path / "chat.db").get_by_intake_message(
+        intake_message_id
+    )
+    assert spine.status is AcceptanceSpineStatus.FAILED
+    assert spine.blocked_reason == "final_action_rejected"
+
+
+def _create_spine_with_pending_final_action(tmp_path: Path):
     db = tmp_path / "chat.db"
     service = PeerChatService(db)
     created = service.create_conversation(title="Acceptance Spine Review")
@@ -194,9 +264,4 @@ def test_acceptance_spine_tracks_review_verdict_final_action_and_github_gap(
     )
 
     hold = FinalActionGateStore(tmp_path / "final_actions.json").list_actions()[0]
-    spine = AcceptanceSpineStore(db).get_by_intake_message(intake.message.id)
-    assert spine.review_verdict_ref == "review_plane.json#verdict=verdict-spine-review"
-    assert spine.final_action_ref == f"final_actions.json#hold={hold.id}"
-    assert spine.manual_gaps == ["github_gate_unverified"]
-    assert spine.status is AcceptanceSpineStatus.BLOCKED
-    assert spine.blocked_reason == "final_action_pending"
+    return intake.message.id, hold
