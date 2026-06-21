@@ -1474,14 +1474,15 @@ async def test_real_ray_codex_app_server_proposal_review_dispatch_completion(
                     "author": "human-1",
                     "role": "human",
                     "content": (
-                        "@architect Call the MCP tool chat_emit_proposal exactly once now. "
-                        "Do not call chat_post_message. Use client_request_id "
-                        "`p2-real-provider-proposal`, summary `P2 real provider dispatch "
-                        "slice`, lanes exactly [{\"feature_id\":\"p2-real-provider-"
-                        "dispatch-slice\",\"prompt\":\"Verify real provider proposal "
-                        "review dispatch queue evidence.\",\"depends_on\":[],"
-                        "\"capabilities\":[\"code\",\"test\"]}], and references exactly "
-                        f"[\"collaboration:{run.run_id}\"]."
+                        "@architect Use MCP tool chat_emit_proposal now. "
+                        "Do not use chat_post_message for this proposal turn.\n"
+                        "client_request_id: p2-real-provider-proposal\n"
+                        "summary: P2 real provider dispatch slice\n"
+                        "lanes: [{\"feature_id\":\"p2-real-provider-dispatch-slice\","
+                        "\"prompt\":\"Verify real provider proposal review dispatch "
+                        "queue evidence.\",\"depends_on\":[],"
+                        "\"capabilities\":[\"code\",\"test\"]}]\n"
+                        f"references: [\"collaboration:{run.run_id}\"]"
                     ),
                     "client_request_id": "p2-real-provider-human",
                 },

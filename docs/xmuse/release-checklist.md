@@ -104,6 +104,13 @@ Do not claim:
   both attempts failed before the first real provider MCP proposal writeback
   with `provider_turn_cancelled_before_mcp_writeback`. This is negative
   evidence only and does not raise the claim level.
+- P4 proposal-writeback stability attempt:
+  `.goal-runs/2026-06-21/p4-real-final-gate-stability-pytest/test_real_ray_codex_app_server0`
+  and
+  `.goal-runs/2026-06-21/p4-real-final-gate-stability-pytest-2/test_real_ray_codex_app_server0`;
+  prompt priority now states that explicit `chat_emit_proposal` requests use
+  `chat_emit_proposal` instead of ordinary `chat_post_message`, but the real
+  app-server path still produced no proposal, MCP tool trace, or stream delta.
 
 ## Required Checks And Gate State
 
@@ -130,8 +137,11 @@ Do not claim:
   reply path now binds proposals to the replied intake AcceptanceSpine without
   relying on model-authored intake references, and the deterministic
   acceptance-gated runner still blocks final action without producer-owned
-  GitHub proof. The real provider path has not yet completed final-action,
-  GitHub gate, accepted AcceptanceSpine truth, or multi-turn soak acceptance.
+  GitHub proof. The proposal-turn prompt contract now removes the ordinary
+  reply/proposal tool conflict, but the real app-server path still fails before
+  the first proposal MCP tool event. The real provider path has not yet
+  completed final-action, GitHub gate, accepted AcceptanceSpine truth, or
+  multi-turn soak acceptance.
 - Release packaging/versioning has not been cut from the current claim level.
 - `uv run mypy xmuse/platform_runner.py` has existing type debt and is not a
   clean release gate.
