@@ -89,6 +89,14 @@ Do not claim:
   review trigger `inbox_27e4675cda2b4aeaa1f6e55a79d370f0`,
   resolution `res_3d19e6d8154b44769aef4d187f74f323`, and dispatch
   `dispatch:conv_bc4fa83561b042a489e80078e05882d5:res_3d19e6d8154b44769aef4d187f74f323:execute`
+- P3 real provider execute dispatch completion evidence:
+  `.goal-runs/2026-06-21/p3-real-dispatch-completion-pytest-4/test_real_ray_codex_app_server0`,
+  architect provider session `019eea58-fd9b-76a2-b1d7-b3e1960dc629`,
+  execute provider session `019eea5b-d4dc-7023-8d24-fa316d3bf99e`,
+  proposal `prop_85f07b4d5c3044cfa543d6f700e5626e`,
+  resolution `res_12b67786d4674539b5779551bc7c5671`,
+  dispatch inbox `inbox_8bc4a91282094c6393575d3a7e6ad756`, and dispatch
+  `dispatch:conv_5a3cc569a316410d804a91972c1adffc:res_12b67786d4674539b5779551bc7c5671:execute`
 
 ## Required Checks And Gate State
 
@@ -109,9 +117,11 @@ Do not claim:
   restart/resume path can produce durable MCP `chat_post_message` replies and
   `mcp_writeback` traces. P2 then proved real provider `chat_emit_proposal`
   can reach durable proposal, review-trigger handling, approval, and queued
-  dispatch. The provider path has not yet been connected through actual
-  execute-provider dispatch completion, final-action, GitHub gate, accepted
-  AcceptanceSpine truth, or multi-turn soak acceptance.
+  dispatch. P3 then proved the queued dispatch intent can be completed by a
+  real execute Codex app-server peer with durable MCP `chat_post_message`
+  acknowledgement and `dispatched` queue evidence. The provider path has not
+  yet been connected through final-action, GitHub gate, accepted AcceptanceSpine
+  truth, or multi-turn soak acceptance.
 - Release packaging/versioning has not been cut from the current claim level.
 - `uv run mypy xmuse/platform_runner.py` has existing type debt and is not a
   clean release gate.

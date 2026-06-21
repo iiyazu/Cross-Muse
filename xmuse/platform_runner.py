@@ -318,6 +318,7 @@ async def run(
     persistent_execute_god_enabled: bool = False,
     peer_chat_scheduler=None,
     peer_chat_post_writeback_grace_s: float = 8.0,
+    peer_chat_dispatch_response_wait_s: float = 300.0,
     memoryos_url: str | None = None,
     model_policy: CodexModelPolicy | None = None,
     execution_provider_profile_ref: str | None = None,
@@ -488,7 +489,7 @@ async def run(
                 worktree=peer_chat_worktree,
                 bridge_id="platform-runner-dispatch",
                 claim_ttl_s=240,
-                response_wait_s=180.0,
+                response_wait_s=peer_chat_dispatch_response_wait_s,
             )
         elif peer_chat_enabled and peer_chat_scheduler is None:
             logger.warning(
@@ -1620,6 +1621,15 @@ def main_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--peer-chat-dispatch-response-wait-s",
+        type=float,
+        default=300.0,
+        help=(
+            "seconds to wait for execute peers to durably acknowledge "
+            "dispatch-bridge handoffs"
+        ),
+    )
+    parser.add_argument(
         "--persistent-review-god",
         action="store_true",
         help=(
@@ -1820,6 +1830,13 @@ def validate_args(args: argparse.Namespace) -> None:
         raise SystemExit(
             "--peer-chat-post-writeback-grace-s must be a non-negative finite number"
         )
+    if (
+        not math.isfinite(args.peer_chat_dispatch_response_wait_s)
+        or args.peer_chat_dispatch_response_wait_s <= 0
+    ):
+        raise SystemExit(
+            "--peer-chat-dispatch-response-wait-s must be a positive finite number"
+        )
     if args.persistent_review_timeout_s is not None:
         if not args.persistent_review_god:
             raise SystemExit(
@@ -1998,6 +2015,7 @@ def main() -> None:
         default_review_peer_routing_enabled=args.default_review_peer_routing,
         persistent_execute_god_enabled=args.persistent_execute_god,
         peer_chat_post_writeback_grace_s=args.peer_chat_post_writeback_grace_s,
+        peer_chat_dispatch_response_wait_s=args.peer_chat_dispatch_response_wait_s,
         memoryos_url=args.memoryos_url,
         model_policy=model_policy,
         execution_provider_profile_ref=args.execution_provider_profile_ref,

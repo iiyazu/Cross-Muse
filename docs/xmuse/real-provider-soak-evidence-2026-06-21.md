@@ -386,3 +386,99 @@ approval of the collaboration-backed proposal enqueues an execute dispatch
 intent. It still does not prove final-action, GitHub gate acceptance, actual
 execute-provider dispatch completion, accepted AcceptanceSpine truth, or
 multi-turn soak stability.
+
+## P3 Positive Execute Dispatch Completion Follow-up
+
+Status: `real_provider_execute_dispatch_completion_accepted`.
+
+Runtime root:
+
+```text
+.goal-runs/2026-06-21/p3-real-dispatch-completion-pytest-4/test_real_ray_codex_app_server0
+```
+
+Command:
+
+```bash
+timeout 900 uv run pytest \
+  tests/xmuse/test_full_chain_real_run.py::test_real_ray_codex_app_server_proposal_review_dispatch_completion \
+  -q -s \
+  --basetemp=.goal-runs/2026-06-21/p3-real-dispatch-completion-pytest-4
+```
+
+Observed result:
+
+```text
+1 passed, 4 warnings in 368.93s
+```
+
+Report:
+
+```json
+{
+  "conversation_id": "conv_5a3cc569a316410d804a91972c1adffc",
+  "dispatch_entry_id": "dispatch:conv_5a3cc569a316410d804a91972c1adffc:res_12b67786d4674539b5779551bc7c5671:execute",
+  "dispatch_evidence": "mcp_writeback:inbox_8bc4a91282094c6393575d3a7e6ad756",
+  "dispatch_inbox_id": "inbox_8bc4a91282094c6393575d3a7e6ad756",
+  "dispatch_provider_run_ref": "peer_ack:execute:part_027040b2664a4723bd151a4e598c5f11",
+  "dispatch_status": "dispatched",
+  "proposal_id": "prop_85f07b4d5c3044cfa543d6f700e5626e",
+  "resolution_id": "res_12b67786d4674539b5779551bc7c5671"
+}
+```
+
+Durable positive facts:
+
+- architect Codex app-server provider session:
+  `019eea58-fd9b-76a2-b1d7-b3e1960dc629`;
+- execute Codex app-server provider session:
+  `019eea5b-d4dc-7023-8d24-fa316d3bf99e`;
+- proposal:
+  `chat.db#proposal=prop_85f07b4d5c3044cfa543d6f700e5626e`;
+- approval resolution:
+  `chat.db#resolution=res_12b67786d4674539b5779551bc7c5671`;
+- dispatch inbox:
+  `chat_inbox_items#id=inbox_8bc4a91282094c6393575d3a7e6ad756`,
+  `item_type = dispatch`,
+  `status = read`,
+  `responded_message_id = msg_317d509f78614acd90867dc36e1102b2`;
+- execute ack message:
+  `chat.db#message=msg_317d509f78614acd90867dc36e1102b2`,
+  content includes `DISPATCH_ACKNOWLEDGED` and the dispatch entry id;
+- dispatch queue entry:
+  `chat_dispatch_queue#entry=dispatch:conv_5a3cc569a316410d804a91972c1adffc:res_12b67786d4674539b5779551bc7c5671:execute`,
+  `status = dispatched`,
+  `provider_run_ref = peer_ack:execute:part_027040b2664a4723bd151a4e598c5f11`,
+  `dispatch_evidence = mcp_writeback:inbox_8bc4a91282094c6393575d3a7e6ad756`;
+- dispatch latency trace:
+  `peer_turn_latency_traces#trace=peer_latency_inbox_8bc4a91282094c6393575d3a7e6ad756`,
+  `delivery_mode = mcp_writeback`,
+  `degraded_reason = peer_writeback_before_provider_result`;
+- dispatch MCP tool traces:
+  `mcp_tool_call_started`,
+  `chat_post_message`,
+  `chat_post_message_persisted`,
+  and `mcp_tool_call_completed` for the dispatch inbox.
+
+The dispatch provider stages were:
+
+```text
+chat_post_message
+chat_post_message_persisted
+codex_app_server_turn_start
+inbox_claim
+mcp_tool_call_completed
+mcp_tool_call_started
+provider_session_started
+ray_actor_delivery_start
+scheduler_observed_durable_writeback
+trace_persisted
+```
+
+This proves the next positive real-provider control-plane question: the queued
+dispatch intent can be consumed by the platform dispatch bridge and completed
+by a real execute Codex app-server peer through durable MCP
+`chat_post_message` writeback. The prompt now explicitly rejects plain-text
+acknowledgement as non-durable dispatch evidence. This still does not prove
+final-action, GitHub gate acceptance, accepted AcceptanceSpine truth, or
+multi-turn soak stability.

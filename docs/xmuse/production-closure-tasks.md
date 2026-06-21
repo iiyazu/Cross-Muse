@@ -153,10 +153,20 @@ real provider path continues through actual execute-provider dispatch
 completion, final-action, GitHub gate evidence, accepted AcceptanceSpine truth,
 and multi-turn soak stability.
 
+Execute dispatch completion follow-up: P3 is now accepted for the bounded
+real-provider dispatch-bridge path. Evidence:
+`docs/xmuse/real-provider-soak-evidence-2026-06-21.md#p3-positive-execute-dispatch-completion-follow-up`.
+The focused real Ray/Codex app-server test consumed the queued dispatch intent,
+created a dispatch inbox for execute, required durable `chat_post_message`
+acknowledgement, and marked the dispatch queue entry `dispatched` with
+`provider_run_ref` and `mcp_writeback:<dispatch_inbox>` evidence. P3 remains
+blocked for final-action, GitHub gate evidence, accepted AcceptanceSpine truth,
+and multi-turn soak stability.
+
 Tasks:
 
-- connect the accepted real provider dispatch queue path to actual
-  execute-provider dispatch completion before attempting a multi-turn soak;
+- connect the accepted real provider dispatch completion path to final-action
+  and GitHub gate evidence before attempting a multi-turn soak;
 - run one bounded long-running demand through the acceptance-gated path;
 - record the runtime root, command, PR or no-PR outcome, final-action record,
   GitHub gate evidence record, and resulting spine status;
