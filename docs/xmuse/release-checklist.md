@@ -123,6 +123,24 @@ Do not claim:
   Ray/Codex app-server `chat_emit_proposal` turn. Full P4 still failed before
   proposal persistence; its trace now classifies the blocker as
   `mcp_tools_ready` / no MCP tool call.
+- P4 tool-choice stability and final-action gate:
+  `.goal-runs/2026-06-21/p4-tool-choice-stability-pytest-2/test_real_ray_codex_app_server0`
+  passed one complete real Ray/Codex app-server path through durable proposal
+  writeback, manual review approval, dispatch MCP writeback, AcceptanceSpine
+  linkage, and final-action hold. The resulting spine remained
+  `blocked/github_gate_unverified` with gap ref
+  `github_gate_evidence.json#evidence=ghgate_5c7a8d77c6034459a590340ca26aa4a3`,
+  which is the expected result without producer-owned server-side merge proof.
+  A later rerun at
+  `.goal-runs/2026-06-21/p4-tool-choice-stability-pytest-3/test_real_ray_codex_app_server0`
+  failed at execute dispatch acknowledgement: MCP readiness and streamed text
+  were observed, but no `chat_post_message` tool trace was written, and the
+  queue failed with `peer_no_inbox_side_effect`. After dispatch prompt
+  hardening, `.goal-runs/2026-06-21/p4-dispatch-ack-hardening-pytest/test_real_ray_codex_app_server0`
+  passed again with proposal `prop_75e60b2708144d2e90f864370db59d4a`,
+  dispatch evidence `mcp_writeback:inbox_a5708a27b033414eb3ea845157a7d09c`,
+  and final-action gap ref
+  `github_gate_evidence.json#evidence=ghgate_3c25c4bee63144b29ea4654d537e4684`.
 
 ## Required Checks And Gate State
 
@@ -145,17 +163,11 @@ Do not claim:
   can reach durable proposal, review-trigger handling, approval, and queued
   dispatch. P3 then proved the queued dispatch intent can be completed by a
   real execute Codex app-server peer with durable MCP `chat_post_message`
-  acknowledgement and `dispatched` queue evidence. The `chat_emit_proposal`
-  reply path now binds proposals to the replied intake AcceptanceSpine without
-  relying on model-authored intake references, and the deterministic
-  acceptance-gated runner still blocks final action without producer-owned
-  GitHub proof. The proposal-turn prompt contract now removes the ordinary
-  reply/proposal tool conflict, but the real app-server path still fails before
-  the first proposal MCP tool event in the complete P4 setup. A small
-  first-proposal probe can persist `chat_emit_proposal`, so the current blocker
-  is stabilizing full-P4 model/tool selection after `mcp_tools_ready`. The real
-  provider path has not yet completed final-action, GitHub gate, accepted
-  AcceptanceSpine truth, or multi-turn soak acceptance.
+  acknowledgement and `dispatched` queue evidence. P4 has repeated complete
+  real-provider evidence to final-action hold with the correct
+  `blocked/github_gate_unverified` terminal state after dispatch prompt
+  hardening. The real provider path has not yet proven accepted GitHub gate
+  truth, server-side merge truth, or multi-turn soak acceptance.
 - Release packaging/versioning has not been cut from the current claim level.
 - `uv run mypy xmuse/platform_runner.py` has existing type debt and is not a
   clean release gate.

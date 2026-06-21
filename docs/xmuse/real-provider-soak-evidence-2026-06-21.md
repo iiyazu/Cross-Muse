@@ -844,3 +844,143 @@ probe, but the complete P4 setup remains unstable at model/tool selection after
 MCP readiness. P4 remains blocked until the full path consistently reaches
 `chat_emit_proposal`, then continues through dispatch completion and the
 final-action GitHub manual-gap gate.
+
+## P4 Tool-Choice Stability And Final-Action Gate
+
+Status: `blocked/github_gate_unverified`.
+
+This follow-up normalized the complete P4 proposal prompt to match the
+successful first-proposal probe shape: the first architect turn asks only for a
+bounded `lane_graph` proposal through `chat_emit_proposal`; review, dispatch,
+and final-action assertions remain in the later test phases. This moved the
+real Ray/Codex app-server path past the previous MCP-ready/no-tool blocker.
+
+Command:
+
+```bash
+timeout 900 uv run pytest \
+  tests/xmuse/test_full_chain_real_run.py::test_real_ray_codex_app_server_proposal_review_dispatch_completion \
+  -q -s \
+  --basetemp=.goal-runs/2026-06-21/p4-tool-choice-stability-pytest-2
+```
+
+First observed result:
+
+```text
+1 passed, 4 warnings in 181.83s
+```
+
+Report:
+
+```json
+{
+  "acceptance_spine_blocked_reason": "github_gate_unverified",
+  "acceptance_spine_status": "blocked",
+  "conversation_id": "conv_984124c525f64b2a91d44d4e018e6184",
+  "delivery_mode": "mcp_writeback",
+  "dispatch_entry_id": "dispatch:conv_984124c525f64b2a91d44d4e018e6184:res_55e8f92680a643a9ab449eb38e5f691b:execute",
+  "dispatch_evidence": "mcp_writeback:inbox_8ba722425c3048f8b913b82998ae72d1",
+  "dispatch_inbox_id": "inbox_8ba722425c3048f8b913b82998ae72d1",
+  "dispatch_observed_stages": [
+    "chat_post_message",
+    "chat_post_message_persisted",
+    "codex_app_server_turn_start",
+    "inbox_claim",
+    "mcp_tool_call_completed",
+    "mcp_tool_call_started",
+    "provider_session_started",
+    "ray_actor_delivery_start",
+    "scheduler_observed_durable_writeback",
+    "trace_persisted"
+  ],
+  "dispatch_provider_run_ref": "peer_ack:execute:part_d455da52c56f4406b217817fdd5905a3",
+  "dispatch_status": "dispatched",
+  "final_action_id": "final-c32cf1e28846",
+  "github_gate_gap_ref": "github_gate_evidence.json#evidence=ghgate_5c7a8d77c6034459a590340ca26aa4a3",
+  "observed_stages": [
+    "chat_emit_proposal",
+    "codex_app_server_turn_start",
+    "inbox_claim",
+    "provider_session_started",
+    "ray_actor_delivery_start",
+    "scheduler_observed_durable_writeback",
+    "trace_persisted"
+  ],
+  "proposal_id": "prop_7cfa18a057664dfc961d09be7f5b7a08",
+  "provider_session_kind": "codex_app_server_thread",
+  "resolution_id": "res_55e8f92680a643a9ab449eb38e5f691b"
+}
+```
+
+Runtime root:
+
+```text
+.goal-runs/2026-06-21/p4-tool-choice-stability-pytest-2/test_real_ray_codex_app_server0
+```
+
+Two follow-up facts prevent calling this stable closure:
+
+- The first attempt on the same branch reached proposal/review/dispatch and
+  failed only because the test expected a stale
+  `request_payload["message"]["id"]` shape; the chat API returns the human
+  message at the top level, so the intake assertion now uses
+  `request_payload["id"]`.
+- A later rerun with the current test shape reached proposal/review/approval
+  and queued dispatch, but the execute dispatch peer returned streamed plain
+  text instead of `chat_post_message`. Its trace contained `mcp_tools_ready` and
+  `first_stream_delta`, no `chat_post_message` tool trace, and queue failure
+  `peer_no_inbox_side_effect`. Runtime root:
+  `.goal-runs/2026-06-21/p4-tool-choice-stability-pytest-3/test_real_ray_codex_app_server0`.
+
+The dispatch prompt now makes the missing rule explicit: MCP tools are
+configured for the dispatch turn, the peer must not claim writeback tools are
+unavailable, and both `DISPATCH_ACKNOWLEDGED` and `DISPATCH_ACK_FAILED` must be
+written through `chat_post_message`.
+
+After the dispatch prompt hardening, the target P4 test passed again:
+
+```bash
+timeout 900 uv run pytest \
+  tests/xmuse/test_full_chain_real_run.py::test_real_ray_codex_app_server_proposal_review_dispatch_completion \
+  -q -s \
+  --basetemp=.goal-runs/2026-06-21/p4-dispatch-ack-hardening-pytest
+```
+
+Observed result:
+
+```text
+1 passed, 4 warnings in 180.70s
+```
+
+Hardening report:
+
+```json
+{
+  "acceptance_spine_blocked_reason": "github_gate_unverified",
+  "acceptance_spine_status": "blocked",
+  "conversation_id": "conv_613e5d8be9e243539bc1917c80a21ea1",
+  "delivery_mode": "mcp_writeback",
+  "dispatch_entry_id": "dispatch:conv_613e5d8be9e243539bc1917c80a21ea1:res_93af9c34f2394d0897f6817ec77d74fb:execute",
+  "dispatch_evidence": "mcp_writeback:inbox_a5708a27b033414eb3ea845157a7d09c",
+  "dispatch_inbox_id": "inbox_a5708a27b033414eb3ea845157a7d09c",
+  "dispatch_provider_run_ref": "peer_ack:execute:part_e69f56f526524b9bb28c4ef364e8a1a5",
+  "dispatch_status": "dispatched",
+  "final_action_id": "final-f8e448addc1a",
+  "github_gate_gap_ref": "github_gate_evidence.json#evidence=ghgate_3c25c4bee63144b29ea4654d537e4684",
+  "proposal_id": "prop_75e60b2708144d2e90f864370db59d4a",
+  "provider_session_kind": "codex_app_server_thread",
+  "resolution_id": "res_93af9c34f2394d0897f6817ec77d74fb"
+}
+```
+
+Runtime root:
+
+```text
+.goal-runs/2026-06-21/p4-dispatch-ack-hardening-pytest/test_real_ray_codex_app_server0
+```
+
+Claim update: the complete P4 real-provider path can reach durable proposal
+writeback, manual review approval, dispatch MCP writeback, AcceptanceSpine
+linkage, and a final-action hold that blocks on missing GitHub/server gate
+evidence. This still does not prove production closure, server-side merge
+truth, release readiness, or stable multi-turn soak behavior.
