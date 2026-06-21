@@ -37,6 +37,22 @@ GET /api/chat/conversations/{conversation_id}/acceptance-spines
 
 The endpoint is read-only and reports `source_authority = "chat_store"`.
 
+Short-run CLI entrypoint:
+
+```bash
+uv run xmuse-platform-runner \
+  --goal "<human demand>" \
+  --acceptance-gate \
+  --github-pr <number>
+```
+
+This entrypoint does not start the long platform loop. It writes a durable human
+intake spine, proposal, dispatch evidence, review verdict, final-action hold,
+and GitHub gate evidence record, then prints a compact terminal summary from
+those stores. The printed JSON is not authority. The durable refs in `chat.db`,
+`final_actions.json`, `review_plane.json`, and `github_gate_evidence.json` are
+authority.
+
 ## Authority
 
 The authority is `chat.db` through chat/control-plane stores:
@@ -140,3 +156,8 @@ The remaining runtime boundary is to invoke the producer from the real long-run
 GitHub/final-action path with authenticated read-only server access. Until that
 path captures a complete `server_side_merge_proof`, xmuse must keep the spine
 blocked with `github_gate_unverified`.
+
+The minimal `--goal --acceptance-gate` runner now invokes that producer for a
+short real run. Its first smoke is recorded in
+`docs/xmuse/acceptance-gated-runner-evidence-2026-06-21.md` and correctly ends
+as `blocked/github_gate_unverified` because it has no `server_side_merge_proof`.
