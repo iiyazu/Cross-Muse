@@ -113,6 +113,14 @@ Ray/Codex app-server path and persisted groupchat/session state, but failed
 before the first durable MCP `chat_post_message` reply. The claim level is not
 raised.
 
+Follow-up: provider response timeout terminalization is now implemented for the
+peer-chat scheduler boundary. A timeout marks the claimed inbox item failed,
+records a failed peer latency trace, and marks the original intake
+AcceptanceSpine failed with that trace ref. This closes the previous classifier
+gap for timeout failures only; P3 remains blocked until the bounded real
+provider soak is rerun and reaches durable writeback/review/final-action/GitHub
+gate evidence.
+
 Tasks:
 
 - run one bounded long-running demand through the acceptance-gated path;
