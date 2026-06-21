@@ -988,6 +988,8 @@ def test_app_server_mcp_instructions_prefer_direct_post(tmp_path: Path) -> None:
     instructions = transport._developer_instructions()
 
     assert "call chat_post_message directly" in instructions
+    assert "If the inbox request explicitly asks for chat_emit_proposal" in instructions
+    assert "that tool is the durable writeback for proposal turns" in instructions
     assert "reply_to_inbox_item_id=xmuse_context.inbox_item.id" in instructions
     assert "chat_read_inbox is only for recovery or batch inspection" in instructions
     assert "Natural-language @mentions inside chat_post_message are display-only" in instructions
