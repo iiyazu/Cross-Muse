@@ -166,7 +166,7 @@ def test_final_action_approval_without_github_evidence_keeps_spine_blocked(
     assert spine.blocked_reason == "github_gate_unverified"
 
 
-def test_final_action_approval_with_github_evidence_accepts_spine(
+def test_final_action_approval_with_direct_github_evidence_ref_stays_blocked(
     tmp_path: Path,
 ) -> None:
     intake_message_id, hold = _create_spine_with_pending_final_action(tmp_path)
@@ -181,10 +181,13 @@ def test_final_action_approval_with_github_evidence_accepts_spine(
     spine = AcceptanceSpineStore(tmp_path / "chat.db").get_by_intake_message(
         intake_message_id
     )
-    assert spine.status is AcceptanceSpineStatus.ACCEPTED
-    assert spine.github_gate_evidence_ref == "github:pr:42#checks=abc123"
-    assert spine.manual_gaps == []
-    assert spine.blocked_reason is None
+    final_action = FinalActionGateStore(tmp_path / "final_actions.json").get(hold.id)
+    assert spine.status is AcceptanceSpineStatus.BLOCKED
+    assert spine.github_gate_evidence_ref is None
+    assert spine.manual_gaps == ["github_gate_unverified"]
+    assert spine.blocked_reason == "github_gate_unverified"
+    assert final_action.github_gate_evidence_ref is None
+    assert final_action.github_gate_gap_ref == "github:pr:42#checks=abc123"
 
 
 def test_final_action_approval_with_server_gate_producer_accepts_spine(
@@ -367,7 +370,11 @@ def _complete_server_truth() -> GitHubServerSideTruthEvidence:
         check_suite_id=222,
         check_run_ids=[111, 112],
         expected_source_app="github-actions",
-        branch_protection_snapshot={"required_status_checks": ["quality-gates"]},
+        branch_protection_snapshot={
+            "required_status_checks": {
+                "checks": [{"context": "quality-gates"}, {"context": "contract-smoke-gates"}]
+            }
+        },
         review_event_id=789,
         reviewer_login="reviewer",
         code_owner_review_verified=True,

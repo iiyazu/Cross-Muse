@@ -97,6 +97,26 @@ class GitHubGateEvidenceStore:
     def ref_for(self, record: GitHubGateEvidenceRecord) -> str:
         return f"{self._path.name}#evidence={record.id}"
 
+    def is_accepted_ref(
+        self,
+        ref: str,
+        *,
+        final_action_id: str | None = None,
+    ) -> bool:
+        prefix = f"{self._path.name}#evidence="
+        if not ref.startswith(prefix):
+            return False
+        evidence_id = ref.removeprefix(prefix).strip()
+        if not evidence_id:
+            return False
+        for item in self._read().get("items", []):
+            if not isinstance(item, dict) or item.get("id") != evidence_id:
+                continue
+            if final_action_id is not None and item.get("final_action_id") != final_action_id:
+                return False
+            return item.get("can_accept") is True
+        return False
+
     def _read(self) -> dict[str, Any]:
         if not self._path.exists():
             return {"schema_version": "github_gate_evidence.v1", "items": []}

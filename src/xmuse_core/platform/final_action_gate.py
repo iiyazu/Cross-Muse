@@ -69,22 +69,36 @@ class FinalActionGateStore:
         resolved_by: str | None = None,
         github_gate_evidence_ref: str | None = None,
         github_gate_gap_ref: str | None = None,
+        github_gate_evidence_store_path: Path | str | None = None,
     ) -> PendingFinalAction:
         data = self._read()
         for item in data.get("holds", []):
             if item.get("id") == hold_id:
+                accepted_github_ref = self._accepted_github_gate_ref(
+                    hold_id=hold_id,
+                    github_gate_evidence_ref=github_gate_evidence_ref,
+                    evidence_store_path=github_gate_evidence_store_path,
+                )
+                rejected_github_ref = (
+                    github_gate_evidence_ref
+                    if github_gate_evidence_ref and not accepted_github_ref
+                    else None
+                )
                 item["status"] = status
                 item["resolved_by"] = resolved_by
-                if github_gate_evidence_ref:
-                    item["github_gate_evidence_ref"] = github_gate_evidence_ref
-                if github_gate_gap_ref:
-                    item["github_gate_gap_ref"] = github_gate_gap_ref
+                if accepted_github_ref:
+                    item["github_gate_evidence_ref"] = accepted_github_ref
+                    item.pop("github_gate_gap_ref", None)
+                else:
+                    item.pop("github_gate_evidence_ref", None)
+                    if github_gate_gap_ref or rejected_github_ref:
+                        item["github_gate_gap_ref"] = github_gate_gap_ref or rejected_github_ref
                 self._write(data)
                 action = PendingFinalAction(**item)
                 self._update_acceptance_spine_for_resolution(
                     hold_id=hold_id,
                     status=status,
-                    github_gate_evidence_ref=github_gate_evidence_ref,
+                    github_gate_evidence_ref=accepted_github_ref,
                 )
                 return action
         raise KeyError(f"unknown final action hold: {hold_id}")
@@ -101,12 +115,13 @@ class FinalActionGateStore:
         collector: GitHubGateTruthCollector,
         evidence_store_path: Path | str | None = None,
     ) -> PendingFinalAction:
+        resolved_evidence_store_path = (
+            evidence_store_path or self._path.parent / "github_gate_evidence.json"
+        )
         github_gate_evidence_ref: str | None = None
         github_gate_gap_ref: str | None = None
         if status.strip().lower() in {"approved", "accepted", "resolved"}:
-            store = GitHubGateEvidenceStore(
-                evidence_store_path or self._path.parent / "github_gate_evidence.json"
-            )
+            store = GitHubGateEvidenceStore(resolved_evidence_store_path)
             record = store.capture_for_final_action(
                 final_action_id=hold_id,
                 repo=repo,
@@ -125,6 +140,7 @@ class FinalActionGateStore:
             resolved_by=resolved_by,
             github_gate_evidence_ref=github_gate_evidence_ref,
             github_gate_gap_ref=github_gate_gap_ref,
+            github_gate_evidence_store_path=resolved_evidence_store_path,
         )
 
     def get(self, hold_id: str) -> PendingFinalAction:
@@ -144,6 +160,25 @@ class FinalActionGateStore:
             json.dumps(data, indent=2, ensure_ascii=False) + "\n",
             encoding="utf-8",
         )
+
+    def _accepted_github_gate_ref(
+        self,
+        *,
+        hold_id: str,
+        github_gate_evidence_ref: str | None,
+        evidence_store_path: Path | str | None,
+    ) -> str | None:
+        if not github_gate_evidence_ref:
+            return None
+        store = GitHubGateEvidenceStore(
+            evidence_store_path or self._path.parent / "github_gate_evidence.json"
+        )
+        if store.is_accepted_ref(
+            github_gate_evidence_ref,
+            final_action_id=hold_id,
+        ):
+            return github_gate_evidence_ref
+        return None
 
     def _update_acceptance_spine_for_resolution(
         self,
