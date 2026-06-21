@@ -482,3 +482,117 @@ by a real execute Codex app-server peer through durable MCP
 acknowledgement as non-durable dispatch evidence. This still does not prove
 final-action, GitHub gate acceptance, accepted AcceptanceSpine truth, or
 multi-turn soak stability.
+
+## P4 Final-Action Blocked-Path Attempt
+
+Status: `blocked/provider_turn_cancelled_before_mcp_writeback`.
+
+This follow-up added the product-side spine binding needed for the next real
+provider closure cut: when a peer calls `chat_emit_proposal` with
+`reply_to_inbox_item_id`, xmuse now attaches that proposal to the source human
+intake AcceptanceSpine even if the model only supplies collaboration refs.
+
+Fast deterministic checks:
+
+```bash
+uv run pytest \
+  tests/xmuse/test_mcp_server.py::test_chat_emit_proposal_reply_attaches_acceptance_spine_intake \
+  -q
+
+uv run pytest \
+  tests/xmuse/test_platform_runner.py::test_acceptance_gated_goal_run_blocks_without_server_side_merge_proof \
+  -q
+
+uv run ruff check \
+  src/xmuse_core/chat/peer_service.py \
+  tests/xmuse/test_mcp_server.py \
+  tests/xmuse/test_full_chain_real_run.py
+```
+
+Observed result:
+
+```text
+1 passed, 1 warning in 2.03s
+1 passed in 1.82s
+All checks passed!
+```
+
+The real dispatch completion test was extended to assert the following terminal
+path after dispatch completion:
+
+1. the replied intake AcceptanceSpine has the proposal id, dispatch id, and
+   dispatch evidence ref;
+2. review verdict and final-action hold refs attach to the same spine;
+3. `resolve_with_github_gate_evidence()` captures a producer-owned manual-gap
+   GitHub gate record;
+4. final approval without `server_side_merge_proof` leaves the spine
+   `blocked/github_gate_unverified`.
+
+Two real-provider attempts did not reach those new assertions because the
+architect provider failed before emitting the first proposal tool call.
+
+First attempt:
+
+```bash
+timeout 900 uv run pytest \
+  tests/xmuse/test_full_chain_real_run.py::test_real_ray_codex_app_server_proposal_review_dispatch_completion \
+  -q -s \
+  --basetemp=.goal-runs/2026-06-21/p4-final-action-gate-blocked-pytest
+```
+
+Runtime root:
+
+```text
+.goal-runs/2026-06-21/p4-final-action-gate-blocked-pytest/test_real_ray_codex_app_server0
+```
+
+Observed result:
+
+```text
+FAILED ... AssertionError: expected 1 proposals
+1 failed, 4 warnings in 205.62s
+```
+
+Durable negative facts:
+
+- conversation `conv_25b074ada9084f9ba66439570dca029c`;
+- intake message `msg_2ca3e441335c45e6a89cbda2866cf7a9`;
+- architect inbox `inbox_89dcd47c4c0943739a7cb47ec949fa3b`;
+- inbox status `failed`;
+- latency trace `delivery_mode = failed`;
+- latency trace `degraded_reason = provider_turn_cancelled_before_mcp_writeback`;
+- zero proposal rows;
+- zero MCP tool traces.
+
+Second attempt:
+
+```bash
+timeout 900 uv run pytest \
+  tests/xmuse/test_full_chain_real_run.py::test_real_ray_codex_app_server_proposal_review_dispatch_completion \
+  -q -s \
+  --basetemp=.goal-runs/2026-06-21/p4-final-action-gate-blocked-pytest-rerun
+```
+
+Runtime root:
+
+```text
+.goal-runs/2026-06-21/p4-final-action-gate-blocked-pytest-rerun/test_real_ray_codex_app_server0
+```
+
+Observed result:
+
+```text
+FAILED ... AssertionError: expected 1 proposals
+1 failed, 4 warnings in 198.55s
+```
+
+Durable negative facts:
+
+- conversation `conv_b1e6ae35a3dc4f3caf81bd94b8f147ad`;
+- the test failed before any proposal was persisted;
+- the new final-action/GitHub gate assertions were not reached.
+
+This attempt does not invalidate the prior P3 dispatch-completion evidence, but
+it also does not prove real-provider final-action closure. The next real
+provider cut should first restore stable proposal MCP writeback, then rerun the
+same extended test until it reaches the deterministic final-action blocked gate.

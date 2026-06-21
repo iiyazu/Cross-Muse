@@ -97,6 +97,13 @@ Do not claim:
   resolution `res_12b67786d4674539b5779551bc7c5671`,
   dispatch inbox `inbox_8bc4a91282094c6393575d3a7e6ad756`, and dispatch
   `dispatch:conv_5a3cc569a316410d804a91972c1adffc:res_12b67786d4674539b5779551bc7c5671:execute`
+- P4 final-action blocked-path attempt:
+  `.goal-runs/2026-06-21/p4-final-action-gate-blocked-pytest/test_real_ray_codex_app_server0`
+  and
+  `.goal-runs/2026-06-21/p4-final-action-gate-blocked-pytest-rerun/test_real_ray_codex_app_server0`;
+  both attempts failed before the first real provider MCP proposal writeback
+  with `provider_turn_cancelled_before_mcp_writeback`. This is negative
+  evidence only and does not raise the claim level.
 
 ## Required Checks And Gate State
 
@@ -119,9 +126,12 @@ Do not claim:
   can reach durable proposal, review-trigger handling, approval, and queued
   dispatch. P3 then proved the queued dispatch intent can be completed by a
   real execute Codex app-server peer with durable MCP `chat_post_message`
-  acknowledgement and `dispatched` queue evidence. The provider path has not
-  yet been connected through final-action, GitHub gate, accepted AcceptanceSpine
-  truth, or multi-turn soak acceptance.
+  acknowledgement and `dispatched` queue evidence. The `chat_emit_proposal`
+  reply path now binds proposals to the replied intake AcceptanceSpine without
+  relying on model-authored intake references, and the deterministic
+  acceptance-gated runner still blocks final action without producer-owned
+  GitHub proof. The real provider path has not yet completed final-action,
+  GitHub gate, accepted AcceptanceSpine truth, or multi-turn soak acceptance.
 - Release packaging/versioning has not been cut from the current claim level.
 - `uv run mypy xmuse/platform_runner.py` has existing type debt and is not a
   clean release gate.

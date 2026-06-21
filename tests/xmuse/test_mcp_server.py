@@ -7,6 +7,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from xmuse_core.agents.god_session_registry import GodSessionRegistry
+from xmuse_core.chat.acceptance_spine import AcceptanceSpineStatus, AcceptanceSpineStore
 from xmuse_core.chat.inbox_store import ChatInboxStore
 from xmuse_core.chat.store import ChatStore
 from xmuse_core.chat.stream_store import PeerTurnLatencyTraceStore
@@ -221,6 +222,68 @@ def test_chat_emit_proposal_can_complete_current_peer_inbox_item(tmp_path: Path)
     )
     assert "chat_emit_proposal" in stages
     assert registry.get(session.god_session_id).status == "running"
+
+
+def test_chat_emit_proposal_reply_attaches_acceptance_spine_intake(
+    tmp_path: Path,
+) -> None:
+    server = load_mcp_module()
+    xmuse_root = tmp_path / "xmuse"
+    db_path = xmuse_root / "chat.db"
+    mcp_client = TestClient(server.create_app(xmuse_root=xmuse_root))
+    created = mcp_call(mcp_client, "chat_create_conversation", {"title": "Spine proposal"})
+    conversation_id = created["conversation"]["id"]
+    architect = next(item for item in created["participants"] if item["role"] == "architect")
+    registry = GodSessionRegistry(xmuse_root / "god_sessions.json")
+    session = registry.find_by_conversation_participant(
+        conversation_id=conversation_id,
+        participant_id=architect["participant_id"],
+    )
+    assert session is not None
+
+    chat = ChatStore(db_path)
+    human = chat.add_message(conversation_id, "human", "human", "@architect propose")
+    AcceptanceSpineStore(db_path).create_for_intake(
+        conversation_id=conversation_id,
+        intake_message_id=human.id,
+    )
+    item = ChatInboxStore(db_path).create_item(
+        conversation_id=conversation_id,
+        target_participant_id=architect["participant_id"],
+        target_role="architect",
+        target_address="@architect",
+        sender_participant_id=None,
+        sender_address="@human",
+        source_message_id=human.id,
+        item_type="mention",
+        payload={"content": human.content},
+    )
+
+    result = mcp_chat_call(
+        mcp_client,
+        "chat_emit_proposal",
+        {
+            "conversation_id": conversation_id,
+            "participant_id": architect["participant_id"],
+            "god_session_id": session.god_session_id,
+            "client_request_id": "spine-proposal-reply",
+            "summary": "Spine linked proposal",
+            "lanes": [
+                {
+                    "feature_id": "spine-linked-proposal",
+                    "prompt": "Link this proposal to the intake spine.",
+                    "depends_on": [],
+                    "capabilities": ["code", "test"],
+                }
+            ],
+            "references": [],
+            "reply_to_inbox_item_id": item.id,
+        },
+    )
+
+    spine = AcceptanceSpineStore(db_path).get_by_intake_message(human.id)
+    assert spine.status is AcceptanceSpineStatus.REVIEW_PENDING
+    assert spine.proposal_id == result["proposal"]["id"]
 
 
 def test_chat_emit_proposal_without_reply_id_closes_single_claimed_inbox_item(

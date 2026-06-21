@@ -2506,6 +2506,7 @@ class PeerChatService:
             references=proposal_references,
             resolution_content=resolution_content,
         )
+        proposal_id = str(payload["proposal"]["id"])
         proposal_message_id = self._proposal_message_id(payload)
         resolved_reply_to_inbox_item_id = (
             reply_to_inbox_item_id
@@ -2521,6 +2522,11 @@ class PeerChatService:
                 inbox_item_id=resolved_reply_to_inbox_item_id,
                 responded_message_id=proposal_message_id,
                 tool_name="chat_emit_proposal",
+            )
+            self._attach_acceptance_spine_proposal_for_inbox_reply(
+                conversation_id=conversation_id,
+                inbox_item_id=resolved_reply_to_inbox_item_id,
+                proposal_id=proposal_id,
             )
             GodSessionRegistry(registry_path).promote_running(god_session_id)
         self._mark_collaboration_callback_inboxes_for_references(
@@ -2658,6 +2664,28 @@ class PeerChatService:
             tool_name=tool_name,
             responded_message_id=responded_message_id,
         )
+
+    def _attach_acceptance_spine_proposal_for_inbox_reply(
+        self,
+        *,
+        conversation_id: str,
+        inbox_item_id: str,
+        proposal_id: str,
+    ) -> None:
+        try:
+            item = self._inbox.get(inbox_item_id)
+        except KeyError:
+            return
+        if item.conversation_id != conversation_id or not item.source_message_id:
+            return
+        try:
+            AcceptanceSpineStore(self._db_path).attach_proposal(
+                conversation_id=conversation_id,
+                intake_message_id=item.source_message_id,
+                proposal_id=proposal_id,
+            )
+        except KeyError:
+            return
 
     def _mark_inbox_consumed_by_tool(
         self,
