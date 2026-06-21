@@ -16,9 +16,16 @@ durable GOD groupchat
 -> producer-backed GitHub gate evidence contract
 ```
 
-这是 RC 阶段收束，不是生产级闭环收束。当前可以声明
-`xmuse RC: durable groupchat + AcceptanceSpine closure skeleton`；不能声明
-`production GitHub-gated delivery complete`。
+这是生产级收束的短路径闭环，不是完整生产 release。当前可以声明:
+
+```text
+xmuse production-closure short path:
+durable GOD groupchat + minimal AcceptanceSpine/GoalRun
++ opt-in GitHub live server-side gate accepted path
+```
+
+不能声明 `full production release ready`、多小时真实 provider soak 已完成，或
+完整长运行 GOD groupchat 在真实 provider/Ray/Codex 环境下已稳定闭环。
 
 面向生产级闭环的 north-star 仍是:
 
@@ -42,8 +49,9 @@ GOD groupchat deliberation
 
 | 文档 | 用途 |
 |---|---|
-| `docs/xmuse/rc-closure-baseline-2026-06-21.md` | 2026-06-21 阶段性收束基线：限定 RC 口径、已完成事实、禁止声明和下一刀 |
-| `docs/xmuse/production-closure-tasks.md` | 从 RC closure skeleton 走向生产级闭环的中等粒度任务清单 |
+| `docs/xmuse/release-checklist.md` | 当前 release decision：production-closure short path accepted，但 full release-ready 仍被 long-run soak、release packaging 和既有类型债阻塞 |
+| `docs/xmuse/rc-closure-baseline-2026-06-21.md` | 2026-06-21 阶段性收束基线：RC skeleton 历史基线、P0-P3 后的短路径提升、禁止声明和下一刀 |
+| `docs/xmuse/production-closure-tasks.md` | P0-P4 生产级收束任务状态：P0-P3 已完成或限定完成，P4 固化 release decision |
 | `docs/xmuse/acceptance-spine.md` | 当前最小 durable GoalRun/AcceptanceSpine 合同与实现边界：串起 human intake、proposal、approval/verdict、dispatch 和证据 refs |
 | `docs/xmuse/acceptance-gated-runner-evidence-2026-06-21.md` | 2026-06-21 `xmuse-platform-runner --goal --acceptance-gate` 短真实 smoke：durable refs、GitHub gate manual gap 和 blocked 终态 |
 | `docs/xmuse/acceptance-gated-live-capture-evidence-2026-06-21.md` | 2026-06-21 `--github-live-capture` 短真实 smoke：producer-owned `server_side_merge_proof` 和 accepted 终态 |

@@ -182,3 +182,6 @@ as `blocked/github_gate_unverified` because it has no `server_side_merge_proof`.
 The first opt-in live GitHub capture smoke is recorded in
 `docs/xmuse/acceptance-gated-live-capture-evidence-2026-06-21.md` and ends as
 `accepted` because the producer captured a complete `server_side_merge_proof`.
+This supports the current `production-closure short path accepted` claim. It
+does not prove full release readiness, a multi-hour real-provider soak, or
+long-running GOD groupchat stability across real provider/Ray/Codex sessions.

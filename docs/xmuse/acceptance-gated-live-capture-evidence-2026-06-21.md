@@ -90,3 +90,8 @@ This closes the short-run accepted path for P3. It does not prove a long
 multi-hour provider execution. It proves the acceptance-gated runner can move
 from durable final action to accepted only through producer-owned live GitHub
 server-side evidence.
+
+Release-readiness use: this evidence supports the current
+`production-closure short path accepted` claim in
+`docs/xmuse/release-checklist.md`. It must not be used to claim a full
+production release or multi-hour real-provider stability.
