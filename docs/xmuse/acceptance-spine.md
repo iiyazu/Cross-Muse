@@ -54,14 +54,19 @@ The authority is `chat.db` through chat/control-plane stores:
   server-side gate evidence, the spine records `github_gate_unverified` in
   `manual_gaps`.
 - `FinalActionGateStore.resolve` updates the spine terminal outcome. Approved
-  final action without a GitHub/server evidence ref remains blocked; approved
-  final action with an explicit evidence ref becomes accepted; rejected,
-  failed, or cancelled final action becomes failed.
+  final action without a producer-owned GitHub/server evidence ref remains
+  blocked. Arbitrary or unverifiable GitHub refs are downgraded to gap refs,
+  not accepted evidence. Rejected, failed, or cancelled final action becomes
+  failed.
 - `GitHubGateEvidenceStore` captures read-only GitHub/server truth evidence in
   `github_gate_evidence.json`. `FinalActionGateStore.resolve_with_github_gate_evidence`
   passes a `github_gate_evidence_ref` to the spine only when the captured record
   is a complete `server_side_merge_proof`; incomplete evidence is persisted as a
   gap ref on the final action and leaves the spine blocked.
+- `AcceptanceSpineStore.resolve_final_action` also verifies the evidence ref at
+  the authority layer: the ref must point at a durable
+  `github_gate_evidence.json#evidence=<id>` record for the same final action,
+  with `can_accept = true` and `proof_level = server_side_merge_proof`.
 
 Dashboard, TUI, timeline, provider stdout, fake/sentinel scripts, and copied
 GitHub text are not acceptance authorities.
@@ -102,8 +107,8 @@ Current implemented statuses:
 - `reviewed`: an independent review-plane verdict ref is linked;
 - `blocked`: a final-action hold or GitHub/server manual gap blocks terminal
   closure;
-- `accepted`: final action is approved with an explicit GitHub/server gate
-  evidence ref;
+- `accepted`: final action is approved with a producer-owned, authority-verified
+  GitHub/server gate evidence ref;
 - `failed`: a dispatch queue failure is linked back to the demand.
 
 Terminal final-action rules:
@@ -111,8 +116,10 @@ Terminal final-action rules:
 - `approved` / `accepted` / `resolved` without `github_gate_evidence_ref`, or
   with only a GitHub gate gap ref, keeps `status = blocked` and
   `manual_gaps = ["github_gate_unverified"]`;
-- `approved` / `accepted` / `resolved` with a valid `github_gate_evidence_ref`
-  sets `status = accepted` and clears the GitHub manual gap;
+- `approved` / `accepted` / `resolved` with a valid
+  `github_gate_evidence_ref` sets `status = accepted` and clears the GitHub
+  manual gap only when the evidence ref resolves to a durable accepted producer
+  record for the same final action;
 - `rejected` / `failed` / `cancelled` / `canceled` sets `status = failed`.
 
 Other lifecycle statuses are reserved for the broader closure path and must not

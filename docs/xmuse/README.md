@@ -1,6 +1,6 @@
 # xmuse 文档入口
 
-更新日期: 2026-06-10
+更新日期: 2026-06-21
 
 本目录是 xmuse 当前阶段的文档入口。旧的 `docs/superpowers/specs/` 和
 `docs/superpowers/plans/` 仍保留原路径，因为测试、lane graph 和历史记录会引用
@@ -8,7 +8,19 @@
 
 ## 当前方向
 
-xmuse 的当前 north-star 是:
+xmuse 当前阶段已收束为:
+
+```text
+durable GOD groupchat
+-> minimal AcceptanceSpine / GoalRun closure contract
+-> producer-backed GitHub gate evidence contract
+```
+
+这是 RC 阶段收束，不是生产级闭环收束。当前可以声明
+`xmuse RC: durable groupchat + AcceptanceSpine closure skeleton`；不能声明
+`production GitHub-gated delivery complete`。
+
+面向生产级闭环的 north-star 仍是:
 
 ```text
 GOD groupchat deliberation
@@ -30,6 +42,8 @@ GOD groupchat deliberation
 
 | 文档 | 用途 |
 |---|---|
+| `docs/xmuse/rc-closure-baseline-2026-06-21.md` | 2026-06-21 阶段性收束基线：限定 RC 口径、已完成事实、禁止声明和下一刀 |
+| `docs/xmuse/production-closure-tasks.md` | 从 RC closure skeleton 走向生产级闭环的中等粒度任务清单 |
 | `docs/xmuse/acceptance-spine.md` | 当前最小 durable GoalRun/AcceptanceSpine 合同与实现边界：串起 human intake、proposal、approval/verdict、dispatch 和证据 refs |
 | `docs/xmuse/mainline-contracts.md` | 当前产品主线合同：GOD 群聊、blueprint freeze、laneDAG、review/GitHub gate、REST-first MemoryOS |
 | `docs/xmuse/real-runtime-loop-behavior-policy.md` | 真实运行链路长 goal 的行为规范：非 TDD-first、authority/producer/consumer/evidence-first、GitHub 额度、PR 防膨胀和 superpowers 使用边界 |
