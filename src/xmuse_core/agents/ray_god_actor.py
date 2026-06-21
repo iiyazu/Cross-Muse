@@ -87,6 +87,16 @@ class _RayGodActorCore:
             return None
         return await self._transport.receive()
 
+    async def active_latency_stages(self) -> dict:
+        await self.ensure_alive()
+        if self._transport is None:
+            return {}
+        getter = getattr(self._transport, "active_latency_stages", None)
+        if not callable(getter):
+            return {}
+        stages = getter()
+        return stages if isinstance(stages, dict) else {}
+
     async def chat_post_message(self, conversation_id: str, content: str) -> str:
         from xmuse_core.chat.store import ChatStore
         store = ChatStore(self._db_path)

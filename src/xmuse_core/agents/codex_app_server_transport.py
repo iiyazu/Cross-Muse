@@ -113,6 +113,9 @@ class AppServerTurnAccumulator:
         if name not in self._latency_stages:
             self._latency_stages[name] = {"at": self.clock()}
 
+    def latency_stages(self) -> dict[str, dict[str, float]]:
+        return {name: dict(stage) for name, stage in self._latency_stages.items()}
+
     def _matches_turn(self, params: dict[str, Any]) -> bool:
         if self.turn_id is None:
             turn = params.get("turn")
@@ -277,6 +280,11 @@ class CodexAppServerTransport:
                 self._active_accumulator = None
                 self._active_turn_request_id = None
                 return result
+
+    def active_latency_stages(self) -> dict[str, dict[str, float]]:
+        if self._active_accumulator is None:
+            return {}
+        return self._active_accumulator.latency_stages()
 
     async def shutdown(self) -> None:
         if self._process is None or self._process.returncode is not None:
