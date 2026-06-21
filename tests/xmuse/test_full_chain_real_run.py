@@ -20,12 +20,40 @@ from xmuse_core.agents import codex_persistent
 from xmuse_core.agents.god_session_registry import GodSessionRegistry
 from xmuse_core.agents.ray_session_layer import RayGodSessionLayer
 from xmuse_core.agents.registry import AgentDescriptor, AgentRuntime
+from xmuse_core.chat.acceptance_spine import AcceptanceSpineStatus, AcceptanceSpineStore
 from xmuse_core.chat.collaboration_store import ChatCollaborationStore
 from xmuse_core.chat.dispatch_queue import ChatDispatchQueueStore
 from xmuse_core.chat.inbox_store import ChatInboxStore
 from xmuse_core.chat.participant_store import Participant, ParticipantStore
 from xmuse_core.chat.store import ChatStore
 from xmuse_core.chat.stream_store import PeerTurnLatencyTraceStore
+from xmuse_core.platform.execution.github_ops import GitHubServerSideTruthEvidence
+from xmuse_core.platform.final_action_gate import FinalActionGateStore
+
+
+class ManualGapGithubGateCollector:
+    def __init__(self, *, reason: str, head_sha: str) -> None:
+        self._reason = reason
+        self._head_sha = head_sha
+
+    def collect(
+        self,
+        *,
+        repo: str,
+        pull_request_number: int,
+        required_checks: list[str],
+    ) -> GitHubServerSideTruthEvidence:
+        return GitHubServerSideTruthEvidence(
+            repo=repo,
+            pull_request_number=pull_request_number,
+            required_checks=required_checks,
+            proof_level="manual_gap",
+            internal_review_artifact="real_dispatch_completion_test",
+            internal_reviewer="pytest",
+            internal_reviewed_head_sha=self._head_sha,
+            internal_review_verified=True,
+            gap_reason=self._reason,
+        )
 
 
 class DummyLauncher:
@@ -1599,6 +1627,56 @@ async def test_real_ray_codex_app_server_proposal_review_dispatch_completion(
             assert "chat_post_message" in dispatch_stages
             assert "chat_post_message_persisted" in dispatch_stages
 
+            spine_store = AcceptanceSpineStore(db_path)
+            spine = spine_store.list_by_conversation(conversation_id)[0]
+            assert spine.intake_message_id == request_payload["message"]["id"]
+            assert spine.proposal_id == proposal.id
+            assert spine.dispatch_item_id == dispatched.entry_id
+            assert dispatched.dispatch_evidence in spine.execution_evidence_refs
+
+            review_verdict_ref = "review_plane.json#verdict=real-p3-dispatch-completion"
+            attached_review = spine_store.attach_review_verdict_for_resolution(
+                resolution_id=approved.json()["id"],
+                review_verdict_ref=review_verdict_ref,
+            )
+            assert attached_review is not None
+            final_actions_path = tmp_path / "final_actions.json"
+            final_action_store = FinalActionGateStore(final_actions_path)
+            hold = final_action_store.create_hold(
+                lane_id="p2-real-provider-dispatch-slice",
+                verdict_id="real-p3-dispatch-completion",
+                action="merge",
+                target_status="accepted",
+                summary="Real dispatch completion requires GitHub gate evidence.",
+            )
+            attached_hold = spine_store.attach_final_action_for_review_verdict(
+                review_verdict_ref=review_verdict_ref,
+                final_action_ref=f"{final_actions_path.name}#hold={hold.id}",
+                manual_gaps=["github_gate_unverified"],
+                blocked_reason="final_action_pending",
+            )
+            assert attached_hold is not None
+            resolved_hold = final_action_store.resolve_with_github_gate_evidence(
+                hold.id,
+                status="approved",
+                resolved_by="pytest",
+                repo="iiyazu/Cross-Muse",
+                pull_request_number=163,
+                required_checks=["real-runtime-integration-gate"],
+                collector=ManualGapGithubGateCollector(
+                    reason="server_side_merge_proof unavailable in real dispatch test",
+                    head_sha="real-dispatch-completion-test-head",
+                ),
+                evidence_store_path=tmp_path / "github_gate_evidence.json",
+            )
+            spine = spine_store.list_by_conversation(conversation_id)[0]
+            assert spine.status is AcceptanceSpineStatus.BLOCKED
+            assert spine.blocked_reason == "github_gate_unverified"
+            assert "github_gate_unverified" in spine.manual_gaps
+            assert spine.github_gate_evidence_ref is None
+            assert resolved_hold.github_gate_evidence_ref is None
+            assert resolved_hold.github_gate_gap_ref is not None
+
             report = {
                 "conversation_id": conversation_id,
                 "proposal_id": proposal.id,
@@ -1615,6 +1693,10 @@ async def test_real_ray_codex_app_server_proposal_review_dispatch_completion(
                 "delivery_mode": proposal_trace["delivery_mode"],
                 "observed_stages": sorted(stages),
                 "dispatch_observed_stages": sorted(dispatch_stages),
+                "acceptance_spine_status": spine.status.value,
+                "acceptance_spine_blocked_reason": spine.blocked_reason,
+                "final_action_id": hold.id,
+                "github_gate_gap_ref": resolved_hold.github_gate_gap_ref,
             }
             print(
                 "XMUSE_REAL_P3_DISPATCH_COMPLETION_REPORT "
