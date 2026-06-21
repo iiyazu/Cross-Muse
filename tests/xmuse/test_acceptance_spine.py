@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -9,6 +10,9 @@ from xmuse_core.chat.acceptance_spine import AcceptanceSpineStatus, AcceptanceSp
 from xmuse_core.chat.dispatch_queue import ChatDispatchQueueStore
 from xmuse_core.chat.peer_service import PeerChatService
 from xmuse_core.chat.store import ChatStore
+from xmuse_core.platform.final_action_gate import FinalActionGateStore
+from xmuse_core.platform.review_plane import ReviewPlaneController
+from xmuse_core.structuring.models import ReviewDecision, ReviewVerdict
 
 
 def test_human_intake_creates_durable_acceptance_spine(tmp_path: Path) -> None:
@@ -124,3 +128,75 @@ def test_chat_api_reads_acceptance_spine_status(tmp_path: Path) -> None:
     assert payload["source_authority"] == "chat_store"
     assert payload["items"][0]["intake_message_id"] == posted.json()["id"]
     assert payload["items"][0]["status"] == "intake"
+
+
+def test_acceptance_spine_tracks_review_verdict_final_action_and_github_gap(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "chat.db"
+    service = PeerChatService(db)
+    created = service.create_conversation(title="Acceptance Spine Review")
+    conversation_id = created["conversation"]["id"]
+    intake = service.post_human_message(
+        conversation_id=conversation_id,
+        author="Human operator",
+        content="Review and hold final action for this demand.",
+        client_request_id="goalrun-review-intake",
+    )
+    proposal = ChatStore(db).create_proposal(
+        conversation_id=conversation_id,
+        author="architect",
+        proposal_type="lane_graph",
+        content='{"summary":"review proposal","lanes":[]}',
+        references=[f"intake_message:{intake.message.id}"],
+    )
+    resolution = ChatStore(db).approve_proposal(
+        proposal.id,
+        approved_by=["human"],
+        approval_mode="manual",
+        goal_summary="Approve review proposal.",
+        content={"type": "lane_graph", "lanes": []},
+    )
+    lanes_path = tmp_path / "feature_lanes.json"
+    lanes_path.write_text(
+        json.dumps(
+            {
+                "lanes": [
+                    {
+                        "feature_id": "lane-spine-review",
+                        "status": "gated",
+                        "prompt": "Run review.",
+                        "graph_id": "graph-spine-review",
+                        "resolution_id": resolution.id,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    controller = ReviewPlaneController(
+        lanes_path=lanes_path,
+        store_path=tmp_path / "review_plane.json",
+        final_actions_path=tmp_path / "final_actions.json",
+        require_final_action_approval=True,
+    )
+    task = controller.open_review_task("lane-spine-review")
+
+    controller.ingest_verdict(
+        task.task_id,
+        ReviewVerdict(
+            id="verdict-spine-review",
+            lane_id="lane-spine-review",
+            decision=ReviewDecision.MERGE,
+            summary="No findings.",
+            evidence_refs=["review:evidence"],
+        ),
+    )
+
+    hold = FinalActionGateStore(tmp_path / "final_actions.json").list_actions()[0]
+    spine = AcceptanceSpineStore(db).get_by_intake_message(intake.message.id)
+    assert spine.review_verdict_ref == "review_plane.json#verdict=verdict-spine-review"
+    assert spine.final_action_ref == f"final_actions.json#hold={hold.id}"
+    assert spine.manual_gaps == ["github_gate_unverified"]
+    assert spine.status is AcceptanceSpineStatus.BLOCKED
+    assert spine.blocked_reason == "final_action_pending"

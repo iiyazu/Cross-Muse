@@ -295,6 +295,88 @@ class AcceptanceSpineStore:
             )
         return self.get_by_intake_message(str(row["intake_message_id"]))
 
+    def attach_review_verdict_for_resolution(
+        self,
+        *,
+        resolution_id: str,
+        review_verdict_ref: str,
+    ) -> AcceptanceSpine | None:
+        now = _utc_now()
+        resolution_ref = f"resolution:{resolution_id}"
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                select intake_message_id from acceptance_spines
+                where review_or_execute_verdict_ref = ?
+                """,
+                (resolution_ref,),
+            ).fetchone()
+            if row is None:
+                return None
+            conn.execute(
+                """
+                update acceptance_spines
+                set review_verdict_ref = ?,
+                    status = ?,
+                    updated_at = ?
+                where review_or_execute_verdict_ref = ?
+                """,
+                (
+                    review_verdict_ref,
+                    AcceptanceSpineStatus.REVIEWED.value,
+                    now,
+                    resolution_ref,
+                ),
+            )
+        return self.get_by_intake_message(str(row["intake_message_id"]))
+
+    def attach_final_action_for_review_verdict(
+        self,
+        *,
+        review_verdict_ref: str,
+        final_action_ref: str,
+        manual_gaps: list[str] | None = None,
+        blocked_reason: str | None = None,
+    ) -> AcceptanceSpine | None:
+        now = _utc_now()
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                select intake_message_id, manual_gaps_json
+                from acceptance_spines
+                where review_verdict_ref = ?
+                """,
+                (review_verdict_ref,),
+            ).fetchone()
+            if row is None:
+                return None
+            merged_gaps = _merge_json_list(row["manual_gaps_json"], manual_gaps or [])
+            status = (
+                AcceptanceSpineStatus.BLOCKED
+                if blocked_reason
+                else AcceptanceSpineStatus.AWAITING_FINAL_ACTION
+            )
+            conn.execute(
+                """
+                update acceptance_spines
+                set final_action_ref = ?,
+                    manual_gaps_json = ?,
+                    blocked_reason = coalesce(?, blocked_reason),
+                    status = ?,
+                    updated_at = ?
+                where review_verdict_ref = ?
+                """,
+                (
+                    final_action_ref,
+                    json.dumps(merged_gaps),
+                    blocked_reason,
+                    status.value,
+                    now,
+                    review_verdict_ref,
+                ),
+            )
+        return self.get_by_intake_message(str(row["intake_message_id"]))
+
     def mark_dispatch_failed(
         self,
         *,
@@ -444,3 +526,12 @@ def _json_list(value: object) -> list[str]:
     if not isinstance(parsed, list):
         return []
     return [item for item in parsed if isinstance(item, str)]
+
+
+def _merge_json_list(existing_json: object, new_values: list[str]) -> list[str]:
+    merged = _json_list(existing_json)
+    for value in new_values:
+        clean = value.strip() if isinstance(value, str) else ""
+        if clean and clean not in merged:
+            merged.append(clean)
+    return merged

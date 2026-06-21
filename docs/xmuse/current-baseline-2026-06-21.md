@@ -45,6 +45,9 @@ The current verified chain is partial but real:
    human `post_human_message` intake creates a spine; source-linked proposals,
    approved resolutions, dispatch queue entries, dispatch evidence refs, and a
    read-only Chat API endpoint now attach to the same demand record.
+9. The AcceptanceSpine now also receives review-plane verdict refs,
+   final-action hold refs, and an explicit `github_gate_unverified` manual gap
+   when a verdict is held for final action without server-side GitHub truth.
 
 ## GitHub Main Audit Absorption
 
@@ -96,8 +99,9 @@ The audit also sharpened the current risk ledger:
 
 The deeper audit finding has now been partially absorbed locally: xmuse has a
 minimal durable acceptance spine for intake -> proposal -> approval/verdict ->
-dispatch evidence. It does not yet prove independent review verdict closure,
-final-action completion, or GitHub/server gate evidence.
+dispatch evidence -> review-plane verdict -> final-action hold/manual GitHub
+gap. It does not yet prove final-action resolution or real GitHub/server gate
+evidence.
 
 ## Baseline Evidence
 
@@ -131,6 +135,9 @@ Latest important runtime evidence before this baseline:
   `post_human_message` -> `acceptance_spines.intake_message_id` ->
   source-linked proposal -> approved `resolution:<id>` verdict ref ->
   dispatch queue ref -> dispatch evidence refs -> read-only Chat API status.
+- Focused acceptance-spine review/final-action verification now proves:
+  review-plane `verdict:<id>` -> `final_actions.json#hold=<id>` ->
+  `manual_gaps=["github_gate_unverified"]` -> blocked spine status.
 
 ## Forbidden Claims
 
@@ -160,6 +167,11 @@ independent review verdict
 -> accepted / blocked / failed terminal spine status
 ```
 
+The review verdict and pending final-action/manual GitHub gap are now wired.
+The next boundary is narrower: replace `github_gate_unverified` with a real
+GitHub/server gate evidence ref where available, then resolve final action into
+an accepted or failed terminal spine state.
+
 When using the existing Loop 2H runtime:
 
 1. Start `xmuse-mcp-server` for the same runtime root when using the existing
@@ -179,6 +191,8 @@ When using the existing Loop 2H runtime:
 
 Focused verification for this snapshot passed:
 
+- `uv run pytest tests/xmuse/test_acceptance_spine.py tests/xmuse/test_review_plane_controller.py -q`
+- `uv run ruff check src/xmuse_core/chat/acceptance_spine.py src/xmuse_core/platform/review_plane.py tests/xmuse/test_acceptance_spine.py`
 - `uv run pytest tests/xmuse/test_acceptance_spine.py tests/xmuse/test_chat_default_intake.py tests/xmuse/test_peer_chat_store.py tests/xmuse/test_peer_chat_mcp_tools.py::test_mcp_emit_proposal_supersedes_prior_open_collaboration_proposal -q`
 - `uv run ruff check src/xmuse_core/chat/acceptance_spine.py src/xmuse_core/chat/store.py src/xmuse_core/chat/dispatch_queue.py src/xmuse_core/chat/peer_service.py src/xmuse_core/chat/__init__.py xmuse/chat_api.py tests/xmuse/test_acceptance_spine.py`
 - `git diff --check`
