@@ -28,8 +28,13 @@ from xmuse_core.chat.driver import ChatDriver
 from xmuse_core.chat.peer_service import PeerChatService
 from xmuse_core.chat.store import ChatStore
 from xmuse_core.platform.coordinator_control import CoordinatorControlService
-from xmuse_core.platform.execution.github_ops import GitHubServerSideTruthEvidence
+from xmuse_core.platform.execution.github_ops import (
+    GitHubCliServerSideTruthClient,
+    GitHubServerSideTruthEvidence,
+    ReadOnlyGitHubServerSideTruthCollector,
+)
 from xmuse_core.platform.final_action_gate import FinalActionGateStore
+from xmuse_core.platform.github_gate_evidence import GitHubGateTruthCollector
 from xmuse_core.platform.model_policy import CodexModelPolicy, resolve_codex_model_policy
 from xmuse_core.platform.orchestrator import PlatformOrchestrator
 from xmuse_core.platform.review_plane import ReviewPlaneController
@@ -104,6 +109,7 @@ def run_acceptance_gated_goal(
     github_pull_request: int,
     required_checks: list[str] | None = None,
     head_sha: str | None = None,
+    github_gate_collector: GitHubGateTruthCollector | None = None,
 ) -> dict[str, Any]:
     """Run the smallest durable acceptance-gated goal path.
 
@@ -245,6 +251,10 @@ def run_acceptance_gated_goal(
         for action in final_action_store.list_actions()
         if action.lane_id == lane_id and action.verdict_id == verdict_id
     )
+    collector = github_gate_collector or _ManualGapGithubGateCollector(
+        reason="server_side_merge_proof unavailable for acceptance-gated short run",
+        head_sha=clean_head_sha,
+    )
     resolved_hold = final_action_store.resolve_with_github_gate_evidence(
         hold.id,
         status="approved",
@@ -252,10 +262,7 @@ def run_acceptance_gated_goal(
         repo=clean_repo,
         pull_request_number=github_pull_request,
         required_checks=clean_checks,
-        collector=_ManualGapGithubGateCollector(
-            reason="server_side_merge_proof unavailable for acceptance-gated short run",
-            head_sha=clean_head_sha,
-        ),
+        collector=collector,
         evidence_store_path=github_gate_evidence_path,
     )
 
@@ -1731,6 +1738,30 @@ def main_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--github-live-capture",
+        action="store_true",
+        help=(
+            "with --acceptance-gate, opt into read-only gh api capture for "
+            "server-side merge proof"
+        ),
+    )
+    parser.add_argument(
+        "--internal-review-artifact",
+        type=Path,
+        default=None,
+        help="internal review artifact path bound to live GitHub review truth",
+    )
+    parser.add_argument(
+        "--internal-reviewer",
+        default=None,
+        help="internal reviewer id bound to live GitHub review truth",
+    )
+    parser.add_argument(
+        "--internal-reviewed-head-sha",
+        default=None,
+        help="PR head SHA reviewed by the internal review artifact",
+    )
+    parser.add_argument(
         "--health-once",
         action="store_true",
         help="print a JSON run health summary and exit without starting the runner",
@@ -1759,6 +1790,23 @@ def validate_args(args: argparse.Namespace) -> None:
             raise SystemExit("--acceptance-gate requires a positive --github-pr")
         if args.health_once:
             raise SystemExit("--acceptance-gate and --health-once are mutually exclusive")
+        if args.github_live_capture:
+            missing_live_args = [
+                name
+                for name, value in (
+                    ("--internal-review-artifact", args.internal_review_artifact),
+                    ("--internal-reviewer", args.internal_reviewer),
+                    ("--internal-reviewed-head-sha", args.internal_reviewed_head_sha),
+                )
+                if value is None or (isinstance(value, str) and not value.strip())
+            ]
+            if missing_live_args:
+                raise SystemExit(
+                    "--github-live-capture requires "
+                    + ", ".join(missing_live_args)
+                )
+            if not Path(args.internal_review_artifact).is_file():
+                raise SystemExit("--internal-review-artifact must be an existing file")
     if args.peer_chat and args.chat_driver:
         raise SystemExit("--peer-chat and --chat-driver are mutually exclusive")
     if args.default_review_peer_routing and not args.persistent_review_god:
@@ -1880,6 +1928,15 @@ def main() -> None:
     xmuse_root, lanes_path = _runtime_paths_from_args(args)
 
     if args.acceptance_gate:
+        github_gate_collector: GitHubGateTruthCollector | None = None
+        if args.github_live_capture:
+            github_gate_collector = ReadOnlyGitHubServerSideTruthCollector(
+                client=GitHubCliServerSideTruthClient(
+                    internal_review_artifact=args.internal_review_artifact,
+                    internal_reviewer=args.internal_reviewer,
+                    internal_reviewed_head_sha=args.internal_reviewed_head_sha,
+                )
+            )
         print(
             json.dumps(
                 run_acceptance_gated_goal(
@@ -1889,7 +1946,9 @@ def main() -> None:
                     github_pull_request=args.github_pr,
                     required_checks=args.github_required_check
                     or REQUIRED_GITHUB_CHECKS,
-                    head_sha=args.github_head_sha,
+                    head_sha=args.github_head_sha
+                    or args.internal_reviewed_head_sha,
+                    github_gate_collector=github_gate_collector,
                 ),
                 ensure_ascii=False,
                 indent=2,
