@@ -82,6 +82,13 @@ Do not claim:
   traces
   `peer_latency_inbox_36409f270c3f454aac7a80dca289a924` and
   `peer_latency_inbox_d3c8700e124a470080171db7458079a7`
+- P2 real provider proposal/review/dispatch evidence:
+  `.goal-runs/2026-06-21/p2-real-provider-proposal-dispatch-pytest/test_real_ray_codex_app_server0`,
+  provider session `019eea3d-fed6-7e32-9f2f-5cb39afa860d`,
+  proposal `prop_038ab28b77f94083959d22f37d527a9c`,
+  review trigger `inbox_27e4675cda2b4aeaa1f6e55a79d370f0`,
+  resolution `res_3d19e6d8154b44769aef4d187f74f323`, and dispatch
+  `dispatch:conv_bc4fa83561b042a489e80078e05882d5:res_3d19e6d8154b44769aef4d187f74f323:execute`
 
 ## Required Checks And Gate State
 
@@ -100,9 +107,11 @@ Do not claim:
   bounded real-provider soak originally blocked before the first durable MCP
   `chat_post_message` reply. P1 later proved a focused real Ray/Codex
   restart/resume path can produce durable MCP `chat_post_message` replies and
-  `mcp_writeback` traces, but the provider path has not yet been connected
-  through proposal/review/dispatch, final-action, GitHub gate, or multi-turn
-  soak acceptance.
+  `mcp_writeback` traces. P2 then proved real provider `chat_emit_proposal`
+  can reach durable proposal, review-trigger handling, approval, and queued
+  dispatch. The provider path has not yet been connected through actual
+  execute-provider dispatch completion, final-action, GitHub gate, accepted
+  AcceptanceSpine truth, or multi-turn soak acceptance.
 - Release packaging/versioning has not been cut from the current claim level.
 - `uv run mypy xmuse/platform_runner.py` has existing type debt and is not a
   clean release gate.
