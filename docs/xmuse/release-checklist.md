@@ -111,6 +111,12 @@ Do not claim:
   prompt priority now states that explicit `chat_emit_proposal` requests use
   `chat_emit_proposal` instead of ordinary `chat_post_message`, but the real
   app-server path still produced no proposal, MCP tool trace, or stream delta.
+- P4 app-server first-event diagnostics:
+  app-server partial latency stages are now copied into timeout/cancellation
+  traces before session abort, so the next real proposal probe can distinguish
+  no app-server event, MCP-ready/no-tool, streamed-text/no-tool, and
+  proposal-tool-call cases. This is diagnostic only and does not raise the
+  claim level.
 
 ## Required Checks And Gate State
 
@@ -139,9 +145,10 @@ Do not claim:
   acceptance-gated runner still blocks final action without producer-owned
   GitHub proof. The proposal-turn prompt contract now removes the ordinary
   reply/proposal tool conflict, but the real app-server path still fails before
-  the first proposal MCP tool event. The real provider path has not yet
-  completed final-action, GitHub gate, accepted AcceptanceSpine truth, or
-  multi-turn soak acceptance.
+  the first proposal MCP tool event. Timeout/cancellation traces now retain
+  app-server partial stages for the next probe, but the real provider path has
+  not yet completed final-action, GitHub gate, accepted AcceptanceSpine truth,
+  or multi-turn soak acceptance.
 - Release packaging/versioning has not been cut from the current claim level.
 - `uv run mypy xmuse/platform_runner.py` has existing type debt and is not a
   clean release gate.

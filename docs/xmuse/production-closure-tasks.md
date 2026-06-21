@@ -182,11 +182,17 @@ failed before any proposal, MCP tool trace, or stream delta was produced, ending
 as `provider_no_mcp_writeback_before_deadline`. Evidence:
 `docs/xmuse/real-provider-soak-evidence-2026-06-21.md#p4-proposal-writeback-stability-attempt`.
 
+P4 first-event diagnostics follow-up: app-server partial latency stages are now
+available to scheduler timeout/cancellation traces before the provider session
+is aborted. The next failed real proposal turn should show whether xmuse saw
+`mcp_tools_ready`, turn start, stream delta, or MCP tool-call events. Evidence:
+`docs/xmuse/real-provider-soak-evidence-2026-06-21.md#p4-app-server-first-event-diagnostics`.
+
 Tasks:
 
-- diagnose the Codex app-server provider boundary for the first proposal turn:
-  prove whether the turn receives MCP tool availability events, any stream
-  delta, or an active-turn error before rerunning the full P4 path;
+- run a small real-provider first-proposal probe and classify the failed or
+  successful trace by app-server partial stages before rerunning the full P4
+  path;
 - rerun the real provider proposal/review/dispatch completion path through the
   spine binding and final-action/GitHub gate blocked assertion only after the
   first proposal writeback is stable again;

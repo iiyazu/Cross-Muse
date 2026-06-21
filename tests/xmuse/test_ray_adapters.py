@@ -532,6 +532,9 @@ async def test_ray_god_actor_core_can_use_injected_transport_without_child_proce
                 message="transport reply",
             )
 
+        def active_latency_stages(self) -> dict[str, dict[str, float]]:
+            return {"mcp_tools_ready": {"at": 1.0}}
+
         async def shutdown(self) -> None:
             self.closed = True
             self.started = False
@@ -579,6 +582,7 @@ async def test_ray_god_actor_core_can_use_injected_transport_without_child_proce
     assert info["thread_id"] == "thread-real-1"
     assert info["resume_thread_id"] is None
     assert msg.message == "transport reply"
+    assert await actor.active_latency_stages() == {"mcp_tools_ready": {"at": 1.0}}
     assert transports[0].sent == [
         (
             "peer_chat_nudge",
@@ -785,6 +789,41 @@ def test_app_server_turn_accumulator_emits_latency_stages_from_mcp_events() -> N
         "mcp_tool_call_completed": {"at": 202.5},
         "chat_mention": {"at": 203.0},
         "chat_record_collaboration_response": {"at": 203.5},
+    }
+
+
+def test_app_server_turn_accumulator_exposes_partial_latency_stages() -> None:
+    from xmuse_core.agents.codex_app_server_transport import AppServerTurnAccumulator
+
+    clock_values = iter([500.0, 500.5, 501.0])
+    accumulator = AppServerTurnAccumulator(
+        request_id="inbox-1",
+        clock=lambda: next(clock_values),
+    )
+
+    assert accumulator.feed(
+        {
+            "method": "mcpServer/startupStatus/updated",
+            "params": {"serverName": "xmuse-platform", "status": "ready"},
+        }
+    ) is None
+    assert accumulator.feed(
+        {
+            "method": "turn/started",
+            "params": {"turn": {"id": "turn-1"}, "threadId": "thread-1"},
+        }
+    ) is None
+    assert accumulator.feed(
+        {
+            "method": "item/agentMessage/delta",
+            "params": {"turnId": "turn-1", "delta": "working"},
+        }
+    ) is None
+
+    assert accumulator.latency_stages() == {
+        "mcp_tools_ready": {"at": 500.0},
+        "codex_app_server_turn_start": {"at": 500.5},
+        "first_stream_delta": {"at": 501.0},
     }
 
 

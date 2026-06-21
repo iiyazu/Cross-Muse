@@ -703,3 +703,53 @@ current blocker is therefore not final-action/GitHub gate logic; it is the real
 Codex app-server provider failing to produce any MCP tool event or stream delta
 for this proposal turn. P4 remains blocked until that first proposal writeback
 is stable again.
+
+## P4 App-Server First-Event Diagnostics
+
+Status: `diagnostics_landed/no_claim_level_change`.
+
+This follow-up does not claim P4 closure. It adds the missing diagnostic link
+between the Codex app-server transport and scheduler failure traces: while an
+app-server turn is still active, xmuse can now snapshot partial latency stages
+such as `mcp_tools_ready`, `codex_app_server_turn_start`,
+`first_stream_delta`, and MCP tool-call stages. On receive timeout or external
+cancellation, the scheduler records those partial stages before aborting the
+provider session and terminalizing the intake spine.
+
+Fast deterministic checks:
+
+```bash
+uv run pytest \
+  tests/xmuse/test_ray_adapters.py::test_app_server_turn_accumulator_exposes_partial_latency_stages \
+  tests/xmuse/test_ray_adapters.py::test_ray_god_actor_core_can_use_injected_transport_without_child_process \
+  tests/xmuse/test_peer_chat_scheduler.py::test_scheduler_terminalizes_claim_and_spine_when_peer_turn_times_out \
+  tests/xmuse/test_peer_chat_scheduler.py::test_scheduler_terminalizes_claim_and_spine_when_peer_turn_is_cancelled \
+  -q
+
+uv run ruff check \
+  src/xmuse_core/agents/codex_app_server_transport.py \
+  src/xmuse_core/agents/ray_god_actor.py \
+  src/xmuse_core/agents/ray_session_layer.py \
+  src/xmuse_core/chat/peer_scheduler.py \
+  tests/xmuse/test_ray_adapters.py \
+  tests/xmuse/test_peer_chat_scheduler.py
+```
+
+Observed result:
+
+```text
+4 passed in 3.70s
+All checks passed!
+```
+
+The next real-provider run should be a smaller first-proposal probe. Its value
+is diagnostic even if it fails:
+
+- if the failed trace contains no app-server stages, the failure is before
+  app-server turn events reach xmuse;
+- if it contains `mcp_tools_ready` but no tool call, the failure is model/tool
+  selection after MCP readiness;
+- if it contains `first_stream_delta` but no MCP tool call, the model is
+  streaming text instead of using durable writeback;
+- if it contains `chat_emit_proposal`, P4 can resume from the final-action gate
+  assertion path.
