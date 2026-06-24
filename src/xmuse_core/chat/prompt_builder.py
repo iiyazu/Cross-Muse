@@ -135,8 +135,12 @@ def _roster_layer(group_context: dict[str, Any]) -> PromptLayer:
 
 def _context_capsule_layer(group_context: dict[str, Any], inbox_item: Any) -> PromptLayer:
     capsule = group_context.get("context_capsule")
+    capsule_version = "unknown"
     recent_messages = []
     if isinstance(capsule, dict):
+        raw_version = capsule.get("version")
+        if isinstance(raw_version, str) and raw_version:
+            capsule_version = raw_version
         raw_messages = capsule.get("recent_messages")
         if isinstance(raw_messages, list):
             recent_messages = raw_messages[-8:]
@@ -144,7 +148,7 @@ def _context_capsule_layer(group_context: dict[str, Any], inbox_item: Any) -> Pr
     request_preview = _inbox_request_preview(getattr(inbox_item, "payload", {}))
     retry_feedback = _retry_feedback_text(group_context)
     content = (
-        "Local context capsule version: xmuse-local-context-capsule-v1\n"
+        f"Local context capsule version: {capsule_version}\n"
         "Use this capsule as bounded durable context. It may be enriched by "
         "MemoryOS only after live MemoryOS proof exists.\n"
         f"Recent transcript:\n{transcript}\n"

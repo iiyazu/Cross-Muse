@@ -168,7 +168,8 @@ async def test_scheduler_claims_and_nudges_oldest_item(tmp_path: Path) -> None:
         },
     ]
     assert context["group_chat"]["recent_messages"][-1]["content"] == "I am here too."
-    assert context["context_capsule"]["version"] == "xmuse-local-context-capsule-v1"
+    assert context["context_capsule"]["version"] == "xmuse-groupchat-context-v2"
+    assert context["context_capsule"]["inbox_summary"]["counts_by_status"]["claimed"] == 1
     assert context["xmuse_prompt"]["version"] == "xmuse-peer-chat-prompt-v2"
     assert context["xmuse_prompt"]["layer_order"] == [
         "xmuse_governance_l0",

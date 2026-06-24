@@ -3,6 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from xmuse_core.chat.acceptance_spine import AcceptanceSpineStore
+from xmuse_core.chat.dispatch_queue import ChatDispatchQueueStore
+from xmuse_core.chat.inbox_store import ChatInboxStore
 from xmuse_core.chat.participant_store import ParticipantStore
 from xmuse_core.chat.store import ChatStore
 
@@ -11,6 +14,9 @@ from xmuse_core.chat.store import ChatStore
 class ContextAssembler:
     participants: ParticipantStore
     chat: ChatStore
+    inbox: ChatInboxStore | None = None
+    acceptance_spines: AcceptanceSpineStore | None = None
+    dispatch_queue: ChatDispatchQueueStore | None = None
     recent_limit: int = 8
 
     def group_chat_context(self, conversation_id: str) -> dict[str, Any]:
@@ -28,6 +34,8 @@ class ContextAssembler:
                 "content": message.content,
                 "created_at": message.created_at,
                 "mentions": list(message.mentions),
+                "intake_kind": (message.envelope_json or {}).get("intake_kind"),
+                "source_refs": [f"chat.db#messages:{message.id}"],
             }
             for message in messages
         ]
@@ -40,17 +48,35 @@ class ContextAssembler:
             }
             for participant in active_participants
         ]
+        proposals = self.chat.list_proposals(conversation_id)
+        inbox_summary = self._inbox_summary(conversation_id)
+        acceptance_spines = self._acceptance_spines(conversation_id)
+        dispatch_summary = self._dispatch_summary(conversation_id)
+        source_refs = _context_source_refs(
+            recent_messages=recent_messages,
+            inbox_summary=inbox_summary,
+            acceptance_spines=acceptance_spines,
+            dispatch_summary=dispatch_summary,
+        )
         return {
             "mode": "group_chat",
             "participants": participants,
             "recent_messages": recent_messages,
             "context_capsule": {
-                "version": "xmuse-local-context-capsule-v1",
+                "version": "xmuse-groupchat-context-v2",
+                "source_authority": "chat_store",
+                "source_refs": source_refs,
                 "recent_message_count": len(recent_messages),
                 "recent_messages": recent_messages,
+                "human_intake": _human_intake_summary(recent_messages),
+                "inbox_summary": inbox_summary,
+                "proposal_summary": _proposal_summary(proposals),
+                "acceptance_spines": acceptance_spines,
+                "dispatch_queue": dispatch_summary,
+                "review_summary": _review_summary(acceptance_spines),
                 "open_questions": [],
                 "commitments": [],
-                "proposal_state": "unknown",
+                "proposal_state": _proposal_state(proposals),
                 "degraded_state": None,
             },
             "turn_guidance": [
@@ -82,3 +108,193 @@ class ContextAssembler:
             "context_capsule": group_chat.get("context_capsule", {}),
             "xmuse_prompt": prompt_artifact,
         }
+
+    def _inbox_summary(self, conversation_id: str) -> dict[str, Any]:
+        if self.inbox is None:
+            return {
+                "source_authority": "chat_inbox_items",
+                "source_refs": [],
+                "counts_by_status": {},
+                "counts_by_type": {},
+                "pending": [],
+            }
+        items = self.inbox.list_by_conversation(conversation_id, include_terminal=True)
+        counts_by_status: dict[str, int] = {}
+        counts_by_type: dict[str, int] = {}
+        pending = []
+        for item in items:
+            counts_by_status[item.status] = counts_by_status.get(item.status, 0) + 1
+            counts_by_type[item.item_type] = counts_by_type.get(item.item_type, 0) + 1
+            if item.status in {"unread", "claimed"}:
+                pending.append(
+                    {
+                        "id": item.id,
+                        "target_role": item.target_role,
+                        "item_type": item.item_type,
+                        "status": item.status,
+                        "source_refs": [f"chat.db#chat_inbox_items:{item.id}"],
+                    }
+                )
+        return {
+            "source_authority": "chat_inbox_items",
+            "source_refs": [f"chat.db#chat_inbox_items:{item.id}" for item in items],
+            "counts_by_status": counts_by_status,
+            "counts_by_type": counts_by_type,
+            "pending": pending[-8:],
+        }
+
+    def _acceptance_spines(self, conversation_id: str) -> list[dict[str, Any]]:
+        if self.acceptance_spines is None:
+            return []
+        return [
+            {
+                "spine_id": spine.spine_id,
+                "status": spine.status.value,
+                "intake_message_id": spine.intake_message_id,
+                "proposal_id": spine.proposal_id,
+                "review_trigger_inbox_id": spine.review_trigger_inbox_id,
+                "review_or_execute_verdict_ref": spine.review_or_execute_verdict_ref,
+                "dispatch_item_id": spine.dispatch_item_id,
+                "review_verdict_ref": spine.review_verdict_ref,
+                "final_action_ref": spine.final_action_ref,
+                "github_gate_evidence_ref": spine.github_gate_evidence_ref,
+                "blocked_reason": spine.blocked_reason,
+                "source_refs": [f"chat.db#acceptance_spines:{spine.spine_id}"],
+            }
+            for spine in self.acceptance_spines.list_by_conversation(conversation_id)
+        ]
+
+    def _dispatch_summary(self, conversation_id: str) -> dict[str, Any]:
+        if self.dispatch_queue is None:
+            return {
+                "source_authority": "chat_dispatch_queue",
+                "source_refs": [],
+                "counts_by_status": {},
+                "entries": [],
+            }
+        entries = self.dispatch_queue.list_entries(conversation_id, limit=10)
+        counts_by_status: dict[str, int] = {}
+        rows = []
+        for entry in entries:
+            counts_by_status[entry.status] = counts_by_status.get(entry.status, 0) + 1
+            rows.append(
+                {
+                    "entry_id": entry.entry_id,
+                    "target": entry.target,
+                    "status": entry.status,
+                    "proposal_id": entry.proposal_id,
+                    "resolution_id": entry.resolution_id,
+                    "dispatch_evidence": entry.dispatch_evidence,
+                    "failure_reason": entry.failure_reason,
+                    "source_refs": [f"chat.db#chat_dispatch_queue:{entry.entry_id}"],
+                }
+            )
+        return {
+            "source_authority": "chat_dispatch_queue",
+            "source_refs": [f"chat.db#chat_dispatch_queue:{entry.entry_id}" for entry in entries],
+            "counts_by_status": counts_by_status,
+            "entries": rows,
+        }
+
+
+def _proposal_summary(proposals: list[Any]) -> dict[str, Any]:
+    return {
+        "source_authority": "proposals",
+        "source_refs": [f"chat.db#proposals:{proposal.id}" for proposal in proposals],
+        "count": len(proposals),
+        "latest": (
+            {
+                "proposal_id": proposals[-1].id,
+                "status": proposals[-1].status.value,
+                "proposal_type": proposals[-1].proposal_type,
+                "source_refs": [f"chat.db#proposals:{proposals[-1].id}"],
+            }
+            if proposals
+            else None
+        ),
+    }
+
+
+def _proposal_state(proposals: list[Any]) -> str:
+    if not proposals:
+        return "none"
+    return proposals[-1].status.value
+
+
+def _human_intake_summary(recent_messages: list[dict[str, Any]]) -> dict[str, Any]:
+    counts: dict[str, int] = {}
+    latest = None
+    for message in recent_messages:
+        intake_kind = message.get("intake_kind")
+        if not isinstance(intake_kind, str) or not intake_kind:
+            continue
+        counts[intake_kind] = counts.get(intake_kind, 0) + 1
+        latest = {
+            "message_id": message.get("id"),
+            "intake_kind": intake_kind,
+            "source_refs": message.get("source_refs", []),
+        }
+    return {"counts": counts, "latest": latest}
+
+
+def _review_summary(acceptance_spines: list[dict[str, Any]]) -> dict[str, Any]:
+    trigger_refs = [
+        spine["review_trigger_inbox_id"]
+        for spine in acceptance_spines
+        if spine.get("review_trigger_inbox_id")
+    ]
+    verdict_refs = [
+        spine["review_verdict_ref"]
+        for spine in acceptance_spines
+        if spine.get("review_verdict_ref")
+    ]
+    return {
+        "source_authority": "acceptance_spines",
+        "review_trigger_count": len(trigger_refs),
+        "review_verdict_refs": verdict_refs,
+        "source_refs": [
+            ref
+            for spine in acceptance_spines
+            for ref in spine.get("source_refs", [])
+        ],
+    }
+
+
+def _context_source_refs(
+    *,
+    recent_messages: list[dict[str, Any]],
+    inbox_summary: dict[str, Any],
+    acceptance_spines: list[dict[str, Any]],
+    dispatch_summary: dict[str, Any],
+) -> list[str]:
+    refs: list[str] = []
+    refs.extend(
+        ref
+        for message in recent_messages
+        for ref in message.get("source_refs", [])
+        if isinstance(ref, str) and ref
+    )
+    refs.extend(
+        ref
+        for ref in inbox_summary.get("source_refs", [])
+        if isinstance(ref, str) and ref
+    )
+    refs.extend(
+        ref
+        for spine in acceptance_spines
+        for ref in spine.get("source_refs", [])
+        if isinstance(ref, str) and ref
+    )
+    refs.extend(
+        ref
+        for ref in dispatch_summary.get("source_refs", [])
+        if isinstance(ref, str) and ref
+    )
+    seen = set()
+    deduped = []
+    for ref in refs:
+        if ref in seen:
+            continue
+        seen.add(ref)
+        deduped.append(ref)
+    return deduped

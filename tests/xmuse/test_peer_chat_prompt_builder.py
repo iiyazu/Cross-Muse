@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from xmuse_core.chat.acceptance_spine import AcceptanceSpineStore
 from xmuse_core.chat.context_assembler import ContextAssembler
+from xmuse_core.chat.dispatch_queue import ChatDispatchQueueStore
 from xmuse_core.chat.inbox_store import ChatInboxStore
 from xmuse_core.chat.participant_store import ParticipantStore
 from xmuse_core.chat.prompt_builder import (
@@ -67,7 +69,7 @@ def test_peer_chat_prompt_builder_emits_ordered_auditable_layers(tmp_path: Path)
     assert "Durable chat state is reply truth" in assembled.text
     assert "Role: architect" in assembled.text
     assert "@review=OpenCode Review GOD" in assembled.text
-    assert "Local context capsule version: xmuse-local-context-capsule-v1" in assembled.text
+    assert "Local context capsule version: xmuse-groupchat-context-v2" in assembled.text
     assert "chat_emit_proposal" in assembled.text
     assert "If the inbox request explicitly asks for chat_emit_proposal" in assembled.text
     assert "that tool is the durable writeback for proposal turns" in assembled.text
@@ -118,9 +120,93 @@ def test_context_assembler_turn_context_carries_prompt_artifact(tmp_path: Path) 
         prompt_artifact=assembled.as_context_artifact(),
     )
 
-    assert context["context_capsule"]["version"] == "xmuse-local-context-capsule-v1"
+    assert context["context_capsule"]["version"] == "xmuse-groupchat-context-v2"
     assert context["xmuse_prompt"]["version"] == PROMPT_CONTRACT_VERSION
     assert context["xmuse_prompt"]["text"] == assembled.text
+
+
+def test_context_assembler_projects_groupchat_context_v2_authority(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "chat.db"
+    chat = ChatStore(db)
+    conv = chat.create_conversation("Context v2")
+    participants = ParticipantStore(db)
+    architect = participants.add(
+        conversation_id=conv.id,
+        role="architect",
+        display_name="Architect GOD",
+        cli_kind="codex",
+        model="gpt-5.5",
+    )
+    human = chat.add_message(
+        conv.id,
+        "human",
+        "human",
+        "Please produce the smallest audited change.",
+        envelope_json={"type": "message", "intake_kind": "goal_intake"},
+    )
+    spine = AcceptanceSpineStore(db).create_for_intake(
+        conversation_id=conv.id,
+        intake_message_id=human.id,
+    )
+    inbox = ChatInboxStore(db)
+    item = inbox.create_item(
+        conversation_id=conv.id,
+        target_participant_id=architect.participant_id,
+        target_role="architect",
+        target_address="@architect",
+        sender_participant_id=None,
+        sender_address="@human",
+        source_message_id=human.id,
+        item_type="default_intake",
+        payload={
+            "content": "Please produce the smallest audited change.",
+            "intake_kind": "goal_intake",
+        },
+    )
+    proposal = chat.create_proposal(
+        conversation_id=conv.id,
+        author="architect",
+        proposal_type="lane_graph",
+        content='{"summary":"small audited change","lanes":[]}',
+        references=[f"intake_message:{human.id}"],
+    )
+    dispatch = ChatDispatchQueueStore(db).enqueue_agent_auto_dispatch(
+        conversation_id=conv.id,
+        proposal_id=proposal.id,
+        resolution_id="res-context-v2",
+        collaboration_run_id=None,
+        artifact_ref=f"proposal:{proposal.id}",
+    )
+
+    context = ContextAssembler(
+        participants=participants,
+        chat=chat,
+        inbox=inbox,
+        acceptance_spines=AcceptanceSpineStore(db),
+        dispatch_queue=ChatDispatchQueueStore(db),
+    ).group_chat_context(conv.id)
+
+    capsule = context["context_capsule"]
+    assert capsule["version"] == "xmuse-groupchat-context-v2"
+    assert capsule["source_authority"] == "chat_store"
+    assert f"chat.db#messages:{human.id}" in capsule["source_refs"]
+    assert capsule["human_intake"]["latest"] == {
+        "message_id": human.id,
+        "intake_kind": "goal_intake",
+        "source_refs": [f"chat.db#messages:{human.id}"],
+    }
+    assert capsule["inbox_summary"]["counts_by_type"]["default_intake"] == 1
+    assert capsule["inbox_summary"]["pending"][0]["id"] == item.id
+    assert capsule["proposal_summary"]["count"] == 1
+    assert capsule["proposal_summary"]["latest"]["proposal_id"] == proposal.id
+    assert capsule["acceptance_spines"][0]["spine_id"] == spine.spine_id
+    assert capsule["acceptance_spines"][0]["proposal_id"] == proposal.id
+    assert capsule["acceptance_spines"][0]["dispatch_item_id"] == dispatch.entry_id
+    assert capsule["dispatch_queue"]["counts_by_status"]["queued"] == 1
+    assert capsule["dispatch_queue"]["entries"][0]["entry_id"] == dispatch.entry_id
+    assert capsule["review_summary"]["source_authority"] == "acceptance_spines"
 
 
 def test_prompt_builder_includes_retry_feedback(tmp_path: Path) -> None:
