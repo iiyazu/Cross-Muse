@@ -32,6 +32,15 @@ def _utc_now() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+def _creates_acceptance_spine(envelope_json: dict[str, Any] | None) -> bool:
+    if not isinstance(envelope_json, dict):
+        return True
+    intake_kind = envelope_json.get("intake_kind")
+    if intake_kind is None:
+        return True
+    return intake_kind == "goal_intake"
+
+
 class ChatStore:
     def __init__(self, path: Path | str) -> None:
         self._path = Path(path)
@@ -226,7 +235,11 @@ class ChatStore:
                         message.reply_to_message_id,
                     ),
                 )
-                if tool_name == "post_human_message" and role == "human":
+                if (
+                    tool_name == "post_human_message"
+                    and role == "human"
+                    and _creates_acceptance_spine(envelope_json)
+                ):
                     insert_acceptance_spine_for_intake(
                         conn,
                         spine_id=self._new_id("goalrun"),

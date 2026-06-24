@@ -154,6 +154,10 @@ class ChatDispatchQueueStore:
         dispatch_evidence: str,
     ) -> ChatDispatchQueueEntry:
         now = _utc_now()
+        clean_provider_run_ref = _required(provider_run_ref, "provider_run_ref")
+        clean_dispatch_evidence = _required(dispatch_evidence, "dispatch_evidence")
+        if not clean_dispatch_evidence.startswith("mcp_writeback:"):
+            raise ValueError("dispatch_evidence must be a durable mcp_writeback ref")
         with self._connect() as conn:
             updated = conn.execute(
                 """
@@ -168,8 +172,8 @@ class ChatDispatchQueueStore:
                   and status = 'processing'
                 """,
                 (
-                    _required(provider_run_ref, "provider_run_ref"),
-                    _required(dispatch_evidence, "dispatch_evidence"),
+                    clean_provider_run_ref,
+                    clean_dispatch_evidence,
                     now,
                     now,
                     entry_id,
