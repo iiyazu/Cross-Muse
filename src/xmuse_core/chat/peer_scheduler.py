@@ -657,6 +657,12 @@ class PeerChatScheduler:
         writeback_at = self._clock()
         mcp_tool_stages = self._latency.list_mcp_tool_stages(item.conversation_id, item.id)
         first_delta_at = _stage_at(transport_latency_stages, "first_stream_delta")
+        expected_contract = getattr(item, "expected_writeback_contract", None)
+        terminal_tool = _terminal_tool_for_trace(
+            expected_contract,
+            mcp_tool_stages,
+            delivery_mode=delivery_mode,
+        )
         stage_timings = _build_stage_timings(
             trace_start_at=trace_start_at,
             delivery_started_at=delivery_started_at,
@@ -681,6 +687,11 @@ class PeerChatScheduler:
             delivery_mode=delivery_mode,
             degraded_reason=degraded_reason,
             stage_timings=stage_timings,
+            expected_writeback_contract=(
+                dict(expected_contract) if isinstance(expected_contract, dict) else None
+            ),
+            terminal_tool=terminal_tool,
+            terminal_evidence_ref=_terminal_evidence_ref(item.id, terminal_tool),
         )
 
     def _terminalize_claimed_item_failure(
@@ -878,6 +889,34 @@ def _build_stage_timings(
         stages["scheduler_observed_result"] = {"at": scheduler_observed_result_at}
     stages["trace_persisted"] = {"at": writeback_at}
     return stages
+
+
+def _terminal_tool_for_trace(
+    contract: dict[str, object] | None,
+    mcp_tool_stages: dict[str, dict[str, float]],
+    *,
+    delivery_mode: str,
+) -> str | None:
+    if delivery_mode != "mcp_writeback":
+        return None
+    allowed_tools = allowed_terminal_tools(contract)
+    if not allowed_tools:
+        return None
+    ordered_tools: list[str] = []
+    required_tool = contract.get("required_tool") if isinstance(contract, dict) else None
+    if isinstance(required_tool, str) and required_tool in allowed_tools:
+        ordered_tools.append(required_tool)
+    ordered_tools.extend(sorted(tool for tool in allowed_tools if tool not in ordered_tools))
+    for tool in ordered_tools:
+        if tool in mcp_tool_stages:
+            return tool
+    return None
+
+
+def _terminal_evidence_ref(inbox_item_id: str, terminal_tool: str | None) -> str | None:
+    if terminal_tool is None:
+        return None
+    return f"peer_turn_mcp_tool_traces#inbox={inbox_item_id}:tool={terminal_tool}"
 
 
 def _stage_at(

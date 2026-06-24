@@ -9,6 +9,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel
 
+PEER_TURN_TRACE_SCHEMA_VERSION = "xmuse-peer-turn-trace-v1"
+
 
 def _utc_now() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
@@ -215,14 +217,29 @@ class PeerTurnLatencyTraceStore:
         delivery_mode: str,
         degraded_reason: str | None,
         stage_timings: dict[str, Any] | None = None,
+        turn_status: str | None = None,
+        expected_writeback_contract: dict[str, Any] | None = None,
+        terminal_tool: str | None = None,
+        terminal_evidence_ref: str | None = None,
+        failure_class: str | None = None,
     ) -> dict[str, Any]:
+        normalized_turn_status = turn_status or _turn_status_from_delivery_mode(
+            delivery_mode
+        )
+        normalized_failure_class = failure_class or _failure_class(
+            turn_status=normalized_turn_status,
+            degraded_reason=degraded_reason,
+        )
         with self._connect() as conn:
             trace = {
                 "id": self._next_latency_trace_id(conn, inbox_item_id),
+                "schema_version": PEER_TURN_TRACE_SCHEMA_VERSION,
+                "source_authority": "peer_turn_latency_traces",
                 "conversation_id": conversation_id,
                 "inbox_item_id": inbox_item_id,
                 "participant_id": participant_id,
                 "target_role": target_role,
+                "turn_status": normalized_turn_status,
                 "message_created_at": message_created_at,
                 "inbox_claimed_at": inbox_claimed_at,
                 "delivery_started_at": delivery_started_at,
@@ -233,24 +250,38 @@ class PeerTurnLatencyTraceStore:
                 "delivery_mode": delivery_mode,
                 "degraded_reason": degraded_reason,
                 "stage_timings": stage_timings or {},
+                "expected_writeback_contract": expected_writeback_contract or {},
+                "terminal_tool": terminal_tool,
+                "terminal_evidence_ref": terminal_evidence_ref,
+                "failure_class": normalized_failure_class,
             }
             stage_timings_json = json.dumps(trace["stage_timings"], sort_keys=True)
+            expected_writeback_contract_json = json.dumps(
+                trace["expected_writeback_contract"],
+                sort_keys=True,
+            )
             conn.execute(
                 """
                 insert into peer_turn_latency_traces (
-                    id, conversation_id, inbox_item_id, participant_id, target_role,
+                    id, schema_version, source_authority, conversation_id,
+                    inbox_item_id, participant_id, target_role, turn_status,
                     message_created_at, inbox_claimed_at, delivery_started_at,
                     provider_turn_started_at, first_delta_at, writeback_at,
-                    total_latency_ms, delivery_mode, degraded_reason, stage_timings_json
+                    total_latency_ms, delivery_mode, degraded_reason,
+                    stage_timings_json, expected_writeback_contract_json,
+                    terminal_tool, terminal_evidence_ref, failure_class
                 )
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     trace["id"],
+                    trace["schema_version"],
+                    trace["source_authority"],
                     conversation_id,
                     inbox_item_id,
                     participant_id,
                     target_role,
+                    trace["turn_status"],
                     message_created_at,
                     inbox_claimed_at,
                     delivery_started_at,
@@ -261,6 +292,10 @@ class PeerTurnLatencyTraceStore:
                     delivery_mode,
                     degraded_reason,
                     stage_timings_json,
+                    expected_writeback_contract_json,
+                    terminal_tool,
+                    terminal_evidence_ref,
+                    normalized_failure_class,
                 ),
             )
         return trace
@@ -356,10 +391,13 @@ class PeerTurnLatencyTraceStore:
                 """
                 create table if not exists peer_turn_latency_traces (
                     id text primary key,
+                    schema_version text not null default 'xmuse-peer-turn-trace-v1',
+                    source_authority text not null default 'peer_turn_latency_traces',
                     conversation_id text not null references conversations(id),
                     inbox_item_id text not null,
                     participant_id text,
                     target_role text,
+                    turn_status text not null default 'unknown',
                     message_created_at text not null,
                     inbox_claimed_at text,
                     delivery_started_at real not null,
@@ -369,7 +407,11 @@ class PeerTurnLatencyTraceStore:
                     total_latency_ms integer not null,
                     delivery_mode text not null,
                     degraded_reason text,
-                    stage_timings_json text not null default '{}'
+                    stage_timings_json text not null default '{}',
+                    expected_writeback_contract_json text not null default '{}',
+                    terminal_tool text,
+                    terminal_evidence_ref text,
+                    failure_class text
                 )
                 """
             )
@@ -388,11 +430,39 @@ class PeerTurnLatencyTraceStore:
                 row["name"]
                 for row in conn.execute("pragma table_info(peer_turn_latency_traces)").fetchall()
             }
-            if "stage_timings_json" not in columns:
-                conn.execute(
-                    "alter table peer_turn_latency_traces "
-                    "add column stage_timings_json text not null default '{}'"
-                )
+            _ensure_column(
+                conn,
+                columns,
+                "stage_timings_json",
+                "text not null default '{}'",
+            )
+            _ensure_column(
+                conn,
+                columns,
+                "schema_version",
+                "text not null default 'xmuse-peer-turn-trace-v1'",
+            )
+            _ensure_column(
+                conn,
+                columns,
+                "source_authority",
+                "text not null default 'peer_turn_latency_traces'",
+            )
+            _ensure_column(
+                conn,
+                columns,
+                "turn_status",
+                "text not null default 'unknown'",
+            )
+            _ensure_column(
+                conn,
+                columns,
+                "expected_writeback_contract_json",
+                "text not null default '{}'",
+            )
+            _ensure_column(conn, columns, "terminal_tool", "text")
+            _ensure_column(conn, columns, "terminal_evidence_ref", "text")
+            _ensure_column(conn, columns, "failure_class", "text")
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self._path)
@@ -403,12 +473,63 @@ class PeerTurnLatencyTraceStore:
     def _trace_from_row(self, row: sqlite3.Row) -> dict[str, Any]:
         trace = dict(row)
         raw_stage_timings = trace.pop("stage_timings_json", None)
+        raw_expected_writeback_contract = trace.pop(
+            "expected_writeback_contract_json",
+            None,
+        )
         try:
             parsed = json.loads(raw_stage_timings) if isinstance(raw_stage_timings, str) else {}
         except json.JSONDecodeError:
             parsed = {}
         trace["stage_timings"] = parsed if isinstance(parsed, dict) else {}
+        try:
+            contract = (
+                json.loads(raw_expected_writeback_contract)
+                if isinstance(raw_expected_writeback_contract, str)
+                else {}
+            )
+        except json.JSONDecodeError:
+            contract = {}
+        trace["expected_writeback_contract"] = (
+            contract if isinstance(contract, dict) else {}
+        )
         return trace
 
 
-__all__ = ["ChatStream", "ChatStreamStore", "PeerTurnLatencyTraceStore"]
+def _turn_status_from_delivery_mode(delivery_mode: str) -> str:
+    if delivery_mode == "mcp_writeback":
+        return "succeeded"
+    if delivery_mode in {"stdout_fallback", "degraded_fallback"}:
+        return "degraded"
+    if delivery_mode == "failed":
+        return "failed"
+    return "unknown"
+
+
+def _failure_class(*, turn_status: str, degraded_reason: str | None) -> str | None:
+    if turn_status not in {"failed", "degraded"}:
+        return None
+    clean = degraded_reason.strip() if isinstance(degraded_reason, str) else ""
+    return clean or turn_status
+
+
+def _ensure_column(
+    conn: sqlite3.Connection,
+    columns: set[str],
+    column_name: str,
+    column_type: str,
+) -> None:
+    if column_name in columns:
+        return
+    conn.execute(
+        f"alter table peer_turn_latency_traces add column {column_name} {column_type}"
+    )
+    columns.add(column_name)
+
+
+__all__ = [
+    "ChatStream",
+    "ChatStreamStore",
+    "PeerTurnLatencyTraceStore",
+    "PEER_TURN_TRACE_SCHEMA_VERSION",
+]

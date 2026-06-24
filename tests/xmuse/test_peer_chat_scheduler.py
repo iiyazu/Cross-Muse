@@ -15,7 +15,11 @@ from xmuse_core.chat.peer_scheduler import (
     _peer_session_prompt_fingerprint,
 )
 from xmuse_core.chat.store import ChatStore
-from xmuse_core.chat.stream_store import ChatStreamStore, PeerTurnLatencyTraceStore
+from xmuse_core.chat.stream_store import (
+    PEER_TURN_TRACE_SCHEMA_VERSION,
+    ChatStreamStore,
+    PeerTurnLatencyTraceStore,
+)
 
 
 class FakeGodLayer:
@@ -1342,6 +1346,10 @@ async def test_scheduler_rejects_read_without_real_writeback_message(
     trace = PeerTurnLatencyTraceStore(tmp_path / "chat.db").list_recent(conv.id)[0]
     assert trace["delivery_mode"] == "failed"
     assert trace["degraded_reason"] == "peer_no_inbox_writeback_message"
+    assert trace["turn_status"] == "failed"
+    assert trace["failure_class"] == "peer_no_inbox_writeback_message"
+    assert trace["terminal_tool"] is None
+    assert trace["terminal_evidence_ref"] is None
 
 
 @pytest.mark.asyncio
@@ -1612,6 +1620,15 @@ async def test_scheduler_records_latency_trace_with_injected_clock(tmp_path: Pat
     assert trace["total_latency_ms"] == 1300
     assert trace["delivery_mode"] == "mcp_writeback"
     assert trace["degraded_reason"] is None
+    assert trace["schema_version"] == PEER_TURN_TRACE_SCHEMA_VERSION
+    assert trace["source_authority"] == "peer_turn_latency_traces"
+    assert trace["turn_status"] == "succeeded"
+    assert trace["expected_writeback_contract"]["required_tool"] == "chat_post_message"
+    assert trace["terminal_tool"] == "chat_post_message"
+    assert trace["terminal_evidence_ref"] == (
+        f"peer_turn_mcp_tool_traces#inbox={item.id}:tool=chat_post_message"
+    )
+    assert trace["failure_class"] is None
     assert trace["stage_timings"] == {
         "inbox_claim": {"at": 100.0},
         "ray_actor_delivery_start": {"at": 100.1},

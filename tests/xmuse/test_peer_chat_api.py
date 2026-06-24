@@ -150,8 +150,12 @@ def test_chat_timeline_projects_peer_progress_from_durable_inbox_and_trace(tmp_p
     assert event["source_id"] == f"peer_latency_{item_id}"
     assert event["inbox_item_id"] == item_id
     assert event["status"] == "failed"
+    assert event["turn_status"] == "failed"
     assert event["delivery_mode"] == "failed"
     assert event["degraded_reason"] == "peer_no_inbox_writeback_message"
+    assert event["failure_class"] == "peer_no_inbox_writeback_message"
+    assert event["terminal_tool"] is None
+    assert event["terminal_evidence_ref"] is None
     assert event["latency_ms"] == 1500
     assert event["stage_names"] == ["chat_read_inbox"]
     assert payload["peer_progress_counts"]["failed"] == 1

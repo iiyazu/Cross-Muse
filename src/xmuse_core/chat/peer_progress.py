@@ -134,6 +134,7 @@ def _event_from_trace(
         "source_id": str(trace.get("id") or ""),
         "event_type": "peer_turn_progress",
         "status": status,
+        "turn_status": _string_value(trace.get("turn_status")) or status,
         "inbox_item_id": inbox_item_id,
         "inbox_status": item.status if item is not None else None,
         "target_participant_id": (
@@ -151,6 +152,9 @@ def _event_from_trace(
         "responded_message_id": item.responded_message_id if item is not None else None,
         "delivery_mode": delivery_mode,
         "degraded_reason": degraded_reason,
+        "failure_class": _string_value(trace.get("failure_class")),
+        "terminal_tool": _string_value(trace.get("terminal_tool")),
+        "terminal_evidence_ref": _string_value(trace.get("terminal_evidence_ref")),
         "latency_ms": trace.get("total_latency_ms"),
         "stage_names": sorted(str(key) for key in stage_timings),
         "claimed_at": trace.get("inbox_claimed_at"),
