@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from xmuse_core.chat.acceptance_spine import AcceptanceSpineStore
+from xmuse_core.chat.collaboration_store import ChatCollaborationStore
 from xmuse_core.chat.context_assembler import ContextAssembler
 from xmuse_core.chat.dispatch_queue import ChatDispatchQueueStore
 from xmuse_core.chat.inbox_store import ChatInboxStore
@@ -179,6 +180,33 @@ def test_context_assembler_projects_groupchat_context_v2_authority(
         collaboration_run_id=None,
         artifact_ref=f"proposal:{proposal.id}",
     )
+    collaboration = ChatCollaborationStore(db)
+    run = collaboration.create_request(
+        conversation_id=conv.id,
+        goal="Collect review and execute feasibility.",
+        initiator="architect",
+        targets=["execute", "review"],
+        callback_target="architect",
+        question="Can this proposal execute safely?",
+        context_refs=[f"proposal:{proposal.id}"],
+        idempotency_key="context-v2-collaboration",
+        timeout_s=480,
+    )
+    collaboration.record_response(
+        run.run_id,
+        target="execute",
+        content='{"type":"execute_feasibility_verdict","status":"executable"}',
+        response_status="received",
+    )
+    blocker = collaboration.raise_blocker(
+        run.run_id,
+        issuer="review",
+        severity="veto",
+        reason="Review needs a narrower diff before dispatch.",
+        affected_ref=f"proposal:{proposal.id}",
+        suggested_fix="Reduce the proposal scope.",
+        blocks_dispatch=True,
+    )
 
     context = ContextAssembler(
         participants=participants,
@@ -186,6 +214,7 @@ def test_context_assembler_projects_groupchat_context_v2_authority(
         inbox=inbox,
         acceptance_spines=AcceptanceSpineStore(db),
         dispatch_queue=ChatDispatchQueueStore(db),
+        collaboration_store=collaboration,
     ).group_chat_context(conv.id)
 
     capsule = context["context_capsule"]
@@ -206,6 +235,17 @@ def test_context_assembler_projects_groupchat_context_v2_authority(
     assert capsule["acceptance_spines"][0]["dispatch_item_id"] == dispatch.entry_id
     assert capsule["dispatch_queue"]["counts_by_status"]["queued"] == 1
     assert capsule["dispatch_queue"]["entries"][0]["entry_id"] == dispatch.entry_id
+    assert capsule["collaboration_summary"]["counts_by_status"]["partial"] == 1
+    assert capsule["collaboration_summary"]["runs"][0]["run_id"] == run.run_id
+    assert capsule["collaboration_summary"]["runs"][0]["completed_targets"] == ["execute"]
+    assert capsule["collaboration_summary"]["runs"][0]["pending_targets"] == ["review"]
+    assert capsule["collaboration_summary"]["pending_handoffs"][0]["run_id"] == run.run_id
+    assert capsule["collaboration_summary"]["open_blockers"][0]["blocker_id"] == (
+        blocker.blocker_id
+    )
+    assert capsule["collaboration_summary"]["open_blockers"][0]["blocks_dispatch"] is True
+    assert f"chat.db#collaboration_runs:{run.run_id}" in capsule["source_refs"]
+    assert f"chat.db#collaboration_blockers:{blocker.blocker_id}" in capsule["source_refs"]
     assert capsule["review_summary"]["source_authority"] == "acceptance_spines"
 
 

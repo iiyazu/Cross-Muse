@@ -11,6 +11,7 @@ from pathlib import Path
 from xmuse_core.agents.persistent_peer import fingerprint_prompt
 from xmuse_core.agents.registry import AgentDescriptor, AgentRuntime
 from xmuse_core.chat.acceptance_spine import AcceptanceSpineStore
+from xmuse_core.chat.collaboration_store import ChatCollaborationStore
 from xmuse_core.chat.context_assembler import ContextAssembler
 from xmuse_core.chat.dispatch_queue import ChatDispatchQueueStore
 from xmuse_core.chat.inbox_store import ChatInboxStore
@@ -64,6 +65,7 @@ class PeerChatScheduler:
             inbox=self._inbox,
             acceptance_spines=AcceptanceSpineStore(db_path),
             dispatch_queue=ChatDispatchQueueStore(db_path),
+            collaboration_store=ChatCollaborationStore(db_path),
         )
         self._prompt_builder = XmusePromptBuilder()
         self._god_layer = god_layer

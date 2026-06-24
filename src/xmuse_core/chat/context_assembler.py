@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from xmuse_core.chat.acceptance_spine import AcceptanceSpineStore
+from xmuse_core.chat.collaboration_store import ChatCollaborationStore
 from xmuse_core.chat.dispatch_queue import ChatDispatchQueueStore
 from xmuse_core.chat.inbox_store import ChatInboxStore
 from xmuse_core.chat.participant_store import ParticipantStore
@@ -17,6 +18,7 @@ class ContextAssembler:
     inbox: ChatInboxStore | None = None
     acceptance_spines: AcceptanceSpineStore | None = None
     dispatch_queue: ChatDispatchQueueStore | None = None
+    collaboration_store: ChatCollaborationStore | None = None
     recent_limit: int = 8
 
     def group_chat_context(self, conversation_id: str) -> dict[str, Any]:
@@ -52,11 +54,13 @@ class ContextAssembler:
         inbox_summary = self._inbox_summary(conversation_id)
         acceptance_spines = self._acceptance_spines(conversation_id)
         dispatch_summary = self._dispatch_summary(conversation_id)
+        collaboration_summary = self._collaboration_summary(conversation_id)
         source_refs = _context_source_refs(
             recent_messages=recent_messages,
             inbox_summary=inbox_summary,
             acceptance_spines=acceptance_spines,
             dispatch_summary=dispatch_summary,
+            collaboration_summary=collaboration_summary,
         )
         return {
             "mode": "group_chat",
@@ -73,6 +77,7 @@ class ContextAssembler:
                 "proposal_summary": _proposal_summary(proposals),
                 "acceptance_spines": acceptance_spines,
                 "dispatch_queue": dispatch_summary,
+                "collaboration_summary": collaboration_summary,
                 "review_summary": _review_summary(acceptance_spines),
                 "open_questions": [],
                 "commitments": [],
@@ -196,6 +201,81 @@ class ContextAssembler:
             "entries": rows,
         }
 
+    def _collaboration_summary(self, conversation_id: str) -> dict[str, Any]:
+        if self.collaboration_store is None:
+            return {
+                "source_authority": "collaboration_runs",
+                "source_refs": [],
+                "counts_by_status": {},
+                "runs": [],
+                "pending_handoffs": [],
+                "open_blockers": [],
+            }
+        runs = self.collaboration_store.list_runs(conversation_id)
+        counts_by_status: dict[str, int] = {}
+        rows = []
+        pending_handoffs = []
+        open_blockers = []
+        source_refs: list[str] = []
+        for run in runs[-10:]:
+            counts_by_status[run.status.value] = (
+                counts_by_status.get(run.status.value, 0) + 1
+            )
+            responded_by_target = {response.target: response for response in run.responses}
+            completed_targets = [
+                target
+                for target, response in responded_by_target.items()
+                if response.status == "received"
+            ]
+            failed_targets = [
+                target
+                for target, response in responded_by_target.items()
+                if response.status in {"failed", "timeout"}
+            ]
+            pending_targets = [
+                target for target in run.targets if target not in responded_by_target
+            ]
+            run_ref = f"chat.db#collaboration_runs:{run.run_id}"
+            source_refs.append(run_ref)
+            row = {
+                "run_id": run.run_id,
+                "status": run.status.value,
+                "initiator": run.initiator,
+                "targets": list(run.targets),
+                "callback_target": run.callback_target,
+                "pending_targets": pending_targets,
+                "completed_targets": completed_targets,
+                "failed_targets": failed_targets,
+                "source_refs": [run_ref],
+            }
+            rows.append(row)
+            if pending_targets:
+                pending_handoffs.append(row)
+            for blocker in run.blockers:
+                blocker_ref = f"chat.db#collaboration_blockers:{blocker.blocker_id}"
+                source_refs.append(blocker_ref)
+                if blocker.active:
+                    open_blockers.append(
+                        {
+                            "blocker_id": blocker.blocker_id,
+                            "run_id": blocker.run_id,
+                            "issuer": blocker.issuer,
+                            "severity": blocker.severity,
+                            "reason": blocker.reason,
+                            "affected_ref": blocker.affected_ref,
+                            "blocks_dispatch": blocker.blocks_dispatch,
+                            "source_refs": [blocker_ref],
+                        }
+                    )
+        return {
+            "source_authority": "collaboration_runs",
+            "source_refs": _dedupe_refs(source_refs),
+            "counts_by_status": counts_by_status,
+            "runs": rows,
+            "pending_handoffs": pending_handoffs,
+            "open_blockers": open_blockers,
+        }
+
 
 def _proposal_summary(proposals: list[Any]) -> dict[str, Any]:
     return {
@@ -266,6 +346,7 @@ def _context_source_refs(
     inbox_summary: dict[str, Any],
     acceptance_spines: list[dict[str, Any]],
     dispatch_summary: dict[str, Any],
+    collaboration_summary: dict[str, Any],
 ) -> list[str]:
     refs: list[str] = []
     refs.extend(
@@ -290,6 +371,15 @@ def _context_source_refs(
         for ref in dispatch_summary.get("source_refs", [])
         if isinstance(ref, str) and ref
     )
+    refs.extend(
+        ref
+        for ref in collaboration_summary.get("source_refs", [])
+        if isinstance(ref, str) and ref
+    )
+    return _dedupe_refs(refs)
+
+
+def _dedupe_refs(refs: list[str]) -> list[str]:
     seen = set()
     deduped = []
     for ref in refs:
