@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 WRITEBACK_CONTRACT_KEY = "expected_writeback_contract"
@@ -83,6 +84,19 @@ def expected_writeback_contract(
             "terminal_effect": "persist_review_feedback_or_blocker",
             "responded_message_required": True,
         }
+    if _requests_chat_emit_proposal(payload):
+        marker = _proposal_marker(payload)
+        contract = {
+            **base,
+            "required_tool": "chat_emit_proposal",
+            "allowed_terminal_tools": ["chat_emit_proposal"],
+            "terminal_effect": "create_lane_graph_proposal_and_mark_inbox_read",
+            "responded_message_required": True,
+            "contract_reason": "explicit_chat_emit_proposal_request",
+        }
+        if marker is not None:
+            contract["required_marker"] = marker
+        return contract
     return {
         **base,
         "required_tool": "chat_post_message",
@@ -166,3 +180,28 @@ def contract_text(contract: dict[str, Any] | None) -> str:
 def _collaboration_ref(payload: dict[str, Any]) -> str | None:
     run_id = payload.get("collaboration_run_id")
     return f"collaboration:{run_id}" if isinstance(run_id, str) and run_id else None
+
+
+def _requests_chat_emit_proposal(payload: dict[str, Any]) -> bool:
+    content = payload.get("content")
+    if not isinstance(content, str):
+        return False
+    lowered = " ".join(content.lower().split())
+    if "chat_emit_proposal" not in lowered:
+        return False
+    if "do not use chat_post_message" in lowered and "proposal turn" in lowered:
+        return True
+    return bool(
+        re.search(
+            r"\b(use|call|invoke|run)\b.{0,40}\bchat_emit_proposal\b",
+            lowered,
+        )
+    )
+
+
+def _proposal_marker(payload: dict[str, Any]) -> str | None:
+    content = payload.get("content")
+    if not isinstance(content, str):
+        return None
+    match = re.search(r"\bcollaboration:[A-Za-z0-9_.:-]+", content)
+    return match.group(0) if match is not None else None

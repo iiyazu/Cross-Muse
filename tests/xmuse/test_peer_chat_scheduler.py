@@ -232,6 +232,144 @@ def test_inbox_expected_writeback_contract_is_item_type_specific(
     assert item.payload["expected_writeback_contract"] == contract
 
 
+def test_inbox_expected_writeback_contract_prioritizes_explicit_proposal_turn(
+    tmp_path: Path,
+) -> None:
+    chat = ChatStore(tmp_path / "chat.db")
+    conv = chat.create_conversation("Proposal contract")
+    participant = ParticipantStore(tmp_path / "chat.db").add(
+        conversation_id=conv.id,
+        role="architect",
+        display_name="Architect GOD",
+        cli_kind="codex",
+        model="gpt-5.4",
+    )
+    message = chat.add_message(
+        conv.id,
+        "human",
+        "human",
+        "@architect Use MCP tool chat_emit_proposal now.",
+    )
+
+    item = ChatInboxStore(tmp_path / "chat.db").create_item(
+        conversation_id=conv.id,
+        target_participant_id=participant.participant_id,
+        target_role=participant.role,
+        target_address="@architect",
+        sender_participant_id=None,
+        sender_address="@human",
+        source_message_id=message.id,
+        item_type="mention",
+        payload={
+            "content": (
+                "@architect Use MCP tool chat_emit_proposal now. "
+                "Do not use chat_post_message for this proposal turn.\n"
+                'references: ["collaboration:run-1"]'
+            )
+        },
+    )
+
+    contract = item.expected_writeback_contract
+    assert contract is not None
+    assert contract["required_tool"] == "chat_emit_proposal"
+    assert contract["allowed_terminal_tools"] == ["chat_emit_proposal"]
+    assert contract["required_marker"] == "collaboration:run-1"
+    assert contract["contract_reason"] == "explicit_chat_emit_proposal_request"
+    assert item.payload["expected_writeback_contract"] == contract
+
+
+@pytest.mark.asyncio
+async def test_scheduler_rejects_wrong_tool_for_explicit_proposal_contract(
+    tmp_path: Path,
+) -> None:
+    chat = ChatStore(tmp_path / "chat.db")
+    conv = chat.create_conversation("Proposal wrong tool")
+    participant = ParticipantStore(tmp_path / "chat.db").add(
+        conversation_id=conv.id,
+        role="architect",
+        display_name="Architect GOD",
+        cli_kind="codex",
+        model="gpt-5.4",
+    )
+    message = chat.add_message(
+        conv.id,
+        "human",
+        "human",
+        "@architect Use MCP tool chat_emit_proposal now.",
+    )
+    item = ChatInboxStore(tmp_path / "chat.db").create_item(
+        conversation_id=conv.id,
+        target_participant_id=participant.participant_id,
+        target_role=participant.role,
+        target_address="@architect",
+        sender_participant_id=None,
+        sender_address="@human",
+        source_message_id=message.id,
+        item_type="mention",
+        payload={
+            "content": (
+                "@architect Use MCP tool chat_emit_proposal now. "
+                "Do not use chat_post_message for this proposal turn."
+            )
+        },
+    )
+
+    class WrongToolGodLayer(FakeGodLayer):
+        def __init__(self) -> None:
+            super().__init__()
+            self.context = None
+
+        async def send_message(
+            self,
+            god_session_id,
+            message_type,
+            prompt,
+            context,
+            request_id=None,
+        ):
+            self.sent.append((god_session_id, message_type, prompt, context, request_id))
+            self.context = json.loads(context)
+
+        async def receive_message(self, god_session_id):
+            assert self.context is not None
+            inbox_item = self.context["inbox_item"]
+            reply = chat.add_message(
+                inbox_item["conversation_id"],
+                participant.participant_id,
+                "assistant",
+                "I will create a proposal later.",
+            )
+            ChatInboxStore(tmp_path / "chat.db").mark_read(
+                inbox_item["id"],
+                responded_message_id=reply.id,
+            )
+            PeerTurnLatencyTraceStore(tmp_path / "chat.db").record_mcp_tool_stage(
+                conversation_id=inbox_item["conversation_id"],
+                inbox_item_id=inbox_item["id"],
+                tool_name="chat_post_message",
+                called_at=1.0,
+            )
+            return self.receive_result
+
+    layer = WrongToolGodLayer()
+    scheduler = PeerChatScheduler(
+        db_path=tmp_path / "chat.db",
+        god_layer=layer,
+        worktree=tmp_path,
+        scheduler_id="sched-test",
+        response_wait_s=1.0,
+    )
+
+    outcome = await scheduler.tick_once()
+
+    assert outcome.failed == 1
+    updated = ChatInboxStore(tmp_path / "chat.db").get(item.id)
+    assert updated.status == "failed"
+    assert updated.failure_reason == "peer_writeback_contract_mismatch"
+    trace = PeerTurnLatencyTraceStore(tmp_path / "chat.db").list_recent(conv.id)[0]
+    assert trace["degraded_reason"] == "peer_writeback_contract_mismatch"
+
+
 @pytest.mark.asyncio
 async def test_scheduler_releases_turn_after_durable_writeback_before_provider_result(
     tmp_path: Path,

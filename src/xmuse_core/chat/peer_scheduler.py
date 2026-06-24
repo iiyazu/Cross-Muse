@@ -395,20 +395,28 @@ class PeerChatScheduler:
                 inbox_item_id=item.id,
                 item=refreshed,
             ):
+                reason = self._writeback_failure_reason(
+                    item.conversation_id,
+                    refreshed.responded_message_id,
+                    participant_id=participant.participant_id,
+                    inbox_item_id=item.id,
+                    item=refreshed,
+                )
                 self._finish_active_stream_for_item(item, status="error")
-                self._record_latency_trace(
+                trace = self._record_latency_trace(
                     item,
                     trace_start_at=trace_start_at,
                     delivery_started_at=delivery_started_at,
                     provider_turn_started_at=provider_turn_started_at,
                     scheduler_observed_result_at=scheduler_observed_result_at,
                     delivery_mode="failed",
-                    degraded_reason="peer_no_inbox_writeback_message",
+                    degraded_reason=reason,
                     transport_latency_stages=transport_latency_stages,
                 )
-                self._record_failed_nudge(
-                    item.id,
-                    reason="peer_no_inbox_writeback_message",
+                self._terminalize_claimed_item_failure(
+                    item,
+                    reason=reason,
+                    trace=trace,
                 )
                 return PeerChatSchedulerOutcome(failed=1)
             _put_latency_stage(
@@ -563,6 +571,31 @@ class PeerChatScheduler:
         stages = set(self._latency.list_mcp_tool_stages(conversation_id, inbox_item_id))
         return bool(terminal_tools & stages)
 
+    def _writeback_failure_reason(
+        self,
+        conversation_id: str,
+        responded_message_id: str | None,
+        *,
+        participant_id: str,
+        inbox_item_id: str,
+        item,
+    ) -> str:
+        contract = getattr(item, "expected_writeback_contract", None)
+        if not contract_requires_response_message(contract):
+            return "peer_no_inbox_writeback_message"
+        message = self._writeback_message(
+            conversation_id,
+            responded_message_id,
+            participant_id=participant_id,
+        )
+        if message is None:
+            return "peer_no_inbox_writeback_message"
+        terminal_tools = allowed_terminal_tools(contract)
+        stages = set(self._latency.list_mcp_tool_stages(conversation_id, inbox_item_id))
+        if terminal_tools and not terminal_tools & stages:
+            return "peer_writeback_contract_mismatch"
+        return "peer_no_inbox_writeback_message"
+
     def _has_real_writeback_message(
         self,
         conversation_id: str,
@@ -572,8 +605,25 @@ class PeerChatScheduler:
         inbox_item_id: str,
         terminal_tools: set[str],
     ) -> bool:
-        if not responded_message_id:
+        message = self._writeback_message(
+            conversation_id,
+            responded_message_id,
+            participant_id=participant_id,
+        )
+        if message is None:
             return False
+        stages = self._latency.list_mcp_tool_stages(conversation_id, inbox_item_id)
+        return bool(terminal_tools & set(stages))
+
+    def _writeback_message(
+        self,
+        conversation_id: str,
+        responded_message_id: str | None,
+        *,
+        participant_id: str,
+    ):
+        if not responded_message_id:
+            return None
         message = next(
             (
                 item
@@ -583,11 +633,10 @@ class PeerChatScheduler:
             None,
         )
         if message is None:
-            return False
+            return None
         if message.author != participant_id or message.role != "assistant":
-            return False
-        stages = self._latency.list_mcp_tool_stages(conversation_id, inbox_item_id)
-        return bool(terminal_tools & set(stages))
+            return None
+        return message
 
     def _record_latency_trace(
         self,
