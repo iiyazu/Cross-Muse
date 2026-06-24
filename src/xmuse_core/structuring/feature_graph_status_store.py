@@ -638,7 +638,11 @@ def _status_from_graph_set(
             updated_at=updated_at,
         ),
         conversation_id=graph_set.feature_plan.conversation_id,
-        planning_run_id=previous.planning_run_id if previous is not None else None,
+        planning_run_id=(
+            previous.planning_run_id
+            if previous is not None and previous.planning_run_id is not None
+            else _planning_run_id_for_graph_set(graph_set)
+        ),
         graph_set_id=graph_set.id,
         graph_set_version=graph_set.version,
         feature_plan_id=graph_set.feature_plan.id,
@@ -686,6 +690,10 @@ def _feature_graph_status_id(
         .replace("Z", "z")
     )
     return f"fgs:{graph_set_id}:{feature_graph_id}:{status.value}:{safe_updated_at}"
+
+
+def _planning_run_id_for_graph_set(graph_set: FeatureGraphSet) -> str:
+    return f"planning-run:{graph_set.id}"
 
 
 def _initialized_event(

@@ -484,6 +484,10 @@ def test_feature_plan_proposal_api_approval_saves_graph_set_before_projecting_re
         FeatureGraphExecutionStatus.READY,
         FeatureGraphExecutionStatus.PLANNED,
     ]
+    assert [record.planning_run_id for record in status_records] == [
+        f"planning-run:{expected_graph_set_id}",
+        f"planning-run:{expected_graph_set_id}",
+    ]
     assert status_records[0].ready_lane_ids == ["feature-plan-schema-01-implement"]
     assert status_records[0].projection_lane_ids == [lanes[0]["feature_id"]]
     assert status_records[1].ready_lane_ids == []
