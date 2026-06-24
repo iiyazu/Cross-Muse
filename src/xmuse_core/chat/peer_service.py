@@ -1587,6 +1587,8 @@ class PeerChatService:
                 mentions=mentions,
                 allow_default_intake=not has_inactive_mentions,
             )
+        intake_kind = _human_intake_kind(inbox_items)
+        inbox_items = _with_human_intake_kind(inbox_items, intake_kind=intake_kind)
         payload = self._chat.create_message_inbox_and_log(
             conversation_id=conversation_id,
             tool_name="post_human_message",
@@ -1596,7 +1598,10 @@ class PeerChatService:
             role="human",
             content=content,
             envelope_type="message",
-            envelope_json=normalize_envelope({"type": "message"}, envelope_type="message"),
+            envelope_json=normalize_envelope(
+                {"type": "message", "intake_kind": intake_kind},
+                envelope_type="message",
+            ),
             mentions=mention_values,
             inbox_items=inbox_items,
             turn_budget_action="reset",
@@ -2926,6 +2931,28 @@ def _collaboration_response_target(role: str, targets: list[str]) -> str | None:
     if address in targets:
         return address
     return None
+
+
+def _human_intake_kind(inbox_items: list[dict[str, Any]]) -> str:
+    item_types = {str(item.get("item_type") or "") for item in inbox_items}
+    if "mention" in item_types:
+        return "direct_handoff"
+    if "default_intake" in item_types:
+        return "goal_intake"
+    return "chat_note"
+
+
+def _with_human_intake_kind(
+    inbox_items: list[dict[str, Any]],
+    *,
+    intake_kind: str,
+) -> list[dict[str, Any]]:
+    enriched: list[dict[str, Any]] = []
+    for item in inbox_items:
+        payload = dict(item.get("payload") or {})
+        payload.setdefault("intake_kind", intake_kind)
+        enriched.append({**item, "payload": payload})
+    return enriched
 
 
 _SECONDARY_DIRECTIVE_VERBS = {
