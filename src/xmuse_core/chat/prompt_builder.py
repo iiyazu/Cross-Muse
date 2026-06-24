@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from xmuse_core.chat.participant_store import Participant
+from xmuse_core.chat.writeback_contract import contract_text
 
 PROMPT_CONTRACT_VERSION = "xmuse-peer-chat-prompt-v2"
 
@@ -64,7 +65,7 @@ class XmusePromptBuilder:
             _member_identity_layer(participant),
             _roster_layer(group_context),
             _context_capsule_layer(group_context, inbox_item),
-            _tool_writeback_layer(),
+            _tool_writeback_layer(inbox_item),
         )
         text = "\n\n".join(
             f"## {layer.name}\n\n{layer.content.strip()}" for layer in layers
@@ -157,10 +158,14 @@ def _context_capsule_layer(group_context: dict[str, Any], inbox_item: Any) -> Pr
     )
 
 
-def _tool_writeback_layer() -> PromptLayer:
+def _tool_writeback_layer(inbox_item: Any) -> PromptLayer:
+    item_contract = contract_text(
+        getattr(inbox_item, "expected_writeback_contract", None)
+    )
     return PromptLayer(
         name="tool_and_writeback_contract",
         content=(
+            f"{item_contract}\n\n"
             "You have unread xmuse chat inbox items in conversation "
             "xmuse_context.conversation_id. If xmuse MCP tools are available, "
             "call chat_post_message directly with "

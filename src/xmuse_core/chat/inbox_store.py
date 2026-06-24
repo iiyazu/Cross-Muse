@@ -8,6 +8,10 @@ from pathlib import Path
 from typing import Any
 
 from xmuse_core.chat.models import ChatInboxItem
+from xmuse_core.chat.writeback_contract import (
+    contract_from_payload_or_default,
+    with_expected_writeback_contract,
+)
 
 
 def _utc_now() -> datetime:
@@ -40,6 +44,12 @@ class ChatInboxStore:
     ) -> ChatInboxItem:
         now = _iso(_utc_now())
         item_id = f"inbox_{uuid.uuid4().hex}"
+        payload = with_expected_writeback_contract(
+            payload,
+            item_type=item_type,
+            inbox_item_id=item_id,
+            target_role=target_role,
+        )
         with self._connect() as conn:
             source = conn.execute(
                 "select conversation_id from messages where id = ?",
@@ -272,6 +282,13 @@ class ChatInboxStore:
 
     def _from_row(self, row: sqlite3.Row) -> ChatInboxItem:
         payload = dict(row)
+        payload_json = json.loads(payload["payload_json"])
+        contract = contract_from_payload_or_default(
+            payload=payload_json,
+            item_type=payload["item_type"],
+            inbox_item_id=payload["id"],
+            target_role=payload["target_role"],
+        )
         return ChatInboxItem(
             id=payload["id"],
             conversation_id=payload["conversation_id"],
@@ -282,7 +299,8 @@ class ChatInboxStore:
             sender_address=payload["sender_address"],
             source_message_id=payload["source_message_id"],
             item_type=payload["item_type"],
-            payload=json.loads(payload["payload_json"]),
+            payload=payload_json,
+            expected_writeback_contract=contract,
             status=payload["status"],
             claim_owner=payload["claim_owner"],
             claimed_at=payload["claimed_at"],

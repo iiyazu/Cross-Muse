@@ -22,6 +22,10 @@ from xmuse_core.chat.models import (
 )
 from xmuse_core.chat.participant_store import _PREDEFINED_TEMPLATES
 from xmuse_core.chat.participant_store import _new_id as _ps_new_id
+from xmuse_core.chat.writeback_contract import (
+    contract_from_payload_or_default,
+    with_expected_writeback_contract,
+)
 
 
 def _utc_now() -> str:
@@ -234,6 +238,18 @@ class ChatStore:
                 created_items = []
                 for item in inbox_items:
                     item_id = self._new_id("inbox")
+                    item_payload = with_expected_writeback_contract(
+                        item["payload"],
+                        item_type=item["item_type"],
+                        inbox_item_id=item_id,
+                        target_role=item.get("target_role"),
+                    )
+                    item_contract = contract_from_payload_or_default(
+                        payload=item_payload,
+                        item_type=item["item_type"],
+                        inbox_item_id=item_id,
+                        target_role=item.get("target_role"),
+                    )
                     conn.execute(
                         """
                         insert into chat_inbox_items (
@@ -254,17 +270,19 @@ class ChatStore:
                             item["sender_address"],
                             message.id,
                             item["item_type"],
-                            json.dumps(item["payload"]),
+                            json.dumps(item_payload),
                             now,
                             now,
                         ),
                     )
                     created_items.append(
                         {
+                            **item,
                             "id": item_id,
                             "conversation_id": conversation_id,
                             "source_message_id": message.id,
-                            "payload": item["payload"],
+                            "payload": item_payload,
+                            "expected_writeback_contract": item_contract,
                             "status": "unread",
                             "claim_owner": None,
                             "claimed_at": None,
@@ -275,7 +293,6 @@ class ChatStore:
                             "failure_reason": None,
                             "created_at": now,
                             "updated_at": now,
-                            **item,
                         }
                     )
 
@@ -316,6 +333,18 @@ class ChatStore:
                     )
                     if callback_item is not None:
                         item_id = self._new_id("inbox")
+                        callback_payload = with_expected_writeback_contract(
+                            callback_item["payload"],
+                            item_type=callback_item["item_type"],
+                            inbox_item_id=item_id,
+                            target_role=callback_item.get("target_role"),
+                        )
+                        callback_contract = contract_from_payload_or_default(
+                            payload=callback_payload,
+                            item_type=callback_item["item_type"],
+                            inbox_item_id=item_id,
+                            target_role=callback_item.get("target_role"),
+                        )
                         conn.execute(
                             """
                             insert into chat_inbox_items (
@@ -336,17 +365,19 @@ class ChatStore:
                                 callback_item["sender_address"],
                                 message.id,
                                 callback_item["item_type"],
-                                json.dumps(callback_item["payload"]),
+                                json.dumps(callback_payload),
                                 now,
                                 now,
                             ),
                         )
                         created_items.append(
                             {
+                                **callback_item,
                                 "id": item_id,
                                 "conversation_id": conversation_id,
                                 "source_message_id": message.id,
-                                "payload": callback_item["payload"],
+                                "payload": callback_payload,
+                                "expected_writeback_contract": callback_contract,
                                 "status": "unread",
                                 "claim_owner": None,
                                 "claimed_at": None,
@@ -357,7 +388,6 @@ class ChatStore:
                                 "failure_reason": None,
                                 "created_at": now,
                                 "updated_at": now,
-                                **callback_item,
                             }
                         )
 

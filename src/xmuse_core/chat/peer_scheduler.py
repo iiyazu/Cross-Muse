@@ -21,6 +21,10 @@ from xmuse_core.chat.participant_store import Participant, ParticipantStore
 from xmuse_core.chat.prompt_builder import XmusePromptBuilder
 from xmuse_core.chat.store import ChatStore
 from xmuse_core.chat.stream_store import ChatStreamStore, PeerTurnLatencyTraceStore
+from xmuse_core.chat.writeback_contract import (
+    allowed_terminal_tools,
+    contract_requires_response_message,
+)
 
 _DURABLE_WRITEBACK = object()
 
@@ -222,7 +226,7 @@ class PeerChatScheduler:
                     refreshed.responded_message_id,
                     participant_id=participant.participant_id,
                     inbox_item_id=item.id,
-                    item_type=getattr(item, "item_type", None),
+                    item=refreshed,
                 ):
                     _put_latency_stage(
                         transport_latency_stages,
@@ -292,7 +296,7 @@ class PeerChatScheduler:
                     refreshed.responded_message_id,
                     participant_id=participant.participant_id,
                     inbox_item_id=item.id,
-                    item_type=getattr(item, "item_type", None),
+                    item=refreshed,
                 ):
                     _put_latency_stage(
                         transport_latency_stages,
@@ -389,7 +393,7 @@ class PeerChatScheduler:
                 refreshed.responded_message_id,
                 participant_id=participant.participant_id,
                 inbox_item_id=item.id,
-                item_type=getattr(item, "item_type", None),
+                item=refreshed,
             ):
                 self._finish_active_stream_for_item(item, status="error")
                 self._record_latency_trace(
@@ -494,7 +498,7 @@ class PeerChatScheduler:
                         refreshed.responded_message_id,
                         participant_id=participant.participant_id,
                         inbox_item_id=item.id,
-                        item_type=getattr(item, "item_type", None),
+                        item=refreshed,
                     ):
                         grace_result = await self._wait_for_provider_result_during_grace(
                             receive_task
@@ -544,20 +548,20 @@ class PeerChatScheduler:
         *,
         participant_id: str,
         inbox_item_id: str,
-        item_type: str | None,
+        item,
     ) -> bool:
-        if self._has_real_writeback_message(
-            conversation_id,
-            responded_message_id,
-            participant_id=participant_id,
-            inbox_item_id=inbox_item_id,
-        ):
-            return True
+        contract = getattr(item, "expected_writeback_contract", None)
+        terminal_tools = allowed_terminal_tools(contract)
+        if contract_requires_response_message(contract):
+            return self._has_real_writeback_message(
+                conversation_id,
+                responded_message_id,
+                participant_id=participant_id,
+                inbox_item_id=inbox_item_id,
+                terminal_tools=terminal_tools,
+            )
         stages = set(self._latency.list_mcp_tool_stages(conversation_id, inbox_item_id))
-        return (
-            item_type == "collaboration_request"
-            and "chat_record_collaboration_response" in stages
-        )
+        return bool(terminal_tools & stages)
 
     def _has_real_writeback_message(
         self,
@@ -566,6 +570,7 @@ class PeerChatScheduler:
         *,
         participant_id: str,
         inbox_item_id: str,
+        terminal_tools: set[str],
     ) -> bool:
         if not responded_message_id:
             return False
@@ -582,15 +587,7 @@ class PeerChatScheduler:
         if message.author != participant_id or message.role != "assistant":
             return False
         stages = self._latency.list_mcp_tool_stages(conversation_id, inbox_item_id)
-        return bool(
-            {
-                "chat_create_collaboration_request",
-                "chat_emit_proposal",
-                "chat_mention",
-                "chat_post_message",
-            }
-            & set(stages)
-        )
+        return bool(terminal_tools & set(stages))
 
     def _record_latency_trace(
         self,

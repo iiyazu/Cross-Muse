@@ -47,6 +47,12 @@ def test_human_post_resolves_mention_and_creates_inbox(tmp_path: Path) -> None:
     assert result.message.mentions == ["@architect"]
     assert len(result.inbox_items) == 1
     assert result.inbox_items[0].target_participant_id == architect.participant_id
+    contract = result.inbox_items[0].expected_writeback_contract
+    assert contract is not None
+    assert contract["source_authority"] == "chat_inbox_items"
+    assert contract["required_tool"] == "chat_post_message"
+    assert "streamed_text" in contract["rejected_evidence"]
+    assert result.inbox_items[0].payload["expected_writeback_contract"] == contract
 
 
 def test_human_post_treats_leading_mentions_as_routing_header(

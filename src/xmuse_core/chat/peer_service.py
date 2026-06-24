@@ -1618,10 +1618,36 @@ class PeerChatService:
         resolver = MentionResolver(self._participants)
         try:
             leading_mentions = resolver.resolve_leading_content(conversation_id, content)
-            mentions = leading_mentions or resolver.resolve_content(conversation_id, content)
+            if leading_mentions:
+                mentions = self._with_secondary_directive_mentions(
+                    conversation_id,
+                    content,
+                    leading_mentions=leading_mentions,
+                )
+            else:
+                mentions = resolver.resolve_content(conversation_id, content)
         except MentionResolutionError as exc:
             raise PeerChatError(exc.code, exc.target) from exc
         return [mention.raw for mention in mentions]
+
+    def _with_secondary_directive_mentions(
+        self,
+        conversation_id: str,
+        content: str,
+        *,
+        leading_mentions,
+    ):
+        resolver = MentionResolver(self._participants)
+        mentions = list(leading_mentions)
+        seen = {mention.normalized for mention in mentions}
+        for mention in resolver.resolve_content(conversation_id, content, strict=False):
+            if mention.normalized in seen:
+                continue
+            if not _looks_like_secondary_directive(content, mention.raw):
+                continue
+            seen.add(mention.normalized)
+            mentions.append(mention)
+        return mentions
 
     def _resolve_human_mentions(
         self,
@@ -2900,6 +2926,42 @@ def _collaboration_response_target(role: str, targets: list[str]) -> str | None:
     if address in targets:
         return address
     return None
+
+
+_SECONDARY_DIRECTIVE_VERBS = {
+    "check",
+    "compare",
+    "continue",
+    "coordinate",
+    "draft",
+    "execute",
+    "fix",
+    "handle",
+    "implement",
+    "inspect",
+    "prepare",
+    "review",
+    "run",
+    "take",
+    "test",
+    "validate",
+}
+
+
+def _looks_like_secondary_directive(content: str, raw_mention: str) -> bool:
+    start = 0
+    while True:
+        index = content.find(raw_mention, start)
+        if index < 0:
+            return False
+        start = index + len(raw_mention)
+        prefix = content[max(0, index - 8):index].strip().lower()
+        if prefix and not prefix.endswith(("and", ",", ";")):
+            continue
+        after = content[start:].lstrip(" \t:,-")
+        first_word = after.split(maxsplit=1)[0].strip(".,;:!?").lower() if after else ""
+        if first_word in _SECONDARY_DIRECTIVE_VERBS:
+            return True
 
 
 def _collaboration_request_content(

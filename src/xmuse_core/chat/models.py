@@ -118,6 +118,7 @@ class ChatInboxItem(BaseModel):
     source_message_id: str
     item_type: str
     payload: dict[str, Any] = Field(default_factory=dict)
+    expected_writeback_contract: dict[str, Any] | None = None
     status: Literal["unread", "claimed", "read", "failed"]
     claim_owner: str | None = None
     claimed_at: str | None = None

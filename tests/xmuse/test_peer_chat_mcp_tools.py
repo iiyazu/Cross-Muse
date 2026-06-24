@@ -834,6 +834,11 @@ def test_chat_read_inbox_includes_claimed_items_for_verified_session(tmp_path: P
 
     assert [inbox_item["id"] for inbox_item in payload["inbox_items"]] == [item.id]
     assert payload["inbox_items"][0]["status"] == "claimed"
+    contract = payload["inbox_items"][0]["expected_writeback_contract"]
+    assert contract["source_authority"] == "chat_inbox_items"
+    assert contract["required_tool"] == "chat_post_message"
+    assert contract["inbox_item_id"] == item.id
+    assert "provider_stdout" in contract["rejected_evidence"]
 
 
 def test_chat_mention_surfaces_display_name_routing_and_inbox_delivery(

@@ -133,6 +133,9 @@ async def test_scheduler_claims_and_nudges_oldest_item(tmp_path: Path) -> None:
     assert '"evidence_refs":["<ref>"]' in layer.sent[0][2]
     assert "verdict=feasible do not satisfy dispatch" in layer.sent[0][2]
     assert "Human approval is still required before dispatch" in layer.sent[0][2]
+    assert "Expected writeback contract:" in layer.sent[0][2]
+    assert "required_tool: chat_post_message" in layer.sent[0][2]
+    assert "rejected_evidence: provider_stdout, streamed_text" in layer.sent[0][2]
 
     assert "Only if MCP tools are unavailable" in layer.sent[0][2]
     assert "This is a group chat" in layer.sent[0][2]
@@ -144,6 +147,12 @@ async def test_scheduler_claims_and_nudges_oldest_item(tmp_path: Path) -> None:
     assert context["participant_id"] == participant.participant_id
     assert context["god_session_id"] == "god-live"
     assert context["inbox_item"]["id"] == item.id
+    contract = context["inbox_item"]["expected_writeback_contract"]
+    assert contract["inbox_item_id"] == item.id
+    assert contract["source_authority"] == "chat_inbox_items"
+    assert contract["required_tool"] == "chat_post_message"
+    assert "provider_stdout" in contract["rejected_evidence"]
+    assert context["inbox_item"]["payload"]["expected_writeback_contract"] == contract
     assert context["group_chat"]["participants"] == [
         {
             "participant_id": participant.participant_id,
@@ -184,6 +193,43 @@ async def test_scheduler_claims_and_nudges_oldest_item(tmp_path: Path) -> None:
     assert claimed.status == "unread"
     assert claimed.claim_owner == "sched-test"
     assert claimed.nudge_count == 1
+
+
+def test_inbox_expected_writeback_contract_is_item_type_specific(
+    tmp_path: Path,
+) -> None:
+    chat = ChatStore(tmp_path / "chat.db")
+    conv = chat.create_conversation("Writeback contract")
+    participant = ParticipantStore(tmp_path / "chat.db").add(
+        conversation_id=conv.id,
+        role="execute",
+        display_name="Execute GOD",
+        cli_kind="codex",
+        model="gpt-5.4",
+    )
+    message = chat.add_message(conv.id, "system", "system", "Collaboration request")
+
+    item = ChatInboxStore(tmp_path / "chat.db").create_item(
+        conversation_id=conv.id,
+        target_participant_id=participant.participant_id,
+        target_role=participant.role,
+        target_address="@execute",
+        sender_participant_id=None,
+        sender_address="@collaboration:run-1",
+        source_message_id=message.id,
+        item_type="collaboration_request",
+        payload={"content": "Respond formally.", "collaboration_run_id": "run-1"},
+    )
+
+    contract = item.expected_writeback_contract
+    assert contract is not None
+    assert contract["required_tool"] == "chat_record_collaboration_response"
+    assert contract["allowed_terminal_tools"] == [
+        "chat_record_collaboration_response"
+    ]
+    assert contract["responded_message_required"] is False
+    assert contract["required_args"] == {"run_id": "run-1"}
+    assert item.payload["expected_writeback_contract"] == contract
 
 
 @pytest.mark.asyncio
@@ -395,7 +441,7 @@ async def test_scheduler_tick_many_claims_multiple_inbox_items_concurrently(
         god_layer=layer,
         worktree=tmp_path,
         scheduler_id="sched-test",
-        response_wait_s=0.1,
+        response_wait_s=1.0,
     )
 
     outcome = await scheduler.tick_many(max_concurrent=3)
