@@ -631,7 +631,9 @@ def test_feature_graph_status_store_initializes_graph_set_statuses(
         ("feature-b", FeatureGraphExecutionStatus.PLANNED),
     ]
     assert initialized[0].ready_lane_ids == ["feature-a-root"]
-    assert initialized[0].projection_lane_ids == []
+    assert initialized[0].projection_lane_ids == [
+        "lane:conv-1:graph-feature-a:feature-a-root:4a03f120661c"
+    ]
     assert initialized[0].feature_lanes_projection_ref is None
     assert store.list_ready(graph_set_id="graph-set-1") == [initialized[0]]
     assert [

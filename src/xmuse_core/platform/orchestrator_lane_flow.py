@@ -96,13 +96,16 @@ def _graph_native_dispatch_authority_allows_lane(orchestrator, lane: dict[str, A
     status = _graph_native_status_record(orchestrator, lane)
     if status is None:
         return True
-    lane_id = str(lane["feature_id"])
+    lane_ids = _graph_native_lane_identity_candidates(lane)
     if status.status is FeatureGraphExecutionStatus.REWORKING:
         return True
     if status.status is FeatureGraphExecutionStatus.READY:
-        return lane_id in status.ready_lane_ids
+        return _has_any(lane_ids, status.ready_lane_ids) or _has_any(
+            lane_ids,
+            status.projection_lane_ids,
+        )
     if status.status is FeatureGraphExecutionStatus.RUNNING:
-        return lane_id in status.active_lane_ids
+        return _has_any(lane_ids, status.active_lane_ids)
     return False
 
 
@@ -119,7 +122,21 @@ def _graph_native_execution_authority_allows_lane(orchestrator, lane: dict[str, 
         return True
     if status.status is not FeatureGraphExecutionStatus.RUNNING:
         return False
-    return str(lane["feature_id"]) in status.active_lane_ids
+    return _has_any(_graph_native_lane_identity_candidates(lane), status.active_lane_ids)
+
+
+def _graph_native_lane_identity_candidates(lane: dict[str, Any]) -> list[str]:
+    candidates: list[str] = []
+    for key in ("feature_id", "lane_id", "lane_local_id"):
+        value = lane.get(key)
+        if isinstance(value, str) and value and value not in candidates:
+            candidates.append(value)
+    return candidates
+
+
+def _has_any(candidates: list[str], values: list[str]) -> bool:
+    value_set = set(values)
+    return any(candidate in value_set for candidate in candidates)
 
 
 def _graph_native_reprojection_authority_allows_lane(

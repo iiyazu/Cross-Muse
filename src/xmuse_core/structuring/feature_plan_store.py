@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path, PurePath
 from typing import Any
 
@@ -12,6 +13,7 @@ from xmuse_core.structuring.decomposition_review import (
     build_graph_set_decomposition_review,
 )
 from xmuse_core.structuring.feature_graph_builder import build_feature_graph_set
+from xmuse_core.structuring.feature_graph_status_store import FeatureGraphStatusStore
 from xmuse_core.structuring.models import (
     ApprovedMissionBlueprint,
     FeatureGraphSet,
@@ -25,6 +27,10 @@ from xmuse_core.structuring.planning_contracts import (
     PlanningReviewResponse,
 )
 from xmuse_core.structuring.projection import project_feature_graph_set_ready_lanes
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def read_approved_mission_blueprint(resolution: StructuredResolution) -> ApprovedMissionBlueprint:
@@ -127,6 +133,12 @@ def save_feature_graph_set_artifacts(
         deep=True,
     )
     FeatureGraphSetStore(graph_sets_root).save(graph_set)
+    FeatureGraphStatusStore(
+        Path(lanes_path).parent / "feature_graph_statuses.json"
+    ).initialize_from_graph_set(
+        graph_set,
+        updated_at=_utc_now_iso(),
+    )
     project_feature_graph_set_ready_lanes(
         graph_set,
         lanes_path,

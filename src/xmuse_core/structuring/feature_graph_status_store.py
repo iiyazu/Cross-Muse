@@ -9,6 +9,7 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Any
 
+from xmuse_core.namespaces import build_projection_lane_id
 from xmuse_core.structuring.feature_review_contracts import (
     FeatureGraphExecutionStatus,
     FeatureGraphExecutionStatusRecord,
@@ -621,6 +622,14 @@ def _status_from_graph_set(
     previous: FeatureGraphExecutionStatusRecord | None = None,
 ) -> FeatureGraphExecutionStatusRecord:
     root_lane_ids = [lane.feature_id for lane in graph.lanes if not lane.depends_on]
+    root_projection_lane_ids = [
+        build_projection_lane_id(
+            conversation_id=graph.conversation_id,
+            graph_id=graph.id,
+            lane_local_id=lane_id,
+        )
+        for lane_id in root_lane_ids
+    ]
     return FeatureGraphExecutionStatusRecord(
         status_id=_feature_graph_status_id(
             graph_set_id=graph_set.id,
@@ -646,7 +655,11 @@ def _status_from_graph_set(
             else []
         ),
         blocked_lane_ids=[],
-        projection_lane_ids=[],
+        projection_lane_ids=(
+            root_projection_lane_ids
+            if status is FeatureGraphExecutionStatus.READY
+            else []
+        ),
         feature_lanes_projection_ref=(
             previous.feature_lanes_projection_ref if previous is not None else None
         ),

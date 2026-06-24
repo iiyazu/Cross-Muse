@@ -35,12 +35,18 @@ from xmuse_core.structuring.models import (
     FeatureGraphPatchForwardGateResult,
     FeatureGraphPatchForwardPlan,
     FeatureGraphReviewCoordinatorAction,
+    FeatureGraphSet,
     FeatureGraphTakeoverPlan,
+    FeaturePlan,
+    FeaturePlanFeature,
     FeatureReviewVerdict,
+    LaneGraph,
+    LaneNode,
     ProviderSessionBindingRecord,
     ProviderSessionBindingStatus,
     ReworkPacket,
 )
+from xmuse_core.structuring.projection import project_feature_graph_set_ready_lanes
 from xmuse_core.structuring.verdict_store import ClarificationStore
 
 CONTRACT_ROOT = Path("tests/fixtures/xmuse/contracts/artifacts")
@@ -193,6 +199,78 @@ async def test_dispatch_lane_allows_graph_native_ready_membership_for_matching_l
 
     assert orch._sm.get_lane("lane-1")["status"] == "dispatched"
     run_exec.assert_awaited_once_with("lane-1")
+
+
+@pytest.mark.asyncio
+async def test_dispatch_lane_allows_initialized_graph_native_projection_identity(
+    tmp_path: Path,
+) -> None:
+    lanes_path = tmp_path / "feature_lanes.json"
+    graph_set = FeatureGraphSet(
+        id="graph-set-b4",
+        feature_plan=FeaturePlan(
+            id="plan-b4",
+            conversation_id="conv-1",
+            resolution_id="res-1",
+            version=7,
+            features=[
+                FeaturePlanFeature(
+                    feature_id="schema",
+                    title="Schema",
+                    goal="Add graph-set schema.",
+                    acceptance_criteria=["Schema validates."],
+                    graph_id="graph-schema",
+                ),
+            ],
+        ),
+        graphs=[
+            LaneGraph(
+                id="graph-schema",
+                conversation_id="conv-1",
+                resolution_id="res-1",
+                version=7,
+                lanes=[
+                    LaneNode(
+                        feature_id="schema-root",
+                        prompt="Implement schema.",
+                    )
+                ],
+            ),
+        ],
+    )
+    status_store = FeatureGraphStatusStore(tmp_path / "feature_graph_statuses.json")
+    initialized = status_store.initialize_from_graph_set(
+        graph_set,
+        updated_at="2026-06-24T12:00:00Z",
+    )
+    projected = project_feature_graph_set_ready_lanes(
+        graph_set,
+        lanes_path,
+        terminal_success_feature_ids=set(),
+    )
+    projected_doc = json.loads(lanes_path.read_text(encoding="utf-8"))
+    projected_doc["lanes"][0].update(
+        {
+            "worktree": str(tmp_path),
+            "branch": "test-branch",
+            "base_head_sha": "unknown",
+        }
+    )
+    lanes_path.write_text(json.dumps(projected_doc) + "\n", encoding="utf-8")
+    orch = PlatformOrchestrator(
+        lanes_path=lanes_path,
+        xmuse_root=tmp_path,
+        mcp_port=9999,
+        feature_graph_status_store=status_store,
+    )
+
+    with patch.object(orch, "_run_execution_god", new_callable=AsyncMock) as run_exec:
+        await orch.dispatch_lane(projected[0]["feature_id"])
+
+    assert initialized[0].ready_lane_ids == ["schema-root"]
+    assert initialized[0].projection_lane_ids == [projected[0]["feature_id"]]
+    assert orch._sm.get_lane(projected[0]["feature_id"])["status"] == "dispatched"
+    run_exec.assert_awaited_once_with(projected[0]["feature_id"])
 
 
 @pytest.mark.asyncio

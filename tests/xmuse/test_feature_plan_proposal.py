@@ -9,6 +9,7 @@ import xmuse_core.structuring.feature_plan_store as feature_plan_store_module
 from xmuse.chat_api import create_app
 from xmuse_core.chat.models import StructuredResolution
 from xmuse_core.namespaces import build_conversation_graph_set_id
+from xmuse_core.structuring.feature_graph_status_store import FeatureGraphStatusStore
 from xmuse_core.structuring.feature_plan_store import (
     FeatureGraphSetStore,
     FeaturePlanStore,
@@ -17,6 +18,7 @@ from xmuse_core.structuring.feature_plan_store import (
     read_approved_mission_blueprint,
 )
 from xmuse_core.structuring.models import (
+    FeatureGraphExecutionStatus,
     FeaturePlanFeature,
     FeaturePlanProposal,
     FeaturePlanProposalApproval,
@@ -456,6 +458,9 @@ def test_feature_plan_proposal_api_approval_saves_graph_set_before_projecting_re
     assert lanes[0]["feature_plan_feature_id"] == "feature-plan-schema"
     assert lanes[0]["graph_id"] == "graph-feature-plan-schema"
     graph_set = FeatureGraphSetStore(tmp_path / "lane_graphs").load(expected_graph_set_id)
+    status_records = FeatureGraphStatusStore(
+        tmp_path / "feature_graph_statuses.json"
+    ).list(graph_set_id=expected_graph_set_id)
 
     stored = FeaturePlanStore(tmp_path / "feature_plans").load(feature_plan_proposal["id"])
 
@@ -471,6 +476,18 @@ def test_feature_plan_proposal_api_approval_saves_graph_set_before_projecting_re
         f"feature_plan:{feature_plan_proposal['id']}:v{payload['version']}",
         blueprint_ref,
     ]
+    assert [record.feature_graph_id for record in status_records] == [
+        "graph-feature-plan-schema",
+        "graph-feature-plan-projection",
+    ]
+    assert [record.status for record in status_records] == [
+        FeatureGraphExecutionStatus.READY,
+        FeatureGraphExecutionStatus.PLANNED,
+    ]
+    assert status_records[0].ready_lane_ids == ["feature-plan-schema-01-implement"]
+    assert status_records[0].projection_lane_ids == [lanes[0]["feature_id"]]
+    assert status_records[1].ready_lane_ids == []
+    assert status_records[1].projection_lane_ids == []
     assert [graph.id for graph in graph_set.graphs] == [
         "graph-feature-plan-schema",
         "graph-feature-plan-projection",
@@ -589,20 +606,11 @@ def test_feature_plan_proposal_api_rejects_ad_hoc_flat_lane_writes(
             ),
             "references": [blueprint_ref],
         },
-    ).json()
-
-    approved = client.post(
-        f"/api/chat/proposals/{feature_plan_proposal['id']}/approve",
-        json={
-            "approved_by": ["human"],
-            "approval_mode": "manual",
-            "goal_summary": "Reject ad hoc flat-lane writes",
-        },
     )
 
-    assert approved.status_code == 400
-    detail = approved.json()["detail"]
-    assert detail["code"] == "invalid_feature_plan_proposal"
-    assert "flat lane" in detail["message"]
+    assert feature_plan_proposal.status_code == 400
+    detail = feature_plan_proposal.json()["detail"]
+    assert detail["code"] == "invalid_structured_escalation"
+    assert "flat lanes" in detail["message"]
     assert not (tmp_path / "feature_plans").exists()
     assert not (tmp_path / "feature_lanes.json").exists()
