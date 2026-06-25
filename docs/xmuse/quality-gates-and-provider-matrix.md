@@ -51,6 +51,18 @@ cleanup in this phase.
 | runtime health command smoke | `tests/xmuse/test_platform_runner.py::test_health_once_handles_missing_lane_projection` | Proves the health command path handles an empty independent checkout without requiring active lanes. |
 | fake-provider groupchat smoke | `tests/xmuse/test_full_chain_real_run.py::test_real_runtime_restart_resume_smoke_with_fake_app_server` | Proves the local groupchat path can exercise MCP writeback and restart/resume with a fake app-server provider. |
 
+## Peer Chat Runtime Gate
+
+The default workflow also includes `peer-chat-runtime-gate`, a no-secrets focused
+job for durable GOD groupchat contracts. It covers peer scheduler/service,
+mention parsing, prompt/context assembly, collaboration runtime, peer chat API,
+and package-boundary protection.
+
+The gate is intentionally narrower than real runtime proof. It must not require
+provider API keys, live MemoryOS, real Ray/Codex app-server writeback, or
+long-running soak tests. `docs/xmuse/peer-chat-runtime-gate.md` records the
+proof boundary and the server-side enforcement boundary.
+
 Real Ray/Codex soak tests are not default CI. They remain operator-run gates for
 runtime closure, for example:
 

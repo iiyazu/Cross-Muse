@@ -5,6 +5,11 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
+
+concurrency:
+  group: xmuse-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   quality-gates:
@@ -155,3 +160,50 @@ jobs:
         run: >-
           uv run mypy
           src/xmuse_core/integrations/memoryos_lite_interop.py
+
+  peer-chat-runtime-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install project
+        run: uv sync --frozen --all-groups
+
+      - name: Peer chat runtime lint
+        run: >-
+          uv run ruff check
+          src/xmuse_core/chat/context_assembler.py
+          src/xmuse_core/chat/mentions.py
+          src/xmuse_core/chat/peer_scheduler.py
+          src/xmuse_core/chat/peer_service.py
+          src/xmuse_core/chat/prompt_builder.py
+          tests/xmuse/test_groupchat_collaboration_runtime.py
+          tests/xmuse/test_peer_chat_api.py
+          tests/xmuse/test_peer_chat_mentions.py
+          tests/xmuse/test_peer_chat_prompt_builder.py
+          tests/xmuse/test_peer_chat_runtime_gate.py
+          tests/xmuse/test_peer_chat_scheduler.py
+          tests/xmuse/test_peer_chat_service.py
+
+      - name: Peer chat runtime focused tests
+        run: >-
+          uv run pytest -q
+          tests/xmuse/test_peer_chat_scheduler.py
+          tests/xmuse/test_peer_chat_service.py
+          tests/xmuse/test_peer_chat_mentions.py
+          tests/xmuse/test_peer_chat_prompt_builder.py
+          tests/xmuse/test_peer_chat_runtime_gate.py
+          tests/xmuse/test_groupchat_collaboration_runtime.py
+          tests/xmuse/test_peer_chat_api.py
+          tests/xmuse/test_package_boundaries.py
