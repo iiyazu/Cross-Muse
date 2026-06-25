@@ -30,6 +30,7 @@ the workflow job names:
 - `quality-gates`
 - `contract-smoke-gates`
 - `real-runtime-integration-gate`
+- `peer-chat-runtime-gate`
 
 Repository tests can prove that this desired configuration is documented and
 kept in sync with workflow files. GitHub branch protection must still be enabled
