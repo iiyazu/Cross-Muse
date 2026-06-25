@@ -5,6 +5,11 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
+
+concurrency:
+  group: xmuse-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   quality-gates:
@@ -187,6 +192,7 @@ jobs:
           tests/xmuse/test_peer_chat_api.py
           tests/xmuse/test_peer_chat_mentions.py
           tests/xmuse/test_peer_chat_prompt_builder.py
+          tests/xmuse/test_peer_chat_runtime_gate.py
           tests/xmuse/test_peer_chat_scheduler.py
           tests/xmuse/test_peer_chat_service.py
 
@@ -197,6 +203,7 @@ jobs:
           tests/xmuse/test_peer_chat_service.py
           tests/xmuse/test_peer_chat_mentions.py
           tests/xmuse/test_peer_chat_prompt_builder.py
+          tests/xmuse/test_peer_chat_runtime_gate.py
           tests/xmuse/test_groupchat_collaboration_runtime.py
           tests/xmuse/test_peer_chat_api.py
           tests/xmuse/test_package_boundaries.py
