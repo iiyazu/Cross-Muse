@@ -1111,19 +1111,40 @@ def _runtime_closure_cards(inspector: dict | None, *, bootstrap: dict | None = N
             item for item in _dict_rows(blockers.get("items"))
             if bool(item.get("active"))
         ]
-        blocker = _latest_row(active)
+        blocker = blockers.get("first_durable_blocker")
+        if not isinstance(blocker, dict):
+            blocker = _latest_row(active)
         if blocker is not None:
-            blocker_id = str(blocker.get("blocker_id") or "?")
-            severity = str(blocker.get("severity") or "?")
-            issuer = str(blocker.get("issuer") or "?")
-            reason = str(blocker.get("reason") or "").strip()
-            blocks_dispatch = bool(blocker.get("blocks_dispatch"))
-            status = "blocked" if blocks_dispatch else severity
-            summary = f"{blocker_id} {severity} {issuer}"
-            if blocks_dispatch:
-                summary = f"{summary} dispatch-blocking"
-            if reason:
-                summary = f"{summary}: {reason}"
+            source_type = str(blocker.get("source_type") or "collaboration_blocker")
+            if source_type == "acceptance_spine":
+                blocker_id = str(
+                    blocker.get("spine_id") or blocker.get("source_id") or "?"
+                )
+                manual_gaps = _string_list(blocker.get("manual_gaps"))
+                reason = str(
+                    blocker.get("blocked_reason")
+                    or blocker.get("reason")
+                    or (manual_gaps[0] if manual_gaps else "")
+                ).strip()
+                status = str(blocker.get("status") or "blocked")
+                severity = "acceptance_spine"
+                issuer = "chat_store"
+                blocks_dispatch = True
+                summary = f"{blocker_id} acceptance_spine {status}"
+                if reason:
+                    summary = f"{summary}: {reason}"
+            else:
+                blocker_id = str(blocker.get("blocker_id") or "?")
+                severity = str(blocker.get("severity") or "?")
+                issuer = str(blocker.get("issuer") or "?")
+                reason = str(blocker.get("reason") or "").strip()
+                blocks_dispatch = bool(blocker.get("blocks_dispatch"))
+                status = "blocked" if blocks_dispatch else severity
+                summary = f"{blocker_id} {severity} {issuer}"
+                if blocks_dispatch:
+                    summary = f"{summary} dispatch-blocking"
+                if reason:
+                    summary = f"{summary}: {reason}"
             cards.append(
                 _runtime_card(
                     conv_id=conv_id,
@@ -1141,6 +1162,7 @@ def _runtime_closure_cards(inspector: dict | None, *, bootstrap: dict | None = N
                         "issuer": issuer,
                         "severity": severity,
                         "blocks_dispatch": blocks_dispatch,
+                        "source_type": source_type,
                     },
                 )
             )
