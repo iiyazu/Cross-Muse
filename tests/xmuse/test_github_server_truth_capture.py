@@ -61,6 +61,7 @@ def test_github_server_truth_capture_writes_complete_snapshot_evidence(
                         {"context": "quality-gates"},
                         {"context": "contract-smoke-gates"},
                         {"context": "real-runtime-integration-gate"},
+                        {"context": "peer-chat-runtime-gate"},
                     ]
                 },
             },
@@ -84,6 +85,12 @@ def test_github_server_truth_capture_writes_complete_snapshot_evidence(
                         "conclusion": "success",
                         "app": {"slug": "github-actions"},
                     },
+                    {
+                        "id": 114,
+                        "name": "peer-chat-runtime-gate",
+                        "conclusion": "success",
+                        "app": {"slug": "github-actions"},
+                    },
                 ]
             },
         }
@@ -96,6 +103,7 @@ def test_github_server_truth_capture_writes_complete_snapshot_evidence(
             "quality-gates",
             "contract-smoke-gates",
             "real-runtime-integration-gate",
+            "peer-chat-runtime-gate",
         ],
         output=output,
         base_branch="main",
@@ -162,6 +170,7 @@ def test_github_server_truth_capture_accepts_internal_review_evidence(
                         {"context": "quality-gates"},
                         {"context": "contract-smoke-gates"},
                         {"context": "real-runtime-integration-gate"},
+                        {"context": "peer-chat-runtime-gate"},
                     ]
                 },
             },
@@ -185,6 +194,12 @@ def test_github_server_truth_capture_accepts_internal_review_evidence(
                         "conclusion": "success",
                         "app": {"slug": "github-actions"},
                     },
+                    {
+                        "id": 114,
+                        "name": "peer-chat-runtime-gate",
+                        "conclusion": "success",
+                        "app": {"slug": "github-actions"},
+                    },
                 ]
             },
         }
@@ -197,6 +212,7 @@ def test_github_server_truth_capture_accepts_internal_review_evidence(
             "quality-gates",
             "contract-smoke-gates",
             "real-runtime-integration-gate",
+            "peer-chat-runtime-gate",
         ],
         output=output,
         base_branch="main",

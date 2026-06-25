@@ -73,6 +73,7 @@ REQUIRED_GITHUB_CHECKS = [
     "quality-gates",
     "contract-smoke-gates",
     "real-runtime-integration-gate",
+    "peer-chat-runtime-gate",
 ]
 
 

@@ -22,7 +22,14 @@ from xmuse_core.platform.execution.github_ops import (
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CI_WORKFLOW = PROJECT_ROOT / ".github" / "workflows" / "xmuse-ci.yml"
+README = PROJECT_ROOT / "docs" / "xmuse" / "README.md"
 SERVER_GATE_DOC = PROJECT_ROOT / "docs" / "xmuse" / "github-server-side-gate.md"
+LIVE_EVIDENCE_DOC = (
+    PROJECT_ROOT
+    / "docs"
+    / "xmuse"
+    / "github-server-side-gate-live-evidence-2026-06-25.md"
+)
 MERGE_CONTRACT_DOC = PROJECT_ROOT / "docs" / "xmuse" / "github-review-merge-contract.md"
 CODEOWNERS = PROJECT_ROOT / "CODEOWNERS"
 
@@ -30,6 +37,7 @@ REQUIRED_SERVER_CHECKS = {
     "quality-gates",
     "contract-smoke-gates",
     "real-runtime-integration-gate",
+    "peer-chat-runtime-gate",
 }
 
 
@@ -115,13 +123,16 @@ def _read(path: Path) -> str:
 
 def test_branch_protection_doc_matches_workflow_job_names_and_ownership() -> None:
     workflow = _read(CI_WORKFLOW)
+    readme = _read(README)
     server_doc = _read(SERVER_GATE_DOC)
+    live_evidence_doc = _read(LIVE_EVIDENCE_DOC)
     merge_doc = _read(MERGE_CONTRACT_DOC)
     codeowners = _read(CODEOWNERS)
 
     for check_name in REQUIRED_SERVER_CHECKS:
         assert f"{check_name}:" in workflow
         assert check_name in server_doc
+        assert check_name in live_evidence_doc
 
     for fragment in (
         "Require status checks to pass before merging",
@@ -136,6 +147,10 @@ def test_branch_protection_doc_matches_workflow_job_names_and_ownership() -> Non
     ):
         assert fragment in server_doc
 
+    assert "docs/xmuse/github-server-side-gate-live-evidence-2026-06-25.md" in readme
+    assert "cf8c243c9c1b3843d9838748a9ebbb5e2c98c740" in live_evidence_doc
+    assert "28175465079" in live_evidence_doc
+    assert "app_id\": 15368" in live_evidence_doc
     assert "Branch protection" in merge_doc
     assert ".github/" in codeowners
     assert "src/xmuse_core/integrations/" in codeowners
@@ -147,6 +162,7 @@ def test_merge_readiness_contract_uses_server_side_required_checks() -> None:
         CheckStatus(name="quality-gates", status="success"),
         CheckStatus(name="contract-smoke-gates", status="success"),
         CheckStatus(name="real-runtime-integration-gate", status="success"),
+        CheckStatus(name="peer-chat-runtime-gate", status="success"),
     ]
 
     ready = evaluate_merge_readiness(
@@ -155,7 +171,7 @@ def test_merge_readiness_contract_uses_server_side_required_checks() -> None:
         review_evidence_refs=["review:evidence:1"],
     )
     missing = evaluate_merge_readiness(
-        checks[:2],
+        checks[:3],
         required_check_names=sorted(REQUIRED_SERVER_CHECKS),
         review_evidence_refs=["review:evidence:1"],
     )
@@ -167,7 +183,7 @@ def test_merge_readiness_contract_uses_server_side_required_checks() -> None:
 
     assert ready.merge_ready is True
     assert missing.merge_ready is False
-    assert missing.failing_checks == ["real-runtime-integration-gate"]
+    assert missing.failing_checks == ["peer-chat-runtime-gate"]
     assert no_evidence.merge_ready is False
     assert no_evidence.missing_evidence == ["review_evidence_bundle"]
 
@@ -191,7 +207,7 @@ def test_branch_protection_snapshot_must_require_all_expected_checks() -> None:
     snapshot = GitHubServerSideTruthSnapshot(
         workflow_run_id=123,
         check_suite_id=456,
-        check_run_ids=[111, 112, 113],
+        check_run_ids=[111, 112, 113, 114],
         expected_source_app="github-actions",
         branch_protection_snapshot=_branch_protection_snapshot({"quality-gates"}),
         review_event_id=789,
@@ -220,7 +236,7 @@ def test_fake_server_side_truth_collector_never_emits_merge_truth() -> None:
     collector = FakeGitHubServerSideTruthCollector(
         workflow_run_id=123,
         check_suite_id=456,
-        check_run_ids=[111, 112, 113],
+        check_run_ids=[111, 112, 113, 114],
         branch_protection_snapshot=_branch_protection_snapshot(),
         review_event_id=789,
         reviewer_login="reviewer",
@@ -273,7 +289,7 @@ def test_server_side_merge_truth_allows_pr_merged_event() -> None:
         proof_level="server_side_merge_proof",
         workflow_run_id=123,
         check_suite_id=456,
-        check_run_ids=[111, 112, 113],
+        check_run_ids=[111, 112, 113, 114],
         expected_source_app="github-actions",
         branch_protection_snapshot=_branch_protection_snapshot(),
         review_event_id=789,
@@ -349,7 +365,7 @@ def test_contract_proof_with_injected_merge_fields_cannot_emit_pr_merged() -> No
         proof_level="contract_proof",
         workflow_run_id=123,
         check_suite_id=456,
-        check_run_ids=[111, 112, 113],
+        check_run_ids=[111, 112, 113, 114],
         expected_source_app="github-actions",
         branch_protection_snapshot=_branch_protection_snapshot(),
         ruleset_snapshot=None,
@@ -370,7 +386,7 @@ def test_server_side_snapshot_normalizer_promotes_complete_read_only_evidence() 
     snapshot = GitHubServerSideTruthSnapshot(
         workflow_run_id=123,
         check_suite_id=456,
-        check_run_ids=[111, 112, 113],
+        check_run_ids=[111, 112, 113, 114],
         expected_source_app="github-actions",
         branch_protection_snapshot=_branch_protection_snapshot(),
         review_event_id=789,
@@ -399,7 +415,7 @@ def test_server_side_snapshot_normalizer_keeps_incomplete_snapshot_as_gap() -> N
     snapshot = GitHubServerSideTruthSnapshot(
         workflow_run_id=123,
         check_suite_id=456,
-        check_run_ids=[111, 112, 113],
+        check_run_ids=[111, 112, 113, 114],
         expected_source_app="github-actions",
         branch_protection_snapshot=_branch_protection_snapshot(),
         code_owner_review_verified=False,
@@ -427,7 +443,7 @@ def test_server_side_snapshot_accepts_internal_review_when_github_review_not_req
     snapshot = GitHubServerSideTruthSnapshot(
         workflow_run_id=123,
         check_suite_id=456,
-        check_run_ids=[111, 112, 113],
+        check_run_ids=[111, 112, 113, 114],
         expected_source_app="github-actions",
         branch_protection_snapshot=_branch_protection_snapshot(review_policy=None),
         internal_review_artifact="docs/xmuse/opencode-in-long-runtime-evidence-closure.md",
@@ -457,7 +473,7 @@ def test_internal_review_does_not_replace_required_github_review() -> None:
     snapshot = GitHubServerSideTruthSnapshot(
         workflow_run_id=123,
         check_suite_id=456,
-        check_run_ids=[111, 112, 113],
+        check_run_ids=[111, 112, 113, 114],
         expected_source_app="github-actions",
         branch_protection_snapshot=_branch_protection_snapshot(
             review_policy={
@@ -493,7 +509,7 @@ def test_internal_review_does_not_replace_required_github_review() -> None:
 def test_server_side_snapshot_normalizer_treats_empty_rulesets_as_missing_enforcement() -> None:
     snapshot = GitHubServerSideTruthSnapshot(
         workflow_run_id=123,
-        check_run_ids=[111, 112, 113],
+        check_run_ids=[111, 112, 113, 114],
         expected_source_app="github-actions",
         ruleset_snapshot={"rulesets": []},
         review_event_id=789,
@@ -522,7 +538,7 @@ def test_read_only_collector_normalizes_client_snapshot_without_mutation() -> No
     snapshot = GitHubServerSideTruthSnapshot(
         workflow_run_id=123,
         check_suite_id=456,
-        check_run_ids=[111, 112, 113],
+        check_run_ids=[111, 112, 113, 114],
         expected_source_app="github-actions",
         branch_protection_snapshot=_branch_protection_snapshot(),
         review_event_id=789,
@@ -571,7 +587,7 @@ def test_read_only_collector_keeps_partial_client_snapshot_as_gap() -> None:
     snapshot = GitHubServerSideTruthSnapshot(
         workflow_run_id=123,
         check_suite_id=456,
-        check_run_ids=[111, 112, 113],
+        check_run_ids=[111, 112, 113, 114],
         expected_source_app="github-actions",
         branch_protection_snapshot=_branch_protection_snapshot(),
         merge_commit_sha="abc123",
@@ -615,6 +631,7 @@ def test_gh_cli_truth_client_fetches_read_only_server_snapshot() -> None:
                         {"context": "quality-gates"},
                         {"context": "contract-smoke-gates"},
                         {"context": "real-runtime-integration-gate"},
+                        {"context": "peer-chat-runtime-gate"},
                     ]
                 },
             },
@@ -638,6 +655,12 @@ def test_gh_cli_truth_client_fetches_read_only_server_snapshot() -> None:
                         "conclusion": "success",
                         "app": {"slug": "github-actions"},
                     },
+                    {
+                        "id": 114,
+                        "name": "peer-chat-runtime-gate",
+                        "conclusion": "success",
+                        "app": {"slug": "github-actions"},
+                    },
                 ]
             },
         }
@@ -652,7 +675,7 @@ def test_gh_cli_truth_client_fetches_read_only_server_snapshot() -> None:
 
     assert snapshot == GitHubServerSideTruthSnapshot(
         workflow_run_id=111,
-        check_run_ids=[111, 112, 113],
+        check_run_ids=[111, 112, 113, 114],
         expected_source_app="github-actions",
         branch_protection_snapshot=runner.responses[
             "repos/iiyazu/Cross-Muse/branches/main/protection"
@@ -723,6 +746,12 @@ def test_gh_cli_truth_client_uses_ruleset_snapshot_when_branch_protection_missin
                     {
                         "id": 113,
                         "name": "real-runtime-integration-gate",
+                        "conclusion": "success",
+                        "app": {"slug": "github-actions"},
+                    },
+                    {
+                        "id": 114,
+                        "name": "peer-chat-runtime-gate",
                         "conclusion": "success",
                         "app": {"slug": "github-actions"},
                     },
@@ -804,6 +833,12 @@ def test_gh_cli_truth_client_does_not_use_ruleset_for_different_branch() -> None
                         "conclusion": "success",
                         "app": {"slug": "github-actions"},
                     },
+                    {
+                        "id": 114,
+                        "name": "peer-chat-runtime-gate",
+                        "conclusion": "success",
+                        "app": {"slug": "github-actions"},
+                    },
                 ]
             },
         },
@@ -882,6 +917,12 @@ def test_gh_cli_truth_client_does_not_use_ruleset_excluding_base_branch() -> Non
                         "conclusion": "success",
                         "app": {"slug": "github-actions"},
                     },
+                    {
+                        "id": 114,
+                        "name": "peer-chat-runtime-gate",
+                        "conclusion": "success",
+                        "app": {"slug": "github-actions"},
+                    },
                 ]
             },
         },
@@ -957,6 +998,12 @@ def test_gh_cli_truth_client_accepts_ruleset_branch_pattern_for_base_branch() ->
                         "conclusion": "success",
                         "app": {"slug": "github-actions"},
                     },
+                    {
+                        "id": 114,
+                        "name": "peer-chat-runtime-gate",
+                        "conclusion": "success",
+                        "app": {"slug": "github-actions"},
+                    },
                 ]
             },
         },
@@ -1014,6 +1061,7 @@ def test_gh_cli_truth_client_partial_required_checks_remain_manual_gap() -> None
                         {"context": "quality-gates"},
                         {"context": "contract-smoke-gates"},
                         {"context": "real-runtime-integration-gate"},
+                        {"context": "peer-chat-runtime-gate"},
                     ]
                 },
             },

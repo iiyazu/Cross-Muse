@@ -53,6 +53,7 @@ REQUIRED_GITHUB_CHECKS = [
     "quality-gates",
     "contract-smoke-gates",
     "real-runtime-integration-gate",
+    "peer-chat-runtime-gate",
 ]
 
 SELF_ITERATION_BLUEPRINT_ID = "bp-self-iteration-runtime-closure"
@@ -953,6 +954,7 @@ def build_self_iteration_closure_artifacts(
             CheckStatus(name="quality-gates", status="success"),
             CheckStatus(name="contract-smoke-gates", status="success"),
             CheckStatus(name="real-runtime-integration-gate", status="success"),
+            CheckStatus(name="peer-chat-runtime-gate", status="success"),
         ],
         review_evidence_refs=list(review_pass.evidence_refs),
         required_check_names=list(REQUIRED_GITHUB_CHECKS),
