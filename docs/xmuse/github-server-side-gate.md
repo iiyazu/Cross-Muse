@@ -1,6 +1,6 @@
 # GitHub Server-Side Gate
 
-Updated: 2026-06-21
+Updated: 2026-06-25
 
 This document is the repository-side contract for GitHub settings that must be
 configured on the server. Repository files can prove the desired configuration,
@@ -14,6 +14,7 @@ Configure branch protection for `main` with these required status checks:
 quality-gates
 contract-smoke-gates
 real-runtime-integration-gate
+peer-chat-runtime-gate
 ```
 
 Settings:
@@ -89,7 +90,9 @@ Runtime proof:
   process.
 
 Current live evidence is recorded in
-`docs/xmuse/github-server-side-gate-live-evidence-2026-06-21.md`.
+`docs/xmuse/github-server-side-gate-live-evidence-2026-06-25.md`.
+The earlier 2026-06-21 evidence remains a historical snapshot before
+`peer-chat-runtime-gate` became server-required.
 
 ## Server-Side Truth Evidence Model
 

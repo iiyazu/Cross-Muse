@@ -32,9 +32,12 @@ closure, or full L1-L11 closure.
 ## Server-Side Enforcement
 
 `docs/xmuse/github-server-side-gate.md` remains the authority for branch
-protection required checks. Promoting `peer-chat-runtime-gate` from default PR
-visibility to a required server-side check is a separate GitHub settings change
-and must be recorded with server-side evidence for the exact repository state.
+protection required checks. As of the 2026-06-25 live evidence capture,
+`peer-chat-runtime-gate` is promoted from default PR visibility to a required
+server-side check for `main`.
 
-Until that promotion is completed, a passing `peer-chat-runtime-gate` is useful
-CI evidence but is not itself branch-protection truth.
+The promotion is recorded in
+`docs/xmuse/github-server-side-gate-live-evidence-2026-06-25.md`. A passing
+`peer-chat-runtime-gate` on a PR is CI evidence; branch-protection truth comes
+from the GitHub server-side required-check setting for the exact repository
+state.

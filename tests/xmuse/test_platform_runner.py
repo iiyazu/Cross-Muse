@@ -69,10 +69,11 @@ def _complete_server_side_merge_truth() -> GitHubServerSideTruthEvidence:
             "quality-gates",
             "contract-smoke-gates",
             "real-runtime-integration-gate",
+            "peer-chat-runtime-gate",
         ],
         proof_level="server_side_merge_proof",
         workflow_run_id=82564030146,
-        check_run_ids=[82564030146, 82564030153, 82564030160],
+        check_run_ids=[82564030146, 82564030153, 82564030160, 82564030167],
         expected_source_app="github-actions",
         branch_protection_snapshot={
             "required_status_checks": {
@@ -81,6 +82,7 @@ def _complete_server_side_merge_truth() -> GitHubServerSideTruthEvidence:
                     {"context": "quality-gates"},
                     {"context": "contract-smoke-gates"},
                     {"context": "real-runtime-integration-gate"},
+                    {"context": "peer-chat-runtime-gate"},
                 ],
             },
             "required_pull_request_reviews": None,
@@ -103,6 +105,7 @@ def _incomplete_server_side_truth() -> GitHubServerSideTruthEvidence:
             "quality-gates",
             "contract-smoke-gates",
             "real-runtime-integration-gate",
+            "peer-chat-runtime-gate",
         ],
         proof_level="manual_gap",
         gap_reason="missing server-side truth: merge_truth",
@@ -1715,6 +1718,7 @@ def test_acceptance_gated_goal_run_blocks_without_server_side_merge_proof(
             "quality-gates",
             "contract-smoke-gates",
             "real-runtime-integration-gate",
+            "peer-chat-runtime-gate",
         ],
         head_sha="abc123",
     )
@@ -1737,6 +1741,7 @@ def test_acceptance_gated_goal_run_blocks_without_server_side_merge_proof(
         "quality-gates",
         "contract-smoke-gates",
         "real-runtime-integration-gate",
+        "peer-chat-runtime-gate",
     ]
     assert evidence["can_accept"] is False
     assert evidence["evidence"]["proof_level"] == "manual_gap"
@@ -1772,6 +1777,7 @@ def test_acceptance_gated_goal_run_accepts_with_server_side_merge_proof(
             "quality-gates",
             "contract-smoke-gates",
             "real-runtime-integration-gate",
+            "peer-chat-runtime-gate",
         ],
         head_sha="abc123",
         github_gate_collector=_StaticGithubTruthCollector(
@@ -1819,6 +1825,7 @@ def test_acceptance_gated_live_capture_gap_stays_blocked(tmp_path: Path) -> None
             "quality-gates",
             "contract-smoke-gates",
             "real-runtime-integration-gate",
+            "peer-chat-runtime-gate",
         ],
         head_sha="abc123",
         github_gate_collector=_StaticGithubTruthCollector(

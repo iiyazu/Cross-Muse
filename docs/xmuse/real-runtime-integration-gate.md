@@ -17,6 +17,9 @@ Deep Research 03 expects GitHub branch protection to require:
 - `contract-smoke-gates`
 - `real-runtime-integration-gate`
 
+Current mainline branch protection also requires `peer-chat-runtime-gate`; see
+`docs/xmuse/github-server-side-gate-live-evidence-2026-06-25.md`.
+
 It runs:
 
 ```bash
