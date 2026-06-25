@@ -136,6 +136,7 @@ def test_runtime_contract_serializes_required_self_iteration_fields(tmp_path: Pa
         "quality-gates",
         "contract-smoke-gates",
         "real-runtime-integration-gate",
+        "peer-chat-runtime-gate",
     ]
     assert round_trip.memory_context_ref is not None
     assert round_trip.review_profile == "self-iteration-contract"
