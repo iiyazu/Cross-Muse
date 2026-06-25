@@ -144,6 +144,7 @@ def test_codex_persistent_run_turn_emits_protocol_result(
     assert codex_persistent._codex_command(config) == [
         "codex",
         "exec",
+        "--ignore-user-config",
         "-m",
         "gpt-5.4",
         "--dangerously-bypass-approvals-and-sandbox",

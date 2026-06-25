@@ -14,7 +14,7 @@ def test_codex_build_command():
     launcher = CodexLauncher()
     cmd = launcher.build_command("my-feature", Path("/tmp/worktree"))
     assert cmd == [
-        "codex", "exec", "-m", "gpt-5.4",
+        "codex", "exec", "--ignore-user-config", "-m", "gpt-5.4",
         "--dangerously-bypass-approvals-and-sandbox",
         "-c",
         'mcp_servers.xmuse-platform.type="sse"',
