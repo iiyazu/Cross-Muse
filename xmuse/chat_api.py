@@ -55,7 +55,11 @@ from xmuse_core.chat.participant_store import (
     resolve_codex_cli_kind,
 )
 from xmuse_core.chat.peer_proposals import classify_structured_proposal
-from xmuse_core.chat.peer_service import PeerChatError, PeerChatService
+from xmuse_core.chat.peer_service import (
+    PeerChatError,
+    PeerChatService,
+    classify_review_trigger_reply,
+)
 from xmuse_core.chat.protocol_v2 import DeliberationMessageV1
 from xmuse_core.chat.roster_events import (
     ROSTER_EVENT_ENVELOPE_TYPE,
@@ -487,16 +491,31 @@ def _reject_pending_review_trigger_for_dispatchable_proposal(
     if proposal_message_id is None:
         return
     inbox = ChatInboxStore(base_dir / "chat.db")
+    messages = {message.id: message for message in store.list_messages(conversation_id)}
     for item in inbox.list_by_conversation(conversation_id, include_terminal=True):
-        if (
-            item.item_type == "review_trigger"
-            and item.source_message_id == proposal_message_id
-            and item.status in {"unread", "claimed"}
-        ):
+        if item.item_type != "review_trigger" or item.source_message_id != proposal_message_id:
+            continue
+        if item.status in {"unread", "claimed"}:
             raise PeerChatError(
                 "proposal_review_pending",
                 f"{item.id}:{item.status}",
             )
+        if item.status == "failed":
+            raise PeerChatError("proposal_review_failed", item.failure_reason or item.id)
+        if not item.responded_message_id:
+            raise PeerChatError("proposal_review_missing", f"{item.id}:missing_response")
+        response = messages.get(item.responded_message_id)
+        if (
+            response is None
+            or response.author != item.target_participant_id
+            or response.role != "assistant"
+        ):
+            raise PeerChatError("proposal_review_missing", f"{item.id}:invalid_response")
+        verdict = classify_review_trigger_reply(response.content)
+        if verdict == "blocked":
+            raise PeerChatError("proposal_review_blocked", f"{item.id}:{response.id}")
+        if verdict != "dispatch_allowed":
+            raise PeerChatError("proposal_review_missing", f"{item.id}:missing_verdict")
 
 
 def _public_peer_participants(payload: dict[str, object]) -> list[dict[str, object]]:

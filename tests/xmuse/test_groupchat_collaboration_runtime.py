@@ -262,7 +262,10 @@ async def test_groupchat_proposal_approval_dispatch_and_review_closure_authority
         participant_id=participants["review"].participant_id,
         god_session_id=sessions["review"],
         client_request_id="bridge-proposal-review-gate",
-        content="Review gate: no veto; proposal may proceed to explicit approval.",
+        content=(
+            "REVIEW_VERDICT: dispatch_allowed\n"
+            "No veto; proposal may proceed to explicit approval."
+        ),
         reply_to_inbox_item_id=review_trigger.id,
     )
 
