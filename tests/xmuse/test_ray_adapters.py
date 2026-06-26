@@ -1022,6 +1022,171 @@ def test_app_server_turn_accumulator_failed_turn_is_not_success_result() -> None
     assert result.message == "provider rejected model"
 
 
+def test_app_server_transport_bridges_plain_collaboration_response(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from xmuse_core.agents import codex_app_server_transport
+    from xmuse_core.agents.codex_app_server_transport import CodexAppServerTransport
+    from xmuse_core.agents.protocol import StdoutMessage
+
+    calls: list[dict[str, Any]] = []
+
+    def fake_call_mcp_chat_tool(*, port: int, payload: dict[str, Any]) -> dict[str, Any]:
+        calls.append({"port": port, "payload": payload})
+        if payload["params"]["name"] == "chat_record_collaboration_response":
+            return {
+                "content": [
+                    {
+                        "text": json.dumps(
+                            {"run": {"run_id": payload["params"]["arguments"]["run_id"]}}
+                        )
+                    }
+                ]
+            }
+        return {"content": [{"text": json.dumps({"message": {"id": "msg-1"}})}]}
+
+    monkeypatch.setattr(
+        codex_app_server_transport,
+        "_call_mcp_chat_tool",
+        fake_call_mcp_chat_tool,
+    )
+    transport = CodexAppServerTransport(
+        god_id="god-execute",
+        role="execute",
+        display_name="Execute GOD",
+        model="gpt-5.4-mini",
+        worktree=tmp_path,
+        mcp_port=8100,
+        enable_mcp=True,
+    )
+    transport._active_turn_context = json.dumps(
+        {
+            "conversation_id": "conv-1",
+            "participant_id": "part-execute",
+            "god_session_id": "god-execute",
+            "inbox_item": {
+                "id": "inbox-1",
+                "payload": {
+                    "content": (
+                        "Record a formal collaboration response for collaboration "
+                        "run `collab_codex123` using "
+                        "chat_record_collaboration_response. Record an "
+                        "execute_feasibility_verdict if safe."
+                    ),
+                },
+                "source_message_id": "msg-source",
+            },
+        }
+    )
+    transport._active_request_id = "inbox-1"
+    result = StdoutMessage(
+        type="result",
+        runtime="codex-app-server",
+        status="success",
+        message="Boundary accepted. Dispatch is executable.",
+        artifacts={"latency_stages": {}},
+    )
+
+    transport._maybe_record_callback_bridge(result)
+
+    assert [call["payload"]["params"]["name"] for call in calls] == [
+        "chat_record_collaboration_response",
+        "chat_post_message",
+    ]
+    response_args = calls[0]["payload"]["params"]["arguments"]
+    assert response_args["run_id"] == "collab_codex123"
+    response_content = json.loads(response_args["content"])
+    assert response_content == {
+        "type": "execute_feasibility_verdict",
+        "status": "executable",
+        "execution_performed": False,
+        "summary": "Boundary accepted. Dispatch is executable.",
+        "evidence_refs": ["msg:msg-source"],
+    }
+    message_args = calls[1]["payload"]["params"]["arguments"]
+    assert message_args["reply_to_inbox_item_id"] == "inbox-1"
+    assert message_args["envelope"]["writeback_path"] == "codex_callback_bridge"
+    assert result.artifacts["codex_callback_bridge"]["tools"] == [
+        "chat_record_collaboration_response",
+        "chat_post_message",
+    ]
+    assert "chat_record_collaboration_response" in result.artifacts["latency_stages"]
+
+
+def test_app_server_transport_preserves_structured_execute_verdict() -> None:
+    from xmuse_core.agents.codex_app_server_transport import (
+        _collaboration_response_bridge_content,
+    )
+
+    context = json.dumps(
+        {
+            "conversation_id": "conv-1",
+            "participant_id": "part-execute",
+            "god_session_id": "god-execute",
+            "inbox_item": {
+                "id": "inbox-1",
+                "payload": {
+                    "content": (
+                        "Record a collaboration response for `collab_codex123` "
+                        "as an execute_feasibility_verdict."
+                    ),
+                },
+            },
+        }
+    )
+    content = json.dumps(
+        {
+            "type": "execute_feasibility_verdict",
+            "status": "executable",
+            "execution_performed": False,
+            "summary": "Docs-only execution is bounded.",
+            "evidence_refs": ["msg:source"],
+        }
+    )
+
+    bridged = _collaboration_response_bridge_content(
+        context=context,
+        content=content,
+    )
+
+    assert json.loads(bridged) == json.loads(content)
+
+
+def test_app_server_transport_detects_mcp_business_error() -> None:
+    from xmuse_core.agents.codex_app_server_transport import _raise_for_mcp_tool_error
+
+    try:
+        _raise_for_mcp_tool_error(
+            {
+                "content": [
+                    {
+                        "text": json.dumps(
+                            {
+                                "error": {
+                                    "code": "execute_collaboration_response_invalid",
+                                    "message": "expected execute_feasibility_verdict",
+                                }
+                            }
+                        )
+                    }
+                ],
+                "structuredContent": {
+                    "error": {
+                        "code": "execute_collaboration_response_invalid",
+                        "message": "expected execute_feasibility_verdict",
+                    }
+                },
+                "isError": False,
+            },
+            tool_name="chat_record_collaboration_response",
+        )
+    except RuntimeError as exc:
+        assert "execute_collaboration_response_invalid" in str(exc)
+    else:
+        raise AssertionError("MCP business error should fail closed")
+
+
 def test_app_server_transport_omits_xmuse_mcp_by_default(tmp_path: Path) -> None:
     from xmuse_core.agents.codex_app_server_transport import CodexAppServerTransport
 

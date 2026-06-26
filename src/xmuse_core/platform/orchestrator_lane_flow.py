@@ -312,7 +312,7 @@ def ensure_lane_worktree(orchestrator, lane: dict[str, Any]) -> dict[str, Any]:
         else:
             base_head_sha = git_output(
                 ["git", "rev-parse", "HEAD"],
-                cwd=orchestrator._root.parent,
+                cwd=_source_repo_root(orchestrator),
             )
     metadata = {
         "branch": branch,
@@ -391,9 +391,10 @@ def create_or_reuse_worktree(orchestrator, *, worktree: Path, branch: str) -> No
     if worktree.exists():
         return
     worktree.parent.mkdir(parents=True, exist_ok=True)
+    source_repo_root = _source_repo_root(orchestrator)
     result = subprocess.run(
         ["git", "worktree", "add", "-b", branch, str(worktree), "HEAD"],
-        cwd=orchestrator._root.parent,
+        cwd=source_repo_root,
         capture_output=True,
         text=True,
         timeout=60,
@@ -402,7 +403,7 @@ def create_or_reuse_worktree(orchestrator, *, worktree: Path, branch: str) -> No
         return
     fallback = subprocess.run(
         ["git", "worktree", "add", str(worktree), branch],
-        cwd=orchestrator._root.parent,
+        cwd=source_repo_root,
         capture_output=True,
         text=True,
         timeout=60,
@@ -412,6 +413,16 @@ def create_or_reuse_worktree(orchestrator, *, worktree: Path, branch: str) -> No
             "failed to create lane worktree "
             f"{worktree}: {result.stderr.strip() or fallback.stderr.strip()}"
         )
+
+
+def _source_repo_root(orchestrator) -> Path:
+    repo_root = getattr(orchestrator, "_repo_root", None)
+    if isinstance(repo_root, Path):
+        return repo_root
+    if isinstance(repo_root, str):
+        return Path(repo_root)
+    return orchestrator._root.parent
+
 
 async def run_execution_god(orchestrator, lane_id: str) -> None:
     lane = orchestrator._sm.get_lane(lane_id)
