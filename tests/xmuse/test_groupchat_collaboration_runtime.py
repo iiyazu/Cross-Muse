@@ -7,6 +7,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from xmuse.chat_api import create_app
+from xmuse_core.agents.god_session_registry import GodSessionRegistry
+from xmuse_core.chat.acceptance_spine import AcceptanceSpineStatus, AcceptanceSpineStore
 from xmuse_core.chat.collaboration_contracts import (
     CollaborationStatus,
     DispatchGateDecision,
@@ -14,10 +16,13 @@ from xmuse_core.chat.collaboration_contracts import (
 from xmuse_core.chat.collaboration_store import ChatCollaborationStore
 from xmuse_core.chat.dispatch_bridge import ChatDispatchBridge
 from xmuse_core.chat.dispatch_queue import ChatDispatchQueueStore
+from xmuse_core.chat.inbox_store import ChatInboxStore
 from xmuse_core.chat.inspector_builder import build_conversation_inspector_payload
 from xmuse_core.chat.participant_store import ParticipantStore
+from xmuse_core.chat.peer_service import PeerChatError, PeerChatService
 from xmuse_core.chat.store import ChatStore
 from xmuse_core.chat.stream_store import PeerTurnLatencyTraceStore
+from xmuse_core.structuring.graph_store import LaneGraphStore
 
 
 class _DispatchBridgeGodLayer:
@@ -109,6 +114,23 @@ def _execute_participant(tmp_path: Path, conversation_id: str):
     )
 
 
+def _conversation_participants_by_role(tmp_path: Path, conversation_id: str):
+    return {
+        participant.role: participant
+        for participant in ParticipantStore(tmp_path / "chat.db").list_by_conversation(
+            conversation_id
+        )
+    }
+
+
+def _conversation_sessions_by_role(tmp_path: Path, conversation_id: str) -> dict[str, str]:
+    return {
+        session.role: session.god_session_id
+        for session in GodSessionRegistry(tmp_path / "god_sessions.json").list()
+        if session.conversation_id == conversation_id
+    }
+
+
 def test_collaboration_request_is_bounded_durable_and_idempotent(tmp_path: Path) -> None:
     conversation_id = _conversation(tmp_path)
     store = ChatCollaborationStore(tmp_path / "chat.db")
@@ -145,6 +167,200 @@ def test_collaboration_request_is_bounded_durable_and_idempotent(tmp_path: Path)
     reloaded = ChatCollaborationStore(tmp_path / "chat.db").get_run(request.run_id)
     assert reloaded.run_id == request.run_id
     assert reloaded.context_refs == ["message:1", "proposal:1"]
+
+
+@pytest.mark.asyncio
+async def test_groupchat_proposal_approval_dispatch_and_review_closure_authority_path(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "chat.db"
+    registry_path = tmp_path / "god_sessions.json"
+    service = PeerChatService(db)
+    created = service.create_conversation(title="Proposal dispatch bridge")
+    conversation_id = created["conversation"]["id"]
+    participants = _conversation_participants_by_role(tmp_path, conversation_id)
+    sessions = _conversation_sessions_by_role(tmp_path, conversation_id)
+
+    intake = service.post_human_message(
+        conversation_id=conversation_id,
+        author="Human operator",
+        content=(
+            "@architect propose the smallest auditable authority bridge from "
+            "groupchat decision to dispatch."
+        ),
+        client_request_id="bridge-intake",
+    )
+    run_payload = service.create_collaboration_request(
+        registry_path=registry_path,
+        conversation_id=conversation_id,
+        participant_id=participants["architect"].participant_id,
+        god_session_id=sessions["architect"],
+        client_request_id="bridge-collaboration",
+        goal="Bridge approved groupchat proposal into dispatch authority.",
+        targets=["review", "execute"],
+        callback_target="architect",
+        question="Can this bounded lane graph safely enter dispatch?",
+        context_refs=[f"intake_message:{intake.message.id}"],
+        idempotency_key="bridge-collaboration",
+        timeout_s=480,
+    )
+    run_id = run_payload["run"]["run_id"]
+    service.record_collaboration_response(
+        registry_path=registry_path,
+        conversation_id=conversation_id,
+        participant_id=participants["review"].participant_id,
+        god_session_id=sessions["review"],
+        run_id=run_id,
+        content="Review verdict: no dispatch veto for this bounded bridge.",
+    )
+    service.record_collaboration_response(
+        registry_path=registry_path,
+        conversation_id=conversation_id,
+        participant_id=participants["execute"].participant_id,
+        god_session_id=sessions["execute"],
+        run_id=run_id,
+        content=json.dumps(
+            {
+                "type": "execute_feasibility_verdict",
+                "status": "executable",
+                "execution_performed": False,
+                "summary": "The bridge is bounded and can be dispatched.",
+                "evidence_refs": [f"collaboration:{run_id}"],
+            }
+        ),
+    )
+    proposal = service.emit_proposal(
+        registry_path=registry_path,
+        conversation_id=conversation_id,
+        participant_id=participants["architect"].participant_id,
+        god_session_id=sessions["architect"],
+        client_request_id="bridge-proposal",
+        summary="Bridge groupchat proposal approval into dispatch authority",
+        lanes=[
+            {
+                "feature_id": "bridge-proposal-dispatch-authority",
+                "prompt": (
+                    "Connect an approved groupchat lane_graph proposal to the "
+                    "existing dispatch authority path."
+                ),
+                "depends_on": [],
+                "capabilities": ["code"],
+            }
+        ],
+        references=[f"intake_message:{intake.message.id}", f"collaboration:{run_id}"],
+    )
+    review_trigger = next(
+        item
+        for item in ChatInboxStore(db).list_by_conversation(conversation_id)
+        if item.target_participant_id == participants["review"].participant_id
+        and item.item_type == "review_trigger"
+        and item.payload.get("source_message_id") == proposal["message"]["id"]
+    )
+    service.post_god_message(
+        registry_path=registry_path,
+        conversation_id=conversation_id,
+        participant_id=participants["review"].participant_id,
+        god_session_id=sessions["review"],
+        client_request_id="bridge-proposal-review-gate",
+        content="Review gate: no veto; proposal may proceed to explicit approval.",
+        reply_to_inbox_item_id=review_trigger.id,
+    )
+
+    approved = TestClient(create_app(tmp_path)).post(
+        f"/api/chat/proposals/{proposal['proposal']['id']}/approve",
+        json={
+            "approved_by": ["human"],
+            "approval_mode": "manual",
+            "goal_summary": "Approve the dispatch authority bridge.",
+        },
+    )
+
+    assert approved.status_code == 200, approved.json()
+    resolution_id = approved.json()["id"]
+    graph = LaneGraphStore(tmp_path / "lane_graphs").get(f"{resolution_id}-graph-v1")
+    assert graph.lanes[0].feature_id == "bridge-proposal-dispatch-authority"
+    queued_entry = ChatDispatchQueueStore(db).list_entries(conversation_id)[0]
+    assert queued_entry.status == "queued"
+    assert queued_entry.proposal_id == proposal["proposal"]["id"]
+    assert queued_entry.resolution_id == resolution_id
+    assert queued_entry.collaboration_run_id == run_id
+
+    bridge = ChatDispatchBridge(
+        db_path=db,
+        god_layer=_DispatchBridgeGodLayer(db),
+        worktree=tmp_path,
+        bridge_id="bridge-authority-test",
+        response_wait_s=0.1,
+    )
+    outcome = await bridge.tick_once(conversation_id=conversation_id)
+
+    assert outcome.dispatched == 1
+    dispatched_entry = ChatDispatchQueueStore(db).get(queued_entry.entry_id)
+    assert dispatched_entry.status == "dispatched"
+    assert dispatched_entry.provider_run_ref == (
+        f"peer_ack:execute:{participants['execute'].participant_id}"
+    )
+    spine = AcceptanceSpineStore(db).get_by_intake_message(intake.message.id)
+    assert spine.status is AcceptanceSpineStatus.DISPATCHED
+    assert spine.dispatch_item_id == queued_entry.entry_id
+    assert dispatched_entry.dispatch_evidence in spine.execution_evidence_refs
+
+    review = service.post_god_message(
+        registry_path=registry_path,
+        conversation_id=conversation_id,
+        participant_id=participants["review"].participant_id,
+        god_session_id=sessions["review"],
+        client_request_id="bridge-review-closure",
+        content=(
+            "Review verdict: acceptable, no veto for the dispatch authority bridge."
+        ),
+        envelope={
+            "type": "review_closure",
+            "resolution_id": resolution_id,
+            "decision": "merge",
+            "dispatch_queue_entry_id": queued_entry.entry_id,
+        },
+    )
+
+    reviewed_spine = AcceptanceSpineStore(db).get_by_intake_message(intake.message.id)
+    assert reviewed_spine.status is AcceptanceSpineStatus.REVIEWED
+    assert reviewed_spine.review_verdict_ref == (
+        f"chat:message:{review['message']['id']}"
+    )
+
+
+def test_review_closure_requires_review_participant_and_resolution_ref(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "chat.db"
+    registry_path = tmp_path / "god_sessions.json"
+    service = PeerChatService(db)
+    created = service.create_conversation(title="Review closure authority")
+    conversation_id = created["conversation"]["id"]
+    participants = _conversation_participants_by_role(tmp_path, conversation_id)
+    sessions = _conversation_sessions_by_role(tmp_path, conversation_id)
+
+    with pytest.raises(PeerChatError, match="invalid_review_closure"):
+        service.post_god_message(
+            registry_path=registry_path,
+            conversation_id=conversation_id,
+            participant_id=participants["review"].participant_id,
+            god_session_id=sessions["review"],
+            client_request_id="missing-resolution",
+            content="Review verdict: missing target resolution.",
+            envelope={"type": "review_closure", "decision": "merge"},
+        )
+
+    with pytest.raises(PeerChatError, match="review_closure_authority_forbidden"):
+        service.post_god_message(
+            registry_path=registry_path,
+            conversation_id=conversation_id,
+            participant_id=participants["execute"].participant_id,
+            god_session_id=sessions["execute"],
+            client_request_id="wrong-role",
+            content="Review verdict: wrong role.",
+            envelope={"type": "review_closure", "resolution_id": "res_missing"},
+        )
 
 
 def test_collaboration_rejects_unbounded_targets_and_active_target_cascade(
