@@ -127,6 +127,10 @@ def test_chat_timeline_projects_peer_progress_from_durable_inbox_and_trace(tmp_p
         inbox_item_id=item_id,
         participant_id=failed.target_participant_id,
         target_role=failed.target_role,
+        god_session_id="god-progress",
+        provider_session_id="provider-progress-thread",
+        provider_session_kind="codex_app_server_thread",
+        provider_binding_status="active",
         message_created_at=failed.created_at,
         inbox_claimed_at=claimed.claimed_at,
         delivery_started_at=10.0,
@@ -152,6 +156,10 @@ def test_chat_timeline_projects_peer_progress_from_durable_inbox_and_trace(tmp_p
     assert event["status"] == "failed"
     assert event["delivery_mode"] == "failed"
     assert event["degraded_reason"] == "peer_no_inbox_writeback_message"
+    assert event["god_session_id"] == "god-progress"
+    assert event["provider_session_id"] == "provider-progress-thread"
+    assert event["provider_session_kind"] == "codex_app_server_thread"
+    assert event["provider_binding_status"] == "active"
     assert event["latency_ms"] == 1500
     assert event["stage_names"] == ["chat_read_inbox"]
     assert payload["peer_progress_counts"]["failed"] == 1

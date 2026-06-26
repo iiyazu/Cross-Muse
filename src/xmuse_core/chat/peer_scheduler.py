@@ -130,6 +130,10 @@ class PeerChatScheduler:
         transport_latency_stages: dict[str, dict[str, float]],
     ) -> PeerChatSchedulerOutcome:
         record = None
+
+        def record_latency_trace(*args, **kwargs):
+            return self._record_latency_trace(*args, provider_record=record, **kwargs)
+
         try:
             agent = AgentDescriptor(
                 name=participant.display_name,
@@ -199,7 +203,7 @@ class PeerChatScheduler:
                         record.god_session_id,
                     )
                     self._finish_active_stream_for_item(item, status="done")
-                    self._record_latency_trace(
+                    record_latency_trace(
                         item,
                         trace_start_at=trace_start_at,
                         delivery_started_at=delivery_started_at,
@@ -231,7 +235,7 @@ class PeerChatScheduler:
                     )
                     await _abort_session_if_supported(self._god_layer, record.god_session_id)
                     self._finish_active_stream_for_item(item, status="done")
-                    self._record_latency_trace(
+                    record_latency_trace(
                         item,
                         trace_start_at=trace_start_at,
                         delivery_started_at=delivery_started_at,
@@ -256,7 +260,7 @@ class PeerChatScheduler:
                 await _abort_session_if_supported(self._god_layer, record.god_session_id)
                 self._finish_active_stream_for_item(item, status="error")
                 reason = "provider_no_mcp_writeback_before_deadline"
-                trace = self._record_latency_trace(
+                trace = record_latency_trace(
                     item,
                     trace_start_at=trace_start_at,
                     delivery_started_at=delivery_started_at,
@@ -300,7 +304,7 @@ class PeerChatScheduler:
                         scheduler_observed_result_at,
                     )
                     self._finish_active_stream_for_item(item, status="done")
-                    self._record_latency_trace(
+                    record_latency_trace(
                         item,
                         trace_start_at=trace_start_at,
                         delivery_started_at=delivery_started_at,
@@ -317,7 +321,7 @@ class PeerChatScheduler:
                     )
                     return PeerChatSchedulerOutcome(nudged=1, happy_path=1)
                 self._finish_active_stream_for_item(item, status="error")
-                self._record_latency_trace(
+                record_latency_trace(
                     item,
                     trace_start_at=trace_start_at,
                     delivery_started_at=delivery_started_at,
@@ -343,7 +347,7 @@ class PeerChatScheduler:
                     message=message,
                 ):
                     self._finish_active_stream_for_item(item, status="error")
-                    self._record_latency_trace(
+                    record_latency_trace(
                         item,
                         trace_start_at=trace_start_at,
                         delivery_started_at=delivery_started_at,
@@ -360,7 +364,7 @@ class PeerChatScheduler:
                     reason="peer_no_inbox_side_effect",
                 ):
                     self._finish_active_stream_for_item(item, status="error")
-                    self._record_latency_trace(
+                    record_latency_trace(
                         item,
                         trace_start_at=trace_start_at,
                         delivery_started_at=delivery_started_at,
@@ -371,7 +375,7 @@ class PeerChatScheduler:
                         transport_latency_stages=transport_latency_stages,
                     )
                     return PeerChatSchedulerOutcome(fallback_replies=1)
-                self._record_latency_trace(
+                record_latency_trace(
                     item,
                     trace_start_at=trace_start_at,
                     delivery_started_at=delivery_started_at,
@@ -392,7 +396,7 @@ class PeerChatScheduler:
                 item_type=getattr(item, "item_type", None),
             ):
                 self._finish_active_stream_for_item(item, status="error")
-                self._record_latency_trace(
+                record_latency_trace(
                     item,
                     trace_start_at=trace_start_at,
                     delivery_started_at=delivery_started_at,
@@ -423,7 +427,7 @@ class PeerChatScheduler:
                 )
                 await _abort_session_if_supported(self._god_layer, record.god_session_id)
             self._finish_active_stream_for_item(item, status="error")
-            trace = self._record_latency_trace(
+            trace = record_latency_trace(
                 item,
                 trace_start_at=trace_start_at,
                 delivery_started_at=delivery_started_at,
@@ -440,7 +444,7 @@ class PeerChatScheduler:
             )
             raise
         except Exception as exc:
-            self._record_latency_trace(
+            record_latency_trace(
                 item,
                 trace_start_at=trace_start_at,
                 delivery_started_at=delivery_started_at,
@@ -455,7 +459,7 @@ class PeerChatScheduler:
 
         self._inbox.record_nudge_result(item.id, owner=self._scheduler_id, success=True)
         self._finish_active_stream_for_item(item, status="done")
-        self._record_latency_trace(
+        record_latency_trace(
             item,
             trace_start_at=trace_start_at,
             delivery_started_at=delivery_started_at,
@@ -603,6 +607,7 @@ class PeerChatScheduler:
         delivery_mode: str,
         degraded_reason: str | None,
         transport_latency_stages: dict[str, dict[str, float]] | None = None,
+        provider_record: object | None = None,
     ) -> dict[str, object]:
         writeback_at = self._clock()
         mcp_tool_stages = self._latency.list_mcp_tool_stages(item.conversation_id, item.id)
@@ -619,8 +624,17 @@ class PeerChatScheduler:
         return self._latency.record(
             conversation_id=item.conversation_id,
             inbox_item_id=item.id,
+            god_session_id=_optional_record_text(provider_record, "god_session_id"),
             participant_id=item.target_participant_id,
             target_role=item.target_role,
+            provider_session_id=_optional_record_text(provider_record, "provider_session_id"),
+            provider_session_kind=_optional_record_text(provider_record, "provider_session_kind"),
+            provider_binding_status=_optional_record_text(
+                provider_record, "provider_binding_status"
+            ),
+            provider_binding_failure_reason=_optional_record_text(
+                provider_record, "provider_binding_failure_reason"
+            ),
             message_created_at=item.created_at,
             inbox_claimed_at=item.claimed_at,
             delivery_started_at=delivery_started_at,
@@ -841,6 +855,14 @@ def _stage_at(
         return None
     at = stage.get("at")
     return float(at) if isinstance(at, (int, float)) else None
+
+
+def _optional_record_text(record: object | None, name: str) -> str | None:
+    value = getattr(record, name, None)
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    return value or None
 
 
 def _first_visible_at(stages: dict[str, dict[str, float]]) -> float | None:

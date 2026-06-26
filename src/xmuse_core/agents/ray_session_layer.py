@@ -167,7 +167,7 @@ class RayGodSessionLayer:
         )
         await self._refresh_provider_binding(live)
         self._live_sessions[record.god_session_id] = live
-        return record
+        return live.record
 
     async def send_message(
         self,

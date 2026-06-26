@@ -38,7 +38,17 @@ class FakeGodLayer:
 
     async def ensure_conversation_session(self, **kwargs):
         self.ensured.append(kwargs)
-        return type("Record", (), {"god_session_id": "god-live"})()
+        return type(
+            "Record",
+            (),
+            {
+                "god_session_id": "god-live",
+                "provider_session_id": "provider-thread-live",
+                "provider_session_kind": "codex_app_server_thread",
+                "provider_binding_status": "active",
+                "provider_binding_failure_reason": None,
+            },
+        )()
 
     async def send_message(self, god_session_id, message_type, prompt, context, request_id=None):
         self.sent.append((god_session_id, message_type, prompt, context, request_id))
@@ -1646,6 +1656,11 @@ async def test_scheduler_records_latency_trace_with_injected_clock(tmp_path: Pat
     assert trace["total_latency_ms"] == 1300
     assert trace["delivery_mode"] == "mcp_writeback"
     assert trace["degraded_reason"] is None
+    assert trace["god_session_id"] == "god-live"
+    assert trace["provider_session_id"] == "provider-thread-live"
+    assert trace["provider_session_kind"] == "codex_app_server_thread"
+    assert trace["provider_binding_status"] == "active"
+    assert trace["provider_binding_failure_reason"] is None
     assert trace["stage_timings"] == {
         "inbox_claim": {"at": 100.0},
         "ray_actor_delivery_start": {"at": 100.1},

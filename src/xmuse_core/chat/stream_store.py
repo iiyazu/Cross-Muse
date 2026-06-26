@@ -215,14 +215,24 @@ class PeerTurnLatencyTraceStore:
         delivery_mode: str,
         degraded_reason: str | None,
         stage_timings: dict[str, Any] | None = None,
+        god_session_id: str | None = None,
+        provider_session_id: str | None = None,
+        provider_session_kind: str | None = None,
+        provider_binding_status: str | None = None,
+        provider_binding_failure_reason: str | None = None,
     ) -> dict[str, Any]:
         with self._connect() as conn:
             trace = {
                 "id": self._next_latency_trace_id(conn, inbox_item_id),
                 "conversation_id": conversation_id,
                 "inbox_item_id": inbox_item_id,
+                "god_session_id": god_session_id,
                 "participant_id": participant_id,
                 "target_role": target_role,
+                "provider_session_id": provider_session_id,
+                "provider_session_kind": provider_session_kind,
+                "provider_binding_status": provider_binding_status,
+                "provider_binding_failure_reason": provider_binding_failure_reason,
                 "message_created_at": message_created_at,
                 "inbox_claimed_at": inbox_claimed_at,
                 "delivery_started_at": delivery_started_at,
@@ -238,19 +248,27 @@ class PeerTurnLatencyTraceStore:
             conn.execute(
                 """
                 insert into peer_turn_latency_traces (
-                    id, conversation_id, inbox_item_id, participant_id, target_role,
+                    id, conversation_id, inbox_item_id, god_session_id,
+                    participant_id, target_role, provider_session_id,
+                    provider_session_kind, provider_binding_status,
+                    provider_binding_failure_reason,
                     message_created_at, inbox_claimed_at, delivery_started_at,
                     provider_turn_started_at, first_delta_at, writeback_at,
                     total_latency_ms, delivery_mode, degraded_reason, stage_timings_json
                 )
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     trace["id"],
                     conversation_id,
                     inbox_item_id,
+                    god_session_id,
                     participant_id,
                     target_role,
+                    provider_session_id,
+                    provider_session_kind,
+                    provider_binding_status,
+                    provider_binding_failure_reason,
                     message_created_at,
                     inbox_claimed_at,
                     delivery_started_at,
@@ -358,8 +376,13 @@ class PeerTurnLatencyTraceStore:
                     id text primary key,
                     conversation_id text not null references conversations(id),
                     inbox_item_id text not null,
+                    god_session_id text,
                     participant_id text,
                     target_role text,
+                    provider_session_id text,
+                    provider_session_kind text,
+                    provider_binding_status text,
+                    provider_binding_failure_reason text,
                     message_created_at text not null,
                     inbox_claimed_at text,
                     delivery_started_at real not null,
@@ -393,6 +416,18 @@ class PeerTurnLatencyTraceStore:
                     "alter table peer_turn_latency_traces "
                     "add column stage_timings_json text not null default '{}'"
                 )
+            optional_columns = {
+                "god_session_id": "text",
+                "provider_session_id": "text",
+                "provider_session_kind": "text",
+                "provider_binding_status": "text",
+                "provider_binding_failure_reason": "text",
+            }
+            for column, column_type in optional_columns.items():
+                if column not in columns:
+                    conn.execute(
+                        f"alter table peer_turn_latency_traces add column {column} {column_type}"
+                    )
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self._path)
