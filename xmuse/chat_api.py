@@ -12,7 +12,7 @@ import uvicorn
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import ValidationError
+from pydantic import BaseModel, Field, ValidationError
 
 from xmuse_core.chat.acceptance_spine import AcceptanceSpineStore
 from xmuse_core.chat.api_models import (
@@ -67,7 +67,12 @@ from xmuse_core.chat.roster_events import (
     roster_event_content,
 )
 from xmuse_core.chat.store import ChatStore
-from xmuse_core.integrations.a2a_bridge import build_participant_agent_card_from_store
+from xmuse_core.integrations.a2a_bridge import (
+    A2ABridgeError,
+    A2AInboundBridge,
+    A2AInboundTask,
+    build_participant_agent_card_from_store,
+)
 from xmuse_core.platform.read_contracts import build_execution_drilldown_refs
 from xmuse_core.platform.run_health import summarize_run_health
 from xmuse_core.runtime.paths import default_xmuse_root
@@ -103,6 +108,15 @@ _EXECUTION_CARD_TYPES = {
 }
 
 
+class A2ATaskSendRequest(BaseModel):
+    task_id: str
+    context_id: str
+    sender_agent_id: str
+    content: str
+    target_address: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 def _store(base_dir: Path) -> ChatStore:
     return ChatStore(base_dir / "chat.db")
 
@@ -113,6 +127,12 @@ def _peer_service(base_dir: Path) -> PeerChatService:
 
 def _a2a_disabled_detail() -> dict[str, str]:
     return {"code": "a2a_bridge_disabled", "message": "A2A bridge is disabled"}
+
+
+def _a2a_error_status(code: str) -> int:
+    if code == "unknown_conversation":
+        return 404
+    return 400
 
 
 def _plain_human_message_payload(
@@ -1203,6 +1223,27 @@ def create_app(
             )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="participant not found") from exc
+
+    @app.post("/a2a/tasks/send", status_code=status.HTTP_202_ACCEPTED)
+    def send_a2a_task(request: A2ATaskSendRequest) -> dict[str, object]:
+        if not a2a_bridge_enabled:
+            raise HTTPException(status_code=404, detail=_a2a_disabled_detail())
+        try:
+            return A2AInboundBridge(root / "chat.db", enabled=True).record_task_send(
+                A2AInboundTask(
+                    task_id=request.task_id,
+                    context_id=request.context_id,
+                    sender_agent_id=request.sender_agent_id,
+                    content=request.content,
+                    target_address=request.target_address,
+                    metadata=request.metadata,
+                )
+            )
+        except A2ABridgeError as exc:
+            raise HTTPException(
+                status_code=_a2a_error_status(exc.code),
+                detail={"code": exc.code, "message": exc.detail},
+            ) from exc
 
     @app.post("/api/chat/conversations", status_code=status.HTTP_201_CREATED)
     def create_conversation(request: ConversationCreate) -> dict[str, object]:
