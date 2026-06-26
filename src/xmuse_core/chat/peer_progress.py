@@ -135,6 +135,7 @@ def _event_from_trace(
         "event_type": "peer_turn_progress",
         "status": status,
         "inbox_item_id": inbox_item_id,
+        "god_session_id": _string_value(trace.get("god_session_id")),
         "inbox_status": item.status if item is not None else None,
         "target_participant_id": (
             item.target_participant_id
@@ -151,6 +152,12 @@ def _event_from_trace(
         "responded_message_id": item.responded_message_id if item is not None else None,
         "delivery_mode": delivery_mode,
         "degraded_reason": degraded_reason,
+        "provider_session_id": _string_value(trace.get("provider_session_id")),
+        "provider_session_kind": _string_value(trace.get("provider_session_kind")),
+        "provider_binding_status": _string_value(trace.get("provider_binding_status")),
+        "provider_binding_failure_reason": _string_value(
+            trace.get("provider_binding_failure_reason")
+        ),
         "latency_ms": trace.get("total_latency_ms"),
         "stage_names": sorted(str(key) for key in stage_timings),
         "claimed_at": trace.get("inbox_claimed_at"),
