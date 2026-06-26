@@ -92,6 +92,7 @@ def _closure_evidence_summary(db_path: Path, conversation_id: str) -> dict[str, 
         )
 
     return {
+        "schema_version": "closure_evidence/v1",
         "source_authority": "chat.db.acceptance_spines",
         "total": len(spines),
         "status_summary": status_summary,
