@@ -32,6 +32,7 @@ from xmuse_core.providers.registry import (
     build_default_provider_registry,
     normalize_codex_model_id,
 )
+from xmuse_core.runtime.child_env import normalize_child_temp_env
 from xmuse_core.structuring.feature_review_contracts import (
     ProviderSessionBindingRecord,
     ProviderSessionBindingStatus,
@@ -246,7 +247,7 @@ class CodexProviderAdapter:
     def build_env(self, feature_id: str) -> dict[str, str]:
         env = dict(os.environ)
         env["XMUSE_FEATURE_ID"] = feature_id
-        return env
+        return normalize_child_temp_env(env)
 
     def invoke(self, invocation: ProviderInvocation) -> ProviderInvocationResult:
         self._validate_invocation(invocation)
