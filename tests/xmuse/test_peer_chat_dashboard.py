@@ -848,7 +848,8 @@ def test_dashboard_peer_chat_runtime_timeline_projects_inspector_state(
         target="execute",
         content=(
             '{"type":"execute_feasibility_verdict","status":"executable",'
-            '"summary":"ready","evidence_refs":["proposal:runtime-cards"]}'
+            '"execution_performed":false,"summary":"ready",'
+            '"evidence_refs":["proposal:runtime-cards"]}'
         ),
         response_status="received",
     )

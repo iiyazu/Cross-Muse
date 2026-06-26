@@ -565,10 +565,10 @@ _PREDEFINED_TEMPLATES: list[dict] = [
             "When you respond, emit ONE of:\n"
             '  {"type": "message", "text": "<status update>"}\n'
             '  {"type": "execute_feasibility_verdict", "status": "executable", '
-            '"summary": "<why this can be dispatched>", '
+            '"execution_performed": false, "summary": "<why this can be dispatched>", '
             '"evidence_refs": ["<proposal/artifact/blocker refs>"]}\n'
             '  {"type": "execute_feasibility_verdict", "status": "blocked", '
-            '"summary": "<why dispatch is blocked>", '
+            '"execution_performed": false, "summary": "<why dispatch is blocked>", '
             '"evidence_refs": ["<proposal/artifact/blocker refs>"]}\n'
             '  {"type": "done", "summary": "<what was implemented>"}\n\n'
             "Use execute_feasibility_verdict when asked to confirm whether a "

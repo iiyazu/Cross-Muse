@@ -501,6 +501,8 @@ def _valid_execute_feasibility_verdict(
         return False
     if payload.get("status") != "executable":
         return False
+    if payload.get("execution_performed") is not False:
+        return False
     summary = payload.get("summary")
     if not isinstance(summary, str) or not summary.strip():
         return False

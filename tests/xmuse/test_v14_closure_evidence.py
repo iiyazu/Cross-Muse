@@ -114,6 +114,7 @@ def _complete_evidence() -> dict:
                                 "content": (
                                     '{"type":"execute_feasibility_verdict",'
                                     '"status":"executable",'
+                                    '"execution_performed":false,'
                                     '"summary":"dispatchable",'
                                     '"evidence_refs":['
                                     '"proposal:proposal-v14",'
@@ -757,6 +758,7 @@ def test_v14_closure_evidence_rejects_blocked_execute_verdict() -> None:
     responses[1]["content"] = (
         '{"type":"execute_feasibility_verdict",'
         '"status":"blocked",'
+        '"execution_performed":false,'
         '"summary":"not dispatchable",'
         '"evidence_refs":["proposal:proposal-v14"]}'
     )
@@ -773,6 +775,7 @@ def test_v14_closure_evidence_rejects_execute_verdict_for_wrong_proposal() -> No
     responses[1]["content"] = (
         '{"type":"execute_feasibility_verdict",'
         '"status":"executable",'
+        '"execution_performed":false,'
         '"summary":"dispatchable",'
         '"evidence_refs":["proposal:other"]}'
     )
@@ -1203,6 +1206,7 @@ async def test_v14_closure_collector_accepts_official_api_approval_and_dispatch_
                 {
                     "type": "execute_feasibility_verdict",
                     "status": "executable",
+                    "execution_performed": False,
                     "summary": "Official API closure can dispatch.",
                     "evidence_refs": [
                         f"proposal:{proposal_id}",
@@ -1496,6 +1500,7 @@ def _build_official_surface_closure_fixture(tmp_path: Path) -> str:
         content=(
             '{"type":"execute_feasibility_verdict",'
             '"status":"executable",'
+            '"execution_performed":false,'
             '"summary":"dispatchable",'
             f'"evidence_refs":["proposal:{proposal.id}","artifact:lane_graph"]'
             "}"
