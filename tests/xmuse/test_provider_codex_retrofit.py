@@ -118,6 +118,19 @@ def test_codex_provider_adapter_builds_compatibility_command_from_invocation(
     assert adapter.build_env("lane-123")["XMUSE_FEATURE_ID"] == "lane-123"
 
 
+def test_codex_provider_adapter_normalizes_windows_temp_env(monkeypatch) -> None:
+    monkeypatch.setenv("TMPDIR", "/mnt/c/Users/iiyatu/AppData/Local/Temp")
+    monkeypatch.setenv("TMP", "/mnt/c/Users/iiyatu/AppData/Local/Temp")
+    monkeypatch.setenv("TEMP", "/mnt/c/Users/iiyatu/AppData/Local/Temp")
+
+    env = CodexProviderAdapter().build_env("lane-123")
+
+    assert env["XMUSE_FEATURE_ID"] == "lane-123"
+    assert env["TMPDIR"] == "/tmp"
+    assert env["TMP"] == "/tmp"
+    assert env["TEMP"] == "/tmp"
+
+
 def test_codex_provider_adapter_builds_resume_command_from_active_binding(
     tmp_path: Path,
 ) -> None:

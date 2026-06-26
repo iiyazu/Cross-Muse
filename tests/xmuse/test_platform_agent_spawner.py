@@ -69,6 +69,27 @@ def test_agent_spawner_uses_explicit_model_and_worker_metadata(monkeypatch) -> N
     assert env["XMUSE_DELEGATION_MODE"] == "bounded_worker"
 
 
+def test_agent_spawner_normalizes_windows_temp_env(monkeypatch) -> None:
+    monkeypatch.setenv("TMPDIR", "/mnt/c/Users/iiyatu/AppData/Local/Temp")
+    monkeypatch.setenv("TMP", "/mnt/c/Users/iiyatu/AppData/Local/Temp")
+    monkeypatch.setenv("TEMP", "/mnt/c/Users/iiyatu/AppData/Local/Temp")
+    spawner = AgentSpawner(repo_root=Path("/tmp/xmuse"), mcp_port=8100)
+
+    env = spawner._build_env(
+        GodConfig(
+            name="execution-god",
+            runtime="codex",
+            timeout_s=60,
+            skill_prompt_path="",
+        ),
+        "lane-tiered",
+    )
+
+    assert env["TMPDIR"] == "/tmp"
+    assert env["TMP"] == "/tmp"
+    assert env["TEMP"] == "/tmp"
+
+
 def test_agent_spawner_build_command_passes_explicit_provider_binding_to_service(
     tmp_path: Path,
 ) -> None:
