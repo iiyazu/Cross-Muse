@@ -4,6 +4,11 @@ import json
 from pathlib import Path
 from typing import Any
 
+from xmuse_core.chat.acceptance_spine import (
+    AcceptanceSpine,
+    AcceptanceSpineStatus,
+    AcceptanceSpineStore,
+)
 from xmuse_core.chat.collaboration_store import ChatCollaborationStore
 from xmuse_core.chat.dispatch_queue import ChatDispatchQueueStore
 from xmuse_core.chat.inbox_store import ChatInboxStore
@@ -11,6 +16,12 @@ from xmuse_core.chat.participant_store import ParticipantStore
 from xmuse_core.chat.peer_service import PeerChatService
 from xmuse_core.chat.store import ChatStore
 from xmuse_core.chat.stream_store import PeerTurnLatencyTraceStore
+
+_TERMINAL_ACCEPTANCE_SPINE_STATUSES = {
+    AcceptanceSpineStatus.ACCEPTED,
+    AcceptanceSpineStatus.FAILED,
+    AcceptanceSpineStatus.CANCELLED,
+}
 
 
 def _read_json(path: Path, default: Any = None) -> Any:
@@ -213,6 +224,11 @@ def build_conversation_inspector_payload(
     collaboration_blockers = collaboration_store.list_blockers(conversation_id)
     collaboration_gate_events = collaboration_store.list_dispatch_gate_events(conversation_id)
     active_blockers = [blocker for blocker in collaboration_blockers if blocker.active]
+    acceptance_spines = AcceptanceSpineStore(db_path).list_by_conversation(conversation_id)
+    first_durable_blocker = _first_durable_blocker(
+        active_blockers=active_blockers,
+        acceptance_spines=acceptance_spines,
+    )
     dispatch_entries = ChatDispatchQueueStore(db_path).list_entries(conversation_id)
     queued_dispatch_entries = [entry for entry in dispatch_entries if entry.status == "queued"]
     processing_dispatch_entries = [
@@ -295,6 +311,7 @@ def build_conversation_inspector_payload(
         "blockers": {
             "total": len(collaboration_blockers),
             "active": len(active_blockers),
+            "first_durable_blocker": first_durable_blocker,
             "items": [
                 blocker.model_dump(mode="json")
                 for blocker in collaboration_blockers
@@ -321,6 +338,68 @@ def build_conversation_inspector_payload(
         "current_feature_plan": fp,
         "current_graph_set": gs,
     }
+
+
+def _first_durable_blocker(
+    *,
+    active_blockers: list[Any],
+    acceptance_spines: list[AcceptanceSpine],
+) -> dict[str, Any] | None:
+    if active_blockers:
+        _, blocker = min(
+            enumerate(active_blockers),
+            key=lambda item: (str(item[1].created_at or ""), item[0]),
+        )
+        payload = blocker.model_dump(mode="json")
+        payload["source_type"] = "collaboration_blocker"
+        payload["source_id"] = blocker.blocker_id
+        return payload
+
+    spine = _active_acceptance_spine(acceptance_spines)
+    if spine is None:
+        return None
+
+    manual_gaps = [str(gap) for gap in spine.manual_gaps if str(gap).strip()]
+    blocked_reason = (
+        spine.blocked_reason.strip()
+        if isinstance(spine.blocked_reason, str)
+        else ""
+    )
+    reason = blocked_reason or (manual_gaps[0] if manual_gaps else "")
+    if not reason and not manual_gaps:
+        return None
+
+    return {
+        "source_type": "acceptance_spine",
+        "source_id": spine.spine_id,
+        "spine_id": spine.spine_id,
+        "intake_message_id": spine.intake_message_id,
+        "status": spine.status.value,
+        "blocked_reason": blocked_reason or None,
+        "manual_gaps": manual_gaps,
+        "reason": reason,
+        "created_at": spine.created_at,
+        "updated_at": spine.updated_at,
+    }
+
+
+def _active_acceptance_spine(
+    acceptance_spines: list[AcceptanceSpine],
+) -> AcceptanceSpine | None:
+    active_spines = [
+        spine
+        for spine in acceptance_spines
+        if spine.status not in _TERMINAL_ACCEPTANCE_SPINE_STATUSES
+    ]
+    if not active_spines:
+        return None
+    return max(
+        enumerate(active_spines),
+        key=lambda item: (
+            str(item[1].updated_at or item[1].created_at or ""),
+            item[0],
+        ),
+    )[1]
 
 
 def _read_session_rows(xmuse_root: Path) -> list[dict[str, Any]]:

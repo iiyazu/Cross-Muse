@@ -1019,18 +1019,37 @@ def _runtime_timeline_events(
 
     blockers = inspector.get("blockers")
     if isinstance(blockers, dict):
-        blocker = _latest_dict(blockers.get("items"))
+        blocker = blockers.get("first_durable_blocker")
+        if not isinstance(blocker, dict):
+            blocker = _latest_dict(blockers.get("items"))
         if blocker is not None:
-            active = bool(blocker.get("active"))
-            event_type = "blocker_active" if active else "blocker_resolved"
-            blocker_id = str(blocker.get("blocker_id") or "?")
-            severity = str(blocker.get("severity") or "?")
-            issuer = str(blocker.get("issuer") or "?")
-            reason = str(blocker.get("reason") or "").strip()
-            status = "active" if active else "resolved"
-            summary = f"{blocker_id} {severity} {issuer} {status}"
-            if reason:
-                summary = f"{summary}: {reason}"
+            source_type = str(blocker.get("source_type") or "collaboration_blocker")
+            if source_type == "acceptance_spine":
+                blocker_id = str(
+                    blocker.get("spine_id") or blocker.get("source_id") or "?"
+                )
+                manual_gaps = _string_items(blocker.get("manual_gaps"))
+                reason = str(
+                    blocker.get("blocked_reason")
+                    or blocker.get("reason")
+                    or (manual_gaps[0] if manual_gaps else "")
+                ).strip()
+                status = str(blocker.get("status") or "blocked")
+                event_type = "blocker_active"
+                summary = f"{blocker_id} acceptance_spine {status}"
+                if reason:
+                    summary = f"{summary}: {reason}"
+            else:
+                active = bool(blocker.get("active"))
+                event_type = "blocker_active" if active else "blocker_resolved"
+                blocker_id = str(blocker.get("blocker_id") or "?")
+                severity = str(blocker.get("severity") or "?")
+                issuer = str(blocker.get("issuer") or "?")
+                reason = str(blocker.get("reason") or "").strip()
+                status = "active" if active else "resolved"
+                summary = f"{blocker_id} {severity} {issuer} {status}"
+                if reason:
+                    summary = f"{summary}: {reason}"
             events.append(
                 _runtime_event(
                     conversation_id=conversation_id,
@@ -1046,6 +1065,7 @@ def _runtime_timeline_events(
                         "blocker_id": blocker_id,
                         "run_id": blocker.get("run_id"),
                         "blocks_dispatch": bool(blocker.get("blocks_dispatch")),
+                        "source_type": source_type,
                     },
                 )
             )

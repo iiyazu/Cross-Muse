@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from xmuse.dashboard_api import create_app
 from xmuse_core.agents.god_session_registry import GodSessionRegistry
+from xmuse_core.chat.acceptance_spine import AcceptanceSpineStore
 from xmuse_core.chat.collaboration_store import ChatCollaborationStore
 from xmuse_core.chat.dispatch_queue import ChatDispatchQueueStore
 from xmuse_core.chat.inbox_store import ChatInboxStore
@@ -13,6 +14,8 @@ from xmuse_core.chat.participant_store import ParticipantStore
 from xmuse_core.chat.peer_service import PeerChatService
 from xmuse_core.chat.store import ChatStore
 from xmuse_core.chat.stream_store import PeerTurnLatencyTraceStore
+from xmuse_core.platform.review_plane import ReviewPlaneController
+from xmuse_core.structuring.models import ReviewDecision, ReviewVerdict
 
 
 def _write_json(path: Path, payload: object) -> None:
@@ -959,6 +962,158 @@ def test_dashboard_peer_chat_runtime_timeline_projects_inspector_state(
         == f"/api/dashboard/peer-chat/conversations/{conv_id}/runtime-timeline"
         for event in body["events"]
     )
+
+
+def test_conversation_inspector_prefers_earliest_active_collaboration_blocker(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "chat.db"
+    conv = ChatStore(db).create_conversation("First Durable Blocker")
+    collaboration = ChatCollaborationStore(db)
+    first_run = collaboration.create_request(
+        conversation_id=conv.id,
+        goal="First blocker",
+        initiator="architect",
+        targets=["review"],
+        callback_target="architect",
+        question="Review first?",
+        context_refs=[],
+        idempotency_key="first-blocker",
+        timeout_s=480,
+    )
+    second_run = collaboration.create_request(
+        conversation_id=conv.id,
+        goal="Second blocker",
+        initiator="execute",
+        targets=["review"],
+        callback_target="execute",
+        question="Review second?",
+        context_refs=[],
+        idempotency_key="second-blocker",
+        timeout_s=480,
+    )
+    first = collaboration.raise_blocker(
+        first_run.run_id,
+        issuer="review",
+        severity="veto",
+        reason="First durable blocker must be visible.",
+        affected_ref="dashboard:first-durable-blocker",
+        suggested_fix="Expose the first active blocker.",
+        blocks_dispatch=True,
+    )
+    second = collaboration.raise_blocker(
+        second_run.run_id,
+        issuer="review",
+        severity="veto",
+        reason="Second active blocker should not hide the first.",
+        affected_ref="dashboard:first-durable-blocker",
+        suggested_fix="Keep first blocker stable.",
+        blocks_dispatch=True,
+    )
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            "update collaboration_blockers set created_at = ? where blocker_id = ?",
+            ("2026-06-05T01:00:00Z", first.blocker_id),
+        )
+        conn.execute(
+            "update collaboration_blockers set created_at = ? where blocker_id = ?",
+            ("2026-06-05T02:00:00Z", second.blocker_id),
+        )
+
+    response = TestClient(create_app(tmp_path)).get(
+        f"/api/dashboard/peer-chat/conversations/{conv.id}/inspector"
+    )
+
+    assert response.status_code == 200
+    blockers = response.json()["blockers"]
+    first_durable = blockers["first_durable_blocker"]
+    assert blockers["active"] == 2
+    assert first_durable["source_type"] == "collaboration_blocker"
+    assert first_durable["source_id"] == first.blocker_id
+    assert first_durable["blocker_id"] == first.blocker_id
+    assert first_durable["blocker_id"] != second.blocker_id
+
+
+def test_dashboard_runtime_timeline_falls_back_to_acceptance_spine_blocker(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "chat.db"
+    service = PeerChatService(db)
+    created = service.create_conversation(title="Acceptance Spine Runtime Blocker")
+    conversation_id = created["conversation"]["id"]
+    intake = service.post_human_message(
+        conversation_id=conversation_id,
+        author="Human operator",
+        content="Review and hold final action for the dashboard blocker.",
+        client_request_id="dashboard-spine-blocker-intake",
+    )
+    proposal = ChatStore(db).create_proposal(
+        conversation_id=conversation_id,
+        author="architect",
+        proposal_type="lane_graph",
+        content='{"summary":"dashboard blocker proposal","lanes":[]}',
+        references=[f"intake_message:{intake.message.id}"],
+    )
+    resolution = ChatStore(db).approve_proposal(
+        proposal.id,
+        approved_by=["human"],
+        approval_mode="manual",
+        goal_summary="Approve dashboard blocker proposal.",
+        content={"type": "lane_graph", "lanes": []},
+    )
+    lanes_path = tmp_path / "feature_lanes.json"
+    lanes_path.write_text(
+        json.dumps(
+            {
+                "lanes": [
+                    {
+                        "feature_id": "lane-dashboard-spine-blocker",
+                        "status": "gated",
+                        "prompt": "Run review.",
+                        "graph_id": "graph-dashboard-spine-blocker",
+                        "resolution_id": resolution.id,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    controller = ReviewPlaneController(
+        lanes_path=lanes_path,
+        store_path=tmp_path / "review_plane.json",
+        final_actions_path=tmp_path / "final_actions.json",
+        require_final_action_approval=True,
+    )
+    task = controller.open_review_task("lane-dashboard-spine-blocker")
+    controller.ingest_verdict(
+        task.task_id,
+        ReviewVerdict(
+            id="verdict-dashboard-spine-blocker",
+            lane_id="lane-dashboard-spine-blocker",
+            decision=ReviewDecision.MERGE,
+            summary="No findings.",
+            evidence_refs=["review:evidence"],
+        ),
+    )
+    spine = AcceptanceSpineStore(db).get_by_intake_message(intake.message.id)
+
+    response = TestClient(create_app(tmp_path)).get(
+        f"/api/dashboard/peer-chat/conversations/{conversation_id}/runtime-timeline"
+    )
+
+    assert response.status_code == 200
+    blocker_events = [
+        event for event in response.json()["events"]
+        if event["event_type"] == "blocker_active"
+    ]
+    assert len(blocker_events) == 1
+    event = blocker_events[0]
+    assert event["event_id"] == spine.spine_id
+    assert event["status"] == "blocked"
+    assert event["summary"] == (
+        f"{spine.spine_id} acceptance_spine blocked: final_action_pending"
+    )
+    assert event["refs"]["source_type"] == "acceptance_spine"
 
 
 def test_conversation_inspector_links_dashboard_runtime_timeline(tmp_path: Path) -> None:

@@ -887,6 +887,46 @@ def test_adapter_builds_runtime_closure_cards_from_inspector():
     )
 
 
+def test_adapter_runtime_closure_cards_render_acceptance_spine_blocker():
+    inspector = {
+        "conversation": {"id": "conv-runtime"},
+        "blockers": {
+            "active": 0,
+            "first_durable_blocker": {
+                "source_type": "acceptance_spine",
+                "source_id": "goalrun-runtime",
+                "spine_id": "goalrun-runtime",
+                "intake_message_id": "msg-runtime",
+                "status": "blocked",
+                "blocked_reason": "github_gate_unverified",
+                "manual_gaps": ["github_gate_unverified"],
+                "reason": "github_gate_unverified",
+                "created_at": "2026-06-05T01:05:00Z",
+                "updated_at": "2026-06-05T01:10:00Z",
+            },
+            "items": [],
+        },
+    }
+
+    cards = _runtime_closure_cards(inspector)
+
+    assert [card["card_type"] for card in cards] == ["runtime_blocker"]
+    blocker = cards[0]
+    assert blocker["source_id"] == "goalrun-runtime"
+    assert blocker["status"] == "blocked"
+    assert blocker["summary"] == (
+        "goalrun-runtime acceptance_spine blocked: github_gate_unverified"
+    )
+    assert blocker["metadata"] == {
+        "blocker_id": "goalrun-runtime",
+        "run_id": None,
+        "issuer": "chat_store",
+        "severity": "acceptance_spine",
+        "blocks_dispatch": True,
+        "source_type": "acceptance_spine",
+    }
+
+
 def test_adapter_poll_cards_merges_runtime_closure_cards(monkeypatch, tmp_path):
     adapter = XmuseAdapter(tmp_path, chat_api_base_url="http://chat-api")
     adapter.get_conversation_inspector = lambda conv_id: {
