@@ -415,6 +415,75 @@ async def test_ray_god_session_layer_uses_actor_for_peer_chat(tmp_path: Path) ->
 
 
 @pytest.mark.asyncio
+async def test_ray_god_session_layer_rejects_registered_identity_mismatch(
+    tmp_path: Path,
+) -> None:
+    from xmuse_core.agents.ray_session_layer import RayGodSessionLayer
+
+    actors: list[_FakeRayActor] = []
+
+    def actor_factory(**kwargs):
+        actor = _FakeRayActor()
+        actors.append(actor)
+        return actor
+
+    class Launcher:
+        supports_persistent_sessions = True
+
+        def build_persistent_command(self, role: str, worktree: Path) -> list[str]:
+            return ["fake-cli", role, str(worktree)]
+
+        def build_env(self, role: str):
+            return None
+
+    first_layer = RayGodSessionLayer(
+        registry_path=tmp_path / "god_sessions.json",
+        db_path=tmp_path / "chat.db",
+        launchers={AgentRuntime.CODEX: Launcher()},
+        actor_factory=actor_factory,
+    )
+    architect_agent = AgentDescriptor(
+        name="Architect GOD",
+        runtime=AgentRuntime.CODEX,
+        capabilities=["architect"],
+    )
+    await first_layer.ensure_conversation_session(
+        conversation_id="conv-1",
+        participant_id="part-1",
+        role="architect",
+        agent=architect_agent,
+        worktree=tmp_path,
+        model="gpt-5.4",
+        prompt_fingerprint="sha256:architect",
+    )
+
+    restarted_layer = RayGodSessionLayer(
+        registry_path=tmp_path / "god_sessions.json",
+        db_path=tmp_path / "chat.db",
+        launchers={AgentRuntime.CODEX: Launcher()},
+        actor_factory=actor_factory,
+    )
+    review_agent = AgentDescriptor(
+        name="Review GOD",
+        runtime=AgentRuntime.CODEX,
+        capabilities=["review"],
+    )
+
+    with pytest.raises(RuntimeError, match="existing registered session"):
+        await restarted_layer.ensure_conversation_session(
+            conversation_id="conv-1",
+            participant_id="part-1",
+            role="review",
+            agent=review_agent,
+            worktree=tmp_path,
+            model="gpt-5.4",
+            prompt_fingerprint="sha256:review",
+        )
+
+    assert len(actors) == 1
+
+
+@pytest.mark.asyncio
 async def test_ray_god_session_layer_uses_process_transport_for_opencode(
     tmp_path: Path,
 ) -> None:
