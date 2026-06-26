@@ -67,6 +67,7 @@ from xmuse_core.chat.roster_events import (
     roster_event_content,
 )
 from xmuse_core.chat.store import ChatStore
+from xmuse_core.integrations.a2a_bridge import build_participant_agent_card_from_store
 from xmuse_core.platform.read_contracts import build_execution_drilldown_refs
 from xmuse_core.platform.run_health import summarize_run_health
 from xmuse_core.runtime.paths import default_xmuse_root
@@ -108,6 +109,10 @@ def _store(base_dir: Path) -> ChatStore:
 
 def _peer_service(base_dir: Path) -> PeerChatService:
     return PeerChatService(base_dir / "chat.db")
+
+
+def _a2a_disabled_detail() -> dict[str, str]:
+    return {"code": "a2a_bridge_disabled", "message": "A2A bridge is disabled"}
 
 
 def _plain_human_message_payload(
@@ -1145,6 +1150,7 @@ def create_app(
     *,
     execution_worktree: Path | str | None = None,
     auth_token: str | None = None,
+    a2a_bridge_enabled: bool = False,
 ) -> FastAPI:
     root = Path(base_dir)
     execution_root = Path(execution_worktree) if execution_worktree is not None else REPO_ROOT
@@ -1183,6 +1189,20 @@ def create_app(
             },
             "role_templates": "ready",
         }
+
+    @app.get("/a2a/agents/{participant_id}")
+    def get_a2a_agent_card(participant_id: str, request: Request) -> dict[str, object]:
+        if not a2a_bridge_enabled:
+            raise HTTPException(status_code=404, detail=_a2a_disabled_detail())
+        try:
+            return build_participant_agent_card_from_store(
+                root / "chat.db",
+                participant_id=participant_id,
+                base_url=str(request.base_url),
+                session_registry_path=root / "god_sessions.json",
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="participant not found") from exc
 
     @app.post("/api/chat/conversations", status_code=status.HTTP_201_CREATED)
     def create_conversation(request: ConversationCreate) -> dict[str, object]:
