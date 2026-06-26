@@ -10,6 +10,10 @@ import pytest
 from xmuse_core.agents.god_session_registry import GodSessionRecord
 from xmuse_core.agents.protocol import StdoutMessage
 from xmuse_core.agents.provider_session_binding_store import ProviderSessionBindingStore
+from xmuse_core.chat.acceptance_spine import AcceptanceSpineStatus, AcceptanceSpineStore
+from xmuse_core.chat.dispatch_queue import ChatDispatchQueueStore
+from xmuse_core.chat.peer_service import PeerChatService
+from xmuse_core.chat.store import ChatStore
 from xmuse_core.gates.models import GateReport
 from xmuse_core.platform.agent_spawner import SpawnResult
 from xmuse_core.platform.execution.review import infer_review_fallback
@@ -5447,6 +5451,93 @@ async def test_gate_failure_marks_lane_gate_failed_and_skips_review(setup):
 
     assert orch._sm.get_lane("lane-1")["status"] == "gate_failed"
     review.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_on_lane_executed_attaches_chat_acceptance_spine_execution_evidence(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "chat.db"
+    service = PeerChatService(db)
+    created = service.create_conversation(title="Lane execution acceptance spine")
+    conversation_id = created["conversation"]["id"]
+    intake = service.post_human_message(
+        conversation_id=conversation_id,
+        author="Human operator",
+        content="Run this approved lane through the platform worker.",
+        client_request_id="lane-exec-spine-intake",
+    )
+    proposal = ChatStore(db).create_proposal(
+        conversation_id=conversation_id,
+        author="architect",
+        proposal_type="lane_graph",
+        content='{"summary":"execute proposal","lanes":[]}',
+        references=[f"intake_message:{intake.message.id}"],
+    )
+    resolution = ChatStore(db).approve_proposal(
+        proposal.id,
+        approved_by=["human"],
+        approval_mode="manual",
+        goal_summary="Approve lane execution.",
+        content={"type": "lane_graph", "lanes": []},
+    )
+    dispatch = ChatDispatchQueueStore(db).enqueue_agent_auto_dispatch(
+        conversation_id=conversation_id,
+        proposal_id=proposal.id,
+        resolution_id=resolution.id,
+        collaboration_run_id="collab-lane-exec",
+        artifact_ref="artifact:lane_graph",
+    )
+    ChatDispatchQueueStore(db).claim_next_auto_dispatch(
+        conversation_id=conversation_id,
+        claimed_by="dispatch-bridge-test",
+    )
+    ChatDispatchQueueStore(db).mark_dispatched(
+        dispatch.entry_id,
+        provider_run_ref="peer_ack:execute:participant-1",
+        dispatch_evidence="mcp_writeback:dispatch-1",
+    )
+    lanes_path = tmp_path / "feature_lanes.json"
+    lanes_path.write_text(
+        json.dumps(
+            {
+                "lanes": [
+                    {
+                        "feature_id": "lane-accepted-exec",
+                        "status": "executed",
+                        "prompt": "Implement the approved lane.",
+                        "worktree": str(tmp_path),
+                        "resolution_id": resolution.id,
+                        "graph_id": f"{resolution.id}-graph-v1",
+                        "dispatch_attempt_id": "dispatch-lane-accepted-exec-abc123",
+                        "provider_session_binding_id": "binding-lane-accepted-exec",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    orch = PlatformOrchestrator(
+        lanes_path=lanes_path,
+        xmuse_root=tmp_path,
+        mcp_port=9999,
+    )
+
+    with patch.object(orch, "_run_gate", new_callable=AsyncMock, return_value=False):
+        await orch._on_lane_executed("lane-accepted-exec")
+
+    lane = orch._sm.get_lane("lane-accepted-exec")
+    spine = AcceptanceSpineStore(db).get_by_intake_message(intake.message.id)
+    assert lane["status"] == "gate_failed"
+    assert spine.status is AcceptanceSpineStatus.EXECUTED
+    assert spine.execution_evidence_refs == [
+        "peer_ack:execute:participant-1",
+        "mcp_writeback:dispatch-1",
+        "feature_lanes.json#lane=lane-accepted-exec:status=executed",
+        f"lane_graph:{resolution.id}-graph-v1",
+        "dispatch_attempt:dispatch-lane-accepted-exec-abc123",
+        "provider_session_binding:binding-lane-accepted-exec",
+    ]
 
 
 @pytest.mark.asyncio
