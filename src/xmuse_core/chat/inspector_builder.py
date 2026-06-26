@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from xmuse_core.chat.acceptance_spine import AcceptanceSpineStore
 from xmuse_core.chat.collaboration_store import ChatCollaborationStore
 from xmuse_core.chat.dispatch_queue import ChatDispatchQueueStore
 from xmuse_core.chat.inbox_store import ChatInboxStore
@@ -48,6 +49,89 @@ def _participant_provider_summary(participant_rows: list[Any]) -> list[dict[str,
         {"provider_id": provider_id, "cli_kind": cli_kind, "count": count}
         for (provider_id, cli_kind), count in sorted(grouped.items())
     ]
+
+
+def _closure_evidence_summary(db_path: Path, conversation_id: str) -> dict[str, Any]:
+    spines = AcceptanceSpineStore(db_path).list_by_conversation(conversation_id)
+    status_summary: dict[str, int] = {}
+    proposal_review_refs: list[str] = []
+    independent_review_refs: list[str] = []
+    dispatch_ack_refs: list[str] = []
+    lane_execution_refs: list[str] = []
+    items: list[dict[str, Any]] = []
+
+    for spine in spines:
+        status_summary[spine.status.value] = status_summary.get(spine.status.value, 0) + 1
+        if spine.review_or_execute_verdict_ref:
+            proposal_review_refs.append(spine.review_or_execute_verdict_ref)
+        if spine.review_verdict_ref:
+            independent_review_refs.append(spine.review_verdict_ref)
+        ack_refs = _dispatch_ack_refs(spine.execution_evidence_refs)
+        lane_refs = _lane_execution_refs(spine.execution_evidence_refs)
+        dispatch_ack_refs.extend(ack_refs)
+        lane_execution_refs.extend(lane_refs)
+        items.append(
+            {
+                "spine_id": spine.spine_id,
+                "status": spine.status.value,
+                "intake_message_id": spine.intake_message_id,
+                "proposal_id": spine.proposal_id,
+                "review_trigger_inbox_id": spine.review_trigger_inbox_id,
+                "proposal_review_ref": spine.review_or_execute_verdict_ref,
+                "dispatch_item_id": spine.dispatch_item_id,
+                "dispatch_ack_refs": ack_refs,
+                "lane_execution_refs": lane_refs,
+                "independent_review_ref": spine.review_verdict_ref,
+                "final_action_ref": spine.final_action_ref,
+                "github_gate_evidence_ref": spine.github_gate_evidence_ref,
+                "blocked_reason": spine.blocked_reason,
+                "manual_gaps": spine.manual_gaps,
+                "created_at": spine.created_at,
+                "updated_at": spine.updated_at,
+            }
+        )
+
+    return {
+        "source_authority": "chat.db.acceptance_spines",
+        "total": len(spines),
+        "status_summary": status_summary,
+        "proposal_review": {
+            "total": len(proposal_review_refs),
+            "refs": proposal_review_refs,
+        },
+        "dispatch_ack": {
+            "total": len(dispatch_ack_refs),
+            "refs": dispatch_ack_refs,
+        },
+        "lane_execution": {
+            "total": len(lane_execution_refs),
+            "refs": lane_execution_refs,
+        },
+        "independent_review": {
+            "total": len(independent_review_refs),
+            "refs": independent_review_refs,
+        },
+        "items": items,
+    }
+
+
+def _dispatch_ack_refs(evidence_refs: list[str]) -> list[str]:
+    prefixes = (
+        "mcp_writeback:",
+        "peer_ack:",
+        "chat_dispatch_queue#entry=",
+    )
+    return [ref for ref in evidence_refs if ref.startswith(prefixes)]
+
+
+def _lane_execution_refs(evidence_refs: list[str]) -> list[str]:
+    prefixes = (
+        "feature_lanes.json#lane=",
+        "lane_graph:",
+        "dispatch_attempt:",
+        "provider_session_binding:",
+    )
+    return [ref for ref in evidence_refs if ref.startswith(prefixes)]
 
 
 def build_conversation_inspector_payload(
@@ -224,6 +308,7 @@ def build_conversation_inspector_payload(
     failed_dispatch_entries = [
         entry for entry in dispatch_entries if entry.status == "failed"
     ]
+    closure_evidence = _closure_evidence_summary(db_path, conversation_id)
 
     return {
         "conversation": conversation.model_dump(mode="json"),
@@ -311,6 +396,7 @@ def build_conversation_inspector_payload(
                 for entry in dispatch_entries
             ],
         },
+        "closure_evidence": closure_evidence,
         "recent_activity": {
             "message_count": len(messages),
             "card_count": len(cards),
