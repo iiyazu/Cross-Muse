@@ -334,6 +334,56 @@ def test_collaboration_proposal_approval_blocks_review_trigger_blocker(tmp_path)
     assert ChatStore(tmp_path / "chat.db").list_resolutions(conversation_id) == []
 
 
+def test_collaboration_proposal_approval_rejects_ambiguous_review_verdict(
+    tmp_path,
+) -> None:
+    client = TestClient(create_app(tmp_path))
+    (
+        service,
+        conversation_id,
+        participants,
+        sessions,
+        intake_message_id,
+        proposal,
+    ) = _dispatchable_proposal_with_review_trigger(tmp_path)
+    review_item = _review_inbox_items(tmp_path, conversation_id)[0]
+
+    reply = service.post_god_message(
+        registry_path=tmp_path / "god_sessions.json",
+        conversation_id=conversation_id,
+        participant_id=participants["review"],
+        god_session_id=sessions["review"],
+        client_request_id="review-ambiguous-verdict",
+        content=(
+            "REVIEW_VERDICT: needs_work\n"
+            "P1: evidence refs are missing, so dispatch must not proceed."
+        ),
+        reply_to_inbox_item_id=review_item.id,
+    )
+
+    updated_item = ChatInboxStore(tmp_path / "chat.db").get(review_item.id)
+    assert updated_item.status == "read"
+    assert updated_item.responded_message_id == reply["message"]["id"]
+    spine = AcceptanceSpineStore(tmp_path / "chat.db").get_by_intake_message(
+        intake_message_id
+    )
+    assert spine.status is AcceptanceSpineStatus.REVIEW_PENDING
+    assert spine.review_or_execute_verdict_ref is None
+
+    response = client.post(
+        f"/api/chat/proposals/{proposal['proposal']['id']}/approve",
+        json={
+            "approved_by": ["human"],
+            "approval_mode": "runtime_loop_manual_approval_no_auto_merge",
+            "goal_summary": "Ambiguous review verdict must not approve",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "proposal_review_missing"
+    assert ChatStore(tmp_path / "chat.db").list_resolutions(conversation_id) == []
+
+
 def test_manual_review_mention_and_auto_review_trigger_do_not_conflict(tmp_path) -> None:
     service = PeerChatService(tmp_path / "chat.db")
     created = service.create_conversation(title="Manual And Auto Review")

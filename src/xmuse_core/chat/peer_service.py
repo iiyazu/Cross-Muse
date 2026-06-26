@@ -3475,6 +3475,4 @@ def classify_review_trigger_reply(content: str) -> str:
         )
     ):
         return "dispatch_allowed"
-    if first_line.startswith("review verdict:") and "blocked" not in first_line:
-        return "dispatch_allowed"
     return "unknown"
