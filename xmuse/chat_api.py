@@ -58,9 +58,12 @@ from xmuse_core.chat.peer_proposals import classify_structured_proposal
 from xmuse_core.chat.peer_service import (
     PeerChatError,
     PeerChatService,
-    classify_review_trigger_reply,
 )
 from xmuse_core.chat.protocol_v2 import DeliberationMessageV1
+from xmuse_core.chat.review_trigger_verdicts import (
+    ReviewTriggerVerdictError,
+    review_trigger_verdict_decision,
+)
 from xmuse_core.chat.roster_events import (
     ROSTER_EVENT_ENVELOPE_TYPE,
     participant_added_event_payload,
@@ -536,7 +539,18 @@ def _reject_pending_review_trigger_for_dispatchable_proposal(
             or response.role != "assistant"
         ):
             raise PeerChatError("proposal_review_missing", f"{item.id}:invalid_response")
-        verdict = classify_review_trigger_reply(response.content)
+        try:
+            verdict = review_trigger_verdict_decision(
+                response.envelope_json,
+                expected_inbox_item_id=item.id,
+                expected_source_message_id=proposal_message_id,
+                expected_proposal_id=proposal_id,
+            )
+        except ReviewTriggerVerdictError as exc:
+            raise PeerChatError(
+                "proposal_review_missing",
+                f"{item.id}:{exc.code}",
+            ) from exc
         if verdict == "blocked":
             raise PeerChatError("proposal_review_blocked", f"{item.id}:{response.id}")
         if verdict != "dispatch_allowed":
