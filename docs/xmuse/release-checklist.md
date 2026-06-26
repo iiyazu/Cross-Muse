@@ -59,7 +59,7 @@ Do not claim:
 - P3 accepted live path evidence:
   `docs/xmuse/acceptance-gated-live-capture-evidence-2026-06-21.md`
 - Real provider bounded soak evidence:
-  `docs/xmuse/real-provider-soak-evidence-2026-06-21.md`
+  `docs/xmuse/archive/2026-06-pre-m7/real-provider-soak-evidence-2026-06-21.md`
 - P3 runtime root:
   `.goal-runs/2026-06-21/stage3-live-pr155-accepted`
 - P3 spine:

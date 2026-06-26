@@ -1,0 +1,62 @@
+# Natural Groupchat A2A Goal Prompt
+
+Use this prompt directly with `/goal`.
+
+```text
+Goal title:
+Production natural agents groupchat with A2A SDK interop and xmuse authority.
+
+Repo:
+/home/iiyatu/projects/python/xmuse
+
+Primary objective:
+Use xmuse's own natural agents groupchat to carry one small real xmuse demand
+through durable discussion, provider invocation, proposal or blocker, structured
+review verdict, dispatch/execution, PR, CI observation, and operator merge or
+explicit durable blocker.
+
+Read first:
+- AGENTS.md
+- docs/xmuse/README.md
+- docs/xmuse/natural-groupchat-a2a-goal.md
+- docs/xmuse/natural-groupchat-a2a-behavior.md
+- docs/xmuse/natural-groupchat-a2a-task-plan.md
+- docs/xmuse/mainline-contracts.md
+- /home/iiyatu/projects/python/xmuse-m7-natural-groupchat-goal-design/docs/superpowers/specs/2026-06-26-natural-groupchat-a2a-production-goal-design.md
+- /home/iiyatu/clowder-ai as natural groupchat reference only
+
+Current calibration:
+- Start from a clean origin/main worktree after truth refresh.
+- PR #193 (codex/a2a-sdk-foundation) should be verified as merged before
+  SDK-dependent work.
+- Dirty historical worktrees and archived docs are references only, not main
+  capability.
+
+Architecture:
+natural groupchat
+-> official a2a-sdk provider / handoff / artifact envelope
+-> xmuse chat.db / inbox / proposal / review / dispatch authority
+-> provider-native execution
+-> PR / CI / operator merge
+
+Hard rules:
+- A2A SDK is interop, not xmuse authority.
+- Ray is optional legacy, not the default natural groupchat kernel.
+- Do not start loops with TDD. First identify authority, producer, consumer,
+  condition, proof level, and failure boundary.
+- Use tests after observed runtime evidence to pin contracts/regressions.
+- Skills/workers are process aids only, never proof truth.
+- Use dynamic small main-based PRs by implementation domain; every PR must pass
+  remote CI before merge.
+- If the same complex boundary fails twice, refactor or redesign the boundary
+  instead of stacking patches.
+
+Minimum success:
+Reach a real PR/CI/operator merge path for one small xmuse demand, or stop at a
+durable blocker that names the next authority boundary with source refs.
+
+Do not claim:
+production-ready natural groupchat, live MemoryOS authority, fully autonomous
+merge, GitHub review truth, provider stdout review truth, full multi-provider
+parity, frontend complete, or Ray-backed production proof.
+```

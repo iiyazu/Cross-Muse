@@ -108,7 +108,7 @@ terminal path, not a multi-hour provider soak.
 
 Update: bounded real-provider/Ray/Codex soak was attempted on 2026-06-21 and is
 blocked. Evidence:
-`docs/xmuse/real-provider-soak-evidence-2026-06-21.md`. The run entered the
+`docs/xmuse/archive/2026-06-pre-m7/real-provider-soak-evidence-2026-06-21.md`. The run entered the
 Ray/Codex app-server path and persisted groupchat/session state, but failed
 before the first durable MCP `chat_post_message` reply. The claim level is not
 raised.
@@ -133,7 +133,7 @@ scheduler observation.
 
 Positive writeback follow-up: P1 is now accepted for the bounded one-turn /
 restart-resume path. Evidence:
-`docs/xmuse/real-provider-soak-evidence-2026-06-21.md#p1-positive-writeback-follow-up`.
+`docs/xmuse/archive/2026-06-pre-m7/real-provider-soak-evidence-2026-06-21.md#p1-positive-writeback-follow-up`.
 The focused real Ray/Codex app-server test produced two durable MCP
 `chat_post_message` replies, read inbox items with `responded_message_id`,
 `mcp_writeback` latency traces, `chat_post_message_persisted` tool stages, and
@@ -144,7 +144,7 @@ evidence.
 
 Proposal/review/dispatch follow-up: P2 is now accepted for the bounded
 real-provider control-plane path. Evidence:
-`docs/xmuse/real-provider-soak-evidence-2026-06-21.md#p2-positive-proposal--review--dispatch-follow-up`.
+`docs/xmuse/archive/2026-06-pre-m7/real-provider-soak-evidence-2026-06-21.md#p2-positive-proposal--review--dispatch-follow-up`.
 The focused real Ray/Codex app-server test produced a durable `lane_graph`
 proposal via `chat_emit_proposal`, handled the automatic review trigger, approved
 the collaboration-backed proposal, and enqueued an execute dispatch intent. This
@@ -155,7 +155,7 @@ and multi-turn soak stability.
 
 Execute dispatch completion follow-up: P3 is now accepted for the bounded
 real-provider dispatch-bridge path. Evidence:
-`docs/xmuse/real-provider-soak-evidence-2026-06-21.md#p3-positive-execute-dispatch-completion-follow-up`.
+`docs/xmuse/archive/2026-06-pre-m7/real-provider-soak-evidence-2026-06-21.md#p3-positive-execute-dispatch-completion-follow-up`.
 The focused real Ray/Codex app-server test consumed the queued dispatch intent,
 created a dispatch inbox for execute, required durable `chat_post_message`
 acknowledgement, and marked the dispatch queue entry `dispatched` with
@@ -173,27 +173,27 @@ completion test through final-action/GitHub gate on 2026-06-21 failed before
 the first provider MCP proposal writeback with
 `provider_turn_cancelled_before_mcp_writeback`; therefore this does not raise
 the real-provider claim level. Evidence:
-`docs/xmuse/real-provider-soak-evidence-2026-06-21.md#p4-final-action-blocked-path-attempt`.
+`docs/xmuse/archive/2026-06-pre-m7/real-provider-soak-evidence-2026-06-21.md#p4-final-action-blocked-path-attempt`.
 
 P4 proposal-writeback stability follow-up: the prompt contract now explicitly
 prioritizes `chat_emit_proposal` over ordinary `chat_post_message` when the
 inbox request asks for proposal emission. A focused real-provider rerun still
 failed before any proposal, MCP tool trace, or stream delta was produced, ending
 as `provider_no_mcp_writeback_before_deadline`. Evidence:
-`docs/xmuse/real-provider-soak-evidence-2026-06-21.md#p4-proposal-writeback-stability-attempt`.
+`docs/xmuse/archive/2026-06-pre-m7/real-provider-soak-evidence-2026-06-21.md#p4-proposal-writeback-stability-attempt`.
 
 P4 first-event diagnostics follow-up: app-server partial latency stages are now
 available to scheduler timeout/cancellation traces before the provider session
 is aborted. The next failed real proposal turn should show whether xmuse saw
 `mcp_tools_ready`, turn start, stream delta, or MCP tool-call events. Evidence:
-`docs/xmuse/real-provider-soak-evidence-2026-06-21.md#p4-app-server-first-event-diagnostics`.
+`docs/xmuse/archive/2026-06-pre-m7/real-provider-soak-evidence-2026-06-21.md#p4-app-server-first-event-diagnostics`.
 
 P4 first-proposal probe follow-up: a small real-provider probe reached durable
 `chat_emit_proposal` and persisted a proposal, but the complete P4 path still
 failed before proposal persistence. The failed full-P4 trace now contains
 `mcp_tools_ready` and `codex_app_server_turn_start`, but no stream delta and no
 MCP tool call. Evidence:
-`docs/xmuse/real-provider-soak-evidence-2026-06-21.md#p4-first-proposal-probe`.
+`docs/xmuse/archive/2026-06-pre-m7/real-provider-soak-evidence-2026-06-21.md#p4-first-proposal-probe`.
 
 P4 tool-choice stability follow-up: one complete real Ray/Codex app-server P4
 run reached durable proposal writeback, manual review approval, dispatch MCP
@@ -205,7 +205,7 @@ tool trace, so the dispatch queue failed with `peer_no_inbox_side_effect`.
 The dispatch prompt now explicitly forbids claiming MCP writeback tools are
 unavailable and requires both acknowledgement and failure acknowledgement to use
 `chat_post_message`; the targeted rerun passed after that hardening. Evidence:
-`docs/xmuse/real-provider-soak-evidence-2026-06-21.md#p4-tool-choice-stability-and-final-action-gate`.
+`docs/xmuse/archive/2026-06-pre-m7/real-provider-soak-evidence-2026-06-21.md#p4-tool-choice-stability-and-final-action-gate`.
 
 Tasks:
 

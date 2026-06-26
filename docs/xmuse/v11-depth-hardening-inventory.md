@@ -19,7 +19,7 @@ cd /home/iiyatu/projects/python/xmuse && for doc in \
   docs/xmuse/production-operations.md \
   docs/xmuse/config-matrix.md \
   docs/xmuse/provider-matrix.md \
-  docs/xmuse/codex-strengthening-handoff.md; do
+  docs/xmuse/archive/2026-06-pre-m7/codex-strengthening-handoff.md; do
   echo "=== $doc ===" && wc -l "$doc"
 done
 
