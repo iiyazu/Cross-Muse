@@ -55,6 +55,17 @@ def _registered_participant(tmp_path: Path):
     return chat, conv, participant, session
 
 
+def _complete_handoff_content() -> str:
+    return (
+        "what: inspect the implementation risk\n"
+        "why: execution depends on this handoff before dispatch\n"
+        "tradeoffs: keep the check bounded and avoid broad refactor\n"
+        "open_questions: none for this handoff\n"
+        "next_action: reply with a concise feasibility note\n"
+        "evidence_refs: message:latest"
+    )
+
+
 def test_mcp_lists_chat_tools(tmp_path: Path) -> None:
     client = TestClient(create_app(tmp_path))
     response = client.post(
@@ -880,6 +891,12 @@ def test_chat_mention_surfaces_display_name_routing_and_inbox_delivery(
     }
     assert payload["inbox_items"][0]["conversation_id"] == conv.id
     assert payload["inbox_items"][0]["target_participant_id"] == target.participant_id
+    assert payload["natural_route"]["source_kind"] == "chat_mention"
+    assert payload["natural_route"]["target_participant_id"] == target.participant_id
+    assert payload["natural_route"]["status"] == "pending"
+    assert payload["inbox_items"][0]["payload"]["natural_route"] == (
+        payload["natural_route"]
+    )
 
 
 def test_chat_mention_can_reply_to_current_inbox_item(tmp_path: Path) -> None:
@@ -916,7 +933,7 @@ def test_chat_mention_can_reply_to_current_inbox_item(tmp_path: Path) -> None:
                 "god_session_id": session.god_session_id,
                 "client_request_id": "handoff-reply-1",
                 "target_address": "@execute",
-                "content": "Please inspect the implementation risk.",
+                "content": _complete_handoff_content(),
                 "reply_to_inbox_item_id": source_item.id,
             },
         )
@@ -926,11 +943,88 @@ def test_chat_mention_can_reply_to_current_inbox_item(tmp_path: Path) -> None:
     assert replied.status == "read"
     assert replied.responded_message_id == payload["message"]["id"]
     assert payload["inbox_items"][0]["target_participant_id"] == target.participant_id
+    assert payload["natural_route"]["source_refs"] == [
+        f"message:{source.id}",
+        f"inbox:{source_item.id}",
+    ]
+    assert payload["natural_route"]["route_kind"] == "handoff"
+    assert payload["handoff_assessment"]["is_complete"] is True
+    assert payload["inbox_items"][0]["payload"]["handoff_assessment"][
+        "missing_fields"
+    ] == []
     stages = PeerTurnLatencyTraceStore(tmp_path / "chat.db").list_mcp_tool_stages(
         conv.id,
         source_item.id,
     )
     assert "chat_mention" in stages
+
+
+def test_chat_mention_current_inbox_incomplete_handoff_creates_blocker(
+    tmp_path: Path,
+) -> None:
+    chat, conv, sender, session = _registered_participant(tmp_path)
+    execute = ParticipantStore(tmp_path / "chat.db").add(
+        conversation_id=conv.id,
+        role="execute",
+        display_name="Execute GOD",
+        cli_kind="codex",
+        model="gpt-5.5",
+    )
+    source = chat.add_message(conv.id, "Human", "human", "@architect hand off")
+    inbox_store = ChatInboxStore(tmp_path / "chat.db")
+    source_item = inbox_store.create_item(
+        conversation_id=conv.id,
+        target_participant_id=sender.participant_id,
+        target_role=sender.role,
+        target_address="@architect",
+        sender_participant_id=None,
+        sender_address="@human",
+        source_message_id=source.id,
+        item_type="mention",
+        payload={"content": source.content},
+    )
+    client = TestClient(create_app(tmp_path))
+
+    payload = json.loads(
+        _mcp_call(
+            client,
+            "chat_mention",
+            {
+                "conversation_id": conv.id,
+                "participant_id": sender.participant_id,
+                "god_session_id": session.god_session_id,
+                "client_request_id": "handoff-blocker-1",
+                "target_address": "@execute",
+                "content": "Please inspect the implementation risk.",
+                "reply_to_inbox_item_id": source_item.id,
+            },
+        )
+    )
+
+    replied = inbox_store.get(source_item.id)
+    assert replied.status == "read"
+    assert replied.responded_message_id == payload["message"]["id"]
+    assert payload["message"]["mentions"] == []
+    assert payload["natural_route"]["status"] == "blocked"
+    assert payload["natural_route"]["blocker_reason"] == "missing_handoff_fields"
+    assert payload["handoff_assessment"]["missing_fields"] == [
+        "what",
+        "why",
+        "tradeoffs",
+        "open_questions",
+        "next_action",
+        "evidence_refs",
+    ]
+    assert payload["inbox_items"][0]["target_participant_id"] == sender.participant_id
+    assert payload["inbox_items"][0]["item_type"] == "natural_handoff_blocker"
+    assert payload["inbox_items"][0]["payload"]["blocks_dispatch"] is True
+    assert payload["inbox_items"][0]["payload"]["target_participant_id"] == (
+        execute.participant_id
+    )
+    assert inbox_store.list_for_participant(
+        conversation_id=conv.id,
+        participant_id=execute.participant_id,
+    ) == []
 
 
 def test_chat_mention_resolves_participant_id_with_conversation_scope(
