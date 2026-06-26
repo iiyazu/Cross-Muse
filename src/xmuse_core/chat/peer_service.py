@@ -2009,6 +2009,17 @@ class PeerChatService:
         response_target = _collaboration_response_target(participant.role, run.targets)
         if response_target is None:
             raise PeerChatError("collaboration_target_mismatch", participant.role)
+        if participant.role == "execute":
+            invalid_reason = _execute_feasibility_verdict_invalid_reason(str(content))
+            if invalid_reason is not None:
+                raise PeerChatError(
+                    "execute_collaboration_response_invalid",
+                    invalid_reason,
+                    details={
+                        "participant_id": participant_id,
+                        "required_type": "execute_feasibility_verdict",
+                    },
+                )
         try:
             updated = store.record_response(
                 run_id,
@@ -2491,6 +2502,21 @@ class PeerChatService:
             participant_id=participant_id,
             god_session_id=god_session_id,
         )
+        participant = self._participant_for_conversation(
+            conversation_id=conversation_id,
+            participant_id=participant_id,
+            error_code="unknown_participant",
+        )
+        if participant.role != "architect":
+            raise PeerChatError(
+                "proposal_authority_forbidden",
+                "chat_emit_proposal is restricted to architect participants",
+                details={
+                    "participant_id": participant_id,
+                    "participant_role": participant.role,
+                    "required_role": "architect",
+                },
+            )
         proposal_references = references or []
         self._require_ready_collaboration_references(
             conversation_id=conversation_id,
@@ -2900,6 +2926,54 @@ def _collaboration_response_target(role: str, targets: list[str]) -> str | None:
     if address in targets:
         return address
     return None
+
+
+def _execute_feasibility_verdict_invalid_reason(content: str) -> str | None:
+    try:
+        payload = json.loads(content)
+    except json.JSONDecodeError:
+        return "execute_shadow_verdict_not_json"
+    if not isinstance(payload, dict):
+        return "execute_shadow_verdict_not_json_object"
+    if payload.get("type") != "execute_feasibility_verdict":
+        return "execute_shadow_verdict_wrong_type"
+    if payload.get("execution_performed") is not False:
+        return "execute_shadow_must_not_perform_execution"
+    if _execute_verdict_blocks_dispatch(payload) or _execute_verdict_confirms_dispatchable(
+        payload
+    ):
+        return None
+    return "execute_shadow_verdict_missing_feasibility"
+
+
+def _execute_verdict_blocks_dispatch(payload: dict[str, Any]) -> bool:
+    if payload.get("feasible") is False or payload.get("dispatchable") is False:
+        return True
+    for key in ("verdict", "status", "feasibility"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip().lower() in {
+            "blocked",
+            "not_feasible",
+            "not feasible",
+            "needs_clarification",
+            "needs clarification",
+        }:
+            return True
+    return False
+
+
+def _execute_verdict_confirms_dispatchable(payload: dict[str, Any]) -> bool:
+    if payload.get("feasible") is True or payload.get("dispatchable") is True:
+        return True
+    for key in ("verdict", "status", "feasibility"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip().lower() in {
+            "dispatchable",
+            "feasible",
+            "executable",
+        }:
+            return True
+    return False
 
 
 def _collaboration_request_content(

@@ -717,7 +717,9 @@ CHAT_TOOL_SCHEMAS: list[dict[str, Any]] = [
     },
     {
         "name": "chat_emit_proposal",
-        "description": "Create an xmuse proposal row and proposal chat card.",
+        "description": (
+            "Architect-only: create an xmuse proposal row and proposal chat card."
+        ),
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -818,7 +820,8 @@ CHAT_TOOL_SCHEMAS: list[dict[str, Any]] = [
             "Record this GOD participant's response to a collaboration request. "
             "For executable dispatch, execute must send content shaped exactly "
             'like {"type":"execute_feasibility_verdict","status":"executable",'
-            '"summary":"<why dispatch is safe>","evidence_refs":["<ref>"]}; '
+            '"execution_performed":false,"summary":"<why dispatch is safe>",'
+            '"evidence_refs":["<ref>"]}; '
             "looser fields such as verdict=feasible do not satisfy approval gates."
         ),
         "inputSchema": {
@@ -1103,9 +1106,10 @@ def _peer_chat_tool_schemas() -> list[dict[str, Any]]:
             narrowed = json.loads(json.dumps(schema))
             if name == "chat_emit_proposal":
                 narrowed["description"] = (
-                    "Submit an actionable lane_graph proposal after peer discussion "
-                    "has produced executable work. This creates an approval card; "
-                    "it does not approve or dispatch the proposal by itself."
+                    "Architect-only: submit an actionable lane_graph proposal after "
+                    "peer discussion has produced executable work. This creates an "
+                    "approval card; it does not approve or dispatch the proposal by "
+                    "itself."
                 )
             elif name == "chat_create_collaboration_request":
                 narrowed["description"] = (
@@ -1119,7 +1123,8 @@ def _peer_chat_tool_schemas() -> list[dict[str, Any]]:
                     "execute_feasibility_verdict JSON object before emitting a "
                     "dispatchable proposal: "
                     '{"type":"execute_feasibility_verdict","status":"executable",'
-                    '"summary":"<why dispatch is safe>","evidence_refs":["<ref>"]}. '
+                    '"execution_performed":false,"summary":"<why dispatch is safe>",'
+                    '"evidence_refs":["<ref>"]}. '
                     "Looser fields such as verdict=feasible do not satisfy dispatch."
                 )
             schemas.append(narrowed)

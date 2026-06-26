@@ -2,6 +2,7 @@
 """REST API for the xmuse chat-plane MVP."""
 
 import json
+import re
 import sqlite3
 import uuid
 from pathlib import Path
@@ -215,13 +216,13 @@ def _collaboration_execute_confirmed(run: CollaborationRun | None) -> bool:
 
 
 def _execute_feasibility_verdict_confirmed(content: str) -> bool:
-    try:
-        payload = json.loads(content)
-    except json.JSONDecodeError:
+    payload = _execute_verdict_payload(content)
+    if payload is None:
         return False
-    if not isinstance(payload, dict):
+    verdict_type = payload.get("type") or payload.get("response_type")
+    if verdict_type != "execute_feasibility_verdict":
         return False
-    if payload.get("type") != "execute_feasibility_verdict":
+    if payload.get("execution_performed") is not False:
         return False
     if payload.get("status") != "executable":
         return False
@@ -232,6 +233,70 @@ def _execute_feasibility_verdict_confirmed(content: str) -> bool:
     if not isinstance(evidence_refs, list):
         return False
     return any(isinstance(ref, str) and bool(ref.strip()) for ref in evidence_refs)
+
+
+def _execute_verdict_payload(content: str) -> dict[str, object] | None:
+    for candidate in _json_object_candidates(content):
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return None
+
+
+def _json_object_candidates(content: str) -> list[str]:
+    text = content.strip()
+    if not text:
+        return []
+    candidates = [_strip_markdown_json_fence(text)]
+    candidates.extend(
+        match.group(1).strip()
+        for match in re.finditer(r"```(?:json)?\s*(.*?)```", text, flags=re.DOTALL)
+        if match.group(1).strip()
+    )
+    extracted = _first_balanced_json_object(text)
+    if extracted:
+        candidates.append(extracted)
+    return candidates
+
+
+def _strip_markdown_json_fence(text: str) -> str:
+    stripped = text.strip()
+    if not stripped.startswith("```"):
+        return stripped
+    lines = stripped.splitlines()
+    if len(lines) < 3 or not lines[-1].strip().startswith("```"):
+        return stripped
+    return "\n".join(lines[1:-1]).strip()
+
+
+def _first_balanced_json_object(text: str) -> str | None:
+    start = text.find("{")
+    if start < 0:
+        return None
+    depth = 0
+    in_string = False
+    escaped = False
+    for index, char in enumerate(text[start:], start=start):
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : index + 1].strip()
+    return None
 
 
 def _conversation_exists(store: ChatStore, conversation_id: str) -> bool:
