@@ -17,6 +17,7 @@ from xmuse_core.providers.registry import (
     DEFAULT_CODEX_GOD_MODEL_ID,
     normalize_codex_model_id,
 )
+from xmuse_core.runtime.child_env import normalize_child_temp_env
 
 if TYPE_CHECKING:
     from xmuse_core.providers.service import RunnerProviderService
@@ -176,12 +177,14 @@ class AgentSpawner:
         if graph_id := context.get("graph_id"):
             env["XMUSE_GRAPH_ID"] = graph_id
         if provider_invocation is not None and self._provider_service is not None:
-            return self._provider_service.build_env(
-                provider_invocation,
-                lane_id=lane_id,
-                base_env=env,
+            return normalize_child_temp_env(
+                self._provider_service.build_env(
+                    provider_invocation,
+                    lane_id=lane_id,
+                    base_env=env,
+                )
             )
-        return env
+        return normalize_child_temp_env(env)
 
     def _spawn_log_dir(self, lane_id: str) -> Path:
         safe_lane_id = "".join(
