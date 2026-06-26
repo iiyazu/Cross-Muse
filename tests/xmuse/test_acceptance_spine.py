@@ -102,6 +102,36 @@ def test_acceptance_spine_tracks_proposal_resolution_and_dispatch_refs(
         "mcp_writeback:dispatch-inbox",
     ]
 
+    AcceptanceSpineStore(db).attach_lane_execution_for_resolution(
+        resolution_id=resolution.id,
+        evidence_refs=[
+            "feature_lanes.json#lane=lane-spine-flow:status=executed",
+            "lane_graph:graph-spine-flow",
+        ],
+    )
+
+    spine = AcceptanceSpineStore(db).get_by_intake_message(intake.message.id)
+    assert spine.status is AcceptanceSpineStatus.EXECUTED
+    assert spine.execution_evidence_refs == [
+        "provider:run:1",
+        "mcp_writeback:dispatch-inbox",
+        "feature_lanes.json#lane=lane-spine-flow:status=executed",
+        "lane_graph:graph-spine-flow",
+    ]
+
+    AcceptanceSpineStore(db).attach_review_verdict_for_resolution(
+        resolution_id=resolution.id,
+        review_verdict_ref="review_plane.json#verdict=verdict-spine-flow",
+    )
+    AcceptanceSpineStore(db).attach_lane_execution_for_resolution(
+        resolution_id=resolution.id,
+        evidence_refs=["provider_session_binding:binding-spine-flow"],
+    )
+
+    spine = AcceptanceSpineStore(db).get_by_intake_message(intake.message.id)
+    assert spine.status is AcceptanceSpineStatus.REVIEWED
+    assert "provider_session_binding:binding-spine-flow" in spine.execution_evidence_refs
+
 
 def test_chat_api_reads_acceptance_spine_status(tmp_path: Path) -> None:
     client = TestClient(create_app(tmp_path))

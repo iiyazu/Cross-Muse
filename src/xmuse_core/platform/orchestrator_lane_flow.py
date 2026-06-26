@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from xmuse_core.agents.persistent_peer import fingerprint_prompt
+from xmuse_core.chat.acceptance_spine import AcceptanceSpineStore
 from xmuse_core.observability import log_event, observability_context, timed_core_operation
 from xmuse_core.platform.agent_spawner import GodConfig
 from xmuse_core.platform.execution import executor as execution_executor
@@ -531,6 +532,7 @@ async def on_lane_executed(orchestrator, lane_id: str) -> None:
     ):
         if lane.get("status") != "executed":
             return
+        _attach_acceptance_spine_lane_execution(orchestrator, lane_id, lane)
         try:
             passed = await orchestrator._recovery.execute_async(
                 "orchestrator.gate_runner",
@@ -553,6 +555,44 @@ async def on_lane_executed(orchestrator, lane_id: str) -> None:
                 "gate_failed",
                 metadata={"gate_passed": False, "failure_reason": "gate_failed"},
             )
+
+def _attach_acceptance_spine_lane_execution(
+    orchestrator,
+    lane_id: str,
+    lane: dict[str, Any],
+) -> None:
+    resolution_id = _optional_text(lane.get("resolution_id"))
+    if resolution_id is None:
+        return
+    chat_db_path = orchestrator._root / "chat.db"
+    if not chat_db_path.exists():
+        return
+    evidence_refs = [
+        f"feature_lanes.json#lane={lane_id}:status=executed",
+    ]
+    graph_id = _lane_graph_id(lane)
+    if graph_id is not None:
+        evidence_refs.append(f"lane_graph:{graph_id}")
+    dispatch_attempt_id = _optional_text(lane.get("dispatch_attempt_id"))
+    if dispatch_attempt_id is not None:
+        evidence_refs.append(f"dispatch_attempt:{dispatch_attempt_id}")
+    provider_binding_id = _optional_text(lane.get("provider_session_binding_id"))
+    if provider_binding_id is not None:
+        evidence_refs.append(f"provider_session_binding:{provider_binding_id}")
+    try:
+        AcceptanceSpineStore(chat_db_path).attach_lane_execution_for_resolution(
+            resolution_id=resolution_id,
+            evidence_refs=evidence_refs,
+        )
+    except Exception as exc:
+        log_event(
+            logger,
+            logging.WARNING,
+            "acceptance_spine_lane_execution_attach_failed",
+            lane_id=lane_id,
+            resolution_id=resolution_id,
+            error=str(exc),
+        )
 
 async def run_review_god(orchestrator, lane_id: str) -> None:
     lane = orchestrator._sm.get_lane(lane_id)
