@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -8,7 +10,28 @@ from xmuse_core.chat.context_assembler import (
     build_participant_profile,
     build_participant_session_binding,
 )
+from xmuse_core.chat.envelopes import normalize_envelope
+from xmuse_core.chat.mentions import MentionResolutionError, MentionResolver
+from xmuse_core.chat.natural_routing import build_natural_route_event, natural_route_payload
 from xmuse_core.chat.participant_store import Participant, ParticipantStore
+from xmuse_core.chat.store import ChatStore
+
+
+class A2ABridgeError(ValueError):
+    def __init__(self, code: str, detail: str) -> None:
+        super().__init__(f"{code}: {detail}")
+        self.code = code
+        self.detail = detail
+
+
+@dataclass(frozen=True)
+class A2AInboundTask:
+    task_id: str
+    context_id: str
+    sender_agent_id: str
+    content: str
+    target_address: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 def build_participant_agent_card(
@@ -97,3 +120,213 @@ def build_participant_agent_card_from_store(
         active_participants=active_participants,
         session_binding=build_participant_session_binding(participant, session),
     )
+
+
+class A2AInboundBridge:
+    def __init__(self, db_path: Path | str, *, enabled: bool = False) -> None:
+        self._db_path = Path(db_path)
+        self._enabled = enabled
+        self._chat = ChatStore(self._db_path)
+        self._participants = ParticipantStore(self._db_path)
+
+    def record_task_send(self, task: A2AInboundTask) -> dict[str, Any]:
+        if not self._enabled:
+            return {
+                "status": "disabled",
+                "reason": "a2a_bridge_disabled",
+                "task_id": task.task_id,
+            }
+        conversation_id = _required(task.context_id, "context_id")
+        task_id = _required(task.task_id, "task_id")
+        sender_agent_id = _required(task.sender_agent_id, "sender_agent_id")
+        content = _required(task.content, "content")
+        target_address = _optional_text(task.target_address, "target_address")
+        metadata = _metadata_dict(task.metadata)
+        self._assert_conversation_exists(conversation_id)
+        target = self._resolve_target(
+            conversation_id=conversation_id,
+            target_address=target_address,
+            content=content,
+        )
+        source_refs = [f"a2a_task:{task_id}", f"a2a_context:{conversation_id}"]
+        payload = self._chat.create_message_inbox_and_log(
+            conversation_id=conversation_id,
+            tool_name="a2a_task_send",
+            caller_identity=f"a2a:{sender_agent_id}",
+            client_request_id=task_id,
+            author=f"a2a:{sender_agent_id}",
+            role="assistant",
+            content=content,
+            envelope_type="a2a_task",
+            envelope_json=normalize_envelope(
+                {
+                    "type": "a2a_task",
+                    "task_id": task_id,
+                    "context_id": conversation_id,
+                    "sender_agent_id": sender_agent_id,
+                    "target_address": target.normalized,
+                    "source_refs": source_refs,
+                    "metadata": metadata,
+                },
+                envelope_type="a2a_task",
+            ),
+            mentions=[target.normalized],
+            inbox_items=[
+                self._inbox_item(
+                    conversation_id=conversation_id,
+                    task_id=task_id,
+                    sender_agent_id=sender_agent_id,
+                    target=target,
+                    content=content,
+                    metadata=metadata,
+                    source_refs=source_refs,
+                )
+            ],
+        )
+        return {
+            "status": "accepted",
+            "task_id": task_id,
+            "message": payload["message"],
+            "inbox_items": payload["inbox_items"],
+        }
+
+    def _assert_conversation_exists(self, conversation_id: str) -> None:
+        if not any(item.id == conversation_id for item in self._chat.list_conversations()):
+            raise A2ABridgeError("unknown_conversation", conversation_id)
+
+    def _resolve_target(
+        self,
+        *,
+        conversation_id: str,
+        target_address: str | None,
+        content: str,
+    ):
+        resolver = MentionResolver(self._participants)
+        if target_address:
+            try:
+                target = resolver.resolve(conversation_id, target_address)
+                self._assert_explicit_target_matches_leading_content(
+                    resolver=resolver,
+                    conversation_id=conversation_id,
+                    explicit_participant_id=target.participant.participant_id,
+                    content=content,
+                )
+                return target
+            except MentionResolutionError as exc:
+                raise A2ABridgeError(exc.code, exc.target) from exc
+        try:
+            targets = resolver.resolve_leading_content(
+                conversation_id,
+                content,
+                strict=True,
+            )
+            if not targets:
+                targets = resolver.resolve_content(
+                    conversation_id,
+                    content,
+                    strict=True,
+                )
+        except MentionResolutionError as exc:
+            raise A2ABridgeError(exc.code, exc.target) from exc
+        if not targets:
+            raise A2ABridgeError("missing_a2a_target", "target_address or @mention required")
+        if len(targets) > 1:
+            raise A2ABridgeError(
+                "multiple_a2a_targets",
+                ",".join(target.normalized for target in targets),
+            )
+        return targets[0]
+
+    def _assert_explicit_target_matches_leading_content(
+        self,
+        *,
+        resolver: MentionResolver,
+        conversation_id: str,
+        explicit_participant_id: str,
+        content: str,
+    ) -> None:
+        targets = resolver.resolve_leading_content(
+            conversation_id,
+            content,
+            strict=True,
+        )
+        if not targets:
+            return
+        if len(targets) > 1:
+            raise A2ABridgeError(
+                "multiple_a2a_targets",
+                ",".join(target.normalized for target in targets),
+            )
+        if targets[0].participant.participant_id != explicit_participant_id:
+            raise A2ABridgeError(
+                "a2a_target_mismatch",
+                f"{explicit_participant_id}!={targets[0].participant.participant_id}",
+            )
+
+    def _inbox_item(
+        self,
+        *,
+        conversation_id: str,
+        task_id: str,
+        sender_agent_id: str,
+        target,
+        content: str,
+        metadata: dict[str, Any],
+        source_refs: list[str],
+    ) -> dict[str, Any]:
+        event = build_natural_route_event(
+            conversation_id=conversation_id,
+            origin_message_id=task_id,
+            source_kind="a2a_inbound",
+            author_participant_id=f"a2a:{sender_agent_id}",
+            target_participant_id=target.participant.participant_id,
+            route_kind="a2a_task",
+            source_refs=source_refs,
+        )
+        return {
+            "target_participant_id": target.participant.participant_id,
+            "target_role": target.participant.role,
+            "target_address": target.normalized,
+            "sender_participant_id": None,
+            "sender_address": f"a2a:{sender_agent_id}",
+            "item_type": "a2a_task",
+            "payload": natural_route_payload(
+                event,
+                content=content,
+                mention=target.raw,
+                extra={
+                    "a2a_task_id": task_id,
+                    "a2a_context_id": conversation_id,
+                    "a2a_sender_agent_id": sender_agent_id,
+                    "a2a_metadata": metadata,
+                },
+            ),
+        }
+
+
+def _required(value: object, field_name: str) -> str:
+    if not isinstance(value, str):
+        raise A2ABridgeError(f"invalid_{field_name}", field_name)
+    text = value.strip()
+    if not text:
+        raise A2ABridgeError(f"missing_{field_name}", field_name)
+    return text
+
+
+def _optional_text(value: object, field_name: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise A2ABridgeError(f"invalid_{field_name}", field_name)
+    return value.strip() or None
+
+
+def _metadata_dict(value: object) -> dict[str, Any]:
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise A2ABridgeError("invalid_metadata", "metadata")
+    try:
+        return json.loads(json.dumps(value))
+    except (TypeError, ValueError) as exc:
+        raise A2ABridgeError("invalid_metadata_json", "metadata") from exc

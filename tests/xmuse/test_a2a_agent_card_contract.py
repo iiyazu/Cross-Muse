@@ -123,4 +123,4 @@ def test_a2a_agent_card_endpoint_does_not_add_inbound_task_route(
 
     response = client.post("/a2a/tasks/send", json={})
 
-    assert response.status_code == 404
+    assert response.status_code == 422
