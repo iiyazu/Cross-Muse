@@ -372,7 +372,7 @@ Required docs candidates:
 - `docs/xmuse/vision-runtime-evidence-closure.md`
 - `docs/xmuse/broad-suite-baseline-debt.md`
 - `docs/xmuse/memoryos-lite-runtime-compatibility.md`
-- `docs/xmuse/codex-strengthening-handoff.md`
+- `docs/xmuse/archive/2026-06-pre-m7/codex-strengthening-handoff.md`
 
 Required handoff content:
 

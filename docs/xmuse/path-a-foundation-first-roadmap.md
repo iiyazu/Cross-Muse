@@ -39,7 +39,7 @@ Hard gates:
 - No memoryOS repo files modified.
 - Runtime behavior tests touched by the change still pass.
 
-Output document: `docs/xmuse/walkthrough-maintenance-notes-v8.md`.
+Output document: `docs/xmuse/archive/2026-06-pre-m7/walkthrough-maintenance-notes-v8.md`.
 
 ## Phase 2: Runtime Operations
 

@@ -52,7 +52,7 @@ entry points.
 
 ### Current Facts
 
-**V8 (Phase 1) proved installability (`docs/xmuse/walkthrough-maintenance-notes-v8.md`):**
+**V8 (Phase 1) proved installability (`docs/xmuse/archive/2026-06-pre-m7/walkthrough-maintenance-notes-v8.md`):**
 
 | Gate | Result | Evidence |
 |------|--------|----------|
@@ -64,7 +64,7 @@ entry points.
 | Wheel metadata has no memoryos-lite | PASS | V8 walkthrough:147-150 |
 | Ruff on touched files | PASS | V8 walkthrough:131-136 |
 
-**Fake groupchat path (docs/xmuse/walkthrough-maintenance-notes-v8.md:100-111):**
+**Fake groupchat path (docs/xmuse/archive/2026-06-pre-m7/walkthrough-maintenance-notes-v8.md:100-111):**
 - Created conversation through `xmuse.chat_api.create_app()`
 - Posted human `@architect` message
 - Ran `PeerChatScheduler` with fake provider layer
@@ -274,7 +274,7 @@ XMUSE_CHAT_API_URL=http://127.0.0.1:8201
 | Provider session binding | 10+ progressive rounds in codex-strengthening-handoff.md | Explicit `--last` rejection, store with upsert/resume/mark_failed, seam built to runtime boundary |
 
 **Evidence of real working system:**
-- `docs/xmuse/walkthrough-maintenance-notes-v8.md:110`: `chat-fake-provider-groupchat-smoke-ok conv_b0a6e2b569fa47c5bb6b93fd8a737728 1`
+- `docs/xmuse/archive/2026-06-pre-m7/walkthrough-maintenance-notes-v8.md:110`: `chat-fake-provider-groupchat-smoke-ok conv_b0a6e2b569fa47c5bb6b93fd8a737728 1`
 - `xmuse/HANDOFF.md:35-37`: "2026-06-02 minimal user-vision closed-loop smoke: passed — chat conversation → feature plan → graph-set → projection → TUI worklist"
 - `xmuse/HANDOFF.md:38`: "2026-06-02 live RayGodActor lifecycle smoke: passed after hardening"
 - `xmuse/HANDOFF.md:47`: "full tests: 3228 passed, 1 skipped, 9 warnings in 1008.69s"

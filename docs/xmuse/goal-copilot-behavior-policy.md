@@ -143,13 +143,13 @@ Active goal:
 
 Read first:
 - AGENTS.md
-- docs/xmuse/real-runtime-loop-behavior-policy.md
-- docs/xmuse/real-god-chatgroup-fullchain-loop-decomposition.md
+- docs/xmuse/README.md
+- docs/xmuse/natural-groupchat-a2a-goal.md
+- docs/xmuse/natural-groupchat-a2a-behavior.md
+- docs/xmuse/natural-groupchat-a2a-task-plan.md
 - docs/xmuse/goal-copilot-behavior-policy.md
-- docs/xmuse/next-production-goal-design.md
-- docs/xmuse/production-closure-gap-ledger.md
-- docs/xmuse/fullchain-runtime-operation-record-2026-06-17.md
-- docs/xmuse/fullchain-runtime-findings-2026-06-17.md
+- docs/xmuse/mainline-contracts.md
+- /home/iiyatu/projects/python/xmuse-m7-natural-groupchat-goal-design/docs/superpowers/specs/2026-06-26-natural-groupchat-a2a-production-goal-design.md
 
 Shared review board:
 .goal-runs/<date>/production-goal-copilot-review-board.md

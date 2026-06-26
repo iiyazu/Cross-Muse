@@ -1,33 +1,34 @@
 # xmuse 文档入口
 
-更新日期: 2026-06-21
+更新日期: 2026-06-26
 
-本目录是 xmuse 当前阶段的文档入口。旧的 `docs/superpowers/specs/` 和
-`docs/superpowers/plans/` 仍保留原路径，因为测试、lane graph 和历史记录会引用
-这些路径；它们现在视为实现历史和方案档案，不再作为唯一的当前权威入口。
+本目录现在按“当前 goal 入口、当前产品合同、CI/兼容合同、历史档案”分层。下一轮
+自然 agents 群聊 `/goal` 不再默认读取旧的 closure ledger、walkthrough、runtime
+operation record 或巨大 handoff 文档。
 
-## 当前方向
+## 当前 Goal 文档包
 
-xmuse 当前阶段已收束为:
+下一轮 `/goal` 只需要默认读取这些文档：
 
-```text
-durable GOD groupchat
--> minimal AcceptanceSpine / GoalRun closure contract
--> producer-backed GitHub gate evidence contract
-```
+| 文档 | 用途 |
+|---|---|
+| `docs/xmuse/natural-groupchat-a2a-goal.md` | 当前愿景、最新状态、A2A/Ray/Clowder-AI 取舍和 forbidden claims |
+| `docs/xmuse/natural-groupchat-a2a-behavior.md` | authority-first 行为规范、TDD/superpowers/GitHub 约束、patch/refactor 阈值 |
+| `docs/xmuse/natural-groupchat-a2a-task-plan.md` | Phase 0-7 的实施任务、验收和停止条件 |
+| `docs/xmuse/natural-groupchat-a2a-goal-prompt.md` | 可直接贴入 `/goal` 的简洁 prompt |
+| `/home/iiyatu/projects/python/xmuse-m7-natural-groupchat-goal-design/docs/superpowers/specs/2026-06-26-natural-groupchat-a2a-production-goal-design.md` | 详细设计来源 |
+| `/home/iiyatu/clowder-ai` | 自然群聊实现参考，不是 xmuse authority |
 
-这是生产级收束的短路径闭环，不是完整生产 release。当前可以声明:
+当前校准：
 
-```text
-xmuse production-closure short path:
-durable GOD groupchat + minimal AcceptanceSpine/GoalRun
-+ opt-in GitHub live server-side gate accepted path
-```
+- `origin/main` 当前按 PR #192 / `bd540de` 校准。
+- PR #193 (`codex/a2a-sdk-foundation`) 已合并到 `origin/main`，merge commit
+  `d429e691be51ef5c9aa7ab34a5670f290b37e7a3`。
+- Dirty historical worktree 和 archive 文档只能作为参考，不是 main capability。
 
-不能声明 `full production release ready`、多小时真实 provider soak 已完成，或
-完整长运行 GOD groupchat 在真实 provider/Ray/Codex 环境下已稳定闭环。
+## 当前产品主线
 
-面向生产级闭环的 north-star 仍是:
+`docs/xmuse/mainline-contracts.md` 是产品主线合同入口。它保留这条 north-star：
 
 ```text
 GOD groupchat deliberation
@@ -38,95 +39,78 @@ GOD groupchat deliberation
 -> REST-first MemoryOS
 ```
 
-`docs/xmuse/mainline-contracts.md` 是当前主线合同入口。它明确:
+`blueprint freeze 是去中心化 GOD deliberation 与中心化 execution/review 的边界`。
+`feature_lanes.json` 仍是兼容投影和 live queue，不是 authority。
 
-- demo/legacy 路径只能作为 smoke、历史兼容或参考，不能绕过主线合同；
-- blueprint freeze 是去中心化 GOD deliberation 与中心化 execution/review 的边界；
-- graph-set / lane graph / review plane / GitHub checks / MemoryOS refs 才是对应阶段的权威，
-  `feature_lanes.json`、cards、dashboard/TUI 读模型是投影或视图。
+下一轮 natural groupchat A2A goal 会把主线前半段改成更实际的运行路线：
 
-## 当前权威文档
+```text
+natural groupchat
+-> official a2a-sdk provider / handoff / artifact envelope
+-> xmuse chat.db / inbox / proposal / review / dispatch authority
+-> provider-native execution
+-> PR / CI / operator merge
+```
+
+A2A SDK 是 interop boundary，不是 proposal、review、dispatch 或 merge authority。
+Ray 是 optional legacy adapter，不是默认自然群聊 kernel。
+
+## CI 和合同文档
+
+这些文档仍是当前 CI、合同测试或 release 判断的一部分，保留在顶层：
 
 | 文档 | 用途 |
 |---|---|
-| `docs/xmuse/release-checklist.md` | 当前 release decision：production-closure short path accepted，但 full release-ready 仍被 long-run soak、release packaging 和既有类型债阻塞 |
-| `docs/xmuse/rc-closure-baseline-2026-06-21.md` | 2026-06-21 阶段性收束基线：RC skeleton 历史基线、P0-P3 后的短路径提升、禁止声明和下一刀 |
-| `docs/xmuse/production-closure-tasks.md` | P0-P4 生产级收束任务状态：P0-P3 已完成或限定完成，P4 固化 release decision |
-| `docs/xmuse/acceptance-spine.md` | 当前最小 durable GoalRun/AcceptanceSpine 合同与实现边界：串起 human intake、proposal、approval/verdict、dispatch 和证据 refs |
-| `docs/xmuse/acceptance-gated-runner-evidence-2026-06-21.md` | 2026-06-21 `xmuse-platform-runner --goal --acceptance-gate` 短真实 smoke：durable refs、GitHub gate manual gap 和 blocked 终态 |
-| `docs/xmuse/acceptance-gated-live-capture-evidence-2026-06-21.md` | 2026-06-21 `--github-live-capture` 短真实 smoke：producer-owned `server_side_merge_proof` 和 accepted 终态 |
-| `docs/xmuse/mainline-contracts.md` | 当前产品主线合同：GOD 群聊、blueprint freeze、laneDAG、review/GitHub gate、REST-first MemoryOS |
-| `docs/xmuse/real-runtime-loop-behavior-policy.md` | 真实运行链路长 goal 的行为规范：非 TDD-first、authority/producer/consumer/evidence-first、GitHub 额度、PR 防膨胀和 superpowers 使用边界 |
-| `docs/xmuse/real-god-chatgroup-fullchain-loop-decomposition.md` | 今晚真实 GOD 群聊到需求完成的循环目标拆解：每轮选最大可运行真实链路，失败后按边界修补/重构/拆 PR |
-| `docs/xmuse/deep-research-02-next-goal.md` | 第二轮深度研究转化目标，定义 #13-#19 的下一阶段任务 |
-| `docs/xmuse/contract-smoke-gates.md` | #19 合同 smoke CI：无 secrets 的 lint、format、typecheck、主线合约测试和 SLO smoke |
-| `docs/xmuse/deep-research-03-next-goal.md` | 第三轮真实运行层目标：GitHub 服务器 gate、MemoryOS Lite 互操作、provider/runtime soak 分层和 broad-suite 债务 |
-| `docs/xmuse/real-runtime-integration-gate.md` | 第三轮无 secrets focused gate，区分 contract proof 与 runtime proof |
-| `docs/xmuse/peer-chat-runtime-gate.md` | 无 secrets peer-chat runtime focused gate：群聊调度、mention、prompt/context、collaboration 和 API 合同 |
-| `docs/xmuse/github-server-side-gate.md` | GitHub branch protection、required checks、CODEOWNER review 和 PR evidence 的服务器侧配置合同 |
-| `docs/xmuse/github-server-side-gate-live-evidence-2026-06-25.md` | 2026-06-25 authenticated GitHub server evidence：main branch protection now requires four checks, including `peer-chat-runtime-gate` |
-| `docs/xmuse/github-server-side-gate-live-evidence-2026-06-21.md` | 2026-06-21 authenticated read-only GitHub server evidence：historical three-check branch protection snapshot before peer-chat gate promotion |
-| `docs/xmuse/broad-suite-baseline-debt.md` | 全仓 format、legacy chat API、live MemoryOS Lite、real provider/Ray/Codex 缺口登记表 |
-| `docs/xmuse/memoryos-lite-runtime-compatibility.md` | MemoryOS Lite 公共 API payload、ContextPackage 解析、namespace/session 持久绑定与 live opt-in 兼容闭环 |
-| `docs/xmuse/self-iteration-runtime-closure-plan.md` | 下一轮自迭代 runtime 闭环的详细任务、验收标准和执行行为规范 |
-| `docs/xmuse/self-iteration-runtime-closure-goal-prompt.md` | 可直接用于 `/goal` 的简洁自迭代闭环 prompt，详细任务引用 plan 文档 |
-| `docs/xmuse/self-iteration-runtime-closure.md` | 自迭代 runtime 闭环 replay artifact，记录 speech-act、blueprint、laneDAG、runtime contract、review、GitHub 和 MemoryOS 证据 |
-| `docs/xmuse/goal-stage-harness.md` | `/goal` 阶段统一执行/证据/失败分类规范与标准 manifest schema |
-| `docs/xmuse/vision-runtime-evidence-closure-plan.md` | 2fdb299 之后愿景 runtime evidence closure 的详细任务、验收标准和执行行为规范 |
-| `docs/xmuse/vision-runtime-evidence-closure-goal-prompt.md` | 可直接用于 `/goal` 的简洁愿景 runtime evidence closure prompt，详细任务引用 plan 文档 |
-| `docs/xmuse/vision-runtime-evidence-closure.md` | 愿景 runtime evidence closure 证据 artifact，记录 CI、merge 语义、GitHub server gap、live MemoryOS trace 和 real runtime soak 边界 |
-| `docs/xmuse/opencode-in-long-runtime-evidence-plan.md` | 下一轮 OpenCode-in 长执行证据闭环的详细任务、授权边界和行为规范 |
-| `docs/xmuse/opencode-in-long-runtime-evidence-goal-prompt.md` | 可直接用于 `/goal` 的简洁 OpenCode-in 长执行 prompt，详细任务引用 plan 文档 |
-| `docs/xmuse/opencode-in-long-runtime-evidence-closure.md` | OpenCode-in 长执行证据闭环的当前审计报告、stage evidence、proof-level 变化和剩余 GitHub manual gap |
-| `docs/xmuse/github-review-merge-contract.md` | GitHub PR template、CODEOWNERS、required checks 和 merge-ready 合同 |
-| `docs/xmuse/memoryos-governance-contract.md` | MemoryOS namespace、actor identity、memory layer、redaction、tombstone 和 MCP 写入边界 |
-| `docs/xmuse/解耦开发协议.md` | 四层解耦边界、事件契约、数据权威和开发规则 |
-| `docs/xmuse/walkthrough-maintenance-notes.md` | 逐步走读 xmuse 时维护的当前实现事实、进度和非生产级记录 |
-| `docs/xmuse/walkthrough-maintenance-notes-v7.md` | 群聊层 runtime 生产级闭环线：真实长 session、provider binding、MCP writeback、latency gate |
-| `docs/xmuse/codex-strengthening-handoff.md` | 给 `/goal` Codex session 的强化开发交接文档、优先级和硬 gate |
-| `docs/xmuse/xmuse-production-strengthening-goal-prompt.md` | 可直接用于 `/goal` 的生产级强化 prompt |
-| `docs/xmuse/deep-research-conversion-roadmap.md` | 将深度研究报告转为 M1-M6 路线图和 GitHub issue 结构 |
-| `docs/xmuse/deep-research-execution-tasks.md` | 深度研究转化的全量执行任务清单，供短 goal prompt 引用 |
-| `docs/xmuse/parallel-development-runbook.md` | 多个 Codex session 并行开发的分工、批次、接口包和合并规则 |
-| `docs/xmuse/code-quality-and-archive-policy.md` | 代码复用、重写、隔离、测试和状态写入质量规则 |
-| `docs/xmuse/memoryos-file-separation.md` | xmuse 与 MemoryOS 的文件、依赖和迁出边界 |
-| `docs/xmuse/split-export-manifest.json` | xmuse 迁出到独立仓库时要复制/排除的文件清单 |
-| `docs/xmuse/xmuse-package.pyproject.toml` | 独立 xmuse package 的 pyproject 模板 |
-| `docs/xmuse/session-prompts/` | 可直接用于启动各模块 Codex session 的初始化 prompt |
-| `docs/xmuse/outer-god-integration-goal.md` | S0-S8 完成后由 Outer GOD 执行的生产级统合验收 goal |
-| `xmuse/HANDOFF.md` | 当前仓库、运行态、开发方向和注意事项交接 |
-| `xmuse/CODEX_GOAL_HANDOFF.md` | 给后续 outer GOD / Codex goal 的自动执行上下文 |
-| `xmuse/FRONTEND_API.md` | 当前前端/TUI 可依赖的 API 摘要 |
-| `xmuse/FRONTEND_CONTEXT.md` | 前端/TUI 开发背景和边界 |
+| `docs/xmuse/contract-smoke-gates.md` | no-secrets contract smoke CI gate |
+| `docs/xmuse/peer-chat-runtime-gate.md` | no-secrets peer-chat runtime focused gate |
+| `docs/xmuse/deep-research-03-next-goal.md` | historical contract-vs-runtime proof split used by CI docs tests |
+| `docs/xmuse/real-runtime-integration-gate.md` | no-secrets real runtime integration gate contract |
+| `docs/xmuse/broad-suite-baseline-debt.md` | known broad-suite baseline gaps |
+| `docs/xmuse/memoryos-lite-runtime-compatibility.md` | MemoryOS Lite public compatibility contract |
+| `docs/xmuse/vision-runtime-evidence-closure-plan.md` | older proof-level boundary plan kept for tests |
+| `docs/xmuse/vision-runtime-evidence-closure-goal-prompt.md` | older prompt kept for tests |
+| `docs/xmuse/github-server-side-gate-live-evidence-2026-06-25.md` | latest committed GitHub server-side evidence snapshot |
+| `docs/xmuse/github-server-side-gate.md` | GitHub server-side gate contract |
+| `docs/xmuse/github-review-merge-contract.md` | PR template, CODEOWNERS and merge-ready contract |
+| `docs/xmuse/release-checklist.md` | current release claim boundary |
 
-## 历史档案
+Do not use these older CI docs as the active natural groupchat goal plan unless
+the task explicitly targets their contract surface.
 
-| 路径 | 状态 |
+## Implementation Policies Still In Force
+
+| 文档 | 用途 |
 |---|---|
-| `docs/superpowers/specs/` | 历史 spec 和已执行蓝图，保留原路径 |
-| `docs/superpowers/plans/` | 历史 implementation plans，保留原路径 |
-| `docs/xmuse/archive/plans/` | 未被当前代码引用的 xmuse plan 草案归档 |
-| `xmuse/history/` | 运行快照、历史归档、隔离产物，默认不提交 |
-| `xmuse/work/` | 过程记录和临时生成器，默认不作为稳定 API |
+| `docs/xmuse/code-quality-and-archive-policy.md` | reuse, refactor, archive and state-write quality rules |
+| `docs/xmuse/parallel-development-runbook.md` | parallel session coordination, useful only after interfaces are frozen |
+| `docs/xmuse/goal-copilot-behavior-policy.md` | optional read-only copilot behavior |
+| `docs/xmuse/goal-stage-harness.md` | standard stage/evidence vocabulary |
+| `docs/xmuse/production-operations.md` | operational commands and expectations |
+| `docs/xmuse/provider-matrix.md` | provider support matrix |
+| `docs/xmuse/config-matrix.md` | configuration surface |
+| `docs/xmuse/解耦开发协议.md` | layer and event boundary protocol |
 
-## 并行开发入口
+## Historical Archive
 
-若需要同时启动多个 Codex session，先读:
+Moved historical material:
 
 ```text
-docs/xmuse/parallel-development-runbook.md
-docs/xmuse/code-quality-and-archive-policy.md
-docs/xmuse/session-prompts/README.md
+docs/xmuse/archive/2026-06-pre-m7/
 ```
 
-推荐先启动 `S0-integration-contract.md`，冻结事件、artifact、fixture 和 allowed files，
-再并行启动 Batch 1 的 S1/S3/S4/S6/S7。S2/S5 触碰 runner/state-machine，建议等
-contract 稳定后再启动。
+This archive contains the old `codex-strengthening-handoff.md`,
+`fullchain-runtime-*`, `production-closure-gap-ledger.md`,
+`real-provider-soak-evidence-2026-06-21.md`, and
+`walkthrough-maintenance-notes*.md` files.
 
-## 清理规则
+Rules:
 
-1. 当前方向文档放在 `docs/xmuse/` 或 `xmuse/*.md` 的明确入口中。
-2. 仍被测试、graph snapshot、handoff 引用的历史文档不移动，只在入口中降级为历史。
-3. 运行时产物、日志、数据库、旧前端构建目录移动到 `xmuse/history/` 隔离。
-4. `feature_lanes.json` 是兼容投影和 live queue，不是权威设计文档。
-5. Ray、LangGraph、TUI、dashboard 之间通过协议和事件对接，避免互相直接依赖实现细节。
+1. Do not treat archived evidence as proof for a new PR head.
+2. Do not restart old L8-L11, overnight-readiness, or closure-ledger framing
+   from the archive.
+3. If an archived implementation detail is reused, cite it as reference and
+   re-verify the current code path.
+
+Old `docs/superpowers/specs/` and `docs/superpowers/plans/` remain historical
+implementation records because tests and lane history may reference their
+paths. They are not the current entrypoint.

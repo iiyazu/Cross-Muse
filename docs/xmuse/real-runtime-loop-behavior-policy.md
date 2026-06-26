@@ -2,6 +2,10 @@
 
 Updated: 2026-06-18
 
+Note: for the next natural groupchat A2A `/goal`, prefer
+`docs/xmuse/natural-groupchat-a2a-behavior.md`. This file remains a historical
+runtime-loop policy and a compatibility reference for older goals.
+
 This policy governs long xmuse `/goal` work that uses real runtime-chain
 testing to build or repair production behavior. It is not a TDD-first workflow.
 It is authority-first, producer-first, consumer-first, evidence-first, and
@@ -57,8 +61,8 @@ claims over known-bad observations.
 
 Primary evidence files for this long goal:
 
-- `docs/xmuse/fullchain-runtime-operation-record-2026-06-17.md`;
-- `docs/xmuse/fullchain-runtime-findings-2026-06-17.md`;
+- `docs/xmuse/archive/2026-06-pre-m7/fullchain-runtime-operation-record-2026-06-17.md`;
+- `docs/xmuse/archive/2026-06-pre-m7/fullchain-runtime-findings-2026-06-17.md`;
 - `.goal-runs/<date>/<loop-id>/` for raw artifacts and snapshots.
 
 The operation record should capture commands, process boundaries, durable ids,
@@ -322,8 +326,8 @@ Do not claim:
 
 Maintain the runtime evidence docs:
 
-- `docs/xmuse/fullchain-runtime-operation-record-2026-06-17.md`;
-- `docs/xmuse/fullchain-runtime-findings-2026-06-17.md`.
+- `docs/xmuse/archive/2026-06-pre-m7/fullchain-runtime-operation-record-2026-06-17.md`;
+- `docs/xmuse/archive/2026-06-pre-m7/fullchain-runtime-findings-2026-06-17.md`.
 
 For each loop, save raw evidence under:
 

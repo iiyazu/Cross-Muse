@@ -14,7 +14,7 @@ must be treated as inputs, not authority.
 | `docs/xmuse/post-patha-release-readiness-audit.md` | Release, resume, onboarding, demo, and presentation readiness. |
 | `docs/xmuse/self-development-closure-audit.md` | Whether xmuse can use xmuse to drive a real feature from request to handoff. |
 | `docs/xmuse/legacy-architecture-debt-audit.md` | Main-path vs legacy-path inventory, architecture debt, and cleanup candidates. |
-| `docs/xmuse/walkthrough-maintenance-notes-v8.md` | Independent installability closure. |
+| `docs/xmuse/archive/2026-06-pre-m7/walkthrough-maintenance-notes-v8.md` | Independent installability closure. |
 | `docs/xmuse/production-operations.md` | Runtime operations and health/cleanup contract. |
 | `docs/xmuse/quality-gates-and-provider-matrix.md` | V10 CI/provider/config support gates. |
 | `docs/xmuse/schema-migration-strategy.md` | V11 durability contract. |

@@ -9,8 +9,8 @@
 把 xmuse 往生产级但不冗余的多 coding-agent 编排平台推进。xmuse 的核心不是多开几个 CLI，而是把 Codex、Claude Code、OpenCode 等独立 coding agents 编排成可审计、可恢复、可并行、中心化执行的工程系统。
 
 启动前必须阅读:
-1. docs/xmuse/codex-strengthening-handoff.md
-2. docs/xmuse/walkthrough-maintenance-notes.md
+1. docs/xmuse/archive/2026-06-pre-m7/codex-strengthening-handoff.md
+2. docs/xmuse/archive/2026-06-pre-m7/walkthrough-maintenance-notes.md
 3. docs/xmuse/解耦开发协议.md
 4. xmuse/HANDOFF.md
 5. 当前任务相关源码和 tests/xmuse focused tests
@@ -98,6 +98,6 @@ A2A 约束:
 
 交付要求:
 - 修改代码和测试。
-- 更新 docs/xmuse/codex-strengthening-handoff.md 或 xmuse/HANDOFF.md，记录完成项、验证命令、剩余风险。
+- 更新 docs/xmuse/archive/2026-06-pre-m7/codex-strengthening-handoff.md 或 xmuse/HANDOFF.md，记录完成项、验证命令、剩余风险。
 - 最终回答只汇报: 做了什么、验证了什么、未完成/风险是什么、下一步建议。
 ```
