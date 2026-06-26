@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
+import urllib.error
+import urllib.request
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -171,6 +175,8 @@ class CodexAppServerTransport:
         self._active_turn_request_id: int | None = None
         self._active_accumulator: AppServerTurnAccumulator | None = None
         self._active_stream_id: str | None = None
+        self._active_turn_context: str | None = None
+        self._active_request_id: str | None = None
 
     async def start(self) -> None:
         if self._process is not None and self._process.returncode is None:
@@ -232,6 +238,8 @@ class CodexAppServerTransport:
             prompt=_clean_text(kwargs.get("prompt")) or "",
             context=_clean_text(kwargs.get("context")) or "",
         )
+        self._active_turn_context = _clean_text(kwargs.get("context")) or ""
+        self._active_request_id = request_id
         initial_latency_stages = (
             {"stream_started": {"at": stream_started_at}}
             if stream_started_at is not None
@@ -275,10 +283,14 @@ class CodexAppServerTransport:
             self._record_stream_delta(message)
             result = self._active_accumulator.feed(message)
             if result is not None:
+                if result.type != "error":
+                    self._maybe_record_callback_bridge(result)
                 stream_status = "error" if result.type == "error" else "done"
                 self._finish_stream(status=stream_status)
                 self._active_accumulator = None
                 self._active_turn_request_id = None
+                self._active_turn_context = None
+                self._active_request_id = None
                 return result
 
     def active_latency_stages(self) -> dict[str, dict[str, float]]:
@@ -407,6 +419,43 @@ class CodexAppServerTransport:
             "baseInstructions": self._base_instructions(),
             "developerInstructions": self._developer_instructions(),
         }
+
+    def _maybe_record_callback_bridge(self, result: StdoutMessage) -> None:
+        if not self._enable_mcp:
+            return
+        context = self._active_turn_context
+        if not context:
+            return
+        artifacts = result.artifacts if isinstance(result.artifacts, dict) else {}
+        latency_stages = artifacts.get("latency_stages")
+        if (
+            isinstance(latency_stages, dict)
+            and "chat_record_collaboration_response" in latency_stages
+        ):
+            return
+        run_id = _collaboration_response_run_id_from_context(context)
+        if run_id is None:
+            return
+        content = _clean_text(result.message)
+        if content is None:
+            return
+        bridge_result = _post_collaboration_response_bridge(
+            port=self._mcp_port,
+            context=context,
+            run_id=run_id,
+            content=content,
+            request_id=self._active_request_id,
+        )
+        if not isinstance(result.artifacts, dict):
+            result.artifacts = {}
+        result.artifacts["codex_callback_bridge"] = bridge_result
+        raw_stages = result.artifacts.get("latency_stages")
+        stages = dict(raw_stages) if isinstance(raw_stages, dict) else {}
+        bridge_at = time.monotonic()
+        stages.setdefault("codex_callback_bridge", {"at": bridge_at})
+        stages.setdefault("chat_record_collaboration_response", {"at": bridge_at})
+        stages.setdefault("chat_post_message", {"at": bridge_at})
+        result.artifacts["latency_stages"] = stages
 
     async def _request(self, method: str, params: dict[str, Any]) -> Any:
         request_id = await self._send_request(method, params)
@@ -567,6 +616,317 @@ def _parse_context(value: object) -> dict[str, Any]:
     except json.JSONDecodeError:
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+def _collaboration_response_run_id_from_context(context: str) -> str | None:
+    parsed = _parse_context(context)
+    inbox_item = parsed.get("inbox_item")
+    if not isinstance(inbox_item, dict):
+        return None
+    payload = inbox_item.get("payload")
+    if not isinstance(payload, dict):
+        return None
+    content = _clean_text(payload.get("content"))
+    if content is None:
+        return None
+    if not _asks_for_collaboration_response(content):
+        return None
+    match = re.search(r"\bcollab_[A-Za-z0-9]+\b", content)
+    return match.group(0) if match else None
+
+
+def _asks_for_collaboration_response(content: str) -> bool:
+    normalized = " ".join(content.lower().split())
+    if "chat_record_collaboration_response" in normalized:
+        return True
+    if "collaboration response" in normalized:
+        return True
+    if "collaboration" in normalized and "record" in normalized and "response" in normalized:
+        return True
+    compact = "".join(content.split())
+    return (
+        any(marker in compact for marker in ("协作", "协同"))
+        and any(marker in compact for marker in ("响应", "回复", "意见", "审查"))
+        and any(marker in compact for marker in ("记录", "提交", "写入", "回填", "回写", "登记"))
+    )
+
+
+def _post_collaboration_response_bridge(
+    *,
+    port: int,
+    context: str,
+    run_id: str,
+    content: str,
+    request_id: str | None,
+) -> dict[str, Any]:
+    response_payload = _build_collaboration_response_payload(
+        context=context,
+        run_id=run_id,
+        content=_collaboration_response_bridge_content(context=context, content=content),
+        request_id=request_id,
+    )
+    response_result = _call_mcp_chat_tool(port=port, payload=response_payload)
+    message_payload = _build_chat_post_message_payload(
+        context=context,
+        content=content,
+        request_id=request_id,
+    )
+    message_result = _call_mcp_chat_tool(port=port, payload=message_payload)
+    return {
+        "status": "ok",
+        "tools": ["chat_record_collaboration_response", "chat_post_message"],
+        "jsonrpc_ids": [response_payload["id"], message_payload["id"]],
+        "collaboration_response": _summarize_mcp_result(response_result),
+        "chat_message": _summarize_mcp_result(message_result),
+    }
+
+
+def _build_collaboration_response_payload(
+    *,
+    context: str,
+    run_id: str,
+    content: str,
+    request_id: str | None,
+) -> dict[str, Any]:
+    parsed, _inbox_item = _parse_peer_chat_context(context)
+    client_request_id = (
+        f"{request_id}:codex_collaboration_response"
+        if request_id
+        else f"codex-peer-collaboration-response-{uuid.uuid4().hex}"
+    )
+    return {
+        "jsonrpc": "2.0",
+        "id": client_request_id,
+        "method": "tools/call",
+        "params": {
+            "name": "chat_record_collaboration_response",
+            "arguments": {
+                "conversation_id": _required_context_text(parsed, "conversation_id"),
+                "participant_id": _required_context_text(parsed, "participant_id"),
+                "god_session_id": _required_context_text(parsed, "god_session_id"),
+                "run_id": run_id,
+                "content": content,
+                "status": "received",
+            },
+        },
+    }
+
+
+def _build_chat_post_message_payload(
+    *,
+    context: str,
+    content: str,
+    request_id: str | None,
+) -> dict[str, Any]:
+    parsed, inbox_item = _parse_peer_chat_context(context)
+    client_request_id = (
+        f"{request_id}:codex_callback_message"
+        if request_id
+        else f"codex-peer-chat-message-{uuid.uuid4().hex}"
+    )
+    return {
+        "jsonrpc": "2.0",
+        "id": client_request_id,
+        "method": "tools/call",
+        "params": {
+            "name": "chat_post_message",
+            "arguments": {
+                "conversation_id": _required_context_text(parsed, "conversation_id"),
+                "participant_id": _required_context_text(parsed, "participant_id"),
+                "god_session_id": _required_context_text(parsed, "god_session_id"),
+                "client_request_id": client_request_id,
+                "content": content,
+                "reply_to_inbox_item_id": _required_context_text(inbox_item, "id"),
+                "envelope": {
+                    "type": "message",
+                    "schema_version": 1,
+                    "writeback_path": "codex_callback_bridge",
+                    "callback_action": "chat_record_collaboration_response",
+                },
+            },
+        },
+    }
+
+
+def _parse_peer_chat_context(context: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    parsed = _parse_context(context)
+    inbox_item = parsed.get("inbox_item")
+    if not isinstance(inbox_item, dict):
+        raise ValueError("peer chat context missing inbox_item")
+    return parsed, inbox_item
+
+
+def _required_context_text(container: dict[str, Any], key: str) -> str:
+    value = _clean_text(container.get(key))
+    if value is None:
+        raise ValueError(f"peer chat context missing {key}")
+    return value
+
+
+def _call_mcp_chat_tool(*, port: int, payload: dict[str, Any]) -> dict[str, Any]:
+    request = urllib.request.Request(
+        f"http://127.0.0.1:{port}/mcp/chat",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            response_body = response.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        name = payload["params"]["name"]
+        raise RuntimeError(
+            f"MCP {name} failed: HTTP {exc.code}: {body}"
+        ) from exc
+    data = json.loads(response_body) if response_body else {}
+    result = data.get("result") if isinstance(data, dict) else None
+    if not isinstance(result, dict):
+        raise RuntimeError(f"MCP {payload['params']['name']} response missing result")
+    _raise_for_mcp_tool_error(result, tool_name=str(payload["params"]["name"]))
+    return result
+
+
+def _collaboration_response_bridge_content(*, context: str, content: str) -> str:
+    _parsed, inbox_item = _parse_peer_chat_context(context)
+    payload = inbox_item.get("payload")
+    request_content = (
+        _clean_text(payload.get("content"))
+        if isinstance(payload, dict)
+        else None
+    )
+    if request_content is None or "execute_feasibility_verdict" not in request_content:
+        return content
+    existing_verdict = _valid_execute_feasibility_verdict(content)
+    if existing_verdict is not None:
+        return existing_verdict
+    normalized = " ".join(content.lower().split())
+    if _plain_text_blocks_execute_feasibility(normalized):
+        return content
+    if not _plain_text_allows_execute_feasibility(normalized):
+        return content
+    verdict = {
+        "type": "execute_feasibility_verdict",
+        "status": "executable",
+        "execution_performed": False,
+        "summary": content.strip(),
+        "evidence_refs": [_bridge_evidence_ref(inbox_item)],
+    }
+    return json.dumps(verdict, ensure_ascii=False, separators=(",", ":"))
+
+
+def _valid_execute_feasibility_verdict(content: str) -> str | None:
+    try:
+        parsed = json.loads(content)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    if parsed.get("type") != "execute_feasibility_verdict":
+        return None
+    if parsed.get("status") != "executable":
+        return None
+    if parsed.get("execution_performed") is not False:
+        return None
+    evidence_refs = parsed.get("evidence_refs")
+    if not isinstance(evidence_refs, list) or not evidence_refs:
+        return None
+    if not all(isinstance(ref, str) and ref.strip() for ref in evidence_refs):
+        return None
+    summary = parsed.get("summary")
+    if not isinstance(summary, str) or not summary.strip():
+        return None
+    return json.dumps(parsed, ensure_ascii=False, separators=(",", ":"))
+
+
+def _plain_text_blocks_execute_feasibility(normalized: str) -> bool:
+    return any(
+        marker in normalized
+        for marker in (
+            "not safe",
+            "unsafe",
+            "not feasible",
+            "not executable",
+            "blocked",
+            "cannot dispatch",
+            "should not dispatch",
+        )
+    )
+
+
+def _plain_text_allows_execute_feasibility(normalized: str) -> bool:
+    return any(
+        marker in normalized
+        for marker in (
+            "safe to dispatch",
+            "safe and executable",
+            "executable",
+            "feasible",
+            "dispatch is safe",
+        )
+    )
+
+
+def _bridge_evidence_ref(inbox_item: dict[str, Any]) -> str:
+    source_message_id = _clean_text(inbox_item.get("source_message_id"))
+    if source_message_id is not None:
+        return f"msg:{source_message_id}"
+    inbox_item_id = _clean_text(inbox_item.get("id"))
+    if inbox_item_id is not None:
+        return f"inbox:{inbox_item_id}"
+    return "codex_callback_bridge:execute_feasibility"
+
+
+def _raise_for_mcp_tool_error(result: dict[str, Any], *, tool_name: str) -> None:
+    if result.get("isError") is True:
+        raise RuntimeError(f"MCP {tool_name} returned isError: {result}")
+    structured = result.get("structuredContent")
+    if isinstance(structured, dict) and isinstance(structured.get("error"), dict):
+        error = structured["error"]
+        code = error.get("code") or "tool_error"
+        message = error.get("message") or code
+        raise RuntimeError(f"MCP {tool_name} returned error {code}: {message}")
+    content = result.get("content")
+    if not isinstance(content, list) or not content:
+        return
+    first = content[0]
+    if not isinstance(first, dict):
+        return
+    text = first.get("text")
+    if not isinstance(text, str):
+        return
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        return
+    if isinstance(parsed, dict) and isinstance(parsed.get("error"), dict):
+        error = parsed["error"]
+        code = error.get("code") or "tool_error"
+        message = error.get("message") or code
+        raise RuntimeError(f"MCP {tool_name} returned error {code}: {message}")
+
+
+def _summarize_mcp_result(result: dict[str, Any]) -> dict[str, Any]:
+    content = result.get("content")
+    if not isinstance(content, list) or not content:
+        return {"content_items": 0}
+    first = content[0]
+    if not isinstance(first, dict):
+        return {"content_items": len(content)}
+    text = first.get("text")
+    if not isinstance(text, str):
+        return {"content_items": len(content)}
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        return {"content_items": len(content), "text": text[:500]}
+    if isinstance(parsed, dict):
+        return {
+            key: parsed[key]
+            for key in ("message", "run", "callback")
+            if key in parsed
+        } or {"content_items": len(content)}
+    return {"content_items": len(content)}
 
 
 def _is_xmuse_mcp_ready(params: dict[str, Any]) -> bool:
