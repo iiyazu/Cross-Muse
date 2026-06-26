@@ -1254,6 +1254,126 @@ async def test_real_runtime_restart_resume_smoke_with_fake_app_server(
 
 
 @pytest.mark.asyncio
+async def test_a2a_inbound_task_reaches_peer_chat_fake_app_server(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    db_path = tmp_path / "chat.db"
+    lanes_path = tmp_path / "feature_lanes.json"
+    lanes_path.write_text(json.dumps({"lanes": []}), encoding="utf-8")
+    chat_port = _free_port()
+    mcp_port = _free_port()
+    actors: list[FakeProviderAppServerActor] = []
+
+    class RuntimeLauncher(DummyLauncher):
+        supports_persistent_sessions = True
+
+    def fake_build_default_launchers(*, mcp_port: int):
+        launcher = RuntimeLauncher("gpt-5.5")
+        launcher.mcp_port = mcp_port
+        return {AgentRuntime.CODEX: launcher}
+
+    def fake_build_actor(self, **kwargs):
+        del self
+        actor = FakeProviderAppServerActor(**kwargs)
+        actors.append(actor)
+        return actor
+
+    import xmuse_core.agents.launchers as launchers_module
+
+    monkeypatch.setattr(
+        launchers_module,
+        "build_default_launchers",
+        fake_build_default_launchers,
+    )
+    monkeypatch.setattr(RayGodSessionLayer, "_build_actor", fake_build_actor)
+    monkeypatch.setenv("XMUSE_PEER_GOD_BACKEND", "ray")
+    monkeypatch.delenv("XMUSE_DEGRADED_LOCAL_GOD_MODE", raising=False)
+
+    chat_server, chat_task = await _serve_app(
+        create_chat_app(tmp_path, a2a_bridge_enabled=True),
+        port=chat_port,
+    )
+    mcp_server, mcp_task = await _serve_app(create_mcp_app(tmp_path), port=mcp_port)
+
+    async def start_runner() -> asyncio.Task:
+        return asyncio.create_task(
+            platform_runner.run(
+                lanes_path=lanes_path,
+                xmuse_root=tmp_path,
+                mcp_port=mcp_port,
+                max_hours=1,
+                max_concurrent=1,
+                peer_chat_enabled=True,
+            )
+        )
+
+    async def stop_runner(task: asyncio.Task) -> None:
+        task.cancel()
+        try:
+            await asyncio.wait_for(task, timeout=5)
+        except (TimeoutError, asyncio.CancelledError):
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+
+    try:
+        runner_task = await start_runner()
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{chat_port}") as client:
+            created = await client.post(
+                "/api/chat/conversations",
+                json={"title": "A2A peer-chat fake provider smoke"},
+            )
+            created.raise_for_status()
+            conversation = created.json()
+            conversation_id = conversation["id"]
+            architect = next(
+                participant
+                for participant in conversation["participants"]
+                if participant["role"] == "architect"
+            )
+
+            routed = await client.post(
+                "/a2a/tasks/send",
+                json={
+                    "task_id": "a2a-fake-provider-smoke",
+                    "context_id": conversation_id,
+                    "sender_agent_id": "external-planner",
+                    "target_address": "@architect",
+                    "content": (
+                        "@architect Please answer this A2A inbox item with "
+                        "chat_post_message."
+                    ),
+                },
+            )
+            routed.raise_for_status()
+            inbox_item = routed.json()["inbox_items"][0]
+            inbox_item_id = inbox_item["id"]
+            assert inbox_item["payload"]["source_kind"] == "a2a_inbound"
+            assert inbox_item["payload"]["route_kind"] == "a2a_task"
+
+            replies = await _wait_for_reply_count(
+                db_path,
+                conversation_id,
+                architect["participant_id"],
+                1,
+            )
+            assert replies[0].content.startswith("Architect GOD via provider-thread-")
+
+            reloaded = ChatInboxStore(db_path).get(inbox_item_id)
+            assert reloaded.status == "read"
+            assert reloaded.responded_message_id == replies[0].id
+            traces = await _wait_for_latency_trace_count(db_path, conversation_id, 1)
+            assert traces[0]["delivery_mode"] == "mcp_writeback"
+            assert traces[0]["degraded_reason"] is None
+    finally:
+        if "runner_task" in locals():
+            await stop_runner(runner_task)
+        await _stop_server(chat_server, chat_task)
+        await _stop_server(mcp_server, mcp_task)
+
+
+@pytest.mark.asyncio
 async def test_real_ray_codex_app_server_mcp_writeback_restart_resume(
     tmp_path: Path,
     monkeypatch,
