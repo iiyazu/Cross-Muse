@@ -1080,6 +1080,7 @@ def test_conversation_inspector_exposes_separated_closure_evidence(
 
     assert response.status_code == 200
     closure = response.json()["closure_evidence"]
+    assert closure["schema_version"] == "closure_evidence/v1"
     assert closure["source_authority"] == "chat.db.acceptance_spines"
     assert closure["status_summary"] == {"reviewed": 1}
     assert closure["proposal_review"] == {
