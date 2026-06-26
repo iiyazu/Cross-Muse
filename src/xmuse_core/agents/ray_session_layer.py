@@ -14,6 +14,8 @@ from xmuse_core.agents.god_session_layer import build_conversation_session_ident
 from xmuse_core.agents.god_session_registry import GodSessionRecord, GodSessionRegistry
 from xmuse_core.agents.registry import AgentDescriptor, AgentRuntime
 
+_UNSET = object()
+
 
 @dataclass
 class LiveRayGodSession:
@@ -80,8 +82,18 @@ class RayGodSessionLayer:
         live = self._find_live_session_by_conversation_participant(
             conversation_id,
             participant_id,
+            feature_scope_id=feature_scope_id,
         )
         if live is not None and await _actor_alive(live.actor):
+            _assert_record_shape_matches(
+                live.record,
+                role=role,
+                agent=agent,
+                model=model,
+                prompt_fingerprint=prompt_fingerprint,
+                worktree=worktree,
+                feature_scope_id=feature_scope_id,
+            )
             await self._refresh_provider_binding(live)
             return live.record
 
@@ -89,11 +101,13 @@ class RayGodSessionLayer:
             record = self._registry.find_by_conversation_participant(
                 conversation_id,
                 participant_id,
+                feature_scope_id=feature_scope_id,
             )
         except KeyError:
             session_address, session_inbox_id = build_conversation_session_identity(
                 conversation_id=conversation_id,
                 participant_id=participant_id,
+                feature_scope_id=feature_scope_id,
             )
             record = self._registry.create(
                 role=role,
@@ -106,6 +120,33 @@ class RayGodSessionLayer:
                 model=model,
                 prompt_fingerprint=prompt_fingerprint,
                 worktree=str(worktree),
+                feature_scope_id=feature_scope_id,
+            )
+        else:
+            if _record_peer_metadata_can_migrate(
+                record,
+                model=model,
+                prompt_fingerprint=prompt_fingerprint,
+                worktree=worktree,
+                feature_scope_id=feature_scope_id,
+            ):
+                record = self._registry.update_peer_metadata(
+                    record.god_session_id,
+                    **_merged_peer_metadata(
+                        record,
+                        model=model,
+                        prompt_fingerprint=prompt_fingerprint,
+                        worktree=worktree,
+                        feature_scope_id=feature_scope_id,
+                    ),
+                )
+            _assert_record_shape_matches(
+                record,
+                role=role,
+                agent=agent,
+                model=model,
+                prompt_fingerprint=prompt_fingerprint,
+                worktree=worktree,
                 feature_scope_id=feature_scope_id,
             )
 
@@ -200,11 +241,16 @@ class RayGodSessionLayer:
         self,
         conversation_id: str,
         participant_id: str,
+        feature_scope_id: str | None | object = _UNSET,
     ) -> LiveRayGodSession | None:
         for live in reversed(list(self._live_sessions.values())):
             if (
                 live.record.conversation_id == conversation_id
                 and live.record.participant_id == participant_id
+                and (
+                    feature_scope_id is _UNSET
+                    or live.record.feature_scope_id == feature_scope_id
+                )
             ):
                 return live
         return None
@@ -327,6 +373,107 @@ def _build_persistent_command(launcher: object, role: str, worktree: Path) -> li
 
 def _runtime_value(runtime: RuntimeKey) -> str:
     return runtime.value if isinstance(runtime, AgentRuntime) else str(runtime)
+
+
+def _assert_record_shape_matches(
+    record: GodSessionRecord,
+    *,
+    role: str,
+    agent: AgentDescriptor,
+    model: str | None,
+    prompt_fingerprint: str | None,
+    worktree: Path,
+    feature_scope_id: str | None,
+) -> None:
+    if (
+        record.role != role
+        or record.agent_name != agent.name
+        or record.runtime != _runtime_value(agent.runtime)
+        or not _record_peer_metadata_matches(
+            record,
+            model=model,
+            prompt_fingerprint=prompt_fingerprint,
+            worktree=worktree,
+            feature_scope_id=feature_scope_id,
+        )
+    ):
+        raise RuntimeError(
+            "Cannot reuse conversation participant "
+            f"'{record.conversation_id}:{record.participant_id}': "
+            "existing registered session does not match requested role/agent"
+        )
+
+
+def _record_peer_metadata_matches(
+    record: GodSessionRecord,
+    *,
+    model: str | None,
+    prompt_fingerprint: str | None,
+    worktree: Path,
+    feature_scope_id: str | None,
+) -> bool:
+    expected_worktree = str(worktree)
+    return (
+        _compatible_optional(record.model, model)
+        and _compatible_optional(record.prompt_fingerprint, prompt_fingerprint)
+        and _compatible_optional(record.worktree, expected_worktree)
+        and _compatible_optional(record.feature_scope_id, feature_scope_id)
+    )
+
+
+def _record_peer_metadata_can_migrate(
+    record: GodSessionRecord,
+    *,
+    model: str | None,
+    prompt_fingerprint: str | None,
+    worktree: Path,
+    feature_scope_id: str | None,
+) -> bool:
+    expected_worktree = str(worktree)
+    pairs = (
+        (record.model, model),
+        (record.prompt_fingerprint, prompt_fingerprint),
+        (record.worktree, expected_worktree),
+        (record.feature_scope_id, feature_scope_id),
+    )
+    if any(
+        existing is not None and expected is not None and existing != expected
+        for existing, expected in pairs
+    ):
+        return False
+    return any(existing is None and expected is not None for existing, expected in pairs)
+
+
+def _merged_peer_metadata(
+    record: GodSessionRecord,
+    *,
+    model: str | None,
+    prompt_fingerprint: str | None,
+    worktree: Path,
+    feature_scope_id: str | None,
+) -> dict[str, str | None]:
+    return {
+        "model": model if model is not None else record.model,
+        "prompt_fingerprint": (
+            prompt_fingerprint
+            if prompt_fingerprint is not None
+            else record.prompt_fingerprint
+        ),
+        "worktree": str(worktree),
+        "feature_scope_id": (
+            feature_scope_id
+            if feature_scope_id is not None
+            else record.feature_scope_id
+        ),
+    }
+
+
+def _compatible_optional(existing: str | None, expected: str | None) -> bool:
+    if existing is None and expected is None:
+        return True
+    if existing is None or expected is None:
+        return False
+    return existing == expected
 
 
 def _find_launcher_for_runtime(
