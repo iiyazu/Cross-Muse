@@ -313,6 +313,53 @@ class AcceptanceSpineStore:
             )
         return self.get_by_intake_message(str(row["intake_message_id"]))
 
+    def attach_lane_execution_for_resolution(
+        self,
+        *,
+        resolution_id: str,
+        evidence_refs: list[str],
+    ) -> AcceptanceSpine | None:
+        now = _utc_now()
+        resolution_ref = f"resolution:{resolution_id}"
+        clean_refs = [ref for ref in evidence_refs if isinstance(ref, str) and ref.strip()]
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                select intake_message_id, status, execution_evidence_refs_json
+                from acceptance_spines
+                where review_or_execute_verdict_ref = ?
+                """,
+                (resolution_ref,),
+            ).fetchone()
+            if row is None:
+                return None
+            existing = _json_list(row["execution_evidence_refs_json"])
+            merged = [*existing]
+            for ref in clean_refs:
+                if ref not in merged:
+                    merged.append(ref)
+            status = str(row["status"])
+            next_status = (
+                AcceptanceSpineStatus.EXECUTED.value
+                if status
+                in {
+                    AcceptanceSpineStatus.REVIEW_CLEARED.value,
+                    AcceptanceSpineStatus.DISPATCHED.value,
+                }
+                else status
+            )
+            conn.execute(
+                """
+                update acceptance_spines
+                set execution_evidence_refs_json = ?,
+                    status = ?,
+                    updated_at = ?
+                where review_or_execute_verdict_ref = ?
+                """,
+                (json.dumps(merged), next_status, now, resolution_ref),
+            )
+        return self.get_by_intake_message(str(row["intake_message_id"]))
+
     def attach_review_verdict_for_resolution(
         self,
         *,
