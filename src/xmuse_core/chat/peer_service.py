@@ -2260,6 +2260,11 @@ class PeerChatService:
         )
         caller_identity = f"god:{god_session_id}:{participant_id}"
         normalized = normalize_envelope(envelope, envelope_type="message")
+        review_closure_resolution_id = self._review_closure_resolution_id(
+            conversation_id=conversation_id,
+            participant_id=participant_id,
+            envelope=normalized,
+        )
         mentions, inbox_items = self._build_god_inbox_items(
             conversation_id=conversation_id,
             content=content,
@@ -2308,7 +2313,60 @@ class PeerChatService:
                 called_at=called_at,
             )
             GodSessionRegistry(registry_path).promote_running(god_session_id)
+        if review_closure_resolution_id is not None:
+            message = result.get("message")
+            message_id = message.get("id") if isinstance(message, dict) else None
+            if isinstance(message_id, str) and message_id:
+                AcceptanceSpineStore(self._db_path).attach_review_verdict_for_resolution(
+                    resolution_id=review_closure_resolution_id,
+                    review_verdict_ref=f"chat:message:{message_id}",
+                )
         return result
+
+    def _review_closure_resolution_id(
+        self,
+        *,
+        conversation_id: str,
+        participant_id: str,
+        envelope: dict[str, Any],
+    ) -> str | None:
+        if envelope.get("type") != "review_closure":
+            return None
+        participant = self._participant_for_conversation(
+            conversation_id=conversation_id,
+            participant_id=participant_id,
+            error_code="unknown_participant",
+        )
+        if participant.role != "review":
+            raise PeerChatError(
+                "review_closure_authority_forbidden",
+                "review_closure messages must be authored by the review participant",
+                details={
+                    "participant_id": participant_id,
+                    "participant_role": participant.role,
+                    "required_role": "review",
+                },
+            )
+        resolution_id = envelope.get("resolution_id")
+        if not isinstance(resolution_id, str) or not resolution_id.strip():
+            raise PeerChatError(
+                "invalid_review_closure",
+                "review_closure envelope requires resolution_id",
+            )
+        clean_resolution_id = resolution_id.strip()
+        try:
+            resolution = self._chat.get_resolution(clean_resolution_id)
+        except KeyError as exc:
+            raise PeerChatError(
+                "unknown_review_closure_resolution",
+                clean_resolution_id,
+            ) from exc
+        if resolution.conversation_id != conversation_id:
+            raise PeerChatError(
+                "unknown_review_closure_resolution",
+                clean_resolution_id,
+            )
+        return clean_resolution_id
 
     def _build_god_inbox_items(
         self,
