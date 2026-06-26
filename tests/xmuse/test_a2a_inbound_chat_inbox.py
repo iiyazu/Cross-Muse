@@ -15,6 +15,7 @@ from xmuse_core.integrations.a2a_bridge import (
     A2AInboundBridge,
     A2AInboundTask,
 )
+from xmuse_core.integrations.a2a_sdk_boundary import A2ASDKBoundary
 
 
 def test_a2a_inbound_bridge_disabled_does_not_write_chat(tmp_path: Path) -> None:
@@ -193,6 +194,7 @@ def test_a2a_task_send_does_not_create_authority_objects(tmp_path: Path) -> None
 
     assert ChatStore(db).list_proposals(conversation.id) == []
     assert AcceptanceSpineStore(db).list_by_conversation(conversation.id) == []
+    assert A2ASDKBoundary().authority == "xmuse-chat-db"
     assert not (tmp_path / "feature_lanes.json").exists()
     assert not (tmp_path / "final_actions.json").exists()
 
