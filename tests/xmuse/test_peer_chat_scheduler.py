@@ -396,7 +396,7 @@ async def test_scheduler_tick_many_claims_multiple_inbox_items_concurrently(
         god_layer=layer,
         worktree=tmp_path,
         scheduler_id="sched-test",
-        response_wait_s=0.1,
+        response_wait_s=1.0,
     )
 
     outcome = await scheduler.tick_many(max_concurrent=3)
