@@ -11,6 +11,7 @@ from xmuse_core.chat.inbox_store import ChatInboxStore
 from xmuse_core.chat.participant_store import ParticipantStore
 from xmuse_core.chat.store import ChatStore
 from xmuse_core.integrations.a2a_bridge import build_participant_agent_card
+from xmuse_core.integrations.a2a_sdk_boundary import A2ASDKBoundary
 
 
 def test_participant_agent_card_uses_existing_profile_contract(tmp_path: Path) -> None:
@@ -43,6 +44,7 @@ def test_participant_agent_card_uses_existing_profile_contract(tmp_path: Path) -
     }
     metadata = card["metadata"]
     assert metadata["authority"] == "chat.db"
+    assert A2ASDKBoundary().authority == "xmuse-chat-db"
     assert metadata["participant_id"] == participant.participant_id
     assert metadata["conversation_id"] == conversation.id
     assert metadata["role"] == "review"
