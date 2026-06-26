@@ -186,6 +186,7 @@ def test_collaboration_proposal_approval_blocks_pending_review_trigger(tmp_path)
             {
                 "type": "execute_feasibility_verdict",
                 "status": "executable",
+                "execution_performed": False,
                 "summary": "The lane has scoped work and enough evidence.",
                 "evidence_refs": ["collaboration:pending-review-approval"],
             }
