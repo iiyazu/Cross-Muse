@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from xmuse.dashboard_api import create_app
 from xmuse_core.agents.god_session_registry import GodSessionRegistry
+from xmuse_core.chat.acceptance_spine import AcceptanceSpineStore
 from xmuse_core.chat.collaboration_store import ChatCollaborationStore
 from xmuse_core.chat.dispatch_queue import ChatDispatchQueueStore
 from xmuse_core.chat.inbox_store import ChatInboxStore
@@ -983,6 +984,129 @@ def test_conversation_inspector_links_dashboard_runtime_timeline(tmp_path: Path)
             "label": "Runtime timeline",
         },
     }
+
+
+def test_conversation_inspector_exposes_separated_closure_evidence(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "chat.db"
+    chat = ChatStore(db)
+    conv = chat.create_conversation("Closure Evidence")
+    intake = chat.add_message(
+        conv.id,
+        "Human",
+        "human",
+        "Expose closure evidence for review, dispatch, and lane execution.",
+    )
+    proposal = chat.create_proposal(
+        conversation_id=conv.id,
+        author="Architect GOD",
+        proposal_type="lane_graph",
+        content=json.dumps(
+            {
+                "summary": "Expose separated closure evidence",
+                "lanes": [
+                    {
+                        "feature_id": "closure-evidence-read-model",
+                        "prompt": "Expose separated closure evidence.",
+                    }
+                ],
+            }
+        ),
+        references=[f"intake_message:{intake.id}"],
+    )
+    spine_store = AcceptanceSpineStore(db)
+    spine_store.create_for_intake(
+        conversation_id=conv.id,
+        intake_message_id=intake.id,
+    )
+    spine_store.attach_proposal(
+        conversation_id=conv.id,
+        intake_message_id=intake.id,
+        proposal_id=proposal.id,
+    )
+    spine_store.attach_review_trigger_for_proposal(
+        proposal_id=proposal.id,
+        review_trigger_inbox_id="inbox-review-trigger",
+    )
+    spine_store.attach_verdict_for_proposal(
+        proposal_id=proposal.id,
+        verdict_ref="resolution:res-closure-evidence",
+    )
+    dispatch_entry = ChatDispatchQueueStore(db).enqueue_agent_auto_dispatch(
+        conversation_id=conv.id,
+        proposal_id=proposal.id,
+        resolution_id="res-closure-evidence",
+        collaboration_run_id="collab-closure-evidence",
+        artifact_ref="artifact:lane_graph",
+    )
+    claimed = ChatDispatchQueueStore(db).claim_next_auto_dispatch(
+        conversation_id=conv.id,
+        claimed_by="bridge-test",
+    )
+    assert claimed is not None
+    ChatDispatchQueueStore(db).mark_dispatched(
+        dispatch_entry.entry_id,
+        provider_run_ref="peer_ack:execute:part-execute",
+        dispatch_evidence="mcp_writeback:inbox-dispatch-ack",
+    )
+    spine_store.attach_dispatch_for_proposal(
+        proposal_id=proposal.id,
+        dispatch_item_id=dispatch_entry.entry_id,
+    )
+    spine_store.attach_execution_evidence_for_dispatch(
+        dispatch_item_id=dispatch_entry.entry_id,
+        evidence_refs=[
+            "peer_ack:execute:part-execute",
+            "mcp_writeback:inbox-dispatch-ack",
+        ],
+    )
+    spine_store.attach_lane_execution_for_resolution(
+        resolution_id="res-closure-evidence",
+        evidence_refs=[
+            "feature_lanes.json#lane=closure-evidence-read-model:status=executed",
+            "lane_graph:graph-closure-evidence",
+            "dispatch_attempt:attempt-closure-evidence",
+        ],
+    )
+    spine_store.attach_review_verdict_for_resolution(
+        resolution_id="res-closure-evidence",
+        review_verdict_ref="review_plane.json#verdict=closure-evidence-reviewed",
+    )
+
+    response = TestClient(create_app(tmp_path)).get(
+        f"/api/dashboard/peer-chat/conversations/{conv.id}/inspector"
+    )
+
+    assert response.status_code == 200
+    closure = response.json()["closure_evidence"]
+    assert closure["source_authority"] == "chat.db.acceptance_spines"
+    assert closure["status_summary"] == {"reviewed": 1}
+    assert closure["proposal_review"] == {
+        "total": 1,
+        "refs": ["resolution:res-closure-evidence"],
+    }
+    assert closure["dispatch_ack"] == {
+        "total": 2,
+        "refs": [
+            "peer_ack:execute:part-execute",
+            "mcp_writeback:inbox-dispatch-ack",
+        ],
+    }
+    assert closure["lane_execution"] == {
+        "total": 3,
+        "refs": [
+            "feature_lanes.json#lane=closure-evidence-read-model:status=executed",
+            "lane_graph:graph-closure-evidence",
+            "dispatch_attempt:attempt-closure-evidence",
+        ],
+    }
+    assert closure["independent_review"] == {
+        "total": 1,
+        "refs": ["review_plane.json#verdict=closure-evidence-reviewed"],
+    }
+    assert closure["items"][0]["dispatch_item_id"] == dispatch_entry.entry_id
+    assert closure["items"][0]["review_trigger_inbox_id"] == "inbox-review-trigger"
 
 
 def test_dashboard_runtime_timeline_prefers_latest_row_when_timestamps_tie(
