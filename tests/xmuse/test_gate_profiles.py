@@ -402,6 +402,11 @@ async def test_gate_runner_does_not_leak_platform_xmuse_root(
         return FakeProcess(stdout="ok", returncode=0)
 
     monkeypatch.setenv("XMUSE_ROOT", "/tmp/platform-runtime-root")
+    monkeypatch.setenv("VIRTUAL_ENV", "/tmp/platform-venv")
+    monkeypatch.setenv("UV_PROJECT_ENVIRONMENT", "/tmp/platform-uv-env")
+    monkeypatch.setenv("TMP", "/mnt/c/Users/example/AppData/Local/Temp")
+    monkeypatch.setenv("TEMP", "/mnt/c/Users/example/AppData/Local/Temp")
+    monkeypatch.delenv("TMPDIR", raising=False)
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
     config = _loaded_config(tmp_path)
     plan = GateProfileResolver(config).resolve(
@@ -415,6 +420,9 @@ async def test_gate_runner_does_not_leak_platform_xmuse_root(
 
     assert report.passed is True
     assert "XMUSE_ROOT" not in calls[0][1]["env"]
+    assert "VIRTUAL_ENV" not in calls[0][1]["env"]
+    assert "UV_PROJECT_ENVIRONMENT" not in calls[0][1]["env"]
+    assert calls[0][1]["env"]["TMPDIR"] == "/tmp"
 
 
 @pytest.mark.asyncio

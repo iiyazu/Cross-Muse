@@ -298,6 +298,32 @@ def _git_output(command: list[str], *, cwd: Path) -> str:
     return result.stdout.strip()
 
 
+def _git_toplevel(candidate: Path) -> Path | None:
+    result = subprocess.run(
+        ["git", "-C", str(candidate), "rev-parse", "--show-toplevel"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if result.returncode != 0:
+        return None
+    output = result.stdout.strip()
+    return Path(output) if output else None
+
+
+def _resolve_source_repo_root(xmuse_root: Path) -> Path:
+    candidates: list[Path] = []
+    env_root = os.environ.get("XMUSE_SOURCE_REPO_ROOT")
+    if env_root:
+        candidates.append(Path(env_root))
+    candidates.extend([Path.cwd(), xmuse_root.parent])
+    for candidate in candidates:
+        repo_root = _git_toplevel(candidate)
+        if repo_root is not None:
+            return repo_root
+    return xmuse_root.parent
+
+
 def _execution_god(
     runtime: str,
     *,
@@ -408,6 +434,7 @@ class PlatformOrchestrator:
         self._execution_provider_profile_ref = execution_provider_profile_ref
         self._review_provider_profile_ref = review_provider_profile_ref
         self._root = xmuse_root
+        self._repo_root = _resolve_source_repo_root(xmuse_root)
         self._graph_store = LaneGraphStore(self._root / "lane_graphs")
         self._require_final_action_approval = require_final_action_approval
         self._final_action_store = FinalActionGateStore(self._root / "final_actions.json")

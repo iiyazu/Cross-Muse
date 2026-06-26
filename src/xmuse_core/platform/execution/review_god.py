@@ -703,7 +703,12 @@ async def _try_configured_review_peer(
         and persistent_session_layer is not None
     ):
         default_peer_failure: str | None = None
-        review_peer_id, default_peer_failure = await _ensure_default_review_peer(
+        default_peer_metadata: dict[str, str] = {}
+        (
+            review_peer_id,
+            default_peer_failure,
+            default_peer_metadata,
+        ) = await _ensure_default_review_peer(
             xmuse_root=xmuse_root,
             conversation_id=_optional_text(lane.get("conversation_id")),
             feature_scope_id=feature_scope_id_from_lane(lane),
@@ -722,7 +727,9 @@ async def _try_configured_review_peer(
         if review_peer_defaulted
         else _peer_routing_mode(lane.get("peer_routing_mode"))
     )
-    base_metadata = {"peer_routing_mode": mode}
+    base_metadata = {"peer_routing_mode": mode} | (
+        default_peer_metadata if review_peer_defaulted else {}
+    )
     if not review_peer_defaulted:
         base_metadata["review_peer_id"] = review_peer_id
     if runtime_peer_required:
@@ -838,6 +845,7 @@ async def _try_configured_review_peer(
                 "peer_routing_mode": mode,
                 "peer_delivery_mode": "configured_peer",
             }
+            | (default_peer_metadata if review_peer_defaulted else {})
             | participant_metadata
             | ({"review_peer_defaulted": True} if review_peer_defaulted else {}),
         )
@@ -998,9 +1006,9 @@ async def _ensure_default_review_peer(
     xmuse_root: Path,
     conversation_id: str | None,
     feature_scope_id: str | None,
-) -> tuple[str | None, str | None]:
+) -> tuple[str | None, str | None, dict[str, str]]:
     if conversation_id is None:
-        return None, None
+        return None, None, {}
     lock_key = f"{conversation_id}:{feature_scope_id or 'conversation-default-review'}"
     lock = _DEFAULT_REVIEW_PEER_LOCKS.setdefault(lock_key, asyncio.Lock())
     async with lock:
@@ -1014,19 +1022,31 @@ def _ensure_default_review_peer_sync(
     *,
     xmuse_root: Path,
     conversation_id: str,
-) -> tuple[str | None, str | None]:
+) -> tuple[str | None, str | None, dict[str, str]]:
     store = ParticipantStore(xmuse_root / "chat.db")
     try:
         participants = store.list_by_conversation(conversation_id)
         opencode_review_peers = _active_review_peers(participants, cli_kind="opencode")
         if len(opencode_review_peers) == 1:
-            return opencode_review_peers[0].participant_id, None
+            return opencode_review_peers[0].participant_id, None, {
+                "review_peer_selection_policy": "default_auto",
+                "review_peer_selected_runtime": "opencode",
+            }
         if len(opencode_review_peers) > 1:
-            return None, "review_peer_runtime_ambiguous"
-        return None, "review_peer_runtime_unavailable"
+            return None, "review_peer_runtime_ambiguous", {}
+        codex_review_peers = _active_review_peers(participants, cli_kind="codex")
+        if len(codex_review_peers) == 1:
+            return codex_review_peers[0].participant_id, None, {
+                "review_peer_selection_policy": "default_auto",
+                "review_peer_selected_runtime": "codex",
+                "review_peer_fallback_reason": "opencode_unavailable",
+            }
+        if len(codex_review_peers) > 1:
+            return None, "review_peer_runtime_ambiguous", {}
+        return None, "review_peer_runtime_unavailable", {}
     except Exception:
-        return None, None
-    return None, "review_peer_runtime_unavailable"
+        return None, None, {}
+    return None, "review_peer_runtime_unavailable", {}
 
 
 def _active_review_peers(participants: list[Any], *, cli_kind: str) -> list[Any]:

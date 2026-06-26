@@ -163,6 +163,9 @@ def _looks_like_test_path(arg: str) -> bool:
 def _command_env(command_env: dict[str, str]) -> dict[str, str]:
     env = dict(os.environ)
     env.pop("XMUSE_ROOT", None)
+    env.pop("VIRTUAL_ENV", None)
+    env.pop("UV_PROJECT_ENVIRONMENT", None)
+    env.setdefault("TMPDIR", "/tmp")
     env.update(command_env)
     return env
 

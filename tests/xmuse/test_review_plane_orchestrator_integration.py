@@ -334,6 +334,56 @@ async def test_default_review_peer_routing_reuses_registered_opencode_review_pee
 
 
 @pytest.mark.asyncio
+async def test_default_review_peer_routing_falls_back_to_registered_codex_review_peer(
+    tmp_path: Path,
+) -> None:
+    chat = ChatStore(tmp_path / "chat.db")
+    conversation = chat.create_conversation("Default Codex review peer")
+    participant = _add_review_participant(tmp_path, conversation.id)
+    orch = _make_final_action_orchestrator(
+        tmp_path,
+        [
+            _gated_lane(
+                "lane-default-codex-review-peer",
+                conversation_id=conversation.id,
+            )
+        ],
+    )
+    orch._default_review_peer_routing_enabled = True
+    persistent = FakePersistentReviewLayer(
+        [
+            StdoutMessage(
+                type="result",
+                status="success",
+                artifacts={
+                    "review_verdict": {
+                        "decision": "merge",
+                        "summary": "Registered Codex review peer approves.",
+                    }
+                },
+            )
+        ]
+    )
+    orch._review_god_session_layer = persistent
+
+    with patch.object(orch._spawner, "spawn", new_callable=AsyncMock) as spawn:
+        await orch._run_review_god("lane-default-codex-review-peer")
+
+    lane = orch._sm.get_lane("lane-default-codex-review-peer")
+    assert spawn.await_count == 0
+    assert lane["status"] == "awaiting_final_action"
+    assert lane["review_peer_defaulted"] is True
+    assert lane["review_peer_id"] == participant.participant_id
+    assert lane["review_peer_selection_policy"] == "default_auto"
+    assert lane["review_peer_selected_runtime"] == "codex"
+    assert lane["review_peer_fallback_reason"] == "opencode_unavailable"
+    assert lane["peer_delivery_mode"] == "configured_peer"
+    assert lane["review_peer_cli_kind"] == participant.cli_kind
+    assert lane["review_peer_model"] == participant.model
+    assert persistent.ensured[0]["participant_id"] == participant.participant_id
+
+
+@pytest.mark.asyncio
 async def test_default_review_peer_routing_ambiguous_opencode_fails_closed(
     tmp_path: Path,
 ) -> None:
