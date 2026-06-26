@@ -59,6 +59,34 @@ class HandoffAssessment:
         }
 
 
+def build_handoff_envelope(
+    assessment: HandoffAssessment,
+    *,
+    conversation_id: str,
+    origin_message_id: str,
+    source_kind: str,
+    author_participant_id: str | None,
+    target_participant_id: str,
+    target_role: str,
+    source_refs: list[str] | tuple[str, ...],
+) -> dict[str, object]:
+    return {
+        "schema_version": "xmuse-natural-handoff-v1",
+        "conversation_id": conversation_id,
+        "origin_message_id": origin_message_id,
+        "source_kind": source_kind,
+        "author_participant_id": author_participant_id,
+        "target_participant_id": target_participant_id,
+        "target_role": target_role,
+        "route_kind": assessment.route_kind,
+        "requires_envelope": assessment.requires_envelope,
+        "is_complete": assessment.is_complete,
+        "missing_fields": list(assessment.missing_fields),
+        "fields": dict(assessment.fields),
+        "source_refs": list(source_refs),
+    }
+
+
 def assess_natural_handoff(content: str, *, target_role: str) -> HandoffAssessment:
     if not _requires_handoff_envelope(content, target_role=target_role):
         return HandoffAssessment(requires_envelope=False)

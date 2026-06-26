@@ -12,6 +12,10 @@ from xmuse_core.chat.context_assembler import (
 )
 from xmuse_core.chat.envelopes import normalize_envelope
 from xmuse_core.chat.mentions import MentionResolutionError, MentionResolver
+from xmuse_core.chat.natural_handoff import (
+    assess_natural_handoff,
+    build_handoff_envelope,
+)
 from xmuse_core.chat.natural_routing import build_natural_route_event, natural_route_payload
 from xmuse_core.chat.participant_store import Participant, ParticipantStore
 from xmuse_core.chat.store import ChatStore
@@ -274,15 +278,54 @@ class A2AInboundBridge:
         metadata: dict[str, Any],
         source_refs: list[str],
     ) -> dict[str, Any]:
+        assessment = assess_natural_handoff(
+            content,
+            target_role=target.participant.role,
+        )
+        blocker_reason = (
+            "missing_handoff_fields"
+            if assessment.requires_envelope and assessment.missing_fields
+            else None
+        )
         event = build_natural_route_event(
             conversation_id=conversation_id,
             origin_message_id=task_id,
             source_kind="a2a_inbound",
             author_participant_id=f"a2a:{sender_agent_id}",
             target_participant_id=target.participant.participant_id,
-            route_kind="a2a_task",
+            route_kind=assessment.route_kind
+            if assessment.requires_envelope
+            else "a2a_task",
             source_refs=source_refs,
+            blocker_reason=blocker_reason,
         )
+        assessment_payload = assessment.model_dump()
+        extra: dict[str, object] = {
+            "a2a_task_id": task_id,
+            "a2a_context_id": conversation_id,
+            "a2a_sender_agent_id": sender_agent_id,
+            "a2a_metadata": metadata,
+            "handoff_assessment": assessment_payload,
+        }
+        if assessment.requires_envelope:
+            extra["handoff_envelope"] = build_handoff_envelope(
+                assessment,
+                conversation_id=conversation_id,
+                origin_message_id=task_id,
+                source_kind="a2a_inbound",
+                author_participant_id=f"a2a:{sender_agent_id}",
+                target_participant_id=target.participant.participant_id,
+                target_role=target.participant.role,
+                source_refs=source_refs,
+            )
+        if blocker_reason:
+            extra.update(
+                {
+                    "blocks_dispatch": True,
+                    "blocker_kind": blocker_reason,
+                    "missing_fields": list(assessment.missing_fields),
+                }
+            )
         return {
             "target_participant_id": target.participant.participant_id,
             "target_role": target.participant.role,
@@ -294,12 +337,7 @@ class A2AInboundBridge:
                 event,
                 content=content,
                 mention=target.raw,
-                extra={
-                    "a2a_task_id": task_id,
-                    "a2a_context_id": conversation_id,
-                    "a2a_sender_agent_id": sender_agent_id,
-                    "a2a_metadata": metadata,
-                },
+                extra=extra,
             ),
         }
 
