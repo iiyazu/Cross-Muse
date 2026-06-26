@@ -20,6 +20,7 @@ from xmuse_core.chat.inbox_store import ChatInboxStore
 from xmuse_core.chat.inspector_builder import build_conversation_inspector_payload
 from xmuse_core.chat.participant_store import ParticipantStore
 from xmuse_core.chat.peer_service import PeerChatError, PeerChatService
+from xmuse_core.chat.review_trigger_verdicts import build_review_trigger_verdict_envelope
 from xmuse_core.chat.store import ChatStore
 from xmuse_core.chat.stream_store import PeerTurnLatencyTraceStore
 from xmuse_core.structuring.graph_store import LaneGraphStore
@@ -262,9 +263,17 @@ async def test_groupchat_proposal_approval_dispatch_and_review_closure_authority
         participant_id=participants["review"].participant_id,
         god_session_id=sessions["review"],
         client_request_id="bridge-proposal-review-gate",
-        content=(
-            "REVIEW_VERDICT: dispatch_allowed\n"
-            "No veto; proposal may proceed to explicit approval."
+        content="No veto; proposal may proceed to explicit approval.",
+        envelope=build_review_trigger_verdict_envelope(
+            review_trigger_inbox_id=review_trigger.id,
+            source_message_id=review_trigger.source_message_id,
+            proposal_id=proposal["proposal"]["id"],
+            decision="dispatch_allowed",
+            summary="No veto; proposal may proceed to explicit approval.",
+            evidence_refs=[
+                f"inbox:{review_trigger.id}",
+                f"collaboration:{run_id}",
+            ],
         ),
         reply_to_inbox_item_id=review_trigger.id,
     )
