@@ -67,6 +67,8 @@ def test_peer_chat_prompt_builder_emits_ordered_auditable_layers(tmp_path: Path)
     assert "Durable chat state is reply truth" in assembled.text
     assert "Role: architect" in assembled.text
     assert "@review=OpenCode Review GOD" in assembled.text
+    assert "Provider/session bindings:" in assembled.text
+    assert "participant_profiles[].mention_handle" in assembled.text
     assert "Local context capsule version: xmuse-local-context-capsule-v1" in assembled.text
     assert "chat_emit_proposal" in assembled.text
     assert "If the inbox request explicitly asks for chat_emit_proposal" in assembled.text

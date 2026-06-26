@@ -387,6 +387,19 @@ async def test_scheduler_claims_and_nudges_oldest_item(tmp_path: Path) -> None:
             "status": "active",
         },
     ]
+    assert context["group_chat"]["source_refs"] == [
+        f"chat.db:conversation:{conv.id}",
+        "god_sessions:god_sessions.json",
+        f"chat.db:structured_state:{conv.id}",
+    ]
+    assert context["group_chat"]["session_bindings"][0]["participant_id"] == (
+        participant.participant_id
+    )
+    assert context["group_chat"]["session_bindings"][0]["session_status"] == "unbound"
+    assert context["group_chat"]["participant_profiles"][0]["mention_handle"] == (
+        "@architect"
+    )
+    assert context["group_chat"]["structured_state"]["source"] == "chat.db"
     assert context["group_chat"]["recent_messages"][-1]["content"] == "I am here too."
     assert context["context_capsule"]["version"] == "xmuse-local-context-capsule-v1"
     assert context["xmuse_prompt"]["version"] == "xmuse-peer-chat-prompt-v2"
