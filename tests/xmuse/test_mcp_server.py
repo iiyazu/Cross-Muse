@@ -449,7 +449,14 @@ def test_sse_chat_mention_without_reply_id_closes_single_claimed_inbox_item(
                     "god_session_id": session.god_session_id,
                     "client_request_id": "handoff-without-reply-id",
                     "target_address": "@execute",
-                    "content": "Please record the execute feasibility verdict.",
+                    "content": (
+                        "what: record the execute feasibility verdict\n"
+                        "why: architect needs a bounded execution handoff\n"
+                        "tradeoffs: keep it read-only until dispatch approval\n"
+                        "open_questions: none for this handoff\n"
+                        "next_action: reply with the feasibility verdict\n"
+                        "evidence_refs: message:latest"
+                    ),
                 },
             },
         },

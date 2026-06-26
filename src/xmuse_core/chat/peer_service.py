@@ -40,6 +40,11 @@ from xmuse_core.chat.mentions import (
     normalize_address,
 )
 from xmuse_core.chat.models import ChatCard, ChatMessage, ChatTimelineItem
+from xmuse_core.chat.natural_handoff import HandoffAssessment, assess_natural_handoff
+from xmuse_core.chat.natural_routing import (
+    build_natural_route_event,
+    natural_route_payload,
+)
 from xmuse_core.chat.participant_store import (
     INIT_GOD_DISPLAY_NAME,
     INIT_GOD_ROLE,
@@ -77,6 +82,22 @@ def _has_leading_all_mention(content: str) -> bool:
 
 def _is_mention_char(value: str) -> bool:
     return value.isalnum() or value in "_-:"
+
+
+def _natural_route_source_refs(
+    *,
+    source_inbox_id: str | None,
+    source_message_id: str | None,
+    client_request_id: str,
+) -> list[str]:
+    refs = []
+    if source_message_id:
+        refs.append(f"message:{source_message_id}")
+    if source_inbox_id:
+        refs.append(f"inbox:{source_inbox_id}")
+    if not refs:
+        refs.append(f"mcp_request:chat_mention:{client_request_id}")
+    return refs
 
 
 class PeerChatService:
@@ -2470,6 +2491,7 @@ class PeerChatService:
             target = resolver.resolve(conversation_id, target_address)
         except MentionResolutionError as exc:
             raise PeerChatError(exc.code, exc.target) from exc
+        participant = self._participants.get(participant_id)
         normalized = normalize_envelope(envelope, envelope_type="mention")
         resolved_reply_to_inbox_item_id = (
             reply_to_inbox_item_id
@@ -2478,6 +2500,65 @@ class PeerChatService:
                 participant_id=participant_id,
             )
         )
+        source_inbox = (
+            self._inbox.get(resolved_reply_to_inbox_item_id)
+            if resolved_reply_to_inbox_item_id
+            else None
+        )
+        assessment = assess_natural_handoff(
+            content,
+            target_role=target.participant.role,
+        )
+        should_block_handoff = (
+            resolved_reply_to_inbox_item_id is not None
+            and assessment.requires_envelope
+            and bool(assessment.missing_fields)
+        )
+        route_event = build_natural_route_event(
+            conversation_id=conversation_id,
+            origin_message_id=(
+                source_inbox.source_message_id
+                if source_inbox is not None
+                else f"client_request:{client_request_id}"
+            ),
+            source_kind="chat_mention",
+            author_participant_id=participant_id,
+            target_participant_id=target.participant.participant_id,
+            route_kind=assessment.route_kind,
+            source_refs=_natural_route_source_refs(
+                source_inbox_id=resolved_reply_to_inbox_item_id,
+                source_message_id=(
+                    source_inbox.source_message_id
+                    if source_inbox is not None
+                    else None
+                ),
+                client_request_id=client_request_id,
+            ),
+            blocker_reason=(
+                "missing_handoff_fields" if should_block_handoff else None
+            ),
+        )
+        assessment_payload = assessment.model_dump()
+        if should_block_handoff:
+            return self._record_natural_handoff_blocker(
+                registry_path=registry_path,
+                conversation_id=conversation_id,
+                participant=participant,
+                god_session_id=god_session_id,
+                caller_identity=caller_identity,
+                client_request_id=client_request_id,
+                target_address=target.normalized,
+                target_role=target.participant.role,
+                target_participant_id=target.participant.participant_id,
+                target_raw=target.raw,
+                content=content,
+                route_event=route_event,
+                assessment=assessment,
+                assessment_payload=assessment_payload,
+                reply_to_inbox_item_id=resolved_reply_to_inbox_item_id,
+            )
+        normalized["natural_route"] = route_event.model_dump()
+        normalized["handoff_assessment"] = assessment_payload
         try:
             result = self._chat.create_message_inbox_and_log(
                 conversation_id=conversation_id,
@@ -2498,12 +2579,21 @@ class PeerChatService:
                         "sender_participant_id": participant_id,
                         "sender_address": f"@participant:{participant_id}",
                         "item_type": "mention",
-                        "payload": {"content": content, "mention": target.raw},
+                        "payload": natural_route_payload(
+                            route_event,
+                            content=content,
+                            mention=target.raw,
+                            extra={"handoff_assessment": assessment_payload},
+                        ),
                     }
                 ],
                 reply_to_inbox_item_id=resolved_reply_to_inbox_item_id,
                 reply_owner_participant_id=participant_id,
                 turn_budget_action="consume",
+                extra_result={
+                    "natural_route": route_event.model_dump(),
+                    "handoff_assessment": assessment_payload,
+                },
             )
             if resolved_reply_to_inbox_item_id:
                 PeerTurnLatencyTraceStore(self._db_path).record_mcp_tool_stage(
@@ -2518,6 +2608,100 @@ class PeerChatService:
             if str(exc) == "turn_budget_exhausted":
                 raise PeerChatError("turn_budget_exhausted", conversation_id) from exc
             raise
+
+    def _record_natural_handoff_blocker(
+        self,
+        *,
+        registry_path: Path,
+        conversation_id: str,
+        participant: Participant,
+        god_session_id: str,
+        caller_identity: str,
+        client_request_id: str,
+        target_address: str,
+        target_role: str,
+        target_participant_id: str,
+        target_raw: str,
+        content: str,
+        route_event,
+        assessment: HandoffAssessment,
+        assessment_payload: dict[str, object],
+        reply_to_inbox_item_id: str | None,
+    ) -> dict[str, Any]:
+        missing = ", ".join(assessment.missing_fields)
+        blocker_content = (
+            f"Natural handoff to {target_address} was blocked before routing. "
+            f"Missing required handoff fields: {missing}."
+        )
+        envelope = normalize_envelope(
+            {
+                "type": "natural_handoff_blocker",
+                "natural_route": route_event.model_dump(),
+                "handoff_assessment": assessment_payload,
+                "target_address": target_address,
+                "target_role": target_role,
+                "missing_fields": list(assessment.missing_fields),
+            },
+            envelope_type="natural_handoff_blocker",
+        )
+        try:
+            result = self._chat.create_message_inbox_and_log(
+                conversation_id=conversation_id,
+                tool_name="chat_mention",
+                caller_identity=caller_identity,
+                client_request_id=client_request_id,
+                author=participant.participant_id,
+                role="assistant",
+                content=blocker_content,
+                envelope_type=envelope["type"],
+                envelope_json=envelope,
+                mentions=[],
+                inbox_items=[
+                    {
+                        "target_participant_id": participant.participant_id,
+                        "target_role": participant.role,
+                        "target_address": f"@participant:{participant.participant_id}",
+                        "sender_participant_id": participant.participant_id,
+                        "sender_address": f"@participant:{participant.participant_id}",
+                        "item_type": "natural_handoff_blocker",
+                        "payload": natural_route_payload(
+                            route_event,
+                            content=blocker_content,
+                            mention=target_raw,
+                            extra={
+                                "blocks_dispatch": True,
+                                "blocker_kind": "missing_handoff_fields",
+                                "target_address": target_address,
+                                "target_role": target_role,
+                                "target_participant_id": target_participant_id,
+                                "missing_fields": list(assessment.missing_fields),
+                                "handoff_assessment": assessment_payload,
+                            },
+                        ),
+                    }
+                ],
+                reply_to_inbox_item_id=reply_to_inbox_item_id,
+                reply_owner_participant_id=participant.participant_id,
+                turn_budget_action="consume",
+                extra_result={
+                    "natural_route": route_event.model_dump(),
+                    "handoff_assessment": assessment_payload,
+                    "blocked": True,
+                },
+            )
+        except ValueError as exc:
+            if str(exc) == "turn_budget_exhausted":
+                raise PeerChatError("turn_budget_exhausted", conversation_id) from exc
+            raise
+        if reply_to_inbox_item_id:
+            PeerTurnLatencyTraceStore(self._db_path).record_mcp_tool_stage(
+                conversation_id=conversation_id,
+                inbox_item_id=reply_to_inbox_item_id,
+                tool_name="chat_mention",
+                called_at=time.monotonic(),
+            )
+            GodSessionRegistry(registry_path).promote_running(god_session_id)
+        return result
 
     def read_inbox(
         self,
