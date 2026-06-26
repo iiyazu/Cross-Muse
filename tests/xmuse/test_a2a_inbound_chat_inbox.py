@@ -84,6 +84,95 @@ def test_a2a_task_send_enters_chat_inbox_as_durable_route(tmp_path: Path) -> Non
         f"a2a_context:{conversation.id}",
     ]
     assert inbox_item.payload["a2a_metadata"] == {"purpose": "review_request"}
+    assert inbox_item.payload["natural_route"]["route_kind"] == "review_request"
+    assert inbox_item.payload["natural_route"]["status"] == "blocked"
+    assert inbox_item.payload["blocker_reason"] == "missing_handoff_fields"
+    assert inbox_item.payload["blocks_dispatch"] is True
+    assert inbox_item.payload["handoff_assessment"]["requires_envelope"] is True
+    assert inbox_item.payload["handoff_assessment"]["missing_fields"] == [
+        "what",
+        "why",
+        "tradeoffs",
+        "open_questions",
+        "next_action",
+        "evidence_refs",
+    ]
+    assert inbox_item.payload["handoff_envelope"]["schema_version"] == (
+        "xmuse-natural-handoff-v1"
+    )
+    assert inbox_item.payload["handoff_envelope"]["target_participant_id"] == (
+        review.participant_id
+    )
+
+
+def test_a2a_complete_review_task_records_canonical_handoff_envelope(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "chat.db"
+    chat = ChatStore(db)
+    conversation = chat.create_conversation("A2A complete handoff")
+    review = ParticipantStore(db).add(
+        conversation_id=conversation.id,
+        role="review",
+        display_name="Review GOD",
+        cli_kind="codex",
+        model="gpt-5.4",
+    )
+
+    result = A2AInboundBridge(db, enabled=True).record_task_send(
+        A2AInboundTask(
+            task_id="task-complete-review",
+            context_id=conversation.id,
+            sender_agent_id="external-planner",
+            target_address="@review",
+            content=(
+                "@review\n"
+                "what: inspect the A2A handoff boundary.\n"
+                "why: provider tasks need durable xmuse authority.\n"
+                "tradeoffs: keep A2A as interop, not authority.\n"
+                "open questions: none for this narrow contract.\n"
+                "next action: review the inbox payload.\n"
+                "evidence refs: a2a_task:task-complete-review"
+            ),
+        )
+    )
+
+    assert result["status"] == "accepted"
+    inbox_item = ChatInboxStore(db).list_for_participant(
+        conversation_id=conversation.id,
+        participant_id=review.participant_id,
+    )[0]
+    assert inbox_item.item_type == "a2a_task"
+    assert inbox_item.payload["natural_route"]["route_kind"] == "review_request"
+    assert inbox_item.payload["natural_route"]["status"] == "pending"
+    assert "blocks_dispatch" not in inbox_item.payload
+    assert inbox_item.payload["handoff_assessment"]["is_complete"] is True
+    assert inbox_item.payload["handoff_assessment"]["missing_fields"] == []
+    assert inbox_item.payload["handoff_envelope"] == {
+        "schema_version": "xmuse-natural-handoff-v1",
+        "conversation_id": conversation.id,
+        "origin_message_id": "task-complete-review",
+        "source_kind": "a2a_inbound",
+        "author_participant_id": "a2a:external-planner",
+        "target_participant_id": review.participant_id,
+        "target_role": "review",
+        "route_kind": "review_request",
+        "requires_envelope": True,
+        "is_complete": True,
+        "missing_fields": [],
+        "fields": {
+            "what": "inspect the A2A handoff boundary.",
+            "why": "provider tasks need durable xmuse authority.",
+            "tradeoffs": "keep A2A as interop, not authority.",
+            "open_questions": "none for this narrow contract.",
+            "next_action": "review the inbox payload.",
+            "evidence_refs": "a2a_task:task-complete-review",
+        },
+        "source_refs": [
+            "a2a_task:task-complete-review",
+            f"a2a_context:{conversation.id}",
+        ],
+    }
 
 
 def test_a2a_task_send_is_idempotent_by_task_id(tmp_path: Path) -> None:
