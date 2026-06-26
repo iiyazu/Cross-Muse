@@ -25,6 +25,7 @@ from xmuse_core.chat.collaboration_store import ChatCollaborationStore
 from xmuse_core.chat.dispatch_queue import ChatDispatchQueueStore
 from xmuse_core.chat.inbox_store import ChatInboxStore
 from xmuse_core.chat.participant_store import Participant, ParticipantStore
+from xmuse_core.chat.review_trigger_verdicts import build_review_trigger_verdict_envelope
 from xmuse_core.chat.store import ChatStore
 from xmuse_core.chat.stream_store import PeerTurnLatencyTraceStore
 from xmuse_core.platform.execution.github_ops import GitHubServerSideTruthEvidence
@@ -1899,6 +1900,20 @@ async def test_real_ray_codex_app_server_proposal_review_dispatch_completion(
                         "content": (
                             "Review verdict: dispatch allowed. The proposal is backed "
                             "by executable collaboration evidence."
+                        ),
+                        "envelope": build_review_trigger_verdict_envelope(
+                            review_trigger_inbox_id=review_items[0].id,
+                            source_message_id=review_items[0].source_message_id,
+                            proposal_id=proposal.id,
+                            decision="dispatch_allowed",
+                            summary=(
+                                "Dispatch may proceed with executable collaboration "
+                                "evidence."
+                            ),
+                            evidence_refs=[
+                                f"inbox:{review_items[0].id}",
+                                f"collaboration:{run.run_id}",
+                            ],
                         ),
                         "reply_to_inbox_item_id": review_items[0].id,
                     },
