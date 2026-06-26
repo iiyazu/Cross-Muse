@@ -17,6 +17,8 @@ from xmuse_core.chat.peer_scheduler import (
     PeerChatScheduler,
     _peer_session_prompt_fingerprint,
 )
+from xmuse_core.chat.peer_service import PeerChatService
+from xmuse_core.chat.review_trigger_verdicts import build_review_trigger_verdict_envelope
 from xmuse_core.chat.store import ChatStore
 from xmuse_core.chat.stream_store import ChatStreamStore, PeerTurnLatencyTraceStore
 
@@ -1764,6 +1766,110 @@ async def test_scheduler_posts_peer_stdout_when_mcp_side_effect_is_missing(
     trace = PeerTurnLatencyTraceStore(tmp_path / "chat.db").list_recent(conv.id)[0]
     assert trace["delivery_mode"] == "stdout_fallback"
     assert trace["degraded_reason"] == "stdout_fallback"
+
+
+@pytest.mark.asyncio
+async def test_scheduler_does_not_consume_review_trigger_with_stdout_fallback(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "chat.db"
+    registry_path = tmp_path / "god_sessions.json"
+    service = PeerChatService(db_path)
+    created = service.create_conversation(title="Review trigger stdout guard")
+    conversation_id = created["conversation"]["id"]
+    participants = {
+        participant["role"]: participant["participant_id"]
+        for participant in created["participants"]
+    }
+    sessions = {
+        session["role"]: session["god_session_id"]
+        for session in created["participant_sessions"]
+    }
+    proposal = service.emit_proposal_without_session_for_test(
+        conversation_id=conversation_id,
+        participant_id=participants["architect"],
+        client_request_id="proposal-review-trigger-stdout-guard",
+        summary="Review trigger stdout fallback must not clear authority",
+        lanes=[
+            {
+                "feature_id": "review-trigger-stdout-guard",
+                "prompt": "Keep review trigger retryable until structured verdict writeback.",
+                "depends_on": [],
+                "capabilities": ["code"],
+            }
+        ],
+    )
+    inbox = ChatInboxStore(db_path)
+    review_item = next(
+        item
+        for item in inbox.list_by_conversation(conversation_id)
+        if item.item_type == "review_trigger"
+    )
+
+    class StdoutReviewGodLayer(FakeGodLayer):
+        async def receive_message(self, god_session_id):
+            return type(
+                "Message",
+                (),
+                {
+                    "type": "result",
+                    "status": "success",
+                    "request_id": review_item.id,
+                    "message": (
+                        "REVIEW_VERDICT: dispatch_allowed\n"
+                        "stdout-only review must remain diagnostic."
+                    ),
+                    "artifacts": {},
+                },
+            )()
+
+    scheduler = PeerChatScheduler(
+        db_path=db_path,
+        god_layer=StdoutReviewGodLayer(),
+        worktree=tmp_path,
+        scheduler_id="sched-test",
+        response_wait_s=0.1,
+        degraded_fallback_enabled=True,
+    )
+
+    outcome = await scheduler.tick_once()
+
+    assert outcome.fallback_replies == 0
+    assert outcome.failed == 1
+    updated = inbox.get(review_item.id)
+    assert updated.status == "unread"
+    assert updated.responded_message_id is None
+    review_messages = [
+        message
+        for message in ChatStore(db_path).list_messages(conversation_id)
+        if message.author == participants["review"]
+    ]
+    assert review_messages == []
+    trace = PeerTurnLatencyTraceStore(db_path).list_recent(conversation_id)[0]
+    assert trace["delivery_mode"] == "failed"
+    assert trace["degraded_reason"] == "peer_no_inbox_side_effect"
+
+    structured = service.post_god_message(
+        registry_path=registry_path,
+        conversation_id=conversation_id,
+        participant_id=participants["review"],
+        god_session_id=sessions["review"],
+        client_request_id="review-trigger-structured-verdict-after-stdout",
+        content="Structured review verdict clears the still-unread review trigger.",
+        envelope=build_review_trigger_verdict_envelope(
+            review_trigger_inbox_id=review_item.id,
+            source_message_id=review_item.source_message_id,
+            proposal_id=proposal["proposal"]["id"],
+            decision="dispatch_allowed",
+            summary="Structured review verdict clears the still-unread review trigger.",
+            evidence_refs=[f"inbox:{review_item.id}", f"proposal:{proposal['proposal']['id']}"],
+        ),
+        reply_to_inbox_item_id=review_item.id,
+    )
+
+    reread = inbox.get(review_item.id)
+    assert reread.status == "read"
+    assert reread.responded_message_id == structured["message"]["id"]
 
 
 @pytest.mark.asyncio

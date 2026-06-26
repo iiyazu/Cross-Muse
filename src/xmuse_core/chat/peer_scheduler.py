@@ -23,6 +23,7 @@ from xmuse_core.chat.store import ChatStore
 from xmuse_core.chat.stream_store import ChatStreamStore, PeerTurnLatencyTraceStore
 
 _DURABLE_WRITEBACK = object()
+_STRUCTURED_WRITEBACK_REQUIRED_ITEM_TYPES = {"review_trigger"}
 
 
 @dataclass(frozen=True)
@@ -739,6 +740,8 @@ class PeerChatScheduler:
     ) -> bool:
         if not self._degraded_fallback_enabled:
             return False
+        if _requires_structured_writeback(item):
+            return False
         try:
             self._inbox.get(item.id)
         except KeyError:
@@ -762,6 +765,8 @@ class PeerChatScheduler:
         participant: Participant,
         message,
     ) -> bool:
+        if _requires_structured_writeback(item):
+            return False
         content = _stdout_reply_content(message)
         if not content:
             return False
@@ -807,6 +812,10 @@ def _latency_stages_from_message(message) -> dict[str, dict[str, float]]:
         if isinstance(at, (int, float)):
             stages[name] = {"at": float(at)}
     return stages
+
+
+def _requires_structured_writeback(item) -> bool:
+    return getattr(item, "item_type", None) in _STRUCTURED_WRITEBACK_REQUIRED_ITEM_TYPES
 
 
 def _put_latency_stage(
