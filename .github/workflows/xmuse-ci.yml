@@ -52,6 +52,7 @@ jobs:
           tests/xmuse/test_quality_gates_phase3.py
           tests/xmuse/test_platform_runner.py::test_health_once_handles_missing_lane_projection
           tests/xmuse/test_full_chain_real_run.py::test_real_runtime_restart_resume_smoke_with_fake_app_server
+          tests/xmuse/test_full_chain_real_run.py::test_a2a_inbound_task_reaches_peer_chat_fake_app_server
 
       - name: Scoped type check
         run: >-
