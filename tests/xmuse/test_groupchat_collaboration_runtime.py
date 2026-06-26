@@ -1345,6 +1345,7 @@ def test_proposal_approval_rejects_blocked_execute_verdict(
             {
                 "type": "execute_feasibility_verdict",
                 "status": "blocked",
+                "execution_performed": False,
                 "summary": "Cannot execute until review veto is resolved.",
                 "evidence_refs": ["blocker:review-veto"],
             }

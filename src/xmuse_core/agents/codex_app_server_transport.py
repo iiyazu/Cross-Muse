@@ -486,7 +486,8 @@ class CodexAppServerTransport:
                 "execute_feasibility_verdict via chat_record_collaboration_response "
                 "using the approval-gate shape "
                 '{"type":"execute_feasibility_verdict","status":"executable",'
-                '"summary":"<why dispatch is safe>","evidence_refs":["<ref>"]}; '
+                '"execution_performed":false,"summary":"<why dispatch is safe>",'
+                '"evidence_refs":["<ref>"]}; '
                 "looser fields such as verdict=feasible do not satisfy dispatch. "
                 "If the current inbox item is a collaboration_request or asks you "
                 "to use chat_record_collaboration_response, call that tool; do "
