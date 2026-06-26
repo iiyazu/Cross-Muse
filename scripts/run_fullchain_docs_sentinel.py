@@ -5,6 +5,7 @@ import argparse
 import contextlib
 import json
 import os
+import shutil
 import signal
 import socket
 import subprocess
@@ -21,6 +22,7 @@ from xmuse_core.chat.store import ChatStore
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 OPENCODE_MODEL = "opencode-go/deepseek-v4-flash"
+CODEX_REVIEW_MODEL = "gpt-5.4"
 DEFAULT_PEER_CHAT_POST_WRITEBACK_GRACE_S = 8.0
 
 
@@ -38,6 +40,10 @@ def main() -> int:
     mcp_port = args.mcp_port or _free_port()
     feature_id = args.feature_id
     note_path = f"docs/xmuse/{feature_id}.md"
+    provider_readiness = _provider_readiness(
+        review_provider_policy=args.review_provider,
+        ray_god_mcp=args.ray_god_mcp,
+    )
     commands = _commands_payload(
         run_root=run_root,
         execution_worktree=execution_worktree,
@@ -49,8 +55,16 @@ def main() -> int:
         peer_chat_post_writeback_grace_s=args.peer_chat_post_writeback_grace_s,
         peer_god_backend=args.peer_god_backend,
         ray_god_mcp=args.ray_god_mcp,
+        review_provider_policy=args.review_provider,
+        selected_review_provider=provider_readiness["review_provider_selection"][
+            "selected_provider"
+        ],
+        review_provider_fallback_reason=provider_readiness[
+            "review_provider_selection"
+        ].get("fallback_reason"),
     )
     _write_json(artifacts / "commands.json", commands)
+    _write_json(artifacts / "provider_readiness.json", provider_readiness)
     (run_root / "commands.txt").write_text(
         "\n".join(f"{key}={value}" for key, value in commands.items()) + "\n",
         encoding="utf-8",
@@ -98,21 +112,18 @@ def main() -> int:
                         "model": args.executor_model,
                         "display_name": "Execute GOD runtime sentinel",
                     },
-                    {
-                        "role": "review",
-                        "provider_id": "opencode",
-                        "profile_id": "review",
-                        "cli_kind": "opencode",
-                        "model": OPENCODE_MODEL,
-                        "display_name": "OpenCode Review GOD runtime sentinel",
-                    },
+                    _review_participant_spec(provider_readiness),
                 ],
             },
         )
         _write_json(artifacts / "conversation_create.json", created)
         conversation_id = str(created["id"])
 
-        demand = _sentinel_demand(feature_id=feature_id, note_path=note_path)
+        demand = _sentinel_demand(
+            feature_id=feature_id,
+            note_path=note_path,
+            provider_readiness=provider_readiness,
+        )
         message = _post_json(
             f"http://127.0.0.1:{chat_port}/api/chat/conversations/{conversation_id}/messages",
             {
@@ -164,6 +175,7 @@ def main() -> int:
             expected_note_content=_expected_note_content(feature_id),
             proposal=proposal,
             lane=lane,
+            provider_readiness=provider_readiness,
         )
         success_checks = _success_checks(snapshot)
         snapshot["success_checks"] = success_checks
@@ -231,6 +243,16 @@ def _parse_args() -> argparse.Namespace:
         default=False,
         help="enable xmuse MCP tools for Ray/Codex app-server GOD turns",
     )
+    parser.add_argument(
+        "--review-provider",
+        choices=["auto", "opencode", "codex"],
+        default="auto",
+        help=(
+            "review participant runtime for the sentinel; auto prefers OpenCode "
+            "when the opencode CLI is available and otherwise records an "
+            "opencode_unavailable fallback to Codex"
+        ),
+    )
     return parser.parse_args()
 
 
@@ -246,6 +268,9 @@ def _commands_payload(
     peer_chat_post_writeback_grace_s: float,
     peer_god_backend: str,
     ray_god_mcp: bool,
+    review_provider_policy: str,
+    selected_review_provider: str,
+    review_provider_fallback_reason: str | None,
 ) -> dict[str, Any]:
     return {
         "run_root": str(run_root),
@@ -259,6 +284,9 @@ def _commands_payload(
         "peer_chat_post_writeback_grace_s": peer_chat_post_writeback_grace_s,
         "peer_god_backend": peer_god_backend,
         "ray_god_mcp": ray_god_mcp,
+        "review_provider_policy": review_provider_policy,
+        "selected_review_provider": selected_review_provider,
+        "review_provider_fallback_reason": review_provider_fallback_reason,
     }
 
 
@@ -409,7 +437,21 @@ def _terminate_process(process: subprocess.Popen[bytes]) -> None:
             stream.close()
 
 
-def _sentinel_demand(*, feature_id: str, note_path: str) -> str:
+def _sentinel_demand(
+    *,
+    feature_id: str,
+    note_path: str,
+    provider_readiness: dict[str, Any],
+) -> str:
+    selection = provider_readiness["review_provider_selection"]
+    selected_review_provider = str(selection["selected_provider"])
+    fallback_reason = selection.get("fallback_reason")
+    fallback_clause = (
+        "OpenCode was not selected because provider readiness recorded "
+        f"`{fallback_reason}`; do not claim OpenCode was verified. "
+        if fallback_reason
+        else ""
+    )
     return (
         "@architect Run a real docs-only xmuse runtime sentinel. "
         "Use the structured collaboration tools before proposing execution: "
@@ -422,7 +464,9 @@ def _sentinel_demand(*, feature_id: str, note_path: str) -> str:
         "worktree with one concise sentence: "
         f"`{_expected_note_content(feature_id)}` "
         "Keep the lane docs-only. Do not include review_runtime; rely on the "
-        "registered OpenCode review participant. Do not edit production code, "
+        f"registered {selected_review_provider} review participant. "
+        f"{fallback_clause}"
+        "Do not edit production code, "
         "tests, PR #43, MemoryOS, TUI, or GitHub-truth code. Do not claim "
         "production readiness, GitHub review truth, live MemoryOS, overnight "
         "readiness, full L8-L10 closure, or full L1-L11 closure."
@@ -551,6 +595,7 @@ def _build_snapshot(
     expected_note_content: str,
     proposal: dict[str, Any],
     lane: dict[str, Any],
+    provider_readiness: dict[str, Any],
 ) -> dict[str, Any]:
     participants = [
         participant.model_dump(mode="json")
@@ -582,6 +627,13 @@ def _build_snapshot(
         "run_root": str(run_root),
         "conversation_id": conversation_id,
         "feature_id": feature_id,
+        "provider_readiness": provider_readiness,
+        "selected_review_provider": provider_readiness["review_provider_selection"][
+            "selected_provider"
+        ],
+        "review_provider_fallback_reason": provider_readiness[
+            "review_provider_selection"
+        ].get("fallback_reason"),
         "proposal": current_proposal,
         "proposal_has_review_runtime": _proposal_has_review_runtime(current_proposal),
         "related_lane_graph_proposals": related_lane_graph_proposals,
@@ -744,6 +796,15 @@ def _success_checks(snapshot: dict[str, Any]) -> dict[str, bool]:
     review_verdict = snapshot.get("review_verdict")
     artifact = snapshot.get("execution_artifact")
     related_proposals = snapshot.get("related_lane_graph_proposals")
+    selected_review_provider = snapshot.get("selected_review_provider")
+    review_peer_participant = snapshot.get("review_peer_participant")
+    provider_readiness = snapshot.get("provider_readiness")
+    review_provider_selection = (
+        provider_readiness.get("review_provider_selection", {})
+        if isinstance(provider_readiness, dict)
+        else {}
+    )
+    expected_fallback = review_provider_selection.get("fallback_reason")
     return {
         "single_related_lane_graph_proposal": isinstance(related_proposals, list)
         and len(related_proposals) == 1,
@@ -757,8 +818,18 @@ def _success_checks(snapshot: dict[str, Any]) -> dict[str, bool]:
         and lane.get("peer_degraded_reason") is None,
         "isolated_note_matches": isinstance(artifact, dict)
         and artifact.get("matches_expected") is True,
-        "opencode_review_peer_recorded": lane.get("review_peer_cli_kind") == "opencode"
-        and snapshot.get("review_peer_participant") is not None,
+        "selected_review_peer_recorded": isinstance(selected_review_provider, str)
+        and lane.get("review_peer_cli_kind") == selected_review_provider
+        and isinstance(review_peer_participant, dict)
+        and review_peer_participant.get("cli_kind") == selected_review_provider,
+        "review_provider_fallback_recorded": (
+            expected_fallback != "opencode_unavailable"
+            or (
+                selected_review_provider == "codex"
+                and snapshot.get("review_provider_fallback_reason")
+                == "opencode_unavailable"
+            )
+        ),
         "review_verdict_finalized": isinstance(review_verdict, dict)
         and review_verdict.get("status") == "finalized",
         "review_task_verdict_emitted": isinstance(review_task, dict)
@@ -768,6 +839,133 @@ def _success_checks(snapshot: dict[str, Any]) -> dict[str, bool]:
         "proposal_has_no_review_runtime": snapshot.get("proposal_has_review_runtime")
         is False,
     }
+
+
+def _provider_readiness(
+    *,
+    review_provider_policy: str,
+    ray_god_mcp: bool,
+) -> dict[str, Any]:
+    codex = _binary_readiness("codex")
+    opencode = _binary_readiness("opencode")
+    selection = _select_review_provider(
+        policy=review_provider_policy,
+        codex_ready=bool(codex["available"]),
+        opencode_ready=bool(opencode["available"]),
+    )
+    return {
+        "providers": {
+            "codex": codex,
+            "opencode": opencode,
+        },
+        "mcp": {
+            "ray_god_mcp_enabled": ray_god_mcp,
+        },
+        "review_provider_selection": selection,
+    }
+
+
+def _binary_readiness(binary_name: str) -> dict[str, Any]:
+    path = shutil.which(binary_name)
+    if path is None:
+        return {
+            "available": False,
+            "binary": binary_name,
+            "path": None,
+            "failure_reason": f"{binary_name}_unavailable",
+            "version": None,
+        }
+    try:
+        result = subprocess.run(
+            [path, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except Exception as exc:
+        return {
+            "available": False,
+            "binary": binary_name,
+            "path": path,
+            "failure_reason": f"{binary_name}_version_failed",
+            "version": None,
+            "error": str(exc),
+        }
+    version = (result.stdout or result.stderr).strip()
+    return {
+        "available": result.returncode == 0,
+        "binary": binary_name,
+        "path": path,
+        "failure_reason": None if result.returncode == 0 else f"{binary_name}_version_failed",
+        "version": version or None,
+    }
+
+
+def _select_review_provider(
+    *,
+    policy: str,
+    codex_ready: bool,
+    opencode_ready: bool,
+) -> dict[str, Any]:
+    if policy == "opencode":
+        if not opencode_ready:
+            raise RuntimeError(
+                "requested opencode review provider unavailable: opencode_unavailable"
+            )
+        return {
+            "policy": policy,
+            "selected_provider": "opencode",
+            "fallback_reason": None,
+        }
+    if policy == "codex":
+        if not codex_ready:
+            raise RuntimeError("requested codex review provider unavailable: codex_unavailable")
+        return {
+            "policy": policy,
+            "selected_provider": "codex",
+            "fallback_reason": None,
+        }
+    if policy != "auto":
+        raise RuntimeError(f"unknown review provider policy: {policy}")
+    if opencode_ready:
+        return {
+            "policy": policy,
+            "selected_provider": "opencode",
+            "fallback_reason": None,
+        }
+    if codex_ready:
+        return {
+            "policy": policy,
+            "selected_provider": "codex",
+            "fallback_reason": "opencode_unavailable",
+        }
+    raise RuntimeError(
+        "no review provider available: opencode_unavailable,codex_unavailable"
+    )
+
+
+def _review_participant_spec(provider_readiness: dict[str, Any]) -> dict[str, str]:
+    selected = provider_readiness["review_provider_selection"]["selected_provider"]
+    if selected == "opencode":
+        return {
+            "role": "review",
+            "provider_id": "opencode",
+            "profile_id": "review",
+            "cli_kind": "opencode",
+            "model": OPENCODE_MODEL,
+            "display_name": "OpenCode Review GOD runtime sentinel",
+        }
+    if selected == "codex":
+        return {
+            "role": "review",
+            "provider_id": "codex",
+            "profile_id": "review",
+            "cli_kind": "codex",
+            "model": CODEX_REVIEW_MODEL,
+            "display_name": "Codex Review GOD runtime sentinel",
+        }
+    raise RuntimeError(f"unsupported review provider: {selected}")
 
 
 def _post_json(url: str, payload: dict[str, Any]) -> dict[str, Any]:

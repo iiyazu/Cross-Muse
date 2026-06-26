@@ -377,6 +377,56 @@ async def test_dispatch_lane_initializes_missing_isolated_worktree(tmp_path):
     )
 
 
+def test_create_or_reuse_worktree_uses_source_repo_root_when_state_root_is_not_repo(
+    tmp_path,
+):
+    source_repo = tmp_path / "source-repo"
+    source_repo.mkdir()
+    subprocess.run(["git", "init"], cwd=source_repo, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.email", "xmuse@example.invalid"],
+        cwd=source_repo,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "xmuse"],
+        cwd=source_repo,
+        check=True,
+    )
+    (source_repo / "README.md").write_text("source\n", encoding="utf-8")
+    subprocess.run(["git", "add", "README.md"], cwd=source_repo, check=True)
+    subprocess.run(
+        ["git", "commit", "-m", "initial"],
+        cwd=source_repo,
+        check=True,
+        capture_output=True,
+    )
+    state_root = tmp_path / "runtime-state"
+    state_root.mkdir()
+    lanes_path = state_root / "feature_lanes.json"
+    lanes_path.write_text(json.dumps({"lanes": []}), encoding="utf-8")
+    orch = PlatformOrchestrator(
+        lanes_path=lanes_path,
+        xmuse_root=state_root,
+        mcp_port=9999,
+    )
+    orch._repo_root = source_repo
+    lane_worktree = tmp_path / "lane-worktree"
+
+    orch._create_or_reuse_worktree(worktree=lane_worktree, branch="lane-source-root")
+
+    assert lane_worktree.exists()
+    assert (
+        subprocess.run(
+            ["git", "-C", str(lane_worktree), "rev-parse", "--is-inside-work-tree"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        == "true"
+    )
+
+
 @pytest.mark.asyncio
 async def test_dispatch_lane_creates_missing_projected_worktree_path(tmp_path):
     lanes_path = tmp_path / "feature_lanes.json"
