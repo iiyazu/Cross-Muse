@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from xmuse_core.agents.god_session_registry import GodSessionRegistry
 from xmuse_core.chat.acceptance_spine import AcceptanceSpineStatus, AcceptanceSpineStore
 from xmuse_core.chat.inbox_store import ChatInboxStore
+from xmuse_core.chat.review_trigger_verdicts import build_review_trigger_verdict_envelope
 from xmuse_core.chat.store import ChatStore
 from xmuse_core.chat.stream_store import PeerTurnLatencyTraceStore
 
@@ -585,8 +586,18 @@ def test_peer_chat_mcp_structured_execution_proposal_approval_enqueues_dispatch(
             "god_session_id": review_session.god_session_id,
             "client_request_id": "review-execution-closure",
             "content": (
-                "Review verdict: executable. Dispatch may proceed with the "
-                "collaboration feasibility evidence."
+                "Dispatch may proceed with the collaboration feasibility evidence."
+            ),
+            "envelope": build_review_trigger_verdict_envelope(
+                review_trigger_inbox_id=review_items[0].id,
+                source_message_id=review_items[0].source_message_id,
+                proposal_id=proposal["id"],
+                decision="dispatch_allowed",
+                summary="Dispatch may proceed with collaboration feasibility evidence.",
+                evidence_refs=[
+                    f"inbox:{review_items[0].id}",
+                    f"collaboration:{run_id}",
+                ],
             ),
             "reply_to_inbox_item_id": review_items[0].id,
         },

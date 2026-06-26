@@ -63,6 +63,11 @@ from xmuse_core.chat.peer_progress import (
 )
 from xmuse_core.chat.peer_proposals import PeerProposalEmitter
 from xmuse_core.chat.peer_types import PeerChatError, PeerMessageResult
+from xmuse_core.chat.review_trigger_verdicts import (
+    REVIEW_TRIGGER_VERDICT_ENVELOPE_TYPE,
+    ReviewTriggerVerdictError,
+    review_trigger_verdict_decision,
+)
 from xmuse_core.chat.roster_events import build_roster_events, roster_event_counts
 from xmuse_core.chat.store import ChatStore
 from xmuse_core.chat.stream_store import PeerTurnLatencyTraceStore
@@ -2342,7 +2347,7 @@ class PeerChatService:
                     participant_id=participant_id,
                     inbox_item_id=reply_to_inbox_item_id,
                     message_id=message_id,
-                    content=content,
+                    envelope=normalized,
                 )
         if review_closure_resolution_id is not None:
             message = result.get("message")
@@ -2361,7 +2366,7 @@ class PeerChatService:
         participant_id: str,
         inbox_item_id: str,
         message_id: str,
-        content: str,
+        envelope: dict[str, Any],
     ) -> None:
         try:
             item = self._inbox.get(inbox_item_id)
@@ -2376,9 +2381,17 @@ class PeerChatService:
         proposal_id = self._proposal_id_from_message(conversation_id, item.source_message_id)
         if proposal_id is None:
             return
-        verdict = classify_review_trigger_reply(content)
+        try:
+            verdict = review_trigger_verdict_decision(
+                envelope,
+                expected_inbox_item_id=item.id,
+                expected_source_message_id=item.source_message_id,
+                expected_proposal_id=proposal_id,
+            )
+        except ReviewTriggerVerdictError:
+            return
         spine = AcceptanceSpineStore(self._db_path)
-        verdict_ref = f"review_trigger_reply:{message_id}"
+        verdict_ref = f"review_trigger_verdict:{message_id}"
         if verdict == "blocked":
             spine.attach_review_blocker_for_proposal(
                 proposal_id=proposal_id,
@@ -3387,17 +3400,30 @@ def _review_trigger_content(
             "You must finish this review turn with exactly one durable MCP "
             "writeback to this inbox item. If dispatch may proceed, call "
             "chat_post_message with reply_to_inbox_item_id set to "
-            "xmuse_context.inbox_item.id and begin the message with "
-            "REVIEW_VERDICT: dispatch_allowed."
+            "xmuse_context.inbox_item.id and envelope.type="
+            f"{REVIEW_TRIGGER_VERDICT_ENVELOPE_TYPE}."
         ),
         (
-            "If this proposal should not dispatch, call chat_post_message with "
-            "reply_to_inbox_item_id set to xmuse_context.inbox_item.id and "
-            "begin the message with REVIEW_VERDICT: blocked, then include the "
-            "blocking reason and concrete suggested_fix. A plain recommendation "
-            "without REVIEW_VERDICT does not clear dispatch."
+            "The envelope must contain: review_trigger_inbox_id="
+            "xmuse_context.inbox_item.id, source_message_id, proposal_id, "
+            "decision=dispatch_allowed or blocked, non-empty summary, and "
+            "non-empty evidence_refs. A plain stdout reply or message text "
+            "without this envelope does not clear dispatch."
         ),
     ]
+    proposal_id = envelope.get("proposal_id")
+    if isinstance(proposal_id, str) and proposal_id.strip():
+        sections.append(f"Proposal id: {proposal_id.strip()}")
+        sections.append(
+            "Envelope shape: "
+            '{"type":"review_trigger_verdict",'
+            '"review_trigger_inbox_id":"<xmuse_context.inbox_item.id>",'
+            f'"source_message_id":"{source_message_id}",'
+            f'"proposal_id":"{proposal_id.strip()}",'
+            '"decision":"dispatch_allowed|blocked",'
+            '"summary":"<review decision summary>",'
+            '"evidence_refs":["<durable ref>"]}'
+        )
     summary = envelope.get("summary")
     if isinstance(summary, str) and summary.strip():
         sections.append(f"Summary: {summary.strip()}")
