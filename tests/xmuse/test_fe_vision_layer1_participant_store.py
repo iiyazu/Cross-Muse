@@ -341,6 +341,7 @@ class TestRoleTemplateStoreSeeding:
         assert "Execute GOD" in t.prompt
         assert '"type": "execute_feasibility_verdict"' in t.prompt
         assert '"status": "executable"' in t.prompt
+        assert '"execution_performed": false' in t.prompt
         assert '"evidence_refs": ["<proposal/artifact/blocker refs>"]' in t.prompt
 
     def test_seeding_idempotent(self, db_path, chat_store):
@@ -372,6 +373,7 @@ class TestRoleTemplateStoreSeeding:
         assert refreshed is not None
         assert '"type": "execute_feasibility_verdict"' in refreshed.prompt
         assert '"status": "executable"' in refreshed.prompt
+        assert '"execution_performed": false' in refreshed.prompt
 
 
 # ---------------------------------------------------------------------------

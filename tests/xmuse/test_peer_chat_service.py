@@ -171,7 +171,10 @@ def test_emit_proposal_accepts_done_collaboration_reference(tmp_path: Path) -> N
     updated = collaboration.record_response(
         run.run_id,
         target="execute",
-        content='{"type":"execute_feasibility_verdict","status":"executable"}',
+        content=(
+            '{"type":"execute_feasibility_verdict","status":"executable",'
+            '"execution_performed":false}'
+        ),
         response_status="received",
     )
     assert updated.status.value == "done"

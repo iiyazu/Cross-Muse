@@ -3014,7 +3014,8 @@ def _collaboration_request_target_content(
         f"After all targets respond, xmuse will notify {callback_target}. "
         "For executable dispatch, use the JSON shape "
         '{"type":"execute_feasibility_verdict","status":"executable",'
-        '"summary":"<why dispatch is safe>","evidence_refs":["<ref>"]}.'
+        '"execution_performed":false,"summary":"<why dispatch is safe>",'
+        '"evidence_refs":["<ref>"]}.'
     )
 
 

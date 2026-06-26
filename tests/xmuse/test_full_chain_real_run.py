@@ -1512,6 +1512,7 @@ async def test_real_ray_codex_app_server_first_proposal_probe(
                     {
                         "type": "execute_feasibility_verdict",
                         "status": "executable",
+                        "execution_performed": False,
                         "summary": "The P4 probe is bounded to proposal writeback.",
                         "evidence_refs": ["test:p4-first-proposal-probe"],
                     }
@@ -1663,6 +1664,7 @@ async def test_real_ray_codex_app_server_proposal_review_dispatch_completion(
                     {
                         "type": "execute_feasibility_verdict",
                         "status": "executable",
+                        "execution_performed": False,
                         "summary": "The P4 lane is bounded to proposal writeback evidence.",
                         "evidence_refs": [
                             "test:p4-real-provider-proposal-review-dispatch"
