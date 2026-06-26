@@ -798,6 +798,10 @@ def test_conversation_inspector_includes_recent_peer_latency_trace(tmp_path: Pat
         inbox_item_id="inbox-latency-1",
         participant_id=participant.participant_id,
         target_role="architect",
+        god_session_id="god-inspector",
+        provider_session_id="provider-inspector-thread",
+        provider_session_kind="codex_app_server_thread",
+        provider_binding_status="active",
         message_created_at="2026-06-04T01:00:00Z",
         inbox_claimed_at="2026-06-04T01:00:01Z",
         delivery_started_at=10.0,
@@ -817,6 +821,10 @@ def test_conversation_inspector_includes_recent_peer_latency_trace(tmp_path: Pat
     traces = response.json()["peer_latency"]["recent_turns"]
     assert traces[0]["inbox_item_id"] == "inbox-latency-1"
     assert traces[0]["target_role"] == "architect"
+    assert traces[0]["god_session_id"] == "god-inspector"
+    assert traces[0]["provider_session_id"] == "provider-inspector-thread"
+    assert traces[0]["provider_session_kind"] == "codex_app_server_thread"
+    assert traces[0]["provider_binding_status"] == "active"
     assert traces[0]["delivery_mode"] == "stdout_fallback"
     assert traces[0]["degraded_reason"] == "stdout_fallback"
     assert traces[0]["total_latency_ms"] == 1400
