@@ -352,6 +352,12 @@ async def test_ray_god_session_layer_uses_actor_for_peer_chat(tmp_path: Path) ->
 
     def actor_factory(**kwargs):
         actor = _FakeRayActor()
+        actor.info.update(
+            {
+                "thread_id": "provider-thread-1",
+                "transport": "codex-app-server",
+            }
+        )
         actors.append(actor)
         return actor
 
@@ -395,6 +401,9 @@ async def test_ray_god_session_layer_uses_actor_for_peer_chat(tmp_path: Path) ->
     )
 
     assert isinstance(record, GodSessionRecord)
+    assert record.provider_session_id == "provider-thread-1"
+    assert record.provider_session_kind == "codex_app_server_thread"
+    assert record.provider_binding_status == "active"
     assert len(actors) == 1
     assert actors[0].info["alive"] is True
     assert actors[0].sent == [
