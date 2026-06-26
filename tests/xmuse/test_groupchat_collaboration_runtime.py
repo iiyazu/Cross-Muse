@@ -602,6 +602,7 @@ def test_proposal_approval_references_collaboration_gate_and_blocks_active_veto(
             {
                 "type": "execute_feasibility_verdict",
                 "status": "executable",
+                "execution_performed": False,
                 "summary": "Executable after blocker visibility was added.",
                 "evidence_refs": ["tui:dispatch-visibility-added"],
             }
@@ -806,6 +807,7 @@ def test_proposal_approval_requires_execute_collaboration_confirmation(
             {
                 "type": "execute_feasibility_verdict",
                 "status": "executable",
+                "execution_performed": False,
                 "summary": "Lane graph has clear scope and required evidence.",
                 "evidence_refs": ["proposal:lane-v14-needs-execute"],
             }
@@ -846,6 +848,7 @@ def test_proposal_approval_accepts_execute_address_target_confirmation(
             {
                 "type": "execute_feasibility_verdict",
                 "status": "executable",
+                "execution_performed": False,
                 "summary": "Lane graph has clear scope and required evidence.",
                 "evidence_refs": ["message:intake", "proposal:lane-v14-address-execute"],
             }
@@ -1245,6 +1248,80 @@ def test_proposal_approval_rejects_freeform_execute_confirmation(
     assert ChatStore(tmp_path / "chat.db").list_resolutions(conversation_id) == []
 
 
+def test_proposal_approval_accepts_embedded_provider_execute_verdict(
+    tmp_path: Path,
+) -> None:
+    conversation_id = _conversation(tmp_path)
+    store = ChatCollaborationStore(tmp_path / "chat.db")
+    run = store.create_request(
+        conversation_id=conversation_id,
+        goal="Accept embedded execute confirmation",
+        initiator="architect",
+        targets=["execute"],
+        callback_target="architect",
+        question="Confirm feasibility with typed evidence.",
+        context_refs=[],
+        idempotency_key="embedded-execute-confirmation",
+        timeout_s=480,
+    )
+    store.record_response(
+        run.run_id,
+        target="execute",
+        content=(
+            "Execution feasibility verdict:\n\n"
+            "```json\n"
+            + json.dumps(
+                {
+                    "type": "execute_feasibility_verdict",
+                    "status": "executable",
+                    "execution_performed": False,
+                    "summary": "The lane is bounded and has a focused verification gate.",
+                    "evidence_refs": ["message:intake", "proposal:embedded-execute"],
+                }
+            )
+            + "\n```"
+        ),
+        response_status="received",
+    )
+    client = TestClient(create_app(tmp_path))
+    proposal = client.post(
+        f"/api/chat/conversations/{conversation_id}/proposals",
+        json={
+            "author": "architect",
+            "proposal_type": "lane_graph",
+            "content": json.dumps(
+                {
+                    "summary": "Embedded execute response is enough",
+                    "lanes": [
+                        {
+                            "feature_id": "lane-v14-embedded-execute",
+                            "prompt": "Dispatch after embedded typed execute response.",
+                            "depends_on": [],
+                            "capabilities": ["code"],
+                        }
+                    ],
+                }
+            ),
+            "references": [f"collaboration:{run.run_id}"],
+        },
+    )
+    assert proposal.status_code == 201
+
+    approved = client.post(
+        f"/api/chat/proposals/{proposal.json()['id']}/approve",
+        json={
+            "approved_by": ["architect"],
+            "approval_mode": "auto",
+            "goal_summary": "Embedded execute confirmation can dispatch",
+        },
+    )
+
+    assert approved.status_code == 200
+    entries = ChatDispatchQueueStore(tmp_path / "chat.db").list_entries(conversation_id)
+    assert len(entries) == 1
+    assert entries[0].collaboration_run_id == run.run_id
+
+
 def test_proposal_approval_rejects_blocked_execute_verdict(
     tmp_path: Path,
 ) -> None:
@@ -1335,6 +1412,7 @@ def test_proposal_approval_rejects_execute_verdict_without_evidence(
             {
                 "type": "execute_feasibility_verdict",
                 "status": "executable",
+                "execution_performed": False,
                 "summary": "Looks executable.",
                 "evidence_refs": [],
             }
@@ -1408,6 +1486,7 @@ def test_proposal_approval_enqueues_agent_auto_dispatch_entry_after_gate(
             {
                 "type": "execute_feasibility_verdict",
                 "status": "executable",
+                "execution_performed": False,
                 "summary": "Queue-backed TUI work is executable.",
                 "evidence_refs": ["proposal:lane-v14-dispatch-queue"],
             }
