@@ -1,0 +1,318 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+from xmuse_core.agents.god_session_layer import build_conversation_session_identity
+from xmuse_core.agents.god_session_registry import GodSessionRegistry
+from xmuse_core.chat.acceptance_spine import AcceptanceSpineStore
+from xmuse_core.chat.collaboration_store import ChatCollaborationStore
+from xmuse_core.chat.context_assembler import ContextAssembler
+from xmuse_core.chat.dispatch_queue import ChatDispatchQueueStore
+from xmuse_core.chat.inbox_store import ChatInboxStore
+from xmuse_core.chat.mentions import MentionResolver
+from xmuse_core.chat.participant_store import ParticipantStore
+from xmuse_core.chat.store import ChatStore
+
+
+def test_group_chat_context_projects_provider_session_bindings(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "chat.db"
+    registry_path = tmp_path / "god_sessions.json"
+    chat = ChatStore(db_path)
+    conversation = chat.create_conversation("Natural context")
+    participants = ParticipantStore(db_path)
+    architect = participants.add(
+        conversation_id=conversation.id,
+        role="architect",
+        display_name="Architect GOD",
+        cli_kind="codex",
+        model="gpt-5.4",
+    )
+    session_address, session_inbox_id = build_conversation_session_identity(
+        conversation_id=conversation.id,
+        participant_id=architect.participant_id,
+    )
+    registry = GodSessionRegistry(registry_path)
+    session = registry.create(
+        role=architect.role,
+        agent_name=architect.display_name,
+        runtime=architect.cli_kind,
+        session_address=session_address,
+        session_inbox_id=session_inbox_id,
+        conversation_id=conversation.id,
+        participant_id=architect.participant_id,
+        model=architect.model,
+        prompt_fingerprint="sha256:test",
+        worktree=str(tmp_path),
+    )
+    registry.update_provider_binding(
+        session.god_session_id,
+        provider_session_id="codex-thread-1",
+        provider_session_kind="codex_app_server_thread",
+        provider_binding_status="active",
+        provider_binding_failure_reason=None,
+    )
+
+    context = ContextAssembler(
+        participants=participants,
+        chat=chat,
+        session_registry_path=registry_path,
+    ).group_chat_context(conversation.id)
+
+    assert context["context_layers"] == [
+        "xmuse_l0_governance",
+        "member_identity",
+        "provider_session_binding_summary",
+        "roster",
+        "recent_transcript",
+        "structured_state_refs",
+    ]
+    assert context["source_refs"] == [
+        f"chat.db:conversation:{conversation.id}",
+        "god_sessions:god_sessions.json",
+    ]
+    assert context["session_bindings"][0]["participant_id"] == architect.participant_id
+    assert context["session_bindings"][0]["session_address"] == session_address
+    assert context["session_bindings"][0]["session_inbox_id"] == session_inbox_id
+    assert context["session_bindings"][0]["provider_session_id"] == "codex-thread-1"
+    assert context["session_bindings"][0]["provider_binding_status"] == "active"
+    profile = context["participant_profiles"][0]
+    assert profile["god_id"] == f"god:{conversation.id}:{architect.participant_id}"
+    assert profile["mention_handle"] == "@architect"
+    assert profile["provider_session_binding_ref"] == (
+        f"god_session:{session.god_session_id}"
+    )
+    assert profile["identity_authority_refs"] == [
+        f"chat.db:participant:{architect.participant_id}",
+        f"chat.db:conversation:{conversation.id}",
+    ]
+
+
+def test_group_chat_context_marks_missing_session_binding_without_failing(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "chat.db"
+    chat = ChatStore(db_path)
+    conversation = chat.create_conversation("Missing binding")
+    participants = ParticipantStore(db_path)
+    review = participants.add(
+        conversation_id=conversation.id,
+        role="review",
+        display_name="Review GOD",
+        cli_kind="codex",
+        model="gpt-5.4",
+    )
+
+    context = ContextAssembler(
+        participants=participants,
+        chat=chat,
+        session_registry_path=tmp_path / "god_sessions.json",
+    ).group_chat_context(conversation.id)
+
+    assert context["session_bindings"][0]["participant_id"] == review.participant_id
+    assert context["session_bindings"][0]["session_status"] == "unbound"
+    assert context["session_bindings"][0]["has_provider_session"] is False
+    assert context["participant_profiles"][0]["provider_session_binding_ref"] is None
+    assert context["participant_profiles"][0]["mention_handle"] == "@review"
+
+
+def test_group_chat_profile_handles_ambiguous_role_aliases(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "chat.db"
+    chat = ChatStore(db_path)
+    conversation = chat.create_conversation("Ambiguous aliases")
+    participants = ParticipantStore(db_path)
+    first = participants.add(
+        conversation_id=conversation.id,
+        role="architect",
+        display_name="Primary Architect",
+        cli_kind="codex",
+        model="gpt-5.4",
+    )
+    second = participants.add(
+        conversation_id=conversation.id,
+        role="architect",
+        display_name="Backup Architect",
+        cli_kind="codex",
+        model="gpt-5.4",
+    )
+
+    context = ContextAssembler(
+        participants=participants,
+        chat=chat,
+    ).group_chat_context(conversation.id)
+
+    profiles = {
+        profile["participant_id"]: profile
+        for profile in context["participant_profiles"]
+    }
+    assert profiles[first.participant_id]["mention_handle"] == (
+        f"@participant:{first.participant_id}"
+    )
+    assert profiles[second.participant_id]["mention_handle"] == (
+        f"@participant:{second.participant_id}"
+    )
+    assert "@architect" not in profiles[first.participant_id]["aliases"]
+    assert "@architect" not in profiles[second.participant_id]["aliases"]
+    resolver = MentionResolver(participants)
+    for participant in (first, second):
+        handle = profiles[participant.participant_id]["mention_handle"]
+        assert resolver.resolve(
+            conversation.id,
+            handle,
+        ).participant.participant_id == participant.participant_id
+
+
+def test_group_chat_context_bounds_recent_transcript_without_mutating_authority(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "chat.db"
+    chat = ChatStore(db_path)
+    conversation = chat.create_conversation("Bounded context")
+    long_content = "HEAD-" + ("x" * 80) + "-TAIL"
+    message = chat.add_message(
+        conversation.id,
+        author="human",
+        role="user",
+        content=long_content,
+    )
+
+    context = ContextAssembler(
+        participants=ParticipantStore(db_path),
+        chat=chat,
+        max_message_chars=50,
+    ).group_chat_context(conversation.id)
+
+    recent = context["recent_messages"][0]
+    assert context["context_budget"] == {
+        "recent_limit": 8,
+        "max_message_chars": 50,
+        "message_count": 1,
+        "truncated_messages": 1,
+    }
+    assert recent["id"] == message.id
+    assert recent["truncated"] is True
+    assert recent["original_chars"] == len(long_content)
+    assert len(recent["content"]) == 50
+    assert recent["content"].startswith("HEAD")
+    assert recent["content"].endswith("TAIL")
+    assert "truncated" in recent["content"]
+    assert chat.list_messages(conversation.id)[0].content == long_content
+
+
+def test_group_chat_context_projects_structured_state_from_chat_authorities(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "chat.db"
+    chat = ChatStore(db_path)
+    conversation = chat.create_conversation("Structured state")
+    participants = ParticipantStore(db_path)
+    architect = participants.add(
+        conversation_id=conversation.id,
+        role="architect",
+        display_name="Architect GOD",
+        cli_kind="codex",
+        model="gpt-5.4",
+    )
+    demand = chat.add_message(
+        conversation.id,
+        author="human",
+        role="user",
+        content="@architect create a bounded plan.",
+        mentions=["@architect"],
+    )
+    AcceptanceSpineStore(db_path).create_for_intake(
+        conversation_id=conversation.id,
+        intake_message_id=demand.id,
+    )
+    inbox = ChatInboxStore(db_path)
+    inbox.create_item(
+        conversation_id=conversation.id,
+        target_participant_id=architect.participant_id,
+        target_role=architect.role,
+        target_address="@architect",
+        sender_participant_id=None,
+        sender_address="human",
+        source_message_id=demand.id,
+        item_type="mention",
+        payload={"route_kind": "ask", "content": demand.content},
+    )
+    inbox.create_item(
+        conversation_id=conversation.id,
+        target_participant_id=architect.participant_id,
+        target_role=architect.role,
+        target_address="@architect",
+        sender_participant_id=None,
+        sender_address="@review",
+        source_message_id=demand.id,
+        item_type="review_blocker",
+        payload={"route_kind": "review_blocker", "blocks_dispatch": True},
+    )
+    proposal = chat.create_proposal(
+        conversation_id=conversation.id,
+        author=architect.participant_id,
+        proposal_type="lane_graph",
+        content='{"type":"lane_graph","lanes":[]}',
+        references=[f"message:{demand.id}"],
+    )
+    collaboration = ChatCollaborationStore(db_path).create_request(
+        conversation_id=conversation.id,
+        goal="Check execution feasibility",
+        initiator="@architect",
+        targets=["@execute"],
+        callback_target="@architect",
+        question="Can this lane run as a read-only inspection?",
+        context_refs=[f"message:{demand.id}"],
+        idempotency_key=None,
+        timeout_s=300,
+    )
+    ChatCollaborationStore(db_path).record_response(
+        collaboration.run_id,
+        target="@execute",
+        content=(
+            '{"type":"execute_feasibility_verdict","status":"executable",'
+            '"execution_performed":false,"summary":"Dispatchable as read-only."}'
+        ),
+        response_status="received",
+    )
+    resolution = chat.approve_proposal(
+        proposal_id=proposal.id,
+        approved_by=["architect"],
+        approval_mode="structured-state-proof",
+        goal_summary="Approve structured state proof.",
+        content={"type": "lane_graph", "lanes": []},
+    )
+    dispatch = ChatDispatchQueueStore(db_path).enqueue_agent_auto_dispatch(
+        conversation_id=conversation.id,
+        proposal_id=proposal.id,
+        resolution_id=resolution.id,
+        collaboration_run_id=collaboration.run_id,
+        artifact_ref=f"resolution:{resolution.id}",
+    )
+
+    context = ContextAssembler(
+        participants=participants,
+        chat=chat,
+        db_path=db_path,
+    ).group_chat_context(conversation.id)
+
+    assert f"chat.db:structured_state:{conversation.id}" in context["source_refs"]
+    state = context["structured_state"]
+    assert state["source"] == "chat.db"
+    assert state["counts"]["open_inbox"] == 2
+    assert state["counts"]["blockers"] == 1
+    assert state["counts"]["accepted_proposals"] == 1
+    assert state["counts"]["approved_resolutions"] == 1
+    assert state["counts"]["collaborations"] == 1
+    assert state["counts"]["collaboration_responses"] == 1
+    assert state["counts"]["dispatch_entries"] == 1
+    assert state["counts"]["acceptance_spines"] == 1
+    assert state["blockers"][0]["blocks_dispatch"] is True
+    assert state["proposals"][0]["id"] == proposal.id
+    assert state["resolutions"][0]["id"] == resolution.id
+    assert state["collaborations"][0]["run_id"] == collaboration.run_id
+    assert state["collaborations"][0]["responses"][0]["target"] == "@execute"
+    assert state["dispatch_queue"][0]["entry_id"] == dispatch.entry_id
+    assert state["acceptance_spines"][0]["proposal_id"] == proposal.id

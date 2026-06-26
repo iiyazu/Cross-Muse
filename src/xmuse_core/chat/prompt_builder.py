@@ -115,6 +115,7 @@ def _member_identity_layer(participant: Participant) -> PromptLayer:
 
 
 def _roster_layer(group_context: dict[str, Any]) -> PromptLayer:
+    participant_count = _participant_count(group_context)
     return PromptLayer(
         name="roster_and_capabilities",
         content=(
@@ -126,9 +127,10 @@ def _roster_layer(group_context: dict[str, Any]) -> PromptLayer:
             "the user explicitly asks for a greeting. Do not address @human unless "
             "the user explicitly asks you to mention the human.\n"
             f"Current participants: {_participant_roster_text(group_context)}\n"
+            f"Provider/session bindings: {_session_binding_text(group_context)}\n"
             f"Turn guidance: {_turn_guidance_text(group_context)}"
         ),
-        metadata={"participant_count": len(group_context.get("participants", []))},
+        metadata={"participant_count": participant_count},
     )
 
 
@@ -179,7 +181,9 @@ def _tool_writeback_layer() -> PromptLayer:
             "and do not enqueue peer work. If you need another GOD to take over, "
             "inspect, or continue the task, call chat_mention with "
             "reply_to_inbox_item_id=xmuse_context.inbox_item.id, target_address "
-            "set to the target GOD's exact @role, and content containing the "
+            "set to the target GOD's exact "
+            "xmuse_context.group_chat.participant_profiles[].mention_handle, "
+            "and content containing the "
             "concrete handoff request; this closes your current inbox item and "
             "enqueues the target GOD in one durable writeback.\n"
             "For work that should enter real execution, do not rely on chat text "
@@ -211,6 +215,28 @@ def _tool_writeback_layer() -> PromptLayer:
 
 
 def _participant_roster_text(group_context: dict[str, Any]) -> str:
+    profiles = group_context.get("participant_profiles")
+    if isinstance(profiles, list) and profiles:
+        rows = []
+        for profile in profiles:
+            if not isinstance(profile, dict):
+                continue
+            handle = str(profile.get("mention_handle") or "").strip()
+            role = str(profile.get("role") or "").strip()
+            name = str(profile.get("display_name") or "").strip()
+            capabilities = profile.get("capabilities")
+            caps = (
+                ",".join(str(capability) for capability in capabilities)
+                if isinstance(capabilities, list)
+                else ""
+            )
+            session_ref = profile.get("provider_session_binding_ref")
+            binding = f" session={session_ref}" if isinstance(session_ref, str) else ""
+            if handle:
+                suffix = f" capabilities={caps}" if caps else ""
+                rows.append(f"{handle}={name or role}{suffix}{binding}")
+        if rows:
+            return ", ".join(rows)
     participants = group_context.get("participants")
     if not isinstance(participants, list) or not participants:
         return "none"
@@ -219,6 +245,40 @@ def _participant_roster_text(group_context: dict[str, Any]) -> str:
         for participant in participants
         if isinstance(participant, dict)
     )
+
+
+def _session_binding_text(group_context: dict[str, Any]) -> str:
+    bindings = group_context.get("session_bindings")
+    if not isinstance(bindings, list) or not bindings:
+        return "none"
+    rows = []
+    for binding in bindings:
+        if not isinstance(binding, dict):
+            continue
+        participant_id = str(binding.get("participant_id") or "unknown")
+        status = str(binding.get("session_status") or "unknown")
+        provider_status = str(binding.get("provider_binding_status") or "unbound")
+        provider_session_id = binding.get("provider_session_id")
+        session = (
+            f" provider_session={provider_session_id}"
+            if isinstance(provider_session_id, str) and provider_session_id.strip()
+            else ""
+        )
+        rows.append(
+            f"{participant_id}: session_status={status} "
+            f"provider_binding_status={provider_status}{session}"
+        )
+    return "; ".join(rows) if rows else "none"
+
+
+def _participant_count(group_context: dict[str, Any]) -> int:
+    profiles = group_context.get("participant_profiles")
+    if isinstance(profiles, list) and profiles:
+        return len([profile for profile in profiles if isinstance(profile, dict)])
+    participants = group_context.get("participants")
+    if isinstance(participants, list):
+        return len([participant for participant in participants if isinstance(participant, dict)])
+    return 0
 
 
 def _turn_guidance_text(group_context: dict[str, Any]) -> str:

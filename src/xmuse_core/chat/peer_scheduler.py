@@ -56,6 +56,8 @@ class PeerChatScheduler:
         self._context_assembler = ContextAssembler(
             participants=self._participants,
             chat=self._chat,
+            session_registry_path=db_path.parent / "god_sessions.json",
+            db_path=db_path,
         )
         self._prompt_builder = XmusePromptBuilder()
         self._god_layer = god_layer
