@@ -98,6 +98,31 @@ def test_rest_message_mention_creates_inbox(tmp_path):
     assert inbox.get(payload["inbox_items"][0]["id"]).status == "unread"
 
 
+def test_rest_message_line_start_instructional_mention_uses_default_intake(tmp_path):
+    client = TestClient(create_app(tmp_path))
+    conv = client.post("/api/chat/conversations", json={"title": "Chat"}).json()
+
+    response = client.post(
+        f"/api/chat/conversations/{conv['id']}/messages",
+        json={
+            "author": "Human operator",
+            "role": "human",
+            "content": (
+                "请 Architect GOD 判断下一步。如果需要 review，请在新行开头精确 "
+                "@review 并说明 what/why/tradeoffs/open_questions。"
+            ),
+            "client_request_id": "rest-line-start-example-mention",
+        },
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["mentions"] == []
+    assert len(payload["inbox_items"]) == 1
+    assert payload["inbox_items"][0]["target_role"] == "architect"
+    assert payload["inbox_items"][0]["item_type"] == "default_intake"
+
+
 def test_chat_timeline_projects_peer_progress_from_durable_inbox_and_trace(tmp_path):
     client = TestClient(create_app(tmp_path))
     conv = client.post("/api/chat/conversations", json={"title": "Peer progress"}).json()

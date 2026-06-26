@@ -33,7 +33,7 @@ def test_explicit_mentions_do_not_also_create_default_architect_intake(tmp_path)
     result = service.post_human_message(
         conversation_id=created["conversation"]["id"],
         author="human-1",
-        content="@review please check this and @execute prepare the patch.",
+        content="@review @execute please check this and prepare the patch.",
         client_request_id="req-explicit-mentions",
     )
 

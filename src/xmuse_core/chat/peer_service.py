@@ -79,6 +79,51 @@ def _is_mention_char(value: str) -> bool:
     return value.isalnum() or value in "_-:"
 
 
+_HUMAN_ROUTE_EXAMPLE_HINTS = (
+    "line-start",
+    "line start",
+    "line beginning",
+    "new line",
+    "newline",
+    "start of a line",
+    "exactly",
+    "新行",
+    "另起一行",
+    "行首",
+    "行开头",
+    "开头",
+    "精确",
+)
+
+
+def _is_human_route_example_mention(content: str, raw: str) -> bool:
+    starts = list(_raw_mention_offsets(content, raw))
+    if not starts:
+        return False
+    lowered = content.casefold()
+    return all(
+        any(
+            hint in lowered[max(0, start - 64) : start]
+            for hint in _HUMAN_ROUTE_EXAMPLE_HINTS
+        )
+        for start in starts
+    )
+
+
+def _raw_mention_offsets(content: str, raw: str):
+    if not raw:
+        return
+    lowered = content.casefold()
+    needle = raw.casefold()
+    index = 0
+    while True:
+        start = lowered.find(needle, index)
+        if start == -1:
+            break
+        yield start
+        index = start + len(needle)
+
+
 class PeerChatService:
     def __init__(self, db_path: Path | str) -> None:
         self._db_path = Path(db_path)
@@ -1618,7 +1663,11 @@ class PeerChatService:
         resolver = MentionResolver(self._participants)
         try:
             leading_mentions = resolver.resolve_leading_content(conversation_id, content)
-            mentions = leading_mentions or resolver.resolve_content(conversation_id, content)
+            mentions = leading_mentions or [
+                mention
+                for mention in resolver.resolve_content(conversation_id, content)
+                if not _is_human_route_example_mention(content, mention.raw)
+            ]
         except MentionResolutionError as exc:
             raise PeerChatError(exc.code, exc.target) from exc
         return [mention.raw for mention in mentions]

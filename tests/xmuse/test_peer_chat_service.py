@@ -49,6 +49,28 @@ def test_human_post_resolves_mention_and_creates_inbox(tmp_path: Path) -> None:
     assert result.inbox_items[0].target_participant_id == architect.participant_id
 
 
+def test_human_post_line_start_instructional_mention_uses_default_intake(
+    tmp_path: Path,
+) -> None:
+    db, conv, architect, _review = _conversation(tmp_path)
+    service = PeerChatService(db)
+
+    result = service.post_human_message(
+        conversation_id=conv.id,
+        author="Human operator",
+        content=(
+            "请 Architect GOD 判断下一步。如果需要 review，请在新行开头精确 "
+            "@review 并说明 what/why/tradeoffs/open_questions。"
+        ),
+        client_request_id="req-human-line-start-example-mention",
+    )
+
+    assert result.message.mentions == []
+    assert [item.target_role for item in result.inbox_items] == ["architect"]
+    assert result.inbox_items[0].target_participant_id == architect.participant_id
+    assert result.inbox_items[0].item_type == "default_intake"
+
+
 def test_human_post_treats_leading_mentions_as_routing_header(
     tmp_path: Path,
 ) -> None:
