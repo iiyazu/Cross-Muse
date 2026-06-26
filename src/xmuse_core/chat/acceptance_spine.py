@@ -247,6 +247,48 @@ class AcceptanceSpineStore:
             )
         return self.get_by_intake_message(str(row["intake_message_id"]))
 
+    def attach_review_blocker_for_proposal(
+        self,
+        *,
+        proposal_id: str,
+        blocker_ref: str,
+        blocked_reason: str = "proposal_review_blocked",
+        manual_gaps: list[str] | None = None,
+    ) -> AcceptanceSpine | None:
+        now = _utc_now()
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                select intake_message_id, manual_gaps_json
+                from acceptance_spines
+                where proposal_id = ?
+                """,
+                (proposal_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            merged_gaps = _merge_json_list(row["manual_gaps_json"], manual_gaps or [])
+            conn.execute(
+                """
+                update acceptance_spines
+                set review_or_execute_verdict_ref = ?,
+                    manual_gaps_json = ?,
+                    blocked_reason = ?,
+                    status = ?,
+                    updated_at = ?
+                where proposal_id = ?
+                """,
+                (
+                    blocker_ref,
+                    json.dumps(merged_gaps),
+                    blocked_reason,
+                    AcceptanceSpineStatus.BLOCKED.value,
+                    now,
+                    proposal_id,
+                ),
+            )
+        return self.get_by_intake_message(str(row["intake_message_id"]))
+
     def attach_dispatch_for_proposal(
         self,
         *,
