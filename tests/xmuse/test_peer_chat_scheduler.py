@@ -6,6 +6,9 @@ from pathlib import Path
 
 import pytest
 
+from xmuse_core.agents.god_session_layer import GodSessionLayer
+from xmuse_core.agents.god_session_registry import GodSessionRegistry
+from xmuse_core.agents.protocol import StdoutMessage
 from xmuse_core.agents.registry import AgentRuntime
 from xmuse_core.chat.acceptance_spine import AcceptanceSpineStatus, AcceptanceSpineStore
 from xmuse_core.chat.inbox_store import ChatInboxStore
@@ -55,6 +58,221 @@ class FakeClock:
         if not self._values:
             raise AssertionError("fake clock exhausted")
         return self._values.pop(0)
+
+
+@pytest.mark.asyncio
+async def test_scheduler_restores_participant_sessions_after_restart(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    db_path = tmp_path / "chat.db"
+    registry_path = tmp_path / "god_sessions.json"
+    chat = ChatStore(db_path)
+    participants = ParticipantStore(db_path)
+    inbox = ChatInboxStore(db_path)
+    conv = chat.create_conversation("Restartable groupchat")
+    roster = {
+        role: participants.add(
+            conversation_id=conv.id,
+            role=role,
+            display_name=f"{role.title()} GOD",
+            cli_kind="codex",
+            model="gpt-5.4",
+        )
+        for role in ("architect", "review", "execute")
+    }
+    writebacks: list[dict[str, str]] = []
+    spawned_sessions: list[object] = []
+
+    class PersistentTestLauncher:
+        supports_persistent_sessions = True
+
+        def __init__(self) -> None:
+            self.build_persistent_command_calls: list[tuple[str, Path]] = []
+
+        def build_persistent_command(self, role: str, worktree: Path) -> list[str]:
+            self.build_persistent_command_calls.append((role, worktree))
+            return ["fake-peer", role, str(worktree)]
+
+        def build_env(self, role: str):
+            return None
+
+    class DurableWritebackSession:
+        def __init__(self) -> None:
+            self.sent: list[tuple[str, dict[str, object]]] = []
+            self.aborted = False
+
+        def is_alive(self) -> bool:
+            return not self.aborted
+
+        async def send_typed(self, msg_type: str, **kwargs) -> None:
+            self.sent.append((msg_type, kwargs))
+
+        async def receive(self):
+            _, payload = self.sent[-1]
+            context = json.loads(str(payload["context"]))
+            item = context["inbox_item"]
+            participant_id = str(context["participant_id"])
+            god_session_id = str(payload["god_session_id"])
+            participant = participants.get(participant_id)
+            reply = chat.add_message(
+                item["conversation_id"],
+                participant_id,
+                "assistant",
+                f"{participant.display_name}: durable reply for {item['id']}",
+            )
+            inbox.mark_read(item["id"], responded_message_id=reply.id)
+            PeerTurnLatencyTraceStore(db_path).record_mcp_tool_stage(
+                conversation_id=item["conversation_id"],
+                inbox_item_id=item["id"],
+                tool_name="chat_post_message",
+                called_at=1.0,
+            )
+            writebacks.append(
+                {
+                    "god_session_id": god_session_id,
+                    "participant_id": participant_id,
+                    "role": participant.role,
+                    "inbox_item_id": item["id"],
+                    "message_id": reply.id,
+                }
+            )
+            return StdoutMessage(
+                type="result",
+                request_id=str(payload.get("request_id") or ""),
+                status="success",
+            )
+
+        async def abort(self) -> None:
+            self.aborted = True
+
+    async def fake_spawn(command, env=None):
+        session = DurableWritebackSession()
+        spawned_sessions.append(session)
+        return session
+
+    monkeypatch.setattr(
+        "xmuse_core.agents.god_session_layer.LocalSession.spawn",
+        fake_spawn,
+    )
+    launcher = PersistentTestLauncher()
+
+    def enqueue(role: str, content: str):
+        participant = roster[role]
+        message = chat.add_message(conv.id, "Human", "human", content)
+        return inbox.create_item(
+            conversation_id=conv.id,
+            target_participant_id=participant.participant_id,
+            target_role=participant.role,
+            target_address=f"@{role}",
+            sender_participant_id=None,
+            sender_address="@human",
+            source_message_id=message.id,
+            item_type="mention",
+            payload={"content": content},
+        )
+
+    first_layer = GodSessionLayer(
+        registry_path=registry_path,
+        launchers={AgentRuntime.CODEX: launcher},
+    )
+    first_scheduler = PeerChatScheduler(
+        db_path=db_path,
+        god_layer=first_layer,
+        worktree=tmp_path,
+        scheduler_id="sched-first",
+        response_wait_s=1.0,
+    )
+    first_items = {
+        role: enqueue(role, f"@{role} first turn")
+        for role in ("architect", "review", "execute")
+    }
+
+    for _role in ("architect", "review", "execute"):
+        outcome = await first_scheduler.tick_once()
+        assert outcome.happy_path == 1
+        assert outcome.failed == 0
+
+    registry = GodSessionRegistry(registry_path)
+    first_sessions = {
+        role: registry.find_by_conversation_participant(
+            conv.id,
+            roster[role].participant_id,
+        )
+        for role in ("architect", "review", "execute")
+    }
+    assert len({session.god_session_id for session in first_sessions.values()}) == 3
+    assert {inbox.get(item.id).status for item in first_items.values()} == {"read"}
+
+    restarted_layer = GodSessionLayer(
+        registry_path=registry_path,
+        launchers={AgentRuntime.CODEX: launcher},
+    )
+    restarted_scheduler = PeerChatScheduler(
+        db_path=db_path,
+        god_layer=restarted_layer,
+        worktree=tmp_path,
+        scheduler_id="sched-restarted",
+        response_wait_s=1.0,
+    )
+    restarted_items = {
+        role: enqueue(role, f"@{role} after restart")
+        for role in ("architect", "review", "execute")
+    }
+
+    for _role in ("architect", "review", "execute"):
+        outcome = await restarted_scheduler.tick_once()
+        assert outcome.happy_path == 1
+        assert outcome.failed == 0
+
+    restarted_sessions = {
+        role: registry.find_by_conversation_participant(
+            conv.id,
+            roster[role].participant_id,
+        )
+        for role in ("architect", "review", "execute")
+    }
+    assert {
+        role: session.god_session_id
+        for role, session in restarted_sessions.items()
+    } == {
+        role: session.god_session_id
+        for role, session in first_sessions.items()
+    }
+    assert {inbox.get(item.id).status for item in restarted_items.values()} == {"read"}
+    assert len(spawned_sessions) == 6
+    assert len(writebacks) == 6
+    for role, participant in roster.items():
+        participant_writebacks = [
+            writeback
+            for writeback in writebacks
+            if writeback["participant_id"] == participant.participant_id
+        ]
+        assert [writeback["role"] for writeback in participant_writebacks] == [
+            role,
+            role,
+        ]
+        assert {
+            writeback["god_session_id"]
+            for writeback in participant_writebacks
+        } == {first_sessions[role].god_session_id}
+
+    traces = PeerTurnLatencyTraceStore(db_path).list_recent(conv.id, limit=10)
+    assert len(traces) == 6
+    assert {trace["delivery_mode"] for trace in traces} == {"mcp_writeback"}
+    messages = chat.list_messages(conv.id)
+    for _role, participant in roster.items():
+        assistant_messages = [
+            message
+            for message in messages
+            if message.author == participant.participant_id
+            and message.role == "assistant"
+        ]
+        assert len(assistant_messages) == 2
+        assert all(
+            participant.display_name in message.content
+            for message in assistant_messages
+        )
 
 
 @pytest.mark.asyncio
