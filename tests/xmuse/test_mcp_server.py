@@ -159,6 +159,7 @@ def test_peer_chat_mcp_endpoint_exposes_writeback_and_explicit_handoff_tools(
     assert "run_id" in tools["chat_record_collaboration_response"]["inputSchema"]["required"]
     response_tool_description = tools["chat_record_collaboration_response"]["description"]
     assert '"status":"executable"' in response_tool_description
+    assert '"execution_performed":false' in response_tool_description
     assert '"evidence_refs":["<ref>"]' in response_tool_description
     assert "verdict=feasible" in response_tool_description
 
@@ -169,21 +170,21 @@ def test_chat_emit_proposal_can_complete_current_peer_inbox_item(tmp_path: Path)
     mcp_client = TestClient(server.create_app(xmuse_root=xmuse_root))
     created = mcp_call(mcp_client, "chat_create_conversation", {"title": "Proposal reply"})
     conversation_id = created["conversation"]["id"]
-    execute = next(item for item in created["participants"] if item["role"] == "execute")
+    architect = next(item for item in created["participants"] if item["role"] == "architect")
     registry = GodSessionRegistry(xmuse_root / "god_sessions.json")
     session = registry.find_by_conversation_participant(
         conversation_id=conversation_id,
-        participant_id=execute["participant_id"],
+        participant_id=architect["participant_id"],
     )
     assert session is not None
     chat = ChatStore(xmuse_root / "chat.db")
-    human = chat.add_message(conversation_id, "human", "human", "@execute propose")
+    human = chat.add_message(conversation_id, "human", "human", "@architect propose")
     inbox = ChatInboxStore(xmuse_root / "chat.db")
     item = inbox.create_item(
         conversation_id=conversation_id,
-        target_participant_id=execute["participant_id"],
-        target_role="execute",
-        target_address="@execute",
+        target_participant_id=architect["participant_id"],
+        target_role="architect",
+        target_address="@architect",
         sender_participant_id=None,
         sender_address="@human",
         source_message_id=human.id,
@@ -196,7 +197,7 @@ def test_chat_emit_proposal_can_complete_current_peer_inbox_item(tmp_path: Path)
         "chat_emit_proposal",
         {
             "conversation_id": conversation_id,
-            "participant_id": execute["participant_id"],
+            "participant_id": architect["participant_id"],
             "god_session_id": session.god_session_id,
             "client_request_id": "proposal-reply",
             "summary": "Bounded execution proposal",
@@ -222,6 +223,54 @@ def test_chat_emit_proposal_can_complete_current_peer_inbox_item(tmp_path: Path)
     )
     assert "chat_emit_proposal" in stages
     assert registry.get(session.god_session_id).status == "running"
+
+
+def test_chat_emit_proposal_rejects_non_architect_participant(tmp_path: Path) -> None:
+    server = load_mcp_module()
+    xmuse_root = tmp_path / "xmuse"
+    mcp_client = TestClient(server.create_app(xmuse_root=xmuse_root))
+    created = mcp_call(mcp_client, "chat_create_conversation", {"title": "Proposal roles"})
+    conversation_id = created["conversation"]["id"]
+    execute = next(item for item in created["participants"] if item["role"] == "execute")
+    registry = GodSessionRegistry(xmuse_root / "god_sessions.json")
+    session = registry.find_by_conversation_participant(
+        conversation_id=conversation_id,
+        participant_id=execute["participant_id"],
+    )
+    assert session is not None
+
+    response = mcp_client.post(
+        "/mcp/chat",
+        json={
+            "jsonrpc": "2.0",
+            "id": "call-chat_emit_proposal",
+            "method": "tools/call",
+            "params": {
+                "name": "chat_emit_proposal",
+                "arguments": {
+                    "conversation_id": conversation_id,
+                    "participant_id": execute["participant_id"],
+                    "god_session_id": session.god_session_id,
+                    "client_request_id": "proposal-role-rejected",
+                    "summary": "Executor must not produce proposals",
+                    "lanes": [
+                        {
+                            "feature_id": "executor-proposal-rejected",
+                            "prompt": "This should be rejected before proposal creation.",
+                            "depends_on": [],
+                            "capabilities": ["code"],
+                        }
+                    ],
+                    "references": [],
+                },
+            },
+        },
+    )
+    assert response.status_code == 200
+    result = response.json()["result"]["structuredContent"]
+
+    assert result["error"]["code"] == "proposal_authority_forbidden"
+    assert ChatStore(xmuse_root / "chat.db").list_proposals(conversation_id) == []
 
 
 def test_chat_emit_proposal_reply_attaches_acceptance_spine_intake(
@@ -294,21 +343,21 @@ def test_chat_emit_proposal_without_reply_id_closes_single_claimed_inbox_item(
     mcp_client = TestClient(server.create_app(xmuse_root=xmuse_root))
     created = mcp_call(mcp_client, "chat_create_conversation", {"title": "Claimed proposal"})
     conversation_id = created["conversation"]["id"]
-    execute = next(item for item in created["participants"] if item["role"] == "execute")
+    architect = next(item for item in created["participants"] if item["role"] == "architect")
     registry = GodSessionRegistry(xmuse_root / "god_sessions.json")
     session = registry.find_by_conversation_participant(
         conversation_id=conversation_id,
-        participant_id=execute["participant_id"],
+        participant_id=architect["participant_id"],
     )
     assert session is not None
     chat = ChatStore(xmuse_root / "chat.db")
-    human = chat.add_message(conversation_id, "human", "human", "@execute fresh proposal")
+    human = chat.add_message(conversation_id, "human", "human", "@architect fresh proposal")
     inbox = ChatInboxStore(xmuse_root / "chat.db")
     item = inbox.create_item(
         conversation_id=conversation_id,
-        target_participant_id=execute["participant_id"],
-        target_role="execute",
-        target_address="@execute",
+        target_participant_id=architect["participant_id"],
+        target_role="architect",
+        target_address="@architect",
         sender_participant_id=None,
         sender_address="@human",
         source_message_id=human.id,
@@ -324,7 +373,7 @@ def test_chat_emit_proposal_without_reply_id_closes_single_claimed_inbox_item(
         "chat_emit_proposal",
         {
             "conversation_id": conversation_id,
-            "participant_id": execute["participant_id"],
+            "participant_id": architect["participant_id"],
             "god_session_id": session.god_session_id,
             "client_request_id": "proposal-claimed-reply",
             "summary": "Claimed inbox proposal",
@@ -480,6 +529,7 @@ def test_peer_chat_mcp_structured_execution_proposal_approval_enqueues_dispatch(
                 {
                     "type": "execute_feasibility_verdict",
                     "status": "executable",
+                    "execution_performed": False,
                     "summary": "The lane has bounded files and a focused verification gate.",
                     "evidence_refs": ["message:latest", "contract:tui-command-palette"],
                 }
@@ -491,12 +541,12 @@ def test_peer_chat_mcp_structured_execution_proposal_approval_enqueues_dispatch(
 
     proposal = mcp_chat_call(
         mcp_client,
-        "chat_emit_proposal",
-        {
-            "conversation_id": conversation_id,
-            "participant_id": participants["execute"]["participant_id"],
-            "god_session_id": execute_session.god_session_id,
-            "client_request_id": "proposal-execution-closure",
+            "chat_emit_proposal",
+            {
+                "conversation_id": conversation_id,
+                "participant_id": participants["architect"]["participant_id"],
+                "god_session_id": architect_session.god_session_id,
+                "client_request_id": "proposal-execution-closure",
             "summary": "TUI command palette production slice",
             "lanes": [
                 {
@@ -658,6 +708,7 @@ def test_chat_create_collaboration_request_enqueues_normalized_target_inbox(
                 {
                     "type": "execute_feasibility_verdict",
                     "status": "executable",
+                    "execution_performed": False,
                     "summary": "The lane is bounded and has a focused gate.",
                     "evidence_refs": ["message:intake"],
                 }
@@ -735,6 +786,7 @@ def test_chat_emit_proposal_deduplicates_collaboration_lane_graph_feature(
                 {
                     "type": "execute_feasibility_verdict",
                     "status": "executable",
+                    "execution_performed": False,
                     "summary": "One bounded docs lane is executable.",
                     "evidence_refs": ["message:latest"],
                 }
@@ -1036,7 +1088,15 @@ def test_chat_record_collaboration_response_promotes_session_status_to_running(
             "participant_id": participants["execute"]["participant_id"],
             "god_session_id": execute_session.god_session_id,
             "run_id": run["run_id"],
-            "content": "Executable as one bounded lane.",
+            "content": json.dumps(
+                {
+                    "type": "execute_feasibility_verdict",
+                    "status": "executable",
+                    "execution_performed": False,
+                    "summary": "Executable as one bounded lane.",
+                    "evidence_refs": ["message:latest"],
+                }
+            ),
             "status": "received",
         },
     )["run"]
