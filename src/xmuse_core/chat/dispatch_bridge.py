@@ -10,6 +10,7 @@ from xmuse_core.chat.participant_store import Participant, ParticipantStore
 from xmuse_core.chat.peer_scheduler import PeerChatScheduler
 from xmuse_core.chat.store import ChatStore
 from xmuse_core.chat.stream_store import PeerTurnLatencyTraceStore
+from xmuse_core.providers.service import RunnerProviderService
 
 
 @dataclass(frozen=True)
@@ -31,6 +32,7 @@ class ChatDispatchBridge:
         bridge_id: str,
         response_wait_s: float = 180.0,
         claim_ttl_s: int = 240,
+        provider_service: RunnerProviderService | None = None,
     ) -> None:
         self._db_path = Path(db_path)
         self._god_layer = god_layer
@@ -38,6 +40,7 @@ class ChatDispatchBridge:
         self._bridge_id = _required(bridge_id, "bridge_id")
         self._response_wait_s = response_wait_s
         self._claim_ttl_s = claim_ttl_s
+        self._provider_service = provider_service
 
     async def tick_once(self, *, conversation_id: str) -> ChatDispatchBridgeOutcome:
         queue = ChatDispatchQueueStore(self._db_path)
@@ -68,6 +71,7 @@ class ChatDispatchBridge:
                 response_wait_s=self._response_wait_s,
                 degraded_fallback_enabled=False,
                 only_inbox_item_id=inbox_item_id,
+                provider_service=self._provider_service,
             )
             scheduler_outcome = await scheduler.tick_once()
             if scheduler_outcome.happy_path == 1:
