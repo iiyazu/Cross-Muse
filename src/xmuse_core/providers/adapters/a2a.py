@@ -146,12 +146,18 @@ class A2AProviderAdapter:
         failure_kind: ProviderFailureKind,
         evidence_refs: list[str],
     ) -> ProviderInvocationResult:
+        diagnostic_payload = _failure_diagnostic_payload(
+            invocation,
+            failure_kind=failure_kind,
+            evidence_refs=evidence_refs,
+        )
         return ProviderInvocationResult(
             request_id=invocation.request_id,
             provider_id=invocation.provider_id,
             profile_id=invocation.profile_id,
             status=WorkerResultStatus.FAILED,
             evidence_refs=evidence_refs,
+            diagnostic_payload=diagnostic_payload,
             failure_kind=failure_kind,
         )
 
@@ -209,6 +215,34 @@ def _diagnostic_payload(result: NormalizedA2ATaskResult) -> dict[str, object]:
         "a2a_source_refs": list(result.source_refs),
         "a2a_sdk_task": dict(result.sdk_task),
         "a2a_jsonrpc_id": result.jsonrpc_id,
+    }
+
+
+def _failure_diagnostic_payload(
+    invocation: ProviderInvocation,
+    *,
+    failure_kind: ProviderFailureKind,
+    evidence_refs: list[str],
+) -> dict[str, object]:
+    return {
+        "a2a_task_id": invocation.request_id,
+        "a2a_context_id": invocation.request_id,
+        "a2a_state": "TASK_STATE_FAILED",
+        "a2a_disposition": "failed",
+        "a2a_terminal": True,
+        "a2a_content": (
+            "A2A provider invocation failed before a remote task result became "
+            f"available: {failure_kind.value}"
+        ),
+        "a2a_artifacts": [],
+        "a2a_history": [],
+        "a2a_metadata": {
+            "failure_kind": failure_kind.value,
+            "provider_profile_ref": invocation.provider_profile_ref,
+        },
+        "a2a_source_refs": list(evidence_refs),
+        "a2a_sdk_task": {},
+        "a2a_jsonrpc_id": None,
     }
 
 

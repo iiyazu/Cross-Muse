@@ -21,6 +21,15 @@ from xmuse_core.chat.participant_store import Participant, ParticipantStore
 from xmuse_core.chat.prompt_builder import XmusePromptBuilder
 from xmuse_core.chat.store import ChatStore
 from xmuse_core.chat.stream_store import ChatStreamStore, PeerTurnLatencyTraceStore
+from xmuse_core.integrations.a2a_writeback_reconciler import A2AProviderWritebackReconciler
+from xmuse_core.providers.adapters.base import (
+    ProviderInvocation,
+    ProviderInvocationResult,
+    ProviderInvocationWritebackContext,
+)
+from xmuse_core.providers.goal_contract import WorkerResultStatus
+from xmuse_core.providers.models import ProviderId, RiskTier, TaskCapability
+from xmuse_core.providers.service import RunnerProviderService
 
 _DURABLE_WRITEBACK = object()
 _STRUCTURED_WRITEBACK_REQUIRED_ITEM_TYPES = {"review_trigger"}
@@ -48,12 +57,14 @@ class PeerChatScheduler:
         degraded_fallback_enabled: bool = False,
         only_inbox_item_id: str | None = None,
         clock: Callable[[], float] | None = None,
+        provider_service: RunnerProviderService | None = None,
     ) -> None:
         self._db_path = db_path
         self._inbox = ChatInboxStore(db_path)
         self._participants = ParticipantStore(db_path)
         self._chat = ChatStore(db_path)
         self._latency = PeerTurnLatencyTraceStore(db_path)
+        self._a2a_writeback = A2AProviderWritebackReconciler(db_path)
         self._context_assembler = ContextAssembler(
             participants=self._participants,
             chat=self._chat,
@@ -70,6 +81,7 @@ class PeerChatScheduler:
         self._degraded_fallback_enabled = degraded_fallback_enabled
         self._only_inbox_item_id = only_inbox_item_id
         self._clock = clock or time.monotonic
+        self._provider_service = provider_service or RunnerProviderService()
         self._participant_locks: dict[str, asyncio.Lock] = {}
 
     async def tick_once(self) -> PeerChatSchedulerOutcome:
@@ -138,11 +150,6 @@ class PeerChatScheduler:
             return self._record_latency_trace(*args, provider_record=record, **kwargs)
 
         try:
-            agent = AgentDescriptor(
-                name=participant.display_name,
-                runtime=_runtime_for_participant(participant),
-                capabilities=[participant.role],
-            )
             group_context = self._context_assembler.group_chat_context(
                 item.conversation_id
             )
@@ -151,6 +158,23 @@ class PeerChatScheduler:
                 participant=participant,
                 inbox_item=item,
                 group_context=group_context,
+            )
+            if participant.cli_kind == "a2a":
+                return self._deliver_a2a_provider_item(
+                    item,
+                    participant=participant,
+                    prompt=assembled_prompt.text,
+                    trace_start_at=trace_start_at,
+                    delivery_started_at=delivery_started_at,
+                    provider_turn_started_at=provider_turn_started_at,
+                    transport_latency_stages=transport_latency_stages,
+                    record_latency_trace=record_latency_trace,
+                )
+
+            agent = AgentDescriptor(
+                name=participant.display_name,
+                runtime=_runtime_for_participant(participant),
+                capabilities=[participant.role],
             )
             record = await self._god_layer.ensure_conversation_session(
                 conversation_id=item.conversation_id,
@@ -472,6 +496,96 @@ class PeerChatScheduler:
             degraded_reason=None,
             transport_latency_stages=transport_latency_stages,
         )
+        return PeerChatSchedulerOutcome(nudged=1, happy_path=1)
+
+    def _deliver_a2a_provider_item(
+        self,
+        item,
+        *,
+        participant: Participant,
+        prompt: str,
+        trace_start_at: float,
+        delivery_started_at: float,
+        provider_turn_started_at: float,
+        transport_latency_stages: dict[str, dict[str, float]],
+        record_latency_trace: Callable[..., dict[str, object]],
+    ) -> PeerChatSchedulerOutcome:
+        if participant.provider_id is not ProviderId.A2A:
+            raise RuntimeError(
+                f"a2a participant must use provider_id 'a2a', got "
+                f"{participant.provider_id.value!r}"
+            )
+        invocation = ProviderInvocation(
+            request_id=item.id,
+            provider_id=participant.provider_id,
+            profile_id=participant.profile_id,
+            task_type=_a2a_task_capability(participant, item),
+            risk_tier=RiskTier.MEDIUM,
+            prompt=prompt,
+            workspace=self._worktree,
+            timeout_seconds=max(1, int(self._response_wait_s)),
+            writeback_context=ProviderInvocationWritebackContext(
+                conversation_id=item.conversation_id,
+                participant_id=participant.participant_id,
+                reply_to_inbox_item_id=item.id,
+            ),
+        )
+        provider_turn_started_at = self._clock()
+        _put_latency_stage(
+            transport_latency_stages,
+            "a2a_provider_invocation_started",
+            provider_turn_started_at,
+        )
+        provider_result = self._provider_service.invoke_provider_adapter(invocation)
+        scheduler_observed_result_at = self._clock()
+        _put_latency_stage(
+            transport_latency_stages,
+            "a2a_provider_result_received",
+            scheduler_observed_result_at,
+        )
+        self._a2a_writeback.record_provider_result(
+            conversation_id=item.conversation_id,
+            participant_id=participant.participant_id,
+            reply_to_inbox_item_id=item.id,
+            provider_result=provider_result,
+        )
+        refreshed = self._inbox.get(item.id)
+        if not self._has_durable_writeback(
+            item.conversation_id,
+            refreshed.responded_message_id,
+            participant_id=participant.participant_id,
+            inbox_item_id=item.id,
+            item_type=getattr(item, "item_type", None),
+        ):
+            self._finish_active_stream_for_item(item, status="error")
+            record_latency_trace(
+                item,
+                trace_start_at=trace_start_at,
+                delivery_started_at=delivery_started_at,
+                provider_turn_started_at=provider_turn_started_at,
+                scheduler_observed_result_at=scheduler_observed_result_at,
+                delivery_mode="failed",
+                degraded_reason="a2a_provider_no_durable_writeback",
+                transport_latency_stages=transport_latency_stages,
+            )
+            self._record_failed_nudge(
+                item.id,
+                reason="a2a_provider_no_durable_writeback",
+            )
+            return PeerChatSchedulerOutcome(failed=1)
+
+        self._finish_active_stream_for_item(item, status="done")
+        record_latency_trace(
+            item,
+            trace_start_at=trace_start_at,
+            delivery_started_at=delivery_started_at,
+            provider_turn_started_at=provider_turn_started_at,
+            scheduler_observed_result_at=scheduler_observed_result_at,
+            delivery_mode="a2a_provider_writeback",
+            degraded_reason=_a2a_provider_degraded_reason(provider_result),
+            transport_latency_stages=transport_latency_stages,
+        )
+        self._inbox.record_nudge_result(item.id, owner=self._scheduler_id, success=True)
         return PeerChatSchedulerOutcome(nudged=1, happy_path=1)
 
     async def _receive_message_or_durable_writeback(
@@ -908,6 +1022,29 @@ def _runtime_for_participant(participant: Participant) -> AgentRuntime:
     if participant.cli_kind == "opencode":
         return AgentRuntime.OPENCODE
     raise RuntimeError(f"unsupported participant cli_kind: {participant.cli_kind}")
+
+
+def _a2a_task_capability(participant: Participant, item) -> TaskCapability:
+    item_type = str(getattr(item, "item_type", "") or "")
+    role = participant.role.strip().lower()
+    if item_type == "review_trigger" or role == "review":
+        return TaskCapability.REVIEW
+    if role == "execute":
+        return TaskCapability.BOUNDED_CODE_WRITING
+    return TaskCapability.BOUNDED_DELIBERATION
+
+
+def _a2a_provider_degraded_reason(
+    provider_result: ProviderInvocationResult,
+) -> str | None:
+    if provider_result.status is WorkerResultStatus.COMPLETED:
+        return None
+    if provider_result.failure_kind is not None:
+        return (
+            f"a2a_provider_{provider_result.status.value}:"
+            f"{provider_result.failure_kind.value}"
+        )
+    return f"a2a_provider_{provider_result.status.value}"
 
 
 def _peer_session_prompt_fingerprint(participant: Participant) -> str:
