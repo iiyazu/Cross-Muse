@@ -142,6 +142,18 @@ class TestModelShapes:
         )
         assert p.cli_kind == "codex"
 
+    def test_participant_cli_kind_allows_a2a_remote(self):
+        p = Participant(
+            participant_id="x", conversation_id="c", role="review",
+            display_name="remote-review", provider_id="a2a", profile_id="remote",
+            cli_kind="a2a", model="a2a-remote",
+            role_template_id=None, status="active",
+            last_seen_at=None, created_at="2026-01-01T00:00:00Z",
+        )
+        assert p.provider_id == "a2a"
+        assert p.profile_id == "remote"
+        assert p.cli_kind == "a2a"
+
     def test_participant_cli_kind_rejects_claude(self):
         with pytest.raises(ValueError):
             Participant(

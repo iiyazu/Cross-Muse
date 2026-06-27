@@ -71,6 +71,27 @@ class TestParticipantStore:
         assert p.last_seen_at is None
         assert p.created_at
 
+    def test_add_accepts_a2a_remote_participant(
+        self,
+        db_path: Path,
+        conv_id: str,
+    ) -> None:
+        store = ParticipantStore(db_path)
+
+        participant = store.add(
+            conversation_id=conv_id,
+            role="review",
+            display_name="Remote A2A Review",
+            cli_kind="a2a",
+            model="a2a-remote",
+        )
+        fetched = store.get(participant.participant_id)
+
+        assert fetched.provider_id == "a2a"
+        assert fetched.profile_id == "remote"
+        assert fetched.cli_kind == "a2a"
+        assert fetched.model == "a2a-remote"
+
     def test_add_with_role_template_id(self, db_path: Path, conv_id: str) -> None:
         store = ParticipantStore(db_path)
         p = store.add(
@@ -208,7 +229,7 @@ class TestParticipantStore:
     def test_add_rejects_claude_cli_kind(self, db_path: Path, conv_id: str) -> None:
         store = ParticipantStore(db_path)
 
-        with pytest.raises(ValueError, match="codex-only"):
+        with pytest.raises(ValueError, match="unsupported xmuse chat participant cli_kind"):
             store.add(
                 conversation_id=conv_id,
                 role="architect",
@@ -421,7 +442,7 @@ class TestRoleTemplateStore:
     def test_create_rejects_claude_cli_kind(self, db_path: Path) -> None:
         store = RoleTemplateStore(db_path)
 
-        with pytest.raises(ValueError, match="codex-only"):
+        with pytest.raises(ValueError, match="unsupported xmuse chat participant cli_kind"):
             store.create(
                 slug="claude-role",
                 display_name="Claude Role",
@@ -456,6 +477,20 @@ class TestRoleTemplateStore:
 
         assert template.cli_kind == "codex"
         assert template.default_model == "gpt-5.4"
+
+    def test_create_a2a_role_template_uses_remote_profile(self, db_path: Path) -> None:
+        template = RoleTemplateStore(db_path).create(
+            slug="remote-review",
+            display_name="Remote Review",
+            prompt="Review through a remote A2A agent.",
+            cli_kind="a2a",
+            default_model="a2a-remote",
+        )
+
+        assert template.provider_id == "a2a"
+        assert template.profile_id == "remote"
+        assert template.cli_kind == "a2a"
+        assert template.default_model == "a2a-remote"
 
     def test_legacy_codex_gpt54_template_reads_as_gpt54(self, db_path: Path) -> None:
         with sqlite3.connect(db_path) as conn:
@@ -633,7 +668,7 @@ class TestRoleTemplateStore:
             default_model="gpt-5.5",
         )
 
-        with pytest.raises(ValueError, match="codex-only"):
+        with pytest.raises(ValueError, match="unsupported xmuse chat participant cli_kind"):
             store.update(created.id, cli_kind="claude")
 
     def test_delete_removes_custom_template(self, db_path: Path) -> None:

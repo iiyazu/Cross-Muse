@@ -5,8 +5,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-CliKind = Literal["codex", "opencode"]
-ProviderIdLiteral = Literal["codex", "opencode"]
+CliKind = Literal["codex", "opencode", "a2a"]
+ProviderIdLiteral = Literal["codex", "opencode", "a2a"]
 ProposalSource = Literal["init_god", "deterministic"]
 
 

@@ -11,7 +11,7 @@ class ParticipantInit(BaseModel):
     role: str = Field(min_length=1)
     provider_id: ProviderId | None = None
     profile_id: ProviderProfileId | None = None
-    cli_kind: Literal["codex", "opencode"] | None = None
+    cli_kind: Literal["codex", "opencode", "a2a"] | None = None
     model: str | None = None
     role_template_id: str | None = None
     display_name: str | None = None
@@ -37,7 +37,7 @@ class ParticipantInit(BaseModel):
 class ProviderOverride(BaseModel):
     provider_id: ProviderId
     profile_id: ProviderProfileId
-    cli_kind: Literal["codex", "opencode"]
+    cli_kind: Literal["codex", "opencode", "a2a"]
     model: str = Field(min_length=1)
     template_slug: str | None = None
     display_name: str | None = None
@@ -216,7 +216,7 @@ class RoleTemplateCreate(BaseModel):
     prompt: str = Field(min_length=1)
     provider_id: ProviderId | None = None
     profile_id: ProviderProfileId | None = None
-    cli_kind: Literal["codex"] | None = None
+    cli_kind: Literal["codex", "opencode", "a2a"] | None = None
     default_model: str = Field(min_length=1)
 
     @field_validator(
@@ -240,7 +240,7 @@ class RoleTemplateUpdate(BaseModel):
     prompt: str | None = Field(default=None, min_length=1)
     provider_id: ProviderId | None = None
     profile_id: ProviderProfileId | None = None
-    cli_kind: Literal["codex"] | None = None
+    cli_kind: Literal["codex", "opencode", "a2a"] | None = None
     default_model: str | None = Field(default=None, min_length=1)
 
     @field_validator(
