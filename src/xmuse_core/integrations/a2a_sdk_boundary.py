@@ -274,6 +274,7 @@ def _normalize_legacy_task_send(params: Mapping[str, Any]) -> NormalizedA2ATaskS
             "sender_agent_id": sender_agent_id,
             "target_address": target_address or "",
             "metadata": metadata,
+            **metadata,
         }
     )
     return NormalizedA2ATaskSend(
@@ -297,7 +298,7 @@ def _normalize_sdk_send_message(params: Mapping[str, Any]) -> NormalizedA2ATaskS
     task_id = _required_text(message.task_id or message.message_id, "task_id")
     context_id = _required_text(message.context_id, "context_id")
     metadata_payload = MessageToDict(message.metadata, preserving_proto_field_name=True)
-    metadata = _metadata(metadata_payload.get("metadata"))
+    metadata = _message_metadata(metadata_payload)
     sender_agent_id = _required_text(
         metadata_payload.get("sender_agent_id") or request.tenant,
         "sender_agent_id",
@@ -316,6 +317,17 @@ def _normalize_sdk_send_message(params: Mapping[str, Any]) -> NormalizedA2ATaskS
         input_parts=_parts_to_payload(message.parts),
         sdk_request=MessageToDict(request, preserving_proto_field_name=True),
     )
+
+
+def _message_metadata(metadata_payload: Mapping[str, Any]) -> dict[str, Any]:
+    metadata = {
+        key: value
+        for key, value in metadata_payload.items()
+        if key not in {"sender_agent_id", "target_address", "metadata"}
+    }
+    nested = _metadata(metadata_payload.get("metadata"))
+    metadata.update(nested)
+    return _metadata(metadata)
 
 
 def _content_from_parts(parts: Any) -> str:

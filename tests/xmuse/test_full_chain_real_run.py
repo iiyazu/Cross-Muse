@@ -1519,6 +1519,23 @@ async def test_a2a_inbound_task_reaches_a2a_provider_writeback(
             assert replies[0].envelope_json["a2a_is_authority"] is False
             assert a2a_requests
             assert a2a_requests[0]["method"] == "SendMessage"
+            a2a_message = a2a_requests[0]["params"]["message"]
+            a2a_metadata = a2a_message["metadata"]
+            assert a2a_metadata["xmuse_writeback_context"] == {
+                "conversation_id": conversation_id,
+                "participant_id": remote_architect.participant_id,
+                "reply_to_inbox_item_id": inbox_item_id,
+            }
+            runtime_context = a2a_metadata["xmuse_runtime_context"]
+            assert runtime_context["authority"] == "chat.db/inbox"
+            assert runtime_context["a2a_is_authority"] is False
+            assert runtime_context["inbox_item_id"] == inbox_item_id
+            assert runtime_context["item_type"] == "a2a_task"
+            assert runtime_context["route"]["source_kind"] == "a2a_inbound"
+            assert runtime_context["route"]["route_kind"] == "a2a_task"
+            assert runtime_context["route"]["target_participant_id"] == (
+                remote_architect.participant_id
+            )
 
             reloaded = ChatInboxStore(db_path).get(inbox_item_id)
             assert reloaded.status == "read"
