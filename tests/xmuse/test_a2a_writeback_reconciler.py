@@ -104,7 +104,10 @@ def _a2a_provider_result_with_proposal(
     return provider_result.model_copy(update={"diagnostic_payload": diagnostic})
 
 
-def _a2a_provider_result_with_review_handoff() -> ProviderInvocationResult:
+def _a2a_provider_result_with_review_handoff(
+    *,
+    metadata: dict[str, object] | None = None,
+) -> ProviderInvocationResult:
     return ProviderInvocationResult(
         request_id="req-a2a-architect",
         provider_id=ProviderId.A2A,
@@ -131,7 +134,7 @@ def _a2a_provider_result_with_review_handoff() -> ProviderInvocationResult:
             ),
             "a2a_artifacts": [{"artifact_id": "artifact-candidate", "text": "bounded"}],
             "a2a_history": [],
-            "a2a_metadata": {},
+            "a2a_metadata": dict(metadata or {}),
             "a2a_source_refs": ["a2a_task:req-a2a-architect"],
             "a2a_sdk_task": {
                 "id": "req-a2a-architect",
@@ -479,7 +482,9 @@ def test_a2a_provider_result_leading_mention_creates_durable_route(
         conversation_id=conversation.id,
         participant_id=architect.participant_id,
         reply_to_inbox_item_id=source_inbox.id,
-        provider_result=_a2a_provider_result_with_review_handoff(),
+        provider_result=_a2a_provider_result_with_review_handoff(
+            metadata={"feature_scope_id": "feature_scope:a2a-provider"}
+        ),
     )
 
     response = result["message"]
@@ -499,6 +504,10 @@ def test_a2a_provider_result_leading_mention_creates_durable_route(
     assert routed["payload"]["handoff_assessment"]["is_complete"] is True
     assert routed["payload"]["handoff_envelope"]["source_inbox_item_id"] == (
         source_inbox.id
+    )
+    assert (
+        routed["payload"]["handoff_envelope"]["feature_scope_id"]
+        == "feature_scope:a2a-provider"
     )
     stored_review_items = [
         item

@@ -134,6 +134,7 @@ def test_a2a_complete_review_task_records_canonical_handoff_envelope(
                 "next action: review the inbox payload.\n"
                 "evidence refs: a2a_task:task-complete-review"
             ),
+            metadata={"feature_scope_id": "feature_scope:a2a-inbound"},
             input_parts=({"kind": "url", "url": "file:///tmp/evidence.md"},),
         )
     )
@@ -154,6 +155,7 @@ def test_a2a_complete_review_task_records_canonical_handoff_envelope(
         "schema_version": "xmuse-natural-handoff-v1",
         "task_id": "task-complete-review",
         "conversation_id": conversation.id,
+        "feature_scope_id": "feature_scope:a2a-inbound",
         "origin_message_id": "task-complete-review",
         "source_message_id": "task-complete-review",
         "source_inbox_item_id": None,
