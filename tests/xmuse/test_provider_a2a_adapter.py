@@ -79,8 +79,11 @@ def _task_result(
         disposition=disposition,
         terminal=True,
         content="remote result",
+        artifacts=({"artifact_id": "artifact-a2a", "text": "artifact text"},),
+        history=({"message_id": "message-a2a", "text": "history text"},),
         metadata=metadata or {},
         source_refs=("a2a_task:req-a2a", "a2a_context:lane-a2a"),
+        sdk_task={"id": "req-a2a", "status": {"state": state}},
         jsonrpc_id="req-a2a",
     )
 
@@ -110,6 +113,20 @@ def test_a2a_provider_adapter_maps_completed_task_to_provider_result(tmp_path) -
         "a2a_disposition:completed",
         "a2a_jsonrpc:req-a2a",
     ]
+    assert result.diagnostic_payload == {
+        "a2a_task_id": "req-a2a",
+        "a2a_context_id": "lane-a2a",
+        "a2a_state": "TASK_STATE_COMPLETED",
+        "a2a_disposition": "completed",
+        "a2a_terminal": True,
+        "a2a_content": "remote result",
+        "a2a_artifacts": [{"artifact_id": "artifact-a2a", "text": "artifact text"}],
+        "a2a_history": [{"message_id": "message-a2a", "text": "history text"}],
+        "a2a_metadata": {},
+        "a2a_source_refs": ["a2a_task:req-a2a", "a2a_context:lane-a2a"],
+        "a2a_sdk_task": {"id": "req-a2a", "status": {"state": "TASK_STATE_COMPLETED"}},
+        "a2a_jsonrpc_id": "req-a2a",
+    }
     assert client.requests[0].task_id == "req-a2a"
     assert client.requests[0].context_id == "lane-a2a"
     assert client.requests[0].sender_agent_id == "xmuse:a2a.remote"

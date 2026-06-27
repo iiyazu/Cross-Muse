@@ -147,6 +147,7 @@ def test_provider_invocation_result_requires_failure_kind_for_failed_status() ->
     assert result.provider_profile_ref == "codex.worker"
     assert result.failure_kind is None
     assert result.worker_result is worker_result
+    assert result.diagnostic_payload == {}
 
     with pytest.raises(ValidationError, match="failure_kind must be provided"):
         ProviderInvocationResult(
