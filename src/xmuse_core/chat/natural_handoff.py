@@ -69,21 +69,46 @@ def build_handoff_envelope(
     target_participant_id: str,
     target_role: str,
     source_refs: list[str] | tuple[str, ...],
+    task_id: str | None = None,
+    source_message_id: str | None = None,
+    source_inbox_item_id: str | None = None,
+    input_parts: list[dict[str, object]] | tuple[dict[str, object], ...] = (),
+    artifact_refs: list[str] | tuple[str, ...] = (),
 ) -> dict[str, object]:
+    fields = dict(assessment.fields)
+    source_refs_list = list(source_refs)
     return {
+        "type": "natural_handoff",
         "schema_version": "xmuse-natural-handoff-v1",
+        "task_id": task_id,
         "conversation_id": conversation_id,
         "origin_message_id": origin_message_id,
+        "source_message_id": source_message_id or origin_message_id,
+        "source_inbox_item_id": source_inbox_item_id,
         "source_kind": source_kind,
         "author_participant_id": author_participant_id,
+        "source_participant_id": author_participant_id,
         "target_participant_id": target_participant_id,
+        "target_participant_ids": [target_participant_id],
         "target_role": target_role,
+        "intent": assessment.route_kind,
         "route_kind": assessment.route_kind,
         "requires_envelope": assessment.requires_envelope,
         "is_complete": assessment.is_complete,
         "missing_fields": list(assessment.missing_fields),
-        "fields": dict(assessment.fields),
-        "source_refs": list(source_refs),
+        "input_parts": [dict(item) for item in input_parts],
+        "artifact_refs": list(artifact_refs),
+        "what": fields.get("what"),
+        "why": fields.get("why"),
+        "tradeoffs": fields.get("tradeoffs"),
+        "open_questions": fields.get("open_questions"),
+        "next_action": fields.get("next_action"),
+        "evidence_refs": _canonical_evidence_refs(
+            fields.get("evidence_refs"),
+            source_refs=source_refs_list,
+        ),
+        "fields": fields,
+        "source_refs": source_refs_list,
     }
 
 
@@ -130,3 +155,17 @@ def _normalize_label(value: str) -> str:
     text = value.strip().lower()
     text = re.sub(r"^[-*>\s]+", "", text)
     return re.sub(r"[\s_-]+", " ", text)
+
+
+def _canonical_evidence_refs(
+    raw_refs: str | None,
+    *,
+    source_refs: list[str],
+) -> list[str]:
+    refs = list(source_refs)
+    if raw_refs:
+        for item in re.split(r"[\n,]+", raw_refs):
+            ref = item.strip().strip("-*")
+            if ref and ref not in refs:
+                refs.append(ref)
+    return refs

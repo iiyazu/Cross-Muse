@@ -348,6 +348,10 @@ class A2AInboundBridge:
                 target_participant_id=target.participant.participant_id,
                 target_role=target.participant.role,
                 source_refs=source_refs,
+                task_id=task_id,
+                source_message_id=task_id,
+                input_parts=list(input_parts),
+                artifact_refs=_artifact_refs_from_input_parts(input_parts),
             )
         if blocker_reason:
             extra.update(
@@ -399,3 +403,15 @@ def _metadata_dict(value: object) -> dict[str, Any]:
         return json.loads(json.dumps(value))
     except (TypeError, ValueError) as exc:
         raise A2ABridgeError("invalid_metadata_json", "metadata") from exc
+
+
+def _artifact_refs_from_input_parts(
+    input_parts: tuple[dict[str, Any], ...],
+) -> list[str]:
+    refs: list[str] = []
+    for part in input_parts:
+        for key in ("artifact_id", "file_id", "url", "uri"):
+            value = part.get(key)
+            if isinstance(value, str) and value.strip() and value not in refs:
+                refs.append(value.strip())
+    return refs
