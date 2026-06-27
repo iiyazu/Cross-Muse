@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import os
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 from xmuse_core.agents.protocol import AgentOutput
+from xmuse_core.providers.adapters.a2a import A2AProviderAdapter, A2ATaskClient
 from xmuse_core.providers.adapters.base import (
     ProviderFailureKind,
     ProviderInvocation,
@@ -17,7 +19,11 @@ from xmuse_core.providers.goal_contract import WorkerResultStatus
 from xmuse_core.providers.health import ProviderHealthSnapshot
 from xmuse_core.providers.models import ProviderId, RiskTier, TaskCapability
 from xmuse_core.providers.policy import ProviderPolicyService, is_low_risk_bounded_task
-from xmuse_core.providers.registry import ProviderRegistry, build_default_provider_registry
+from xmuse_core.providers.registry import (
+    DEFAULT_A2A_REMOTE_API_KEY_ENV_NAME,
+    ProviderRegistry,
+    build_default_provider_registry,
+)
 from xmuse_core.providers.selection_record import (
     ProviderSelectionRecord,
     ProviderSelectionRecordStore,
@@ -43,6 +49,9 @@ class RunnerProviderService:
         execution_provider_profile_ref: str = DEFAULT_EXECUTION_PROVIDER_PROFILE_REF,
         review_provider_profile_ref: str = DEFAULT_REVIEW_PROVIDER_PROFILE_REF,
         health_by_profile: Mapping[str, ProviderHealthSnapshot] | None = None,
+        a2a_provider_endpoint_url: str | None = None,
+        a2a_provider_api_key: str | None = None,
+        a2a_task_client: A2ATaskClient | None = None,
     ) -> None:
         self._mcp_port = mcp_port
         self._registry = registry or build_default_provider_registry()
@@ -54,6 +63,11 @@ class RunnerProviderService:
         self._review_provider_profile_ref = review_provider_profile_ref
         self._health_by_profile = dict(health_by_profile or {})
         self._pending_selection_records: dict[str, ProviderSelectionRecord] = {}
+        self._a2a_provider_endpoint_url = _clean_optional_text(
+            a2a_provider_endpoint_url
+        )
+        self._a2a_provider_api_key = _clean_optional_text(a2a_provider_api_key)
+        self._a2a_task_client = a2a_task_client
 
     def build_execution_invocation(
         self,
@@ -263,6 +277,44 @@ class RunnerProviderService:
             failure_kind=failure_kind,
         )
 
+    def invoke_provider_adapter(
+        self,
+        invocation: ProviderInvocation,
+    ) -> ProviderInvocationResult:
+        if invocation.provider_id is ProviderId.A2A:
+            try:
+                return self._a2a_adapter(invocation.provider_profile_ref).invoke(
+                    invocation
+                )
+            except ValueError as exc:
+                return ProviderInvocationResult(
+                    request_id=invocation.request_id,
+                    provider_id=invocation.provider_id,
+                    profile_id=invocation.profile_id,
+                    status=WorkerResultStatus.FAILED,
+                    evidence_refs=[
+                        "a2a_adapter:config_error",
+                        f"a2a_adapter_error:{exc.__class__.__name__}",
+                    ],
+                    failure_kind=ProviderFailureKind.CONFIG_ERROR,
+                )
+        if invocation.provider_id is ProviderId.CODEX:
+            return self._codex_adapter(invocation.provider_profile_ref).invoke(
+                invocation
+            )
+        if invocation.provider_id is ProviderId.OPENCODE:
+            return self._opencode_adapter(invocation.provider_profile_ref).invoke(
+                invocation
+            )
+        return ProviderInvocationResult(
+            request_id=invocation.request_id,
+            provider_id=invocation.provider_id,
+            profile_id=invocation.profile_id,
+            status=WorkerResultStatus.FAILED,
+            evidence_refs=["provider_service:unsupported_runtime"],
+            failure_kind=ProviderFailureKind.UNSUPPORTED_CAPABILITY,
+        )
+
     def record_execution_selection(
         self,
         *,
@@ -399,3 +451,37 @@ class RunnerProviderService:
 
     def _opencode_adapter(self, provider_profile_ref: str) -> OpenCodeProviderAdapter:
         return OpenCodeProviderAdapter(self._registry.get(provider_profile_ref))
+
+    def _a2a_adapter(self, provider_profile_ref: str) -> A2AProviderAdapter:
+        profile = self._registry.get(provider_profile_ref)
+        endpoint_url = self._a2a_endpoint_url(profile.api_base_env_name)
+        if endpoint_url is None:
+            raise ValueError(
+                f"{provider_profile_ref} requires {profile.api_base_env_name} "
+                "or a2a_provider_endpoint_url"
+            )
+        return A2AProviderAdapter(
+            profile,
+            endpoint_url=endpoint_url,
+            api_key=self._a2a_api_key(),
+            client=self._a2a_task_client,
+        )
+
+    def _a2a_endpoint_url(self, env_name: str | None) -> str | None:
+        if self._a2a_provider_endpoint_url is not None:
+            return self._a2a_provider_endpoint_url
+        if env_name is None:
+            return None
+        return _clean_optional_text(os.environ.get(env_name))
+
+    def _a2a_api_key(self) -> str | None:
+        if self._a2a_provider_api_key is not None:
+            return self._a2a_provider_api_key
+        return _clean_optional_text(os.environ.get(DEFAULT_A2A_REMOTE_API_KEY_ENV_NAME))
+
+
+def _clean_optional_text(value: str | None) -> str | None:
+    if value is None:
+        return None
+    cleaned = value.strip()
+    return cleaned or None
