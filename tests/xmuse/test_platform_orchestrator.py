@@ -16,6 +16,9 @@ from xmuse_core.chat.peer_service import PeerChatService
 from xmuse_core.chat.store import ChatStore
 from xmuse_core.gates.models import GateReport
 from xmuse_core.platform.agent_spawner import SpawnResult
+from xmuse_core.platform.execution.a2a_review_verdicts import (
+    build_a2a_platform_review_verdict_envelope,
+)
 from xmuse_core.platform.execution.review import infer_review_fallback
 from xmuse_core.platform.messages import ExecuteRequest, ExecuteResponse, ReviewVerdict
 from xmuse_core.platform.orchestrator import PlatformOrchestrator
@@ -4398,6 +4401,200 @@ async def test_review_transport_receives_provider_invocation(setup):
     assert invocation is not None
     assert invocation.task_type is TaskCapability.REVIEW
     assert invocation.provider_profile_ref == "codex.review"
+
+
+@pytest.mark.asyncio
+async def test_a2a_review_runtime_structured_verdict_marks_reviewed_without_stdout(
+    setup,
+):
+    tmp_path, lanes_path = setup
+    lanes_path.write_text(json.dumps({"lanes": [
+        {
+            "feature_id": "lane-a2a-review",
+            "status": "gated",
+            "prompt": "fix",
+            "worktree": str(tmp_path),
+            "review_runtime": "a2a",
+        },
+    ]}))
+    orch = PlatformOrchestrator(
+        lanes_path=lanes_path,
+        xmuse_root=tmp_path,
+        mcp_port=9999,
+    )
+    captured: dict[str, object] = {}
+
+    async def fake_send_review(req):
+        captured["provider_invocation"] = req.provider_invocation
+        invocation = req.provider_invocation
+        return ReviewVerdict(
+            passed=True,
+            verdict="raw",
+            feedback="",
+            raw_output="",
+            exit_code=0,
+            provider_result=ProviderInvocationResult(
+                request_id=invocation.request_id,
+                provider_id=invocation.provider_id,
+                profile_id=invocation.profile_id,
+                status=WorkerResultStatus.COMPLETED,
+                evidence_refs=["a2a_task:lane-a2a-review:review"],
+                diagnostic_payload={
+                    "a2a_content": "Verdict: merge",
+                    "a2a_metadata": {
+                        "xmuse_platform_review_verdict": (
+                            build_a2a_platform_review_verdict_envelope(
+                                lane_id="lane-a2a-review",
+                                decision="merge",
+                                summary="A2A structured review allows merge.",
+                                evidence_refs=[
+                                    "a2a_task:lane-a2a-review:review",
+                                    "review:structured-envelope",
+                                ],
+                            )
+                        )
+                    },
+                },
+            ),
+        )
+
+    with patch.object(orch._transport, "send_review", new=fake_send_review), patch.object(
+        orch,
+        "on_lane_reviewed",
+        new_callable=AsyncMock,
+    ) as reviewed:
+        await orch._run_review_god("lane-a2a-review")
+
+    invocation = captured["provider_invocation"]
+    assert invocation is not None
+    assert invocation.provider_id is ProviderId.A2A
+    assert invocation.provider_profile_ref == "a2a.remote"
+    lane = orch._sm.get_lane("lane-a2a-review")
+    assert lane["status"] == "reviewed"
+    assert lane["review_decision"] == "merge"
+    assert lane["review_fallback"] == "a2a_provider_result"
+    assert lane["review_fallback_reason"] == "structured_a2a_platform_review_verdict"
+    assert lane["review_delivery_mode"] == "a2a_provider_result"
+    assert lane["review_evidence_refs"] == [
+        "a2a_task:lane-a2a-review:review",
+        "review:structured-envelope",
+    ]
+    assert lane["review_verdict_id"]
+    reviewed.assert_awaited_once_with("lane-a2a-review")
+
+
+@pytest.mark.asyncio
+async def test_a2a_review_runtime_verdict_does_not_override_transport_failure(setup):
+    tmp_path, lanes_path = setup
+    lanes_path.write_text(json.dumps({"lanes": [
+        {
+            "feature_id": "lane-a2a-review-nonzero",
+            "status": "gated",
+            "prompt": "fix",
+            "worktree": str(tmp_path),
+            "review_runtime": "a2a",
+        },
+    ]}))
+    orch = PlatformOrchestrator(
+        lanes_path=lanes_path,
+        xmuse_root=tmp_path,
+        mcp_port=9999,
+    )
+
+    async def fake_send_review(req):
+        invocation = req.provider_invocation
+        return ReviewVerdict(
+            passed=False,
+            verdict="raw",
+            feedback="provider failed",
+            raw_output="",
+            exit_code=2,
+            provider_result=ProviderInvocationResult(
+                request_id=invocation.request_id,
+                provider_id=invocation.provider_id,
+                profile_id=invocation.profile_id,
+                status=WorkerResultStatus.COMPLETED,
+                evidence_refs=["a2a_task:lane-a2a-review-nonzero:review"],
+                diagnostic_payload={
+                    "a2a_metadata": {
+                        "xmuse_platform_review_verdict": (
+                            build_a2a_platform_review_verdict_envelope(
+                                lane_id="lane-a2a-review-nonzero",
+                                decision="merge",
+                                summary="This must not override transport failure.",
+                                evidence_refs=[
+                                    "a2a_task:lane-a2a-review-nonzero:review",
+                                ],
+                            )
+                        )
+                    },
+                },
+            ),
+        )
+
+    with patch.object(orch._transport, "send_review", new=fake_send_review), patch.object(
+        orch,
+        "on_lane_reviewed",
+        new_callable=AsyncMock,
+    ) as reviewed:
+        await orch._run_review_god("lane-a2a-review-nonzero")
+
+    lane = orch._sm.get_lane("lane-a2a-review-nonzero")
+    assert lane["status"] == "gate_failed"
+    assert lane["failure_reason"] == "review_non_zero_exit"
+    reviewed.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a2a_review_runtime_rejects_content_only_verdict(setup):
+    tmp_path, lanes_path = setup
+    lanes_path.write_text(json.dumps({"lanes": [
+        {
+            "feature_id": "lane-a2a-content-only-review",
+            "status": "gated",
+            "prompt": "fix",
+            "worktree": str(tmp_path),
+            "review_runtime": "a2a",
+        },
+    ]}))
+    orch = PlatformOrchestrator(
+        lanes_path=lanes_path,
+        xmuse_root=tmp_path,
+        mcp_port=9999,
+    )
+
+    async def fake_send_review(req):
+        invocation = req.provider_invocation
+        return ReviewVerdict(
+            passed=True,
+            verdict="raw",
+            feedback="",
+            raw_output="",
+            exit_code=0,
+            provider_result=ProviderInvocationResult(
+                request_id=invocation.request_id,
+                provider_id=invocation.provider_id,
+                profile_id=invocation.profile_id,
+                status=WorkerResultStatus.COMPLETED,
+                evidence_refs=["a2a_task:lane-a2a-content-only-review:review"],
+                diagnostic_payload={
+                    "a2a_content": "Verdict: merge\nNo findings.",
+                    "a2a_metadata": {},
+                },
+            ),
+        )
+
+    with patch.object(orch._transport, "send_review", new=fake_send_review), patch.object(
+        orch,
+        "on_lane_reviewed",
+        new_callable=AsyncMock,
+    ) as reviewed:
+        await orch._run_review_god("lane-a2a-content-only-review")
+
+    lane = orch._sm.get_lane("lane-a2a-content-only-review")
+    assert lane["status"] == "gate_failed"
+    assert lane["failure_reason"] == "review_no_verdict"
+    reviewed.assert_not_awaited()
 
 
 @pytest.mark.asyncio
