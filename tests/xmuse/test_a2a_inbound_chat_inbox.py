@@ -409,6 +409,55 @@ def test_a2a_task_send_write_token_rejects_missing_and_accepts_valid_token(
     assert accepted.json()["status"] == "accepted"
 
 
+def test_a2a_jsonrpc_task_send_auth_failure_preserves_rpc_envelope(
+    tmp_path: Path,
+) -> None:
+    client = TestClient(
+        create_app(
+            base_dir=tmp_path,
+            a2a_bridge_enabled=True,
+            a2a_write_token="a2a-secret",
+        )
+    )
+
+    response = client.post(
+        "/a2a/tasks/send",
+        json={
+            "jsonrpc": "2.0",
+            "id": "rpc-auth-required",
+            "method": "SendMessage",
+            "params": {
+                "tenant": "external-a2a",
+                "message": {
+                    "messageId": "msg-auth-required",
+                    "taskId": "task-auth-required",
+                    "contextId": "conv-auth-required",
+                    "role": "ROLE_USER",
+                    "parts": [{"text": "@review inspect auth boundary."}],
+                    "metadata": {
+                        "sender_agent_id": "external-a2a",
+                        "target_address": "@review",
+                    },
+                },
+            },
+        },
+    )
+
+    assert response.status_code == 401
+    assert response.json() == {
+        "jsonrpc": "2.0",
+        "id": "rpc-auth-required",
+        "error": {
+            "code": -32001,
+            "message": "a2a_write_auth_required",
+            "data": {
+                "detail": "A2A task/send requires a valid write token",
+            },
+        },
+    }
+    assert ChatStore(tmp_path / "chat.db").list_conversations() == []
+
+
 def test_a2a_jsonrpc_send_message_request_enters_chat_inbox(
     tmp_path: Path,
 ) -> None:
