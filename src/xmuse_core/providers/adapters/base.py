@@ -61,6 +61,19 @@ class ProviderFailureKind(StrEnum):
     STALE_REQUEST = "stale_request"
 
 
+class ProviderInvocationWritebackContext(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    conversation_id: str
+    participant_id: str
+    reply_to_inbox_item_id: str
+
+    @field_validator("conversation_id", "participant_id", "reply_to_inbox_item_id")
+    @classmethod
+    def _validate_text(cls, value: str, info: ValidationInfo) -> str:
+        return _require_text(value, info.field_name)
+
+
 class ProviderInvocation(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -73,6 +86,7 @@ class ProviderInvocation(BaseModel):
     workspace: Path
     timeout_seconds: int = Field(gt=0)
     goal_contract: WorkerGoalContract | None = None
+    writeback_context: ProviderInvocationWritebackContext | None = None
 
     @field_validator("request_id", "prompt")
     @classmethod
