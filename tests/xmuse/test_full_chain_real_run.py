@@ -150,19 +150,50 @@ class FakeProviderAppServerActor:
             inbox_items = inbox["inbox_items"]
             assert inbox_items
             item = inbox_items[0]
-            await _http_mcp_call(
-                client,
-                mcp_url,
-                "chat_post_message",
-                {
-                    "conversation_id": context["conversation_id"],
-                    "participant_id": context["participant_id"],
-                    "god_session_id": context["god_session_id"],
-                    "client_request_id": f"{item['id']}:fake-provider",
-                    "content": f"Architect GOD via {self._thread_id}: received.",
-                    "reply_to_inbox_item_id": item["id"],
-                },
+            item_payload = item.get("payload", {})
+            item_content = (
+                item_payload.get("content", "") if isinstance(item_payload, dict) else ""
             )
+            if "chat_emit_proposal" in str(item_content):
+                await _http_mcp_call(
+                    client,
+                    mcp_url,
+                    "chat_emit_proposal",
+                    {
+                        "conversation_id": context["conversation_id"],
+                        "participant_id": context["participant_id"],
+                        "god_session_id": context["god_session_id"],
+                        "client_request_id": f"{item['id']}:fake-proposal",
+                        "summary": "A2A routed proposal smoke",
+                        "lanes": [
+                            {
+                                "feature_id": "a2a-routed-proposal-smoke",
+                                "prompt": (
+                                    "Prove A2A handoff can enter xmuse "
+                                    "proposal authority."
+                                ),
+                                "depends_on": [],
+                                "capabilities": ["code", "test"],
+                            }
+                        ],
+                        "references": [],
+                        "reply_to_inbox_item_id": item["id"],
+                    },
+                )
+            else:
+                await _http_mcp_call(
+                    client,
+                    mcp_url,
+                    "chat_post_message",
+                    {
+                        "conversation_id": context["conversation_id"],
+                        "participant_id": context["participant_id"],
+                        "god_session_id": context["god_session_id"],
+                        "client_request_id": f"{item['id']}:fake-provider",
+                        "content": f"Architect GOD via {self._thread_id}: received.",
+                        "reply_to_inbox_item_id": item["id"],
+                    },
+                )
         return type(
             "Message",
             (),
@@ -1725,6 +1756,221 @@ async def test_a2a_provider_result_handoff_reaches_review_peer(
             )
             assert review_replies[0].reply_to_message_id is None
             assert ChatStore(db_path).list_proposals(conversation_id) == []
+            traces = await _wait_for_latency_trace_count(db_path, conversation_id, 2)
+            delivery_modes = {trace["delivery_mode"] for trace in traces}
+            assert "a2a_provider_writeback" in delivery_modes
+            assert "mcp_writeback" in delivery_modes
+    finally:
+        if "runner_task" in locals():
+            await stop_runner(runner_task)
+        await _stop_server(chat_server, chat_task)
+        await _stop_server(mcp_server, mcp_task)
+        await _stop_server(a2a_server, a2a_task)
+
+
+@pytest.mark.asyncio
+async def test_a2a_provider_result_handoff_reaches_architect_proposal(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    db_path = tmp_path / "chat.db"
+    lanes_path = tmp_path / "feature_lanes.json"
+    lanes_path.write_text(json.dumps({"lanes": []}), encoding="utf-8")
+    chat_port = _free_port()
+    mcp_port = _free_port()
+    a2a_port = _free_port()
+
+    class RuntimeLauncher(DummyLauncher):
+        supports_persistent_sessions = True
+
+    def fake_build_default_launchers(*, mcp_port: int):
+        launcher = RuntimeLauncher("gpt-5.5")
+        launcher.mcp_port = mcp_port
+        return {AgentRuntime.CODEX: launcher}
+
+    def fake_build_actor(self, **kwargs):
+        del self
+        return FakeProviderAppServerActor(**kwargs)
+
+    a2a_app = FastAPI()
+
+    @a2a_app.post("/a2a")
+    async def fake_a2a_task(request: Request) -> dict[str, object]:
+        body = await request.json()
+        message = body["params"]["message"]
+        task_id = message["task_id"]
+        context_id = message["context_id"]
+        return {
+            "jsonrpc": "2.0",
+            "id": body["id"],
+            "result": {
+                "task": {
+                    "id": task_id,
+                    "contextId": context_id,
+                    "status": {"state": "TASK_STATE_COMPLETED"},
+                    "artifacts": [
+                        {
+                            "artifactId": "artifact-a2a-proposal-handoff",
+                            "name": "remote-a2a-proposal-handoff",
+                            "parts": [
+                                {
+                                    "text": (
+                                        "@architect Please take over this A2A "
+                                        "candidate through xmuse proposal authority.\n"
+                                        "what: Convert this candidate into a "
+                                        "source-linked lane proposal.\n"
+                                        "why: A2A output is interop evidence, "
+                                        "not proposal authority.\n"
+                                        "tradeoffs: Requires architect MCP "
+                                        "writeback before review can begin.\n"
+                                        "open_questions: none.\n"
+                                        "next_action: Use MCP tool "
+                                        "chat_emit_proposal now. Do not use "
+                                        "chat_post_message for this proposal turn.\n"
+                                        "evidence_refs: a2a_task:"
+                                        "a2a-provider-proposal-handoff"
+                                    )
+                                }
+                            ],
+                        }
+                    ],
+                }
+            },
+        }
+
+    import xmuse_core.agents.launchers as launchers_module
+
+    monkeypatch.setattr(
+        launchers_module,
+        "build_default_launchers",
+        fake_build_default_launchers,
+    )
+    monkeypatch.setattr(RayGodSessionLayer, "_build_actor", fake_build_actor)
+    monkeypatch.setenv("XMUSE_PEER_GOD_BACKEND", "ray")
+    monkeypatch.setenv(
+        "XMUSE_A2A_PROVIDER_URL",
+        f"http://127.0.0.1:{a2a_port}/a2a",
+    )
+    monkeypatch.delenv("XMUSE_DEGRADED_LOCAL_GOD_MODE", raising=False)
+
+    chat_server, chat_task = await _serve_app(
+        create_chat_app(tmp_path, a2a_bridge_enabled=True),
+        port=chat_port,
+    )
+    mcp_server, mcp_task = await _serve_app(create_mcp_app(tmp_path), port=mcp_port)
+    a2a_server, a2a_task = await _serve_app(a2a_app, port=a2a_port)
+
+    async def start_runner() -> asyncio.Task:
+        return asyncio.create_task(
+            platform_runner.run(
+                lanes_path=lanes_path,
+                xmuse_root=tmp_path,
+                mcp_port=mcp_port,
+                max_hours=1,
+                max_concurrent=1,
+                peer_chat_enabled=True,
+            )
+        )
+
+    async def stop_runner(task: asyncio.Task) -> None:
+        task.cancel()
+        try:
+            await asyncio.wait_for(task, timeout=5)
+        except (TimeoutError, asyncio.CancelledError):
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+
+    try:
+        runner_task = await start_runner()
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{chat_port}") as client:
+            created = await client.post(
+                "/api/chat/conversations",
+                json={
+                    "title": "A2A provider result proposal handoff",
+                    "initial_participants": [],
+                },
+            )
+            created.raise_for_status()
+            conversation_id = created.json()["id"]
+            participants = ParticipantStore(db_path)
+            remote_planner = participants.add(
+                conversation_id=conversation_id,
+                role="planner",
+                display_name="Remote A2A Planner GOD",
+                cli_kind="a2a",
+                model="a2a-remote",
+            )
+            architect = participants.add(
+                conversation_id=conversation_id,
+                role="architect",
+                display_name="Architect GOD",
+                cli_kind="codex",
+                model="gpt-5.5",
+            )
+            review = participants.add(
+                conversation_id=conversation_id,
+                role="review",
+                display_name="Review GOD",
+                cli_kind="codex",
+                model="gpt-5.5",
+            )
+
+            routed = await client.post(
+                "/a2a/tasks/send",
+                json={
+                    "task_id": "a2a-provider-proposal-handoff",
+                    "context_id": conversation_id,
+                    "sender_agent_id": "external-planner",
+                    "target_address": "@planner",
+                    "content": "@planner prepare a proposal handoff.",
+                },
+            )
+            routed.raise_for_status()
+
+            planner_replies = await _wait_for_reply_count(
+                db_path,
+                conversation_id,
+                remote_planner.participant_id,
+                1,
+            )
+            assert planner_replies[0].envelope_type == "a2a_provider_result"
+            architect_items = [
+                item
+                for item in ChatInboxStore(db_path).list_by_conversation(
+                    conversation_id,
+                    include_terminal=True,
+                )
+                if item.target_participant_id == architect.participant_id
+            ]
+            assert architect_items
+            assert architect_items[0].payload["source_kind"] == "a2a_provider_result"
+            assert architect_items[0].payload["route_kind"] == "handoff"
+            assert architect_items[0].payload["handoff_assessment"]["is_complete"] is True
+
+            proposals = await _wait_for_proposal_count(db_path, conversation_id, 1)
+            proposal = proposals[0]
+            assert proposal.author == architect.participant_id
+            assert proposal.proposal_type == "lane_graph"
+            assert proposal.references == []
+            proposal_payload = json.loads(proposal.content)
+            assert proposal_payload["lanes"][0]["feature_id"] == (
+                "a2a-routed-proposal-smoke"
+            )
+
+            review_items = await _wait_for_review_trigger_count(
+                db_path,
+                conversation_id,
+                1,
+            )
+            assert review_items[0].target_participant_id == review.participant_id
+            assert review_items[0].payload["reviewable_type"] == "lane_graph"
+
+            stages = PeerTurnLatencyTraceStore(db_path).list_mcp_tool_stages(
+                conversation_id,
+                architect_items[0].id,
+            )
+            assert "chat_emit_proposal" in stages
             traces = await _wait_for_latency_trace_count(db_path, conversation_id, 2)
             delivery_modes = {trace["delivery_mode"] for trace in traces}
             assert "a2a_provider_writeback" in delivery_modes
