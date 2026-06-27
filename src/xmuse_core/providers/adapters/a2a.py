@@ -17,7 +17,10 @@ from xmuse_core.providers.adapters.base import (
     ProviderInvocationResult,
 )
 from xmuse_core.providers.goal_contract import WorkerResultStatus
-from xmuse_core.providers.health import ProviderHealthSnapshot
+from xmuse_core.providers.health import (
+    ProviderHealthFailureKind,
+    ProviderHealthSnapshot,
+)
 from xmuse_core.providers.models import (
     AdapterKind,
     ProviderId,
@@ -105,15 +108,34 @@ class A2AProviderAdapter:
         )
 
     def check_health(self) -> ProviderHealthSnapshot:
+        if self._api_key is None:
+            return ProviderHealthSnapshot(
+                provider_id=self.profile.provider_id,
+                profile_id=self.profile.profile_id,
+                checked_at=self._checked_at_factory(),
+                is_available=False,
+                is_configured=True,
+                auth_ok=False,
+                model_available=False,
+                failure_kind=ProviderHealthFailureKind.AUTH_ERROR,
+                diagnostic_summary=(
+                    "A2A endpoint configured, but no provider API key is present; "
+                    "remote write auth is not proven."
+                ),
+            )
         return ProviderHealthSnapshot(
             provider_id=self.profile.provider_id,
             profile_id=self.profile.profile_id,
             checked_at=self._checked_at_factory(),
-            is_available=True,
+            is_available=False,
             is_configured=True,
             auth_ok=True,
-            model_available=True,
-            diagnostic_summary="A2A adapter configured; live remote health not probed.",
+            model_available=False,
+            failure_kind=ProviderHealthFailureKind.UNAVAILABLE,
+            diagnostic_summary=(
+                "A2A endpoint and API key configured; live remote health is not "
+                "probed, so availability is not asserted."
+            ),
         )
 
     def _build_task_request(
@@ -135,6 +157,8 @@ class A2AProviderAdapter:
             metadata["xmuse_writeback_context"] = (
                 invocation.writeback_context.model_dump(mode="json")
             )
+            if _uses_natural_groupchat_route(invocation.runtime_context):
+                context_id = invocation.writeback_context.conversation_id
         if invocation.runtime_context:
             metadata["xmuse_runtime_context"] = dict(invocation.runtime_context)
         if invocation.goal_contract is not None:
@@ -189,6 +213,11 @@ def _context_id_for_invocation(invocation: ProviderInvocation) -> str:
         if lane_id:
             return lane_id
     return invocation.request_id
+
+
+def _uses_natural_groupchat_route(runtime_context: dict[str, object]) -> bool:
+    route = runtime_context.get("route")
+    return isinstance(route, dict) and bool(route.get("route_key"))
 
 
 def _review_expected_result_contract(*, lane_id: str) -> dict[str, object]:

@@ -16,6 +16,7 @@ from xmuse_core.providers.goal_contract import (
     WorkerGoalContract,
     WorkerResultStatus,
 )
+from xmuse_core.providers.health import ProviderHealthFailureKind
 from xmuse_core.providers.models import (
     ProviderId,
     ProviderProfile,
@@ -252,6 +253,55 @@ def test_a2a_provider_adapter_includes_xmuse_context_metadata(tmp_path) -> None:
     }
 
 
+def test_a2a_provider_adapter_uses_conversation_context_for_natural_route(
+    tmp_path,
+) -> None:
+    client = FakeA2ATaskClient(
+        _task_result(disposition="completed", state="TASK_STATE_COMPLETED")
+    )
+    adapter = A2AProviderAdapter(
+        _profile(),
+        endpoint_url="https://remote.example/a2a",
+        client=client,
+    )
+    invocation = ProviderInvocation(
+        request_id="inbox-a2a-natural",
+        provider_id=ProviderId.A2A,
+        profile_id=ProviderProfileId.REMOTE,
+        task_type=TaskCapability.BOUNDED_DELIBERATION,
+        risk_tier=RiskTier.MEDIUM,
+        prompt="@review inspect natural handoff.",
+        workspace=tmp_path,
+        timeout_seconds=120,
+        writeback_context=ProviderInvocationWritebackContext(
+            conversation_id="conv-natural",
+            participant_id="participant-a2a",
+            reply_to_inbox_item_id="inbox-a2a-natural",
+        ),
+        runtime_context={
+            "authority": "chat.db/inbox",
+            "a2a_is_authority": False,
+            "route": {
+                "route_key": "natural-route:abc",
+                "source_kind": "human_line_start_mention",
+                "depth": 1,
+            },
+        },
+    )
+
+    adapter.invoke(invocation)
+
+    request = client.requests[0]
+    assert request.task_id == "inbox-a2a-natural"
+    assert request.context_id == "conv-natural"
+    assert request.metadata["xmuse_writeback_context"]["conversation_id"] == (
+        "conv-natural"
+    )
+    assert request.metadata["xmuse_runtime_context"]["route"]["route_key"] == (
+        "natural-route:abc"
+    )
+
+
 def test_a2a_provider_adapter_marks_task_metadata_as_non_authority(tmp_path) -> None:
     client = FakeA2ATaskClient(
         _task_result(disposition="completed", state="TASK_STATE_COMPLETED")
@@ -342,7 +392,7 @@ def test_a2a_provider_adapter_rejects_unsupported_capability(tmp_path) -> None:
     assert result.evidence_refs == ["a2a_adapter:unsupported_capability"]
 
 
-def test_a2a_provider_adapter_health_reports_configured_contract() -> None:
+def test_a2a_provider_adapter_health_requires_write_auth_proof() -> None:
     adapter = A2AProviderAdapter(
         _profile(),
         endpoint_url="https://remote.example/a2a",
@@ -353,10 +403,32 @@ def test_a2a_provider_adapter_health_reports_configured_contract() -> None:
 
     assert snapshot.provider_profile_ref == "a2a.remote"
     assert snapshot.is_configured is True
-    assert snapshot.is_available is True
+    assert snapshot.is_available is False
+    assert snapshot.auth_ok is False
+    assert snapshot.model_available is False
+    assert snapshot.failure_kind is ProviderHealthFailureKind.AUTH_ERROR
+    assert "remote write auth is not proven" in str(snapshot.diagnostic_summary)
+
+
+def test_a2a_provider_adapter_health_does_not_claim_live_remote_availability() -> None:
+    adapter = A2AProviderAdapter(
+        _profile(),
+        endpoint_url="https://remote.example/a2a",
+        api_key="secret",
+        checked_at_factory=lambda: datetime(2026, 6, 27, tzinfo=UTC),
+    )
+
+    snapshot = adapter.check_health()
+
+    assert snapshot.provider_profile_ref == "a2a.remote"
+    assert snapshot.is_configured is True
     assert snapshot.auth_ok is True
+    assert snapshot.is_available is False
+    assert snapshot.model_available is False
+    assert snapshot.failure_kind is ProviderHealthFailureKind.UNAVAILABLE
     assert snapshot.diagnostic_summary == (
-        "A2A adapter configured; live remote health not probed."
+        "A2A endpoint and API key configured; live remote health is not probed, "
+        "so availability is not asserted."
     )
 
 

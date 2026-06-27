@@ -25,7 +25,14 @@ async def test_a2a_provider_client_sends_sdk_request_and_normalizes_task_result(
         assert body["params"]["message"]["task_id"] == "task-remote"
         assert body["params"]["message"]["context_id"] == "conv-remote"
         assert body["params"]["message"]["parts"] == [
-            {"text": "@review inspect remote output."}
+            {"text": "@review inspect remote output."},
+            {"data": {"evidence": "bounded"}},
+            {
+                "url": "file:///tmp/evidence.md",
+                "metadata": {"file_id": "file:///tmp/evidence.md"},
+                "filename": "evidence.md",
+                "media_type": "text/markdown",
+            },
         ]
         assert body["params"]["message"]["metadata"]["purpose"] == "review_request"
         assert body["params"]["message"]["metadata"]["metadata"] == {
@@ -66,6 +73,15 @@ async def test_a2a_provider_client_sends_sdk_request_and_normalizes_task_result(
                 target_address="@review",
                 content="@review inspect remote output.",
                 metadata={"purpose": "review_request"},
+                input_parts=(
+                    {"kind": "data", "data": {"evidence": "bounded"}},
+                    {
+                        "kind": "file",
+                        "file_id": "file:///tmp/evidence.md",
+                        "filename": "evidence.md",
+                        "media_type": "text/markdown",
+                    },
+                ),
             )
         )
 

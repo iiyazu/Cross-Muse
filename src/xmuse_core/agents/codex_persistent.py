@@ -360,7 +360,10 @@ def _format_turn_prompt(
                 "reference, passing "
                 "`reply_to_inbox_item_id=xmuse_context.inbox_item.id` so the proposal "
                 "closes the current inbox item. Human approval remains required before "
-                "dispatch.",
+                "dispatch. Every dispatchable lane_graph lane must include explicit "
+                "`gate_profiles`, for example `[\"xmuse-core\"]` for xmuse core code "
+                "paths; if you cannot choose a gate profile, write a blocker or open "
+                "question instead of proposing dispatchable work.",
                 "If MCP tools are unavailable, return one concise natural-language "
                 "assistant reply on stdout. The scheduler will publish that stdout as "
                 "the GOD reply.",

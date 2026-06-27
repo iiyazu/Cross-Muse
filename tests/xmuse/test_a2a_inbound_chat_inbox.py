@@ -134,6 +134,7 @@ def test_a2a_complete_review_task_records_canonical_handoff_envelope(
                 "next action: review the inbox payload.\n"
                 "evidence refs: a2a_task:task-complete-review"
             ),
+            metadata={"feature_scope_id": "feature_scope:a2a-inbound"},
             input_parts=({"kind": "url", "url": "file:///tmp/evidence.md"},),
         )
     )
@@ -154,6 +155,7 @@ def test_a2a_complete_review_task_records_canonical_handoff_envelope(
         "schema_version": "xmuse-natural-handoff-v1",
         "task_id": "task-complete-review",
         "conversation_id": conversation.id,
+        "feature_scope_id": "feature_scope:a2a-inbound",
         "origin_message_id": "task-complete-review",
         "source_message_id": "task-complete-review",
         "source_inbox_item_id": None,
@@ -405,6 +407,55 @@ def test_a2a_task_send_write_token_rejects_missing_and_accepts_valid_token(
     assert rejected.json()["detail"]["code"] == "a2a_write_auth_required"
     assert accepted.status_code == 202
     assert accepted.json()["status"] == "accepted"
+
+
+def test_a2a_jsonrpc_task_send_auth_failure_preserves_rpc_envelope(
+    tmp_path: Path,
+) -> None:
+    client = TestClient(
+        create_app(
+            base_dir=tmp_path,
+            a2a_bridge_enabled=True,
+            a2a_write_token="a2a-secret",
+        )
+    )
+
+    response = client.post(
+        "/a2a/tasks/send",
+        json={
+            "jsonrpc": "2.0",
+            "id": "rpc-auth-required",
+            "method": "SendMessage",
+            "params": {
+                "tenant": "external-a2a",
+                "message": {
+                    "messageId": "msg-auth-required",
+                    "taskId": "task-auth-required",
+                    "contextId": "conv-auth-required",
+                    "role": "ROLE_USER",
+                    "parts": [{"text": "@review inspect auth boundary."}],
+                    "metadata": {
+                        "sender_agent_id": "external-a2a",
+                        "target_address": "@review",
+                    },
+                },
+            },
+        },
+    )
+
+    assert response.status_code == 401
+    assert response.json() == {
+        "jsonrpc": "2.0",
+        "id": "rpc-auth-required",
+        "error": {
+            "code": -32001,
+            "message": "a2a_write_auth_required",
+            "data": {
+                "detail": "A2A task/send requires a valid write token",
+            },
+        },
+    }
+    assert ChatStore(tmp_path / "chat.db").list_conversations() == []
 
 
 def test_a2a_jsonrpc_send_message_request_enters_chat_inbox(

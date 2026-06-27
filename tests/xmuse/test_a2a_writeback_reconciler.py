@@ -104,7 +104,10 @@ def _a2a_provider_result_with_proposal(
     return provider_result.model_copy(update={"diagnostic_payload": diagnostic})
 
 
-def _a2a_provider_result_with_review_handoff() -> ProviderInvocationResult:
+def _a2a_provider_result_with_review_handoff(
+    *,
+    metadata: dict[str, object] | None = None,
+) -> ProviderInvocationResult:
     return ProviderInvocationResult(
         request_id="req-a2a-architect",
         provider_id=ProviderId.A2A,
@@ -131,7 +134,7 @@ def _a2a_provider_result_with_review_handoff() -> ProviderInvocationResult:
             ),
             "a2a_artifacts": [{"artifact_id": "artifact-candidate", "text": "bounded"}],
             "a2a_history": [],
-            "a2a_metadata": {},
+            "a2a_metadata": dict(metadata or {}),
             "a2a_source_refs": ["a2a_task:req-a2a-architect"],
             "a2a_sdk_task": {
                 "id": "req-a2a-architect",
@@ -260,6 +263,7 @@ def test_a2a_provider_metadata_proposal_enters_proposal_authority(
                             "prompt": "Validate structured A2A proposal writeback.",
                             "depends_on": [],
                             "capabilities": ["code", "test"],
+                            "gate_profiles": ["xmuse-core"],
                         }
                     ],
                 },
@@ -279,12 +283,56 @@ def test_a2a_provider_metadata_proposal_enters_proposal_authority(
     assert "a2a_task:req-a2a-review" in proposal.references
     assert "artifact:a2a-proposal" in proposal.references
     assert json.loads(proposal.content)["lanes"][0]["feature_id"] == "a2a-proposal-lane"
+    assert json.loads(proposal.content)["lanes"][0]["gate_profiles"] == ["xmuse-core"]
     writeback = result["message"]
     assert writeback["envelope_type"] == "a2a_provider_result"
     assert writeback["envelope_json"]["proposal_writeback"]["proposal_id"] == proposal.id
     updated = ChatInboxStore(db).get(inbox_item.id)
     assert updated.status == "read"
     assert updated.responded_message_id == writeback["id"]
+
+
+def test_a2a_lane_graph_proposal_missing_gate_profiles_blocks_without_proposal(
+    tmp_path: Path,
+) -> None:
+    db, _chat, conversation, participant, inbox_item = _setup_inbox(tmp_path)
+
+    result = A2AProviderWritebackReconciler(db).record_provider_result(
+        conversation_id=conversation.id,
+        participant_id=participant.participant_id,
+        reply_to_inbox_item_id=inbox_item.id,
+        provider_result=_a2a_provider_result_with_proposal(
+            proposal_payload={
+                "schema_version": 1,
+                "proposal_type": "lane_graph",
+                "summary": "Ungated A2A lane graph candidate",
+                "content": {
+                    "summary": "Ungated A2A lane graph candidate",
+                    "lanes": [
+                        {
+                            "feature_id": "a2a-ungated-lane",
+                            "prompt": "This must not become dispatchable.",
+                            "depends_on": [],
+                            "capabilities": ["code", "test"],
+                        }
+                    ],
+                },
+                "references": ["artifact:a2a-ungated-proposal"],
+            },
+        ),
+    )
+
+    assert ChatStore(db).list_proposals(conversation.id) == []
+    blocked = result["proposal_writeback"]
+    assert blocked["status"] == "blocked"
+    assert blocked["reason"] == "missing_gate_profiles"
+    assert "missing_gate_profiles" in blocked["detail"]
+    assert blocked["authority"] == "chat.db/inbox"
+    assert blocked["a2a_is_authority"] is False
+    assert result["message"]["envelope_json"]["proposal_writeback"]["status"] == "blocked"
+    updated = ChatInboxStore(db).get(inbox_item.id)
+    assert updated.status == "read"
+    assert updated.responded_message_id == result["message"]["id"]
 
 
 def test_invalid_a2a_provider_proposal_metadata_blocks_without_proposal(
@@ -434,7 +482,9 @@ def test_a2a_provider_result_leading_mention_creates_durable_route(
         conversation_id=conversation.id,
         participant_id=architect.participant_id,
         reply_to_inbox_item_id=source_inbox.id,
-        provider_result=_a2a_provider_result_with_review_handoff(),
+        provider_result=_a2a_provider_result_with_review_handoff(
+            metadata={"feature_scope_id": "feature_scope:a2a-provider"}
+        ),
     )
 
     response = result["message"]
@@ -455,6 +505,10 @@ def test_a2a_provider_result_leading_mention_creates_durable_route(
     assert routed["payload"]["handoff_envelope"]["source_inbox_item_id"] == (
         source_inbox.id
     )
+    assert (
+        routed["payload"]["handoff_envelope"]["feature_scope_id"]
+        == "feature_scope:a2a-provider"
+    )
     stored_review_items = [
         item
         for item in ChatInboxStore(db).list_by_conversation(conversation.id)
@@ -463,6 +517,96 @@ def test_a2a_provider_result_leading_mention_creates_durable_route(
     assert len(stored_review_items) == 1
     assert stored_review_items[0].payload["route_key"] == routed["payload"]["route_key"]
     assert ChatStore(db).list_proposals(conversation.id) == []
+
+
+def test_a2a_provider_result_fanout_excess_writes_durable_route_blocker(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "chat.db"
+    chat = ChatStore(db)
+    conversation = chat.create_conversation("A2A provider fanout guard")
+    participants = ParticipantStore(db)
+    architect = participants.add(
+        conversation_id=conversation.id,
+        role="architect",
+        display_name="A2A Architect",
+        cli_kind="a2a",
+        model="a2a-remote",
+    )
+    review = participants.add(
+        conversation_id=conversation.id,
+        role="review",
+        display_name="Review GOD",
+        cli_kind="codex",
+        model="gpt-5.4",
+    )
+    execute = participants.add(
+        conversation_id=conversation.id,
+        role="execute",
+        display_name="Execute GOD",
+        cli_kind="codex",
+        model="gpt-5.4",
+    )
+    source = chat.add_message(
+        conversation.id,
+        "human",
+        "human",
+        "@architect create a candidate.",
+    )
+    source_inbox = ChatInboxStore(db).create_item(
+        conversation_id=conversation.id,
+        target_participant_id=architect.participant_id,
+        target_role=architect.role,
+        target_address="@architect",
+        sender_participant_id=None,
+        sender_address="@human",
+        source_message_id=source.id,
+        item_type="mention",
+        payload={"content": source.content},
+    )
+    provider_result = _a2a_provider_result_with_review_handoff()
+    diagnostic = dict(provider_result.diagnostic_payload)
+    diagnostic["a2a_content"] = (
+        "@review, @execute\n"
+        "what: Review and execute the A2A handoff candidate.\n"
+        "why: This intentionally exceeds the provider-result fanout cap.\n"
+        "tradeoffs: Keep multi-target routing blocked until explicitly split.\n"
+        "open_questions: none.\n"
+        "next_action: Record a durable route blocker.\n"
+        "evidence_refs: a2a_task:req-a2a-architect"
+    )
+
+    result = A2AProviderWritebackReconciler(db).record_provider_result(
+        conversation_id=conversation.id,
+        participant_id=architect.participant_id,
+        reply_to_inbox_item_id=source_inbox.id,
+        provider_result=provider_result.model_copy(
+            update={"diagnostic_payload": diagnostic}
+        ),
+    )
+
+    assert result["inbox_items"] == []
+    blocker = result["message"]["envelope_json"]["route_blocker"]
+    assert blocker == result["route_blocker"]
+    assert blocker["reason"] == "a2a_provider_result_fanout_exceeded"
+    assert blocker["max_fanout"] == 1
+    assert blocker["target_participant_ids"] == [
+        review.participant_id,
+        execute.participant_id,
+    ]
+    assert blocker["target_addresses"] == ["@review", "@execute"]
+    assert blocker["authority"] == "chat.db/inbox"
+    assert blocker["a2a_is_authority"] is False
+    assert blocker["blocks_dispatch"] is True
+    assert ChatInboxStore(db).get(source_inbox.id).status == "read"
+    assert [
+        item
+        for item in ChatInboxStore(db).list_by_conversation(
+            conversation.id,
+            include_terminal=True,
+        )
+        if item.source_message_id == result["message"]["id"]
+    ] == []
 
 
 def test_a2a_provider_result_markdown_leading_mention_creates_durable_route(
