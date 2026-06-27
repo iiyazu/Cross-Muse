@@ -15,6 +15,8 @@ from xmuse_core.chat.dispatch_queue import ChatDispatchQueueStore
 from xmuse_core.chat.peer_service import PeerChatService
 from xmuse_core.chat.store import ChatStore
 from xmuse_core.gates.models import GateReport
+from xmuse_core.integrations.a2a_provider_client import A2AProviderTaskRequest
+from xmuse_core.integrations.a2a_sdk_boundary import NormalizedA2ATaskResult
 from xmuse_core.platform.agent_spawner import SpawnResult
 from xmuse_core.platform.execution.a2a_review_verdicts import (
     build_a2a_platform_review_verdict_envelope,
@@ -4481,6 +4483,102 @@ async def test_a2a_review_runtime_structured_verdict_marks_reviewed_without_stdo
     ]
     assert lane["review_verdict_id"]
     reviewed.assert_awaited_once_with("lane-a2a-review")
+
+
+@pytest.mark.asyncio
+async def test_a2a_review_runtime_uses_adapter_result_contract_for_review_god(
+    setup,
+):
+    tmp_path, lanes_path = setup
+    lanes_path.write_text(json.dumps({"lanes": [
+        {
+            "feature_id": "lane-a2a-contract-path",
+            "status": "gated",
+            "prompt": "fix",
+            "worktree": str(tmp_path),
+            "review_runtime": "a2a",
+        },
+    ]}))
+
+    class ContractAwareA2AClient:
+        def __init__(self) -> None:
+            self.requests: list[A2AProviderTaskRequest] = []
+
+        async def invoke_task(
+            self,
+            request: A2AProviderTaskRequest,
+        ) -> NormalizedA2ATaskResult:
+            self.requests.append(request)
+            expected = request.metadata["xmuse_expected_result"]
+            assert isinstance(expected, dict)
+            envelope_contract = expected["envelope"]
+            assert isinstance(envelope_contract, dict)
+            lane_id = envelope_contract["lane_id"]
+            assert lane_id == "lane-a2a-contract-path"
+            assert envelope_contract["authority"] == "review_plane/lane_state"
+            assert envelope_contract["a2a_is_authority"] is False
+            return NormalizedA2ATaskResult(
+                task_id=request.task_id,
+                context_id=request.context_id,
+                state="TASK_STATE_COMPLETED",
+                disposition="completed",
+                terminal=True,
+                content="Verdict: merge",
+                metadata={
+                    "xmuse_platform_review_verdict": (
+                        build_a2a_platform_review_verdict_envelope(
+                            lane_id=str(lane_id),
+                            decision="merge",
+                            summary="A2A contract path returns structured review.",
+                            evidence_refs=[
+                                f"a2a_task:{request.task_id}",
+                                f"a2a_context:{request.context_id}",
+                            ],
+                        )
+                    )
+                },
+                source_refs=(
+                    f"a2a_task:{request.task_id}",
+                    f"a2a_context:{request.context_id}",
+                ),
+                sdk_task={
+                    "id": request.task_id,
+                    "contextId": request.context_id,
+                    "status": {"state": "TASK_STATE_COMPLETED"},
+                },
+                jsonrpc_id=request.task_id,
+            )
+
+    client = ContractAwareA2AClient()
+    provider_service = RunnerProviderService(
+        a2a_provider_endpoint_url="https://remote.example/a2a",
+        a2a_task_client=client,
+    )
+    orch = PlatformOrchestrator(
+        lanes_path=lanes_path,
+        xmuse_root=tmp_path,
+        mcp_port=9999,
+        provider_service=provider_service,
+    )
+
+    with patch.object(orch, "on_lane_reviewed", new_callable=AsyncMock) as reviewed:
+        await orch._run_review_god("lane-a2a-contract-path")
+
+    assert len(client.requests) == 1
+    request = client.requests[0]
+    assert request.task_id == "lane-a2a-contract-path:review"
+    assert request.context_id == "lane-a2a-contract-path"
+    lane = orch._sm.get_lane("lane-a2a-contract-path")
+    assert lane["status"] == "reviewed"
+    assert lane["review_decision"] == "merge"
+    assert lane["review_fallback"] == "a2a_provider_result"
+    assert lane["review_fallback_reason"] == "structured_a2a_platform_review_verdict"
+    assert lane["review_delivery_mode"] == "a2a_provider_result"
+    assert lane["review_evidence_refs"] == [
+        "a2a_task:lane-a2a-contract-path:review",
+        "a2a_context:lane-a2a-contract-path",
+    ]
+    reviewed.assert_awaited_once_with("lane-a2a-contract-path")
 
 
 @pytest.mark.asyncio
