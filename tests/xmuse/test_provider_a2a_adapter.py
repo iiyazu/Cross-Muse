@@ -16,6 +16,7 @@ from xmuse_core.providers.goal_contract import (
     WorkerGoalContract,
     WorkerResultStatus,
 )
+from xmuse_core.providers.health import ProviderHealthFailureKind
 from xmuse_core.providers.models import (
     ProviderId,
     ProviderProfile,
@@ -342,7 +343,7 @@ def test_a2a_provider_adapter_rejects_unsupported_capability(tmp_path) -> None:
     assert result.evidence_refs == ["a2a_adapter:unsupported_capability"]
 
 
-def test_a2a_provider_adapter_health_reports_configured_contract() -> None:
+def test_a2a_provider_adapter_health_requires_write_auth_proof() -> None:
     adapter = A2AProviderAdapter(
         _profile(),
         endpoint_url="https://remote.example/a2a",
@@ -353,10 +354,32 @@ def test_a2a_provider_adapter_health_reports_configured_contract() -> None:
 
     assert snapshot.provider_profile_ref == "a2a.remote"
     assert snapshot.is_configured is True
-    assert snapshot.is_available is True
+    assert snapshot.is_available is False
+    assert snapshot.auth_ok is False
+    assert snapshot.model_available is False
+    assert snapshot.failure_kind is ProviderHealthFailureKind.AUTH_ERROR
+    assert "remote write auth is not proven" in str(snapshot.diagnostic_summary)
+
+
+def test_a2a_provider_adapter_health_does_not_claim_live_remote_availability() -> None:
+    adapter = A2AProviderAdapter(
+        _profile(),
+        endpoint_url="https://remote.example/a2a",
+        api_key="secret",
+        checked_at_factory=lambda: datetime(2026, 6, 27, tzinfo=UTC),
+    )
+
+    snapshot = adapter.check_health()
+
+    assert snapshot.provider_profile_ref == "a2a.remote"
+    assert snapshot.is_configured is True
     assert snapshot.auth_ok is True
+    assert snapshot.is_available is False
+    assert snapshot.model_available is False
+    assert snapshot.failure_kind is ProviderHealthFailureKind.UNAVAILABLE
     assert snapshot.diagnostic_summary == (
-        "A2A adapter configured; live remote health not probed."
+        "A2A endpoint and API key configured; live remote health is not probed, "
+        "so availability is not asserted."
     )
 
 
