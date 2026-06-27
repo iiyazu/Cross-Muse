@@ -160,7 +160,7 @@ class PeerChatScheduler:
                 group_context=group_context,
             )
             if participant.cli_kind == "a2a":
-                return self._deliver_a2a_provider_item(
+                return await self._deliver_a2a_provider_item(
                     item,
                     participant=participant,
                     prompt=assembled_prompt.text,
@@ -498,7 +498,7 @@ class PeerChatScheduler:
         )
         return PeerChatSchedulerOutcome(nudged=1, happy_path=1)
 
-    def _deliver_a2a_provider_item(
+    async def _deliver_a2a_provider_item(
         self,
         item,
         *,
@@ -536,7 +536,10 @@ class PeerChatScheduler:
             "a2a_provider_invocation_started",
             provider_turn_started_at,
         )
-        provider_result = self._provider_service.invoke_provider_adapter(invocation)
+        provider_result = await asyncio.to_thread(
+            self._provider_service.invoke_provider_adapter,
+            invocation,
+        )
         scheduler_observed_result_at = self._clock()
         _put_latency_stage(
             transport_latency_stages,
