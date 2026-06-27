@@ -508,6 +508,9 @@ class A2AProviderWritebackReconciler:
                     task_id=provider_result.request_id,
                     source_inbox_item_id=reply_to_inbox_item_id,
                     artifact_refs=list(provider_result.evidence_refs),
+                    feature_scope_id=_feature_scope_id_from_diagnostic(
+                        provider_result.diagnostic_payload
+                    ),
                 )
             if blocker_reason:
                 extra.update(
@@ -549,6 +552,17 @@ def _source_refs(
         if ref not in deduped:
             deduped.append(ref)
     return deduped
+
+
+def _feature_scope_id_from_diagnostic(diagnostic: dict[str, Any]) -> str | None:
+    metadata = diagnostic.get("a2a_metadata")
+    if not isinstance(metadata, dict):
+        return None
+    for key in ("feature_scope_id", "xmuse_feature_scope_id"):
+        value = metadata.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
 
 
 def _content(
