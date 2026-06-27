@@ -26,6 +26,7 @@ DEFAULT_LOW_COST_WORKER_PROFILE_REF = "opencode.deepseek_flash_worker"
 DEFAULT_FALLBACK_WORKER_PROFILE_REF = "codex.worker"
 DEFAULT_ESCALATED_WORKER_PROFILE_REF = "codex.god"
 DEFAULT_FALLBACK_DELIBERATION_PROFILE_REF = "codex.god"
+DEFAULT_A2A_REMOTE_PROFILE_REF = "a2a.remote"
 BOUNDED_DELIBERATION_SPEECH_ACTS = ("propose", "ask", "challenge")
 
 
@@ -40,6 +41,16 @@ def _require_optional_text(value: str | None, field_name: str | None) -> str | N
     if value is None:
         return None
     return _require_text(value, field_name)
+
+
+def _requested_review_runtime(lane: Mapping[str, Any] | None) -> str | None:
+    if lane is None:
+        return None
+    value = lane.get("review_runtime")
+    if not isinstance(value, str):
+        return None
+    cleaned = value.strip().lower()
+    return cleaned or None
 
 
 class LanePolicySignals(BaseModel):
@@ -207,8 +218,26 @@ class ProviderPolicyService:
         *,
         lane: Mapping[str, Any] | None = None,
     ) -> ProviderPolicyDecision:
-        profile = self._registry.get(self._review_profile_ref)
         signals = evaluate_lane_policy_signals(lane or {})
+        requested_review_runtime = _requested_review_runtime(lane)
+        if requested_review_runtime in {"a2a", "a2a.remote"}:
+            profile = self._registry.get(DEFAULT_A2A_REMOTE_PROFILE_REF)
+            selection_reason = (
+                "Route review to the requested A2A remote profile from lane "
+                "review_runtime authority."
+            )
+            return ProviderPolicyDecision(
+                provider_id=profile.provider_id,
+                profile_id=profile.profile_id,
+                task_type=TaskCapability.REVIEW,
+                lane_risk=signals.lane_risk if lane is not None else RiskTier.HIGH,
+                peer_type="review",
+                selected_model=profile.model_id,
+                selection_reason=selection_reason,
+                escalation_level=signals.escalation_level,
+                escalation_reasons=signals.escalation_reasons,
+            )
+        profile = self._registry.get(self._review_profile_ref)
         selection_reason = "Route review to the high-quality codex review profile."
         if signals.escalation_reasons:
             selection_reason = (
