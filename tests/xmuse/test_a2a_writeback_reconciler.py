@@ -4,9 +4,11 @@ from pathlib import Path
 
 import pytest
 
-from xmuse_core.chat.acceptance_spine import AcceptanceSpineStore
+from xmuse_core.chat.acceptance_spine import AcceptanceSpineStatus, AcceptanceSpineStore
 from xmuse_core.chat.inbox_store import ChatInboxStore
 from xmuse_core.chat.participant_store import ParticipantStore
+from xmuse_core.chat.peer_service import PeerChatService
+from xmuse_core.chat.review_trigger_verdicts import build_review_trigger_verdict_envelope
 from xmuse_core.chat.store import ChatStore
 from xmuse_core.integrations.a2a_writeback_reconciler import (
     A2AProviderWritebackReconciler,
@@ -126,6 +128,54 @@ def _a2a_provider_result_with_review_handoff() -> ProviderInvocationResult:
     )
 
 
+def _a2a_provider_result_with_review_verdict(
+    *,
+    review_trigger_inbox_id: str,
+    source_message_id: str,
+    proposal_id: str,
+) -> ProviderInvocationResult:
+    return ProviderInvocationResult(
+        request_id="req-a2a-review-verdict",
+        provider_id=ProviderId.A2A,
+        profile_id=ProviderProfileId.REMOTE,
+        status=WorkerResultStatus.COMPLETED,
+        evidence_refs=[
+            "a2a_task:req-a2a-review-verdict",
+            "a2a_context:conv-a2a",
+        ],
+        diagnostic_payload={
+            "a2a_task_id": "req-a2a-review-verdict",
+            "a2a_context_id": "conv-a2a",
+            "a2a_state": "TASK_STATE_COMPLETED",
+            "a2a_disposition": "completed",
+            "a2a_terminal": True,
+            "a2a_content": "A2A review verdict: dispatch allowed.",
+            "a2a_artifacts": [],
+            "a2a_history": [],
+            "a2a_metadata": {
+                "xmuse_review_trigger_verdict": build_review_trigger_verdict_envelope(
+                    review_trigger_inbox_id=review_trigger_inbox_id,
+                    source_message_id=source_message_id,
+                    proposal_id=proposal_id,
+                    decision="dispatch_allowed",
+                    summary="A2A review verdict is structured and source-linked.",
+                    evidence_refs=[
+                        f"inbox:{review_trigger_inbox_id}",
+                        f"proposal:{proposal_id}",
+                        "a2a_task:req-a2a-review-verdict",
+                    ],
+                )
+            },
+            "a2a_source_refs": ["a2a_task:req-a2a-review-verdict"],
+            "a2a_sdk_task": {
+                "id": "req-a2a-review-verdict",
+                "status": {"state": "TASK_STATE_COMPLETED"},
+            },
+            "a2a_jsonrpc_id": "req-a2a-review-verdict",
+        },
+    )
+
+
 def test_a2a_provider_result_reconciles_to_durable_inbox_writeback(
     tmp_path: Path,
 ) -> None:
@@ -172,6 +222,79 @@ def test_a2a_provider_result_reconciles_to_durable_inbox_writeback(
     assert ChatStore(db).list_proposals(conversation.id) == []
     assert AcceptanceSpineStore(db).list_by_conversation(conversation.id) == []
     assert chat.list_messages(conversation.id)[-1].id == response["id"]
+
+
+def test_a2a_review_trigger_verdict_reconciles_to_review_authority(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "chat.db"
+    service = PeerChatService(db)
+    created = service.create_conversation(title="A2A review verdict")
+    conversation_id = created["conversation"]["id"]
+    participants = {
+        participant["role"]: participant["participant_id"]
+        for participant in created["participants"]
+    }
+    intake = ChatStore(db).add_message(
+        conversation_id,
+        "human",
+        "human",
+        "Please prove A2A review verdict authority.",
+    )
+    AcceptanceSpineStore(db).create_for_intake(
+        conversation_id=conversation_id,
+        intake_message_id=intake.id,
+    )
+    proposal = service.emit_proposal_without_session_for_test(
+        conversation_id=conversation_id,
+        participant_id=participants["architect"],
+        client_request_id="a2a-review-verdict-proposal",
+        summary="A2A review verdict proposal",
+        lanes=[
+            {
+                "feature_id": "a2a-review-verdict",
+                "prompt": "Prove A2A verdicts must enter review authority.",
+                "depends_on": [],
+                "capabilities": ["code", "test"],
+            }
+        ],
+        references=[f"intake_message:{intake.id}"],
+    )
+    review_item = next(
+        item
+        for item in ChatInboxStore(db).list_by_conversation(conversation_id)
+        if item.item_type == "review_trigger"
+    )
+
+    result = A2AProviderWritebackReconciler(db).record_provider_result(
+        conversation_id=conversation_id,
+        participant_id=participants["review"],
+        reply_to_inbox_item_id=review_item.id,
+        provider_result=_a2a_provider_result_with_review_verdict(
+            review_trigger_inbox_id=review_item.id,
+            source_message_id=review_item.source_message_id,
+            proposal_id=proposal["proposal"]["id"],
+        ),
+    )
+
+    response = result["message"]
+    assert response["author"] == participants["review"]
+    assert response["envelope_type"] == "review_trigger_verdict"
+    assert response["envelope_json"]["type"] == "review_trigger_verdict"
+    assert response["envelope_json"]["review_trigger_inbox_id"] == review_item.id
+    assert response["envelope_json"]["a2a_source_refs"] == [
+        "a2a_task:req-a2a-review-verdict",
+        "a2a_context:conv-a2a",
+    ]
+    updated = ChatInboxStore(db).get(review_item.id)
+    assert updated.status == "read"
+    assert updated.responded_message_id == response["id"]
+    spine = AcceptanceSpineStore(db).list_by_conversation(conversation_id)[0]
+    assert spine.status is AcceptanceSpineStatus.REVIEW_CLEARED
+    assert spine.review_or_execute_verdict_ref == (
+        f"review_trigger_verdict:{response['id']}"
+    )
+    assert ChatStore(db).list_proposals(conversation_id)[0].status.value == "open"
 
 
 def test_a2a_provider_result_leading_mention_creates_durable_route(

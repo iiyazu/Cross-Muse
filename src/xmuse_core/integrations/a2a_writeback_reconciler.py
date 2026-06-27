@@ -3,7 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from xmuse_core.chat.acceptance_spine import AcceptanceSpineStore
 from xmuse_core.chat.envelopes import normalize_envelope
+from xmuse_core.chat.inbox_store import ChatInboxStore
 from xmuse_core.chat.mentions import MentionResolutionError, MentionResolver
 from xmuse_core.chat.natural_handoff import (
     assess_natural_handoff,
@@ -11,6 +13,11 @@ from xmuse_core.chat.natural_handoff import (
 )
 from xmuse_core.chat.natural_routing import build_natural_route_event, natural_route_payload
 from xmuse_core.chat.participant_store import ParticipantStore
+from xmuse_core.chat.review_trigger_verdicts import (
+    REVIEW_TRIGGER_VERDICT_ENVELOPE_TYPE,
+    ReviewTriggerVerdictError,
+    review_trigger_verdict_decision,
+)
 from xmuse_core.chat.store import ChatStore
 from xmuse_core.providers.adapters.base import ProviderInvocationResult
 from xmuse_core.providers.models import ProviderId
@@ -52,6 +59,24 @@ class A2AProviderWritebackReconciler:
             )
         source_refs = _source_refs(provider_result, diagnostic)
         content = _content(provider_result, diagnostic)
+        review_verdict = self._review_trigger_verdict(
+            conversation_id=conversation_id,
+            reply_to_inbox_item_id=reply_to_inbox_item_id,
+            diagnostic=diagnostic,
+            source_refs=source_refs,
+        )
+        if review_verdict is not None:
+            return self._record_review_trigger_verdict(
+                conversation_id=conversation_id,
+                participant_id=participant_id,
+                reply_to_inbox_item_id=reply_to_inbox_item_id,
+                provider_result=provider_result,
+                content=content,
+                envelope=review_verdict["envelope"],
+                proposal_id=review_verdict["proposal_id"],
+                verdict=review_verdict["verdict"],
+                source_refs=source_refs,
+            )
         inbox_items = self._route_provider_result_mentions(
             conversation_id=conversation_id,
             participant_id=participant_id,
@@ -109,6 +134,117 @@ class A2AProviderWritebackReconciler:
                 }
             },
         )
+
+    def _review_trigger_verdict(
+        self,
+        *,
+        conversation_id: str,
+        reply_to_inbox_item_id: str,
+        diagnostic: dict[str, Any],
+        source_refs: list[str],
+    ) -> dict[str, Any] | None:
+        try:
+            inbox_item = ChatInboxStore(self._db_path).get(reply_to_inbox_item_id)
+        except KeyError:
+            return None
+        if (
+            inbox_item.conversation_id != conversation_id
+            or inbox_item.item_type != "review_trigger"
+        ):
+            return None
+        metadata = diagnostic.get("a2a_metadata")
+        if not isinstance(metadata, dict):
+            return None
+        raw_envelope = metadata.get("xmuse_review_trigger_verdict")
+        if not isinstance(raw_envelope, dict):
+            return None
+        proposal_id = _proposal_id_from_message(
+            self._chat,
+            conversation_id=conversation_id,
+            source_message_id=inbox_item.source_message_id,
+        )
+        if proposal_id is None:
+            return None
+        envelope = normalize_envelope(
+            raw_envelope,
+            envelope_type=REVIEW_TRIGGER_VERDICT_ENVELOPE_TYPE,
+        )
+        envelope.setdefault("a2a_source_refs", list(source_refs))
+        try:
+            verdict = review_trigger_verdict_decision(
+                envelope,
+                expected_inbox_item_id=inbox_item.id,
+                expected_source_message_id=inbox_item.source_message_id,
+                expected_proposal_id=proposal_id,
+            )
+        except ReviewTriggerVerdictError:
+            return None
+        return {
+            "envelope": envelope,
+            "proposal_id": proposal_id,
+            "verdict": verdict,
+        }
+
+    def _record_review_trigger_verdict(
+        self,
+        *,
+        conversation_id: str,
+        participant_id: str,
+        reply_to_inbox_item_id: str,
+        provider_result: ProviderInvocationResult,
+        content: str,
+        envelope: dict[str, Any],
+        proposal_id: str,
+        verdict: str,
+        source_refs: list[str],
+    ) -> dict[str, Any]:
+        result = self._chat.create_message_inbox_and_log(
+            conversation_id=conversation_id,
+            tool_name="a2a_provider_review_verdict",
+            caller_identity=participant_id,
+            client_request_id=(
+                f"{provider_result.request_id}:{reply_to_inbox_item_id}:review-verdict"
+            ),
+            author=participant_id,
+            role="assistant",
+            content=content,
+            envelope_type=REVIEW_TRIGGER_VERDICT_ENVELOPE_TYPE,
+            envelope_json=envelope,
+            mentions=[],
+            inbox_items=[],
+            reply_to_inbox_item_id=reply_to_inbox_item_id,
+            reply_owner_participant_id=participant_id,
+            extra_result={
+                "a2a_writeback": {
+                    "provider_request_id": provider_result.request_id,
+                    "provider_profile_ref": provider_result.provider_profile_ref,
+                    "provider_status": provider_result.status.value,
+                    "source_refs": source_refs,
+                    "authority": "chat.db/inbox/review_trigger_verdict",
+                    "a2a_is_authority": False,
+                },
+                "review_trigger_verdict": {
+                    "proposal_id": proposal_id,
+                    "decision": verdict,
+                },
+            },
+        )
+        message = result.get("message")
+        message_id = message.get("id") if isinstance(message, dict) else None
+        if isinstance(message_id, str) and message_id:
+            verdict_ref = f"review_trigger_verdict:{message_id}"
+            spine = AcceptanceSpineStore(self._db_path)
+            if verdict == "blocked":
+                spine.attach_review_blocker_for_proposal(
+                    proposal_id=proposal_id,
+                    blocker_ref=verdict_ref,
+                )
+            elif verdict == "dispatch_allowed":
+                spine.attach_verdict_for_proposal(
+                    proposal_id=proposal_id,
+                    verdict_ref=verdict_ref,
+                )
+        return result
 
     def _route_provider_result_mentions(
         self,
@@ -231,3 +367,25 @@ def _content(
     if isinstance(content, str) and content.strip():
         return content.strip()
     return f"A2A provider result: {provider_result.status.value}"
+
+
+def _proposal_id_from_message(
+    chat: ChatStore,
+    *,
+    conversation_id: str,
+    source_message_id: str | None,
+) -> str | None:
+    if not source_message_id:
+        return None
+    source_message = next(
+        (
+            message
+            for message in chat.list_messages(conversation_id)
+            if message.id == source_message_id
+        ),
+        None,
+    )
+    if source_message is None or not isinstance(source_message.envelope_json, dict):
+        return None
+    proposal_id = source_message.envelope_json.get("proposal_id")
+    return proposal_id if isinstance(proposal_id, str) and proposal_id.strip() else None
