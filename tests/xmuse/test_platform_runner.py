@@ -648,7 +648,7 @@ async def test_runner_enables_peer_chat_with_default_codex_launcher(
 
 
 @pytest.mark.asyncio
-async def test_runner_wires_peer_chat_writeback_grace_override(
+async def test_runner_wires_peer_chat_response_wait_and_writeback_grace_overrides(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
@@ -689,10 +689,13 @@ async def test_runner_wires_peer_chat_writeback_grace_override(
         max_hours=0,
         max_concurrent=1,
         peer_chat_enabled=True,
+        peer_chat_response_wait_s=432.0,
         peer_chat_post_writeback_grace_s=20.0,
     )
 
+    assert captured["scheduler_kwargs"]["response_wait_s"] == 432.0
     assert captured["scheduler_kwargs"]["post_writeback_grace_s"] == 20.0
+    assert captured["scheduler_kwargs"]["claim_ttl_s"] >= 482
 
 
 @pytest.mark.asyncio
@@ -804,6 +807,7 @@ async def test_runner_builds_dispatch_bridge_with_peer_god_layer(
     )
     assert Path(captured["dispatch_bridge_kwargs"]["worktree"]).name == "peer_chat_worktree"
     assert captured["dispatch_bridge_kwargs"]["response_wait_s"] == 321.0
+    assert captured["dispatch_bridge_kwargs"]["claim_ttl_s"] >= 351
 
 
 @pytest.mark.asyncio
@@ -1624,16 +1628,36 @@ def test_platform_runner_defaults_peer_chat_writeback_grace() -> None:
     args = platform_runner.main_arg_parser().parse_args([])
 
     platform_runner.validate_args(args)
+    assert args.peer_chat_response_wait_s == 900.0
     assert args.peer_chat_post_writeback_grace_s == 8.0
 
 
-def test_platform_runner_supports_peer_chat_writeback_grace_override() -> None:
+def test_platform_runner_supports_peer_chat_wait_overrides() -> None:
     args = platform_runner.main_arg_parser().parse_args(
-        ["--peer-chat", "--peer-chat-post-writeback-grace-s", "20"]
+        [
+            "--peer-chat",
+            "--peer-chat-response-wait-s",
+            "432",
+            "--peer-chat-post-writeback-grace-s",
+            "20",
+        ]
     )
 
     platform_runner.validate_args(args)
+    assert args.peer_chat_response_wait_s == 432.0
     assert args.peer_chat_post_writeback_grace_s == 20.0
+
+
+@pytest.mark.parametrize("wait_s", ["0", "-1", "nan", "inf"])
+def test_platform_runner_rejects_invalid_peer_chat_response_wait(
+    wait_s: str,
+) -> None:
+    args = platform_runner.main_arg_parser().parse_args(
+        ["--peer-chat-response-wait-s", wait_s]
+    )
+
+    with pytest.raises(SystemExit):
+        platform_runner.validate_args(args)
 
 
 @pytest.mark.parametrize("grace", ["-1", "nan", "inf"])
