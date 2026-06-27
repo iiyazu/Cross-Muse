@@ -309,7 +309,7 @@ def _message_context(message: Any, *, max_chars: int) -> dict[str, Any]:
         message.content,
         max_chars=max_chars,
     )
-    return {
+    context = {
         "id": message.id,
         "author": message.author,
         "role": message.role,
@@ -319,6 +319,101 @@ def _message_context(message: Any, *, max_chars: int) -> dict[str, Any]:
         "truncated": truncated,
         "original_chars": original_chars,
     }
+    envelope = _compact_message_envelope(message, max_chars=max_chars)
+    if envelope is not None:
+        context["envelope"] = envelope
+    return context
+
+
+def _compact_message_envelope(
+    message: Any,
+    *,
+    max_chars: int,
+) -> dict[str, Any] | None:
+    envelope_type = getattr(message, "envelope_type", None)
+    envelope_json = getattr(message, "envelope_json", None)
+    if not isinstance(envelope_type, str) or not envelope_type.strip():
+        envelope_type = None
+    if not isinstance(envelope_json, dict):
+        envelope_json = {}
+    if envelope_type is None and not envelope_json:
+        return None
+    compact: dict[str, Any] = {}
+    if envelope_type is not None:
+        compact["type"] = envelope_type
+    for key in (
+        "provider_profile_ref",
+        "provider_request_id",
+        "provider_status",
+        "failure_kind",
+        "authority",
+    ):
+        value = envelope_json.get(key)
+        if isinstance(value, str) and value.strip():
+            compact[key] = value
+    a2a_is_authority = envelope_json.get("a2a_is_authority")
+    if isinstance(a2a_is_authority, bool):
+        compact["a2a_is_authority"] = a2a_is_authority
+    source_refs = _payload_str_list(envelope_json, "source_refs")
+    if source_refs:
+        compact["source_refs"] = source_refs[:8]
+    diagnostic = envelope_json.get("diagnostic_payload")
+    if isinstance(diagnostic, dict):
+        artifacts = _compact_artifacts(diagnostic, max_chars=max_chars)
+        if artifacts:
+            compact["artifacts"] = artifacts
+            compact["artifact_count"] = _artifact_count(diagnostic)
+    return compact or None
+
+
+def _compact_artifacts(
+    diagnostic: dict[str, Any],
+    *,
+    max_chars: int,
+) -> list[dict[str, Any]]:
+    raw_artifacts = diagnostic.get("a2a_artifacts")
+    if not isinstance(raw_artifacts, list):
+        return []
+    compact: list[dict[str, Any]] = []
+    for raw_artifact in raw_artifacts[:4]:
+        if not isinstance(raw_artifact, dict):
+            continue
+        artifact: dict[str, Any] = {}
+        for key in ("artifact_id", "artifactId", "id", "name", "type"):
+            value = raw_artifact.get(key)
+            if isinstance(value, str) and value.strip():
+                artifact[key] = value
+        text = _artifact_text(raw_artifact)
+        if text:
+            artifact["text"] = _truncate_head_tail(
+                text,
+                max_chars=min(max_chars, 1000),
+            )[0]
+        if artifact:
+            compact.append(artifact)
+    return compact
+
+
+def _artifact_count(diagnostic: dict[str, Any]) -> int:
+    artifacts = diagnostic.get("a2a_artifacts")
+    return len(artifacts) if isinstance(artifacts, list) else 0
+
+
+def _artifact_text(artifact: dict[str, Any]) -> str:
+    text = artifact.get("text")
+    if isinstance(text, str) and text.strip():
+        return text.strip()
+    parts = artifact.get("parts")
+    if not isinstance(parts, list):
+        return ""
+    texts: list[str] = []
+    for part in parts:
+        if not isinstance(part, dict):
+            continue
+        value = part.get("text")
+        if isinstance(value, str) and value.strip():
+            texts.append(value.strip())
+    return "\n".join(texts)
 
 
 def _truncate_head_tail(content: str, *, max_chars: int) -> tuple[str, bool, int]:
