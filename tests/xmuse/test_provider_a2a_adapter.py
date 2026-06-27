@@ -210,3 +210,40 @@ def test_runner_provider_service_recognizes_explicit_a2a_runtime(tmp_path) -> No
     assert invocation.provider_profile_ref == "a2a.remote"
     assert service.runtime_for_invocation(invocation) == "a2a"
     assert service.supports_persistent_execute(invocation) is False
+
+
+def test_runner_provider_service_invokes_configured_a2a_adapter(tmp_path) -> None:
+    client = FakeA2ATaskClient(
+        _task_result(disposition="completed", state="TASK_STATE_COMPLETED")
+    )
+    service = RunnerProviderService(
+        a2a_provider_endpoint_url="https://remote.example/a2a",
+        a2a_provider_api_key="secret",
+        a2a_task_client=client,
+    )
+
+    result = service.invoke_provider_adapter(_invocation(tmp_path))
+
+    assert result.provider_profile_ref == "a2a.remote"
+    assert result.status is WorkerResultStatus.COMPLETED
+    assert result.failure_kind is None
+    assert client.requests[0].task_id == "req-a2a"
+    assert client.requests[0].sender_agent_id == "xmuse:a2a.remote"
+
+
+def test_runner_provider_service_fails_closed_when_a2a_endpoint_missing(tmp_path) -> None:
+    client = FakeA2ATaskClient(
+        _task_result(disposition="completed", state="TASK_STATE_COMPLETED")
+    )
+    service = RunnerProviderService(a2a_task_client=client)
+
+    result = service.invoke_provider_adapter(_invocation(tmp_path))
+
+    assert result.provider_profile_ref == "a2a.remote"
+    assert result.status is WorkerResultStatus.FAILED
+    assert result.failure_kind is ProviderFailureKind.CONFIG_ERROR
+    assert result.evidence_refs == [
+        "a2a_adapter:config_error",
+        "a2a_adapter_error:ValueError",
+    ]
+    assert client.requests == []
