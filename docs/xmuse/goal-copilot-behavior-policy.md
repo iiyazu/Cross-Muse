@@ -77,7 +77,7 @@ recommendation to the review board instead of executing it.
 Default path:
 
 ```text
-.goal-runs/<date>/production-goal-copilot-review-board.md
+.goal-runs/RUN_ID/production-goal-copilot-review-board.md
 ```
 
 The board is a goal artifact, not product truth. It is append-only. The main
@@ -141,10 +141,10 @@ Role:
 - The main /goal Codex remains the only proof/phase/Git/merge coordinator.
 
 Repository:
-<repo_path>
+REPO_PATH
 
 Active goal:
-<paste or reference the active /goal prompt>
+ACTIVE_GOAL_PROMPT_OR_PATH
 
 Read first:
 - AGENTS.md
@@ -154,10 +154,16 @@ Read first:
 - docs/xmuse/natural-groupchat-a2a-task-plan.md
 - docs/xmuse/goal-copilot-behavior-policy.md
 - docs/xmuse/mainline-contracts.md
+
+Optional local references when present:
 - /home/iiyatu/projects/python/xmuse-m7-natural-groupchat-goal-design/docs/superpowers/specs/2026-06-26-natural-groupchat-a2a-production-goal-design.md
+- /home/iiyatu/clowder-ai as natural groupchat reference only
+
+If an optional local reference is absent, continue from repo-local docs and
+treat the missing path as non-blocking.
 
 Shared review board:
-.goal-runs/<date>/production-goal-copilot-review-board.md
+.goal-runs/RUN_ID/production-goal-copilot-review-board.md
 
 Hard rules:
 - Do not edit source code.

@@ -115,17 +115,24 @@ Remote CI is server evidence only for the exact PR head SHA and run inspected.
 Local tests are local evidence only. The operator performs final merge or
 explicitly authorizes merge behavior.
 
-When merge automation is authorized for a run, the merge path is:
+This policy does not grant blanket merge authority. When the operator
+explicitly authorizes guarded merge for the current run and current PR, the
+merge path is:
 
 ```text
 PR exact-head CI success
--> gh pr merge --match-head-commit <head_sha>
+-> gh pr merge --match-head-commit HEAD_SHA
 -> fetch origin
 -> observe main CI for the merge commit
 ```
 
+Otherwise stop at PR ready, exact-head CI success, and merge awaiting operator.
 Do not delete feature branches unless separately authorized. Do not claim main
 CI success until the run for the merge commit is completed successfully.
+
+No external exposure claim is allowed unless write endpoints are token-gated or
+explicitly local-only. If auth/RBAC is not addressed in a PR, the PR must state
+`trusted-local-only`.
 
 Do not create umbrella PRs. If separate domains emerge, split by domain:
 

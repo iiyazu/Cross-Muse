@@ -24,8 +24,13 @@ Read first:
 - docs/xmuse/natural-groupchat-a2a-task-plan.md
 - docs/xmuse/goal-copilot-behavior-policy.md
 - docs/xmuse/mainline-contracts.md
+
+Optional local references when present:
 - /home/iiyatu/projects/python/xmuse-m7-natural-groupchat-goal-design/docs/superpowers/specs/2026-06-26-natural-groupchat-a2a-production-goal-design.md
 - /home/iiyatu/clowder-ai as natural groupchat reference only
+
+If an optional local reference is absent, continue from repo-local docs and
+treat the missing path as non-blocking.
 
 Current calibration:
 - Start from a clean origin/main worktree after truth refresh.
@@ -56,14 +61,23 @@ Hard rules:
 - Use dynamic small main-based PRs by implementation domain; do not set a fixed
   PR count cap, but do not create umbrella PRs.
 - Every PR must pass remote exact-head CI before merge.
-- Operator authorization for this run: when a PR is domain-scoped and exact-head
-  CI passes, use head-SHA guarded merge, then observe main CI for the merge
-  commit. Do not delete branches unless separately authorized.
+- This prompt does not grant blanket merge authority. Only if the operator
+  explicitly authorizes guarded merge for the current run and current PR, use:
+  gh pr merge --match-head-commit HEAD_SHA
+  then fetch origin and observe main CI for the merge commit. Otherwise stop at
+  PR ready, exact-head CI success, and merge awaiting operator.
+- Do not delete branches unless separately authorized.
+- No external exposure claim unless write endpoints are token-gated or
+  explicitly local-only. If auth/RBAC is not addressed in a PR, state
+  trusted-local-only.
 - If the same complex boundary fails twice, refactor or redesign the boundary
   instead of stacking patches.
 - MemoryOS is an optional sidecar, not authority. If unavailable, degrade.
 - Frontend work is read API / UX projection only; projections do not create
   truth.
+- The practical proposal/review/dispatch route for this goal does not replace
+  the product mainline requirement that larger flows preserve blueprint freeze,
+  lane graph, and review lineage.
 
 Execution topology:
 - Track A: natural groupchat real chain and PR/CI/merge coordination.

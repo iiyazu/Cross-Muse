@@ -17,8 +17,16 @@ operation record 或巨大 handoff 文档。
 | `docs/xmuse/natural-groupchat-a2a-behavior.md` | authority-first 行为规范、TDD/superpowers/GitHub 约束、patch/refactor 阈值 |
 | `docs/xmuse/natural-groupchat-a2a-task-plan.md` | Phase 0-7 的实施任务、验收和停止条件 |
 | `docs/xmuse/natural-groupchat-a2a-goal-prompt.md` | 可直接贴入 `/goal` 的简洁 prompt |
+
+Optional local references when present:
+
+| 路径 | 用途 |
+|---|---|
 | `/home/iiyatu/projects/python/xmuse-m7-natural-groupchat-goal-design/docs/superpowers/specs/2026-06-26-natural-groupchat-a2a-production-goal-design.md` | 详细设计来源 |
 | `/home/iiyatu/clowder-ai` | 自然群聊实现参考，不是 xmuse authority |
+
+If either optional local reference is absent, continue from repo-local
+`docs/xmuse/*` and treat the missing path as non-blocking.
 
 当前校准：
 
@@ -74,6 +82,10 @@ natural groupchat
 
 A2A SDK 是 interop boundary，不是 proposal、review、dispatch 或 merge authority。
 Ray 是 optional legacy adapter，不是默认自然群聊 kernel。
+
+This practical proposal/review/dispatch route is for small real xmuse demands.
+It does not replace the product mainline requirement that larger mainline
+execution flows preserve blueprint freeze, lane graph, and review lineage.
 
 ## CI 和合同文档
 

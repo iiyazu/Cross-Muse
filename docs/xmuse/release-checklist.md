@@ -1,6 +1,6 @@
 # xmuse Release Checklist
 
-Updated: 2026-06-21
+Updated: 2026-06-27
 
 ## Release Decision
 
@@ -18,6 +18,27 @@ AcceptanceSpine/GoalRun closure path, and the short
 end as `accepted` only through producer-owned live GitHub server-side evidence.
 
 It does not mean full release-ready.
+
+## Evidence Update Since 2026-06-21
+
+New evidence:
+
+- PR #242 (`codex/a2a-natural-real-chain`) was merged into `main` at
+  `c1d19ad2ae9bd8b22742376c98968073a508329c`.
+- PR #242 made native GOD sessions the default peer-chat path and kept Ray as
+  optional legacy infrastructure.
+- The native/A2A service-chain evidence reached the no-Ray path:
+  `ChatAPI -> A2A planner -> native persistent architect -> durable proposal
+  -> A2A review verdict -> dispatch bridge -> A2A execute ack`.
+- Main CI run `28292323481` was observed successful on merge commit
+  `c1d19ad...`.
+
+Claim change: none.
+
+The new evidence supports the next natural-groupchat A2A goal calibration. It
+does not upgrade release status and does not prove production-ready natural
+groupchat, full closure, GitHub review truth, fully autonomous merge, or live
+MemoryOS authority.
 
 ## Claimable Now
 
@@ -43,6 +64,9 @@ Do not claim:
 - multi-hour real-provider/Ray/Codex soak complete;
 - long-running GOD groupchat stability across real provider sessions;
 - GitHub PR/CodeOwner review enforcement is enabled on `main`;
+- production-ready natural groupchat;
+- fully autonomous merge;
+- live MemoryOS authority;
 - fake demos, stdout, dashboard, TUI, or copied GitHub text are acceptance
   truth;
 - `uv run mypy xmuse/platform_runner.py` is clean;

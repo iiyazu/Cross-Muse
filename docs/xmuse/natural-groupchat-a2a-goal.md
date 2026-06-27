@@ -15,8 +15,14 @@ Read these first:
 - `docs/xmuse/natural-groupchat-a2a-behavior.md`
 - `docs/xmuse/natural-groupchat-a2a-task-plan.md`
 - `docs/xmuse/mainline-contracts.md`
+
+Optional local references when present:
+
 - `/home/iiyatu/projects/python/xmuse-m7-natural-groupchat-goal-design/docs/superpowers/specs/2026-06-26-natural-groupchat-a2a-production-goal-design.md`
 - `/home/iiyatu/clowder-ai` as implementation reference, not as authority
+
+If an optional local reference is absent, continue from repo-local
+`docs/xmuse/*` and treat the missing path as non-blocking.
 
 ## Latest Calibration
 
@@ -95,6 +101,11 @@ legacy compatibility adapter, but it should not consume the main repair budget.
 A2A is an interop boundary, not xmuse authority. Every important A2A event must
 be normalized into durable xmuse state before proposal, review, dispatch, or
 merge gates consume it.
+
+This practical proposal/review/dispatch route is the route for small real
+xmuse demands in this goal. It does not replace the mainline requirement that
+larger execution flows preserve blueprint freeze, lane graph, and review
+lineage.
 
 MemoryOS is an optional sidecar for recall, summaries, decisions, blockers, and
 artifact refs. It becomes live evidence only when a live trace id or artifact

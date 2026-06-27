@@ -127,7 +127,7 @@ Deliver:
 Validation:
 
 ```text
-uv run pytest <focused tests> -q
+uv run pytest FOCUSED_TESTS -q
 uv run ruff check .
 git diff --check
 test ! -e xmuse/__init__.py

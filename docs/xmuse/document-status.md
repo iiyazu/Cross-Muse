@@ -13,6 +13,7 @@ does not restart old L8-L11, closure-ledger, Path-A, or pre-M7 planning frames.
 | `default-read` | Read by default for the next natural groupchat A2A goal. |
 | `current-contract` | Active product, authority, runtime, or CI contract. |
 | `current-policy` | Active engineering behavior, GitHub, archive, or operations policy. |
+| `optional-local-reference` | Read when present in the operator's local environment; missing paths are non-blocking. |
 | `retained-by-test` | Historical or compatibility document kept at its path because tests, code, or evidence strings reference it. |
 | `reference-only` | Useful historical context, not an active goal entrypoint or proof source. |
 | `archived` | Moved under `docs/xmuse/archive/**`; do not read by default. |
@@ -35,8 +36,13 @@ For the next new `/goal` session, read only:
 | `docs/xmuse/natural-groupchat-a2a-goal-prompt.md` | `default-read` | Concise prompt for `/goal`. |
 | `docs/xmuse/goal-copilot-behavior-policy.md` | `default-read` | Read-only copilot/Track D rules. |
 | `docs/xmuse/mainline-contracts.md` | `default-read` | Product authority contracts. |
-| `/home/iiyatu/projects/python/xmuse-m7-natural-groupchat-goal-design/docs/superpowers/specs/2026-06-26-natural-groupchat-a2a-production-goal-design.md` | `default-read` | Detailed design source. |
-| `/home/iiyatu/clowder-ai` | `default-read` | Natural groupchat reference only. |
+
+Optional local references for the next `/goal` session:
+
+| Document | Status | Role |
+|---|---|---|
+| `/home/iiyatu/projects/python/xmuse-m7-natural-groupchat-goal-design/docs/superpowers/specs/2026-06-26-natural-groupchat-a2a-production-goal-design.md` | `optional-local-reference` | Detailed design source. |
+| `/home/iiyatu/clowder-ai` | `optional-local-reference` | Natural groupchat reference only. |
 
 ## Current Product And Authority Contracts
 
