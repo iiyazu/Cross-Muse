@@ -155,6 +155,7 @@ class _A2AGroupchatRuntimeClient:
                             ),
                             "depends_on": [],
                             "capabilities": ["code", "test"],
+                            "gate_profiles": ["xmuse-core"],
                         }
                     ],
                 },
