@@ -20,6 +20,10 @@ from xmuse_core.chat.mentions import (
 )
 from xmuse_core.chat.participant_store import Participant, ParticipantStore
 from xmuse_core.chat.prompt_builder import XmusePromptBuilder
+from xmuse_core.chat.review_trigger_verdicts import (
+    ReviewTriggerVerdictError,
+    review_trigger_verdict_decision,
+)
 from xmuse_core.chat.store import ChatStore
 from xmuse_core.chat.stream_store import ChatStreamStore, PeerTurnLatencyTraceStore
 from xmuse_core.integrations.a2a_writeback_reconciler import A2AProviderWritebackReconciler
@@ -672,6 +676,13 @@ class PeerChatScheduler:
         inbox_item_id: str,
         item_type: str | None,
     ) -> bool:
+        if item_type == "review_trigger":
+            return self._has_review_trigger_verdict_writeback(
+                conversation_id,
+                responded_message_id,
+                participant_id=participant_id,
+                inbox_item_id=inbox_item_id,
+            )
         if self._has_real_writeback_message(
             conversation_id,
             responded_message_id,
@@ -685,6 +696,47 @@ class PeerChatScheduler:
             and "chat_record_collaboration_response" in stages
         )
 
+    def _has_review_trigger_verdict_writeback(
+        self,
+        conversation_id: str,
+        responded_message_id: str | None,
+        *,
+        participant_id: str,
+        inbox_item_id: str,
+    ) -> bool:
+        if not responded_message_id:
+            return False
+        try:
+            inbox_item = self._inbox.get(inbox_item_id)
+        except KeyError:
+            return False
+        message = _message_by_id(
+            self._chat,
+            conversation_id=conversation_id,
+            message_id=responded_message_id,
+        )
+        if message is None:
+            return False
+        if message.author != participant_id or message.role != "assistant":
+            return False
+        proposal_id = _proposal_id_from_message(
+            self._chat,
+            conversation_id=conversation_id,
+            source_message_id=inbox_item.source_message_id,
+        )
+        if proposal_id is None:
+            return False
+        try:
+            review_trigger_verdict_decision(
+                message.envelope_json,
+                expected_inbox_item_id=inbox_item.id,
+                expected_source_message_id=inbox_item.source_message_id,
+                expected_proposal_id=proposal_id,
+            )
+        except ReviewTriggerVerdictError:
+            return False
+        return True
+
     def _has_real_writeback_message(
         self,
         conversation_id: str,
@@ -695,13 +747,10 @@ class PeerChatScheduler:
     ) -> bool:
         if not responded_message_id:
             return False
-        message = next(
-            (
-                item
-                for item in self._chat.list_messages(conversation_id)
-                if item.id == responded_message_id
-            ),
-            None,
+        message = _message_by_id(
+            self._chat,
+            conversation_id=conversation_id,
+            message_id=responded_message_id,
         )
         if message is None:
             return False
@@ -949,6 +998,36 @@ def _is_a2a_provider_result_writeback(message) -> bool:
         and envelope.get("authority") == "chat.db/inbox"
         and envelope.get("a2a_is_authority") is False
     )
+
+
+def _message_by_id(chat: ChatStore, *, conversation_id: str, message_id: str):
+    return next(
+        (
+            item
+            for item in chat.list_messages(conversation_id)
+            if item.id == message_id
+        ),
+        None,
+    )
+
+
+def _proposal_id_from_message(
+    chat: ChatStore,
+    *,
+    conversation_id: str,
+    source_message_id: str | None,
+) -> str | None:
+    if not source_message_id:
+        return None
+    source_message = _message_by_id(
+        chat,
+        conversation_id=conversation_id,
+        message_id=source_message_id,
+    )
+    if source_message is None or not isinstance(source_message.envelope_json, dict):
+        return None
+    proposal_id = source_message.envelope_json.get("proposal_id")
+    return proposal_id if isinstance(proposal_id, str) and proposal_id.strip() else None
 
 
 def _put_latency_stage(

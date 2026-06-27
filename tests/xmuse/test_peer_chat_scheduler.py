@@ -2164,6 +2164,101 @@ async def test_scheduler_does_not_consume_review_trigger_with_stdout_fallback(
     assert reread.responded_message_id == structured["message"]["id"]
 
 
+def test_scheduler_requires_structured_verdict_for_a2a_review_trigger(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "chat.db"
+    service = PeerChatService(db_path)
+    created = service.create_conversation(title="A2A review trigger authority")
+    conversation_id = created["conversation"]["id"]
+    participants = {
+        participant["role"]: participant["participant_id"]
+        for participant in created["participants"]
+    }
+    intake = ChatStore(db_path).add_message(
+        conversation_id,
+        "human",
+        "human",
+        "Please keep generic A2A review output out of review authority.",
+    )
+    AcceptanceSpineStore(db_path).create_for_intake(
+        conversation_id=conversation_id,
+        intake_message_id=intake.id,
+    )
+    proposal = service.emit_proposal_without_session_for_test(
+        conversation_id=conversation_id,
+        participant_id=participants["architect"],
+        client_request_id="a2a-generic-review-trigger-proposal",
+        summary="A2A generic result must not clear review authority",
+        lanes=[
+            {
+                "feature_id": "a2a-generic-review-trigger",
+                "prompt": "Keep generic A2A review output out of review authority.",
+                "depends_on": [],
+                "capabilities": ["code"],
+            }
+        ],
+        references=[f"intake_message:{intake.id}"],
+    )
+    inbox = ChatInboxStore(db_path)
+    review_item = next(
+        item
+        for item in inbox.list_by_conversation(conversation_id)
+        if item.item_type == "review_trigger"
+    )
+
+    result = A2AProviderWritebackReconciler(db_path).record_provider_result(
+        conversation_id=conversation_id,
+        participant_id=participants["review"],
+        reply_to_inbox_item_id=review_item.id,
+        provider_result=ProviderInvocationResult(
+            request_id="req-a2a-generic-review",
+            provider_id=ProviderId.A2A,
+            profile_id=ProviderProfileId.REMOTE,
+            status=WorkerResultStatus.COMPLETED,
+            evidence_refs=["a2a_task:req-a2a-generic-review"],
+            diagnostic_payload={
+                "a2a_task_id": "req-a2a-generic-review",
+                "a2a_context_id": conversation_id,
+                "a2a_state": "TASK_STATE_COMPLETED",
+                "a2a_disposition": "completed",
+                "a2a_terminal": True,
+                "a2a_content": (
+                    "REVIEW_VERDICT: dispatch_allowed, but this is generic A2A "
+                    "provider text without a review_trigger_verdict envelope."
+                ),
+                "a2a_artifacts": [],
+                "a2a_history": [],
+                "a2a_metadata": {},
+                "a2a_source_refs": ["a2a_task:req-a2a-generic-review"],
+                "a2a_sdk_task": {"id": "req-a2a-generic-review"},
+                "a2a_jsonrpc_id": "req-a2a-generic-review",
+            },
+        ),
+    )
+
+    updated = inbox.get(review_item.id)
+    assert updated.status == "read"
+    assert updated.responded_message_id == result["message"]["id"]
+    scheduler = PeerChatScheduler(
+        db_path=db_path,
+        god_layer=FakeGodLayer(),
+        worktree=tmp_path,
+        scheduler_id="sched-test",
+    )
+    assert not scheduler._has_durable_writeback(
+        conversation_id,
+        updated.responded_message_id,
+        participant_id=participants["review"],
+        inbox_item_id=review_item.id,
+        item_type="review_trigger",
+    )
+    spine = AcceptanceSpineStore(db_path).list_by_conversation(conversation_id)[0]
+    assert spine.proposal_id == proposal["proposal"]["id"]
+    assert spine.status is AcceptanceSpineStatus.REVIEW_PENDING
+    assert spine.review_or_execute_verdict_ref is None
+
+
 @pytest.mark.asyncio
 async def test_scheduler_rejects_peer_stdout_without_degraded_fallback(
     tmp_path: Path,
