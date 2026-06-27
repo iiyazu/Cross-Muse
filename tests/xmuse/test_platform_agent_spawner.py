@@ -4,10 +4,15 @@ from pathlib import Path
 
 import pytest
 
+from xmuse_core.chat.inbox_store import ChatInboxStore
+from xmuse_core.chat.store import ChatStore
 from xmuse_core.integrations.a2a_provider_client import A2AProviderTaskRequest
 from xmuse_core.integrations.a2a_sdk_boundary import NormalizedA2ATaskResult
 from xmuse_core.platform.agent_spawner import AgentSpawner, GodConfig
-from xmuse_core.providers.adapters.base import ProviderInvocation
+from xmuse_core.providers.adapters.base import (
+    ProviderInvocation,
+    ProviderInvocationWritebackContext,
+)
 from xmuse_core.providers.models import ProviderId, ProviderProfileId, RiskTier, TaskCapability
 from xmuse_core.providers.service import RunnerProviderService
 from xmuse_core.structuring.models import (
@@ -345,6 +350,122 @@ async def test_agent_spawner_uses_direct_a2a_provider_adapter_without_subprocess
     log_payload = json.loads(Path(result.result_log_path).read_text(encoding="utf-8"))
     assert log_payload["command"] == ["xmuse-provider-adapter", "a2a.remote"]
     assert log_payload["provider_result"]["provider_id"] == "a2a"
+
+
+@pytest.mark.asyncio
+async def test_agent_spawner_writes_direct_a2a_result_to_chat_inbox(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    async def fail_create_subprocess_exec(*_args, **_kwargs):
+        raise AssertionError("A2A provider adapter must not spawn a subprocess")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fail_create_subprocess_exec)
+    xmuse_root = tmp_path / "xmuse"
+    db = xmuse_root / "chat.db"
+    chat = ChatStore(db)
+    conversation = chat.create_conversation("A2A writeback")
+    source_message = chat.add_message(
+        conversation.id,
+        "a2a:external-planner",
+        "assistant",
+        "Please review this handoff.",
+        envelope_type="a2a_task",
+        envelope_json={"type": "a2a_task", "source_refs": ["a2a_task:remote-review"]},
+    )
+    inbox_store = ChatInboxStore(db)
+    inbox_item = inbox_store.create_item(
+        conversation_id=conversation.id,
+        target_participant_id="remote-reviewer",
+        target_role="reviewer",
+        target_address="xmuse://participants/remote-reviewer",
+        sender_participant_id=None,
+        sender_address="a2a:external-planner",
+        source_message_id=source_message.id,
+        item_type="a2a_task",
+        payload={"source_refs": ["a2a_task:remote-review"]},
+    )
+    client = _FakeA2ATaskClient(
+        NormalizedA2ATaskResult(
+            task_id="lane-a2a:review",
+            context_id="lane-a2a",
+            state="TASK_STATE_COMPLETED",
+            disposition="completed",
+            terminal=True,
+            content="remote A2A review result",
+            artifacts=({"artifact_id": "review-artifact", "text": "bounded"},),
+            source_refs=("a2a_task:lane-a2a:review", "a2a_context:lane-a2a"),
+        )
+    )
+    provider_service = RunnerProviderService(
+        a2a_provider_endpoint_url="https://remote.example/a2a",
+        a2a_task_client=client,
+    )
+    provider_invocation = provider_service.build_review_invocation(
+        lane_id="lane-a2a",
+        prompt="@remote review the proposed handoff.",
+        workspace=tmp_path,
+        timeout_seconds=60,
+        provider_profile_ref="a2a.remote",
+        risk_tier=RiskTier.MEDIUM,
+    ).model_copy(
+        update={
+            "writeback_context": ProviderInvocationWritebackContext(
+                conversation_id=conversation.id,
+                participant_id="remote-reviewer",
+                reply_to_inbox_item_id=inbox_item.id,
+            )
+        }
+    )
+    spawner = AgentSpawner(
+        repo_root=xmuse_root,
+        mcp_port=8100,
+        provider_service=provider_service,
+    )
+
+    result = await spawner.spawn(
+        god_config=GodConfig(
+            name="remote-review",
+            runtime="a2a",
+            timeout_s=60,
+            skill_prompt_path="",
+        ),
+        lane_id="lane-a2a",
+        prompt="@remote review the proposed handoff.",
+        worktree=tmp_path,
+        provider_invocation=provider_invocation,
+    )
+
+    assert result.exit_code == 0
+    assert result.provider_writeback is not None
+    assert result.provider_writeback["a2a_writeback"]["authority"] == "chat.db/inbox"
+    updated_inbox = inbox_store.get(inbox_item.id)
+    assert updated_inbox.status == "read"
+    assert updated_inbox.responded_message_id is not None
+    messages = chat.list_messages(conversation.id)
+    assert [message.envelope_type for message in messages] == [
+        "a2a_task",
+        "a2a_provider_result",
+    ]
+    response = messages[-1]
+    assert response.id == updated_inbox.responded_message_id
+    assert response.author == "remote-reviewer"
+    assert response.role == "assistant"
+    assert response.content == "remote A2A review result"
+    assert response.envelope_json["a2a_is_authority"] is False
+    assert response.envelope_json["source_refs"] == [
+        "a2a_task:lane-a2a:review",
+        "a2a_context:lane-a2a",
+        "a2a_state:TASK_STATE_COMPLETED",
+        "a2a_disposition:completed",
+    ]
+    assert response.envelope_json["diagnostic_payload"]["a2a_artifacts"] == [
+        {"artifact_id": "review-artifact", "text": "bounded"}
+    ]
+    assert chat.list_proposals(conversation.id) == []
+    assert result.result_log_path is not None
+    log_payload = json.loads(Path(result.result_log_path).read_text(encoding="utf-8"))
+    assert log_payload["provider_writeback"]["a2a_writeback"]["a2a_is_authority"] is False
 
 
 def _provider_session_binding(*, worktree: str) -> ProviderSessionBindingRecord:

@@ -10,6 +10,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from xmuse_core.integrations.a2a_writeback_reconciler import (
+    A2AProviderWritebackReconciler,
+)
 from xmuse_core.observability import current_observability_context
 from xmuse_core.providers.adapters.base import ProviderInvocation, ProviderInvocationResult
 from xmuse_core.providers.goal_contract import WorkerResultStatus
@@ -74,6 +77,7 @@ class SpawnResult:
     memoryos_ingested: bool = False
     memoryos_degraded_reason: str | None = None
     provider_result: ProviderInvocationResult | None = None
+    provider_writeback: dict[str, Any] | None = None
     provider_profile_ref: str | None = None
     prompt_log_path: str | None = None
     stdout_log_path: str | None = None
@@ -234,6 +238,7 @@ class AgentSpawner:
                         if result.provider_result is not None
                         else None
                     ),
+                    "provider_writeback": result.provider_writeback,
                 },
                 indent=2,
                 ensure_ascii=False,
@@ -384,6 +389,10 @@ class AgentSpawner:
         provider_result = self._provider_service.invoke_provider_adapter(
             provider_invocation
         )
+        provider_writeback = self._record_provider_writeback(
+            provider_invocation=provider_invocation,
+            provider_result=provider_result,
+        )
         result = SpawnResult(
             exit_code=(
                 0 if provider_result.status is WorkerResultStatus.COMPLETED else 1
@@ -394,6 +403,7 @@ class AgentSpawner:
             memoryos_context_attached=memoryos_context_attached,
             memoryos_degraded_reason=memoryos_degraded_reason,
             provider_result=provider_result,
+            provider_writeback=provider_writeback,
             provider_profile_ref=provider_invocation.provider_profile_ref,
         )
         if memoryos_session_id is not None:
@@ -418,6 +428,24 @@ class AgentSpawner:
             log_paths=log_paths,
         )
         return result
+
+    def _record_provider_writeback(
+        self,
+        *,
+        provider_invocation: ProviderInvocation,
+        provider_result: ProviderInvocationResult,
+    ) -> dict[str, Any] | None:
+        context = provider_invocation.writeback_context
+        if context is None:
+            return None
+        return A2AProviderWritebackReconciler(
+            self._repo_root / "chat.db"
+        ).record_provider_result(
+            conversation_id=context.conversation_id,
+            participant_id=context.participant_id,
+            reply_to_inbox_item_id=context.reply_to_inbox_item_id,
+            provider_result=provider_result,
+        )
 
     def _uses_direct_provider_adapter(
         self,
