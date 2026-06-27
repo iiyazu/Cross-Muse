@@ -27,6 +27,10 @@ async def test_a2a_provider_client_sends_sdk_request_and_normalizes_task_result(
         assert body["params"]["message"]["parts"] == [
             {"text": "@review inspect remote output."}
         ]
+        assert body["params"]["message"]["metadata"]["purpose"] == "review_request"
+        assert body["params"]["message"]["metadata"]["metadata"] == {
+            "purpose": "review_request"
+        }
         return httpx.Response(
             200,
             json={
