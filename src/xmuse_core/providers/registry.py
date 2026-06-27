@@ -24,6 +24,8 @@ DEFAULT_OPENCODE_DEEPSEEK_MODEL_ID = "deepseek-v4-flash"
 DEFAULT_OPENCODE_DEEPSEEK_MODEL_ENV_NAME = "DEEPSEEK_MODEL"
 DEFAULT_OPENCODE_DEEPSEEK_BASE_ENV_NAME = "DEEPSEEK_BASE_URL"
 DEFAULT_OPENCODE_DEEPSEEK_API_KEY_ENV_NAME = "DEEPSEEK_API_KEY"
+DEFAULT_A2A_REMOTE_MODEL_ID = "a2a-remote"
+DEFAULT_A2A_REMOTE_ENDPOINT_ENV_NAME = "XMUSE_A2A_PROVIDER_URL"
 
 
 def is_reserved_final_quality_model_id(model_id: str | None) -> bool:
@@ -115,6 +117,24 @@ def build_default_provider_registry(
 ) -> ProviderRegistry:
     return ProviderRegistry(
         [
+            ProviderProfile(
+                provider_id=ProviderId.A2A,
+                profile_id=ProviderProfileId.REMOTE,
+                adapter_kind=AdapterKind.A2A_REMOTE,
+                model_id=DEFAULT_A2A_REMOTE_MODEL_ID,
+                api_base_env_name=DEFAULT_A2A_REMOTE_ENDPOINT_ENV_NAME,
+                env_requirement_names=(DEFAULT_A2A_REMOTE_ENDPOINT_ENV_NAME,),
+                supports_mcp=False,
+                persistent_capability=PersistentCapability.UNSUPPORTED,
+                support_level=SupportLevel.EXPERIMENTAL,
+                cost_tier=CostTier.MEDIUM,
+                risk_tier=RiskTier.MEDIUM,
+                task_capabilities=(
+                    TaskCapability.BOUNDED_CODE_WRITING,
+                    TaskCapability.BOUNDED_DELIBERATION,
+                    TaskCapability.REVIEW,
+                ),
+            ),
             ProviderProfile(
                 provider_id=ProviderId.CODEX,
                 profile_id=ProviderProfileId.DEFAULT,

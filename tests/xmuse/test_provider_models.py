@@ -68,6 +68,7 @@ def test_provider_registry_lists_required_codex_and_opencode_profiles() -> None:
     registry = build_default_provider_registry()
 
     assert [profile.ref for profile in registry.list_profiles()] == [
+        "a2a.remote",
         "codex.default",
         "codex.worker",
         "codex.review",
@@ -90,6 +91,15 @@ def test_provider_registry_lists_required_codex_and_opencode_profiles() -> None:
     assert codex_final_quality.task_capabilities == (
         TaskCapability.MERGE_FINAL_REVIEW,
     )
+
+    a2a_remote = registry.get("a2a.remote")
+    assert a2a_remote.provider_id is ProviderId.A2A
+    assert a2a_remote.adapter_kind is AdapterKind.A2A_REMOTE
+    assert a2a_remote.support_level.value == "experimental"
+    assert a2a_remote.api_base_env_name == "XMUSE_A2A_PROVIDER_URL"
+    assert a2a_remote.env_requirement_names == ("XMUSE_A2A_PROVIDER_URL",)
+    assert a2a_remote.supports_persistent_sessions is False
+    assert TaskCapability.REVIEW in a2a_remote.task_capabilities
 
 
 def test_opencode_deepseek_flash_worker_has_configurable_model_and_env_requirements() -> None:
