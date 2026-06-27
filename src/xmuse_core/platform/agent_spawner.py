@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from xmuse_core.observability import current_observability_context
 from xmuse_core.providers.adapters.base import ProviderInvocation, ProviderInvocationResult
+from xmuse_core.providers.goal_contract import WorkerResultStatus
 from xmuse_core.providers.models import ProviderProfileId
 from xmuse_core.providers.registry import (
     DEFAULT_CODEX_GOD_MODEL_ID,
@@ -228,6 +229,11 @@ class AgentSpawner:
                     "memoryos_context_attached": result.memoryos_context_attached,
                     "memoryos_ingested": result.memoryos_ingested,
                     "memoryos_degraded_reason": result.memoryos_degraded_reason,
+                    "provider_result": (
+                        result.provider_result.model_dump(mode="json")
+                        if result.provider_result is not None
+                        else None
+                    ),
                 },
                 indent=2,
                 ensure_ascii=False,
@@ -256,6 +262,17 @@ class AgentSpawner:
             await self._prepare_memoryos_prompt(lane_id, prompt)
         )
         provider_invocation = self._with_final_prompt(provider_invocation, prompt)
+        if self._uses_direct_provider_adapter(provider_invocation):
+            assert provider_invocation is not None
+            return await self._spawn_direct_provider_adapter(
+                god_config=god_config,
+                lane_id=lane_id,
+                prompt=prompt,
+                provider_invocation=provider_invocation,
+                memoryos_session_id=memoryos_session_id,
+                memoryos_context_attached=context_attached,
+                memoryos_degraded_reason=degraded_reason,
+            )
         cmd = self._build_command(
             god_config,
             worktree,
@@ -351,6 +368,65 @@ class AgentSpawner:
             )
             return result
 
+    async def _spawn_direct_provider_adapter(
+        self,
+        *,
+        god_config: GodConfig,
+        lane_id: str,
+        prompt: str,
+        provider_invocation: ProviderInvocation,
+        memoryos_session_id: str | None,
+        memoryos_context_attached: bool,
+        memoryos_degraded_reason: str | None,
+    ) -> SpawnResult:
+        if self._provider_service is None:
+            raise ValueError("direct provider adapter requires provider_service")
+        provider_result = self._provider_service.invoke_provider_adapter(
+            provider_invocation
+        )
+        result = SpawnResult(
+            exit_code=(
+                0 if provider_result.status is WorkerResultStatus.COMPLETED else 1
+            ),
+            stdout="",
+            stderr=_provider_result_stderr(provider_result),
+            memoryos_session_id=memoryos_session_id,
+            memoryos_context_attached=memoryos_context_attached,
+            memoryos_degraded_reason=memoryos_degraded_reason,
+            provider_result=provider_result,
+            provider_profile_ref=provider_invocation.provider_profile_ref,
+        )
+        if memoryos_session_id is not None:
+            result.memoryos_ingested = await self._ingest_memoryos_result(
+                memoryos_session_id,
+                original_prompt=self._strip_memoryos_context(prompt),
+                result=result,
+            )
+        log_paths = self._write_spawn_log(
+            lane_id=lane_id,
+            god_config=god_config,
+            command=[
+                "xmuse-provider-adapter",
+                provider_invocation.provider_profile_ref,
+            ],
+            prompt=prompt,
+            result=result,
+        )
+        self._attach_provider_metadata(
+            result,
+            provider_invocation=provider_invocation,
+            log_paths=log_paths,
+        )
+        return result
+
+    def _uses_direct_provider_adapter(
+        self,
+        provider_invocation: ProviderInvocation | None,
+    ) -> bool:
+        if provider_invocation is None or self._provider_service is None:
+            return False
+        return self._provider_service.runtime_for_invocation(provider_invocation) == "a2a"
+
     def _with_final_prompt(
         self,
         provider_invocation: ProviderInvocation | None,
@@ -385,10 +461,11 @@ class AgentSpawner:
         if provider_invocation is None or self._provider_service is None:
             return
         result.provider_profile_ref = provider_invocation.provider_profile_ref
-        result.provider_result = self._provider_service.build_result_from_spawn_result(
-            provider_invocation,
-            result,
-        )
+        if result.provider_result is None:
+            result.provider_result = self._provider_service.build_result_from_spawn_result(
+                provider_invocation,
+                result,
+            )
 
     async def _prepare_memoryos_prompt(
         self,
@@ -442,3 +519,11 @@ class AgentSpawner:
         if prompt.startswith("<memoryos_context>") and end_tag in prompt:
             return prompt.split(end_tag, 1)[1].lstrip()
         return prompt
+
+
+def _provider_result_stderr(result: ProviderInvocationResult) -> str:
+    if result.status is WorkerResultStatus.COMPLETED:
+        return ""
+    if result.failure_kind is not None:
+        return result.failure_kind.value
+    return result.status.value
