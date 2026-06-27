@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -88,6 +89,19 @@ def _a2a_provider_result() -> ProviderInvocationResult:
             "a2a_jsonrpc_id": "req-a2a-review",
         },
     )
+
+
+def _a2a_provider_result_with_proposal(
+    *,
+    proposal_payload: dict,
+) -> ProviderInvocationResult:
+    provider_result = _a2a_provider_result()
+    diagnostic = dict(provider_result.diagnostic_payload)
+    metadata = dict(diagnostic["a2a_metadata"])
+    metadata["xmuse_proposal"] = proposal_payload
+    diagnostic["a2a_metadata"] = metadata
+    diagnostic["a2a_content"] = "Remote A2A provider returned a structured proposal."
+    return provider_result.model_copy(update={"diagnostic_payload": diagnostic})
 
 
 def _a2a_provider_result_with_review_handoff() -> ProviderInvocationResult:
@@ -222,6 +236,86 @@ def test_a2a_provider_result_reconciles_to_durable_inbox_writeback(
     assert ChatStore(db).list_proposals(conversation.id) == []
     assert AcceptanceSpineStore(db).list_by_conversation(conversation.id) == []
     assert chat.list_messages(conversation.id)[-1].id == response["id"]
+
+
+def test_a2a_provider_metadata_proposal_enters_proposal_authority(
+    tmp_path: Path,
+) -> None:
+    db, chat, conversation, participant, inbox_item = _setup_inbox(tmp_path)
+
+    result = A2AProviderWritebackReconciler(db).record_provider_result(
+        conversation_id=conversation.id,
+        participant_id=participant.participant_id,
+        reply_to_inbox_item_id=inbox_item.id,
+        provider_result=_a2a_provider_result_with_proposal(
+            proposal_payload={
+                "schema_version": 1,
+                "proposal_type": "lane_graph",
+                "summary": "A2A lane graph candidate",
+                "content": {
+                    "summary": "A2A lane graph candidate",
+                    "lanes": [
+                        {
+                            "feature_id": "a2a-proposal-lane",
+                            "prompt": "Validate structured A2A proposal writeback.",
+                            "depends_on": [],
+                            "capabilities": ["code", "test"],
+                        }
+                    ],
+                },
+                "references": ["artifact:a2a-proposal"],
+            },
+        ),
+    )
+
+    assert result["proposal_writeback"]["status"] == "accepted"
+    assert result["proposal_writeback"]["authority"] == "chat.db/proposal"
+    assert result["proposal_writeback"]["a2a_is_authority"] is False
+    [proposal] = ChatStore(db).list_proposals(conversation.id)
+    assert proposal.author == participant.participant_id
+    assert proposal.proposal_type == "lane_graph"
+    assert proposal.status.value == "open"
+    assert "inbox:" + inbox_item.id in proposal.references
+    assert "a2a_task:req-a2a-review" in proposal.references
+    assert "artifact:a2a-proposal" in proposal.references
+    assert json.loads(proposal.content)["lanes"][0]["feature_id"] == "a2a-proposal-lane"
+    writeback = result["message"]
+    assert writeback["envelope_type"] == "a2a_provider_result"
+    assert writeback["envelope_json"]["proposal_writeback"]["proposal_id"] == proposal.id
+    updated = ChatInboxStore(db).get(inbox_item.id)
+    assert updated.status == "read"
+    assert updated.responded_message_id == writeback["id"]
+
+
+def test_invalid_a2a_provider_proposal_metadata_blocks_without_proposal(
+    tmp_path: Path,
+) -> None:
+    db, _chat, conversation, participant, inbox_item = _setup_inbox(tmp_path)
+
+    result = A2AProviderWritebackReconciler(db).record_provider_result(
+        conversation_id=conversation.id,
+        participant_id=participant.participant_id,
+        reply_to_inbox_item_id=inbox_item.id,
+        provider_result=_a2a_provider_result_with_proposal(
+            proposal_payload={
+                "schema_version": 1,
+                "proposal_type": "lane_graph",
+                "summary": "Invalid A2A lane graph candidate",
+                "content": {"summary": "missing lanes"},
+            },
+        ),
+    )
+
+    assert ChatStore(db).list_proposals(conversation.id) == []
+    blocked = result["proposal_writeback"]
+    assert blocked["status"] == "blocked"
+    assert blocked["reason"] == "invalid_xmuse_proposal"
+    assert blocked["authority"] == "chat.db/inbox"
+    assert blocked["a2a_is_authority"] is False
+    assert result["message"]["envelope_json"]["proposal_writeback"]["status"] == "blocked"
+    updated = ChatInboxStore(db).get(inbox_item.id)
+    assert updated.status == "read"
+    assert updated.responded_message_id == result["message"]["id"]
 
 
 def test_a2a_review_trigger_verdict_reconciles_to_review_authority(
