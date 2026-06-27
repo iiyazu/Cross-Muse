@@ -435,6 +435,11 @@ def _structured_state(
                 "status": item.status,
                 "target_role": item.target_role,
                 "route_kind": item.payload.get("route_kind"),
+                "route_key": _payload_str(item.payload, "route_key"),
+                "route_depth": _payload_int(item.payload, "route_depth"),
+                "source_kind": _payload_str(item.payload, "source_kind"),
+                "source_refs": _payload_str_list(item.payload, "source_refs"),
+                "natural_route": _compact_natural_route(item.payload),
                 "source_message_id": item.source_message_id,
             }
             for item in open_inbox[-8:]
@@ -448,6 +453,11 @@ def _structured_state(
                 "blocks_dispatch": item.payload.get("blocks_dispatch") is True,
                 "blocker_reason": item.payload.get("blocker_reason"),
                 "route_kind": item.payload.get("route_kind"),
+                "route_key": _payload_str(item.payload, "route_key"),
+                "route_depth": _payload_int(item.payload, "route_depth"),
+                "source_kind": _payload_str(item.payload, "source_kind"),
+                "source_refs": _payload_str_list(item.payload, "source_refs"),
+                "natural_route": _compact_natural_route(item.payload),
                 "natural_route_status": _natural_route_status(item.payload),
             }
             for item in blockers[-8:]
@@ -511,6 +521,33 @@ def _structured_state(
     }
 
 
+def _compact_natural_route(payload: dict[str, Any]) -> dict[str, Any] | None:
+    natural_route = payload.get("natural_route")
+    if not isinstance(natural_route, dict):
+        return None
+    compact: dict[str, Any] = {}
+    for key in (
+        "route_id",
+        "route_key",
+        "source_kind",
+        "route_kind",
+        "origin_message_id",
+        "target_participant_id",
+        "status",
+        "blocker_reason",
+    ):
+        value = natural_route.get(key)
+        if isinstance(value, str) and value.strip():
+            compact[key] = value
+    depth = natural_route.get("depth")
+    if isinstance(depth, int):
+        compact["depth"] = depth
+    source_refs = _payload_str_list(natural_route, "source_refs")
+    if source_refs:
+        compact["source_refs"] = source_refs
+    return compact or None
+
+
 def _natural_route_status(payload: dict[str, Any]) -> str | None:
     natural_route = payload.get("natural_route")
     if isinstance(natural_route, dict):
@@ -518,6 +555,27 @@ def _natural_route_status(payload: dict[str, Any]) -> str | None:
         if isinstance(status, str):
             return status
     return None
+
+
+def _payload_str(payload: dict[str, Any], key: str) -> str | None:
+    value = payload.get(key)
+    if isinstance(value, str) and value.strip():
+        return value
+    return None
+
+
+def _payload_int(payload: dict[str, Any], key: str) -> int | None:
+    value = payload.get(key)
+    if isinstance(value, int):
+        return value
+    return None
+
+
+def _payload_str_list(payload: dict[str, Any], key: str) -> list[str]:
+    value = payload.get(key)
+    if not isinstance(value, (list, tuple)):
+        return []
+    return [str(item) for item in value if isinstance(item, str) and item.strip()]
 
 
 def _enum_value(value: Any) -> str:

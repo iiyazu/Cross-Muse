@@ -10,6 +10,10 @@ from xmuse_core.chat.context_assembler import ContextAssembler
 from xmuse_core.chat.dispatch_queue import ChatDispatchQueueStore
 from xmuse_core.chat.inbox_store import ChatInboxStore
 from xmuse_core.chat.mentions import MentionResolver
+from xmuse_core.chat.natural_routing import (
+    build_natural_route_event,
+    natural_route_payload,
+)
 from xmuse_core.chat.participant_store import ParticipantStore
 from xmuse_core.chat.store import ChatStore
 
@@ -228,6 +232,15 @@ def test_group_chat_context_projects_structured_state_from_chat_authorities(
         intake_message_id=demand.id,
     )
     inbox = ChatInboxStore(db_path)
+    mention_route = build_natural_route_event(
+        conversation_id=conversation.id,
+        origin_message_id=demand.id,
+        source_kind="human_line_start_mention",
+        author_participant_id=None,
+        target_participant_id=architect.participant_id,
+        route_kind="mention",
+        source_refs=[f"message:{demand.id}"],
+    )
     inbox.create_item(
         conversation_id=conversation.id,
         target_participant_id=architect.participant_id,
@@ -237,7 +250,22 @@ def test_group_chat_context_projects_structured_state_from_chat_authorities(
         sender_address="human",
         source_message_id=demand.id,
         item_type="mention",
-        payload={"route_kind": "ask", "content": demand.content},
+        payload=natural_route_payload(
+            mention_route,
+            content=demand.content,
+            mention="@architect",
+        ),
+    )
+    blocker_route = build_natural_route_event(
+        conversation_id=conversation.id,
+        origin_message_id=demand.id,
+        source_kind="review_gate",
+        author_participant_id=None,
+        target_participant_id=architect.participant_id,
+        route_kind="review_blocker",
+        source_refs=[f"message:{demand.id}", "review:required"],
+        depth=2,
+        blocker_reason="review_required",
     )
     inbox.create_item(
         conversation_id=conversation.id,
@@ -248,7 +276,11 @@ def test_group_chat_context_projects_structured_state_from_chat_authorities(
         sender_address="@review",
         source_message_id=demand.id,
         item_type="review_blocker",
-        payload={"route_kind": "review_blocker", "blocks_dispatch": True},
+        payload=natural_route_payload(
+            blocker_route,
+            content="Review is required before dispatch.",
+            extra={"blocks_dispatch": True},
+        ),
     )
     proposal = chat.create_proposal(
         conversation_id=conversation.id,
@@ -309,7 +341,34 @@ def test_group_chat_context_projects_structured_state_from_chat_authorities(
     assert state["counts"]["collaboration_responses"] == 1
     assert state["counts"]["dispatch_entries"] == 1
     assert state["counts"]["acceptance_spines"] == 1
+    assert state["open_inbox"][0]["route_key"] == mention_route.route_key
+    assert state["open_inbox"][0]["route_depth"] == 1
+    assert state["open_inbox"][0]["source_kind"] == "human_line_start_mention"
+    assert state["open_inbox"][0]["source_refs"] == [f"message:{demand.id}"]
+    assert state["open_inbox"][0]["natural_route"] == {
+        "route_id": mention_route.route_id,
+        "route_key": mention_route.route_key,
+        "source_kind": "human_line_start_mention",
+        "route_kind": "mention",
+        "origin_message_id": demand.id,
+        "target_participant_id": architect.participant_id,
+        "status": "pending",
+        "depth": 1,
+        "source_refs": [f"message:{demand.id}"],
+    }
     assert state["blockers"][0]["blocks_dispatch"] is True
+    assert state["blockers"][0]["route_key"] == blocker_route.route_key
+    assert state["blockers"][0]["route_depth"] == 2
+    assert state["blockers"][0]["source_kind"] == "review_gate"
+    assert state["blockers"][0]["source_refs"] == [
+        f"message:{demand.id}",
+        "review:required",
+    ]
+    assert state["blockers"][0]["natural_route"]["status"] == "blocked"
+    assert state["blockers"][0]["natural_route"]["blocker_reason"] == (
+        "review_required"
+    )
+    assert state["blockers"][0]["natural_route_status"] == "blocked"
     assert state["proposals"][0]["id"] == proposal.id
     assert state["resolutions"][0]["id"] == resolution.id
     assert state["collaborations"][0]["run_id"] == collaboration.run_id
