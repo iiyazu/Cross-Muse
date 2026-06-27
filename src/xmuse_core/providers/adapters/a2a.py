@@ -122,6 +122,12 @@ class A2AProviderAdapter:
             "xmuse_risk_tier": invocation.risk_tier.value,
             "xmuse_workspace": str(invocation.workspace),
         }
+        if invocation.writeback_context is not None:
+            metadata["xmuse_writeback_context"] = (
+                invocation.writeback_context.model_dump(mode="json")
+            )
+        if invocation.runtime_context:
+            metadata["xmuse_runtime_context"] = dict(invocation.runtime_context)
         if invocation.goal_contract is not None:
             context_id = invocation.goal_contract.lane_id
             metadata["xmuse_goal_contract"] = {

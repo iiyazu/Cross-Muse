@@ -12,6 +12,10 @@ from xmuse_core.agents.protocol import StdoutMessage
 from xmuse_core.agents.registry import AgentRuntime
 from xmuse_core.chat.acceptance_spine import AcceptanceSpineStatus, AcceptanceSpineStore
 from xmuse_core.chat.inbox_store import ChatInboxStore
+from xmuse_core.chat.natural_routing import (
+    build_natural_route_event,
+    natural_route_payload,
+)
 from xmuse_core.chat.participant_store import ParticipantStore
 from xmuse_core.chat.peer_scheduler import (
     PeerChatScheduler,
@@ -1561,6 +1565,15 @@ async def test_scheduler_delivers_a2a_participant_via_provider_writeback(
         model="a2a-remote",
     )
     source = chat.add_message(conv.id, "Human", "human", "@review inspect this.")
+    route = build_natural_route_event(
+        conversation_id=conv.id,
+        origin_message_id=source.id,
+        source_kind="human_line_start_mention",
+        author_participant_id=None,
+        target_participant_id=participant.participant_id,
+        route_kind="mention",
+        source_refs=[f"message:{source.id}"],
+    )
     inbox = ChatInboxStore(db_path)
     item = inbox.create_item(
         conversation_id=conv.id,
@@ -1571,7 +1584,11 @@ async def test_scheduler_delivers_a2a_participant_via_provider_writeback(
         sender_address="@human",
         source_message_id=source.id,
         item_type="mention",
-        payload={"content": "@review inspect this."},
+        payload=natural_route_payload(
+            route,
+            content="@review inspect this.",
+            mention="@review",
+        ),
     )
 
     class ForbiddenGodLayer:
@@ -1636,6 +1653,22 @@ async def test_scheduler_delivers_a2a_participant_via_provider_writeback(
     assert invocation.writeback_context.conversation_id == conv.id
     assert invocation.writeback_context.participant_id == participant.participant_id
     assert invocation.writeback_context.reply_to_inbox_item_id == item.id
+    assert invocation.runtime_context["authority"] == "chat.db/inbox"
+    assert invocation.runtime_context["a2a_is_authority"] is False
+    assert invocation.runtime_context["inbox_item_id"] == item.id
+    assert invocation.runtime_context["source_message_id"] == source.id
+    assert invocation.runtime_context["source_refs"] == [f"message:{source.id}"]
+    assert invocation.runtime_context["route"] == {
+        "route_id": route.route_id,
+        "route_key": route.route_key,
+        "source_kind": "human_line_start_mention",
+        "route_kind": "mention",
+        "origin_message_id": source.id,
+        "target_participant_id": participant.participant_id,
+        "status": "pending",
+        "depth": 1,
+        "source_refs": [f"message:{source.id}"],
+    }
     updated = inbox.get(item.id)
     assert updated.status == "read"
     assert updated.responded_message_id is not None

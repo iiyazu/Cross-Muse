@@ -87,6 +87,7 @@ class ProviderInvocation(BaseModel):
     timeout_seconds: int = Field(gt=0)
     goal_contract: WorkerGoalContract | None = None
     writeback_context: ProviderInvocationWritebackContext | None = None
+    runtime_context: dict[str, object] = Field(default_factory=dict)
 
     @field_validator("request_id", "prompt")
     @classmethod
