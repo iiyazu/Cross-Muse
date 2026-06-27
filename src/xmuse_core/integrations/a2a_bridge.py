@@ -352,6 +352,7 @@ class A2AInboundBridge:
                 source_message_id=task_id,
                 input_parts=list(input_parts),
                 artifact_refs=_artifact_refs_from_input_parts(input_parts),
+                feature_scope_id=_feature_scope_id_from_metadata(metadata),
             )
         if blocker_reason:
             extra.update(
@@ -403,6 +404,14 @@ def _metadata_dict(value: object) -> dict[str, Any]:
         return json.loads(json.dumps(value))
     except (TypeError, ValueError) as exc:
         raise A2ABridgeError("invalid_metadata_json", "metadata") from exc
+
+
+def _feature_scope_id_from_metadata(metadata: dict[str, Any]) -> str | None:
+    for key in ("feature_scope_id", "xmuse_feature_scope_id"):
+        value = metadata.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
 
 
 def _artifact_refs_from_input_parts(
