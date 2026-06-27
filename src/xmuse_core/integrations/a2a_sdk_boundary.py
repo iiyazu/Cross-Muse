@@ -18,6 +18,7 @@ class A2ASDKBoundary:
         "agent_card_model",
         "send_message_request_model",
         "artifact_parts_model",
+        "task_result_normalization",
         "jsonrpc_http_boundary",
         "xmuse_authority_normalization",
     )
@@ -47,6 +48,22 @@ class NormalizedA2ATaskSend:
     sdk_request: dict[str, Any] = field(default_factory=dict)
     jsonrpc_id: str | int | None = None
     method: str = "tasks/send"
+
+
+@dataclass(frozen=True)
+class NormalizedA2ATaskResult:
+    task_id: str
+    context_id: str
+    state: str
+    disposition: str
+    terminal: bool
+    content: str
+    artifacts: tuple[dict[str, Any], ...] = ()
+    history: tuple[dict[str, Any], ...] = ()
+    metadata: dict[str, Any] = field(default_factory=dict)
+    source_refs: tuple[str, ...] = ()
+    sdk_task: dict[str, Any] = field(default_factory=dict)
+    jsonrpc_id: str | int | None = None
 
 
 def a2a_sdk_dependency_status() -> dict[str, object]:
@@ -183,6 +200,62 @@ def jsonrpc_error_response(
     return payload
 
 
+def normalize_task_result_payload(payload: Mapping[str, Any]) -> NormalizedA2ATaskResult:
+    """Normalize A2A SDK Task output into an xmuse-safe provider result.
+
+    This does not approve proposals, produce review truth, dispatch execution,
+    or mutate final-action state. It only turns a remote/provider A2A task into
+    a structured payload that a future writeback reconciler can persist into
+    xmuse authority stores.
+    """
+
+    if not isinstance(payload, Mapping):
+        raise A2ASDKBoundaryError("invalid_a2a_task_result", "object payload required")
+    jsonrpc_id: str | int | None = None
+    result: Mapping[str, Any] = payload
+    if "jsonrpc" in payload or "result" in payload or "error" in payload:
+        if payload.get("jsonrpc") != "2.0":
+            raise A2ASDKBoundaryError("invalid_jsonrpc", "jsonrpc must be 2.0")
+        request_id = payload.get("id")
+        if request_id is not None and not isinstance(request_id, str | int):
+            raise A2ASDKBoundaryError("invalid_jsonrpc_id", "id")
+        jsonrpc_id = request_id
+        if "error" in payload:
+            return _normalize_jsonrpc_error(payload, jsonrpc_id=jsonrpc_id)
+        raw_result = payload.get("result")
+        if not isinstance(raw_result, Mapping):
+            raise A2ASDKBoundaryError("invalid_jsonrpc_result", "result object required")
+        result = raw_result
+    try:
+        task = ParseDict(dict(result), a2a_types.Task())
+    except Exception as exc:  # noqa: BLE001 - protobuf raises several parse exception types.
+        raise A2ASDKBoundaryError("invalid_sdk_task", str(exc)) from exc
+    task_id = _required_text(task.id, "task_id")
+    context_id = _optional_text(task.context_id, "context_id") or ""
+    state = _task_state_name(task.status.state)
+    disposition = _task_disposition(state)
+    artifacts = tuple(_artifact_to_payload(artifact) for artifact in task.artifacts)
+    history = tuple(_message_to_payload(message) for message in task.history)
+    content = _task_content(artifacts=artifacts, history=history, status=task.status)
+    source_refs = (f"a2a_task:{task_id}",) + (
+        (f"a2a_context:{context_id}",) if context_id else ()
+    )
+    return NormalizedA2ATaskResult(
+        task_id=task_id,
+        context_id=context_id,
+        state=state,
+        disposition=disposition,
+        terminal=_task_terminal(state),
+        content=content,
+        artifacts=artifacts,
+        history=history,
+        metadata=_metadata(MessageToDict(task.metadata, preserving_proto_field_name=True)),
+        source_refs=source_refs,
+        sdk_task=MessageToDict(task, preserving_proto_field_name=True),
+        jsonrpc_id=jsonrpc_id,
+    )
+
+
 def _normalize_legacy_task_send(params: Mapping[str, Any]) -> NormalizedA2ATaskSend:
     task_id = _required_text(params.get("task_id"), "task_id")
     context_id = _required_text(params.get("context_id"), "context_id")
@@ -272,6 +345,108 @@ def _parts_to_payload(parts: Any) -> tuple[dict[str, Any], ...]:
         data["kind"] = part.WhichOneof("content")
         payload.append(data)
     return tuple(payload)
+
+
+def _artifact_to_payload(artifact: Any) -> dict[str, Any]:
+    parts = _parts_to_payload(artifact.parts)
+    payload = MessageToDict(artifact, preserving_proto_field_name=True)
+    return {
+        "artifact_id": artifact.artifact_id,
+        "name": artifact.name,
+        "description": artifact.description,
+        "parts": list(parts),
+        "text": _content_from_parts(artifact.parts),
+        "sdk_artifact": payload,
+    }
+
+
+def _message_to_payload(message: Any) -> dict[str, Any]:
+    parts = _parts_to_payload(message.parts)
+    return {
+        "message_id": message.message_id,
+        "context_id": message.context_id,
+        "task_id": message.task_id,
+        "role": a2a_types.Role.Name(message.role),
+        "parts": list(parts),
+        "text": _content_from_parts(message.parts),
+        "metadata": MessageToDict(message.metadata, preserving_proto_field_name=True),
+    }
+
+
+def _task_content(
+    *,
+    artifacts: tuple[dict[str, Any], ...],
+    history: tuple[dict[str, Any], ...],
+    status: Any,
+) -> str:
+    artifact_text = "\n".join(
+        str(item.get("text", "")) for item in artifacts if item.get("text")
+    )
+    if artifact_text:
+        return artifact_text
+    for message in reversed(history):
+        if message.get("text"):
+            return str(message["text"])
+    if status.HasField("message"):
+        return _content_from_parts(status.message.parts)
+    return ""
+
+
+def _task_state_name(value: int) -> str:
+    try:
+        return a2a_types.TaskState.Name(value)
+    except ValueError:
+        return "TASK_STATE_UNSPECIFIED"
+
+
+def _task_disposition(state: str) -> str:
+    if state == "TASK_STATE_COMPLETED":
+        return "completed"
+    if state in {"TASK_STATE_INPUT_REQUIRED", "TASK_STATE_AUTH_REQUIRED"}:
+        return "blocked"
+    if state in {
+        "TASK_STATE_FAILED",
+        "TASK_STATE_CANCELED",
+        "TASK_STATE_REJECTED",
+        "TASK_STATE_UNSPECIFIED",
+    }:
+        return "failed"
+    return "in_progress"
+
+
+def _task_terminal(state: str) -> bool:
+    return state in {
+        "TASK_STATE_COMPLETED",
+        "TASK_STATE_FAILED",
+        "TASK_STATE_CANCELED",
+        "TASK_STATE_INPUT_REQUIRED",
+        "TASK_STATE_REJECTED",
+        "TASK_STATE_AUTH_REQUIRED",
+    }
+
+
+def _normalize_jsonrpc_error(
+    payload: Mapping[str, Any],
+    *,
+    jsonrpc_id: str | int | None,
+) -> NormalizedA2ATaskResult:
+    error = payload.get("error")
+    if not isinstance(error, Mapping):
+        raise A2ASDKBoundaryError("invalid_jsonrpc_error", "error object required")
+    message = str(error.get("message") or "A2A JSON-RPC error")
+    task_id = str(jsonrpc_id or "unknown")
+    return NormalizedA2ATaskResult(
+        task_id=task_id,
+        context_id="",
+        state="TASK_STATE_FAILED",
+        disposition="failed",
+        terminal=True,
+        content=message,
+        metadata={"jsonrpc_error": dict(error)},
+        source_refs=(f"a2a_jsonrpc_error:{task_id}",),
+        sdk_task={},
+        jsonrpc_id=jsonrpc_id,
+    )
 
 
 def _required_text(value: object, field_name: str) -> str:
