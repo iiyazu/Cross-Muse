@@ -42,6 +42,20 @@ def test_participant_agent_card_uses_existing_profile_contract(tmp_path: Path) -
         "pushNotifications": False,
         "stateTransitionHistory": False,
     }
+    assert card["sdk_boundary"] == {
+        "protocol": "a2a-sdk",
+        "authority": "xmuse-chat-db",
+        "write_authority": "chat.db/inbox",
+    }
+    assert card["sdk_agent_card"]["name"] == "Review GOD"
+    assert card["sdk_agent_card"]["supported_interfaces"] == [
+        {
+            "url": f"http://testserver/a2a/agents/{participant.participant_id}",
+            "protocol_binding": "JSONRPC",
+            "protocol_version": "1.0",
+        }
+    ]
+    assert card["sdk_agent_card"]["skills"][0]["id"] == "xmuse-review"
     metadata = card["metadata"]
     assert metadata["authority"] == "chat.db"
     assert A2ASDKBoundary().authority == "xmuse-chat-db"
@@ -125,4 +139,5 @@ def test_a2a_agent_card_endpoint_does_not_add_inbound_task_route(
 
     response = client.post("/a2a/tasks/send", json={})
 
-    assert response.status_code == 422
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "invalid_task_id"

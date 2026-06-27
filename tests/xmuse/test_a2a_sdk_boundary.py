@@ -29,8 +29,10 @@ def test_a2a_sdk_boundary_names_non_goals() -> None:
     assert boundary.authority == "xmuse-chat-db"
     assert boundary.supported_now == (
         "agent_card_model",
-        "task_send_model",
+        "send_message_request_model",
         "artifact_parts_model",
+        "jsonrpc_http_boundary",
+        "xmuse_authority_normalization",
     )
     assert boundary.deferred == (
         "streaming",

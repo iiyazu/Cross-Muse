@@ -1,9 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+import json
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from importlib import metadata
+from typing import Any
 
 from a2a import types as a2a_types
+from google.protobuf.json_format import MessageToDict, ParseDict
 
 
 @dataclass(frozen=True)
@@ -12,14 +16,37 @@ class A2ASDKBoundary:
     authority: str = "xmuse-chat-db"
     supported_now: tuple[str, ...] = (
         "agent_card_model",
-        "task_send_model",
+        "send_message_request_model",
         "artifact_parts_model",
+        "jsonrpc_http_boundary",
+        "xmuse_authority_normalization",
     )
     deferred: tuple[str, ...] = (
         "streaming",
         "push_notifications",
         "direct_review_or_dispatch_authority",
     )
+
+
+class A2ASDKBoundaryError(ValueError):
+    def __init__(self, code: str, detail: str) -> None:
+        super().__init__(f"{code}: {detail}")
+        self.code = code
+        self.detail = detail
+
+
+@dataclass(frozen=True)
+class NormalizedA2ATaskSend:
+    task_id: str
+    context_id: str
+    sender_agent_id: str
+    content: str
+    target_address: str | None
+    metadata: dict[str, Any] = field(default_factory=dict)
+    input_parts: tuple[dict[str, Any], ...] = ()
+    sdk_request: dict[str, Any] = field(default_factory=dict)
+    jsonrpc_id: str | int | None = None
+    method: str = "tasks/send"
 
 
 def a2a_sdk_dependency_status() -> dict[str, object]:
@@ -39,3 +66,237 @@ def _sdk_model_names() -> tuple[str, ...]:
         a2a_types.Task.__name__,
         a2a_types.Artifact.__name__,
     )
+
+
+def build_sdk_agent_card_payload(
+    *,
+    name: str,
+    description: str,
+    url: str,
+    version: str,
+    streaming: bool = False,
+    push_notifications: bool = False,
+    skills: tuple[Mapping[str, Any], ...] = (),
+) -> dict[str, Any]:
+    """Build an official a2a-sdk AgentCard payload.
+
+    xmuse still returns its compatibility Agent Card fields for current clients,
+    but this SDK payload is the public protocol boundary used to prevent drift
+    between hand-written dicts and the installed SDK model.
+    """
+
+    card = a2a_types.AgentCard(
+        name=name,
+        description=description,
+        version=version,
+    )
+    interface = card.supported_interfaces.add()
+    interface.url = url
+    interface.protocol_binding = "JSONRPC"
+    interface.protocol_version = "1.0"
+    card.capabilities.streaming = streaming
+    card.capabilities.push_notifications = push_notifications
+    for item in skills:
+        skill = card.skills.add()
+        skill.id = _required_text(item.get("id"), "skill.id")
+        skill.name = _required_text(item.get("name"), "skill.name")
+        skill.description = _required_text(item.get("description"), "skill.description")
+        for tag in item.get("tags", ()):
+            if isinstance(tag, str) and tag:
+                skill.tags.append(tag)
+    return MessageToDict(card, preserving_proto_field_name=True)
+
+
+def normalize_task_send_payload(payload: Mapping[str, Any]) -> NormalizedA2ATaskSend:
+    """Normalize legacy, JSON-RPC, or SDK SendMessageRequest payloads.
+
+    The returned object is safe to pass into xmuse's durable chat/inbox bridge.
+    A2A SDK state remains an interop envelope and never becomes proposal,
+    review, dispatch, or merge authority by itself.
+    """
+
+    if not isinstance(payload, Mapping):
+        raise A2ASDKBoundaryError("invalid_a2a_payload", "object payload required")
+
+    jsonrpc_id: str | int | None = None
+    method = "tasks/send"
+    params: Mapping[str, Any] = payload
+    if "jsonrpc" in payload or "method" in payload or "params" in payload:
+        if payload.get("jsonrpc") != "2.0":
+            raise A2ASDKBoundaryError("invalid_jsonrpc", "jsonrpc must be 2.0")
+        method = _required_text(payload.get("method"), "method")
+        if method not in {"tasks/send", "message/send"}:
+            raise A2ASDKBoundaryError("unsupported_a2a_method", method)
+        request_id = payload.get("id")
+        if request_id is not None and not isinstance(request_id, str | int):
+            raise A2ASDKBoundaryError("invalid_jsonrpc_id", "id")
+        jsonrpc_id = request_id
+        raw_params = payload.get("params")
+        if not isinstance(raw_params, Mapping):
+            raise A2ASDKBoundaryError("invalid_jsonrpc_params", "params object required")
+        params = raw_params
+
+    if "message" in params:
+        normalized = _normalize_sdk_send_message(params)
+    else:
+        normalized = _normalize_legacy_task_send(params)
+    return NormalizedA2ATaskSend(
+        task_id=normalized.task_id,
+        context_id=normalized.context_id,
+        sender_agent_id=normalized.sender_agent_id,
+        content=normalized.content,
+        target_address=normalized.target_address,
+        metadata=normalized.metadata,
+        input_parts=normalized.input_parts,
+        sdk_request=normalized.sdk_request,
+        jsonrpc_id=jsonrpc_id,
+        method=method,
+    )
+
+
+def jsonrpc_task_send_response(
+    *,
+    request_id: str | int | None,
+    result: Mapping[str, Any],
+) -> dict[str, Any]:
+    return {
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "result": dict(result),
+    }
+
+
+def jsonrpc_error_response(
+    *,
+    request_id: str | int | None,
+    code: int,
+    message: str,
+    data: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "error": {"code": code, "message": message},
+    }
+    if data is not None:
+        payload["error"]["data"] = dict(data)
+    return payload
+
+
+def _normalize_legacy_task_send(params: Mapping[str, Any]) -> NormalizedA2ATaskSend:
+    task_id = _required_text(params.get("task_id"), "task_id")
+    context_id = _required_text(params.get("context_id"), "context_id")
+    sender_agent_id = _required_text(params.get("sender_agent_id"), "sender_agent_id")
+    content = _required_text(params.get("content"), "content")
+    target_address = _optional_text(params.get("target_address"), "target_address")
+    metadata = _metadata(params.get("metadata"))
+    request = a2a_types.SendMessageRequest(tenant="xmuse")
+    request.message.message_id = task_id
+    request.message.task_id = task_id
+    request.message.context_id = context_id
+    request.message.role = a2a_types.Role.ROLE_USER
+    request.message.parts.add(text=content)
+    request.message.metadata.update(
+        {
+            "sender_agent_id": sender_agent_id,
+            "target_address": target_address or "",
+            "metadata": metadata,
+        }
+    )
+    return NormalizedA2ATaskSend(
+        task_id=task_id,
+        context_id=context_id,
+        sender_agent_id=sender_agent_id,
+        content=content,
+        target_address=target_address,
+        metadata=metadata,
+        input_parts=_parts_to_payload(request.message.parts),
+        sdk_request=MessageToDict(request, preserving_proto_field_name=True),
+    )
+
+
+def _normalize_sdk_send_message(params: Mapping[str, Any]) -> NormalizedA2ATaskSend:
+    try:
+        request = ParseDict(dict(params), a2a_types.SendMessageRequest())
+    except Exception as exc:  # noqa: BLE001 - protobuf raises several parse exception types.
+        raise A2ASDKBoundaryError("invalid_sdk_send_message", str(exc)) from exc
+    message = request.message
+    task_id = _required_text(message.task_id or message.message_id, "task_id")
+    context_id = _required_text(message.context_id, "context_id")
+    metadata_payload = MessageToDict(message.metadata, preserving_proto_field_name=True)
+    metadata = _metadata(metadata_payload.get("metadata"))
+    sender_agent_id = _required_text(
+        metadata_payload.get("sender_agent_id") or request.tenant,
+        "sender_agent_id",
+    )
+    target_address = _optional_text(metadata_payload.get("target_address"), "target_address")
+    content = _content_from_parts(message.parts)
+    if not content:
+        raise A2ASDKBoundaryError("missing_content", "message.parts text/data/url/raw required")
+    return NormalizedA2ATaskSend(
+        task_id=task_id,
+        context_id=context_id,
+        sender_agent_id=sender_agent_id,
+        content=content,
+        target_address=target_address,
+        metadata=metadata,
+        input_parts=_parts_to_payload(message.parts),
+        sdk_request=MessageToDict(request, preserving_proto_field_name=True),
+    )
+
+
+def _content_from_parts(parts: Any) -> str:
+    chunks: list[str] = []
+    for part in parts:
+        kind = part.WhichOneof("content")
+        if kind == "text":
+            chunks.append(part.text)
+        elif kind == "url":
+            chunks.append(f"[a2a-url:{part.url}]")
+        elif kind == "raw":
+            chunks.append("[a2a-raw-bytes]")
+        elif kind == "data":
+            chunks.append(
+                json.dumps(
+                    MessageToDict(part.data, preserving_proto_field_name=True),
+                    sort_keys=True,
+                )
+            )
+    return "\n".join(chunk for chunk in chunks if chunk)
+
+
+def _parts_to_payload(parts: Any) -> tuple[dict[str, Any], ...]:
+    payload: list[dict[str, Any]] = []
+    for part in parts:
+        data = MessageToDict(part, preserving_proto_field_name=True)
+        data["kind"] = part.WhichOneof("content")
+        payload.append(data)
+    return tuple(payload)
+
+
+def _required_text(value: object, field_name: str) -> str:
+    if not isinstance(value, str):
+        raise A2ASDKBoundaryError(f"invalid_{field_name}", field_name)
+    text = value.strip()
+    if not text:
+        raise A2ASDKBoundaryError(f"missing_{field_name}", field_name)
+    return text
+
+
+def _optional_text(value: object, field_name: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise A2ASDKBoundaryError(f"invalid_{field_name}", field_name)
+    return value.strip() or None
+
+
+def _metadata(value: object) -> dict[str, Any]:
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        raise A2ASDKBoundaryError("invalid_metadata", "metadata")
+    try:
+        return json.loads(json.dumps(value))
+    except (TypeError, ValueError) as exc:
+        raise A2ASDKBoundaryError("invalid_metadata_json", "metadata") from exc
