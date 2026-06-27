@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +14,8 @@ from xmuse_core.chat.natural_handoff import (
 )
 from xmuse_core.chat.natural_routing import build_natural_route_event, natural_route_payload
 from xmuse_core.chat.participant_store import ParticipantStore
+from xmuse_core.chat.peer_proposals import classify_structured_proposal
+from xmuse_core.chat.peer_types import PeerChatError
 from xmuse_core.chat.review_trigger_verdicts import (
     REVIEW_TRIGGER_VERDICT_ENVELOPE_TYPE,
     ReviewTriggerVerdictError,
@@ -77,6 +80,14 @@ class A2AProviderWritebackReconciler:
                 verdict=review_verdict["verdict"],
                 source_refs=source_refs,
             )
+        proposal_writeback = self._record_structured_proposal(
+            conversation_id=conversation_id,
+            participant_id=participant_id,
+            reply_to_inbox_item_id=reply_to_inbox_item_id,
+            provider_result=provider_result,
+            diagnostic=diagnostic,
+            source_refs=source_refs,
+        )
         inbox_items = self._route_provider_result_mentions(
             conversation_id=conversation_id,
             participant_id=participant_id,
@@ -100,9 +111,26 @@ class A2AProviderWritebackReconciler:
                 "diagnostic_payload": diagnostic,
                 "authority": "chat.db/inbox",
                 "a2a_is_authority": False,
+                **(
+                    {"proposal_writeback": proposal_writeback}
+                    if proposal_writeback is not None
+                    else {}
+                ),
             },
             envelope_type="a2a_provider_result",
         )
+        extra_result: dict[str, Any] = {
+            "a2a_writeback": {
+                "provider_request_id": provider_result.request_id,
+                "provider_profile_ref": provider_result.provider_profile_ref,
+                "provider_status": provider_result.status.value,
+                "source_refs": source_refs,
+                "authority": "chat.db/inbox",
+                "a2a_is_authority": False,
+            }
+        }
+        if proposal_writeback is not None:
+            extra_result["proposal_writeback"] = proposal_writeback
         return self._chat.create_message_inbox_and_log(
             conversation_id=conversation_id,
             tool_name="a2a_provider_writeback",
@@ -123,16 +151,7 @@ class A2AProviderWritebackReconciler:
             inbox_items=inbox_items,
             reply_to_inbox_item_id=reply_to_inbox_item_id,
             reply_owner_participant_id=participant_id,
-            extra_result={
-                "a2a_writeback": {
-                    "provider_request_id": provider_result.request_id,
-                    "provider_profile_ref": provider_result.provider_profile_ref,
-                    "provider_status": provider_result.status.value,
-                    "source_refs": source_refs,
-                    "authority": "chat.db/inbox",
-                    "a2a_is_authority": False,
-                }
-            },
+            extra_result=extra_result,
         )
 
     def _review_trigger_verdict(
@@ -247,6 +266,82 @@ class A2AProviderWritebackReconciler:
                     verdict_ref=verdict_ref,
                 )
         return result
+
+    def _record_structured_proposal(
+        self,
+        *,
+        conversation_id: str,
+        participant_id: str,
+        reply_to_inbox_item_id: str,
+        provider_result: ProviderInvocationResult,
+        diagnostic: dict[str, Any],
+        source_refs: list[str],
+    ) -> dict[str, Any] | None:
+        proposal_payload = _proposal_payload_from_diagnostic(diagnostic)
+        if proposal_payload is None:
+            return None
+        try:
+            proposal_type, content, references, summary = _normalize_proposal_payload(
+                proposal_payload,
+                reply_to_inbox_item_id=reply_to_inbox_item_id,
+                source_refs=source_refs,
+            )
+            escalation = classify_structured_proposal(
+                proposal_type=proposal_type,
+                content=content,
+                references=references,
+            )
+            result = self._chat.create_proposal_message_and_log(
+                conversation_id=conversation_id,
+                tool_name="a2a_provider_proposal_writeback",
+                caller_identity=participant_id,
+                client_request_id=(
+                    f"{provider_result.request_id}:{reply_to_inbox_item_id}:proposal"
+                ),
+                author=participant_id,
+                proposal_type=escalation.normalized_proposal_type,
+                content=escalation.normalized_content,
+                references=references,
+                message_content=f"[a2a proposal] {summary}",
+                envelope_json=normalize_envelope(
+                    {
+                        "type": "proposal",
+                        "schema_version": 1,
+                        "source_kind": "a2a_provider_result",
+                        "provider_profile_ref": provider_result.provider_profile_ref,
+                        "provider_request_id": provider_result.request_id,
+                        "proposal_type": escalation.normalized_proposal_type,
+                        "source_refs": references,
+                        "authority": "chat.db/proposal",
+                        "a2a_is_authority": False,
+                    },
+                    envelope_type="proposal",
+                ),
+            )
+        except (PeerChatError, TypeError, ValueError) as exc:
+            return {
+                "status": "blocked",
+                "reason": "invalid_xmuse_proposal",
+                "detail": str(exc),
+                "authority": "chat.db/inbox",
+                "a2a_is_authority": False,
+                "source_refs": source_refs,
+            }
+        proposal = result.get("proposal")
+        message = result.get("message")
+        proposal_id = proposal.get("id") if isinstance(proposal, dict) else None
+        message_id = message.get("id") if isinstance(message, dict) else None
+        return {
+            "status": "accepted",
+            "proposal_id": proposal_id,
+            "proposal_message_id": message_id,
+            "proposal_type": (
+                proposal.get("proposal_type") if isinstance(proposal, dict) else None
+            ),
+            "authority": "chat.db/proposal",
+            "a2a_is_authority": False,
+            "source_refs": source_refs,
+        }
 
     def _route_provider_result_mentions(
         self,
@@ -369,6 +464,78 @@ def _content(
     if isinstance(content, str) and content.strip():
         return content.strip()
     return f"A2A provider result: {provider_result.status.value}"
+
+
+def _proposal_payload_from_diagnostic(diagnostic: dict[str, Any]) -> dict[str, Any] | None:
+    metadata = diagnostic.get("a2a_metadata")
+    if not isinstance(metadata, dict):
+        return None
+    payload = metadata.get("xmuse_proposal")
+    return payload if isinstance(payload, dict) else None
+
+
+def _normalize_proposal_payload(
+    payload: dict[str, Any],
+    *,
+    reply_to_inbox_item_id: str,
+    source_refs: list[str],
+) -> tuple[str, str, list[str], str]:
+    proposal_type = _required_text(payload.get("proposal_type"), "proposal_type")
+    raw_content = payload.get("content")
+    if isinstance(raw_content, dict):
+        content = json.dumps(raw_content, ensure_ascii=False, sort_keys=True)
+        summary = _summary_from_payload(raw_content)
+    else:
+        content = _required_text(raw_content, "content")
+        summary = _bounded_summary(content)
+    raw_summary = payload.get("summary")
+    if isinstance(raw_summary, str) and raw_summary.strip():
+        summary = raw_summary.strip()
+    references = _dedupe_refs(
+        [
+            f"inbox:{reply_to_inbox_item_id}",
+            *source_refs,
+            *_payload_references(payload),
+        ]
+    )
+    return proposal_type, content, references, summary
+
+
+def _payload_references(payload: dict[str, Any]) -> list[str]:
+    raw = payload.get("references")
+    if not isinstance(raw, (list, tuple)):
+        return []
+    return [str(item).strip() for item in raw if str(item).strip()]
+
+
+def _summary_from_payload(payload: dict[str, Any]) -> str:
+    for key in ("summary", "title", "goal"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return _bounded_summary(value)
+    return "A2A structured proposal"
+
+
+def _bounded_summary(value: str, *, max_chars: int = 120) -> str:
+    normalized = " ".join(value.strip().split())
+    if len(normalized) <= max_chars:
+        return normalized
+    return normalized[: max_chars - 3].rstrip() + "..."
+
+
+def _dedupe_refs(refs: list[str]) -> list[str]:
+    deduped: list[str] = []
+    for ref in refs:
+        cleaned = str(ref).strip()
+        if cleaned and cleaned not in deduped:
+            deduped.append(cleaned)
+    return deduped
+
+
+def _required_text(value: object, field_name: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{field_name} is required")
+    return value.strip()
 
 
 def _proposal_id_from_message(
