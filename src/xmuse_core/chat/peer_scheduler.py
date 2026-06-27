@@ -7,6 +7,7 @@ from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from xmuse_core.agents.persistent_peer import fingerprint_prompt
 from xmuse_core.agents.registry import AgentDescriptor, AgentRuntime
@@ -529,6 +530,7 @@ class PeerChatScheduler:
                 participant_id=participant.participant_id,
                 reply_to_inbox_item_id=item.id,
             ),
+            runtime_context=_a2a_runtime_context(item),
         )
         provider_turn_started_at = self._clock()
         _put_latency_stage(
@@ -1025,6 +1027,69 @@ def _runtime_for_participant(participant: Participant) -> AgentRuntime:
     if participant.cli_kind == "opencode":
         return AgentRuntime.OPENCODE
     raise RuntimeError(f"unsupported participant cli_kind: {participant.cli_kind}")
+
+
+def _a2a_runtime_context(item) -> dict[str, object]:
+    payload = getattr(item, "payload", {})
+    if not isinstance(payload, dict):
+        payload = {}
+    context: dict[str, object] = {
+        "authority": "chat.db/inbox",
+        "a2a_is_authority": False,
+        "inbox_item_id": item.id,
+        "item_type": item.item_type,
+        "source_message_id": item.source_message_id,
+    }
+    route = _compact_route_context(payload)
+    if route:
+        context["route"] = route
+    source_refs = _payload_str_list(payload, "source_refs")
+    if source_refs:
+        context["source_refs"] = source_refs
+    return context
+
+
+def _compact_route_context(payload: dict[str, Any]) -> dict[str, object]:
+    route: dict[str, object] = {}
+    natural_route = payload.get("natural_route")
+    if isinstance(natural_route, dict):
+        for key in (
+            "route_id",
+            "route_key",
+            "source_kind",
+            "route_kind",
+            "origin_message_id",
+            "target_participant_id",
+            "status",
+            "blocker_reason",
+        ):
+            value = natural_route.get(key)
+            if isinstance(value, str) and value.strip():
+                route[key] = value
+        depth = natural_route.get("depth")
+        if isinstance(depth, int):
+            route["depth"] = depth
+        source_refs = _payload_str_list(natural_route, "source_refs")
+        if source_refs:
+            route["source_refs"] = source_refs
+    for key in ("route_id", "route_key", "source_kind", "route_kind"):
+        value = payload.get(key)
+        if key not in route and isinstance(value, str) and value.strip():
+            route[key] = value
+    depth = payload.get("route_depth")
+    if "depth" not in route and isinstance(depth, int):
+        route["depth"] = depth
+    source_refs = _payload_str_list(payload, "source_refs")
+    if "source_refs" not in route and source_refs:
+        route["source_refs"] = source_refs
+    return route
+
+
+def _payload_str_list(payload: dict[str, Any], key: str) -> list[str]:
+    value = payload.get(key)
+    if not isinstance(value, (list, tuple)):
+        return []
+    return [item for item in value if isinstance(item, str) and item.strip()]
 
 
 def _a2a_task_capability(participant: Participant, item) -> TaskCapability:
