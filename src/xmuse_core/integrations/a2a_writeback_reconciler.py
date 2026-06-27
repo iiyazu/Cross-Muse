@@ -169,6 +169,8 @@ class A2AProviderWritebackReconciler:
             raw_envelope,
             envelope_type=REVIEW_TRIGGER_VERDICT_ENVELOPE_TYPE,
         )
+        envelope.setdefault("authority", "chat.db/inbox/review_trigger_verdict")
+        envelope.setdefault("a2a_is_authority", False)
         envelope.setdefault("a2a_source_refs", list(source_refs))
         try:
             verdict = review_trigger_verdict_decision(

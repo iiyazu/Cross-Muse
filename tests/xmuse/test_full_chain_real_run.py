@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import shutil
 import socket
 import statistics
@@ -155,6 +156,17 @@ class FakeProviderAppServerActor:
                 item_payload.get("content", "") if isinstance(item_payload, dict) else ""
             )
             if "chat_emit_proposal" in str(item_content):
+                proposal_refs = _refs_from_content(str(item_content))
+                lane = {
+                    "feature_id": "a2a-routed-proposal-smoke",
+                    "prompt": (
+                        "Prove A2A handoff can enter xmuse proposal authority."
+                    ),
+                    "depends_on": [],
+                    "capabilities": ["code", "test"],
+                }
+                if "review_runtime: a2a" in str(item_content).lower():
+                    lane["review_runtime"] = "a2a"
                 await _http_mcp_call(
                     client,
                     mcp_url,
@@ -165,18 +177,8 @@ class FakeProviderAppServerActor:
                         "god_session_id": context["god_session_id"],
                         "client_request_id": f"{item['id']}:fake-proposal",
                         "summary": "A2A routed proposal smoke",
-                        "lanes": [
-                            {
-                                "feature_id": "a2a-routed-proposal-smoke",
-                                "prompt": (
-                                    "Prove A2A handoff can enter xmuse "
-                                    "proposal authority."
-                                ),
-                                "depends_on": [],
-                                "capabilities": ["code", "test"],
-                            }
-                        ],
-                        "references": [],
+                        "lanes": [lane],
+                        "references": proposal_refs,
                         "reply_to_inbox_item_id": item["id"],
                     },
                 )
@@ -208,7 +210,41 @@ class FakeProviderAppServerActor:
 
     async def shutdown(self):
         self._alive = False
-        return None
+
+
+def _refs_from_content(content: str) -> list[str]:
+    refs: list[str] = []
+    for match in re.finditer(
+        r"\b(?:intake_message|collaboration):[A-Za-z0-9_:-]+",
+        content,
+    ):
+        ref = match.group(0).rstrip(".,;)")
+        if ref not in refs:
+            refs.append(ref)
+    return refs
+
+
+def _a2a_request_text(message: dict[str, object]) -> str:
+    parts = message.get("parts")
+    if not isinstance(parts, list):
+        return ""
+    chunks: list[str] = []
+    for part in parts:
+        if not isinstance(part, dict):
+            continue
+        text = part.get("text")
+        if isinstance(text, str) and text.strip():
+            chunks.append(text)
+    return "\n".join(chunks)
+
+
+def _field_after_label(content: str, label: str) -> str:
+    for line in content.splitlines():
+        if line.startswith(label):
+            value = line.removeprefix(label).strip()
+            if value:
+                return value
+    raise AssertionError(f"missing {label!r} in content")
 
 
 def _mcp_call(client: TestClient, name: str, arguments: dict[str, object]) -> dict[str, object]:
@@ -428,6 +464,25 @@ async def _wait_for_dispatch_entry_count(
             return entries
         await asyncio.sleep(0.1)
     raise AssertionError(f"expected {expected} dispatch queue entries")
+
+
+async def _wait_for_acceptance_spine_status(
+    db_path: Path,
+    conversation_id: str,
+    expected: AcceptanceSpineStatus,
+    *,
+    attempts: int = 600,
+):
+    last_spines = []
+    for _ in range(attempts):
+        spines = AcceptanceSpineStore(db_path).list_by_conversation(conversation_id)
+        last_spines = spines
+        for spine in spines:
+            if spine.status is expected:
+                return spine
+        await asyncio.sleep(0.1)
+    statuses = [f"{spine.spine_id}:{spine.status.value}" for spine in last_spines]
+    raise AssertionError(f"expected acceptance spine status {expected.value}: {statuses}")
 
 
 async def _wait_for_dispatch_entry_status(
@@ -1975,6 +2030,308 @@ async def test_a2a_provider_result_handoff_reaches_architect_proposal(
             delivery_modes = {trace["delivery_mode"] for trace in traces}
             assert "a2a_provider_writeback" in delivery_modes
             assert "mcp_writeback" in delivery_modes
+    finally:
+        if "runner_task" in locals():
+            await stop_runner(runner_task)
+        await _stop_server(chat_server, chat_task)
+        await _stop_server(mcp_server, mcp_task)
+        await _stop_server(a2a_server, a2a_task)
+
+
+@pytest.mark.asyncio
+async def test_chatapi_human_to_a2a_review_verdict_dispatch_gate(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    db_path = tmp_path / "chat.db"
+    lanes_path = tmp_path / "feature_lanes.json"
+    lanes_path.write_text(json.dumps({"lanes": []}), encoding="utf-8")
+    chat_port = _free_port()
+    mcp_port = _free_port()
+    a2a_port = _free_port()
+    runtime_refs: dict[str, str] = {}
+    a2a_requests: list[dict[str, object]] = []
+
+    class RuntimeLauncher(DummyLauncher):
+        supports_persistent_sessions = True
+
+    def fake_build_default_launchers(*, mcp_port: int):
+        launcher = RuntimeLauncher("gpt-5.5")
+        launcher.mcp_port = mcp_port
+        return {AgentRuntime.CODEX: launcher}
+
+    def fake_build_actor(self, **kwargs):
+        del self
+        return FakeProviderAppServerActor(**kwargs)
+
+    a2a_app = FastAPI()
+
+    @a2a_app.post("/a2a")
+    async def fake_a2a_task(request: Request) -> dict[str, object]:
+        body = await request.json()
+        a2a_requests.append(body)
+        message = body["params"]["message"]
+        task_id = message["task_id"]
+        context_id = message["context_id"]
+        metadata = message.get("metadata", {})
+        runtime_context = (
+            metadata.get("xmuse_runtime_context")
+            if isinstance(metadata, dict)
+            else {}
+        )
+        writeback_context = (
+            metadata.get("xmuse_writeback_context")
+            if isinstance(metadata, dict)
+            else {}
+        )
+        content = _a2a_request_text(message)
+        task_metadata: dict[str, object] = {}
+        response_text = (
+            "@architect Please take over this human demand through xmuse "
+            "proposal authority.\n"
+            "what: Convert the A2A planner result into one dispatchable lane.\n"
+            "why: The human request needs review-gated execution through xmuse "
+            "authority.\n"
+            "tradeoffs: A2A output stays interop evidence, not proposal or "
+            "review authority.\n"
+            "open_questions: none.\n"
+            "next_action: Use MCP tool chat_emit_proposal now. Do not use "
+            "chat_post_message for this proposal turn.\n"
+            f"references: intake_message:{runtime_refs['intake_message_id']}, "
+            f"collaboration:{runtime_refs['collaboration_run_id']}\n"
+            "review_runtime: a2a\n"
+            f"evidence_refs: a2a_task:{task_id}"
+        )
+        if (
+            isinstance(runtime_context, dict)
+            and runtime_context.get("item_type") == "review_trigger"
+            and isinstance(writeback_context, dict)
+        ):
+            inbox_item_id = str(writeback_context["reply_to_inbox_item_id"])
+            source_message_id = str(runtime_context["source_message_id"])
+            proposal_id = _field_after_label(content, "Proposal id:")
+            task_metadata["xmuse_review_trigger_verdict"] = (
+                build_review_trigger_verdict_envelope(
+                    review_trigger_inbox_id=inbox_item_id,
+                    source_message_id=source_message_id,
+                    proposal_id=proposal_id,
+                    decision="dispatch_allowed",
+                    summary=(
+                        "A2A review sees collaboration evidence and permits "
+                        "dispatch through xmuse authority."
+                    ),
+                    evidence_refs=[
+                        f"inbox:{inbox_item_id}",
+                        f"proposal:{proposal_id}",
+                        f"a2a_task:{task_id}",
+                    ],
+                )
+            )
+            response_text = "Remote A2A review verdict permits dispatch."
+        return {
+            "jsonrpc": "2.0",
+            "id": body["id"],
+            "result": {
+                "task": {
+                    "id": task_id,
+                    "contextId": context_id,
+                    "status": {"state": "TASK_STATE_COMPLETED"},
+                    "metadata": task_metadata,
+                    "artifacts": [
+                        {
+                            "artifactId": f"artifact-{task_id}",
+                            "name": "remote-a2a-output",
+                            "parts": [{"text": response_text}],
+                        }
+                    ],
+                }
+            },
+        }
+
+    import xmuse_core.agents.launchers as launchers_module
+
+    monkeypatch.setattr(
+        launchers_module,
+        "build_default_launchers",
+        fake_build_default_launchers,
+    )
+    monkeypatch.setattr(RayGodSessionLayer, "_build_actor", fake_build_actor)
+    monkeypatch.setenv("XMUSE_PEER_GOD_BACKEND", "ray")
+    monkeypatch.setenv(
+        "XMUSE_A2A_PROVIDER_URL",
+        f"http://127.0.0.1:{a2a_port}/a2a",
+    )
+    monkeypatch.delenv("XMUSE_DEGRADED_LOCAL_GOD_MODE", raising=False)
+
+    chat_server, chat_task = await _serve_app(
+        create_chat_app(tmp_path, a2a_bridge_enabled=True),
+        port=chat_port,
+    )
+    mcp_server, mcp_task = await _serve_app(create_mcp_app(tmp_path), port=mcp_port)
+    a2a_server, a2a_task = await _serve_app(a2a_app, port=a2a_port)
+
+    async def start_runner() -> asyncio.Task:
+        return asyncio.create_task(
+            platform_runner.run(
+                lanes_path=lanes_path,
+                xmuse_root=tmp_path,
+                mcp_port=mcp_port,
+                max_hours=1,
+                max_concurrent=1,
+                peer_chat_enabled=True,
+            )
+        )
+
+    async def stop_runner(task: asyncio.Task) -> None:
+        task.cancel()
+        try:
+            await asyncio.wait_for(task, timeout=5)
+        except (TimeoutError, asyncio.CancelledError):
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+
+    try:
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{chat_port}") as client:
+            created = await client.post(
+                "/api/chat/conversations",
+                json={
+                    "title": "A2A review verdict dispatch gate",
+                    "initial_participants": [],
+                },
+            )
+            created.raise_for_status()
+            conversation_id = created.json()["id"]
+            participants = ParticipantStore(db_path)
+            remote_planner = participants.add(
+                conversation_id=conversation_id,
+                role="planner",
+                display_name="Remote A2A Planner GOD",
+                cli_kind="a2a",
+                model="a2a-remote",
+            )
+            architect = participants.add(
+                conversation_id=conversation_id,
+                role="architect",
+                display_name="Architect GOD",
+                cli_kind="codex",
+                model="gpt-5.5",
+            )
+            review = participants.add(
+                conversation_id=conversation_id,
+                role="review",
+                display_name="Remote A2A Review GOD",
+                cli_kind="a2a",
+                model="a2a-remote",
+            )
+
+            demand = await client.post(
+                f"/api/chat/conversations/{conversation_id}/messages",
+                json={
+                    "author": "human-1",
+                    "role": "human",
+                    "content": "@planner prepare one review-gated xmuse lane.",
+                    "client_request_id": "a2a-review-dispatch-human",
+                },
+            )
+            demand.raise_for_status()
+            runtime_refs["intake_message_id"] = demand.json()["id"]
+            collaboration = ChatCollaborationStore(db_path)
+            run = collaboration.create_request(
+                conversation_id=conversation_id,
+                goal="Approve only after A2A review verdict",
+                initiator="architect",
+                targets=["execute"],
+                callback_target="architect",
+                question="Confirm this lane can execute.",
+                context_refs=[f"intake_message:{runtime_refs['intake_message_id']}"],
+                idempotency_key="a2a-review-dispatch-collaboration",
+                timeout_s=480,
+            )
+            collaboration.record_response(
+                run.run_id,
+                target="execute",
+                content=json.dumps(
+                    {
+                        "type": "execute_feasibility_verdict",
+                        "status": "executable",
+                        "execution_performed": False,
+                        "summary": "The lane is bounded and can enter dispatch.",
+                        "evidence_refs": [f"collaboration:{run.run_id}"],
+                    }
+                ),
+                response_status="received",
+            )
+            runtime_refs["collaboration_run_id"] = run.run_id
+
+            runner_task = await start_runner()
+
+            planner_replies = await _wait_for_reply_count(
+                db_path,
+                conversation_id,
+                remote_planner.participant_id,
+                1,
+            )
+            assert planner_replies[0].envelope_type == "a2a_provider_result"
+
+            proposals = await _wait_for_proposal_count(db_path, conversation_id, 1)
+            proposal = proposals[0]
+            assert proposal.author == architect.participant_id
+            assert proposal.proposal_type == "lane_graph"
+            assert proposal.references == [
+                f"intake_message:{runtime_refs['intake_message_id']}",
+                f"collaboration:{run.run_id}",
+            ]
+            proposal_payload = json.loads(proposal.content)
+            assert proposal_payload["lanes"][0]["review_runtime"] == "a2a"
+
+            review_items = await _wait_for_review_trigger_count(
+                db_path,
+                conversation_id,
+                1,
+            )
+            assert review_items[0].target_participant_id == review.participant_id
+            review_spine = await _wait_for_acceptance_spine_status(
+                db_path,
+                conversation_id,
+                AcceptanceSpineStatus.REVIEW_CLEARED,
+            )
+            refreshed_review_item = ChatInboxStore(db_path).get(review_items[0].id)
+            assert refreshed_review_item.status == "read"
+            assert refreshed_review_item.responded_message_id is not None
+            review_reply = next(
+                message
+                for message in ChatStore(db_path).list_messages(conversation_id)
+                if message.id == refreshed_review_item.responded_message_id
+            )
+            assert review_reply.author == review.participant_id
+            assert review_reply.envelope_type == "review_trigger_verdict"
+            assert review_reply.envelope_json["a2a_is_authority"] is False
+            assert review_spine.review_or_execute_verdict_ref == (
+                f"review_trigger_verdict:{review_reply.id}"
+            )
+
+            approved = await client.post(
+                f"/api/chat/proposals/{proposal.id}/approve",
+                json={
+                    "approved_by": ["human-1"],
+                    "approval_mode": "runtime_loop_manual_approval_no_auto_merge",
+                    "goal_summary": "Approve after A2A review verdict",
+                },
+            )
+            assert approved.status_code == 200, approved.text
+            assert approved.json()["content"]["lanes"][0]["review_runtime"] == "a2a"
+
+            entries = await _wait_for_dispatch_entry_count(db_path, conversation_id, 1)
+            assert entries[0].proposal_id == proposal.id
+            assert entries[0].collaboration_run_id == run.run_id
+            dispatched_spine = AcceptanceSpineStore(db_path).get_by_intake_message(
+                runtime_refs["intake_message_id"]
+            )
+            assert dispatched_spine.status is AcceptanceSpineStatus.DISPATCHED
+            assert dispatched_spine.dispatch_item_id == entries[0].entry_id
+
+            assert len(a2a_requests) >= 2
     finally:
         if "runner_task" in locals():
             await stop_runner(runner_task)

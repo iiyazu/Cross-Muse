@@ -1336,6 +1336,64 @@ def test_lane_graph_approval_canonicalizes_opencode_review_runtime_case(
     assert lanes[0]["review_runtime"] == "opencode"
 
 
+def test_lane_graph_approval_uses_a2a_review_peer_for_final_hold_runtime(
+    tmp_path: Path,
+) -> None:
+    conversation_id = _conversation(tmp_path)
+    ParticipantStore(tmp_path / "chat.db").add(
+        conversation_id=conversation_id,
+        role="review",
+        display_name="Remote A2A Review GOD",
+        cli_kind="a2a",
+        model="a2a-remote",
+    )
+    client = TestClient(create_app(tmp_path))
+    proposal = client.post(
+        f"/api/chat/conversations/{conversation_id}/proposals",
+        json={
+            "author": "architect",
+            "proposal_type": "lane_graph",
+            "content": json.dumps(
+                {
+                    "summary": "Use the registered A2A review peer",
+                    "lanes": [
+                        {
+                            "feature_id": "lane-review-runtime-from-a2a-peer",
+                            "prompt": "Review through the remote A2A peer.",
+                            "depends_on": [],
+                            "capabilities": ["code"],
+                            "review_runtime": "human_final_hold",
+                            "final_action": "no-auto-merge",
+                        }
+                    ],
+                }
+            ),
+            "references": [],
+        },
+    )
+    assert proposal.status_code == 201
+
+    approved = client.post(
+        f"/api/chat/proposals/{proposal.json()['id']}/approve",
+        json={
+            "approved_by": ["architect"],
+            "approval_mode": "manual",
+            "goal_summary": "Approve A2A review peer runtime projection",
+        },
+    )
+
+    assert approved.status_code == 200
+    assert approved.json()["content"]["lanes"][0]["review_runtime"] == "a2a"
+    graph_id = f"{approved.json()['id']}-graph-v{approved.json()['version']}"
+    graph = json.loads((tmp_path / "lane_graphs" / f"{graph_id}.json").read_text())
+    assert graph["lanes"][0]["feature_id"] == "lane-review-runtime-from-a2a-peer"
+    assert graph["lanes"][0]["review_runtime"] == "a2a"
+    assert graph["lanes"][0]["final_action"] == "no-auto-merge"
+    lanes = json.loads((tmp_path / "feature_lanes.json").read_text())["lanes"]
+    assert lanes[0]["feature_id"] == "lane-review-runtime-from-a2a-peer"
+    assert lanes[0]["review_runtime"] == "a2a"
+
+
 def test_lane_graph_approval_metadata_preserves_proposal_lane_authority(
     tmp_path: Path,
 ) -> None:
