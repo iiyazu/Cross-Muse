@@ -142,7 +142,7 @@ def normalize_task_send_payload(payload: Mapping[str, Any]) -> NormalizedA2ATask
         if payload.get("jsonrpc") != "2.0":
             raise A2ASDKBoundaryError("invalid_jsonrpc", "jsonrpc must be 2.0")
         method = _required_text(payload.get("method"), "method")
-        if method not in {"tasks/send", "message/send"}:
+        if method not in {"tasks/send", "message/send", "SendMessage"}:
             raise A2ASDKBoundaryError("unsupported_a2a_method", method)
         request_id = payload.get("id")
         if request_id is not None and not isinstance(request_id, str | int):
