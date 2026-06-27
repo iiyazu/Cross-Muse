@@ -949,18 +949,21 @@ def _review_participant_runtime_authority_for_conversation(
     if len(review_participants) != 1:
         return None
     review_participant = review_participants[0]
-    if review_participant.cli_kind == "opencode":
-        aliases = {
-            alias
-            for alias in (
-                review_participant.role.strip().lower(),
-                review_participant.display_name.strip().lower(),
-            )
-            if alias
-        }
-        aliases.update({f"@{alias}" for alias in list(aliases) if alias})
-        return "opencode", aliases
-    return None
+    authoritative_runtime = review_participant.cli_kind.strip().lower()
+    if authoritative_runtime not in {"opencode", "a2a"}:
+        return None
+    aliases = {
+        alias
+        for alias in (
+            review_participant.role.strip().lower(),
+            review_participant.display_name.strip().lower(),
+        )
+        if alias
+    }
+    aliases.update({f"@{alias}" for alias in list(aliases) if alias})
+    if authoritative_runtime == "a2a":
+        aliases.update({"a2a.remote", "remote-a2a", "remote_a2a"})
+    return authoritative_runtime, aliases
 
 
 def _apply_lane_graph_review_runtime_authority(
@@ -985,17 +988,18 @@ def _apply_lane_graph_review_runtime_authority(
 
     changed = False
     normalized_lanes: list[Any] = []
+    review_runtime_aliases = {
+        authoritative_runtime,
+        "human_final_hold",
+        "final_hold",
+        *review_aliases,
+    }
     for lane in lanes:
         if not isinstance(lane, dict):
             normalized_lanes.append(lane)
             continue
         review_runtime = str(lane.get("review_runtime") or "").strip().lower()
-        if review_runtime in {
-            "opencode",
-            "human_final_hold",
-            "final_hold",
-            *review_aliases,
-        }:
+        if review_runtime in review_runtime_aliases:
             normalized_lanes.append({**lane, "review_runtime": authoritative_runtime})
             changed = True
             continue
