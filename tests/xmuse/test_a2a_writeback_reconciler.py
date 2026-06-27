@@ -371,6 +371,74 @@ def test_a2a_provider_result_leading_mention_creates_durable_route(
     assert ChatStore(db).list_proposals(conversation.id) == []
 
 
+def test_a2a_provider_result_markdown_leading_mention_creates_durable_route(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "chat.db"
+    chat = ChatStore(db)
+    conversation = chat.create_conversation("A2A markdown provider route")
+    participants = ParticipantStore(db)
+    architect = participants.add(
+        conversation_id=conversation.id,
+        role="architect",
+        display_name="A2A Architect",
+        cli_kind="a2a",
+        model="a2a-remote",
+    )
+    review = participants.add(
+        conversation_id=conversation.id,
+        role="review",
+        display_name="Review GOD",
+        cli_kind="codex",
+        model="gpt-5.4",
+    )
+    source = chat.add_message(
+        conversation.id,
+        "human",
+        "human",
+        "@architect create a candidate.",
+    )
+    source_inbox = ChatInboxStore(db).create_item(
+        conversation_id=conversation.id,
+        target_participant_id=architect.participant_id,
+        target_role=architect.role,
+        target_address="@architect",
+        sender_participant_id=None,
+        sender_address="@human",
+        source_message_id=source.id,
+        item_type="mention",
+        payload={"content": source.content},
+    )
+    provider_result = _a2a_provider_result_with_review_handoff()
+    diagnostic = dict(provider_result.diagnostic_payload)
+    diagnostic["a2a_content"] = (
+        "- @review\n"
+        "what: Review the A2A handoff candidate.\n"
+        "why: The next step needs independent review before dispatch.\n"
+        "tradeoffs: Keep this as an inbox handoff, not approval.\n"
+        "open_questions: none.\n"
+        "next_action: Record a structured review verdict.\n"
+        "evidence_refs: a2a_task:req-a2a-architect"
+    )
+
+    result = A2AProviderWritebackReconciler(db).record_provider_result(
+        conversation_id=conversation.id,
+        participant_id=architect.participant_id,
+        reply_to_inbox_item_id=source_inbox.id,
+        provider_result=provider_result.model_copy(
+            update={"diagnostic_payload": diagnostic}
+        ),
+    )
+
+    response = result["message"]
+    assert response["mentions"] == ["@review"]
+    routed = result["inbox_items"][0]
+    assert routed["target_participant_id"] == review.participant_id
+    assert routed["target_role"] == "review"
+    assert routed["payload"]["route_kind"] == "review_request"
+    assert routed["payload"]["handoff_assessment"]["is_complete"] is True
+
+
 def test_a2a_provider_writeback_is_idempotent_by_request_and_inbox(
     tmp_path: Path,
 ) -> None:
