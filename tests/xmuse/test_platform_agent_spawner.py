@@ -1,8 +1,11 @@
 import asyncio
+import json
 from pathlib import Path
 
 import pytest
 
+from xmuse_core.integrations.a2a_provider_client import A2AProviderTaskRequest
+from xmuse_core.integrations.a2a_sdk_boundary import NormalizedA2ATaskResult
 from xmuse_core.platform.agent_spawner import AgentSpawner, GodConfig
 from xmuse_core.providers.adapters.base import ProviderInvocation
 from xmuse_core.providers.models import ProviderId, ProviderProfileId, RiskTier, TaskCapability
@@ -220,6 +223,19 @@ class _FakeProcess:
         return self.returncode
 
 
+class _FakeA2ATaskClient:
+    def __init__(self, result: NormalizedA2ATaskResult) -> None:
+        self.result = result
+        self.requests: list[A2AProviderTaskRequest] = []
+
+    async def invoke_task(
+        self,
+        request: A2AProviderTaskRequest,
+    ) -> NormalizedA2ATaskResult:
+        self.requests.append(request)
+        return self.result
+
+
 @pytest.mark.asyncio
 async def test_agent_spawner_attaches_memoryos_context_and_ingests_result(
     monkeypatch, tmp_path: Path
@@ -263,6 +279,72 @@ async def test_agent_spawner_attaches_memoryos_context_and_ingests_result(
     assert result.memoryos_context_attached is True
     assert result.memoryos_ingested is True
     assert result.process_pid == 4321
+
+
+@pytest.mark.asyncio
+async def test_agent_spawner_uses_direct_a2a_provider_adapter_without_subprocess(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    async def fail_create_subprocess_exec(*_args, **_kwargs):
+        raise AssertionError("A2A provider adapter must not spawn a subprocess")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fail_create_subprocess_exec)
+    client = _FakeA2ATaskClient(
+        NormalizedA2ATaskResult(
+            task_id="lane-a2a:review",
+            context_id="lane-a2a",
+            state="TASK_STATE_COMPLETED",
+            disposition="completed",
+            terminal=True,
+            content="remote A2A review result",
+            source_refs=("a2a_task:lane-a2a:review", "a2a_context:lane-a2a"),
+        )
+    )
+    provider_service = RunnerProviderService(
+        a2a_provider_endpoint_url="https://remote.example/a2a",
+        a2a_task_client=client,
+    )
+    provider_invocation = provider_service.build_review_invocation(
+        lane_id="lane-a2a",
+        prompt="@remote review the proposed handoff.",
+        workspace=tmp_path,
+        timeout_seconds=60,
+        provider_profile_ref="a2a.remote",
+        risk_tier=RiskTier.MEDIUM,
+    )
+    spawner = AgentSpawner(
+        repo_root=tmp_path / "xmuse",
+        mcp_port=8100,
+        provider_service=provider_service,
+    )
+
+    result = await spawner.spawn(
+        god_config=GodConfig(
+            name="remote-review",
+            runtime="a2a",
+            timeout_s=60,
+            skill_prompt_path="",
+        ),
+        lane_id="lane-a2a",
+        prompt="@remote review the proposed handoff.",
+        worktree=tmp_path,
+        provider_invocation=provider_invocation,
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout == ""
+    assert result.stderr == ""
+    assert result.process_pid is None
+    assert result.provider_profile_ref == "a2a.remote"
+    assert result.provider_result is not None
+    assert result.provider_result.status.value == "completed"
+    assert client.requests[0].task_id == "lane-a2a:review"
+    assert client.requests[0].content == "@remote review the proposed handoff."
+    assert result.result_log_path is not None
+    log_payload = json.loads(Path(result.result_log_path).read_text(encoding="utf-8"))
+    assert log_payload["command"] == ["xmuse-provider-adapter", "a2a.remote"]
+    assert log_payload["provider_result"]["provider_id"] == "a2a"
 
 
 def _provider_session_binding(*, worktree: str) -> ProviderSessionBindingRecord:
