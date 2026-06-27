@@ -52,6 +52,7 @@ from xmuse_core.chat.participant_store import (
     ParticipantStore,
     RoleTemplateStore,
     participant_summary,
+    provider_profile_id_for_cli_kind_role,
     provider_profile_id_for_role,
     resolve_codex_cli_kind,
 )
@@ -445,7 +446,10 @@ class PeerChatService:
                     or (
                         base.profile_id
                         if base is not None
-                        else provider_profile_id_for_role(role).value
+                        else provider_profile_id_for_cli_kind_role(
+                            spec["cli_kind"],
+                            role,
+                        ).value
                     )
                 ),
                 "cli_kind": spec["cli_kind"],
@@ -464,6 +468,11 @@ class PeerChatService:
                 )
                 payload["template_slug"] = override.get("template_slug") or payload["template_slug"]
                 payload["display_name"] = override.get("display_name") or payload["display_name"]
+                if payload.get("cli_kind") == "a2a" and override.get("profile_id") is None:
+                    payload["profile_id"] = provider_profile_id_for_cli_kind_role(
+                        "a2a",
+                        role,
+                    ).value
             try:
                 team.append(LogicalPeerSpec.model_validate(payload))
             except ValueError as exc:
@@ -1078,7 +1087,11 @@ class PeerChatService:
             raise PeerChatError("invalid_arguments", "participant must be an object")
         role = self._required_string(participant.get("role"), "role")
         explicit_cli_kind = self._optional_string(participant.get("cli_kind"))
-        if explicit_cli_kind is not None and explicit_cli_kind not in {"codex", "opencode"}:
+        if explicit_cli_kind is not None and explicit_cli_kind not in {
+            "codex",
+            "opencode",
+            "a2a",
+        }:
             raise PeerChatError("codex_only_participants", explicit_cli_kind)
         provider_id = self._optional_string(participant.get("provider_id"))
         profile_id = self._optional_string(participant.get("profile_id"))
@@ -1094,7 +1107,13 @@ class PeerChatService:
             if template is None or not template.predefined:
                 raise PeerChatError("role_template_id_required", role)
 
-        expected_profile_id = provider_profile_id_for_role(role)
+        expected_cli_kind = explicit_cli_kind
+        if expected_cli_kind is None and provider_id in {"codex", "opencode", "a2a"}:
+            expected_cli_kind = provider_id
+        expected_profile_id = provider_profile_id_for_cli_kind_role(
+            expected_cli_kind or "codex",
+            role,
+        )
         if (
             profile_id is not None
             and profile_id != expected_profile_id.value
@@ -1124,7 +1143,7 @@ class PeerChatService:
         except ValueError as exc:
             raise PeerChatError("invalid_arguments", str(exc)) from exc
 
-        if cli_kind == "opencode":
+        if cli_kind != "codex":
             missing = [
                 field_name
                 for field_name, value in (
@@ -1137,7 +1156,7 @@ class PeerChatService:
             if missing:
                 raise PeerChatError(
                     "invalid_arguments",
-                    "opencode initial_participants require explicit "
+                    "non-codex initial_participants require explicit "
                     "provider_id, cli_kind, and model",
                 )
 
@@ -1519,6 +1538,8 @@ class PeerChatService:
         session.setdefault("provider_id", provider_id)
         if provider_id == "codex":
             session.setdefault("profile_id", provider_profile_id_for_role(role).value)
+        elif provider_id == "a2a":
+            session.setdefault("profile_id", "remote")
         else:
             session.setdefault("profile_id", "default")
         return session

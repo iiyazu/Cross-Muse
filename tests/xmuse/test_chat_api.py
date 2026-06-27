@@ -251,6 +251,35 @@ def test_chat_api_accepts_provider_profile_participant_fields(tmp_path: Path) ->
     assert participants[0]["cli_kind"] == "codex"
 
 
+def test_chat_api_accepts_a2a_remote_participant_fields(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+
+    response = client.post(
+        "/api/chat/conversations",
+        json={
+            "title": "xmuse A2A",
+            "initial_participants": [
+                {
+                    "role": "review",
+                    "display_name": "Remote A2A Review",
+                    "provider_id": "a2a",
+                    "profile_id": "remote",
+                    "cli_kind": "a2a",
+                    "model": "a2a-remote",
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 201
+    participants = response.json()["participants"]
+    assert len(participants) == 1
+    assert participants[0]["provider_id"] == "a2a"
+    assert participants[0]["profile_id"] == "remote"
+    assert participants[0]["cli_kind"] == "a2a"
+    assert participants[0]["model"] == "a2a-remote"
+
+
 def test_chat_api_rejects_claude_participant(tmp_path: Path) -> None:
     client = _client(tmp_path)
 

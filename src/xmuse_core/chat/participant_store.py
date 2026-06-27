@@ -40,22 +40,23 @@ def _new_id(prefix: str) -> str:
 # Pydantic models (match FRONTEND_VISION.md type signatures exactly)
 # ---------------------------------------------------------------------------
 
-CliKind = Literal["codex", "opencode"]
+CliKind = Literal["codex", "opencode", "a2a"]
 INIT_GOD_ROLE = "init"
 INIT_GOD_DISPLAY_NAME = "init-god"
+_SUPPORTED_CLI_KINDS = {"codex", "opencode", "a2a"}
 
 
 def _require_supported_cli_kind(cli_kind: str) -> CliKind:
-    normalized = cli_kind.strip()
-    if normalized not in {"codex", "opencode"}:
+    normalized = cli_kind.strip().lower()
+    if normalized not in _SUPPORTED_CLI_KINDS:
         raise ValueError(f"unsupported xmuse chat participant cli_kind: {cli_kind!r}")
     return normalized  # type: ignore[return-value]
 
 
 def _read_cli_kind(cli_kind: str) -> CliKind:
     normalized = cli_kind.strip().lower()
-    if normalized == "opencode":
-        return "opencode"
+    if normalized in {"opencode", "a2a"}:
+        return normalized  # type: ignore[return-value]
     # Older chat.db files may contain unsupported runtime ids. Fall back to the
     # closest supported runtime instead of making old conversations unloadable.
     return "codex"
@@ -67,8 +68,15 @@ def _read_model(
     *,
     profile_id: ProviderProfileId,
 ) -> str:
+    raw_cli_kind = cli_kind.strip().lower()
+    if raw_cli_kind not in _SUPPORTED_CLI_KINDS:
+        return _normalize_model_for_cli_kind(
+            "codex",
+            None,
+            profile_id=profile_id,
+        )
     return _normalize_model_for_cli_kind(
-        _read_cli_kind(cli_kind),
+        _read_cli_kind(raw_cli_kind),
         model,
         profile_id=profile_id,
     )
@@ -108,9 +116,29 @@ def provider_profile_id_for_template_slug(slug: str) -> ProviderProfileId:
     return ProviderProfileId.DEFAULT
 
 
+def provider_profile_id_for_cli_kind_role(
+    cli_kind: CliKind,
+    role: str,
+) -> ProviderProfileId:
+    if cli_kind == "a2a":
+        return ProviderProfileId.REMOTE
+    return provider_profile_id_for_role(role)
+
+
+def provider_profile_id_for_cli_kind_template_slug(
+    cli_kind: CliKind,
+    slug: str,
+) -> ProviderProfileId:
+    if cli_kind == "a2a":
+        return ProviderProfileId.REMOTE
+    return provider_profile_id_for_template_slug(slug)
+
+
 def provider_id_for_cli_kind(cli_kind: CliKind) -> ProviderId:
     if cli_kind == "opencode":
         return ProviderId.OPENCODE
+    if cli_kind == "a2a":
+        return ProviderId.A2A
     return ProviderId.CODEX
 
 
@@ -129,9 +157,15 @@ def resolve_codex_cli_kind(
     normalized_profile_id = _parse_profile_id(profile_id)
 
     if normalized_provider_id is None and normalized_profile_id is not None:
-        normalized_provider_id = ProviderId.CODEX
+        normalized_provider_id = (
+            ProviderId.A2A
+            if normalized_profile_id is ProviderProfileId.REMOTE
+            else ProviderId.CODEX
+        )
     if normalized_provider_id is None and normalized_cli_kind is not None:
         normalized_provider_id = provider_id_for_cli_kind(normalized_cli_kind)
+    if normalized_cli_kind is None and normalized_provider_id is not None:
+        normalized_cli_kind = _cli_kind_for_provider_id(normalized_provider_id)
 
     if normalized_provider_id is not None and normalized_cli_kind is not None:
         expected_provider_id = provider_id_for_cli_kind(normalized_cli_kind)
@@ -140,9 +174,17 @@ def resolve_codex_cli_kind(
                 f"{subject} must use provider_id {expected_provider_id.value!r}, "
                 f"got {normalized_provider_id.value!r}"
             )
-    if normalized_profile_id is not None and normalized_profile_id is not expected_profile_id:
+    effective_expected_profile_id = (
+        ProviderProfileId.REMOTE
+        if normalized_cli_kind == "a2a"
+        else expected_profile_id
+    )
+    if (
+        normalized_profile_id is not None
+        and normalized_profile_id is not effective_expected_profile_id
+    ):
         raise ValueError(
-            f"{subject} must use profile_id {expected_profile_id.value!r}, "
+            f"{subject} must use profile_id {effective_expected_profile_id.value!r}, "
             f"got {normalized_profile_id.value!r}"
         )
 
@@ -150,6 +192,14 @@ def resolve_codex_cli_kind(
         return normalized_cli_kind
     if normalized_provider_id is ProviderId.OPENCODE:
         return "opencode"
+    return "codex"
+
+
+def _cli_kind_for_provider_id(provider_id: ProviderId) -> CliKind:
+    if provider_id is ProviderId.OPENCODE:
+        return "opencode"
+    if provider_id is ProviderId.A2A:
+        return "a2a"
     return "codex"
 
 
@@ -237,7 +287,7 @@ class ParticipantStore:
         status: Literal["active", "stopped"] = "active",
     ) -> Participant:
         normalized_cli_kind = _require_supported_cli_kind(cli_kind)
-        profile_id = provider_profile_id_for_role(role)
+        profile_id = provider_profile_id_for_cli_kind_role(normalized_cli_kind, role)
         participant = Participant(
             participant_id=_new_id("part"),
             conversation_id=conversation_id,
@@ -291,16 +341,21 @@ class ParticipantStore:
         display_name: str = INIT_GOD_DISPLAY_NAME,
         role_template_id: str | None = None,
     ) -> Participant:
+        normalized_cli_kind = _require_supported_cli_kind(cli_kind)
+        profile_id = provider_profile_id_for_cli_kind_role(
+            normalized_cli_kind,
+            INIT_GOD_ROLE,
+        )
         normalized_model = _normalize_model_for_cli_kind(
-            cli_kind,
+            normalized_cli_kind,
             model,
-            profile_id=ProviderProfileId.GOD,
+            profile_id=profile_id,
         )
         existing = self._find_init_god(conversation_id)
         if existing is not None:
             if (
                 existing.display_name != display_name
-                or existing.cli_kind != cli_kind
+                or existing.cli_kind != normalized_cli_kind
                 or existing.model != normalized_model
                 or existing.role_template_id != role_template_id
             ):
@@ -315,7 +370,7 @@ class ParticipantStore:
             conversation_id=conversation_id,
             role=INIT_GOD_ROLE,
             display_name=display_name,
-            cli_kind=cli_kind,
+            cli_kind=normalized_cli_kind,
             model=normalized_model,
             role_template_id=role_template_id,
         )
@@ -330,10 +385,12 @@ class ParticipantStore:
         model: str,
         role_template_id: str | None = None,
     ) -> Participant:
+        normalized_cli_kind = _require_supported_cli_kind(cli_kind)
+        profile_id = provider_profile_id_for_cli_kind_role(normalized_cli_kind, role)
         normalized_model = _normalize_model_for_cli_kind(
-            cli_kind,
+            normalized_cli_kind,
             model,
-            profile_id=provider_profile_id_for_role(role),
+            profile_id=profile_id,
         )
         existing = self._find_bootstrap_participant(
             conversation_id=conversation_id,
@@ -342,7 +399,7 @@ class ParticipantStore:
         )
         if existing is not None:
             if (
-                existing.cli_kind != cli_kind
+                existing.cli_kind != normalized_cli_kind
                 or existing.model != normalized_model
                 or existing.role_template_id != role_template_id
             ):
@@ -357,7 +414,7 @@ class ParticipantStore:
             conversation_id=conversation_id,
             role=role,
             display_name=display_name,
-            cli_kind=cli_kind,
+            cli_kind=normalized_cli_kind,
             model=normalized_model,
             role_template_id=role_template_id,
         )
@@ -421,15 +478,16 @@ class ParticipantStore:
 
     def _from_row(self, row: sqlite3.Row) -> Participant:
         d = dict(row)
-        profile_id = provider_profile_id_for_role(d["role"])
+        cli_kind = _read_cli_kind(d["cli_kind"])
+        profile_id = provider_profile_id_for_cli_kind_role(cli_kind, d["role"])
         return Participant(
             participant_id=d["participant_id"],
             conversation_id=d["conversation_id"],
             role=d["role"],
             display_name=d["display_name"],
-            provider_id=provider_id_for_cli_kind(_read_cli_kind(d["cli_kind"])),
+            provider_id=provider_id_for_cli_kind(cli_kind),
             profile_id=profile_id,
-            cli_kind=_read_cli_kind(d["cli_kind"]),
+            cli_kind=cli_kind,
             model=_read_model(d["cli_kind"], d["model"], profile_id=profile_id),
             role_template_id=d.get("role_template_id"),
             status=d["status"],
@@ -642,9 +700,12 @@ class RoleTemplateStore:
         cli_kind: CliKind,
         default_model: str,
     ) -> RoleTemplate:
-        profile_id = provider_profile_id_for_template_slug(slug)
         now = _utc_now()
         normalized_cli_kind = _require_supported_cli_kind(cli_kind)
+        profile_id = provider_profile_id_for_cli_kind_template_slug(
+            normalized_cli_kind,
+            slug,
+        )
         template = RoleTemplate(
             id=_new_id("tmpl"),
             slug=slug,
@@ -702,10 +763,14 @@ class RoleTemplateStore:
             if cli_kind is not None
             else existing.cli_kind
         )
+        new_profile_id = provider_profile_id_for_cli_kind_template_slug(
+            new_cli_kind,
+            existing.slug,
+        )
         new_default_model = _normalize_model_for_cli_kind(
             new_cli_kind,
             default_model if default_model is not None else existing.default_model,
-            profile_id=existing.profile_id,
+            profile_id=new_profile_id,
         )
         with self._connect() as conn:
             conn.execute(
@@ -793,15 +858,19 @@ class RoleTemplateStore:
 
     def _from_row(self, row: sqlite3.Row) -> RoleTemplate:
         d = dict(row)
-        profile_id = provider_profile_id_for_template_slug(d["slug"])
+        cli_kind = _read_cli_kind(d["cli_kind"])
+        profile_id = provider_profile_id_for_cli_kind_template_slug(
+            cli_kind,
+            d["slug"],
+        )
         return RoleTemplate(
             id=d["id"],
             slug=d["slug"],
             display_name=d["display_name"],
             prompt=d["prompt"],
-                provider_id=provider_id_for_cli_kind(_read_cli_kind(d["cli_kind"])),
-                profile_id=profile_id,
-                cli_kind=_read_cli_kind(d["cli_kind"]),
+            provider_id=provider_id_for_cli_kind(cli_kind),
+            profile_id=profile_id,
+            cli_kind=cli_kind,
             default_model=_read_model(
                 d["cli_kind"],
                 d["default_model"],

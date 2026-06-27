@@ -92,6 +92,23 @@ def test_opencode_requires_explicit_model() -> None:
         )
 
 
+def test_logical_peer_allows_a2a_remote_profile() -> None:
+    peer = LogicalPeerSpec(
+        role="review",
+        address_slug="remote-review",
+        display_name="Remote Review",
+        template_slug="review",
+        provider_id="a2a",
+        profile_id="remote",
+        cli_kind="a2a",
+        model="a2a-remote",
+    )
+
+    assert peer.provider_id == "a2a"
+    assert peer.profile_id == "remote"
+    assert peer.cli_kind == "a2a"
+
+
 def test_deterministic_ids_are_stable() -> None:
     assert BootstrapInitMode.PROPOSAL_THEN_APPROVE.value == "proposal_then_approve"
     assert bootstrap_apply_id("conv-1", "proposal-1") == "bootstrap-apply:conv-1:proposal-1"

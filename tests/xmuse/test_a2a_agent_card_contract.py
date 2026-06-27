@@ -69,6 +69,36 @@ def test_participant_agent_card_uses_existing_profile_contract(tmp_path: Path) -
     ]
 
 
+def test_participant_agent_card_projects_a2a_remote_profile(tmp_path: Path) -> None:
+    db = tmp_path / "chat.db"
+    chat = ChatStore(db)
+    conversation = chat.create_conversation("A2A remote card")
+    participants = ParticipantStore(db)
+    participant = participants.add(
+        conversation_id=conversation.id,
+        role="review",
+        display_name="Remote A2A Review",
+        cli_kind="a2a",
+        model="a2a-remote",
+    )
+
+    card = build_participant_agent_card(
+        participant,
+        base_url="http://testserver/",
+        active_participants=participants.list_by_conversation(conversation.id),
+        session_binding=None,
+    )
+
+    metadata = card["metadata"]
+    assert metadata["provider_id"] == "a2a"
+    assert metadata["profile_id"] == "remote"
+    assert metadata["cli_kind"] == "a2a"
+    assert metadata["model"] == "a2a-remote"
+    assert metadata["natural_profile"]["provider_id"] == "a2a"
+    assert metadata["natural_profile"]["profile_id"] == "remote"
+    assert card["sdk_agent_card"]["skills"][0]["id"] == "xmuse-review"
+
+
 def test_a2a_agent_card_endpoint_is_disabled_by_default(tmp_path: Path) -> None:
     client = TestClient(create_app(base_dir=tmp_path))
 
