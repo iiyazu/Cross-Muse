@@ -95,6 +95,7 @@ class A2AProviderAdapter:
             profile_id=self.profile.profile_id,
             status=status,
             evidence_refs=_evidence_refs(result),
+            diagnostic_payload=_diagnostic_payload(result),
             failure_kind=_failure_kind(result, status),
         )
 
@@ -192,6 +193,23 @@ def _evidence_refs(result: NormalizedA2ATaskResult) -> list[str]:
     if result.jsonrpc_id is not None:
         refs.append(f"a2a_jsonrpc:{result.jsonrpc_id}")
     return refs
+
+
+def _diagnostic_payload(result: NormalizedA2ATaskResult) -> dict[str, object]:
+    return {
+        "a2a_task_id": result.task_id,
+        "a2a_context_id": result.context_id,
+        "a2a_state": result.state,
+        "a2a_disposition": result.disposition,
+        "a2a_terminal": result.terminal,
+        "a2a_content": result.content,
+        "a2a_artifacts": [dict(item) for item in result.artifacts],
+        "a2a_history": [dict(item) for item in result.history],
+        "a2a_metadata": dict(result.metadata),
+        "a2a_source_refs": list(result.source_refs),
+        "a2a_sdk_task": dict(result.sdk_task),
+        "a2a_jsonrpc_id": result.jsonrpc_id,
+    }
 
 
 def _clean_text(value: str, field_name: str) -> str:
