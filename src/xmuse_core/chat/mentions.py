@@ -72,14 +72,13 @@ def extract_leading_mentions(content: str) -> list[str]:
     mentions: list[str] = []
     index = 0
     length = len(content)
-    while index < length and content[index].isspace():
-        index += 1
     while index < length:
-        if content[index] != "@" or not _looks_like_mention_start(content, index):
+        start = _leading_mention_start(content, index)
+        if start is None:
             break
-        if _is_escaped(content, index):
+        if _is_escaped(content, start):
             break
-        match = MENTION_RE.match(content, index)
+        match = MENTION_RE.match(content, start)
         if match is None:
             break
         raw = match.group(0).strip()
@@ -104,6 +103,11 @@ def has_inactive_mention_candidates(content: str) -> bool:
 def _iter_mention_candidates(content: str):
     index = 0
     while index < len(content):
+        fenced_end = _find_fenced_code_block_end(content, index)
+        if fenced_end is not None:
+            yield from _iter_inactive_code_mentions(content, index, fenced_end)
+            index = fenced_end
+            continue
         if content[index] == "`" and not _is_escaped(content, index):
             closing = _find_inline_code_span_end(content, index)
             if closing is not None:
@@ -116,13 +120,40 @@ def _iter_mention_candidates(content: str):
 
 
 def _iter_inactive_code_mentions(content: str, start: int, end: int):
-    run_length = _backtick_run_length(content, start)
-    index = start + run_length
-    stop = end - run_length
-    while index < stop:
+    index = start
+    while index < end:
         if content[index] == "@" and _looks_like_mention_start(content, index):
             yield _MentionCandidate(start=index, active=False)
         index += 1
+
+
+def _find_fenced_code_block_end(content: str, start: int) -> int | None:
+    marker = content[start]
+    if marker not in {"`", "~"} or not _is_line_prefix_only_spaces(content, start):
+        return None
+    run_length = _char_run_length(content, start, marker)
+    if run_length < 3:
+        return None
+    line_end = content.find("\n", start)
+    if line_end == -1:
+        return len(content)
+    index = line_end + 1
+    while index < len(content):
+        line_start = index
+        while index < len(content) and content[index] in {" ", "\t"}:
+            index += 1
+        if (
+            index < len(content)
+            and content[index] == marker
+            and _char_run_length(content, index, marker) >= run_length
+        ):
+            closing_line_end = content.find("\n", index)
+            return len(content) if closing_line_end == -1 else closing_line_end + 1
+        next_line = content.find("\n", line_start)
+        if next_line == -1:
+            return len(content)
+        index = next_line + 1
+    return len(content)
 
 
 def _find_inline_code_span_end(content: str, start: int) -> int | None:
@@ -139,10 +170,48 @@ def _find_inline_code_span_end(content: str, start: int) -> int | None:
 
 
 def _backtick_run_length(content: str, start: int) -> int:
+    return _char_run_length(content, start, "`")
+
+
+def _char_run_length(content: str, start: int, char: str) -> int:
     end = start
-    while end < len(content) and content[end] == "`":
+    while end < len(content) and content[end] == char:
         end += 1
     return end - start
+
+
+def _is_line_prefix_only_spaces(content: str, index: int) -> bool:
+    line_start = content.rfind("\n", 0, index) + 1
+    return all(char in {" ", "\t"} for char in content[line_start:index])
+
+
+def _leading_mention_start(content: str, index: int) -> int | None:
+    length = len(content)
+    while index < length and content[index].isspace():
+        index += 1
+    index = _skip_markdown_line_prefix(content, index)
+    if index >= length:
+        return None
+    if content[index] != "@" or not _looks_like_mention_start(content, index):
+        return None
+    return index
+
+
+def _skip_markdown_line_prefix(content: str, index: int) -> int:
+    length = len(content)
+    while index < length and content[index] in {">"}:
+        index += 1
+        while index < length and content[index] in {" ", "\t"}:
+            index += 1
+    if (
+        index + 1 < length
+        and content[index] in {"-", "*", "+"}
+        and content[index + 1].isspace()
+    ):
+        index += 1
+        while index < length and content[index] in {" ", "\t"}:
+            index += 1
+    return index
 
 
 def _looks_like_mention_start(content: str, start: int) -> bool:
@@ -206,14 +275,13 @@ class MentionResolver:
         resolved: list[ResolvedMention] = []
         index = 0
         length = len(content)
-        while index < length and content[index].isspace():
-            index += 1
         while index < length:
-            if content[index] != "@" or not _looks_like_mention_start(content, index):
+            start = _leading_mention_start(content, index)
+            if start is None:
                 break
-            if _is_escaped(content, index):
+            if _is_escaped(content, start):
                 break
-            raw, end = self._extract_scoped_raw(content, index, aliases)
+            raw, end = self._extract_scoped_raw(content, start, aliases)
             if raw is None:
                 break
             try:
