@@ -21,6 +21,12 @@ from xmuse_core.chat.peer_service import PeerChatService
 from xmuse_core.chat.review_trigger_verdicts import build_review_trigger_verdict_envelope
 from xmuse_core.chat.store import ChatStore
 from xmuse_core.chat.stream_store import ChatStreamStore, PeerTurnLatencyTraceStore
+from xmuse_core.integrations.a2a_writeback_reconciler import (
+    A2AProviderWritebackReconciler,
+)
+from xmuse_core.providers.adapters.base import ProviderInvocationResult
+from xmuse_core.providers.goal_contract import WorkerResultStatus
+from xmuse_core.providers.models import ProviderId, ProviderProfileId
 
 
 class FakeGodLayer:
@@ -1454,6 +1460,86 @@ async def test_scheduler_accepts_structured_collaboration_response_writeback(
     assert outcome.happy_path == 1
     assert outcome.failed == 0
     trace = PeerTurnLatencyTraceStore(tmp_path / "chat.db").list_recent(conv.id)[0]
+    assert trace["delivery_mode"] == "mcp_writeback"
+    assert trace["degraded_reason"] is None
+
+
+@pytest.mark.asyncio
+async def test_scheduler_accepts_a2a_provider_result_writeback_without_mcp_stage(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "chat.db"
+    chat = ChatStore(db_path)
+    conv = chat.create_conversation("Scheduler A2A provider writeback")
+    participant = ParticipantStore(db_path).add(
+        conversation_id=conv.id,
+        role="review",
+        display_name="Remote Review GOD",
+        cli_kind="codex",
+        model="gpt-5.4",
+    )
+    message = chat.add_message(conv.id, "a2a:external-planner", "assistant", "@review")
+    inbox = ChatInboxStore(db_path)
+    item = inbox.create_item(
+        conversation_id=conv.id,
+        target_participant_id=participant.participant_id,
+        target_role="review",
+        target_address="@review",
+        sender_participant_id=None,
+        sender_address="a2a:external-planner",
+        source_message_id=message.id,
+        item_type="a2a_task",
+        payload={"content": "@review inspect this remote task."},
+    )
+
+    class A2AWritebackGodLayer(FakeGodLayer):
+        async def receive_message(self, god_session_id):
+            A2AProviderWritebackReconciler(db_path).record_provider_result(
+                conversation_id=conv.id,
+                participant_id=participant.participant_id,
+                reply_to_inbox_item_id=item.id,
+                provider_result=ProviderInvocationResult(
+                    request_id="lane-a2a:review",
+                    provider_id=ProviderId.A2A,
+                    profile_id=ProviderProfileId.REMOTE,
+                    status=WorkerResultStatus.COMPLETED,
+                    evidence_refs=[
+                        "a2a_task:lane-a2a:review",
+                        "a2a_context:lane-a2a",
+                    ],
+                    diagnostic_payload={
+                        "a2a_content": "Remote A2A review completed.",
+                        "a2a_source_refs": [
+                            "a2a_task:lane-a2a:review",
+                            "a2a_context:lane-a2a",
+                        ],
+                    },
+                ),
+            )
+            return self.receive_result
+
+    scheduler = PeerChatScheduler(
+        db_path=db_path,
+        god_layer=A2AWritebackGodLayer(),
+        worktree=tmp_path,
+        scheduler_id="sched-test",
+        response_wait_s=0.1,
+    )
+
+    outcome = await scheduler.tick_once()
+
+    assert outcome.happy_path == 1
+    assert outcome.failed == 0
+    updated = inbox.get(item.id)
+    assert updated.status == "read"
+    assert updated.responded_message_id is not None
+    reply = next(
+        msg for msg in chat.list_messages(conv.id) if msg.id == updated.responded_message_id
+    )
+    assert reply.envelope_type == "a2a_provider_result"
+    assert reply.envelope_json["authority"] == "chat.db/inbox"
+    assert reply.envelope_json["a2a_is_authority"] is False
+    trace = PeerTurnLatencyTraceStore(db_path).list_recent(conv.id)[0]
     assert trace["delivery_mode"] == "mcp_writeback"
     assert trace["degraded_reason"] is None
 
