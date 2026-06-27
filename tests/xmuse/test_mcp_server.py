@@ -1134,10 +1134,11 @@ def test_read_provider_inventory_returns_sanitized_static_profile_metadata(
 
     assert inventory["kind"] == "provider_inventory"
     assert inventory["read_only"] is True
-    assert inventory["counts"] == {"providers": 2, "profiles": 6}
-    assert inventory["provider_ids"] == ["codex", "opencode"]
+    assert inventory["counts"] == {"providers": 3, "profiles": 7}
+    assert inventory["provider_ids"] == ["a2a", "codex", "opencode"]
 
     providers = {provider["provider_id"]: provider for provider in inventory["providers"]}
+    assert providers["a2a"]["profile_refs"] == ["a2a.remote"]
     assert providers["codex"]["profile_refs"] == [
         "codex.default",
         "codex.worker",
@@ -1153,6 +1154,27 @@ def test_read_provider_inventory_returns_sanitized_static_profile_metadata(
         for profile in provider["profiles"]
     }
 
+    assert profiles["a2a.remote"] == {
+        "ref": "a2a.remote",
+        "provider_id": "a2a",
+        "profile_id": "remote",
+        "adapter_kind": "a2a_remote",
+        "model_id": "a2a-remote",
+        "supports_mcp": False,
+        "supports_persistent_sessions": False,
+        "persistent_capability": "unsupported",
+        "support_level": "experimental",
+        "cost_tier": "medium",
+        "risk_tier": "medium",
+        "task_capabilities": [
+            "bounded_code_writing",
+            "bounded_deliberation",
+            "review",
+        ],
+        "model_id_env_name": None,
+        "api_base_env_name": "XMUSE_A2A_PROVIDER_URL",
+        "env_requirement_names": ["XMUSE_A2A_PROVIDER_URL"],
+    }
     assert profiles["codex.worker"] == {
         "ref": "codex.worker",
         "provider_id": "codex",
