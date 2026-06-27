@@ -11,6 +11,7 @@ from pathlib import Path
 import httpx
 import pytest
 import uvicorn
+from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
 from xmuse import platform_runner
@@ -1372,6 +1373,164 @@ async def test_a2a_inbound_task_reaches_peer_chat_fake_app_server(
             await stop_runner(runner_task)
         await _stop_server(chat_server, chat_task)
         await _stop_server(mcp_server, mcp_task)
+
+
+@pytest.mark.asyncio
+async def test_a2a_inbound_task_reaches_a2a_provider_writeback(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    db_path = tmp_path / "chat.db"
+    lanes_path = tmp_path / "feature_lanes.json"
+    lanes_path.write_text(json.dumps({"lanes": []}), encoding="utf-8")
+    chat_port = _free_port()
+    mcp_port = _free_port()
+    a2a_port = _free_port()
+    a2a_requests: list[dict[str, object]] = []
+
+    class RuntimeLauncher(DummyLauncher):
+        supports_persistent_sessions = True
+
+    def fake_build_default_launchers(*, mcp_port: int):
+        launcher = RuntimeLauncher("gpt-5.5")
+        launcher.mcp_port = mcp_port
+        return {AgentRuntime.CODEX: launcher}
+
+    def fake_build_actor(self, **kwargs):
+        del self
+        return FakeProviderAppServerActor(**kwargs)
+
+    a2a_app = FastAPI()
+
+    @a2a_app.post("/a2a")
+    async def fake_a2a_task(request: Request) -> dict[str, object]:
+        body = await request.json()
+        a2a_requests.append(body)
+        message = body["params"]["message"]
+        task_id = message["task_id"]
+        context_id = message["context_id"]
+        return {
+            "jsonrpc": "2.0",
+            "id": body["id"],
+            "result": {
+                "task": {
+                    "id": task_id,
+                    "contextId": context_id,
+                    "status": {"state": "TASK_STATE_COMPLETED"},
+                    "artifacts": [
+                        {
+                            "artifactId": "artifact-a2a-runtime",
+                            "name": "remote-a2a-runtime-output",
+                            "parts": [{"text": "Remote A2A architect response."}],
+                        }
+                    ],
+                }
+            },
+        }
+
+    import xmuse_core.agents.launchers as launchers_module
+
+    monkeypatch.setattr(
+        launchers_module,
+        "build_default_launchers",
+        fake_build_default_launchers,
+    )
+    monkeypatch.setattr(RayGodSessionLayer, "_build_actor", fake_build_actor)
+    monkeypatch.setenv("XMUSE_PEER_GOD_BACKEND", "ray")
+    monkeypatch.setenv(
+        "XMUSE_A2A_PROVIDER_URL",
+        f"http://127.0.0.1:{a2a_port}/a2a",
+    )
+    monkeypatch.delenv("XMUSE_DEGRADED_LOCAL_GOD_MODE", raising=False)
+
+    chat_server, chat_task = await _serve_app(
+        create_chat_app(tmp_path, a2a_bridge_enabled=True),
+        port=chat_port,
+    )
+    a2a_server, a2a_task = await _serve_app(a2a_app, port=a2a_port)
+
+    async def start_runner() -> asyncio.Task:
+        return asyncio.create_task(
+            platform_runner.run(
+                lanes_path=lanes_path,
+                xmuse_root=tmp_path,
+                mcp_port=mcp_port,
+                max_hours=1,
+                max_concurrent=1,
+                peer_chat_enabled=True,
+            )
+        )
+
+    async def stop_runner(task: asyncio.Task) -> None:
+        task.cancel()
+        try:
+            await asyncio.wait_for(task, timeout=5)
+        except (TimeoutError, asyncio.CancelledError):
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+
+    try:
+        runner_task = await start_runner()
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{chat_port}") as client:
+            created = await client.post(
+                "/api/chat/conversations",
+                json={
+                    "title": "A2A provider writeback runtime smoke",
+                    "initial_participants": [],
+                },
+            )
+            created.raise_for_status()
+            conversation_id = created.json()["id"]
+            remote_architect = ParticipantStore(db_path).add(
+                conversation_id=conversation_id,
+                role="architect",
+                display_name="Remote A2A Architect GOD",
+                cli_kind="a2a",
+                model="a2a-remote",
+            )
+
+            routed = await client.post(
+                "/a2a/tasks/send",
+                json={
+                    "task_id": "a2a-provider-writeback-smoke",
+                    "context_id": conversation_id,
+                    "sender_agent_id": "external-planner",
+                    "target_address": "@architect",
+                    "content": "@architect answer through the remote A2A provider.",
+                },
+            )
+            routed.raise_for_status()
+            inbox_item = routed.json()["inbox_items"][0]
+            inbox_item_id = inbox_item["id"]
+            assert inbox_item["payload"]["source_kind"] == "a2a_inbound"
+            assert inbox_item["payload"]["route_kind"] == "a2a_task"
+
+            replies = await _wait_for_reply_count(
+                db_path,
+                conversation_id,
+                remote_architect.participant_id,
+                1,
+            )
+            assert replies[0].content == "Remote A2A architect response."
+            assert replies[0].envelope_type == "a2a_provider_result"
+            assert replies[0].envelope_json["provider_profile_ref"] == "a2a.remote"
+            assert replies[0].envelope_json["authority"] == "chat.db/inbox"
+            assert replies[0].envelope_json["a2a_is_authority"] is False
+            assert a2a_requests
+            assert a2a_requests[0]["method"] == "SendMessage"
+
+            reloaded = ChatInboxStore(db_path).get(inbox_item_id)
+            assert reloaded.status == "read"
+            assert reloaded.responded_message_id == replies[0].id
+            traces = await _wait_for_latency_trace_count(db_path, conversation_id, 1)
+            assert traces[0]["delivery_mode"] == "a2a_provider_writeback"
+            assert traces[0]["degraded_reason"] is None
+    finally:
+        if "runner_task" in locals():
+            await stop_runner(runner_task)
+        await _stop_server(chat_server, chat_task)
+        await _stop_server(a2a_server, a2a_task)
 
 
 @pytest.mark.asyncio
