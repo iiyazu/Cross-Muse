@@ -343,6 +343,30 @@ def test_runner_provider_service_recognizes_explicit_a2a_runtime(tmp_path) -> No
     assert service.supports_persistent_execute(invocation) is False
 
 
+def test_runner_provider_service_maps_explicit_a2a_execute_lane_to_bounded_code(
+    tmp_path,
+) -> None:
+    service = RunnerProviderService()
+
+    invocation = service.build_execution_invocation(
+        lane_id="lane-a2a-execute",
+        prompt="Execute the bounded lane through A2A.",
+        workspace=tmp_path,
+        timeout_seconds=120,
+        provider_profile_ref="a2a.remote",
+        risk_tier=RiskTier.MEDIUM,
+        lane={
+            "feature_id": "lane-a2a-execute",
+            "task_type": "execute",
+            "capabilities": ["code"],
+        },
+    )
+
+    assert invocation.provider_profile_ref == "a2a.remote"
+    assert invocation.task_type is TaskCapability.BOUNDED_CODE_WRITING
+    assert service.runtime_for_invocation(invocation) == "a2a"
+
+
 def test_runner_provider_service_invokes_configured_a2a_adapter(tmp_path) -> None:
     client = FakeA2ATaskClient(
         _task_result(disposition="completed", state="TASK_STATE_COMPLETED")
