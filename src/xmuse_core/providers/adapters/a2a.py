@@ -126,6 +126,10 @@ class A2AProviderAdapter:
             "xmuse_task_type": invocation.task_type.value,
             "xmuse_risk_tier": invocation.risk_tier.value,
             "xmuse_workspace": str(invocation.workspace),
+            "xmuse_authority": "chat.db/inbox/proposal/review/dispatch/final_gates",
+            "a2a_is_authority": False,
+            "a2a_task_status_is_authority": False,
+            "provider_stdout_is_authority": False,
         }
         if invocation.writeback_context is not None:
             metadata["xmuse_writeback_context"] = (

@@ -252,6 +252,40 @@ def test_a2a_provider_adapter_includes_xmuse_context_metadata(tmp_path) -> None:
     }
 
 
+def test_a2a_provider_adapter_marks_task_metadata_as_non_authority(tmp_path) -> None:
+    client = FakeA2ATaskClient(
+        _task_result(disposition="completed", state="TASK_STATE_COMPLETED")
+    )
+    adapter = A2AProviderAdapter(
+        _profile(),
+        endpoint_url="https://remote.example/a2a",
+        client=client,
+    )
+    invocation = RunnerProviderService().build_execution_invocation(
+        lane_id="lane-a2a-execute",
+        prompt="@remote execute this bounded lane.",
+        workspace=tmp_path,
+        timeout_seconds=120,
+        provider_profile_ref="a2a.remote",
+        risk_tier=RiskTier.MEDIUM,
+        lane={
+            "feature_id": "lane-a2a-execute",
+            "task_type": "execute",
+            "capabilities": ["code"],
+        },
+    )
+
+    adapter.invoke(invocation)
+
+    metadata = client.requests[0].metadata
+    assert metadata["xmuse_authority"] == (
+        "chat.db/inbox/proposal/review/dispatch/final_gates"
+    )
+    assert metadata["a2a_is_authority"] is False
+    assert metadata["a2a_task_status_is_authority"] is False
+    assert metadata["provider_stdout_is_authority"] is False
+
+
 def test_a2a_provider_adapter_maps_blocked_task_without_failure_kind(tmp_path) -> None:
     adapter = A2AProviderAdapter(
         _profile(),
