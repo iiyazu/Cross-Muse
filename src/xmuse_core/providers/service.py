@@ -287,15 +287,21 @@ class RunnerProviderService:
                     invocation
                 )
             except ValueError as exc:
+                evidence_refs = [
+                    "a2a_adapter:config_error",
+                    f"a2a_adapter_error:{exc.__class__.__name__}",
+                ]
                 return ProviderInvocationResult(
                     request_id=invocation.request_id,
                     provider_id=invocation.provider_id,
                     profile_id=invocation.profile_id,
                     status=WorkerResultStatus.FAILED,
-                    evidence_refs=[
-                        "a2a_adapter:config_error",
-                        f"a2a_adapter_error:{exc.__class__.__name__}",
-                    ],
+                    evidence_refs=evidence_refs,
+                    diagnostic_payload=_a2a_config_error_diagnostic_payload(
+                        invocation,
+                        error=exc,
+                        evidence_refs=evidence_refs,
+                    ),
                     failure_kind=ProviderFailureKind.CONFIG_ERROR,
                 )
         if invocation.provider_id is ProviderId.CODEX:
@@ -485,3 +491,28 @@ def _clean_optional_text(value: str | None) -> str | None:
         return None
     cleaned = value.strip()
     return cleaned or None
+
+
+def _a2a_config_error_diagnostic_payload(
+    invocation: ProviderInvocation,
+    *,
+    error: ValueError,
+    evidence_refs: list[str],
+) -> dict[str, object]:
+    return {
+        "a2a_task_id": invocation.request_id,
+        "a2a_context_id": invocation.request_id,
+        "a2a_state": "TASK_STATE_FAILED",
+        "a2a_disposition": "failed",
+        "a2a_terminal": True,
+        "a2a_content": f"A2A provider is not configured: {error}",
+        "a2a_artifacts": [],
+        "a2a_history": [],
+        "a2a_metadata": {
+            "failure_kind": ProviderFailureKind.CONFIG_ERROR.value,
+            "provider_profile_ref": invocation.provider_profile_ref,
+        },
+        "a2a_source_refs": list(evidence_refs),
+        "a2a_sdk_task": {},
+        "a2a_jsonrpc_id": None,
+    }
