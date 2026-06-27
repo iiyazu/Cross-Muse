@@ -4,6 +4,13 @@ from pathlib import Path
 from typing import Any
 
 from xmuse_core.chat.envelopes import normalize_envelope
+from xmuse_core.chat.mentions import MentionResolutionError, MentionResolver
+from xmuse_core.chat.natural_handoff import (
+    assess_natural_handoff,
+    build_handoff_envelope,
+)
+from xmuse_core.chat.natural_routing import build_natural_route_event, natural_route_payload
+from xmuse_core.chat.participant_store import ParticipantStore
 from xmuse_core.chat.store import ChatStore
 from xmuse_core.providers.adapters.base import ProviderInvocationResult
 from xmuse_core.providers.models import ProviderId
@@ -20,7 +27,9 @@ class A2AProviderWritebackReconciler:
     """Persist A2A provider output through the durable chat/inbox authority."""
 
     def __init__(self, db_path: Path | str) -> None:
-        self._chat = ChatStore(db_path)
+        self._db_path = Path(db_path)
+        self._chat = ChatStore(self._db_path)
+        self._participants = ParticipantStore(self._db_path)
 
     def record_provider_result(
         self,
@@ -43,6 +52,14 @@ class A2AProviderWritebackReconciler:
             )
         source_refs = _source_refs(provider_result, diagnostic)
         content = _content(provider_result, diagnostic)
+        inbox_items = self._route_provider_result_mentions(
+            conversation_id=conversation_id,
+            participant_id=participant_id,
+            reply_to_inbox_item_id=reply_to_inbox_item_id,
+            provider_result=provider_result,
+            content=content,
+            source_refs=source_refs,
+        )
         envelope = normalize_envelope(
             {
                 "type": "a2a_provider_result",
@@ -73,8 +90,12 @@ class A2AProviderWritebackReconciler:
             content=content,
             envelope_type="a2a_provider_result",
             envelope_json=envelope,
-            mentions=[],
-            inbox_items=[],
+            mentions=[
+                str(item["target_address"])
+                for item in inbox_items
+                if isinstance(item.get("target_address"), str)
+            ],
+            inbox_items=inbox_items,
             reply_to_inbox_item_id=reply_to_inbox_item_id,
             reply_owner_participant_id=participant_id,
             extra_result={
@@ -88,6 +109,103 @@ class A2AProviderWritebackReconciler:
                 }
             },
         )
+
+    def _route_provider_result_mentions(
+        self,
+        *,
+        conversation_id: str,
+        participant_id: str,
+        reply_to_inbox_item_id: str,
+        provider_result: ProviderInvocationResult,
+        content: str,
+        source_refs: list[str],
+    ) -> list[dict[str, Any]]:
+        try:
+            targets = MentionResolver(self._participants).resolve_leading_content(
+                conversation_id,
+                content,
+                strict=True,
+            )
+        except MentionResolutionError:
+            return []
+        inbox_items: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for target in targets:
+            target_participant_id = target.participant.participant_id
+            if target_participant_id == participant_id or target_participant_id in seen:
+                continue
+            seen.add(target_participant_id)
+            assessment = assess_natural_handoff(
+                content,
+                target_role=target.participant.role,
+            )
+            blocker_reason = (
+                "missing_handoff_fields"
+                if assessment.requires_envelope and assessment.missing_fields
+                else None
+            )
+            route_event = build_natural_route_event(
+                conversation_id=conversation_id,
+                origin_message_id=provider_result.request_id,
+                source_kind="a2a_provider_result",
+                author_participant_id=participant_id,
+                target_participant_id=target_participant_id,
+                route_kind=(
+                    assessment.route_kind
+                    if assessment.requires_envelope
+                    else "mention"
+                ),
+                source_refs=[
+                    f"inbox:{reply_to_inbox_item_id}",
+                    *source_refs,
+                ],
+                blocker_reason=blocker_reason,
+            )
+            assessment_payload = assessment.model_dump()
+            extra: dict[str, object] = {
+                "source_a2a_provider_request_id": provider_result.request_id,
+                "source_a2a_provider_status": provider_result.status.value,
+                "handoff_assessment": assessment_payload,
+            }
+            if assessment.requires_envelope:
+                extra["handoff_envelope"] = build_handoff_envelope(
+                    assessment,
+                    conversation_id=conversation_id,
+                    origin_message_id=provider_result.request_id,
+                    source_kind="a2a_provider_result",
+                    author_participant_id=participant_id,
+                    target_participant_id=target_participant_id,
+                    target_role=target.participant.role,
+                    source_refs=source_refs,
+                    task_id=provider_result.request_id,
+                    source_inbox_item_id=reply_to_inbox_item_id,
+                    artifact_refs=list(provider_result.evidence_refs),
+                )
+            if blocker_reason:
+                extra.update(
+                    {
+                        "blocks_dispatch": True,
+                        "blocker_kind": blocker_reason,
+                        "blocker_reason": blocker_reason,
+                    }
+                )
+            inbox_items.append(
+                {
+                    "target_participant_id": target_participant_id,
+                    "target_role": target.participant.role,
+                    "target_address": target.normalized,
+                    "sender_participant_id": participant_id,
+                    "sender_address": f"@participant:{participant_id}",
+                    "item_type": "mention",
+                    "payload": natural_route_payload(
+                        route_event,
+                        content=content,
+                        mention=target.raw,
+                        extra=extra,
+                    ),
+                }
+            )
+        return inbox_items
 
 
 def _source_refs(
