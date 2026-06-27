@@ -1686,6 +1686,176 @@ async def test_scheduler_delivers_a2a_participant_via_provider_writeback(
 
 
 @pytest.mark.asyncio
+async def test_scheduler_a2a_proposal_writeback_creates_review_trigger(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "chat.db"
+    chat = ChatStore(db_path)
+    conv = chat.create_conversation("Scheduler A2A proposal to review")
+    participants = ParticipantStore(db_path)
+    architect = participants.add(
+        conversation_id=conv.id,
+        role="architect",
+        display_name="Remote A2A Architect GOD",
+        cli_kind="a2a",
+        model="a2a-remote",
+    )
+    review = participants.add(
+        conversation_id=conv.id,
+        role="review",
+        display_name="Review GOD",
+        cli_kind="codex",
+        model="gpt-5.4",
+    )
+    source = chat.add_message(
+        conv.id,
+        "Human",
+        "human",
+        "@architect propose the smallest safe A2A review chain.",
+    )
+    AcceptanceSpineStore(db_path).create_for_intake(
+        conversation_id=conv.id,
+        intake_message_id=source.id,
+    )
+    route = build_natural_route_event(
+        conversation_id=conv.id,
+        origin_message_id=source.id,
+        source_kind="human_line_start_mention",
+        author_participant_id=None,
+        target_participant_id=architect.participant_id,
+        route_kind="mention",
+        source_refs=[f"message:{source.id}"],
+    )
+    inbox = ChatInboxStore(db_path)
+    item = inbox.create_item(
+        conversation_id=conv.id,
+        target_participant_id=architect.participant_id,
+        target_role="architect",
+        target_address="@architect",
+        sender_participant_id=None,
+        sender_address="@human",
+        source_message_id=source.id,
+        item_type="mention",
+        payload=natural_route_payload(
+            route,
+            content=source.content,
+            mention="@architect",
+        ),
+    )
+
+    class ForbiddenGodLayer:
+        async def ensure_conversation_session(self, **kwargs):
+            raise AssertionError("A2A participants must not use GodSessionLayer")
+
+    class ProposalProviderService:
+        def __init__(self) -> None:
+            self.invocations = []
+
+        def invoke_provider_adapter(self, invocation):
+            self.invocations.append(invocation)
+            return ProviderInvocationResult(
+                request_id=invocation.request_id,
+                provider_id=ProviderId.A2A,
+                profile_id=ProviderProfileId.REMOTE,
+                status=WorkerResultStatus.COMPLETED,
+                evidence_refs=[
+                    f"a2a_task:{invocation.request_id}",
+                    f"a2a_context:{invocation.request_id}",
+                ],
+                diagnostic_payload={
+                    "a2a_task_id": invocation.request_id,
+                    "a2a_context_id": invocation.request_id,
+                    "a2a_state": "TASK_STATE_COMPLETED",
+                    "a2a_disposition": "completed",
+                    "a2a_terminal": True,
+                    "a2a_content": "Remote A2A architect returned a proposal.",
+                    "a2a_artifacts": [
+                        {"artifact_id": "artifact-a2a-proposal", "text": "proposal"}
+                    ],
+                    "a2a_history": [],
+                    "a2a_metadata": {
+                        "xmuse_proposal": {
+                            "schema_version": 1,
+                            "proposal_type": "lane_graph",
+                            "summary": "A2A review chain candidate",
+                            "content": {
+                                "summary": "A2A review chain candidate",
+                                "lanes": [
+                                    {
+                                        "feature_id": "a2a-review-chain",
+                                        "prompt": (
+                                            "Validate A2A proposal writeback reaches "
+                                            "review trigger authority."
+                                        ),
+                                        "depends_on": [],
+                                        "capabilities": ["code", "test"],
+                                    }
+                                ],
+                            },
+                            "references": ["artifact:a2a-proposal"],
+                        }
+                    },
+                    "a2a_source_refs": [
+                        f"a2a_task:{invocation.request_id}",
+                        f"a2a_context:{invocation.request_id}",
+                    ],
+                    "a2a_sdk_task": {
+                        "id": invocation.request_id,
+                        "status": {"state": "TASK_STATE_COMPLETED"},
+                    },
+                    "a2a_jsonrpc_id": invocation.request_id,
+                },
+            )
+
+    provider_service = ProposalProviderService()
+    scheduler = PeerChatScheduler(
+        db_path=db_path,
+        god_layer=ForbiddenGodLayer(),
+        worktree=tmp_path,
+        scheduler_id="sched-test",
+        response_wait_s=0.1,
+        provider_service=provider_service,
+    )
+
+    outcome = await scheduler.tick_once()
+
+    assert outcome.happy_path == 1
+    assert outcome.failed == 0
+    [invocation] = provider_service.invocations
+    assert invocation.provider_profile_ref == "a2a.remote"
+    [proposal] = ChatStore(db_path).list_proposals(conv.id)
+    proposal_message = next(
+        msg
+        for msg in chat.list_messages(conv.id)
+        if msg.envelope_type == "proposal"
+        and msg.envelope_json["proposal_id"] == proposal.id
+    )
+    review_items = [
+        stored
+        for stored in inbox.list_by_conversation(conv.id, include_terminal=True)
+        if stored.item_type == "review_trigger"
+    ]
+    assert len(review_items) == 1
+    review_item = review_items[0]
+    assert review_item.target_participant_id == review.participant_id
+    assert review_item.source_message_id == proposal_message.id
+    assert review_item.payload["reviewable_type"] == "lane_graph"
+    assert f"Proposal id: {proposal.id}" in review_item.payload["content"]
+    spine = AcceptanceSpineStore(db_path).list_by_conversation(conv.id)[0]
+    assert spine.status is AcceptanceSpineStatus.REVIEW_PENDING
+    assert spine.proposal_id == proposal.id
+    assert spine.review_trigger_inbox_id == review_item.id
+    provider_reply = next(
+        msg for msg in chat.list_messages(conv.id) if msg.envelope_type == "a2a_provider_result"
+    )
+    proposal_writeback = provider_reply.envelope_json["proposal_writeback"]
+    assert proposal_writeback["acceptance_spine"]["status"] == "attached"
+    assert proposal_writeback["review_trigger"]["status"] == "ensured"
+    assert proposal_writeback["review_trigger"]["inbox_item_id"] == review_item.id
+    assert inbox.get(item.id).status == "read"
+
+
+@pytest.mark.asyncio
 async def test_scheduler_writes_durable_a2a_config_error_when_endpoint_missing(
     tmp_path: Path,
     monkeypatch,
