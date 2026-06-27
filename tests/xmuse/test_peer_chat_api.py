@@ -272,6 +272,16 @@ def test_rest_message_all_broadcasts_to_active_peers(tmp_path):
     routed_roles = sorted(item["target_role"] for item in payload["inbox_items"])
     assert routed_roles == ["architect", "execute", "review"]
     assert {item["item_type"] for item in payload["inbox_items"]} == {"mention"}
+    assert {item["payload"]["natural_route"]["source_kind"] for item in payload["inbox_items"]} == {
+        "human_all_mention"
+    }
+    assert {item["payload"]["route_kind"] for item in payload["inbox_items"]} == {"mention"}
+    assert {item["payload"]["route_depth"] for item in payload["inbox_items"]} == {1}
+    assert len({item["payload"]["route_key"] for item in payload["inbox_items"]}) == 3
+    assert {
+        tuple(item["payload"]["source_refs"])
+        for item in payload["inbox_items"]
+    } == {("human_request:post_human_message:rest-all-broadcast",)}
 
 
 def test_thread_message_endpoint_uses_peer_service(tmp_path):

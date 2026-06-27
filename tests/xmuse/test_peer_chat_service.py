@@ -47,6 +47,16 @@ def test_human_post_resolves_mention_and_creates_inbox(tmp_path: Path) -> None:
     assert result.message.mentions == ["@architect"]
     assert len(result.inbox_items) == 1
     assert result.inbox_items[0].target_participant_id == architect.participant_id
+    route = result.inbox_items[0].payload["natural_route"]
+    assert route["source_kind"] == "human_mention"
+    assert route["route_kind"] == "mention"
+    assert route["status"] == "pending"
+    assert route["depth"] == 1
+    assert route["target_participant_id"] == architect.participant_id
+    assert result.inbox_items[0].payload["route_key"] == route["route_key"]
+    assert result.inbox_items[0].payload["source_refs"] == [
+        "human_request:post_human_message:req-human-1"
+    ]
 
 
 def test_human_post_treats_leading_mentions_as_routing_header(
@@ -113,6 +123,12 @@ def test_human_post_allows_multiple_leading_route_mentions(tmp_path: Path) -> No
         architect.participant_id,
         review.participant_id,
     ]
+    route_keys = [item.payload["route_key"] for item in result.inbox_items]
+    assert len(set(route_keys)) == 2
+    assert {item.payload["natural_route"]["source_kind"] for item in result.inbox_items} == {
+        "human_mention"
+    }
+    assert {item.payload["route_depth"] for item in result.inbox_items} == {1}
 
 
 def test_emit_proposal_rejects_not_ready_collaboration_reference(
