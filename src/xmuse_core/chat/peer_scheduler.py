@@ -588,6 +588,8 @@ class PeerChatScheduler:
             return False
         if message.author != participant_id or message.role != "assistant":
             return False
+        if _is_a2a_provider_result_writeback(message):
+            return True
         stages = self._latency.list_mcp_tool_stages(conversation_id, inbox_item_id)
         return bool(
             {
@@ -816,6 +818,18 @@ def _latency_stages_from_message(message) -> dict[str, dict[str, float]]:
 
 def _requires_structured_writeback(item) -> bool:
     return getattr(item, "item_type", None) in _STRUCTURED_WRITEBACK_REQUIRED_ITEM_TYPES
+
+
+def _is_a2a_provider_result_writeback(message) -> bool:
+    envelope = getattr(message, "envelope_json", None)
+    if not isinstance(envelope, dict):
+        return False
+    return (
+        getattr(message, "envelope_type", None) == "a2a_provider_result"
+        and envelope.get("type") == "a2a_provider_result"
+        and envelope.get("authority") == "chat.db/inbox"
+        and envelope.get("a2a_is_authority") is False
+    )
 
 
 def _put_latency_stage(
