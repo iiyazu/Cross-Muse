@@ -1,12 +1,15 @@
 # Goal Copilot Behavior Policy
 
-Updated: 2026-06-20.
+Updated: 2026-06-27.
 
 This document defines the "副驾" copilot role for long xmuse `/goal` runs.
 The copilot is an independent read-only reviewer that periodically audits
 progress and writes recommendations to a shared review board.
 
-The copilot is not an implementation agent and not a truth authority.
+The copilot is not an implementation agent and not a truth authority. For
+unattended natural-groupchat goals it is Track D: a read-only audit track that
+helps the main Track A avoid target drift, PR bloat, proof inflation, and
+low-value expansion while Tracks B/C run sidecar or projection work.
 
 ## Purpose
 
@@ -78,8 +81,10 @@ Default path:
 ```
 
 The board is a goal artifact, not product truth. It is append-only. The main
-agent reads it during phase fan-in, before PR creation/merge, and roughly
-hourly during long runs.
+agent reads it during phase fan-in, before PR creation/merge, and roughly every
+60-90 minutes during long unattended runs. This cadence is advisory, not a hard
+timer; review before high-risk fan-in, PR creation, PR merge, or phase
+completion.
 
 Each entry uses this shape:
 
@@ -164,10 +169,14 @@ Hard rules:
 - Treat your own output as candidate review input only.
 - Verify claims against files, commits, runtime artifacts, or GitHub server facts.
 - Preserve forbidden claims: production readiness, GitHub review truth, live MemoryOS, full closure, overnight readiness, and worker/local-test truth.
+- For natural groupchat throughput goals, check that Track A remains the proof
+  owner, Track B MemoryOS stays sidecar-only, Track C frontend work stays
+  projection-only, and dynamic PR growth remains domain-scoped rather than an
+  umbrella.
 
 Cadence:
 - Review after Phase 0/1 fan-in.
-- Then review roughly once per hour.
+- Then review roughly every 60-90 minutes when possible.
 - Also review before major PR creation, PR merge, or phase completion if asked.
 
 Output:

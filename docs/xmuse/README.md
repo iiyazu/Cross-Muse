@@ -1,6 +1,6 @@
 # xmuse 文档入口
 
-更新日期: 2026-06-26
+更新日期: 2026-06-27
 
 本目录现在按“当前 goal 入口、当前产品合同、CI/兼容合同、历史档案”分层。下一轮
 自然 agents 群聊 `/goal` 不再默认读取旧的 closure ledger、walkthrough、runtime
@@ -21,10 +21,29 @@ operation record 或巨大 handoff 文档。
 
 当前校准：
 
-- `origin/main` 当前按 PR #192 / `bd540de` 校准。
-- PR #193 (`codex/a2a-sdk-foundation`) 已合并到 `origin/main`，merge commit
-  `d429e691be51ef5c9aa7ab34a5670f290b37e7a3`。
+- `origin/main` 当前按 PR #242 / `c1d19ad2ae9bd8b22742376c98968073a508329c`
+  校准。
+- PR #193 (`codex/a2a-sdk-foundation`) 和 A2A hardening PR #234-#242
+  已合并。
+- PR #242 (`codex/a2a-natural-real-chain`) 将 peer chat 主路径默认切到
+  native GOD session，并保留 Ray 作为 optional legacy backend。
+- 最新已观察 main CI run `28292323481` 在 merge commit `c1d19ad...`
+  上成功。
 - Dirty historical worktree 和 archive 文档只能作为参考，不是 main capability。
+
+下一轮长 `/goal` 是无人值守吞吐型 goal：时间只表示可承载的任务量级，不
+按小时切死阶段。推荐采用三写轨加一只读副驾轨：
+
+```text
+Track A: natural groupchat real chain / PR / CI / merge
+Track B: MemoryOS sidecar and context continuity
+Track C: frontend API / UX read projection
+Track D: read-only copilot audit
+```
+
+Track A 是主链路和合并协调者。Track B/C 只能消费已存在 authority，
+不能替代 `chat.db / inbox / proposal / review verdict / dispatch queue /
+GitHub server facts`。Track D 只能写共享审计记录，不能写代码或创建 PR。
 
 ## 当前产品主线
 

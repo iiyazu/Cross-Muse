@@ -1,6 +1,6 @@
 # Natural Groupchat A2A Goal
 
-Updated: 2026-06-26
+Updated: 2026-06-27
 
 This is the current `/goal` entrypoint for the next xmuse production push. It
 supersedes older L8-L11, closure-ledger, walkthrough, and runtime-log driven
@@ -22,13 +22,24 @@ Read these first:
 
 As of this update:
 
-- `origin/main` is calibrated at PR #192 / `bd540de`.
-- PR #193 (`codex/a2a-sdk-foundation`) is merged into `origin/main` at merge
-  commit `d429e691be51ef5c9aa7ab34a5670f290b37e7a3`.
+- `origin/main` is calibrated at PR #242 /
+  `c1d19ad2ae9bd8b22742376c98968073a508329c`.
+- PR #193 (`codex/a2a-sdk-foundation`) and A2A hardening PR #234-#242 are
+  merged.
+- PR #242 (`codex/a2a-natural-real-chain`) makes native GOD sessions the
+  default peer-chat path. Ray remains optional legacy infrastructure and is
+  not the default natural groupchat kernel.
+- Main CI run `28292323481` was observed successful on merge commit
+  `c1d19ad...`.
 - The next long goal should start from a clean `origin/main` worktree after
   truth refresh.
-- Dirty historical worktrees may be read as references only. They are not main
+- Dirty historical worktrees, including branches with useful natural
+  groupchat assets, may be read as references only. They are not main
   capability.
+
+The next run is an unattended throughput goal. A 10h sleep window is a capacity
+signal, not a fixed schedule. The goal should keep advancing valuable loops
+while proof boundaries remain strong, then stop at a clean merge/report point.
 
 ## Objective
 
@@ -52,6 +63,20 @@ The goal is not to declare production-ready natural groupchat. The goal is to
 advance the maximum real chain and leave precise durable blockers where it
 cannot advance.
 
+Use multiple independent worktrees when that increases throughput without
+mixing authority boundaries:
+
+```text
+Track A: natural groupchat real chain, PR/CI/merge coordination
+Track B: MemoryOS sidecar and context continuity
+Track C: frontend API / UX projection
+Track D: read-only copilot audit
+```
+
+Track A owns the main proof path. Track B and Track C are sidecars and
+projections; they must not create proposal, review, dispatch, or GitHub truth.
+Track D is advisory only.
+
 ## Architecture Direction
 
 Default route:
@@ -70,6 +95,34 @@ legacy compatibility adapter, but it should not consume the main repair budget.
 A2A is an interop boundary, not xmuse authority. Every important A2A event must
 be normalized into durable xmuse state before proposal, review, dispatch, or
 merge gates consume it.
+
+MemoryOS is an optional sidecar for recall, summaries, decisions, blockers, and
+artifact refs. It becomes live evidence only when a live trace id or artifact
+exists. If unavailable, the chain should degrade without blocking Track A.
+
+Frontend work in this goal is read API / UX contract work. Timeline cards,
+agent cards, worklist state, blocker panels, and collapsible details are
+projections over durable stores; they do not create truth.
+
+## Unattended Execution Model
+
+Do not plan by fixed hours. Plan by value loops:
+
+```text
+run largest real chain
+-> classify durable boundary
+-> fix or refactor one boundary
+-> focused validation
+-> PR / exact-head CI / guarded merge when clean
+-> main CI observation
+-> replay largest real chain
+-> continue, parallelize, or stop
+```
+
+Continue while the maximum real chain advances, the next boundary has clear
+authority/producer/consumer, PRs remain domain-scoped, and CI/GitHub facts are
+available. Stop when the next work would become umbrella scope, low-value
+polish, proof-boundary weakening, or repeated patching of a complex boundary.
 
 ## Clowder-AI Extraction
 
@@ -98,4 +151,5 @@ Do not claim:
 - provider stdout review truth;
 - full multi-provider parity;
 - frontend complete;
-- Ray-backed production proof.
+- Ray-backed production proof;
+- full closure.
