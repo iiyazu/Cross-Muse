@@ -79,6 +79,43 @@ def test_a2a_official_sendmessage_jsonrpc_normalizes_to_task_send() -> None:
     assert result.sdk_request["message"]["task_id"] == "task-send"
 
 
+def test_a2a_legacy_task_send_preserves_outbound_input_parts() -> None:
+    result = normalize_task_send_payload(
+        {
+            "task_id": "task-parts",
+            "context_id": "conv-parts",
+            "sender_agent_id": "xmuse-architect",
+            "target_address": "@review",
+            "content": "@review inspect attached evidence.",
+            "input_parts": [
+                {"kind": "data", "data": {"evidence": "bounded"}},
+                {
+                    "kind": "file",
+                    "file_id": "file:///tmp/evidence.md",
+                    "filename": "evidence.md",
+                    "media_type": "text/markdown",
+                    "metadata": {"purpose": "review_evidence"},
+                },
+            ],
+        }
+    )
+
+    parts = result.sdk_request["message"]["parts"]
+    assert parts[0] == {"text": "@review inspect attached evidence."}
+    assert parts[1] == {"data": {"evidence": "bounded"}}
+    assert parts[2] == {
+        "url": "file:///tmp/evidence.md",
+        "metadata": {
+            "purpose": "review_evidence",
+            "file_id": "file:///tmp/evidence.md",
+        },
+        "filename": "evidence.md",
+        "media_type": "text/markdown",
+    }
+    assert result.input_parts[1]["kind"] == "data"
+    assert result.input_parts[2]["kind"] == "url"
+
+
 def test_a2a_task_result_normalizes_completed_artifacts() -> None:
     result = normalize_task_result_payload(
         {
