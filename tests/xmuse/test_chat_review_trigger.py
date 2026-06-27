@@ -7,10 +7,16 @@ from fastapi.testclient import TestClient
 from xmuse.chat_api import create_app
 from xmuse_core.chat.acceptance_spine import AcceptanceSpineStatus, AcceptanceSpineStore
 from xmuse_core.chat.collaboration_store import ChatCollaborationStore
+from xmuse_core.chat.dispatch_queue import ChatDispatchQueueStore
 from xmuse_core.chat.inbox_store import ChatInboxStore
+from xmuse_core.chat.participant_store import ParticipantStore
 from xmuse_core.chat.peer_service import PeerChatService
 from xmuse_core.chat.review_trigger_verdicts import build_review_trigger_verdict_envelope
 from xmuse_core.chat.store import ChatStore
+from xmuse_core.integrations.a2a_writeback_reconciler import A2AProviderWritebackReconciler
+from xmuse_core.providers.adapters.base import ProviderInvocationResult
+from xmuse_core.providers.goal_contract import WorkerResultStatus
+from xmuse_core.providers.models import ProviderId, ProviderProfileId
 
 
 def test_lane_graph_proposal_auto_triggers_single_review_inbox_item(tmp_path) -> None:
@@ -493,6 +499,76 @@ def test_collaboration_proposal_approval_rejects_malformed_review_verdict(
     assert ChatStore(tmp_path / "chat.db").list_resolutions(conversation_id) == []
 
 
+def test_a2a_review_trigger_verdict_only_proposal_approval_enqueues_dispatch(
+    tmp_path,
+) -> None:
+    client = TestClient(create_app(tmp_path))
+    (
+        conversation_id,
+        intake_message_id,
+        proposal_id,
+        verdict_message_id,
+    ) = _a2a_proposal_with_review_trigger_without_collaboration(
+        tmp_path,
+        write_verdict=True,
+    )
+
+    spine = AcceptanceSpineStore(tmp_path / "chat.db").get_by_intake_message(
+        intake_message_id
+    )
+    assert spine.status is AcceptanceSpineStatus.REVIEW_CLEARED
+    assert spine.review_or_execute_verdict_ref == f"review_trigger_verdict:{verdict_message_id}"
+
+    response = client.post(
+        f"/api/chat/proposals/{proposal_id}/approve",
+        json={
+            "approved_by": ["human"],
+            "approval_mode": "runtime_loop_manual_approval_no_auto_merge",
+            "goal_summary": "Approve after durable review-trigger verdict.",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    entries = ChatDispatchQueueStore(tmp_path / "chat.db").list_entries(conversation_id)
+    assert len(entries) == 1
+    assert entries[0].proposal_id == proposal_id
+    assert entries[0].resolution_id == response.json()["id"]
+    assert entries[0].collaboration_run_id is None
+    assert entries[0].artifact_ref == "artifact:lane_graph"
+    spine = AcceptanceSpineStore(tmp_path / "chat.db").get_by_intake_message(
+        intake_message_id
+    )
+    assert spine.status is AcceptanceSpineStatus.DISPATCHED
+
+
+def test_a2a_review_trigger_pending_proposal_approval_without_collaboration_is_blocked(
+    tmp_path,
+) -> None:
+    client = TestClient(create_app(tmp_path))
+    (
+        conversation_id,
+        _intake_message_id,
+        proposal_id,
+        _verdict_message_id,
+    ) = _a2a_proposal_with_review_trigger_without_collaboration(
+        tmp_path,
+        write_verdict=False,
+    )
+
+    response = client.post(
+        f"/api/chat/proposals/{proposal_id}/approve",
+        json={
+            "approved_by": ["human"],
+            "approval_mode": "runtime_loop_manual_approval_no_auto_merge",
+            "goal_summary": "Try approval before review verdict.",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "proposal_review_pending"
+    assert ChatDispatchQueueStore(tmp_path / "chat.db").list_entries(conversation_id) == []
+
+
 def test_manual_review_mention_and_auto_review_trigger_do_not_conflict(tmp_path) -> None:
     service = PeerChatService(tmp_path / "chat.db")
     created = service.create_conversation(title="Manual And Auto Review")
@@ -645,4 +721,185 @@ def _dispatchable_proposal_with_review_trigger(tmp_path):
         sessions,
         intake.message.id,
         proposal,
+    )
+
+
+def _a2a_proposal_with_review_trigger_without_collaboration(
+    tmp_path,
+    *,
+    write_verdict: bool,
+):
+    db_path = tmp_path / "chat.db"
+    chat = ChatStore(db_path)
+    conversation = chat.create_conversation("A2A review-trigger dispatch")
+    participants = ParticipantStore(db_path)
+    architect = participants.add(
+        conversation_id=conversation.id,
+        role="architect",
+        display_name="A2A Architect",
+        cli_kind="a2a",
+        model="a2a-remote",
+    )
+    review = participants.add(
+        conversation_id=conversation.id,
+        role="review",
+        display_name="A2A Review",
+        cli_kind="a2a",
+        model="a2a-remote",
+    )
+    intake = chat.add_message(
+        conversation.id,
+        "Human",
+        "human",
+        "@architect propose the smallest reviewed lane.",
+    )
+    AcceptanceSpineStore(db_path).create_for_intake(
+        conversation_id=conversation.id,
+        intake_message_id=intake.id,
+    )
+    source_inbox = ChatInboxStore(db_path).create_item(
+        conversation_id=conversation.id,
+        target_participant_id=architect.participant_id,
+        target_role="architect",
+        target_address="@architect",
+        sender_participant_id=None,
+        sender_address="@human",
+        source_message_id=intake.id,
+        item_type="mention",
+        payload={"content": intake.content},
+    )
+    result = A2AProviderWritebackReconciler(db_path).record_provider_result(
+        conversation_id=conversation.id,
+        participant_id=architect.participant_id,
+        reply_to_inbox_item_id=source_inbox.id,
+        provider_result=_a2a_proposal_result(),
+    )
+    proposal_id = result["proposal_writeback"]["proposal_id"]
+    review_item = next(
+        item
+        for item in ChatInboxStore(db_path).list_by_conversation(
+            conversation.id,
+            include_terminal=True,
+        )
+        if item.item_type == "review_trigger"
+    )
+    verdict_message_id = None
+    if write_verdict:
+        verdict = A2AProviderWritebackReconciler(db_path).record_provider_result(
+            conversation_id=conversation.id,
+            participant_id=review.participant_id,
+            reply_to_inbox_item_id=review_item.id,
+            provider_result=_a2a_review_verdict_result(
+                review_item=review_item,
+                proposal_id=proposal_id,
+            ),
+        )
+        verdict_message_id = verdict["message"]["id"]
+    return (
+        conversation.id,
+        intake.id,
+        proposal_id,
+        verdict_message_id,
+    )
+
+
+def _a2a_proposal_result() -> ProviderInvocationResult:
+    return ProviderInvocationResult(
+        request_id="req-a2a-review-only-proposal",
+        provider_id=ProviderId.A2A,
+        profile_id=ProviderProfileId.REMOTE,
+        status=WorkerResultStatus.COMPLETED,
+        evidence_refs=[
+            "a2a_task:req-a2a-review-only-proposal",
+            "a2a_context:review-only",
+        ],
+        diagnostic_payload={
+            "a2a_task_id": "req-a2a-review-only-proposal",
+            "a2a_context_id": "review-only",
+            "a2a_state": "TASK_STATE_COMPLETED",
+            "a2a_disposition": "completed",
+            "a2a_terminal": True,
+            "a2a_content": "A2A architect returned a structured proposal.",
+            "a2a_artifacts": [
+                {"artifact_id": "artifact-a2a-review-only", "text": "proposal"}
+            ],
+            "a2a_history": [],
+            "a2a_metadata": {
+                "xmuse_proposal": {
+                    "schema_version": 1,
+                    "proposal_type": "lane_graph",
+                    "summary": "A2A review-only dispatch candidate",
+                    "content": {
+                        "summary": "A2A review-only dispatch candidate",
+                        "lanes": [
+                            {
+                                "feature_id": "feature-a2a-review-only-dispatch",
+                                "prompt": (
+                                    "Allow dispatch after A2A review-trigger verdict "
+                                    "and approval."
+                                ),
+                                "depends_on": [],
+                                "capabilities": ["code"],
+                            }
+                        ],
+                    },
+                    "references": ["artifact:a2a-review-only-proposal"],
+                }
+            },
+            "a2a_source_refs": [
+                "a2a_task:req-a2a-review-only-proposal",
+                "a2a_context:review-only",
+            ],
+            "a2a_sdk_task": {
+                "id": "req-a2a-review-only-proposal",
+                "status": {"state": "TASK_STATE_COMPLETED"},
+            },
+            "a2a_jsonrpc_id": "req-a2a-review-only-proposal",
+        },
+    )
+
+
+def _a2a_review_verdict_result(*, review_item, proposal_id: str) -> ProviderInvocationResult:
+    return ProviderInvocationResult(
+        request_id="req-a2a-review-only-verdict",
+        provider_id=ProviderId.A2A,
+        profile_id=ProviderProfileId.REMOTE,
+        status=WorkerResultStatus.COMPLETED,
+        evidence_refs=[
+            "a2a_task:req-a2a-review-only-verdict",
+            "a2a_context:review-only",
+        ],
+        diagnostic_payload={
+            "a2a_task_id": "req-a2a-review-only-verdict",
+            "a2a_context_id": "review-only",
+            "a2a_state": "TASK_STATE_COMPLETED",
+            "a2a_disposition": "completed",
+            "a2a_terminal": True,
+            "a2a_content": "A2A review verdict: dispatch allowed.",
+            "a2a_artifacts": [],
+            "a2a_history": [],
+            "a2a_metadata": {
+                "xmuse_review_trigger_verdict": build_review_trigger_verdict_envelope(
+                    review_trigger_inbox_id=review_item.id,
+                    source_message_id=review_item.source_message_id,
+                    proposal_id=proposal_id,
+                    decision="dispatch_allowed",
+                    summary="A2A review-trigger verdict allows dispatch.",
+                    evidence_refs=[
+                        f"inbox:{review_item.id}",
+                        f"proposal:{proposal_id}",
+                        "a2a_task:req-a2a-review-only-verdict",
+                    ],
+                )
+            },
+            "a2a_source_refs": [
+                "a2a_task:req-a2a-review-only-verdict",
+                "a2a_context:review-only",
+            ],
+            "a2a_sdk_task": {
+                "id": "req-a2a-review-only-verdict",
+                "status": {"state": "TASK_STATE_COMPLETED"},
+            },
+            "a2a_jsonrpc_id": "req-a2a-review-only-verdict",
+        },
     )
