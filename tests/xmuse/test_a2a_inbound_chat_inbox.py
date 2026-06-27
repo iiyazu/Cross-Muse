@@ -134,6 +134,7 @@ def test_a2a_complete_review_task_records_canonical_handoff_envelope(
                 "next action: review the inbox payload.\n"
                 "evidence refs: a2a_task:task-complete-review"
             ),
+            input_parts=({"kind": "url", "url": "file:///tmp/evidence.md"},),
         )
     )
 
@@ -149,17 +150,35 @@ def test_a2a_complete_review_task_records_canonical_handoff_envelope(
     assert inbox_item.payload["handoff_assessment"]["is_complete"] is True
     assert inbox_item.payload["handoff_assessment"]["missing_fields"] == []
     assert inbox_item.payload["handoff_envelope"] == {
+        "type": "natural_handoff",
         "schema_version": "xmuse-natural-handoff-v1",
+        "task_id": "task-complete-review",
         "conversation_id": conversation.id,
         "origin_message_id": "task-complete-review",
+        "source_message_id": "task-complete-review",
+        "source_inbox_item_id": None,
         "source_kind": "a2a_inbound",
         "author_participant_id": "a2a:external-planner",
+        "source_participant_id": "a2a:external-planner",
         "target_participant_id": review.participant_id,
+        "target_participant_ids": [review.participant_id],
         "target_role": "review",
+        "intent": "review_request",
         "route_kind": "review_request",
         "requires_envelope": True,
         "is_complete": True,
         "missing_fields": [],
+        "input_parts": [{"kind": "url", "url": "file:///tmp/evidence.md"}],
+        "artifact_refs": ["file:///tmp/evidence.md"],
+        "what": "inspect the A2A handoff boundary.",
+        "why": "provider tasks need durable xmuse authority.",
+        "tradeoffs": "keep A2A as interop, not authority.",
+        "open_questions": "none for this narrow contract.",
+        "next_action": "review the inbox payload.",
+        "evidence_refs": [
+            "a2a_task:task-complete-review",
+            f"a2a_context:{conversation.id}",
+        ],
         "fields": {
             "what": "inspect the A2A handoff boundary.",
             "why": "provider tasks need durable xmuse authority.",
