@@ -114,6 +114,7 @@ class ProviderInvocationResult(BaseModel):
     changed_files: list[str] = Field(default_factory=list)
     tests_run: list[str] = Field(default_factory=list)
     evidence_refs: list[str] = Field(default_factory=list)
+    diagnostic_payload: dict[str, object] = Field(default_factory=dict)
     failure_kind: ProviderFailureKind | None = None
 
     @field_validator("request_id")
