@@ -69,6 +69,7 @@ logger = logging.getLogger(__name__)
 PLANNING_AUTOMATION_WORKER_ID = "platform-runner"
 WRITER_LEASE_TTL_S = 60.0
 WRITER_LEASE_RENEW_INTERVAL_S = WRITER_LEASE_TTL_S / 3
+DEFAULT_PEER_GOD_BACKEND = "native"
 REQUIRED_GITHUB_CHECKS = [
     "quality-gates",
     "contract-smoke-gates",
@@ -318,6 +319,8 @@ async def run(
     default_review_peer_routing_enabled: bool = False,
     persistent_execute_god_enabled: bool = False,
     peer_chat_scheduler=None,
+    peer_god_backend: str | None = None,
+    peer_chat_response_wait_s: float = 900.0,
     peer_chat_post_writeback_grace_s: float = 8.0,
     peer_chat_dispatch_response_wait_s: float = 300.0,
     memoryos_url: str | None = None,
@@ -455,7 +458,8 @@ async def run(
             from xmuse_core.chat.peer_scheduler import PeerChatScheduler
 
             peer_god_layer = _build_peer_god_layer(
-                backend=os.environ.get("XMUSE_PEER_GOD_BACKEND", "ray"),
+                backend=peer_god_backend
+                or os.environ.get("XMUSE_PEER_GOD_BACKEND", DEFAULT_PEER_GOD_BACKEND),
                 native_layer=god_session_layer,
                 launchers=launchers,
                 xmuse_root=xmuse_root,
@@ -468,13 +472,27 @@ async def run(
             if orchestrator_kwargs["review_god_session_layer"] is None:
                 orchestrator_kwargs["review_god_session_layer"] = peer_god_layer
             peer_chat_worktree = _peer_chat_runtime_worktree(xmuse_root)
+            peer_chat_claim_ttl_s = max(
+                240,
+                int(
+                    math.ceil(
+                        peer_chat_response_wait_s
+                        + peer_chat_post_writeback_grace_s
+                        + 30.0
+                    )
+                ),
+            )
+            peer_chat_dispatch_claim_ttl_s = max(
+                240,
+                int(math.ceil(peer_chat_dispatch_response_wait_s + 30.0)),
+            )
             peer_chat_scheduler = PeerChatScheduler(
                 db_path=xmuse_root / "chat.db",
                 god_layer=peer_god_layer,
                 worktree=peer_chat_worktree,
                 scheduler_id="platform-runner",
-                claim_ttl_s=240,
-                response_wait_s=180.0,
+                claim_ttl_s=peer_chat_claim_ttl_s,
+                response_wait_s=peer_chat_response_wait_s,
                 post_writeback_grace_s=peer_chat_post_writeback_grace_s,
                 degraded_fallback_enabled=False,
             )
@@ -489,7 +507,7 @@ async def run(
                 god_layer=peer_god_layer,
                 worktree=peer_chat_worktree,
                 bridge_id="platform-runner-dispatch",
-                claim_ttl_s=240,
+                claim_ttl_s=peer_chat_dispatch_claim_ttl_s,
                 response_wait_s=peer_chat_dispatch_response_wait_s,
             )
         elif peer_chat_enabled and peer_chat_scheduler is None:
@@ -1095,13 +1113,9 @@ def _build_optional_ray_god_layer(
     xmuse_root: Path,
     purpose: str,
 ):
-    normalized = (backend or "ray").strip().lower()
+    normalized = (backend or DEFAULT_PEER_GOD_BACKEND).strip().lower()
     if normalized in {"native", "local"}:
-        return _mark_degraded_native_god_layer(
-            native_layer,
-            purpose=purpose,
-            reason="explicit_native_backend",
-        )
+        return native_layer
     if normalized not in {"ray", "auto"}:
         raise RuntimeError(
             f"Unknown {purpose} GOD backend '{backend}'; "
@@ -1256,7 +1270,10 @@ def _process_readiness(service_count: int) -> dict[str, Any]:
 
 
 def _ray_god_layer_readiness() -> dict[str, Any]:
-    backend = os.environ.get("XMUSE_PEER_GOD_BACKEND", "ray").strip().lower() or "ray"
+    backend = (
+        os.environ.get("XMUSE_PEER_GOD_BACKEND", DEFAULT_PEER_GOD_BACKEND).strip().lower()
+        or DEFAULT_PEER_GOD_BACKEND
+    )
     transport = os.environ.get("XMUSE_RAY_GOD_TRANSPORT", "app-server").strip().lower()
     mcp_enabled = os.environ.get("XMUSE_RAY_GOD_MCP", "0").strip().lower() in {
         "1",
@@ -1264,7 +1281,7 @@ def _ray_god_layer_readiness() -> dict[str, Any]:
         "yes",
         "on",
     }
-    status = "degraded" if backend in {"native", "local"} else "configured"
+    status = "native_configured" if backend in {"native", "local"} else "configured"
     return {
         "status": status,
         "backend": backend,
@@ -1613,6 +1630,24 @@ def main_arg_parser() -> argparse.ArgumentParser:
         help="enable MCP peer-chat scheduler for long-lived GOD sessions",
     )
     parser.add_argument(
+        "--peer-god-backend",
+        choices=("ray", "auto", "native", "local"),
+        default=None,
+        help=(
+            "backend for --peer-chat GOD sessions; native/local uses the "
+            "provider-native persistent session layer without Ray"
+        ),
+    )
+    parser.add_argument(
+        "--peer-chat-response-wait-s",
+        type=float,
+        default=900.0,
+        help=(
+            "seconds to wait for ordinary peer-chat GOD turns to durably "
+            "write back through MCP"
+        ),
+    )
+    parser.add_argument(
         "--peer-chat-post-writeback-grace-s",
         type=float,
         default=8.0,
@@ -1825,6 +1860,13 @@ def validate_args(args: argparse.Namespace) -> None:
             "--default-review-peer-routing requires --persistent-review-god"
         )
     if (
+        not math.isfinite(args.peer_chat_response_wait_s)
+        or args.peer_chat_response_wait_s <= 0
+    ):
+        raise SystemExit(
+            "--peer-chat-response-wait-s must be a positive finite number"
+        )
+    if (
         not math.isfinite(args.peer_chat_post_writeback_grace_s)
         or args.peer_chat_post_writeback_grace_s < 0
     ):
@@ -2011,10 +2053,12 @@ def main() -> None:
         chat_driver_enabled=args.chat_driver,
         chat_driver_model=args.chat_driver_model,
         peer_chat_enabled=args.peer_chat,
+        peer_god_backend=args.peer_god_backend,
         persistent_review_god_enabled=args.persistent_review_god,
         persistent_review_timeout_s=args.persistent_review_timeout_s,
         default_review_peer_routing_enabled=args.default_review_peer_routing,
         persistent_execute_god_enabled=args.persistent_execute_god,
+        peer_chat_response_wait_s=args.peer_chat_response_wait_s,
         peer_chat_post_writeback_grace_s=args.peer_chat_post_writeback_grace_s,
         peer_chat_dispatch_response_wait_s=args.peer_chat_dispatch_response_wait_s,
         memoryos_url=args.memoryos_url,

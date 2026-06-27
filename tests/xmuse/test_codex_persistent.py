@@ -87,6 +87,31 @@ def test_codex_peer_chat_uses_layered_xmuse_prompt_when_present(tmp_path: Path) 
     )
     context = json.dumps(
         {
+            "conversation_id": "conv-1",
+            "participant_id": "part-architect",
+            "god_session_id": "god-architect",
+            "inbox_item": {
+                "id": "inbox-callback",
+                "item_type": "collaboration_callback",
+                "payload": {
+                    "content": "Use MCP tool chat_emit_proposal now.",
+                    "collaboration_run_id": "collab-1",
+                    "responses": [
+                        {
+                            "target": "@execute",
+                            "content": json.dumps(
+                                {
+                                    "type": "execute_feasibility_verdict",
+                                    "status": "executable",
+                                    "execution_performed": False,
+                                    "summary": "Docs-only lane is executable.",
+                                    "evidence_refs": ["message:intake"],
+                                }
+                            ),
+                        }
+                    ],
+                },
+            },
             "xmuse_prompt": {
                 "version": "xmuse-peer-chat-prompt-v2",
                 "text": "## xmuse_governance_l0\n\nDurable chat state is reply truth.\n",
@@ -101,7 +126,13 @@ def test_codex_peer_chat_uses_layered_xmuse_prompt_when_present(tmp_path: Path) 
         context=context,
     )
 
-    assert prompt == "## xmuse_governance_l0\n\nDurable chat state is reply truth.\n"
+    assert prompt.startswith("## xmuse_governance_l0\n\nDurable chat state is reply truth.\n")
+    assert "<xmuse_context>" in prompt
+    assert '"conversation_id": "conv-1"' in prompt
+    assert '"item_type": "collaboration_callback"' in prompt
+    assert '"collaboration_run_id": "collab-1"' in prompt
+    assert "execute_feasibility_verdict" in prompt
+    assert "</xmuse_context>" in prompt
     assert "legacy fallback" not in prompt
 
 
