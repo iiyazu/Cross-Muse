@@ -26,6 +26,7 @@ def _require_unique_non_empty(
 
 
 class ProviderId(StrEnum):
+    A2A = "a2a"
     CODEX = "codex"
     OPENCODE = "opencode"
 
@@ -37,9 +38,11 @@ class ProviderProfileId(StrEnum):
     GOD = "god"
     FINAL_QUALITY = "final_quality"
     DEEPSEEK_FLASH_WORKER = "deepseek_flash_worker"
+    REMOTE = "remote"
 
 
 class AdapterKind(StrEnum):
+    A2A_REMOTE = "a2a_remote"
     CODEX_CLI = "codex_cli"
     OPENCODE_CLI = "opencode_cli"
 

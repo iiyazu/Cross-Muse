@@ -123,6 +123,8 @@ class RunnerProviderService:
         )
 
     def runtime_for_invocation(self, invocation: ProviderInvocation) -> str:
+        if invocation.provider_id is ProviderId.A2A:
+            return "a2a"
         if invocation.provider_id is ProviderId.CODEX:
             return "codex"
         if invocation.provider_id is ProviderId.OPENCODE:
