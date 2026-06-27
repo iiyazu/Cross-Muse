@@ -24,7 +24,7 @@ class TestSettingsDefaults:
         assert settings.runtime_backend == "ray"
         assert settings.review_god_backend == "ray"
         assert settings.execute_god_backend == "ray"
-        assert settings.peer_god_backend == "ray"
+        assert settings.peer_god_backend == "native"
         assert settings.review_gate is True
         assert settings.chat_api_url == "http://127.0.0.1:8201"
         assert settings.superpowers is False
