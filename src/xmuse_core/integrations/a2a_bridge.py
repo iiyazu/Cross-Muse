@@ -96,7 +96,7 @@ def build_participant_agent_card(
     compatibility_card["sdk_agent_card"] = build_sdk_agent_card_payload(
         name=participant.display_name,
         description=f"xmuse {participant.role} participant",
-        url=f"{url}/a2a/agents/{participant.participant_id}",
+        url=f"{url}/a2a/tasks/send",
         version=version,
         streaming=False,
         push_notifications=False,

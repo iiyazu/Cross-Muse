@@ -50,11 +50,12 @@ def test_participant_agent_card_uses_existing_profile_contract(tmp_path: Path) -
     assert card["sdk_agent_card"]["name"] == "Review GOD"
     assert card["sdk_agent_card"]["supported_interfaces"] == [
         {
-            "url": f"http://testserver/a2a/agents/{participant.participant_id}",
+            "url": "http://testserver/a2a/tasks/send",
             "protocol_binding": "JSONRPC",
             "protocol_version": "1.0",
         }
     ]
+    assert card["sdk_agent_card"]["supported_interfaces"][0]["url"] != card["url"]
     assert card["sdk_agent_card"]["skills"][0]["id"] == "xmuse-review"
     metadata = card["metadata"]
     assert metadata["authority"] == "chat.db"
