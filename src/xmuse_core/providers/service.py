@@ -99,7 +99,10 @@ class RunnerProviderService:
             workspace=workspace,
             timeout_seconds=timeout_seconds,
             provider_profile_ref=provider_profile_ref or self._execution_provider_profile_ref,
-            task_type=TaskCapability.LANE_COORDINATION,
+            task_type=self._execution_task_type_for_profile(
+                provider_profile_ref or self._execution_provider_profile_ref,
+                lane=lane,
+            ),
             risk_tier=risk_tier,
             request_suffix="execute",
         )
@@ -411,6 +414,26 @@ class RunnerProviderService:
         )
         return invocation
 
+    def _execution_task_type_for_profile(
+        self,
+        provider_profile_ref: str,
+        *,
+        lane: Mapping[str, Any] | None,
+    ) -> TaskCapability:
+        profile = self._registry.get(provider_profile_ref)
+        requested = _requested_execution_task_type(lane)
+        if requested is not None and requested in profile.task_capabilities:
+            return requested
+        if (
+            _is_code_execution_lane(lane)
+            and TaskCapability.LANE_COORDINATION not in profile.task_capabilities
+            and TaskCapability.BOUNDED_CODE_WRITING in profile.task_capabilities
+        ):
+            return TaskCapability.BOUNDED_CODE_WRITING
+        if TaskCapability.LANE_COORDINATION in profile.task_capabilities:
+            return TaskCapability.LANE_COORDINATION
+        return requested or TaskCapability.LANE_COORDINATION
+
     def _record_selection(
         self,
         *,
@@ -491,6 +514,48 @@ def _clean_optional_text(value: str | None) -> str | None:
         return None
     cleaned = value.strip()
     return cleaned or None
+
+
+def _requested_execution_task_type(
+    lane: Mapping[str, Any] | None,
+) -> TaskCapability | None:
+    if lane is None:
+        return None
+    for key in ("selection_task_type", "task_type"):
+        value = _clean_optional_text(lane.get(key))
+        if value is None or value == "execute":
+            continue
+        alias = _EXECUTION_TASK_TYPE_ALIASES.get(value)
+        if alias is not None:
+            return alias
+        try:
+            return TaskCapability(value)
+        except ValueError:
+            continue
+    return None
+
+
+def _is_code_execution_lane(lane: Mapping[str, Any] | None) -> bool:
+    if lane is None:
+        return False
+    task_type = _clean_optional_text(lane.get("selection_task_type")) or _clean_optional_text(
+        lane.get("task_type")
+    )
+    if task_type in {"execute", "code", "bounded_code_writing"}:
+        return True
+    capabilities = lane.get("capabilities")
+    return isinstance(capabilities, list) and any(
+        isinstance(item, str) and item.strip().lower() == "code"
+        for item in capabilities
+    )
+
+
+_EXECUTION_TASK_TYPE_ALIASES = {
+    "mechanical_cleanup": TaskCapability.BOUNDED_CODE_WRITING,
+    "cleanup": TaskCapability.BOUNDED_CODE_WRITING,
+    "rename": TaskCapability.BOUNDED_CODE_WRITING,
+    "formatting": TaskCapability.BOUNDED_CODE_WRITING,
+}
 
 
 def _a2a_config_error_diagnostic_payload(
