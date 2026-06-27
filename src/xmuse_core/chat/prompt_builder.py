@@ -44,9 +44,7 @@ class AssembledPrompt:
         return {
             "prompt_contract_version": self.version,
             "prompt_layer_order": [layer.name for layer in self.layers],
-            "prompt_layer_hashes": {
-                layer.name: _sha256(layer.content) for layer in self.layers
-            },
+            "prompt_layer_hashes": {layer.name: _sha256(layer.content) for layer in self.layers},
             "prompt_artifact_fingerprint": self.fingerprint,
         }
 
@@ -66,9 +64,10 @@ class XmusePromptBuilder:
             _context_capsule_layer(group_context, inbox_item),
             _tool_writeback_layer(),
         )
-        text = "\n\n".join(
-            f"## {layer.name}\n\n{layer.content.strip()}" for layer in layers
-        ).strip() + "\n"
+        text = (
+            "\n\n".join(f"## {layer.name}\n\n{layer.content.strip()}" for layer in layers).strip()
+            + "\n"
+        )
         return AssembledPrompt(
             version=PROMPT_CONTRACT_VERSION,
             text=text,
@@ -190,9 +189,9 @@ def _tool_writeback_layer() -> PromptLayer:
             "alone: create or reference a collaboration run, have execute record "
             "a JSON execute_feasibility_verdict through "
             "chat_record_collaboration_response using the approval-gate shape "
-            "{\"type\":\"execute_feasibility_verdict\",\"status\":\"executable\","
-            "\"execution_performed\":false,\"summary\":\"<why dispatch is safe>\","
-            "\"evidence_refs\":[\"<ref>\"]}; "
+            '{"type":"execute_feasibility_verdict","status":"executable",'
+            '"execution_performed":false,"summary":"<why dispatch is safe>",'
+            '"evidence_refs":["<ref>"]}; '
             "looser fields such as verdict=feasible do not satisfy dispatch. "
             "If your current inbox item is a collaboration_request or asks you "
             "to use chat_record_collaboration_response, call that tool; do not "
@@ -204,7 +203,7 @@ def _tool_writeback_layer() -> PromptLayer:
             "reply_to_inbox_item_id=xmuse_context.inbox_item.id, and a "
             "collaboration:<run_id> reference. Human approval is still required "
             "before dispatch. Every dispatchable lane_graph lane must include "
-            "explicit gate_profiles, for example [\"xmuse-core\"] for xmuse "
+            'explicit gate_profiles, for example ["xmuse-core"] for xmuse '
             "core code paths; if you cannot choose a gate profile, write a "
             "durable blocker or open question instead of proposing dispatchable "
             "work.\n"
@@ -307,9 +306,26 @@ def _recent_transcript_text(messages: list[Any]) -> str:
 
 def _inbox_request_preview(payload: dict[str, object]) -> str:
     content = payload.get("content")
+    callback_action = _collaboration_callback_action(payload)
     if not isinstance(content, str) or not content.strip():
-        return "Current inbox request: none"
-    return "Current inbox request:\n" + _bounded(content.strip(), max_chars=8000)
+        return "Current inbox request: none" + callback_action
+    return "Current inbox request:\n" + _bounded(content.strip(), max_chars=8000) + callback_action
+
+
+def _collaboration_callback_action(payload: dict[str, object]) -> str:
+    if payload.get("trigger_mode") != "collaboration_done_callback":
+        return ""
+    run_id = payload.get("collaboration_run_id")
+    if not isinstance(run_id, str) or not run_id.strip():
+        return ""
+    run_ref = f"collaboration:{run_id.strip()}"
+    return (
+        "\n\nCollaboration callback action:\n"
+        "- call chat_emit_proposal before ending this turn.\n"
+        f'- include references=["{run_ref}"].\n'
+        "- use reply_to_inbox_item_id=xmuse_context.inbox_item.id.\n"
+        "- plain final text or no tool call is a failed callback."
+    )
 
 
 def _retry_feedback_text(group_context: dict[str, Any]) -> str:
