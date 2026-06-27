@@ -252,6 +252,55 @@ def test_a2a_provider_adapter_includes_xmuse_context_metadata(tmp_path) -> None:
     }
 
 
+def test_a2a_provider_adapter_uses_conversation_context_for_natural_route(
+    tmp_path,
+) -> None:
+    client = FakeA2ATaskClient(
+        _task_result(disposition="completed", state="TASK_STATE_COMPLETED")
+    )
+    adapter = A2AProviderAdapter(
+        _profile(),
+        endpoint_url="https://remote.example/a2a",
+        client=client,
+    )
+    invocation = ProviderInvocation(
+        request_id="inbox-a2a-natural",
+        provider_id=ProviderId.A2A,
+        profile_id=ProviderProfileId.REMOTE,
+        task_type=TaskCapability.BOUNDED_DELIBERATION,
+        risk_tier=RiskTier.MEDIUM,
+        prompt="@review inspect natural handoff.",
+        workspace=tmp_path,
+        timeout_seconds=120,
+        writeback_context=ProviderInvocationWritebackContext(
+            conversation_id="conv-natural",
+            participant_id="participant-a2a",
+            reply_to_inbox_item_id="inbox-a2a-natural",
+        ),
+        runtime_context={
+            "authority": "chat.db/inbox",
+            "a2a_is_authority": False,
+            "route": {
+                "route_key": "natural-route:abc",
+                "source_kind": "human_line_start_mention",
+                "depth": 1,
+            },
+        },
+    )
+
+    adapter.invoke(invocation)
+
+    request = client.requests[0]
+    assert request.task_id == "inbox-a2a-natural"
+    assert request.context_id == "conv-natural"
+    assert request.metadata["xmuse_writeback_context"]["conversation_id"] == (
+        "conv-natural"
+    )
+    assert request.metadata["xmuse_runtime_context"]["route"]["route_key"] == (
+        "natural-route:abc"
+    )
+
+
 def test_a2a_provider_adapter_marks_task_metadata_as_non_authority(tmp_path) -> None:
     client = FakeA2ATaskClient(
         _task_result(disposition="completed", state="TASK_STATE_COMPLETED")
