@@ -185,6 +185,36 @@ class AcceptanceSpineStore:
             raise KeyError(f"unknown acceptance spine intake: {intake_message_id}")
         return self.get_by_intake_message(intake_message_id)
 
+    def attach_proposal_for_inbox_reply(
+        self,
+        *,
+        conversation_id: str,
+        inbox_item_id: str,
+        proposal_id: str,
+    ) -> AcceptanceSpine | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                select conversation_id, source_message_id
+                from chat_inbox_items
+                where id = ?
+                """,
+                (inbox_item_id,),
+            ).fetchone()
+        if row is None or row["conversation_id"] != conversation_id:
+            return None
+        intake_message_id = str(row["source_message_id"] or "")
+        if not intake_message_id:
+            return None
+        try:
+            return self.attach_proposal(
+                conversation_id=conversation_id,
+                intake_message_id=intake_message_id,
+                proposal_id=proposal_id,
+            )
+        except KeyError:
+            return None
+
     def attach_review_trigger_for_proposal(
         self,
         *,
