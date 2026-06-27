@@ -542,32 +542,75 @@ def _mark_review_trigger_read_for_approved_proposal(
             inbox.mark_read(item.id, responded_message_id=proposal_message_id)
 
 
-def _reject_pending_review_trigger_for_dispatchable_proposal(
-    base_dir: Path,
+def _proposal_message_id_for_review_gate(
+    store: ChatStore,
     *,
     conversation_id: str,
     proposal_id: str,
-    proposal_type: str,
-    references: list[str],
-) -> None:
-    if proposal_type != "lane_graph" or not _collaboration_run_refs(references):
-        return
-    store = _store(base_dir)
-    proposal_message_id = None
+) -> str | None:
     for message in store.list_messages(conversation_id):
         if (
             message.envelope_type == "proposal"
             and message.envelope_json.get("proposal_id") == proposal_id
         ):
-            proposal_message_id = message.id
-            break
+            return message.id
+    return None
+
+
+def _is_a2a_sourced_proposal(
+    base_dir: Path,
+    *,
+    conversation_id: str,
+    proposal_id: str,
+) -> bool:
+    store = _store(base_dir)
+    proposal_refs: list[str] = []
+    try:
+        proposal_refs = store.get_proposal(proposal_id).references
+    except KeyError:
+        pass
+    for message in store.list_messages(conversation_id):
+        if (
+            message.envelope_type != "proposal"
+            or message.envelope_json.get("proposal_id") != proposal_id
+        ):
+            continue
+        if message.envelope_json.get("source_kind") == "a2a_provider_result":
+            return True
+        raw_refs = message.envelope_json.get("source_refs")
+        if isinstance(raw_refs, list):
+            proposal_refs.extend(str(ref) for ref in raw_refs)
+        raw_refs = message.envelope_json.get("references")
+        if isinstance(raw_refs, list):
+            proposal_refs.extend(str(ref) for ref in raw_refs)
+    return any(
+        ref.startswith("a2a_task:") or ref.startswith("a2a_context:")
+        for ref in proposal_refs
+    )
+
+
+def _review_trigger_dispatch_verdict_for_proposal(
+    base_dir: Path,
+    *,
+    conversation_id: str,
+    proposal_id: str,
+) -> str | None:
+    store = _store(base_dir)
+    proposal_message_id = _proposal_message_id_for_review_gate(
+        store,
+        conversation_id=conversation_id,
+        proposal_id=proposal_id,
+    )
     if proposal_message_id is None:
-        return
+        return None
     inbox = ChatInboxStore(base_dir / "chat.db")
     messages = {message.id: message for message in store.list_messages(conversation_id)}
+    saw_review_trigger = False
+    dispatch_allowed = False
     for item in inbox.list_by_conversation(conversation_id, include_terminal=True):
         if item.item_type != "review_trigger" or item.source_message_id != proposal_message_id:
             continue
+        saw_review_trigger = True
         if item.status in {"unread", "claimed"}:
             raise PeerChatError(
                 "proposal_review_pending",
@@ -598,8 +641,34 @@ def _reject_pending_review_trigger_for_dispatchable_proposal(
             ) from exc
         if verdict == "blocked":
             raise PeerChatError("proposal_review_blocked", f"{item.id}:{response.id}")
-        if verdict != "dispatch_allowed":
-            raise PeerChatError("proposal_review_missing", f"{item.id}:missing_verdict")
+        if verdict == "dispatch_allowed":
+            dispatch_allowed = True
+    if not saw_review_trigger:
+        return None
+    return "dispatch_allowed" if dispatch_allowed else None
+
+
+def _reject_pending_review_trigger_for_dispatchable_proposal(
+    base_dir: Path,
+    *,
+    conversation_id: str,
+    proposal_id: str,
+    proposal_type: str,
+    references: list[str],
+) -> None:
+    if proposal_type != "lane_graph":
+        return
+    if not _collaboration_run_refs(references) and not _is_a2a_sourced_proposal(
+        base_dir,
+        conversation_id=conversation_id,
+        proposal_id=proposal_id,
+    ):
+        return
+    _review_trigger_dispatch_verdict_for_proposal(
+        base_dir,
+        conversation_id=conversation_id,
+        proposal_id=proposal_id,
+    )
 
 
 def _public_peer_participants(payload: dict[str, object]) -> list[dict[str, object]]:
@@ -1038,7 +1107,19 @@ def _enqueue_structured_dispatch_intent(
     resolution_id = str(resolution.id)
     collaboration_run_ids = _collaboration_run_refs(references)
     if not collaboration_run_ids:
-        return
+        if not _is_a2a_sourced_proposal(
+            base_dir,
+            conversation_id=conversation_id,
+            proposal_id=proposal_id,
+        ):
+            return
+        verdict = _review_trigger_dispatch_verdict_for_proposal(
+            base_dir,
+            conversation_id=conversation_id,
+            proposal_id=proposal_id,
+        )
+        if verdict != "dispatch_allowed":
+            return
     _dispatch_queue_store(base_dir).enqueue_agent_auto_dispatch(
         conversation_id=conversation_id,
         proposal_id=proposal_id,
