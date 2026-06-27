@@ -18,7 +18,12 @@ from xmuse_core.providers.adapters.base import (
 )
 from xmuse_core.providers.goal_contract import WorkerResultStatus
 from xmuse_core.providers.health import ProviderHealthSnapshot
-from xmuse_core.providers.models import AdapterKind, ProviderId, ProviderProfile
+from xmuse_core.providers.models import (
+    AdapterKind,
+    ProviderId,
+    ProviderProfile,
+    TaskCapability,
+)
 
 
 class A2ATaskClient(Protocol):
@@ -115,7 +120,7 @@ class A2AProviderAdapter:
         self,
         invocation: ProviderInvocation,
     ) -> A2AProviderTaskRequest:
-        context_id = invocation.request_id
+        context_id = _context_id_for_invocation(invocation)
         metadata: dict[str, object] = {
             "xmuse_provider_profile_ref": invocation.provider_profile_ref,
             "xmuse_task_type": invocation.task_type.value,
@@ -137,6 +142,10 @@ class A2AProviderAdapter:
                 ),
                 "blueprint_refs": list(invocation.goal_contract.blueprint_refs),
             }
+        if invocation.task_type is TaskCapability.REVIEW:
+            metadata["xmuse_expected_result"] = _review_expected_result_contract(
+                lane_id=context_id,
+            )
         return A2AProviderTaskRequest(
             task_id=invocation.request_id,
             context_id=context_id,
@@ -166,6 +175,47 @@ class A2AProviderAdapter:
             diagnostic_payload=diagnostic_payload,
             failure_kind=failure_kind,
         )
+
+
+def _context_id_for_invocation(invocation: ProviderInvocation) -> str:
+    if invocation.task_type is TaskCapability.REVIEW and invocation.request_id.endswith(
+        ":review"
+    ):
+        lane_id = invocation.request_id.removesuffix(":review").strip()
+        if lane_id:
+            return lane_id
+    return invocation.request_id
+
+
+def _review_expected_result_contract(*, lane_id: str) -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "result_kind": "platform_review_verdict",
+        "consumer": "xmuse.review_god",
+        "metadata_key": "xmuse_platform_review_verdict",
+        "required_metadata_path": [
+            "task.metadata.xmuse_platform_review_verdict",
+        ],
+        "envelope": {
+            "schema_version": 1,
+            "type": "platform_review_verdict",
+            "lane_id": lane_id,
+            "decision_values": ["merge", "rework", "terminate"],
+            "required_fields": [
+                "type",
+                "lane_id",
+                "decision",
+                "summary",
+                "evidence_refs",
+                "authority",
+                "a2a_is_authority",
+            ],
+            "authority": "review_plane/lane_state",
+            "a2a_is_authority": False,
+        },
+        "stdout_is_review_truth": False,
+        "a2a_task_status_is_review_truth": False,
+    }
 
 
 def _run_awaitable(

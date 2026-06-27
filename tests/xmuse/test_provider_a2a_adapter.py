@@ -137,6 +137,70 @@ def test_a2a_provider_adapter_maps_completed_task_to_provider_result(tmp_path) -
         "acceptance_criteria": ["Return a normalized provider result only."],
         "blueprint_refs": ["docs/xmuse/natural-groupchat-contract.md"],
     }
+    assert client.requests[0].metadata["xmuse_expected_result"] == {
+        "schema_version": 1,
+        "result_kind": "platform_review_verdict",
+        "consumer": "xmuse.review_god",
+        "metadata_key": "xmuse_platform_review_verdict",
+        "required_metadata_path": [
+            "task.metadata.xmuse_platform_review_verdict",
+        ],
+        "envelope": {
+            "schema_version": 1,
+            "type": "platform_review_verdict",
+            "lane_id": "lane-a2a",
+            "decision_values": ["merge", "rework", "terminate"],
+            "required_fields": [
+                "type",
+                "lane_id",
+                "decision",
+                "summary",
+                "evidence_refs",
+                "authority",
+                "a2a_is_authority",
+            ],
+            "authority": "review_plane/lane_state",
+            "a2a_is_authority": False,
+        },
+        "stdout_is_review_truth": False,
+        "a2a_task_status_is_review_truth": False,
+    }
+
+
+def test_a2a_provider_adapter_derives_review_lane_context_without_goal_contract(
+    tmp_path,
+) -> None:
+    client = FakeA2ATaskClient(
+        _task_result(disposition="completed", state="TASK_STATE_COMPLETED")
+    )
+    adapter = A2AProviderAdapter(
+        _profile(),
+        endpoint_url="https://remote.example/a2a",
+        client=client,
+    )
+    invocation = RunnerProviderService().build_review_invocation(
+        lane_id="lane-a2a-no-contract",
+        prompt="@remote review the proposed handoff.",
+        workspace=tmp_path,
+        timeout_seconds=120,
+        provider_profile_ref="a2a.remote",
+        risk_tier=RiskTier.MEDIUM,
+    )
+
+    adapter.invoke(invocation)
+
+    request = client.requests[0]
+    assert request.task_id == "lane-a2a-no-contract:review"
+    assert request.context_id == "lane-a2a-no-contract"
+    expected = request.metadata["xmuse_expected_result"]
+    assert isinstance(expected, dict)
+    envelope = expected["envelope"]
+    assert isinstance(envelope, dict)
+    assert envelope["lane_id"] == "lane-a2a-no-contract"
+    assert envelope["authority"] == "review_plane/lane_state"
+    assert envelope["a2a_is_authority"] is False
+    assert expected["stdout_is_review_truth"] is False
+    assert expected["a2a_task_status_is_review_truth"] is False
 
 
 def test_a2a_provider_adapter_includes_xmuse_context_metadata(tmp_path) -> None:
