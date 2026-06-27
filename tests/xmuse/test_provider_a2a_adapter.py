@@ -10,6 +10,7 @@ from xmuse_core.providers.adapters.base import (
     ProviderAdapter,
     ProviderFailureKind,
     ProviderInvocation,
+    ProviderInvocationWritebackContext,
 )
 from xmuse_core.providers.goal_contract import (
     WorkerGoalContract,
@@ -135,6 +136,55 @@ def test_a2a_provider_adapter_maps_completed_task_to_provider_result(tmp_path) -
         "lane_id": "lane-a2a",
         "acceptance_criteria": ["Return a normalized provider result only."],
         "blueprint_refs": ["docs/xmuse/natural-groupchat-contract.md"],
+    }
+
+
+def test_a2a_provider_adapter_includes_xmuse_context_metadata(tmp_path) -> None:
+    client = FakeA2ATaskClient(
+        _task_result(disposition="completed", state="TASK_STATE_COMPLETED")
+    )
+    adapter = A2AProviderAdapter(
+        _profile(),
+        endpoint_url="https://remote.example/a2a",
+        client=client,
+    )
+    invocation = _invocation(tmp_path).model_copy(
+        update={
+            "writeback_context": ProviderInvocationWritebackContext(
+                conversation_id="conv-a2a",
+                participant_id="participant-review",
+                reply_to_inbox_item_id="inbox-a2a",
+            ),
+            "runtime_context": {
+                "authority": "chat.db/inbox",
+                "a2a_is_authority": False,
+                "route": {
+                    "route_key": "natural-route:abc",
+                    "source_kind": "human_line_start_mention",
+                    "depth": 1,
+                    "source_refs": ["message:1"],
+                },
+            },
+        }
+    )
+
+    adapter.invoke(invocation)
+
+    metadata = client.requests[0].metadata
+    assert metadata["xmuse_writeback_context"] == {
+        "conversation_id": "conv-a2a",
+        "participant_id": "participant-review",
+        "reply_to_inbox_item_id": "inbox-a2a",
+    }
+    assert metadata["xmuse_runtime_context"] == {
+        "authority": "chat.db/inbox",
+        "a2a_is_authority": False,
+        "route": {
+            "route_key": "natural-route:abc",
+            "source_kind": "human_line_start_mention",
+            "depth": 1,
+            "source_refs": ["message:1"],
+        },
     }
 
 
