@@ -90,6 +90,13 @@ def _is_mention_char(value: str) -> bool:
     return value.isalnum() or value in "_-:"
 
 
+def _human_routing_header_prefix(content: str) -> str:
+    for index, char in enumerate(content):
+        if char in {".", "!", "?", "\n"}:
+            return content[: index + 1]
+    return content
+
+
 def _natural_route_source_refs(
     *,
     source_inbox_id: str | None,
@@ -1620,6 +1627,7 @@ class PeerChatService:
             inbox_items = self._build_human_all_inbox_items(
                 conversation_id=conversation_id,
                 content=content,
+                client_request_id=client_request_id,
             )
         else:
             mentions = self._resolve_human_mentions(
@@ -1632,6 +1640,7 @@ class PeerChatService:
                 conversation_id=conversation_id,
                 content=content,
                 mentions=mentions,
+                client_request_id=client_request_id,
                 allow_default_intake=not has_inactive_mentions,
             )
         payload = self._chat.create_message_inbox_and_log(
@@ -1665,7 +1674,14 @@ class PeerChatService:
         resolver = MentionResolver(self._participants)
         try:
             leading_mentions = resolver.resolve_leading_content(conversation_id, content)
-            mentions = leading_mentions or resolver.resolve_content(conversation_id, content)
+            mentions = (
+                resolver.resolve_content(
+                    conversation_id,
+                    _human_routing_header_prefix(content),
+                )
+                if leading_mentions
+                else resolver.resolve_content(conversation_id, content)
+            )
         except MentionResolutionError as exc:
             raise PeerChatError(exc.code, exc.target) from exc
         return [mention.raw for mention in mentions]
@@ -1705,19 +1721,20 @@ class PeerChatService:
         conversation_id: str,
         content: str,
         mentions: list[Any],
+        client_request_id: str,
         allow_default_intake: bool = True,
     ) -> list[dict[str, Any]]:
         if mentions:
             return [
-                {
-                    "target_participant_id": mention.participant.participant_id,
-                    "target_role": mention.participant.role,
-                    "target_address": mention.normalized,
-                    "sender_participant_id": None,
-                    "sender_address": "@human",
-                    "item_type": "mention",
-                    "payload": {"content": content, "mention": mention.raw},
-                }
+                self._human_route_inbox_item(
+                    conversation_id=conversation_id,
+                    content=content,
+                    client_request_id=client_request_id,
+                    participant=mention.participant,
+                    target_address=mention.normalized,
+                    mention=mention.raw,
+                    source_kind="human_mention",
+                )
                 for mention in mentions
             ]
 
@@ -1746,6 +1763,7 @@ class PeerChatService:
         *,
         conversation_id: str,
         content: str,
+        client_request_id: str,
     ) -> list[dict[str, Any]]:
         inbox_items: list[dict[str, Any]] = []
         routed_participant_ids: set[str] = set()
@@ -1758,17 +1776,52 @@ class PeerChatService:
                 continue
             routed_participant_ids.add(participant.participant_id)
             inbox_items.append(
-                {
-                    "target_participant_id": participant.participant_id,
-                    "target_role": participant.role,
-                    "target_address": f"@{participant.role}",
-                    "sender_participant_id": None,
-                    "sender_address": "@human",
-                    "item_type": "mention",
-                    "payload": {"content": content, "mention": "@all"},
-                }
+                self._human_route_inbox_item(
+                    conversation_id=conversation_id,
+                    content=content,
+                    client_request_id=client_request_id,
+                    participant=participant,
+                    target_address=f"@{participant.role}",
+                    mention="@all",
+                    source_kind="human_all_mention",
+                )
             )
         return inbox_items
+
+    def _human_route_inbox_item(
+        self,
+        *,
+        conversation_id: str,
+        content: str,
+        client_request_id: str,
+        participant: Participant,
+        target_address: str,
+        mention: str,
+        source_kind: str,
+    ) -> dict[str, Any]:
+        source_refs = [f"human_request:post_human_message:{client_request_id}"]
+        route_event = build_natural_route_event(
+            conversation_id=conversation_id,
+            origin_message_id=f"human_request:{client_request_id}",
+            source_kind=source_kind,
+            author_participant_id=None,
+            target_participant_id=participant.participant_id,
+            route_kind="mention",
+            source_refs=source_refs,
+        )
+        return {
+            "target_participant_id": participant.participant_id,
+            "target_role": participant.role,
+            "target_address": target_address,
+            "sender_participant_id": None,
+            "sender_address": "@human",
+            "item_type": "mention",
+            "payload": natural_route_payload(
+                route_event,
+                content=content,
+                mention=mention,
+            ),
+        }
 
     def _resolve_default_intake(self, conversation_id: str):
         resolver = MentionResolver(self._participants)
