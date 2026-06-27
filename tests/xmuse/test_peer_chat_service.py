@@ -449,6 +449,55 @@ def test_create_conversation_infers_review_profile_for_opencode_participant(
     ]
 
 
+def test_create_conversation_accepts_explicit_a2a_remote_participant(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "chat.db"
+    service = PeerChatService(db)
+
+    payload = service.create_conversation(
+        title="A2A remote review",
+        participants=[
+            {
+                "role": "review",
+                "display_name": "Remote A2A Review",
+                "provider_id": "a2a",
+                "profile_id": "remote",
+                "cli_kind": "a2a",
+                "model": "a2a-remote",
+            }
+        ],
+    )
+
+    assert payload["participants"] == [
+        {
+            "participant_id": payload["participants"][0]["participant_id"],
+            "conversation_id": payload["conversation"]["id"],
+            "role": "review",
+            "display_name": "Remote A2A Review",
+            "provider_id": "a2a",
+            "profile_id": "remote",
+            "cli_kind": "a2a",
+            "model": "a2a-remote",
+            "role_template_id": payload["participants"][0]["role_template_id"],
+            "status": "active",
+            "last_seen_at": None,
+            "created_at": payload["participants"][0]["created_at"],
+        }
+    ]
+    listed = service.list_participants(
+        conversation_id=payload["conversation"]["id"],
+        registry_path=tmp_path / "god_sessions.json",
+    )
+    review = next(
+        participant for participant in listed["participants"]
+        if participant["role"] == "review"
+    )
+    assert review["session"]["provider_id"] == "a2a"
+    assert review["session"]["profile_id"] == "remote"
+    assert review["session"]["runtime"] == "a2a"
+
+
 def test_create_conversation_rejects_explicit_profile_mismatch_for_role(
     tmp_path: Path,
 ) -> None:

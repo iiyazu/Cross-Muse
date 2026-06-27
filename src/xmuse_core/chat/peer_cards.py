@@ -111,6 +111,8 @@ class PeerChatCardAssembler:
         session.setdefault("provider_id", provider_id)
         if provider_id == "codex":
             session.setdefault("profile_id", provider_profile_id_for_role(role).value)
+        elif provider_id == "a2a":
+            session.setdefault("profile_id", "remote")
         else:
             session.setdefault("profile_id", "default")
         return session
