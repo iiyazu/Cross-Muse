@@ -19,10 +19,14 @@ from xmuse_core.chat.dispatch_queue import ChatDispatchQueueStore
 from xmuse_core.chat.inbox_store import ChatInboxStore
 from xmuse_core.chat.inspector_builder import build_conversation_inspector_payload
 from xmuse_core.chat.participant_store import ParticipantStore
+from xmuse_core.chat.peer_scheduler import PeerChatScheduler
 from xmuse_core.chat.peer_service import PeerChatError, PeerChatService
 from xmuse_core.chat.review_trigger_verdicts import build_review_trigger_verdict_envelope
 from xmuse_core.chat.store import ChatStore
 from xmuse_core.chat.stream_store import PeerTurnLatencyTraceStore
+from xmuse_core.integrations.a2a_provider_client import A2AProviderTaskRequest
+from xmuse_core.integrations.a2a_sdk_boundary import NormalizedA2ATaskResult
+from xmuse_core.providers.service import RunnerProviderService
 from xmuse_core.structuring.graph_store import LaneGraphStore
 
 
@@ -98,6 +102,87 @@ class _DispatchBridgeGodLayer:
                 },
             },
         )()
+
+
+class _A2AGroupchatRuntimeClient:
+    def __init__(self) -> None:
+        self.task_types: list[str] = []
+
+    async def invoke_task(
+        self,
+        request: A2AProviderTaskRequest,
+    ) -> NormalizedA2ATaskResult:
+        task_type = str(request.metadata.get("xmuse_task_type") or "")
+        self.task_types.append(task_type)
+        runtime_context = request.metadata.get("xmuse_runtime_context")
+        runtime_context = runtime_context if isinstance(runtime_context, dict) else {}
+        metadata: dict[str, object] = {}
+        content = ""
+        if task_type == "review":
+            review_trigger_inbox_id = str(runtime_context.get("inbox_item_id") or "")
+            source_message_id = str(runtime_context.get("source_message_id") or "")
+            proposal_id = _line_value(request.content, "Proposal id:")
+            metadata["xmuse_review_trigger_verdict"] = {
+                "type": "review_trigger_verdict",
+                "review_trigger_inbox_id": review_trigger_inbox_id,
+                "source_message_id": source_message_id,
+                "proposal_id": proposal_id,
+                "decision": "dispatch_allowed",
+                "summary": "A2A review linked the durable proposal and trigger ids.",
+                "evidence_refs": [
+                    f"inbox:{review_trigger_inbox_id}",
+                    f"proposal:{proposal_id}",
+                    f"a2a_task:{request.task_id}",
+                ],
+                "authority": "chat.db/inbox/review_trigger_verdict",
+                "a2a_is_authority": False,
+            }
+            content = "A2A review verdict: dispatch allowed."
+        elif task_type == "bounded_code_writing":
+            dispatch_entry_id = _line_value(request.content, "- Dispatch entry:")
+            content = f"DISPATCH_ACKNOWLEDGED {dispatch_entry_id} via A2A execute peer."
+        else:
+            metadata["xmuse_proposal"] = {
+                "proposal_type": "lane_graph",
+                "summary": "A2A dispatchable lane_graph proposal",
+                "content": {
+                    "summary": "Prove the A2A dispatch handoff reaches execute ack.",
+                    "lanes": [
+                        {
+                            "feature_id": "a2a-dispatch-ack-runtime-probe",
+                            "prompt": (
+                                "Acknowledge dispatch without claiming code execution."
+                            ),
+                            "depends_on": [],
+                            "capabilities": ["code", "test"],
+                        }
+                    ],
+                },
+                "references": ["artifact:a2a-dispatchable-proposal"],
+            }
+            content = "Remote A2A architect returned a dispatchable lane_graph proposal."
+        return NormalizedA2ATaskResult(
+            task_id=request.task_id,
+            context_id=request.context_id,
+            state="TASK_STATE_COMPLETED",
+            disposition="completed",
+            terminal=True,
+            content=content,
+            metadata=metadata,
+            source_refs=(
+                f"a2a_task:{request.task_id}",
+                f"a2a_context:{request.context_id}",
+            ),
+            jsonrpc_id=request.task_id,
+        )
+
+
+def _line_value(text: str, prefix: str) -> str:
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith(prefix):
+            return stripped.removeprefix(prefix).strip()
+    return ""
 
 
 def _conversation(tmp_path: Path) -> str:
@@ -2028,6 +2113,117 @@ def test_chat_api_dispatch_bridge_rejects_blank_claim_identity(
     )
 
     assert rejected.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_a2a_groupchat_review_approval_dispatch_reaches_execute_ack(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "chat.db"
+    conversation_id = _conversation(tmp_path)
+    participants = ParticipantStore(db_path)
+    participants.add(
+        conversation_id=conversation_id,
+        role="architect",
+        display_name="Remote A2A Architect",
+        cli_kind="a2a",
+        model="a2a-remote",
+    )
+    participants.add(
+        conversation_id=conversation_id,
+        role="review",
+        display_name="Remote A2A Review",
+        cli_kind="a2a",
+        model="a2a-remote",
+    )
+    execute = participants.add(
+        conversation_id=conversation_id,
+        role="execute",
+        display_name="Remote A2A Execute",
+        cli_kind="a2a",
+        model="a2a-remote",
+    )
+    intake = PeerChatService(db_path).post_human_message(
+        conversation_id=conversation_id,
+        author="operator",
+        content=(
+            "@architect Propose the smallest dispatchable A2A lane and keep "
+            "chat.db gates explicit."
+        ),
+        client_request_id="runtime-human-a2a-dispatch-001",
+    )
+    a2a_client = _A2AGroupchatRuntimeClient()
+    provider_service = RunnerProviderService(
+        a2a_provider_endpoint_url="http://a2a-runtime.test/tasks/send",
+        a2a_task_client=a2a_client,
+    )
+    scheduler = PeerChatScheduler(
+        db_path=db_path,
+        god_layer=object(),
+        worktree=tmp_path,
+        scheduler_id="a2a-runtime-probe",
+        response_wait_s=0.1,
+        provider_service=provider_service,
+    )
+
+    proposal_outcome = await scheduler.tick_once()
+    review_outcome = await scheduler.tick_once()
+
+    assert proposal_outcome.happy_path == 1
+    assert review_outcome.happy_path == 1
+    proposal = ChatStore(db_path).list_proposals(conversation_id)[0]
+    spine = AcceptanceSpineStore(db_path).get_by_intake_message(intake.message.id)
+    assert spine.status is AcceptanceSpineStatus.REVIEW_CLEARED
+    assert spine.proposal_id == proposal.id
+    approval = TestClient(create_app(tmp_path)).post(
+        f"/api/chat/proposals/{proposal.id}/approve",
+        json={
+            "approved_by": ["operator"],
+            "approval_mode": "runtime_probe_manual_approval_no_auto_merge",
+            "goal_summary": "Approve A2A runtime probe after durable review verdict.",
+        },
+    )
+    assert approval.status_code == 200, approval.text
+    queued = ChatDispatchQueueStore(db_path).list_entries(conversation_id)
+    assert len(queued) == 1
+    assert queued[0].status == "queued"
+    bridge = ChatDispatchBridge(
+        db_path=db_path,
+        god_layer=object(),
+        worktree=tmp_path,
+        bridge_id="a2a-dispatch-bridge",
+        response_wait_s=0.1,
+        provider_service=provider_service,
+    )
+
+    dispatch_outcome = await bridge.tick_once(conversation_id=conversation_id)
+
+    assert dispatch_outcome.claimed == 1
+    assert dispatch_outcome.dispatched == 1
+    assert dispatch_outcome.failed == 0
+    dispatched = ChatDispatchQueueStore(db_path).get(queued[0].entry_id)
+    assert dispatched.status == "dispatched"
+    assert dispatched.provider_run_ref == f"peer_ack:execute:{execute.participant_id}"
+    assert dispatched.dispatch_evidence.startswith("mcp_writeback:")
+    spine = AcceptanceSpineStore(db_path).get_by_intake_message(intake.message.id)
+    assert spine.status is AcceptanceSpineStatus.DISPATCHED
+    assert spine.dispatch_item_id == queued[0].entry_id
+    assert spine.execution_evidence_refs == [
+        f"peer_ack:execute:{execute.participant_id}",
+        dispatched.dispatch_evidence,
+    ]
+    assert a2a_client.task_types == [
+        "bounded_deliberation",
+        "review",
+        "bounded_code_writing",
+    ]
+    dispatch_messages = [
+        message
+        for message in ChatStore(db_path).list_messages(conversation_id)
+        if message.envelope_type == "a2a_provider_result"
+        and "DISPATCH_ACKNOWLEDGED" in message.content
+    ]
+    assert len(dispatch_messages) == 1
 
 
 @pytest.mark.asyncio
