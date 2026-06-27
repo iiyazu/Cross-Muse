@@ -330,7 +330,128 @@ def test_a2a_task_send_api_is_opt_in_and_preserves_source_refs(tmp_path: Path) -
     assert response.status_code == 202
     payload = response.json()
     assert payload["status"] == "accepted"
+    assert payload["a2a_sdk"]["protocol"] == "a2a-sdk"
+    assert payload["a2a_sdk"]["method"] == "tasks/send"
+    assert payload["a2a_sdk"]["authority"] == "xmuse-chat-db"
+    assert payload["a2a_sdk"]["input_parts"] == [
+        {"text": "@review inspect this API route.", "kind": "text"}
+    ]
     assert payload["inbox_items"][0]["payload"]["source_refs"] == [
         "a2a_task:task-api",
+        f"a2a_context:{conversation['id']}",
+    ]
+    assert payload["inbox_items"][0]["payload"]["a2a_sdk_boundary"] == {
+        "protocol": "a2a-sdk",
+        "authority": "xmuse-chat-db",
+    }
+
+
+def test_a2a_task_send_write_token_rejects_missing_and_accepts_valid_token(
+    tmp_path: Path,
+) -> None:
+    client = TestClient(
+        create_app(
+            base_dir=tmp_path,
+            a2a_bridge_enabled=True,
+            a2a_write_token="a2a-secret",
+        )
+    )
+    conversation = client.post(
+        "/api/chat/conversations",
+        json={"title": "A2A token gate", "initial_participants": []},
+    ).json()
+    ParticipantStore(tmp_path / "chat.db").add(
+        conversation_id=conversation["id"],
+        role="architect",
+        display_name="Architect GOD",
+        cli_kind="codex",
+        model="gpt-5.4",
+    )
+    body = {
+        "task_id": "task-token",
+        "context_id": conversation["id"],
+        "sender_agent_id": "external-planner",
+        "target_address": "@architect",
+        "content": "@architect inspect this API route.",
+    }
+
+    rejected = client.post("/a2a/tasks/send", json=body)
+    accepted = client.post(
+        "/a2a/tasks/send",
+        json=body,
+        headers={"X-XMUSE-A2A-Key": "a2a-secret"},
+    )
+
+    assert rejected.status_code == 401
+    assert rejected.json()["detail"]["code"] == "a2a_write_auth_required"
+    assert accepted.status_code == 202
+    assert accepted.json()["status"] == "accepted"
+
+
+def test_a2a_jsonrpc_send_message_request_enters_chat_inbox(
+    tmp_path: Path,
+) -> None:
+    client = TestClient(
+        create_app(
+            base_dir=tmp_path,
+            a2a_bridge_enabled=True,
+            a2a_write_token="a2a-secret",
+        )
+    )
+    conversation = client.post(
+        "/api/chat/conversations",
+        json={"title": "A2A SDK JSON-RPC", "initial_participants": []},
+    ).json()
+    architect = ParticipantStore(tmp_path / "chat.db").add(
+        conversation_id=conversation["id"],
+        role="architect",
+        display_name="Architect GOD",
+        cli_kind="codex",
+        model="gpt-5.4",
+    )
+
+    response = client.post(
+        "/a2a/tasks/send",
+        headers={"Authorization": "Bearer a2a-secret"},
+        json={
+            "jsonrpc": "2.0",
+            "id": "rpc-1",
+            "method": "message/send",
+            "params": {
+                "tenant": "external-planner",
+                "message": {
+                    "messageId": "msg-sdk",
+                    "taskId": "task-sdk",
+                    "contextId": conversation["id"],
+                    "role": "ROLE_USER",
+                    "parts": [{"text": "@architect inspect the SDK boundary."}],
+                    "metadata": {
+                        "sender_agent_id": "external-planner",
+                        "target_address": "@architect",
+                        "metadata": {"purpose": "sdk-boundary"},
+                    },
+                },
+            },
+        },
+    )
+
+    assert response.status_code == 202
+    payload = response.json()
+    assert payload["jsonrpc"] == "2.0"
+    assert payload["id"] == "rpc-1"
+    result = payload["result"]
+    assert result["status"] == "accepted"
+    assert result["a2a_sdk"]["method"] == "message/send"
+    assert result["a2a_sdk"]["sdk_request"]["message"]["task_id"] == "task-sdk"
+    inbox_item = ChatInboxStore(tmp_path / "chat.db").list_for_participant(
+        conversation_id=conversation["id"],
+        participant_id=architect.participant_id,
+    )[0]
+    assert inbox_item.payload["a2a_input_parts"] == [
+        {"text": "@architect inspect the SDK boundary.", "kind": "text"}
+    ]
+    assert inbox_item.payload["a2a_metadata"] == {"purpose": "sdk-boundary"}
+    assert inbox_item.payload["source_refs"] == [
+        "a2a_task:task-sdk",
         f"a2a_context:{conversation['id']}",
     ]
