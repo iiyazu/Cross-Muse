@@ -20,6 +20,11 @@ from xmuse_core.chat.participant_store import ParticipantStore
 from xmuse_core.observability import log_event
 from xmuse_core.platform.agent_spawner import GodConfig
 from xmuse_core.platform.execution import persistent_review_context, persistent_review_delivery
+from xmuse_core.platform.execution.a2a_review_verdicts import (
+    A2APlatformReviewVerdict,
+    A2APlatformReviewVerdictError,
+    a2a_platform_review_verdict_from_provider_result,
+)
 from xmuse_core.platform.execution.persistent_review_session import (
     ConfiguredReviewPeerAttempt,
     PersistentReviewSessionLayer,
@@ -431,7 +436,6 @@ async def _handle_review_result(
             metadata=_review_provider_failure_metadata(provider_result.failure_kind),
         )
         return
-
     if result.timed_out:
         sm.transition(
             lane_id,
@@ -464,6 +468,35 @@ async def _handle_review_result(
                 "failure_reason": "review_non_zero_exit",
                 "failure_layer": "review",
             },
+        )
+        return
+
+    try:
+        a2a_review_verdict = a2a_platform_review_verdict_from_provider_result(
+            provider_result,
+            expected_lane_id=lane_id,
+        )
+    except A2APlatformReviewVerdictError as exc:
+        sm.transition(
+            lane_id,
+            "gate_failed",
+            metadata={
+                "failure_reason": "review_a2a_invalid_verdict",
+                "failure_layer": "review",
+                "review_a2a_verdict_error": exc.code,
+            },
+        )
+        return
+    if a2a_review_verdict is not None:
+        await _apply_a2a_platform_review_verdict(
+            lane_id=lane_id,
+            verdict=a2a_review_verdict,
+            sm=sm,
+            stable_verdict_id=stable_verdict_id,
+            ingest_merge_verdict=ingest_merge_verdict,
+            ingest_rework_verdict=ingest_rework_verdict,
+            on_reviewed=on_reviewed,
+            on_rejected=on_rejected,
         )
         return
 
@@ -527,6 +560,77 @@ async def _handle_review_result(
         )
         ingest_rework_verdict(lane_id, summary, evidence_refs)
         await on_rejected(lane_id)
+
+
+async def _apply_a2a_platform_review_verdict(
+    *,
+    lane_id: str,
+    verdict: A2APlatformReviewVerdict,
+    sm: LaneStateMachine,
+    stable_verdict_id: Callable[[str], str],
+    ingest_merge_verdict: Callable[[str, str, list[str] | None], None],
+    ingest_rework_verdict: Callable[[str, str, list[str] | None], None],
+    on_reviewed: Callable[[str], Awaitable[None]],
+    on_rejected: Callable[[str], Awaitable[None]],
+) -> None:
+    summary = sanitize_review_summary(verdict.summary)
+    evidence_refs = list(verdict.evidence_refs)
+    if verdict.decision is ReviewDecision.MERGE:
+        current = sm.get_lane(lane_id)
+        verdict_id = _existing_or_stable_verdict_id(
+            current,
+            lane_id=lane_id,
+            stable_verdict_id=stable_verdict_id,
+        )
+        sm.transition(
+            lane_id,
+            "reviewed",
+            metadata=_review_metadata(
+                lane=current,
+                decision=ReviewDecision.MERGE.value,
+                summary=summary,
+                fallback="a2a_provider_result",
+                fallback_reason="structured_a2a_platform_review_verdict",
+            )
+            | {
+                "review_verdict_id": verdict_id,
+                "review_delivery_mode": "a2a_provider_result",
+                "review_evidence_refs": evidence_refs,
+            },
+        )
+        ingest_merge_verdict(lane_id, summary, evidence_refs)
+        await on_reviewed(lane_id)
+        return
+
+    sm.transition(
+        lane_id,
+        "rejected",
+        metadata=_review_metadata(
+            lane=sm.get_lane(lane_id),
+            decision=verdict.decision.value,
+            summary=summary,
+            fallback="a2a_provider_result",
+            fallback_reason="structured_a2a_platform_review_verdict",
+        )
+        | {
+            "review_delivery_mode": "a2a_provider_result",
+            "review_evidence_refs": evidence_refs,
+        },
+    )
+    ingest_rework_verdict(lane_id, summary, evidence_refs)
+    await on_rejected(lane_id)
+
+
+def _existing_or_stable_verdict_id(
+    lane: dict[str, Any],
+    *,
+    lane_id: str,
+    stable_verdict_id: Callable[[str], str],
+) -> str:
+    existing = lane.get("review_verdict_id")
+    if isinstance(existing, str) and existing.strip():
+        return existing.strip()
+    return stable_verdict_id(lane_id)
 
 
 def _review_provider_failure_metadata(
