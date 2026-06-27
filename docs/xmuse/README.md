@@ -12,6 +12,7 @@ operation record 或巨大 handoff 文档。
 
 | 文档 | 用途 |
 |---|---|
+| `docs/xmuse/document-status.md` | 当前文档状态索引：标记 default-read、current-contract、retained-by-test、reference-only 和 archived，避免新会话误读旧 goal |
 | `docs/xmuse/natural-groupchat-a2a-goal.md` | 当前愿景、最新状态、A2A/Ray/Clowder-AI 取舍和 forbidden claims |
 | `docs/xmuse/natural-groupchat-a2a-behavior.md` | authority-first 行为规范、TDD/superpowers/GitHub 约束、patch/refactor 阈值 |
 | `docs/xmuse/natural-groupchat-a2a-task-plan.md` | Phase 0-7 的实施任务、验收和停止条件 |
@@ -115,12 +116,17 @@ Moved historical material:
 
 ```text
 docs/xmuse/archive/2026-06-pre-m7/
+docs/xmuse/archive/2026-06-pre-overnight-goal/
 ```
 
-This archive contains the old `codex-strengthening-handoff.md`,
+`2026-06-pre-m7/` contains the old `codex-strengthening-handoff.md`,
 `fullchain-runtime-*`, `production-closure-gap-ledger.md`,
 `real-provider-soak-evidence-2026-06-21.md`, and
 `walkthrough-maintenance-notes*.md` files.
+
+`2026-06-pre-overnight-goal/` contains superseded deep-research, Path/V-series,
+closure, self-iteration, OpenCode-in, and production-strengthening prompts or
+roadmaps that are no longer default entrypoints.
 
 Rules:
 

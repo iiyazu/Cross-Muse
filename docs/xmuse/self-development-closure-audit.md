@@ -306,7 +306,7 @@ Two parallel paths exist:
 | 7 | Provider session binding resume NOT yet driven by orchestrator store lookup | `src/xmuse_core/platform/execution/provider_session_binding.py` lookup works, but `coordination.session_route_planning()` is not the default dispatch path |
 | 8 | `provider_session_binding_god_session_id` is a migration-era hint | `src/xmuse_core/platform/orchestrator_lane_flow.py:385` — flat projection field |
 | 9 | GitHub Actions CI scope extremely narrow | 5 ruff files, 9 pytest targets, 3 mypy files |
-| 10 | Full-repo ruff has 81 violations; full-repo mypy has 124 errors | `v10-ci-candidate-audit.md` |
+| 10 | Full-repo ruff has 81 violations; full-repo mypy has 124 errors | `archive/2026-06-pre-overnight-goal/v10-ci-candidate-audit.md` |
 | 11 | `test_skill_plan_execute_review.py` collection error | ModuleNotFoundError for `skills.plan_execute_review` |
 | 12 | 1 known test failure | `test_feature_plan_proposal_api_rejects_ad_hoc_flat_lane_writes` — KeyError |
 

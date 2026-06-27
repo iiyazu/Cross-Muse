@@ -205,7 +205,7 @@ XMUSE_CHAT_API_URL=http://127.0.0.1:8201
 | **Phase 1 (V8)** | Independent Installability | **DONE** | `walkthrough-maintenance-notes-v8.md` |
 | **Phase 2 (V9)** | Runtime Operations | **DONE** | `production-operations.md` |
 | **Phase 3 (V10)** | Quality Gates | **DOC EXISTS, CI NEVER TRIGGERED** | `quality-gates-and-provider-matrix.md`, `.github/workflows/xmuse-ci.yml` |
-| **Phase 4 (V11)** | Depth Hardening | **NOT STARTED** — docs exist as scoping | `mcp-permission-model.md`, `schema-migration-strategy.md`, `v11-depth-hardening-inventory.md` |
+| **Phase 4 (V11)** | Depth Hardening | **NOT STARTED** — docs exist as scoping | `mcp-permission-model.md`, `schema-migration-strategy.md`, `archive/2026-06-pre-overnight-goal/v11-depth-hardening-inventory.md` |
 
 **`feature_lanes.json` authority confusion (well-documented, partly resolved):**
 - All docs agree: `feature_lanes.json` should be projection/queue, not authority
