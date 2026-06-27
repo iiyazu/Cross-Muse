@@ -157,6 +157,11 @@ def test_peer_chat_mcp_endpoint_exposes_writeback_and_explicit_handoff_tools(
         "items"
     ]["properties"]
     assert lane_item_properties["review_runtime"] == {"type": "string"}
+    assert lane_item_properties["gate_profiles"] == {
+        "type": "array",
+        "items": {"type": "string"},
+    }
+    assert "gate_profiles" in tools["chat_emit_proposal"]["description"]
     assert "run_id" in tools["chat_record_collaboration_response"]["inputSchema"]["required"]
     response_tool_description = tools["chat_record_collaboration_response"]["description"]
     assert '"status":"executable"' in response_tool_description

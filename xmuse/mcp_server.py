@@ -718,7 +718,9 @@ CHAT_TOOL_SCHEMAS: list[dict[str, Any]] = [
     {
         "name": "chat_emit_proposal",
         "description": (
-            "Architect-only: create an xmuse proposal row and proposal chat card."
+            "Architect-only: create an xmuse proposal row and proposal chat card. "
+            "Dispatchable lane_graph lanes must include explicit gate_profiles; "
+            "write a blocker/open question instead if no gate profile is known."
         ),
         "inputSchema": {
             "type": "object",
@@ -739,6 +741,11 @@ CHAT_TOOL_SCHEMAS: list[dict[str, Any]] = [
                             "capabilities": {"type": "array", "items": {"type": "string"}},
                             "feature_group": {"type": "string"},
                             "review_runtime": {"type": "string"},
+                            "gate_profiles": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                            },
+                            "gate_profile": {"type": "string"},
                         },
                         "required": ["feature_id", "prompt", "depends_on", "capabilities"],
                         "additionalProperties": True,
@@ -1109,7 +1116,9 @@ def _peer_chat_tool_schemas() -> list[dict[str, Any]]:
                     "Architect-only: submit an actionable lane_graph proposal after "
                     "peer discussion has produced executable work. This creates an "
                     "approval card; it does not approve or dispatch the proposal by "
-                    "itself."
+                    "itself. Each dispatchable lane_graph lane must include explicit "
+                    "gate_profiles, for example [\"xmuse-core\"] for xmuse core code; "
+                    "write a blocker/open question instead if no gate profile is known."
                 )
             elif name == "chat_create_collaboration_request":
                 narrowed["description"] = (
