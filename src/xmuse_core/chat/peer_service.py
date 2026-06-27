@@ -42,8 +42,11 @@ from xmuse_core.chat.mentions import (
 from xmuse_core.chat.models import ChatCard, ChatMessage, ChatTimelineItem
 from xmuse_core.chat.natural_handoff import HandoffAssessment, assess_natural_handoff
 from xmuse_core.chat.natural_routing import (
+    DEFAULT_NATURAL_ROUTE_MAX_DEPTH,
     build_natural_route_event,
+    natural_route_depth_exceeded,
     natural_route_payload,
+    next_natural_route_depth,
 )
 from xmuse_core.chat.participant_store import (
     INIT_GOD_DISPLAY_NAME,
@@ -2603,11 +2606,20 @@ class PeerChatService:
             content,
             target_role=target.participant.role,
         )
+        route_depth = next_natural_route_depth(
+            source_inbox.payload if source_inbox is not None else None
+        )
+        should_block_depth = natural_route_depth_exceeded(route_depth)
         should_block_handoff = (
             resolved_reply_to_inbox_item_id is not None
             and assessment.requires_envelope
             and bool(assessment.missing_fields)
         )
+        blocker_reason = None
+        if should_block_depth:
+            blocker_reason = "natural_route_max_depth_exceeded"
+        elif should_block_handoff:
+            blocker_reason = "missing_handoff_fields"
         route_event = build_natural_route_event(
             conversation_id=conversation_id,
             origin_message_id=(
@@ -2619,6 +2631,7 @@ class PeerChatService:
             author_participant_id=participant_id,
             target_participant_id=target.participant.participant_id,
             route_kind=assessment.route_kind,
+            depth=route_depth,
             source_refs=_natural_route_source_refs(
                 source_inbox_id=resolved_reply_to_inbox_item_id,
                 source_message_id=(
@@ -2628,11 +2641,27 @@ class PeerChatService:
                 ),
                 client_request_id=client_request_id,
             ),
-            blocker_reason=(
-                "missing_handoff_fields" if should_block_handoff else None
-            ),
+            blocker_reason=blocker_reason,
         )
         assessment_payload = assessment.model_dump()
+        if should_block_depth:
+            return self._record_natural_route_depth_blocker(
+                registry_path=registry_path,
+                conversation_id=conversation_id,
+                participant=participant,
+                god_session_id=god_session_id,
+                caller_identity=caller_identity,
+                client_request_id=client_request_id,
+                target_address=target.normalized,
+                target_role=target.participant.role,
+                target_participant_id=target.participant.participant_id,
+                target_raw=target.raw,
+                content=content,
+                route_event=route_event,
+                assessment_payload=assessment_payload,
+                reply_to_inbox_item_id=resolved_reply_to_inbox_item_id,
+                attempted_depth=route_depth,
+            )
         if should_block_handoff:
             return self._record_natural_handoff_blocker(
                 registry_path=registry_path,
@@ -2702,6 +2731,104 @@ class PeerChatService:
             if str(exc) == "turn_budget_exhausted":
                 raise PeerChatError("turn_budget_exhausted", conversation_id) from exc
             raise
+
+    def _record_natural_route_depth_blocker(
+        self,
+        *,
+        registry_path: Path,
+        conversation_id: str,
+        participant: Participant,
+        god_session_id: str,
+        caller_identity: str,
+        client_request_id: str,
+        target_address: str,
+        target_role: str,
+        target_participant_id: str,
+        target_raw: str,
+        content: str,
+        route_event,
+        assessment_payload: dict[str, object],
+        reply_to_inbox_item_id: str | None,
+        attempted_depth: int,
+    ) -> dict[str, Any]:
+        blocker_content = (
+            f"Natural route to {target_address} was blocked before routing. "
+            f"Route depth {attempted_depth} exceeds max depth "
+            f"{DEFAULT_NATURAL_ROUTE_MAX_DEPTH}."
+        )
+        envelope = normalize_envelope(
+            {
+                "type": "natural_route_blocker",
+                "natural_route": route_event.model_dump(),
+                "handoff_assessment": assessment_payload,
+                "target_address": target_address,
+                "target_role": target_role,
+                "target_participant_id": target_participant_id,
+                "attempted_depth": attempted_depth,
+                "max_depth": DEFAULT_NATURAL_ROUTE_MAX_DEPTH,
+                "blocked_content": content,
+            },
+            envelope_type="natural_route_blocker",
+        )
+        try:
+            result = self._chat.create_message_inbox_and_log(
+                conversation_id=conversation_id,
+                tool_name="chat_mention",
+                caller_identity=caller_identity,
+                client_request_id=client_request_id,
+                author=participant.participant_id,
+                role="assistant",
+                content=blocker_content,
+                envelope_type=envelope["type"],
+                envelope_json=envelope,
+                mentions=[],
+                inbox_items=[
+                    {
+                        "target_participant_id": participant.participant_id,
+                        "target_role": participant.role,
+                        "target_address": f"@participant:{participant.participant_id}",
+                        "sender_participant_id": participant.participant_id,
+                        "sender_address": f"@participant:{participant.participant_id}",
+                        "item_type": "natural_route_blocker",
+                        "payload": natural_route_payload(
+                            route_event,
+                            content=blocker_content,
+                            mention=target_raw,
+                            extra={
+                                "blocks_dispatch": True,
+                                "blocker_kind": "natural_route_max_depth_exceeded",
+                                "target_address": target_address,
+                                "target_role": target_role,
+                                "target_participant_id": target_participant_id,
+                                "attempted_depth": attempted_depth,
+                                "max_depth": DEFAULT_NATURAL_ROUTE_MAX_DEPTH,
+                                "handoff_assessment": assessment_payload,
+                            },
+                        ),
+                    }
+                ],
+                reply_to_inbox_item_id=reply_to_inbox_item_id,
+                reply_owner_participant_id=participant.participant_id,
+                turn_budget_action="consume",
+                extra_result={
+                    "natural_route": route_event.model_dump(),
+                    "handoff_assessment": assessment_payload,
+                    "blocked": True,
+                },
+            )
+        except ValueError as exc:
+            if str(exc) == "turn_budget_exhausted":
+                raise PeerChatError("turn_budget_exhausted", conversation_id) from exc
+            raise
+        if reply_to_inbox_item_id:
+            PeerTurnLatencyTraceStore(self._db_path).record_mcp_tool_stage(
+                conversation_id=conversation_id,
+                inbox_item_id=reply_to_inbox_item_id,
+                tool_name="chat_mention",
+                called_at=time.monotonic(),
+            )
+            GodSessionRegistry(registry_path).promote_running(god_session_id)
+        return result
 
     def _record_natural_handoff_blocker(
         self,
