@@ -26,6 +26,8 @@ from xmuse_core.chat.store import ChatStore
 from xmuse_core.providers.adapters.base import ProviderInvocationResult
 from xmuse_core.providers.models import ProviderId
 
+_MAX_A2A_PROVIDER_RESULT_FANOUT = 1
+
 
 class A2AWritebackReconcilerError(ValueError):
     def __init__(self, code: str, detail: str) -> None:
@@ -89,7 +91,7 @@ class A2AProviderWritebackReconciler:
             diagnostic=diagnostic,
             source_refs=source_refs,
         )
-        inbox_items = self._route_provider_result_mentions(
+        route_result = self._route_provider_result_mentions(
             conversation_id=conversation_id,
             participant_id=participant_id,
             reply_to_inbox_item_id=reply_to_inbox_item_id,
@@ -97,27 +99,32 @@ class A2AProviderWritebackReconciler:
             content=content,
             source_refs=source_refs,
         )
+        inbox_items = route_result["inbox_items"]
+        route_blocker = route_result.get("route_blocker")
+        envelope_payload: dict[str, Any] = {
+            "type": "a2a_provider_result",
+            "provider_profile_ref": provider_result.provider_profile_ref,
+            "provider_request_id": provider_result.request_id,
+            "provider_status": provider_result.status.value,
+            "failure_kind": (
+                provider_result.failure_kind.value
+                if provider_result.failure_kind is not None
+                else None
+            ),
+            "source_refs": source_refs,
+            "diagnostic_payload": diagnostic,
+            "authority": "chat.db/inbox",
+            "a2a_is_authority": False,
+            **(
+                {"proposal_writeback": proposal_writeback}
+                if proposal_writeback is not None
+                else {}
+            ),
+        }
+        if route_blocker is not None:
+            envelope_payload["route_blocker"] = route_blocker
         envelope = normalize_envelope(
-            {
-                "type": "a2a_provider_result",
-                "provider_profile_ref": provider_result.provider_profile_ref,
-                "provider_request_id": provider_result.request_id,
-                "provider_status": provider_result.status.value,
-                "failure_kind": (
-                    provider_result.failure_kind.value
-                    if provider_result.failure_kind is not None
-                    else None
-                ),
-                "source_refs": source_refs,
-                "diagnostic_payload": diagnostic,
-                "authority": "chat.db/inbox",
-                "a2a_is_authority": False,
-                **(
-                    {"proposal_writeback": proposal_writeback}
-                    if proposal_writeback is not None
-                    else {}
-                ),
-            },
+            envelope_payload,
             envelope_type="a2a_provider_result",
         )
         extra_result: dict[str, Any] = {
@@ -132,6 +139,8 @@ class A2AProviderWritebackReconciler:
         }
         if proposal_writeback is not None:
             extra_result["proposal_writeback"] = proposal_writeback
+        if route_blocker is not None:
+            extra_result["route_blocker"] = route_blocker
         return self._chat.create_message_inbox_and_log(
             conversation_id=conversation_id,
             tool_name="a2a_provider_writeback",
@@ -465,7 +474,7 @@ class A2AProviderWritebackReconciler:
         provider_result: ProviderInvocationResult,
         content: str,
         source_refs: list[str],
-    ) -> list[dict[str, Any]]:
+    ) -> dict[str, Any]:
         try:
             targets = MentionResolver(self._participants).resolve_leading_content(
                 conversation_id,
@@ -473,14 +482,42 @@ class A2AProviderWritebackReconciler:
                 strict=True,
             )
         except MentionResolutionError:
-            return []
+            return {"inbox_items": []}
         inbox_items: list[dict[str, Any]] = []
         seen: set[str] = set()
+        resolved_targets = []
         for target in targets:
             target_participant_id = target.participant.participant_id
             if target_participant_id == participant_id or target_participant_id in seen:
                 continue
             seen.add(target_participant_id)
+            resolved_targets.append(target)
+        if len(resolved_targets) > _MAX_A2A_PROVIDER_RESULT_FANOUT:
+            return {
+                "inbox_items": [],
+                "route_blocker": {
+                    "reason": "a2a_provider_result_fanout_exceeded",
+                    "source_kind": "a2a_provider_result",
+                    "provider_request_id": provider_result.request_id,
+                    "max_fanout": _MAX_A2A_PROVIDER_RESULT_FANOUT,
+                    "target_addresses": [
+                        target.normalized for target in resolved_targets
+                    ],
+                    "target_participant_ids": [
+                        target.participant.participant_id
+                        for target in resolved_targets
+                    ],
+                    "source_refs": [
+                        f"inbox:{reply_to_inbox_item_id}",
+                        *source_refs,
+                    ],
+                    "authority": "chat.db/inbox",
+                    "a2a_is_authority": False,
+                    "blocks_dispatch": True,
+                },
+            }
+        for target in resolved_targets:
+            target_participant_id = target.participant.participant_id
             assessment = assess_natural_handoff(
                 content,
                 target_role=target.participant.role,
@@ -554,7 +591,7 @@ class A2AProviderWritebackReconciler:
                     ),
                 }
             )
-        return inbox_items
+        return {"inbox_items": inbox_items}
 
 
 def _source_refs(

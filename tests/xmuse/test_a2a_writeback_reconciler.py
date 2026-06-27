@@ -519,6 +519,96 @@ def test_a2a_provider_result_leading_mention_creates_durable_route(
     assert ChatStore(db).list_proposals(conversation.id) == []
 
 
+def test_a2a_provider_result_fanout_excess_writes_durable_route_blocker(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "chat.db"
+    chat = ChatStore(db)
+    conversation = chat.create_conversation("A2A provider fanout guard")
+    participants = ParticipantStore(db)
+    architect = participants.add(
+        conversation_id=conversation.id,
+        role="architect",
+        display_name="A2A Architect",
+        cli_kind="a2a",
+        model="a2a-remote",
+    )
+    review = participants.add(
+        conversation_id=conversation.id,
+        role="review",
+        display_name="Review GOD",
+        cli_kind="codex",
+        model="gpt-5.4",
+    )
+    execute = participants.add(
+        conversation_id=conversation.id,
+        role="execute",
+        display_name="Execute GOD",
+        cli_kind="codex",
+        model="gpt-5.4",
+    )
+    source = chat.add_message(
+        conversation.id,
+        "human",
+        "human",
+        "@architect create a candidate.",
+    )
+    source_inbox = ChatInboxStore(db).create_item(
+        conversation_id=conversation.id,
+        target_participant_id=architect.participant_id,
+        target_role=architect.role,
+        target_address="@architect",
+        sender_participant_id=None,
+        sender_address="@human",
+        source_message_id=source.id,
+        item_type="mention",
+        payload={"content": source.content},
+    )
+    provider_result = _a2a_provider_result_with_review_handoff()
+    diagnostic = dict(provider_result.diagnostic_payload)
+    diagnostic["a2a_content"] = (
+        "@review, @execute\n"
+        "what: Review and execute the A2A handoff candidate.\n"
+        "why: This intentionally exceeds the provider-result fanout cap.\n"
+        "tradeoffs: Keep multi-target routing blocked until explicitly split.\n"
+        "open_questions: none.\n"
+        "next_action: Record a durable route blocker.\n"
+        "evidence_refs: a2a_task:req-a2a-architect"
+    )
+
+    result = A2AProviderWritebackReconciler(db).record_provider_result(
+        conversation_id=conversation.id,
+        participant_id=architect.participant_id,
+        reply_to_inbox_item_id=source_inbox.id,
+        provider_result=provider_result.model_copy(
+            update={"diagnostic_payload": diagnostic}
+        ),
+    )
+
+    assert result["inbox_items"] == []
+    blocker = result["message"]["envelope_json"]["route_blocker"]
+    assert blocker == result["route_blocker"]
+    assert blocker["reason"] == "a2a_provider_result_fanout_exceeded"
+    assert blocker["max_fanout"] == 1
+    assert blocker["target_participant_ids"] == [
+        review.participant_id,
+        execute.participant_id,
+    ]
+    assert blocker["target_addresses"] == ["@review", "@execute"]
+    assert blocker["authority"] == "chat.db/inbox"
+    assert blocker["a2a_is_authority"] is False
+    assert blocker["blocks_dispatch"] is True
+    assert ChatInboxStore(db).get(source_inbox.id).status == "read"
+    assert [
+        item
+        for item in ChatInboxStore(db).list_by_conversation(
+            conversation.id,
+            include_terminal=True,
+        )
+        if item.source_message_id == result["message"]["id"]
+    ] == []
+
+
 def test_a2a_provider_result_markdown_leading_mention_creates_durable_route(
     tmp_path: Path,
 ) -> None:
