@@ -243,6 +243,24 @@ def test_provider_policy_selects_codex_god_review_and_mid_tier_coordinator() -> 
     assert "mid-tier codex coordinator profile" in coordinator.selection_reason
 
 
+def test_provider_policy_selects_a2a_remote_for_requested_review_runtime() -> None:
+    service = ProviderPolicyService(registry=build_default_provider_registry())
+
+    review = service.select_review(
+        lane={
+            "lane_id": "lane-a2a-review",
+            "review_runtime": "a2a",
+            "risk": "medium",
+        }
+    )
+
+    assert review.provider_id is ProviderId.A2A
+    assert review.provider_profile_ref == "a2a.remote"
+    assert review.task_type is TaskCapability.REVIEW
+    assert review.lane_risk is RiskTier.MEDIUM
+    assert "requested A2A remote profile" in review.selection_reason
+
+
 def test_provider_registry_reserves_gpt55_for_explicit_final_quality_profile() -> None:
     registry = build_default_provider_registry()
 
