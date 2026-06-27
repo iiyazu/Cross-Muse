@@ -24,9 +24,11 @@ from xmuse_core.chat.stream_store import ChatStreamStore, PeerTurnLatencyTraceSt
 from xmuse_core.integrations.a2a_writeback_reconciler import (
     A2AProviderWritebackReconciler,
 )
-from xmuse_core.providers.adapters.base import ProviderInvocationResult
+from xmuse_core.providers.adapters.base import ProviderFailureKind, ProviderInvocationResult
 from xmuse_core.providers.goal_contract import WorkerResultStatus
-from xmuse_core.providers.models import ProviderId, ProviderProfileId
+from xmuse_core.providers.models import ProviderId, ProviderProfileId, TaskCapability
+from xmuse_core.providers.registry import DEFAULT_A2A_REMOTE_ENDPOINT_ENV_NAME
+from xmuse_core.providers.service import RunnerProviderService
 
 
 class FakeGodLayer:
@@ -1542,6 +1544,177 @@ async def test_scheduler_accepts_a2a_provider_result_writeback_without_mcp_stage
     trace = PeerTurnLatencyTraceStore(db_path).list_recent(conv.id)[0]
     assert trace["delivery_mode"] == "mcp_writeback"
     assert trace["degraded_reason"] is None
+
+
+@pytest.mark.asyncio
+async def test_scheduler_delivers_a2a_participant_via_provider_writeback(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "chat.db"
+    chat = ChatStore(db_path)
+    conv = chat.create_conversation("Scheduler A2A provider participant")
+    participant = ParticipantStore(db_path).add(
+        conversation_id=conv.id,
+        role="review",
+        display_name="Remote A2A Review GOD",
+        cli_kind="a2a",
+        model="a2a-remote",
+    )
+    source = chat.add_message(conv.id, "Human", "human", "@review inspect this.")
+    inbox = ChatInboxStore(db_path)
+    item = inbox.create_item(
+        conversation_id=conv.id,
+        target_participant_id=participant.participant_id,
+        target_role="review",
+        target_address="@review",
+        sender_participant_id=None,
+        sender_address="@human",
+        source_message_id=source.id,
+        item_type="mention",
+        payload={"content": "@review inspect this."},
+    )
+
+    class ForbiddenGodLayer:
+        async def ensure_conversation_session(self, **kwargs):
+            raise AssertionError("A2A participants must not use GodSessionLayer")
+
+    class FakeProviderService:
+        def __init__(self) -> None:
+            self.invocations = []
+
+        def invoke_provider_adapter(self, invocation):
+            self.invocations.append(invocation)
+            return ProviderInvocationResult(
+                request_id=invocation.request_id,
+                provider_id=ProviderId.A2A,
+                profile_id=ProviderProfileId.REMOTE,
+                status=WorkerResultStatus.COMPLETED,
+                evidence_refs=[
+                    f"a2a_task:{invocation.request_id}",
+                    f"a2a_context:{invocation.request_id}",
+                ],
+                diagnostic_payload={
+                    "a2a_task_id": invocation.request_id,
+                    "a2a_context_id": invocation.request_id,
+                    "a2a_state": "TASK_STATE_COMPLETED",
+                    "a2a_disposition": "completed",
+                    "a2a_terminal": True,
+                    "a2a_content": "Remote A2A participant completed review.",
+                    "a2a_artifacts": [],
+                    "a2a_history": [],
+                    "a2a_metadata": {},
+                    "a2a_source_refs": [
+                        f"a2a_task:{invocation.request_id}",
+                        f"a2a_context:{invocation.request_id}",
+                    ],
+                    "a2a_sdk_task": {
+                        "id": invocation.request_id,
+                        "status": {"state": "TASK_STATE_COMPLETED"},
+                    },
+                    "a2a_jsonrpc_id": invocation.request_id,
+                },
+            )
+
+    provider_service = FakeProviderService()
+    scheduler = PeerChatScheduler(
+        db_path=db_path,
+        god_layer=ForbiddenGodLayer(),
+        worktree=tmp_path,
+        scheduler_id="sched-test",
+        response_wait_s=0.1,
+        provider_service=provider_service,
+    )
+
+    outcome = await scheduler.tick_once()
+
+    assert outcome.happy_path == 1
+    assert outcome.failed == 0
+    [invocation] = provider_service.invocations
+    assert invocation.provider_profile_ref == "a2a.remote"
+    assert invocation.task_type is TaskCapability.REVIEW
+    assert invocation.writeback_context is not None
+    assert invocation.writeback_context.conversation_id == conv.id
+    assert invocation.writeback_context.participant_id == participant.participant_id
+    assert invocation.writeback_context.reply_to_inbox_item_id == item.id
+    updated = inbox.get(item.id)
+    assert updated.status == "read"
+    assert updated.responded_message_id is not None
+    reply = next(
+        msg for msg in chat.list_messages(conv.id) if msg.id == updated.responded_message_id
+    )
+    assert reply.author == participant.participant_id
+    assert reply.envelope_type == "a2a_provider_result"
+    assert reply.envelope_json["authority"] == "chat.db/inbox"
+    assert reply.envelope_json["a2a_is_authority"] is False
+    assert reply.envelope_json["provider_status"] == "completed"
+    trace = PeerTurnLatencyTraceStore(db_path).list_recent(conv.id)[0]
+    assert trace["delivery_mode"] == "a2a_provider_writeback"
+    assert trace["degraded_reason"] is None
+
+
+@pytest.mark.asyncio
+async def test_scheduler_writes_durable_a2a_config_error_when_endpoint_missing(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv(DEFAULT_A2A_REMOTE_ENDPOINT_ENV_NAME, raising=False)
+    db_path = tmp_path / "chat.db"
+    chat = ChatStore(db_path)
+    conv = chat.create_conversation("Scheduler A2A provider config blocker")
+    participant = ParticipantStore(db_path).add(
+        conversation_id=conv.id,
+        role="architect",
+        display_name="Remote A2A Architect GOD",
+        cli_kind="a2a",
+        model="a2a-remote",
+    )
+    source = chat.add_message(conv.id, "Human", "human", "@architect plan this.")
+    inbox = ChatInboxStore(db_path)
+    item = inbox.create_item(
+        conversation_id=conv.id,
+        target_participant_id=participant.participant_id,
+        target_role="architect",
+        target_address="@architect",
+        sender_participant_id=None,
+        sender_address="@human",
+        source_message_id=source.id,
+        item_type="mention",
+        payload={"content": "@architect plan this."},
+    )
+
+    class ForbiddenGodLayer:
+        async def ensure_conversation_session(self, **kwargs):
+            raise AssertionError("A2A participants must not use GodSessionLayer")
+
+    scheduler = PeerChatScheduler(
+        db_path=db_path,
+        god_layer=ForbiddenGodLayer(),
+        worktree=tmp_path,
+        scheduler_id="sched-test",
+        response_wait_s=0.1,
+        provider_service=RunnerProviderService(),
+    )
+
+    outcome = await scheduler.tick_once()
+
+    assert outcome.happy_path == 1
+    assert outcome.failed == 0
+    updated = inbox.get(item.id)
+    assert updated.status == "read"
+    assert updated.responded_message_id is not None
+    reply = next(
+        msg for msg in chat.list_messages(conv.id) if msg.id == updated.responded_message_id
+    )
+    assert reply.envelope_type == "a2a_provider_result"
+    assert reply.envelope_json["provider_status"] == "failed"
+    assert reply.envelope_json["failure_kind"] == ProviderFailureKind.CONFIG_ERROR.value
+    assert reply.envelope_json["diagnostic_payload"]["a2a_disposition"] == "failed"
+    assert reply.envelope_json["diagnostic_payload"]["a2a_content"].startswith(
+        "A2A provider is not configured:"
+    )
+    trace = PeerTurnLatencyTraceStore(db_path).list_recent(conv.id)[0]
+    assert trace["delivery_mode"] == "a2a_provider_writeback"
+    assert trace["degraded_reason"] == "a2a_provider_failed:config_error"
 
 
 @pytest.mark.asyncio
