@@ -20,6 +20,7 @@ class A2AProviderTaskRequest:
     content: str
     target_address: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    input_parts: tuple[dict[str, Any], ...] = ()
 
 
 class A2AProviderClient:
@@ -53,6 +54,7 @@ class A2AProviderClient:
                 "content": request.content,
                 "target_address": request.target_address,
                 "metadata": request.metadata,
+                "input_parts": list(request.input_parts),
             }
         )
         rpc = {
