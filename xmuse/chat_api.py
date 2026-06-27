@@ -2,6 +2,7 @@
 """REST API for the xmuse chat-plane MVP."""
 
 import json
+import os
 import re
 import sqlite3
 import uuid
@@ -9,10 +10,10 @@ from pathlib import Path
 from typing import Any
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, Request, status
+from fastapi import Body, FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import ValidationError
 
 from xmuse_core.chat.acceptance_spine import AcceptanceSpineStore
 from xmuse_core.chat.api_models import (
@@ -76,6 +77,12 @@ from xmuse_core.integrations.a2a_bridge import (
     A2AInboundTask,
     build_participant_agent_card_from_store,
 )
+from xmuse_core.integrations.a2a_sdk_boundary import (
+    A2ASDKBoundaryError,
+    jsonrpc_error_response,
+    jsonrpc_task_send_response,
+    normalize_task_send_payload,
+)
 from xmuse_core.platform.read_contracts import build_execution_drilldown_refs
 from xmuse_core.platform.run_health import summarize_run_health
 from xmuse_core.runtime.paths import default_xmuse_root
@@ -109,15 +116,7 @@ _EXECUTION_CARD_TYPES = {
     "run_takeover",
     "run_terminal",
 }
-
-
-class A2ATaskSendRequest(BaseModel):
-    task_id: str
-    context_id: str
-    sender_agent_id: str
-    content: str
-    target_address: str | None = None
-    metadata: dict[str, Any] = Field(default_factory=dict)
+_A2A_TASK_SEND_BODY = Body(...)
 
 
 def _store(base_dir: Path) -> ChatStore:
@@ -136,6 +135,52 @@ def _a2a_error_status(code: str) -> int:
     if code == "unknown_conversation":
         return 404
     return 400
+
+
+def _jsonrpc_id(payload: object) -> str | int | None:
+    if not isinstance(payload, dict):
+        return None
+    request_id = payload.get("id")
+    return request_id if isinstance(request_id, str | int) else None
+
+
+def _a2a_write_token(configured: str | None, auth_token: str | None) -> str | None:
+    return configured or os.environ.get("XMUSE_A2A_WRITE_TOKEN") or auth_token
+
+
+def _presented_a2a_write_token(request: Request) -> str | None:
+    bearer = request.headers.get("Authorization", "")
+    return (
+        request.headers.get("X-XMUSE-A2A-Key")
+        or request.headers.get("X-XMUSE-API-Key")
+        or (bearer.removeprefix("Bearer ").strip() if bearer.startswith("Bearer ") else None)
+    )
+
+
+def _is_trusted_local_request(request: Request) -> bool:
+    host = request.client.host if request.client else ""
+    return host in {"127.0.0.1", "::1", "localhost", "testclient"}
+
+
+def _require_a2a_write_authorized(request: Request, token: str | None) -> None:
+    if token:
+        if _presented_a2a_write_token(request) != token:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={
+                    "code": "a2a_write_auth_required",
+                    "message": "A2A task/send requires a valid write token",
+                },
+            )
+        return
+    if not _is_trusted_local_request(request):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "a2a_write_local_only",
+                "message": "A2A task/send without a token is restricted to trusted local clients",
+            },
+        )
 
 
 def _plain_human_message_payload(
@@ -1185,6 +1230,7 @@ def create_app(
     execution_worktree: Path | str | None = None,
     auth_token: str | None = None,
     a2a_bridge_enabled: bool = False,
+    a2a_write_token: str | None = None,
 ) -> FastAPI:
     root = Path(base_dir)
     execution_root = Path(execution_worktree) if execution_worktree is not None else REPO_ROOT
@@ -1199,6 +1245,14 @@ def create_app(
 
     @app.middleware("http")
     async def require_write_auth(request: Request, call_next):
+        a2a_token = _a2a_write_token(a2a_write_token, auth_token)
+        if (
+            request.url.path.startswith("/a2a/")
+            and request.method in {"POST", "PUT", "PATCH", "DELETE"}
+            and a2a_token
+            and _presented_a2a_write_token(request) == a2a_token
+        ):
+            return await call_next(request)
         if (
             auth_token
             and request.method in {"POST", "PUT", "PATCH", "DELETE"}
@@ -1238,22 +1292,71 @@ def create_app(
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="participant not found") from exc
 
-    @app.post("/a2a/tasks/send", status_code=status.HTTP_202_ACCEPTED)
-    def send_a2a_task(request: A2ATaskSendRequest) -> dict[str, object]:
+    @app.post(
+        "/a2a/tasks/send",
+        status_code=status.HTTP_202_ACCEPTED,
+        response_model=None,
+    )
+    def send_a2a_task(
+        request: Request,
+        body: dict[str, Any] = _A2A_TASK_SEND_BODY,
+    ) -> dict[str, object] | JSONResponse:
         if not a2a_bridge_enabled:
             raise HTTPException(status_code=404, detail=_a2a_disabled_detail())
+        _require_a2a_write_authorized(request, _a2a_write_token(a2a_write_token, auth_token))
         try:
-            return A2AInboundBridge(root / "chat.db", enabled=True).record_task_send(
+            normalized = normalize_task_send_payload(body)
+            result = A2AInboundBridge(root / "chat.db", enabled=True).record_task_send(
                 A2AInboundTask(
-                    task_id=request.task_id,
-                    context_id=request.context_id,
-                    sender_agent_id=request.sender_agent_id,
-                    content=request.content,
-                    target_address=request.target_address,
-                    metadata=request.metadata,
+                    task_id=normalized.task_id,
+                    context_id=normalized.context_id,
+                    sender_agent_id=normalized.sender_agent_id,
+                    content=normalized.content,
+                    target_address=normalized.target_address,
+                    metadata=normalized.metadata,
+                    input_parts=normalized.input_parts,
+                    sdk_request=normalized.sdk_request,
                 )
             )
+            result["a2a_sdk"] = {
+                "protocol": "a2a-sdk",
+                "method": normalized.method,
+                "input_parts": list(normalized.input_parts),
+                "sdk_request": normalized.sdk_request,
+                "authority": "xmuse-chat-db",
+            }
+            if normalized.jsonrpc_id is not None:
+                return jsonrpc_task_send_response(
+                    request_id=normalized.jsonrpc_id,
+                    result=result,
+                )
+            return result
+        except A2ASDKBoundaryError as exc:
+            if isinstance(body, dict) and body.get("jsonrpc") == "2.0":
+                return JSONResponse(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    content=jsonrpc_error_response(
+                        request_id=_jsonrpc_id(body),
+                        code=-32602,
+                        message=exc.code,
+                        data={"detail": exc.detail},
+                    ),
+                )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"code": exc.code, "message": exc.detail},
+            ) from exc
         except A2ABridgeError as exc:
+            if isinstance(body, dict) and body.get("jsonrpc") == "2.0":
+                return JSONResponse(
+                    status_code=_a2a_error_status(exc.code),
+                    content=jsonrpc_error_response(
+                        request_id=_jsonrpc_id(body),
+                        code=-32000,
+                        message=exc.code,
+                        data={"detail": exc.detail},
+                    ),
+                )
             raise HTTPException(
                 status_code=_a2a_error_status(exc.code),
                 detail={"code": exc.code, "message": exc.detail},

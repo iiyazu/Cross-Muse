@@ -19,6 +19,7 @@ from xmuse_core.chat.natural_handoff import (
 from xmuse_core.chat.natural_routing import build_natural_route_event, natural_route_payload
 from xmuse_core.chat.participant_store import Participant, ParticipantStore
 from xmuse_core.chat.store import ChatStore
+from xmuse_core.integrations.a2a_sdk_boundary import build_sdk_agent_card_payload
 
 
 class A2ABridgeError(ValueError):
@@ -36,6 +37,8 @@ class A2AInboundTask:
     content: str
     target_address: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    input_parts: tuple[dict[str, Any], ...] = ()
+    sdk_request: dict[str, Any] = field(default_factory=dict)
 
 
 def build_participant_agent_card(
@@ -54,7 +57,13 @@ def build_participant_agent_card(
         session_binding=session_binding,
         active_participants=active_participants,
     )
-    return {
+    skill = {
+        "id": f"xmuse-{participant.role}",
+        "name": participant.role,
+        "description": f"Participates in xmuse natural groupchat as {participant.role}.",
+        "tags": ["xmuse", "groupchat", participant.role],
+    }
+    compatibility_card = {
         "protocolVersion": "1.0",
         "name": participant.display_name,
         "description": f"xmuse {participant.role} participant",
@@ -66,14 +75,7 @@ def build_participant_agent_card(
             "stateTransitionHistory": False,
         },
         "skills": [
-            {
-                "id": f"xmuse-{participant.role}",
-                "name": participant.role,
-                "description": (
-                    f"Participates in xmuse natural groupchat as {participant.role}."
-                ),
-                "tags": ["xmuse", "groupchat", participant.role],
-            }
+            skill
         ],
         "metadata": {
             "authority": "chat.db",
@@ -91,6 +93,21 @@ def build_participant_agent_card(
             "natural_profile": profile,
         },
     }
+    compatibility_card["sdk_agent_card"] = build_sdk_agent_card_payload(
+        name=participant.display_name,
+        description=f"xmuse {participant.role} participant",
+        url=f"{url}/a2a/agents/{participant.participant_id}",
+        version=version,
+        streaming=False,
+        push_notifications=False,
+        skills=(skill,),
+    )
+    compatibility_card["sdk_boundary"] = {
+        "protocol": "a2a-sdk",
+        "authority": "xmuse-chat-db",
+        "write_authority": "chat.db/inbox",
+    }
+    return compatibility_card
 
 
 def build_participant_agent_card_from_store(
@@ -146,6 +163,8 @@ class A2AInboundBridge:
         content = _required(task.content, "content")
         target_address = _optional_text(task.target_address, "target_address")
         metadata = _metadata_dict(task.metadata)
+        input_parts = tuple(task.input_parts)
+        sdk_request = _metadata_dict(task.sdk_request)
         self._assert_conversation_exists(conversation_id)
         target = self._resolve_target(
             conversation_id=conversation_id,
@@ -169,8 +188,10 @@ class A2AInboundBridge:
                     "context_id": conversation_id,
                     "sender_agent_id": sender_agent_id,
                     "target_address": target.normalized,
+                    "input_parts": list(input_parts),
                     "source_refs": source_refs,
                     "metadata": metadata,
+                    "sdk_request": sdk_request,
                 },
                 envelope_type="a2a_task",
             ),
@@ -183,6 +204,8 @@ class A2AInboundBridge:
                     target=target,
                     content=content,
                     metadata=metadata,
+                    input_parts=input_parts,
+                    sdk_request=sdk_request,
                     source_refs=source_refs,
                 )
             ],
@@ -276,6 +299,8 @@ class A2AInboundBridge:
         target,
         content: str,
         metadata: dict[str, Any],
+        input_parts: tuple[dict[str, Any], ...],
+        sdk_request: dict[str, Any],
         source_refs: list[str],
     ) -> dict[str, Any]:
         assessment = assess_natural_handoff(
@@ -305,6 +330,12 @@ class A2AInboundBridge:
             "a2a_context_id": conversation_id,
             "a2a_sender_agent_id": sender_agent_id,
             "a2a_metadata": metadata,
+            "a2a_input_parts": list(input_parts),
+            "a2a_sdk_request": sdk_request,
+            "a2a_sdk_boundary": {
+                "protocol": "a2a-sdk",
+                "authority": "xmuse-chat-db",
+            },
             "handoff_assessment": assessment_payload,
         }
         if assessment.requires_envelope:
