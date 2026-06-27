@@ -296,6 +296,10 @@ class A2AProviderWritebackReconciler:
                 reply_to_inbox_item_id=reply_to_inbox_item_id,
                 source_refs=source_refs,
             )
+            _require_a2a_lane_graph_gate_profiles(
+                proposal_type=proposal_type,
+                content=content,
+            )
             escalation = classify_structured_proposal(
                 proposal_type=proposal_type,
                 content=content,
@@ -328,7 +332,21 @@ class A2AProviderWritebackReconciler:
                     envelope_type="proposal",
                 ),
             )
-        except (PeerChatError, TypeError, ValueError) as exc:
+        except PeerChatError as exc:
+            reason = (
+                exc.code
+                if exc.code == "missing_gate_profiles"
+                else "invalid_xmuse_proposal"
+            )
+            return {
+                "status": "blocked",
+                "reason": reason,
+                "detail": str(exc),
+                "authority": "chat.db/inbox",
+                "a2a_is_authority": False,
+                "source_refs": source_refs,
+            }
+        except (TypeError, ValueError) as exc:
             return {
                 "status": "blocked",
                 "reason": "invalid_xmuse_proposal",
@@ -545,6 +563,9 @@ class A2AProviderWritebackReconciler:
                     task_id=provider_result.request_id,
                     source_inbox_item_id=reply_to_inbox_item_id,
                     artifact_refs=list(provider_result.evidence_refs),
+                    feature_scope_id=_feature_scope_id_from_diagnostic(
+                        provider_result.diagnostic_payload
+                    ),
                 )
             if blocker_reason:
                 extra.update(
@@ -586,6 +607,17 @@ def _source_refs(
         if ref not in deduped:
             deduped.append(ref)
     return deduped
+
+
+def _feature_scope_id_from_diagnostic(diagnostic: dict[str, Any]) -> str | None:
+    metadata = diagnostic.get("a2a_metadata")
+    if not isinstance(metadata, dict):
+        return None
+    for key in ("feature_scope_id", "xmuse_feature_scope_id"):
+        value = metadata.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
 
 
 def _content(
@@ -631,6 +663,52 @@ def _normalize_proposal_payload(
         ]
     )
     return proposal_type, content, references, summary
+
+
+def _require_a2a_lane_graph_gate_profiles(
+    *,
+    proposal_type: str,
+    content: str,
+) -> None:
+    if proposal_type.strip() != "lane_graph":
+        return
+    try:
+        payload = json.loads(content)
+    except json.JSONDecodeError:
+        return
+    if not isinstance(payload, dict):
+        return
+    lanes = payload.get("lanes")
+    if not isinstance(lanes, list):
+        resolution = payload.get("resolution_content")
+        if isinstance(resolution, dict):
+            lanes = resolution.get("lanes")
+    if not isinstance(lanes, list):
+        return
+    missing: list[str] = []
+    for lane in lanes:
+        if not isinstance(lane, dict):
+            continue
+        if _lane_has_gate_profile(lane):
+            continue
+        feature_id = str(lane.get("feature_id") or "<unknown>").strip()
+        missing.append(feature_id or "<unknown>")
+    if missing:
+        raise PeerChatError(
+            "missing_gate_profiles",
+            "A2A lane_graph proposal lanes require explicit gate_profiles before "
+            f"dispatch: {', '.join(missing)}",
+        )
+
+
+def _lane_has_gate_profile(lane: dict[str, Any]) -> bool:
+    gate_profiles = lane.get("gate_profiles")
+    if isinstance(gate_profiles, list) and any(
+        str(item).strip() for item in gate_profiles
+    ):
+        return True
+    gate_profile = lane.get("gate_profile")
+    return isinstance(gate_profile, str) and bool(gate_profile.strip())
 
 
 def _payload_references(payload: dict[str, Any]) -> list[str]:

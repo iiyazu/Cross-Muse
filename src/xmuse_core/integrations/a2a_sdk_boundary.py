@@ -269,6 +269,7 @@ def _normalize_legacy_task_send(params: Mapping[str, Any]) -> NormalizedA2ATaskS
     request.message.context_id = context_id
     request.message.role = a2a_types.Role.ROLE_USER
     request.message.parts.add(text=content)
+    _append_legacy_input_parts(request.message.parts, params.get("input_parts"))
     request.message.metadata.update(
         {
             "sender_agent_id": sender_agent_id,
@@ -357,6 +358,96 @@ def _parts_to_payload(parts: Any) -> tuple[dict[str, Any], ...]:
         data["kind"] = part.WhichOneof("content")
         payload.append(data)
     return tuple(payload)
+
+
+def _append_legacy_input_parts(parts: Any, value: object) -> None:
+    if value is None:
+        return
+    if not isinstance(value, list | tuple):
+        raise A2ASDKBoundaryError("invalid_input_parts", "input_parts list required")
+    for index, item in enumerate(value):
+        if not isinstance(item, Mapping):
+            raise A2ASDKBoundaryError(
+                "invalid_input_part",
+                f"input_parts[{index}] object required",
+            )
+        part = parts.add()
+        kind = _input_part_kind(item)
+        if kind == "text":
+            part.text = _required_text(
+                item.get("text") or item.get("content"),
+                f"input_parts[{index}].text",
+            )
+        elif kind == "data":
+            ParseDict(
+                _json_value(item.get("data"), f"input_parts[{index}].data"),
+                part.data,
+            )
+        elif kind in {"url", "file"}:
+            part.url = _required_text(
+                item.get("url") or item.get("uri") or item.get("file_id"),
+                f"input_parts[{index}].url",
+            )
+        elif kind == "raw":
+            part.raw = _raw_bytes(item.get("raw"), f"input_parts[{index}].raw")
+        else:
+            raise A2ASDKBoundaryError(
+                "unsupported_input_part_kind",
+                f"input_parts[{index}].kind={kind}",
+            )
+        metadata = _input_part_metadata(item)
+        if metadata:
+            ParseDict(metadata, part.metadata)
+        filename = _optional_text(item.get("filename"), f"input_parts[{index}].filename")
+        if filename is not None:
+            part.filename = filename
+        media_type = _optional_text(
+            item.get("media_type") or item.get("mediaType"),
+            f"input_parts[{index}].media_type",
+        )
+        if media_type is not None:
+            part.media_type = media_type
+
+
+def _input_part_kind(item: Mapping[str, Any]) -> str:
+    explicit = _optional_text(item.get("kind"), "input_part.kind")
+    if explicit:
+        return explicit.lower()
+    if item.get("text") is not None or item.get("content") is not None:
+        return "text"
+    if item.get("data") is not None:
+        return "data"
+    if item.get("url") is not None or item.get("uri") is not None:
+        return "url"
+    if item.get("file_id") is not None:
+        return "file"
+    if item.get("raw") is not None:
+        return "raw"
+    return "unknown"
+
+
+def _json_value(value: object, field_name: str) -> Any:
+    try:
+        return json.loads(json.dumps(value))
+    except (TypeError, ValueError) as exc:
+        raise A2ASDKBoundaryError("invalid_json_value", field_name) from exc
+
+
+def _raw_bytes(value: object, field_name: str) -> bytes:
+    if isinstance(value, bytes):
+        return value
+    if isinstance(value, str):
+        return value.encode("utf-8")
+    raise A2ASDKBoundaryError("invalid_raw_part", field_name)
+
+
+def _input_part_metadata(item: Mapping[str, Any]) -> dict[str, Any]:
+    metadata = _metadata(item.get("metadata"))
+    for key in ("artifact_id", "file_id"):
+        value = item.get(key)
+        if isinstance(value, str) and value.strip():
+            metadata.setdefault(key, value.strip())
+    return metadata
 
 
 def _artifact_to_payload(artifact: Any) -> dict[str, Any]:
