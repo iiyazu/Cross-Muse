@@ -308,7 +308,7 @@ def _format_turn_prompt(
     if msg_type == "peer_chat_nudge":
         layered_prompt = _xmuse_layered_prompt(context)
         if layered_prompt:
-            return layered_prompt
+            return _with_xmuse_context(layered_prompt, context)
     sections = [
         "You are an xmuse persistent GOD session turn worker.",
         f"Role: {config.role}",
@@ -407,6 +407,17 @@ def _xmuse_layered_prompt(context: str) -> str:
         return ""
     text = prompt_artifact.get("text")
     return text.strip() + "\n" if isinstance(text, str) and text.strip() else ""
+
+
+def _with_xmuse_context(prompt: str, context: str) -> str:
+    if not context.strip():
+        return prompt.strip() + "\n"
+    return (
+        prompt.strip()
+        + "\n\n<xmuse_context>\n"
+        + context.strip()
+        + "\n</xmuse_context>\n"
+    )
 
 
 def _attach_execute_result(

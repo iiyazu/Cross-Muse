@@ -24,6 +24,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 OPENCODE_MODEL = "opencode-go/deepseek-v4-flash"
 CODEX_REVIEW_MODEL = "gpt-5.4"
 DEFAULT_PEER_CHAT_POST_WRITEBACK_GRACE_S = 8.0
+DEFAULT_PEER_CHAT_RESPONSE_WAIT_S = 900.0
 
 
 def main() -> int:
@@ -53,6 +54,7 @@ def main() -> int:
         note_path=note_path,
         repo_head_sha=repo_head_sha,
         peer_chat_post_writeback_grace_s=args.peer_chat_post_writeback_grace_s,
+        peer_chat_response_wait_s=args.peer_chat_response_wait_s,
         peer_god_backend=args.peer_god_backend,
         ray_god_mcp=args.ray_god_mcp,
         review_provider_policy=args.review_provider,
@@ -85,6 +87,7 @@ def main() -> int:
                 chat_port=chat_port,
                 logs_dir=run_root / "logs",
                 max_hours=args.max_hours,
+                peer_chat_response_wait_s=args.peer_chat_response_wait_s,
                 peer_chat_post_writeback_grace_s=args.peer_chat_post_writeback_grace_s,
                 peer_god_backend=args.peer_god_backend,
                 ray_god_mcp=args.ray_god_mcp,
@@ -220,6 +223,15 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--architect-model", default="gpt-5.4")
     parser.add_argument("--executor-model", default="gpt-5.4-mini")
     parser.add_argument(
+        "--peer-chat-response-wait-s",
+        type=float,
+        default=DEFAULT_PEER_CHAT_RESPONSE_WAIT_S,
+        help=(
+            "seconds to wait for ordinary peer-chat GOD turns to durably "
+            "write back through MCP"
+        ),
+    )
+    parser.add_argument(
         "--peer-chat-post-writeback-grace-s",
         type=float,
         default=DEFAULT_PEER_CHAT_POST_WRITEBACK_GRACE_S,
@@ -265,6 +277,7 @@ def _commands_payload(
     feature_id: str,
     note_path: str,
     repo_head_sha: str,
+    peer_chat_response_wait_s: float,
     peer_chat_post_writeback_grace_s: float,
     peer_god_backend: str,
     ray_god_mcp: bool,
@@ -281,6 +294,7 @@ def _commands_payload(
         "note_path": note_path,
         "repo_head_sha": repo_head_sha,
         "expected_note_content": _expected_note_content(feature_id),
+        "peer_chat_response_wait_s": peer_chat_response_wait_s,
         "peer_chat_post_writeback_grace_s": peer_chat_post_writeback_grace_s,
         "peer_god_backend": peer_god_backend,
         "ray_god_mcp": ray_god_mcp,
@@ -363,6 +377,7 @@ def _start_runner(
     chat_port: int,
     logs_dir: Path,
     max_hours: float,
+    peer_chat_response_wait_s: float,
     peer_chat_post_writeback_grace_s: float,
     peer_god_backend: str,
     ray_god_mcp: bool,
@@ -391,6 +406,8 @@ def _start_runner(
             "--default-review-peer-routing",
             "--no-auto-merge",
             "--require-final-action-approval",
+            "--peer-chat-response-wait-s",
+            str(peer_chat_response_wait_s),
             "--peer-chat-post-writeback-grace-s",
             str(peer_chat_post_writeback_grace_s),
         ],

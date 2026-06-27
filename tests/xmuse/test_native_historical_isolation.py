@@ -27,7 +27,7 @@ class _FakeStateMachine:
 
 
 @pytest.mark.asyncio
-async def test_runner_uses_ray_peer_god_layer_by_default(
+async def test_runner_uses_native_peer_god_layer_by_default(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
@@ -57,11 +57,7 @@ async def test_runner_uses_ray_peer_god_layer_by_default(
             return None
 
     import xmuse_core.agents.launchers as launchers_module
-    import xmuse_core.agents.ray_session_layer as ray_session_layer_module
     import xmuse_core.chat.peer_scheduler as peer_scheduler_module
-
-    async def fake_prewarm(self) -> None:
-        captured["prewarmed"] = type(self).__name__
 
     monkeypatch.setattr(
         launchers_module,
@@ -71,7 +67,6 @@ async def test_runner_uses_ray_peer_god_layer_by_default(
     monkeypatch.delenv("XMUSE_PEER_GOD_BACKEND", raising=False)
     monkeypatch.setattr(platform_runner, "PlatformOrchestrator", FakeOrchestrator)
     monkeypatch.setattr(peer_scheduler_module, "PeerChatScheduler", FakePeerScheduler)
-    monkeypatch.setattr(ray_session_layer_module.RayGodSessionLayer, "prewarm", fake_prewarm)
 
     await platform_runner.run(
         lanes_path=tmp_path / "feature_lanes.json",
@@ -82,8 +77,7 @@ async def test_runner_uses_ray_peer_god_layer_by_default(
         peer_chat_enabled=True,
     )
 
-    assert type(captured["scheduler_kwargs"]["god_layer"]).__name__ == "RayGodSessionLayer"
-    assert captured["prewarmed"] == "RayGodSessionLayer"
+    assert type(captured["scheduler_kwargs"]["god_layer"]).__name__ == "GodSessionLayer"
 
 
 @pytest.mark.asyncio
@@ -139,8 +133,8 @@ async def test_runner_can_force_native_peer_god_layer(
 
     god_layer = captured["scheduler_kwargs"]["god_layer"]
     assert type(god_layer).__name__ == "GodSessionLayer"
-    assert god_layer.degraded_peer_runtime == "native_exec_shim"
-    assert god_layer.degraded_peer_runtime_reason == "explicit_native_backend"
+    assert not hasattr(god_layer, "degraded_peer_runtime")
+    assert not hasattr(god_layer, "degraded_peer_runtime_reason")
 
 
 @pytest.mark.asyncio

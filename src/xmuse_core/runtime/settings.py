@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     runtime_backend: str = "ray"
     review_god_backend: str = "ray"
     execute_god_backend: str = "ray"
-    peer_god_backend: str = "ray"
+    peer_god_backend: str = "native"
     degraded_local_god_mode: bool = False
     ray_god_transport: str = "app-server"
     ray_god_effort: str = "low"
