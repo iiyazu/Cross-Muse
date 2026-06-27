@@ -17,7 +17,10 @@ from xmuse_core.providers.adapters.base import (
     ProviderInvocationResult,
 )
 from xmuse_core.providers.goal_contract import WorkerResultStatus
-from xmuse_core.providers.health import ProviderHealthSnapshot
+from xmuse_core.providers.health import (
+    ProviderHealthFailureKind,
+    ProviderHealthSnapshot,
+)
 from xmuse_core.providers.models import (
     AdapterKind,
     ProviderId,
@@ -105,15 +108,34 @@ class A2AProviderAdapter:
         )
 
     def check_health(self) -> ProviderHealthSnapshot:
+        if self._api_key is None:
+            return ProviderHealthSnapshot(
+                provider_id=self.profile.provider_id,
+                profile_id=self.profile.profile_id,
+                checked_at=self._checked_at_factory(),
+                is_available=False,
+                is_configured=True,
+                auth_ok=False,
+                model_available=False,
+                failure_kind=ProviderHealthFailureKind.AUTH_ERROR,
+                diagnostic_summary=(
+                    "A2A endpoint configured, but no provider API key is present; "
+                    "remote write auth is not proven."
+                ),
+            )
         return ProviderHealthSnapshot(
             provider_id=self.profile.provider_id,
             profile_id=self.profile.profile_id,
             checked_at=self._checked_at_factory(),
-            is_available=True,
+            is_available=False,
             is_configured=True,
             auth_ok=True,
-            model_available=True,
-            diagnostic_summary="A2A adapter configured; live remote health not probed.",
+            model_available=False,
+            failure_kind=ProviderHealthFailureKind.UNAVAILABLE,
+            diagnostic_summary=(
+                "A2A endpoint and API key configured; live remote health is not "
+                "probed, so availability is not asserted."
+            ),
         )
 
     def _build_task_request(
