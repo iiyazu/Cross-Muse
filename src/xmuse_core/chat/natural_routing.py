@@ -3,6 +3,9 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import asdict, dataclass
+from typing import Any
+
+DEFAULT_NATURAL_ROUTE_MAX_DEPTH = 3
 
 
 @dataclass(frozen=True)
@@ -83,6 +86,21 @@ def build_natural_route_event(
     )
 
 
+def next_natural_route_depth(source_payload: dict[str, Any] | None) -> int:
+    parent_depth = _natural_route_depth(source_payload)
+    if parent_depth is None:
+        return 1
+    return parent_depth + 1
+
+
+def natural_route_depth_exceeded(
+    depth: int,
+    *,
+    max_depth: int = DEFAULT_NATURAL_ROUTE_MAX_DEPTH,
+) -> bool:
+    return depth > max_depth
+
+
 def natural_route_payload(
     event: NaturalRouteEvent,
     *,
@@ -107,3 +125,17 @@ def natural_route_payload(
     if extra:
         payload.update(extra)
     return payload
+
+
+def _natural_route_depth(source_payload: dict[str, Any] | None) -> int | None:
+    if not isinstance(source_payload, dict):
+        return None
+    natural_route = source_payload.get("natural_route")
+    if isinstance(natural_route, dict):
+        depth = natural_route.get("depth")
+        if isinstance(depth, int):
+            return depth
+    depth = source_payload.get("route_depth")
+    if isinstance(depth, int):
+        return depth
+    return None

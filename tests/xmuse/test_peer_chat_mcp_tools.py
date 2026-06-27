@@ -9,6 +9,11 @@ from xmuse.mcp_server import create_app
 from xmuse_core.agents.god_session_registry import GodSessionRegistry
 from xmuse_core.chat.collaboration_store import ChatCollaborationStore
 from xmuse_core.chat.inbox_store import ChatInboxStore
+from xmuse_core.chat.natural_routing import (
+    DEFAULT_NATURAL_ROUTE_MAX_DEPTH,
+    build_natural_route_event,
+    natural_route_payload,
+)
 from xmuse_core.chat.participant_store import ParticipantStore
 from xmuse_core.chat.store import ChatStore
 from xmuse_core.chat.stream_store import PeerTurnLatencyTraceStore
@@ -957,6 +962,150 @@ def test_chat_mention_can_reply_to_current_inbox_item(tmp_path: Path) -> None:
         source_item.id,
     )
     assert "chat_mention" in stages
+
+
+def test_chat_mention_reply_increments_parent_natural_route_depth(
+    tmp_path: Path,
+) -> None:
+    chat, conv, sender, session = _registered_participant(tmp_path)
+    target = ParticipantStore(tmp_path / "chat.db").add(
+        conversation_id=conv.id,
+        role="review",
+        display_name="Review GOD",
+        cli_kind="codex",
+        model="gpt-5.5",
+    )
+    source = chat.add_message(conv.id, "Human", "human", "@architect start")
+    parent_route = build_natural_route_event(
+        conversation_id=conv.id,
+        origin_message_id=source.id,
+        source_kind="human_line_start_mention",
+        author_participant_id=None,
+        target_participant_id=sender.participant_id,
+        route_kind="mention",
+        source_refs=[f"message:{source.id}"],
+        depth=2,
+    )
+    inbox_store = ChatInboxStore(tmp_path / "chat.db")
+    source_item = inbox_store.create_item(
+        conversation_id=conv.id,
+        target_participant_id=sender.participant_id,
+        target_role=sender.role,
+        target_address="@architect",
+        sender_participant_id=None,
+        sender_address="@human",
+        source_message_id=source.id,
+        item_type="mention",
+        payload=natural_route_payload(
+            parent_route,
+            content=source.content,
+            mention="@architect",
+        ),
+    )
+    client = TestClient(create_app(tmp_path))
+
+    payload = json.loads(
+        _mcp_call(
+            client,
+            "chat_mention",
+            {
+                "conversation_id": conv.id,
+                "participant_id": sender.participant_id,
+                "god_session_id": session.god_session_id,
+                "client_request_id": "route-depth-increment-1",
+                "target_address": "@review",
+                "content": _complete_handoff_content(),
+                "reply_to_inbox_item_id": source_item.id,
+            },
+        )
+    )
+
+    assert payload["inbox_items"][0]["target_participant_id"] == target.participant_id
+    assert payload["natural_route"]["depth"] == 3
+    assert payload["inbox_items"][0]["payload"]["route_depth"] == 3
+    assert payload["natural_route"]["source_refs"] == [
+        f"message:{source.id}",
+        f"inbox:{source_item.id}",
+    ]
+
+
+def test_chat_mention_reply_blocks_when_natural_route_depth_exceeds_max(
+    tmp_path: Path,
+) -> None:
+    chat, conv, sender, session = _registered_participant(tmp_path)
+    target = ParticipantStore(tmp_path / "chat.db").add(
+        conversation_id=conv.id,
+        role="review",
+        display_name="Review GOD",
+        cli_kind="codex",
+        model="gpt-5.5",
+    )
+    source = chat.add_message(conv.id, "Human", "human", "@architect start")
+    parent_route = build_natural_route_event(
+        conversation_id=conv.id,
+        origin_message_id=source.id,
+        source_kind="human_line_start_mention",
+        author_participant_id=None,
+        target_participant_id=sender.participant_id,
+        route_kind="mention",
+        source_refs=[f"message:{source.id}"],
+        depth=DEFAULT_NATURAL_ROUTE_MAX_DEPTH,
+    )
+    inbox_store = ChatInboxStore(tmp_path / "chat.db")
+    source_item = inbox_store.create_item(
+        conversation_id=conv.id,
+        target_participant_id=sender.participant_id,
+        target_role=sender.role,
+        target_address="@architect",
+        sender_participant_id=None,
+        sender_address="@human",
+        source_message_id=source.id,
+        item_type="mention",
+        payload=natural_route_payload(
+            parent_route,
+            content=source.content,
+            mention="@architect",
+        ),
+    )
+    client = TestClient(create_app(tmp_path))
+
+    payload = json.loads(
+        _mcp_call(
+            client,
+            "chat_mention",
+            {
+                "conversation_id": conv.id,
+                "participant_id": sender.participant_id,
+                "god_session_id": session.god_session_id,
+                "client_request_id": "route-depth-blocker-1",
+                "target_address": "@review",
+                "content": _complete_handoff_content(),
+                "reply_to_inbox_item_id": source_item.id,
+            },
+        )
+    )
+
+    replied = inbox_store.get(source_item.id)
+    assert replied.status == "read"
+    assert replied.responded_message_id == payload["message"]["id"]
+    assert payload["message"]["mentions"] == []
+    assert payload["natural_route"]["status"] == "blocked"
+    assert payload["natural_route"]["blocker_reason"] == (
+        "natural_route_max_depth_exceeded"
+    )
+    assert payload["natural_route"]["depth"] == DEFAULT_NATURAL_ROUTE_MAX_DEPTH + 1
+    assert payload["inbox_items"][0]["target_participant_id"] == sender.participant_id
+    assert payload["inbox_items"][0]["item_type"] == "natural_route_blocker"
+    blocker_payload = payload["inbox_items"][0]["payload"]
+    assert blocker_payload["blocks_dispatch"] is True
+    assert blocker_payload["blocker_kind"] == "natural_route_max_depth_exceeded"
+    assert blocker_payload["target_participant_id"] == target.participant_id
+    assert blocker_payload["attempted_depth"] == DEFAULT_NATURAL_ROUTE_MAX_DEPTH + 1
+    assert blocker_payload["max_depth"] == DEFAULT_NATURAL_ROUTE_MAX_DEPTH
+    assert inbox_store.list_for_participant(
+        conversation_id=conv.id,
+        participant_id=target.participant_id,
+    ) == []
 
 
 def test_chat_mention_current_inbox_incomplete_handoff_creates_blocker(
