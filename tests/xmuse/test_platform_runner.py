@@ -696,7 +696,7 @@ async def test_runner_wires_peer_chat_writeback_grace_override(
 
 
 @pytest.mark.asyncio
-async def test_runner_uses_ray_peer_god_layer_by_default(
+async def test_runner_uses_native_peer_god_layer_by_default(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
@@ -719,16 +719,11 @@ async def test_runner_uses_ray_peer_god_layer_by_default(
         async def tick_once(self) -> None:
             return None
 
-    import xmuse_core.agents.ray_session_layer as ray_session_layer_module
     import xmuse_core.chat.peer_scheduler as peer_scheduler_module
-
-    async def fake_prewarm(self) -> None:
-        captured["prewarmed"] = type(self).__name__
 
     monkeypatch.delenv("XMUSE_PEER_GOD_BACKEND", raising=False)
     monkeypatch.setattr(platform_runner, "PlatformOrchestrator", FakeOrchestrator)
     monkeypatch.setattr(peer_scheduler_module, "PeerChatScheduler", FakePeerScheduler)
-    monkeypatch.setattr(ray_session_layer_module.RayGodSessionLayer, "prewarm", fake_prewarm)
     monkeypatch.setattr(
         platform_runner,
         "_peer_chat_runtime_worktree",
@@ -744,8 +739,7 @@ async def test_runner_uses_ray_peer_god_layer_by_default(
         peer_chat_enabled=True,
     )
 
-    assert type(captured["scheduler_kwargs"]["god_layer"]).__name__ == "RayGodSessionLayer"
-    assert captured["prewarmed"] == "RayGodSessionLayer"
+    assert type(captured["scheduler_kwargs"]["god_layer"]).__name__ == "GodSessionLayer"
 
 
 @pytest.mark.asyncio
@@ -837,7 +831,7 @@ async def test_dispatch_bridge_tick_scans_chat_conversations(tmp_path: Path) -> 
 
 
 @pytest.mark.asyncio
-async def test_runner_prewarm_ray_peer_god_layer_by_default(
+async def test_runner_prewarm_ray_peer_god_layer_when_explicitly_selected(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
@@ -866,7 +860,7 @@ async def test_runner_prewarm_ray_peer_god_layer_by_default(
     import xmuse_core.agents.ray_session_layer as ray_session_layer_module
     import xmuse_core.chat.peer_scheduler as peer_scheduler_module
 
-    monkeypatch.delenv("XMUSE_PEER_GOD_BACKEND", raising=False)
+    monkeypatch.setenv("XMUSE_PEER_GOD_BACKEND", "ray")
     monkeypatch.setattr(platform_runner, "PlatformOrchestrator", FakeOrchestrator)
     monkeypatch.setattr(peer_scheduler_module, "PeerChatScheduler", FakePeerScheduler)
     monkeypatch.setattr(ray_session_layer_module.RayGodSessionLayer, "prewarm", fake_prewarm)
@@ -933,6 +927,63 @@ async def test_runner_can_force_native_peer_god_layer(
     )
 
     assert type(captured["scheduler_kwargs"]["god_layer"]).__name__ == "GodSessionLayer"
+
+
+@pytest.mark.asyncio
+async def test_runner_can_force_native_peer_god_layer_from_run_argument(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeOrchestrator:
+        def __init__(self, **kwargs) -> None:
+            self._sm = _FakeStateMachine()
+
+        async def reconcile_status_changes(self) -> None:
+            return None
+
+        async def dispatch_lane(self, lane_id: str) -> None:
+            return None
+
+    class FakePeerScheduler:
+        def __init__(self, **kwargs) -> None:
+            captured["scheduler_kwargs"] = kwargs
+
+        async def tick_once(self) -> None:
+            return None
+
+    import xmuse_core.chat.peer_scheduler as peer_scheduler_module
+
+    monkeypatch.delenv("XMUSE_PEER_GOD_BACKEND", raising=False)
+    monkeypatch.setattr(platform_runner, "PlatformOrchestrator", FakeOrchestrator)
+    monkeypatch.setattr(peer_scheduler_module, "PeerChatScheduler", FakePeerScheduler)
+    monkeypatch.setattr(
+        platform_runner,
+        "_peer_chat_runtime_worktree",
+        _empty_peer_chat_worktree,
+    )
+
+    await platform_runner.run(
+        lanes_path=tmp_path / "feature_lanes.json",
+        xmuse_root=tmp_path / "xmuse",
+        mcp_port=8100,
+        max_hours=0,
+        max_concurrent=1,
+        peer_chat_enabled=True,
+        peer_god_backend="native",
+    )
+
+    assert type(captured["scheduler_kwargs"]["god_layer"]).__name__ == "GodSessionLayer"
+
+
+def test_platform_runner_accepts_peer_god_backend_cli_argument() -> None:
+    args = platform_runner.main_arg_parser().parse_args(
+        ["--peer-chat", "--peer-god-backend", "native"]
+    )
+
+    assert args.peer_chat is True
+    assert args.peer_god_backend == "native"
 
 
 
@@ -2228,7 +2279,7 @@ def test_health_once_exposes_chat_dispatch_bridge_progress(
     }
 
 
-def test_health_once_marks_runtime_operations_degraded_and_cleanup_dirty(
+def test_health_once_marks_native_peer_backend_and_cleanup_dirty(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -2264,7 +2315,7 @@ def test_health_once_marks_runtime_operations_degraded_and_cleanup_dirty(
     assert operations["readiness"]["chat_api"]["status"] == "unreachable"
     assert operations["readiness"]["mcp"]["status"] == "unreachable"
     assert operations["readiness"]["runner"]["status"] == "missing"
-    assert operations["readiness"]["ray_god_layer"]["status"] == "degraded"
+    assert operations["readiness"]["ray_god_layer"]["status"] == "native_configured"
     assert operations["readiness"]["codex_app_server"]["status"] == "orphaned"
     assert operations["cleanup"]["status"] == "dirty"
     assert [item["code"] for item in operations["cleanup"]["leftovers"]] == [

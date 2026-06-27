@@ -20,6 +20,7 @@ from xmuse.chat_api import create_app as create_chat_app
 from xmuse.mcp_server import create_app as create_mcp_app
 from xmuse_core.agents import codex_persistent
 from xmuse_core.agents.god_session_registry import GodSessionRegistry
+from xmuse_core.agents.protocol import StdoutMessage
 from xmuse_core.agents.ray_session_layer import RayGodSessionLayer
 from xmuse_core.agents.registry import AgentDescriptor, AgentRuntime
 from xmuse_core.chat.acceptance_spine import AcceptanceSpineStatus, AcceptanceSpineStore
@@ -67,6 +68,9 @@ class DummyLauncher:
 
     def build_persistent_command(self, role: str, worktree: Path) -> list[str]:
         return ["codex", role, str(worktree)]
+
+    def build_env(self, _role: str) -> dict[str, str]:
+        return {}
 
     def persistent_model(self) -> str:
         return self.model
@@ -210,6 +214,32 @@ class FakeProviderAppServerActor:
 
     async def shutdown(self):
         self._alive = False
+
+
+class FakeNativePersistentSession:
+    def __init__(self, *, mcp_port: int, god_id: str) -> None:
+        self._actor = FakeProviderAppServerActor(mcp_port=mcp_port, god_id=god_id)
+        self._alive = True
+
+    async def send_typed(self, msg_type: str, **payload) -> None:
+        await self._actor.send_typed(msg_type, **payload)
+
+    async def receive(self):
+        message = await self._actor.receive()
+        return StdoutMessage(
+            type=message.type,
+            request_id=getattr(message, "request_id", None),
+            status=getattr(message, "status", None),
+            message=getattr(message, "message", None),
+            artifacts=getattr(message, "artifacts", {}),
+        )
+
+    async def abort(self) -> None:
+        self._alive = False
+        await self._actor.shutdown()
+
+    def is_alive(self) -> bool:
+        return self._alive
 
 
 def _refs_from_content(content: str) -> list[str]:
@@ -1482,10 +1512,6 @@ async def test_a2a_inbound_task_reaches_a2a_provider_writeback(
         launcher.mcp_port = mcp_port
         return {AgentRuntime.CODEX: launcher}
 
-    def fake_build_actor(self, **kwargs):
-        del self
-        return FakeProviderAppServerActor(**kwargs)
-
     a2a_app = FastAPI()
 
     @a2a_app.post("/a2a")
@@ -1515,14 +1541,21 @@ async def test_a2a_inbound_task_reaches_a2a_provider_writeback(
         }
 
     import xmuse_core.agents.launchers as launchers_module
+    import xmuse_core.agents.session as session_module
+
+    async def fake_spawn(command: list[str], _env=None) -> FakeNativePersistentSession:
+        return FakeNativePersistentSession(
+            mcp_port=mcp_port,
+            god_id=f"native-{command[1] if len(command) > 1 else 'peer'}",
+        )
 
     monkeypatch.setattr(
         launchers_module,
         "build_default_launchers",
         fake_build_default_launchers,
     )
-    monkeypatch.setattr(RayGodSessionLayer, "_build_actor", fake_build_actor)
-    monkeypatch.setenv("XMUSE_PEER_GOD_BACKEND", "ray")
+    monkeypatch.setattr(session_module.LocalSession, "spawn", staticmethod(fake_spawn))
+    monkeypatch.delenv("XMUSE_PEER_GOD_BACKEND", raising=False)
     monkeypatch.setenv(
         "XMUSE_A2A_PROVIDER_URL",
         f"http://127.0.0.1:{a2a_port}/a2a",
@@ -1656,10 +1689,6 @@ async def test_a2a_provider_result_handoff_reaches_review_peer(
         launcher.mcp_port = mcp_port
         return {AgentRuntime.CODEX: launcher}
 
-    def fake_build_actor(self, **kwargs):
-        del self
-        return FakeProviderAppServerActor(**kwargs)
-
     a2a_app = FastAPI()
 
     @a2a_app.post("/a2a")
@@ -1702,14 +1731,21 @@ async def test_a2a_provider_result_handoff_reaches_review_peer(
         }
 
     import xmuse_core.agents.launchers as launchers_module
+    import xmuse_core.agents.session as session_module
+
+    async def fake_spawn(command: list[str], _env=None) -> FakeNativePersistentSession:
+        return FakeNativePersistentSession(
+            mcp_port=mcp_port,
+            god_id=f"native-{command[1] if len(command) > 1 else 'peer'}",
+        )
 
     monkeypatch.setattr(
         launchers_module,
         "build_default_launchers",
         fake_build_default_launchers,
     )
-    monkeypatch.setattr(RayGodSessionLayer, "_build_actor", fake_build_actor)
-    monkeypatch.setenv("XMUSE_PEER_GOD_BACKEND", "ray")
+    monkeypatch.setattr(session_module.LocalSession, "spawn", staticmethod(fake_spawn))
+    monkeypatch.delenv("XMUSE_PEER_GOD_BACKEND", raising=False)
     monkeypatch.setenv(
         "XMUSE_A2A_PROVIDER_URL",
         f"http://127.0.0.1:{a2a_port}/a2a",
