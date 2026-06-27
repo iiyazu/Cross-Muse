@@ -474,3 +474,73 @@ def test_a2a_jsonrpc_send_message_request_enters_chat_inbox(
         "a2a_task:task-sdk",
         f"a2a_context:{conversation['id']}",
     ]
+
+
+def test_a2a_official_sendmessage_request_enters_chat_inbox(
+    tmp_path: Path,
+) -> None:
+    client = TestClient(
+        create_app(
+            base_dir=tmp_path,
+            a2a_bridge_enabled=True,
+            a2a_write_token="a2a-secret",
+        )
+    )
+    conversation = client.post(
+        "/api/chat/conversations",
+        json={"title": "A2A official SendMessage", "initial_participants": []},
+    ).json()
+    review = ParticipantStore(tmp_path / "chat.db").add(
+        conversation_id=conversation["id"],
+        role="review",
+        display_name="Review GOD",
+        cli_kind="codex",
+        model="gpt-5.4",
+    )
+
+    response = client.post(
+        "/a2a/tasks/send",
+        headers={"Authorization": "Bearer a2a-secret"},
+        json={
+            "jsonrpc": "2.0",
+            "id": "rpc-official",
+            "method": "SendMessage",
+            "params": {
+                "tenant": "external-a2a",
+                "message": {
+                    "messageId": "msg-official",
+                    "taskId": "task-official",
+                    "contextId": conversation["id"],
+                    "role": "ROLE_USER",
+                    "parts": [{"text": "@review inspect official SDK method."}],
+                    "metadata": {
+                        "sender_agent_id": "external-a2a",
+                        "target_address": "@review",
+                        "metadata": {"purpose": "official-sdk"},
+                    },
+                },
+            },
+        },
+    )
+
+    assert response.status_code == 202
+    payload = response.json()
+    assert payload["jsonrpc"] == "2.0"
+    assert payload["id"] == "rpc-official"
+    result = payload["result"]
+    assert result["status"] == "accepted"
+    assert result["a2a_sdk"]["method"] == "SendMessage"
+    assert result["a2a_sdk"]["sdk_request"]["message"]["task_id"] == "task-official"
+    inbox_item = ChatInboxStore(tmp_path / "chat.db").list_for_participant(
+        conversation_id=conversation["id"],
+        participant_id=review.participant_id,
+    )[0]
+    assert inbox_item.item_type == "a2a_task"
+    assert inbox_item.payload["a2a_input_parts"] == [
+        {"text": "@review inspect official SDK method.", "kind": "text"}
+    ]
+    assert inbox_item.payload["a2a_metadata"] == {"purpose": "official-sdk"}
+    assert inbox_item.payload["source_refs"] == [
+        "a2a_task:task-official",
+        f"a2a_context:{conversation['id']}",
+    ]

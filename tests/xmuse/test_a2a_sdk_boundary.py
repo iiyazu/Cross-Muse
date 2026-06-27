@@ -4,6 +4,7 @@ from xmuse_core.integrations.a2a_sdk_boundary import (
     A2ASDKBoundary,
     a2a_sdk_dependency_status,
     normalize_task_result_payload,
+    normalize_task_send_payload,
 )
 
 
@@ -41,6 +42,41 @@ def test_a2a_sdk_boundary_names_non_goals() -> None:
         "push_notifications",
         "direct_review_or_dispatch_authority",
     )
+
+
+def test_a2a_official_sendmessage_jsonrpc_normalizes_to_task_send() -> None:
+    result = normalize_task_send_payload(
+        {
+            "jsonrpc": "2.0",
+            "id": "rpc-send",
+            "method": "SendMessage",
+            "params": {
+                "tenant": "external-a2a",
+                "message": {
+                    "messageId": "msg-send",
+                    "taskId": "task-send",
+                    "contextId": "conv-send",
+                    "role": "ROLE_USER",
+                    "parts": [{"text": "@review inspect official SDK method."}],
+                    "metadata": {
+                        "sender_agent_id": "external-a2a",
+                        "target_address": "@review",
+                        "metadata": {"purpose": "official-sdk"},
+                    },
+                },
+            },
+        }
+    )
+
+    assert result.method == "SendMessage"
+    assert result.jsonrpc_id == "rpc-send"
+    assert result.task_id == "task-send"
+    assert result.context_id == "conv-send"
+    assert result.sender_agent_id == "external-a2a"
+    assert result.target_address == "@review"
+    assert result.content == "@review inspect official SDK method."
+    assert result.metadata == {"purpose": "official-sdk"}
+    assert result.sdk_request["message"]["task_id"] == "task-send"
 
 
 def test_a2a_task_result_normalizes_completed_artifacts() -> None:
