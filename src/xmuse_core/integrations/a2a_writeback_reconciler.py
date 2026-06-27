@@ -21,6 +21,7 @@ from xmuse_core.chat.review_trigger_verdicts import (
     ReviewTriggerVerdictError,
     review_trigger_verdict_decision,
 )
+from xmuse_core.chat.review_triggers import ReviewTriggerService
 from xmuse_core.chat.store import ChatStore
 from xmuse_core.providers.adapters.base import ProviderInvocationResult
 from xmuse_core.providers.models import ProviderId
@@ -331,6 +332,20 @@ class A2AProviderWritebackReconciler:
         message = result.get("message")
         proposal_id = proposal.get("id") if isinstance(proposal, dict) else None
         message_id = message.get("id") if isinstance(message, dict) else None
+        spine_proposal_link = self._attach_acceptance_spine_for_proposal(
+            conversation_id=conversation_id,
+            reply_to_inbox_item_id=reply_to_inbox_item_id,
+            proposal_id=proposal_id,
+        )
+        review_trigger = self._ensure_review_trigger_for_proposal(
+            conversation_id=conversation_id,
+            participant_id=participant_id,
+            proposal_id=proposal_id,
+            proposal_message_id=message_id,
+            proposal_type=(
+                proposal.get("proposal_type") if isinstance(proposal, dict) else None
+            ),
+        )
         return {
             "status": "accepted",
             "proposal_id": proposal_id,
@@ -338,9 +353,89 @@ class A2AProviderWritebackReconciler:
             "proposal_type": (
                 proposal.get("proposal_type") if isinstance(proposal, dict) else None
             ),
+            "acceptance_spine": spine_proposal_link,
+            "review_trigger": review_trigger,
             "authority": "chat.db/proposal",
             "a2a_is_authority": False,
             "source_refs": source_refs,
+        }
+
+    def _attach_acceptance_spine_for_proposal(
+        self,
+        *,
+        conversation_id: str,
+        reply_to_inbox_item_id: str,
+        proposal_id: str | None,
+    ) -> dict[str, Any]:
+        if not proposal_id:
+            return {
+                "status": "blocked",
+                "reason": "missing_proposal_id",
+                "authority": "chat.db/acceptance_spine",
+                "a2a_is_authority": False,
+            }
+        spine = AcceptanceSpineStore(self._db_path).attach_proposal_for_inbox_reply(
+            conversation_id=conversation_id,
+            inbox_item_id=reply_to_inbox_item_id,
+            proposal_id=proposal_id,
+        )
+        if spine is None:
+            return {
+                "status": "not_applicable",
+                "reason": "no_acceptance_spine_for_source_inbox",
+                "proposal_id": proposal_id,
+                "authority": "chat.db/acceptance_spine",
+                "a2a_is_authority": False,
+            }
+        return {
+            "status": "attached",
+            "proposal_id": proposal_id,
+            "intake_message_id": spine.intake_message_id,
+            "spine_status": spine.status.value,
+            "authority": "chat.db/acceptance_spine",
+            "a2a_is_authority": False,
+        }
+
+    def _ensure_review_trigger_for_proposal(
+        self,
+        *,
+        conversation_id: str,
+        participant_id: str,
+        proposal_id: str | None,
+        proposal_message_id: str | None,
+        proposal_type: str | None,
+    ) -> dict[str, Any]:
+        if not proposal_id or not proposal_message_id:
+            return {
+                "status": "blocked",
+                "reason": "missing_proposal_message",
+                "authority": "chat.db/inbox/review_trigger",
+                "a2a_is_authority": False,
+            }
+        try:
+            trigger = ReviewTriggerService(self._db_path).ensure_for_message(
+                conversation_id=conversation_id,
+                source_message_id=proposal_message_id,
+                sender_participant_id=participant_id,
+                reviewable_type=proposal_type or "proposal",
+            )
+        except PeerChatError as exc:
+            return {
+                "status": "blocked",
+                "reason": str(exc.code),
+                "detail": str(exc),
+                "proposal_id": proposal_id,
+                "proposal_message_id": proposal_message_id,
+                "authority": "chat.db/inbox/review_trigger",
+                "a2a_is_authority": False,
+            }
+        return {
+            "status": "ensured",
+            "inbox_item_id": trigger.id,
+            "proposal_id": proposal_id,
+            "proposal_message_id": proposal_message_id,
+            "authority": "chat.db/inbox/review_trigger",
+            "a2a_is_authority": False,
         }
 
     def _route_provider_result_mentions(
