@@ -206,6 +206,69 @@ def test_group_chat_context_bounds_recent_transcript_without_mutating_authority(
     assert chat.list_messages(conversation.id)[0].content == long_content
 
 
+def test_group_chat_context_projects_compact_message_envelope_artifacts(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "chat.db"
+    chat = ChatStore(db_path)
+    conversation = chat.create_conversation("A2A artifact context")
+    message = chat.add_message(
+        conversation.id,
+        author="remote-a2a-architect",
+        role="assistant",
+        content="Remote A2A result.",
+        envelope_type="a2a_provider_result",
+        envelope_json={
+            "type": "a2a_provider_result",
+            "provider_profile_ref": "a2a.remote",
+            "provider_request_id": "inbox-a2a",
+            "provider_status": "completed",
+            "source_refs": ["a2a_task:inbox-a2a", "a2a_state:TASK_STATE_COMPLETED"],
+            "authority": "chat.db/inbox",
+            "a2a_is_authority": False,
+            "diagnostic_payload": {
+                "a2a_artifacts": [
+                    {
+                        "artifact_id": "artifact-lane-candidate",
+                        "name": "lane candidate",
+                        "parts": [
+                            {"text": "Use this as proposal evidence, not approval."}
+                        ],
+                    }
+                ]
+            },
+        },
+    )
+
+    context = ContextAssembler(
+        participants=ParticipantStore(db_path),
+        chat=chat,
+    ).group_chat_context(conversation.id)
+
+    recent = context["recent_messages"][0]
+    assert recent["id"] == message.id
+    assert recent["envelope"] == {
+        "type": "a2a_provider_result",
+        "provider_profile_ref": "a2a.remote",
+        "provider_request_id": "inbox-a2a",
+        "provider_status": "completed",
+        "authority": "chat.db/inbox",
+        "a2a_is_authority": False,
+        "source_refs": ["a2a_task:inbox-a2a", "a2a_state:TASK_STATE_COMPLETED"],
+        "artifacts": [
+            {
+                "artifact_id": "artifact-lane-candidate",
+                "name": "lane candidate",
+                "text": "Use this as proposal evidence, not approval.",
+            }
+        ],
+        "artifact_count": 1,
+    }
+    assert context["context_capsule"]["recent_messages"][0]["envelope"] == (
+        recent["envelope"]
+    )
+
+
 def test_group_chat_context_projects_structured_state_from_chat_authorities(
     tmp_path: Path,
 ) -> None:
