@@ -157,6 +157,8 @@ class A2AProviderAdapter:
             metadata["xmuse_writeback_context"] = (
                 invocation.writeback_context.model_dump(mode="json")
             )
+            if _uses_natural_groupchat_route(invocation.runtime_context):
+                context_id = invocation.writeback_context.conversation_id
         if invocation.runtime_context:
             metadata["xmuse_runtime_context"] = dict(invocation.runtime_context)
         if invocation.goal_contract is not None:
@@ -211,6 +213,11 @@ def _context_id_for_invocation(invocation: ProviderInvocation) -> str:
         if lane_id:
             return lane_id
     return invocation.request_id
+
+
+def _uses_natural_groupchat_route(runtime_context: dict[str, object]) -> bool:
+    route = runtime_context.get("route")
+    return isinstance(route, dict) and bool(route.get("route_key"))
 
 
 def _review_expected_result_contract(*, lane_id: str) -> dict[str, object]:

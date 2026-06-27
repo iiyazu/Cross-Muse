@@ -1789,6 +1789,7 @@ async def test_scheduler_a2a_proposal_writeback_creates_review_trigger(
                                         ),
                                         "depends_on": [],
                                         "capabilities": ["code", "test"],
+                                        "gate_profiles": ["xmuse-core"],
                                     }
                                 ],
                             },
@@ -1824,6 +1825,7 @@ async def test_scheduler_a2a_proposal_writeback_creates_review_trigger(
     [invocation] = provider_service.invocations
     assert invocation.provider_profile_ref == "a2a.remote"
     [proposal] = ChatStore(db_path).list_proposals(conv.id)
+    assert json.loads(proposal.content)["lanes"][0]["gate_profiles"] == ["xmuse-core"]
     proposal_message = next(
         msg
         for msg in chat.list_messages(conv.id)

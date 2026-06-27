@@ -1388,8 +1388,11 @@ def create_app(
     ) -> dict[str, object] | JSONResponse:
         if not a2a_bridge_enabled:
             raise HTTPException(status_code=404, detail=_a2a_disabled_detail())
-        _require_a2a_write_authorized(request, _a2a_write_token(a2a_write_token, auth_token))
         try:
+            _require_a2a_write_authorized(
+                request,
+                _a2a_write_token(a2a_write_token, auth_token),
+            )
             normalized = normalize_task_send_payload(body)
             result = A2AInboundBridge(root / "chat.db", enabled=True).record_task_send(
                 A2AInboundTask(
@@ -1431,6 +1434,24 @@ def create_app(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail={"code": exc.code, "message": exc.detail},
             ) from exc
+        except HTTPException as exc:
+            if (
+                isinstance(body, dict)
+                and body.get("jsonrpc") == "2.0"
+                and isinstance(exc.detail, dict)
+                and exc.detail.get("code")
+                in {"a2a_write_auth_required", "a2a_write_local_only"}
+            ):
+                return JSONResponse(
+                    status_code=exc.status_code,
+                    content=jsonrpc_error_response(
+                        request_id=_jsonrpc_id(body),
+                        code=-32001,
+                        message=str(exc.detail["code"]),
+                        data={"detail": exc.detail.get("message")},
+                    ),
+                )
+            raise
         except A2ABridgeError as exc:
             if isinstance(body, dict) and body.get("jsonrpc") == "2.0":
                 return JSONResponse(

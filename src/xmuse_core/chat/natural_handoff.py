@@ -74,10 +74,11 @@ def build_handoff_envelope(
     source_inbox_item_id: str | None = None,
     input_parts: list[dict[str, object]] | tuple[dict[str, object], ...] = (),
     artifact_refs: list[str] | tuple[str, ...] = (),
+    feature_scope_id: str | None = None,
 ) -> dict[str, object]:
     fields = dict(assessment.fields)
     source_refs_list = list(source_refs)
-    return {
+    envelope: dict[str, object] = {
         "type": "natural_handoff",
         "schema_version": "xmuse-natural-handoff-v1",
         "task_id": task_id,
@@ -110,6 +111,10 @@ def build_handoff_envelope(
         "fields": fields,
         "source_refs": source_refs_list,
     }
+    clean_feature_scope_id = _clean_optional_text(feature_scope_id)
+    if clean_feature_scope_id is not None:
+        envelope["feature_scope_id"] = clean_feature_scope_id
+    return envelope
 
 
 def assess_natural_handoff(content: str, *, target_role: str) -> HandoffAssessment:
@@ -155,6 +160,13 @@ def _normalize_label(value: str) -> str:
     text = value.strip().lower()
     text = re.sub(r"^[-*>\s]+", "", text)
     return re.sub(r"[\s_-]+", " ", text)
+
+
+def _clean_optional_text(value: str | None) -> str | None:
+    if value is None:
+        return None
+    text = value.strip()
+    return text or None
 
 
 def _canonical_evidence_refs(

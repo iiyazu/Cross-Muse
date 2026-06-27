@@ -77,6 +77,10 @@ def test_peer_chat_prompt_builder_emits_ordered_auditable_layers(tmp_path: Path)
         assembled.text
     )
     assert "do not also call chat_mention for the same target" in assembled.text
+    assert "Every dispatchable lane_graph lane must include explicit gate_profiles" in (
+        assembled.text
+    )
+    assert "durable blocker or open question" in assembled.text
     assert "If mcp_tools_ready has appeared, MCP tools are available" in assembled.text
 
 
