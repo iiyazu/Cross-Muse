@@ -6,7 +6,11 @@ from types import SimpleNamespace
 import pytest
 
 from xmuse_core.chat.memory_sidecar import GroupchatMemorySidecar
-from xmuse_core.integrations.memoryos_client import FakeMemoryOSClient, MemoryOSContext
+from xmuse_core.integrations.memoryos_client import (
+    FakeMemoryOSClient,
+    MemoryOSContext,
+    MemoryOSIngestRequest,
+)
 from xmuse_core.integrations.memoryos_namespace import conversation_namespace
 
 
@@ -74,3 +78,44 @@ async def test_memory_sidecar_recall_reports_timeout_without_blocking() -> None:
     assert result["query"] == "@architect continue"
     assert result["degraded_reason"] == "memoryos_timeout"
     assert result["source_refs"] == []
+    assert "continuity_refs" not in result
+    assert result["continuity_attempt_ref"] == (
+        "memory://conversation/conv-1/context/memoryos-sidecar-attempt"
+    )
+
+
+@pytest.mark.asyncio
+async def test_memory_sidecar_recall_attaches_namespace_continuity_refs() -> None:
+    memoryos = FakeMemoryOSClient()
+    namespace = conversation_namespace("conv-1")
+    await memoryos.ingest(
+        MemoryOSIngestRequest(
+            namespace=namespace,
+            actor_id="god-review",
+            content="@architect use prior review: prior review approved the bounded lane.",
+            source_refs=["review:verdict-1"],
+        )
+    )
+    sidecar = GroupchatMemorySidecar(memoryos)
+    inbox_item = SimpleNamespace(
+        payload={"content": "@architect use prior review"},
+        item_type="mention",
+    )
+
+    result = await sidecar.recall_for_turn(
+        conversation_id="conv-1",
+        actor_id="architect-1",
+        inbox_item=inbox_item,
+    )
+
+    assert result["status"] == "attached"
+    assert result["source_refs"] == ["review:verdict-1"]
+    assert result["continuity_ref"] == (
+        "memory://conversation/conv-1/context/memoryos-sidecar"
+    )
+    assert result["continuity_refs"] == [
+        "memory://conversation/conv-1/context/memoryos-sidecar"
+    ]
+    assert result["continuity_attempt_ref"] == (
+        "memory://conversation/conv-1/context/memoryos-sidecar-attempt"
+    )

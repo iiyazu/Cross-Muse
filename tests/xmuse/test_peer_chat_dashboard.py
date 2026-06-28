@@ -409,6 +409,9 @@ def test_dashboard_peer_chat_ux_projection_is_frontend_read_model(
                 "namespace_uri": f"memory://conversation/{conv.id}",
                 "degraded_reason": "memoryos_timeout",
                 "source_refs": long_memory_refs,
+                "continuity_attempt_ref": (
+                    f"memory://conversation/{conv.id}/context/memoryos-sidecar-attempt"
+                ),
                 "text": "recall body must not be projected as frontend truth",
             }
         },
@@ -503,6 +506,7 @@ def test_dashboard_peer_chat_ux_projection_is_frontend_read_model(
             "namespace_uri": f"memory://conversation/{conv.id}",
             "degraded_reason": "memoryos_timeout",
             "source_refs": [ref[:240] for ref in long_memory_refs[:20]],
+            "continuity_refs": [],
         }
     ]
     assert "recall body" not in json.dumps(supporting_context)
@@ -741,6 +745,59 @@ def test_dashboard_peer_chat_ux_projection_tolerates_old_trace_schema(
         "source_authority": ["chat.db:peer_turn_latency_traces.supporting_context_json"],
         "memoryos_sidecar": {"status_summary": {}, "latest": []},
     }
+
+
+def test_dashboard_peer_chat_ux_projection_accepts_singular_sidecar_continuity_ref(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "chat.db"
+    chat = ChatStore(db)
+    conv = chat.create_conversation("Singular sidecar continuity")
+    message = chat.add_message(conv.id, "Human", "human", "@architect continue")
+    inbox = ChatInboxStore(db).create_item(
+        conversation_id=conv.id,
+        target_participant_id="part-architect",
+        target_role="architect",
+        target_address="@architect",
+        sender_participant_id=None,
+        sender_address="@human",
+        source_message_id=message.id,
+        item_type="mention",
+        payload={"content": "@architect continue"},
+    )
+    continuity_ref = f"memory://conversation/{conv.id}/context/memoryos-sidecar"
+    PeerTurnLatencyTraceStore(db).record(
+        conversation_id=conv.id,
+        inbox_item_id=inbox.id,
+        participant_id="part-architect",
+        target_role="architect",
+        message_created_at=inbox.created_at,
+        inbox_claimed_at=inbox.claimed_at,
+        delivery_started_at=1.0,
+        provider_turn_started_at=1.1,
+        first_delta_at=None,
+        writeback_at=2.0,
+        total_latency_ms=1000,
+        delivery_mode="mcp_writeback",
+        degraded_reason=None,
+        supporting_context={
+            "memoryos_sidecar": {
+                "status": "attached",
+                "authority": "memoryos_sidecar",
+                "proof_level": "contract",
+                "namespace_uri": f"memory://conversation/{conv.id}",
+                "continuity_ref": continuity_ref,
+            }
+        },
+    )
+
+    response = TestClient(create_app(tmp_path)).get(
+        f"/api/dashboard/peer-chat/conversations/{conv.id}/ux-projection"
+    )
+
+    assert response.status_code == 200
+    [item] = response.json()["supporting_context"]["memoryos_sidecar"]["latest"]
+    assert item["continuity_refs"] == [continuity_ref]
 
 
 def test_dashboard_peer_chat_ux_projection_tolerates_dispatch_queue_without_gate_refs(

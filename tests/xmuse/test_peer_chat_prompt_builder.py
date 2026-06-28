@@ -203,6 +203,9 @@ def test_prompt_builder_includes_memoryos_sidecar_context(tmp_path: Path) -> Non
         "namespace_uri": f"memory://conversation/{conv.id}",
         "text": "Prior review approved the tiny docs-only lane.",
         "source_refs": ["review:verdict-1", "gate:pytest"],
+        "continuity_refs": [
+            f"memory://conversation/{conv.id}/context/memoryos-sidecar",
+        ],
     }
 
     assembled = XmusePromptBuilder().build_peer_chat_prompt(
@@ -223,8 +226,14 @@ def test_prompt_builder_includes_memoryos_sidecar_context(tmp_path: Path) -> Non
     assert "MemoryOS sidecar status: attached" in assembled.text
     assert "MemoryOS is sidecar context, not proposal/review/dispatch truth" in (assembled.text)
     assert "Prior review approved the tiny docs-only lane." in assembled.text
+    assert "Continuity refs:" in assembled.text
+    assert f"- memory://conversation/{conv.id}/context/memoryos-sidecar" in assembled.text
     assert "- review:verdict-1" in assembled.text
     assert "- gate:pytest" in assembled.text
+    memory_layer = artifact["layers"][4]
+    assert memory_layer["metadata"]["continuity_refs"] == [
+        f"memory://conversation/{conv.id}/context/memoryos-sidecar"
+    ]
 
 
 def test_prompt_builder_includes_collaboration_callback_proposal_action(

@@ -71,12 +71,15 @@ class GroupchatMemorySidecar:
     ) -> dict[str, Any]:
         namespace = conversation_namespace(conversation_id)
         query = _query_for_item(inbox_item)
+        continuity_ref = _continuity_ref(namespace)
+        continuity_attempt_ref = _continuity_attempt_ref(namespace)
         base = {
             "authority": "memoryos_sidecar",
             "namespace_uri": namespace.uri,
             "actor_id": actor_id,
             "query": query,
             "budget": self.budget,
+            "continuity_attempt_ref": continuity_attempt_ref,
         }
         try:
             context = await self._build_context(
@@ -109,15 +112,20 @@ class GroupchatMemorySidecar:
                 "source_refs": list(context.source_refs),
             }
         text = context.text.strip()
+        assembled_context = {
+            **base,
+            "continuity_ref": continuity_ref,
+            "continuity_refs": [continuity_ref],
+        }
         if not text:
             return {
-                **base,
+                **assembled_context,
                 "status": "empty",
                 "proof_level": "contract",
                 "source_refs": list(context.source_refs),
             }
         return {
-            **base,
+            **assembled_context,
             "status": "attached",
             "proof_level": "contract",
             "text": text,
@@ -214,6 +222,14 @@ def _query_for_item(inbox_item: Any) -> str:
     if isinstance(item_type, str) and item_type.strip():
         return item_type.strip()
     return "xmuse groupchat turn"
+
+
+def _continuity_ref(namespace: MemoryOSNamespace) -> str:
+    return f"{namespace.uri}/context/memoryos-sidecar"
+
+
+def _continuity_attempt_ref(namespace: MemoryOSNamespace) -> str:
+    return f"{namespace.uri}/context/memoryos-sidecar-attempt"
 
 
 def _dispatch_handoff_content(dispatch_queue_entry_id: str, source_refs: list[str]) -> str:
