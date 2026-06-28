@@ -592,6 +592,50 @@ def test_dashboard_peer_chat_ux_projection_tolerates_dispatch_queue_without_gate
     ]
 
 
+def test_dashboard_peer_chat_ux_projection_keeps_dispatch_evidence_out_of_source_refs(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "chat.db"
+    conv = ChatStore(db).create_conversation("Dispatch evidence boundary")
+    queue = ChatDispatchQueueStore(db)
+    entry = queue.enqueue_agent_auto_dispatch(
+        conversation_id=conv.id,
+        proposal_id="proposal-evidence-boundary",
+        resolution_id="resolution-evidence-boundary",
+        collaboration_run_id="collab-evidence-boundary",
+        artifact_ref="artifact:lane_graph",
+        gate_refs=["review_trigger_verdict:message-evidence-boundary"],
+    )
+    assert queue.claim_next_auto_dispatch(
+        conversation_id=conv.id,
+        claimed_by="bridge-test",
+    )
+    dispatched = queue.mark_dispatched(
+        entry.entry_id,
+        provider_run_ref="provider:execute:boundary",
+        dispatch_evidence="mcp_writeback:dispatch-inbox",
+    )
+
+    response = TestClient(create_app(tmp_path)).get(
+        f"/api/dashboard/peer-chat/conversations/{conv.id}/ux-projection"
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    worklist_by_id = {item["id"]: item for item in payload["worklist"]}
+    assert worklist_by_id[entry.entry_id]["source_refs"] == [
+        f"chat_dispatch_queue:{entry.entry_id}",
+        "proposal:proposal-evidence-boundary",
+        "review_trigger_verdict:message-evidence-boundary",
+        "resolution:resolution-evidence-boundary",
+        "collaboration:collab-evidence-boundary",
+        "artifact:lane_graph",
+    ]
+    assert dispatched.dispatch_evidence not in worklist_by_id[entry.entry_id]["source_refs"]
+    dispatch_entry = payload["dispatch_queue"]["entries"][0]
+    assert dispatch_entry["dispatch_evidence"] == "mcp_writeback:dispatch-inbox"
+
+
 def test_dashboard_peer_chat_ux_projection_does_not_mutate_authority_files(
     tmp_path: Path,
 ) -> None:

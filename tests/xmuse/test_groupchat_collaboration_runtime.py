@@ -2278,7 +2278,19 @@ async def test_dispatch_bridge_acknowledges_gated_entry_through_execute_peer(
         resolution_id="resolution-real-provider",
         collaboration_run_id="collab-real-provider",
         artifact_ref="artifact:lane_graph",
+        gate_refs=[
+            "review_trigger_verdict:review-real-provider",
+            "collaboration:collab-real-provider",
+        ],
     )
+    expected_source_refs = [
+        f"chat_dispatch_queue:{entry.entry_id}",
+        "proposal:proposal-real-provider",
+        "review_trigger_verdict:review-real-provider",
+        "collaboration:collab-real-provider",
+        "resolution:resolution-real-provider",
+        "artifact:lane_graph",
+    ]
     god_layer = _DispatchBridgeGodLayer(tmp_path / "chat.db")
     bridge = ChatDispatchBridge(
         db_path=tmp_path / "chat.db",
@@ -2303,6 +2315,17 @@ async def test_dispatch_bridge_acknowledges_gated_entry_through_execute_peer(
     assert "MemoryOS sidecar" not in prompt
     assert context["inbox_item"]["item_type"] == "dispatch"
     assert context["inbox_item"]["payload"]["dispatch_queue_entry_id"] == entry.entry_id
+    assert context["inbox_item"]["payload"]["source_refs"] == expected_source_refs
+    dispatch_message = next(
+        message
+        for message in ChatStore(tmp_path / "chat.db").list_messages(conversation_id)
+        if message.envelope_type == "dispatch_request"
+    )
+    assert dispatch_message.envelope_json["source_refs"] == expected_source_refs
+    assert "Source refs:" in prompt
+    assert "These refs identify xmuse authority boundaries; they are not execution proof." in prompt
+    for source_ref in expected_source_refs:
+        assert f"- {source_ref}" in prompt
     assert "memoryos_context" not in context["group_chat"]
     reloaded = ChatDispatchQueueStore(tmp_path / "chat.db").get(entry.entry_id)
     assert reloaded.status == "dispatched"
