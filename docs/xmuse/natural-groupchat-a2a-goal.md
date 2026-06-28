@@ -23,14 +23,10 @@ Read these first:
 As of this update:
 
 - `origin/main` is calibrated at merge commit
-  `8ae7600991371783658829900cda59ecdbed7a57`.
-- The latest merged PR is #273 (`docs: record sentinel backend alignment
-  merge`),
+  `5d03bbe82a3f17f2d854d46ee4dcbf7972fe533d`.
+- The latest merged PR is #279 (`Add docs-only gate profile`),
   merged 2026-06-28 with exact PR head
-  `f67d34035d78eeb662b8f927e5a22dcd7328b080`.
-- PR #266 (`Clarify copilot intake authority
-  boundaries`), merged 2026-06-28 with exact PR head
-  `778937c1a26c81b70bb798ea6616cd8fd6fc3911`.
+  `f3212bba613693cdbb38249fd746fb760064d3c8`.
 - Current server-side main CI evidence:
   - PR #242 `c1d19ad2ae9bd8b22742376c98968073a508329c`: run
     `28292323481` success.
@@ -92,6 +88,18 @@ As of this update:
     `28318839517` success.
   - PR #273 `8ae7600991371783658829900cda59ecdbed7a57`: run
     `28318943411` success.
+  - PR #274 `f0a7041eba700ce4c1240dfac389f8ca54e6bd52`: run
+    `28319547618` success.
+  - PR #275 `9811e12c236ac88e31e67771d9788d75489d767d`: run
+    `28319975311` success.
+  - PR #276 `232e91672650d2bcda6cae0e8e2f8cd9976bfae1`: run
+    `28320338930` success.
+  - PR #277 `22e0e4ead7dd14a77ae737b88d288227bd86f79e`: run
+    `28321033182` success.
+  - PR #278 `f15cd87f595eebe1131a7e4c8590c18f1557acdc`: run
+    `28321147772` success.
+  - PR #279 `5d03bbe82a3f17f2d854d46ee4dcbf7972fe533d`: run
+    `28323650818` success.
 - Recent domain-scoped progress:
   - #244 advanced the natural peer-callback proposal handoff path.
   - #245 added opt-in MemoryOS sidecar recall/degraded-mode support.
@@ -151,6 +159,21 @@ As of this update:
     not drift into Ray defaults.
   - #273 refreshed current goal docs after #272 and records its merge/main-CI
     facts.
+  - #274 refreshed current goal docs after the default native post-#273
+    sentinel.
+  - #275 projects pending final-action holds through the read-only peer-chat UX
+    surface as operator next-action state.
+  - #276 lets read-only copilot intake classify final-action holds as durable
+    operator next-action authority without treating them as GitHub or merge
+    truth.
+  - #277 threads MemoryOS sidecar recall continuity refs into dedicated
+    prompt/supporting-context/read-projection fields while keeping generic
+    authority `source_refs` clean.
+  - #278 refreshed current goal docs after #277.
+  - #279 adds a repository `docs-only` gate profile, keeps explicit gate
+    profile selection scoped by actual changed paths including untracked worker
+    output, and writes durable fail-closed gate reports for profile resolution
+    failures.
 - The next long goal should start from a clean `origin/main` worktree after
   truth refresh.
 - Dirty historical worktrees may be read as references only. They are not main

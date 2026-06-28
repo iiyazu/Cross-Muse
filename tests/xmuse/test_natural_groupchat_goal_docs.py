@@ -4,9 +4,9 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DOCS_ROOT = PROJECT_ROOT / "docs" / "xmuse"
-CURRENT_MAIN_SHA = "8ae7600991371783658829900cda59ecdbed7a57"
-CURRENT_PR_HEAD_SHA = "f67d34035d78eeb662b8f927e5a22dcd7328b080"
-CURRENT_MAIN_CI_RUN = "28318943411"
+CURRENT_MAIN_SHA = "5d03bbe82a3f17f2d854d46ee4dcbf7972fe533d"
+CURRENT_PR_HEAD_SHA = "f3212bba613693cdbb38249fd746fb760064d3c8"
+CURRENT_MAIN_CI_RUN = "28323650818"
 HISTORICAL_DISPATCH_PROOF_SPLIT_SHA = "53dbeb9ace749510e9cb0f82f73cbd4df11ec190"
 
 
@@ -24,7 +24,7 @@ def test_natural_groupchat_goal_docs_track_current_main_calibration() -> None:
 
     for name, content in docs.items():
         assert CURRENT_MAIN_SHA in content, name
-        assert "#273" in content, name
+        assert "#279" in content, name
         assert "#259" in content
 
     assert CURRENT_PR_HEAD_SHA in docs["natural-groupchat-a2a-goal.md"]
@@ -33,6 +33,9 @@ def test_natural_groupchat_goal_docs_track_current_main_calibration() -> None:
     assert CURRENT_MAIN_CI_RUN in docs["natural-groupchat-a2a-goal.md"]
     assert CURRENT_MAIN_CI_RUN in docs["natural-groupchat-a2a-task-plan.md"]
     assert "track-a-post273-sentinel-20260628" in docs["natural-groupchat-a2a-task-plan.md"]
+    assert "track-a-docs-only-gate-final2-20260628" in docs[
+        "natural-groupchat-a2a-task-plan.md"
+    ]
     assert "default native" in docs["natural-groupchat-a2a-task-plan.md"]
     assert "28314524612" in docs["natural-groupchat-a2a-task-plan.md"]
     assert "#250" in docs["README.md"]
@@ -57,6 +60,12 @@ def test_natural_groupchat_goal_docs_track_current_main_calibration() -> None:
     assert "#271" in docs["README.md"]
     assert "#272" in docs["README.md"]
     assert "#273" in docs["README.md"]
+    assert "#274" in docs["README.md"]
+    assert "#275" in docs["README.md"]
+    assert "#276" in docs["README.md"]
+    assert "#277" in docs["README.md"]
+    assert "#278" in docs["README.md"]
+    assert "#279" in docs["README.md"]
 
 
 def test_github_server_gate_docs_describe_exact_head_check_run_evidence() -> None:
