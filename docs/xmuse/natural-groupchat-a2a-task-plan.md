@@ -14,9 +14,9 @@ Reach one of these terminal states:
 - or the chain stops at a durable blocker that names the next authority
   boundary and preserves source refs.
 
-## Current Main Status
+## Recorded Main Baseline
 
-Current server facts after the 2026-06-28 Track A/B/C/D pass:
+Recorded server facts through the 2026-06-28 Track A/B/C/D pass:
 
 | PR | Domain | Merge commit | Main CI run |
 |---|---|---|---|
@@ -57,16 +57,18 @@ Current server facts after the 2026-06-28 Track A/B/C/D pass:
 | #278 | docs refresh after MemoryOS sidecar continuity | `f15cd87f595eebe1131a7e4c8590c18f1557acdc` | `28321147772` success |
 | #279 | docs-only gate profile and explicit-profile scope enforcement | `5d03bbe82a3f17f2d854d46ee4dcbf7972fe533d` | `28323650818` success |
 
-These rows are GitHub server facts for merged code and CI. They are not proof
+These rows are GitHub server facts for merged code and CI as recorded in this
+docs snapshot. They are not live GitHub truth, latest remote-head truth, proof
 of production-ready natural groupchat, live MemoryOS authority, frontend
 completeness, GitHub review truth, or autonomous merge.
 
-Next execution loop should start from clean `origin/main` at or after
-`5d03bbe82a3f17f2d854d46ee4dcbf7972fe533d`, run Phase 0 again, and then push
-the largest reachable real chain beyond the current handoff/review/dispatch
-boundary. If the next chain cannot advance, record the durable blocker and
-next authority boundary rather than relying on stdout, worker summaries, or
-local tests.
+The recorded `last_observed_baseline` is
+`5d03bbe82a3f17f2d854d46ee4dcbf7972fe533d`. Next execution loop should start
+from a clean live `origin/main` after Phase 0 refresh, not from this static
+baseline by assumption. Then push the largest reachable real chain beyond the
+current handoff/review/dispatch boundary. If the next chain cannot advance,
+record the durable blocker and next authority boundary rather than relying on
+stdout, worker summaries, or local tests.
 
 Latest local runtime evidence recorded during #272 preparation:
 
