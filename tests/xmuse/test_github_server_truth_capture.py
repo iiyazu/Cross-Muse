@@ -9,6 +9,12 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT_PATH = ROOT / "scripts" / "github_server_truth_capture.py"
+REQUIRED_CHECKS = [
+    "quality-gates",
+    "contract-smoke-gates",
+    "real-runtime-integration-gate",
+    "peer-chat-runtime-gate",
+]
 
 module_name = "github_server_truth_capture_test_harness"
 loader = importlib.util.spec_from_file_location(module_name, SCRIPT_PATH)
@@ -36,6 +42,23 @@ class _FakeGhApiRunner:
             stdout=json.dumps(self.responses[endpoint]),
             stderr="",
         )
+
+
+def _successful_required_check_runs(head_sha: str = "head123") -> list[dict[str, object]]:
+    return [
+        {
+            "id": 111 + index,
+            "name": check_name,
+            "conclusion": "success",
+            "head_sha": head_sha,
+            "app": {"slug": "github-actions"},
+        }
+        for index, check_name in enumerate(REQUIRED_CHECKS)
+    ]
+
+
+def test_github_server_truth_capture_default_required_checks_match_server_gate() -> None:
+    assert module.DEFAULT_REQUIRED_CHECKS == REQUIRED_CHECKS
 
 
 def test_github_server_truth_capture_writes_complete_snapshot_evidence(
@@ -66,32 +89,7 @@ def test_github_server_truth_capture_writes_complete_snapshot_evidence(
                 },
             },
             "repos/iiyazu/Cross-Muse/commits/head123/check-runs": {
-                "check_runs": [
-                    {
-                        "id": 111,
-                        "name": "quality-gates",
-                        "conclusion": "success",
-                        "app": {"slug": "github-actions"},
-                    },
-                    {
-                        "id": 112,
-                        "name": "contract-smoke-gates",
-                        "conclusion": "success",
-                        "app": {"slug": "github-actions"},
-                    },
-                    {
-                        "id": 113,
-                        "name": "real-runtime-integration-gate",
-                        "conclusion": "success",
-                        "app": {"slug": "github-actions"},
-                    },
-                    {
-                        "id": 114,
-                        "name": "peer-chat-runtime-gate",
-                        "conclusion": "success",
-                        "app": {"slug": "github-actions"},
-                    },
-                ]
+                "check_runs": _successful_required_check_runs()
             },
         }
     )
@@ -99,12 +97,7 @@ def test_github_server_truth_capture_writes_complete_snapshot_evidence(
     rc = module.capture_github_server_truth(
         repo="iiyazu/Cross-Muse",
         pull_request_number=42,
-        required_checks=[
-            "quality-gates",
-            "contract-smoke-gates",
-            "real-runtime-integration-gate",
-            "peer-chat-runtime-gate",
-        ],
+        required_checks=REQUIRED_CHECKS,
         output=output,
         base_branch="main",
         runner=runner,
@@ -114,6 +107,9 @@ def test_github_server_truth_capture_writes_complete_snapshot_evidence(
     assert rc == 0
     assert payload["proof_level"] == "server_side_merge_proof"
     assert payload["can_emit_pr_merged"] is True
+    assert payload["head_sha"] == "head123"
+    assert payload["check_run_names"] == REQUIRED_CHECKS
+    assert payload["check_run_head_shas"] == ["head123"] * len(REQUIRED_CHECKS)
     assert payload["repo"] == "iiyazu/Cross-Muse"
     assert all(command[:2] == ["gh", "api"] for command in runner.commands)
 
@@ -175,32 +171,7 @@ def test_github_server_truth_capture_accepts_internal_review_evidence(
                 },
             },
             "repos/iiyazu/Cross-Muse/commits/head123/check-runs": {
-                "check_runs": [
-                    {
-                        "id": 111,
-                        "name": "quality-gates",
-                        "conclusion": "success",
-                        "app": {"slug": "github-actions"},
-                    },
-                    {
-                        "id": 112,
-                        "name": "contract-smoke-gates",
-                        "conclusion": "success",
-                        "app": {"slug": "github-actions"},
-                    },
-                    {
-                        "id": 113,
-                        "name": "real-runtime-integration-gate",
-                        "conclusion": "success",
-                        "app": {"slug": "github-actions"},
-                    },
-                    {
-                        "id": 114,
-                        "name": "peer-chat-runtime-gate",
-                        "conclusion": "success",
-                        "app": {"slug": "github-actions"},
-                    },
-                ]
+                "check_runs": _successful_required_check_runs()
             },
         }
     )
@@ -208,12 +179,7 @@ def test_github_server_truth_capture_accepts_internal_review_evidence(
     rc = module.capture_github_server_truth(
         repo="iiyazu/Cross-Muse",
         pull_request_number=42,
-        required_checks=[
-            "quality-gates",
-            "contract-smoke-gates",
-            "real-runtime-integration-gate",
-            "peer-chat-runtime-gate",
-        ],
+        required_checks=REQUIRED_CHECKS,
         output=output,
         base_branch="main",
         runner=runner,
@@ -226,6 +192,9 @@ def test_github_server_truth_capture_accepts_internal_review_evidence(
     assert rc == 0
     assert payload["proof_level"] == "server_side_merge_proof"
     assert payload["can_emit_pr_merged"] is True
+    assert payload["head_sha"] == "head123"
+    assert payload["check_run_names"] == REQUIRED_CHECKS
+    assert payload["check_run_head_shas"] == ["head123"] * len(REQUIRED_CHECKS)
     assert payload["internal_review_artifact"] == str(artifact)
     assert payload["internal_reviewer"] == "opencode-in-review"
     assert payload["internal_review_verified"] is True
