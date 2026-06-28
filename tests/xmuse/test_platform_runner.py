@@ -2484,6 +2484,7 @@ class _FakeFinalActionPrCommandRunner:
     def __init__(self, *, dirty: bool = True) -> None:
         self.dirty = dirty
         self.commands: list[tuple[tuple[str, ...], Path]] = []
+        self.base_synced = False
 
     def __call__(
         self,
@@ -2514,8 +2515,19 @@ class _FakeFinalActionPrCommandRunner:
                 stdout="[codex/lane-pr 1234567] docs: add lane-pr\n",
                 stderr="",
             )
+        if cmd[:3] == ("git", "fetch", "origin"):
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+        if cmd[:3] == ("git", "merge", "--no-edit"):
+            self.base_synced = True
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout="Merge made by the 'ort' strategy.\n",
+                stderr="",
+            )
         if cmd[:3] == ("git", "rev-parse", "HEAD"):
-            return subprocess.CompletedProcess(command, 0, stdout="head123\n", stderr="")
+            stdout = "syncedhead123\n" if self.base_synced else "head123\n"
+            return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
         if cmd[:2] == ("git", "push"):
             return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
         if cmd[:3] == ("gh", "pr", "create"):
@@ -2533,7 +2545,9 @@ class _FakeFinalActionPrCommandRunner:
                     {
                         "number": 999,
                         "url": "https://github.com/iiyazu/Cross-Muse/pull/999",
-                        "headRefOid": "head123",
+                        "headRefOid": (
+                            "syncedhead123" if self.base_synced else "head123"
+                        ),
                     }
                 )
                 + "\n",
@@ -2607,7 +2621,8 @@ def test_create_final_action_pull_request_records_pr_without_resolving_hold(
     assert record["final_action_id"] == "final-pr"
     assert record["lane_id"] == "lane-pr"
     assert record["head_branch"] == "codex/lane-pr"
-    assert record["head_sha"] == "head123"
+    assert record["head_sha"] == "syncedhead123"
+    assert record["commit_sha"] == "syncedhead123"
     assert record["proof_boundary"] == "pull_request_created_not_merge_truth"
     holds = json.loads((xmuse_root / "final_actions.json").read_text(encoding="utf-8"))
     assert holds["holds"][0]["status"] == "pending"
@@ -2616,8 +2631,14 @@ def test_create_final_action_pull_request_records_pr_without_resolving_hold(
     assert lane["status"] == "awaiting_final_action"
     assert lane["pull_request_number"] == 999
     assert lane["pull_request_url"] == "https://github.com/iiyazu/Cross-Muse/pull/999"
-    assert lane["pull_request_head_sha"] == "head123"
+    assert lane["pull_request_head_sha"] == "syncedhead123"
     assert any(cmd[:3] == ("gh", "pr", "create") for cmd, _cwd in runner.commands)
+    commands = [cmd for cmd, _cwd in runner.commands]
+    assert ("git", "fetch", "origin", "main") in commands
+    assert ("git", "merge", "--no-edit", "origin/main") in commands
+    assert commands.index(("git", "merge", "--no-edit", "origin/main")) < commands.index(
+        ("git", "push", "-u", "origin", "HEAD:refs/heads/codex/lane-pr")
+    )
 
 
 def test_create_final_action_pull_request_requires_worktree_changes(
