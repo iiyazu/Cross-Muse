@@ -282,6 +282,10 @@ Validation:
   `chat.db:acceptance_spines.final_action_ref` as read-only worklist and
   detail payloads. These holds are operator next-action projection, not GitHub
   gate or merge truth.
+- read-only copilot intake may accept `final_actions.json#hold=*` as durable
+  final-action hold authority for operator next-action recommendations, while
+  treating GitHub gate evidence refs and `feature_lanes.json` as candidate or
+  projection input unless separately verified through GitHub server facts.
 
 ## Phase 7 - Documentation And Final Report
 
@@ -339,8 +343,9 @@ Current final-report notes for the 2026-06-28 pass:
   durable authority while keeping `mcp_writeback:*` candidate-only; #266 lets
   accepted recommendations also use `review_trigger_verdict:*` as durable
   review verdict authority, keeps legacy `chat_dispatch_queue#entry=*`
-  candidate-only, and marks intake as advisory; subagent/copilot output is not
-  proof truth;
+  candidate-only, and marks intake as advisory; final-action hold refs may be
+  used only as operator next-action authority, not GitHub or merge truth;
+  subagent/copilot output is not proof truth;
 - GitHub server truth: #249 requires complete required check names and
   per-check-run PR head SHA evidence before `server_side_merge_proof` can emit
   `pr_merged`; #268 makes the acceptance-gated short-run lane projection

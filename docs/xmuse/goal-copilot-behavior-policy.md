@@ -34,6 +34,10 @@ The main `/goal` Codex remains the only coordinator for:
 Copilot output is candidate review input only. It becomes actionable only after
 the main agent verifies it against durable artifacts, Git state, GitHub server
 facts, or repository source.
+For advisory intake classification, durable authority refs include `chat.db`,
+inbox, proposal, review verdict, dispatch queue, final-action hold refs, and
+GitHub server facts. A final-action hold ref proves an operator next-action
+boundary only; it does not prove GitHub gate acceptance or merge.
 
 ## Allowed Actions
 
@@ -122,11 +126,13 @@ Product helper:
   such as subagent output, worker output, and local tests stay separate from
   verified authority refs. `review_trigger_verdict:*` is durable review
   verdict authority and `chat_dispatch_queue:*` is durable dispatch authority;
-  `mcp_writeback:*` and legacy `chat_dispatch_queue#entry=*` refs are
-  execution evidence/candidate input and must not be promoted to authority by
-  the copilot. Intake output includes a producer/consumer/condition/proof
-  boundary showing it remains advisory and cannot become review, dispatch,
-  merge, or execution truth.
+  `final_actions.json#hold=*` is durable final-action hold authority for
+  operator next-action recommendations. It is not GitHub gate evidence or
+  merge truth. `mcp_writeback:*`, `github_gate_evidence.json#evidence=*`, and
+  legacy `chat_dispatch_queue#entry=*` refs are evidence/candidate input and
+  must not be promoted to authority by the copilot. Intake output includes a
+  producer/consumer/condition/proof boundary showing it remains advisory and
+  cannot become review, dispatch, GitHub gate, merge, or execution truth.
 - `xmuse_core.platform.goal_copilot.build_goal_copilot_launch_prompt()` emits a
   launch prompt that preserves the read-only and forbidden-claim boundaries.
 
