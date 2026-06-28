@@ -230,12 +230,17 @@ def _proposals(conn: sqlite3.Connection, conversation_id: str) -> list[dict[str,
 
 
 def _dispatch_entries(conn: sqlite3.Connection, conversation_id: str) -> list[dict[str, Any]]:
+    gate_refs_expr = (
+        "gate_refs_json"
+        if _table_has_column(conn, "chat_dispatch_queue", "gate_refs_json")
+        else "'[]' as gate_refs_json"
+    )
     rows = _fetch_all(
         conn,
-        """
+        f"""
         select entry_id, conversation_id, source, target, status, auto_execute,
                proposal_id, resolution_id, collaboration_run_id, artifact_ref,
-               dispatch_policy, claimed_by, claimed_at, provider_run_ref,
+               {gate_refs_expr}, dispatch_policy, claimed_by, claimed_at, provider_run_ref,
                dispatch_evidence, failure_reason, completed_at, created_at, updated_at
         from chat_dispatch_queue
         where conversation_id = ?
@@ -244,7 +249,14 @@ def _dispatch_entries(conn: sqlite3.Connection, conversation_id: str) -> list[di
         """,
         (conversation_id,),
     )
-    return [{**dict(row), "auto_execute": bool(row["auto_execute"])} for row in rows]
+    return [
+        {
+            **dict(row),
+            "auto_execute": bool(row["auto_execute"]),
+            "gate_refs": _json_list(row["gate_refs_json"]),
+        }
+        for row in rows
+    ]
 
 
 def _collaboration_runs(conn: sqlite3.Connection, conversation_id: str) -> list[dict[str, Any]]:
@@ -654,8 +666,14 @@ def _inbox_source_refs(item: dict[str, Any]) -> list[str]:
 
 def _dispatch_source_refs(entry: dict[str, Any]) -> list[str]:
     refs = []
+    entry_id = entry.get("entry_id")
+    if isinstance(entry_id, str) and entry_id:
+        refs.append(f"chat_dispatch_queue:{entry_id}")
+    proposal_id = entry.get("proposal_id")
+    if isinstance(proposal_id, str) and proposal_id:
+        refs.append(f"proposal:{proposal_id}")
+    refs.extend(_string_items(entry.get("gate_refs")))
     for prefix, key in (
-        ("proposal", "proposal_id"),
         ("resolution", "resolution_id"),
         ("collaboration", "collaboration_run_id"),
     ):
@@ -687,6 +705,18 @@ def _fetch_all(
         return list(conn.execute(query, params).fetchall())
     except sqlite3.OperationalError:
         return []
+
+
+def _table_has_column(
+    conn: sqlite3.Connection,
+    table_name: str,
+    column_name: str,
+) -> bool:
+    try:
+        rows = conn.execute(f"pragma table_info({table_name})").fetchall()
+    except sqlite3.OperationalError:
+        return False
+    return any(row["name"] == column_name for row in rows)
 
 
 def _read_json_file(path: Path) -> dict[str, Any]:

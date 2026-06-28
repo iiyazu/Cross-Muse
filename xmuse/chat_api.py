@@ -1142,13 +1142,14 @@ def _enqueue_structured_dispatch_intent(
             return None
         gate_refs = review_gate.source_refs
     else:
-        gate_refs = [f"collaboration:{collaboration_run_ids[0]}"]
+        gate_refs = [f"collaboration:{run_id}" for run_id in collaboration_run_ids]
     entry = _dispatch_queue_store(base_dir).enqueue_agent_auto_dispatch(
         conversation_id=conversation_id,
         proposal_id=proposal_id,
         resolution_id=resolution_id,
         collaboration_run_id=collaboration_run_ids[0] if collaboration_run_ids else None,
         artifact_ref=f"artifact:{proposal_type}",
+        gate_refs=gate_refs,
     )
     return _StructuredDispatchIntent(entry=entry, gate_refs=gate_refs)
 
