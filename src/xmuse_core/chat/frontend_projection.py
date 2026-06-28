@@ -46,8 +46,18 @@ def build_peer_chat_ux_projection(
         closure_evidence = _closure_evidence(conn, conversation_id)
         supporting_context = _supporting_context(conn, conversation_id)
     sessions = _conversation_sessions(root, conversation_id)
-    review_state = _review_state(root, closure_evidence)
-    final_action_holds = _final_action_holds(root, closure_evidence)
+    conversation_lanes = _conversation_lanes(root, conversation_id)
+    review_state = _review_state(root, closure_evidence, conversation_lanes)
+    final_action_holds = _final_action_holds(
+        root,
+        closure_evidence,
+        conversation_lanes,
+    )
+    final_action_state = _final_action_state(
+        root,
+        closure_evidence,
+        conversation_lanes,
+    )
 
     return {
         "schema_version": "peer_chat_ux_projection/v1",
@@ -115,6 +125,7 @@ def build_peer_chat_ux_projection(
         "closure_evidence": closure_evidence,
         "review_state": review_state,
         "final_action_holds": final_action_holds,
+        "final_action_state": final_action_state,
     }
 
 
@@ -635,43 +646,130 @@ def _worklist_items(
 def _final_action_holds(
     root: Path,
     closure_evidence: dict[str, Any],
+    conversation_lanes: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    raw_holds = _read_json_file(root / "final_actions.json").get("holds")
-    if not isinstance(raw_holds, list):
-        raw_holds = []
-    holds_by_id = {
-        str(hold.get("id")): hold
-        for hold in raw_holds
-        if isinstance(hold, dict) and isinstance(hold.get("id"), str)
-    }
+    holds_by_id = _final_actions_by_id(root)
     items: list[dict[str, Any]] = []
-    for spine in closure_evidence.get("items") or []:
-        if not isinstance(spine, dict):
-            continue
-        final_action_ref = spine.get("final_action_ref")
-        hold_id = _final_action_id_from_ref(final_action_ref)
-        if hold_id is None:
+    seen: set[str] = set()
+    used_lane_projection = False
+    for hold_id, spine, lane in _final_action_links(closure_evidence, conversation_lanes):
+        if hold_id in seen:
             continue
         hold = holds_by_id.get(hold_id)
         if not isinstance(hold, dict):
             continue
         if hold.get("status") != "pending":
             continue
-        item = _final_action_hold_projection(hold, spine)
+        item = _final_action_projection(hold, spine=spine, lane=lane)
         if item is not None:
             items.append(item)
-    return {
+            seen.add(hold_id)
+            used_lane_projection = used_lane_projection or lane is not None
+    result: dict[str, Any] = {
         "source_authority": ["final_actions.json", "chat.db:acceptance_spines"],
         "projection_only": True,
         "total": len(items),
         "pending": sum(1 for item in items if item.get("status") == "pending"),
         "items": items,
     }
+    if used_lane_projection:
+        result["projection_source"] = ["feature_lanes.json"]
+    return result
+
+
+def _final_action_state(
+    root: Path,
+    closure_evidence: dict[str, Any],
+    conversation_lanes: list[dict[str, Any]],
+) -> dict[str, Any]:
+    holds_by_id = _final_actions_by_id(root)
+    items: list[dict[str, Any]] = []
+    status_summary: dict[str, int] = {}
+    seen: set[str] = set()
+    used_lane_projection = False
+    for hold_id, spine, lane in _final_action_links(closure_evidence, conversation_lanes):
+        if hold_id in seen:
+            continue
+        hold = holds_by_id.get(hold_id)
+        if not isinstance(hold, dict):
+            continue
+        item = _final_action_projection(hold, spine=spine, lane=lane)
+        if item is None:
+            continue
+        items.append(item)
+        seen.add(hold_id)
+        used_lane_projection = used_lane_projection or lane is not None
+        item_status = str(item.get("status") or "unknown")
+        status_summary[item_status] = status_summary.get(item_status, 0) + 1
+    result: dict[str, Any] = {
+        "source_authority": ["final_actions.json", "chat.db:acceptance_spines"],
+        "projection_only": True,
+        "total": len(items),
+        "status_summary": status_summary,
+        "items": items,
+    }
+    if used_lane_projection:
+        result["projection_source"] = ["feature_lanes.json"]
+    return result
+
+
+def _final_actions_by_id(root: Path) -> dict[str, dict[str, Any]]:
+    raw_holds = _read_json_file(root / "final_actions.json").get("holds")
+    if not isinstance(raw_holds, list):
+        raw_holds = []
+    return {
+        str(hold.get("id")): hold
+        for hold in raw_holds
+        if isinstance(hold, dict) and isinstance(hold.get("id"), str)
+    }
+
+
+def _final_action_links(
+    closure_evidence: dict[str, Any],
+    conversation_lanes: list[dict[str, Any]],
+) -> list[tuple[str, dict[str, Any] | None, dict[str, Any] | None]]:
+    links: list[tuple[str, dict[str, Any] | None, dict[str, Any] | None]] = []
+    for spine in closure_evidence.get("items") or []:
+        if not isinstance(spine, dict):
+            continue
+        hold_id = _final_action_id_from_ref(spine.get("final_action_ref"))
+        if hold_id is not None:
+            links.append((hold_id, spine, None))
+    for lane in conversation_lanes:
+        hold_id = _projection_text(lane.get("final_action_hold_id"))
+        if hold_id:
+            links.append((hold_id, None, lane))
+    return links
+
+
+def _conversation_lanes(root: Path, conversation_id: str) -> list[dict[str, Any]]:
+    raw_lanes = _read_json_file(root / "feature_lanes.json").get("lanes")
+    if not isinstance(raw_lanes, list):
+        return []
+    return [
+        lane
+        for lane in raw_lanes
+        if isinstance(lane, dict) and lane.get("conversation_id") == conversation_id
+    ]
+
+
+def _lane_feature_id(lane: dict[str, Any] | None) -> str | None:
+    if lane is None:
+        return None
+    return _projection_text(lane.get("feature_id")) or _projection_text(lane.get("lane_id"))
+
+
+def _lane_source_ref(lane: dict[str, Any] | None) -> str | None:
+    feature_id = _lane_feature_id(lane)
+    if feature_id is None:
+        return None
+    return f"feature_lanes.json#lane={feature_id}"
 
 
 def _review_state(
     root: Path,
     closure_evidence: dict[str, Any],
+    conversation_lanes: list[dict[str, Any]],
 ) -> dict[str, Any]:
     review_plane = _read_json_file(root / "review_plane.json")
     raw_tasks = review_plane.get("review_tasks")
@@ -700,6 +798,7 @@ def _review_state(
     items: list[dict[str, Any]] = []
     decision_summary: dict[str, int] = {}
     seen: set[str] = set()
+    used_lane_projection = False
     for spine in closure_evidence.get("items") or []:
         if not isinstance(spine, dict):
             continue
@@ -710,26 +809,45 @@ def _review_state(
         if not isinstance(verdict, dict):
             continue
         task = tasks_by_verdict_id.get(verdict_id)
-        item = _review_verdict_projection(verdict_id, verdict, task, spine)
+        item = _review_verdict_projection(verdict_id, verdict, task, spine=spine)
         items.append(item)
         seen.add(verdict_id)
         decision = str(item.get("decision") or "unknown")
         decision_summary[decision] = decision_summary.get(decision, 0) + 1
+    for lane in conversation_lanes:
+        verdict_id = _projection_text(lane.get("review_verdict_id"))
+        if verdict_id is None or verdict_id in seen:
+            continue
+        verdict = verdicts_by_id.get(verdict_id)
+        if not isinstance(verdict, dict):
+            continue
+        task = tasks_by_verdict_id.get(verdict_id)
+        item = _review_verdict_projection(verdict_id, verdict, task, lane=lane)
+        items.append(item)
+        seen.add(verdict_id)
+        used_lane_projection = True
+        decision = str(item.get("decision") or "unknown")
+        decision_summary[decision] = decision_summary.get(decision, 0) + 1
 
-    return {
+    result: dict[str, Any] = {
         "source_authority": ["review_plane.json", "chat.db:acceptance_spines"],
         "projection_only": True,
         "total": len(items),
         "decision_summary": decision_summary,
         "items": items,
     }
+    if used_lane_projection:
+        result["projection_source"] = ["feature_lanes.json"]
+    return result
 
 
 def _review_verdict_projection(
     verdict_id: str,
     verdict: dict[str, Any],
     task: dict[str, Any] | None,
-    spine: dict[str, Any],
+    *,
+    spine: dict[str, Any] | None = None,
+    lane: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     task_id = _projection_text(task.get("task_id")) if isinstance(task, dict) else None
     return {
@@ -751,7 +869,12 @@ def _review_verdict_projection(
         "patch_instructions": _projection_text(verdict.get("patch_instructions")),
         "terminate_reason": _projection_text(verdict.get("terminate_reason")),
         "created_at": _projection_text(verdict.get("created_at")),
-        "source_refs": _review_source_refs(verdict_id, task_id, spine),
+        "source_refs": _review_source_refs(
+            verdict_id,
+            task_id,
+            spine=spine,
+            lane=lane,
+        ),
         "authority_boundary": _review_authority_boundary(),
     }
 
@@ -769,14 +892,20 @@ def _review_verdict_id_from_ref(value: Any) -> str | None:
 def _review_source_refs(
     verdict_id: str,
     task_id: str | None,
-    spine: dict[str, Any],
+    *,
+    spine: dict[str, Any] | None = None,
+    lane: dict[str, Any] | None = None,
 ) -> list[str]:
     refs = [f"review_plane.json#verdict={verdict_id}"]
     if task_id:
         refs.append(f"review_plane.json#task={task_id}")
-    spine_id = spine.get("spine_id")
-    if isinstance(spine_id, str) and spine_id:
-        refs.append(f"chat.db:acceptance_spines#spine={spine_id}")
+    if spine is not None:
+        spine_id = spine.get("spine_id")
+        if isinstance(spine_id, str) and spine_id:
+            refs.append(f"chat.db:acceptance_spines#spine={spine_id}")
+    lane_ref = _lane_source_ref(lane)
+    if lane_ref:
+        refs.append(lane_ref)
     return _dedupe(refs)
 
 
@@ -789,9 +918,11 @@ def _review_authority_boundary() -> dict[str, str]:
     }
 
 
-def _final_action_hold_projection(
+def _final_action_projection(
     hold: dict[str, Any],
-    spine: dict[str, Any],
+    *,
+    spine: dict[str, Any] | None = None,
+    lane: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     hold_id = _projection_text(hold.get("id"))
     if not hold_id:
@@ -807,7 +938,7 @@ def _final_action_hold_projection(
         "resolved_by": _projection_text(hold.get("resolved_by")),
         "github_gate_evidence_ref": _projection_text(hold.get("github_gate_evidence_ref")),
         "github_gate_gap_ref": _projection_text(hold.get("github_gate_gap_ref")),
-        "source_refs": _final_action_source_refs(hold_id, hold, spine),
+        "source_refs": _final_action_source_refs(hold_id, hold, spine=spine, lane=lane),
         "authority_boundary": _final_action_authority_boundary(),
     }
 
@@ -947,17 +1078,23 @@ def _final_action_id_from_ref(value: Any) -> str | None:
 def _final_action_source_refs(
     hold_id: str,
     hold: dict[str, Any],
-    spine: dict[str, Any],
+    *,
+    spine: dict[str, Any] | None = None,
+    lane: dict[str, Any] | None = None,
 ) -> list[str]:
     refs = [f"final_actions.json#hold={hold_id}"]
-    verdict_ref = spine.get("review_verdict_ref")
+    verdict_ref = spine.get("review_verdict_ref") if spine is not None else None
     if isinstance(verdict_ref, str) and verdict_ref:
         refs.append(verdict_ref)
     elif isinstance(hold.get("verdict_id"), str) and hold["verdict_id"]:
-        refs.append(f"review_verdict:{hold['verdict_id']}")
-    spine_id = spine.get("spine_id")
-    if isinstance(spine_id, str) and spine_id:
-        refs.append(f"chat.db:acceptance_spines#spine={spine_id}")
+        refs.append(f"review_plane.json#verdict={hold['verdict_id']}")
+    if spine is not None:
+        spine_id = spine.get("spine_id")
+        if isinstance(spine_id, str) and spine_id:
+            refs.append(f"chat.db:acceptance_spines#spine={spine_id}")
+    lane_ref = _lane_source_ref(lane)
+    if lane_ref:
+        refs.append(lane_ref)
     return _dedupe(refs)
 
 

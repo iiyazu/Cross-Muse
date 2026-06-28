@@ -687,6 +687,124 @@ def test_dashboard_peer_chat_ux_projection_exposes_review_verdict_state(
     }
 
 
+def test_dashboard_peer_chat_ux_projection_links_natural_chain_lane_state(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "chat.db"
+    chat = ChatStore(db)
+    conv = chat.create_conversation("Natural chain projection")
+    intake = chat.add_message(conv.id, "Human", "human", "@architect run sentinel")
+    AcceptanceSpineStore(db).create_for_intake(
+        conversation_id=conv.id,
+        intake_message_id=intake.id,
+    )
+    task = ReviewTask(
+        task_id="review-task-natural",
+        lane_id="lane-natural",
+        graph_id="graph-natural",
+        resolution_id="res-natural",
+        lane_prompt="Review natural-chain sentinel lane.",
+        gate_report_ref="logs/gates/lane-natural/report.json",
+        created_at="2026-06-28T18:00:00Z",
+    )
+    verdict = ReviewVerdict(
+        id="verdict-natural",
+        lane_id="lane-natural",
+        decision=ReviewDecision.MERGE,
+        status="finalized",
+        summary="Review accepted natural-chain sentinel.",
+        evidence_refs=["logs/gates/lane-natural/report.json"],
+        created_at="2026-06-28T18:01:00Z",
+    )
+    VerdictStore(tmp_path / "review_plane.json").save_task_and_verdict(task, verdict)
+    _write_json(
+        tmp_path / "final_actions.json",
+        {
+            "holds": [
+                {
+                    "id": "final-natural",
+                    "lane_id": "lane-natural",
+                    "verdict_id": "verdict-natural",
+                    "action": "merge",
+                    "target_status": "reviewed",
+                    "status": "approved",
+                    "summary": "GitHub gate accepted.",
+                    "resolved_by": "platform-runner",
+                    "github_gate_evidence_ref": (
+                        "github_gate_evidence.json#evidence=accepted-natural"
+                    ),
+                }
+            ]
+        },
+    )
+    _write_json(
+        tmp_path / "feature_lanes.json",
+        {
+            "lanes": [
+                {
+                    "feature_id": "lane-natural",
+                    "conversation_id": conv.id,
+                    "status": "merged",
+                    "review_verdict_id": "verdict-natural",
+                    "final_action_hold_id": "final-natural",
+                    "github_gate_evidence_ref": (
+                        "github_gate_evidence.json#evidence=accepted-natural"
+                    ),
+                }
+            ]
+        },
+    )
+
+    response = TestClient(create_app(tmp_path)).get(
+        f"/api/dashboard/peer-chat/conversations/{conv.id}/ux-projection"
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["review_state"]["total"] == 1
+    assert payload["review_state"]["projection_source"] == ["feature_lanes.json"]
+    assert payload["review_state"]["items"][0]["source_refs"] == [
+        "review_plane.json#verdict=verdict-natural",
+        "review_plane.json#task=review-task-natural",
+        "feature_lanes.json#lane=lane-natural",
+    ]
+    assert payload["final_action_holds"]["total"] == 0
+    assert payload["final_action_state"] == {
+        "source_authority": ["final_actions.json", "chat.db:acceptance_spines"],
+        "projection_source": ["feature_lanes.json"],
+        "projection_only": True,
+        "total": 1,
+        "status_summary": {"approved": 1},
+        "items": [
+            {
+                "id": "final-natural",
+                "lane_id": "lane-natural",
+                "verdict_id": "verdict-natural",
+                "action": "merge",
+                "target_status": "reviewed",
+                "status": "approved",
+                "summary": "GitHub gate accepted.",
+                "resolved_by": "platform-runner",
+                "github_gate_evidence_ref": (
+                    "github_gate_evidence.json#evidence=accepted-natural"
+                ),
+                "github_gate_gap_ref": None,
+                "source_refs": [
+                    "final_actions.json#hold=final-natural",
+                    "review_plane.json#verdict=verdict-natural",
+                    "feature_lanes.json#lane=lane-natural",
+                ],
+                "authority_boundary": {
+                    "producer": "final_actions.json",
+                    "consumer": "frontend.peer_chat_ux_projection",
+                    "condition": "read_only_projection",
+                    "proof_boundary": "final_action_hold_not_github_or_merge_truth",
+                },
+            }
+        ],
+    }
+
+
 def test_dashboard_peer_chat_ux_projection_filters_non_pending_final_action_holds(
     tmp_path: Path,
 ) -> None:
