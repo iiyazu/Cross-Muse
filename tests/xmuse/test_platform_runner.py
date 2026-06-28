@@ -893,7 +893,10 @@ async def test_runner_builds_dispatch_bridge_with_peer_god_layer(
     assert captured["dispatch_bridge_kwargs"]["response_wait_s"] == 321.0
     assert captured["dispatch_bridge_kwargs"]["claim_ttl_s"] >= 351
     assert isinstance(captured["scheduler_kwargs"]["memoryos_client"], FakePeerMemoryOSClient)
-    assert "memoryos_client" not in captured["dispatch_bridge_kwargs"]
+    assert (
+        captured["dispatch_bridge_kwargs"]["memoryos_client"]
+        is captured["scheduler_kwargs"]["memoryos_client"]
+    )
 
 
 @pytest.mark.asyncio
