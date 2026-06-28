@@ -22,9 +22,9 @@ operation record 或巨大 handoff 文档。
 当前校准：
 
 - `origin/main` 当前校准在 merge commit
-  `76a57362c73f0f63dc2d9b61f871b24a7a5bb329`，对应 PR #268
-  `Fix acceptance gate lane projection`。
-- PR #242、#244、#245、#246、#247、#248、#249、#250、#251、#252、#253、#254、#255、#257、#258、#259、#260、#261、#262、#263、#264、#265、#266、#267、#268 均已合并，
+  `fa1cc1e1996be3c18540f574c3513b0cafbea642`，对应 PR #270
+  `Mark acceptance gate projection noop integration`。
+- PR #242、#244、#245、#246、#247、#248、#249、#250、#251、#252、#253、#254、#255、#257、#258、#259、#260、#261、#262、#263、#264、#265、#266、#267、#268、#269、#270 均已合并，
   且各自 merge commit 的 main push CI 均为 success。
 - PR #248 与 #250 是当前 goal 文档校准；PR #249 加固了 GitHub server
   truth exact-head check-run evidence；PR #251 暴露 MemoryOS sidecar 支撑上下文
@@ -50,7 +50,10 @@ operation record 或巨大 handoff 文档。
   PR #267 刷新当前 goal docs；PR #268 让 acceptance-gated short run 在
   final-action GitHub gate resolution 后把 `feature_lanes.json` 更新为终态
   read projection：accepted 显示为 `merged`，manual-gap blocked 显示为
-  `blocked_for_input` + `blocked_reason`，并保留 durable authority refs。
+  `blocked_for_input` + `blocked_reason`，并保留 durable authority refs；
+  PR #269 刷新当前 goal docs；PR #270 将 synthetic acceptance-gated short-run
+  lane projection 标记为 `integration_mode: noop`，避免 health 将其误报为
+  普通 feature lane 的 dependent release 风险。
   这些都是支撑链路，不是 production-ready natural groupchat 证明。
 - PR #243 (`codex/natural-groupchat-overnight-goal-docs`) 是较早的宽文档包，
   当前 `BEHIND` main；可作参考，但不是最新 current-goal 状态入口。
