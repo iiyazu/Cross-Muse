@@ -387,6 +387,8 @@ def _start_runner(
     env["XMUSE_ROOT"] = str(run_root)
     env["XMUSE_CHAT_API_URL"] = f"http://127.0.0.1:{chat_port}"
     env["XMUSE_PEER_GOD_BACKEND"] = peer_god_backend
+    env["XMUSE_REVIEW_GOD_BACKEND"] = peer_god_backend
+    env["XMUSE_EXECUTE_GOD_BACKEND"] = peer_god_backend
     env["XMUSE_RAY_GOD_MCP"] = "1" if ray_god_mcp else "0"
     return _spawn(
         [
@@ -406,6 +408,8 @@ def _start_runner(
             "--default-review-peer-routing",
             "--no-auto-merge",
             "--require-final-action-approval",
+            "--peer-god-backend",
+            peer_god_backend,
             "--peer-chat-response-wait-s",
             str(peer_chat_response_wait_s),
             "--peer-chat-post-writeback-grace-s",
