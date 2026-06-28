@@ -120,9 +120,13 @@ Product helper:
   keeps accepted recommendations advisory-only and requires durable authority
   refs before the main agent can classify them as accepted. Candidate refs
   such as subagent output, worker output, and local tests stay separate from
-  verified authority refs. `chat_dispatch_queue:*` is durable dispatch
-  authority; `mcp_writeback:*` is execution evidence/candidate input and must
-  not be promoted to authority by the copilot.
+  verified authority refs. `review_trigger_verdict:*` is durable review
+  verdict authority and `chat_dispatch_queue:*` is durable dispatch authority;
+  `mcp_writeback:*` and legacy `chat_dispatch_queue#entry=*` refs are
+  execution evidence/candidate input and must not be promoted to authority by
+  the copilot. Intake output includes a producer/consumer/condition/proof
+  boundary showing it remains advisory and cannot become review, dispatch,
+  merge, or execution truth.
 - `xmuse_core.platform.goal_copilot.build_goal_copilot_launch_prompt()` emits a
   launch prompt that preserves the read-only and forbidden-claim boundaries.
 

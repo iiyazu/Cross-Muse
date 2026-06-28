@@ -140,6 +140,18 @@ def test_goal_copilot_intake_acceptance_requires_durable_authority_refs() -> Non
             verified_authority_refs=["git:HEAD"],
         )
 
+    for evidence_ref in (
+        "mcp_writeback:dispatch-inbox",
+        "chat_dispatch_queue#entry=legacy-dispatch-evidence",
+    ):
+        with pytest.raises(ValueError, match="durable authority"):
+            build_goal_copilot_intake_decision(
+                recommendation_id=f"rec-evidence-only-{evidence_ref.split(':', 1)[0]}",
+                classification="accepted",
+                reason="execution evidence alone is not authority",
+                verified_authority_refs=[evidence_ref],
+            )
+
     accepted = build_goal_copilot_intake_decision(
         recommendation_id="rec-2",
         classification="accepted",
@@ -163,20 +175,33 @@ def test_goal_copilot_intake_acceptance_requires_durable_authority_refs() -> Non
         "subagent:audit#candidate",
         "local-test:pytest",
     ]
+    assert accepted["intake_boundary"] == {
+        "producer": "goal_copilot_review_board",
+        "consumer": "main_goal_agent",
+        "condition": "main_agent_verified_durable_authority_refs",
+        "proof_boundary": "advisory_intake_not_review_dispatch_merge_or_execution_truth",
+        "failure_boundary": "accepted_without_durable_authority_refs_rejected",
+    }
     dispatch_accepted = build_goal_copilot_intake_decision(
         recommendation_id="rec-dispatch",
         classification="accepted",
         reason="verified dispatch queue authority and separated execution evidence",
         verified_authority_refs=[
             "chat_dispatch_queue:dispatch:conv:resolution:execute",
+            "review_trigger_verdict:msg-review",
             "mcp_writeback:dispatch-inbox",
+            "chat_dispatch_queue#entry=legacy-dispatch-evidence",
         ],
     )
 
     assert dispatch_accepted["verified_authority_refs"] == [
-        "chat_dispatch_queue:dispatch:conv:resolution:execute"
+        "chat_dispatch_queue:dispatch:conv:resolution:execute",
+        "review_trigger_verdict:msg-review",
     ]
-    assert dispatch_accepted["candidate_input_refs"] == ["mcp_writeback:dispatch-inbox"]
+    assert dispatch_accepted["candidate_input_refs"] == [
+        "mcp_writeback:dispatch-inbox",
+        "chat_dispatch_queue#entry=legacy-dispatch-evidence",
+    ]
     assert accepted["forbidden_truth_surfaces"] == [
         "provider stdout",
         "worker output",
