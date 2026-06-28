@@ -11,6 +11,7 @@ import uvicorn
 from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 
+from xmuse_core.chat.frontend_projection import build_peer_chat_ux_projection
 from xmuse_core.chat.inbox_store import ChatInboxStore
 from xmuse_core.chat.participant_store import ParticipantStore
 from xmuse_core.chat.peer_service import PeerChatService
@@ -824,6 +825,16 @@ def create_app(base_dir: Path | str = DEFAULT_BASE_DIR) -> FastAPI:
             },
         }
         return payload
+
+    @app.get("/api/dashboard/peer-chat/conversations/{conversation_id}/ux-projection")
+    def peer_chat_ux_projection(conversation_id: str) -> dict[str, Any]:
+        try:
+            return build_peer_chat_ux_projection(conversation_id, root)
+        except KeyError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=str(exc),
+            ) from exc
 
     @app.get("/api/dashboard/peer-chat/conversations/{conversation_id}/runtime-timeline")
     def peer_chat_runtime_timeline(conversation_id: str) -> dict[str, Any]:

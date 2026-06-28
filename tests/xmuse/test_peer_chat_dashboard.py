@@ -1,5 +1,6 @@
 import json
 import sqlite3
+from hashlib import sha256
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -244,6 +245,224 @@ def test_dashboard_peer_chat_conversation_includes_compact_cards(tmp_path: Path)
         f"/dashboard/peer-chat/conversations/{conv.id}#proposal-{proposal.id}"
     )
     assert payload["cards"][0]["api_href"] == f"/api/chat/proposals/{proposal.id}"
+
+
+def test_dashboard_peer_chat_ux_projection_is_frontend_read_model(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "chat.db"
+    chat = ChatStore(db)
+    conv = chat.create_conversation("Mission UX")
+    architect = ParticipantStore(db).add(
+        conversation_id=conv.id,
+        role="architect",
+        display_name="Architect GOD",
+        cli_kind="codex",
+        model="gpt-5.5",
+    )
+    execute = ParticipantStore(db).add(
+        conversation_id=conv.id,
+        role="execute",
+        display_name="Execute GOD",
+        cli_kind="codex",
+        model="gpt-5.5",
+    )
+    message = chat.add_message(conv.id, "Human", "human", "@architect plan UX")
+    spine_store = AcceptanceSpineStore(db)
+    spine_store.create_for_intake(conversation_id=conv.id, intake_message_id=message.id)
+    inbox_item = ChatInboxStore(db).create_item(
+        conversation_id=conv.id,
+        target_participant_id=architect.participant_id,
+        target_role=architect.role,
+        target_address="@architect",
+        sender_participant_id=None,
+        sender_address="@human",
+        source_message_id=message.id,
+        item_type="mention",
+        payload={"content": message.content},
+    )
+    proposal = chat.create_proposal(
+        conversation_id=conv.id,
+        author="Architect GOD",
+        proposal_type="lane_graph",
+        content='{"summary":"UX lanes","lanes":[{"feature_id":"ux-lane"}]}',
+        references=[message.id, "artifact:ux-plan"],
+    )
+    spine_store.attach_proposal(
+        conversation_id=conv.id,
+        intake_message_id=message.id,
+        proposal_id=proposal.id,
+    )
+    collaboration = ChatCollaborationStore(db)
+    run = collaboration.create_request(
+        conversation_id=conv.id,
+        goal="Review UX projection",
+        initiator="architect",
+        targets=["review"],
+        callback_target="architect",
+        question="Is the projection enough for frontend?",
+        context_refs=["proposal:ux"],
+        idempotency_key=None,
+        timeout_s=60,
+    )
+    blocker = collaboration.raise_blocker(
+        run.run_id,
+        issuer="review",
+        severity="blocker",
+        reason="Need dispatch visibility",
+        affected_ref="proposal:ux",
+        suggested_fix="Expose dispatch next action",
+        blocks_dispatch=True,
+    )
+    dispatch = ChatDispatchQueueStore(db).enqueue_agent_auto_dispatch(
+        conversation_id=conv.id,
+        proposal_id=proposal.id,
+        resolution_id="resolution-ux",
+        collaboration_run_id=run.run_id,
+        artifact_ref="artifact:ux-lane-graph",
+    )
+    _write_json(
+        tmp_path / "active_sessions.json",
+        {
+            "sessions": [
+                {
+                    "god_session_id": "god-architect",
+                    "conversation_id": conv.id,
+                    "participant_id": architect.participant_id,
+                    "role": architect.role,
+                    "status": "running",
+                    "provider_id": "codex",
+                }
+            ]
+        },
+    )
+
+    response = TestClient(create_app(tmp_path)).get(
+        f"/api/dashboard/peer-chat/conversations/{conv.id}/ux-projection"
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["schema_version"] == "peer_chat_ux_projection/v1"
+    assert payload["projection_only"] is True
+    assert payload["write_capabilities"] == []
+    assert payload["source_authority"] == [
+        "chat.db:conversations",
+        "chat.db:messages",
+        "chat.db:participants",
+        "chat.db:chat_inbox_items",
+        "chat.db:proposals",
+        "chat.db:chat_dispatch_queue",
+        "chat.db:collaboration_runs",
+        "chat.db:collaboration_blockers",
+        "chat.db:acceptance_spines",
+        "active_sessions.json",
+        "god_sessions.json",
+    ]
+    assert payload["conversation"]["id"] == conv.id
+    assert payload["links"]["inspector_api_href"].endswith(f"/{conv.id}/inspector")
+    proposal_card = next(card for card in payload["cards"] if card["detail_kind"] == "proposal")
+    assert proposal_card["detail_api_href"] == f"/api/chat/proposals/{proposal.id}"
+    assert "artifact:ux-plan" in proposal_card["source_refs"]
+    agent_by_role = {agent["role"]: agent for agent in payload["agent_cards"]}
+    assert agent_by_role["architect"]["participant_id"] == architect.participant_id
+    assert agent_by_role["architect"]["inbox_counts"]["unread"] == 1
+    assert agent_by_role["architect"]["session"]["god_session_id"] == "god-architect"
+    assert agent_by_role["execute"]["participant_id"] == execute.participant_id
+    worklist_by_id = {item["id"]: item for item in payload["worklist"]}
+    assert worklist_by_id[inbox_item.id]["next_action"] == "deliver_peer_turn"
+    assert worklist_by_id[inbox_item.id]["detail_kind"] == "inbox_item"
+    assert worklist_by_id[dispatch.entry_id]["next_action"] == "dispatch_execute_peer"
+    assert worklist_by_id[dispatch.entry_id]["source_refs"] == [
+        f"proposal:{proposal.id}",
+        "resolution:resolution-ux",
+        f"collaboration:{run.run_id}",
+        "artifact:ux-lane-graph",
+    ]
+    assert worklist_by_id[blocker.blocker_id]["next_action"] == "resolve_blocker"
+    assert worklist_by_id[blocker.blocker_id]["source_refs"] == ["proposal:ux"]
+    assert payload["closure_evidence"]["total"] == 1
+    assert payload["closure_evidence"]["items"][0]["proposal_id"] == proposal.id
+
+
+def test_dashboard_peer_chat_ux_projection_404s_for_missing_conversation(
+    tmp_path: Path,
+) -> None:
+    response = TestClient(create_app(tmp_path)).get(
+        "/api/dashboard/peer-chat/conversations/missing/ux-projection"
+    )
+
+    assert response.status_code == 404
+    assert not (tmp_path / "chat.db").exists()
+
+
+def test_dashboard_peer_chat_ux_projection_does_not_mutate_authority_files(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "chat.db"
+    chat = ChatStore(db)
+    conv = chat.create_conversation("Read-only UX")
+    participant = ParticipantStore(db).add(
+        conversation_id=conv.id,
+        role="architect",
+        display_name="Architect GOD",
+        cli_kind="codex",
+        model="gpt-5.5",
+    )
+    message = chat.add_message(conv.id, "Human", "human", "@architect no writes")
+    ChatInboxStore(db).create_item(
+        conversation_id=conv.id,
+        target_participant_id=participant.participant_id,
+        target_role=participant.role,
+        target_address="@architect",
+        sender_participant_id=None,
+        sender_address="@human",
+        source_message_id=message.id,
+        item_type="mention",
+        payload={"content": message.content},
+    )
+    before_hash = sha256(db.read_bytes()).hexdigest()
+    _write_json(
+        tmp_path / "active_sessions.json",
+        {
+            "sessions": [
+                {
+                    "god_session_id": "god-read-only",
+                    "conversation_id": conv.id,
+                    "participant_id": participant.participant_id,
+                    "role": participant.role,
+                    "status": "running",
+                }
+            ]
+        },
+    )
+    _write_json(tmp_path / "god_sessions.json", {"sessions": []})
+    before_active_sessions = sha256((tmp_path / "active_sessions.json").read_bytes()).hexdigest()
+    before_god_sessions = sha256((tmp_path / "god_sessions.json").read_bytes()).hexdigest()
+    before_sidecars = {
+        path.name
+        for path in tmp_path.iterdir()
+        if path.name.startswith("chat.db-")
+    }
+
+    response = TestClient(create_app(tmp_path)).get(
+        f"/api/dashboard/peer-chat/conversations/{conv.id}/ux-projection"
+    )
+
+    assert response.status_code == 200
+    assert sha256(db.read_bytes()).hexdigest() == before_hash
+    assert sha256((tmp_path / "active_sessions.json").read_bytes()).hexdigest() == (
+        before_active_sessions
+    )
+    assert sha256((tmp_path / "god_sessions.json").read_bytes()).hexdigest() == (
+        before_god_sessions
+    )
+    after_sidecars = {
+        path.name
+        for path in tmp_path.iterdir()
+        if path.name.startswith("chat.db-")
+    }
+    assert after_sidecars == before_sidecars
 
 
 def test_dashboard_peer_chat_detail_filters_raw_proposal_envelopes(
