@@ -645,6 +645,71 @@ async def test_runner_enables_peer_chat_with_default_codex_launcher(
         captured["orchestrator_kwargs"]["review_god_session_layer"]
         is captured["scheduler_kwargs"]["god_layer"]
     )
+    assert captured["scheduler_kwargs"]["memoryos_client"] is None
+
+
+@pytest.mark.asyncio
+async def test_runner_wires_peer_chat_memoryos_sidecar_client(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class FakePeerMemoryOSClient:
+        def __init__(self, *, base_url: str, api_key: str | None = None) -> None:
+            self.base_url = base_url
+            self.api_key = api_key
+
+    class FakeOrchestrator:
+        def __init__(self, **kwargs) -> None:
+            captured["orchestrator_kwargs"] = kwargs
+            self._sm = _FakeStateMachine()
+
+        async def reconcile_status_changes(self) -> None:
+            return None
+
+        async def dispatch_lane(self, lane_id: str) -> None:
+            return None
+
+    class FakePeerScheduler:
+        def __init__(self, **kwargs) -> None:
+            captured["scheduler_kwargs"] = kwargs
+
+        async def tick_once(self) -> None:
+            return None
+
+    import xmuse_core.chat.peer_scheduler as peer_scheduler_module
+
+    monkeypatch.setenv("XMUSE_PEER_GOD_BACKEND", "native")
+    monkeypatch.setenv("XMUSE_PEER_CHAT_MEMORYOS_API_KEY", "sidecar-key")
+    monkeypatch.setattr(platform_runner, "PlatformOrchestrator", FakeOrchestrator)
+    monkeypatch.setattr(
+        platform_runner,
+        "PeerChatMemoryOSClient",
+        FakePeerMemoryOSClient,
+    )
+    monkeypatch.setattr(peer_scheduler_module, "PeerChatScheduler", FakePeerScheduler)
+    monkeypatch.setattr(
+        platform_runner,
+        "_peer_chat_runtime_worktree",
+        _empty_peer_chat_worktree,
+    )
+
+    await platform_runner.run(
+        lanes_path=tmp_path / "feature_lanes.json",
+        xmuse_root=tmp_path / "xmuse",
+        mcp_port=8100,
+        max_hours=0,
+        max_concurrent=1,
+        peer_chat_enabled=True,
+        peer_chat_memoryos_url="http://peer-memoryos.test",
+    )
+
+    memoryos_client = captured["scheduler_kwargs"]["memoryos_client"]
+    assert isinstance(memoryos_client, FakePeerMemoryOSClient)
+    assert memoryos_client.base_url == "http://peer-memoryos.test"
+    assert memoryos_client.api_key == "sidecar-key"
+    assert captured["orchestrator_kwargs"]["memoryos_client"] is None
 
 
 @pytest.mark.asyncio
@@ -752,6 +817,11 @@ async def test_runner_builds_dispatch_bridge_with_peer_god_layer(
 ) -> None:
     captured: dict[str, object] = {}
 
+    class FakePeerMemoryOSClient:
+        def __init__(self, *, base_url: str, api_key: str | None = None) -> None:
+            self.base_url = base_url
+            self.api_key = api_key
+
     class FakeOrchestrator:
         def __init__(self, **kwargs) -> None:
             self._sm = _FakeStateMachine()
@@ -778,6 +848,11 @@ async def test_runner_builds_dispatch_bridge_with_peer_god_layer(
 
     monkeypatch.setenv("XMUSE_PEER_GOD_BACKEND", "native")
     monkeypatch.setattr(platform_runner, "PlatformOrchestrator", FakeOrchestrator)
+    monkeypatch.setattr(
+        platform_runner,
+        "PeerChatMemoryOSClient",
+        FakePeerMemoryOSClient,
+    )
     monkeypatch.setattr(peer_scheduler_module, "PeerChatScheduler", FakePeerScheduler)
     monkeypatch.setattr(
         platform_runner,
@@ -794,6 +869,7 @@ async def test_runner_builds_dispatch_bridge_with_peer_god_layer(
         max_concurrent=1,
         peer_chat_enabled=True,
         peer_chat_dispatch_response_wait_s=321.0,
+        peer_chat_memoryos_url="http://peer-memoryos.test",
     )
 
     assert captured["dispatch_bridge_kwargs"]["bridge_id"] == "platform-runner-dispatch"
@@ -808,6 +884,8 @@ async def test_runner_builds_dispatch_bridge_with_peer_god_layer(
     assert Path(captured["dispatch_bridge_kwargs"]["worktree"]).name == "peer_chat_worktree"
     assert captured["dispatch_bridge_kwargs"]["response_wait_s"] == 321.0
     assert captured["dispatch_bridge_kwargs"]["claim_ttl_s"] >= 351
+    assert isinstance(captured["scheduler_kwargs"]["memoryos_client"], FakePeerMemoryOSClient)
+    assert "memoryos_client" not in captured["dispatch_bridge_kwargs"]
 
 
 @pytest.mark.asyncio
@@ -1646,6 +1724,16 @@ def test_platform_runner_supports_peer_chat_wait_overrides() -> None:
     platform_runner.validate_args(args)
     assert args.peer_chat_response_wait_s == 432.0
     assert args.peer_chat_post_writeback_grace_s == 20.0
+
+
+def test_platform_runner_supports_peer_chat_memoryos_url() -> None:
+    args = platform_runner.main_arg_parser().parse_args(
+        ["--peer-chat", "--peer-chat-memoryos-url", "http://memoryos.sidecar"]
+    )
+
+    platform_runner.validate_args(args)
+    assert args.peer_chat is True
+    assert args.peer_chat_memoryos_url == "http://memoryos.sidecar"
 
 
 @pytest.mark.parametrize("wait_s", ["0", "-1", "nan", "inf"])

@@ -2261,8 +2261,10 @@ async def test_dispatch_bridge_acknowledges_gated_entry_through_execute_peer(
     assert message_type == "peer_chat_nudge"
     assert request_id == context["inbox_item"]["id"]
     assert "reply_to_inbox_item_id=xmuse_context.inbox_item.id" in prompt
+    assert "MemoryOS sidecar" not in prompt
     assert context["inbox_item"]["item_type"] == "dispatch"
     assert context["inbox_item"]["payload"]["dispatch_queue_entry_id"] == entry.entry_id
+    assert "memoryos_context" not in context["group_chat"]
     reloaded = ChatDispatchQueueStore(tmp_path / "chat.db").get(entry.entry_id)
     assert reloaded.status == "dispatched"
     assert reloaded.provider_run_ref == f"peer_ack:execute:{execute.participant_id}"

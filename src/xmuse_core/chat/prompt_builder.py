@@ -62,6 +62,7 @@ class XmusePromptBuilder:
             _member_identity_layer(participant),
             _roster_layer(group_context),
             _context_capsule_layer(group_context, inbox_item),
+            *_memoryos_sidecar_layers(group_context),
             _tool_writeback_layer(),
         )
         text = (
@@ -156,6 +157,54 @@ def _context_capsule_layer(group_context: dict[str, Any], inbox_item: Any) -> Pr
         content=content,
         metadata={"recent_message_count": len(recent_messages)},
     )
+
+
+def _memoryos_sidecar_layers(group_context: dict[str, Any]) -> tuple[PromptLayer, ...]:
+    memory_context = group_context.get("memoryos_context")
+    if not isinstance(memory_context, dict):
+        return ()
+    status = str(memory_context.get("status") or "unknown").strip() or "unknown"
+    namespace_uri = str(memory_context.get("namespace_uri") or "unknown").strip()
+    proof_level = str(memory_context.get("proof_level") or "unknown").strip()
+    authority = str(memory_context.get("authority") or "memoryos_sidecar").strip()
+    lines = [
+        f"MemoryOS sidecar status: {status}",
+        f"Authority: {authority}",
+        f"Proof level: {proof_level}",
+        f"Namespace: {namespace_uri}",
+        "MemoryOS is sidecar context, not proposal/review/dispatch truth.",
+    ]
+    degraded_reason = memory_context.get("degraded_reason")
+    if isinstance(degraded_reason, str) and degraded_reason.strip():
+        lines.append(f"Degraded reason: {degraded_reason.strip()}")
+        lines.append("No MemoryOS recall is available; continue from chat.db authority.")
+    text = memory_context.get("text")
+    if isinstance(text, str) and text.strip():
+        lines.extend(["", "Recall:", _bounded(text.strip(), max_chars=2400)])
+    source_refs = _memoryos_source_refs(memory_context)
+    if source_refs:
+        lines.extend(["", "Source refs:"])
+        lines.extend(f"- {ref}" for ref in source_refs)
+    return (
+        PromptLayer(
+            name="memoryos_sidecar_context",
+            content="\n".join(lines),
+            metadata={
+                "authority": authority,
+                "status": status,
+                "proof_level": proof_level,
+                "namespace_uri": namespace_uri,
+                "source_refs": source_refs,
+            },
+        ),
+    )
+
+
+def _memoryos_source_refs(memory_context: dict[str, Any]) -> list[str]:
+    value = memory_context.get("source_refs")
+    if not isinstance(value, (list, tuple)):
+        return []
+    return [str(ref) for ref in value if isinstance(ref, str) and ref.strip()]
 
 
 def _tool_writeback_layer() -> PromptLayer:
