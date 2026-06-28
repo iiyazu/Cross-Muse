@@ -1496,17 +1496,6 @@ def test_conversation_inspector_exposes_separated_closure_evidence(
         provider_run_ref="peer_ack:execute:part-execute",
         dispatch_evidence="mcp_writeback:inbox-dispatch-ack",
     )
-    spine_store.attach_dispatch_for_proposal(
-        proposal_id=proposal.id,
-        dispatch_item_id=dispatch_entry.entry_id,
-    )
-    spine_store.attach_execution_evidence_for_dispatch(
-        dispatch_item_id=dispatch_entry.entry_id,
-        evidence_refs=[
-            "peer_ack:execute:part-execute",
-            "mcp_writeback:inbox-dispatch-ack",
-        ],
-    )
     spine_store.attach_lane_execution_for_resolution(
         resolution_id="res-closure-evidence",
         evidence_refs=[
@@ -1527,7 +1516,10 @@ def test_conversation_inspector_exposes_separated_closure_evidence(
     assert response.status_code == 200
     closure = response.json()["closure_evidence"]
     assert closure["schema_version"] == "closure_evidence/v1"
-    assert closure["source_authority"] == "chat.db.acceptance_spines"
+    assert closure["source_authority"] == [
+        "chat.db:acceptance_spines",
+        "chat.db:chat_dispatch_queue",
+    ]
     assert closure["status_summary"] == {"reviewed": 1}
     assert closure["proposal_review"] == {
         "total": 1,

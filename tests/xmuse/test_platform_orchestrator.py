@@ -5876,13 +5876,14 @@ async def test_on_lane_executed_attaches_chat_acceptance_spine_execution_evidenc
     assert lane["status"] == "gate_failed"
     assert spine.status is AcceptanceSpineStatus.EXECUTED
     assert spine.execution_evidence_refs == [
-        "peer_ack:execute:participant-1",
-        "mcp_writeback:dispatch-1",
         "feature_lanes.json#lane=lane-accepted-exec:status=executed",
         f"lane_graph:{resolution.id}-graph-v1",
         "dispatch_attempt:dispatch-lane-accepted-exec-abc123",
         "provider_session_binding:binding-lane-accepted-exec",
     ]
+    dispatched = ChatDispatchQueueStore(db).get(dispatch.entry_id)
+    assert dispatched.provider_run_ref == "peer_ack:execute:participant-1"
+    assert dispatched.dispatch_evidence == "mcp_writeback:dispatch-1"
 
 
 @pytest.mark.asyncio
