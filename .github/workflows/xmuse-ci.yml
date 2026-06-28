@@ -100,6 +100,7 @@ jobs:
         run: >-
           uv run pytest -q
           tests/xmuse/test_mainline_contract_docs.py
+          tests/xmuse/test_natural_groupchat_goal_docs.py
           tests/xmuse/test_deliberation_protocol_v2.py
           tests/xmuse/test_god_speech_act_contract.py
           tests/xmuse/test_deliberation_engine.py
