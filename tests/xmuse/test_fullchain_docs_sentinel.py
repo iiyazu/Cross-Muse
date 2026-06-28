@@ -341,3 +341,55 @@ def test_success_checks_accept_selected_codex_review_fallback() -> None:
     }
 
     assert all(sentinel._success_checks(snapshot).values())
+
+
+def test_success_checks_reject_stdout_review_authority() -> None:
+    snapshot = {
+        "selected_review_provider": "codex",
+        "review_provider_fallback_reason": "opencode_unavailable",
+        "provider_readiness": {
+            "review_provider_selection": {
+                "policy": "auto",
+                "selected_provider": "codex",
+                "fallback_reason": "opencode_unavailable",
+            }
+        },
+        "related_lane_graph_proposals": [{"id": "prop-1"}],
+        "proposal": {
+            "status": "accepted",
+            "accepted_resolution_id": "res-1",
+        },
+        "proposal_has_review_runtime": False,
+        "lane": {
+            "resolution_id": "res-1",
+            "status": "awaiting_final_action",
+            "gate_passed": True,
+            "peer_delivery_mode": "configured_peer",
+            "peer_result_status": "completed",
+            "peer_degraded_reason": None,
+            "review_peer_cli_kind": "codex",
+            "review_summary": "MCP unavailable; stdout fallback review authority used.",
+            "review_history": [
+                {
+                    "fallback": "persistent",
+                    "fallback_reason": "verdict_merge",
+                    "summary": "MCP unavailable; stdout fallback review authority used.",
+                }
+            ],
+        },
+        "review_peer_participant": {"cli_kind": "codex"},
+        "review_verdict": {
+            "status": "finalized",
+            "summary": "MCP unavailable; stdout fallback review authority used.",
+        },
+        "review_task": {"status": "verdict_emitted"},
+        "final_action_hold": {
+            "status": "pending",
+            "summary": "MCP unavailable; stdout fallback review authority used.",
+        },
+        "execution_artifact": {"matches_expected": True},
+    }
+
+    checks = sentinel._success_checks(snapshot)
+    assert checks["review_authority_not_stdout_fallback"] is False
+    assert not all(checks.values())

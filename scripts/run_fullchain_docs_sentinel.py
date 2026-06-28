@@ -855,11 +855,61 @@ def _success_checks(snapshot: dict[str, Any]) -> dict[str, bool]:
         and review_verdict.get("status") == "finalized",
         "review_task_verdict_emitted": isinstance(review_task, dict)
         and review_task.get("status") == "verdict_emitted",
+        "review_authority_not_stdout_fallback": _review_authority_not_stdout_fallback(
+            lane=lane,
+            review_verdict=review_verdict,
+            final_action_hold=final_action_hold,
+        ),
         "final_action_hold_pending": isinstance(final_action_hold, dict)
         and final_action_hold.get("status") == "pending",
         "proposal_has_no_review_runtime": snapshot.get("proposal_has_review_runtime")
         is False,
     }
+
+
+def _review_authority_not_stdout_fallback(
+    *,
+    lane: dict[str, Any],
+    review_verdict: dict[str, Any] | None,
+    final_action_hold: dict[str, Any] | None,
+) -> bool:
+    for value in _review_authority_claims(lane, review_verdict, final_action_hold):
+        lowered = value.lower()
+        if "stdout fallback" in lowered or "provider stdout" in lowered:
+            return False
+    for key in ("review_fallback", "review_delivery_mode"):
+        if lane.get(key) == "stdout":
+            return False
+    return True
+
+
+def _review_authority_claims(
+    lane: dict[str, Any],
+    review_verdict: dict[str, Any] | None,
+    final_action_hold: dict[str, Any] | None,
+) -> list[str]:
+    claims: list[str] = []
+    for key in ("review_summary", "review_fallback", "review_fallback_reason"):
+        value = lane.get(key)
+        if isinstance(value, str):
+            claims.append(value)
+    history = lane.get("review_history")
+    if isinstance(history, list):
+        for item in history:
+            if not isinstance(item, dict):
+                continue
+            for key in ("summary", "fallback", "fallback_reason"):
+                value = item.get(key)
+                if isinstance(value, str):
+                    claims.append(value)
+    for record in (review_verdict, final_action_hold):
+        if not isinstance(record, dict):
+            continue
+        for key in ("summary", "status", "decision"):
+            value = record.get(key)
+            if isinstance(value, str):
+                claims.append(value)
+    return claims
 
 
 def _provider_readiness(
