@@ -278,6 +278,10 @@ Validation:
   `dispatch_queue.entries[]` with explicit frontend authority boundary and
   projection-only sidecar continuity metadata; this is still read-only and not
   a full frontend claim.
+- pending final-action holds should be exposed from `final_actions.json` via
+  `chat.db:acceptance_spines.final_action_ref` as read-only worklist and
+  detail payloads. These holds are operator next-action projection, not GitHub
+  gate or merge truth.
 
 ## Phase 7 - Documentation And Final Report
 
