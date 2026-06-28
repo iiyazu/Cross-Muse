@@ -16,6 +16,7 @@ SOURCE_AUTHORITY = [
     "chat.db:collaboration_blockers",
     "chat.db:acceptance_spines",
     "chat.db:peer_turn_latency_traces",
+    "review_plane.json",
     "final_actions.json",
     "active_sessions.json",
     "god_sessions.json",
@@ -45,6 +46,7 @@ def build_peer_chat_ux_projection(
         closure_evidence = _closure_evidence(conn, conversation_id)
         supporting_context = _supporting_context(conn, conversation_id)
     sessions = _conversation_sessions(root, conversation_id)
+    review_state = _review_state(root, closure_evidence)
     final_action_holds = _final_action_holds(root, closure_evidence)
 
     return {
@@ -111,6 +113,7 @@ def build_peer_chat_ux_projection(
         },
         "supporting_context": supporting_context,
         "closure_evidence": closure_evidence,
+        "review_state": review_state,
         "final_action_holds": final_action_holds,
     }
 
@@ -658,6 +661,126 @@ def _final_action_holds(
         "total": len(items),
         "pending": sum(1 for item in items if item.get("status") == "pending"),
         "items": items,
+    }
+
+
+def _review_state(
+    root: Path,
+    closure_evidence: dict[str, Any],
+) -> dict[str, Any]:
+    review_plane = _read_json_file(root / "review_plane.json")
+    raw_tasks = review_plane.get("review_tasks")
+    raw_verdicts = review_plane.get("review_verdicts")
+    tasks = (
+        [task for task in raw_tasks if isinstance(task, dict)]
+        if isinstance(raw_tasks, list)
+        else []
+    )
+    verdicts = (
+        [verdict for verdict in raw_verdicts if isinstance(verdict, dict)]
+        if isinstance(raw_verdicts, list)
+        else []
+    )
+    tasks_by_verdict_id = {
+        str(task.get("verdict_id")): task
+        for task in tasks
+        if isinstance(task.get("verdict_id"), str) and task.get("verdict_id")
+    }
+    verdicts_by_id = {
+        str(verdict.get("id")): verdict
+        for verdict in verdicts
+        if isinstance(verdict.get("id"), str) and verdict.get("id")
+    }
+
+    items: list[dict[str, Any]] = []
+    decision_summary: dict[str, int] = {}
+    seen: set[str] = set()
+    for spine in closure_evidence.get("items") or []:
+        if not isinstance(spine, dict):
+            continue
+        verdict_id = _review_verdict_id_from_ref(spine.get("review_verdict_ref"))
+        if verdict_id is None or verdict_id in seen:
+            continue
+        verdict = verdicts_by_id.get(verdict_id)
+        if not isinstance(verdict, dict):
+            continue
+        task = tasks_by_verdict_id.get(verdict_id)
+        item = _review_verdict_projection(verdict_id, verdict, task, spine)
+        items.append(item)
+        seen.add(verdict_id)
+        decision = str(item.get("decision") or "unknown")
+        decision_summary[decision] = decision_summary.get(decision, 0) + 1
+
+    return {
+        "source_authority": ["review_plane.json", "chat.db:acceptance_spines"],
+        "projection_only": True,
+        "total": len(items),
+        "decision_summary": decision_summary,
+        "items": items,
+    }
+
+
+def _review_verdict_projection(
+    verdict_id: str,
+    verdict: dict[str, Any],
+    task: dict[str, Any] | None,
+    spine: dict[str, Any],
+) -> dict[str, Any]:
+    task_id = _projection_text(task.get("task_id")) if isinstance(task, dict) else None
+    return {
+        "id": verdict_id,
+        "lane_id": _projection_text(verdict.get("lane_id")),
+        "decision": _projection_text(verdict.get("decision")) or "unknown",
+        "verdict_status": _projection_text(verdict.get("status")) or "unknown",
+        "summary": _projection_text(verdict.get("summary")),
+        "task_id": task_id,
+        "task_status": _projection_text(task.get("status")) if isinstance(task, dict) else None,
+        "graph_id": _projection_text(task.get("graph_id")) if isinstance(task, dict) else None,
+        "resolution_id": _projection_text(task.get("resolution_id"))
+        if isinstance(task, dict)
+        else None,
+        "gate_report_ref": _projection_text(task.get("gate_report_ref"))
+        if isinstance(task, dict)
+        else None,
+        "evidence_refs": _string_items(verdict.get("evidence_refs")),
+        "patch_instructions": _projection_text(verdict.get("patch_instructions")),
+        "terminate_reason": _projection_text(verdict.get("terminate_reason")),
+        "created_at": _projection_text(verdict.get("created_at")),
+        "source_refs": _review_source_refs(verdict_id, task_id, spine),
+        "authority_boundary": _review_authority_boundary(),
+    }
+
+
+def _review_verdict_id_from_ref(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    prefix = "review_plane.json#verdict="
+    if not value.startswith(prefix):
+        return None
+    verdict_id = value.removeprefix(prefix).strip()
+    return verdict_id or None
+
+
+def _review_source_refs(
+    verdict_id: str,
+    task_id: str | None,
+    spine: dict[str, Any],
+) -> list[str]:
+    refs = [f"review_plane.json#verdict={verdict_id}"]
+    if task_id:
+        refs.append(f"review_plane.json#task={task_id}")
+    spine_id = spine.get("spine_id")
+    if isinstance(spine_id, str) and spine_id:
+        refs.append(f"chat.db:acceptance_spines#spine={spine_id}")
+    return _dedupe(refs)
+
+
+def _review_authority_boundary() -> dict[str, str]:
+    return {
+        "producer": "review_plane.json",
+        "consumer": "frontend.peer_chat_ux_projection",
+        "condition": "read_only_projection",
+        "proof_boundary": "review_verdict_authority_not_github_or_merge_truth",
     }
 
 
