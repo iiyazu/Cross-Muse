@@ -52,6 +52,11 @@ jobs:
           tests/xmuse/test_provider_support_level.py
           tests/xmuse/test_provider_read_contracts_module.py
           tests/xmuse/test_goal_copilot.py
+          tests/xmuse/test_gate_profiles.py::test_repository_gate_profiles_config_loads
+          tests/xmuse/test_gate_profiles.py::test_repository_docs_only_gate_accepts_explicit_docs_profile
+          tests/xmuse/test_platform_orchestrator.py::test_run_gate_uses_plural_gate_profiles
+          tests/xmuse/test_platform_orchestrator.py::test_run_gate_rejects_underscoped_explicit_gate_profile
+          tests/xmuse/test_platform_orchestrator.py::test_get_changed_paths_includes_untracked_files
           tests/xmuse/test_quality_gates_phase3.py
           tests/xmuse/test_platform_runner.py::test_health_once_handles_missing_lane_projection
           tests/xmuse/test_platform_runner.py::test_runner_wires_peer_chat_memoryos_sidecar_client

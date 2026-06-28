@@ -661,8 +661,34 @@ def test_repository_gate_profiles_config_loads():
 
     assert config.defaults.full_gate_interval == 20
     assert "strict-product" in config.profiles
+    assert "docs-only" in config.profiles
     assert config.profiles["strict-product"].blocking is True
     assert config.profiles["historical"].blocking is False
+
+
+def test_repository_docs_only_gate_accepts_explicit_docs_profile():
+    config = load_gate_config(Path("xmuse/gate_profiles.json"), repo_root=Path("."))
+    resolver = GateProfileResolver(config)
+
+    plan = resolver.resolve(
+        feature_id="docs-sentinel",
+        worktree=Path("."),
+        explicit_profiles=["docs-only"],
+        changed_paths=["docs/xmuse/docs-sentinel.md"],
+    )
+
+    command_args = {
+        arg
+        for command in plan.commands
+        for arg in command.argv
+        if arg.startswith("tests/")
+    }
+
+    assert plan.profiles == ["docs-only"]
+    assert plan.resolution_reasons["docs-only"] == ["explicit_lane_profile"]
+    assert plan.blocking is True
+    assert "tests/xmuse/test_mainline_contract_docs.py" in command_args
+    assert "tests/xmuse/test_contract_smoke_gates.py" in command_args
 
 
 def test_xmuse_core_gate_runs_peer_chat_regression_tests():

@@ -17,14 +17,22 @@ _WORKTREE_GATE_PROFILE_WARNING = (
 
 
 def get_changed_paths(worktree: Path) -> list[str]:
-    try:
-        result = subprocess.run(
-            ["git", "diff", "--name-only", "HEAD"],
-            cwd=worktree, capture_output=True, text=True, timeout=10,
-        )
-        return [p for p in result.stdout.strip().splitlines() if p]
-    except Exception:
-        return []
+    paths: list[str] = []
+    for command in (
+        ["git", "diff", "--name-only", "HEAD"],
+        ["git", "ls-files", "--others", "--exclude-standard"],
+    ):
+        try:
+            result = subprocess.run(
+                command,
+                cwd=worktree, capture_output=True, text=True, timeout=10,
+            )
+        except Exception:
+            continue
+        if result.returncode != 0:
+            continue
+        paths.extend(p for p in result.stdout.strip().splitlines() if p)
+    return list(dict.fromkeys(paths))
 
 
 async def run_gate(*, lane_id: str, lane: dict[str, Any], root: Path) -> bool:
@@ -34,7 +42,7 @@ async def run_gate(*, lane_id: str, lane: dict[str, Any], root: Path) -> bool:
 
     try:
         from xmuse_core.gates.loader import load_gate_config
-        from xmuse_core.gates.resolver import GateProfileResolver
+        from xmuse_core.gates.resolver import GateProfileResolver, ProfileMismatchError
         from xmuse_core.gates.runner import GateRunner
 
         config_path, config_repo_root, source_warning = _resolve_gate_config(
@@ -58,22 +66,36 @@ async def run_gate(*, lane_id: str, lane: dict[str, Any], root: Path) -> bool:
         warnings: list[str] = []
         if source_warning:
             warnings.append(source_warning)
-        resolver_changed_paths = changed
-        if explicit_profiles:
-            resolver_changed_paths = []
-            if changed:
-                warnings.append(
-                    "explicit gate_profiles selected; full dirty-worktree "
-                    "coverage is recorded but not used to reject this lane"
-                )
 
-        plan = resolver.resolve(
-            feature_id=lane_id,
-            worktree=worktree,
-            explicit_profiles=explicit_profiles,
-            changed_paths=resolver_changed_paths,
-            warnings=warnings,
-        )
+        try:
+            plan = resolver.resolve(
+                feature_id=lane_id,
+                worktree=worktree,
+                explicit_profiles=explicit_profiles,
+                changed_paths=changed,
+                warnings=warnings,
+            )
+        except ProfileMismatchError as exc:
+            log_event(
+                logger,
+                logging.WARNING,
+                "gate_profile_resolution_failed",
+                lane_id=lane_id,
+                error=str(exc),
+                explicit_profiles=explicit_profiles,
+                changed_paths=changed,
+            )
+            _write_gate_profile_resolution_failure_report(
+                lane_id=lane_id,
+                root=root,
+                worktree=worktree,
+                selected_path=config_path,
+                explicit_profiles=explicit_profiles,
+                changed_paths=changed,
+                error=str(exc),
+                warnings=warnings,
+            )
+            return False
 
         runner = GateRunner(
             repo_root=config_repo_root,
@@ -156,6 +178,52 @@ def _write_gate_profiles_missing_report(
         ],
     }
     (report_dir / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+
+
+def _write_gate_profile_resolution_failure_report(
+    *,
+    lane_id: str,
+    root: Path,
+    worktree: Path,
+    selected_path: Path,
+    explicit_profiles: list[str],
+    changed_paths: list[str],
+    error: str,
+    warnings: list[str],
+) -> None:
+    report_dir = root / "logs" / "gates" / lane_id
+    report_dir.mkdir(parents=True, exist_ok=True)
+    report = {
+        "feature_id": lane_id,
+        "passed": False,
+        "blocking_passed": False,
+        "profile_ids": list(explicit_profiles),
+        "resolution_reasons": {
+            profile_id: ["explicit_lane_profile"]
+            for profile_id in explicit_profiles
+        },
+        "command_results": [],
+        "artifact_dir": str(report_dir),
+        "worktree": str(worktree),
+        "changed_paths": list(changed_paths),
+        "gate_profiles_source": _gate_profiles_source_payload(
+            root=root,
+            worktree=worktree,
+            selected_path=selected_path,
+        ),
+        "warnings": [
+            *warnings,
+            f"gate profile resolution failed closed: {error}",
+        ],
+        "error": {
+            "type": "ProfileMismatchError",
+            "message": error,
+        },
+    }
+    (report_dir / "report.json").write_text(
+        json.dumps(report, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
 
 
 def _write_gate_profiles_source_report(
