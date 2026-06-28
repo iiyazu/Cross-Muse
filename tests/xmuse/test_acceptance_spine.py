@@ -416,9 +416,12 @@ def _complete_server_truth() -> GitHubServerSideTruthEvidence:
         pull_request_number=42,
         required_checks=["quality-gates", "contract-smoke-gates"],
         proof_level="server_side_merge_proof",
+        head_sha="head123",
         workflow_run_id=111,
         check_suite_id=222,
         check_run_ids=[111, 112],
+        check_run_names=["quality-gates", "contract-smoke-gates"],
+        check_run_head_shas=["head123", "head123"],
         expected_source_app="github-actions",
         branch_protection_snapshot={
             "required_status_checks": {

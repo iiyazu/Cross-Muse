@@ -150,8 +150,10 @@ jobs:
           src/xmuse_core/integrations/memoryos_lite_interop.py
           src/xmuse_core/platform/final_action_gate.py
           src/xmuse_core/platform/github_gate_evidence.py
+          scripts/github_server_truth_capture.py
           tests/xmuse/test_acceptance_spine.py
           tests/xmuse/test_github_server_gate_contract.py
+          tests/xmuse/test_github_server_truth_capture.py
           tests/xmuse/test_memoryos_lite_interop.py
           tests/xmuse/test_real_runtime_integration_gate.py
 
@@ -160,6 +162,7 @@ jobs:
           uv run pytest -q
           tests/xmuse/test_acceptance_spine.py
           tests/xmuse/test_github_server_gate_contract.py
+          tests/xmuse/test_github_server_truth_capture.py
           tests/xmuse/test_memoryos_lite_interop.py
           tests/xmuse/test_real_runtime_integration_gate.py
           tests/xmuse/test_package_boundaries.py
@@ -167,6 +170,8 @@ jobs:
       - name: Runtime gate type check
         run: >-
           uv run mypy
+          scripts/github_server_truth_capture.py
+          src/xmuse_core/platform/execution/github_ops.py
           src/xmuse_core/integrations/memoryos_lite_interop.py
 
   peer-chat-runtime-gate:

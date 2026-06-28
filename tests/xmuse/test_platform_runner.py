@@ -72,8 +72,16 @@ def _complete_server_side_merge_truth() -> GitHubServerSideTruthEvidence:
             "peer-chat-runtime-gate",
         ],
         proof_level="server_side_merge_proof",
+        head_sha="abc123",
         workflow_run_id=82564030146,
         check_run_ids=[82564030146, 82564030153, 82564030160, 82564030167],
+        check_run_names=[
+            "quality-gates",
+            "contract-smoke-gates",
+            "real-runtime-integration-gate",
+            "peer-chat-runtime-gate",
+        ],
+        check_run_head_shas=["abc123", "abc123", "abc123", "abc123"],
         expected_source_app="github-actions",
         branch_protection_snapshot={
             "required_status_checks": {
