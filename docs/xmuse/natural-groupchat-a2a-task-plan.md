@@ -53,13 +53,14 @@ Current server facts after the 2026-06-28 Track A/B/C/D pass:
 | #274 | docs calibration after post-sentinel main facts | `f0a7041eba700ce4c1240dfac389f8ca54e6bd52` | `28319547618` success |
 | #275 | frontend final-action hold read projection | `9811e12c236ac88e31e67771d9788d75489d767d` | `28319975311` success |
 | #276 | copilot final-action hold authority boundary | `232e91672650d2bcda6cae0e8e2f8cd9976bfae1` | `28320338930` success |
+| #277 | MemoryOS sidecar context continuity refs | `22e0e4ead7dd14a77ae737b88d288227bd86f79e` | `28321033182` success |
 
 These rows are GitHub server facts for merged code and CI. They are not proof
 of production-ready natural groupchat, live MemoryOS authority, frontend
 completeness, GitHub review truth, or autonomous merge.
 
 Next execution loop should start from clean `origin/main` at or after
-`232e91672650d2bcda6cae0e8e2f8cd9976bfae1`, run Phase 0 again, and then push
+`22e0e4ead7dd14a77ae737b88d288227bd86f79e`, run Phase 0 again, and then push
 the largest reachable real chain beyond the current handoff/review/dispatch
 boundary. If the next chain cannot advance, record the durable blocker and
 next authority boundary rather than relying on stdout, worker summaries, or
@@ -128,7 +129,7 @@ git branch --show-current
 git rev-parse HEAD
 git fetch origin
 git rev-parse origin/main
-for pr in 242 244 245 246 247 248 249 250 251 252 253 254 255 257 258 259 260 261 262 263 264 265 266 267 268 269 270 271 272 273 274 275 276; do
+for pr in 242 244 245 246 247 248 249 250 251 252 253 254 255 257 258 259 260 261 262 263 264 265 266 267 268 269 270 271 272 273 274 275 276 277; do
   gh pr view "$pr" --json number,state,headRefName,headRefOid,baseRefName,mergedAt,mergeCommit,url
 done
 gh pr list --state open --json number,title,headRefName,headRefOid,baseRefName,isDraft,mergeStateStatus,url
@@ -142,7 +143,7 @@ Exit with:
   main SHA;
 - #242, #244, #245, #246, #247, #248, #249, #250, #251, #252, #253, #254,
   #255, #257, #258, #259, #260, #261, #262, #263, #264, #265, #266, #267,
-  #268, #269, #270, #271, #272, #273, #274, #275, and #276 verified
+  #268, #269, #270, #271, #272, #273, #274, #275, #276, and #277 verified
   merged unless superseded by newer current docs;
 - latest relevant main push CI observed through GitHub server facts;
 - dirty historical worktrees marked reference-only;
@@ -326,7 +327,7 @@ Final report includes:
 
 Current final-report notes for the 2026-06-28 pass:
 
-- maximum verified GitHub chain: domain-scoped PRs #244-#276 reached
+- maximum verified GitHub chain: domain-scoped PRs #244-#277 reached
   exact-head PR CI, guarded merge, and successful main push CI;
 - MemoryOS state: opt-in sidecar contract/degraded-mode support only; no live
   MemoryOS authority claim; #255 gives sidecar/context continuity durable
@@ -336,8 +337,10 @@ Current final-report notes for the 2026-06-28 pass:
   execution prompts, and persistent execute context; #263 records approved
   dispatch handoff continuity into the optional sidecar while treating degraded
   sidecar ingest as non-blocking; sidecar recall continuity refs are prompt and
-  read-projection context only; #259 still prevents dispatch ack evidence from
-  becoming lane execution proof;
+  read-projection context only, and #277 keeps degraded recall to attempt refs
+  while preventing sidecar continuity from entering generic authority
+  `source_refs`; #259 still prevents dispatch ack evidence from becoming lane
+  execution proof;
 - frontend state: read-only API/UX projection only; #251 exposes sanitized
   MemoryOS sidecar support metadata, #255 exposes durable dispatch gate refs,
   and #257 keeps dispatch execution evidence separate from authority
