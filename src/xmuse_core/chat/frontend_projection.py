@@ -15,9 +15,12 @@ SOURCE_AUTHORITY = [
     "chat.db:collaboration_runs",
     "chat.db:collaboration_blockers",
     "chat.db:acceptance_spines",
+    "chat.db:peer_turn_latency_traces",
     "active_sessions.json",
     "god_sessions.json",
 ]
+_SUPPORTING_CONTEXT_SOURCE_REF_LIMIT = 20
+_SUPPORTING_CONTEXT_SOURCE_REF_MAX_CHARS = 240
 
 
 def build_peer_chat_ux_projection(
@@ -39,6 +42,7 @@ def build_peer_chat_ux_projection(
         collaboration_runs = _collaboration_runs(conn, conversation_id)
         blockers = _blockers(conn, conversation_id)
         closure_evidence = _closure_evidence(conn, conversation_id)
+        supporting_context = _supporting_context(conn, conversation_id)
     sessions = _conversation_sessions(root, conversation_id)
 
     return {
@@ -98,12 +102,11 @@ def build_peer_chat_ux_projection(
         "collaboration": {
             "total_runs": len(collaboration_runs),
             "active_runs": sum(
-                1
-                for run in collaboration_runs
-                if run.get("status") in {"running", "partial"}
+                1 for run in collaboration_runs if run.get("status") in {"running", "partial"}
             ),
             "runs": collaboration_runs,
         },
+        "supporting_context": supporting_context,
         "closure_evidence": closure_evidence,
     }
 
@@ -331,6 +334,57 @@ def _closure_evidence(conn: sqlite3.Connection, conversation_id: str) -> dict[st
     }
 
 
+def _supporting_context(conn: sqlite3.Connection, conversation_id: str) -> dict[str, Any]:
+    rows = _fetch_all(
+        conn,
+        """
+        select id, inbox_item_id, participant_id, target_role, supporting_context_json
+        from peer_turn_latency_traces
+        where conversation_id = ?
+        order by writeback_at desc
+        limit 50
+        """,
+        (conversation_id,),
+    )
+    memoryos_items = []
+    status_summary: dict[str, int] = {}
+    for row in rows:
+        raw_context = _json_object(row["supporting_context_json"])
+        memoryos_context = raw_context.get("memoryos_sidecar")
+        if not isinstance(memoryos_context, dict):
+            continue
+        item = _memoryos_sidecar_projection(row, memoryos_context)
+        status = str(item.get("status") or "unknown")
+        status_summary[status] = status_summary.get(status, 0) + 1
+        memoryos_items.append(item)
+    return {
+        "projection_only": True,
+        "source_authority": ["chat.db:peer_turn_latency_traces.supporting_context_json"],
+        "memoryos_sidecar": {
+            "status_summary": status_summary,
+            "latest": memoryos_items[:10],
+        },
+    }
+
+
+def _memoryos_sidecar_projection(
+    row: sqlite3.Row,
+    context: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "trace_id": row["id"],
+        "inbox_item_id": row["inbox_item_id"],
+        "participant_id": row["participant_id"],
+        "target_role": row["target_role"],
+        "status": _projection_text(context.get("status")) or "unknown",
+        "authority": _projection_text(context.get("authority")) or "memoryos_sidecar",
+        "proof_level": _projection_text(context.get("proof_level")) or "unknown",
+        "namespace_uri": _projection_text(context.get("namespace_uri")) or "unknown",
+        "degraded_reason": _projection_text(context.get("degraded_reason")),
+        "source_refs": _supporting_context_source_refs(context.get("source_refs")),
+    }
+
+
 def _conversation_sessions(root: Path, conversation_id: str) -> list[dict[str, Any]]:
     sessions: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -395,8 +449,7 @@ def _proposal_card(proposal: dict[str, Any]) -> dict[str, Any]:
         "detail_kind": "proposal",
         "detail_api_href": f"/api/chat/proposals/{proposal_id}",
         "detail_href": (
-            f"/dashboard/peer-chat/conversations/{conversation_id}"
-            f"#proposal-{proposal_id}"
+            f"/dashboard/peer-chat/conversations/{conversation_id}#proposal-{proposal_id}"
         ),
         "source_refs": _dedupe([f"proposal:{proposal_id}", *proposal.get("references", [])]),
         "compact_detail": {"proposal_type": proposal.get("proposal_type")},
@@ -677,6 +730,25 @@ def _string_items(value: Any) -> list[str]:
     if not isinstance(value, (list, tuple)):
         return []
     return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _projection_text(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
+def _supporting_context_source_refs(value: Any) -> list[str]:
+    refs = []
+    for ref in _json_list(value):
+        clean = ref.strip()
+        if not clean:
+            continue
+        refs.append(clean[:_SUPPORTING_CONTEXT_SOURCE_REF_MAX_CHARS])
+        if len(refs) >= _SUPPORTING_CONTEXT_SOURCE_REF_LIMIT:
+            break
+    return refs
 
 
 def _dedupe(items: list[str]) -> list[str]:
