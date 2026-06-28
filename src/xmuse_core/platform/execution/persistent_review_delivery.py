@@ -6,7 +6,6 @@ from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
 
 from xmuse_core.agents.protocol import StdoutMessage
-from xmuse_core.platform.execution.review import infer_review_fallback
 from xmuse_core.platform.review_summary_safety import sanitize_review_summary
 from xmuse_core.platform.state_machine import LaneStateMachine
 from xmuse_core.structuring.models import ReviewDecision
@@ -62,14 +61,10 @@ async def apply_persistent_review_message(
 ) -> bool:
     verdict = persistent_verdict_payload(message)
     if verdict is None:
-        text = _review_text_from_message(message)
-        if not text:
-            return False
-        decision, summary, reason = infer_review_fallback(text)
-    else:
-        decision = "reviewed" if verdict["decision"] == ReviewDecision.MERGE.value else "rejected"
-        summary = verdict["summary"]
-        reason = "persistent_result"
+        return False
+    decision = "reviewed" if verdict["decision"] == ReviewDecision.MERGE.value else "rejected"
+    summary = verdict["summary"]
+    reason = "persistent_result"
 
     summary = sanitize_review_summary(summary)
     review_evidence_refs = _dedupe_refs(evidence_refs or [])
@@ -286,20 +281,6 @@ def persistent_verdict_payload(message: StdoutMessage) -> dict[str, str] | None:
     if not summary:
         return None
     return {"decision": decision, "summary": summary}
-
-
-def _review_text_from_message(message: StdoutMessage) -> str:
-    candidates = [
-        message.message,
-        message.artifacts.get("reply_text"),
-        message.artifacts.get("message"),
-        message.artifacts.get("result"),
-        message.artifacts.get("stdout"),
-    ]
-    for candidate in candidates:
-        if isinstance(candidate, str) and candidate.strip():
-            return candidate
-    return ""
 
 
 def _dedupe_refs(value: list[str]) -> list[str]:
