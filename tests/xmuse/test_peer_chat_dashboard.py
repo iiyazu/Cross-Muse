@@ -175,9 +175,7 @@ def test_dashboard_conversation_list_uses_isolated_workspace_fields(
     assert alpha_row["claimed_count"] == 1
     assert alpha_row["linked_session_ids"] == ["god-alpha"]
     assert [session["god_session_id"] for session in alpha_row["sessions"]] == ["god-alpha"]
-    assert [message["id"] for message in alpha_row["recent_messages"]] == [
-        alpha_message.id
-    ]
+    assert [message["id"] for message in alpha_row["recent_messages"]] == [alpha_message.id]
     assert [message["id"] for message in beta_row["recent_messages"]] == [beta_message.id]
     assert alpha_proposal.id in [card["source_id"] for card in alpha_row["recent_cards"]]
     assert all("lanes" not in card for card in alpha_row["recent_cards"])
@@ -336,6 +334,37 @@ def test_dashboard_peer_chat_ux_projection_is_frontend_read_model(
             ]
         },
     )
+    long_memory_refs = [f"memoryos:sidecar:{index}:{'x' * 260}" for index in range(25)]
+    PeerTurnLatencyTraceStore(db).record(
+        conversation_id=conv.id,
+        inbox_item_id=inbox_item.id,
+        participant_id=architect.participant_id,
+        target_role=architect.role,
+        god_session_id="god-architect",
+        provider_session_id="provider-thread-architect",
+        provider_session_kind="codex_app_server_thread",
+        provider_binding_status="active",
+        message_created_at=inbox_item.created_at,
+        inbox_claimed_at=inbox_item.claimed_at,
+        delivery_started_at=10.0,
+        provider_turn_started_at=10.1,
+        first_delta_at=10.2,
+        writeback_at=10.5,
+        total_latency_ms=500,
+        delivery_mode="mcp_writeback",
+        degraded_reason=None,
+        supporting_context={
+            "memoryos_sidecar": {
+                "status": "degraded",
+                "authority": "memoryos_sidecar",
+                "proof_level": "degraded",
+                "namespace_uri": f"memory://conversation/{conv.id}",
+                "degraded_reason": "memoryos_timeout",
+                "source_refs": long_memory_refs,
+                "text": "recall body must not be projected as frontend truth",
+            }
+        },
+    )
 
     response = TestClient(create_app(tmp_path)).get(
         f"/api/dashboard/peer-chat/conversations/{conv.id}/ux-projection"
@@ -356,6 +385,7 @@ def test_dashboard_peer_chat_ux_projection_is_frontend_read_model(
         "chat.db:collaboration_runs",
         "chat.db:collaboration_blockers",
         "chat.db:acceptance_spines",
+        "chat.db:peer_turn_latency_traces",
         "active_sessions.json",
         "god_sessions.json",
     ]
@@ -381,6 +411,27 @@ def test_dashboard_peer_chat_ux_projection_is_frontend_read_model(
     ]
     assert worklist_by_id[blocker.blocker_id]["next_action"] == "resolve_blocker"
     assert worklist_by_id[blocker.blocker_id]["source_refs"] == ["proposal:ux"]
+    supporting_context = payload["supporting_context"]
+    assert supporting_context["projection_only"] is True
+    assert supporting_context["source_authority"] == [
+        "chat.db:peer_turn_latency_traces.supporting_context_json"
+    ]
+    assert supporting_context["memoryos_sidecar"]["status_summary"] == {"degraded": 1}
+    assert supporting_context["memoryos_sidecar"]["latest"] == [
+        {
+            "trace_id": f"peer_latency_{inbox_item.id}",
+            "inbox_item_id": inbox_item.id,
+            "participant_id": architect.participant_id,
+            "target_role": architect.role,
+            "status": "degraded",
+            "authority": "memoryos_sidecar",
+            "proof_level": "degraded",
+            "namespace_uri": f"memory://conversation/{conv.id}",
+            "degraded_reason": "memoryos_timeout",
+            "source_refs": [ref[:240] for ref in long_memory_refs[:20]],
+        }
+    ]
+    assert "recall body" not in json.dumps(supporting_context)
     assert payload["closure_evidence"]["total"] == 1
     assert payload["closure_evidence"]["items"][0]["proposal_id"] == proposal.id
 
@@ -394,6 +445,75 @@ def test_dashboard_peer_chat_ux_projection_404s_for_missing_conversation(
 
     assert response.status_code == 404
     assert not (tmp_path / "chat.db").exists()
+
+
+def test_dashboard_peer_chat_ux_projection_tolerates_old_trace_schema(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "chat.db"
+    chat = ChatStore(db)
+    conv = chat.create_conversation("Old trace projection")
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            """
+            create table peer_turn_latency_traces (
+                id text primary key,
+                conversation_id text not null references conversations(id),
+                inbox_item_id text not null,
+                god_session_id text,
+                participant_id text,
+                target_role text,
+                provider_session_id text,
+                provider_session_kind text,
+                provider_binding_status text,
+                provider_binding_failure_reason text,
+                message_created_at text not null,
+                inbox_claimed_at text,
+                delivery_started_at real not null,
+                provider_turn_started_at real not null,
+                first_delta_at real,
+                writeback_at real not null,
+                total_latency_ms integer not null,
+                delivery_mode text not null,
+                degraded_reason text,
+                stage_timings_json text not null default '{}'
+            )
+            """
+        )
+        conn.execute(
+            """
+            insert into peer_turn_latency_traces (
+                id, conversation_id, inbox_item_id, message_created_at,
+                delivery_started_at, provider_turn_started_at, writeback_at,
+                total_latency_ms, delivery_mode, degraded_reason, stage_timings_json
+            )
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "peer_latency_old_projection",
+                conv.id,
+                "inbox-old-projection",
+                "2026-06-28T00:00:00Z",
+                1.0,
+                1.1,
+                2.0,
+                1000,
+                "mcp_writeback",
+                None,
+                "{}",
+            ),
+        )
+
+    response = TestClient(create_app(tmp_path)).get(
+        f"/api/dashboard/peer-chat/conversations/{conv.id}/ux-projection"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["supporting_context"] == {
+        "projection_only": True,
+        "source_authority": ["chat.db:peer_turn_latency_traces.supporting_context_json"],
+        "memoryos_sidecar": {"status_summary": {}, "latest": []},
+    }
 
 
 def test_dashboard_peer_chat_ux_projection_does_not_mutate_authority_files(
@@ -439,17 +559,18 @@ def test_dashboard_peer_chat_ux_projection_does_not_mutate_authority_files(
     _write_json(tmp_path / "god_sessions.json", {"sessions": []})
     before_active_sessions = sha256((tmp_path / "active_sessions.json").read_bytes()).hexdigest()
     before_god_sessions = sha256((tmp_path / "god_sessions.json").read_bytes()).hexdigest()
-    before_sidecars = {
-        path.name
-        for path in tmp_path.iterdir()
-        if path.name.startswith("chat.db-")
-    }
+    before_sidecars = {path.name for path in tmp_path.iterdir() if path.name.startswith("chat.db-")}
 
     response = TestClient(create_app(tmp_path)).get(
         f"/api/dashboard/peer-chat/conversations/{conv.id}/ux-projection"
     )
 
     assert response.status_code == 200
+    assert response.json()["supporting_context"] == {
+        "projection_only": True,
+        "source_authority": ["chat.db:peer_turn_latency_traces.supporting_context_json"],
+        "memoryos_sidecar": {"status_summary": {}, "latest": []},
+    }
     assert sha256(db.read_bytes()).hexdigest() == before_hash
     assert sha256((tmp_path / "active_sessions.json").read_bytes()).hexdigest() == (
         before_active_sessions
@@ -457,11 +578,7 @@ def test_dashboard_peer_chat_ux_projection_does_not_mutate_authority_files(
     assert sha256((tmp_path / "god_sessions.json").read_bytes()).hexdigest() == (
         before_god_sessions
     )
-    after_sidecars = {
-        path.name
-        for path in tmp_path.iterdir()
-        if path.name.startswith("chat.db-")
-    }
+    after_sidecars = {path.name for path in tmp_path.iterdir() if path.name.startswith("chat.db-")}
     assert after_sidecars == before_sidecars
 
 
@@ -628,14 +745,12 @@ def test_dashboard_peer_request_and_result_drilldowns_follow_card_links(
     request_card = next(
         card
         for card in timeline["cards"]
-        if card["card_type"] == "peer_request"
-        and card["source_id"] == "req-alpha-review"
+        if card["card_type"] == "peer_request" and card["source_id"] == "req-alpha-review"
     )
     result_card = next(
         card
         for card in timeline["cards"]
-        if card["card_type"] == "peer_result"
-        and card["source_id"] == "req-alpha-review"
+        if card["card_type"] == "peer_result" and card["source_id"] == "req-alpha-review"
     )
 
     request_response = client.get(request_card["api_href"])
@@ -654,8 +769,7 @@ def test_dashboard_peer_request_and_result_drilldowns_follow_card_links(
         "feature_id": "feature-alpha",
         "graph_id": "graph-alpha",
         "dashboard_href": (
-            f"/dashboard/peer-chat/conversations/{conv.id}"
-            "#peer-request-req-alpha-review"
+            f"/dashboard/peer-chat/conversations/{conv.id}#peer-request-req-alpha-review"
         ),
         "api_href": "/api/peer-requests/req-alpha-review",
         "result_api_href": "/api/peer-requests/req-alpha-review/result",
@@ -786,9 +900,7 @@ def test_dashboard_gray_box_card_drilldowns_are_compact_and_conversation_scoped(
     assert timeline.status_code == 200
     cards = timeline.json()["cards"]
     lane_graph_card = next(card for card in cards if card["card_type"] == "lane_graph")
-    graph_set_card = next(
-        card for card in cards if card["card_type"] == "feature_graph_set"
-    )
+    graph_set_card = next(card for card in cards if card["card_type"] == "feature_graph_set")
     health_card = next(card for card in cards if card["card_type"] == "health_summary")
 
     assert lane_graph_card["href"] == (
@@ -803,9 +915,7 @@ def test_dashboard_gray_box_card_drilldowns_are_compact_and_conversation_scoped(
     assert graph_set_card["api_href"] == (
         f"/api/dashboard/peer-chat/conversations/{conv.id}/feature-graph-sets/graph-set-alpha"
     )
-    assert health_card["href"] == (
-        f"/dashboard/peer-chat/conversations/{conv.id}#run-health"
-    )
+    assert health_card["href"] == (f"/dashboard/peer-chat/conversations/{conv.id}#run-health")
     assert health_card["api_href"] == (
         f"/api/dashboard/peer-chat/conversations/{conv.id}/run-health"
     )
@@ -1175,8 +1285,7 @@ def test_dashboard_peer_chat_runtime_timeline_projects_inspector_state(
         "mcp_writeback execute evidence=dispatch-inbox"
     )
     assert all(
-        event["api_href"]
-        == f"/api/dashboard/peer-chat/conversations/{conv_id}/runtime-timeline"
+        event["api_href"] == f"/api/dashboard/peer-chat/conversations/{conv_id}/runtime-timeline"
         for event in body["events"]
     )
 
@@ -1197,9 +1306,7 @@ def test_conversation_inspector_links_dashboard_runtime_timeline(tmp_path: Path)
             "label": "Runtime timeline",
         },
         "api": {
-            "api_href": (
-                f"/api/dashboard/peer-chat/conversations/{conv.id}/runtime-timeline"
-            ),
+            "api_href": (f"/api/dashboard/peer-chat/conversations/{conv.id}/runtime-timeline"),
             "label": "Runtime timeline",
         },
     }
@@ -1369,9 +1476,7 @@ def test_dashboard_runtime_timeline_prefers_latest_row_when_timestamps_tie(
 
     assert response.status_code == 200
     discussion_events = [
-        event
-        for event in response.json()["events"]
-        if event["event_type"] == "collaboration_run"
+        event for event in response.json()["events"] if event["event_type"] == "collaboration_run"
     ]
     assert discussion_events[0]["event_id"] == newer.run_id
     assert discussion_events[0]["event_id"] != older.run_id
@@ -1457,9 +1562,7 @@ def test_dashboard_runtime_timeline_prefers_newest_dispatch_queue_row_on_tie(
 
     assert response.status_code == 200
     dispatch_events = [
-        event
-        for event in response.json()["events"]
-        if event["event_type"] == "dispatch_queue"
+        event for event in response.json()["events"] if event["event_type"] == "dispatch_queue"
     ]
     assert dispatch_events[0]["event_id"] == newer.entry_id
     assert dispatch_events[0]["event_id"] != older.entry_id
@@ -2019,8 +2122,12 @@ def test_inspector_artifacts_summarizes_available_artifacts(tmp_path: Path) -> N
         content='{"type":"mission_blueprint","title":"Build Dashboard"}',
         references=[],
     )
-    chat.approve_proposal(proposal_id=proposal.id, approved_by=["human"],
-                          approval_mode="human", goal_summary="Build dashboard")
+    chat.approve_proposal(
+        proposal_id=proposal.id,
+        approved_by=["human"],
+        approval_mode="human",
+        goal_summary="Build dashboard",
+    )
 
     client = TestClient(create_app(tmp_path))
     response = client.get(f"/api/dashboard/peer-chat/conversations/{conv.id}/inspector")
@@ -2065,22 +2172,26 @@ def test_inspector_degradation_is_conversation_scoped(tmp_path: Path) -> None:
     conv2 = chat.create_conversation("Conv2")
     for cid in (conv1.id, conv2.id):
         ParticipantStore(db).add(
-            conversation_id=cid, role="architect",
-            display_name="Arch", cli_kind="codex", model="gpt-5.5",
+            conversation_id=cid,
+            role="architect",
+            display_name="Arch",
+            cli_kind="codex",
+            model="gpt-5.5",
         )
     # Error referencing a lane in conv2
     _write_json(
         tmp_path / "error_knowledge.json",
-        {"entries": [{"id": "err-conv2", "lane_id": "lane-conv2",
-                      "pit": "conv2 only failure"}]},
+        {"entries": [{"id": "err-conv2", "lane_id": "lane-conv2", "pit": "conv2 only failure"}]},
     )
     # Lane in conv1 and lane in conv2
     _write_json(
         tmp_path / "feature_lanes.json",
-        {"lanes": [
-            {"feature_id": "lane-conv1", "conversation_id": conv1.id, "status": "failed"},
-            {"feature_id": "lane-conv2", "conversation_id": conv2.id, "status": "failed"},
-        ]},
+        {
+            "lanes": [
+                {"feature_id": "lane-conv1", "conversation_id": conv1.id, "status": "failed"},
+                {"feature_id": "lane-conv2", "conversation_id": conv2.id, "status": "failed"},
+            ]
+        },
     )
 
     client = TestClient(create_app(tmp_path))
@@ -2118,13 +2229,18 @@ def test_inspector_degradation_includes_error_details(tmp_path: Path) -> None:
     conv = chat.create_conversation("Errors")
     ParticipantStore(db).add(
         conversation_id=conv.id,
-        role="architect", display_name="Arch",
-        cli_kind="codex", model="gpt-5.5",
+        role="architect",
+        display_name="Arch",
+        cli_kind="codex",
+        model="gpt-5.5",
     )
     _add_conv_lane_and_errors(
-        conv, tmp_path,
-        [{"entry_id": "err-1", "message": "first error"},
-         {"entry_id": "err-2", "message": "second error"}],
+        conv,
+        tmp_path,
+        [
+            {"entry_id": "err-1", "message": "first error"},
+            {"entry_id": "err-2", "message": "second error"},
+        ],
     )
 
     client = TestClient(create_app(tmp_path))
@@ -2143,12 +2259,12 @@ def test_inspector_degradation_limits_error_details(tmp_path: Path) -> None:
     conv = chat.create_conversation("Many")
     ParticipantStore(db).add(
         conversation_id=conv.id,
-        role="architect", display_name="Arch",
-        cli_kind="codex", model="gpt-5.5",
+        role="architect",
+        display_name="Arch",
+        cli_kind="codex",
+        model="gpt-5.5",
     )
-    many_errors = [
-        {"entry_id": f"err-{i}", "message": f"error {i}"} for i in range(100)
-    ]
+    many_errors = [{"entry_id": f"err-{i}", "message": f"error {i}"} for i in range(100)]
     _add_conv_lane_and_errors(conv, tmp_path, many_errors)
 
     client = TestClient(create_app(tmp_path))
@@ -2172,7 +2288,8 @@ def test_inspector_degradation_shows_dead_letters_and_errors(tmp_path: Path) -> 
         model="gpt-5.5",
     )
     _add_conv_lane_and_errors(
-        conv, tmp_path,
+        conv,
+        tmp_path,
         [{"entry_id": "err-1", "message": "test failure"}],
     )
 
@@ -2231,9 +2348,7 @@ def test_inspector_cross_surface_parity_core_fields_match(
     chat.add_message(conv.id, "Human", "human", "build it")
 
     dash_client = TestClient(create_app(tmp_path))
-    dash_resp = dash_client.get(
-        f"/api/dashboard/peer-chat/conversations/{conv.id}/inspector"
-    )
+    dash_resp = dash_client.get(f"/api/dashboard/peer-chat/conversations/{conv.id}/inspector")
     assert dash_resp.status_code == 200
     dash_body = dash_resp.json()
 
@@ -2251,17 +2366,21 @@ def test_inspector_cross_surface_parity_core_fields_match(
         },
     )
     assert mcp_resp.status_code == 200
-    mcp_body = json.loads(
-        mcp_resp.json()["result"]["content"][0]["text"]
-    )
+    mcp_body = json.loads(mcp_resp.json()["result"]["content"][0]["text"])
 
     # Core fields: both surfaces must agree on conversation id
     assert dash_body["conversation"]["id"] == mcp_body["conversation"]["id"] == conv.id
     assert dash_body["conversation"]["title"] == mcp_body["conversation"]["title"] == "Parity"
 
     # Both must have the same sections
-    for section in ("participants", "session_health", "graph_worklist",
-                    "artifacts", "degradation", "recent_activity"):
+    for section in (
+        "participants",
+        "session_health",
+        "graph_worklist",
+        "artifacts",
+        "degradation",
+        "recent_activity",
+    ):
         assert section in dash_body, f"dashboard missing {section}"
         assert section in mcp_body, f"MCP missing {section}"
 
@@ -2273,8 +2392,9 @@ def test_inspector_cross_surface_parity_core_fields_match(
     assert d["artifacts"]["total"] == m["artifacts"]["total"]
     assert d["degradation"]["error_count"] == m["degradation"]["error_count"]
     assert d["graph_worklist"]["total_lanes"] == m["graph_worklist"]["total_lanes"]
-    assert (d["graph_worklist"].get("authoritative_graph_id")
-            == m["graph_worklist"].get("authoritative_graph_id"))
+    assert d["graph_worklist"].get("authoritative_graph_id") == m["graph_worklist"].get(
+        "authoritative_graph_id"
+    )
 
 
 def test_inspector_cross_surface_parity_empty_state(tmp_path: Path) -> None:
@@ -2285,9 +2405,7 @@ def test_inspector_cross_surface_parity_empty_state(tmp_path: Path) -> None:
     conv = chat.create_conversation("Empty")
 
     dash_client = TestClient(create_app(tmp_path))
-    dash_resp = dash_client.get(
-        f"/api/dashboard/peer-chat/conversations/{conv.id}/inspector"
-    )
+    dash_resp = dash_client.get(f"/api/dashboard/peer-chat/conversations/{conv.id}/inspector")
     assert dash_resp.status_code == 200
     dash_body = dash_resp.json()
 
@@ -2307,8 +2425,13 @@ def test_inspector_cross_surface_parity_empty_state(tmp_path: Path) -> None:
     mcp_body = json.loads(mcp_resp.json()["result"]["content"][0]["text"])
 
     # Empty states must agree — value-level for ALL numeric fields
-    for section in ("recent_activity", "session_health", "graph_worklist",
-                    "artifacts", "degradation"):
+    for section in (
+        "recent_activity",
+        "session_health",
+        "graph_worklist",
+        "artifacts",
+        "degradation",
+    ):
         assert section in dash_body and section in mcp_body
     d, m = dash_body, mcp_body
     assert d["recent_activity"]["message_count"] == m["recent_activity"]["message_count"] == 0
@@ -2386,25 +2509,19 @@ def test_dashboard_feature_graph_set_drilldown_rejects_other_conversation_scope(
     alpha_timeline = client.get(f"/api/dashboard/peer-chat/conversations/{alpha.id}")
     beta_timeline = client.get(f"/api/dashboard/peer-chat/conversations/{beta.id}")
     alpha_detail = client.get(
-        f"/api/dashboard/peer-chat/conversations/{alpha.id}"
-        "/feature-graph-sets/graph-set-alpha"
+        f"/api/dashboard/peer-chat/conversations/{alpha.id}/feature-graph-sets/graph-set-alpha"
     )
     beta_detail = client.get(
-        f"/api/dashboard/peer-chat/conversations/{beta.id}"
-        "/feature-graph-sets/graph-set-alpha"
+        f"/api/dashboard/peer-chat/conversations/{beta.id}/feature-graph-sets/graph-set-alpha"
     )
 
     assert alpha_timeline.status_code == 200
     assert any(
-        card["card_type"] == "feature_graph_set"
-        and card["source_id"] == "graph-set-alpha"
+        card["card_type"] == "feature_graph_set" and card["source_id"] == "graph-set-alpha"
         for card in alpha_timeline.json()["cards"]
     )
     assert beta_timeline.status_code == 200
-    assert all(
-        card["source_id"] != "graph-set-alpha"
-        for card in beta_timeline.json()["cards"]
-    )
+    assert all(card["source_id"] != "graph-set-alpha" for card in beta_timeline.json()["cards"])
     assert alpha_detail.status_code == 200
     assert alpha_detail.json()["graph_set"]["conversation_id"] == alpha.id
     assert beta_detail.status_code == 404

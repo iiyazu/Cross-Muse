@@ -169,8 +169,7 @@ class ChatStreamStore:
                 """
             )
             columns = {
-                row["name"]
-                for row in conn.execute("pragma table_info(chat_streams)").fetchall()
+                row["name"] for row in conn.execute("pragma table_info(chat_streams)").fetchall()
             }
             if "first_delta_at" not in columns:
                 conn.execute("alter table chat_streams add column first_delta_at text")
@@ -220,6 +219,7 @@ class PeerTurnLatencyTraceStore:
         provider_session_kind: str | None = None,
         provider_binding_status: str | None = None,
         provider_binding_failure_reason: str | None = None,
+        supporting_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         with self._connect() as conn:
             trace = {
@@ -243,8 +243,13 @@ class PeerTurnLatencyTraceStore:
                 "delivery_mode": delivery_mode,
                 "degraded_reason": degraded_reason,
                 "stage_timings": stage_timings or {},
+                "supporting_context": supporting_context or {},
             }
             stage_timings_json = json.dumps(trace["stage_timings"], sort_keys=True)
+            supporting_context_json = json.dumps(
+                trace["supporting_context"],
+                sort_keys=True,
+            )
             conn.execute(
                 """
                 insert into peer_turn_latency_traces (
@@ -254,9 +259,10 @@ class PeerTurnLatencyTraceStore:
                     provider_binding_failure_reason,
                     message_created_at, inbox_claimed_at, delivery_started_at,
                     provider_turn_started_at, first_delta_at, writeback_at,
-                    total_latency_ms, delivery_mode, degraded_reason, stage_timings_json
+                    total_latency_ms, delivery_mode, degraded_reason, stage_timings_json,
+                    supporting_context_json
                 )
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     trace["id"],
@@ -279,6 +285,7 @@ class PeerTurnLatencyTraceStore:
                     delivery_mode,
                     degraded_reason,
                     stage_timings_json,
+                    supporting_context_json,
                 ),
             )
         return trace
@@ -363,10 +370,7 @@ class PeerTurnLatencyTraceStore:
                 """,
                 (conversation_id, inbox_item_id),
             ).fetchall()
-        return {
-            row["tool_name"]: {"at": row["called_at"]}
-            for row in rows
-        }
+        return {row["tool_name"]: {"at": row["called_at"]} for row in rows}
 
     def _init_db(self) -> None:
         with self._connect() as conn:
@@ -392,7 +396,8 @@ class PeerTurnLatencyTraceStore:
                     total_latency_ms integer not null,
                     delivery_mode text not null,
                     degraded_reason text,
-                    stage_timings_json text not null default '{}'
+                    stage_timings_json text not null default '{}',
+                    supporting_context_json text not null default '{}'
                 )
                 """
             )
@@ -416,6 +421,11 @@ class PeerTurnLatencyTraceStore:
                     "alter table peer_turn_latency_traces "
                     "add column stage_timings_json text not null default '{}'"
                 )
+            if "supporting_context_json" not in columns:
+                conn.execute(
+                    "alter table peer_turn_latency_traces "
+                    "add column supporting_context_json text not null default '{}'"
+                )
             optional_columns = {
                 "god_session_id": "text",
                 "provider_session_id": "text",
@@ -438,11 +448,23 @@ class PeerTurnLatencyTraceStore:
     def _trace_from_row(self, row: sqlite3.Row) -> dict[str, Any]:
         trace = dict(row)
         raw_stage_timings = trace.pop("stage_timings_json", None)
+        raw_supporting_context = trace.pop("supporting_context_json", None)
         try:
             parsed = json.loads(raw_stage_timings) if isinstance(raw_stage_timings, str) else {}
         except json.JSONDecodeError:
             parsed = {}
         trace["stage_timings"] = parsed if isinstance(parsed, dict) else {}
+        try:
+            supporting_context = (
+                json.loads(raw_supporting_context)
+                if isinstance(raw_supporting_context, str)
+                else {}
+            )
+        except json.JSONDecodeError:
+            supporting_context = {}
+        trace["supporting_context"] = (
+            supporting_context if isinstance(supporting_context, dict) else {}
+        )
         return trace
 
 
