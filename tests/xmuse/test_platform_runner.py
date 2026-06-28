@@ -1860,6 +1860,36 @@ def test_runner_rejects_resolve_final_action_without_hold_selector() -> None:
         platform_runner.validate_args(args)
 
 
+def test_runner_parser_supports_create_final_action_pr() -> None:
+    args = platform_runner.main_arg_parser().parse_args(
+        [
+            "--create-final-action-pr",
+            "--final-action-id",
+            "final-pr",
+            "--github-repo",
+            "iiyazu/Cross-Muse",
+            "--pr-base-branch",
+            "main",
+            "--pr-branch-prefix",
+            "codex/",
+        ]
+    )
+
+    platform_runner.validate_args(args)
+    assert args.create_final_action_pr is True
+    assert args.final_action_id == "final-pr"
+    assert args.github_repo == "iiyazu/Cross-Muse"
+    assert args.pr_base_branch == "main"
+    assert args.pr_branch_prefix == "codex/"
+
+
+def test_runner_rejects_create_final_action_pr_without_hold_selector() -> None:
+    args = platform_runner.main_arg_parser().parse_args(["--create-final-action-pr"])
+
+    with pytest.raises(SystemExit):
+        platform_runner.validate_args(args)
+
+
 def test_runner_parser_supports_opt_in_live_github_capture(tmp_path: Path) -> None:
     review_artifact = tmp_path / "internal-review.json"
     review_artifact.write_text('{"review":"accepted"}\n', encoding="utf-8")
@@ -2448,6 +2478,208 @@ def test_resolve_existing_final_action_can_retry_after_github_gate_gap(
     assert lane["status"] == "merged"
     assert lane["github_gate_evidence_ref"] == hold["github_gate_evidence_ref"]
     assert "github_gate_gap_ref" not in lane
+
+
+class _FakeFinalActionPrCommandRunner:
+    def __init__(self, *, dirty: bool = True) -> None:
+        self.dirty = dirty
+        self.commands: list[tuple[tuple[str, ...], Path]] = []
+
+    def __call__(
+        self,
+        command,
+        *,
+        cwd=None,
+        capture_output=True,
+        text=True,
+        timeout=None,
+        check=False,
+    ):
+        del capture_output, text, timeout, check
+        cmd = tuple(str(part) for part in command)
+        self.commands.append((cmd, Path(cwd or ".")))
+        if cmd[:3] == ("git", "rev-parse", "--is-inside-work-tree"):
+            return subprocess.CompletedProcess(command, 0, stdout="true\n", stderr="")
+        if cmd[:3] == ("git", "status", "--porcelain"):
+            stdout = "?? docs/xmuse/new.md\n" if self.dirty else ""
+            return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
+        if cmd[:2] == ("git", "checkout"):
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+        if cmd[:2] == ("git", "add"):
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+        if cmd[:2] == ("git", "commit"):
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout="[codex/lane-pr 1234567] docs: add lane-pr\n",
+                stderr="",
+            )
+        if cmd[:3] == ("git", "rev-parse", "HEAD"):
+            return subprocess.CompletedProcess(command, 0, stdout="head123\n", stderr="")
+        if cmd[:2] == ("git", "push"):
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+        if cmd[:3] == ("gh", "pr", "create"):
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout="https://github.com/iiyazu/Cross-Muse/pull/999\n",
+                stderr="",
+            )
+        if cmd[:3] == ("gh", "pr", "view"):
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout=json.dumps(
+                    {
+                        "number": 999,
+                        "url": "https://github.com/iiyazu/Cross-Muse/pull/999",
+                        "headRefOid": "head123",
+                    }
+                )
+                + "\n",
+                stderr="",
+            )
+        return subprocess.CompletedProcess(command, 1, stdout="", stderr="unexpected")
+
+
+def test_create_final_action_pull_request_records_pr_without_resolving_hold(
+    tmp_path: Path,
+) -> None:
+    xmuse_root = tmp_path / "runtime"
+    worktree = tmp_path / "worktree"
+    xmuse_root.mkdir()
+    worktree.mkdir()
+    (xmuse_root / "feature_lanes.json").write_text(
+        json.dumps(
+            {
+                "lanes": [
+                    {
+                        "feature_id": "lane-pr",
+                        "status": "awaiting_final_action",
+                        "worktree": str(worktree),
+                        "branch": "lane-pr",
+                        "base_head_sha": "base123",
+                        "final_action_hold_id": "final-pr",
+                        "review_verdict_id": "verdict-pr",
+                    }
+                ]
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (xmuse_root / "final_actions.json").write_text(
+        json.dumps(
+            {
+                "holds": [
+                    {
+                        "id": "final-pr",
+                        "lane_id": "lane-pr",
+                        "verdict_id": "verdict-pr",
+                        "action": "merge",
+                        "target_status": "reviewed",
+                        "status": "pending",
+                        "summary": "merge after PR",
+                    }
+                ]
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    runner = _FakeFinalActionPrCommandRunner()
+
+    result = platform_runner.create_final_action_pull_request(
+        xmuse_root=xmuse_root,
+        final_action_id="final-pr",
+        github_repo="iiyazu/Cross-Muse",
+        command_runner=runner,
+    )
+
+    assert result["status"] == "created"
+    assert result["pull_request_number"] == 999
+    pr_payload = json.loads(
+        (xmuse_root / "final_action_prs.json").read_text(encoding="utf-8")
+    )
+    record = pr_payload["items"][0]
+    assert record["final_action_id"] == "final-pr"
+    assert record["lane_id"] == "lane-pr"
+    assert record["head_branch"] == "codex/lane-pr"
+    assert record["head_sha"] == "head123"
+    assert record["proof_boundary"] == "pull_request_created_not_merge_truth"
+    holds = json.loads((xmuse_root / "final_actions.json").read_text(encoding="utf-8"))
+    assert holds["holds"][0]["status"] == "pending"
+    lanes = json.loads((xmuse_root / "feature_lanes.json").read_text(encoding="utf-8"))
+    lane = lanes["lanes"][0]
+    assert lane["status"] == "awaiting_final_action"
+    assert lane["pull_request_number"] == 999
+    assert lane["pull_request_url"] == "https://github.com/iiyazu/Cross-Muse/pull/999"
+    assert lane["pull_request_head_sha"] == "head123"
+    assert any(cmd[:3] == ("gh", "pr", "create") for cmd, _cwd in runner.commands)
+
+
+def test_create_final_action_pull_request_requires_worktree_changes(
+    tmp_path: Path,
+) -> None:
+    xmuse_root = tmp_path / "runtime"
+    worktree = tmp_path / "worktree"
+    xmuse_root.mkdir()
+    worktree.mkdir()
+    (xmuse_root / "feature_lanes.json").write_text(
+        json.dumps(
+            {
+                "lanes": [
+                    {
+                        "feature_id": "lane-clean",
+                        "status": "awaiting_final_action",
+                        "worktree": str(worktree),
+                        "branch": "lane-clean",
+                        "base_head_sha": "base123",
+                        "final_action_hold_id": "final-clean",
+                    }
+                ]
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (xmuse_root / "final_actions.json").write_text(
+        json.dumps(
+            {
+                "holds": [
+                    {
+                        "id": "final-clean",
+                        "lane_id": "lane-clean",
+                        "verdict_id": "verdict-clean",
+                        "action": "merge",
+                        "target_status": "reviewed",
+                        "status": "pending",
+                        "summary": "merge after PR",
+                    }
+                ]
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    runner = _FakeFinalActionPrCommandRunner(dirty=False)
+
+    with pytest.raises(RuntimeError, match="final action worktree has no changes"):
+        platform_runner.create_final_action_pull_request(
+            xmuse_root=xmuse_root,
+            lane_id="lane-clean",
+            github_repo="iiyazu/Cross-Muse",
+            command_runner=runner,
+        )
+
+    assert not (xmuse_root / "final_action_prs.json").exists()
+    holds = json.loads((xmuse_root / "final_actions.json").read_text(encoding="utf-8"))
+    assert holds["holds"][0]["status"] == "pending"
+    assert not any(cmd[:3] == ("gh", "pr", "create") for cmd, _cwd in runner.commands)
 
 
 def test_acceptance_gated_live_capture_gap_stays_blocked(tmp_path: Path) -> None:
