@@ -571,6 +571,18 @@ def create_final_action_pull_request(
     _command_stdout(command_runner, ["git", "checkout", "-B", head_branch], cwd=worktree)
     _command_stdout(command_runner, ["git", "add", "--all"], cwd=worktree)
     _command_stdout(command_runner, ["git", "commit", "-m", title], cwd=worktree)
+    _command_stdout(
+        command_runner,
+        ["git", "fetch", "origin", clean_base],
+        cwd=worktree,
+        timeout=300,
+    )
+    _command_stdout(
+        command_runner,
+        ["git", "merge", "--no-edit", f"origin/{clean_base}"],
+        cwd=worktree,
+        timeout=300,
+    )
     commit_sha = _command_stdout(command_runner, ["git", "rev-parse", "HEAD"], cwd=worktree)
     _command_stdout(
         command_runner,
