@@ -89,3 +89,32 @@ def test_github_server_gate_docs_describe_exact_head_check_run_evidence() -> Non
         "`manual_gap`",
     ):
         assert fragment in server_gate
+
+
+def test_goal_behavior_docs_define_throughput_discipline() -> None:
+    behavior = _read_doc("natural-groupchat-a2a-behavior.md")
+    task_plan = _read_doc("natural-groupchat-a2a-task-plan.md")
+
+    for fragment in (
+        "Goal Throughput Discipline",
+        "Track A is the default primary Track",
+        "core-chain progress",
+        "support progress",
+        "one primary authority boundary",
+        "Do not count support surfaces as core-chain completion",
+        "Subagent or copilot audit should be sampled at decision points",
+    ):
+        assert fragment in behavior
+
+    for fragment in (
+        "Execution Throughput Gate",
+        "primary_track",
+        "support_tracks",
+        "primary_authority_boundary",
+        "core_chain_progress_target",
+        "support_progress_target",
+        "Track A is the default primary track",
+        "Support work must not be reported as core-chain completion",
+        "forbidden progress claims",
+    ):
+        assert fragment in task_plan
