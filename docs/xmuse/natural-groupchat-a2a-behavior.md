@@ -161,6 +161,14 @@ failure boundary is degraded sidecar ingest without blocking dispatch. Sidecar
 ingest output is never proposal, review, dispatch, merge, or lane execution
 truth.
 
+MemoryOS recall context may attach namespace-scoped continuity refs such as
+`memory://conversation/<id>/context/memoryos-sidecar` to the peer prompt,
+latency supporting context, and frontend read projection. These refs prove only
+that optional sidecar context was assembled for a turn; they do not become
+proposal, review, dispatch, merge, lane execution, GitHub, or production truth.
+Degraded recall may record an attempt ref, but it must not emit assembled
+context continuity refs.
+
 Frontend work in this goal is API/UX contract first: timeline, agent cards,
 worklist, review/dispatch, blockers, next action, and collapsible detail
 payloads. Frontend projection does not create truth.

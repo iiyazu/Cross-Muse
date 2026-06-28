@@ -122,15 +122,18 @@ class FakeClock:
 
 def test_supporting_context_source_refs_are_bounded() -> None:
     long_refs = [f"memoryos:sidecar:{index}:{'x' * 260}" for index in range(25)]
+    continuity_ref = "memory://conversation/conv-1/context/memoryos-sidecar"
 
     supporting_context = _supporting_context_from_group_context(
         {
+            "sidecar_continuity_refs": [continuity_ref],
             "memoryos_context": {
                 "status": "attached",
                 "authority": "memoryos_sidecar",
                 "proof_level": "contract",
                 "namespace_uri": "memory://conversation/conv-1",
                 "source_refs": long_refs,
+                "continuity_refs": [continuity_ref],
                 "text": "recall body is not supporting-context truth",
             }
         }
@@ -139,6 +142,8 @@ def test_supporting_context_source_refs_are_bounded() -> None:
     assert supporting_context is not None
     source_refs = supporting_context["memoryos_sidecar"]["source_refs"]
     assert source_refs == [ref[:240] for ref in long_refs[:20]]
+    assert supporting_context["memoryos_sidecar"]["continuity_refs"] == [continuity_ref]
+    assert supporting_context["sidecar_continuity_refs"] == [continuity_ref]
     assert "text" not in supporting_context["memoryos_sidecar"]
 
 
@@ -545,11 +550,17 @@ async def test_scheduler_attaches_memoryos_sidecar_recall_to_peer_context(
     prompt = layer.sent[0][2]
     context = json.loads(layer.sent[0][3])
     memory_context = context["group_chat"]["memoryos_context"]
+    continuity_ref = f"memory://conversation/{conv.id}/context/memoryos-sidecar"
     assert memory_context["status"] == "attached"
     assert memory_context["authority"] == "memoryos_sidecar"
     assert memory_context["proof_level"] == "contract"
     assert memory_context["namespace_uri"] == f"memory://conversation/{conv.id}"
     assert memory_context["source_refs"] == ["review:verdict-1", "gate:pytest"]
+    assert memory_context["continuity_ref"] == continuity_ref
+    assert memory_context["continuity_refs"] == [continuity_ref]
+    assert context["group_chat"]["sidecar_continuity_refs"] == [continuity_ref]
+    assert continuity_ref not in context["group_chat"]["source_refs"]
+    assert "memoryos:sidecar" not in context["group_chat"]["source_refs"]
     assert "@architect review sentinel: prior reviewer approved the bounded lane." in prompt
     assert "MemoryOS is sidecar context, not proposal/review/dispatch truth" in prompt
     assert context["group_chat"]["structured_state"]["source"] == "chat.db"
@@ -565,6 +576,7 @@ async def test_scheduler_attaches_memoryos_sidecar_recall_to_peer_context(
     assert before_spines[0]["github_gate_evidence_ref"] is None
     trace = PeerTurnLatencyTraceStore(db_path).list_recent(conv.id)[0]
     assert trace["supporting_context"] == {
+        "sidecar_continuity_refs": [continuity_ref],
         "memoryos_sidecar": {
             "status": "attached",
             "authority": "memoryos_sidecar",
@@ -572,6 +584,7 @@ async def test_scheduler_attaches_memoryos_sidecar_recall_to_peer_context(
             "namespace_uri": f"memory://conversation/{conv.id}",
             "degraded_reason": None,
             "source_refs": ["review:verdict-1", "gate:pytest"],
+            "continuity_refs": [continuity_ref],
         }
     }
     assert inbox.get(item.id).status == "unread"
@@ -629,6 +642,10 @@ async def test_scheduler_degrades_memoryos_sidecar_without_blocking_peer_turn(
     memory_context = context["group_chat"]["memoryos_context"]
     assert memory_context["status"] == "degraded"
     assert memory_context["degraded_reason"] == "memoryos_timeout"
+    assert "continuity_refs" not in memory_context
+    assert memory_context["continuity_attempt_ref"] == (
+        f"memory://conversation/{conv.id}/context/memoryos-sidecar-attempt"
+    )
     assert "MemoryOS sidecar status: degraded" in layer.sent[0][2]
     assert "continue from chat.db authority" in layer.sent[0][2]
     trace = PeerTurnLatencyTraceStore(db_path).list_recent(conv.id)[0]
@@ -640,8 +657,10 @@ async def test_scheduler_degrades_memoryos_sidecar_without_blocking_peer_turn(
             "namespace_uri": f"memory://conversation/{conv.id}",
             "degraded_reason": "memoryos_timeout",
             "source_refs": [],
+            "continuity_refs": [],
         }
     }
+    assert "sidecar_continuity_refs" not in trace["supporting_context"]
     assert inbox.get(item.id).status == "read"
 
 

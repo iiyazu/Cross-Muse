@@ -181,6 +181,10 @@ def _memoryos_sidecar_layers(group_context: dict[str, Any]) -> tuple[PromptLayer
     text = memory_context.get("text")
     if isinstance(text, str) and text.strip():
         lines.extend(["", "Recall:", _bounded(text.strip(), max_chars=2400)])
+    continuity_refs = _memoryos_continuity_refs(memory_context)
+    if continuity_refs:
+        lines.extend(["", "Continuity refs:"])
+        lines.extend(f"- {ref}" for ref in continuity_refs)
     source_refs = _memoryos_source_refs(memory_context)
     if source_refs:
         lines.extend(["", "Source refs:"])
@@ -194,6 +198,7 @@ def _memoryos_sidecar_layers(group_context: dict[str, Any]) -> tuple[PromptLayer
                 "status": status,
                 "proof_level": proof_level,
                 "namespace_uri": namespace_uri,
+                "continuity_refs": continuity_refs,
                 "source_refs": source_refs,
             },
         ),
@@ -201,7 +206,20 @@ def _memoryos_sidecar_layers(group_context: dict[str, Any]) -> tuple[PromptLayer
 
 
 def _memoryos_source_refs(memory_context: dict[str, Any]) -> list[str]:
-    value = memory_context.get("source_refs")
+    return _memoryos_refs(memory_context.get("source_refs"))
+
+
+def _memoryos_continuity_refs(memory_context: dict[str, Any]) -> list[str]:
+    refs = _memoryos_refs(memory_context.get("continuity_refs"))
+    if refs:
+        return refs
+    single_ref = memory_context.get("continuity_ref")
+    if isinstance(single_ref, str) and single_ref.strip():
+        return [single_ref.strip()]
+    return []
+
+
+def _memoryos_refs(value: Any) -> list[str]:
     if not isinstance(value, (list, tuple)):
         return []
     return [str(ref) for ref in value if isinstance(ref, str) and ref.strip()]
