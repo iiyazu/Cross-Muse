@@ -7,31 +7,71 @@ This plan is the detailed task reference for
 
 ## Minimum Success
 
+This is a staged A/B/C closure goal, sized for a multi-hour or overnight
+development run. It is not complete merely because one support surface improves.
 Reach one of these terminal states:
 
-- a real natural groupchat chain creates a small xmuse PR, observes CI, and
-  reaches operator merge or explicit operator blocker;
-- or the chain stops at a durable blocker that names the next authority
-  boundary and preserves source refs.
+- integrated closure: one real natural groupchat demand flows through Track A,
+  Track B, and Track C on the same source refs, creates a small xmuse PR,
+  observes exact-head CI, and reaches guarded merge plus main CI observation;
+- operator blocker: the same staged chain reaches the deepest possible durable
+  boundary, records the next authority boundary, preserves source refs, and
+  names why operator input is required;
+- implementation blocker: a repeated runtime boundary failure is captured as a
+  durable blocker with producer, consumer, proof level, and a patch/refactor
+  target for the next goal turn.
+
+Track-specific closure means:
+
+- Track A: natural groupchat carries the demand through durable discussion,
+  provider invocation, proposal/review/dispatch/execution, PR, exact-head CI,
+  guarded merge, and main CI, or stops at a durable blocker.
+- Track B: MemoryOS sidecar contributes continuity to the same Track A demand
+  without creating proposal, review, dispatch, execution, GitHub, or merge truth;
+  degraded sidecar state does not block xmuse authority.
+- Track C: frontend/API/UX read projection follows the same Track A/B demand and
+  exposes operator next actions and proof traces without writing truth.
 
 ## Execution Throughput Gate
 
 Before each implementation loop, record:
 
 ```text
+stage
 primary_track
 support_tracks
 primary_authority_boundary
 support_authority_boundaries
 core_chain_progress_target
 support_progress_target
+closure_target
+producer
+consumer
+condition
+proof_level
+failure_boundary
 blocked_boundary
+timebox
 next_primary_action
+continue_or_stop_condition
 ```
 
 Track A is the default primary track. Track B or Track C can become primary
-only when the loop names the Track A blocker it removes or the milestone it
-directly completes. Support work must not be reported as core-chain completion.
+only as the named next stage in this staged closure plan, or when the loop names
+the Track A blocker it removes.
+Support work must not be reported as core-chain completion.
+
+The goal loop should operate in staged cadence, not in isolated small-task
+cadence:
+
+1. Run the largest reachable real chain for the current stage before patching.
+2. Patch or refactor only the first durable blocker on that stage.
+3. Verify the patched boundary with a runtime replay or exact source-level
+   contract test.
+4. Advance to the next stage only when the previous stage's stop condition is
+   satisfied or explicitly blocked.
+5. Keep PRs domain-scoped, but let a single long goal produce multiple PRs as the
+   staged chain advances.
 
 For final reports, keep these categories separate:
 
@@ -42,6 +82,11 @@ For final reports, keep these categories separate:
 - forbidden progress claims: projection readiness, sidecar continuity,
   advisory audit output, green local tests, or green CI described as natural
   groupchat production readiness without the real chain evidence above.
+
+Do not restart documentation-calibration churn during this long goal. Update this
+task plan only when a milestone changes execution rules, staged closure status,
+or a durable blocker. Do not rewrite the baseline table merely because main moved
+after a PR.
 
 ## Recorded Main Baseline
 
@@ -179,189 +224,259 @@ Latest #279 PR-head local runtime evidence:
   #279 PR head, not proof of production readiness, autonomous merge, live
   MemoryOS authority, full frontend readiness, or GitHub review truth.
 
-## Phase 0 - Truth Refresh
+## Current Source-Derived Starting State
 
-Run and record:
+The next long goal must start by refreshing live facts, but the current
+source-derived starting state observed after PR #284 is:
+
+- live GitHub/server fact observed before this task-plan update:
+  `origin/main` and the clean inspection worktree were both at
+  `7f8a3df3e7153bf60fab2e0d84203f0df62c947b`; main CI run `28325344618` was
+  `success`; recent merged PRs #281-#284 were inspected as GitHub server facts;
+- Track A implementation shape: `chat.db` dispatch queue, dispatch bridge,
+  acceptance spine, review plane, final-action holds, and GitHub gate evidence
+  producer exist in source. They support durable control-plane closure, but they
+  do not yet prove a production-style natural groupchat demand has created a PR,
+  observed exact-head CI, and reached guarded merge/main CI;
+- Track B implementation shape: optional MemoryOS sidecar recall and dispatch
+  handoff continuity exist, including degraded non-blocking behavior and
+  namespace-scoped continuity refs. This is context continuity, not xmuse truth;
+- Track C implementation shape: peer-chat UX read projection exposes timeline,
+  worklist, dispatch state, supporting context, review state, final-action
+  holds, source refs, and authority boundaries. It is projection-only and has no
+  write capabilities;
+- current highest-confidence blocker: A/B/C have useful pieces, but the task
+  plan must now drive them through one staged demand instead of letting support
+  surfaces accumulate as separate progress claims.
+
+This section is an observed source-derived starting point, not a replacement for
+the static `last_observed_baseline` above and not a requirement to rewrite docs
+after every PR.
+
+## Phase 0 - Truth Refresh And Run Setup
+
+Run and record live facts dynamically:
 
 ```text
 git status -sb
 git branch --show-current
-git rev-parse HEAD
-git fetch origin
-git rev-parse origin/main
-for pr in 242 244 245 246 247 248 249 250 251 252 253 254 255 257 258 259 260 261 262 263 264 265 266 267 268 269 270 271 272 273 274 275 276 277 278 279; do
-  gh pr view "$pr" --json number,state,headRefName,headRefOid,baseRefName,mergedAt,mergeCommit,url
-done
+git fetch origin main --prune
+git rev-parse HEAD origin/main
 gh pr list --state open --json number,title,headRefName,headRefOid,baseRefName,isDraft,mergeStateStatus,url
-gh run list --branch main --limit 8 --json databaseId,headSha,status,conclusion,displayTitle,event,workflowName,createdAt,url
+gh pr list --state merged --limit 12 --json number,title,headRefOid,mergeCommit,mergedAt,url
+gh run list --branch main --workflow "xmuse CI" --limit 5 --json databaseId,headSha,status,conclusion,createdAt,url
+git worktree list --porcelain
 ```
 
 Exit with:
 
-- clean worktree selected;
-- `origin/main` verified against the current calibration or a newer fetched
-  main SHA;
-- #242, #244, #245, #246, #247, #248, #249, #250, #251, #252, #253, #254,
-  #255, #257, #258, #259, #260, #261, #262, #263, #264, #265, #266, #267,
-  #268, #269, #270, #271, #272, #273, #274, #275, #276, #277, #278, and #279
-  verified merged unless superseded by newer current docs;
-- latest relevant main push CI observed through GitHub server facts;
+- a clean `origin/main`-based worktree selected for source edits;
 - dirty historical worktrees marked reference-only;
-- current provider availability recorded;
-- first real runtime chain selected.
+- live main SHA, latest main CI, open PR state, and recent merged PRs recorded
+  from GitHub server facts;
+- current provider availability and expected latency budget recorded;
+- current stage selected from Phase 1-5 below;
+- the first runtime chain selected before any patching.
 
-## Phase 1 - Security And Authority Preflight
+## Phase 1 - Track A Real-Chain Harness
+
+Objective: drive the largest reachable natural groupchat chain before patching.
+
+The target chain is:
+
+```text
+durable human/operator demand
+-> chat.db message/inbox
+-> natural groupchat handoff
+-> provider-native peer turn
+-> durable proposal or blocker
+-> review-trigger verdict
+-> proposal approval or explicit blocker
+-> dispatch queue
+-> dispatch bridge / execute peer
+-> lane execution proof
+-> review verdict
+-> final-action hold or GitHub gate path
+```
 
 Deliver:
 
-- A2A bridge/server disabled by default;
-- write paths local-only or token-gated;
-- read-only Agent Card separated from task/send write path;
-- A2A SDK task status cannot approve, dispatch, review, or merge directly.
+- a runtime replay command or harness path that starts from a durable demand,
+  not from manually constructed downstream artifacts;
+- durable source refs for message, inbox, proposal, review trigger, dispatch
+  queue entry, lane/execution proof, review verdict, and final-action state when
+  those objects exist;
+- first durable blocker recorded with producer, consumer, condition, proof level,
+  and failure boundary;
+- patch/refactor only the first blocker that prevents this chain from advancing.
 
 Validation:
 
-- missing token rejected for write path;
-- valid token accepted for write path;
-- read-only card behavior matches configured policy;
-- no stdout or SDK status can bypass xmuse durable authority.
+- provider stdout, worker summaries, and local test output remain diagnostics
+  only;
+- `feature_lanes.json` is used only as projection/live queue, not authority;
+- Ray is not used as the default natural groupchat route;
+- the chain reaches at least the previous `awaiting_final_action` local proof
+  level, or records why current main regressed before that boundary.
 
-## Phase 2 - Agent Interop Kernel
+Continue when:
 
-Deliver:
+- Track A reaches final-action hold or a later PR/CI boundary from the natural
+  chain; or
+- the first repeated blocker has a domain-scoped implementation target and a
+  planned PR.
 
-- agent profile/card read model;
-- official SDK model boundary available from main;
-- layered prompt builder:
-  `xmuse L0 + role identity + roster + task + bounded transcript + state refs`;
-- context assembler with restart-stable refs;
-- provider-native session binding and same-session serialization;
-- canonical handoff task envelope.
+Stop when:
 
-Validation:
+- the same boundary fails twice after a focused refactor;
+- proof would require stdout or local tests as truth;
+- the next change would become an umbrella PR.
 
-- Chat API can create a durable groupchat where each participant has identity,
-  capability, provider/session state, and prompt/context payload.
+## Phase 2 - Track A PR/CI/Guarded Merge Closure
 
-## Phase 3 - Natural Handoff And Provider Invocation
-
-Deliver:
-
-- line-start mention or explicit target becomes durable handoff item;
-- code-block mention stripping, target validation, self-filtering, dedupe, and
-  ping-pong guard;
-- outbound A2A/provider adapter for invocation;
-- provider task/artifact normalization;
-- writeback reconciliation into `chat.db` and inbox linkage.
-
-Validation:
-
-- real Codex participant reads inbox and produces durable proposal or blocker;
-- main path does not use Ray as default route.
-
-## Phase 4 - Review, Dispatch, Execution Closure
+Objective: extend Track A from local final-action closure to GitHub-visible PR
+and guarded merge closure.
 
 Deliver:
 
-- structured review verdict remains review authority;
-- P1/P2 findings block with evidence refs;
-- P3 may allow dispatch only when explicitly non-blocking;
-- approval/blocked state has source refs;
-- dispatch/execution consumes xmuse authority, not stdout;
-- dispatch acknowledgement remains a handoff proof, not lane execution proof;
-- approved dispatch source refs are visible to saved lane graphs, projected
-  lanes, lane context bundles, normal execution prompts, and persistent execute
-  context without becoming execution proof;
-- one small PR is created from the chain;
-- CI is observed through GitHub server facts;
-- operator merge or explicit blocker is recorded.
+- one small PR created from the natural chain or an explicit durable blocker that
+  states why the chain cannot create or prepare that PR yet;
+- exact PR head SHA recorded;
+- required GitHub check names and per-check-run head SHAs observed;
+- final-action resolution only through producer-owned GitHub gate evidence or a
+  persisted manual gap;
+- guarded merge by operator or explicit operator blocker;
+- main CI observed after merge when merge occurs.
 
 Validation:
 
 - PR/CI/merge state is tied to exact head SHA, check-run names, check-run head
-  SHAs, and run metadata;
-- no GitHub review truth, ready-to-merge, or autonomous merge claim is made.
+  SHAs, run metadata, and GitHub server facts;
+- no GitHub review truth, ready-to-merge, or autonomous merge claim is made;
+- final-action approval without accepted GitHub gate evidence leaves the
+  acceptance spine blocked, not accepted.
 
-## Phase 5 - MemoryOS Sidecar
+Continue when:
 
-Only proceed after the natural groupchat chain has advanced.
+- one natural-chain PR reaches exact-head CI and either guarded merge/main CI or
+  explicit operator blocker.
+
+Stop when:
+
+- GitHub facts cannot be collected for the exact head SHA;
+- final-action acceptance would require bypassing the GitHub evidence producer.
+
+## Phase 3 - Track B MemoryOS Sidecar Closure On The Same Demand
+
+Objective: attach MemoryOS sidecar continuity to the same Track A demand without
+creating or mutating xmuse truth.
 
 Deliver:
 
-- opt-in ingest of summaries, decisions, blockers, and artifact refs;
-- recall into context assembler;
-- degraded mode when unavailable.
+- opt-in sidecar recall for natural peer turns when MemoryOS is configured;
+- dispatch handoff continuity ingest using the same queue/proposal/review/
+  resolution/artifact refs consumed by Track A;
+- degraded sidecar behavior that preserves Track A progress and records an
+  attempt ref without emitting assembled continuity refs;
+- prompt/supporting-context/read-projection metadata that separates sidecar
+  continuity refs from authority `source_refs`.
 
 Validation:
 
-- contract proof with fake/local adapter is present on main through #245;
-- durable dispatch gate refs are available to context/read projection consumers
-  through #255;
-- execute-peer dispatch context/prompt/envelope now carries the same ordered,
-  deduped dispatch authority refs through #257;
-- #259 keeps `peer_ack:*`, `mcp_writeback:*`, provider run refs, and
-  `chat_dispatch_queue#entry=*` out of acceptance spine lane execution proof;
-- #261 carries approved dispatch authority refs into lane graph/projection and
-  worker-visible execution context, explicitly marked as not lane execution
-  proof;
-- #263 records approved dispatch handoff continuity into the optional
-  MemoryOS sidecar with queue/proposal/review/resolution/artifact refs, and
-  sidecar ingest degradation does not block `chat.db` dispatch authority;
-- sidecar recall context attaches namespace-scoped continuity refs such as
-  `memory://conversation/<id>/context/memoryos-sidecar` into peer prompt
-  metadata, dedicated scheduler `sidecar_continuity_refs`, latency supporting
-  context, and read-only frontend projection. These refs are context
-  continuity only, not proposal, review, dispatch, lane execution, GitHub,
-  merge, or production truth. Degraded recall records only an attempt ref and
-  must not emit assembled context continuity refs;
-- live proof only when live MemoryOS is actually available.
+- contract proof with fake/local adapter remains enough when live MemoryOS is not
+  configured;
+- live proof is claimed only when a live MemoryOS service is actually used;
+- sidecar output is never proposal, review, dispatch, lane execution, GitHub,
+  merge, or production truth;
+- #259 remains the proof split: `peer_ack:*`, `mcp_writeback:*`, provider run
+  refs, and queue refs do not become acceptance spine lane execution proof.
 
-## Phase 6 - Frontend API / UX Contract
+Continue when:
 
-Do not attempt full frontend implementation.
+- the same demand can be replayed with MemoryOS configured or deliberately
+  degraded, and Track A authority is unchanged.
 
-Deliver read-only API payloads for:
+Stop when:
 
-- conversation timeline;
-- agent cards;
-- inbox/worklist;
-- review/dispatch state;
-- blocker/next action;
-- artifact/source refs;
-- card summary plus collapsible detail payload.
+- MemoryOS work starts displacing the Track A chain;
+- sidecar continuity would need to be promoted into authority to make progress.
+
+## Phase 4 - Track C Frontend/API Read Projection Closure On The Same Demand
+
+Objective: make the same Track A/B demand inspectable through read-only API/UX
+projection without bypassing authority stores.
+
+Deliver read-only payloads for:
+
+- conversation timeline and agent cards;
+- inbox/worklist and next action;
+- proposal, dispatch, review verdict, final-action, and GitHub gate/gap state;
+- MemoryOS sidecar supporting context and continuity metadata when present;
+- collapsible detail payloads with source refs and authority boundaries.
 
 Validation:
 
-- frontend can consume payloads without reading internal stores directly;
-- read-only peer-chat UX projection exists on main through #246;
-- dispatch queue source refs include queue/proposal/gate/resolution refs through
-  #255, with old-schema fallback.
-- #257 keeps worklist `source_refs` authority-only and exposes
-  `dispatch_evidence` separately; frontend must not treat `mcp_writeback:*` as
-  authority.
-- #259 makes inspector closure evidence read dispatch ack from
-  `chat_dispatch_queue` and lane execution from `acceptance_spines`, with
-  explicit source authority refs for both stores.
-- #261 makes dispatch authority refs available through lane projection and
-  execution context so frontend/API consumers can trace the queue authority
-  consumed by a lane without treating the refs as proof of execution.
-- #265 exposes the same dispatch queue authority refs directly on
-  `dispatch_queue.entries[]` with explicit frontend authority boundary and
-  projection-only sidecar continuity metadata; this is still read-only and not
-  a full frontend claim.
-- pending final-action holds should be exposed from `final_actions.json` via
-  `chat.db:acceptance_spines.final_action_ref` as read-only worklist and
-  detail payloads. These holds are operator next-action projection, not GitHub
-  gate or merge truth.
-- read-only copilot intake may accept `final_actions.json#hold=*` as durable
-  final-action hold authority for operator next-action recommendations, while
-  treating GitHub gate evidence refs and `feature_lanes.json` as candidate or
-  projection input unless separately verified through GitHub server facts.
-- MemoryOS supporting context projection may expose `continuity_refs` from
-  `chat.db:peer_turn_latency_traces.supporting_context_json`, but it must not
-  expose recalled text as frontend truth or promote sidecar refs to authority.
+- frontend/API consumers can inspect the chain without reading internal stores
+  directly and without writing truth;
+- `write_capabilities` stays empty for peer-chat UX projection;
+- worklist `source_refs` remain authority-only and keep execution evidence
+  separate;
+- pending final-action holds are operator next-action projection, not GitHub gate
+  or merge truth;
+- recalled sidecar text is never exposed as frontend truth.
 
-## Phase 7 - Documentation And Final Report
+Continue when:
+
+- the same demand can be inspected end-to-end from intake through the deepest
+  reached Track A/B state, and missing fields are captured as explicit projection
+  gaps.
+
+Stop when:
+
+- frontend work becomes a full UI build unrelated to the current authority chain;
+- projection state is needed to create truth.
+
+## Phase 5 - Integrated A/B/C Replay
+
+Objective: run one integrated replay after staged Track A, B, and C changes so
+the final report describes one coherent chain, not three unrelated improvements.
+
+Replay proof must name:
+
+```text
+demand_id_or_message_ref
+conversation_id
+proposal_or_blocker_ref
+review_verdict_ref
+dispatch_queue_ref
+execution_evidence_ref
+final_action_ref
+github_gate_evidence_or_gap_ref
+memoryos_continuity_or_degraded_ref
+frontend_projection_ref_or_endpoint
+```
+
+Validation:
+
+- each ref has a producer and consumer;
+- each proof claim states whether it is authority, execution proof, GitHub server
+  truth, sidecar continuity, or read projection;
+- local tests are only regression/contract evidence for the code changed during
+  the goal;
+- subagent or copilot audit, when used, is sampled at decision points and remains
+  candidate input only.
+
+Stop with success when:
+
+- the integrated chain reaches guarded merge/main CI; or
+- an explicit durable blocker names the next authority boundary and source refs.
+
+Stop with failure when:
+
+- the chain can only proceed by weakening forbidden claims or using diagnostic
+  output as proof truth.
+
+## Phase 6 - Documentation And Final Report
 
 Update only the concise current docs unless a historical artifact needs a
 pointer:
@@ -377,85 +492,35 @@ Final report includes:
 
 - maximum real chain reached;
 - demand attempted or completed;
-- PR/CI/merge state;
-- A2A progress by phase;
+- PR/CI/merge state tied to exact GitHub facts;
+- A/B/C progress by stage;
 - MemoryOS state: skipped, degraded, contract proof, or live proof;
-- frontend API changes, if any;
+- frontend/API projection state: absent, partial, complete for the replayed
+  demand, or blocked;
 - whether Ray was used in the main path;
 - durable blockers and next authority boundary;
 - exact forbidden claims not made.
 
-Current final-report notes for the 2026-06-28 pass:
+Current final-report notes for the #284 source-derived inspection:
 
-- maximum verified GitHub chain: domain-scoped PRs #244-#279 reached
-  exact-head PR CI, guarded merge, and successful main push CI;
-- MemoryOS state: opt-in sidecar contract/degraded-mode support only; no live
-  MemoryOS authority claim; #255 gives sidecar/context continuity durable
-  dispatch gate refs to consume, #257 carries those refs into the execute-peer
-  dispatch context/prompt/envelope, and #261 carries the same authority refs
-  into saved lane graphs, projected lanes, lane context bundles, normal
-  execution prompts, and persistent execute context; #263 records approved
-  dispatch handoff continuity into the optional sidecar while treating degraded
-  sidecar ingest as non-blocking; sidecar recall continuity refs are prompt and
-  read-projection context only, and #277 keeps degraded recall to attempt refs
-  while preventing sidecar continuity from entering generic authority
-  `source_refs`; #259 still prevents dispatch ack evidence from becoming lane
-  execution proof;
-- frontend state: read-only API/UX projection only; #251 exposes sanitized
-  MemoryOS sidecar support metadata, #255 exposes durable dispatch gate refs,
-  and #257 keeps dispatch execution evidence separate from authority
-  `source_refs`; #259 separates inspector dispatch ack from lane execution
-  closure evidence; #261 makes lane-level dispatch authority refs readable
-  without promoting them to execution proof; #265 exposes dispatch queue
-  entry-level authority refs, authority boundary, and projection-only sidecar
-  continuity on the frontend UX projection; #275 exposes pending final-action
-  holds as read-only operator next-action projection; no full frontend claim;
+- maximum verified GitHub chain: domain-scoped PRs #244-#284 reached
+  exact-head PR CI, guarded merge, and successful main push CI as GitHub server
+  facts; this is not proof that natural groupchat itself created every PR;
+- Track A state: dispatch queue, dispatch bridge, acceptance spine, review
+  plane, final-action holds, and GitHub gate evidence support the control-plane
+  closure path. The unclosed product shape is still natural groupchat demand ->
+  PR -> exact-head CI -> guarded merge/main CI on one staged demand;
+- Track B state: opt-in sidecar contract/degraded-mode support exists. It can
+  carry dispatch handoff and recall continuity refs, but it remains sidecar
+  continuity only and cannot create proposal, review, dispatch, execution,
+  GitHub, or merge truth;
+- Track C state: read-only peer-chat UX projection exposes dispatch, supporting
+  context, review state, and final-action holds with authority boundaries and no
+  write capabilities. It must be proven against the same staged demand as Track A
+  and Track B;
 - Ray use: not the default natural groupchat route; remains optional legacy;
-  #272 keeps the fullchain docs sentinel peer/review/execute GOD backends
-  aligned with the selected `--peer-god-backend`, so native sentinel runs do
-  not drift into Ray defaults; the post-#273 default native sentinel confirmed
-  the script default path launched `--peer-god-backend native` and reached
-  `awaiting_final_action` without using Ray as the main route;
-- copilot audit: helper exists for read-only append-only board and advisory
-  intake; #257 lets accepted recommendations use `chat_dispatch_queue:*` as
-  durable authority while keeping `mcp_writeback:*` candidate-only; #266 lets
-  accepted recommendations also use `review_trigger_verdict:*` as durable
-  review verdict authority, keeps legacy `chat_dispatch_queue#entry=*`
-  candidate-only, and marks intake as advisory; #276 lets final-action hold
-  refs be used only as operator next-action authority, not GitHub or merge truth;
-  subagent/copilot output is not proof truth;
-- GitHub server truth: #249 requires complete required check names and
-  per-check-run PR head SHA evidence before `server_side_merge_proof` can emit
-  `pr_merged`; #268 makes the acceptance-gated short-run lane projection
-  consume final-action GitHub gate resolution without becoming authority:
-  accepted gates project as `merged`, manual gaps project as
-  `blocked_for_input` with `blocked_reason`, and health must not report them as
-  live or execution failures; #270 marks the same synthetic short-run lane as
-  `integration_mode: noop`, so health does not treat it as an ordinary merged
-  feature lane with dependent-release requirements;
-- A2A review boundary: #252 records `chat.db/proposal_approval` as the next
-  authority after A2A `dispatch_allowed` review verdict writeback; A2A output
-  still cannot create dispatch truth directly;
-- dispatch boundary: #254 only exposes `chat.db/dispatch_queue` next authority
-  when a real queue entry exists; #255 persists A2A/collaboration gate refs on
-  the queue for B/C/D read consumers; #257 propagates those refs to
-  execute/frontend/copilot consumers without promoting execution evidence;
-  #259 keeps dispatch ack/evidence in `chat_dispatch_queue` and actual lane
-  execution proof in `acceptance_spines.execution_evidence_refs`; #261 makes
-  the dispatch authority refs worker-visible through lane graph/projection and
-  execution context while preserving that proof split; #263 copies the same
-  dispatch handoff refs into optional MemoryOS sidecar continuity, not into
-  lane execution proof; #265 exposes the dispatch refs to frontend consumers as
-  projection-only metadata; #266 keeps copilot intake advisory and prevents
-  execution evidence refs from becoming accepted authority; #268 records
-  acceptance-gate projection refs back to `chat.db`, dispatch queue, review
-  verdict, final action, and GitHub gate evidence/gap authority; #270 keeps
-  the noop integration marker projection-only and separate from execution or
-  merge proof;
-- docs-only gate boundary: #279 adds a `docs-only` gate profile for
-  `docs/xmuse/**`, keeps explicit profile selection scoped by actual changed
-  paths including untracked isolated-worker output, and writes durable
-  fail-closed gate reports when profile resolution fails before any gate
-  command can run;
-- next authority boundary: run the next real natural chain from current main
-  and tie any PR/CI/merge state to exact head SHA and GitHub run metadata.
+- copilot/subagent audit: useful at PR-ready review, repeated boundary failure,
+  or authority classification uncertainty, but output is candidate input only;
+- next authority boundary: start the next long goal at Phase 0, run Phase 1
+  before adding support work, then progress through Phase 2-5 until integrated
+  A/B/C closure or a durable blocker is reached.
