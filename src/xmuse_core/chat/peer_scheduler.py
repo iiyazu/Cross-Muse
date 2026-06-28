@@ -41,6 +41,8 @@ from xmuse_core.providers.service import RunnerProviderService
 _DURABLE_WRITEBACK = object()
 _STRUCTURED_WRITEBACK_REQUIRED_ITEM_TYPES = {"review_trigger"}
 _MEMORYOS_SIDECAR_ITEM_TYPES = {"mention"}
+_SUPPORTING_CONTEXT_SOURCE_REF_LIMIT = 20
+_SUPPORTING_CONTEXT_SOURCE_REF_MAX_CHARS = 240
 
 
 @dataclass(frozen=True)
@@ -160,9 +162,15 @@ class PeerChatScheduler:
         transport_latency_stages: dict[str, dict[str, float]],
     ) -> PeerChatSchedulerOutcome:
         record = None
+        supporting_context: dict[str, Any] | None = None
 
         def record_latency_trace(*args, **kwargs):
-            return self._record_latency_trace(*args, provider_record=record, **kwargs)
+            return self._record_latency_trace(
+                *args,
+                provider_record=record,
+                supporting_context=supporting_context,
+                **kwargs,
+            )
 
         try:
             group_context = self._context_assembler.group_chat_context(item.conversation_id)
@@ -171,6 +179,7 @@ class PeerChatScheduler:
                 item=item,
                 participant=participant,
             )
+            supporting_context = _supporting_context_from_group_context(group_context)
             group_context = self._with_retry_feedback(group_context, item)
             assembled_prompt = self._prompt_builder.build_peer_chat_prompt(
                 participant=participant,
@@ -806,6 +815,7 @@ class PeerChatScheduler:
         degraded_reason: str | None,
         transport_latency_stages: dict[str, dict[str, float]] | None = None,
         provider_record: object | None = None,
+        supporting_context: dict[str, Any] | None = None,
     ) -> dict[str, object]:
         writeback_at = self._clock()
         mcp_tool_stages = self._latency.list_mcp_tool_stages(item.conversation_id, item.id)
@@ -843,6 +853,7 @@ class PeerChatScheduler:
             delivery_mode=delivery_mode,
             degraded_reason=degraded_reason,
             stage_timings=stage_timings,
+            supporting_context=supporting_context,
         )
 
     def _terminalize_claimed_item_failure(
@@ -1061,6 +1072,47 @@ def _requires_structured_writeback(item) -> bool:
 
 def _memoryos_sidecar_enabled_for_item(item) -> bool:
     return str(getattr(item, "item_type", "") or "") in _MEMORYOS_SIDECAR_ITEM_TYPES
+
+
+def _supporting_context_from_group_context(
+    group_context: dict[str, Any],
+) -> dict[str, Any] | None:
+    memory_context = group_context.get("memoryos_context")
+    if not isinstance(memory_context, dict):
+        return None
+    return {
+        "memoryos_sidecar": {
+            "status": _context_text(memory_context, "status") or "unknown",
+            "authority": _context_text(memory_context, "authority") or "memoryos_sidecar",
+            "proof_level": _context_text(memory_context, "proof_level") or "unknown",
+            "namespace_uri": _context_text(memory_context, "namespace_uri") or "unknown",
+            "degraded_reason": _context_text(memory_context, "degraded_reason"),
+            "source_refs": _context_source_refs(memory_context),
+        }
+    }
+
+
+def _context_text(context: dict[str, Any], key: str) -> str | None:
+    value = context.get(key)
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
+def _context_source_refs(context: dict[str, Any]) -> list[str]:
+    raw_refs = context.get("source_refs")
+    if not isinstance(raw_refs, (list, tuple)):
+        return []
+    refs = []
+    for raw_ref in raw_refs:
+        ref = str(raw_ref).strip()
+        if not ref:
+            continue
+        refs.append(ref[:_SUPPORTING_CONTEXT_SOURCE_REF_MAX_CHARS])
+        if len(refs) >= _SUPPORTING_CONTEXT_SOURCE_REF_LIMIT:
+            break
+    return refs
 
 
 def _callback_requires_proposal(item: Any | None) -> bool:
