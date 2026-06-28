@@ -403,6 +403,7 @@ def _memoryos_sidecar_projection(
         "namespace_uri": _projection_text(context.get("namespace_uri")) or "unknown",
         "degraded_reason": _projection_text(context.get("degraded_reason")),
         "source_refs": _supporting_context_source_refs(context.get("source_refs")),
+        "continuity_refs": _supporting_context_continuity_refs(context),
     }
 
 
@@ -935,6 +936,16 @@ def _supporting_context_source_refs(value: Any) -> list[str]:
         if len(refs) >= _SUPPORTING_CONTEXT_SOURCE_REF_LIMIT:
             break
     return refs
+
+
+def _supporting_context_continuity_refs(context: dict[str, Any]) -> list[str]:
+    refs = _supporting_context_source_refs(context.get("continuity_refs"))
+    if refs:
+        return refs
+    single_ref = _projection_text(context.get("continuity_ref"))
+    if single_ref is None:
+        return []
+    return [single_ref[:_SUPPORTING_CONTEXT_SOURCE_REF_MAX_CHARS]]
 
 
 def _dedupe(items: list[str]) -> list[str]:
