@@ -23,10 +23,10 @@ Read these first:
 As of this update:
 
 - `origin/main` is calibrated at merge commit
-  `ea0f23b85011cb68429089a8acdc30891d2836c2`.
-- The latest merged PR is #261 (`Propagate dispatch authority into lane
-  execution context`), merged 2026-06-28 with exact PR head
-  `39725e1e0b9d596d3c84321a9fa57cb59a54204c`.
+  `3fe6d8a853ddeade5548733970445c9ef108f4e1`.
+- The latest merged PR is #263 (`Record dispatch handoffs in MemoryOS
+  sidecar`), merged 2026-06-28 with exact PR head
+  `2ec2767cd681c5fc1d92973350ad281e6c7fb545`.
 - Current server-side main CI evidence:
   - PR #242 `c1d19ad2ae9bd8b22742376c98968073a508329c`: run
     `28292323481` success.
@@ -64,6 +64,10 @@ As of this update:
     `28314661776` success.
   - PR #261 `ea0f23b85011cb68429089a8acdc30891d2836c2`: run
     `28315305767` success.
+  - PR #262 `3772b07f9f47bca0205dac465af762463b5bdeaa`: run
+    `28315629004` success.
+  - PR #263 `3fe6d8a853ddeade5548733970445c9ef108f4e1`: run
+    `28316064426` success.
 - Recent domain-scoped progress:
   - #244 advanced the natural peer-callback proposal handoff path.
   - #245 added opt-in MemoryOS sidecar recall/degraded-mode support.
@@ -95,6 +99,10 @@ As of this update:
   - #261 propagated approved dispatch authority refs into saved lane graphs,
     projected lanes, lane context bundles, normal execution prompts, and
     persistent execute context, while preserving the #259 proof split.
+  - #262 refreshed current goal docs after #261.
+  - #263 records approved dispatch handoff continuity into the optional
+    MemoryOS sidecar, keeps dispatch refs as sidecar continuity rather than
+    execution proof, and continues dispatch when sidecar ingest degrades.
 - The next long goal should start from a clean `origin/main` worktree after
   truth refresh.
 - Dirty historical worktrees may be read as references only. They are not main
