@@ -19,13 +19,14 @@ def test_natural_groupchat_goal_docs_track_current_main_calibration() -> None:
     }
 
     for content in docs.values():
-        assert "159b851435b735ac828eca0637b601907c306cef" in content
-        assert "#249" in content
+        assert "e2a2e2742ff452bc8e306fb6efdd525231d22bff" in content
+        assert "#252" in content
 
-    assert "ebbc58848d24dbbb4d2f3671bca61d4e1a621725" in docs["natural-groupchat-a2a-goal.md"]
-    assert "28310645567" in docs["natural-groupchat-a2a-task-plan.md"]
-    assert "#248" in docs["README.md"]
-    assert "#249" in docs["README.md"]
+    assert "1fc647e6d19689071c92cb763594494eb171ca86" in docs["natural-groupchat-a2a-goal.md"]
+    assert "28311860691" in docs["natural-groupchat-a2a-task-plan.md"]
+    assert "#250" in docs["README.md"]
+    assert "#251" in docs["README.md"]
+    assert "#252" in docs["README.md"]
 
 
 def test_github_server_gate_docs_describe_exact_head_check_run_evidence() -> None:
