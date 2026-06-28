@@ -6,6 +6,7 @@ import os
 import re
 import sqlite3
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -45,7 +46,7 @@ from xmuse_core.chat.collaboration_contracts import (
 )
 from xmuse_core.chat.collaboration_store import ChatCollaborationStore
 from xmuse_core.chat.deliberation_engine import DeliberationFreezeGuard
-from xmuse_core.chat.dispatch_queue import ChatDispatchQueueStore
+from xmuse_core.chat.dispatch_queue import ChatDispatchQueueEntry, ChatDispatchQueueStore
 from xmuse_core.chat.health_cards import build_run_health_chat_card
 from xmuse_core.chat.inbox_store import ChatInboxStore
 from xmuse_core.chat.participant_store import (
@@ -499,6 +500,18 @@ def _dedupe_text(values: list[str]) -> list[str]:
     return result
 
 
+@dataclass(frozen=True)
+class _ReviewTriggerDispatchGate:
+    decision: str
+    source_refs: list[str]
+
+
+@dataclass(frozen=True)
+class _StructuredDispatchIntent:
+    entry: ChatDispatchQueueEntry
+    gate_refs: list[str]
+
+
 def _role_template_has_participants(base_dir: Path, template_id: str) -> bool:
     store = _store(base_dir)
     participant_store = _participant_store(base_dir)
@@ -584,8 +597,7 @@ def _is_a2a_sourced_proposal(
         if isinstance(raw_refs, list):
             proposal_refs.extend(str(ref) for ref in raw_refs)
     return any(
-        ref.startswith("a2a_task:") or ref.startswith("a2a_context:")
-        for ref in proposal_refs
+        ref.startswith("a2a_task:") or ref.startswith("a2a_context:") for ref in proposal_refs
     )
 
 
@@ -594,7 +606,7 @@ def _review_trigger_dispatch_verdict_for_proposal(
     *,
     conversation_id: str,
     proposal_id: str,
-) -> str | None:
+) -> _ReviewTriggerDispatchGate | None:
     store = _store(base_dir)
     proposal_message_id = _proposal_message_id_for_review_gate(
         store,
@@ -607,6 +619,7 @@ def _review_trigger_dispatch_verdict_for_proposal(
     messages = {message.id: message for message in store.list_messages(conversation_id)}
     saw_review_trigger = False
     dispatch_allowed = False
+    source_refs: list[str] = []
     for item in inbox.list_by_conversation(conversation_id, include_terminal=True):
         if item.item_type != "review_trigger" or item.source_message_id != proposal_message_id:
             continue
@@ -643,9 +656,17 @@ def _review_trigger_dispatch_verdict_for_proposal(
             raise PeerChatError("proposal_review_blocked", f"{item.id}:{response.id}")
         if verdict == "dispatch_allowed":
             dispatch_allowed = True
+            source_refs.append(f"review_trigger_verdict:{response.id}")
     if not saw_review_trigger:
         return None
-    return "dispatch_allowed" if dispatch_allowed else None
+    return (
+        _ReviewTriggerDispatchGate(
+            decision="dispatch_allowed",
+            source_refs=_dedupe_text(source_refs),
+        )
+        if dispatch_allowed
+        else None
+    )
 
 
 def _reject_pending_review_trigger_for_dispatchable_proposal(
@@ -797,7 +818,8 @@ def _append_resolution_read_model(base_dir: Path, resolution_payload: dict[str, 
         "approval_mode": resolution_payload["approval_mode"],
     }
     data["resolutions"] = [
-        item for item in resolutions
+        item
+        for item in resolutions
         if isinstance(item, dict) and item.get("resolution_id") != entry["resolution_id"]
     ]
     data["resolutions"].append(entry)
@@ -868,10 +890,7 @@ def _build_feature_plan_proposal_record(
         resolution_id = _resolution_id_from_blueprint_ref(blueprint_ref)
         source_resolution = _store(base_dir).get_resolution(resolution_id)
         blueprint = read_approved_mission_blueprint(source_resolution)
-        features = [
-            FeaturePlanFeature.model_validate(item)
-            for item in payload.get("features", [])
-        ]
+        features = [FeaturePlanFeature.model_validate(item) for item in payload.get("features", [])]
     except KeyError as exc:
         raise PeerChatError(
             "invalid_feature_plan_proposal",
@@ -1099,34 +1118,63 @@ def _enqueue_structured_dispatch_intent(
     proposal_type: str,
     references: list[str],
     resolution: object,
-) -> None:
+) -> _StructuredDispatchIntent | None:
     content = getattr(resolution, "content", None)
     if isinstance(content, dict) and content.get("type") in {"mission_blueprint", "feature_plan"}:
-        return
+        return None
     conversation_id = str(resolution.conversation_id)
     resolution_id = str(resolution.id)
     collaboration_run_ids = _collaboration_run_refs(references)
+    gate_refs: list[str] = []
     if not collaboration_run_ids:
         if not _is_a2a_sourced_proposal(
             base_dir,
             conversation_id=conversation_id,
             proposal_id=proposal_id,
         ):
-            return
-        verdict = _review_trigger_dispatch_verdict_for_proposal(
+            return None
+        review_gate = _review_trigger_dispatch_verdict_for_proposal(
             base_dir,
             conversation_id=conversation_id,
             proposal_id=proposal_id,
         )
-        if verdict != "dispatch_allowed":
-            return
-    _dispatch_queue_store(base_dir).enqueue_agent_auto_dispatch(
+        if review_gate is None or review_gate.decision != "dispatch_allowed":
+            return None
+        gate_refs = review_gate.source_refs
+    else:
+        gate_refs = [f"collaboration:{collaboration_run_ids[0]}"]
+    entry = _dispatch_queue_store(base_dir).enqueue_agent_auto_dispatch(
         conversation_id=conversation_id,
         proposal_id=proposal_id,
         resolution_id=resolution_id,
         collaboration_run_id=collaboration_run_ids[0] if collaboration_run_ids else None,
         artifact_ref=f"artifact:{proposal_type}",
     )
+    return _StructuredDispatchIntent(entry=entry, gate_refs=gate_refs)
+
+
+def _dispatch_next_authority_boundary(
+    *,
+    proposal_id: str,
+    resolution_id: str,
+    dispatch_intent: _StructuredDispatchIntent,
+) -> dict[str, object]:
+    entry = dispatch_intent.entry
+    return {
+        "required_authority": "chat.db/dispatch_queue",
+        "required_action": "run_dispatch_bridge",
+        "dispatch_queue_entry_available": True,
+        "dispatch_queue_entry_id": entry.entry_id,
+        "dispatch_policy": entry.dispatch_policy,
+        "source_refs": _dedupe_text(
+            [
+                f"proposal:{proposal_id}",
+                *dispatch_intent.gate_refs,
+                f"resolution:{resolution_id}",
+                f"chat_dispatch_queue:{entry.entry_id}",
+            ]
+        ),
+    }
 
 
 def _chat_timeline_payload(base_dir: Path, conversation_id: str) -> dict[str, Any]:
@@ -1144,9 +1192,7 @@ def _with_execution_card_drilldown_refs(
         payload["cards"] = [_enrich_execution_card(base_dir, card) for card in cards]
     recent_cards = payload.get("recent_cards")
     if isinstance(recent_cards, list):
-        payload["recent_cards"] = [
-            _enrich_execution_card(base_dir, card) for card in recent_cards
-        ]
+        payload["recent_cards"] = [_enrich_execution_card(base_dir, card) for card in recent_cards]
     items = payload.get("items")
     if isinstance(items, list):
         payload["items"] = [_enrich_timeline_execution_card(base_dir, item) for item in items]
@@ -1181,9 +1227,7 @@ def _enrich_execution_card(base_dir: Path, card: Any) -> Any:
         payload=payload if isinstance(payload, dict) else {},
         xmuse_root=base_dir,
         existing_refs=(
-            metadata["drilldown_refs"]
-            if isinstance(metadata.get("drilldown_refs"), list)
-            else None
+            metadata["drilldown_refs"] if isinstance(metadata.get("drilldown_refs"), list) else None
         ),
     )
     return {
@@ -1439,8 +1483,7 @@ def create_app(
                 isinstance(body, dict)
                 and body.get("jsonrpc") == "2.0"
                 and isinstance(exc.detail, dict)
-                and exc.detail.get("code")
-                in {"a2a_write_auth_required", "a2a_write_local_only"}
+                and exc.detail.get("code") in {"a2a_write_auth_required", "a2a_write_local_only"}
             ):
                 return JSONResponse(
                     status_code=exc.status_code,
@@ -1474,8 +1517,7 @@ def create_app(
             None
             if request.initial_participants is None
             else [
-                participant.model_dump(mode="json")
-                for participant in request.initial_participants
+                participant.model_dump(mode="json") for participant in request.initial_participants
             ]
         )
         init_mode = request.init_mode
@@ -1925,9 +1967,7 @@ def create_app(
             "source_authority": "chat_store",
             "items": [
                 spine.model_dump(mode="json")
-                for spine in _acceptance_spine_store(root).list_by_conversation(
-                    conversation_id
-                )
+                for spine in _acceptance_spine_store(root).list_by_conversation(conversation_id)
             ],
         }
 
@@ -1969,9 +2009,7 @@ def create_app(
         except sqlite3.IntegrityError as exc:
             raise HTTPException(status_code=404, detail="conversation not found") from exc
         payload = result.message.model_dump(mode="json")
-        payload["inbox_items"] = [
-            item.model_dump(mode="json") for item in result.inbox_items
-        ]
+        payload["inbox_items"] = [item.model_dump(mode="json") for item in result.inbox_items]
         return payload
 
     @app.post(
@@ -2216,13 +2254,19 @@ def create_app(
         )
         _append_resolution_read_model(root, payload)
         produce_blueprint_approval_event(root, resolution)
-        _enqueue_structured_dispatch_intent(
+        dispatch_intent = _enqueue_structured_dispatch_intent(
             root,
             proposal_id=proposal_id,
             proposal_type=escalation.normalized_proposal_type,
             references=proposal.references,
             resolution=resolution,
         )
+        if dispatch_intent is not None:
+            payload["next_authority_boundary"] = _dispatch_next_authority_boundary(
+                proposal_id=proposal_id,
+                resolution_id=resolution.id,
+                dispatch_intent=dispatch_intent,
+            )
         _project_resolution_into_execution_queue(
             root,
             resolution,
