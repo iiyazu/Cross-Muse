@@ -83,9 +83,7 @@ class ChatDispatchBridge:
                     return ChatDispatchBridgeOutcome(claimed=1, failed=1)
                 queue.mark_dispatched(
                     entry.entry_id,
-                    provider_run_ref=(
-                        f"peer_ack:{participant.role}:{participant.participant_id}"
-                    ),
+                    provider_run_ref=(f"peer_ack:{participant.role}:{participant.participant_id}"),
                     dispatch_evidence=f"mcp_writeback:{inbox_item_id}",
                 )
                 return ChatDispatchBridgeOutcome(claimed=1, dispatched=1)
@@ -116,7 +114,13 @@ class ChatDispatchBridge:
         participant: Participant,
     ) -> str:
         artifact_context = _dispatch_artifact_context(self._db_path, entry)
-        content = _dispatch_prompt(entry, participant, artifact_context=artifact_context)
+        source_refs = _dispatch_source_refs(entry)
+        content = _dispatch_prompt(
+            entry,
+            participant,
+            artifact_context=artifact_context,
+            source_refs=source_refs,
+        )
         payload = ChatStore(self._db_path).create_message_inbox_and_log(
             conversation_id=entry.conversation_id,
             tool_name="chat_dispatch_bridge_enqueue",
@@ -134,6 +138,7 @@ class ChatDispatchBridge:
                 "collaboration_run_id": entry.collaboration_run_id,
                 "artifact_ref": entry.artifact_ref,
                 "dispatch_policy": entry.dispatch_policy,
+                "source_refs": source_refs,
                 **artifact_context,
             },
             mentions=[f"@{participant.role}"],
@@ -153,6 +158,7 @@ class ChatDispatchBridge:
                         "resolution_id": entry.resolution_id,
                         "collaboration_run_id": entry.collaboration_run_id,
                         "artifact_ref": entry.artifact_ref,
+                        "source_refs": source_refs,
                         **artifact_context,
                     },
                 }
@@ -220,19 +226,29 @@ def _dispatch_artifact_context(
     context: dict[str, object] = {}
     if entry.proposal_id:
         try:
-            context["proposal"] = chat.get_proposal(entry.proposal_id).model_dump(
-                mode="json"
-            )
+            context["proposal"] = chat.get_proposal(entry.proposal_id).model_dump(mode="json")
         except KeyError:
             context["proposal"] = {"id": entry.proposal_id, "missing": True}
     if entry.resolution_id:
         try:
-            context["resolution"] = chat.get_resolution(entry.resolution_id).model_dump(
-                mode="json"
-            )
+            context["resolution"] = chat.get_resolution(entry.resolution_id).model_dump(mode="json")
         except KeyError:
             context["resolution"] = {"id": entry.resolution_id, "missing": True}
     return context
+
+
+def _dispatch_source_refs(entry: ChatDispatchQueueEntry) -> list[str]:
+    refs = [f"chat_dispatch_queue:{entry.entry_id}"]
+    if entry.proposal_id:
+        refs.append(f"proposal:{entry.proposal_id}")
+    refs.extend(entry.gate_refs)
+    if entry.resolution_id:
+        refs.append(f"resolution:{entry.resolution_id}")
+    if entry.collaboration_run_id:
+        refs.append(f"collaboration:{entry.collaboration_run_id}")
+    if entry.artifact_ref:
+        refs.append(entry.artifact_ref)
+    return _dedupe_refs(refs)
 
 
 def _dispatch_prompt(
@@ -240,11 +256,11 @@ def _dispatch_prompt(
     participant: Participant,
     *,
     artifact_context: dict[str, object] | None = None,
+    source_refs: list[str] | None = None,
 ) -> str:
     lines = [
         f"@{participant.role}",
-        "Acknowledge this approved xmuse dispatch queue entry as a chat-plane "
-        "handoff notice.",
+        "Acknowledge this approved xmuse dispatch queue entry as a chat-plane handoff notice.",
         "",
         f"- Dispatch entry: {entry.entry_id}",
         f"- Proposal: {entry.proposal_id or 'unknown'}",
@@ -252,22 +268,35 @@ def _dispatch_prompt(
         f"- Collaboration run: {entry.collaboration_run_id or 'unknown'}",
         f"- Artifact: {entry.artifact_ref or 'unknown'}",
         f"- Dispatch policy: {entry.dispatch_policy}",
-        "",
-        "Acknowledgement contract:",
-        "- This chat nudge does not execute the lane and must not claim execution.",
-        "- Do not edit files, run tests, or inspect unrelated repository state.",
-        "- Real worktree execution is handled by the platform lane worker.",
-        "- xmuse MCP tools are configured for this dispatch turn; do not claim "
-        "that MCP writeback tools are unavailable.",
-        "- You must call the MCP tool chat_post_message exactly once after reading "
-        "this dispatch context.",
-        "- Do not answer with plain text; a plain text acknowledgement is not a "
-        "durable dispatch acknowledgement.",
-        "- The chat_post_message content must include DISPATCH_ACKNOWLEDGED and "
-        "the dispatch entry id.",
-        "- If you cannot acknowledge the handoff, still call chat_post_message; "
-        "the content must include DISPATCH_ACK_FAILED and the reason.",
     ]
+    if source_refs:
+        lines.extend(
+            [
+                "",
+                "Source refs:",
+                *[f"- {ref}" for ref in source_refs],
+                "These refs identify xmuse authority boundaries; they are not execution proof.",
+            ]
+        )
+    lines.extend(
+        [
+            "",
+            "Acknowledgement contract:",
+            "- This chat nudge does not execute the lane and must not claim execution.",
+            "- Do not edit files, run tests, or inspect unrelated repository state.",
+            "- Real worktree execution is handled by the platform lane worker.",
+            "- xmuse MCP tools are configured for this dispatch turn; do not claim "
+            "that MCP writeback tools are unavailable.",
+            "- You must call the MCP tool chat_post_message exactly once after reading "
+            "this dispatch context.",
+            "- Do not answer with plain text; a plain text acknowledgement is not a "
+            "durable dispatch acknowledgement.",
+            "- The chat_post_message content must include DISPATCH_ACKNOWLEDGED and "
+            "the dispatch entry id.",
+            "- If you cannot acknowledge the handoff, still call chat_post_message; "
+            "the content must include DISPATCH_ACK_FAILED and the reason.",
+        ]
+    )
     context = artifact_context or {}
     proposal = context.get("proposal")
     resolution = context.get("resolution")
@@ -297,6 +326,18 @@ def _compact_json(value: dict[str, object], *, max_chars: int = 8000) -> str:
     if len(text) <= max_chars:
         return text
     return text[: max_chars - 3] + "..."
+
+
+def _dedupe_refs(refs: list[str]) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for ref in refs:
+        clean = ref.strip() if isinstance(ref, str) else ""
+        if not clean or clean in seen:
+            continue
+        seen.add(clean)
+        deduped.append(clean)
+    return deduped
 
 
 def _required(value: str, name: str) -> str:

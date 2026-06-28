@@ -681,7 +681,6 @@ def _dispatch_source_refs(entry: dict[str, Any]) -> list[str]:
         if isinstance(value, str) and value:
             refs.append(f"{prefix}:{value}")
     refs.extend(_string_items(entry.get("artifact_ref")))
-    refs.extend(_string_items(entry.get("dispatch_evidence")))
     return _dedupe(refs)
 
 

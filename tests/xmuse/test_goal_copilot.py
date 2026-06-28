@@ -163,6 +163,20 @@ def test_goal_copilot_intake_acceptance_requires_durable_authority_refs() -> Non
         "subagent:audit#candidate",
         "local-test:pytest",
     ]
+    dispatch_accepted = build_goal_copilot_intake_decision(
+        recommendation_id="rec-dispatch",
+        classification="accepted",
+        reason="verified dispatch queue authority and separated execution evidence",
+        verified_authority_refs=[
+            "chat_dispatch_queue:dispatch:conv:resolution:execute",
+            "mcp_writeback:dispatch-inbox",
+        ],
+    )
+
+    assert dispatch_accepted["verified_authority_refs"] == [
+        "chat_dispatch_queue:dispatch:conv:resolution:execute"
+    ]
+    assert dispatch_accepted["candidate_input_refs"] == ["mcp_writeback:dispatch-inbox"]
     assert accepted["forbidden_truth_surfaces"] == [
         "provider stdout",
         "worker output",
