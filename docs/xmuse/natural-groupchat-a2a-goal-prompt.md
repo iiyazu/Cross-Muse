@@ -28,10 +28,10 @@ Read first:
 Current calibration:
 - Start from a clean origin/main worktree after truth refresh.
 - Current known main calibration is
-  `ea0f23b85011cb68429089a8acdc30891d2836c2` after PR #261, but always verify
+  `3fe6d8a853ddeade5548733970445c9ef108f4e1` after PR #263, but always verify
   live `origin/main` and open PR state before acting.
 - PRs #242, #244, #245, #246, #247, #248, #249, #250, #251, #252, #253,
-  #254, #255, #257, #258, #259, #260, and #261 have
+  #254, #255, #257, #258, #259, #260, #261, #262, and #263 have
   merged with
   successful main push CI as of 2026-06-28.
 - PR #249 hardened GitHub server truth: PR/CI/merge evidence must be tied to
@@ -58,6 +58,11 @@ Current calibration:
   projected execution lanes, lane context bundles, normal execution prompts,
   and persistent execute context; those refs identify queue/proposal/review
   authority consumption and are still not lane execution proof.
+- PR #262 refreshed current goal docs after #261.
+- PR #263 records approved dispatch handoff continuity into the optional
+  MemoryOS sidecar with queue/proposal/review/resolution/artifact refs; sidecar
+  ingest degradation remains non-blocking and does not become dispatch or lane
+  execution proof.
 - PR #243 is an older behind-main docs package; treat it as reference-only
   unless rebased and revalidated.
 - Dirty historical worktrees and archived docs are references only, not main

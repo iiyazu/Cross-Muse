@@ -154,6 +154,13 @@ MemoryOS is an opt-in sidecar for recall, summaries, decisions, blockers, and
 artifact refs. It must not mutate xmuse authority stores directly. If
 unavailable, omit recall and continue.
 
+Approved dispatch handoff refs may be ingested into the optional sidecar for
+continuity. The producer remains `chat.db/chat_dispatch_queue`, the consumer is
+MemoryOS sidecar, the condition is explicit MemoryOS configuration, and the
+failure boundary is degraded sidecar ingest without blocking dispatch. Sidecar
+ingest output is never proposal, review, dispatch, merge, or lane execution
+truth.
+
 Frontend work in this goal is API/UX contract first: timeline, agent cards,
 worklist, review/dispatch, blockers, next action, and collapsible detail
 payloads. Frontend projection does not create truth.
