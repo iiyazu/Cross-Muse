@@ -22,10 +22,13 @@ operation record 或巨大 handoff 文档。
 当前校准：
 
 - `origin/main` 当前校准在 merge commit
-  `a94ebb33c751a02b13e00de06d53a0fd56649405`，对应 PR #247
-  `Add goal copilot audit guardrails`。
-- PR #242、#244、#245、#246、#247 均已合并，且各自 merge commit 的
-  main push CI 均为 success。
+  `159b851435b735ac828eca0637b601907c306cef`，对应 PR #249
+  `Harden GitHub exact-head evidence`。
+- PR #242、#244、#245、#246、#247、#248、#249 均已合并，且各自
+  merge commit 的 main push CI 均为 success。
+- PR #248 是当前 goal 文档校准；PR #249 加固了 GitHub server truth
+  exact-head check-run evidence。二者都是支撑链路，不是 production-ready
+  natural groupchat 证明。
 - PR #243 (`codex/natural-groupchat-overnight-goal-docs`) 是较早的宽文档包，
   当前 `BEHIND` main；可作参考，但不是最新 current-goal 状态入口。
 - Dirty historical worktree 和 archive 文档只能作为参考，不是 main capability。

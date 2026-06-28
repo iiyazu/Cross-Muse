@@ -102,8 +102,12 @@ only evidence structure; it does not query or mutate GitHub settings.
 
 `server_side_merge_proof` requires all of:
 
+- PR head SHA;
 - workflow run identity plus check suite or check run identity;
 - successful check run identities covering every documented required check;
+- check run names proving every required check name was observed;
+- check run head SHAs proving every accepted check run belongs to the exact PR
+  head SHA;
 - expected source GitHub App for checks;
 - branch protection or ruleset snapshot;
 - review truth:
@@ -115,8 +119,15 @@ only evidence structure; it does not query or mutate GitHub settings.
 
 `build_github_server_side_truth_gap(...)` records the current unauthenticated or
 missing-evidence state as `manual_gap`. `can_emit_pr_merged(...)` returns true
-only for `server_side_merge_proof` that has status-check identity, server
-enforcement truth, review truth, and real merge truth fields.
+only for `server_side_merge_proof` that has status-check identity, exact-head
+check-run truth, server enforcement truth, review truth, and real merge truth
+fields.
+
+A missing per-check-run head SHA, a check run from any non-PR head, duplicate
+check-name-only evidence, or duplicate check names that leave a required check
+unobserved must remain `manual_gap`. Check run count alone is not proof; the
+evidence must cover the required check run names and the corresponding check run
+head SHAs.
 
 `FakeGitHubServerSideTruthCollector` is a contract-only scaffold for tests and
 local development. It may mirror workflow, check, ruleset, and review field
