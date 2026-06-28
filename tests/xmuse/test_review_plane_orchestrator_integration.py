@@ -28,6 +28,7 @@ from xmuse_core.agents.protocol import StdoutMessage
 from xmuse_core.chat.participant_store import ParticipantStore
 from xmuse_core.chat.store import ChatStore
 from xmuse_core.platform.agent_spawner import SpawnResult
+from xmuse_core.platform.execution import review_god as review_god_module
 from xmuse_core.platform.orchestrator import PlatformOrchestrator
 from xmuse_core.platform.verdicts.writer import ingest_rework_verdict
 from xmuse_core.structuring.models import ReviewDecision, ReviewTaskStatus
@@ -144,6 +145,24 @@ class FakePersistentReviewLayer:
 
     def persistent_model_for_runtime(self, runtime) -> str:
         return "gpt-5.5"
+
+
+class CallbackPersistentReviewLayer(FakePersistentReviewLayer):
+    def __init__(
+        self,
+        received: list[StdoutMessage],
+        *,
+        before_result,
+    ) -> None:
+        super().__init__(received)
+        self._before_result = before_result
+        self.before_result_calls = 0
+
+    async def receive_message(self, god_session_id: str):
+        if self.before_result_calls == 0:
+            self.before_result_calls += 1
+            self._before_result()
+        return await super().receive_message(god_session_id)
 
 
 class SlowPersistentReviewLayer(FakePersistentReviewLayer):
@@ -954,6 +973,106 @@ async def test_configured_review_peer_preferred_success_records_peer_metadata(
 
 
 @pytest.mark.asyncio
+async def test_configured_review_peer_accepts_existing_mcp_writeback_without_artifact(
+    tmp_path: Path,
+) -> None:
+    chat = ChatStore(tmp_path / "chat.db")
+    conversation = chat.create_conversation("Configured review MCP writeback")
+    participant = _add_review_participant(tmp_path, conversation.id)
+    lane_id = "lane-configured-peer-mcp-writeback"
+    orch = _make_final_action_orchestrator(
+        tmp_path,
+        [
+            _gated_lane(
+                lane_id,
+                conversation_id=conversation.id,
+                feature_plan_feature_id="feature-a",
+                review_peer_id=participant.participant_id,
+                peer_routing_mode="preferred",
+            )
+        ],
+    )
+
+    def apply_mcp_writeback() -> None:
+        orch._sm.transition(
+            lane_id,
+            "reviewed",
+            metadata={
+                "review_decision": ReviewDecision.MERGE.value,
+                "review_summary": "review accepted",
+                "review_verdict_id": "verdict-mcp-writeback",
+            },
+        )
+        hold = orch._final_action_store.create_hold(
+            lane_id=lane_id,
+            verdict_id="verdict-mcp-writeback",
+            action="merge",
+            target_status="reviewed",
+            summary="review accepted",
+        )
+        orch._sm.transition(
+            lane_id,
+            "awaiting_final_action",
+            metadata={
+                "review_decision": ReviewDecision.MERGE.value,
+                "review_summary": "review accepted",
+                "review_verdict_id": "verdict-mcp-writeback",
+                "final_action_hold_id": hold.id,
+            },
+        )
+
+    persistent = CallbackPersistentReviewLayer(
+        [
+            StdoutMessage(
+                type="result",
+                status="success",
+                artifacts={"message_type": "review"},
+            )
+        ],
+        before_result=apply_mcp_writeback,
+    )
+    orch._review_god_session_layer = persistent
+
+    with patch.object(orch._spawner, "spawn", new_callable=AsyncMock) as spawn:
+        await orch._run_review_god(lane_id)
+
+    lane = orch._sm.get_lane(lane_id)
+    assert spawn.await_count == 0
+    assert persistent.before_result_calls == 1
+    assert lane["status"] == "awaiting_final_action"
+    assert lane["review_verdict_id"] == "verdict-mcp-writeback"
+    assert lane["peer_delivery_mode"] == "configured_peer"
+    assert lane["peer_result_status"] == "ok"
+    assert lane["peer_result_artifact_keys"] == ["message_type"]
+    assert lane.get("peer_degraded_reason") is None
+
+
+def test_configured_peer_writeback_reconciliation_requires_durable_verdict_markers() -> None:
+    assert review_god_module._configured_peer_writeback_already_delivered(
+        {
+            "status": "awaiting_final_action",
+            "review_decision": ReviewDecision.MERGE.value,
+            "review_verdict_id": "verdict-1",
+            "final_action_hold_id": "final-1",
+        }
+    )
+    assert not review_god_module._configured_peer_writeback_already_delivered(
+        {
+            "status": "reviewed",
+            "review_decision": ReviewDecision.MERGE.value,
+            "review_summary": "projection-only update",
+        }
+    )
+    assert not review_god_module._configured_peer_writeback_already_delivered(
+        {
+            "status": "rejected",
+            "review_decision": ReviewDecision.REWORK.value,
+            "review_summary": "projection-only update",
+        }
+    )
+
+
+@pytest.mark.asyncio
 async def test_review_runtime_opencode_routes_to_existing_review_peer(
     tmp_path: Path,
 ) -> None:
@@ -977,7 +1096,10 @@ async def test_review_runtime_opencode_routes_to_existing_review_peer(
                 type="result",
                 status="success",
                 artifacts={
-                    "stdout": "Findings: none\nVerdict: merge",
+                    "review_verdict": {
+                        "decision": "merge",
+                        "summary": "Configured OpenCode review peer approves.",
+                    }
                 },
             )
         ]
@@ -994,7 +1116,7 @@ async def test_review_runtime_opencode_routes_to_existing_review_peer(
     assert lane["review_runtime_requested"] == "opencode"
     assert lane["peer_routing_mode"] == "required"
     assert lane["peer_delivery_mode"] == "configured_peer"
-    assert "Verdict: merge" in lane["review_summary"]
+    assert lane["review_summary"] == "Configured OpenCode review peer approves."
     assert persistent.ensured[0]["participant_id"] == participant.participant_id
 
 
@@ -1021,7 +1143,10 @@ async def test_review_runtime_opencode_without_feature_scope_uses_request_scope(
                 type="result",
                 status="success",
                 artifacts={
-                    "stdout": "Findings: none\nVerdict: merge",
+                    "review_verdict": {
+                        "decision": "merge",
+                        "summary": "Scoped OpenCode review peer approves.",
+                    }
                 },
             )
         ]
