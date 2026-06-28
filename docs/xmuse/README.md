@@ -1,6 +1,6 @@
 # xmuse 文档入口
 
-更新日期: 2026-06-26
+更新日期: 2026-06-28
 
 本目录现在按“当前 goal 入口、当前产品合同、CI/兼容合同、历史档案”分层。下一轮
 自然 agents 群聊 `/goal` 不再默认读取旧的 closure ledger、walkthrough、runtime
@@ -21,9 +21,13 @@ operation record 或巨大 handoff 文档。
 
 当前校准：
 
-- `origin/main` 当前按 PR #192 / `bd540de` 校准。
-- PR #193 (`codex/a2a-sdk-foundation`) 已合并到 `origin/main`，merge commit
-  `d429e691be51ef5c9aa7ab34a5670f290b37e7a3`。
+- `origin/main` 当前校准在 merge commit
+  `a94ebb33c751a02b13e00de06d53a0fd56649405`，对应 PR #247
+  `Add goal copilot audit guardrails`。
+- PR #242、#244、#245、#246、#247 均已合并，且各自 merge commit 的
+  main push CI 均为 success。
+- PR #243 (`codex/natural-groupchat-overnight-goal-docs`) 是较早的宽文档包，
+  当前 `BEHIND` main；可作参考，但不是最新 current-goal 状态入口。
 - Dirty historical worktree 和 archive 文档只能作为参考，不是 main capability。
 
 ## 当前产品主线

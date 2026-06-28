@@ -1,6 +1,6 @@
 # Natural Groupchat A2A Behavior Policy
 
-Updated: 2026-06-26
+Updated: 2026-06-28
 
 This policy governs the next long `/goal` for natural agents groupchat,
 A2A-based interop, MemoryOS sidecar work, and frontend API readiness.
@@ -72,6 +72,12 @@ and then treat that as closure.
 
 Use skills, subagents, OpenCode, or other helpers only when they materially
 improve the current decision or implementation. They are never proof truth.
+
+During long goal execution, the main agent may flexibly enable read-only
+subagent or copilot audit for implementation and review quality. Audit output
+is candidate input only; the main agent must verify material recommendations
+against durable xmuse authority, GitHub server facts, or repository source
+before accepting them.
 
 If a skill instruction conflicts with this policy's authority-first runtime
 rules, preserve the xmuse proof boundary and record the conflict.

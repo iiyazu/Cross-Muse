@@ -27,8 +27,13 @@ Read first:
 
 Current calibration:
 - Start from a clean origin/main worktree after truth refresh.
-- PR #193 (codex/a2a-sdk-foundation) should be verified as merged before
-  SDK-dependent work.
+- Current known main calibration is
+  `a94ebb33c751a02b13e00de06d53a0fd56649405` after PR #247, but always verify
+  live `origin/main` and open PR state before acting.
+- PRs #242, #244, #245, #246, and #247 have merged with successful main push
+  CI as of 2026-06-28.
+- PR #243 is an older behind-main docs package; treat it as reference-only
+  unless rebased and revalidated.
 - Dirty historical worktrees and archived docs are references only, not main
   capability.
 
@@ -46,6 +51,8 @@ Hard rules:
   condition, proof level, and failure boundary.
 - Use tests after observed runtime evidence to pin contracts/regressions.
 - Skills/workers are process aids only, never proof truth.
+- Flexibly enable read-only subagent or copilot audit when it materially helps
+  implementation/review decisions; audit output remains candidate input only.
 - Use dynamic small main-based PRs by implementation domain; every PR must pass
   remote CI before merge.
 - If the same complex boundary fails twice, refactor or redesign the boundary
