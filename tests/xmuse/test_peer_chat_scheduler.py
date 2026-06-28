@@ -649,6 +649,9 @@ async def test_scheduler_degrades_memoryos_sidecar_without_blocking_peer_turn(
     assert "MemoryOS sidecar status: degraded" in layer.sent[0][2]
     assert "continue from chat.db authority" in layer.sent[0][2]
     trace = PeerTurnLatencyTraceStore(db_path).list_recent(conv.id)[0]
+    continuity_attempt_ref = (
+        f"memory://conversation/{conv.id}/context/memoryos-sidecar-attempt"
+    )
     assert trace["supporting_context"] == {
         "memoryos_sidecar": {
             "status": "degraded",
@@ -658,6 +661,7 @@ async def test_scheduler_degrades_memoryos_sidecar_without_blocking_peer_turn(
             "degraded_reason": "memoryos_timeout",
             "source_refs": [],
             "continuity_refs": [],
+            "continuity_attempt_ref": continuity_attempt_ref,
         }
     }
     assert "sidecar_continuity_refs" not in trace["supporting_context"]

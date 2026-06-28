@@ -395,7 +395,8 @@ def _memoryos_sidecar_projection(
     row: sqlite3.Row,
     context: dict[str, Any],
 ) -> dict[str, Any]:
-    return {
+    continuity_refs = _supporting_context_continuity_refs(context)
+    item = {
         "trace_id": row["id"],
         "inbox_item_id": row["inbox_item_id"],
         "participant_id": row["participant_id"],
@@ -406,8 +407,12 @@ def _memoryos_sidecar_projection(
         "namespace_uri": _projection_text(context.get("namespace_uri")) or "unknown",
         "degraded_reason": _projection_text(context.get("degraded_reason")),
         "source_refs": _supporting_context_source_refs(context.get("source_refs")),
-        "continuity_refs": _supporting_context_continuity_refs(context),
+        "continuity_refs": continuity_refs,
     }
+    continuity_attempt_ref = _supporting_context_continuity_attempt_ref(context)
+    if continuity_attempt_ref and not continuity_refs:
+        item["continuity_attempt_ref"] = continuity_attempt_ref
+    return item
 
 
 def _conversation_sessions(root: Path, conversation_id: str) -> list[dict[str, Any]]:
@@ -1069,6 +1074,13 @@ def _supporting_context_continuity_refs(context: dict[str, Any]) -> list[str]:
     if single_ref is None:
         return []
     return [single_ref[:_SUPPORTING_CONTEXT_SOURCE_REF_MAX_CHARS]]
+
+
+def _supporting_context_continuity_attempt_ref(context: dict[str, Any]) -> str | None:
+    attempt_ref = _projection_text(context.get("continuity_attempt_ref"))
+    if attempt_ref is None:
+        return None
+    return attempt_ref[:_SUPPORTING_CONTEXT_SOURCE_REF_MAX_CHARS]
 
 
 def _dedupe(items: list[str]) -> list[str]:
