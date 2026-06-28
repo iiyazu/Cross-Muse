@@ -22,6 +22,7 @@ _DURABLE_AUTHORITY_PREFIXES = (
     "inbox:",
     "proposal:",
     "review_verdict:",
+    "chat_dispatch_queue:",
     "dispatch_queue:",
     "github:",
 )
