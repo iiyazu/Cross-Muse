@@ -318,6 +318,7 @@ def test_dashboard_peer_chat_ux_projection_is_frontend_read_model(
         resolution_id="resolution-ux",
         collaboration_run_id=run.run_id,
         artifact_ref="artifact:ux-lane-graph",
+        gate_refs=["collaboration:frontend-gate", "review_trigger_verdict:frontend-review"],
     )
     _write_json(
         tmp_path / "active_sessions.json",
@@ -404,7 +405,10 @@ def test_dashboard_peer_chat_ux_projection_is_frontend_read_model(
     assert worklist_by_id[inbox_item.id]["detail_kind"] == "inbox_item"
     assert worklist_by_id[dispatch.entry_id]["next_action"] == "dispatch_execute_peer"
     assert worklist_by_id[dispatch.entry_id]["source_refs"] == [
+        f"chat_dispatch_queue:{dispatch.entry_id}",
         f"proposal:{proposal.id}",
+        "collaboration:frontend-gate",
+        "review_trigger_verdict:frontend-review",
         "resolution:resolution-ux",
         f"collaboration:{run.run_id}",
         "artifact:ux-lane-graph",
@@ -514,6 +518,78 @@ def test_dashboard_peer_chat_ux_projection_tolerates_old_trace_schema(
         "source_authority": ["chat.db:peer_turn_latency_traces.supporting_context_json"],
         "memoryos_sidecar": {"status_summary": {}, "latest": []},
     }
+
+
+def test_dashboard_peer_chat_ux_projection_tolerates_dispatch_queue_without_gate_refs(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "chat.db"
+    chat = ChatStore(db)
+    conv = chat.create_conversation("Old dispatch projection")
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            """
+            create table chat_dispatch_queue (
+                entry_id text primary key,
+                conversation_id text not null,
+                source text not null,
+                target text not null,
+                status text not null,
+                auto_execute integer not null,
+                proposal_id text,
+                resolution_id text,
+                collaboration_run_id text,
+                artifact_ref text,
+                dispatch_policy text not null,
+                claimed_by text,
+                claimed_at text,
+                provider_run_ref text,
+                dispatch_evidence text,
+                failure_reason text,
+                completed_at text,
+                created_at text not null,
+                updated_at text not null
+            )
+            """
+        )
+        conn.execute(
+            """
+            insert into chat_dispatch_queue (
+                entry_id, conversation_id, source, target, status, auto_execute,
+                proposal_id, resolution_id, collaboration_run_id, artifact_ref,
+                dispatch_policy, created_at, updated_at
+            )
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "dispatch:old",
+                conv.id,
+                "agent",
+                "execute",
+                "queued",
+                1,
+                "proposal-old",
+                "resolution-old",
+                None,
+                "artifact:old-lane",
+                "real_provider_allowed",
+                "2026-06-28T00:00:00Z",
+                "2026-06-28T00:00:00Z",
+            ),
+        )
+
+    response = TestClient(create_app(tmp_path)).get(
+        f"/api/dashboard/peer-chat/conversations/{conv.id}/ux-projection"
+    )
+
+    assert response.status_code == 200
+    worklist_by_id = {item["id"]: item for item in response.json()["worklist"]}
+    assert worklist_by_id["dispatch:old"]["source_refs"] == [
+        "chat_dispatch_queue:dispatch:old",
+        "proposal:proposal-old",
+        "resolution:resolution-old",
+        "artifact:old-lane",
+    ]
 
 
 def test_dashboard_peer_chat_ux_projection_does_not_mutate_authority_files(

@@ -521,6 +521,7 @@ def test_a2a_review_trigger_verdict_only_proposal_approval_enqueues_dispatch(
     assert entries[0].resolution_id == response.json()["id"]
     assert entries[0].collaboration_run_id is None
     assert entries[0].artifact_ref == "artifact:lane_graph"
+    assert entries[0].gate_refs == [f"review_trigger_verdict:{verdict_message_id}"]
     assert response.json()["next_authority_boundary"] == {
         "required_authority": "chat.db/dispatch_queue",
         "required_action": "run_dispatch_bridge",

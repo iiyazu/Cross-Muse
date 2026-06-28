@@ -1858,6 +1858,37 @@ def test_proposal_approval_enqueues_agent_auto_dispatch_entry_after_gate(
         ),
         response_status="received",
     )
+    second_run = collaboration.create_request(
+        conversation_id=conversation_id,
+        goal="Confirm queue projection refs",
+        initiator="architect",
+        targets=["review", "execute"],
+        callback_target="architect",
+        question="Can downstream readers audit every dispatch gate ref?",
+        context_refs=[],
+        idempotency_key="proposal-gate-dispatch-queue-second",
+        timeout_s=480,
+    )
+    collaboration.record_response(
+        second_run.run_id,
+        target="review",
+        content="No veto for projection refs.",
+        response_status="received",
+    )
+    collaboration.record_response(
+        second_run.run_id,
+        target="execute",
+        content=json.dumps(
+            {
+                "type": "execute_feasibility_verdict",
+                "status": "executable",
+                "execution_performed": False,
+                "summary": "Queue refs are inspectable without executing.",
+                "evidence_refs": ["proposal:lane-v14-dispatch-queue"],
+            }
+        ),
+        response_status="received",
+    )
     client = TestClient(create_app(tmp_path))
     proposal = client.post(
         f"/api/chat/conversations/{conversation_id}/proposals",
@@ -1877,7 +1908,10 @@ def test_proposal_approval_enqueues_agent_auto_dispatch_entry_after_gate(
                     ],
                 }
             ),
-            "references": [f"collaboration:{run.run_id}"],
+            "references": [
+                f"collaboration:{run.run_id}",
+                f"collaboration:{second_run.run_id}",
+            ],
         },
     )
     assert proposal.status_code == 201
@@ -1905,6 +1939,10 @@ def test_proposal_approval_enqueues_agent_auto_dispatch_entry_after_gate(
     assert entry.artifact_ref == "artifact:lane_graph"
     assert entry.dispatch_policy == "real_provider_allowed"
     assert entry.target == "execute"
+    assert entry.gate_refs == [
+        f"collaboration:{run.run_id}",
+        f"collaboration:{second_run.run_id}",
+    ]
     assert approved.json()["next_authority_boundary"] == {
         "required_authority": "chat.db/dispatch_queue",
         "required_action": "run_dispatch_bridge",
@@ -1914,6 +1952,7 @@ def test_proposal_approval_enqueues_agent_auto_dispatch_entry_after_gate(
         "source_refs": [
             f"proposal:{proposal.json()['id']}",
             f"collaboration:{run.run_id}",
+            f"collaboration:{second_run.run_id}",
             f"resolution:{resolution_id}",
             f"chat_dispatch_queue:{entry.entry_id}",
         ],
