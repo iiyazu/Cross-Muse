@@ -38,6 +38,8 @@ FEATURE_LANE_FIELD_CLASSIFICATIONS: dict[str, str] = {
     "graph_set_version": "projection",
     "feature_plan_id": "projection",
     "feature_plan_version": "projection",
+    "source_refs": "projection",
+    "dispatch_queue_entry_id": "projection",
     "lane_id": "projection",
     "lane_local_id": "projection",
     "lane_depends_on_ids": "projection",
@@ -374,6 +376,12 @@ def _lane_payload(
         "resolution_id": graph.resolution_id,
         "graph_id": graph.id,
         "graph_version": graph.version,
+        **({"source_refs": list(graph.source_refs)} if graph.source_refs else {}),
+        **(
+            {"dispatch_queue_entry_id": dispatch_queue_entry_id}
+            if (dispatch_queue_entry_id := _dispatch_queue_entry_id(graph.source_refs))
+            else {}
+        ),
         **({"gate_profile": node.gate_profile} if node.gate_profile else {}),
         **({"gate_profiles": list(node.gate_profiles)} if node.gate_profiles else {}),
         **({"source_lane_id": node.source_lane_id} if node.source_lane_id else {}),
@@ -416,3 +424,14 @@ def _direct_lane_graph_feature_scope_id(graph: LaneGraph, node: LaneNode) -> str
     if node.feature_group and node.feature_group.strip():
         return node.feature_group.strip()
     return f"lane_graph:{graph.id}"
+
+
+def _dispatch_queue_entry_id(source_refs: list[str]) -> str | None:
+    prefix = "chat_dispatch_queue:"
+    for ref in source_refs:
+        if not ref.startswith(prefix):
+            continue
+        entry_id = ref.removeprefix(prefix).strip()
+        if entry_id:
+            return entry_id
+    return None

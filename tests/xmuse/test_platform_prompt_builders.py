@@ -182,6 +182,33 @@ def test_build_execution_prompt_includes_blueprint_acceptance_context(
     assert "- Execution and review use the same acceptance criteria." in result
 
 
+def test_build_execution_prompt_includes_dispatch_authority_context(
+    xmuse_root: Path,
+):
+    lane = {
+        "feature_id": "lane-dispatch-authority",
+        "prompt": "execute approved dispatch work",
+        "dispatch_queue_entry_id": "dispatch:conv-1:res-1:execute",
+        "source_refs": [
+            "proposal:prop-1",
+            "collaboration:run-1",
+            "resolution:res-1",
+            "chat_dispatch_queue:dispatch:conv-1:res-1:execute",
+        ],
+    }
+
+    result = build_execution_prompt(
+        lane,
+        xmuse_root=xmuse_root,
+        skill_prompt_path="xmuse/god_prompts/execution_god.md",
+    )
+
+    assert "## Dispatch Authority Context" in result
+    assert "- Dispatch queue entry: dispatch:conv-1:res-1:execute" in result
+    assert "- Source refs: proposal:prop-1, collaboration:run-1" in result
+    assert "not lane execution proof" in result
+
+
 def test_build_execution_prompt_includes_bounded_worker_delegation_contract(
     xmuse_root: Path,
 ):

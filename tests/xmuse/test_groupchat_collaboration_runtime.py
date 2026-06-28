@@ -1943,23 +1943,32 @@ def test_proposal_approval_enqueues_agent_auto_dispatch_entry_after_gate(
         f"collaboration:{run.run_id}",
         f"collaboration:{second_run.run_id}",
     ]
+    expected_source_refs = [
+        f"proposal:{proposal.json()['id']}",
+        f"collaboration:{run.run_id}",
+        f"collaboration:{second_run.run_id}",
+        f"resolution:{resolution_id}",
+        f"chat_dispatch_queue:{entry.entry_id}",
+    ]
     assert approved.json()["next_authority_boundary"] == {
         "required_authority": "chat.db/dispatch_queue",
         "required_action": "run_dispatch_bridge",
         "dispatch_queue_entry_available": True,
         "dispatch_queue_entry_id": entry.entry_id,
         "dispatch_policy": "real_provider_allowed",
-        "source_refs": [
-            f"proposal:{proposal.json()['id']}",
-            f"collaboration:{run.run_id}",
-            f"collaboration:{second_run.run_id}",
-            f"resolution:{resolution_id}",
-            f"chat_dispatch_queue:{entry.entry_id}",
-        ],
+        "source_refs": expected_source_refs,
     }
+    graph = json.loads(
+        (tmp_path / "lane_graphs" / f"{resolution_id}-graph-v1.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert graph["source_refs"] == expected_source_refs
     lanes = json.loads((tmp_path / "feature_lanes.json").read_text(encoding="utf-8"))["lanes"]
     assert lanes[0]["feature_id"] == "lane-v14-dispatch-queue"
     assert lanes[0]["feature_scope_id"] == f"lane_graph:{resolution_id}-graph-v1"
+    assert lanes[0]["dispatch_queue_entry_id"] == entry.entry_id
+    assert lanes[0]["source_refs"] == expected_source_refs
 
     inspector = build_conversation_inspector_payload(conversation_id, tmp_path)
     assert inspector["dispatch_queue"]["entries"][0]["entry_id"] == entry.entry_id

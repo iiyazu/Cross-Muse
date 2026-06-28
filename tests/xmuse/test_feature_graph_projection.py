@@ -184,6 +184,44 @@ def test_project_feature_graph_set_returned_lane_carries_projection_revision(
     assert "projection_revision" not in _read_lanes(lanes_path)[0]
 
 
+def test_project_ready_lanes_carries_dispatch_authority_refs(
+    tmp_path: Path,
+) -> None:
+    lanes_path = tmp_path / "feature_lanes.json"
+    graph = LaneGraph(
+        id="graph-dispatch",
+        conversation_id="conv-dispatch",
+        resolution_id="res-dispatch",
+        version=1,
+        source_refs=[
+            "proposal:prop-dispatch",
+            "collaboration:run-dispatch",
+            "resolution:res-dispatch",
+            "chat_dispatch_queue:dispatch:conv-dispatch:res-dispatch:execute",
+        ],
+        lanes=[
+            LaneNode(
+                feature_id="dispatch-consumer",
+                prompt="Consume the approved dispatch authority.",
+            )
+        ],
+    )
+
+    projected = project_ready_lanes(graph, lanes_path)
+
+    assert projected[0]["source_refs"] == graph.source_refs
+    assert (
+        projected[0]["dispatch_queue_entry_id"]
+        == "dispatch:conv-dispatch:res-dispatch:execute"
+    )
+    stored = _read_lanes(lanes_path)
+    assert stored[0]["source_refs"] == graph.source_refs
+    assert (
+        stored[0]["dispatch_queue_entry_id"]
+        == "dispatch:conv-dispatch:res-dispatch:execute"
+    )
+
+
 def test_project_feature_graph_set_is_idempotent_without_revision_churn(
     tmp_path: Path,
 ) -> None:
@@ -640,6 +678,7 @@ def test_project_feature_graph_set_payload_uses_explicit_safe_allowlist(
         "graph_version",
         "graph_set_id",
         "graph_set_version",
+        "source_refs",
         "gate_profiles",
         "feature_group",
         "feature_plan_id",

@@ -11,6 +11,7 @@ from typing import Any
 
 from xmuse_core.platform.lane_context import (
     build_lane_context_bundle,
+    dispatch_authority_context_for_prompt,
     should_include_retry_context,
 )
 from xmuse_core.providers.goal_contract import WorkerGoalContract
@@ -132,6 +133,9 @@ def build_execution_prompt(
     blueprint_context = _blueprint_context(lane, xmuse_root=xmuse_root)
     if blueprint_context:
         prompt = f"{prompt}\n\n{blueprint_context}"
+    dispatch_authority_context = dispatch_authority_context_for_prompt(lane)
+    if dispatch_authority_context:
+        prompt = f"{prompt}\n\n{dispatch_authority_context}"
     context = _prior_attempt_context(lane, xmuse_root=xmuse_root, all_lanes=all_lanes)
     if context:
         prompt = f"{prompt}\n\n{context}"

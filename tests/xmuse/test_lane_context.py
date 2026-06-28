@@ -127,6 +127,42 @@ def test_lane_context_bundle_keeps_memory_refs_alongside_primary_evidence_refs(
     )
 
 
+def test_lane_context_bundle_carries_dispatch_authority_refs(
+    tmp_path: Path,
+) -> None:
+    source_refs = [
+        "proposal:prop-1",
+        "collaboration:run-1",
+        "resolution:res-1",
+        "chat_dispatch_queue:dispatch:conv-1:res-1:execute",
+    ]
+    lane = {
+        "feature_id": "lane-dispatch-authority",
+        "status": "pending",
+        "source_refs": source_refs,
+        "dispatch_queue_entry_id": "dispatch:conv-1:res-1:execute",
+    }
+
+    bundle = build_lane_context_bundle(lane, xmuse_root=tmp_path)
+
+    assert bundle["dispatch_authority"] == {
+        "dispatch_queue_entry_id": "dispatch:conv-1:res-1:execute",
+        "source_refs": source_refs,
+        "proof_boundary": (
+            "Dispatch authority refs identify approved xmuse handoff inputs; "
+            "they are not lane execution proof."
+        ),
+    }
+    assert bundle["context_contract"]["dispatch_authority"] == bundle["dispatch_authority"]
+    assert "Dispatch queue entry: dispatch:conv-1:res-1:execute" in (
+        bundle["retry_context"]
+    )
+    assert "Dispatch authority refs: proposal:prop-1, collaboration:run-1" in (
+        bundle["retry_context"]
+    )
+    assert "not lane execution proof" in bundle["retry_context"]
+
+
 def test_retry_context_includes_merge_conflict_details(tmp_path: Path) -> None:
     lane = {
         "feature_id": "lane-merge-conflict",
