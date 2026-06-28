@@ -73,9 +73,7 @@ def test_peer_chat_prompt_builder_emits_ordered_auditable_layers(tmp_path: Path)
     assert "chat_emit_proposal" in assembled.text
     assert "If the inbox request explicitly asks for chat_emit_proposal" in assembled.text
     assert "that tool is the durable writeback for proposal turns" in assembled.text
-    assert "do not return the JSON as final assistant text or streamed stdout" in (
-        assembled.text
-    )
+    assert "do not return the JSON as final assistant text or streamed stdout" in (assembled.text)
     assert "do not also call chat_mention for the same target" in assembled.text
     assert "Every dispatchable lane_graph lane must include explicit gate_profiles" in (
         assembled.text
@@ -169,3 +167,71 @@ def test_prompt_builder_includes_retry_feedback(tmp_path: Path) -> None:
 
     assert "Retry feedback:" in assembled.text
     assert "Previous attempt failed with peer_no_inbox_side_effect" in assembled.text
+
+
+def test_prompt_builder_includes_collaboration_callback_proposal_action(
+    tmp_path: Path,
+) -> None:
+    chat = ChatStore(tmp_path / "chat.db")
+    conv = chat.create_conversation("Callback proposal")
+    participants = ParticipantStore(tmp_path / "chat.db")
+    architect = participants.add(
+        conversation_id=conv.id,
+        role="architect",
+        display_name="Architect GOD",
+        cli_kind="codex",
+        model="gpt-5.4",
+    )
+    msg = chat.add_message(
+        conv.id,
+        "system",
+        "system",
+        "Collaboration run `collab_123` completed.",
+    )
+    item = ChatInboxStore(tmp_path / "chat.db").create_item(
+        conversation_id=conv.id,
+        target_participant_id=architect.participant_id,
+        target_role="architect",
+        target_address="@architect",
+        sender_participant_id=None,
+        sender_address="@system",
+        source_message_id=msg.id,
+        item_type="collaboration_callback",
+        payload={
+            "content": (
+                "Collaboration run `collab_123` is done. If original request "
+                "asked for lane_graph proposal, call chat_emit_proposal now."
+            ),
+            "collaboration_run_id": "collab_123",
+            "collaboration_status": "done",
+            "trigger_mode": "collaboration_done_callback",
+            "responses": [
+                {
+                    "target": "@execute",
+                    "content": (
+                        '{"type":"execute_feasibility_verdict",'
+                        '"status":"executable",'
+                        '"execution_performed":false,'
+                        '"summary":"Dispatch is safe.",'
+                        '"evidence_refs":["intake_message:msg_1"]}'
+                    ),
+                }
+            ],
+        },
+    )
+    group_context = ContextAssembler(
+        participants=participants,
+        chat=chat,
+    ).group_chat_context(conv.id)
+
+    assembled = XmusePromptBuilder().build_peer_chat_prompt(
+        participant=architect,
+        inbox_item=item,
+        group_context=group_context,
+    )
+
+    assert "Collaboration callback action:" in assembled.text
+    assert "call chat_emit_proposal before ending this turn" in assembled.text
+    assert 'references=["collaboration:collab_123"]' in assembled.text
+    assert "reply_to_inbox_item_id=xmuse_context.inbox_item.id" in assembled.text
+    assert "plain final text or no tool call is a failed callback" in assembled.text

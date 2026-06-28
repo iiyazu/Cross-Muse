@@ -208,8 +208,7 @@ async def test_scheduler_restores_participant_sessions_after_restart(
         response_wait_s=1.0,
     )
     first_items = {
-        role: enqueue(role, f"@{role} first turn")
-        for role in ("architect", "review", "execute")
+        role: enqueue(role, f"@{role} first turn") for role in ("architect", "review", "execute")
     }
 
     for _role in ("architect", "review", "execute"):
@@ -240,8 +239,7 @@ async def test_scheduler_restores_participant_sessions_after_restart(
         response_wait_s=1.0,
     )
     restarted_items = {
-        role: enqueue(role, f"@{role} after restart")
-        for role in ("architect", "review", "execute")
+        role: enqueue(role, f"@{role} after restart") for role in ("architect", "review", "execute")
     }
 
     for _role in ("architect", "review", "execute"):
@@ -256,12 +254,8 @@ async def test_scheduler_restores_participant_sessions_after_restart(
         )
         for role in ("architect", "review", "execute")
     }
-    assert {
-        role: session.god_session_id
-        for role, session in restarted_sessions.items()
-    } == {
-        role: session.god_session_id
-        for role, session in first_sessions.items()
+    assert {role: session.god_session_id for role, session in restarted_sessions.items()} == {
+        role: session.god_session_id for role, session in first_sessions.items()
     }
     assert {inbox.get(item.id).status for item in restarted_items.values()} == {"read"}
     assert len(spawned_sessions) == 6
@@ -276,10 +270,9 @@ async def test_scheduler_restores_participant_sessions_after_restart(
             role,
             role,
         ]
-        assert {
-            writeback["god_session_id"]
-            for writeback in participant_writebacks
-        } == {first_sessions[role].god_session_id}
+        assert {writeback["god_session_id"] for writeback in participant_writebacks} == {
+            first_sessions[role].god_session_id
+        }
 
     traces = PeerTurnLatencyTraceStore(db_path).list_recent(conv.id, limit=10)
     assert len(traces) == 6
@@ -289,14 +282,10 @@ async def test_scheduler_restores_participant_sessions_after_restart(
         assistant_messages = [
             message
             for message in messages
-            if message.author == participant.participant_id
-            and message.role == "assistant"
+            if message.author == participant.participant_id and message.role == "assistant"
         ]
         assert len(assistant_messages) == 2
-        assert all(
-            participant.display_name in message.content
-            for message in assistant_messages
-        )
+        assert all(participant.display_name in message.content for message in assistant_messages)
 
 
 @pytest.mark.asyncio
@@ -364,8 +353,7 @@ async def test_scheduler_claims_and_nudges_oldest_item(tmp_path: Path) -> None:
     assert "answer, report, review" in layer.sent[0][2]
     assert "do not use chat_mention back to the sender for simple answers" in layer.sent[0][2]
     assert (
-        "Natural-language @mentions inside chat_post_message are display-only"
-        in layer.sent[0][2]
+        "Natural-language @mentions inside chat_post_message are display-only" in layer.sent[0][2]
     )
     assert "call chat_mention with" in layer.sent[0][2]
     assert "closes your current inbox item" in layer.sent[0][2]
@@ -410,9 +398,7 @@ async def test_scheduler_claims_and_nudges_oldest_item(tmp_path: Path) -> None:
         participant.participant_id
     )
     assert context["group_chat"]["session_bindings"][0]["session_status"] == "unbound"
-    assert context["group_chat"]["participant_profiles"][0]["mention_handle"] == (
-        "@architect"
-    )
+    assert context["group_chat"]["participant_profiles"][0]["mention_handle"] == ("@architect")
     assert context["group_chat"]["structured_state"]["source"] == "chat.db"
     assert context["group_chat"]["recent_messages"][-1]["content"] == "I am here too."
     assert context["context_capsule"]["version"] == "xmuse-local-context-capsule-v1"
@@ -426,14 +412,14 @@ async def test_scheduler_claims_and_nudges_oldest_item(tmp_path: Path) -> None:
     ]
     assert context["xmuse_prompt"]["fingerprint"].startswith("sha256:")
     assert layer.prompt_contracts[0][0] == "god-live"
-    assert layer.prompt_contracts[0][1]["prompt_contract_version"] == (
-        "xmuse-peer-chat-prompt-v2"
+    assert layer.prompt_contracts[0][1]["prompt_contract_version"] == ("xmuse-peer-chat-prompt-v2")
+    assert (
+        layer.prompt_contracts[0][1]["prompt_layer_order"]
+        == (context["xmuse_prompt"]["layer_order"])
     )
-    assert layer.prompt_contracts[0][1]["prompt_layer_order"] == (
-        context["xmuse_prompt"]["layer_order"]
-    )
-    assert layer.prompt_contracts[0][1]["prompt_artifact_fingerprint"] == (
-        context["xmuse_prompt"]["fingerprint"]
+    assert (
+        layer.prompt_contracts[0][1]["prompt_artifact_fingerprint"]
+        == (context["xmuse_prompt"]["fingerprint"])
     )
 
     claimed = inbox.get(item.id)
@@ -858,9 +844,7 @@ async def test_scheduler_terminalizes_claim_and_spine_when_peer_turn_times_out(
     spine = AcceptanceSpineStore(tmp_path / "chat.db").get_by_intake_message(message.id)
     assert spine.status is AcceptanceSpineStatus.FAILED
     assert spine.blocked_reason == "provider_no_mcp_writeback_before_deadline"
-    assert spine.execution_evidence_refs == [
-        f"peer_turn_latency_traces#trace={trace['id']}"
-    ]
+    assert spine.execution_evidence_refs == [f"peer_turn_latency_traces#trace={trace['id']}"]
 
 
 @pytest.mark.asyncio
@@ -936,9 +920,7 @@ async def test_scheduler_terminalizes_claim_and_spine_when_peer_turn_is_cancelle
     spine = AcceptanceSpineStore(tmp_path / "chat.db").get_by_intake_message(message.id)
     assert spine.status is AcceptanceSpineStatus.FAILED
     assert spine.blocked_reason == "provider_turn_cancelled_before_mcp_writeback"
-    assert spine.execution_evidence_refs == [
-        f"peer_turn_latency_traces#trace={trace['id']}"
-    ]
+    assert spine.execution_evidence_refs == [f"peer_turn_latency_traces#trace={trace['id']}"]
 
 
 @pytest.mark.asyncio
@@ -1157,9 +1139,7 @@ async def test_scheduler_records_success_when_peer_marks_inbox_read(tmp_path: Pa
     assert updated.status == "read"
     assert updated.responded_message_id is not None
     replies = [
-        msg
-        for msg in chat.list_messages(conv.id)
-        if msg.author == participant.participant_id
+        msg for msg in chat.list_messages(conv.id) if msg.author == participant.participant_id
     ]
     assert [reply.id for reply in replies] == [updated.responded_message_id]
 
@@ -1769,9 +1749,7 @@ async def test_scheduler_a2a_proposal_writeback_creates_review_trigger(
                     "a2a_disposition": "completed",
                     "a2a_terminal": True,
                     "a2a_content": "Remote A2A architect returned a proposal.",
-                    "a2a_artifacts": [
-                        {"artifact_id": "artifact-a2a-proposal", "text": "proposal"}
-                    ],
+                    "a2a_artifacts": [{"artifact_id": "artifact-a2a-proposal", "text": "proposal"}],
                     "a2a_history": [],
                     "a2a_metadata": {
                         "xmuse_proposal": {
@@ -1829,8 +1807,7 @@ async def test_scheduler_a2a_proposal_writeback_creates_review_trigger(
     proposal_message = next(
         msg
         for msg in chat.list_messages(conv.id)
-        if msg.envelope_type == "proposal"
-        and msg.envelope_json["proposal_id"] == proposal.id
+        if msg.envelope_type == "proposal" and msg.envelope_json["proposal_id"] == proposal.id
     )
     review_items = [
         stored
@@ -1986,6 +1963,166 @@ async def test_scheduler_retries_collaboration_request_with_writeback_feedback(
     assert "Retry feedback for this same collaboration_request" in retry_prompt
     assert "Plain final text or stream output was not accepted" in retry_prompt
     assert "chat_record_collaboration_response" in retry_prompt
+
+
+@pytest.mark.asyncio
+async def test_scheduler_retries_collaboration_callback_with_proposal_feedback(
+    tmp_path: Path,
+) -> None:
+    chat = ChatStore(tmp_path / "chat.db")
+    conv = chat.create_conversation("Scheduler collaboration callback retry")
+    participant = ParticipantStore(tmp_path / "chat.db").add(
+        conversation_id=conv.id,
+        role="architect",
+        display_name="Architect GOD",
+        cli_kind="codex",
+        model="gpt-5.4",
+    )
+    message = chat.add_message(
+        conv.id,
+        "system",
+        "system",
+        "Collaboration run `collab_123` completed.",
+    )
+    inbox = ChatInboxStore(tmp_path / "chat.db")
+    item = inbox.create_item(
+        conversation_id=conv.id,
+        target_participant_id=participant.participant_id,
+        target_role="architect",
+        target_address="@architect",
+        sender_participant_id=None,
+        sender_address="@system",
+        source_message_id=message.id,
+        item_type="collaboration_callback",
+        payload={
+            "content": (
+                "Collaboration run `collab_123` is done. If original request "
+                "asked for lane_graph proposal, call chat_emit_proposal now."
+            ),
+            "collaboration_run_id": "collab_123",
+            "trigger_mode": "collaboration_done_callback",
+        },
+    )
+
+    class RetryGodLayer(FakeGodLayer):
+        def __init__(self) -> None:
+            super().__init__()
+            self.received = 0
+
+        async def receive_message(self, god_session_id):
+            self.received += 1
+            if self.received == 1:
+                return self.receive_result
+            reply = chat.add_message(
+                conv.id,
+                participant.participant_id,
+                "assistant",
+                "lane_graph proposal emitted",
+            )
+            inbox.mark_read(item.id, responded_message_id=reply.id)
+            PeerTurnLatencyTraceStore(tmp_path / "chat.db").record_mcp_tool_stage(
+                conversation_id=conv.id,
+                inbox_item_id=item.id,
+                tool_name="chat_emit_proposal",
+                called_at=100.0,
+            )
+            return self.receive_result
+
+    god_layer = RetryGodLayer()
+    scheduler = PeerChatScheduler(
+        db_path=tmp_path / "chat.db",
+        god_layer=god_layer,
+        worktree=tmp_path,
+        scheduler_id="sched-test",
+        response_wait_s=0.1,
+    )
+
+    first = await scheduler.tick_once()
+    second = await scheduler.tick_once()
+
+    assert first.failed == 1
+    assert second.happy_path == 1
+    assert len(god_layer.sent) == 2
+    retry_prompt = god_layer.sent[1][2]
+    assert "Retry feedback for this same collaboration_callback" in retry_prompt
+    assert "Plain final text or stream output was not accepted" in retry_prompt
+    assert "chat_emit_proposal" in retry_prompt
+    assert "collaboration:collab_123" in retry_prompt
+
+
+@pytest.mark.asyncio
+async def test_scheduler_rejects_plain_callback_reply_when_proposal_required(
+    tmp_path: Path,
+) -> None:
+    chat = ChatStore(tmp_path / "chat.db")
+    conv = chat.create_conversation("Scheduler callback requires proposal")
+    participant = ParticipantStore(tmp_path / "chat.db").add(
+        conversation_id=conv.id,
+        role="architect",
+        display_name="Architect GOD",
+        cli_kind="codex",
+        model="gpt-5.4",
+    )
+    source = chat.add_message(
+        conv.id,
+        "system",
+        "system",
+        "Collaboration run `collab_123` completed.",
+    )
+    inbox = ChatInboxStore(tmp_path / "chat.db")
+    item = inbox.create_item(
+        conversation_id=conv.id,
+        target_participant_id=participant.participant_id,
+        target_role="architect",
+        target_address="@architect",
+        sender_participant_id=None,
+        sender_address="@system",
+        source_message_id=source.id,
+        item_type="collaboration_callback",
+        payload={
+            "content": (
+                "Collaboration run `collab_123` is done. If original request "
+                "asked for lane_graph proposal, call chat_emit_proposal now."
+            ),
+            "collaboration_run_id": "collab_123",
+            "trigger_mode": "collaboration_done_callback",
+        },
+    )
+
+    class PlainReplyGodLayer(FakeGodLayer):
+        async def receive_message(self, god_session_id):
+            reply = chat.add_message(
+                conv.id,
+                participant.participant_id,
+                "assistant",
+                "I will emit a proposal next.",
+            )
+            inbox.mark_read(item.id, responded_message_id=reply.id)
+            PeerTurnLatencyTraceStore(tmp_path / "chat.db").record_mcp_tool_stage(
+                conversation_id=conv.id,
+                inbox_item_id=item.id,
+                tool_name="chat_post_message",
+                called_at=100.0,
+            )
+            return self.receive_result
+
+    scheduler = PeerChatScheduler(
+        db_path=tmp_path / "chat.db",
+        god_layer=PlainReplyGodLayer(),
+        worktree=tmp_path,
+        scheduler_id="sched-test",
+        response_wait_s=0.1,
+    )
+
+    outcome = await scheduler.tick_once()
+
+    assert outcome.failed == 1
+    refreshed = inbox.get(item.id)
+    assert refreshed.status == "unread"
+    assert refreshed.nudge_count == 1
+    trace = PeerTurnLatencyTraceStore(tmp_path / "chat.db").list_recent(conv.id)[0]
+    assert trace["delivery_mode"] == "failed"
+    assert trace["degraded_reason"] == "peer_no_inbox_writeback_message"
 
 
 @pytest.mark.asyncio
@@ -2246,8 +2383,7 @@ async def test_scheduler_does_not_consume_review_trigger_with_stdout_fallback(
         for participant in created["participants"]
     }
     sessions = {
-        session["role"]: session["god_session_id"]
-        for session in created["participant_sessions"]
+        session["role"]: session["god_session_id"] for session in created["participant_sessions"]
     }
     proposal = service.emit_proposal_without_session_for_test(
         conversation_id=conversation_id,
@@ -2487,9 +2623,7 @@ async def test_scheduler_rejects_peer_stdout_without_degraded_fallback(
     updated = inbox.get(item.id)
     assert updated.status == "unread"
     replies = [
-        msg
-        for msg in chat.list_messages(conv.id)
-        if msg.author == participant.participant_id
+        msg for msg in chat.list_messages(conv.id) if msg.author == participant.participant_id
     ]
     assert replies == []
     trace = PeerTurnLatencyTraceStore(tmp_path / "chat.db").list_recent(conv.id)[0]

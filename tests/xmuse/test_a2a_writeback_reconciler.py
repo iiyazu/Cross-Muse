@@ -290,6 +290,15 @@ def test_a2a_provider_metadata_proposal_enters_proposal_authority(
     updated = ChatInboxStore(db).get(inbox_item.id)
     assert updated.status == "read"
     assert updated.responded_message_id == writeback["id"]
+    [review_item] = [
+        item
+        for item in ChatInboxStore(db).list_by_conversation(
+            conversation.id,
+            include_terminal=True,
+        )
+        if item.item_type == "review_trigger"
+    ]
+    assert 'gate_profiles=["xmuse-core"]' in review_item.payload["content"]
 
 
 def test_a2a_lane_graph_proposal_missing_gate_profiles_blocks_without_proposal(
@@ -433,9 +442,7 @@ def test_a2a_review_trigger_verdict_reconciles_to_review_authority(
     assert updated.responded_message_id == response["id"]
     spine = AcceptanceSpineStore(db).list_by_conversation(conversation_id)[0]
     assert spine.status is AcceptanceSpineStatus.REVIEW_CLEARED
-    assert spine.review_or_execute_verdict_ref == (
-        f"review_trigger_verdict:{response['id']}"
-    )
+    assert spine.review_or_execute_verdict_ref == (f"review_trigger_verdict:{response['id']}")
     assert ChatStore(db).list_proposals(conversation_id)[0].status.value == "open"
 
 
@@ -502,13 +509,8 @@ def test_a2a_provider_result_leading_mention_creates_durable_route(
         "a2a_context:conv-a2a",
     ]
     assert routed["payload"]["handoff_assessment"]["is_complete"] is True
-    assert routed["payload"]["handoff_envelope"]["source_inbox_item_id"] == (
-        source_inbox.id
-    )
-    assert (
-        routed["payload"]["handoff_envelope"]["feature_scope_id"]
-        == "feature_scope:a2a-provider"
-    )
+    assert routed["payload"]["handoff_envelope"]["source_inbox_item_id"] == (source_inbox.id)
+    assert routed["payload"]["handoff_envelope"]["feature_scope_id"] == "feature_scope:a2a-provider"
     stored_review_items = [
         item
         for item in ChatInboxStore(db).list_by_conversation(conversation.id)
@@ -580,9 +582,7 @@ def test_a2a_provider_result_fanout_excess_writes_durable_route_blocker(
         conversation_id=conversation.id,
         participant_id=architect.participant_id,
         reply_to_inbox_item_id=source_inbox.id,
-        provider_result=provider_result.model_copy(
-            update={"diagnostic_payload": diagnostic}
-        ),
+        provider_result=provider_result.model_copy(update={"diagnostic_payload": diagnostic}),
     )
 
     assert result["inbox_items"] == []
@@ -663,9 +663,7 @@ def test_a2a_provider_result_markdown_leading_mention_creates_durable_route(
         conversation_id=conversation.id,
         participant_id=architect.participant_id,
         reply_to_inbox_item_id=source_inbox.id,
-        provider_result=provider_result.model_copy(
-            update={"diagnostic_payload": diagnostic}
-        ),
+        provider_result=provider_result.model_copy(update={"diagnostic_payload": diagnostic}),
     )
 
     response = result["message"]
