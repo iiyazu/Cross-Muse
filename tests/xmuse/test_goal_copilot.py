@@ -143,6 +143,12 @@ def test_goal_copilot_intake_acceptance_requires_durable_authority_refs() -> Non
     for evidence_ref in (
         "mcp_writeback:dispatch-inbox",
         "chat_dispatch_queue#entry=legacy-dispatch-evidence",
+        "final_actions.json",
+        "final_actions.json#hold=",
+        "final_actions.json#hold=   ",
+        "FINAL_ACTIONS.JSON#HOLD=final-operator-approval",
+        "feature_lanes.json#lane=awaiting-final-action",
+        "github_gate_evidence.json#evidence=pending-gap",
     ):
         with pytest.raises(ValueError, match="durable authority"):
             build_goal_copilot_intake_decision(
@@ -179,7 +185,9 @@ def test_goal_copilot_intake_acceptance_requires_durable_authority_refs() -> Non
         "producer": "goal_copilot_review_board",
         "consumer": "main_goal_agent",
         "condition": "main_agent_verified_durable_authority_refs",
-        "proof_boundary": "advisory_intake_not_review_dispatch_merge_or_execution_truth",
+        "proof_boundary": (
+            "advisory_intake_not_review_dispatch_github_gate_merge_or_execution_truth"
+        ),
         "failure_boundary": "accepted_without_durable_authority_refs_rejected",
     }
     dispatch_accepted = build_goal_copilot_intake_decision(
@@ -201,6 +209,28 @@ def test_goal_copilot_intake_acceptance_requires_durable_authority_refs() -> Non
     assert dispatch_accepted["candidate_input_refs"] == [
         "mcp_writeback:dispatch-inbox",
         "chat_dispatch_queue#entry=legacy-dispatch-evidence",
+    ]
+    final_action_accepted = build_goal_copilot_intake_decision(
+        recommendation_id="rec-final-action",
+        classification="accepted",
+        reason="verified pending final action hold requires operator gate action",
+        verified_authority_refs=[
+            "final_actions.json#hold=final-operator-approval",
+            "github_gate_evidence.json#evidence=pending-gap",
+            "feature_lanes.json#lane=projection-only",
+            "copilot:board#candidate",
+        ],
+    )
+
+    assert final_action_accepted["verified_authority_refs"] == [
+        "final_actions.json#hold=final-operator-approval",
+    ]
+    assert "final-action holds" in str(final_action_accepted["authority_boundary"])
+    assert "github_gate" in str(final_action_accepted["intake_boundary"]["proof_boundary"])
+    assert final_action_accepted["candidate_input_refs"] == [
+        "github_gate_evidence.json#evidence=pending-gap",
+        "feature_lanes.json#lane=projection-only",
+        "copilot:board#candidate",
     ]
     assert accepted["forbidden_truth_surfaces"] == [
         "provider stdout",
@@ -227,10 +257,9 @@ def test_goal_copilot_launch_prompt_preserves_read_only_boundaries(tmp_path: Pat
     assert "Only append review entries" in prompt
     assert "not proof truth" in prompt
     assert "subagent output, worker output, and local tests are candidate input only" in prompt
-    assert (
-        "chat.db / inbox / proposal / review verdict / dispatch queue / GitHub server facts"
-        in prompt
-    )
+    assert "chat.db / inbox / proposal / review verdict / dispatch queue" in prompt
+    assert "final-action holds" in prompt
+    assert "GitHub server facts" in prompt
     assert "files, commits, runtime artifacts" not in prompt
     assert "Do not edit source code." in prompt
     assert "Do not create branches, commits, pushes, PRs, or merges." in prompt
