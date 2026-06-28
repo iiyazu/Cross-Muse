@@ -115,9 +115,7 @@ class ChatInboxStore:
         include_terminal: bool = False,
     ) -> list[ChatInboxItem]:
         statuses = (
-            ("unread", "claimed", "read", "failed")
-            if include_terminal
-            else ("unread", "claimed")
+            ("unread", "claimed", "read", "failed") if include_terminal else ("unread", "claimed")
         )
         placeholders = ",".join("?" for _ in statuses)
         with self._connect() as conn:
@@ -236,6 +234,45 @@ class ChatInboxStore:
                     1 if success else 0,
                     max_nudges,
                     reason or "max_nudges_exceeded",
+                    now,
+                    item_id,
+                    owner,
+                ),
+            )
+        return self.get(item_id)
+
+    def record_invalid_writeback_result(
+        self,
+        item_id: str,
+        *,
+        owner: str,
+        reason: str,
+        max_nudges: int = 3,
+    ) -> ChatInboxItem:
+        now = _iso(_utc_now())
+        with self._connect() as conn:
+            conn.execute(
+                """
+                update chat_inbox_items
+                set nudge_count = nudge_count + 1,
+                    last_nudged_at = ?,
+                    status = case
+                        when nudge_count + 1 >= ? then 'failed'
+                        else 'unread'
+                    end,
+                    responded_message_id = null,
+                    failure_reason = case
+                        when nudge_count + 1 >= ? then ?
+                        else failure_reason
+                    end,
+                    updated_at = ?
+                where id = ? and claim_owner = ? and status in ('claimed', 'read')
+                """,
+                (
+                    now,
+                    max_nudges,
+                    max_nudges,
+                    reason or "invalid_writeback",
                     now,
                     item_id,
                     owner,

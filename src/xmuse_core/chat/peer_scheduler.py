@@ -155,9 +155,7 @@ class PeerChatScheduler:
             return self._record_latency_trace(*args, provider_record=record, **kwargs)
 
         try:
-            group_context = self._context_assembler.group_chat_context(
-                item.conversation_id
-            )
+            group_context = self._context_assembler.group_chat_context(item.conversation_id)
             group_context = self._with_retry_feedback(group_context, item)
             assembled_prompt = self._prompt_builder.build_peer_chat_prompt(
                 participant=participant,
@@ -259,6 +257,7 @@ class PeerChatScheduler:
                     participant_id=participant.participant_id,
                     inbox_item_id=item.id,
                     item_type=getattr(item, "item_type", None),
+                    item=item,
                 ):
                     _put_latency_stage(
                         transport_latency_stages,
@@ -329,6 +328,7 @@ class PeerChatScheduler:
                     participant_id=participant.participant_id,
                     inbox_item_id=item.id,
                     item_type=getattr(item, "item_type", None),
+                    item=item,
                 ):
                     _put_latency_stage(
                         transport_latency_stages,
@@ -368,7 +368,10 @@ class PeerChatScheduler:
                     reason=reason,
                 ):
                     return PeerChatSchedulerOutcome(fallback_replies=1)
-                self._record_failed_nudge(item.id, reason=reason)
+                if refreshed.status == "read":
+                    self._record_invalid_writeback(item.id, reason=reason)
+                else:
+                    self._record_failed_nudge(item.id, reason=reason)
                 return PeerChatSchedulerOutcome(failed=1)
             transport_latency_stages.update(_latency_stages_from_message(message))
             refreshed = self._inbox.get(item.id)
@@ -426,6 +429,7 @@ class PeerChatScheduler:
                 participant_id=participant.participant_id,
                 inbox_item_id=item.id,
                 item_type=getattr(item, "item_type", None),
+                item=item,
             ):
                 self._finish_active_stream_for_item(item, status="error")
                 record_latency_trace(
@@ -438,7 +442,7 @@ class PeerChatScheduler:
                     degraded_reason="peer_no_inbox_writeback_message",
                     transport_latency_stages=transport_latency_stages,
                 )
-                self._record_failed_nudge(
+                self._record_invalid_writeback(
                     item.id,
                     reason="peer_no_inbox_writeback_message",
                 )
@@ -517,8 +521,7 @@ class PeerChatScheduler:
     ) -> PeerChatSchedulerOutcome:
         if participant.provider_id is not ProviderId.A2A:
             raise RuntimeError(
-                f"a2a participant must use provider_id 'a2a', got "
-                f"{participant.provider_id.value!r}"
+                f"a2a participant must use provider_id 'a2a', got {participant.provider_id.value!r}"
             )
         invocation = ProviderInvocation(
             request_id=item.id,
@@ -565,6 +568,7 @@ class PeerChatScheduler:
             participant_id=participant.participant_id,
             inbox_item_id=item.id,
             item_type=getattr(item, "item_type", None),
+            item=item,
         ):
             self._finish_active_stream_for_item(item, status="error")
             record_latency_trace(
@@ -577,7 +581,7 @@ class PeerChatScheduler:
                 degraded_reason="a2a_provider_no_durable_writeback",
                 transport_latency_stages=transport_latency_stages,
             )
-            self._record_failed_nudge(
+            self._record_invalid_writeback(
                 item.id,
                 reason="a2a_provider_no_durable_writeback",
             )
@@ -625,6 +629,7 @@ class PeerChatScheduler:
                         participant_id=participant.participant_id,
                         inbox_item_id=item.id,
                         item_type=getattr(item, "item_type", None),
+                        item=item,
                     ):
                         grace_result = await self._wait_for_provider_result_during_grace(
                             receive_task
@@ -657,9 +662,7 @@ class PeerChatScheduler:
     async def tick_many(self, *, max_concurrent: int = 1) -> PeerChatSchedulerOutcome:
         if max_concurrent <= 1 or self._only_inbox_item_id is not None:
             return await self.tick_once()
-        outcomes = await asyncio.gather(
-            *(self.tick_once() for _ in range(max_concurrent))
-        )
+        outcomes = await asyncio.gather(*(self.tick_once() for _ in range(max_concurrent)))
         return PeerChatSchedulerOutcome(
             nudged=sum(outcome.nudged for outcome in outcomes),
             happy_path=sum(outcome.happy_path for outcome in outcomes),
@@ -675,6 +678,7 @@ class PeerChatScheduler:
         participant_id: str,
         inbox_item_id: str,
         item_type: str | None,
+        item: Any | None = None,
     ) -> bool:
         if item_type == "review_trigger":
             return self._has_review_trigger_verdict_writeback(
@@ -682,6 +686,14 @@ class PeerChatScheduler:
                 responded_message_id,
                 participant_id=participant_id,
                 inbox_item_id=inbox_item_id,
+            )
+        if item_type == "collaboration_callback" and _callback_requires_proposal(item):
+            return self._has_real_writeback_message(
+                conversation_id,
+                responded_message_id,
+                participant_id=participant_id,
+                inbox_item_id=inbox_item_id,
+                allowed_mcp_tools={"chat_emit_proposal"},
             )
         if self._has_real_writeback_message(
             conversation_id,
@@ -692,8 +704,7 @@ class PeerChatScheduler:
             return True
         stages = set(self._latency.list_mcp_tool_stages(conversation_id, inbox_item_id))
         return (
-            item_type == "collaboration_request"
-            and "chat_record_collaboration_response" in stages
+            item_type == "collaboration_request" and "chat_record_collaboration_response" in stages
         )
 
     def _has_review_trigger_verdict_writeback(
@@ -744,6 +755,7 @@ class PeerChatScheduler:
         *,
         participant_id: str,
         inbox_item_id: str,
+        allowed_mcp_tools: set[str] | None = None,
     ) -> bool:
         if not responded_message_id:
             return False
@@ -759,15 +771,13 @@ class PeerChatScheduler:
         if _is_a2a_provider_result_writeback(message):
             return True
         stages = self._latency.list_mcp_tool_stages(conversation_id, inbox_item_id)
-        return bool(
-            {
-                "chat_create_collaboration_request",
-                "chat_emit_proposal",
-                "chat_mention",
-                "chat_post_message",
-            }
-            & set(stages)
-        )
+        allowed_tools = allowed_mcp_tools or {
+            "chat_create_collaboration_request",
+            "chat_emit_proposal",
+            "chat_mention",
+            "chat_post_message",
+        }
+        return bool(allowed_tools & set(stages))
 
     def _record_latency_trace(
         self,
@@ -858,6 +868,13 @@ class PeerChatScheduler:
             reason=reason,
         )
 
+    def _record_invalid_writeback(self, item_id: str, *, reason: str) -> None:
+        self._inbox.record_invalid_writeback_result(
+            item_id,
+            owner=self._scheduler_id,
+            reason=reason,
+        )
+
     def _with_retry_feedback(self, group_context: dict, item) -> dict:
         feedback = self._retry_feedback_for_item(item)
         if feedback is None:
@@ -879,15 +896,34 @@ class PeerChatScheduler:
     def _retry_feedback_for_item(self, item) -> str | None:
         if int(getattr(item, "nudge_count", 0) or 0) <= 0:
             return None
-        if getattr(item, "item_type", None) != "collaboration_request":
-            return None
         reason = self._last_delivery_failure_reason(item) or "peer_no_inbox_side_effect"
+        item_type = getattr(item, "item_type", None)
+        if item_type == "collaboration_request":
+            return (
+                f"Retry feedback for this same collaboration_request: the previous "
+                f"attempt failed with {reason}. Plain final text or stream output was "
+                "not accepted as durable reply truth. For this retry, call "
+                "chat_record_collaboration_response for the collaboration run named in "
+                "xmuse_context.inbox_item.payload.content. Do not answer with plain text. "
+                "If mcp_tools_ready appears, MCP tools are available; do not say durable "
+                "writeback is unavailable."
+            )
+        if item_type != "collaboration_callback":
+            return None
+        payload = getattr(item, "payload", {})
+        run_id = payload.get("collaboration_run_id") if isinstance(payload, dict) else None
+        run_ref = (
+            f"collaboration:{run_id.strip()}"
+            if isinstance(run_id, str) and run_id.strip()
+            else "collaboration:<run_id>"
+        )
         return (
-            f"Retry feedback for this same collaboration_request: the previous "
+            f"Retry feedback for this same collaboration_callback: the previous "
             f"attempt failed with {reason}. Plain final text or stream output was "
-            "not accepted as durable reply truth. For this retry, call "
-            "chat_record_collaboration_response for the collaboration run named in "
-            "xmuse_context.inbox_item.payload.content. Do not answer with plain text. "
+            "not accepted as durable reply truth. For this retry, call chat_emit_proposal "
+            "before ending the turn, set "
+            "reply_to_inbox_item_id=xmuse_context.inbox_item.id, and include "
+            f"{run_ref} in the proposal references. Do not answer with plain text. "
             "If mcp_tools_ready appears, MCP tools are available; do not say durable "
             "writeback is unavailable."
         )
@@ -988,6 +1024,24 @@ def _requires_structured_writeback(item) -> bool:
     return getattr(item, "item_type", None) in _STRUCTURED_WRITEBACK_REQUIRED_ITEM_TYPES
 
 
+def _callback_requires_proposal(item: Any | None) -> bool:
+    if item is None:
+        return False
+    payload = getattr(item, "payload", {})
+    if not isinstance(payload, dict):
+        return False
+    if payload.get("trigger_mode") != "collaboration_done_callback":
+        return False
+    run_id = payload.get("collaboration_run_id")
+    if not isinstance(run_id, str) or not run_id.strip():
+        return False
+    content = payload.get("content")
+    if not isinstance(content, str):
+        return False
+    lowered = content.lower()
+    return "chat_emit_proposal" in lowered or "lane_graph proposal" in lowered
+
+
 def _is_a2a_provider_result_writeback(message) -> bool:
     envelope = getattr(message, "envelope_json", None)
     if not isinstance(envelope, dict):
@@ -1002,11 +1056,7 @@ def _is_a2a_provider_result_writeback(message) -> bool:
 
 def _message_by_id(chat: ChatStore, *, conversation_id: str, message_id: str):
     return next(
-        (
-            item
-            for item in chat.list_messages(conversation_id)
-            if item.id == message_id
-        ),
+        (item for item in chat.list_messages(conversation_id) if item.id == message_id),
         None,
     )
 
@@ -1187,10 +1237,7 @@ def _a2a_provider_degraded_reason(
     if provider_result.status is WorkerResultStatus.COMPLETED:
         return None
     if provider_result.failure_kind is not None:
-        return (
-            f"a2a_provider_{provider_result.status.value}:"
-            f"{provider_result.failure_kind.value}"
-        )
+        return f"a2a_provider_{provider_result.status.value}:{provider_result.failure_kind.value}"
     return f"a2a_provider_{provider_result.status.value}"
 
 

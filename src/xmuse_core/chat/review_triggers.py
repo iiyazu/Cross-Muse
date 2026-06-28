@@ -80,15 +80,23 @@ class ReviewTriggerService:
             ),
             None,
         )
+        projection_envelope = (
+            self._review_projection_envelope(
+                conversation_id=conversation_id,
+                envelope=source_message.envelope_json,
+            )
+            if source_message is not None
+            else {}
+        )
         content = (
             _review_trigger_content(
                 source_message_id=source_message_id,
                 reviewable_type=reviewable_type,
                 source_content=source_message.content,
-                envelope=source_message.envelope_json,
+                envelope=projection_envelope,
                 collaboration_context=self._review_collaboration_context(
                     conversation_id=conversation_id,
-                    envelope=source_message.envelope_json,
+                    envelope=projection_envelope,
                 ),
             )
             if source_message is not None
@@ -100,6 +108,34 @@ class ReviewTriggerService:
             "source_message_id": source_message_id,
             "trigger_mode": "automatic",
         }
+
+    def _review_projection_envelope(
+        self,
+        *,
+        conversation_id: str,
+        envelope: dict[str, Any],
+    ) -> dict[str, Any]:
+        proposal_id = envelope.get("proposal_id")
+        if not isinstance(proposal_id, str) or not proposal_id.strip():
+            return envelope
+        proposal = next(
+            (item for item in self._chat.list_proposals(conversation_id) if item.id == proposal_id),
+            None,
+        )
+        if proposal is None:
+            return envelope
+        projection = dict(envelope)
+        try:
+            proposal_content = json.loads(proposal.content)
+        except json.JSONDecodeError:
+            proposal_content = {}
+        if isinstance(proposal_content, dict):
+            for key in ("summary", "lanes", "resolution_content"):
+                if key not in projection and key in proposal_content:
+                    projection[key] = proposal_content[key]
+        if "references" not in projection:
+            projection["references"] = list(proposal.references)
+        return projection
 
     def _review_collaboration_context(
         self,
@@ -118,9 +154,7 @@ class ReviewTriggerService:
         from xmuse_core.chat.collaboration_store import ChatCollaborationStore
 
         store = ChatCollaborationStore(self._db_path)
-        lines: list[str] = [
-            "Use this durable collaboration authority when checking references."
-        ]
+        lines: list[str] = ["Use this durable collaboration authority when checking references."]
         for run_id in run_ids:
             try:
                 run = store.get_run(run_id)
@@ -218,6 +252,11 @@ def _review_trigger_content(
             "non-empty evidence_refs. A plain stdout reply or message text "
             "without this envelope does not clear dispatch."
         ),
+        (
+            "If a collaboration issue must block dispatch, call "
+            "chat_raise_collaboration_blocker. A plain chat_post_message "
+            "recommendation cannot block dispatch."
+        ),
     ]
     proposal_id = envelope.get("proposal_id")
     if isinstance(proposal_id, str) and proposal_id.strip():
@@ -247,6 +286,9 @@ def _review_trigger_content(
                 line = f"- {feature_id.strip()}"
                 if isinstance(prompt, str) and prompt.strip():
                     line += f": {prompt.strip()}"
+                gate_profiles = _lane_gate_profiles(lane)
+                if gate_profiles:
+                    line += "; gate_profiles=" + json.dumps(gate_profiles, separators=(",", ":"))
                 sections.append(line)
     references = envelope.get("references")
     if isinstance(references, list) and references:
@@ -274,6 +316,22 @@ def _collaboration_reference_run_ids(references: list[str]) -> list[str]:
         seen.add(run_id)
         run_ids.append(run_id)
     return run_ids
+
+
+def _lane_string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [item.strip() for item in value if isinstance(item, str) and item.strip()]
+
+
+def _lane_gate_profiles(lane: dict[str, Any]) -> list[str]:
+    profiles = _lane_string_list(lane.get("gate_profiles"))
+    if profiles:
+        return profiles
+    singular = lane.get("gate_profile")
+    if isinstance(singular, str) and singular.strip():
+        return [singular.strip()]
+    return []
 
 
 def _collaboration_response_review_summary(response: Any) -> str:
