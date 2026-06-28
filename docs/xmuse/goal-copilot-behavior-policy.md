@@ -109,6 +109,21 @@ Claims to avoid:
 - claims that current evidence does not support
 ```
 
+Product helper:
+
+- `xmuse_core.platform.goal_copilot.default_goal_copilot_review_board_path()`
+  resolves the ignored board path.
+- `xmuse_core.platform.goal_copilot.append_goal_copilot_review_entry()` only
+  appends to `production-goal-copilot-review-board.md` under
+  `.goal-runs/<date>/`.
+- `xmuse_core.platform.goal_copilot.build_goal_copilot_intake_decision()`
+  keeps accepted recommendations advisory-only and requires durable authority
+  refs before the main agent can classify them as accepted. Candidate refs
+  such as subagent output, worker output, and local tests stay separate from
+  verified authority refs.
+- `xmuse_core.platform.goal_copilot.build_goal_copilot_launch_prompt()` emits a
+  launch prompt that preserves the read-only and forbidden-claim boundaries.
+
 ## Main Agent Intake Rule
 
 The main agent should classify material copilot recommendations as:
