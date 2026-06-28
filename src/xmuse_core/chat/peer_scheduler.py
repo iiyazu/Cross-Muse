@@ -14,6 +14,7 @@ from xmuse_core.agents.registry import AgentDescriptor, AgentRuntime
 from xmuse_core.chat.acceptance_spine import AcceptanceSpineStore
 from xmuse_core.chat.context_assembler import ContextAssembler
 from xmuse_core.chat.inbox_store import ChatInboxStore
+from xmuse_core.chat.memory_sidecar import GroupchatMemorySidecar
 from xmuse_core.chat.mentions import (
     MentionResolver,
     ResolvedMention,
@@ -27,6 +28,7 @@ from xmuse_core.chat.review_trigger_verdicts import (
 from xmuse_core.chat.store import ChatStore
 from xmuse_core.chat.stream_store import ChatStreamStore, PeerTurnLatencyTraceStore
 from xmuse_core.integrations.a2a_writeback_reconciler import A2AProviderWritebackReconciler
+from xmuse_core.integrations.memoryos_client import MemoryOSClientProtocol
 from xmuse_core.providers.adapters.base import (
     ProviderInvocation,
     ProviderInvocationResult,
@@ -38,6 +40,7 @@ from xmuse_core.providers.service import RunnerProviderService
 
 _DURABLE_WRITEBACK = object()
 _STRUCTURED_WRITEBACK_REQUIRED_ITEM_TYPES = {"review_trigger"}
+_MEMORYOS_SIDECAR_ITEM_TYPES = {"mention"}
 
 
 @dataclass(frozen=True)
@@ -63,6 +66,8 @@ class PeerChatScheduler:
         only_inbox_item_id: str | None = None,
         clock: Callable[[], float] | None = None,
         provider_service: RunnerProviderService | None = None,
+        memoryos_client: MemoryOSClientProtocol | None = None,
+        memoryos_timeout_s: float = 1.0,
     ) -> None:
         self._db_path = db_path
         self._inbox = ChatInboxStore(db_path)
@@ -87,6 +92,11 @@ class PeerChatScheduler:
         self._only_inbox_item_id = only_inbox_item_id
         self._clock = clock or time.monotonic
         self._provider_service = provider_service or RunnerProviderService()
+        self._memory_sidecar = (
+            GroupchatMemorySidecar(memoryos_client, timeout_s=memoryos_timeout_s)
+            if memoryos_client is not None
+            else None
+        )
         self._participant_locks: dict[str, asyncio.Lock] = {}
 
     async def tick_once(self) -> PeerChatSchedulerOutcome:
@@ -156,6 +166,11 @@ class PeerChatScheduler:
 
         try:
             group_context = self._context_assembler.group_chat_context(item.conversation_id)
+            group_context = await self._with_memoryos_context(
+                group_context,
+                item=item,
+                participant=participant,
+            )
             group_context = self._with_retry_feedback(group_context, item)
             assembled_prompt = self._prompt_builder.build_peer_chat_prompt(
                 participant=participant,
@@ -875,6 +890,26 @@ class PeerChatScheduler:
             reason=reason,
         )
 
+    async def _with_memoryos_context(
+        self,
+        group_context: dict,
+        *,
+        item,
+        participant: Participant,
+    ) -> dict:
+        if self._memory_sidecar is None or not _memoryos_sidecar_enabled_for_item(item):
+            return group_context
+        enriched = dict(group_context)
+        enriched["memoryos_context"] = await self._memory_sidecar.recall_for_turn(
+            conversation_id=item.conversation_id,
+            actor_id=participant.participant_id,
+            inbox_item=item,
+        )
+        source_refs = list(enriched.get("source_refs") or [])
+        source_refs.append("memoryos:sidecar")
+        enriched["source_refs"] = source_refs
+        return enriched
+
     def _with_retry_feedback(self, group_context: dict, item) -> dict:
         feedback = self._retry_feedback_for_item(item)
         if feedback is None:
@@ -1022,6 +1057,10 @@ def _latency_stages_from_message(message) -> dict[str, dict[str, float]]:
 
 def _requires_structured_writeback(item) -> bool:
     return getattr(item, "item_type", None) in _STRUCTURED_WRITEBACK_REQUIRED_ITEM_TYPES
+
+
+def _memoryos_sidecar_enabled_for_item(item) -> bool:
+    return str(getattr(item, "item_type", "") or "") in _MEMORYOS_SIDECAR_ITEM_TYPES
 
 
 def _callback_requires_proposal(item: Any | None) -> bool:

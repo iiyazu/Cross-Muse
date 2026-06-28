@@ -51,6 +51,9 @@ jobs:
           tests/xmuse/test_provider_read_contracts_module.py
           tests/xmuse/test_quality_gates_phase3.py
           tests/xmuse/test_platform_runner.py::test_health_once_handles_missing_lane_projection
+          tests/xmuse/test_platform_runner.py::test_runner_wires_peer_chat_memoryos_sidecar_client
+          tests/xmuse/test_platform_runner.py::test_runner_builds_dispatch_bridge_with_peer_god_layer
+          tests/xmuse/test_platform_runner.py::test_platform_runner_supports_peer_chat_memoryos_url
           tests/xmuse/test_full_chain_real_run.py::test_real_runtime_restart_resume_smoke_with_fake_app_server
           tests/xmuse/test_full_chain_real_run.py::test_a2a_inbound_task_reaches_peer_chat_fake_app_server
 
@@ -185,10 +188,12 @@ jobs:
         run: >-
           uv run ruff check
           src/xmuse_core/chat/context_assembler.py
+          src/xmuse_core/chat/memory_sidecar.py
           src/xmuse_core/chat/mentions.py
           src/xmuse_core/chat/peer_scheduler.py
           src/xmuse_core/chat/peer_service.py
           src/xmuse_core/chat/prompt_builder.py
+          tests/xmuse/test_groupchat_memory_sidecar.py
           tests/xmuse/test_groupchat_collaboration_runtime.py
           tests/xmuse/test_peer_chat_api.py
           tests/xmuse/test_peer_chat_mentions.py
@@ -200,6 +205,7 @@ jobs:
       - name: Peer chat runtime focused tests
         run: >-
           uv run pytest -q
+          tests/xmuse/test_groupchat_memory_sidecar.py
           tests/xmuse/test_peer_chat_scheduler.py
           tests/xmuse/test_peer_chat_service.py
           tests/xmuse/test_peer_chat_mentions.py

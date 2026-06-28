@@ -169,6 +169,64 @@ def test_prompt_builder_includes_retry_feedback(tmp_path: Path) -> None:
     assert "Previous attempt failed with peer_no_inbox_side_effect" in assembled.text
 
 
+def test_prompt_builder_includes_memoryos_sidecar_context(tmp_path: Path) -> None:
+    chat = ChatStore(tmp_path / "chat.db")
+    conv = chat.create_conversation("Prompt memory")
+    participants = ParticipantStore(tmp_path / "chat.db")
+    architect = participants.add(
+        conversation_id=conv.id,
+        role="architect",
+        display_name="Architect GOD",
+        cli_kind="codex",
+        model="gpt-5.4",
+    )
+    msg = chat.add_message(conv.id, "human", "human", "@architect use prior review")
+    item = ChatInboxStore(tmp_path / "chat.db").create_item(
+        conversation_id=conv.id,
+        target_participant_id=architect.participant_id,
+        target_role="architect",
+        target_address="@architect",
+        sender_participant_id=None,
+        sender_address="@human",
+        source_message_id=msg.id,
+        item_type="mention",
+        payload={"content": "@architect use prior review"},
+    )
+    group_context = ContextAssembler(
+        participants=participants,
+        chat=chat,
+    ).group_chat_context(conv.id)
+    group_context["memoryos_context"] = {
+        "status": "attached",
+        "authority": "memoryos_sidecar",
+        "proof_level": "contract",
+        "namespace_uri": f"memory://conversation/{conv.id}",
+        "text": "Prior review approved the tiny docs-only lane.",
+        "source_refs": ["review:verdict-1", "gate:pytest"],
+    }
+
+    assembled = XmusePromptBuilder().build_peer_chat_prompt(
+        participant=architect,
+        inbox_item=item,
+        group_context=group_context,
+    )
+    artifact = assembled.as_context_artifact()
+
+    assert artifact["layer_order"] == [
+        "xmuse_governance_l0",
+        "member_identity",
+        "roster_and_capabilities",
+        "local_context_capsule",
+        "memoryos_sidecar_context",
+        "tool_and_writeback_contract",
+    ]
+    assert "MemoryOS sidecar status: attached" in assembled.text
+    assert "MemoryOS is sidecar context, not proposal/review/dispatch truth" in (assembled.text)
+    assert "Prior review approved the tiny docs-only lane." in assembled.text
+    assert "- review:verdict-1" in assembled.text
+    assert "- gate:pytest" in assembled.text
+
+
 def test_prompt_builder_includes_collaboration_callback_proposal_action(
     tmp_path: Path,
 ) -> None:
