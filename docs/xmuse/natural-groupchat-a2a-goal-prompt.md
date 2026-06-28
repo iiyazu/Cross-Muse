@@ -28,12 +28,11 @@ Read first:
 Current calibration:
 - Start from a clean origin/main worktree after truth refresh.
 - Current known main calibration is
-  `235f36ea4c5c38b73d23a786903407ee99088f23` after PR #266, but always verify
+  `76a57362c73f0f63dc2d9b61f871b24a7a5bb329` after PR #268, but always verify
   live `origin/main` and open PR state before acting.
 - PRs #242, #244, #245, #246, #247, #248, #249, #250, #251, #252, #253,
-  #254, #255, #257, #258, #259, #260, #261, #262, #263, #264, #265, and #266 have
-  merged with
-  successful main push CI as of 2026-06-28.
+  #254, #255, #257, #258, #259, #260, #261, #262, #263, #264, #265, #266,
+  #267, and #268 have merged with successful main push CI as of 2026-06-28.
 - PR #249 hardened GitHub server truth: PR/CI/merge evidence must be tied to
   exact PR head SHA, required check-run names, and per-check-run head SHAs.
 - PR #251 exposed sanitized MemoryOS sidecar support metadata through the
@@ -71,6 +70,12 @@ Current calibration:
   recommendations may use `review_trigger_verdict:*` and `chat_dispatch_queue:*`
   as durable authority, while `mcp_writeback:*` and legacy
   `chat_dispatch_queue#entry=*` remain candidate/evidence refs.
+- PR #267 refreshed current goal docs after the B/C/D completion pass.
+- PR #268 fixes acceptance-gated short-run read projection after final-action
+  GitHub gate resolution: accepted gates project as `merged`; manual gaps
+  project as `blocked_for_input` with `blocked_reason`; projection refs point
+  back to `chat.db`, dispatch queue, review verdict, final action, and GitHub
+  gate evidence/gap authority.
 - PR #243 is an older behind-main docs package; treat it as reference-only
   unless rebased and revalidated.
 - Dirty historical worktrees and archived docs are references only, not main

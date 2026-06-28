@@ -43,13 +43,15 @@ Current server facts after the 2026-06-28 Track A/B/C/D pass:
 | #264 | docs refresh after MemoryOS sidecar handoffs | `de51f8faf981b04755ebf1a2bd8fdd6f62a0a993` | `28316229878` success |
 | #265 | frontend dispatch continuity read projection | `09b8164866992e9f7df8ac84072f4d9aeb26a602` | `28316510543` success |
 | #266 | copilot intake authority boundary clarification | `235f36ea4c5c38b73d23a786903407ee99088f23` | `28316712653` success |
+| #267 | docs refresh after B/C/D completion | `df83ea99803e64f97317d854f69c0befa468adf4` | `28316881854` success |
+| #268 | acceptance gate lane projection terminalization | `76a57362c73f0f63dc2d9b61f871b24a7a5bb329` | `28317369049` success |
 
 These rows are GitHub server facts for merged code and CI. They are not proof
 of production-ready natural groupchat, live MemoryOS authority, frontend
 completeness, GitHub review truth, or autonomous merge.
 
 Next execution loop should start from clean `origin/main` at or after
-`235f36ea4c5c38b73d23a786903407ee99088f23`, run Phase 0 again, and then push
+`76a57362c73f0f63dc2d9b61f871b24a7a5bb329`, run Phase 0 again, and then push
 the largest reachable real chain beyond the current handoff/review/dispatch
 boundary. If the next chain cannot advance, record the durable blocker and
 next authority boundary rather than relying on stdout, worker summaries, or
@@ -65,7 +67,7 @@ git branch --show-current
 git rev-parse HEAD
 git fetch origin
 git rev-parse origin/main
-for pr in 242 244 245 246 247 248 249 250 251 252 253 254 255 257 258 259 260 261 262 263 264 265 266; do
+for pr in 242 244 245 246 247 248 249 250 251 252 253 254 255 257 258 259 260 261 262 263 264 265 266 267 268; do
   gh pr view "$pr" --json number,state,headRefName,headRefOid,baseRefName,mergedAt,mergeCommit,url
 done
 gh pr list --state open --json number,title,headRefName,headRefOid,baseRefName,isDraft,mergeStateStatus,url
@@ -78,7 +80,8 @@ Exit with:
 - `origin/main` verified against the current calibration or a newer fetched
   main SHA;
 - #242, #244, #245, #246, #247, #248, #249, #250, #251, #252, #253, #254,
-  #255, #257, #258, #259, #260, and #261 verified
+  #255, #257, #258, #259, #260, #261, #262, #263, #264, #265, #266, #267,
+  and #268 verified
   merged unless superseded by newer current docs;
 - latest relevant main push CI observed through GitHub server facts;
 - dirty historical worktrees marked reference-only;
@@ -244,7 +247,7 @@ Final report includes:
 
 Current final-report notes for the 2026-06-28 pass:
 
-- maximum verified GitHub chain: domain-scoped PRs #244-#266 reached
+- maximum verified GitHub chain: domain-scoped PRs #244-#268 reached
   exact-head PR CI, guarded merge, and successful main push CI;
 - MemoryOS state: opt-in sidecar contract/degraded-mode support only; no live
   MemoryOS authority claim; #255 gives sidecar/context continuity durable
@@ -273,7 +276,11 @@ Current final-report notes for the 2026-06-28 pass:
   proof truth;
 - GitHub server truth: #249 requires complete required check names and
   per-check-run PR head SHA evidence before `server_side_merge_proof` can emit
-  `pr_merged`;
+  `pr_merged`; #268 makes the acceptance-gated short-run lane projection
+  consume final-action GitHub gate resolution without becoming authority:
+  accepted gates project as `merged`, manual gaps project as
+  `blocked_for_input` with `blocked_reason`, and health must not report them as
+  live or execution failures;
 - A2A review boundary: #252 records `chat.db/proposal_approval` as the next
   authority after A2A `dispatch_allowed` review verdict writeback; A2A output
   still cannot create dispatch truth directly;
@@ -288,6 +295,8 @@ Current final-report notes for the 2026-06-28 pass:
   dispatch handoff refs into optional MemoryOS sidecar continuity, not into
   lane execution proof; #265 exposes the dispatch refs to frontend consumers as
   projection-only metadata; #266 keeps copilot intake advisory and prevents
-  execution evidence refs from becoming accepted authority;
+  execution evidence refs from becoming accepted authority; #268 records
+  acceptance-gate projection refs back to `chat.db`, dispatch queue, review
+  verdict, final action, and GitHub gate evidence/gap authority;
 - next authority boundary: run the next real natural chain from current main
   and tie any PR/CI/merge state to exact head SHA and GitHub run metadata.
