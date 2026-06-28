@@ -986,11 +986,23 @@ def _project_resolution_into_execution_queue(
     resolution: object,
     *,
     execution_worktree: Path,
+    dispatch_intent: _StructuredDispatchIntent | None = None,
+    proposal_id: str | None = None,
 ) -> None:
     content = getattr(resolution, "content", None)
     if isinstance(content, dict) and content.get("type") in {"mission_blueprint", "feature_plan"}:
         return
     graph = build_lane_graph(resolution)
+    if dispatch_intent is not None and proposal_id is not None:
+        graph = graph.model_copy(
+            update={
+                "source_refs": _dispatch_authority_source_refs(
+                    proposal_id=proposal_id,
+                    resolution_id=graph.resolution_id,
+                    dispatch_intent=dispatch_intent,
+                )
+            }
+        )
     LaneGraphStore(base_dir / "lane_graphs").save(graph)
     project_ready_lanes(
         graph,
@@ -1167,15 +1179,28 @@ def _dispatch_next_authority_boundary(
         "dispatch_queue_entry_available": True,
         "dispatch_queue_entry_id": entry.entry_id,
         "dispatch_policy": entry.dispatch_policy,
-        "source_refs": _dedupe_text(
-            [
-                f"proposal:{proposal_id}",
-                *dispatch_intent.gate_refs,
-                f"resolution:{resolution_id}",
-                f"chat_dispatch_queue:{entry.entry_id}",
-            ]
+        "source_refs": _dispatch_authority_source_refs(
+            proposal_id=proposal_id,
+            resolution_id=resolution_id,
+            dispatch_intent=dispatch_intent,
         ),
     }
+
+
+def _dispatch_authority_source_refs(
+    *,
+    proposal_id: str,
+    resolution_id: str,
+    dispatch_intent: _StructuredDispatchIntent,
+) -> list[str]:
+    return _dedupe_text(
+        [
+            f"proposal:{proposal_id}",
+            *dispatch_intent.gate_refs,
+            f"resolution:{resolution_id}",
+            f"chat_dispatch_queue:{dispatch_intent.entry.entry_id}",
+        ]
+    )
 
 
 def _chat_timeline_payload(base_dir: Path, conversation_id: str) -> dict[str, Any]:
@@ -2272,6 +2297,8 @@ def create_app(
             root,
             resolution,
             execution_worktree=execution_root,
+            dispatch_intent=dispatch_intent,
+            proposal_id=proposal_id,
         )
         return payload
 

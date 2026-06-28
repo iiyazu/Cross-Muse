@@ -17,6 +17,10 @@ _REDACTED_LOG_KEYS = (
     "secret",
     "token",
 )
+DISPATCH_AUTHORITY_PROOF_BOUNDARY = (
+    "Dispatch authority refs identify approved xmuse handoff inputs; "
+    "they are not lane execution proof."
+)
 
 
 def build_lane_context_bundle(
@@ -75,6 +79,7 @@ def build_lane_context_bundle(
     blueprint_refs = _compact_text_items(lane.get("blueprint_refs"))
     acceptance_criteria = _compact_text_items(lane.get("acceptance_criteria"))
     memory_refs = serialize_memory_refs(lane.get("memory_refs"))
+    dispatch_authority = dispatch_authority_for_context(lane)
     bundle: dict[str, Any] = {
         "lane_id": lane_id,
         "lane_context_ref": _lane_context_ref(lane_id),
@@ -117,6 +122,8 @@ def build_lane_context_bundle(
         "recent_agent_spawn_excerpt": recent_spawn_excerpt,
         "generated_at": _utc_now(),
     }
+    if dispatch_authority is not None:
+        bundle["dispatch_authority"] = dispatch_authority
     bundle["context_contract"] = _context_contract(
         bundle,
         failure_category=context_category,
@@ -275,6 +282,49 @@ def retry_context_for_prompt(bundle_or_lane: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def dispatch_authority_for_context(payload: dict[str, Any]) -> dict[str, Any] | None:
+    existing = payload.get("dispatch_authority")
+    if isinstance(existing, dict):
+        source_refs = _compact_text_items(existing.get("source_refs"), max_items=20, max_chars=240)
+        entry_id = _compact_text(
+            existing.get("dispatch_queue_entry_id") or _dispatch_queue_entry_id(source_refs),
+            max_chars=240,
+        )
+        if source_refs or entry_id:
+            return {
+                "dispatch_queue_entry_id": entry_id,
+                "source_refs": source_refs,
+                "proof_boundary": DISPATCH_AUTHORITY_PROOF_BOUNDARY,
+            }
+    source_refs = _compact_text_items(payload.get("source_refs"), max_items=20, max_chars=240)
+    entry_id = _compact_text(
+        payload.get("dispatch_queue_entry_id") or _dispatch_queue_entry_id(source_refs),
+        max_chars=240,
+    )
+    if not source_refs and not entry_id:
+        return None
+    return {
+        "dispatch_queue_entry_id": entry_id,
+        "source_refs": source_refs,
+        "proof_boundary": DISPATCH_AUTHORITY_PROOF_BOUNDARY,
+    }
+
+
+def dispatch_authority_context_for_prompt(payload: dict[str, Any]) -> str:
+    authority = dispatch_authority_for_context(payload)
+    if authority is None:
+        return ""
+    lines = ["## Dispatch Authority Context", ""]
+    entry_id = authority.get("dispatch_queue_entry_id")
+    if isinstance(entry_id, str) and entry_id.strip():
+        lines.append(f"- Dispatch queue entry: {entry_id.strip()}")
+    source_refs = _compact_text_items(authority.get("source_refs"), max_items=20, max_chars=240)
+    if source_refs:
+        lines.append("- Source refs: " + ", ".join(source_refs[:10]))
+    lines.append(f"- Proof boundary: {DISPATCH_AUTHORITY_PROOF_BOUNDARY}")
+    return "\n".join(lines)
+
+
 def _alignment_for_prompt(bundle_or_lane: dict[str, Any]) -> Mapping[str, Any]:
     alignment = bundle_or_lane.get("review_rework_alignment")
     if isinstance(alignment, dict):
@@ -295,7 +345,7 @@ def _context_contract(
     *,
     failure_category: str,
 ) -> dict[str, Any]:
-    return {
+    contract = {
         "schema_version": "lane-context-contract/v1",
         "lane_id": bundle.get("lane_id"),
         "feature_id": bundle.get("feature_id"),
@@ -313,6 +363,9 @@ def _context_contract(
         "compact_primary_evidence_refs": bundle.get("compact_primary_evidence_refs", []),
         "review_history_refs": _review_history_refs(bundle.get("review_history")),
     }
+    if bundle.get("dispatch_authority") is not None:
+        contract["dispatch_authority"] = bundle["dispatch_authority"]
+    return contract
 
 
 def _context_bundle_ref_section(bundle_or_lane: dict[str, Any]) -> list[str]:
@@ -372,6 +425,19 @@ def _context_bundle_ref_section(bundle_or_lane: dict[str, Any]) -> list[str]:
         lines.append(
             "- Memory ref evidence refs: " + ", ".join(memory_ref_evidence_refs[:6])
         )
+    dispatch_authority = dispatch_authority_for_context(bundle_or_lane)
+    if dispatch_authority is not None:
+        entry_id = dispatch_authority.get("dispatch_queue_entry_id")
+        if isinstance(entry_id, str) and entry_id.strip():
+            lines.append(f"- Dispatch queue entry: {entry_id.strip()}")
+        source_refs = _compact_text_items(
+            dispatch_authority.get("source_refs"),
+            max_items=20,
+            max_chars=240,
+        )
+        if source_refs:
+            lines.append("- Dispatch authority refs: " + ", ".join(source_refs[:10]))
+        lines.append(f"- Dispatch proof boundary: {DISPATCH_AUTHORITY_PROOF_BOUNDARY}")
     return lines
 
 
@@ -452,6 +518,17 @@ def _primary_evidence_ref_kind(ref: str) -> str:
     if ref.startswith("logs/lane_context/"):
         return "lane_context"
     return "evidence_ref"
+
+
+def _dispatch_queue_entry_id(source_refs: list[str]) -> str | None:
+    prefix = "chat_dispatch_queue:"
+    for ref in source_refs:
+        if not ref.startswith(prefix):
+            continue
+        entry_id = ref.removeprefix(prefix).strip()
+        if entry_id:
+            return entry_id
+    return None
 
 
 def _expected_fix(bundle: dict[str, Any]) -> str | None:
