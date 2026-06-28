@@ -43,6 +43,13 @@ A2A task status before xmuse normalization
 skill or subagent output
 ```
 
+Approved dispatch authority refs may be copied into saved lane graphs,
+`feature_lanes.json` projection, lane context bundles, and execution prompts so
+workers and read-only consumers can trace which durable queue/proposal/review
+authority they are consuming. This context still is not lane execution proof.
+Actual lane execution proof remains in durable execution status/evidence paths,
+not in prompt text or dispatch acknowledgement refs.
+
 Provider or A2A output must pass through one writeback reconciliation boundary:
 
 ```text
