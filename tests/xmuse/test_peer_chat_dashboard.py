@@ -510,6 +510,9 @@ def test_dashboard_peer_chat_ux_projection_is_frontend_read_model(
             "degraded_reason": "memoryos_timeout",
             "source_refs": [ref[:240] for ref in long_memory_refs[:20]],
             "continuity_refs": [],
+            "continuity_attempt_ref": (
+                f"memory://conversation/{conv.id}/context/memoryos-sidecar-attempt"
+            ),
         }
     ]
     assert "recall body" not in json.dumps(supporting_context)
