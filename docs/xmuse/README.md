@@ -22,17 +22,19 @@ operation record 或巨大 handoff 文档。
 当前校准：
 
 - `origin/main` 当前校准在 merge commit
-  `502f7a6b1e777991ff22c7ea73bdc52373e2a218`，对应 PR #255
-  `Persist dispatch gate refs for read projections`。
-- PR #242、#244、#245、#246、#247、#248、#249、#250、#251、#252、#253、#254、#255 均已合并，
+  `9a30aeadd242e4978a84683801c0c65494a66c1c`，对应 PR #257
+  `Propagate dispatch authority refs to consumers`。
+- PR #242、#244、#245、#246、#247、#248、#249、#250、#251、#252、#253、#254、#255、#257 均已合并，
   且各自 merge commit 的 main push CI 均为 success。
 - PR #248 与 #250 是当前 goal 文档校准；PR #249 加固了 GitHub server
   truth exact-head check-run evidence；PR #251 暴露 MemoryOS sidecar 支撑上下文
   的只读 UX projection；PR #252 明确 A2A review verdict 后仍需 proposal
   approval authority 才能进入 dispatch；PR #254 让 proposal approval 响应只在
   durable dispatch queue entry 存在时暴露下一跳；PR #255 将 dispatch gate refs
-  持久化给 MemoryOS/frontend/copilot 等只读消费者。这些都是支撑链路，不是
-  production-ready natural groupchat 证明。
+  持久化给 MemoryOS/frontend/copilot 等只读消费者；PR #257 让 dispatch bridge
+  把同一组 authority source refs 写入 execute-peer context/prompt/envelope，并让
+  frontend/copilot 保持 execution evidence 与 authority refs 分离。这些都是支撑链路，
+  不是 production-ready natural groupchat 证明。
 - PR #243 (`codex/natural-groupchat-overnight-goal-docs`) 是较早的宽文档包，
   当前 `BEHIND` main；可作参考，但不是最新 current-goal 状态入口。
 - Dirty historical worktree 和 archive 文档只能作为参考，不是 main capability。

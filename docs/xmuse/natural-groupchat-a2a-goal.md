@@ -23,10 +23,10 @@ Read these first:
 As of this update:
 
 - `origin/main` is calibrated at merge commit
-  `502f7a6b1e777991ff22c7ea73bdc52373e2a218`.
-- The latest merged PR is #255 (`Persist dispatch gate refs for read
-  projections`), merged 2026-06-28 with exact PR head
-  `9d55598d279b0fdcd26587b21bc38e3e958bb945`.
+  `9a30aeadd242e4978a84683801c0c65494a66c1c`.
+- The latest merged PR is #257 (`Propagate dispatch authority refs to
+  consumers`), merged 2026-06-28 with exact PR head
+  `d2a0e4dec4d651138f8683655b2526785fc45ca9`.
 - Current server-side main CI evidence:
   - PR #242 `c1d19ad2ae9bd8b22742376c98968073a508329c`: run
     `28292323481` success.
@@ -54,6 +54,8 @@ As of this update:
     `28312435751` success.
   - PR #255 `502f7a6b1e777991ff22c7ea73bdc52373e2a218`: run
     `28313035616` success.
+  - PR #257 `9a30aeadd242e4978a84683801c0c65494a66c1c`: run
+    `28313722964` success.
 - Recent domain-scoped progress:
   - #244 advanced the natural peer-callback proposal handoff path.
   - #245 added opt-in MemoryOS sidecar recall/degraded-mode support.
@@ -73,6 +75,10 @@ As of this update:
     approval creates a real durable queue entry.
   - #255 persisted dispatch gate refs for MemoryOS sidecar/context continuity,
     frontend projection, and read-only copilot audit consumers.
+  - #257 propagated dispatch authority refs into execute-peer dispatch
+    context/prompt/envelope, kept frontend `source_refs` authority-only, and
+    made read-only copilot intake accept `chat_dispatch_queue:*` while keeping
+    `mcp_writeback:*` execution evidence separate.
 - The next long goal should start from a clean `origin/main` worktree after
   truth refresh.
 - Dirty historical worktrees may be read as references only. They are not main
