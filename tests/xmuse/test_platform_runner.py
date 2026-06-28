@@ -1936,6 +1936,28 @@ def test_acceptance_gated_goal_run_blocks_without_server_side_merge_proof(
         f"github_gate_evidence.json#evidence={evidence['id']}"
     )
 
+    lanes_payload = json.loads(
+        (xmuse_root / "feature_lanes.json").read_text(encoding="utf-8")
+    )
+    lane = lanes_payload["lanes"][0]
+    assert lane["feature_id"] == result["lane_id"]
+    assert lane["status"] == "blocked_for_input"
+    assert lane["blocked_reason"] == "github_gate_unverified"
+    assert "failure_reason" not in lane
+    assert lane["final_action_ref"] == f"final_actions.json#hold={hold['id']}"
+    assert lane["github_gate_gap_ref"] == hold["github_gate_gap_ref"]
+
+    health = platform_runner.health_once(
+        xmuse_root / "feature_lanes.json",
+        live_pids=set(),
+        xmuse_root=xmuse_root,
+    )
+    assert health["counts"]["live"] == 0
+    assert health["counts"]["terminal"] == 1
+    assert health["counts"]["takeover_context_needed"] == 0
+    assert health["groups"]["terminal"] == [result["lane_id"]]
+    assert health["groups"]["takeover_context_needed"] == []
+
 
 def test_acceptance_gated_goal_run_accepts_with_server_side_merge_proof(
     tmp_path: Path,
@@ -1985,6 +2007,24 @@ def test_acceptance_gated_goal_run_accepts_with_server_side_merge_proof(
     assert spines[0].status.value == "accepted"
     assert spines[0].blocked_reason is None
     assert spines[0].github_gate_evidence_ref == hold["github_gate_evidence_ref"]
+
+    lanes_payload = json.loads(
+        (xmuse_root / "feature_lanes.json").read_text(encoding="utf-8")
+    )
+    lane = lanes_payload["lanes"][0]
+    assert lane["feature_id"] == result["lane_id"]
+    assert lane["status"] == "merged"
+    assert lane["final_action_ref"] == f"final_actions.json#hold={hold['id']}"
+    assert lane["github_gate_evidence_ref"] == hold["github_gate_evidence_ref"]
+
+    health = platform_runner.health_once(
+        xmuse_root / "feature_lanes.json",
+        live_pids=set(),
+        xmuse_root=xmuse_root,
+    )
+    assert health["counts"]["live"] == 0
+    assert health["counts"]["terminal"] == 1
+    assert health["groups"]["terminal"] == [result["lane_id"]]
 
 
 def test_acceptance_gated_live_capture_gap_stays_blocked(tmp_path: Path) -> None:
