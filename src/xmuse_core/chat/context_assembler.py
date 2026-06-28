@@ -31,8 +31,7 @@ class ContextAssembler:
         ]
         messages = self.chat.list_messages(conversation_id)[-self.recent_limit :]
         recent_messages = [
-            _message_context(message, max_chars=self.max_message_chars)
-            for message in messages
+            _message_context(message, max_chars=self.max_message_chars) for message in messages
         ]
         session_bindings = _session_bindings(
             active_participants,
@@ -71,9 +70,7 @@ class ContextAssembler:
             "participant_profiles": [
                 build_participant_profile(
                     participant,
-                    session_binding=session_bindings_by_participant.get(
-                        participant.participant_id
-                    ),
+                    session_binding=session_bindings_by_participant.get(participant.participant_id),
                     active_participants=active_participants,
                 )
                 for participant in active_participants
@@ -97,9 +94,7 @@ class ContextAssembler:
                 "recent_limit": self.recent_limit,
                 "max_message_chars": self.max_message_chars,
                 "message_count": len(recent_messages),
-                "truncated_messages": sum(
-                    1 for message in recent_messages if message["truncated"]
-                ),
+                "truncated_messages": sum(1 for message in recent_messages if message["truncated"]),
             },
             "turn_guidance": [
                 "Treat the conversation as shared group context.",
@@ -158,9 +153,7 @@ def build_participant_profile(
         "profile_id": _enum_value(participant.profile_id),
         "cli_kind": participant.cli_kind,
         "model": participant.model,
-        "provider_session_binding_ref": _provider_session_binding_ref(
-            session_binding
-        ),
+        "provider_session_binding_ref": _provider_session_binding_ref(session_binding),
         "a2a_agent_card_ref": f"/a2a/agents/{participant.participant_id}",
         "identity_authority_refs": [
             f"chat.db:participant:{participant.participant_id}",
@@ -486,16 +479,11 @@ def _structured_state(
         limit=10,
     )
     spines = AcceptanceSpineStore(db_path).list_by_conversation(conversation_id)
-    open_inbox = [
-        item
-        for item in inbox_items
-        if item.status in {"unread", "claimed"}
-    ]
+    open_inbox = [item for item in inbox_items if item.status in {"unread", "claimed"}]
     blockers = [
         item
         for item in inbox_items
-        if item.item_type.endswith("blocker")
-        or item.payload.get("blocks_dispatch") is True
+        if item.item_type.endswith("blocker") or item.payload.get("blocks_dispatch") is True
     ]
     return {
         "source": "chat.db",
@@ -507,19 +495,13 @@ def _structured_state(
                 1 for proposal in proposals if _enum_value(proposal.status) == "open"
             ),
             "accepted_proposals": sum(
-                1
-                for proposal in proposals
-                if _enum_value(proposal.status) == "accepted"
+                1 for proposal in proposals if _enum_value(proposal.status) == "accepted"
             ),
             "approved_resolutions": sum(
-                1
-                for resolution in resolutions
-                if _enum_value(resolution.status) == "approved"
+                1 for resolution in resolutions if _enum_value(resolution.status) == "approved"
             ),
             "collaborations": len(collaborations),
-            "collaboration_responses": sum(
-                len(run.responses) for run in collaborations
-            ),
+            "collaboration_responses": sum(len(run.responses) for run in collaborations),
             "dispatch_entries": len(dispatch_entries),
             "acceptance_spines": len(spines),
         },
@@ -596,6 +578,7 @@ def _structured_state(
                 "status": entry.status,
                 "proposal_id": entry.proposal_id,
                 "resolution_id": entry.resolution_id,
+                "gate_refs": list(entry.gate_refs),
                 "dispatch_policy": entry.dispatch_policy,
             }
             for entry in dispatch_entries
