@@ -23,10 +23,10 @@ Read these first:
 As of this update:
 
 - `origin/main` is calibrated at merge commit
-  `53dbeb9ace749510e9cb0f82f73cbd4df11ec190`.
-- The latest merged PR is #259 (`Separate dispatch ack from execution
-  evidence`), merged 2026-06-28 with exact PR head
-  `4b82536830b48d055a613f747391c737a4cb6713`.
+  `ea0f23b85011cb68429089a8acdc30891d2836c2`.
+- The latest merged PR is #261 (`Propagate dispatch authority into lane
+  execution context`), merged 2026-06-28 with exact PR head
+  `39725e1e0b9d596d3c84321a9fa57cb59a54204c`.
 - Current server-side main CI evidence:
   - PR #242 `c1d19ad2ae9bd8b22742376c98968073a508329c`: run
     `28292323481` success.
@@ -60,6 +60,10 @@ As of this update:
     `28313973331` success.
   - PR #259 `53dbeb9ace749510e9cb0f82f73cbd4df11ec190`: run
     `28314524612` success.
+  - PR #260 `7e8d06679715e8eb2f2d78743a5827fa5dbfaa3f`: run
+    `28314661776` success.
+  - PR #261 `ea0f23b85011cb68429089a8acdc30891d2836c2`: run
+    `28315305767` success.
 - Recent domain-scoped progress:
   - #244 advanced the natural peer-callback proposal handoff path.
   - #245 added opt-in MemoryOS sidecar recall/degraded-mode support.
@@ -87,6 +91,10 @@ As of this update:
   - #259 separated dispatch acknowledgement/evidence refs from actual lane
     execution evidence in the acceptance spine and inspector closure evidence
     read projection.
+  - #260 refreshed current goal docs after #259.
+  - #261 propagated approved dispatch authority refs into saved lane graphs,
+    projected lanes, lane context bundles, normal execution prompts, and
+    persistent execute context, while preserving the #259 proof split.
 - The next long goal should start from a clean `origin/main` worktree after
   truth refresh.
 - Dirty historical worktrees may be read as references only. They are not main

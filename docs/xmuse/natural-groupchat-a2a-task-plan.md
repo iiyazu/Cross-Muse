@@ -36,13 +36,15 @@ Current server facts after the 2026-06-28 Track A/B/C/D pass:
 | #257 | dispatch authority refs to execute/frontend/copilot consumers | `9a30aeadd242e4978a84683801c0c65494a66c1c` | `28313722964` success |
 | #258 | docs refresh after dispatch authority refs | `d78a2df79d7515e1b536052b958f2e1be7983e51` | `28313973331` success |
 | #259 | dispatch ack separated from execution proof | `53dbeb9ace749510e9cb0f82f73cbd4df11ec190` | `28314524612` success |
+| #260 | docs refresh after execution proof boundary | `7e8d06679715e8eb2f2d78743a5827fa5dbfaa3f` | `28314661776` success |
+| #261 | dispatch authority refs into lane execution context | `ea0f23b85011cb68429089a8acdc30891d2836c2` | `28315305767` success |
 
 These rows are GitHub server facts for merged code and CI. They are not proof
 of production-ready natural groupchat, live MemoryOS authority, frontend
 completeness, GitHub review truth, or autonomous merge.
 
 Next execution loop should start from clean `origin/main` at or after
-`53dbeb9ace749510e9cb0f82f73cbd4df11ec190`, run Phase 0 again, and then push
+`ea0f23b85011cb68429089a8acdc30891d2836c2`, run Phase 0 again, and then push
 the largest reachable real chain beyond the current handoff/review/dispatch
 boundary. If the next chain cannot advance, record the durable blocker and
 next authority boundary rather than relying on stdout, worker summaries, or
@@ -58,7 +60,7 @@ git branch --show-current
 git rev-parse HEAD
 git fetch origin
 git rev-parse origin/main
-for pr in 242 244 245 246 247 248 249 250 251 252 253 254 255 257 258 259; do
+for pr in 242 244 245 246 247 248 249 250 251 252 253 254 255 257 258 259 260 261; do
   gh pr view "$pr" --json number,state,headRefName,headRefOid,baseRefName,mergedAt,mergeCommit,url
 done
 gh pr list --state open --json number,title,headRefName,headRefOid,baseRefName,isDraft,mergeStateStatus,url
@@ -71,7 +73,7 @@ Exit with:
 - `origin/main` verified against the current calibration or a newer fetched
   main SHA;
 - #242, #244, #245, #246, #247, #248, #249, #250, #251, #252, #253, #254,
-  #255, #257, #258, and #259 verified
+  #255, #257, #258, #259, #260, and #261 verified
   merged unless superseded by newer current docs;
 - latest relevant main push CI observed through GitHub server facts;
 - dirty historical worktrees marked reference-only;
@@ -137,6 +139,9 @@ Deliver:
 - approval/blocked state has source refs;
 - dispatch/execution consumes xmuse authority, not stdout;
 - dispatch acknowledgement remains a handoff proof, not lane execution proof;
+- approved dispatch source refs are visible to saved lane graphs, projected
+  lanes, lane context bundles, normal execution prompts, and persistent execute
+  context without becoming execution proof;
 - one small PR is created from the chain;
 - CI is observed through GitHub server facts;
 - operator merge or explicit blocker is recorded.
@@ -166,6 +171,9 @@ Validation:
   deduped dispatch authority refs through #257;
 - #259 keeps `peer_ack:*`, `mcp_writeback:*`, provider run refs, and
   `chat_dispatch_queue#entry=*` out of acceptance spine lane execution proof;
+- #261 carries approved dispatch authority refs into lane graph/projection and
+  worker-visible execution context, explicitly marked as not lane execution
+  proof;
 - live proof only when live MemoryOS is actually available.
 
 ## Phase 6 - Frontend API / UX Contract
@@ -194,6 +202,9 @@ Validation:
 - #259 makes inspector closure evidence read dispatch ack from
   `chat_dispatch_queue` and lane execution from `acceptance_spines`, with
   explicit source authority refs for both stores.
+- #261 makes dispatch authority refs available through lane projection and
+  execution context so frontend/API consumers can trace the queue authority
+  consumed by a lane without treating the refs as proof of execution.
 
 ## Phase 7 - Documentation And Final Report
 
@@ -221,18 +232,21 @@ Final report includes:
 
 Current final-report notes for the 2026-06-28 pass:
 
-- maximum verified GitHub chain: domain-scoped PRs #244-#259 reached
+- maximum verified GitHub chain: domain-scoped PRs #244-#261 reached
   exact-head PR CI, guarded merge, and successful main push CI;
 - MemoryOS state: opt-in sidecar contract/degraded-mode support only; no live
   MemoryOS authority claim; #255 gives sidecar/context continuity durable
-  dispatch gate refs to consume, and #257 carries those refs into the
-  execute-peer dispatch context/prompt/envelope; #259 prevents dispatch ack
-  evidence from becoming lane execution proof;
+  dispatch gate refs to consume, #257 carries those refs into the execute-peer
+  dispatch context/prompt/envelope, and #261 carries the same authority refs
+  into saved lane graphs, projected lanes, lane context bundles, normal
+  execution prompts, and persistent execute context; #259 still prevents
+  dispatch ack evidence from becoming lane execution proof;
 - frontend state: read-only API/UX projection only; #251 exposes sanitized
   MemoryOS sidecar support metadata, #255 exposes durable dispatch gate refs,
   and #257 keeps dispatch execution evidence separate from authority
   `source_refs`; #259 separates inspector dispatch ack from lane execution
-  closure evidence; no full frontend claim;
+  closure evidence; #261 makes lane-level dispatch authority refs readable
+  without promoting them to execution proof; no full frontend claim;
 - Ray use: not the default natural groupchat route; remains optional legacy;
 - copilot audit: helper exists for read-only append-only board and advisory
   intake; #257 lets accepted recommendations use `chat_dispatch_queue:*` as
@@ -249,6 +263,8 @@ Current final-report notes for the 2026-06-28 pass:
   the queue for B/C/D read consumers; #257 propagates those refs to
   execute/frontend/copilot consumers without promoting execution evidence;
   #259 keeps dispatch ack/evidence in `chat_dispatch_queue` and actual lane
-  execution proof in `acceptance_spines.execution_evidence_refs`;
+  execution proof in `acceptance_spines.execution_evidence_refs`; #261 makes
+  the dispatch authority refs worker-visible through lane graph/projection and
+  execution context while preserving that proof split;
 - next authority boundary: run the next real natural chain from current main
   and tie any PR/CI/merge state to exact head SHA and GitHub run metadata.

@@ -22,9 +22,9 @@ operation record 或巨大 handoff 文档。
 当前校准：
 
 - `origin/main` 当前校准在 merge commit
-  `53dbeb9ace749510e9cb0f82f73cbd4df11ec190`，对应 PR #259
-  `Separate dispatch ack from execution evidence`。
-- PR #242、#244、#245、#246、#247、#248、#249、#250、#251、#252、#253、#254、#255、#257、#258、#259 均已合并，
+  `ea0f23b85011cb68429089a8acdc30891d2836c2`，对应 PR #261
+  `Propagate dispatch authority into lane execution context`。
+- PR #242、#244、#245、#246、#247、#248、#249、#250、#251、#252、#253、#254、#255、#257、#258、#259、#260、#261 均已合并，
   且各自 merge commit 的 main push CI 均为 success。
 - PR #248 与 #250 是当前 goal 文档校准；PR #249 加固了 GitHub server
   truth exact-head check-run evidence；PR #251 暴露 MemoryOS sidecar 支撑上下文
@@ -35,8 +35,11 @@ operation record 或巨大 handoff 文档。
   把同一组 authority source refs 写入 execute-peer context/prompt/envelope，并让
   frontend/copilot 保持 execution evidence 与 authority refs 分离；PR #258 刷新当前
   goal 文档；PR #259 把 dispatch ack/evidence 留在 `chat_dispatch_queue`，避免提升为
-  acceptance spine 的 lane execution proof。这些都是支撑链路，不是 production-ready
-  natural groupchat 证明。
+  acceptance spine 的 lane execution proof；PR #260 刷新执行 proof 边界文档；
+  PR #261 把 approved dispatch authority refs 写入 saved lane graph、
+  `feature_lanes.json` projection、lane context bundle、normal execution prompt
+  和 persistent execute context，并明确这些 refs 不是 lane execution proof。
+  这些都是支撑链路，不是 production-ready natural groupchat 证明。
 - PR #243 (`codex/natural-groupchat-overnight-goal-docs`) 是较早的宽文档包，
   当前 `BEHIND` main；可作参考，但不是最新 current-goal 状态入口。
 - Dirty historical worktree 和 archive 文档只能作为参考，不是 main capability。
