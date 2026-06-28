@@ -106,6 +106,63 @@ class _ManualGapGithubGateCollector:
         )
 
 
+def _update_acceptance_gate_lane_projection(
+    *,
+    lanes_path: Path,
+    lane_id: str,
+    status: str,
+    final_action_ref: str,
+    acceptance_spine_ref: str,
+    dispatch_ref: str,
+    review_verdict_ref: str,
+    github_gate_evidence_ref: str | None = None,
+    github_gate_gap_ref: str | None = None,
+    blocked_reason: str | None = None,
+    failure_reason: str | None = None,
+) -> None:
+    payload = json.loads(lanes_path.read_text(encoding="utf-8"))
+    lanes = payload.get("lanes")
+    if not isinstance(lanes, list):
+        raise RuntimeError("feature_lanes.json missing lanes list")
+
+    for lane in lanes:
+        if not isinstance(lane, dict):
+            continue
+        if lane.get("feature_id") != lane_id:
+            continue
+
+        lane["status"] = status
+        lane["final_action_ref"] = final_action_ref
+        lane["acceptance_spine_ref"] = acceptance_spine_ref
+        lane["dispatch_ref"] = dispatch_ref
+        lane["review_verdict_ref"] = review_verdict_ref
+        lane["projection_proof_boundary"] = (
+            "feature_lanes_projection_not_acceptance_authority"
+        )
+        if github_gate_evidence_ref:
+            lane["github_gate_evidence_ref"] = github_gate_evidence_ref
+            lane.pop("github_gate_gap_ref", None)
+        if github_gate_gap_ref:
+            lane["github_gate_gap_ref"] = github_gate_gap_ref
+            lane.pop("github_gate_evidence_ref", None)
+        if blocked_reason:
+            lane["blocked_reason"] = blocked_reason
+        else:
+            lane.pop("blocked_reason", None)
+        if failure_reason:
+            lane["failure_reason"] = failure_reason
+        else:
+            lane.pop("failure_reason", None)
+
+        lanes_path.write_text(
+            json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        return
+
+    raise RuntimeError(f"acceptance-gated lane projection not found: {lane_id}")
+
+
 def run_acceptance_gated_goal(
     *,
     goal: str,
@@ -276,11 +333,33 @@ def run_acceptance_gated_goal(
     spine = AcceptanceSpineStore(chat_db_path).list_by_conversation(conversation_id)[0]
     if spine.status is AcceptanceSpineStatus.ACCEPTED:
         terminal_status = "accepted"
+        lane_projection_status = "merged"
     elif spine.status is AcceptanceSpineStatus.FAILED:
         terminal_status = "failed"
+        lane_projection_status = "failed"
     else:
         terminal_status = "blocked"
+        lane_projection_status = "blocked_for_input"
     github_ref = resolved_hold.github_gate_evidence_ref or resolved_hold.github_gate_gap_ref
+    final_action_ref = f"final_actions.json#hold={hold.id}"
+    spine_ref = f"chat.db#acceptance_spine={spine.spine_id}"
+    dispatch_ref = f"chat_dispatch_queue#entry={dispatch.entry_id}"
+    review_verdict_ref = f"review_plane.json#verdict={verdict_id}"
+    _update_acceptance_gate_lane_projection(
+        lanes_path=lanes_path,
+        lane_id=lane_id,
+        status=lane_projection_status,
+        final_action_ref=final_action_ref,
+        acceptance_spine_ref=spine_ref,
+        dispatch_ref=dispatch_ref,
+        review_verdict_ref=review_verdict_ref,
+        github_gate_evidence_ref=resolved_hold.github_gate_evidence_ref,
+        github_gate_gap_ref=resolved_hold.github_gate_gap_ref,
+        blocked_reason=spine.blocked_reason
+        if lane_projection_status == "blocked_for_input"
+        else None,
+        failure_reason=spine.blocked_reason if lane_projection_status == "failed" else None,
+    )
     return {
         "status": terminal_status,
         "blocked_reason": spine.blocked_reason,
@@ -290,12 +369,12 @@ def run_acceptance_gated_goal(
         "final_action_id": hold.id,
         "durable_refs": {
             "chat_db": str(chat_db_path),
-            "spine_ref": f"chat.db#acceptance_spine={spine.spine_id}",
+            "spine_ref": spine_ref,
             "intake_message_ref": f"chat.db#message={intake.message.id}",
             "proposal_ref": f"chat.db#proposal={proposal.id}",
-            "dispatch_ref": f"chat_dispatch_queue#entry={dispatch.entry_id}",
-            "review_verdict_ref": f"review_plane.json#verdict={verdict_id}",
-            "final_action_ref": f"final_actions.json#hold={hold.id}",
+            "dispatch_ref": dispatch_ref,
+            "review_verdict_ref": review_verdict_ref,
+            "final_action_ref": final_action_ref,
             "github_gate_evidence_ref": github_ref,
         },
     }
