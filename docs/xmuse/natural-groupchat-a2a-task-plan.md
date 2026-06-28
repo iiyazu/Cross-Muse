@@ -49,13 +49,14 @@ Current server facts after the 2026-06-28 Track A/B/C/D pass:
 | #270 | acceptance gate noop integration projection | `fa1cc1e1996be3c18540f574c3513b0cafbea642` | `28317667416` success |
 | #271 | docs refresh after noop integration projection | `7c5831d75b6efa59c0ce57aebbae21fdefc68240` | `28317787154` success |
 | #272 | docs sentinel GOD backend alignment | `c60f12090868a35ca56917feabfd66cee6306809` | `28318839517` success |
+| #273 | docs refresh after sentinel backend alignment | `8ae7600991371783658829900cda59ecdbed7a57` | `28318943411` success |
 
 These rows are GitHub server facts for merged code and CI. They are not proof
 of production-ready natural groupchat, live MemoryOS authority, frontend
 completeness, GitHub review truth, or autonomous merge.
 
 Next execution loop should start from clean `origin/main` at or after
-`c60f12090868a35ca56917feabfd66cee6306809`, run Phase 0 again, and then push
+`8ae7600991371783658829900cda59ecdbed7a57`, run Phase 0 again, and then push
 the largest reachable real chain beyond the current handoff/review/dispatch
 boundary. If the next chain cannot advance, record the durable blocker and
 next authority boundary rather than relying on stdout, worker summaries, or
@@ -89,6 +90,31 @@ Latest local runtime evidence recorded during #272 preparation:
   this is local runtime evidence, not GitHub server truth, production
   readiness, autonomous merge, or live MemoryOS proof.
 
+Latest post-#273 local runtime evidence:
+
+- command path:
+  `scripts/run_fullchain_docs_sentinel.py` was run from clean
+  `origin/main@8ae7600991371783658829900cda59ecdbed7a57` without
+  review/execute backend env overrides and without an explicit CLI
+  `--peer-god-backend`; the sentinel script defaulted to native and launched
+  `xmuse.platform_runner --peer-god-backend native`;
+- condition satisfied:
+  feature `track-a-post273-sentinel-20260628` reached
+  `awaiting_final_action`, final action hold `final-219d4426fecd` stayed
+  pending, and the isolated execution file
+  `docs/xmuse/track-a-post273-sentinel-20260628.md` matched the exact expected
+  sentence;
+- authority/projection boundary:
+  `chat.db`, `collaboration_responses`, `proposals`, `resolutions`,
+  `chat_dispatch_queue`, `review_plane.json`, gate reports, and the isolated
+  execution worktree were inspected; `feature_lanes.json` was used only as
+  projection evidence;
+- proof limitation:
+  this default native sentinel is local durable runtime proof for the
+  handoff/review/dispatch/lane/gate/final-action-hold path. It is not proof of
+  GitHub PR creation by the natural chain, autonomous merge, live MemoryOS, or
+  production readiness.
+
 ## Phase 0 - Truth Refresh
 
 Run and record:
@@ -99,7 +125,7 @@ git branch --show-current
 git rev-parse HEAD
 git fetch origin
 git rev-parse origin/main
-for pr in 242 244 245 246 247 248 249 250 251 252 253 254 255 257 258 259 260 261 262 263 264 265 266 267 268 269 270 271 272; do
+for pr in 242 244 245 246 247 248 249 250 251 252 253 254 255 257 258 259 260 261 262 263 264 265 266 267 268 269 270 271 272 273; do
   gh pr view "$pr" --json number,state,headRefName,headRefOid,baseRefName,mergedAt,mergeCommit,url
 done
 gh pr list --state open --json number,title,headRefName,headRefOid,baseRefName,isDraft,mergeStateStatus,url
@@ -113,7 +139,7 @@ Exit with:
   main SHA;
 - #242, #244, #245, #246, #247, #248, #249, #250, #251, #252, #253, #254,
   #255, #257, #258, #259, #260, #261, #262, #263, #264, #265, #266, #267,
-  #268, #269, #270, #271, and #272 verified
+  #268, #269, #270, #271, #272, and #273 verified
   merged unless superseded by newer current docs;
 - latest relevant main push CI observed through GitHub server facts;
 - dirty historical worktrees marked reference-only;
@@ -279,7 +305,7 @@ Final report includes:
 
 Current final-report notes for the 2026-06-28 pass:
 
-- maximum verified GitHub chain: domain-scoped PRs #244-#272 reached
+- maximum verified GitHub chain: domain-scoped PRs #244-#273 reached
   exact-head PR CI, guarded merge, and successful main push CI;
 - MemoryOS state: opt-in sidecar contract/degraded-mode support only; no live
   MemoryOS authority claim; #255 gives sidecar/context continuity durable
@@ -301,7 +327,9 @@ Current final-report notes for the 2026-06-28 pass:
 - Ray use: not the default natural groupchat route; remains optional legacy;
   #272 keeps the fullchain docs sentinel peer/review/execute GOD backends
   aligned with the selected `--peer-god-backend`, so native sentinel runs do
-  not drift into Ray defaults;
+  not drift into Ray defaults; the post-#273 default native sentinel confirmed
+  the script default path launched `--peer-god-backend native` and reached
+  `awaiting_final_action` without using Ray as the main route;
 - copilot audit: helper exists for read-only append-only board and advisory
   intake; #257 lets accepted recommendations use `chat_dispatch_queue:*` as
   durable authority while keeping `mcp_writeback:*` candidate-only; #266 lets

@@ -28,12 +28,12 @@ Read first:
 Current calibration:
 - Start from a clean origin/main worktree after truth refresh.
 - Current known main calibration is
-  `fa1cc1e1996be3c18540f574c3513b0cafbea642` after PR #270, but always verify
+  `8ae7600991371783658829900cda59ecdbed7a57` after PR #273, but always verify
   live `origin/main` and open PR state before acting.
 - PRs #242, #244, #245, #246, #247, #248, #249, #250, #251, #252, #253,
   #254, #255, #257, #258, #259, #260, #261, #262, #263, #264, #265, #266,
-  #267, #268, #269, and #270 have merged with successful main push CI as of
-  2026-06-28.
+  #267, #268, #269, #270, #271, #272, and #273 have merged with successful
+  main push CI as of 2026-06-28.
 - PR #249 hardened GitHub server truth: PR/CI/merge evidence must be tied to
   exact PR head SHA, required check-run names, and per-check-run head SHAs.
 - PR #251 exposed sanitized MemoryOS sidecar support metadata through the
@@ -81,6 +81,12 @@ Current calibration:
 - PR #270 marks synthetic acceptance-gated short-run lane projections as
   `integration_mode: noop`, so health does not report ordinary dependent
   release risk for a projection-only gate lane.
+- PR #271 refreshed current goal docs after #270.
+- PR #272 keeps the fullchain docs sentinel peer/review/execute GOD backends
+  aligned with the selected `--peer-god-backend`, so native sentinel runs do
+  not drift into Ray defaults.
+- PR #273 refreshed current goal docs after #272 and records its merge/main-CI
+  facts.
 - PR #243 is an older behind-main docs package; treat it as reference-only
   unless rebased and revalidated.
 - Dirty historical worktrees and archived docs are references only, not main

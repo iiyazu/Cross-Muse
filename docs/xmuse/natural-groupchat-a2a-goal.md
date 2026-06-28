@@ -23,11 +23,11 @@ Read these first:
 As of this update:
 
 - `origin/main` is calibrated at merge commit
-  `fa1cc1e1996be3c18540f574c3513b0cafbea642`.
-- The latest merged PR is #270 (`Mark acceptance gate projection noop
-  integration`),
+  `8ae7600991371783658829900cda59ecdbed7a57`.
+- The latest merged PR is #273 (`docs: record sentinel backend alignment
+  merge`),
   merged 2026-06-28 with exact PR head
-  `ce845037d9c7f933933baa5edc2c669f6bb7235a`.
+  `f67d34035d78eeb662b8f927e5a22dcd7328b080`.
 - PR #266 (`Clarify copilot intake authority
   boundaries`), merged 2026-06-28 with exact PR head
   `778937c1a26c81b70bb798ea6616cd8fd6fc3911`.
@@ -86,6 +86,12 @@ As of this update:
     `28317521660` success.
   - PR #270 `fa1cc1e1996be3c18540f574c3513b0cafbea642`: run
     `28317667416` success.
+  - PR #271 `7c5831d75b6efa59c0ce57aebbae21fdefc68240`: run
+    `28317787154` success.
+  - PR #272 `c60f12090868a35ca56917feabfd66cee6306809`: run
+    `28318839517` success.
+  - PR #273 `8ae7600991371783658829900cda59ecdbed7a57`: run
+    `28318943411` success.
 - Recent domain-scoped progress:
   - #244 advanced the natural peer-callback proposal handoff path.
   - #245 added opt-in MemoryOS sidecar recall/degraded-mode support.
@@ -139,6 +145,12 @@ As of this update:
   - #270 marks synthetic acceptance-gated short-run lane projections as
     `integration_mode: noop`, preventing health from reporting ordinary
     dependent-release risk for a projection-only gate lane.
+  - #271 refreshed current goal docs after #270.
+  - #272 keeps the fullchain docs sentinel peer/review/execute GOD backends
+    aligned with the selected `--peer-god-backend`, so native sentinel runs do
+    not drift into Ray defaults.
+  - #273 refreshed current goal docs after #272 and records its merge/main-CI
+    facts.
 - The next long goal should start from a clean `origin/main` worktree after
   truth refresh.
 - Dirty historical worktrees may be read as references only. They are not main

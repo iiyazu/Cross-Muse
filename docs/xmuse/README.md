@@ -22,10 +22,10 @@ operation record 或巨大 handoff 文档。
 当前校准：
 
 - `origin/main` 当前校准在 merge commit
-  `fa1cc1e1996be3c18540f574c3513b0cafbea642`，对应 PR #270
-  `Mark acceptance gate projection noop integration`。
+  `8ae7600991371783658829900cda59ecdbed7a57`，对应 PR #273
+  `docs: record sentinel backend alignment merge`。
 - PR #242、#244、#245、#246、#247、#248、#249、#250、#251、#252、#253、#254、#255、#257、#258、#259、#260、#261、#262、#263、#264、#265、#266、#267、#268、#269、#270 均已合并，
-  且各自 merge commit 的 main push CI 均为 success。
+  #271、#272、#273 均已合并，且各自 merge commit 的 main push CI 均为 success。
 - PR #248 与 #250 是当前 goal 文档校准；PR #249 加固了 GitHub server
   truth exact-head check-run evidence；PR #251 暴露 MemoryOS sidecar 支撑上下文
   的只读 UX projection；PR #252 明确 A2A review verdict 后仍需 proposal
@@ -53,8 +53,10 @@ operation record 或巨大 handoff 文档。
   `blocked_for_input` + `blocked_reason`，并保留 durable authority refs；
   PR #269 刷新当前 goal docs；PR #270 将 synthetic acceptance-gated short-run
   lane projection 标记为 `integration_mode: noop`，避免 health 将其误报为
-  普通 feature lane 的 dependent release 风险。
-  这些都是支撑链路，不是 production-ready natural groupchat 证明。
+  普通 feature lane 的 dependent release 风险；PR #271 刷新当前 goal docs；
+  PR #272 对齐 fullchain docs sentinel 的 peer/review/execute GOD backend；
+  PR #273 记录 #272 的 merge/main-CI 事实。这些都是支撑链路，不是
+  production-ready natural groupchat 证明。
 - PR #243 (`codex/natural-groupchat-overnight-goal-docs`) 是较早的宽文档包，
   当前 `BEHIND` main；可作参考，但不是最新 current-goal 状态入口。
 - Dirty historical worktree 和 archive 文档只能作为参考，不是 main capability。
