@@ -2014,6 +2014,7 @@ def test_acceptance_gated_goal_run_accepts_with_server_side_merge_proof(
     lane = lanes_payload["lanes"][0]
     assert lane["feature_id"] == result["lane_id"]
     assert lane["status"] == "merged"
+    assert lane["integration_mode"] == "noop"
     assert lane["final_action_ref"] == f"final_actions.json#hold={hold['id']}"
     assert lane["github_gate_evidence_ref"] == hold["github_gate_evidence_ref"]
 
@@ -2024,7 +2025,9 @@ def test_acceptance_gated_goal_run_accepts_with_server_side_merge_proof(
     )
     assert health["counts"]["live"] == 0
     assert health["counts"]["terminal"] == 1
+    assert health["counts"]["unsafe_to_release_dependents"] == 0
     assert health["groups"]["terminal"] == [result["lane_id"]]
+    assert health["groups"]["unsafe_to_release_dependents"] == []
 
 
 def test_acceptance_gated_live_capture_gap_stays_blocked(tmp_path: Path) -> None:
