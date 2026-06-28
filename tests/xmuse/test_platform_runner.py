@@ -1831,6 +1831,35 @@ def test_runner_parser_supports_acceptance_gated_goal() -> None:
     assert args.github_pr == 154
 
 
+def test_runner_parser_supports_existing_final_action_resolution() -> None:
+    args = platform_runner.main_arg_parser().parse_args(
+        [
+            "--resolve-final-action",
+            "--lane-id",
+            "lane-ready",
+            "--github-pr",
+            "155",
+            "--github-head-sha",
+            "abc123",
+        ]
+    )
+
+    platform_runner.validate_args(args)
+    assert args.resolve_final_action is True
+    assert args.lane_id == "lane-ready"
+    assert args.github_pr == 155
+    assert args.github_head_sha == "abc123"
+
+
+def test_runner_rejects_resolve_final_action_without_hold_selector() -> None:
+    args = platform_runner.main_arg_parser().parse_args(
+        ["--resolve-final-action", "--github-pr", "155"]
+    )
+
+    with pytest.raises(SystemExit):
+        platform_runner.validate_args(args)
+
+
 def test_runner_parser_supports_opt_in_live_github_capture(tmp_path: Path) -> None:
     review_artifact = tmp_path / "internal-review.json"
     review_artifact.write_text('{"review":"accepted"}\n', encoding="utf-8")
@@ -2028,6 +2057,397 @@ def test_acceptance_gated_goal_run_accepts_with_server_side_merge_proof(
     assert health["counts"]["unsafe_to_release_dependents"] == 0
     assert health["groups"]["terminal"] == [result["lane_id"]]
     assert health["groups"]["unsafe_to_release_dependents"] == []
+
+
+def test_resolve_existing_final_action_accepts_with_server_side_merge_proof(
+    tmp_path: Path,
+) -> None:
+    xmuse_root = tmp_path / "runtime"
+    xmuse_root.mkdir()
+    (xmuse_root / "feature_lanes.json").write_text(
+        json.dumps(
+            {
+                "lanes": [
+                    {
+                        "feature_id": "lane-gh-proof",
+                        "status": "awaiting_final_action",
+                        "prompt": "ready for github proof",
+                        "final_action_hold_id": "final-gh-proof",
+                    }
+                ]
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (xmuse_root / "final_actions.json").write_text(
+        json.dumps(
+            {
+                "holds": [
+                    {
+                        "id": "final-gh-proof",
+                        "lane_id": "lane-gh-proof",
+                        "verdict_id": "verdict-gh-proof",
+                        "action": "merge",
+                        "target_status": "reviewed",
+                        "status": "pending",
+                        "summary": "merge after GitHub proof",
+                    }
+                ]
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = platform_runner.resolve_existing_final_action_with_github_gate(
+        xmuse_root=xmuse_root,
+        lane_id="lane-gh-proof",
+        github_repo="iiyazu/Cross-Muse",
+        github_pull_request=155,
+        required_checks=[
+            "quality-gates",
+            "contract-smoke-gates",
+            "real-runtime-integration-gate",
+            "peer-chat-runtime-gate",
+        ],
+        head_sha="abc123",
+        github_gate_collector=_StaticGithubTruthCollector(
+            _complete_server_side_merge_truth()
+        ),
+    )
+
+    assert result["status"] == "accepted"
+    assert result["blocked_reason"] is None
+    gate_payload = json.loads(
+        (xmuse_root / "github_gate_evidence.json").read_text(encoding="utf-8")
+    )
+    final_actions = json.loads(
+        (xmuse_root / "final_actions.json").read_text(encoding="utf-8")
+    )
+    lanes = json.loads((xmuse_root / "feature_lanes.json").read_text(encoding="utf-8"))
+    evidence = gate_payload["items"][0]
+    hold = final_actions["holds"][0]
+    lane = lanes["lanes"][0]
+    assert evidence["can_accept"] is True
+    assert hold["status"] == "approved"
+    assert hold["github_gate_evidence_ref"] == (
+        f"github_gate_evidence.json#evidence={evidence['id']}"
+    )
+    assert lane["status"] == "merged"
+    assert lane["github_gate_evidence_ref"] == hold["github_gate_evidence_ref"]
+    assert lane["final_action_ref"] == "final_actions.json#hold=final-gh-proof"
+
+
+def test_resolve_existing_final_action_blocks_on_github_gate_gap(
+    tmp_path: Path,
+) -> None:
+    xmuse_root = tmp_path / "runtime"
+    xmuse_root.mkdir()
+    (xmuse_root / "feature_lanes.json").write_text(
+        json.dumps(
+            {
+                "lanes": [
+                    {
+                        "feature_id": "lane-gh-gap",
+                        "status": "awaiting_final_action",
+                        "prompt": "ready for github proof",
+                        "final_action_hold_id": "final-gh-gap",
+                    }
+                ]
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (xmuse_root / "final_actions.json").write_text(
+        json.dumps(
+            {
+                "holds": [
+                    {
+                        "id": "final-gh-gap",
+                        "lane_id": "lane-gh-gap",
+                        "verdict_id": "verdict-gh-gap",
+                        "action": "merge",
+                        "target_status": "reviewed",
+                        "status": "pending",
+                        "summary": "merge after GitHub proof",
+                    }
+                ]
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = platform_runner.resolve_existing_final_action_with_github_gate(
+        xmuse_root=xmuse_root,
+        lane_id="lane-gh-gap",
+        github_repo="iiyazu/Cross-Muse",
+        github_pull_request=155,
+        required_checks=[
+            "quality-gates",
+            "contract-smoke-gates",
+            "real-runtime-integration-gate",
+            "peer-chat-runtime-gate",
+        ],
+        github_gate_collector=_StaticGithubTruthCollector(_incomplete_server_side_truth()),
+    )
+
+    assert result["status"] == "blocked"
+    assert result["blocked_reason"] == "github_gate_unverified"
+    final_actions = json.loads(
+        (xmuse_root / "final_actions.json").read_text(encoding="utf-8")
+    )
+    lanes = json.loads((xmuse_root / "feature_lanes.json").read_text(encoding="utf-8"))
+    hold = final_actions["holds"][0]
+    lane = lanes["lanes"][0]
+    assert hold["status"] == "blocked"
+    assert hold["github_gate_gap_ref"].startswith("github_gate_evidence.json#evidence=")
+    assert "github_gate_evidence_ref" not in hold
+    assert lane["status"] == "blocked_for_input"
+    assert lane["blocked_reason"] == "github_gate_unverified"
+    assert lane["github_gate_gap_ref"] == hold["github_gate_gap_ref"]
+
+
+def test_resolve_existing_final_action_blocks_on_expected_head_mismatch(
+    tmp_path: Path,
+) -> None:
+    xmuse_root = tmp_path / "runtime"
+    xmuse_root.mkdir()
+    (xmuse_root / "feature_lanes.json").write_text(
+        json.dumps(
+            {
+                "lanes": [
+                    {
+                        "feature_id": "lane-head-mismatch",
+                        "status": "awaiting_final_action",
+                        "prompt": "ready for github proof",
+                        "final_action_hold_id": "final-head-mismatch",
+                    }
+                ]
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (xmuse_root / "final_actions.json").write_text(
+        json.dumps(
+            {
+                "holds": [
+                    {
+                        "id": "final-head-mismatch",
+                        "lane_id": "lane-head-mismatch",
+                        "verdict_id": "verdict-head-mismatch",
+                        "action": "merge",
+                        "target_status": "reviewed",
+                        "status": "pending",
+                        "summary": "merge after GitHub proof",
+                    }
+                ]
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = platform_runner.resolve_existing_final_action_with_github_gate(
+        xmuse_root=xmuse_root,
+        lane_id="lane-head-mismatch",
+        github_repo="iiyazu/Cross-Muse",
+        github_pull_request=155,
+        required_checks=[
+            "quality-gates",
+            "contract-smoke-gates",
+            "real-runtime-integration-gate",
+            "peer-chat-runtime-gate",
+        ],
+        head_sha="different-head",
+        github_gate_collector=_StaticGithubTruthCollector(
+            _complete_server_side_merge_truth()
+        ),
+    )
+
+    assert result["status"] == "blocked"
+    gate_payload = json.loads(
+        (xmuse_root / "github_gate_evidence.json").read_text(encoding="utf-8")
+    )
+    evidence = gate_payload["items"][0]
+    assert evidence["can_accept"] is False
+    assert evidence["gap_reason"] == "github evidence head SHA mismatch"
+    assert evidence["evidence"]["proof_level"] == "manual_gap"
+    assert evidence["evidence"]["head_sha"] == "abc123"
+    final_actions = json.loads(
+        (xmuse_root / "final_actions.json").read_text(encoding="utf-8")
+    )
+    assert final_actions["holds"][0]["status"] == "blocked"
+    assert final_actions["holds"][0]["github_gate_gap_ref"] == (
+        f"github_gate_evidence.json#evidence={evidence['id']}"
+    )
+
+
+def test_resolve_existing_final_action_projection_preflight_failure_keeps_hold_pending(
+    tmp_path: Path,
+) -> None:
+    xmuse_root = tmp_path / "runtime"
+    xmuse_root.mkdir()
+    (xmuse_root / "feature_lanes.json").write_text(
+        json.dumps(
+            {
+                "lanes": [
+                    {
+                        "feature_id": "lane-preflight",
+                        "status": "awaiting_final_action",
+                        "prompt": "ready for github proof",
+                        "final_action_hold_id": "different-final-action",
+                    }
+                ]
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (xmuse_root / "final_actions.json").write_text(
+        json.dumps(
+            {
+                "holds": [
+                    {
+                        "id": "final-preflight",
+                        "lane_id": "lane-preflight",
+                        "verdict_id": "verdict-preflight",
+                        "action": "merge",
+                        "target_status": "reviewed",
+                        "status": "pending",
+                        "summary": "merge after GitHub proof",
+                    }
+                ]
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeError, match="final-action projection hold mismatch"):
+        platform_runner.resolve_existing_final_action_with_github_gate(
+            xmuse_root=xmuse_root,
+            lane_id="lane-preflight",
+            github_repo="iiyazu/Cross-Muse",
+            github_pull_request=155,
+            required_checks=[
+                "quality-gates",
+                "contract-smoke-gates",
+                "real-runtime-integration-gate",
+                "peer-chat-runtime-gate",
+            ],
+            github_gate_collector=_StaticGithubTruthCollector(
+                _complete_server_side_merge_truth()
+            ),
+        )
+
+    final_actions = json.loads(
+        (xmuse_root / "final_actions.json").read_text(encoding="utf-8")
+    )
+    assert final_actions["holds"][0]["status"] == "pending"
+    assert not (xmuse_root / "github_gate_evidence.json").exists()
+
+
+def test_resolve_existing_final_action_can_retry_after_github_gate_gap(
+    tmp_path: Path,
+) -> None:
+    xmuse_root = tmp_path / "runtime"
+    xmuse_root.mkdir()
+    (xmuse_root / "feature_lanes.json").write_text(
+        json.dumps(
+            {
+                "lanes": [
+                    {
+                        "feature_id": "lane-gh-retry",
+                        "status": "awaiting_final_action",
+                        "prompt": "ready for github proof",
+                        "final_action_hold_id": "final-gh-retry",
+                    }
+                ]
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (xmuse_root / "final_actions.json").write_text(
+        json.dumps(
+            {
+                "holds": [
+                    {
+                        "id": "final-gh-retry",
+                        "lane_id": "lane-gh-retry",
+                        "verdict_id": "verdict-gh-retry",
+                        "action": "merge",
+                        "target_status": "reviewed",
+                        "status": "pending",
+                        "summary": "merge after GitHub proof",
+                    }
+                ]
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    blocked = platform_runner.resolve_existing_final_action_with_github_gate(
+        xmuse_root=xmuse_root,
+        final_action_id="final-gh-retry",
+        github_repo="iiyazu/Cross-Muse",
+        github_pull_request=155,
+        required_checks=[
+            "quality-gates",
+            "contract-smoke-gates",
+            "real-runtime-integration-gate",
+            "peer-chat-runtime-gate",
+        ],
+        github_gate_collector=_StaticGithubTruthCollector(_incomplete_server_side_truth()),
+    )
+    accepted = platform_runner.resolve_existing_final_action_with_github_gate(
+        xmuse_root=xmuse_root,
+        final_action_id="final-gh-retry",
+        github_repo="iiyazu/Cross-Muse",
+        github_pull_request=155,
+        required_checks=[
+            "quality-gates",
+            "contract-smoke-gates",
+            "real-runtime-integration-gate",
+            "peer-chat-runtime-gate",
+        ],
+        head_sha="abc123",
+        github_gate_collector=_StaticGithubTruthCollector(
+            _complete_server_side_merge_truth()
+        ),
+    )
+
+    assert blocked["status"] == "blocked"
+    assert accepted["status"] == "accepted"
+    final_actions = json.loads(
+        (xmuse_root / "final_actions.json").read_text(encoding="utf-8")
+    )
+    lanes = json.loads((xmuse_root / "feature_lanes.json").read_text(encoding="utf-8"))
+    hold = final_actions["holds"][0]
+    lane = lanes["lanes"][0]
+    assert hold["status"] == "approved"
+    assert "github_gate_gap_ref" not in hold
+    assert hold["github_gate_evidence_ref"] == accepted["durable_refs"][
+        "github_gate_evidence_ref"
+    ]
+    assert lane["status"] == "merged"
+    assert lane["github_gate_evidence_ref"] == hold["github_gate_evidence_ref"]
+    assert "github_gate_gap_ref" not in lane
 
 
 def test_acceptance_gated_live_capture_gap_stays_blocked(tmp_path: Path) -> None:
