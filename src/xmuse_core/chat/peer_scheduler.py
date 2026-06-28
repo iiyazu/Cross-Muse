@@ -1080,16 +1080,21 @@ def _supporting_context_from_group_context(
     memory_context = group_context.get("memoryos_context")
     if not isinstance(memory_context, dict):
         return None
+    continuity_refs = _context_continuity_refs(memory_context)
+    memory_sidecar_context = {
+        "status": _context_text(memory_context, "status") or "unknown",
+        "authority": _context_text(memory_context, "authority") or "memoryos_sidecar",
+        "proof_level": _context_text(memory_context, "proof_level") or "unknown",
+        "namespace_uri": _context_text(memory_context, "namespace_uri") or "unknown",
+        "degraded_reason": _context_text(memory_context, "degraded_reason"),
+        "source_refs": _context_source_refs(memory_context),
+        "continuity_refs": continuity_refs,
+    }
+    continuity_attempt_ref = _context_continuity_attempt_ref(memory_context)
+    if continuity_attempt_ref and not continuity_refs:
+        memory_sidecar_context["continuity_attempt_ref"] = continuity_attempt_ref
     result = {
-        "memoryos_sidecar": {
-            "status": _context_text(memory_context, "status") or "unknown",
-            "authority": _context_text(memory_context, "authority") or "memoryos_sidecar",
-            "proof_level": _context_text(memory_context, "proof_level") or "unknown",
-            "namespace_uri": _context_text(memory_context, "namespace_uri") or "unknown",
-            "degraded_reason": _context_text(memory_context, "degraded_reason"),
-            "source_refs": _context_source_refs(memory_context),
-            "continuity_refs": _context_continuity_refs(memory_context),
-        }
+        "memoryos_sidecar": memory_sidecar_context
     }
     continuity_refs = _bounded_context_refs(group_context.get("sidecar_continuity_refs"))
     if continuity_refs:
@@ -1119,6 +1124,14 @@ def _context_continuity_refs(context: dict[str, Any]) -> list[str]:
         return []
     ref = single_ref.strip()
     return [ref[:_SUPPORTING_CONTEXT_SOURCE_REF_MAX_CHARS]] if ref else []
+
+
+def _context_continuity_attempt_ref(context: dict[str, Any]) -> str | None:
+    value = context.get("continuity_attempt_ref")
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped[:_SUPPORTING_CONTEXT_SOURCE_REF_MAX_CHARS] if stripped else None
 
 
 def _bounded_context_refs(raw_refs: Any) -> list[str]:
