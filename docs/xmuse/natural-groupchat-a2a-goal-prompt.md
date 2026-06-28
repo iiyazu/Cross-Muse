@@ -28,12 +28,18 @@ Read first:
 Current calibration:
 - Start from a clean origin/main worktree after truth refresh.
 - Current known main calibration is
-  `159b851435b735ac828eca0637b601907c306cef` after PR #249, but always verify
+  `e2a2e2742ff452bc8e306fb6efdd525231d22bff` after PR #252, but always verify
   live `origin/main` and open PR state before acting.
-- PRs #242, #244, #245, #246, #247, #248, and #249 have merged with
+- PRs #242, #244, #245, #246, #247, #248, #249, #250, #251, and #252 have
+  merged with
   successful main push CI as of 2026-06-28.
 - PR #249 hardened GitHub server truth: PR/CI/merge evidence must be tied to
   exact PR head SHA, required check-run names, and per-check-run head SHAs.
+- PR #251 exposed sanitized MemoryOS sidecar support metadata through the
+  read-only UX projection.
+- PR #252 clarified that A2A `dispatch_allowed` review verdict writeback still
+  requires `chat.db/proposal_approval` before dispatch, and drops
+  provider-supplied boundary claims.
 - PR #243 is an older behind-main docs package; treat it as reference-only
   unless rebased and revalidated.
 - Dirty historical worktrees and archived docs are references only, not main
