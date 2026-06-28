@@ -4,6 +4,8 @@ import argparse
 import json
 from pathlib import Path
 
+import pytest
+
 from scripts import run_fullchain_docs_sentinel as sentinel
 from xmuse_core.chat.inbox_store import ChatInboxStore
 from xmuse_core.chat.store import ChatStore
@@ -142,9 +144,19 @@ def test_main_writes_expected_note_content_into_command_artifacts(
     assert "selected_review_provider=codex\n" in commands_txt
 
 
+@pytest.mark.parametrize(
+    ("peer_god_backend", "ray_god_mcp", "expected_ray_god_mcp"),
+    [
+        ("native", False, "0"),
+        ("ray", True, "1"),
+    ],
+)
 def test_start_runner_uses_configured_peer_chat_writeback_grace(
     tmp_path: Path,
     monkeypatch,
+    peer_god_backend: str,
+    ray_god_mcp: bool,
+    expected_ray_god_mcp: str,
 ) -> None:
     captured: dict[str, object] = {}
 
@@ -164,8 +176,8 @@ def test_start_runner_uses_configured_peer_chat_writeback_grace(
         max_hours=0.75,
         peer_chat_response_wait_s=456.0,
         peer_chat_post_writeback_grace_s=13.5,
-        peer_god_backend="ray",
-        ray_god_mcp=True,
+        peer_god_backend=peer_god_backend,
+        ray_god_mcp=ray_god_mcp,
     )
 
     command = captured["command"]
@@ -175,9 +187,13 @@ def test_start_runner_uses_configured_peer_chat_writeback_grace(
     assert command[wait_flag_index + 1] == "456.0"
     flag_index = command.index("--peer-chat-post-writeback-grace-s")
     assert command[flag_index + 1] == "13.5"
+    backend_flag_index = command.index("--peer-god-backend")
+    assert command[backend_flag_index + 1] == peer_god_backend
     env = captured["env"]
-    assert env["XMUSE_PEER_GOD_BACKEND"] == "ray"
-    assert env["XMUSE_RAY_GOD_MCP"] == "1"
+    assert env["XMUSE_PEER_GOD_BACKEND"] == peer_god_backend
+    assert env["XMUSE_REVIEW_GOD_BACKEND"] == peer_god_backend
+    assert env["XMUSE_EXECUTE_GOD_BACKEND"] == peer_god_backend
+    assert env["XMUSE_RAY_GOD_MCP"] == expected_ray_god_mcp
 
 
 def test_wait_for_proposal_review_trigger_waits_until_read(
