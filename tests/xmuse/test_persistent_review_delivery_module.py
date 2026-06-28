@@ -51,6 +51,69 @@ def test_review_god_preserves_persistent_review_delivery_compat_exports() -> Non
 
 
 @pytest.mark.asyncio
+async def test_apply_persistent_review_message_rejects_unstructured_result_text(
+    tmp_path,
+) -> None:
+    lanes_path = tmp_path / "feature_lanes.json"
+    lanes_path.write_text(
+        json.dumps(
+            {
+                "lanes": [
+                    {
+                        "feature_id": "lane-stdout-review",
+                        "status": "gated",
+                        "review_task_id": "task-lane-stdout-review",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    sm = LaneStateMachine(lanes_path)
+
+    def ingest_merge_verdict(
+        lane_id: str,
+        summary: str,
+        refs: list[str] | None = None,
+    ) -> None:
+        raise AssertionError(f"stdout text must not create merge verdict for {lane_id}")
+
+    def ingest_rework_verdict(
+        lane_id: str,
+        summary: str,
+        refs: list[str] | None = None,
+    ) -> None:
+        raise AssertionError(f"stdout text must not create rework verdict for {lane_id}")
+
+    async def on_reviewed(lane_id: str) -> None:
+        raise AssertionError(f"stdout text must not accept lane {lane_id}")
+
+    async def on_rejected(lane_id: str) -> None:
+        raise AssertionError(f"stdout text must not reject lane {lane_id}")
+
+    delivered = await persistent_review_delivery.apply_persistent_review_message(
+        lane_id="lane-stdout-review",
+        sm=sm,
+        message=StdoutMessage(type="result", message="Findings: none\nVerdict: merge"),
+        stable_verdict_id=lambda lane_id: f"verdict-{lane_id}",
+        ingest_merge_verdict=ingest_merge_verdict,
+        ingest_rework_verdict=ingest_rework_verdict,
+        on_reviewed=on_reviewed,
+        on_rejected=on_rejected,
+        review_request_id="review-request-stdout",
+        persistent_review_identity="configured:review-peer-1",
+        evidence_refs=["review://stdout-text"],
+    )
+
+    lane = sm.get_lane("lane-stdout-review")
+    assert delivered is False
+    assert lane["status"] == "gated"
+    assert "review_decision" not in lane
+    assert "review_verdict_id" not in lane
+    assert "review_history" not in lane
+
+
+@pytest.mark.asyncio
 async def test_apply_persistent_review_message_records_evidence_refs(tmp_path) -> None:
     lanes_path = tmp_path / "feature_lanes.json"
     lanes_path.write_text(
@@ -104,7 +167,15 @@ async def test_apply_persistent_review_message_records_evidence_refs(tmp_path) -
     delivered = await persistent_review_delivery.apply_persistent_review_message(
         lane_id="lane-1",
         sm=sm,
-        message=StdoutMessage(type="result", message="No findings.\nVerdict: merge"),
+        message=StdoutMessage(
+            type="result",
+            artifacts={
+                "review_verdict": {
+                    "decision": "merge",
+                    "summary": "No findings.",
+                }
+            },
+        ),
         stable_verdict_id=stable_verdict_id,
         ingest_merge_verdict=ingest_merge_verdict,
         ingest_rework_verdict=ingest_rework_verdict,
