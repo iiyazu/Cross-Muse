@@ -4,9 +4,9 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DOCS_ROOT = PROJECT_ROOT / "docs" / "xmuse"
-CURRENT_MAIN_SHA = "235f36ea4c5c38b73d23a786903407ee99088f23"
-CURRENT_PR_HEAD_SHA = "778937c1a26c81b70bb798ea6616cd8fd6fc3911"
-CURRENT_MAIN_CI_RUN = "28316712653"
+CURRENT_MAIN_SHA = "76a57362c73f0f63dc2d9b61f871b24a7a5bb329"
+CURRENT_PR_HEAD_SHA = "de2b663385d3883860b9366634641959cd38bb2a"
+CURRENT_MAIN_CI_RUN = "28317369049"
 HISTORICAL_DISPATCH_PROOF_SPLIT_SHA = "53dbeb9ace749510e9cb0f82f73cbd4df11ec190"
 
 
@@ -24,7 +24,7 @@ def test_natural_groupchat_goal_docs_track_current_main_calibration() -> None:
 
     for name, content in docs.items():
         assert CURRENT_MAIN_SHA in content, name
-        assert "#266" in content, name
+        assert "#268" in content, name
         assert "#259" in content
 
     assert CURRENT_PR_HEAD_SHA in docs["natural-groupchat-a2a-goal.md"]
@@ -48,6 +48,8 @@ def test_natural_groupchat_goal_docs_track_current_main_calibration() -> None:
     assert "#264" in docs["README.md"]
     assert "#265" in docs["README.md"]
     assert "#266" in docs["README.md"]
+    assert "#267" in docs["README.md"]
+    assert "#268" in docs["README.md"]
 
 
 def test_github_server_gate_docs_describe_exact_head_check_run_evidence() -> None:

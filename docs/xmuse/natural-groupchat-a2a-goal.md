@@ -23,8 +23,11 @@ Read these first:
 As of this update:
 
 - `origin/main` is calibrated at merge commit
-  `235f36ea4c5c38b73d23a786903407ee99088f23`.
-- The latest merged PR is #266 (`Clarify copilot intake authority
+  `76a57362c73f0f63dc2d9b61f871b24a7a5bb329`.
+- The latest merged PR is #268 (`Fix acceptance gate lane projection`),
+  merged 2026-06-28 with exact PR head
+  `de2b663385d3883860b9366634641959cd38bb2a`.
+- PR #266 (`Clarify copilot intake authority
   boundaries`), merged 2026-06-28 with exact PR head
   `778937c1a26c81b70bb798ea6616cd8fd6fc3911`.
 - Current server-side main CI evidence:
@@ -74,6 +77,10 @@ As of this update:
     `28316510543` success.
   - PR #266 `235f36ea4c5c38b73d23a786903407ee99088f23`: run
     `28316712653` success.
+  - PR #267 `df83ea99803e64f97317d854f69c0befa468adf4`: run
+    `28316881854` success.
+  - PR #268 `76a57362c73f0f63dc2d9b61f871b24a7a5bb329`: run
+    `28317369049` success.
 - Recent domain-scoped progress:
   - #244 advanced the natural peer-callback proposal handoff path.
   - #245 added opt-in MemoryOS sidecar recall/degraded-mode support.
@@ -117,6 +124,12 @@ As of this update:
     durable review verdict authority, keeps `mcp_writeback:*` and legacy
     `chat_dispatch_queue#entry=*` candidate-only, and adds an explicit advisory
     intake boundary.
+  - #267 refreshed current goal docs after the B/C/D completion pass.
+  - #268 fixes the acceptance-gated short-run read projection after
+    final-action GitHub gate resolution: accepted gates project as `merged`,
+    manual gaps project as `blocked_for_input` with `blocked_reason`, and
+    durable refs point back to `chat.db`, dispatch queue, review verdict,
+    final action, and GitHub gate evidence/gap authority.
 - The next long goal should start from a clean `origin/main` worktree after
   truth refresh.
 - Dirty historical worktrees may be read as references only. They are not main
