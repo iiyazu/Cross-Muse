@@ -404,7 +404,7 @@ def test_dashboard_peer_chat_ux_projection_is_frontend_read_model(
     assert worklist_by_id[inbox_item.id]["next_action"] == "deliver_peer_turn"
     assert worklist_by_id[inbox_item.id]["detail_kind"] == "inbox_item"
     assert worklist_by_id[dispatch.entry_id]["next_action"] == "dispatch_execute_peer"
-    assert worklist_by_id[dispatch.entry_id]["source_refs"] == [
+    expected_dispatch_refs = [
         f"chat_dispatch_queue:{dispatch.entry_id}",
         f"proposal:{proposal.id}",
         "collaboration:frontend-gate",
@@ -413,6 +413,28 @@ def test_dashboard_peer_chat_ux_projection_is_frontend_read_model(
         f"collaboration:{run.run_id}",
         "artifact:ux-lane-graph",
     ]
+    assert worklist_by_id[dispatch.entry_id]["source_refs"] == expected_dispatch_refs
+    dispatch_entry = next(
+        entry
+        for entry in payload["dispatch_queue"]["entries"]
+        if entry["entry_id"] == dispatch.entry_id
+    )
+    assert dispatch_entry["source_refs"] == expected_dispatch_refs
+    assert dispatch_entry["authority_boundary"] == {
+        "producer": "chat.db:chat_dispatch_queue",
+        "consumer": "frontend.peer_chat_ux_projection",
+        "condition": "read_only_projection",
+        "proof_boundary": "dispatch_queue_authority_not_execution_proof",
+    }
+    assert dispatch_entry["sidecar_continuity"] == {
+        "producer": "chat.db:chat_dispatch_queue",
+        "consumer": "memoryos_sidecar",
+        "condition": "explicit_memoryos_configuration",
+        "proof_boundary": "sidecar_continuity_not_execution_truth",
+        "projection_only": True,
+        "handoff_state": "contract_available",
+        "source_refs": expected_dispatch_refs,
+    }
     assert worklist_by_id[blocker.blocker_id]["next_action"] == "resolve_blocker"
     assert worklist_by_id[blocker.blocker_id]["source_refs"] == ["proposal:ux"]
     supporting_context = payload["supporting_context"]
@@ -583,13 +605,37 @@ def test_dashboard_peer_chat_ux_projection_tolerates_dispatch_queue_without_gate
     )
 
     assert response.status_code == 200
-    worklist_by_id = {item["id"]: item for item in response.json()["worklist"]}
+    payload = response.json()
+    worklist_by_id = {item["id"]: item for item in payload["worklist"]}
     assert worklist_by_id["dispatch:old"]["source_refs"] == [
         "chat_dispatch_queue:dispatch:old",
         "proposal:proposal-old",
         "resolution:resolution-old",
         "artifact:old-lane",
     ]
+    legacy_dispatch_entry = payload["dispatch_queue"]["entries"][0]
+    expected_legacy_refs = [
+        "chat_dispatch_queue:dispatch:old",
+        "proposal:proposal-old",
+        "resolution:resolution-old",
+        "artifact:old-lane",
+    ]
+    assert legacy_dispatch_entry["source_refs"] == expected_legacy_refs
+    assert legacy_dispatch_entry["authority_boundary"] == {
+        "producer": "chat.db:chat_dispatch_queue",
+        "consumer": "frontend.peer_chat_ux_projection",
+        "condition": "read_only_projection",
+        "proof_boundary": "dispatch_queue_authority_not_execution_proof",
+    }
+    assert legacy_dispatch_entry["sidecar_continuity"] == {
+        "producer": "chat.db:chat_dispatch_queue",
+        "consumer": "memoryos_sidecar",
+        "condition": "explicit_memoryos_configuration",
+        "proof_boundary": "sidecar_continuity_not_execution_truth",
+        "projection_only": True,
+        "handoff_state": "contract_available",
+        "source_refs": expected_legacy_refs,
+    }
 
 
 def test_dashboard_peer_chat_ux_projection_keeps_dispatch_evidence_out_of_source_refs(
@@ -634,6 +680,8 @@ def test_dashboard_peer_chat_ux_projection_keeps_dispatch_evidence_out_of_source
     assert dispatched.dispatch_evidence not in worklist_by_id[entry.entry_id]["source_refs"]
     dispatch_entry = payload["dispatch_queue"]["entries"][0]
     assert dispatch_entry["dispatch_evidence"] == "mcp_writeback:dispatch-inbox"
+    assert dispatched.dispatch_evidence not in dispatch_entry["source_refs"]
+    assert dispatch_entry["sidecar_continuity"]["source_refs"] == dispatch_entry["source_refs"]
 
 
 def test_dashboard_peer_chat_ux_projection_does_not_mutate_authority_files(

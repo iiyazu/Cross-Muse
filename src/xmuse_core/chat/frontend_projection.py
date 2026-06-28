@@ -249,14 +249,19 @@ def _dispatch_entries(conn: sqlite3.Connection, conversation_id: str) -> list[di
         """,
         (conversation_id,),
     )
-    return [
-        {
+    entries: list[dict[str, Any]] = []
+    for row in rows:
+        entry = {
             **dict(row),
             "auto_execute": bool(row["auto_execute"]),
             "gate_refs": _json_list(row["gate_refs_json"]),
         }
-        for row in rows
-    ]
+        source_refs = _dispatch_source_refs(entry)
+        entry["source_refs"] = source_refs
+        entry["authority_boundary"] = _dispatch_authority_boundary()
+        entry["sidecar_continuity"] = _dispatch_sidecar_continuity(source_refs)
+        entries.append(entry)
+    return entries
 
 
 def _collaboration_runs(conn: sqlite3.Connection, conversation_id: str) -> list[dict[str, Any]]:
@@ -682,6 +687,27 @@ def _dispatch_source_refs(entry: dict[str, Any]) -> list[str]:
             refs.append(f"{prefix}:{value}")
     refs.extend(_string_items(entry.get("artifact_ref")))
     return _dedupe(refs)
+
+
+def _dispatch_authority_boundary() -> dict[str, str]:
+    return {
+        "producer": "chat.db:chat_dispatch_queue",
+        "consumer": "frontend.peer_chat_ux_projection",
+        "condition": "read_only_projection",
+        "proof_boundary": "dispatch_queue_authority_not_execution_proof",
+    }
+
+
+def _dispatch_sidecar_continuity(source_refs: list[str]) -> dict[str, Any]:
+    return {
+        "producer": "chat.db:chat_dispatch_queue",
+        "consumer": "memoryos_sidecar",
+        "condition": "explicit_memoryos_configuration",
+        "proof_boundary": "sidecar_continuity_not_execution_truth",
+        "projection_only": True,
+        "handoff_state": "contract_available",
+        "source_refs": list(source_refs),
+    }
 
 
 def _fetch_one(
