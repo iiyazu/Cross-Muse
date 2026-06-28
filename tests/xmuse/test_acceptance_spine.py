@@ -133,6 +133,37 @@ def test_acceptance_spine_tracks_proposal_resolution_and_dispatch_refs(
     assert "provider_session_binding:binding-spine-flow" in spine.execution_evidence_refs
 
 
+def test_dispatch_queue_preserves_gate_refs_when_legacy_enqueue_retries(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "chat.db"
+    chat = ChatStore(db)
+    conversation = chat.create_conversation("Dispatch gate refs")
+    queue = ChatDispatchQueueStore(db)
+
+    initial = queue.enqueue_agent_auto_dispatch(
+        conversation_id=conversation.id,
+        proposal_id="proposal-gated",
+        resolution_id="resolution-gated",
+        collaboration_run_id="run-gated",
+        artifact_ref="artifact:lane_graph",
+        gate_refs=["collaboration:run-gated", "review_trigger_verdict:message-gated"],
+    )
+    retried = queue.enqueue_agent_auto_dispatch(
+        conversation_id=conversation.id,
+        proposal_id="proposal-gated",
+        resolution_id="resolution-gated",
+        collaboration_run_id="run-gated",
+        artifact_ref="artifact:lane_graph",
+    )
+
+    assert retried.entry_id == initial.entry_id
+    assert retried.gate_refs == [
+        "collaboration:run-gated",
+        "review_trigger_verdict:message-gated",
+    ]
+
+
 def test_chat_api_reads_acceptance_spine_status(tmp_path: Path) -> None:
     client = TestClient(create_app(tmp_path))
     conversation = client.post(
@@ -166,9 +197,7 @@ def test_acceptance_spine_tracks_review_verdict_final_action_and_github_gap(
 ) -> None:
     intake_message_id, hold = _create_spine_with_pending_final_action(tmp_path)
 
-    spine = AcceptanceSpineStore(tmp_path / "chat.db").get_by_intake_message(
-        intake_message_id
-    )
+    spine = AcceptanceSpineStore(tmp_path / "chat.db").get_by_intake_message(intake_message_id)
     assert spine.review_verdict_ref == "review_plane.json#verdict=verdict-spine-review"
     assert spine.final_action_ref == f"final_actions.json#hold={hold.id}"
     assert spine.manual_gaps == ["github_gate_unverified"]
@@ -187,9 +216,7 @@ def test_final_action_approval_without_github_evidence_keeps_spine_blocked(
         resolved_by="human",
     )
 
-    spine = AcceptanceSpineStore(tmp_path / "chat.db").get_by_intake_message(
-        intake_message_id
-    )
+    spine = AcceptanceSpineStore(tmp_path / "chat.db").get_by_intake_message(intake_message_id)
     assert spine.status is AcceptanceSpineStatus.BLOCKED
     assert spine.github_gate_evidence_ref is None
     assert spine.manual_gaps == ["github_gate_unverified"]
@@ -208,9 +235,7 @@ def test_final_action_approval_with_direct_github_evidence_ref_stays_blocked(
         github_gate_evidence_ref="github:pr:42#checks=abc123",
     )
 
-    spine = AcceptanceSpineStore(tmp_path / "chat.db").get_by_intake_message(
-        intake_message_id
-    )
+    spine = AcceptanceSpineStore(tmp_path / "chat.db").get_by_intake_message(intake_message_id)
     final_action = FinalActionGateStore(tmp_path / "final_actions.json").get(hold.id)
     assert spine.status is AcceptanceSpineStatus.BLOCKED
     assert spine.github_gate_evidence_ref is None
@@ -231,9 +256,7 @@ def test_acceptance_spine_direct_final_action_ref_without_producer_record_stays_
         github_gate_evidence_ref="github:pr:42#checks=abc123",
     )
 
-    spine = AcceptanceSpineStore(tmp_path / "chat.db").get_by_intake_message(
-        intake_message_id
-    )
+    spine = AcceptanceSpineStore(tmp_path / "chat.db").get_by_intake_message(intake_message_id)
     assert spine.status is AcceptanceSpineStatus.BLOCKED
     assert spine.github_gate_evidence_ref is None
     assert spine.manual_gaps == ["github_gate_unverified"]
@@ -255,13 +278,9 @@ def test_final_action_approval_with_server_gate_producer_accepts_spine(
         collector=_StaticGithubTruthCollector(_complete_server_truth()),
     )
 
-    spine = AcceptanceSpineStore(tmp_path / "chat.db").get_by_intake_message(
-        intake_message_id
-    )
+    spine = AcceptanceSpineStore(tmp_path / "chat.db").get_by_intake_message(intake_message_id)
     final_action = FinalActionGateStore(tmp_path / "final_actions.json").get(hold.id)
-    gate_payload = json.loads(
-        (tmp_path / "github_gate_evidence.json").read_text(encoding="utf-8")
-    )
+    gate_payload = json.loads((tmp_path / "github_gate_evidence.json").read_text(encoding="utf-8"))
 
     assert spine.status is AcceptanceSpineStatus.ACCEPTED
     assert spine.github_gate_evidence_ref == final_action.github_gate_evidence_ref
@@ -270,9 +289,11 @@ def test_final_action_approval_with_server_gate_producer_accepts_spine(
     assert gate_payload["items"][0]["can_accept"] is True
     assert gate_payload["items"][0]["evidence"]["proof_level"] == "server_side_merge_proof"
 
-    api_payload = TestClient(create_app(tmp_path)).get(
-        f"/api/chat/conversations/{spine.conversation_id}/acceptance-spines"
-    ).json()
+    api_payload = (
+        TestClient(create_app(tmp_path))
+        .get(f"/api/chat/conversations/{spine.conversation_id}/acceptance-spines")
+        .json()
+    )
     api_item = api_payload["items"][0]
     assert api_payload["source_authority"] == "chat_store"
     assert api_item["final_action_ref"] == f"final_actions.json#hold={hold.id}"
@@ -295,13 +316,9 @@ def test_final_action_approval_with_server_gate_gap_keeps_spine_blocked(
         collector=_StaticGithubTruthCollector(_manual_gap_truth()),
     )
 
-    spine = AcceptanceSpineStore(tmp_path / "chat.db").get_by_intake_message(
-        intake_message_id
-    )
+    spine = AcceptanceSpineStore(tmp_path / "chat.db").get_by_intake_message(intake_message_id)
     final_action = FinalActionGateStore(tmp_path / "final_actions.json").get(hold.id)
-    gate_payload = json.loads(
-        (tmp_path / "github_gate_evidence.json").read_text(encoding="utf-8")
-    )
+    gate_payload = json.loads((tmp_path / "github_gate_evidence.json").read_text(encoding="utf-8"))
 
     assert spine.status is AcceptanceSpineStatus.BLOCKED
     assert spine.github_gate_evidence_ref is None
@@ -321,9 +338,7 @@ def test_final_action_rejection_fails_spine(tmp_path: Path) -> None:
         resolved_by="human",
     )
 
-    spine = AcceptanceSpineStore(tmp_path / "chat.db").get_by_intake_message(
-        intake_message_id
-    )
+    spine = AcceptanceSpineStore(tmp_path / "chat.db").get_by_intake_message(intake_message_id)
     assert spine.status is AcceptanceSpineStatus.FAILED
     assert spine.blocked_reason == "final_action_rejected"
 

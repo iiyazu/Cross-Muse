@@ -84,9 +84,7 @@ def test_group_chat_context_projects_provider_session_bindings(
     profile = context["participant_profiles"][0]
     assert profile["god_id"] == f"god:{conversation.id}:{architect.participant_id}"
     assert profile["mention_handle"] == "@architect"
-    assert profile["provider_session_binding_ref"] == (
-        f"god_session:{session.god_session_id}"
-    )
+    assert profile["provider_session_binding_ref"] == (f"god_session:{session.god_session_id}")
     assert profile["identity_authority_refs"] == [
         f"chat.db:participant:{architect.participant_id}",
         f"chat.db:conversation:{conversation.id}",
@@ -148,10 +146,7 @@ def test_group_chat_profile_handles_ambiguous_role_aliases(
         chat=chat,
     ).group_chat_context(conversation.id)
 
-    profiles = {
-        profile["participant_id"]: profile
-        for profile in context["participant_profiles"]
-    }
+    profiles = {profile["participant_id"]: profile for profile in context["participant_profiles"]}
     assert profiles[first.participant_id]["mention_handle"] == (
         f"@participant:{first.participant_id}"
     )
@@ -163,10 +158,13 @@ def test_group_chat_profile_handles_ambiguous_role_aliases(
     resolver = MentionResolver(participants)
     for participant in (first, second):
         handle = profiles[participant.participant_id]["mention_handle"]
-        assert resolver.resolve(
-            conversation.id,
-            handle,
-        ).participant.participant_id == participant.participant_id
+        assert (
+            resolver.resolve(
+                conversation.id,
+                handle,
+            ).participant.participant_id
+            == participant.participant_id
+        )
 
 
 def test_group_chat_context_bounds_recent_transcript_without_mutating_authority(
@@ -231,9 +229,7 @@ def test_group_chat_context_projects_compact_message_envelope_artifacts(
                     {
                         "artifact_id": "artifact-lane-candidate",
                         "name": "lane candidate",
-                        "parts": [
-                            {"text": "Use this as proposal evidence, not approval."}
-                        ],
+                        "parts": [{"text": "Use this as proposal evidence, not approval."}],
                     }
                 ]
             },
@@ -264,9 +260,7 @@ def test_group_chat_context_projects_compact_message_envelope_artifacts(
         ],
         "artifact_count": 1,
     }
-    assert context["context_capsule"]["recent_messages"][0]["envelope"] == (
-        recent["envelope"]
-    )
+    assert context["context_capsule"]["recent_messages"][0]["envelope"] == (recent["envelope"])
 
 
 def test_group_chat_context_projects_structured_state_from_chat_authorities(
@@ -385,6 +379,7 @@ def test_group_chat_context_projects_structured_state_from_chat_authorities(
         resolution_id=resolution.id,
         collaboration_run_id=collaboration.run_id,
         artifact_ref=f"resolution:{resolution.id}",
+        gate_refs=[f"collaboration:{collaboration.run_id}"],
     )
 
     context = ContextAssembler(
@@ -428,13 +423,12 @@ def test_group_chat_context_projects_structured_state_from_chat_authorities(
         "review:required",
     ]
     assert state["blockers"][0]["natural_route"]["status"] == "blocked"
-    assert state["blockers"][0]["natural_route"]["blocker_reason"] == (
-        "review_required"
-    )
+    assert state["blockers"][0]["natural_route"]["blocker_reason"] == ("review_required")
     assert state["blockers"][0]["natural_route_status"] == "blocked"
     assert state["proposals"][0]["id"] == proposal.id
     assert state["resolutions"][0]["id"] == resolution.id
     assert state["collaborations"][0]["run_id"] == collaboration.run_id
     assert state["collaborations"][0]["responses"][0]["target"] == "@execute"
     assert state["dispatch_queue"][0]["entry_id"] == dispatch.entry_id
+    assert state["dispatch_queue"][0]["gate_refs"] == [f"collaboration:{collaboration.run_id}"]
     assert state["acceptance_spines"][0]["proposal_id"] == proposal.id
