@@ -22,13 +22,15 @@ operation record 或巨大 handoff 文档。
 当前校准：
 
 - `origin/main` 当前校准在 merge commit
-  `159b851435b735ac828eca0637b601907c306cef`，对应 PR #249
-  `Harden GitHub exact-head evidence`。
-- PR #242、#244、#245、#246、#247、#248、#249 均已合并，且各自
-  merge commit 的 main push CI 均为 success。
-- PR #248 是当前 goal 文档校准；PR #249 加固了 GitHub server truth
-  exact-head check-run evidence。二者都是支撑链路，不是 production-ready
-  natural groupchat 证明。
+  `e2a2e2742ff452bc8e306fb6efdd525231d22bff`，对应 PR #252
+  `Clarify A2A review verdict approval boundary`。
+- PR #242、#244、#245、#246、#247、#248、#249、#250、#251、#252 均已合并，
+  且各自 merge commit 的 main push CI 均为 success。
+- PR #248 与 #250 是当前 goal 文档校准；PR #249 加固了 GitHub server
+  truth exact-head check-run evidence；PR #251 暴露 MemoryOS sidecar 支撑上下文
+  的只读 UX projection；PR #252 明确 A2A review verdict 后仍需 proposal
+  approval authority 才能进入 dispatch。这些都是支撑链路，不是
+  production-ready natural groupchat 证明。
 - PR #243 (`codex/natural-groupchat-overnight-goal-docs`) 是较早的宽文档包，
   当前 `BEHIND` main；可作参考，但不是最新 current-goal 状态入口。
 - Dirty historical worktree 和 archive 文档只能作为参考，不是 main capability。

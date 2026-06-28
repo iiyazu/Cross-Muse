@@ -23,10 +23,10 @@ Read these first:
 As of this update:
 
 - `origin/main` is calibrated at merge commit
-  `159b851435b735ac828eca0637b601907c306cef`.
-- The latest merged PR is #249 (`Harden GitHub exact-head evidence`), merged
-  2026-06-28 with exact PR head
-  `ebbc58848d24dbbb4d2f3671bca61d4e1a621725`.
+  `e2a2e2742ff452bc8e306fb6efdd525231d22bff`.
+- The latest merged PR is #252 (`Clarify A2A review verdict approval
+  boundary`), merged 2026-06-28 with exact PR head
+  `1fc647e6d19689071c92cb763594494eb171ca86`.
 - Current server-side main CI evidence:
   - PR #242 `c1d19ad2ae9bd8b22742376c98968073a508329c`: run
     `28292323481` success.
@@ -42,6 +42,12 @@ As of this update:
     `28309677170` success.
   - PR #249 `159b851435b735ac828eca0637b601907c306cef`: run
     `28310645567` success.
+  - PR #250 `38306251fa1a820b35ce3ca46e877e9e04f1679c`: run
+    `28310900258` success.
+  - PR #251 `10d9f89900646e5b364424e01dc931383983084c`: run
+    `28311466358` success.
+  - PR #252 `e2a2e2742ff452bc8e306fb6efdd525231d22bff`: run
+    `28311860691` success.
 - Recent domain-scoped progress:
   - #244 advanced the natural peer-callback proposal handoff path.
   - #245 added opt-in MemoryOS sidecar recall/degraded-mode support.
@@ -50,6 +56,12 @@ As of this update:
   - #248 refreshed the current goal documentation package.
   - #249 made GitHub server truth require exact PR head check-run evidence
     before merge proof can emit `pr_merged`.
+  - #250 refreshed current goal docs against the newer main truth.
+  - #251 projected sanitized MemoryOS sidecar support metadata through the
+    read-only peer-chat UX projection.
+  - #252 made A2A `dispatch_allowed` review verdict writeback name
+    `chat.db/proposal_approval` as the next authority boundary, while dropping
+    provider-supplied boundary claims.
 - The next long goal should start from a clean `origin/main` worktree after
   truth refresh.
 - Dirty historical worktrees may be read as references only. They are not main
