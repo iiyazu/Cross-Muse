@@ -1,6 +1,6 @@
 # Goal Copilot Behavior Policy
 
-Updated: 2026-06-20.
+Updated: 2026-06-28.
 
 This document defines the "副驾" copilot role for long xmuse `/goal` runs.
 The copilot is an independent read-only reviewer that periodically audits
@@ -120,7 +120,9 @@ Product helper:
   keeps accepted recommendations advisory-only and requires durable authority
   refs before the main agent can classify them as accepted. Candidate refs
   such as subagent output, worker output, and local tests stay separate from
-  verified authority refs.
+  verified authority refs. `chat_dispatch_queue:*` is durable dispatch
+  authority; `mcp_writeback:*` is execution evidence/candidate input and must
+  not be promoted to authority by the copilot.
 - `xmuse_core.platform.goal_copilot.build_goal_copilot_launch_prompt()` emits a
   launch prompt that preserves the read-only and forbidden-claim boundaries.
 

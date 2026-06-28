@@ -28,10 +28,10 @@ Read first:
 Current calibration:
 - Start from a clean origin/main worktree after truth refresh.
 - Current known main calibration is
-  `502f7a6b1e777991ff22c7ea73bdc52373e2a218` after PR #255, but always verify
+  `9a30aeadd242e4978a84683801c0c65494a66c1c` after PR #257, but always verify
   live `origin/main` and open PR state before acting.
 - PRs #242, #244, #245, #246, #247, #248, #249, #250, #251, #252, #253,
-  #254, and #255 have
+  #254, #255, and #257 have
   merged with
   successful main push CI as of 2026-06-28.
 - PR #249 hardened GitHub server truth: PR/CI/merge evidence must be tied to
@@ -45,6 +45,10 @@ Current calibration:
   approval creates a real queue entry.
 - PR #255 persisted dispatch gate refs for MemoryOS sidecar/context continuity,
   frontend projection, and read-only copilot audit consumers.
+- PR #257 propagated dispatch authority refs into execute-peer
+  context/prompt/envelope, kept frontend `source_refs` authority-only, and
+  made read-only copilot classify `chat_dispatch_queue:*` as durable authority
+  while leaving `mcp_writeback:*` as execution evidence/candidate input.
 - PR #243 is an older behind-main docs package; treat it as reference-only
   unless rebased and revalidated.
 - Dirty historical worktrees and archived docs are references only, not main
