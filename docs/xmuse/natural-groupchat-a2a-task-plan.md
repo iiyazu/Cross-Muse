@@ -54,13 +54,15 @@ Current server facts after the 2026-06-28 Track A/B/C/D pass:
 | #275 | frontend final-action hold read projection | `9811e12c236ac88e31e67771d9788d75489d767d` | `28319975311` success |
 | #276 | copilot final-action hold authority boundary | `232e91672650d2bcda6cae0e8e2f8cd9976bfae1` | `28320338930` success |
 | #277 | MemoryOS sidecar context continuity refs | `22e0e4ead7dd14a77ae737b88d288227bd86f79e` | `28321033182` success |
+| #278 | docs refresh after MemoryOS sidecar continuity | `f15cd87f595eebe1131a7e4c8590c18f1557acdc` | `28321147772` success |
+| #279 | docs-only gate profile and explicit-profile scope enforcement | `5d03bbe82a3f17f2d854d46ee4dcbf7972fe533d` | `28323650818` success |
 
 These rows are GitHub server facts for merged code and CI. They are not proof
 of production-ready natural groupchat, live MemoryOS authority, frontend
 completeness, GitHub review truth, or autonomous merge.
 
 Next execution loop should start from clean `origin/main` at or after
-`22e0e4ead7dd14a77ae737b88d288227bd86f79e`, run Phase 0 again, and then push
+`5d03bbe82a3f17f2d854d46ee4dcbf7972fe533d`, run Phase 0 again, and then push
 the largest reachable real chain beyond the current handoff/review/dispatch
 boundary. If the next chain cannot advance, record the durable blocker and
 next authority boundary rather than relying on stdout, worker summaries, or
@@ -119,6 +121,33 @@ Latest post-#273 local runtime evidence:
   GitHub PR creation by the natural chain, autonomous merge, live MemoryOS, or
   production readiness.
 
+Latest #279 PR-head local runtime evidence:
+
+- command path:
+  `scripts/run_fullchain_docs_sentinel.py` was run from clean PR head
+  `f3212bba613693cdbb38249fd746fb760064d3c8` after the `docs-only` gate
+  profile fix, with `--peer-god-backend native` and `--review-provider auto`;
+- condition satisfied:
+  feature `track-a-docs-only-gate-final2-20260628` reached
+  `awaiting_final_action`, final action hold `final-e7112dbbd2b9` stayed
+  pending, `gate_passed` was true, and the isolated execution file
+  `docs/xmuse/track-a-docs-only-gate-final2-20260628.md` matched the exact
+  expected sentence;
+- gate proof:
+  `logs/gates/track-a-docs-only-gate-final2-20260628/report.json` selected
+  `profile_ids=["docs-only"]` and ran
+  `uv run pytest -q tests/xmuse/test_mainline_contract_docs.py
+  tests/xmuse/test_contract_smoke_gates.py` with return code 0;
+- authority/projection boundary:
+  `chat.db`, proposal/review/resolution/dispatch queue, `review_plane.json`,
+  gate report, review verdict, final-action hold, and the isolated worktree
+  were the inspected proof surfaces; provider stdout and local test output
+  remained diagnostics only;
+- proof limitation:
+  this is local durable runtime evidence for the natural docs sentinel on the
+  #279 PR head, not proof of production readiness, autonomous merge, live
+  MemoryOS authority, full frontend readiness, or GitHub review truth.
+
 ## Phase 0 - Truth Refresh
 
 Run and record:
@@ -129,7 +158,7 @@ git branch --show-current
 git rev-parse HEAD
 git fetch origin
 git rev-parse origin/main
-for pr in 242 244 245 246 247 248 249 250 251 252 253 254 255 257 258 259 260 261 262 263 264 265 266 267 268 269 270 271 272 273 274 275 276 277; do
+for pr in 242 244 245 246 247 248 249 250 251 252 253 254 255 257 258 259 260 261 262 263 264 265 266 267 268 269 270 271 272 273 274 275 276 277 278 279; do
   gh pr view "$pr" --json number,state,headRefName,headRefOid,baseRefName,mergedAt,mergeCommit,url
 done
 gh pr list --state open --json number,title,headRefName,headRefOid,baseRefName,isDraft,mergeStateStatus,url
@@ -143,8 +172,8 @@ Exit with:
   main SHA;
 - #242, #244, #245, #246, #247, #248, #249, #250, #251, #252, #253, #254,
   #255, #257, #258, #259, #260, #261, #262, #263, #264, #265, #266, #267,
-  #268, #269, #270, #271, #272, #273, #274, #275, #276, and #277 verified
-  merged unless superseded by newer current docs;
+  #268, #269, #270, #271, #272, #273, #274, #275, #276, #277, #278, and #279
+  verified merged unless superseded by newer current docs;
 - latest relevant main push CI observed through GitHub server facts;
 - dirty historical worktrees marked reference-only;
 - current provider availability recorded;
@@ -327,7 +356,7 @@ Final report includes:
 
 Current final-report notes for the 2026-06-28 pass:
 
-- maximum verified GitHub chain: domain-scoped PRs #244-#277 reached
+- maximum verified GitHub chain: domain-scoped PRs #244-#279 reached
   exact-head PR CI, guarded merge, and successful main push CI;
 - MemoryOS state: opt-in sidecar contract/degraded-mode support only; no live
   MemoryOS authority claim; #255 gives sidecar/context continuity durable
@@ -348,7 +377,8 @@ Current final-report notes for the 2026-06-28 pass:
   closure evidence; #261 makes lane-level dispatch authority refs readable
   without promoting them to execution proof; #265 exposes dispatch queue
   entry-level authority refs, authority boundary, and projection-only sidecar
-  continuity on the frontend UX projection; no full frontend claim;
+  continuity on the frontend UX projection; #275 exposes pending final-action
+  holds as read-only operator next-action projection; no full frontend claim;
 - Ray use: not the default natural groupchat route; remains optional legacy;
   #272 keeps the fullchain docs sentinel peer/review/execute GOD backends
   aligned with the selected `--peer-god-backend`, so native sentinel runs do
@@ -360,8 +390,8 @@ Current final-report notes for the 2026-06-28 pass:
   durable authority while keeping `mcp_writeback:*` candidate-only; #266 lets
   accepted recommendations also use `review_trigger_verdict:*` as durable
   review verdict authority, keeps legacy `chat_dispatch_queue#entry=*`
-  candidate-only, and marks intake as advisory; final-action hold refs may be
-  used only as operator next-action authority, not GitHub or merge truth;
+  candidate-only, and marks intake as advisory; #276 lets final-action hold
+  refs be used only as operator next-action authority, not GitHub or merge truth;
   subagent/copilot output is not proof truth;
 - GitHub server truth: #249 requires complete required check names and
   per-check-run PR head SHA evidence before `server_side_merge_proof` can emit
@@ -391,5 +421,10 @@ Current final-report notes for the 2026-06-28 pass:
   verdict, final action, and GitHub gate evidence/gap authority; #270 keeps
   the noop integration marker projection-only and separate from execution or
   merge proof;
+- docs-only gate boundary: #279 adds a `docs-only` gate profile for
+  `docs/xmuse/**`, keeps explicit profile selection scoped by actual changed
+  paths including untracked isolated-worker output, and writes durable
+  fail-closed gate reports when profile resolution fails before any gate
+  command can run;
 - next authority boundary: run the next real natural chain from current main
   and tie any PR/CI/merge state to exact head SHA and GitHub run metadata.

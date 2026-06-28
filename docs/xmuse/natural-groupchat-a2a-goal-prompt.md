@@ -28,12 +28,12 @@ Read first:
 Current calibration:
 - Start from a clean origin/main worktree after truth refresh.
 - Current known main calibration is
-  `8ae7600991371783658829900cda59ecdbed7a57` after PR #273, but always verify
+  `5d03bbe82a3f17f2d854d46ee4dcbf7972fe533d` after PR #279, but always verify
   live `origin/main` and open PR state before acting.
 - PRs #242, #244, #245, #246, #247, #248, #249, #250, #251, #252, #253,
   #254, #255, #257, #258, #259, #260, #261, #262, #263, #264, #265, #266,
-  #267, #268, #269, #270, #271, #272, and #273 have merged with successful
-  main push CI as of 2026-06-28.
+  #267, #268, #269, #270, #271, #272, #273, #274, #275, #276, #277, #278,
+  and #279 have merged with successful main push CI as of 2026-06-28.
 - PR #249 hardened GitHub server truth: PR/CI/merge evidence must be tied to
   exact PR head SHA, required check-run names, and per-check-run head SHAs.
 - PR #251 exposed sanitized MemoryOS sidecar support metadata through the
@@ -87,6 +87,20 @@ Current calibration:
   not drift into Ray defaults.
 - PR #273 refreshed current goal docs after #272 and records its merge/main-CI
   facts.
+- PR #274 refreshed current goal docs after the default native post-#273
+  sentinel.
+- PR #275 exposes pending final-action holds as read-only frontend operator
+  next-action projection.
+- PR #276 lets read-only copilot intake classify final-action holds as durable
+  operator next-action authority, not GitHub or merge truth.
+- PR #277 threads MemoryOS sidecar recall continuity refs into dedicated
+  prompt/supporting-context/read-projection fields while keeping generic
+  authority `source_refs` clean.
+- PR #278 refreshed current goal docs after #277.
+- PR #279 adds a repository `docs-only` gate profile, keeps explicit
+  `gate_profiles` scoped by actual changed paths including untracked isolated
+  worker output, and writes durable fail-closed gate reports for profile
+  resolution failures.
 - PR #243 is an older behind-main docs package; treat it as reference-only
   unless rebased and revalidated.
 - Dirty historical worktrees and archived docs are references only, not main
