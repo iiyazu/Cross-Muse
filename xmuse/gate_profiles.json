@@ -53,6 +53,31 @@
       "test_markers": [],
       "mixed_test_files": []
     },
+    "docs-only": {
+      "description": "Docs-only xmuse documentation smoke gate for isolated runtime sentinel lanes.",
+      "blocking": true,
+      "env": {},
+      "commands": [
+        {
+          "command": "pytest",
+          "args": [
+            "-q",
+            "tests/xmuse/test_mainline_contract_docs.py",
+            "tests/xmuse/test_contract_smoke_gates.py"
+          ]
+        }
+      ],
+      "diff_selectors": [
+        "docs/xmuse/**"
+      ],
+      "test_files": [
+        "tests/xmuse/test_mainline_contract_docs.py",
+        "tests/xmuse/test_contract_smoke_gates.py"
+      ],
+      "test_nodeids": [],
+      "test_markers": [],
+      "mixed_test_files": []
+    },
     "xmuse-core": {
       "description": "xmuse core runtime, peer-chat, feature graph, and platform orchestrator gate.",
       "blocking": true,
