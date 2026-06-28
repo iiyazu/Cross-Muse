@@ -28,9 +28,10 @@ Read first:
 Current calibration:
 - Start from a clean origin/main worktree after truth refresh.
 - Current known main calibration is
-  `e2a2e2742ff452bc8e306fb6efdd525231d22bff` after PR #252, but always verify
+  `502f7a6b1e777991ff22c7ea73bdc52373e2a218` after PR #255, but always verify
   live `origin/main` and open PR state before acting.
-- PRs #242, #244, #245, #246, #247, #248, #249, #250, #251, and #252 have
+- PRs #242, #244, #245, #246, #247, #248, #249, #250, #251, #252, #253,
+  #254, and #255 have
   merged with
   successful main push CI as of 2026-06-28.
 - PR #249 hardened GitHub server truth: PR/CI/merge evidence must be tied to
@@ -40,6 +41,10 @@ Current calibration:
 - PR #252 clarified that A2A `dispatch_allowed` review verdict writeback still
   requires `chat.db/proposal_approval` before dispatch, and drops
   provider-supplied boundary claims.
+- PR #254 exposed `chat.db/dispatch_queue` as next authority only when proposal
+  approval creates a real queue entry.
+- PR #255 persisted dispatch gate refs for MemoryOS sidecar/context continuity,
+  frontend projection, and read-only copilot audit consumers.
 - PR #243 is an older behind-main docs package; treat it as reference-only
   unless rebased and revalidated.
 - Dirty historical worktrees and archived docs are references only, not main
