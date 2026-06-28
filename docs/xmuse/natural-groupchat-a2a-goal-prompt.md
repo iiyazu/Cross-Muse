@@ -25,11 +25,12 @@ Read first:
 - /home/iiyatu/projects/python/xmuse-m7-natural-groupchat-goal-design/docs/superpowers/specs/2026-06-26-natural-groupchat-a2a-production-goal-design.md
 - /home/iiyatu/clowder-ai as natural groupchat reference only
 
-Current calibration:
+Recorded baseline:
 - Start from a clean origin/main worktree after truth refresh.
-- Current known main calibration is
-  `5d03bbe82a3f17f2d854d46ee4dcbf7972fe533d` after PR #279, but always verify
-  live `origin/main` and open PR state before acting.
+- `last_observed_baseline` is
+  `5d03bbe82a3f17f2d854d46ee4dcbf7972fe533d` after PR #279. This is a static
+  docs baseline, not live remote-head truth. Always verify live `origin/main`
+  and open PR state before acting.
 - PRs #242, #244, #245, #246, #247, #248, #249, #250, #251, #252, #253,
   #254, #255, #257, #258, #259, #260, #261, #262, #263, #264, #265, #266,
   #267, #268, #269, #270, #271, #272, #273, #274, #275, #276, #277, #278,

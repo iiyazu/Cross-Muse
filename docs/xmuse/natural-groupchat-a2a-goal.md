@@ -18,16 +18,20 @@ Read these first:
 - `/home/iiyatu/projects/python/xmuse-m7-natural-groupchat-goal-design/docs/superpowers/specs/2026-06-26-natural-groupchat-a2a-production-goal-design.md`
 - `/home/iiyatu/clowder-ai` as implementation reference, not as authority
 
-## Latest Calibration
+## Recorded Baseline
 
-As of this update:
+As of this docs snapshot:
 
-- `origin/main` is calibrated at merge commit
+- `last_observed_baseline` is merge commit
   `5d03bbe82a3f17f2d854d46ee4dcbf7972fe533d`.
-- The latest merged PR is #279 (`Add docs-only gate profile`),
+- The last merged PR recorded by this baseline is #279
+  (`Add docs-only gate profile`),
   merged 2026-06-28 with exact PR head
   `f3212bba613693cdbb38249fd746fb760064d3c8`.
-- Current server-side main CI evidence:
+- This static baseline is not live GitHub truth. Every execution loop must
+  refresh `origin/main`, open PRs, and CI runs from GitHub server facts before
+  acting.
+- Recorded server-side main CI evidence:
   - PR #242 `c1d19ad2ae9bd8b22742376c98968073a508329c`: run
     `28292323481` success.
   - PR #244 `65910e683eb6f8c70ed5428ac77c0e971ff0aa99`: run

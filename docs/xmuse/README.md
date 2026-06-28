@@ -19,11 +19,13 @@ operation record 或巨大 handoff 文档。
 | `/home/iiyatu/projects/python/xmuse-m7-natural-groupchat-goal-design/docs/superpowers/specs/2026-06-26-natural-groupchat-a2a-production-goal-design.md` | 详细设计来源 |
 | `/home/iiyatu/clowder-ai` | 自然群聊实现参考，不是 xmuse authority |
 
-当前校准：
+最近记录的 observed baseline：
 
-- `origin/main` 当前校准在 merge commit
+- 本文件的 `last_observed_baseline` 记录在 merge commit
   `5d03bbe82a3f17f2d854d46ee4dcbf7972fe533d`，对应 PR #279
   `Add docs-only gate profile`。
+- 这是静态文档基线，不是 live remote HEAD 声明。每轮执行必须从 GitHub
+  server facts 重新刷新 `origin/main`、open PR 和 CI 状态。
 - PR #242、#244、#245、#246、#247、#248、#249、#250、#251、#252、#253、#254、#255、#257、#258、#259、#260、#261、#262、#263、#264、#265、#266、#267、#268、#269、#270 均已合并，
   #271、#272、#273、#274、#275、#276、#277、#278、#279 均已合并，且各自
   merge commit 的 main push CI 均为 success。
