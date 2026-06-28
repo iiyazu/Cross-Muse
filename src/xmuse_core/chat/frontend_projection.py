@@ -16,6 +16,7 @@ SOURCE_AUTHORITY = [
     "chat.db:collaboration_blockers",
     "chat.db:acceptance_spines",
     "chat.db:peer_turn_latency_traces",
+    "final_actions.json",
     "active_sessions.json",
     "god_sessions.json",
 ]
@@ -44,6 +45,7 @@ def build_peer_chat_ux_projection(
         closure_evidence = _closure_evidence(conn, conversation_id)
         supporting_context = _supporting_context(conn, conversation_id)
     sessions = _conversation_sessions(root, conversation_id)
+    final_action_holds = _final_action_holds(root, closure_evidence)
 
     return {
         "schema_version": "peer_chat_ux_projection/v1",
@@ -67,6 +69,7 @@ def build_peer_chat_ux_projection(
             inbox_items=inbox_items,
             dispatch_entries=dispatch_entries,
             blockers=blockers,
+            final_action_holds=final_action_holds["items"],
         ),
         "artifacts": {
             "total": len(proposals),
@@ -108,6 +111,7 @@ def build_peer_chat_ux_projection(
         },
         "supporting_context": supporting_context,
         "closure_evidence": closure_evidence,
+        "final_action_holds": final_action_holds,
     }
 
 
@@ -529,6 +533,7 @@ def _worklist_items(
     inbox_items: list[dict[str, Any]],
     dispatch_entries: list[dict[str, Any]],
     blockers: list[dict[str, Any]],
+    final_action_holds: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     links = _links(conversation_id)
     items: list[dict[str, Any]] = []
@@ -593,7 +598,89 @@ def _worklist_items(
                 },
             }
         )
+    for hold in final_action_holds:
+        items.append(
+            {
+                "kind": "final_action_hold",
+                "id": hold.get("id"),
+                "status": hold.get("status"),
+                "target_role": "operator",
+                "created_at": hold.get("created_at"),
+                "updated_at": hold.get("updated_at"),
+                "next_action": _next_action_for_final_action(hold),
+                "detail_kind": "final_action_hold",
+                "detail_api_href": links["inspector_api_href"],
+                "source_refs": list(hold.get("source_refs") or []),
+                "compact_detail": {
+                    "action": hold.get("action"),
+                    "lane_id": hold.get("lane_id"),
+                    "target_status": hold.get("target_status"),
+                    "github_gate_evidence_ref": hold.get("github_gate_evidence_ref"),
+                    "github_gate_gap_ref": hold.get("github_gate_gap_ref"),
+                },
+            }
+        )
     return sorted(items, key=lambda item: str(item.get("created_at") or ""))
+
+
+def _final_action_holds(
+    root: Path,
+    closure_evidence: dict[str, Any],
+) -> dict[str, Any]:
+    raw_holds = _read_json_file(root / "final_actions.json").get("holds")
+    if not isinstance(raw_holds, list):
+        raw_holds = []
+    holds_by_id = {
+        str(hold.get("id")): hold
+        for hold in raw_holds
+        if isinstance(hold, dict) and isinstance(hold.get("id"), str)
+    }
+    items: list[dict[str, Any]] = []
+    for spine in closure_evidence.get("items") or []:
+        if not isinstance(spine, dict):
+            continue
+        final_action_ref = spine.get("final_action_ref")
+        hold_id = _final_action_id_from_ref(final_action_ref)
+        if hold_id is None:
+            continue
+        hold = holds_by_id.get(hold_id)
+        if not isinstance(hold, dict):
+            continue
+        if hold.get("status") != "pending":
+            continue
+        item = _final_action_hold_projection(hold, spine)
+        if item is not None:
+            items.append(item)
+    return {
+        "source_authority": ["final_actions.json", "chat.db:acceptance_spines"],
+        "projection_only": True,
+        "total": len(items),
+        "pending": sum(1 for item in items if item.get("status") == "pending"),
+        "items": items,
+    }
+
+
+def _final_action_hold_projection(
+    hold: dict[str, Any],
+    spine: dict[str, Any],
+) -> dict[str, Any] | None:
+    hold_id = _projection_text(hold.get("id"))
+    if not hold_id:
+        return None
+    return {
+        "id": hold_id,
+        "lane_id": _projection_text(hold.get("lane_id")),
+        "verdict_id": _projection_text(hold.get("verdict_id")),
+        "action": _projection_text(hold.get("action")),
+        "target_status": _projection_text(hold.get("target_status")),
+        "status": _projection_text(hold.get("status")) or "unknown",
+        "summary": _projection_text(hold.get("summary")),
+        "resolved_by": _projection_text(hold.get("resolved_by")),
+        "github_gate_evidence_ref": _projection_text(hold.get("github_gate_evidence_ref")),
+        "github_gate_gap_ref": _projection_text(hold.get("github_gate_gap_ref")),
+        "source_refs": _final_action_source_refs(hold_id, hold, spine),
+        "authority_boundary": _final_action_authority_boundary(),
+    }
 
 
 def _participant_payload(row: sqlite3.Row) -> dict[str, Any]:
@@ -647,6 +734,14 @@ def _next_action_for_dispatch(entry: dict[str, Any]) -> str:
     if status == "failed":
         return "inspect_dispatch_failure"
     return "none"
+
+
+def _next_action_for_final_action(hold: dict[str, Any]) -> str:
+    if hold.get("status") != "pending":
+        return "none"
+    if hold.get("action") == "merge":
+        return "verify_github_gate_and_resolve_final_action"
+    return "resolve_final_action"
 
 
 def _session_api_href(session: dict[str, Any] | None) -> str | None:
@@ -707,6 +802,42 @@ def _dispatch_sidecar_continuity(source_refs: list[str]) -> dict[str, Any]:
         "projection_only": True,
         "handoff_state": "contract_available",
         "source_refs": list(source_refs),
+    }
+
+
+def _final_action_id_from_ref(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    prefix = "final_actions.json#hold="
+    if not value.startswith(prefix):
+        return None
+    hold_id = value.removeprefix(prefix).strip()
+    return hold_id or None
+
+
+def _final_action_source_refs(
+    hold_id: str,
+    hold: dict[str, Any],
+    spine: dict[str, Any],
+) -> list[str]:
+    refs = [f"final_actions.json#hold={hold_id}"]
+    verdict_ref = spine.get("review_verdict_ref")
+    if isinstance(verdict_ref, str) and verdict_ref:
+        refs.append(verdict_ref)
+    elif isinstance(hold.get("verdict_id"), str) and hold["verdict_id"]:
+        refs.append(f"review_verdict:{hold['verdict_id']}")
+    spine_id = spine.get("spine_id")
+    if isinstance(spine_id, str) and spine_id:
+        refs.append(f"chat.db:acceptance_spines#spine={spine_id}")
+    return _dedupe(refs)
+
+
+def _final_action_authority_boundary() -> dict[str, str]:
+    return {
+        "producer": "final_actions.json",
+        "consumer": "frontend.peer_chat_ux_projection",
+        "condition": "read_only_projection",
+        "proof_boundary": "final_action_hold_not_github_or_merge_truth",
     }
 
 

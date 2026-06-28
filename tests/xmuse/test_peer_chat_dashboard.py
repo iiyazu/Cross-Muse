@@ -15,10 +15,57 @@ from xmuse_core.chat.participant_store import ParticipantStore
 from xmuse_core.chat.peer_service import PeerChatService
 from xmuse_core.chat.store import ChatStore
 from xmuse_core.chat.stream_store import PeerTurnLatencyTraceStore
+from xmuse_core.platform.final_action_gate import FinalActionGateStore
 
 
 def _write_json(path: Path, payload: object) -> None:
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def _create_final_action_projection_fixture(tmp_path: Path):
+    db = tmp_path / "chat.db"
+    chat = ChatStore(db)
+    conv = chat.create_conversation("Final action UX")
+    message = chat.add_message(conv.id, "Human", "human", "@architect run sentinel")
+    proposal = chat.create_proposal(
+        conversation_id=conv.id,
+        author="Architect GOD",
+        proposal_type="lane_graph",
+        content='{"summary":"Final action lane","lanes":[{"feature_id":"lane-final"}]}',
+        references=[message.id],
+    )
+    spine_store = AcceptanceSpineStore(db)
+    spine_store.create_for_intake(conversation_id=conv.id, intake_message_id=message.id)
+    spine_store.attach_proposal(
+        conversation_id=conv.id,
+        intake_message_id=message.id,
+        proposal_id=proposal.id,
+    )
+    spine_store.attach_verdict_for_proposal(
+        proposal_id=proposal.id,
+        verdict_ref="resolution:res-final-action",
+    )
+    spine_store.attach_lane_execution_for_resolution(
+        resolution_id="res-final-action",
+        evidence_refs=["lane_graph:res-final-action-graph-v1"],
+    )
+    spine_store.attach_review_verdict_for_resolution(
+        resolution_id="res-final-action",
+        review_verdict_ref="review_plane.json#verdict=verdict-final-action",
+    )
+    hold = FinalActionGateStore(tmp_path / "final_actions.json").create_hold(
+        lane_id="lane-final",
+        verdict_id="verdict-final-action",
+        action="merge",
+        target_status="reviewed",
+        summary="Review accepted; operator must verify GitHub gate before merge.",
+    )
+    spine = spine_store.attach_final_action_for_review_verdict(
+        review_verdict_ref="review_plane.json#verdict=verdict-final-action",
+        final_action_ref=f"final_actions.json#hold={hold.id}",
+    )
+    assert spine is not None
+    return conv, hold, spine
 
 
 def test_dashboard_lists_peer_chat_conversations_with_drilldown_links(tmp_path: Path) -> None:
@@ -387,6 +434,7 @@ def test_dashboard_peer_chat_ux_projection_is_frontend_read_model(
         "chat.db:collaboration_blockers",
         "chat.db:acceptance_spines",
         "chat.db:peer_turn_latency_traces",
+        "final_actions.json",
         "active_sessions.json",
         "god_sessions.json",
     ]
@@ -460,6 +508,159 @@ def test_dashboard_peer_chat_ux_projection_is_frontend_read_model(
     assert "recall body" not in json.dumps(supporting_context)
     assert payload["closure_evidence"]["total"] == 1
     assert payload["closure_evidence"]["items"][0]["proposal_id"] == proposal.id
+
+
+def test_dashboard_peer_chat_ux_projection_exposes_pending_final_action_hold(
+    tmp_path: Path,
+) -> None:
+    conv, hold, spine = _create_final_action_projection_fixture(tmp_path)
+
+    response = TestClient(create_app(tmp_path)).get(
+        f"/api/dashboard/peer-chat/conversations/{conv.id}/ux-projection"
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert "final_actions.json" in payload["source_authority"]
+    assert payload["final_action_holds"] == {
+        "source_authority": ["final_actions.json", "chat.db:acceptance_spines"],
+        "projection_only": True,
+        "total": 1,
+        "pending": 1,
+        "items": [
+            {
+                "id": hold.id,
+                "lane_id": "lane-final",
+                "verdict_id": "verdict-final-action",
+                "action": "merge",
+                "target_status": "reviewed",
+                "status": "pending",
+                "summary": "Review accepted; operator must verify GitHub gate before merge.",
+                "resolved_by": None,
+                "github_gate_evidence_ref": None,
+                "github_gate_gap_ref": None,
+                "source_refs": [
+                    f"final_actions.json#hold={hold.id}",
+                    "review_plane.json#verdict=verdict-final-action",
+                    f"chat.db:acceptance_spines#spine={spine.spine_id}",
+                ],
+                "authority_boundary": {
+                    "producer": "final_actions.json",
+                    "consumer": "frontend.peer_chat_ux_projection",
+                    "condition": "read_only_projection",
+                    "proof_boundary": "final_action_hold_not_github_or_merge_truth",
+                },
+            }
+        ],
+    }
+    worklist_by_id = {item["id"]: item for item in payload["worklist"]}
+    assert worklist_by_id[hold.id] == {
+        "kind": "final_action_hold",
+        "id": hold.id,
+        "status": "pending",
+        "target_role": "operator",
+        "created_at": None,
+        "updated_at": None,
+        "next_action": "verify_github_gate_and_resolve_final_action",
+        "detail_kind": "final_action_hold",
+        "detail_api_href": f"/api/dashboard/peer-chat/conversations/{conv.id}/inspector",
+        "source_refs": [
+            f"final_actions.json#hold={hold.id}",
+            "review_plane.json#verdict=verdict-final-action",
+            f"chat.db:acceptance_spines#spine={spine.spine_id}",
+        ],
+        "compact_detail": {
+            "action": "merge",
+            "lane_id": "lane-final",
+            "target_status": "reviewed",
+            "github_gate_evidence_ref": None,
+            "github_gate_gap_ref": None,
+        },
+    }
+
+
+def test_dashboard_peer_chat_ux_projection_filters_non_pending_final_action_holds(
+    tmp_path: Path,
+) -> None:
+    conv, hold, _spine = _create_final_action_projection_fixture(tmp_path)
+    store = FinalActionGateStore(tmp_path / "final_actions.json")
+    unlinked_hold = store.create_hold(
+        lane_id="lane-unlinked",
+        verdict_id="verdict-unlinked",
+        action="merge",
+        target_status="reviewed",
+        summary="This hold is not linked by the conversation acceptance spine.",
+    )
+    store.resolve(
+        hold.id,
+        status="approved",
+        resolved_by="operator",
+        github_gate_gap_ref="github_gate_evidence.json#evidence=manual-gap",
+    )
+    _write_json(
+        tmp_path / "feature_lanes.json",
+        {
+            "lanes": [
+                {
+                    "feature_id": "lane-bogus",
+                    "status": "awaiting_final_action",
+                    "final_action_hold_id": "final-bogus",
+                }
+            ]
+        },
+    )
+
+    response = TestClient(create_app(tmp_path)).get(
+        f"/api/dashboard/peer-chat/conversations/{conv.id}/ux-projection"
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["final_action_holds"] == {
+        "source_authority": ["final_actions.json", "chat.db:acceptance_spines"],
+        "projection_only": True,
+        "total": 0,
+        "pending": 0,
+        "items": [],
+    }
+    worklist_ids = {item["id"] for item in payload["worklist"]}
+    assert hold.id not in worklist_ids
+    assert unlinked_hold.id not in worklist_ids
+    assert "final-bogus" not in worklist_ids
+
+
+def test_dashboard_peer_chat_ux_projection_keeps_github_refs_out_of_hold_source_refs(
+    tmp_path: Path,
+) -> None:
+    conv, hold, spine = _create_final_action_projection_fixture(tmp_path)
+    payload = json.loads((tmp_path / "final_actions.json").read_text(encoding="utf-8"))
+    payload["holds"][0]["github_gate_evidence_ref"] = (
+        "github_gate_evidence.json#evidence=accepted"
+    )
+    payload["holds"][0]["github_gate_gap_ref"] = "github_gate_evidence.json#evidence=gap"
+    _write_json(tmp_path / "final_actions.json", payload)
+
+    response = TestClient(create_app(tmp_path)).get(
+        f"/api/dashboard/peer-chat/conversations/{conv.id}/ux-projection"
+    )
+
+    assert response.status_code == 200
+    projected = response.json()["final_action_holds"]["items"][0]
+    assert projected["github_gate_evidence_ref"] == "github_gate_evidence.json#evidence=accepted"
+    assert projected["github_gate_gap_ref"] == "github_gate_evidence.json#evidence=gap"
+    assert projected["source_refs"] == [
+        f"final_actions.json#hold={hold.id}",
+        "review_plane.json#verdict=verdict-final-action",
+        f"chat.db:acceptance_spines#spine={spine.spine_id}",
+    ]
+    worklist_item = next(item for item in response.json()["worklist"] if item["id"] == hold.id)
+    assert worklist_item["source_refs"] == projected["source_refs"]
+    assert worklist_item["compact_detail"]["github_gate_evidence_ref"] == (
+        "github_gate_evidence.json#evidence=accepted"
+    )
+    assert worklist_item["compact_detail"]["github_gate_gap_ref"] == (
+        "github_gate_evidence.json#evidence=gap"
+    )
 
 
 def test_dashboard_peer_chat_ux_projection_404s_for_missing_conversation(
