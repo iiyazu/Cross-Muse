@@ -36,9 +36,7 @@ class _DispatchBridgeGodLayer:
         db_path: Path,
         *,
         write_back: bool = True,
-        completion_content: str = (
-            "DISPATCH_ACKNOWLEDGED\nDispatch entry acknowledged."
-        ),
+        completion_content: str = ("DISPATCH_ACKNOWLEDGED\nDispatch entry acknowledged."),
     ) -> None:
         self.db_path = db_path
         self.write_back = write_back
@@ -150,9 +148,7 @@ class _A2AGroupchatRuntimeClient:
                     "lanes": [
                         {
                             "feature_id": "a2a-dispatch-ack-runtime-probe",
-                            "prompt": (
-                                "Acknowledge dispatch without claiming code execution."
-                            ),
+                            "prompt": ("Acknowledge dispatch without claiming code execution."),
                             "depends_on": [],
                             "capabilities": ["code", "test"],
                             "gate_profiles": ["xmuse-core"],
@@ -409,9 +405,7 @@ async def test_groupchat_proposal_approval_dispatch_and_review_closure_authority
         participant_id=participants["review"].participant_id,
         god_session_id=sessions["review"],
         client_request_id="bridge-review-closure",
-        content=(
-            "Review verdict: acceptable, no veto for the dispatch authority bridge."
-        ),
+        content=("Review verdict: acceptable, no veto for the dispatch authority bridge."),
         envelope={
             "type": "review_closure",
             "resolution_id": resolution_id,
@@ -422,9 +416,7 @@ async def test_groupchat_proposal_approval_dispatch_and_review_closure_authority
 
     reviewed_spine = AcceptanceSpineStore(db).get_by_intake_message(intake.message.id)
     assert reviewed_spine.status is AcceptanceSpineStatus.REVIEWED
-    assert reviewed_spine.review_verdict_ref == (
-        f"chat:message:{review['message']['id']}"
-    )
+    assert reviewed_spine.review_verdict_ref == (f"chat:message:{review['message']['id']}")
 
 
 def test_review_closure_requires_review_participant_and_resolution_ref(
@@ -1913,9 +1905,20 @@ def test_proposal_approval_enqueues_agent_auto_dispatch_entry_after_gate(
     assert entry.artifact_ref == "artifact:lane_graph"
     assert entry.dispatch_policy == "real_provider_allowed"
     assert entry.target == "execute"
-    lanes = json.loads((tmp_path / "feature_lanes.json").read_text(encoding="utf-8"))[
-        "lanes"
-    ]
+    assert approved.json()["next_authority_boundary"] == {
+        "required_authority": "chat.db/dispatch_queue",
+        "required_action": "run_dispatch_bridge",
+        "dispatch_queue_entry_available": True,
+        "dispatch_queue_entry_id": entry.entry_id,
+        "dispatch_policy": "real_provider_allowed",
+        "source_refs": [
+            f"proposal:{proposal.json()['id']}",
+            f"collaboration:{run.run_id}",
+            f"resolution:{resolution_id}",
+            f"chat_dispatch_queue:{entry.entry_id}",
+        ],
+    }
+    lanes = json.loads((tmp_path / "feature_lanes.json").read_text(encoding="utf-8"))["lanes"]
     assert lanes[0]["feature_id"] == "lane-v14-dispatch-queue"
     assert lanes[0]["feature_scope_id"] == f"lane_graph:{resolution_id}-graph-v1"
 
@@ -1962,6 +1965,7 @@ def test_proposal_approval_without_collaboration_ref_does_not_enqueue_dispatch_e
     )
 
     assert approved.status_code == 200
+    assert "next_authority_boundary" not in approved.json()
     assert ChatDispatchQueueStore(tmp_path / "chat.db").list_entries(conversation_id) == []
 
 
@@ -2025,10 +2029,7 @@ def test_dispatch_queue_lifecycle_is_durable_and_visible_in_inspector(
     inspector = build_conversation_inspector_payload(conversation_id, tmp_path)
     assert inspector["dispatch_queue"]["dispatched"] == 1
     assert inspector["dispatch_queue"]["failed"] == 1
-    by_id = {
-        item["entry_id"]: item
-        for item in inspector["dispatch_queue"]["entries"]
-    }
+    by_id = {item["entry_id"]: item for item in inspector["dispatch_queue"]["entries"]}
     assert by_id[entry.entry_id]["provider_run_ref"] == "provider:codex:session-1"
     assert by_id[failed_entry.entry_id]["failure_reason"] == "provider dispatch rejected"
 
@@ -2148,8 +2149,7 @@ async def test_a2a_groupchat_review_approval_dispatch_reaches_execute_ack(
         conversation_id=conversation_id,
         author="operator",
         content=(
-            "@architect Propose the smallest dispatchable A2A lane and keep "
-            "chat.db gates explicit."
+            "@architect Propose the smallest dispatchable A2A lane and keep chat.db gates explicit."
         ),
         client_request_id="runtime-human-a2a-dispatch-001",
     )
@@ -2431,9 +2431,7 @@ async def test_dispatch_bridge_rejects_progress_only_writeback(
     )
     god_layer = _DispatchBridgeGodLayer(
         tmp_path / "chat.db",
-        completion_content=(
-            "I have claimed the task and will update after implementation."
-        ),
+        completion_content=("I have claimed the task and will update after implementation."),
     )
     bridge = ChatDispatchBridge(
         db_path=tmp_path / "chat.db",

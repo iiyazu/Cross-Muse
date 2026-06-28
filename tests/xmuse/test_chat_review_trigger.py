@@ -521,6 +521,19 @@ def test_a2a_review_trigger_verdict_only_proposal_approval_enqueues_dispatch(
     assert entries[0].resolution_id == response.json()["id"]
     assert entries[0].collaboration_run_id is None
     assert entries[0].artifact_ref == "artifact:lane_graph"
+    assert response.json()["next_authority_boundary"] == {
+        "required_authority": "chat.db/dispatch_queue",
+        "required_action": "run_dispatch_bridge",
+        "dispatch_queue_entry_available": True,
+        "dispatch_queue_entry_id": entries[0].entry_id,
+        "dispatch_policy": "real_provider_allowed",
+        "source_refs": [
+            f"proposal:{proposal_id}",
+            f"review_trigger_verdict:{verdict_message_id}",
+            f"resolution:{response.json()['id']}",
+            f"chat_dispatch_queue:{entries[0].entry_id}",
+        ],
+    }
     spine = AcceptanceSpineStore(tmp_path / "chat.db").get_by_intake_message(intake_message_id)
     assert spine.status is AcceptanceSpineStatus.DISPATCHED
 
