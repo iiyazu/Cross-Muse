@@ -23,10 +23,10 @@ Read these first:
 As of this update:
 
 - `origin/main` is calibrated at merge commit
-  `9a30aeadd242e4978a84683801c0c65494a66c1c`.
-- The latest merged PR is #257 (`Propagate dispatch authority refs to
-  consumers`), merged 2026-06-28 with exact PR head
-  `d2a0e4dec4d651138f8683655b2526785fc45ca9`.
+  `53dbeb9ace749510e9cb0f82f73cbd4df11ec190`.
+- The latest merged PR is #259 (`Separate dispatch ack from execution
+  evidence`), merged 2026-06-28 with exact PR head
+  `4b82536830b48d055a613f747391c737a4cb6713`.
 - Current server-side main CI evidence:
   - PR #242 `c1d19ad2ae9bd8b22742376c98968073a508329c`: run
     `28292323481` success.
@@ -56,6 +56,10 @@ As of this update:
     `28313035616` success.
   - PR #257 `9a30aeadd242e4978a84683801c0c65494a66c1c`: run
     `28313722964` success.
+  - PR #258 `d78a2df79d7515e1b536052b958f2e1be7983e51`: run
+    `28313973331` success.
+  - PR #259 `53dbeb9ace749510e9cb0f82f73cbd4df11ec190`: run
+    `28314524612` success.
 - Recent domain-scoped progress:
   - #244 advanced the natural peer-callback proposal handoff path.
   - #245 added opt-in MemoryOS sidecar recall/degraded-mode support.
@@ -79,6 +83,10 @@ As of this update:
     context/prompt/envelope, kept frontend `source_refs` authority-only, and
     made read-only copilot intake accept `chat_dispatch_queue:*` while keeping
     `mcp_writeback:*` execution evidence separate.
+  - #258 refreshed current goal docs after #257.
+  - #259 separated dispatch acknowledgement/evidence refs from actual lane
+    execution evidence in the acceptance spine and inspector closure evidence
+    read projection.
 - The next long goal should start from a clean `origin/main` worktree after
   truth refresh.
 - Dirty historical worktrees may be read as references only. They are not main
