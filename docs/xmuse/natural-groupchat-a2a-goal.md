@@ -23,10 +23,10 @@ Read these first:
 As of this update:
 
 - `origin/main` is calibrated at merge commit
-  `e2a2e2742ff452bc8e306fb6efdd525231d22bff`.
-- The latest merged PR is #252 (`Clarify A2A review verdict approval
-  boundary`), merged 2026-06-28 with exact PR head
-  `1fc647e6d19689071c92cb763594494eb171ca86`.
+  `502f7a6b1e777991ff22c7ea73bdc52373e2a218`.
+- The latest merged PR is #255 (`Persist dispatch gate refs for read
+  projections`), merged 2026-06-28 with exact PR head
+  `9d55598d279b0fdcd26587b21bc38e3e958bb945`.
 - Current server-side main CI evidence:
   - PR #242 `c1d19ad2ae9bd8b22742376c98968073a508329c`: run
     `28292323481` success.
@@ -48,6 +48,12 @@ As of this update:
     `28311466358` success.
   - PR #252 `e2a2e2742ff452bc8e306fb6efdd525231d22bff`: run
     `28311860691` success.
+  - PR #253 `db62fdaa34a3ec87c96553e5c0f45101ea2062d0`: run
+    `28311993991` success.
+  - PR #254 `b04fcd902296fe78086aa8502f98ee565a4cb545`: run
+    `28312435751` success.
+  - PR #255 `502f7a6b1e777991ff22c7ea73bdc52373e2a218`: run
+    `28313035616` success.
 - Recent domain-scoped progress:
   - #244 advanced the natural peer-callback proposal handoff path.
   - #245 added opt-in MemoryOS sidecar recall/degraded-mode support.
@@ -62,6 +68,11 @@ As of this update:
   - #252 made A2A `dispatch_allowed` review verdict writeback name
     `chat.db/proposal_approval` as the next authority boundary, while dropping
     provider-supplied boundary claims.
+  - #253 refreshed current goal docs after #252.
+  - #254 exposed `chat.db/dispatch_queue` as next authority only when proposal
+    approval creates a real durable queue entry.
+  - #255 persisted dispatch gate refs for MemoryOS sidecar/context continuity,
+    frontend projection, and read-only copilot audit consumers.
 - The next long goal should start from a clean `origin/main` worktree after
   truth refresh.
 - Dirty historical worktrees may be read as references only. They are not main

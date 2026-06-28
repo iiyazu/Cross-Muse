@@ -30,13 +30,16 @@ Current server facts after the 2026-06-28 Track A/B/C/D pass:
 | #250 | current main truth documentation calibration | `38306251fa1a820b35ce3ca46e877e9e04f1679c` | `28310900258` success |
 | #251 | MemoryOS sidecar support UX projection | `10d9f89900646e5b364424e01dc931383983084c` | `28311466358` success |
 | #252 | A2A review verdict approval boundary | `e2a2e2742ff452bc8e306fb6efdd525231d22bff` | `28311860691` success |
+| #253 | docs refresh after A2A boundary merge | `db62fdaa34a3ec87c96553e5c0f45101ea2062d0` | `28311993991` success |
+| #254 | proposal approval dispatch queue boundary | `b04fcd902296fe78086aa8502f98ee565a4cb545` | `28312435751` success |
+| #255 | durable dispatch gate refs for read projections | `502f7a6b1e777991ff22c7ea73bdc52373e2a218` | `28313035616` success |
 
 These rows are GitHub server facts for merged code and CI. They are not proof
 of production-ready natural groupchat, live MemoryOS authority, frontend
 completeness, GitHub review truth, or autonomous merge.
 
 Next execution loop should start from clean `origin/main` at or after
-`e2a2e2742ff452bc8e306fb6efdd525231d22bff`, run Phase 0 again, and then push
+`502f7a6b1e777991ff22c7ea73bdc52373e2a218`, run Phase 0 again, and then push
 the largest reachable real chain beyond the current handoff/review/dispatch
 boundary. If the next chain cannot advance, record the durable blocker and
 next authority boundary rather than relying on stdout, worker summaries, or
@@ -52,7 +55,7 @@ git branch --show-current
 git rev-parse HEAD
 git fetch origin
 git rev-parse origin/main
-for pr in 242 244 245 246 247 248 249 250 251 252; do
+for pr in 242 244 245 246 247 248 249 250 251 252 253 254 255; do
   gh pr view "$pr" --json number,state,headRefName,headRefOid,baseRefName,mergedAt,mergeCommit,url
 done
 gh pr list --state open --json number,title,headRefName,headRefOid,baseRefName,isDraft,mergeStateStatus,url
@@ -64,7 +67,8 @@ Exit with:
 - clean worktree selected;
 - `origin/main` verified against the current calibration or a newer fetched
   main SHA;
-- #242, #244, #245, #246, #247, #248, #249, #250, #251, and #252 verified
+- #242, #244, #245, #246, #247, #248, #249, #250, #251, #252, #253, #254,
+  and #255 verified
   merged unless superseded by newer current docs;
 - latest relevant main push CI observed through GitHub server facts;
 - dirty historical worktrees marked reference-only;
@@ -152,6 +156,8 @@ Deliver:
 Validation:
 
 - contract proof with fake/local adapter is present on main through #245;
+- durable dispatch gate refs are available to context/read projection consumers
+  through #255;
 - live proof only when live MemoryOS is actually available.
 
 ## Phase 6 - Frontend API / UX Contract
@@ -171,7 +177,9 @@ Deliver read-only API payloads for:
 Validation:
 
 - frontend can consume payloads without reading internal stores directly;
-- read-only peer-chat UX projection exists on main through #246.
+- read-only peer-chat UX projection exists on main through #246;
+- dispatch queue source refs include queue/proposal/gate/resolution refs through
+  #255, with old-schema fallback.
 
 ## Phase 7 - Documentation And Final Report
 
@@ -199,12 +207,14 @@ Final report includes:
 
 Current final-report notes for the 2026-06-28 pass:
 
-- maximum verified GitHub chain: domain-scoped PRs #244-#252 reached
+- maximum verified GitHub chain: domain-scoped PRs #244-#255 reached
   exact-head PR CI, guarded merge, and successful main push CI;
 - MemoryOS state: opt-in sidecar contract/degraded-mode support only; no live
-  MemoryOS authority claim;
+  MemoryOS authority claim; #255 gives sidecar/context continuity durable
+  dispatch gate refs to consume;
 - frontend state: read-only API/UX projection only; #251 exposes sanitized
-  MemoryOS sidecar support metadata; no full frontend claim;
+  MemoryOS sidecar support metadata and #255 exposes durable dispatch gate refs;
+  no full frontend claim;
 - Ray use: not the default natural groupchat route; remains optional legacy;
 - copilot audit: helper exists for read-only append-only board and advisory
   intake; subagent/copilot output is not proof truth;
@@ -214,5 +224,8 @@ Current final-report notes for the 2026-06-28 pass:
 - A2A review boundary: #252 records `chat.db/proposal_approval` as the next
   authority after A2A `dispatch_allowed` review verdict writeback; A2A output
   still cannot create dispatch truth directly;
+- dispatch boundary: #254 only exposes `chat.db/dispatch_queue` next authority
+  when a real queue entry exists; #255 persists A2A/collaboration gate refs on
+  the queue for B/C/D read consumers;
 - next authority boundary: run the next real natural chain from current main
   and tie any PR/CI/merge state to exact head SHA and GitHub run metadata.
