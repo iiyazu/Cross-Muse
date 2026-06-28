@@ -14,6 +14,35 @@ Reach one of these terminal states:
 - or the chain stops at a durable blocker that names the next authority
   boundary and preserves source refs.
 
+## Execution Throughput Gate
+
+Before each implementation loop, record:
+
+```text
+primary_track
+support_tracks
+primary_authority_boundary
+support_authority_boundaries
+core_chain_progress_target
+support_progress_target
+blocked_boundary
+next_primary_action
+```
+
+Track A is the default primary track. Track B or Track C can become primary
+only when the loop names the Track A blocker it removes or the milestone it
+directly completes. Support work must not be reported as core-chain completion.
+
+For final reports, keep these categories separate:
+
+- core-chain progress: real natural groupchat movement toward PR, exact-head
+  CI, guarded merge, main CI, or an explicit operator blocker;
+- support progress: MemoryOS sidecar, frontend read projection, copilot or
+  subagent audit, docs, local tests, and CI harness improvements;
+- forbidden progress claims: projection readiness, sidecar continuity,
+  advisory audit output, green local tests, or green CI described as natural
+  groupchat production readiness without the real chain evidence above.
+
 ## Recorded Main Baseline
 
 Recorded server facts through the 2026-06-28 Track A/B/C/D pass:
