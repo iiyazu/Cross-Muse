@@ -6,10 +6,12 @@ from pathlib import Path
 
 from xmuse_core.chat.dispatch_queue import ChatDispatchQueueEntry, ChatDispatchQueueStore
 from xmuse_core.chat.inbox_store import ChatInboxStore
+from xmuse_core.chat.memory_sidecar import GroupchatMemorySidecar
 from xmuse_core.chat.participant_store import Participant, ParticipantStore
 from xmuse_core.chat.peer_scheduler import PeerChatScheduler
 from xmuse_core.chat.store import ChatStore
 from xmuse_core.chat.stream_store import PeerTurnLatencyTraceStore
+from xmuse_core.integrations.memoryos_client import MemoryOSClientProtocol
 from xmuse_core.providers.service import RunnerProviderService
 
 
@@ -33,6 +35,8 @@ class ChatDispatchBridge:
         response_wait_s: float = 180.0,
         claim_ttl_s: int = 240,
         provider_service: RunnerProviderService | None = None,
+        memoryos_client: MemoryOSClientProtocol | None = None,
+        memoryos_timeout_s: float = 1.0,
     ) -> None:
         self._db_path = Path(db_path)
         self._god_layer = god_layer
@@ -41,6 +45,11 @@ class ChatDispatchBridge:
         self._response_wait_s = response_wait_s
         self._claim_ttl_s = claim_ttl_s
         self._provider_service = provider_service
+        self._memory_sidecar = (
+            GroupchatMemorySidecar(memoryos_client, timeout_s=memoryos_timeout_s)
+            if memoryos_client is not None
+            else None
+        )
 
     async def tick_once(self, *, conversation_id: str) -> ChatDispatchBridgeOutcome:
         queue = ChatDispatchQueueStore(self._db_path)
@@ -62,6 +71,7 @@ class ChatDispatchBridge:
                 return ChatDispatchBridgeOutcome(claimed=1, failed=1)
 
             inbox_item_id = self._create_dispatch_inbox_item(entry, participant)
+            await self._ingest_dispatch_handoff(entry)
             scheduler = PeerChatScheduler(
                 db_path=self._db_path,
                 god_layer=self._god_layer,
@@ -171,6 +181,16 @@ class ChatDispatchBridge:
         if not isinstance(item_id, str) or not item_id:
             raise RuntimeError("dispatch bridge inbox item is missing an id")
         return item_id
+
+    async def _ingest_dispatch_handoff(self, entry: ChatDispatchQueueEntry) -> None:
+        if self._memory_sidecar is None:
+            return
+        await self._memory_sidecar.ingest_dispatch_handoff(
+            conversation_id=entry.conversation_id,
+            actor_id=f"dispatch-bridge:{self._bridge_id}",
+            dispatch_queue_entry_id=entry.entry_id,
+            source_refs=_dispatch_source_refs(entry),
+        )
 
     def _dispatch_failure_reason(self, inbox_item_id: str) -> str:
         trace_reason = self._trace_failure_reason(inbox_item_id)
