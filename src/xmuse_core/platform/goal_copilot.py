@@ -6,8 +6,12 @@ from pathlib import Path
 
 REVIEW_BOARD_FILENAME = "production-goal-copilot-review-board.md"
 INTAKE_SCHEMA_VERSION = "goal_copilot_intake/v1"
+INTAKE_PROOF_BOUNDARY = (
+    "advisory_intake_not_review_dispatch_github_gate_merge_or_execution_truth"
+)
 AUTHORITY_BOUNDARY = (
-    "chat.db / inbox / proposal / review verdict / dispatch queue / GitHub server facts"
+    "chat.db / inbox / proposal / review verdict / dispatch queue / "
+    "final-action holds / GitHub server facts"
 )
 FORBIDDEN_TRUTH_SURFACES = [
     "provider stdout",
@@ -27,6 +31,7 @@ _DURABLE_AUTHORITY_PREFIXES = (
     "dispatch_queue:",
     "github:",
 )
+_FINAL_ACTION_HOLD_REF_PREFIX = "final_actions.json#hold="
 _INTAKE_CLASSIFICATIONS = {
     "accepted",
     "rejected",
@@ -120,7 +125,7 @@ def build_goal_copilot_intake_decision(
             "producer": "goal_copilot_review_board",
             "consumer": "main_goal_agent",
             "condition": "main_agent_verified_durable_authority_refs",
-            "proof_boundary": "advisory_intake_not_review_dispatch_merge_or_execution_truth",
+            "proof_boundary": INTAKE_PROOF_BOUNDARY,
             "failure_boundary": "accepted_without_durable_authority_refs_rejected",
         },
         "verified_authority_refs": durable_refs,
@@ -204,8 +209,18 @@ def _display_path(repo_path: Path, path: Path) -> str:
 
 
 def _is_durable_authority_ref(ref: str) -> bool:
-    normalized = ref.strip().lower()
+    stripped_ref = ref.strip()
+    if _is_final_action_hold_ref(stripped_ref):
+        return True
+    normalized = stripped_ref.lower()
     return any(normalized.startswith(prefix) for prefix in _DURABLE_AUTHORITY_PREFIXES)
+
+
+def _is_final_action_hold_ref(ref: str) -> bool:
+    if not ref.startswith(_FINAL_ACTION_HOLD_REF_PREFIX):
+        return False
+    hold_id = ref.removeprefix(_FINAL_ACTION_HOLD_REF_PREFIX).strip()
+    return bool(hold_id)
 
 
 def _is_iso_date(value: str) -> bool:
