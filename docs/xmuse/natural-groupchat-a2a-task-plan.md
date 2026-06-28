@@ -34,13 +34,15 @@ Current server facts after the 2026-06-28 Track A/B/C/D pass:
 | #254 | proposal approval dispatch queue boundary | `b04fcd902296fe78086aa8502f98ee565a4cb545` | `28312435751` success |
 | #255 | durable dispatch gate refs for read projections | `502f7a6b1e777991ff22c7ea73bdc52373e2a218` | `28313035616` success |
 | #257 | dispatch authority refs to execute/frontend/copilot consumers | `9a30aeadd242e4978a84683801c0c65494a66c1c` | `28313722964` success |
+| #258 | docs refresh after dispatch authority refs | `d78a2df79d7515e1b536052b958f2e1be7983e51` | `28313973331` success |
+| #259 | dispatch ack separated from execution proof | `53dbeb9ace749510e9cb0f82f73cbd4df11ec190` | `28314524612` success |
 
 These rows are GitHub server facts for merged code and CI. They are not proof
 of production-ready natural groupchat, live MemoryOS authority, frontend
 completeness, GitHub review truth, or autonomous merge.
 
 Next execution loop should start from clean `origin/main` at or after
-`9a30aeadd242e4978a84683801c0c65494a66c1c`, run Phase 0 again, and then push
+`53dbeb9ace749510e9cb0f82f73cbd4df11ec190`, run Phase 0 again, and then push
 the largest reachable real chain beyond the current handoff/review/dispatch
 boundary. If the next chain cannot advance, record the durable blocker and
 next authority boundary rather than relying on stdout, worker summaries, or
@@ -56,7 +58,7 @@ git branch --show-current
 git rev-parse HEAD
 git fetch origin
 git rev-parse origin/main
-for pr in 242 244 245 246 247 248 249 250 251 252 253 254 255 257; do
+for pr in 242 244 245 246 247 248 249 250 251 252 253 254 255 257 258 259; do
   gh pr view "$pr" --json number,state,headRefName,headRefOid,baseRefName,mergedAt,mergeCommit,url
 done
 gh pr list --state open --json number,title,headRefName,headRefOid,baseRefName,isDraft,mergeStateStatus,url
@@ -69,7 +71,7 @@ Exit with:
 - `origin/main` verified against the current calibration or a newer fetched
   main SHA;
 - #242, #244, #245, #246, #247, #248, #249, #250, #251, #252, #253, #254,
-  #255, and #257 verified
+  #255, #257, #258, and #259 verified
   merged unless superseded by newer current docs;
 - latest relevant main push CI observed through GitHub server facts;
 - dirty historical worktrees marked reference-only;
@@ -134,6 +136,7 @@ Deliver:
 - P3 may allow dispatch only when explicitly non-blocking;
 - approval/blocked state has source refs;
 - dispatch/execution consumes xmuse authority, not stdout;
+- dispatch acknowledgement remains a handoff proof, not lane execution proof;
 - one small PR is created from the chain;
 - CI is observed through GitHub server facts;
 - operator merge or explicit blocker is recorded.
@@ -161,6 +164,8 @@ Validation:
   through #255;
 - execute-peer dispatch context/prompt/envelope now carries the same ordered,
   deduped dispatch authority refs through #257;
+- #259 keeps `peer_ack:*`, `mcp_writeback:*`, provider run refs, and
+  `chat_dispatch_queue#entry=*` out of acceptance spine lane execution proof;
 - live proof only when live MemoryOS is actually available.
 
 ## Phase 6 - Frontend API / UX Contract
@@ -186,6 +191,9 @@ Validation:
 - #257 keeps worklist `source_refs` authority-only and exposes
   `dispatch_evidence` separately; frontend must not treat `mcp_writeback:*` as
   authority.
+- #259 makes inspector closure evidence read dispatch ack from
+  `chat_dispatch_queue` and lane execution from `acceptance_spines`, with
+  explicit source authority refs for both stores.
 
 ## Phase 7 - Documentation And Final Report
 
@@ -213,16 +221,18 @@ Final report includes:
 
 Current final-report notes for the 2026-06-28 pass:
 
-- maximum verified GitHub chain: domain-scoped PRs #244-#257 reached
+- maximum verified GitHub chain: domain-scoped PRs #244-#259 reached
   exact-head PR CI, guarded merge, and successful main push CI;
 - MemoryOS state: opt-in sidecar contract/degraded-mode support only; no live
   MemoryOS authority claim; #255 gives sidecar/context continuity durable
   dispatch gate refs to consume, and #257 carries those refs into the
-  execute-peer dispatch context/prompt/envelope;
+  execute-peer dispatch context/prompt/envelope; #259 prevents dispatch ack
+  evidence from becoming lane execution proof;
 - frontend state: read-only API/UX projection only; #251 exposes sanitized
   MemoryOS sidecar support metadata, #255 exposes durable dispatch gate refs,
   and #257 keeps dispatch execution evidence separate from authority
-  `source_refs`; no full frontend claim;
+  `source_refs`; #259 separates inspector dispatch ack from lane execution
+  closure evidence; no full frontend claim;
 - Ray use: not the default natural groupchat route; remains optional legacy;
 - copilot audit: helper exists for read-only append-only board and advisory
   intake; #257 lets accepted recommendations use `chat_dispatch_queue:*` as
@@ -238,5 +248,7 @@ Current final-report notes for the 2026-06-28 pass:
   when a real queue entry exists; #255 persists A2A/collaboration gate refs on
   the queue for B/C/D read consumers; #257 propagates those refs to
   execute/frontend/copilot consumers without promoting execution evidence;
+  #259 keeps dispatch ack/evidence in `chat_dispatch_queue` and actual lane
+  execution proof in `acceptance_spines.execution_evidence_refs`;
 - next authority boundary: run the next real natural chain from current main
   and tie any PR/CI/merge state to exact head SHA and GitHub run metadata.

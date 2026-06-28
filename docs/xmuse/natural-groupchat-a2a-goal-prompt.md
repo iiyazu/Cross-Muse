@@ -28,10 +28,10 @@ Read first:
 Current calibration:
 - Start from a clean origin/main worktree after truth refresh.
 - Current known main calibration is
-  `9a30aeadd242e4978a84683801c0c65494a66c1c` after PR #257, but always verify
+  `53dbeb9ace749510e9cb0f82f73cbd4df11ec190` after PR #259, but always verify
   live `origin/main` and open PR state before acting.
 - PRs #242, #244, #245, #246, #247, #248, #249, #250, #251, #252, #253,
-  #254, #255, and #257 have
+  #254, #255, #257, #258, and #259 have
   merged with
   successful main push CI as of 2026-06-28.
 - PR #249 hardened GitHub server truth: PR/CI/merge evidence must be tied to
@@ -49,6 +49,10 @@ Current calibration:
   context/prompt/envelope, kept frontend `source_refs` authority-only, and
   made read-only copilot classify `chat_dispatch_queue:*` as durable authority
   while leaving `mcp_writeback:*` as execution evidence/candidate input.
+- PR #258 refreshed current goal docs after #257.
+- PR #259 keeps dispatch acknowledgement/evidence refs in `chat_dispatch_queue`
+  and prevents `mcp_writeback:*` / `peer_ack:*` from becoming acceptance spine
+  lane execution proof.
 - PR #243 is an older behind-main docs package; treat it as reference-only
   unless rebased and revalidated.
 - Dirty historical worktrees and archived docs are references only, not main
