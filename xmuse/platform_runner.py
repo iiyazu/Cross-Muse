@@ -275,6 +275,7 @@ def run_acceptance_gated_goal(
                         "prompt": clean_goal,
                         "graph_id": graph_id,
                         "resolution_id": resolution.id,
+                        "integration_mode": "noop",
                     }
                 ]
             },
