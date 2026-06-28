@@ -47,17 +47,46 @@ Current server facts after the 2026-06-28 Track A/B/C/D pass:
 | #268 | acceptance gate lane projection terminalization | `76a57362c73f0f63dc2d9b61f871b24a7a5bb329` | `28317369049` success |
 | #269 | docs refresh after Track A projection fix | `0b383026b1b250be3fe11a91697d3c6b8102ae55` | `28317521660` success |
 | #270 | acceptance gate noop integration projection | `fa1cc1e1996be3c18540f574c3513b0cafbea642` | `28317667416` success |
+| #271 | docs refresh after noop integration projection | `7c5831d75b6efa59c0ce57aebbae21fdefc68240` | `28317787154` success |
 
 These rows are GitHub server facts for merged code and CI. They are not proof
 of production-ready natural groupchat, live MemoryOS authority, frontend
 completeness, GitHub review truth, or autonomous merge.
 
 Next execution loop should start from clean `origin/main` at or after
-`fa1cc1e1996be3c18540f574c3513b0cafbea642`, run Phase 0 again, and then push
+`7c5831d75b6efa59c0ce57aebbae21fdefc68240`, run Phase 0 again, and then push
 the largest reachable real chain beyond the current handoff/review/dispatch
 boundary. If the next chain cannot advance, record the durable blocker and
 next authority boundary rather than relying on stdout, worker summaries, or
 local tests.
+
+Latest local runtime evidence after #271:
+
+- local runtime chain observed across durable authority and projection:
+  `chat.db` human mention -> architect collaboration request -> execute
+  `execute_feasibility_verdict` -> collaboration callback -> architect
+  `lane_graph` proposal -> review-trigger verdict -> approved proposal ->
+  dispatch queue -> dispatch ack -> lane execution -> gate -> review verdict ->
+  `awaiting_final_action`;
+- producer/consumer proof boundaries:
+  `chat_inbox_items`, `collaboration_responses`, `proposals`, `resolutions`,
+  and `chat_dispatch_queue` are durable chat-plane authority surfaces;
+  `feature_lanes.json` is projection evidence only; `review_plane.json`, gate
+  reports, and the isolated execution worktree file are review/gate/execution
+  proof surfaces;
+- condition satisfied:
+  `docs/xmuse/track-a-timebudget-sentinel-20260628.md` existed in the
+  isolated execution worktree with the exact expected sentence, the lane
+  reached `awaiting_final_action`, and the final action hold stayed pending;
+- failure boundary learned:
+  a 240-second proposal timeout is too short for the current real multi-hop
+  natural chain because individual provider turns can consume 90-200 seconds;
+  use multi-hop budgets such as `--proposal-timeout-s 900` and
+  `--peer-chat-response-wait-s 420` for this sentinel until latency is
+  reduced;
+- proof limitation:
+  this is local runtime evidence, not GitHub server truth, production
+  readiness, autonomous merge, or live MemoryOS proof.
 
 ## Phase 0 - Truth Refresh
 
@@ -69,7 +98,7 @@ git branch --show-current
 git rev-parse HEAD
 git fetch origin
 git rev-parse origin/main
-for pr in 242 244 245 246 247 248 249 250 251 252 253 254 255 257 258 259 260 261 262 263 264 265 266 267 268 269 270; do
+for pr in 242 244 245 246 247 248 249 250 251 252 253 254 255 257 258 259 260 261 262 263 264 265 266 267 268 269 270 271; do
   gh pr view "$pr" --json number,state,headRefName,headRefOid,baseRefName,mergedAt,mergeCommit,url
 done
 gh pr list --state open --json number,title,headRefName,headRefOid,baseRefName,isDraft,mergeStateStatus,url
@@ -83,7 +112,7 @@ Exit with:
   main SHA;
 - #242, #244, #245, #246, #247, #248, #249, #250, #251, #252, #253, #254,
   #255, #257, #258, #259, #260, #261, #262, #263, #264, #265, #266, #267,
-  #268, #269, and #270 verified
+  #268, #269, #270, and #271 verified
   merged unless superseded by newer current docs;
 - latest relevant main push CI observed through GitHub server facts;
 - dirty historical worktrees marked reference-only;
@@ -249,7 +278,7 @@ Final report includes:
 
 Current final-report notes for the 2026-06-28 pass:
 
-- maximum verified GitHub chain: domain-scoped PRs #244-#270 reached
+- maximum verified GitHub chain: domain-scoped PRs #244-#271 reached
   exact-head PR CI, guarded merge, and successful main push CI;
 - MemoryOS state: opt-in sidecar contract/degraded-mode support only; no live
   MemoryOS authority claim; #255 gives sidecar/context continuity durable
