@@ -97,10 +97,7 @@ def test_acceptance_spine_tracks_proposal_resolution_and_dispatch_refs(
 
     spine = AcceptanceSpineStore(db).get_by_intake_message(intake.message.id)
     assert spine.status is AcceptanceSpineStatus.DISPATCHED
-    assert spine.execution_evidence_refs == [
-        "provider:run:1",
-        "mcp_writeback:dispatch-inbox",
-    ]
+    assert spine.execution_evidence_refs == []
 
     AcceptanceSpineStore(db).attach_lane_execution_for_resolution(
         resolution_id=resolution.id,
@@ -113,8 +110,6 @@ def test_acceptance_spine_tracks_proposal_resolution_and_dispatch_refs(
     spine = AcceptanceSpineStore(db).get_by_intake_message(intake.message.id)
     assert spine.status is AcceptanceSpineStatus.EXECUTED
     assert spine.execution_evidence_refs == [
-        "provider:run:1",
-        "mcp_writeback:dispatch-inbox",
         "feature_lanes.json#lane=lane-spine-flow:status=executed",
         "lane_graph:graph-spine-flow",
     ]
@@ -161,6 +156,78 @@ def test_dispatch_queue_preserves_gate_refs_when_legacy_enqueue_retries(
     assert retried.gate_refs == [
         "collaboration:run-gated",
         "review_trigger_verdict:message-gated",
+    ]
+
+
+def test_acceptance_spine_filters_dispatch_ack_refs_from_execution_evidence(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "chat.db"
+    service = PeerChatService(db)
+    created = service.create_conversation(title="Execution evidence boundary")
+    conversation_id = created["conversation"]["id"]
+    intake = service.post_human_message(
+        conversation_id=conversation_id,
+        author="Human operator",
+        content="Keep dispatch acknowledgement evidence out of execution proof.",
+        client_request_id="goalrun-execution-evidence-boundary",
+    )
+    proposal = ChatStore(db).create_proposal(
+        conversation_id=conversation_id,
+        author="architect",
+        proposal_type="lane_graph",
+        content='{"summary":"small proposal","lanes":[]}',
+        references=[f"intake_message:{intake.message.id}"],
+    )
+    resolution = ChatStore(db).approve_proposal(
+        proposal.id,
+        approved_by=["human"],
+        approval_mode="manual",
+        goal_summary="Approve execution evidence boundary.",
+        content={"type": "lane_graph", "lanes": []},
+    )
+    dispatch = ChatDispatchQueueStore(db).enqueue_agent_auto_dispatch(
+        conversation_id=conversation_id,
+        proposal_id=proposal.id,
+        resolution_id=resolution.id,
+        collaboration_run_id=None,
+        artifact_ref="artifact:lane_graph",
+    )
+
+    spine = AcceptanceSpineStore(db).attach_execution_evidence_for_dispatch(
+        dispatch_item_id=dispatch.entry_id,
+        evidence_refs=[
+            "provider:run:dispatch-ack",
+            "peer_ack:execute:participant-1",
+            "mcp_writeback:dispatch-inbox",
+            "chat_dispatch_queue#entry=dispatch-1",
+            "feature_lanes.json#lane=lane-boundary:status=executed",
+            "provider_session_binding:binding-boundary",
+        ],
+    )
+
+    assert spine is not None
+    assert spine.execution_evidence_refs == [
+        "feature_lanes.json#lane=lane-boundary:status=executed",
+        "provider_session_binding:binding-boundary",
+    ]
+
+    spine = AcceptanceSpineStore(db).attach_lane_execution_for_resolution(
+        resolution_id=resolution.id,
+        evidence_refs=[
+            "mcp_writeback:dispatch-inbox",
+            "peer_ack:execute:participant-1",
+            "feature_lanes.json#lane=lane-resolution:status=executed",
+            "lane_graph:graph-resolution",
+        ],
+    )
+
+    assert spine is not None
+    assert spine.execution_evidence_refs == [
+        "feature_lanes.json#lane=lane-boundary:status=executed",
+        "provider_session_binding:binding-boundary",
+        "feature_lanes.json#lane=lane-resolution:status=executed",
+        "lane_graph:graph-resolution",
     ]
 
 

@@ -357,7 +357,7 @@ class AcceptanceSpineStore:
         evidence_refs: list[str],
     ) -> AcceptanceSpine | None:
         now = _utc_now()
-        clean_refs = [ref for ref in evidence_refs if isinstance(ref, str) and ref.strip()]
+        clean_refs = _clean_lane_execution_refs(evidence_refs)
         with self._connect() as conn:
             row = conn.execute(
                 """
@@ -393,7 +393,7 @@ class AcceptanceSpineStore:
     ) -> AcceptanceSpine | None:
         now = _utc_now()
         resolution_ref = f"resolution:{resolution_id}"
-        clean_refs = [ref for ref in evidence_refs if isinstance(ref, str) and ref.strip()]
+        clean_refs = _clean_lane_execution_refs(evidence_refs)
         with self._connect() as conn:
             row = conn.execute(
                 """
@@ -834,6 +834,24 @@ def _merge_values(existing: list[str], new_values: list[str]) -> list[str]:
         if clean and clean not in merged:
             merged.append(clean)
     return merged
+
+
+def _clean_lane_execution_refs(refs: list[str]) -> list[str]:
+    prefixes = (
+        "feature_lanes.json#lane=",
+        "lane_graph:",
+        "dispatch_attempt:",
+        "provider_session_binding:",
+    )
+    clean: list[str] = []
+    seen: set[str] = set()
+    for ref in refs:
+        value = ref.strip() if isinstance(ref, str) else ""
+        if not value or value in seen or not value.startswith(prefixes):
+            continue
+        seen.add(value)
+        clean.append(value)
+    return clean
 
 
 def _remove_values(existing: list[str], values: set[str]) -> list[str]:

@@ -189,10 +189,6 @@ class ChatDispatchQueueStore:
             ).rowcount
         if updated != 1:
             raise ValueError("dispatch queue entry must be processing to mark dispatched")
-        AcceptanceSpineStore(self._path).attach_execution_evidence_for_dispatch(
-            dispatch_item_id=entry_id,
-            evidence_refs=[provider_run_ref, dispatch_evidence],
-        )
         return self.get(entry_id)
 
     def mark_failed(

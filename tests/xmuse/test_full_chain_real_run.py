@@ -3055,7 +3055,7 @@ async def test_real_ray_codex_app_server_proposal_review_dispatch_completion(
             assert spine.intake_message_id == request_payload["id"]
             assert spine.proposal_id == proposal.id
             assert spine.dispatch_item_id == dispatched.entry_id
-            assert dispatched.dispatch_evidence in spine.execution_evidence_refs
+            assert dispatched.dispatch_evidence not in spine.execution_evidence_refs
 
             review_verdict_ref = "review_plane.json#verdict=real-p4-dispatch-completion"
             attached_review = spine_store.attach_review_verdict_for_resolution(
