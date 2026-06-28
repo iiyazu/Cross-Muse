@@ -1,6 +1,6 @@
 # Natural Groupchat A2A Goal
 
-Updated: 2026-06-26
+Updated: 2026-06-28
 
 This is the current `/goal` entrypoint for the next xmuse production push. It
 supersedes older L8-L11, closure-ledger, walkthrough, and runtime-log driven
@@ -22,13 +22,33 @@ Read these first:
 
 As of this update:
 
-- `origin/main` is calibrated at PR #192 / `bd540de`.
-- PR #193 (`codex/a2a-sdk-foundation`) is merged into `origin/main` at merge
-  commit `d429e691be51ef5c9aa7ab34a5670f290b37e7a3`.
+- `origin/main` is calibrated at merge commit
+  `a94ebb33c751a02b13e00de06d53a0fd56649405`.
+- The latest merged PR is #247 (`Add goal copilot audit guardrails`), merged
+  2026-06-28 with exact PR head
+  `96d24c9ee1469ceb87c3be9b30b787e23d1526b7`.
+- Current server-side main CI evidence:
+  - PR #242 `c1d19ad2ae9bd8b22742376c98968073a508329c`: run
+    `28292323481` success.
+  - PR #244 `65910e683eb6f8c70ed5428ac77c0e971ff0aa99`: run
+    `28307269298` success.
+  - PR #245 `328e79a9b153843069146826192dc9ac2cc115d6`: run
+    `28308325362` success.
+  - PR #246 `176d26272cb118c62ab424053d77bd6a1a44a5a5`: run
+    `28309007290` success.
+  - PR #247 `a94ebb33c751a02b13e00de06d53a0fd56649405`: run
+    `28309375745` success.
+- Recent domain-scoped progress:
+  - #244 advanced the natural peer-callback proposal handoff path.
+  - #245 added opt-in MemoryOS sidecar recall/degraded-mode support.
+  - #246 added frontend read-only peer-chat UX projection.
+  - #247 added read-only goal copilot audit guardrails.
 - The next long goal should start from a clean `origin/main` worktree after
   truth refresh.
 - Dirty historical worktrees may be read as references only. They are not main
   capability.
+- PR #243 is an older broad docs package and is behind current main. Treat it
+  as reference-only unless it is explicitly rebased and revalidated.
 
 ## Objective
 
