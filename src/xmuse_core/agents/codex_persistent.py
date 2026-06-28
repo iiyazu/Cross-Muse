@@ -38,6 +38,8 @@ def runtime_truth_metadata() -> dict[str, object]:
 
 
 _ACTIVE_CHILD: subprocess.Popen[str] | None = None
+_REVIEW_VERDICT_PREFIX = "XMUSE_REVIEW_VERDICT_JSON:"
+_REVIEW_VERDICT_DECISIONS = {"merge", "rework", "terminate"}
 
 
 def main() -> None:
@@ -194,6 +196,7 @@ def _run_codex_turn(config: RunnerConfig, message: dict[str, Any]) -> None:
         stderr=stderr,
         timed_out=False,
     )
+    _attach_review_verdict(artifacts, msg_type=msg_type, stdout=stdout)
     if not emit_result:
         return
     if result.returncode == 0:
@@ -324,6 +327,19 @@ def _format_turn_prompt(
                 "",
                 "Return a clear review with a Findings section and a Verdict line.",
                 "Use exactly one of: Verdict: merge, Verdict: rework, Verdict: terminate.",
+                "",
+                "## Review expected result contract",
+                "",
+                "End stdout with exactly one machine-readable verdict line:",
+                "XMUSE_REVIEW_VERDICT_JSON: "
+                '{"decision":"merge|rework|terminate",'
+                '"summary":"<one concise sentence>"}',
+                "The shim converts only that validated line into "
+                "`artifacts.review_verdict`; ordinary prose and `Verdict:` text "
+                "remain diagnostic and are not review authority artifacts.",
+                "The JSON summary must summarize authority refs and the review "
+                "decision only; do not mention MCP/tool availability or fallback "
+                "transport there.",
             ]
         )
     if msg_type == "peer_chat_nudge":
@@ -450,6 +466,55 @@ def _attach_execute_result(
     if transport_error:
         execute_result["transport_error"] = transport_error
     artifacts["execute_result"] = execute_result
+
+
+def _attach_review_verdict(
+    artifacts: dict[str, Any],
+    *,
+    msg_type: str,
+    stdout: Any,
+) -> None:
+    if msg_type != "review":
+        return
+    verdict = _review_verdict_from_stdout(stdout)
+    if verdict is not None:
+        artifacts["review_verdict"] = verdict
+
+
+def _review_verdict_from_stdout(stdout: Any) -> dict[str, str] | None:
+    stripped_lines = [line.strip() for line in str(stdout or "").splitlines() if line.strip()]
+    if not stripped_lines:
+        return None
+    final_line = stripped_lines[-1]
+    if not final_line.startswith(_REVIEW_VERDICT_PREFIX):
+        return None
+    lines = [
+        line.strip()
+        for line in stripped_lines
+        if line.strip().startswith(_REVIEW_VERDICT_PREFIX)
+    ]
+    if len(lines) != 1 or lines[0] != final_line:
+        return None
+    raw = lines[0][len(_REVIEW_VERDICT_PREFIX) :].strip()
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    raw_decision = payload.get("decision")
+    if not isinstance(raw_decision, str):
+        return None
+    decision = raw_decision.strip().lower()
+    if decision not in _REVIEW_VERDICT_DECISIONS:
+        return None
+    raw_summary = payload.get("summary")
+    if not isinstance(raw_summary, str):
+        return None
+    summary = raw_summary.strip()
+    if not summary:
+        return None
+    return {"decision": decision, "summary": _bounded(summary, max_chars=2000)}
 
 
 def _attach_request_id(artifacts: dict[str, Any], request_id: str | None) -> None:

@@ -954,6 +954,23 @@ async def _try_configured_review_peer(
             | ({"review_peer_defaulted": True} if review_peer_defaulted else {}),
         )
         if not delivered:
+            if _configured_peer_writeback_already_delivered(sm.get_lane(lane_id)):
+                sm.update_metadata(
+                    lane_id,
+                    {
+                        "review_peer_id": review_peer_id,
+                        "peer_request_id": peer_request_id,
+                        "peer_routing_mode": mode,
+                        "peer_delivery_mode": "configured_peer",
+                        "persistent_review_degraded": False,
+                        "peer_degraded_reason": None,
+                    }
+                    | (default_peer_metadata if review_peer_defaulted else {})
+                    | participant_metadata
+                    | ({"review_peer_defaulted": True} if review_peer_defaulted else {})
+                    | _peer_result_failure_metadata(result),
+                )
+                return ConfiguredReviewPeerAttempt(attempted=True, delivered=True)
             return _configured_peer_failed(
                 sm,
                 lane_id,
@@ -978,6 +995,19 @@ async def _try_configured_review_peer(
         review_peer_defaulted=review_peer_defaulted,
         peer_result=result,
     )
+
+
+def _configured_peer_writeback_already_delivered(lane: dict[str, Any]) -> bool:
+    status = lane.get("status")
+    decision = lane.get("review_decision")
+    verdict_id = lane.get("review_verdict_id")
+    if status == "awaiting_final_action":
+        return bool(verdict_id and lane.get("final_action_hold_id"))
+    if status == "reviewed":
+        return decision == ReviewDecision.MERGE.value and bool(verdict_id)
+    if status == "rejected":
+        return decision == ReviewDecision.REWORK.value and bool(verdict_id)
+    return False
 
 
 def _review_peer_id_for_requested_runtime(
