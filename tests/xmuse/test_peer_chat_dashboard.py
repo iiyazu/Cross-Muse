@@ -16,6 +16,8 @@ from xmuse_core.chat.peer_service import PeerChatService
 from xmuse_core.chat.store import ChatStore
 from xmuse_core.chat.stream_store import PeerTurnLatencyTraceStore
 from xmuse_core.platform.final_action_gate import FinalActionGateStore
+from xmuse_core.structuring.models import ReviewDecision, ReviewTask, ReviewVerdict
+from xmuse_core.structuring.verdict_store import VerdictStore
 
 
 def _write_json(path: Path, payload: object) -> None:
@@ -437,6 +439,7 @@ def test_dashboard_peer_chat_ux_projection_is_frontend_read_model(
         "chat.db:collaboration_blockers",
         "chat.db:acceptance_spines",
         "chat.db:peer_turn_latency_traces",
+        "review_plane.json",
         "final_actions.json",
         "active_sessions.json",
         "god_sessions.json",
@@ -580,6 +583,104 @@ def test_dashboard_peer_chat_ux_projection_exposes_pending_final_action_hold(
             "github_gate_evidence_ref": None,
             "github_gate_gap_ref": None,
         },
+    }
+
+
+def test_dashboard_peer_chat_ux_projection_exposes_review_verdict_state(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "chat.db"
+    chat = ChatStore(db)
+    conv = chat.create_conversation("Review verdict UX")
+    intake = chat.add_message(conv.id, "Human", "human", "@architect ship reviewed lane")
+    proposal = chat.create_proposal(
+        conversation_id=conv.id,
+        author="Architect GOD",
+        proposal_type="lane_graph",
+        content='{"summary":"Reviewed lane","lanes":[{"feature_id":"lane-review"}]}',
+        references=[intake.id],
+    )
+    spine_store = AcceptanceSpineStore(db)
+    spine_store.create_for_intake(conversation_id=conv.id, intake_message_id=intake.id)
+    spine_store.attach_proposal(
+        conversation_id=conv.id,
+        intake_message_id=intake.id,
+        proposal_id=proposal.id,
+    )
+    spine_store.attach_verdict_for_proposal(
+        proposal_id=proposal.id,
+        verdict_ref="resolution:res-review",
+    )
+    spine_store.attach_lane_execution_for_resolution(
+        resolution_id="res-review",
+        evidence_refs=["lane_graph:graph-review"],
+    )
+    spine = spine_store.attach_review_verdict_for_resolution(
+        resolution_id="res-review",
+        review_verdict_ref="review_plane.json#verdict=verdict-review",
+    )
+
+    task = ReviewTask(
+        task_id="review-task-ux",
+        lane_id="lane-review",
+        graph_id="graph-review",
+        resolution_id="res-review",
+        lane_prompt="Review the frontend projection lane.",
+        gate_report_ref="logs/gates/lane-review/report.json",
+        created_at="2026-06-28T13:00:00Z",
+    )
+    verdict = ReviewVerdict(
+        id="verdict-review",
+        lane_id="lane-review",
+        decision=ReviewDecision.MERGE,
+        status="finalized",
+        summary="Review accepted.",
+        evidence_refs=["logs/gates/lane-review/report.json"],
+        created_at="2026-06-28T13:01:00Z",
+    )
+    VerdictStore(tmp_path / "review_plane.json").save_task_and_verdict(task, verdict)
+
+    response = TestClient(create_app(tmp_path)).get(
+        f"/api/dashboard/peer-chat/conversations/{conv.id}/ux-projection"
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert "review_plane.json" in payload["source_authority"]
+    assert payload["review_state"] == {
+        "source_authority": ["review_plane.json", "chat.db:acceptance_spines"],
+        "projection_only": True,
+        "total": 1,
+        "decision_summary": {"merge": 1},
+        "items": [
+            {
+                "id": "verdict-review",
+                "lane_id": "lane-review",
+                "decision": "merge",
+                "verdict_status": "finalized",
+                "summary": "Review accepted.",
+                "task_id": "review-task-ux",
+                "task_status": "verdict_emitted",
+                "graph_id": "graph-review",
+                "resolution_id": "res-review",
+                "gate_report_ref": "logs/gates/lane-review/report.json",
+                "evidence_refs": ["logs/gates/lane-review/report.json"],
+                "patch_instructions": None,
+                "terminate_reason": None,
+                "created_at": "2026-06-28T13:01:00Z",
+                "source_refs": [
+                    "review_plane.json#verdict=verdict-review",
+                    "review_plane.json#task=review-task-ux",
+                    f"chat.db:acceptance_spines#spine={spine.spine_id}",
+                ],
+                "authority_boundary": {
+                    "producer": "review_plane.json",
+                    "consumer": "frontend.peer_chat_ux_projection",
+                    "condition": "read_only_projection",
+                    "proof_boundary": "review_verdict_authority_not_github_or_merge_truth",
+                },
+            }
+        ],
     }
 
 
