@@ -116,9 +116,7 @@ class A2AProviderWritebackReconciler:
             "authority": "chat.db/inbox",
             "a2a_is_authority": False,
             **(
-                {"proposal_writeback": proposal_writeback}
-                if proposal_writeback is not None
-                else {}
+                {"proposal_writeback": proposal_writeback} if proposal_writeback is not None else {}
             ),
         }
         if route_blocker is not None:
@@ -145,9 +143,7 @@ class A2AProviderWritebackReconciler:
             conversation_id=conversation_id,
             tool_name="a2a_provider_writeback",
             caller_identity=participant_id,
-            client_request_id=(
-                f"{provider_result.request_id}:{reply_to_inbox_item_id}"
-            ),
+            client_request_id=(f"{provider_result.request_id}:{reply_to_inbox_item_id}"),
             author=participant_id,
             role="assistant",
             content=content,
@@ -198,6 +194,7 @@ class A2AProviderWritebackReconciler:
             raw_envelope,
             envelope_type=REVIEW_TRIGGER_VERDICT_ENVELOPE_TYPE,
         )
+        envelope.pop("next_authority_boundary", None)
         envelope.setdefault("authority", "chat.db/inbox/review_trigger_verdict")
         envelope.setdefault("a2a_is_authority", False)
         envelope.setdefault("a2a_source_refs", list(source_refs))
@@ -210,6 +207,12 @@ class A2AProviderWritebackReconciler:
             )
         except ReviewTriggerVerdictError:
             return None
+        if verdict == "dispatch_allowed":
+            envelope["next_authority_boundary"] = _review_verdict_next_authority_boundary(
+                proposal_id=proposal_id,
+                review_trigger_inbox_id=inbox_item.id,
+                source_refs=source_refs,
+            )
         return {
             "envelope": envelope,
             "proposal_id": proposal_id,
@@ -257,6 +260,11 @@ class A2AProviderWritebackReconciler:
                 "review_trigger_verdict": {
                     "proposal_id": proposal_id,
                     "decision": verdict,
+                    **(
+                        {"next_authority_boundary": envelope["next_authority_boundary"]}
+                        if "next_authority_boundary" in envelope
+                        else {}
+                    ),
                 },
             },
         )
@@ -333,11 +341,7 @@ class A2AProviderWritebackReconciler:
                 ),
             )
         except PeerChatError as exc:
-            reason = (
-                exc.code
-                if exc.code == "missing_gate_profiles"
-                else "invalid_xmuse_proposal"
-            )
+            reason = exc.code if exc.code == "missing_gate_profiles" else "invalid_xmuse_proposal"
             return {
                 "status": "blocked",
                 "reason": reason,
@@ -369,9 +373,7 @@ class A2AProviderWritebackReconciler:
             participant_id=participant_id,
             proposal_id=proposal_id,
             proposal_message_id=message_id,
-            proposal_type=(
-                proposal.get("proposal_type") if isinstance(proposal, dict) else None
-            ),
+            proposal_type=(proposal.get("proposal_type") if isinstance(proposal, dict) else None),
         )
         return {
             "status": "accepted",
@@ -500,12 +502,9 @@ class A2AProviderWritebackReconciler:
                     "source_kind": "a2a_provider_result",
                     "provider_request_id": provider_result.request_id,
                     "max_fanout": _MAX_A2A_PROVIDER_RESULT_FANOUT,
-                    "target_addresses": [
-                        target.normalized for target in resolved_targets
-                    ],
+                    "target_addresses": [target.normalized for target in resolved_targets],
                     "target_participant_ids": [
-                        target.participant.participant_id
-                        for target in resolved_targets
+                        target.participant.participant_id for target in resolved_targets
                     ],
                     "source_refs": [
                         f"inbox:{reply_to_inbox_item_id}",
@@ -533,11 +532,7 @@ class A2AProviderWritebackReconciler:
                 source_kind="a2a_provider_result",
                 author_participant_id=participant_id,
                 target_participant_id=target_participant_id,
-                route_kind=(
-                    assessment.route_kind
-                    if assessment.requires_envelope
-                    else "mention"
-                ),
+                route_kind=(assessment.route_kind if assessment.requires_envelope else "mention"),
                 source_refs=[
                     f"inbox:{reply_to_inbox_item_id}",
                     *source_refs,
@@ -618,6 +613,27 @@ def _feature_scope_id_from_diagnostic(diagnostic: dict[str, Any]) -> str | None:
         if isinstance(value, str) and value.strip():
             return value.strip()
     return None
+
+
+def _review_verdict_next_authority_boundary(
+    *,
+    proposal_id: str,
+    review_trigger_inbox_id: str,
+    source_refs: list[str],
+) -> dict[str, Any]:
+    return {
+        "required_authority": "chat.db/proposal_approval",
+        "required_action": f"POST /api/chat/proposals/{proposal_id}/approve",
+        "dispatch_queue_created": False,
+        "dispatch_blocked_until": "proposal_approval",
+        "source_refs": _dedupe_refs(
+            [
+                f"inbox:{review_trigger_inbox_id}",
+                f"proposal:{proposal_id}",
+                *source_refs,
+            ]
+        ),
+    }
 
 
 def _content(
@@ -703,9 +719,7 @@ def _require_a2a_lane_graph_gate_profiles(
 
 def _lane_has_gate_profile(lane: dict[str, Any]) -> bool:
     gate_profiles = lane.get("gate_profiles")
-    if isinstance(gate_profiles, list) and any(
-        str(item).strip() for item in gate_profiles
-    ):
+    if isinstance(gate_profiles, list) and any(str(item).strip() for item in gate_profiles):
         return True
     gate_profile = lane.get("gate_profile")
     return isinstance(gate_profile, str) and bool(gate_profile.strip())
