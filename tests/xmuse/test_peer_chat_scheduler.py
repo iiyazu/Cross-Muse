@@ -11,6 +11,7 @@ from xmuse_core.agents.god_session_registry import GodSessionRegistry
 from xmuse_core.agents.protocol import StdoutMessage
 from xmuse_core.agents.registry import AgentRuntime
 from xmuse_core.chat.acceptance_spine import AcceptanceSpineStatus, AcceptanceSpineStore
+from xmuse_core.chat.dispatch_queue import ChatDispatchQueueStore
 from xmuse_core.chat.inbox_store import ChatInboxStore
 from xmuse_core.chat.natural_routing import (
     build_natural_route_event,
@@ -28,6 +29,12 @@ from xmuse_core.chat.stream_store import ChatStreamStore, PeerTurnLatencyTraceSt
 from xmuse_core.integrations.a2a_writeback_reconciler import (
     A2AProviderWritebackReconciler,
 )
+from xmuse_core.integrations.memoryos_client import (
+    FakeMemoryOSClient,
+    MemoryOSContext,
+    MemoryOSIngestRequest,
+)
+from xmuse_core.integrations.memoryos_namespace import conversation_namespace
 from xmuse_core.providers.adapters.base import ProviderFailureKind, ProviderInvocationResult
 from xmuse_core.providers.goal_contract import WorkerResultStatus
 from xmuse_core.providers.models import ProviderId, ProviderProfileId, TaskCapability
@@ -71,6 +78,34 @@ class FakeGodLayer:
         self.prompt_contracts.append((god_session_id, kwargs))
 
     async def receive_message(self, god_session_id):
+        return self.receive_result
+
+
+class DurableWritebackGodLayer(FakeGodLayer):
+    def __init__(self, db_path: Path) -> None:
+        super().__init__()
+        self.db_path = db_path
+
+    async def receive_message(self, god_session_id):
+        context = json.loads(self.sent[-1][3])
+        inbox_item = context["inbox_item"]
+        participant_id = str(context["participant_id"])
+        reply = ChatStore(self.db_path).add_message(
+            inbox_item["conversation_id"],
+            participant_id,
+            "assistant",
+            "durable peer reply",
+        )
+        ChatInboxStore(self.db_path).mark_read(
+            inbox_item["id"],
+            responded_message_id=reply.id,
+        )
+        PeerTurnLatencyTraceStore(self.db_path).record_mcp_tool_stage(
+            conversation_id=inbox_item["conversation_id"],
+            inbox_item_id=inbox_item["id"],
+            tool_name="chat_post_message",
+            called_at=1.0,
+        )
         return self.receive_result
 
 
@@ -426,6 +461,209 @@ async def test_scheduler_claims_and_nudges_oldest_item(tmp_path: Path) -> None:
     assert claimed.status == "unread"
     assert claimed.claim_owner == "sched-test"
     assert claimed.nudge_count == 1
+
+
+@pytest.mark.asyncio
+async def test_scheduler_attaches_memoryos_sidecar_recall_to_peer_context(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "chat.db"
+    chat = ChatStore(db_path)
+    conv = chat.create_conversation("Scheduler MemoryOS recall")
+    participants = ParticipantStore(db_path)
+    participant = participants.add(
+        conversation_id=conv.id,
+        role="architect",
+        display_name="Architect GOD",
+        cli_kind="codex",
+        model="gpt-5.4",
+    )
+    message = chat.add_message(conv.id, "Human", "human", "@architect review sentinel")
+    spine_store = AcceptanceSpineStore(db_path)
+    spine_store.create_for_intake(conversation_id=conv.id, intake_message_id=message.id)
+    inbox = ChatInboxStore(db_path)
+    item = inbox.create_item(
+        conversation_id=conv.id,
+        target_participant_id=participant.participant_id,
+        target_role="architect",
+        target_address="@architect",
+        sender_participant_id=None,
+        sender_address="@human",
+        source_message_id=message.id,
+        item_type="mention",
+        payload={"content": "@architect review sentinel"},
+    )
+    memoryos = FakeMemoryOSClient()
+    await memoryos.ingest(
+        MemoryOSIngestRequest(
+            namespace=conversation_namespace(conv.id),
+            actor_id="god-review",
+            content=("@architect review sentinel: prior reviewer approved the bounded lane."),
+            source_refs=["review:verdict-1", "gate:pytest"],
+        )
+    )
+    layer = FakeGodLayer()
+    scheduler = PeerChatScheduler(
+        db_path=db_path,
+        god_layer=layer,
+        worktree=tmp_path,
+        scheduler_id="sched-test",
+        response_wait_s=0.1,
+        memoryos_client=memoryos,
+    )
+    before_spines = [
+        spine.model_dump(mode="json") for spine in spine_store.list_by_conversation(conv.id)
+    ]
+    before_dispatch_entries = ChatDispatchQueueStore(db_path).list_entries(conv.id)
+
+    outcome = await scheduler.tick_once()
+
+    assert outcome.failed == 1
+    prompt = layer.sent[0][2]
+    context = json.loads(layer.sent[0][3])
+    memory_context = context["group_chat"]["memoryos_context"]
+    assert memory_context["status"] == "attached"
+    assert memory_context["authority"] == "memoryos_sidecar"
+    assert memory_context["proof_level"] == "contract"
+    assert memory_context["namespace_uri"] == f"memory://conversation/{conv.id}"
+    assert memory_context["source_refs"] == ["review:verdict-1", "gate:pytest"]
+    assert "@architect review sentinel: prior reviewer approved the bounded lane." in prompt
+    assert "MemoryOS is sidecar context, not proposal/review/dispatch truth" in prompt
+    assert context["group_chat"]["structured_state"]["source"] == "chat.db"
+    assert chat.list_proposals(conv.id) == []
+    assert ChatDispatchQueueStore(db_path).list_entries(conv.id) == before_dispatch_entries
+    assert [
+        spine.model_dump(mode="json") for spine in spine_store.list_by_conversation(conv.id)
+    ] == before_spines
+    assert before_spines[0]["status"] == "intake"
+    assert before_spines[0]["proposal_id"] is None
+    assert before_spines[0]["review_trigger_inbox_id"] is None
+    assert before_spines[0]["dispatch_item_id"] is None
+    assert before_spines[0]["github_gate_evidence_ref"] is None
+    assert inbox.get(item.id).status == "unread"
+
+
+@pytest.mark.asyncio
+async def test_scheduler_degrades_memoryos_sidecar_without_blocking_peer_turn(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "chat.db"
+    chat = ChatStore(db_path)
+    conv = chat.create_conversation("Scheduler MemoryOS degrade")
+    participant = ParticipantStore(db_path).add(
+        conversation_id=conv.id,
+        role="architect",
+        display_name="Architect GOD",
+        cli_kind="codex",
+        model="gpt-5.4",
+    )
+    message = chat.add_message(conv.id, "Human", "human", "@architect continue")
+    inbox = ChatInboxStore(db_path)
+    item = inbox.create_item(
+        conversation_id=conv.id,
+        target_participant_id=participant.participant_id,
+        target_role="architect",
+        target_address="@architect",
+        sender_participant_id=None,
+        sender_address="@human",
+        source_message_id=message.id,
+        item_type="mention",
+        payload={"content": "@architect continue"},
+    )
+
+    class SlowMemoryOSClient:
+        async def build_context(self, namespace, *, query: str, budget: int = 4096):
+            await asyncio.sleep(30)
+            raise AssertionError("timeout should cancel slow MemoryOS recall")
+
+    layer = DurableWritebackGodLayer(db_path)
+    scheduler = PeerChatScheduler(
+        db_path=db_path,
+        god_layer=layer,
+        worktree=tmp_path,
+        scheduler_id="sched-test",
+        response_wait_s=0.1,
+        memoryos_client=SlowMemoryOSClient(),
+        memoryos_timeout_s=0.001,
+    )
+
+    outcome = await scheduler.tick_once()
+
+    assert outcome.happy_path == 1
+    assert outcome.failed == 0
+    context = json.loads(layer.sent[0][3])
+    memory_context = context["group_chat"]["memoryos_context"]
+    assert memory_context["status"] == "degraded"
+    assert memory_context["degraded_reason"] == "memoryos_timeout"
+    assert "MemoryOS sidecar status: degraded" in layer.sent[0][2]
+    assert "continue from chat.db authority" in layer.sent[0][2]
+    assert inbox.get(item.id).status == "read"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("item_type", ["review_trigger", "collaboration_callback", "dispatch"])
+async def test_scheduler_skips_memoryos_sidecar_for_structured_authority_items(
+    tmp_path: Path,
+    item_type: str,
+) -> None:
+    db_path = tmp_path / "chat.db"
+    chat = ChatStore(db_path)
+    conv = chat.create_conversation(f"Scheduler MemoryOS structured {item_type}")
+    participant = ParticipantStore(db_path).add(
+        conversation_id=conv.id,
+        role="review" if item_type == "review_trigger" else "execute",
+        display_name="Structured GOD",
+        cli_kind="codex",
+        model="gpt-5.4",
+    )
+    message = chat.add_message(conv.id, "Human", "human", f"@{participant.role} continue")
+    inbox = ChatInboxStore(db_path)
+    inbox.create_item(
+        conversation_id=conv.id,
+        target_participant_id=participant.participant_id,
+        target_role=participant.role,
+        target_address=f"@{participant.role}",
+        sender_participant_id=None,
+        sender_address="@human",
+        source_message_id=message.id,
+        item_type=item_type,
+        payload={
+            "content": f"@{participant.role} continue",
+            "proposal_id": "proposal-1",
+            "dispatch_queue_entry_id": "dispatch-1",
+        },
+    )
+
+    class RecordingMemoryOSClient:
+        def __init__(self) -> None:
+            self.called = False
+
+        async def build_context(self, namespace, *, query: str, budget: int = 4096):
+            self.called = True
+            return MemoryOSContext(
+                namespace_uri=namespace.uri,
+                text="memoryos should not appear in structured authority prompts",
+            )
+
+    memoryos = RecordingMemoryOSClient()
+    layer = FakeGodLayer()
+    scheduler = PeerChatScheduler(
+        db_path=db_path,
+        god_layer=layer,
+        worktree=tmp_path,
+        scheduler_id="sched-test",
+        response_wait_s=0.1,
+        memoryos_client=memoryos,
+    )
+
+    outcome = await scheduler.tick_once()
+
+    assert outcome.failed == 1
+    assert memoryos.called is False
+    context = json.loads(layer.sent[0][3])
+    assert context["inbox_item"]["item_type"] == item_type
+    assert "memoryos_context" not in context["group_chat"]
+    assert "MemoryOS sidecar" not in layer.sent[0][2]
 
 
 @pytest.mark.asyncio

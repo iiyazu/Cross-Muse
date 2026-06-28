@@ -27,6 +27,9 @@ from xmuse_core.chat.dispatch_queue import ChatDispatchQueueStore
 from xmuse_core.chat.driver import ChatDriver
 from xmuse_core.chat.peer_service import PeerChatService
 from xmuse_core.chat.store import ChatStore
+from xmuse_core.integrations.memoryos_client import (
+    RestMemoryOSClient as PeerChatMemoryOSClient,
+)
 from xmuse_core.platform.coordinator_control import CoordinatorControlService
 from xmuse_core.platform.execution.github_ops import (
     GitHubCliServerSideTruthClient,
@@ -323,6 +326,7 @@ async def run(
     peer_chat_response_wait_s: float = 900.0,
     peer_chat_post_writeback_grace_s: float = 8.0,
     peer_chat_dispatch_response_wait_s: float = 300.0,
+    peer_chat_memoryos_url: str | None = None,
     memoryos_url: str | None = None,
     model_policy: CodexModelPolicy | None = None,
     execution_provider_profile_ref: str | None = None,
@@ -346,6 +350,14 @@ async def run(
         memoryos_client = (
             MemoryOSClient(base_url=memoryos_url)
             if memoryos_url is not None
+            else None
+        )
+        peer_chat_memoryos_client = (
+            PeerChatMemoryOSClient(
+                base_url=peer_chat_memoryos_url,
+                api_key=os.environ.get("XMUSE_PEER_CHAT_MEMORYOS_API_KEY"),
+            )
+            if peer_chat_memoryos_url is not None
             else None
         )
         from xmuse_core.agents.god_session_layer import GodSessionLayer
@@ -495,6 +507,7 @@ async def run(
                 response_wait_s=peer_chat_response_wait_s,
                 post_writeback_grace_s=peer_chat_post_writeback_grace_s,
                 degraded_fallback_enabled=False,
+                memoryos_client=peer_chat_memoryos_client,
             )
             logger.info(
                 "Peer chat scheduler enabled (god_backend=%s)",
@@ -1660,9 +1673,14 @@ def main_arg_parser() -> argparse.ArgumentParser:
         "--peer-chat-dispatch-response-wait-s",
         type=float,
         default=300.0,
+        help=("seconds to wait for execute peers to durably acknowledge dispatch-bridge handoffs"),
+    )
+    parser.add_argument(
+        "--peer-chat-memoryos-url",
+        default=os.environ.get("XMUSE_PEER_CHAT_MEMORYOS_URL"),
         help=(
-            "seconds to wait for execute peers to durably acknowledge "
-            "dispatch-bridge handoffs"
+            "optional MemoryOS REST base URL for natural peer-chat recall "
+            "sidecar; does not create proposal/review/dispatch authority"
         ),
     )
     parser.add_argument(
@@ -2061,6 +2079,7 @@ def main() -> None:
         peer_chat_response_wait_s=args.peer_chat_response_wait_s,
         peer_chat_post_writeback_grace_s=args.peer_chat_post_writeback_grace_s,
         peer_chat_dispatch_response_wait_s=args.peer_chat_dispatch_response_wait_s,
+        peer_chat_memoryos_url=args.peer_chat_memoryos_url,
         memoryos_url=args.memoryos_url,
         model_policy=model_policy,
         execution_provider_profile_ref=args.execution_provider_profile_ref,
