@@ -125,6 +125,49 @@ Do not create umbrella PRs. If separate domains emerge, split by domain:
 - MemoryOS sidecar;
 - frontend read API.
 
+## Documentation Calibration And Throughput
+
+Do not turn every merged PR into an automatic current-main documentation PR.
+Tracked docs may record `calibrated_through` or `last_observed_baseline` facts,
+but they must not imply that a static file is live GitHub truth. Live truth is
+always refreshed from GitHub server facts at the start of a loop.
+
+Documentation-only PRs are appropriate when they change operating rules,
+authority boundaries, task scope, forbidden claims, or milestone-level status.
+They are not required merely because the previous documentation PR moved
+`main` to a new merge commit.
+
+Goal-doc tests should validate durable documentation contracts, evidence shape,
+and forbidden-claim boundaries. They should not force a self-refresh loop by
+requiring the latest `origin/main` SHA to appear in tracked docs after every
+merge. If exact SHAs are recorded, name them as observed baselines, not as a
+permanent claim that the file equals the current remote head.
+
+Implementation throughput has priority over calibration churn. Prefer:
+
+- one domain-scoped implementation PR with exact-head CI and guarded merge;
+- milestone documentation refresh after a meaningful capability or policy
+  change;
+- a short final report that names the live GitHub facts inspected in that
+  loop.
+
+## Worktree Hygiene
+
+Use a clean main-based worktree for new development. Dirty historical worktrees
+remain reference-only unless explicitly promoted after inspection.
+
+Before starting a new implementation slice, check for state hazards that can
+distort truth refresh or merge behavior:
+
+- an old worktree occupying the local `main` branch;
+- prunable temporary worktrees from tests or runtime probes;
+- stale branch worktrees that look newer than `origin/main`;
+- runtime state files that would be mistaken for source evidence.
+
+Cleanups must be non-destructive unless the operator explicitly authorizes
+removal. Prefer listing hazards first, then pruning only prunable worktrees or
+clearly disposable runtime artifacts.
+
 ## Patch And Refactor Threshold
 
 Use a focused refactor immediately when it is simpler than another patch.
