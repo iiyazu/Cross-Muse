@@ -36,7 +36,9 @@ jobs:
           uv run ruff check
           src/xmuse_core/providers/models.py
           src/xmuse_core/providers/registry.py
+          src/xmuse_core/platform/goal_copilot.py
           src/xmuse_core/platform/provider_read_contracts.py
+          tests/xmuse/test_goal_copilot.py
           tests/xmuse/test_provider_read_contracts_module.py
           tests/xmuse/test_quality_gates_phase3.py
 
@@ -49,6 +51,7 @@ jobs:
           tests/xmuse/test_provider_policy.py
           tests/xmuse/test_provider_support_level.py
           tests/xmuse/test_provider_read_contracts_module.py
+          tests/xmuse/test_goal_copilot.py
           tests/xmuse/test_quality_gates_phase3.py
           tests/xmuse/test_platform_runner.py::test_health_once_handles_missing_lane_projection
           tests/xmuse/test_platform_runner.py::test_runner_wires_peer_chat_memoryos_sidecar_client
@@ -62,6 +65,7 @@ jobs:
           uv run mypy
           src/xmuse_core/providers/models.py
           src/xmuse_core/providers/registry.py
+          src/xmuse_core/platform/goal_copilot.py
           src/xmuse_core/platform/provider_read_contracts.py
 
   contract-smoke-gates:
