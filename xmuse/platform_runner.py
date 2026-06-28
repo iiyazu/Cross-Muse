@@ -106,6 +106,47 @@ class _ManualGapGithubGateCollector:
         )
 
 
+class _ExpectedHeadGithubGateCollector:
+    def __init__(
+        self,
+        *,
+        collector: GitHubGateTruthCollector,
+        expected_head_sha: str,
+    ) -> None:
+        self._collector = collector
+        self._expected_head_sha = expected_head_sha
+
+    def collect(
+        self,
+        *,
+        repo: str,
+        pull_request_number: int,
+        required_checks: list[str],
+    ) -> GitHubServerSideTruthEvidence:
+        evidence = self._collector.collect(
+            repo=repo,
+            pull_request_number=pull_request_number,
+            required_checks=required_checks,
+        )
+        if evidence.head_sha == self._expected_head_sha:
+            return evidence
+        data = evidence.model_dump(mode="json")
+        data["proof_level"] = "manual_gap"
+        data["gap_reason"] = "github evidence head SHA mismatch"
+        return GitHubServerSideTruthEvidence(**data)
+
+
+def _with_expected_github_head(
+    collector: GitHubGateTruthCollector,
+    *,
+    expected_head_sha: str,
+) -> GitHubGateTruthCollector:
+    return _ExpectedHeadGithubGateCollector(
+        collector=collector,
+        expected_head_sha=expected_head_sha,
+    )
+
+
 def _update_acceptance_gate_lane_projection(
     *,
     lanes_path: Path,
@@ -161,6 +202,219 @@ def _update_acceptance_gate_lane_projection(
         return
 
     raise RuntimeError(f"acceptance-gated lane projection not found: {lane_id}")
+
+
+def _update_existing_final_action_lane_projection(
+    *,
+    lanes_path: Path,
+    lane_id: str,
+    final_action_ref: str,
+    github_gate_evidence_ref: str | None,
+    github_gate_gap_ref: str | None,
+    github_repo: str,
+    github_pull_request: int,
+    required_checks: list[str],
+    status: str,
+    blocked_reason: str | None = None,
+) -> None:
+    payload = json.loads(lanes_path.read_text(encoding="utf-8"))
+    lanes = payload.get("lanes")
+    if not isinstance(lanes, list):
+        raise RuntimeError("feature_lanes.json missing lanes list")
+
+    for lane in lanes:
+        if not isinstance(lane, dict):
+            continue
+        if lane.get("feature_id") != lane_id:
+            continue
+
+        lane["status"] = status
+        lane["final_action_ref"] = final_action_ref
+        lane["projection_proof_boundary"] = (
+            "feature_lanes_projection_not_acceptance_authority"
+        )
+        lane["github_gate_repo"] = github_repo
+        lane["github_gate_pull_request"] = github_pull_request
+        lane["github_gate_required_checks"] = list(required_checks)
+        if github_gate_evidence_ref:
+            lane["github_gate_evidence_ref"] = github_gate_evidence_ref
+            lane.pop("github_gate_gap_ref", None)
+        if github_gate_gap_ref:
+            lane["github_gate_gap_ref"] = github_gate_gap_ref
+            lane.pop("github_gate_evidence_ref", None)
+        if blocked_reason:
+            lane["blocked_reason"] = blocked_reason
+        else:
+            lane.pop("blocked_reason", None)
+
+        lanes_path.write_text(
+            json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        return
+
+    raise RuntimeError(f"final-action lane projection not found: {lane_id}")
+
+
+def _preflight_existing_final_action_lane_projection(
+    *,
+    lanes_path: Path,
+    lane_id: str,
+    final_action_id: str,
+) -> None:
+    payload = json.loads(lanes_path.read_text(encoding="utf-8"))
+    lanes = payload.get("lanes")
+    if not isinstance(lanes, list):
+        raise RuntimeError("feature_lanes.json missing lanes list")
+
+    for lane in lanes:
+        if not isinstance(lane, dict):
+            continue
+        if lane.get("feature_id") != lane_id:
+            continue
+        projected_hold_id = lane.get("final_action_hold_id")
+        if (
+            isinstance(projected_hold_id, str)
+            and projected_hold_id.strip()
+            and projected_hold_id != final_action_id
+        ):
+            raise RuntimeError("final-action projection hold mismatch")
+        return
+
+    raise RuntimeError(f"final-action lane projection not found: {lane_id}")
+
+
+def _find_resolvable_final_action_hold(
+    *,
+    final_action_store: FinalActionGateStore,
+    lane_id: str | None,
+    final_action_id: str | None,
+):
+    matches = []
+    for action in final_action_store.list_actions():
+        if action.status != "pending" and not (
+            action.status == "blocked" and action.github_gate_gap_ref
+        ):
+            continue
+        if lane_id is not None and action.lane_id != lane_id:
+            continue
+        if final_action_id is not None and action.id != final_action_id:
+            continue
+        matches.append(action)
+    if not matches:
+        raise ValueError("resolvable final action hold not found")
+    if len(matches) > 1:
+        raise ValueError("multiple pending final action holds matched")
+    return matches[0]
+
+
+def resolve_existing_final_action_with_github_gate(
+    *,
+    xmuse_root: Path,
+    github_repo: str,
+    github_pull_request: int,
+    required_checks: list[str] | None = None,
+    head_sha: str | None = None,
+    lane_id: str | None = None,
+    final_action_id: str | None = None,
+    github_gate_collector: GitHubGateTruthCollector | None = None,
+    resolved_by: str = PLANNING_AUTOMATION_WORKER_ID,
+) -> dict[str, Any]:
+    """Resolve an existing pending final-action hold with GitHub gate truth."""
+
+    if lane_id is None and final_action_id is None:
+        raise ValueError("lane_id or final_action_id is required")
+    clean_lane_id = lane_id.strip() if isinstance(lane_id, str) else None
+    clean_final_action_id = (
+        final_action_id.strip() if isinstance(final_action_id, str) else None
+    )
+    if lane_id is not None and not clean_lane_id:
+        raise ValueError("lane_id must be non-empty")
+    if final_action_id is not None and not clean_final_action_id:
+        raise ValueError("final_action_id must be non-empty")
+    if github_pull_request <= 0:
+        raise ValueError("github_pull_request must be positive")
+    clean_repo = github_repo.strip() if isinstance(github_repo, str) else ""
+    if not clean_repo:
+        raise ValueError("github_repo is required")
+    clean_checks = list(required_checks or REQUIRED_GITHUB_CHECKS)
+    if not clean_checks or any(not check.strip() for check in clean_checks):
+        raise ValueError("required_checks must contain non-empty check names")
+    clean_head_sha = (head_sha or _current_git_head_sha(ROOT)).strip()
+    if not clean_head_sha:
+        raise ValueError("head_sha is required")
+
+    xmuse_root.mkdir(parents=True, exist_ok=True)
+    lanes_path = xmuse_root / "feature_lanes.json"
+    final_actions_path = xmuse_root / "final_actions.json"
+    github_gate_evidence_path = xmuse_root / "github_gate_evidence.json"
+
+    final_action_store = FinalActionGateStore(final_actions_path)
+    hold = _find_resolvable_final_action_hold(
+        final_action_store=final_action_store,
+        lane_id=clean_lane_id,
+        final_action_id=clean_final_action_id,
+    )
+    _preflight_existing_final_action_lane_projection(
+        lanes_path=lanes_path,
+        lane_id=hold.lane_id,
+        final_action_id=hold.id,
+    )
+    collector = _with_expected_github_head(
+        github_gate_collector
+        or _ManualGapGithubGateCollector(
+            reason="server_side_merge_proof unavailable for existing final action",
+            head_sha=clean_head_sha,
+        ),
+        expected_head_sha=clean_head_sha,
+    )
+    resolved_hold = final_action_store.resolve_with_github_gate_evidence(
+        hold.id,
+        status="approved",
+        resolved_by=resolved_by,
+        repo=clean_repo,
+        pull_request_number=github_pull_request,
+        required_checks=clean_checks,
+        collector=collector,
+        evidence_store_path=github_gate_evidence_path,
+    )
+
+    final_action_ref = f"final_actions.json#hold={hold.id}"
+    github_ref = (
+        resolved_hold.github_gate_evidence_ref or resolved_hold.github_gate_gap_ref
+    )
+    if resolved_hold.github_gate_evidence_ref:
+        terminal_status = "accepted"
+        lane_status = "merged" if hold.action == "merge" else hold.target_status
+        blocked_reason = None
+    else:
+        terminal_status = "blocked"
+        lane_status = "blocked_for_input"
+        blocked_reason = "github_gate_unverified"
+
+    _update_existing_final_action_lane_projection(
+        lanes_path=lanes_path,
+        lane_id=hold.lane_id,
+        final_action_ref=final_action_ref,
+        github_gate_evidence_ref=resolved_hold.github_gate_evidence_ref,
+        github_gate_gap_ref=resolved_hold.github_gate_gap_ref,
+        github_repo=clean_repo,
+        github_pull_request=github_pull_request,
+        required_checks=clean_checks,
+        status=lane_status,
+        blocked_reason=blocked_reason,
+    )
+    return {
+        "status": terminal_status,
+        "blocked_reason": blocked_reason,
+        "lane_id": hold.lane_id,
+        "final_action_id": hold.id,
+        "durable_refs": {
+            "final_action_ref": final_action_ref,
+            "github_gate_evidence_ref": github_ref,
+            "feature_lanes": str(lanes_path),
+        },
+    }
 
 
 def run_acceptance_gated_goal(
@@ -314,9 +568,13 @@ def run_acceptance_gated_goal(
         for action in final_action_store.list_actions()
         if action.lane_id == lane_id and action.verdict_id == verdict_id
     )
-    collector = github_gate_collector or _ManualGapGithubGateCollector(
-        reason="server_side_merge_proof unavailable for acceptance-gated short run",
-        head_sha=clean_head_sha,
+    collector = _with_expected_github_head(
+        github_gate_collector
+        or _ManualGapGithubGateCollector(
+            reason="server_side_merge_proof unavailable for acceptance-gated short run",
+            head_sha=clean_head_sha,
+        ),
+        expected_head_sha=clean_head_sha,
     )
     resolved_hold = final_action_store.resolve_with_github_gate_evidence(
         hold.id,
@@ -1855,21 +2113,39 @@ def main_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--resolve-final-action",
+        action="store_true",
+        help=(
+            "resolve an existing pending final-action hold through the GitHub "
+            "gate producer and exit"
+        ),
+    )
+    parser.add_argument(
+        "--final-action-id",
+        default=None,
+        help="pending final-action hold id used by --resolve-final-action",
+    )
+    parser.add_argument(
+        "--lane-id",
+        default=None,
+        help="lane id used by --resolve-final-action",
+    )
+    parser.add_argument(
         "--github-repo",
         default="iiyazu/Cross-Muse",
-        help="GitHub owner/repo used by --acceptance-gate evidence capture",
+        help="GitHub owner/repo used by GitHub gate evidence capture",
     )
     parser.add_argument(
         "--github-pr",
         type=int,
         default=None,
-        help="GitHub pull request number bound to --acceptance-gate evidence",
+        help="GitHub pull request number bound to GitHub gate evidence",
     )
     parser.add_argument(
         "--github-head-sha",
         default=None,
         help=(
-            "head SHA bound to --acceptance-gate evidence; defaults to current "
+            "head SHA bound to GitHub gate evidence; defaults to current "
             "repository HEAD"
         ),
     )
@@ -1886,8 +2162,7 @@ def main_arg_parser() -> argparse.ArgumentParser:
         "--github-live-capture",
         action="store_true",
         help=(
-            "with --acceptance-gate, opt into read-only gh api capture for "
-            "server-side merge proof"
+            "opt into read-only gh api capture for server-side merge proof"
         ),
     )
     parser.add_argument(
@@ -1928,6 +2203,10 @@ def main_arg_parser() -> argparse.ArgumentParser:
 def validate_args(args: argparse.Namespace) -> None:
     if args.goal and not args.acceptance_gate:
         raise SystemExit("--goal requires --acceptance-gate")
+    if args.acceptance_gate and args.resolve_final_action:
+        raise SystemExit(
+            "--acceptance-gate and --resolve-final-action are mutually exclusive"
+        )
     if args.acceptance_gate:
         if not args.goal or not args.goal.strip():
             raise SystemExit("--acceptance-gate requires --goal")
@@ -1935,23 +2214,34 @@ def validate_args(args: argparse.Namespace) -> None:
             raise SystemExit("--acceptance-gate requires a positive --github-pr")
         if args.health_once:
             raise SystemExit("--acceptance-gate and --health-once are mutually exclusive")
-        if args.github_live_capture:
-            missing_live_args = [
-                name
-                for name, value in (
-                    ("--internal-review-artifact", args.internal_review_artifact),
-                    ("--internal-reviewer", args.internal_reviewer),
-                    ("--internal-reviewed-head-sha", args.internal_reviewed_head_sha),
-                )
-                if value is None or (isinstance(value, str) and not value.strip())
-            ]
-            if missing_live_args:
-                raise SystemExit(
-                    "--github-live-capture requires "
-                    + ", ".join(missing_live_args)
-                )
-            if not Path(args.internal_review_artifact).is_file():
-                raise SystemExit("--internal-review-artifact must be an existing file")
+    if args.resolve_final_action:
+        if args.github_pr is None or args.github_pr <= 0:
+            raise SystemExit("--resolve-final-action requires a positive --github-pr")
+        if not (args.final_action_id or args.lane_id):
+            raise SystemExit(
+                "--resolve-final-action requires --final-action-id or --lane-id"
+            )
+        if args.health_once:
+            raise SystemExit(
+                "--resolve-final-action and --health-once are mutually exclusive"
+            )
+    if args.github_live_capture and (args.acceptance_gate or args.resolve_final_action):
+        missing_live_args = [
+            name
+            for name, value in (
+                ("--internal-review-artifact", args.internal_review_artifact),
+                ("--internal-reviewer", args.internal_reviewer),
+                ("--internal-reviewed-head-sha", args.internal_reviewed_head_sha),
+            )
+            if value is None or (isinstance(value, str) and not value.strip())
+        ]
+        if missing_live_args:
+            raise SystemExit(
+                "--github-live-capture requires "
+                + ", ".join(missing_live_args)
+            )
+        if not Path(args.internal_review_artifact).is_file():
+            raise SystemExit("--internal-review-artifact must be an existing file")
     if args.peer_chat and args.chat_driver:
         raise SystemExit("--peer-chat and --chat-driver are mutually exclusive")
     if args.default_review_peer_routing and not args.persistent_review_god:
@@ -2101,6 +2391,37 @@ def main() -> None:
                 run_acceptance_gated_goal(
                     goal=args.goal,
                     xmuse_root=xmuse_root,
+                    github_repo=args.github_repo,
+                    github_pull_request=args.github_pr,
+                    required_checks=args.github_required_check
+                    or REQUIRED_GITHUB_CHECKS,
+                    head_sha=args.github_head_sha
+                    or args.internal_reviewed_head_sha,
+                    github_gate_collector=github_gate_collector,
+                ),
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return
+
+    if args.resolve_final_action:
+        github_gate_collector: GitHubGateTruthCollector | None = None
+        if args.github_live_capture:
+            github_gate_collector = ReadOnlyGitHubServerSideTruthCollector(
+                client=GitHubCliServerSideTruthClient(
+                    internal_review_artifact=args.internal_review_artifact,
+                    internal_reviewer=args.internal_reviewer,
+                    internal_reviewed_head_sha=args.internal_reviewed_head_sha,
+                )
+            )
+        print(
+            json.dumps(
+                resolve_existing_final_action_with_github_gate(
+                    xmuse_root=xmuse_root,
+                    lane_id=args.lane_id,
+                    final_action_id=args.final_action_id,
                     github_repo=args.github_repo,
                     github_pull_request=args.github_pr,
                     required_checks=args.github_required_check

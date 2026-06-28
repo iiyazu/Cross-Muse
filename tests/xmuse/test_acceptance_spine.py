@@ -390,6 +390,7 @@ def test_final_action_approval_with_server_gate_gap_keeps_spine_blocked(
     assert spine.status is AcceptanceSpineStatus.BLOCKED
     assert spine.github_gate_evidence_ref is None
     assert spine.manual_gaps == ["github_gate_unverified"]
+    assert final_action.status == "blocked"
     assert final_action.github_gate_evidence_ref is None
     assert final_action.github_gate_gap_ref is not None
     assert gate_payload["items"][0]["can_accept"] is False

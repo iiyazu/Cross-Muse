@@ -769,7 +769,7 @@ def test_approve_awaiting_final_action_merge_without_github_proof_stays_blocked(
     assert data["lanes"][0]["status"] == "blocked"
     assert data["lanes"][0]["blocker_reason"] == "github_gate_unverified"
     holds = json.loads((tmp_path / "final_actions.json").read_text(encoding="utf-8"))
-    assert holds["holds"][0]["status"] == "approved"
+    assert holds["holds"][0]["status"] == "blocked"
     assert holds["holds"][0]["github_gate_gap_ref"] == "github_gate_unverified"
 
 
@@ -854,7 +854,7 @@ def test_approve_awaiting_final_action_merge_applies_import_to_target_worktree(t
     assert imports["imports"][0]["import_decision"]["id"] == "decision-import"
     assert "github_server_merge" in imports["imports"][0]["forbidden_claims"]
     holds = json.loads((tmp_path / "final_actions.json").read_text(encoding="utf-8"))
-    assert holds["holds"][0]["status"] == "approved"
+    assert holds["holds"][0]["status"] == "blocked"
     assert holds["holds"][0]["github_gate_gap_ref"] == "github_gate_unverified"
 
 
