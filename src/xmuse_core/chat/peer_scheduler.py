@@ -916,9 +916,9 @@ class PeerChatScheduler:
             actor_id=participant.participant_id,
             inbox_item=item,
         )
-        source_refs = list(enriched.get("source_refs") or [])
-        source_refs.append("memoryos:sidecar")
-        enriched["source_refs"] = source_refs
+        continuity_refs = _context_continuity_refs(enriched["memoryos_context"])
+        if continuity_refs:
+            enriched["sidecar_continuity_refs"] = continuity_refs
         return enriched
 
     def _with_retry_feedback(self, group_context: dict, item) -> dict:
@@ -1080,7 +1080,7 @@ def _supporting_context_from_group_context(
     memory_context = group_context.get("memoryos_context")
     if not isinstance(memory_context, dict):
         return None
-    return {
+    result = {
         "memoryos_sidecar": {
             "status": _context_text(memory_context, "status") or "unknown",
             "authority": _context_text(memory_context, "authority") or "memoryos_sidecar",
@@ -1088,8 +1088,13 @@ def _supporting_context_from_group_context(
             "namespace_uri": _context_text(memory_context, "namespace_uri") or "unknown",
             "degraded_reason": _context_text(memory_context, "degraded_reason"),
             "source_refs": _context_source_refs(memory_context),
+            "continuity_refs": _context_continuity_refs(memory_context),
         }
     }
+    continuity_refs = _bounded_context_refs(group_context.get("sidecar_continuity_refs"))
+    if continuity_refs:
+        result["sidecar_continuity_refs"] = continuity_refs
+    return result
 
 
 def _context_text(context: dict[str, Any], key: str) -> str | None:
@@ -1101,7 +1106,22 @@ def _context_text(context: dict[str, Any], key: str) -> str | None:
 
 
 def _context_source_refs(context: dict[str, Any]) -> list[str]:
-    raw_refs = context.get("source_refs")
+    return _bounded_context_refs(context.get("source_refs"))
+
+
+def _context_continuity_refs(context: dict[str, Any]) -> list[str]:
+    raw_refs = context.get("continuity_refs")
+    refs = _bounded_context_refs(raw_refs)
+    if refs:
+        return refs
+    single_ref = context.get("continuity_ref")
+    if not isinstance(single_ref, str):
+        return []
+    ref = single_ref.strip()
+    return [ref[:_SUPPORTING_CONTEXT_SOURCE_REF_MAX_CHARS]] if ref else []
+
+
+def _bounded_context_refs(raw_refs: Any) -> list[str]:
     if not isinstance(raw_refs, (list, tuple)):
         return []
     refs = []
