@@ -40,13 +40,16 @@ Current server facts after the 2026-06-28 Track A/B/C/D pass:
 | #261 | dispatch authority refs into lane execution context | `ea0f23b85011cb68429089a8acdc30891d2836c2` | `28315305767` success |
 | #262 | docs refresh after dispatch context refs | `3772b07f9f47bca0205dac465af762463b5bdeaa` | `28315629004` success |
 | #263 | MemoryOS sidecar dispatch handoff continuity | `3fe6d8a853ddeade5548733970445c9ef108f4e1` | `28316064426` success |
+| #264 | docs refresh after MemoryOS sidecar handoffs | `de51f8faf981b04755ebf1a2bd8fdd6f62a0a993` | `28316229878` success |
+| #265 | frontend dispatch continuity read projection | `09b8164866992e9f7df8ac84072f4d9aeb26a602` | `28316510543` success |
+| #266 | copilot intake authority boundary clarification | `235f36ea4c5c38b73d23a786903407ee99088f23` | `28316712653` success |
 
 These rows are GitHub server facts for merged code and CI. They are not proof
 of production-ready natural groupchat, live MemoryOS authority, frontend
 completeness, GitHub review truth, or autonomous merge.
 
 Next execution loop should start from clean `origin/main` at or after
-`3fe6d8a853ddeade5548733970445c9ef108f4e1`, run Phase 0 again, and then push
+`235f36ea4c5c38b73d23a786903407ee99088f23`, run Phase 0 again, and then push
 the largest reachable real chain beyond the current handoff/review/dispatch
 boundary. If the next chain cannot advance, record the durable blocker and
 next authority boundary rather than relying on stdout, worker summaries, or
@@ -62,7 +65,7 @@ git branch --show-current
 git rev-parse HEAD
 git fetch origin
 git rev-parse origin/main
-for pr in 242 244 245 246 247 248 249 250 251 252 253 254 255 257 258 259 260 261; do
+for pr in 242 244 245 246 247 248 249 250 251 252 253 254 255 257 258 259 260 261 262 263 264 265 266; do
   gh pr view "$pr" --json number,state,headRefName,headRefOid,baseRefName,mergedAt,mergeCommit,url
 done
 gh pr list --state open --json number,title,headRefName,headRefOid,baseRefName,isDraft,mergeStateStatus,url
@@ -210,6 +213,10 @@ Validation:
 - #261 makes dispatch authority refs available through lane projection and
   execution context so frontend/API consumers can trace the queue authority
   consumed by a lane without treating the refs as proof of execution.
+- #265 exposes the same dispatch queue authority refs directly on
+  `dispatch_queue.entries[]` with explicit frontend authority boundary and
+  projection-only sidecar continuity metadata; this is still read-only and not
+  a full frontend claim.
 
 ## Phase 7 - Documentation And Final Report
 
@@ -237,7 +244,7 @@ Final report includes:
 
 Current final-report notes for the 2026-06-28 pass:
 
-- maximum verified GitHub chain: domain-scoped PRs #244-#263 reached
+- maximum verified GitHub chain: domain-scoped PRs #244-#266 reached
   exact-head PR CI, guarded merge, and successful main push CI;
 - MemoryOS state: opt-in sidecar contract/degraded-mode support only; no live
   MemoryOS authority claim; #255 gives sidecar/context continuity durable
@@ -253,12 +260,17 @@ Current final-report notes for the 2026-06-28 pass:
   and #257 keeps dispatch execution evidence separate from authority
   `source_refs`; #259 separates inspector dispatch ack from lane execution
   closure evidence; #261 makes lane-level dispatch authority refs readable
-  without promoting them to execution proof; no full frontend claim;
+  without promoting them to execution proof; #265 exposes dispatch queue
+  entry-level authority refs, authority boundary, and projection-only sidecar
+  continuity on the frontend UX projection; no full frontend claim;
 - Ray use: not the default natural groupchat route; remains optional legacy;
 - copilot audit: helper exists for read-only append-only board and advisory
   intake; #257 lets accepted recommendations use `chat_dispatch_queue:*` as
-  durable authority while keeping `mcp_writeback:*` candidate-only;
-  subagent/copilot output is not proof truth;
+  durable authority while keeping `mcp_writeback:*` candidate-only; #266 lets
+  accepted recommendations also use `review_trigger_verdict:*` as durable
+  review verdict authority, keeps legacy `chat_dispatch_queue#entry=*`
+  candidate-only, and marks intake as advisory; subagent/copilot output is not
+  proof truth;
 - GitHub server truth: #249 requires complete required check names and
   per-check-run PR head SHA evidence before `server_side_merge_proof` can emit
   `pr_merged`;
@@ -274,6 +286,8 @@ Current final-report notes for the 2026-06-28 pass:
   the dispatch authority refs worker-visible through lane graph/projection and
   execution context while preserving that proof split; #263 copies the same
   dispatch handoff refs into optional MemoryOS sidecar continuity, not into
-  lane execution proof;
+  lane execution proof; #265 exposes the dispatch refs to frontend consumers as
+  projection-only metadata; #266 keeps copilot intake advisory and prevents
+  execution evidence refs from becoming accepted authority;
 - next authority boundary: run the next real natural chain from current main
   and tie any PR/CI/merge state to exact head SHA and GitHub run metadata.

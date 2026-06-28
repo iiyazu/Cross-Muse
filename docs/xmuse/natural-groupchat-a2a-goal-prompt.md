@@ -28,10 +28,10 @@ Read first:
 Current calibration:
 - Start from a clean origin/main worktree after truth refresh.
 - Current known main calibration is
-  `3fe6d8a853ddeade5548733970445c9ef108f4e1` after PR #263, but always verify
+  `235f36ea4c5c38b73d23a786903407ee99088f23` after PR #266, but always verify
   live `origin/main` and open PR state before acting.
 - PRs #242, #244, #245, #246, #247, #248, #249, #250, #251, #252, #253,
-  #254, #255, #257, #258, #259, #260, #261, #262, and #263 have
+  #254, #255, #257, #258, #259, #260, #261, #262, #263, #264, #265, and #266 have
   merged with
   successful main push CI as of 2026-06-28.
 - PR #249 hardened GitHub server truth: PR/CI/merge evidence must be tied to
@@ -63,6 +63,14 @@ Current calibration:
   MemoryOS sidecar with queue/proposal/review/resolution/artifact refs; sidecar
   ingest degradation remains non-blocking and does not become dispatch or lane
   execution proof.
+- PR #264 refreshed current goal docs after #263.
+- PR #265 exposes dispatch queue entry-level source refs, frontend authority
+  boundary, and projection-only sidecar continuity on the read-only UX
+  projection.
+- PR #266 clarifies read-only copilot intake boundaries: accepted
+  recommendations may use `review_trigger_verdict:*` and `chat_dispatch_queue:*`
+  as durable authority, while `mcp_writeback:*` and legacy
+  `chat_dispatch_queue#entry=*` remain candidate/evidence refs.
 - PR #243 is an older behind-main docs package; treat it as reference-only
   unless rebased and revalidated.
 - Dirty historical worktrees and archived docs are references only, not main
