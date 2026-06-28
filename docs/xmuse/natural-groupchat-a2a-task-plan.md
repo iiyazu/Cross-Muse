@@ -48,19 +48,20 @@ Current server facts after the 2026-06-28 Track A/B/C/D pass:
 | #269 | docs refresh after Track A projection fix | `0b383026b1b250be3fe11a91697d3c6b8102ae55` | `28317521660` success |
 | #270 | acceptance gate noop integration projection | `fa1cc1e1996be3c18540f574c3513b0cafbea642` | `28317667416` success |
 | #271 | docs refresh after noop integration projection | `7c5831d75b6efa59c0ce57aebbae21fdefc68240` | `28317787154` success |
+| #272 | docs sentinel GOD backend alignment | `c60f12090868a35ca56917feabfd66cee6306809` | `28318839517` success |
 
 These rows are GitHub server facts for merged code and CI. They are not proof
 of production-ready natural groupchat, live MemoryOS authority, frontend
 completeness, GitHub review truth, or autonomous merge.
 
 Next execution loop should start from clean `origin/main` at or after
-`7c5831d75b6efa59c0ce57aebbae21fdefc68240`, run Phase 0 again, and then push
+`c60f12090868a35ca56917feabfd66cee6306809`, run Phase 0 again, and then push
 the largest reachable real chain beyond the current handoff/review/dispatch
 boundary. If the next chain cannot advance, record the durable blocker and
 next authority boundary rather than relying on stdout, worker summaries, or
 local tests.
 
-Latest local runtime evidence after #271:
+Latest local runtime evidence recorded during #272 preparation:
 
 - local runtime chain observed across durable authority and projection:
   `chat.db` human mention -> architect collaboration request -> execute
@@ -98,7 +99,7 @@ git branch --show-current
 git rev-parse HEAD
 git fetch origin
 git rev-parse origin/main
-for pr in 242 244 245 246 247 248 249 250 251 252 253 254 255 257 258 259 260 261 262 263 264 265 266 267 268 269 270 271; do
+for pr in 242 244 245 246 247 248 249 250 251 252 253 254 255 257 258 259 260 261 262 263 264 265 266 267 268 269 270 271 272; do
   gh pr view "$pr" --json number,state,headRefName,headRefOid,baseRefName,mergedAt,mergeCommit,url
 done
 gh pr list --state open --json number,title,headRefName,headRefOid,baseRefName,isDraft,mergeStateStatus,url
@@ -112,7 +113,7 @@ Exit with:
   main SHA;
 - #242, #244, #245, #246, #247, #248, #249, #250, #251, #252, #253, #254,
   #255, #257, #258, #259, #260, #261, #262, #263, #264, #265, #266, #267,
-  #268, #269, #270, and #271 verified
+  #268, #269, #270, #271, and #272 verified
   merged unless superseded by newer current docs;
 - latest relevant main push CI observed through GitHub server facts;
 - dirty historical worktrees marked reference-only;
@@ -278,7 +279,7 @@ Final report includes:
 
 Current final-report notes for the 2026-06-28 pass:
 
-- maximum verified GitHub chain: domain-scoped PRs #244-#271 reached
+- maximum verified GitHub chain: domain-scoped PRs #244-#272 reached
   exact-head PR CI, guarded merge, and successful main push CI;
 - MemoryOS state: opt-in sidecar contract/degraded-mode support only; no live
   MemoryOS authority claim; #255 gives sidecar/context continuity durable
@@ -298,6 +299,9 @@ Current final-report notes for the 2026-06-28 pass:
   entry-level authority refs, authority boundary, and projection-only sidecar
   continuity on the frontend UX projection; no full frontend claim;
 - Ray use: not the default natural groupchat route; remains optional legacy;
+  #272 keeps the fullchain docs sentinel peer/review/execute GOD backends
+  aligned with the selected `--peer-god-backend`, so native sentinel runs do
+  not drift into Ray defaults;
 - copilot audit: helper exists for read-only append-only board and advisory
   intake; #257 lets accepted recommendations use `chat_dispatch_queue:*` as
   durable authority while keeping `mcp_writeback:*` candidate-only; #266 lets
