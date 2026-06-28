@@ -397,7 +397,7 @@ async def test_groupchat_proposal_approval_dispatch_and_review_closure_authority
     spine = AcceptanceSpineStore(db).get_by_intake_message(intake.message.id)
     assert spine.status is AcceptanceSpineStatus.DISPATCHED
     assert spine.dispatch_item_id == queued_entry.entry_id
-    assert dispatched_entry.dispatch_evidence in spine.execution_evidence_refs
+    assert dispatched_entry.dispatch_evidence not in spine.execution_evidence_refs
 
     review = service.post_god_message(
         registry_path=registry_path,
@@ -2248,10 +2248,7 @@ async def test_a2a_groupchat_review_approval_dispatch_reaches_execute_ack(
     spine = AcceptanceSpineStore(db_path).get_by_intake_message(intake.message.id)
     assert spine.status is AcceptanceSpineStatus.DISPATCHED
     assert spine.dispatch_item_id == queued[0].entry_id
-    assert spine.execution_evidence_refs == [
-        f"peer_ack:execute:{execute.participant_id}",
-        dispatched.dispatch_evidence,
-    ]
+    assert spine.execution_evidence_refs == []
     assert a2a_client.task_types == [
         "bounded_deliberation",
         "review",

@@ -53,6 +53,7 @@ def _participant_provider_summary(participant_rows: list[Any]) -> list[dict[str,
 
 def _closure_evidence_summary(db_path: Path, conversation_id: str) -> dict[str, Any]:
     spines = AcceptanceSpineStore(db_path).list_by_conversation(conversation_id)
+    dispatch_queue = ChatDispatchQueueStore(db_path)
     status_summary: dict[str, int] = {}
     proposal_review_refs: list[str] = []
     independent_review_refs: list[str] = []
@@ -66,7 +67,11 @@ def _closure_evidence_summary(db_path: Path, conversation_id: str) -> dict[str, 
             proposal_review_refs.append(spine.review_or_execute_verdict_ref)
         if spine.review_verdict_ref:
             independent_review_refs.append(spine.review_verdict_ref)
-        ack_refs = _dispatch_ack_refs(spine.execution_evidence_refs)
+        ack_refs = _dispatch_ack_refs(
+            dispatch_queue,
+            dispatch_item_id=spine.dispatch_item_id,
+            legacy_evidence_refs=spine.execution_evidence_refs,
+        )
         lane_refs = _lane_execution_refs(spine.execution_evidence_refs)
         dispatch_ack_refs.extend(ack_refs)
         lane_execution_refs.extend(lane_refs)
@@ -93,7 +98,10 @@ def _closure_evidence_summary(db_path: Path, conversation_id: str) -> dict[str, 
 
     return {
         "schema_version": "closure_evidence/v1",
-        "source_authority": "chat.db.acceptance_spines",
+        "source_authority": [
+            "chat.db:acceptance_spines",
+            "chat.db:chat_dispatch_queue",
+        ],
         "total": len(spines),
         "status_summary": status_summary,
         "proposal_review": {
@@ -116,7 +124,28 @@ def _closure_evidence_summary(db_path: Path, conversation_id: str) -> dict[str, 
     }
 
 
-def _dispatch_ack_refs(evidence_refs: list[str]) -> list[str]:
+def _dispatch_ack_refs(
+    dispatch_queue: ChatDispatchQueueStore,
+    *,
+    dispatch_item_id: str | None,
+    legacy_evidence_refs: list[str],
+) -> list[str]:
+    refs: list[str] = []
+    if dispatch_item_id:
+        try:
+            entry = dispatch_queue.get(dispatch_item_id)
+        except KeyError:
+            entry = None
+        if entry is not None:
+            if entry.provider_run_ref:
+                refs.append(entry.provider_run_ref)
+            if entry.dispatch_evidence:
+                refs.append(entry.dispatch_evidence)
+    refs.extend(_legacy_dispatch_ack_refs(legacy_evidence_refs))
+    return _dedupe_refs(refs)
+
+
+def _legacy_dispatch_ack_refs(evidence_refs: list[str]) -> list[str]:
     prefixes = (
         "mcp_writeback:",
         "peer_ack:",
@@ -133,6 +162,18 @@ def _lane_execution_refs(evidence_refs: list[str]) -> list[str]:
         "provider_session_binding:",
     )
     return [ref for ref in evidence_refs if ref.startswith(prefixes)]
+
+
+def _dedupe_refs(refs: list[str]) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for ref in refs:
+        clean = ref.strip() if isinstance(ref, str) else ""
+        if not clean or clean in seen:
+            continue
+        seen.add(clean)
+        deduped.append(clean)
+    return deduped
 
 
 def build_conversation_inspector_payload(
