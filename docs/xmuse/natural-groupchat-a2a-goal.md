@@ -23,10 +23,11 @@ Read these first:
 As of this update:
 
 - `origin/main` is calibrated at merge commit
-  `76a57362c73f0f63dc2d9b61f871b24a7a5bb329`.
-- The latest merged PR is #268 (`Fix acceptance gate lane projection`),
+  `fa1cc1e1996be3c18540f574c3513b0cafbea642`.
+- The latest merged PR is #270 (`Mark acceptance gate projection noop
+  integration`),
   merged 2026-06-28 with exact PR head
-  `de2b663385d3883860b9366634641959cd38bb2a`.
+  `ce845037d9c7f933933baa5edc2c669f6bb7235a`.
 - PR #266 (`Clarify copilot intake authority
   boundaries`), merged 2026-06-28 with exact PR head
   `778937c1a26c81b70bb798ea6616cd8fd6fc3911`.
@@ -81,6 +82,10 @@ As of this update:
     `28316881854` success.
   - PR #268 `76a57362c73f0f63dc2d9b61f871b24a7a5bb329`: run
     `28317369049` success.
+  - PR #269 `0b383026b1b250be3fe11a91697d3c6b8102ae55`: run
+    `28317521660` success.
+  - PR #270 `fa1cc1e1996be3c18540f574c3513b0cafbea642`: run
+    `28317667416` success.
 - Recent domain-scoped progress:
   - #244 advanced the natural peer-callback proposal handoff path.
   - #245 added opt-in MemoryOS sidecar recall/degraded-mode support.
@@ -130,6 +135,10 @@ As of this update:
     manual gaps project as `blocked_for_input` with `blocked_reason`, and
     durable refs point back to `chat.db`, dispatch queue, review verdict,
     final action, and GitHub gate evidence/gap authority.
+  - #269 refreshed current goal docs after #268.
+  - #270 marks synthetic acceptance-gated short-run lane projections as
+    `integration_mode: noop`, preventing health from reporting ordinary
+    dependent-release risk for a projection-only gate lane.
 - The next long goal should start from a clean `origin/main` worktree after
   truth refresh.
 - Dirty historical worktrees may be read as references only. They are not main
