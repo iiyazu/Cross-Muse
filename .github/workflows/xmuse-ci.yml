@@ -188,6 +188,7 @@ jobs:
         run: >-
           uv run ruff check
           src/xmuse_core/chat/context_assembler.py
+          src/xmuse_core/chat/frontend_projection.py
           src/xmuse_core/chat/memory_sidecar.py
           src/xmuse_core/chat/mentions.py
           src/xmuse_core/chat/peer_scheduler.py
@@ -195,6 +196,7 @@ jobs:
           src/xmuse_core/chat/prompt_builder.py
           tests/xmuse/test_groupchat_memory_sidecar.py
           tests/xmuse/test_groupchat_collaboration_runtime.py
+          tests/xmuse/test_peer_chat_dashboard.py
           tests/xmuse/test_peer_chat_api.py
           tests/xmuse/test_peer_chat_mentions.py
           tests/xmuse/test_peer_chat_prompt_builder.py
@@ -212,5 +214,8 @@ jobs:
           tests/xmuse/test_peer_chat_prompt_builder.py
           tests/xmuse/test_peer_chat_runtime_gate.py
           tests/xmuse/test_groupchat_collaboration_runtime.py
+          tests/xmuse/test_peer_chat_dashboard.py::test_dashboard_peer_chat_ux_projection_is_frontend_read_model
+          tests/xmuse/test_peer_chat_dashboard.py::test_dashboard_peer_chat_ux_projection_404s_for_missing_conversation
+          tests/xmuse/test_peer_chat_dashboard.py::test_dashboard_peer_chat_ux_projection_does_not_mutate_authority_files
           tests/xmuse/test_peer_chat_api.py
           tests/xmuse/test_package_boundaries.py
