@@ -19,6 +19,7 @@ import urllib.parse
 import urllib.request
 import uuid
 from contextlib import contextmanager, suppress
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -79,6 +80,10 @@ REQUIRED_GITHUB_CHECKS = [
     "real-runtime-integration-gate",
     "peer-chat-runtime-gate",
 ]
+
+
+def _utc_now() -> str:
+    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 class _ManualGapGithubGateCollector:
@@ -284,6 +289,72 @@ def _preflight_existing_final_action_lane_projection(
     raise RuntimeError(f"final-action lane projection not found: {lane_id}")
 
 
+def _load_final_action_lane_projection(
+    *,
+    lanes_path: Path,
+    lane_id: str,
+    final_action_id: str,
+) -> dict[str, Any]:
+    payload = json.loads(lanes_path.read_text(encoding="utf-8"))
+    lanes = payload.get("lanes")
+    if not isinstance(lanes, list):
+        raise RuntimeError("feature_lanes.json missing lanes list")
+
+    for lane in lanes:
+        if not isinstance(lane, dict):
+            continue
+        if lane.get("feature_id") != lane_id:
+            continue
+        projected_hold_id = lane.get("final_action_hold_id")
+        if (
+            isinstance(projected_hold_id, str)
+            and projected_hold_id.strip()
+            and projected_hold_id != final_action_id
+        ):
+            raise RuntimeError("final-action projection hold mismatch")
+        return lane
+
+    raise RuntimeError(f"final-action lane projection not found: {lane_id}")
+
+
+def _update_final_action_pr_lane_projection(
+    *,
+    lanes_path: Path,
+    lane_id: str,
+    pr_ref: str,
+    pull_request_number: int,
+    pull_request_url: str,
+    pull_request_head_sha: str,
+    head_branch: str,
+) -> None:
+    payload = json.loads(lanes_path.read_text(encoding="utf-8"))
+    lanes = payload.get("lanes")
+    if not isinstance(lanes, list):
+        raise RuntimeError("feature_lanes.json missing lanes list")
+
+    for lane in lanes:
+        if not isinstance(lane, dict):
+            continue
+        if lane.get("feature_id") != lane_id:
+            continue
+        lane["pull_request_ref"] = pr_ref
+        lane["pull_request_number"] = pull_request_number
+        lane["pull_request_url"] = pull_request_url
+        lane["pull_request_head_sha"] = pull_request_head_sha
+        lane["pull_request_head_branch"] = head_branch
+        lane["pull_request_status"] = "created"
+        lane["projection_proof_boundary"] = (
+            "feature_lanes_projection_not_pr_ci_or_merge_authority"
+        )
+        lanes_path.write_text(
+            json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        return
+
+    raise RuntimeError(f"final-action lane projection not found: {lane_id}")
+
+
 def _find_resolvable_final_action_hold(
     *,
     final_action_store: FinalActionGateStore,
@@ -306,6 +377,287 @@ def _find_resolvable_final_action_hold(
     if len(matches) > 1:
         raise ValueError("multiple pending final action holds matched")
     return matches[0]
+
+
+def _find_pending_merge_final_action_hold(
+    *,
+    final_action_store: FinalActionGateStore,
+    lane_id: str | None,
+    final_action_id: str | None,
+):
+    matches = []
+    for action in final_action_store.list_actions():
+        if action.status != "pending" or action.action != "merge":
+            continue
+        if lane_id is not None and action.lane_id != lane_id:
+            continue
+        if final_action_id is not None and action.id != final_action_id:
+            continue
+        matches.append(action)
+    if not matches:
+        raise ValueError("pending merge final action hold not found")
+    if len(matches) > 1:
+        raise ValueError("multiple pending merge final action holds matched")
+    return matches[0]
+
+
+def _sanitize_branch_component(value: str) -> str:
+    cleaned = []
+    for char in value.strip():
+        if char.isalnum() or char in {"-", "_", "."}:
+            cleaned.append(char)
+        else:
+            cleaned.append("-")
+    branch = "".join(cleaned).strip("-._")
+    if not branch:
+        raise ValueError("branch component is empty")
+    return branch
+
+
+def _command_stdout(
+    command_runner,
+    command: list[str],
+    *,
+    cwd: Path,
+    timeout: int = 120,
+) -> str:
+    result = command_runner(
+        command,
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        check=False,
+    )
+    if result.returncode != 0:
+        message = (result.stderr or result.stdout or "").strip()
+        raise RuntimeError(
+            "command failed: " + " ".join(command) + (f": {message}" if message else "")
+        )
+    return str(result.stdout or "").strip()
+
+
+def _read_final_action_prs(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {"schema_version": "final_action_prs.v1", "items": []}
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data.get("items"), list):
+        raise RuntimeError("final_action_prs.json items must be a list")
+    return data
+
+
+def _write_final_action_prs(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload["schema_version"] = "final_action_prs.v1"
+    path.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _render_final_action_pr_body(
+    *,
+    lane_id: str,
+    final_action_id: str,
+    final_action_summary: str,
+    pr_ref: str,
+    source_refs: list[Any],
+    base_head_sha: str | None,
+) -> str:
+    refs = "\n".join(f"- {ref}" for ref in source_refs if isinstance(ref, str))
+    if not refs:
+        refs = "- (none recorded)"
+    return (
+        f"## Summary\n{final_action_summary}\n\n"
+        "## xmuse Authority\n"
+        f"- Lane: `{lane_id}`\n"
+        f"- Final action: `final_actions.json#hold={final_action_id}`\n"
+        f"- PR record: `{pr_ref}`\n"
+        f"- Base head: `{base_head_sha or 'unknown'}`\n\n"
+        "## Source Refs\n"
+        f"{refs}\n\n"
+        "## Proof Boundary\n"
+        "This pull request was created from a pending xmuse final-action hold. "
+        "It is not CI truth, GitHub review truth, merge truth, or final-action "
+        "approval. Exact-head CI and guarded merge must be observed separately.\n"
+    )
+
+
+def create_final_action_pull_request(
+    *,
+    xmuse_root: Path,
+    github_repo: str,
+    lane_id: str | None = None,
+    final_action_id: str | None = None,
+    base_branch: str = "main",
+    branch_prefix: str = "codex/",
+    draft: bool = False,
+    command_runner=None,
+) -> dict[str, Any]:
+    """Create a GitHub PR from an existing pending merge final-action hold."""
+
+    if lane_id is None and final_action_id is None:
+        raise ValueError("lane_id or final_action_id is required")
+    clean_lane_id = lane_id.strip() if isinstance(lane_id, str) else None
+    clean_final_action_id = (
+        final_action_id.strip() if isinstance(final_action_id, str) else None
+    )
+    if lane_id is not None and not clean_lane_id:
+        raise ValueError("lane_id must be non-empty")
+    if final_action_id is not None and not clean_final_action_id:
+        raise ValueError("final_action_id must be non-empty")
+    clean_repo = github_repo.strip() if isinstance(github_repo, str) else ""
+    if not clean_repo:
+        raise ValueError("github_repo is required")
+    clean_base = base_branch.strip()
+    if not clean_base:
+        raise ValueError("base_branch is required")
+    clean_prefix = branch_prefix.strip()
+    if not clean_prefix:
+        raise ValueError("branch_prefix is required")
+
+    command_runner = command_runner or subprocess.run
+    lanes_path = xmuse_root / "feature_lanes.json"
+    final_actions_path = xmuse_root / "final_actions.json"
+    pr_store_path = xmuse_root / "final_action_prs.json"
+    final_action_store = FinalActionGateStore(final_actions_path)
+    hold = _find_pending_merge_final_action_hold(
+        final_action_store=final_action_store,
+        lane_id=clean_lane_id,
+        final_action_id=clean_final_action_id,
+    )
+    lane = _load_final_action_lane_projection(
+        lanes_path=lanes_path,
+        lane_id=hold.lane_id,
+        final_action_id=hold.id,
+    )
+    if lane.get("status") != "awaiting_final_action":
+        raise RuntimeError("final action lane must be awaiting_final_action")
+    worktree_value = lane.get("worktree")
+    worktree = Path(str(worktree_value)) if worktree_value else None
+    if worktree is None:
+        raise RuntimeError("final action lane missing worktree")
+    if not worktree.is_absolute():
+        worktree = (xmuse_root / worktree).resolve()
+    if not worktree.exists():
+        raise RuntimeError("final action worktree not found")
+
+    _command_stdout(
+        command_runner,
+        ["git", "rev-parse", "--is-inside-work-tree"],
+        cwd=worktree,
+    )
+    dirty = _command_stdout(
+        command_runner,
+        ["git", "status", "--porcelain"],
+        cwd=worktree,
+    )
+    if not dirty:
+        raise RuntimeError("final action worktree has no changes")
+
+    head_branch = clean_prefix + _sanitize_branch_component(hold.lane_id)
+    title = f"xmuse final action: {hold.lane_id}"
+    record_id = f"fapr-{uuid.uuid4().hex[:12]}"
+    pr_ref = f"final_action_prs.json#pr={record_id}"
+    base_head_sha = lane.get("base_head_sha")
+    body = _render_final_action_pr_body(
+        lane_id=hold.lane_id,
+        final_action_id=hold.id,
+        final_action_summary=hold.summary,
+        pr_ref=pr_ref,
+        source_refs=list(lane.get("source_refs") or []),
+        base_head_sha=base_head_sha if isinstance(base_head_sha, str) else None,
+    )
+    _command_stdout(command_runner, ["git", "checkout", "-B", head_branch], cwd=worktree)
+    _command_stdout(command_runner, ["git", "add", "--all"], cwd=worktree)
+    _command_stdout(command_runner, ["git", "commit", "-m", title], cwd=worktree)
+    commit_sha = _command_stdout(command_runner, ["git", "rev-parse", "HEAD"], cwd=worktree)
+    _command_stdout(
+        command_runner,
+        ["git", "push", "-u", "origin", f"HEAD:refs/heads/{head_branch}"],
+        cwd=worktree,
+        timeout=300,
+    )
+    pr_create = [
+        "gh",
+        "pr",
+        "create",
+        "--repo",
+        clean_repo,
+        "--base",
+        clean_base,
+        "--head",
+        head_branch,
+        "--title",
+        title,
+        "--body",
+        body,
+    ]
+    if draft:
+        pr_create.append("--draft")
+    pr_url = _command_stdout(command_runner, pr_create, cwd=worktree, timeout=300)
+    pr_view = _command_stdout(
+        command_runner,
+        [
+            "gh",
+            "pr",
+            "view",
+            pr_url,
+            "--repo",
+            clean_repo,
+            "--json",
+            "number,url,headRefOid",
+        ],
+        cwd=worktree,
+        timeout=120,
+    )
+    pr_payload = json.loads(pr_view)
+    pr_number = int(pr_payload["number"])
+    pr_url = str(pr_payload["url"])
+    pr_head_sha = str(pr_payload["headRefOid"])
+    record = {
+        "id": record_id,
+        "final_action_id": hold.id,
+        "lane_id": hold.lane_id,
+        "status": "created",
+        "repo": clean_repo,
+        "base_branch": clean_base,
+        "head_branch": head_branch,
+        "commit_sha": commit_sha,
+        "pull_request_number": pr_number,
+        "pull_request_url": pr_url,
+        "head_sha": pr_head_sha,
+        "draft": draft,
+        "worktree": str(worktree),
+        "proof_boundary": "pull_request_created_not_merge_truth",
+        "created_at": _utc_now(),
+    }
+    pr_store = _read_final_action_prs(pr_store_path)
+    pr_store.setdefault("items", []).append(record)
+    _write_final_action_prs(pr_store_path, pr_store)
+    pr_ref = f"final_action_prs.json#pr={record['id']}"
+    _update_final_action_pr_lane_projection(
+        lanes_path=lanes_path,
+        lane_id=hold.lane_id,
+        pr_ref=pr_ref,
+        pull_request_number=pr_number,
+        pull_request_url=pr_url,
+        pull_request_head_sha=pr_head_sha,
+        head_branch=head_branch,
+    )
+    return {
+        "status": "created",
+        "lane_id": hold.lane_id,
+        "final_action_id": hold.id,
+        "pull_request_number": pr_number,
+        "pull_request_url": pr_url,
+        "pull_request_head_sha": pr_head_sha,
+        "durable_refs": {
+            "final_action_ref": f"final_actions.json#hold={hold.id}",
+            "pull_request_ref": pr_ref,
+            "feature_lanes": str(lanes_path),
+        },
+    }
 
 
 def resolve_existing_final_action_with_github_gate(
@@ -2121,6 +2473,14 @@ def main_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--create-final-action-pr",
+        action="store_true",
+        help=(
+            "create a pull request from an existing pending merge final-action "
+            "hold and exit; does not resolve the hold or claim CI/merge truth"
+        ),
+    )
+    parser.add_argument(
         "--final-action-id",
         default=None,
         help="pending final-action hold id used by --resolve-final-action",
@@ -2134,6 +2494,21 @@ def main_arg_parser() -> argparse.ArgumentParser:
         "--github-repo",
         default="iiyazu/Cross-Muse",
         help="GitHub owner/repo used by GitHub gate evidence capture",
+    )
+    parser.add_argument(
+        "--pr-base-branch",
+        default="main",
+        help="base branch used by --create-final-action-pr",
+    )
+    parser.add_argument(
+        "--pr-branch-prefix",
+        default="codex/",
+        help="remote branch prefix used by --create-final-action-pr",
+    )
+    parser.add_argument(
+        "--pr-draft",
+        action="store_true",
+        help="create draft pull requests with --create-final-action-pr",
     )
     parser.add_argument(
         "--github-pr",
@@ -2207,6 +2582,11 @@ def validate_args(args: argparse.Namespace) -> None:
         raise SystemExit(
             "--acceptance-gate and --resolve-final-action are mutually exclusive"
         )
+    if args.create_final_action_pr and (args.acceptance_gate or args.resolve_final_action):
+        raise SystemExit(
+            "--create-final-action-pr is mutually exclusive with --acceptance-gate "
+            "and --resolve-final-action"
+        )
     if args.acceptance_gate:
         if not args.goal or not args.goal.strip():
             raise SystemExit("--acceptance-gate requires --goal")
@@ -2224,6 +2604,15 @@ def validate_args(args: argparse.Namespace) -> None:
         if args.health_once:
             raise SystemExit(
                 "--resolve-final-action and --health-once are mutually exclusive"
+            )
+    if args.create_final_action_pr:
+        if not (args.final_action_id or args.lane_id):
+            raise SystemExit(
+                "--create-final-action-pr requires --final-action-id or --lane-id"
+            )
+        if args.health_once:
+            raise SystemExit(
+                "--create-final-action-pr and --health-once are mutually exclusive"
             )
     if args.github_live_capture and (args.acceptance_gate or args.resolve_final_action):
         missing_live_args = [
@@ -2429,6 +2818,25 @@ def main() -> None:
                     head_sha=args.github_head_sha
                     or args.internal_reviewed_head_sha,
                     github_gate_collector=github_gate_collector,
+                ),
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return
+
+    if args.create_final_action_pr:
+        print(
+            json.dumps(
+                create_final_action_pull_request(
+                    xmuse_root=xmuse_root,
+                    lane_id=args.lane_id,
+                    final_action_id=args.final_action_id,
+                    github_repo=args.github_repo,
+                    base_branch=args.pr_base_branch,
+                    branch_prefix=args.pr_branch_prefix,
+                    draft=args.pr_draft,
                 ),
                 ensure_ascii=False,
                 indent=2,
