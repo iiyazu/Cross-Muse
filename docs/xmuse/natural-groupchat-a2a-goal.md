@@ -23,10 +23,10 @@ Read these first:
 As of this update:
 
 - `origin/main` is calibrated at merge commit
-  `a94ebb33c751a02b13e00de06d53a0fd56649405`.
-- The latest merged PR is #247 (`Add goal copilot audit guardrails`), merged
+  `159b851435b735ac828eca0637b601907c306cef`.
+- The latest merged PR is #249 (`Harden GitHub exact-head evidence`), merged
   2026-06-28 with exact PR head
-  `96d24c9ee1469ceb87c3be9b30b787e23d1526b7`.
+  `ebbc58848d24dbbb4d2f3671bca61d4e1a621725`.
 - Current server-side main CI evidence:
   - PR #242 `c1d19ad2ae9bd8b22742376c98968073a508329c`: run
     `28292323481` success.
@@ -38,11 +38,18 @@ As of this update:
     `28309007290` success.
   - PR #247 `a94ebb33c751a02b13e00de06d53a0fd56649405`: run
     `28309375745` success.
+  - PR #248 `a752432b73a5d7a6cdd735d9776141f0d2ebc3a1`: run
+    `28309677170` success.
+  - PR #249 `159b851435b735ac828eca0637b601907c306cef`: run
+    `28310645567` success.
 - Recent domain-scoped progress:
   - #244 advanced the natural peer-callback proposal handoff path.
   - #245 added opt-in MemoryOS sidecar recall/degraded-mode support.
   - #246 added frontend read-only peer-chat UX projection.
   - #247 added read-only goal copilot audit guardrails.
+  - #248 refreshed the current goal documentation package.
+  - #249 made GitHub server truth require exact PR head check-run evidence
+    before merge proof can emit `pr_merged`.
 - The next long goal should start from a clean `origin/main` worktree after
   truth refresh.
 - Dirty historical worktrees may be read as references only. They are not main

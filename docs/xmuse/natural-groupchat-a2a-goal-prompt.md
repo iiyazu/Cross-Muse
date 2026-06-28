@@ -28,10 +28,12 @@ Read first:
 Current calibration:
 - Start from a clean origin/main worktree after truth refresh.
 - Current known main calibration is
-  `a94ebb33c751a02b13e00de06d53a0fd56649405` after PR #247, but always verify
+  `159b851435b735ac828eca0637b601907c306cef` after PR #249, but always verify
   live `origin/main` and open PR state before acting.
-- PRs #242, #244, #245, #246, and #247 have merged with successful main push
-  CI as of 2026-06-28.
+- PRs #242, #244, #245, #246, #247, #248, and #249 have merged with
+  successful main push CI as of 2026-06-28.
+- PR #249 hardened GitHub server truth: PR/CI/merge evidence must be tied to
+  exact PR head SHA, required check-run names, and per-check-run head SHAs.
 - PR #243 is an older behind-main docs package; treat it as reference-only
   unless rebased and revalidated.
 - Dirty historical worktrees and archived docs are references only, not main

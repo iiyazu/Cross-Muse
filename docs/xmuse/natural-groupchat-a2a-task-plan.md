@@ -25,13 +25,15 @@ Current server facts after the 2026-06-28 Track A/B/C/D pass:
 | #245 | MemoryOS sidecar/context continuity | `328e79a9b153843069146826192dc9ac2cc115d6` | `28308325362` success |
 | #246 | frontend read-only UX projection | `176d26272cb118c62ab424053d77bd6a1a44a5a5` | `28309007290` success |
 | #247 | read-only copilot audit guardrails | `a94ebb33c751a02b13e00de06d53a0fd56649405` | `28309375745` success |
+| #248 | current goal documentation calibration | `a752432b73a5d7a6cdd735d9776141f0d2ebc3a1` | `28309677170` success |
+| #249 | GitHub exact-head evidence hardening | `159b851435b735ac828eca0637b601907c306cef` | `28310645567` success |
 
 These rows are GitHub server facts for merged code and CI. They are not proof
 of production-ready natural groupchat, live MemoryOS authority, frontend
 completeness, GitHub review truth, or autonomous merge.
 
 Next execution loop should start from clean `origin/main` at
-`a94ebb33c751a02b13e00de06d53a0fd56649405`, run Phase 0 again, and then push
+`159b851435b735ac828eca0637b601907c306cef`, run Phase 0 again, and then push
 the largest reachable real chain beyond the current handoff/review/dispatch
 boundary. If the next chain cannot advance, record the durable blocker and
 next authority boundary rather than relying on stdout, worker summaries, or
@@ -47,7 +49,7 @@ git branch --show-current
 git rev-parse HEAD
 git fetch origin
 git rev-parse origin/main
-for pr in 242 244 245 246 247; do
+for pr in 242 244 245 246 247 248 249; do
   gh pr view "$pr" --json number,state,headRefName,headRefOid,baseRefName,mergedAt,mergeCommit,url
 done
 gh pr list --state open --json number,title,headRefName,headRefOid,baseRefName,isDraft,mergeStateStatus,url
@@ -59,8 +61,8 @@ Exit with:
 - clean worktree selected;
 - `origin/main` verified against the current calibration or a newer fetched
   main SHA;
-- #242, #244, #245, #246, and #247 verified merged unless superseded by newer
-  current docs;
+- #242, #244, #245, #246, #247, #248, and #249 verified merged unless
+  superseded by newer current docs;
 - latest relevant main push CI observed through GitHub server facts;
 - dirty historical worktrees marked reference-only;
 - current provider availability recorded;
@@ -130,7 +132,8 @@ Deliver:
 
 Validation:
 
-- PR/CI/merge state is tied to exact head SHA and run metadata;
+- PR/CI/merge state is tied to exact head SHA, check-run names, check-run head
+  SHAs, and run metadata;
 - no GitHub review truth, ready-to-merge, or autonomous merge claim is made.
 
 ## Phase 5 - MemoryOS Sidecar
@@ -193,7 +196,7 @@ Final report includes:
 
 Current final-report notes for the 2026-06-28 pass:
 
-- maximum verified GitHub chain: domain-scoped PRs #244-#247 reached
+- maximum verified GitHub chain: domain-scoped PRs #244-#249 reached
   exact-head PR CI, guarded merge, and successful main push CI;
 - MemoryOS state: opt-in sidecar contract/degraded-mode support only; no live
   MemoryOS authority claim;
@@ -201,5 +204,8 @@ Current final-report notes for the 2026-06-28 pass:
 - Ray use: not the default natural groupchat route; remains optional legacy;
 - copilot audit: helper exists for read-only append-only board and advisory
   intake; subagent/copilot output is not proof truth;
+- GitHub server truth: #249 requires complete required check names and
+  per-check-run PR head SHA evidence before `server_side_merge_proof` can emit
+  `pr_merged`;
 - next authority boundary: run the next real natural chain from current main
   and tie any PR/CI/merge state to exact head SHA and GitHub run metadata.
