@@ -522,6 +522,7 @@ async def run(
                 bridge_id="platform-runner-dispatch",
                 claim_ttl_s=peer_chat_dispatch_claim_ttl_s,
                 response_wait_s=peer_chat_dispatch_response_wait_s,
+                memoryos_client=peer_chat_memoryos_client,
             )
         elif peer_chat_enabled and peer_chat_scheduler is None:
             logger.warning(

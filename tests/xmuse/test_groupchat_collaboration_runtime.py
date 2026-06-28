@@ -26,6 +26,8 @@ from xmuse_core.chat.store import ChatStore
 from xmuse_core.chat.stream_store import PeerTurnLatencyTraceStore
 from xmuse_core.integrations.a2a_provider_client import A2AProviderTaskRequest
 from xmuse_core.integrations.a2a_sdk_boundary import NormalizedA2ATaskResult
+from xmuse_core.integrations.memoryos_client import FakeMemoryOSClient
+from xmuse_core.integrations.memoryos_namespace import conversation_namespace
 from xmuse_core.providers.service import RunnerProviderService
 from xmuse_core.structuring.graph_store import LaneGraphStore
 
@@ -2339,6 +2341,115 @@ async def test_dispatch_bridge_acknowledges_gated_entry_through_execute_peer(
     assert reloaded.dispatch_evidence.startswith("mcp_writeback:")
     inspector = build_conversation_inspector_payload(conversation_id, tmp_path)
     assert inspector["dispatch_queue"]["dispatched"] == 1
+
+
+@pytest.mark.asyncio
+async def test_dispatch_bridge_ingests_dispatch_handoff_to_memoryos_sidecar(
+    tmp_path: Path,
+) -> None:
+    conversation_id = _conversation(tmp_path)
+    _execute_participant(tmp_path, conversation_id)
+    entry = ChatDispatchQueueStore(tmp_path / "chat.db").enqueue_agent_auto_dispatch(
+        conversation_id=conversation_id,
+        proposal_id="proposal-memoryos-dispatch",
+        resolution_id="resolution-memoryos-dispatch",
+        collaboration_run_id="collab-memoryos-dispatch",
+        artifact_ref="artifact:memoryos-lane-graph",
+        gate_refs=[
+            "review_trigger_verdict:review-memoryos-dispatch",
+            "collaboration:collab-memoryos-dispatch",
+        ],
+    )
+    expected_source_refs = [
+        f"chat_dispatch_queue:{entry.entry_id}",
+        "proposal:proposal-memoryos-dispatch",
+        "review_trigger_verdict:review-memoryos-dispatch",
+        "collaboration:collab-memoryos-dispatch",
+        "resolution:resolution-memoryos-dispatch",
+        "artifact:memoryos-lane-graph",
+    ]
+    memoryos = FakeMemoryOSClient()
+    god_layer = _DispatchBridgeGodLayer(tmp_path / "chat.db")
+    bridge = ChatDispatchBridge(
+        db_path=tmp_path / "chat.db",
+        god_layer=god_layer,
+        worktree=tmp_path,
+        bridge_id="dispatch-bridge-test",
+        response_wait_s=0.1,
+        memoryos_client=memoryos,
+    )
+
+    outcome = await bridge.tick_once(conversation_id=conversation_id)
+
+    assert outcome.claimed == 1
+    assert outcome.dispatched == 1
+    context = json.loads(god_layer.sent[0][3])
+    prompt = god_layer.sent[0][2]
+    assert "memoryos_context" not in context["group_chat"]
+    assert "MemoryOS sidecar" not in prompt
+    pages = await memoryos.search(
+        conversation_namespace(conversation_id),
+        query="dispatch handoff",
+    )
+    assert len(pages) == 1
+    assert pages[0].actor_id == "dispatch-bridge:dispatch-bridge-test"
+    assert pages[0].source_refs == expected_source_refs
+    assert pages[0].metadata == {
+        "memoryos_sidecar_kind": "dispatch_handoff",
+        "dispatch_queue_entry_id": entry.entry_id,
+        "proof_boundary": "sidecar_continuity_not_execution_truth",
+    }
+    assert "Dispatch handoff recorded for approved queue entry" in pages[0].content
+    assert "These refs are sidecar continuity refs, not lane execution proof." in pages[0].content
+    for source_ref in expected_source_refs:
+        assert f"- {source_ref}" in pages[0].content
+
+
+@pytest.mark.asyncio
+async def test_dispatch_bridge_continues_when_memoryos_sidecar_ingest_degrades(
+    tmp_path: Path,
+) -> None:
+    class DegradedMemoryOSClient:
+        async def ingest(self, request):
+            raise RuntimeError("memoryos unavailable")
+
+        async def build_context(self, namespace, *, query: str, budget: int = 4096):
+            raise AssertionError("dispatch bridge must not request MemoryOS recall")
+
+        async def search(self, namespace, *, query: str, limit: int = 10):
+            return []
+
+    conversation_id = _conversation(tmp_path)
+    execute = _execute_participant(tmp_path, conversation_id)
+    entry = ChatDispatchQueueStore(tmp_path / "chat.db").enqueue_agent_auto_dispatch(
+        conversation_id=conversation_id,
+        proposal_id="proposal-memoryos-degraded",
+        resolution_id="resolution-memoryos-degraded",
+        collaboration_run_id="collab-memoryos-degraded",
+        artifact_ref="artifact:memoryos-degraded-lane-graph",
+        gate_refs=["review_trigger_verdict:review-memoryos-degraded"],
+    )
+    god_layer = _DispatchBridgeGodLayer(tmp_path / "chat.db")
+    bridge = ChatDispatchBridge(
+        db_path=tmp_path / "chat.db",
+        god_layer=god_layer,
+        worktree=tmp_path,
+        bridge_id="dispatch-bridge-test",
+        response_wait_s=0.1,
+        memoryos_client=DegradedMemoryOSClient(),
+    )
+
+    outcome = await bridge.tick_once(conversation_id=conversation_id)
+
+    assert outcome.claimed == 1
+    assert outcome.dispatched == 1
+    assert outcome.failed == 0
+    context = json.loads(god_layer.sent[0][3])
+    assert "memoryos_context" not in context["group_chat"]
+    reloaded = ChatDispatchQueueStore(tmp_path / "chat.db").get(entry.entry_id)
+    assert reloaded.status == "dispatched"
+    assert reloaded.provider_run_ref == f"peer_ack:execute:{execute.participant_id}"
+    assert reloaded.dispatch_evidence.startswith("mcp_writeback:")
 
 
 @pytest.mark.asyncio
