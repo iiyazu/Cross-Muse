@@ -84,7 +84,12 @@ class FinalActionGateStore:
                     if github_gate_evidence_ref and not accepted_github_ref
                     else None
                 )
-                item["status"] = status
+                normalized_status = status.strip().lower()
+                status_blocked_by_github_gate = bool(
+                    (github_gate_gap_ref or rejected_github_ref)
+                    and normalized_status in {"approved", "accepted", "resolved"}
+                )
+                item["status"] = "blocked" if status_blocked_by_github_gate else status
                 item["resolved_by"] = resolved_by
                 if accepted_github_ref:
                     item["github_gate_evidence_ref"] = accepted_github_ref
