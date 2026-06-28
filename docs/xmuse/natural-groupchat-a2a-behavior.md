@@ -151,6 +151,51 @@ Implementation throughput has priority over calibration churn. Prefer:
 - a short final report that names the live GitHub facts inspected in that
   loop.
 
+## Goal Throughput Discipline
+
+Each loop must declare one primary Track before doing implementation work:
+
+- Track A: natural groupchat real chain to PR/CI/guarded merge;
+- Track B: MemoryOS sidecar/context continuity;
+- Track C: frontend API/UX read projection.
+
+Track A is the default primary Track until a real natural groupchat chain can
+create a small xmuse PR, observe exact-head CI, and reach guarded merge or an
+explicit operator blocker. Track B or Track C may become primary only when the
+loop names the Track A blocker it removes or the milestone it directly
+completes.
+
+Each loop may have support Tracks, but support work must not displace the
+primary Track. The loop report must separate:
+
+```text
+core-chain progress
+support progress
+primary authority boundary
+support authority boundary
+blocked boundary
+next primary action
+```
+
+Use one primary authority boundary per implementation PR. If a proposed change
+touches multiple producer/consumer boundaries, split it unless the split would
+break the runtime proof.
+
+Do not count support surfaces as core-chain completion. MemoryOS sidecar,
+frontend projection, copilot/subagent audit, local tests, and docs updates are
+support progress unless the loop proves they directly unblock the real
+groupchat-to-PR chain. Green CI, successful local tests, or richer projection
+payloads must not be summarized as natural groupchat production readiness.
+
+Documentation-only PRs should normally follow two or three implementation PRs,
+or an explicit policy/authority-boundary change. If a documentation PR happens
+sooner, its PR body must state why delaying it would risk incorrect execution.
+
+Subagent or copilot audit should be sampled at decision points, not used as a
+constant parallel self-approval loop. Good triggers are PR-ready review,
+repeated complex boundary failure, or uncertainty about authority
+classification.
+
 ## Worktree Hygiene
 
 Use a clean main-based worktree for new development. Dirty historical worktrees
