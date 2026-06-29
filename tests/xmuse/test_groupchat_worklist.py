@@ -677,6 +677,156 @@ async def test_groupchat_peer_runtime_continues_to_dispatch_ack_authority_wait(
 
 
 @pytest.mark.asyncio
+async def test_groupchat_peer_runtime_resumes_past_ack_when_final_action_is_available(
+    tmp_path,
+):
+    db = tmp_path / "chat.db"
+    chat = ChatStore(db)
+    conversation = chat.create_conversation("A5 final action resume")
+    participants = ParticipantStore(db)
+    architect = participants.add(
+        conversation_id=conversation.id,
+        role="architect",
+        display_name="Remote A2A Architect GOD",
+        cli_kind="a2a",
+        model="a2a-remote",
+    )
+    participants.add(
+        conversation_id=conversation.id,
+        role="review",
+        display_name="Review GOD",
+        cli_kind="codex",
+        model="gpt-5.5",
+    )
+    participants.add(
+        conversation_id=conversation.id,
+        role="critic",
+        display_name="Critic GOD",
+        cli_kind="codex",
+        model="gpt-5.5",
+    )
+    root = chat.add_message(
+        conversation_id=conversation.id,
+        author="human",
+        role="human",
+        content="@execute no natural route from the root.",
+    )
+    store = GroupchatWorklistStore(db)
+    chain = store.create_chain(conversation_id=conversation.id, root_message_id=root.id)
+    dispatch_ack = chat.add_message(
+        conversation_id=conversation.id,
+        author="execute",
+        role="assistant",
+        content="DISPATCH_ACKNOWLEDGED dispatch-a",
+        envelope_type="dispatch_result",
+        envelope_json={
+            "type": "dispatch_result",
+            "authority": "chat.db/messages/dispatch_result",
+            "dispatch_queue_entry_id": "dispatch-a",
+            "proposal_id": "proposal-a",
+            "resolution_id": "resolution-a",
+            "proof_boundary": "dispatch_acknowledgement_not_execution_proof",
+            "source_refs": ["chat_dispatch_queue:dispatch-a"],
+        },
+    )
+    spine_ref = _acceptance_spine_for_dispatch(
+        db,
+        conversation_id=conversation.id,
+        intake_message_id=root.id,
+        proposal_id="proposal-a",
+        dispatch_item_id="dispatch-a",
+    )
+    final_action = chat.add_message(
+        conversation_id=conversation.id,
+        author="final-action-gate",
+        role="system",
+        content="Final action merge for lane lane-a is accepted.",
+        envelope_type="final_action_result",
+        envelope_json={
+            "type": "final_action_result",
+            "authority": "chat.db/messages/final_action_result",
+            "lane_id": "lane-a",
+            "action": "merge",
+            "status": "accepted",
+            "github_gate_evidence_ref": "github_gate_evidence:lane-a",
+            "github_gate": {"status": "accepted"},
+            "acceptance_spine_ref": spine_ref,
+            "source_refs": [
+                "final_actions.json#hold=final-a",
+                spine_ref,
+                "github_gate_evidence:lane-a",
+            ],
+        },
+    )
+
+    class ForbiddenGodLayer:
+        async def ensure_conversation_session(self, **kwargs):
+            raise AssertionError("A2A architect should use provider writeback")
+
+    class FinalActionProviderService:
+        def __init__(self) -> None:
+            self.invocations = []
+
+        def invoke_provider_adapter(self, invocation):
+            self.invocations.append(invocation)
+            return ProviderInvocationResult(
+                request_id=invocation.request_id,
+                provider_id=ProviderId.A2A,
+                profile_id=ProviderProfileId.REMOTE,
+                status=WorkerResultStatus.COMPLETED,
+                evidence_refs=[f"a2a_task:{invocation.request_id}"],
+                diagnostic_payload={
+                    "a2a_task_id": invocation.request_id,
+                    "a2a_context_id": invocation.request_id,
+                    "a2a_state": "TASK_STATE_COMPLETED",
+                    "a2a_disposition": "completed",
+                    "a2a_terminal": True,
+                    "a2a_content": "Final action evidence accepted; no further route.",
+                    "a2a_artifacts": [],
+                    "a2a_history": [],
+                    "a2a_metadata": {},
+                    "a2a_source_refs": [f"a2a_task:{invocation.request_id}"],
+                    "a2a_sdk_task": {
+                        "id": invocation.request_id,
+                        "status": {"state": "TASK_STATE_COMPLETED"},
+                    },
+                    "a2a_jsonrpc_id": invocation.request_id,
+                },
+            )
+
+    provider_service = FinalActionProviderService()
+    outcome = await GroupchatPeerRuntime(
+        db_path=db,
+        god_layer=ForbiddenGodLayer(),
+        worktree=tmp_path,
+        scheduler_id="groupchat-peer-a5",
+        response_wait_s=0.1,
+        provider_service=provider_service,
+    ).run_until_idle(chain_id=chain.chain_id, max_ticks=5)
+
+    assert outcome.stop_reason == "chain_completed"
+    assert outcome.chain_status == "completed"
+    assert len(provider_service.invocations) == 1
+    items = store.list_items(chain.chain_id)
+    ack_items = [item for item in items if item.source_message_id == dispatch_ack.id]
+    assert len(ack_items) == 1
+    assert ack_items[0].status == "canceled"
+    assert ack_items[0].terminal_reason == f"superseded_by_authority:{final_action.id}"
+    final_action_items = [
+        item
+        for item in items
+        if item.source_message_id == final_action.id
+        and item.target_participant_id == architect.participant_id
+    ]
+    assert len(final_action_items) == 1
+    assert final_action_items[0].status == "completed"
+    assert final_action_items[0].completed_message_id is not None
+    assert outcome.tick_outcomes[-1].worklist.completed_message_id == (
+        final_action_items[0].completed_message_id
+    )
+
+
+@pytest.mark.asyncio
 async def test_groupchat_peer_runtime_runs_from_root_message_idempotently(tmp_path):
     db = tmp_path / "chat.db"
     chat = ChatStore(db)
