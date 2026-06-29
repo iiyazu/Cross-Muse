@@ -516,6 +516,16 @@ def _evidence_summary(
         for item in _dict_items(final_action_state.get("items"))
         if _projection_text(item.get("id"))
     }
+    include_lane_context = _has_multiple_evidence_lanes(review_state, final_action_state)
+
+    def lane_kwargs(
+        *items: dict[str, Any] | None,
+        source_refs: Any = None,
+    ) -> dict[str, Any]:
+        if not include_lane_context:
+            return {}
+        return _evidence_context_kwargs(*items, source_refs=source_refs)
+
     acceptance_spine_items: list[dict[str, Any]] = []
     execution_evidence_items: list[dict[str, Any]] = []
     dispatch_evidence_items: list[dict[str, Any]] = []
@@ -540,6 +550,13 @@ def _evidence_summary(
         )
 
     for spine in _dict_items(closure_evidence.get("items")):
+        review_ref = _projection_text(spine.get("review_verdict_ref"))
+        review = reviews_by_ref.get(review_ref) if review_ref else None
+        final_action_ref = _projection_text(spine.get("final_action_ref"))
+        final_action = (
+            final_actions_by_ref.get(final_action_ref) if final_action_ref else None
+        )
+        lane_context = lane_kwargs(review, final_action)
         proposal_id = _projection_text(spine.get("proposal_id"))
         if proposal_id:
             proposal = proposals_by_id.get(proposal_id)
@@ -573,9 +590,7 @@ def _evidence_summary(
                     )
                 )
 
-        review_ref = _projection_text(spine.get("review_verdict_ref"))
         if review_ref:
-            review = reviews_by_ref.get(review_ref)
             if review is None:
                 failure_boundaries.append(
                     _failure_boundary(
@@ -598,6 +613,7 @@ def _evidence_summary(
                         producer="review_plane.json",
                         condition="review_verdict_linked_to_acceptance_spine",
                         proof_boundary="review_verdict_authority_not_github_or_merge_truth",
+                        **lane_kwargs(review),
                     )
                 )
                 for ref in _string_items(review.get("evidence_refs")):
@@ -610,6 +626,10 @@ def _evidence_summary(
                             producer="review_plane.json",
                             condition="review_verdict_evidence_ref",
                             proof_boundary="execution_proof_not_review_github_or_merge_truth",
+                            **lane_kwargs(
+                                review,
+                                source_refs=[ref],
+                            ),
                         )
                     )
 
@@ -638,6 +658,11 @@ def _evidence_summary(
                         producer="chat.db:chat_dispatch_queue",
                         condition="dispatch_entry_linked_to_acceptance_spine",
                         proof_boundary="dispatch_queue_authority_not_execution_proof",
+                        **lane_kwargs(
+                            review,
+                            final_action,
+                            source_refs=dispatch.get("source_refs"),
+                        ),
                     )
                 )
                 dispatch_evidence = _projection_text(dispatch.get("dispatch_evidence"))
@@ -651,6 +676,11 @@ def _evidence_summary(
                             producer="chat_dispatch_bridge",
                             condition="dispatch_entry_dispatch_evidence",
                             proof_boundary="worker_writeback_not_authority_or_github_truth",
+                            **lane_kwargs(
+                                review,
+                                final_action,
+                                source_refs=[dispatch_evidence],
+                            ),
                         )
                     )
                 if dispatch.get("status") == "failed":
@@ -679,12 +709,15 @@ def _evidence_summary(
                     producer="lane_execution_or_gate",
                     condition="acceptance_spine_execution_evidence_ref",
                     proof_boundary="execution_proof_not_review_github_or_merge_truth",
+                    **lane_kwargs(
+                        review,
+                        final_action,
+                        source_refs=[ref],
+                    ),
                 )
             )
 
-        final_action_ref = _projection_text(spine.get("final_action_ref"))
         if final_action_ref:
-            final_action = final_actions_by_ref.get(final_action_ref)
             if final_action is None:
                 failure_boundaries.append(
                     _failure_boundary(
@@ -708,6 +741,7 @@ def _evidence_summary(
                         producer="final_actions.json",
                         condition="final_action_linked_to_acceptance_spine",
                         proof_boundary="final_action_authority_not_github_or_merge_truth",
+                        **lane_kwargs(final_action),
                     )
                 )
                 final_action_id = _final_action_id_from_ref(final_action_ref)
@@ -744,6 +778,10 @@ def _evidence_summary(
                                 condition="final_action_contains_github_gate_evidence_ref",
                                 proof_boundary="github_gate_evidence_not_main_ci_truth",
                                 details=details,
+                                **lane_kwargs(
+                                    final_action,
+                                    source_refs=[github_gate_evidence_ref],
+                                ),
                             )
                         )
                         main_ci_status = str(
@@ -786,6 +824,7 @@ def _evidence_summary(
                     producer="chat.db:acceptance_spines",
                     condition="acceptance_spine_tracks_chain",
                     proof_boundary="acceptance_spine_authority_not_github_or_merge_truth",
+                    **lane_context,
                 )
             )
         blocked_reason = _projection_text(spine.get("blocked_reason"))
@@ -934,6 +973,8 @@ def _evidence_item(
     proof_boundary: str,
     consumer: str = "natural_groupchat_evidence_summary",
     details: dict[str, Any] | None = None,
+    lane_id: str | None = None,
+    source_refs: list[str] | None = None,
 ) -> dict[str, Any]:
     item: dict[str, Any] = {
         "kind": kind,
@@ -947,7 +988,49 @@ def _evidence_item(
     }
     if details is not None:
         item["details"] = details
+    if lane_id is not None:
+        item["lane_id"] = lane_id
+    if source_refs:
+        item["source_refs"] = list(source_refs)
     return item
+
+
+def _evidence_context_kwargs(
+    *items: dict[str, Any] | None,
+    source_refs: Any = None,
+) -> dict[str, Any]:
+    lane_id: str | None = None
+    refs: list[str] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        lane_id = lane_id or _projection_text(item.get("lane_id"))
+        refs.extend(_string_items(item.get("source_refs")))
+    refs.extend(_string_items(source_refs))
+    kwargs: dict[str, Any] = {}
+    if lane_id is not None:
+        kwargs["lane_id"] = lane_id
+    refs = _dedupe(refs)
+    if refs:
+        kwargs["source_refs"] = refs
+    return kwargs
+
+
+def _has_multiple_evidence_lanes(
+    review_state: dict[str, Any],
+    final_action_state: dict[str, Any],
+) -> bool:
+    lane_ids: set[str] = set()
+    for item in [
+        *_dict_items(review_state.get("items")),
+        *_dict_items(final_action_state.get("items")),
+    ]:
+        lane_id = _projection_text(item.get("lane_id"))
+        if lane_id is not None:
+            lane_ids.add(lane_id)
+        if len(lane_ids) > 1:
+            return True
+    return False
 
 
 def _failure_boundary(
@@ -1345,18 +1428,37 @@ def _final_action_links(
     closure_evidence: dict[str, Any],
     conversation_lanes: list[dict[str, Any]],
 ) -> list[tuple[str, dict[str, Any] | None, dict[str, Any] | None]]:
-    links: list[tuple[str, dict[str, Any] | None, dict[str, Any] | None]] = []
+    links_by_hold_id: dict[str, tuple[dict[str, Any] | None, dict[str, Any] | None]] = {}
+    order: list[str] = []
+
+    def merge_link(
+        hold_id: str,
+        *,
+        spine: dict[str, Any] | None = None,
+        lane: dict[str, Any] | None = None,
+    ) -> None:
+        existing_spine, existing_lane = links_by_hold_id.get(hold_id, (None, None))
+        if hold_id not in links_by_hold_id:
+            order.append(hold_id)
+        links_by_hold_id[hold_id] = (
+            existing_spine if existing_spine is not None else spine,
+            existing_lane if existing_lane is not None else lane,
+        )
+
     for spine in closure_evidence.get("items") or []:
         if not isinstance(spine, dict):
             continue
         hold_id = _final_action_id_from_ref(spine.get("final_action_ref"))
         if hold_id is not None:
-            links.append((hold_id, spine, None))
+            merge_link(hold_id, spine=spine)
     for lane in conversation_lanes:
         hold_id = _projection_text(lane.get("final_action_hold_id"))
         if hold_id:
-            links.append((hold_id, None, lane))
-    return links
+            merge_link(hold_id, lane=lane)
+    return [
+        (hold_id, links_by_hold_id[hold_id][0], links_by_hold_id[hold_id][1])
+        for hold_id in order
+    ]
 
 
 def _conversation_lanes(root: Path, conversation_id: str) -> list[dict[str, Any]]:
@@ -1411,6 +1513,11 @@ def _review_state(
         for verdict in verdicts
         if isinstance(verdict.get("id"), str) and verdict.get("id")
     }
+    lanes_by_verdict_id: dict[str, dict[str, Any]] = {}
+    for lane in conversation_lanes:
+        verdict_id = _projection_text(lane.get("review_verdict_id"))
+        if verdict_id and verdict_id not in lanes_by_verdict_id:
+            lanes_by_verdict_id[verdict_id] = lane
 
     items: list[dict[str, Any]] = []
     decision_summary: dict[str, int] = {}
@@ -1426,9 +1533,17 @@ def _review_state(
         if not isinstance(verdict, dict):
             continue
         task = tasks_by_verdict_id.get(verdict_id)
-        item = _review_verdict_projection(verdict_id, verdict, task, spine=spine)
+        lane = lanes_by_verdict_id.get(verdict_id)
+        item = _review_verdict_projection(
+            verdict_id,
+            verdict,
+            task,
+            spine=spine,
+            lane=lane,
+        )
         items.append(item)
         seen.add(verdict_id)
+        used_lane_projection = used_lane_projection or lane is not None
         decision = str(item.get("decision") or "unknown")
         decision_summary[decision] = decision_summary.get(decision, 0) + 1
     for lane in conversation_lanes:
