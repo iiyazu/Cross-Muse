@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -658,11 +657,54 @@ def test_validate_test_ownership_accepts_mixed_file_markers(tmp_path):
 
 def test_repository_gate_profiles_config_loads():
     config = load_gate_config(Path("xmuse/gate_profiles.json"), repo_root=Path("."))
+    strict_command_args = {
+        arg
+        for command in config.profiles["strict-product"].commands
+        for arg in command.args
+        if arg.startswith("tests/")
+    }
 
     assert config.defaults.full_gate_interval == 20
     assert "strict-product" in config.profiles
+    assert "docs-only" in config.profiles
     assert config.profiles["strict-product"].blocking is True
     assert config.profiles["historical"].blocking is False
+    assert "tests/xmuse/test_package_boundaries.py" in strict_command_args
+    assert "tests/xmuse/test_gate_profiles.py" in strict_command_args
+    assert "tests/xmuse/test_fullchain_docs_sentinel.py" in strict_command_args
+    assert (
+        "tests/xmuse/test_fullchain_docs_sentinel.py"
+        in config.profiles["strict-product"].test_files
+    )
+    assert (
+        "scripts/run_fullchain_docs_sentinel.py"
+        in config.profiles["strict-product"].diff_selectors
+    )
+
+
+def test_repository_docs_only_gate_accepts_explicit_docs_profile():
+    config = load_gate_config(Path("xmuse/gate_profiles.json"), repo_root=Path("."))
+    resolver = GateProfileResolver(config)
+
+    plan = resolver.resolve(
+        feature_id="docs-sentinel",
+        worktree=Path("."),
+        explicit_profiles=["docs-only"],
+        changed_paths=["docs/xmuse/docs-sentinel.md"],
+    )
+
+    command_args = {
+        arg
+        for command in plan.commands
+        for arg in command.argv
+        if arg.startswith("tests/")
+    }
+
+    assert plan.profiles == ["docs-only"]
+    assert plan.resolution_reasons["docs-only"] == ["explicit_lane_profile"]
+    assert plan.blocking is True
+    assert "tests/xmuse/test_mainline_contract_docs.py" in command_args
+    assert "tests/xmuse/test_contract_smoke_gates.py" in command_args
 
 
 def test_xmuse_core_gate_runs_peer_chat_regression_tests():
@@ -694,6 +736,32 @@ def test_xmuse_core_gate_runs_peer_chat_regression_tests():
     assert "tests/xmuse/test_god_session_layer.py" in profile.test_files
     assert "tests/xmuse/test_platform_runner.py" in command_args
     assert "tests/xmuse/test_platform_runner.py" in profile.test_files
+
+
+def test_xmuse_core_gate_runs_blocking_ruff_before_pytest():
+    config = load_gate_config(Path("xmuse/gate_profiles.json"), repo_root=Path("."))
+    resolver = GateProfileResolver(config)
+
+    plan = resolver.resolve(
+        feature_id="xmuse-core-syntax-sentinel",
+        worktree=Path("."),
+        explicit_profiles=["xmuse-core"],
+        changed_paths=["src/xmuse_core/platform/rung4_gate_failure_sentinel.py"],
+    )
+
+    assert plan.commands[0].command_id == "ruff"
+    assert plan.commands[0].profile_id == "xmuse-core"
+    assert plan.commands[0].blocking is True
+    assert plan.commands[0].argv == [
+        "uv",
+        "run",
+        "ruff",
+        "check",
+        "src/xmuse_core",
+        "xmuse",
+        "tests/xmuse",
+    ]
+    assert [command.command_id for command in plan.commands] == ["ruff", "pytest"]
 
 
 def test_xmuse_core_gate_runs_b4_feature_graph_tests():
@@ -735,21 +803,10 @@ def test_xmuse_core_gate_runs_b4_feature_summary_after_lane_five_exists():
     assert test_file in profile.test_files
 
 
-def test_b4_plan_documents_reviewed_graph_set_injection_flow():
-    plan_path = Path(
-        "docs/superpowers/plans/2026-05-30-b4-feature-plan-to-lane-graph.md"
-    )
+def test_current_xmuse_docs_keep_old_superpowers_records_historical():
+    content = Path("docs/xmuse/README.md").read_text(encoding="utf-8")
+    normalized = " ".join(content.split())
 
-    tracked = subprocess.run(
-        ["git", "ls-files", "--error-unmatch", str(plan_path)],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    assert tracked.returncode == 0, tracked.stderr
-
-    content = plan_path.read_text(encoding="utf-8")
-
-    assert "preview -> review -> graph snapshot -> ready projection" in content
-    assert "`feature_lanes.json` is a live projection" in content
-    assert "not graph authority" in content
+    assert "Old `docs/superpowers/specs/` and `docs/superpowers/plans/`" in normalized
+    assert "historical implementation records" in normalized
+    assert "not the current entrypoint" in normalized

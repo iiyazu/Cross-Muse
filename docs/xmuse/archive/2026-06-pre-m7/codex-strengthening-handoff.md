@@ -8749,7 +8749,7 @@ git diff --check
 - `tests/xmuse/test_platform_agent_spawner.py`
 - `tests/xmuse/test_memory_update_events.py`
 
-**新增文档**: `docs/xmuse/v6-legacy-coupling-inventory.md`
+**新增文档**: `docs/xmuse/archive/2026-06-roadmaps-and-audits/v6-legacy-coupling-inventory.md`
 
 **找到 10 个 legacy memoryOS 接缝，分三类**:
 
@@ -8944,7 +8944,7 @@ uv run ruff check src/xmuse_core/sidecar/ tests/xmuse/test_sidecar_*.py
 本轮基于 Tasks 1-5 的证据产出边界建议文档。
 
 **新增文件**:
-- `docs/xmuse/v6-session-vs-shared-memory-boundary.md`
+- `docs/xmuse/archive/2026-06-roadmaps-and-audits/v6-session-vs-shared-memory-boundary.md`
 
 **四类场景结论**:
 
@@ -8971,12 +8971,12 @@ uv run ruff check src/xmuse_core/sidecar/ tests/xmuse/test_sidecar_*.py
 - `tests/xmuse/test_v6_independent_smoke.py` — 5 focused smoke tests
 
 **全链路验证**:
-1. ✅ 识别 legacy memoryOS coupling → `docs/xmuse/v6-legacy-coupling-inventory.md`
+1. ✅ 识别 legacy memoryOS coupling → `docs/xmuse/archive/2026-06-roadmaps-and-audits/v6-legacy-coupling-inventory.md`
 2. ✅ 定义并验证 chat-memory taxonomy → `src/xmuse_core/sidecar/taxonomy.py` (20 tests)
 3. ✅ 生成 replay packet contract → `src/xmuse_core/sidecar/replay_packet.py` (14 tests)
 4. ✅ 从群聊链路导出 replay packets → `src/xmuse_core/sidecar/replay_exporter.py` (9 tests)
 5. ✅ 用 replay packets 驱动 recall eval → `src/xmuse_core/sidecar/recall_eval.py` (16 tests)
-6. ✅ 输出 session vs shared memory boundary → `docs/xmuse/v6-session-vs-shared-memory-boundary.md`
+6. ✅ 输出 session vs shared memory boundary → `docs/xmuse/archive/2026-06-roadmaps-and-audits/v6-session-vs-shared-memory-boundary.md`
 
 **终止条件检查**:
 
@@ -9018,8 +9018,8 @@ uv run ruff check src/xmuse_core/sidecar/ tests/xmuse/test_sidecar_*.py \
 | `tests/xmuse/test_sidecar_replay_exporter.py` | 9 tests |
 | `tests/xmuse/test_sidecar_recall_eval.py` | 16 tests |
 | `tests/xmuse/test_v6_independent_smoke.py` | 5 smoke tests |
-| `docs/xmuse/v6-legacy-coupling-inventory.md` | inventory doc |
-| `docs/xmuse/v6-session-vs-shared-memory-boundary.md` | boundary recommendation doc |
+| `docs/xmuse/archive/2026-06-roadmaps-and-audits/v6-legacy-coupling-inventory.md` | inventory doc |
+| `docs/xmuse/archive/2026-06-roadmaps-and-audits/v6-session-vs-shared-memory-boundary.md` | boundary recommendation doc |
 
 **V6 终止条件已满足，goal 完成。**
 
@@ -10444,7 +10444,7 @@ groupchat runtime semantic changes；未修改 `/home/iiyatu/projects/python/mem
   - `docs/xmuse/config-matrix.md` 和 `docs/xmuse/provider-matrix.md` 不再声称没有
     `BaseSettings` 或 `pydantic-settings` 未使用；改为说明 `Settings(BaseSettings)` 已存在，
     但仍是 additive overlay，调用点尚未全部迁移。
-  - `docs/xmuse/post-patha-release-readiness-audit.md` 增加 post-packaging note，标明该审计
+  - `docs/xmuse/archive/2026-06-roadmaps-and-audits/post-patha-release-readiness-audit.md` 增加 post-packaging note，标明该审计
     是 pre-packaging 状态，当前 onboarding 入口为 root README、QUICKSTART、fake demo 和
     release checklist。
 
@@ -10454,7 +10454,7 @@ groupchat runtime semantic changes；未修改 `/home/iiyatu/projects/python/mem
 - `QUICKSTART.md`
 - `docs/xmuse/release-checklist.md`
 - `docs/xmuse/codex-strengthening-handoff.md`
-- `docs/xmuse/post-patha-release-readiness-audit.md`
+- `docs/xmuse/archive/2026-06-roadmaps-and-audits/post-patha-release-readiness-audit.md`
 - `docs/xmuse/provider-matrix.md`
 - `docs/xmuse/config-matrix.md`
 - `scripts/demo_fake_groupchat.py`
@@ -11565,7 +11565,7 @@ Validation:
 - `uv run mypy scripts/goal_stage_runner.py scripts/github_server_truth_capture.py src/xmuse_core/providers/adapters/opencode.py src/xmuse_core/providers/registry.py src/xmuse_core/runtime/settings.py src/xmuse_core/platform/execution/github_ops.py src/xmuse_core/self_iteration/runtime_closure.py`
   - 结果: `Success: no issues found in 7 source files`。
 - Current canonical command scan:
-  `rg -n "deepseek-v4-flash:max|opencode-go/deepseek-v4-flash:max|deepseek-v4-flash-max|opencode-go/deepseek-v4-flash-max" src/xmuse_core tests/xmuse scripts .env.example docs/xmuse/goal-stage-harness.md docs/xmuse/opencode-in-long-runtime-evidence-plan.md docs/xmuse/provider-matrix.md docs/xmuse/config-matrix.md docs/xmuse/tui-slash-command-handoff.md -g '!*.pyc'`
+  `rg -n "deepseek-v4-flash:max|opencode-go/deepseek-v4-flash:max|deepseek-v4-flash-max|opencode-go/deepseek-v4-flash-max" src/xmuse_core tests/xmuse scripts .env.example docs/xmuse/goal-stage-harness.md docs/xmuse/archive/2026-06-proof-closure-legacy/opencode-in-long-runtime-evidence-plan.md docs/xmuse/provider-matrix.md docs/xmuse/config-matrix.md docs/xmuse/tui-slash-command-handoff.md -g '!*.pyc'`
   - 结果: 无输出，exit 1。
 - `git diff --check`
   - 结果: 无输出，exit 0。
@@ -11622,7 +11622,7 @@ import/config/runtime dependency。
   - `max` 不再拼进 model id。
 - 当前权威 docs 已更新:
   - `docs/xmuse/goal-stage-harness.md`;
-  - `docs/xmuse/opencode-in-long-runtime-evidence-plan.md`;
+  - `docs/xmuse/archive/2026-06-proof-closure-legacy/opencode-in-long-runtime-evidence-plan.md`;
   - `docs/xmuse/provider-matrix.md`;
   - `docs/xmuse/config-matrix.md`;
   - `docs/xmuse/tui-slash-command-handoff.md`。
@@ -11782,7 +11782,7 @@ import/config/runtime dependency。
 
 ## 2026-06-10 OpenCode-In Long Runtime Evidence Closure Slice
 
-本轮目标来自 `docs/xmuse/opencode-in-long-runtime-evidence-plan.md` 与
+本轮目标来自 `docs/xmuse/archive/2026-06-proof-closure-legacy/opencode-in-long-runtime-evidence-plan.md` 与
 `/mnt/c/tmp/deep-research-long-blueprint.md`。重点不是扩功能面，而是继续把
 contract/fake proof 往可审计 long-runtime evidence 推进。
 

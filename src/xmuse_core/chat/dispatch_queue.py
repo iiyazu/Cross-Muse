@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -27,6 +28,7 @@ class ChatDispatchQueueEntry(BaseModel):
     resolution_id: str | None = None
     collaboration_run_id: str | None = None
     artifact_ref: str | None = None
+    gate_refs: list[str] = Field(default_factory=list)
     dispatch_policy: str = Field(min_length=1)
     claimed_by: str | None = None
     claimed_at: str | None = None
@@ -58,20 +60,27 @@ class ChatDispatchQueueStore:
         resolution_id: str,
         collaboration_run_id: str | None,
         artifact_ref: str,
+        gate_refs: list[str] | tuple[str, ...] = (),
         target: str = "execute",
         dispatch_policy: str = "real_provider_allowed",
     ) -> ChatDispatchQueueEntry:
         now = _utc_now()
         entry_id = f"dispatch:{conversation_id}:{resolution_id}:{target}"
+        gate_refs_json = json.dumps(_clean_refs(gate_refs), ensure_ascii=False)
         with self._connect() as conn:
             conn.execute(
                 """
                 insert into chat_dispatch_queue (
                     entry_id, conversation_id, source, target, status, auto_execute,
                     proposal_id, resolution_id, collaboration_run_id, artifact_ref,
-                    dispatch_policy, created_at, updated_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    gate_refs_json, dispatch_policy, created_at, updated_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 on conflict(entry_id) do update set
+                    gate_refs_json = case
+                        when excluded.gate_refs_json != '[]'
+                        then excluded.gate_refs_json
+                        else chat_dispatch_queue.gate_refs_json
+                    end,
                     updated_at = excluded.updated_at
                 """,
                 (
@@ -85,6 +94,7 @@ class ChatDispatchQueueStore:
                     resolution_id,
                     collaboration_run_id,
                     _required(artifact_ref, "artifact_ref"),
+                    gate_refs_json,
                     _required(dispatch_policy, "dispatch_policy"),
                     now,
                     now,
@@ -106,8 +116,10 @@ class ChatDispatchQueueStore:
         now_dt = datetime.now(UTC).replace(microsecond=0)
         now = now_dt.isoformat().replace("+00:00", "Z")
         stale_before = (
-            now_dt - timedelta(seconds=max(0, int(claim_ttl_s)))
-        ).isoformat().replace("+00:00", "Z")
+            (now_dt - timedelta(seconds=max(0, int(claim_ttl_s))))
+            .isoformat()
+            .replace("+00:00", "Z")
+        )
         with self._connect() as conn:
             conn.execute("begin immediate")
             row = conn.execute(
@@ -177,10 +189,6 @@ class ChatDispatchQueueStore:
             ).rowcount
         if updated != 1:
             raise ValueError("dispatch queue entry must be processing to mark dispatched")
-        AcceptanceSpineStore(self._path).attach_execution_evidence_for_dispatch(
-            dispatch_item_id=entry_id,
-            evidence_refs=[provider_run_ref, dispatch_evidence],
-        )
         return self.get(entry_id)
 
     def mark_failed(
@@ -260,6 +268,7 @@ class ChatDispatchQueueStore:
                     resolution_id text,
                     collaboration_run_id text,
                     artifact_ref text,
+                    gate_refs_json text not null default '[]',
                     dispatch_policy text not null,
                     claimed_by text,
                     claimed_at text,
@@ -281,6 +290,12 @@ class ChatDispatchQueueStore:
             _ensure_column(conn, "chat_dispatch_queue", "dispatch_evidence", "text")
             _ensure_column(conn, "chat_dispatch_queue", "failure_reason", "text")
             _ensure_column(conn, "chat_dispatch_queue", "completed_at", "text")
+            _ensure_column(
+                conn,
+                "chat_dispatch_queue",
+                "gate_refs_json",
+                "text not null default '[]'",
+            )
 
     def _from_row(self, row: sqlite3.Row) -> ChatDispatchQueueEntry:
         payload = dict(row)
@@ -295,6 +310,7 @@ class ChatDispatchQueueStore:
             resolution_id=payload["resolution_id"],
             collaboration_run_id=payload["collaboration_run_id"],
             artifact_ref=payload["artifact_ref"],
+            gate_refs=_json_str_list(payload.get("gate_refs_json")),
             dispatch_policy=payload["dispatch_policy"],
             claimed_by=payload["claimed_by"],
             claimed_at=payload["claimed_at"],
@@ -313,10 +329,7 @@ def _ensure_column(
     column_name: str,
     column_type: str,
 ) -> None:
-    columns = {
-        row["name"]
-        for row in conn.execute(f"pragma table_info({table_name})").fetchall()
-    }
+    columns = {row["name"] for row in conn.execute(f"pragma table_info({table_name})").fetchall()}
     if column_name in columns:
         return
     conn.execute(f"alter table {table_name} add column {column_name} {column_type}")
@@ -327,3 +340,31 @@ def _required(value: str, name: str) -> str:
     if not clean:
         raise ValueError(f"{name} must not be blank")
     return clean
+
+
+def _clean_refs(refs: list[str] | tuple[str, ...]) -> list[str]:
+    clean: list[str] = []
+    seen: set[str] = set()
+    for ref in refs:
+        if not isinstance(ref, str):
+            continue
+        value = ref.strip()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        clean.append(value)
+    return clean
+
+
+def _json_str_list(value: object) -> list[str]:
+    if isinstance(value, list):
+        return _clean_refs(tuple(str(item) for item in value))
+    if not isinstance(value, str) or not value.strip():
+        return []
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return _clean_refs(tuple(str(item) for item in parsed))

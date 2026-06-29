@@ -26,6 +26,8 @@ from xmuse_core.chat.store import ChatStore
 from xmuse_core.chat.stream_store import PeerTurnLatencyTraceStore
 from xmuse_core.integrations.a2a_provider_client import A2AProviderTaskRequest
 from xmuse_core.integrations.a2a_sdk_boundary import NormalizedA2ATaskResult
+from xmuse_core.integrations.memoryos_client import FakeMemoryOSClient
+from xmuse_core.integrations.memoryos_namespace import conversation_namespace
 from xmuse_core.providers.service import RunnerProviderService
 from xmuse_core.structuring.graph_store import LaneGraphStore
 
@@ -36,9 +38,7 @@ class _DispatchBridgeGodLayer:
         db_path: Path,
         *,
         write_back: bool = True,
-        completion_content: str = (
-            "DISPATCH_ACKNOWLEDGED\nDispatch entry acknowledged."
-        ),
+        completion_content: str = ("DISPATCH_ACKNOWLEDGED\nDispatch entry acknowledged."),
     ) -> None:
         self.db_path = db_path
         self.write_back = write_back
@@ -150,9 +150,7 @@ class _A2AGroupchatRuntimeClient:
                     "lanes": [
                         {
                             "feature_id": "a2a-dispatch-ack-runtime-probe",
-                            "prompt": (
-                                "Acknowledge dispatch without claiming code execution."
-                            ),
+                            "prompt": ("Acknowledge dispatch without claiming code execution."),
                             "depends_on": [],
                             "capabilities": ["code", "test"],
                             "gate_profiles": ["xmuse-core"],
@@ -401,7 +399,7 @@ async def test_groupchat_proposal_approval_dispatch_and_review_closure_authority
     spine = AcceptanceSpineStore(db).get_by_intake_message(intake.message.id)
     assert spine.status is AcceptanceSpineStatus.DISPATCHED
     assert spine.dispatch_item_id == queued_entry.entry_id
-    assert dispatched_entry.dispatch_evidence in spine.execution_evidence_refs
+    assert dispatched_entry.dispatch_evidence not in spine.execution_evidence_refs
 
     review = service.post_god_message(
         registry_path=registry_path,
@@ -409,9 +407,7 @@ async def test_groupchat_proposal_approval_dispatch_and_review_closure_authority
         participant_id=participants["review"].participant_id,
         god_session_id=sessions["review"],
         client_request_id="bridge-review-closure",
-        content=(
-            "Review verdict: acceptable, no veto for the dispatch authority bridge."
-        ),
+        content=("Review verdict: acceptable, no veto for the dispatch authority bridge."),
         envelope={
             "type": "review_closure",
             "resolution_id": resolution_id,
@@ -422,9 +418,7 @@ async def test_groupchat_proposal_approval_dispatch_and_review_closure_authority
 
     reviewed_spine = AcceptanceSpineStore(db).get_by_intake_message(intake.message.id)
     assert reviewed_spine.status is AcceptanceSpineStatus.REVIEWED
-    assert reviewed_spine.review_verdict_ref == (
-        f"chat:message:{review['message']['id']}"
-    )
+    assert reviewed_spine.review_verdict_ref == (f"chat:message:{review['message']['id']}")
 
 
 def test_review_closure_requires_review_participant_and_resolution_ref(
@@ -1866,6 +1860,37 @@ def test_proposal_approval_enqueues_agent_auto_dispatch_entry_after_gate(
         ),
         response_status="received",
     )
+    second_run = collaboration.create_request(
+        conversation_id=conversation_id,
+        goal="Confirm queue projection refs",
+        initiator="architect",
+        targets=["review", "execute"],
+        callback_target="architect",
+        question="Can downstream readers audit every dispatch gate ref?",
+        context_refs=[],
+        idempotency_key="proposal-gate-dispatch-queue-second",
+        timeout_s=480,
+    )
+    collaboration.record_response(
+        second_run.run_id,
+        target="review",
+        content="No veto for projection refs.",
+        response_status="received",
+    )
+    collaboration.record_response(
+        second_run.run_id,
+        target="execute",
+        content=json.dumps(
+            {
+                "type": "execute_feasibility_verdict",
+                "status": "executable",
+                "execution_performed": False,
+                "summary": "Queue refs are inspectable without executing.",
+                "evidence_refs": ["proposal:lane-v14-dispatch-queue"],
+            }
+        ),
+        response_status="received",
+    )
     client = TestClient(create_app(tmp_path))
     proposal = client.post(
         f"/api/chat/conversations/{conversation_id}/proposals",
@@ -1885,7 +1910,10 @@ def test_proposal_approval_enqueues_agent_auto_dispatch_entry_after_gate(
                     ],
                 }
             ),
-            "references": [f"collaboration:{run.run_id}"],
+            "references": [
+                f"collaboration:{run.run_id}",
+                f"collaboration:{second_run.run_id}",
+            ],
         },
     )
     assert proposal.status_code == 201
@@ -1913,11 +1941,36 @@ def test_proposal_approval_enqueues_agent_auto_dispatch_entry_after_gate(
     assert entry.artifact_ref == "artifact:lane_graph"
     assert entry.dispatch_policy == "real_provider_allowed"
     assert entry.target == "execute"
-    lanes = json.loads((tmp_path / "feature_lanes.json").read_text(encoding="utf-8"))[
-        "lanes"
+    assert entry.gate_refs == [
+        f"collaboration:{run.run_id}",
+        f"collaboration:{second_run.run_id}",
     ]
+    expected_source_refs = [
+        f"proposal:{proposal.json()['id']}",
+        f"collaboration:{run.run_id}",
+        f"collaboration:{second_run.run_id}",
+        f"resolution:{resolution_id}",
+        f"chat_dispatch_queue:{entry.entry_id}",
+    ]
+    assert approved.json()["next_authority_boundary"] == {
+        "required_authority": "chat.db/dispatch_queue",
+        "required_action": "run_dispatch_bridge",
+        "dispatch_queue_entry_available": True,
+        "dispatch_queue_entry_id": entry.entry_id,
+        "dispatch_policy": "real_provider_allowed",
+        "source_refs": expected_source_refs,
+    }
+    graph = json.loads(
+        (tmp_path / "lane_graphs" / f"{resolution_id}-graph-v1.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert graph["source_refs"] == expected_source_refs
+    lanes = json.loads((tmp_path / "feature_lanes.json").read_text(encoding="utf-8"))["lanes"]
     assert lanes[0]["feature_id"] == "lane-v14-dispatch-queue"
     assert lanes[0]["feature_scope_id"] == f"lane_graph:{resolution_id}-graph-v1"
+    assert lanes[0]["dispatch_queue_entry_id"] == entry.entry_id
+    assert lanes[0]["source_refs"] == expected_source_refs
 
     inspector = build_conversation_inspector_payload(conversation_id, tmp_path)
     assert inspector["dispatch_queue"]["entries"][0]["entry_id"] == entry.entry_id
@@ -1962,6 +2015,7 @@ def test_proposal_approval_without_collaboration_ref_does_not_enqueue_dispatch_e
     )
 
     assert approved.status_code == 200
+    assert "next_authority_boundary" not in approved.json()
     assert ChatDispatchQueueStore(tmp_path / "chat.db").list_entries(conversation_id) == []
 
 
@@ -2025,10 +2079,7 @@ def test_dispatch_queue_lifecycle_is_durable_and_visible_in_inspector(
     inspector = build_conversation_inspector_payload(conversation_id, tmp_path)
     assert inspector["dispatch_queue"]["dispatched"] == 1
     assert inspector["dispatch_queue"]["failed"] == 1
-    by_id = {
-        item["entry_id"]: item
-        for item in inspector["dispatch_queue"]["entries"]
-    }
+    by_id = {item["entry_id"]: item for item in inspector["dispatch_queue"]["entries"]}
     assert by_id[entry.entry_id]["provider_run_ref"] == "provider:codex:session-1"
     assert by_id[failed_entry.entry_id]["failure_reason"] == "provider dispatch rejected"
 
@@ -2148,8 +2199,7 @@ async def test_a2a_groupchat_review_approval_dispatch_reaches_execute_ack(
         conversation_id=conversation_id,
         author="operator",
         content=(
-            "@architect Propose the smallest dispatchable A2A lane and keep "
-            "chat.db gates explicit."
+            "@architect Propose the smallest dispatchable A2A lane and keep chat.db gates explicit."
         ),
         client_request_id="runtime-human-a2a-dispatch-001",
     )
@@ -2209,10 +2259,7 @@ async def test_a2a_groupchat_review_approval_dispatch_reaches_execute_ack(
     spine = AcceptanceSpineStore(db_path).get_by_intake_message(intake.message.id)
     assert spine.status is AcceptanceSpineStatus.DISPATCHED
     assert spine.dispatch_item_id == queued[0].entry_id
-    assert spine.execution_evidence_refs == [
-        f"peer_ack:execute:{execute.participant_id}",
-        dispatched.dispatch_evidence,
-    ]
+    assert spine.execution_evidence_refs == []
     assert a2a_client.task_types == [
         "bounded_deliberation",
         "review",
@@ -2239,7 +2286,19 @@ async def test_dispatch_bridge_acknowledges_gated_entry_through_execute_peer(
         resolution_id="resolution-real-provider",
         collaboration_run_id="collab-real-provider",
         artifact_ref="artifact:lane_graph",
+        gate_refs=[
+            "review_trigger_verdict:review-real-provider",
+            "collaboration:collab-real-provider",
+        ],
     )
+    expected_source_refs = [
+        f"chat_dispatch_queue:{entry.entry_id}",
+        "proposal:proposal-real-provider",
+        "review_trigger_verdict:review-real-provider",
+        "collaboration:collab-real-provider",
+        "resolution:resolution-real-provider",
+        "artifact:lane_graph",
+    ]
     god_layer = _DispatchBridgeGodLayer(tmp_path / "chat.db")
     bridge = ChatDispatchBridge(
         db_path=tmp_path / "chat.db",
@@ -2261,14 +2320,191 @@ async def test_dispatch_bridge_acknowledges_gated_entry_through_execute_peer(
     assert message_type == "peer_chat_nudge"
     assert request_id == context["inbox_item"]["id"]
     assert "reply_to_inbox_item_id=xmuse_context.inbox_item.id" in prompt
+    assert "MemoryOS sidecar" not in prompt
     assert context["inbox_item"]["item_type"] == "dispatch"
     assert context["inbox_item"]["payload"]["dispatch_queue_entry_id"] == entry.entry_id
+    assert context["inbox_item"]["payload"]["source_refs"] == expected_source_refs
+    dispatch_message = next(
+        message
+        for message in ChatStore(tmp_path / "chat.db").list_messages(conversation_id)
+        if message.envelope_type == "dispatch_request"
+    )
+    assert dispatch_message.envelope_json["source_refs"] == expected_source_refs
+    assert "Source refs:" in prompt
+    assert "These refs identify xmuse authority boundaries; they are not execution proof." in prompt
+    for source_ref in expected_source_refs:
+        assert f"- {source_ref}" in prompt
+    assert "memoryos_context" not in context["group_chat"]
     reloaded = ChatDispatchQueueStore(tmp_path / "chat.db").get(entry.entry_id)
     assert reloaded.status == "dispatched"
     assert reloaded.provider_run_ref == f"peer_ack:execute:{execute.participant_id}"
     assert reloaded.dispatch_evidence.startswith("mcp_writeback:")
     inspector = build_conversation_inspector_payload(conversation_id, tmp_path)
     assert inspector["dispatch_queue"]["dispatched"] == 1
+
+
+@pytest.mark.asyncio
+async def test_dispatch_bridge_ingests_dispatch_handoff_to_memoryos_sidecar(
+    tmp_path: Path,
+) -> None:
+    conversation_id = _conversation(tmp_path)
+    _execute_participant(tmp_path, conversation_id)
+    entry = ChatDispatchQueueStore(tmp_path / "chat.db").enqueue_agent_auto_dispatch(
+        conversation_id=conversation_id,
+        proposal_id="proposal-memoryos-dispatch",
+        resolution_id="resolution-memoryos-dispatch",
+        collaboration_run_id="collab-memoryos-dispatch",
+        artifact_ref="artifact:memoryos-lane-graph",
+        gate_refs=[
+            "review_trigger_verdict:review-memoryos-dispatch",
+            "collaboration:collab-memoryos-dispatch",
+        ],
+    )
+    expected_source_refs = [
+        f"chat_dispatch_queue:{entry.entry_id}",
+        "proposal:proposal-memoryos-dispatch",
+        "review_trigger_verdict:review-memoryos-dispatch",
+        "collaboration:collab-memoryos-dispatch",
+        "resolution:resolution-memoryos-dispatch",
+        "artifact:memoryos-lane-graph",
+    ]
+    memoryos = FakeMemoryOSClient()
+    god_layer = _DispatchBridgeGodLayer(tmp_path / "chat.db")
+    bridge = ChatDispatchBridge(
+        db_path=tmp_path / "chat.db",
+        god_layer=god_layer,
+        worktree=tmp_path,
+        bridge_id="dispatch-bridge-test",
+        response_wait_s=0.1,
+        memoryos_client=memoryos,
+    )
+
+    outcome = await bridge.tick_once(conversation_id=conversation_id)
+
+    assert outcome.claimed == 1
+    assert outcome.dispatched == 1
+    context = json.loads(god_layer.sent[0][3])
+    prompt = god_layer.sent[0][2]
+    assert "memoryos_context" not in context["group_chat"]
+    assert "MemoryOS sidecar" not in prompt
+    pages = await memoryos.search(
+        conversation_namespace(conversation_id),
+        query="dispatch handoff",
+    )
+    assert len(pages) == 1
+    assert pages[0].actor_id == "dispatch-bridge:dispatch-bridge-test"
+    assert pages[0].source_refs == expected_source_refs
+    assert pages[0].metadata == {
+        "memoryos_sidecar_kind": "dispatch_handoff",
+        "dispatch_queue_entry_id": entry.entry_id,
+        "proof_boundary": "sidecar_continuity_not_execution_truth",
+    }
+    assert "Dispatch handoff recorded for approved queue entry" in pages[0].content
+    assert "These refs are sidecar continuity refs, not lane execution proof." in pages[0].content
+    for source_ref in expected_source_refs:
+        assert f"- {source_ref}" in pages[0].content
+    traces = PeerTurnLatencyTraceStore(tmp_path / "chat.db").list_recent(
+        conversation_id,
+        limit=10,
+    )
+    [sidecar_trace] = [
+        trace
+        for trace in traces
+        if trace["supporting_context"].get("memoryos_sidecar", {}).get("status")
+        == "recorded"
+    ]
+    assert sidecar_trace["delivery_mode"] == "memoryos_sidecar_dispatch_handoff"
+    assert sidecar_trace["degraded_reason"] is None
+    sidecar_context = sidecar_trace["supporting_context"]["memoryos_sidecar"]
+    assert sidecar_context == {
+        "status": "recorded",
+        "authority": "memoryos_sidecar",
+        "proof_level": "contract",
+        "namespace_uri": f"memory://conversation/{conversation_id}",
+        "degraded_reason": None,
+        "source_refs": expected_source_refs,
+        "continuity_refs": [
+            f"memory://conversation/{conversation_id}/refs/chat_dispatch_queue:{entry.entry_id}"
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_dispatch_bridge_continues_when_memoryos_sidecar_ingest_degrades(
+    tmp_path: Path,
+) -> None:
+    class DegradedMemoryOSClient:
+        async def ingest(self, request):
+            raise RuntimeError("memoryos unavailable")
+
+        async def build_context(self, namespace, *, query: str, budget: int = 4096):
+            raise AssertionError("dispatch bridge must not request MemoryOS recall")
+
+        async def search(self, namespace, *, query: str, limit: int = 10):
+            return []
+
+    conversation_id = _conversation(tmp_path)
+    execute = _execute_participant(tmp_path, conversation_id)
+    entry = ChatDispatchQueueStore(tmp_path / "chat.db").enqueue_agent_auto_dispatch(
+        conversation_id=conversation_id,
+        proposal_id="proposal-memoryos-degraded",
+        resolution_id="resolution-memoryos-degraded",
+        collaboration_run_id="collab-memoryos-degraded",
+        artifact_ref="artifact:memoryos-degraded-lane-graph",
+        gate_refs=["review_trigger_verdict:review-memoryos-degraded"],
+    )
+    god_layer = _DispatchBridgeGodLayer(tmp_path / "chat.db")
+    bridge = ChatDispatchBridge(
+        db_path=tmp_path / "chat.db",
+        god_layer=god_layer,
+        worktree=tmp_path,
+        bridge_id="dispatch-bridge-test",
+        response_wait_s=0.1,
+        memoryos_client=DegradedMemoryOSClient(),
+    )
+
+    outcome = await bridge.tick_once(conversation_id=conversation_id)
+
+    assert outcome.claimed == 1
+    assert outcome.dispatched == 1
+    assert outcome.failed == 0
+    context = json.loads(god_layer.sent[0][3])
+    assert "memoryos_context" not in context["group_chat"]
+    reloaded = ChatDispatchQueueStore(tmp_path / "chat.db").get(entry.entry_id)
+    assert reloaded.status == "dispatched"
+    assert reloaded.provider_run_ref == f"peer_ack:execute:{execute.participant_id}"
+    assert reloaded.dispatch_evidence.startswith("mcp_writeback:")
+    traces = PeerTurnLatencyTraceStore(tmp_path / "chat.db").list_recent(
+        conversation_id,
+        limit=10,
+    )
+    [sidecar_trace] = [
+        trace
+        for trace in traces
+        if trace["supporting_context"].get("memoryos_sidecar", {}).get("status")
+        == "degraded"
+    ]
+    assert sidecar_trace["delivery_mode"] == "memoryos_sidecar_dispatch_handoff"
+    assert sidecar_trace["degraded_reason"] is None
+    assert sidecar_trace["supporting_context"]["memoryos_sidecar"] == {
+        "status": "degraded",
+        "authority": "memoryos_sidecar",
+        "proof_level": "degraded",
+        "namespace_uri": f"memory://conversation/{conversation_id}",
+        "degraded_reason": "memoryos_exception:RuntimeError",
+        "source_refs": [
+            f"chat_dispatch_queue:{entry.entry_id}",
+            "proposal:proposal-memoryos-degraded",
+            "review_trigger_verdict:review-memoryos-degraded",
+            "resolution:resolution-memoryos-degraded",
+            "collaboration:collab-memoryos-degraded",
+            "artifact:memoryos-degraded-lane-graph",
+        ],
+        "continuity_refs": [],
+        "continuity_attempt_ref": (
+            f"memory://conversation/{conversation_id}/context/memoryos-sidecar-attempt"
+        ),
+    }
 
 
 @pytest.mark.asyncio
@@ -2429,9 +2665,7 @@ async def test_dispatch_bridge_rejects_progress_only_writeback(
     )
     god_layer = _DispatchBridgeGodLayer(
         tmp_path / "chat.db",
-        completion_content=(
-            "I have claimed the task and will update after implementation."
-        ),
+        completion_content=("I have claimed the task and will update after implementation."),
     )
     bridge = ChatDispatchBridge(
         db_path=tmp_path / "chat.db",

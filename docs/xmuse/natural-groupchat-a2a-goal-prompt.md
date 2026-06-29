@@ -1,103 +1,77 @@
-# Natural Groupchat A2A Goal Prompt
+# Natural Groupchat Goal Prompt
 
 Use this prompt directly with `/goal`.
 
 ```text
 Goal title:
-Unattended production natural agents groupchat throughput with A2A SDK interop.
+xmuse natural groupchat kernel and development-chain closure.
 
 Repo:
 /home/iiyatu/projects/python/xmuse
 
-Primary objective:
-Use xmuse's own natural agents groupchat to carry real xmuse demands through
-durable discussion, provider/A2A handoff, proposal or blocker, structured
-review verdict, dispatch/execution, PR, exact-head CI, head-SHA guarded merge,
-and main CI observation. Use the unattended window as throughput capacity, not
-as a fixed time schedule.
+Objective:
+Start from a clean origin/main truth refresh. Track A is kernel-first:
+A1 Natural Groupchat Kernel -> A2 Groupchat Decision Closure -> A3 Dispatch To
+Execution Harness -> A4 Result Writeback To Groupchat -> A5 Unattended
+Groupchat Development Loop.
+
+Track A ladder:
+A1 Natural Groupchat Kernel
+-> A2 Groupchat Decision Closure
+-> A3 Dispatch To Execution Harness
+-> A4 Result Writeback To Groupchat
+-> A5 Unattended Groupchat Development Loop
 
 Read first:
 - AGENTS.md
 - docs/xmuse/README.md
+- docs/xmuse/document-status.md
 - docs/xmuse/natural-groupchat-a2a-goal.md
 - docs/xmuse/natural-groupchat-a2a-behavior.md
 - docs/xmuse/natural-groupchat-a2a-task-plan.md
-- docs/xmuse/goal-copilot-behavior-policy.md
 - docs/xmuse/mainline-contracts.md
-
-Optional local references when present:
-- /home/iiyatu/projects/python/xmuse-m7-natural-groupchat-goal-design/docs/superpowers/specs/2026-06-26-natural-groupchat-a2a-production-goal-design.md
+- docs/superpowers/specs/2026-06-30-natural-groupchat-kernel-design.md
 - /home/iiyatu/clowder-ai as natural groupchat reference only
 
-If an optional local reference is absent, continue from repo-local docs and
-treat the missing path as non-blocking.
+Static baselines:
+- last_observed_baseline:
+  5d03bbe82a3f17f2d854d46ee4dcbf7972fe533d after PR #279 and PR #259
+  dispatch proof split 53dbeb9ace749510e9cb0f82f73cbd4df11ec190.
+- post_abc_closure_baseline:
+  07630131dcb6e26c8dc09dcf41690381e5cd0ee6 from PR #294, run
+  track-abc-integrated-memoryos-degraded-20260629-01, conversation
+  conv_c7528fbf03b84755b8d4eb65166aa0a1, final action
+  final-cce17cc5e0e7, PR CI run 28332878486, main CI run 28332906024, GitHub
+  gate evidence github_gate_evidence.json#evidence=ghgate_e3e90b98395d4c6e81136db6241ecf49.
+These are static orientation facts, not live GitHub truth.
 
-Current calibration:
-- Start from a clean origin/main worktree after truth refresh.
-- PR #193 and A2A hardening PR #234-#242 should be verified as merged.
-- Latest calibrated main after PR #242:
-  c1d19ad2ae9bd8b22742376c98968073a508329c.
-- PR #242 makes native GOD sessions the default peer-chat path; Ray is optional
-  legacy and not the main natural groupchat kernel.
-- Dirty historical worktrees and archived docs are references only, not main
-  capability.
-
-Architecture:
-natural groupchat
--> official a2a-sdk provider / handoff / artifact envelope
--> xmuse chat.db / inbox / proposal / review / dispatch authority
--> provider-native execution
--> PR / CI / operator merge
-
-Hard rules:
-- A2A SDK is interop, not xmuse authority.
-- Durable authority remains chat.db / inbox / proposal / review verdict /
-  dispatch queue / GitHub server facts.
-- Ray is optional legacy, not the default natural groupchat kernel.
-- Do not start loops with TDD. First identify authority, producer, consumer,
-  condition, proof level, and failure boundary.
-- Use tests after observed runtime evidence to pin contracts/regressions.
-- Skills/workers are process aids only, never proof truth.
-- Use dynamic small main-based PRs by implementation domain; do not set a fixed
-  PR count cap, but do not create umbrella PRs.
-- Every PR must pass remote exact-head CI before merge.
-- This prompt does not grant blanket merge authority. Only if the operator
-  explicitly authorizes guarded merge for the current run and current PR, use:
-  gh pr merge --match-head-commit HEAD_SHA
-  then fetch origin and observe main CI for the merge commit. Otherwise stop at
-  PR ready, exact-head CI success, and merge awaiting operator.
-- Do not delete branches unless separately authorized.
-- No external exposure claim unless write endpoints are token-gated or
-  explicitly local-only. If auth/RBAC is not addressed in a PR, state
-  trusted-local-only.
-- If the same complex boundary fails twice, refactor or redesign the boundary
-  instead of stacking patches.
-- MemoryOS is an optional sidecar, not authority. If unavailable, degrade.
-- Frontend work is read API / UX projection only; projections do not create
-  truth.
-- The practical proposal/review/dispatch route for this goal does not replace
-  the product mainline requirement that larger flows preserve blueprint freeze,
-  lane graph, and review lineage.
-
-Execution topology:
-- Track A: natural groupchat real chain and PR/CI/merge coordination.
-- Track B: MemoryOS sidecar and context continuity.
-- Track C: frontend API / UX read projection.
-- Track D: read-only copilot audit using docs/xmuse/goal-copilot-behavior-policy.md.
-
-Loop model:
-run largest real chain -> classify durable boundary -> fix/refactor one boundary
--> focused validation -> PR/CI/merge if clean -> replay largest real chain ->
-continue, parallelize, or stop at a clean report point.
+Operating contract:
+- Each loop declares authority, producer, consumer, condition, proof level,
+  failure boundary, and forbidden claims.
+- A1 authority is chat_messages, groupchat_chains, groupchat_worklist, linked
+  chat_inbox_items, and structured callback/writeback.
+- Text @mentions and router output are candidate signals only; schedulable
+  authority starts when GroupchatWorklistScheduler accepts groupchat_worklist.
+- A2 requires durable proposal, objection or clearance, review verdict,
+  decision, or blocker refs.
+- A3-A5 use the existing execution harness. PR/CI/guarded merge is downstream
+  proof, not A1 completion.
+- A2A SDK is interop. MemoryOS is sidecar. Frontend is projection. Ray is
+  optional legacy.
+- Skills, workers, local tests, provider stdout, and subagent audit are
+  diagnostics or candidate input only.
 
 Minimum success:
-Track A reaches a real PR/CI/guarded-merge/main-CI path for at least one real
-xmuse demand, or stops at a durable blocker that names the next authority
-boundary with source refs. Track B or C should produce a domain-scoped mergeable
-improvement when it does not displace Track A.
+Reach the deepest honest boundary without weakening authority: A1 kernel
+closure, A2 decision closure, A3-A5 development-chain closure, or a durable
+blocker with source refs and next authority boundary.
+
+PR discipline:
+Use domain-scoped main-based PRs only when code or current docs change. Each PR
+needs exact-head CI before guarded merge, and main CI observation after merge.
 
 Do not claim:
-production-ready natural groupchat, live MemoryOS authority, fully autonomous
-merge, GitHub review truth, provider stdout review truth, full multi-provider
-parity, frontend complete, Ray-backed production proof, or full closure.
+production-ready natural groupchat, live MemoryOS truth, frontend complete,
+GitHub review truth, provider stdout truth, Ray-backed production proof, or
+autonomous merge.
 ```

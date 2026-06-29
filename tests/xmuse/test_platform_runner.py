@@ -6,12 +6,23 @@ import json
 import subprocess
 from pathlib import Path
 
+import httpx
 import pytest
 
 from xmuse_core.chat.acceptance_spine import AcceptanceSpineStore
 from xmuse_core.chat.dispatch_queue import ChatDispatchQueueStore
 from xmuse_core.chat.store import ChatStore
-from xmuse_core.platform.execution.github_ops import GitHubServerSideTruthEvidence
+from xmuse_core.chat.stream_store import PeerTurnLatencyTraceStore
+from xmuse_core.integrations.memoryos_client import FakeMemoryOSClient
+from xmuse_core.integrations.memoryos_lite_interop import (
+    MemoryOSLiteInteropAdapter,
+    MemoryOSLiteSessionBindingStore,
+)
+from xmuse_core.integrations.memoryos_namespace import conversation_namespace
+from xmuse_core.platform.execution.github_ops import (
+    GitHubMainCiEvidence,
+    GitHubServerSideTruthEvidence,
+)
 from xmuse_core.platform.run_health import build_process_inventory
 from xmuse_core.structuring.models import (
     FeatureGraphSet,
@@ -61,6 +72,21 @@ class _StaticGithubTruthCollector:
         return self._evidence
 
 
+class _StaticMainCiTruthCollector:
+    def __init__(self, evidence: GitHubMainCiEvidence) -> None:
+        self._evidence = evidence
+
+    def collect_main_ci(
+        self,
+        *,
+        repo: str,
+        merge_commit_sha: str,
+    ) -> GitHubMainCiEvidence:
+        assert repo == "iiyazu/Cross-Muse"
+        assert merge_commit_sha == self._evidence.head_sha
+        return self._evidence
+
+
 def _complete_server_side_merge_truth() -> GitHubServerSideTruthEvidence:
     return GitHubServerSideTruthEvidence(
         repo="iiyazu/Cross-Muse",
@@ -72,8 +98,16 @@ def _complete_server_side_merge_truth() -> GitHubServerSideTruthEvidence:
             "peer-chat-runtime-gate",
         ],
         proof_level="server_side_merge_proof",
+        head_sha="abc123",
         workflow_run_id=82564030146,
         check_run_ids=[82564030146, 82564030153, 82564030160, 82564030167],
+        check_run_names=[
+            "quality-gates",
+            "contract-smoke-gates",
+            "real-runtime-integration-gate",
+            "peer-chat-runtime-gate",
+        ],
+        check_run_head_shas=["abc123", "abc123", "abc123", "abc123"],
         expected_source_app="github-actions",
         branch_protection_snapshot={
             "required_status_checks": {
@@ -94,6 +128,20 @@ def _complete_server_side_merge_truth() -> GitHubServerSideTruthEvidence:
         merge_commit_sha="4fd40a735e62be255e787ce93bdc3d5653d0255e",
         merged_at="2026-06-21T10:56:19Z",
         merge_event_id="PR_kwDOExample",
+    )
+
+
+def _successful_main_ci_truth() -> GitHubMainCiEvidence:
+    return GitHubMainCiEvidence(
+        workflow_run_id=28351375224,
+        workflow_name="xmuse CI",
+        head_sha="4fd40a735e62be255e787ce93bdc3d5653d0255e",
+        head_branch="main",
+        status="completed",
+        conclusion="success",
+        url="https://github.com/iiyazu/Cross-Muse/actions/runs/28351375224",
+        created_at="2026-06-29T05:47:21Z",
+        updated_at="2026-06-29T05:48:00Z",
     )
 
 
@@ -645,6 +693,145 @@ async def test_runner_enables_peer_chat_with_default_codex_launcher(
         captured["orchestrator_kwargs"]["review_god_session_layer"]
         is captured["scheduler_kwargs"]["god_layer"]
     )
+    assert captured["scheduler_kwargs"]["memoryos_client"] is None
+
+
+@pytest.mark.asyncio
+async def test_runner_wires_peer_chat_memoryos_sidecar_client(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class FakePeerMemoryOSClient:
+        def __init__(self, *, base_url: str, api_key: str | None = None) -> None:
+            self.base_url = base_url
+            self.api_key = api_key
+
+    class FakeOrchestrator:
+        def __init__(self, **kwargs) -> None:
+            captured["orchestrator_kwargs"] = kwargs
+            self._sm = _FakeStateMachine()
+
+        async def reconcile_status_changes(self) -> None:
+            return None
+
+        async def dispatch_lane(self, lane_id: str) -> None:
+            return None
+
+    class FakePeerScheduler:
+        def __init__(self, **kwargs) -> None:
+            captured["scheduler_kwargs"] = kwargs
+
+        async def tick_once(self) -> None:
+            return None
+
+    import xmuse_core.chat.peer_scheduler as peer_scheduler_module
+
+    monkeypatch.setenv("XMUSE_PEER_GOD_BACKEND", "native")
+    monkeypatch.setenv("XMUSE_PEER_CHAT_MEMORYOS_API_KEY", "sidecar-key")
+    monkeypatch.setattr(platform_runner, "PlatformOrchestrator", FakeOrchestrator)
+    monkeypatch.setattr(
+        platform_runner,
+        "PeerChatMemoryOSClient",
+        FakePeerMemoryOSClient,
+    )
+    monkeypatch.setattr(peer_scheduler_module, "PeerChatScheduler", FakePeerScheduler)
+    monkeypatch.setattr(
+        platform_runner,
+        "_peer_chat_runtime_worktree",
+        _empty_peer_chat_worktree,
+    )
+
+    await platform_runner.run(
+        lanes_path=tmp_path / "feature_lanes.json",
+        xmuse_root=tmp_path / "xmuse",
+        mcp_port=8100,
+        max_hours=0,
+        max_concurrent=1,
+        peer_chat_enabled=True,
+        peer_chat_memoryos_url="http://peer-memoryos.test",
+    )
+
+    memoryos_client = captured["scheduler_kwargs"]["memoryos_client"]
+    assert isinstance(memoryos_client, FakePeerMemoryOSClient)
+    assert memoryos_client.base_url == "http://peer-memoryos.test"
+    assert memoryos_client.api_key == "sidecar-key"
+    assert captured["orchestrator_kwargs"]["memoryos_client"] is None
+
+
+@pytest.mark.asyncio
+async def test_runner_wires_peer_chat_memoryos_lite_sidecar_client(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeMemoryOSLiteInteropAdapter:
+        def __init__(self, *, base_url: str, binding_store) -> None:
+            self.base_url = base_url
+            self.binding_store = binding_store
+
+    class FakeOrchestrator:
+        def __init__(self, **kwargs) -> None:
+            captured["orchestrator_kwargs"] = kwargs
+            self._sm = _FakeStateMachine()
+
+        async def reconcile_status_changes(self) -> None:
+            return None
+
+        async def dispatch_lane(self, lane_id: str) -> None:
+            return None
+
+    class FakePeerScheduler:
+        def __init__(self, **kwargs) -> None:
+            captured["scheduler_kwargs"] = kwargs
+
+        async def tick_once(self) -> None:
+            return None
+
+    class FakeDispatchBridge:
+        def __init__(self, **kwargs) -> None:
+            captured["dispatch_bridge_kwargs"] = kwargs
+
+    import xmuse_core.chat.dispatch_bridge as dispatch_bridge_module
+    import xmuse_core.chat.peer_scheduler as peer_scheduler_module
+
+    monkeypatch.setenv("XMUSE_PEER_GOD_BACKEND", "native")
+    monkeypatch.setattr(platform_runner, "PlatformOrchestrator", FakeOrchestrator)
+    monkeypatch.setattr(
+        platform_runner,
+        "MemoryOSLiteInteropAdapter",
+        FakeMemoryOSLiteInteropAdapter,
+    )
+    monkeypatch.setattr(peer_scheduler_module, "PeerChatScheduler", FakePeerScheduler)
+    monkeypatch.setattr(
+        platform_runner,
+        "_peer_chat_runtime_worktree",
+        _empty_peer_chat_worktree,
+    )
+    monkeypatch.setattr(dispatch_bridge_module, "ChatDispatchBridge", FakeDispatchBridge)
+
+    xmuse_root = tmp_path / "xmuse"
+    await platform_runner.run(
+        lanes_path=tmp_path / "feature_lanes.json",
+        xmuse_root=xmuse_root,
+        mcp_port=8100,
+        max_hours=0,
+        max_concurrent=1,
+        peer_chat_enabled=True,
+        peer_chat_memoryos_url="http://peer-memoryos-lite.test",
+        peer_chat_memoryos_kind="memoryos-lite",
+    )
+
+    memoryos_client = captured["scheduler_kwargs"]["memoryos_client"]
+    assert isinstance(memoryos_client, FakeMemoryOSLiteInteropAdapter)
+    assert memoryos_client.base_url == "http://peer-memoryos-lite.test"
+    assert memoryos_client.binding_store.path == (
+        xmuse_root / "memoryos_lite_sessions.json"
+    )
+    assert captured["dispatch_bridge_kwargs"]["memoryos_client"] is memoryos_client
+    assert captured["orchestrator_kwargs"]["memoryos_client"] is None
 
 
 @pytest.mark.asyncio
@@ -752,6 +939,11 @@ async def test_runner_builds_dispatch_bridge_with_peer_god_layer(
 ) -> None:
     captured: dict[str, object] = {}
 
+    class FakePeerMemoryOSClient:
+        def __init__(self, *, base_url: str, api_key: str | None = None) -> None:
+            self.base_url = base_url
+            self.api_key = api_key
+
     class FakeOrchestrator:
         def __init__(self, **kwargs) -> None:
             self._sm = _FakeStateMachine()
@@ -778,6 +970,11 @@ async def test_runner_builds_dispatch_bridge_with_peer_god_layer(
 
     monkeypatch.setenv("XMUSE_PEER_GOD_BACKEND", "native")
     monkeypatch.setattr(platform_runner, "PlatformOrchestrator", FakeOrchestrator)
+    monkeypatch.setattr(
+        platform_runner,
+        "PeerChatMemoryOSClient",
+        FakePeerMemoryOSClient,
+    )
     monkeypatch.setattr(peer_scheduler_module, "PeerChatScheduler", FakePeerScheduler)
     monkeypatch.setattr(
         platform_runner,
@@ -794,6 +991,7 @@ async def test_runner_builds_dispatch_bridge_with_peer_god_layer(
         max_concurrent=1,
         peer_chat_enabled=True,
         peer_chat_dispatch_response_wait_s=321.0,
+        peer_chat_memoryos_url="http://peer-memoryos.test",
     )
 
     assert captured["dispatch_bridge_kwargs"]["bridge_id"] == "platform-runner-dispatch"
@@ -808,6 +1006,11 @@ async def test_runner_builds_dispatch_bridge_with_peer_god_layer(
     assert Path(captured["dispatch_bridge_kwargs"]["worktree"]).name == "peer_chat_worktree"
     assert captured["dispatch_bridge_kwargs"]["response_wait_s"] == 321.0
     assert captured["dispatch_bridge_kwargs"]["claim_ttl_s"] >= 351
+    assert isinstance(captured["scheduler_kwargs"]["memoryos_client"], FakePeerMemoryOSClient)
+    assert (
+        captured["dispatch_bridge_kwargs"]["memoryos_client"]
+        is captured["scheduler_kwargs"]["memoryos_client"]
+    )
 
 
 @pytest.mark.asyncio
@@ -1648,6 +1851,43 @@ def test_platform_runner_supports_peer_chat_wait_overrides() -> None:
     assert args.peer_chat_post_writeback_grace_s == 20.0
 
 
+def test_platform_runner_supports_peer_chat_memoryos_url() -> None:
+    args = platform_runner.main_arg_parser().parse_args(
+        ["--peer-chat", "--peer-chat-memoryos-url", "http://memoryos.sidecar"]
+    )
+
+    platform_runner.validate_args(args)
+    assert args.peer_chat is True
+    assert args.peer_chat_memoryos_url == "http://memoryos.sidecar"
+    assert args.peer_chat_memoryos_kind == "generic"
+
+
+def test_platform_runner_supports_peer_chat_memoryos_lite_kind() -> None:
+    args = platform_runner.main_arg_parser().parse_args(
+        [
+            "--peer-chat",
+            "--peer-chat-memoryos-url",
+            "http://memoryos-lite.sidecar",
+            "--peer-chat-memoryos-kind",
+            "memoryos-lite",
+        ]
+    )
+
+    platform_runner.validate_args(args)
+    assert args.peer_chat_memoryos_url == "http://memoryos-lite.sidecar"
+    assert args.peer_chat_memoryos_kind == "memoryos-lite"
+
+
+def test_platform_runner_rejects_invalid_peer_chat_memoryos_kind_from_env(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("XMUSE_PEER_CHAT_MEMORYOS_KIND", "memoryos")
+    args = platform_runner.main_arg_parser().parse_args([])
+
+    with pytest.raises(SystemExit):
+        platform_runner.validate_args(args)
+
+
 @pytest.mark.parametrize("wait_s", ["0", "-1", "nan", "inf"])
 def test_platform_runner_rejects_invalid_peer_chat_response_wait(
     wait_s: str,
@@ -1732,6 +1972,65 @@ def test_runner_parser_supports_acceptance_gated_goal() -> None:
     assert args.github_pr == 154
 
 
+def test_runner_parser_supports_existing_final_action_resolution() -> None:
+    args = platform_runner.main_arg_parser().parse_args(
+        [
+            "--resolve-final-action",
+            "--lane-id",
+            "lane-ready",
+            "--github-pr",
+            "155",
+            "--github-head-sha",
+            "abc123",
+        ]
+    )
+
+    platform_runner.validate_args(args)
+    assert args.resolve_final_action is True
+    assert args.lane_id == "lane-ready"
+    assert args.github_pr == 155
+    assert args.github_head_sha == "abc123"
+
+
+def test_runner_rejects_resolve_final_action_without_hold_selector() -> None:
+    args = platform_runner.main_arg_parser().parse_args(
+        ["--resolve-final-action", "--github-pr", "155"]
+    )
+
+    with pytest.raises(SystemExit):
+        platform_runner.validate_args(args)
+
+
+def test_runner_parser_supports_create_final_action_pr() -> None:
+    args = platform_runner.main_arg_parser().parse_args(
+        [
+            "--create-final-action-pr",
+            "--final-action-id",
+            "final-pr",
+            "--github-repo",
+            "iiyazu/Cross-Muse",
+            "--pr-base-branch",
+            "main",
+            "--pr-branch-prefix",
+            "codex/",
+        ]
+    )
+
+    platform_runner.validate_args(args)
+    assert args.create_final_action_pr is True
+    assert args.final_action_id == "final-pr"
+    assert args.github_repo == "iiyazu/Cross-Muse"
+    assert args.pr_base_branch == "main"
+    assert args.pr_branch_prefix == "codex/"
+
+
+def test_runner_rejects_create_final_action_pr_without_hold_selector() -> None:
+    args = platform_runner.main_arg_parser().parse_args(["--create-final-action-pr"])
+
+    with pytest.raises(SystemExit):
+        platform_runner.validate_args(args)
+
+
 def test_runner_parser_supports_opt_in_live_github_capture(tmp_path: Path) -> None:
     review_artifact = tmp_path / "internal-review.json"
     review_artifact.write_text('{"review":"accepted"}\n', encoding="utf-8")
@@ -1757,6 +2056,63 @@ def test_runner_parser_supports_opt_in_live_github_capture(tmp_path: Path) -> No
     assert args.internal_review_artifact == review_artifact
     assert args.internal_reviewer == "platform-runner"
     assert args.internal_reviewed_head_sha == "abc123"
+
+
+def test_runner_parser_supports_main_ci_capture_without_internal_review_args() -> None:
+    args = platform_runner.main_arg_parser().parse_args(
+        [
+            "--capture-final-action-main-ci",
+            "--final-action-id",
+            "final-main-ci",
+            "--github-live-capture",
+        ]
+    )
+
+    platform_runner.validate_args(args)
+    assert args.capture_final_action_main_ci is True
+    assert args.final_action_id == "final-main-ci"
+
+
+def test_runner_rejects_main_ci_capture_without_live_capture() -> None:
+    args = platform_runner.main_arg_parser().parse_args(
+        [
+            "--capture-final-action-main-ci",
+            "--final-action-id",
+            "final-main-ci",
+        ]
+    )
+
+    with pytest.raises(SystemExit):
+        platform_runner.validate_args(args)
+
+
+def test_runner_parser_supports_dispatch_sidecar_handoff_capture() -> None:
+    args = platform_runner.main_arg_parser().parse_args(
+        [
+            "--capture-dispatch-sidecar-handoff",
+            "--dispatch-entry-id",
+            "dispatch:conv:res:execute",
+            "--peer-chat-memoryos-url",
+            "http://memoryos.test",
+        ]
+    )
+
+    platform_runner.validate_args(args)
+    assert args.capture_dispatch_sidecar_handoff is True
+    assert args.dispatch_entry_id == "dispatch:conv:res:execute"
+
+
+def test_runner_rejects_dispatch_sidecar_handoff_capture_without_url() -> None:
+    args = platform_runner.main_arg_parser().parse_args(
+        [
+            "--capture-dispatch-sidecar-handoff",
+            "--dispatch-entry-id",
+            "dispatch:conv:res:execute",
+        ]
+    )
+
+    with pytest.raises(SystemExit):
+        platform_runner.validate_args(args)
 
 
 def test_runner_rejects_live_capture_without_internal_review_artifact() -> None:
@@ -1837,6 +2193,28 @@ def test_acceptance_gated_goal_run_blocks_without_server_side_merge_proof(
         f"github_gate_evidence.json#evidence={evidence['id']}"
     )
 
+    lanes_payload = json.loads(
+        (xmuse_root / "feature_lanes.json").read_text(encoding="utf-8")
+    )
+    lane = lanes_payload["lanes"][0]
+    assert lane["feature_id"] == result["lane_id"]
+    assert lane["status"] == "blocked_for_input"
+    assert lane["blocked_reason"] == "github_gate_unverified"
+    assert "failure_reason" not in lane
+    assert lane["final_action_ref"] == f"final_actions.json#hold={hold['id']}"
+    assert lane["github_gate_gap_ref"] == hold["github_gate_gap_ref"]
+
+    health = platform_runner.health_once(
+        xmuse_root / "feature_lanes.json",
+        live_pids=set(),
+        xmuse_root=xmuse_root,
+    )
+    assert health["counts"]["live"] == 0
+    assert health["counts"]["terminal"] == 1
+    assert health["counts"]["takeover_context_needed"] == 0
+    assert health["groups"]["terminal"] == [result["lane_id"]]
+    assert health["groups"]["takeover_context_needed"] == []
+
 
 def test_acceptance_gated_goal_run_accepts_with_server_side_merge_proof(
     tmp_path: Path,
@@ -1858,6 +2236,7 @@ def test_acceptance_gated_goal_run_accepts_with_server_side_merge_proof(
         github_gate_collector=_StaticGithubTruthCollector(
             _complete_server_side_merge_truth()
         ),
+        main_ci_collector=_StaticMainCiTruthCollector(_successful_main_ci_truth()),
     )
 
     assert result["status"] == "accepted"
@@ -1874,6 +2253,18 @@ def test_acceptance_gated_goal_run_accepts_with_server_side_merge_proof(
     assert evidence["final_action_id"] == hold["id"]
     assert evidence["can_accept"] is True
     assert evidence["evidence"]["proof_level"] == "server_side_merge_proof"
+    assert evidence["main_ci"] == {
+        "workflow_run_id": 28351375224,
+        "workflow_name": "xmuse CI",
+        "head_sha": "4fd40a735e62be255e787ce93bdc3d5653d0255e",
+        "head_branch": "main",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/iiyazu/Cross-Muse/actions/runs/28351375224",
+        "created_at": "2026-06-29T05:47:21Z",
+        "updated_at": "2026-06-29T05:48:00Z",
+        "gap_reason": None,
+    }
     assert hold["github_gate_evidence_ref"] == (
         f"github_gate_evidence.json#evidence={evidence['id']}"
     )
@@ -1886,6 +2277,908 @@ def test_acceptance_gated_goal_run_accepts_with_server_side_merge_proof(
     assert spines[0].status.value == "accepted"
     assert spines[0].blocked_reason is None
     assert spines[0].github_gate_evidence_ref == hold["github_gate_evidence_ref"]
+
+    lanes_payload = json.loads(
+        (xmuse_root / "feature_lanes.json").read_text(encoding="utf-8")
+    )
+    lane = lanes_payload["lanes"][0]
+    assert lane["feature_id"] == result["lane_id"]
+    assert lane["status"] == "merged"
+    assert lane["integration_mode"] == "noop"
+    assert lane["final_action_ref"] == f"final_actions.json#hold={hold['id']}"
+    assert lane["github_gate_evidence_ref"] == hold["github_gate_evidence_ref"]
+
+    health = platform_runner.health_once(
+        xmuse_root / "feature_lanes.json",
+        live_pids=set(),
+        xmuse_root=xmuse_root,
+    )
+    assert health["counts"]["live"] == 0
+    assert health["counts"]["terminal"] == 1
+    assert health["counts"]["unsafe_to_release_dependents"] == 0
+    assert health["groups"]["terminal"] == [result["lane_id"]]
+    assert health["groups"]["unsafe_to_release_dependents"] == []
+
+
+def test_resolve_existing_final_action_accepts_with_server_side_merge_proof(
+    tmp_path: Path,
+) -> None:
+    xmuse_root = tmp_path / "runtime"
+    xmuse_root.mkdir()
+    (xmuse_root / "feature_lanes.json").write_text(
+        json.dumps(
+            {
+                "lanes": [
+                    {
+                        "feature_id": "lane-gh-proof",
+                        "status": "awaiting_final_action",
+                        "prompt": "ready for github proof",
+                        "final_action_hold_id": "final-gh-proof",
+                    }
+                ]
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (xmuse_root / "final_actions.json").write_text(
+        json.dumps(
+            {
+                "holds": [
+                    {
+                        "id": "final-gh-proof",
+                        "lane_id": "lane-gh-proof",
+                        "verdict_id": "verdict-gh-proof",
+                        "action": "merge",
+                        "target_status": "reviewed",
+                        "status": "pending",
+                        "summary": "merge after GitHub proof",
+                    }
+                ]
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = platform_runner.resolve_existing_final_action_with_github_gate(
+        xmuse_root=xmuse_root,
+        lane_id="lane-gh-proof",
+        github_repo="iiyazu/Cross-Muse",
+        github_pull_request=155,
+        required_checks=[
+            "quality-gates",
+            "contract-smoke-gates",
+            "real-runtime-integration-gate",
+            "peer-chat-runtime-gate",
+        ],
+        head_sha="abc123",
+        github_gate_collector=_StaticGithubTruthCollector(
+            _complete_server_side_merge_truth()
+        ),
+        main_ci_collector=_StaticMainCiTruthCollector(_successful_main_ci_truth()),
+    )
+
+    assert result["status"] == "accepted"
+    assert result["blocked_reason"] is None
+    gate_payload = json.loads(
+        (xmuse_root / "github_gate_evidence.json").read_text(encoding="utf-8")
+    )
+    final_actions = json.loads(
+        (xmuse_root / "final_actions.json").read_text(encoding="utf-8")
+    )
+    lanes = json.loads((xmuse_root / "feature_lanes.json").read_text(encoding="utf-8"))
+    evidence = gate_payload["items"][0]
+    hold = final_actions["holds"][0]
+    lane = lanes["lanes"][0]
+    assert evidence["can_accept"] is True
+    assert evidence["main_ci"]["conclusion"] == "success"
+    assert evidence["main_ci"]["head_sha"] == (
+        evidence["evidence"]["merge_commit_sha"]
+    )
+    assert hold["status"] == "approved"
+    assert hold["github_gate_evidence_ref"] == (
+        f"github_gate_evidence.json#evidence={evidence['id']}"
+    )
+    assert lane["status"] == "merged"
+    assert lane["github_gate_evidence_ref"] == hold["github_gate_evidence_ref"]
+    assert lane["final_action_ref"] == "final_actions.json#hold=final-gh-proof"
+
+
+def test_capture_existing_final_action_main_ci_updates_accepted_gate_record(
+    tmp_path: Path,
+) -> None:
+    xmuse_root = tmp_path / "runtime"
+    xmuse_root.mkdir()
+    (xmuse_root / "feature_lanes.json").write_text(
+        json.dumps(
+            {
+                "lanes": [
+                    {
+                        "feature_id": "lane-main-ci",
+                        "status": "awaiting_final_action",
+                        "prompt": "ready for main ci proof",
+                        "final_action_hold_id": "final-main-ci",
+                    }
+                ]
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (xmuse_root / "final_actions.json").write_text(
+        json.dumps(
+            {
+                "holds": [
+                    {
+                        "id": "final-main-ci",
+                        "lane_id": "lane-main-ci",
+                        "verdict_id": "verdict-main-ci",
+                        "action": "merge",
+                        "target_status": "reviewed",
+                        "status": "pending",
+                        "summary": "merge after GitHub proof",
+                    }
+                ]
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    accepted = platform_runner.resolve_existing_final_action_with_github_gate(
+        xmuse_root=xmuse_root,
+        final_action_id="final-main-ci",
+        github_repo="iiyazu/Cross-Muse",
+        github_pull_request=155,
+        required_checks=[
+            "quality-gates",
+            "contract-smoke-gates",
+            "real-runtime-integration-gate",
+            "peer-chat-runtime-gate",
+        ],
+        head_sha="abc123",
+        github_gate_collector=_StaticGithubTruthCollector(
+            _complete_server_side_merge_truth()
+        ),
+    )
+    before = json.loads(
+        (xmuse_root / "github_gate_evidence.json").read_text(encoding="utf-8")
+    )
+    assert before["items"][0]["main_ci"] is None
+
+    captured = platform_runner.capture_existing_final_action_main_ci(
+        xmuse_root=xmuse_root,
+        final_action_id="final-main-ci",
+        main_ci_collector=_StaticMainCiTruthCollector(_successful_main_ci_truth()),
+    )
+
+    after = json.loads(
+        (xmuse_root / "github_gate_evidence.json").read_text(encoding="utf-8")
+    )
+    assert captured["status"] == "captured"
+    assert captured["blocked_reason"] is None
+    assert captured["github_gate_evidence_ref"] == accepted["durable_refs"][
+        "github_gate_evidence_ref"
+    ]
+    assert len(after["items"]) == 1
+    assert after["items"][0]["main_ci"]["conclusion"] == "success"
+    assert after["items"][0]["main_ci"]["head_sha"] == (
+        after["items"][0]["evidence"]["merge_commit_sha"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_capture_existing_dispatch_sidecar_handoff_records_continuity(
+    tmp_path: Path,
+) -> None:
+    xmuse_root = tmp_path / "runtime"
+    xmuse_root.mkdir()
+    db = xmuse_root / "chat.db"
+    chat = ChatStore(db)
+    conv = chat.create_conversation("Dispatch sidecar handoff")
+    intake = chat.add_message(conv.id, "Human", "human", "Run sidecar handoff")
+    proposal = chat.create_proposal(
+        conversation_id=conv.id,
+        author="Architect GOD",
+        proposal_type="lane_graph",
+        content='{"summary":"sidecar handoff"}',
+        references=[intake.id],
+    )
+    resolution = chat.approve_proposal(
+        proposal.id,
+        approved_by=["human"],
+        approval_mode="human",
+        goal_summary="Run sidecar handoff",
+    )
+    dispatch = ChatDispatchQueueStore(db).enqueue_agent_auto_dispatch(
+        conversation_id=conv.id,
+        proposal_id=proposal.id,
+        resolution_id=resolution.id,
+        collaboration_run_id="collab-sidecar",
+        artifact_ref="artifact:sidecar-lane-graph",
+        gate_refs=["review_trigger_verdict:sidecar"],
+    )
+    memoryos = FakeMemoryOSClient()
+
+    result = await platform_runner.capture_existing_dispatch_sidecar_handoff(
+        xmuse_root=xmuse_root,
+        dispatch_entry_id=dispatch.entry_id,
+        memoryos_client=memoryos,
+        actor_id="platform-runner-test",
+    )
+
+    expected_refs = [
+        f"chat_dispatch_queue:{dispatch.entry_id}",
+        f"proposal:{proposal.id}",
+        "review_trigger_verdict:sidecar",
+        f"resolution:{resolution.id}",
+        "collaboration:collab-sidecar",
+        "artifact:sidecar-lane-graph",
+    ]
+    assert result["status"] == "captured"
+    assert result["dispatch_entry_id"] == dispatch.entry_id
+    assert result["sidecar_status"] == "recorded"
+    assert result["source_refs"] == expected_refs
+    assert result["continuity_refs"] == [
+        f"memory://conversation/{conv.id}/refs/chat_dispatch_queue:{dispatch.entry_id}"
+    ]
+    pages = await memoryos.search(
+        conversation_namespace(conv.id),
+        query="dispatch handoff",
+    )
+    assert len(pages) == 1
+    assert pages[0].actor_id == "platform-runner-test"
+    assert pages[0].source_refs == expected_refs
+    traces = PeerTurnLatencyTraceStore(db).list_recent(conv.id, limit=5)
+    [trace] = traces
+    assert trace["delivery_mode"] == "memoryos_sidecar_dispatch_handoff"
+    assert trace["supporting_context"] == {
+        "memoryos_sidecar": {
+            "status": "recorded",
+            "authority": "memoryos_sidecar",
+            "proof_level": "contract",
+            "namespace_uri": f"memory://conversation/{conv.id}",
+            "degraded_reason": None,
+            "source_refs": expected_refs,
+            "continuity_refs": result["continuity_refs"],
+        }
+    }
+
+
+@pytest.mark.asyncio
+async def test_capture_existing_dispatch_sidecar_handoff_uses_memoryos_lite_adapter(
+    tmp_path: Path,
+) -> None:
+    xmuse_root = tmp_path / "runtime"
+    xmuse_root.mkdir()
+    db = xmuse_root / "chat.db"
+    chat = ChatStore(db)
+    conv = chat.create_conversation("Dispatch MemoryOS Lite sidecar handoff")
+    intake = chat.add_message(conv.id, "Human", "human", "Run MemoryOS Lite handoff")
+    proposal = chat.create_proposal(
+        conversation_id=conv.id,
+        author="Architect GOD",
+        proposal_type="lane_graph",
+        content='{"summary":"memoryos lite sidecar handoff"}',
+        references=[intake.id],
+    )
+    resolution = chat.approve_proposal(
+        proposal.id,
+        approved_by=["human"],
+        approval_mode="human",
+        goal_summary="Run MemoryOS Lite sidecar handoff",
+    )
+    dispatch = ChatDispatchQueueStore(db).enqueue_agent_auto_dispatch(
+        conversation_id=conv.id,
+        proposal_id=proposal.id,
+        resolution_id=resolution.id,
+        collaboration_run_id="collab-memoryos-lite-sidecar",
+        artifact_ref="artifact:memoryos-lite-lane-graph",
+        gate_refs=["review_trigger_verdict:memoryos-lite"],
+    )
+    expected_refs = [
+        f"chat_dispatch_queue:{dispatch.entry_id}",
+        f"proposal:{proposal.id}",
+        "review_trigger_verdict:memoryos-lite",
+        f"resolution:{resolution.id}",
+        "collaboration:collab-memoryos-lite-sidecar",
+        "artifact:memoryos-lite-lane-graph",
+    ]
+    requests: list[tuple[str, dict[str, object]]] = []
+
+    def route(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode() or "{}")
+        requests.append((request.url.path, payload))
+        if request.url.path == "/sessions":
+            return httpx.Response(200, json={"id": "ses-memoryos-lite-sidecar"})
+        if request.url.path == "/sessions/ses-memoryos-lite-sidecar/ingest":
+            metadata = payload["metadata"]
+            assert metadata["xmuse_namespace_uri"] == f"memory://conversation/{conv.id}"
+            assert metadata["xmuse_actor_id"] == "platform-runner-test"
+            assert metadata["xmuse_source_refs"] == expected_refs
+            assert metadata["xmuse_request_metadata"] == {
+                "memoryos_sidecar_kind": "dispatch_handoff",
+                "dispatch_queue_entry_id": dispatch.entry_id,
+                "proof_boundary": "sidecar_continuity_not_execution_truth",
+            }
+            return httpx.Response(
+                200,
+                json={
+                    "message": {
+                        "id": "msg-memoryos-lite-sidecar",
+                        "session_id": "ses-memoryos-lite-sidecar",
+                    }
+                },
+            )
+        raise AssertionError(f"unexpected endpoint: {request.url.path}")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(route)) as http_client:
+        memoryos = MemoryOSLiteInteropAdapter(
+            base_url="http://memoryos-lite.test",
+            http_client=http_client,
+            binding_store=MemoryOSLiteSessionBindingStore(
+                xmuse_root / "memoryos_lite_sessions.json"
+            ),
+        )
+        result = await platform_runner.capture_existing_dispatch_sidecar_handoff(
+            xmuse_root=xmuse_root,
+            dispatch_entry_id=dispatch.entry_id,
+            memoryos_client=memoryos,
+            actor_id="platform-runner-test",
+        )
+
+    expected_memory_ref = (
+        f"memory://conversation/{conv.id}/messages/msg-memoryos-lite-sidecar"
+    )
+    assert result["status"] == "captured"
+    assert result["sidecar_status"] == "recorded"
+    assert result["continuity_refs"] == [expected_memory_ref]
+    traces = PeerTurnLatencyTraceStore(db).list_recent(conv.id, limit=5)
+    [trace] = traces
+    assert trace["supporting_context"]["memoryos_sidecar"]["continuity_refs"] == [
+        expected_memory_ref
+    ]
+    assert [path for path, _payload in requests] == [
+        "/sessions",
+        "/sessions/ses-memoryos-lite-sidecar/ingest",
+    ]
+
+
+def test_resolve_existing_final_action_blocks_on_github_gate_gap(
+    tmp_path: Path,
+) -> None:
+    xmuse_root = tmp_path / "runtime"
+    xmuse_root.mkdir()
+    (xmuse_root / "feature_lanes.json").write_text(
+        json.dumps(
+            {
+                "lanes": [
+                    {
+                        "feature_id": "lane-gh-gap",
+                        "status": "awaiting_final_action",
+                        "prompt": "ready for github proof",
+                        "final_action_hold_id": "final-gh-gap",
+                    }
+                ]
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (xmuse_root / "final_actions.json").write_text(
+        json.dumps(
+            {
+                "holds": [
+                    {
+                        "id": "final-gh-gap",
+                        "lane_id": "lane-gh-gap",
+                        "verdict_id": "verdict-gh-gap",
+                        "action": "merge",
+                        "target_status": "reviewed",
+                        "status": "pending",
+                        "summary": "merge after GitHub proof",
+                    }
+                ]
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = platform_runner.resolve_existing_final_action_with_github_gate(
+        xmuse_root=xmuse_root,
+        lane_id="lane-gh-gap",
+        github_repo="iiyazu/Cross-Muse",
+        github_pull_request=155,
+        required_checks=[
+            "quality-gates",
+            "contract-smoke-gates",
+            "real-runtime-integration-gate",
+            "peer-chat-runtime-gate",
+        ],
+        github_gate_collector=_StaticGithubTruthCollector(_incomplete_server_side_truth()),
+    )
+
+    assert result["status"] == "blocked"
+    assert result["blocked_reason"] == "github_gate_unverified"
+    final_actions = json.loads(
+        (xmuse_root / "final_actions.json").read_text(encoding="utf-8")
+    )
+    lanes = json.loads((xmuse_root / "feature_lanes.json").read_text(encoding="utf-8"))
+    hold = final_actions["holds"][0]
+    lane = lanes["lanes"][0]
+    assert hold["status"] == "blocked"
+    assert hold["github_gate_gap_ref"].startswith("github_gate_evidence.json#evidence=")
+    assert "github_gate_evidence_ref" not in hold
+    assert lane["status"] == "blocked_for_input"
+    assert lane["blocked_reason"] == "github_gate_unverified"
+    assert lane["github_gate_gap_ref"] == hold["github_gate_gap_ref"]
+
+
+def test_resolve_existing_final_action_blocks_on_expected_head_mismatch(
+    tmp_path: Path,
+) -> None:
+    xmuse_root = tmp_path / "runtime"
+    xmuse_root.mkdir()
+    (xmuse_root / "feature_lanes.json").write_text(
+        json.dumps(
+            {
+                "lanes": [
+                    {
+                        "feature_id": "lane-head-mismatch",
+                        "status": "awaiting_final_action",
+                        "prompt": "ready for github proof",
+                        "final_action_hold_id": "final-head-mismatch",
+                    }
+                ]
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (xmuse_root / "final_actions.json").write_text(
+        json.dumps(
+            {
+                "holds": [
+                    {
+                        "id": "final-head-mismatch",
+                        "lane_id": "lane-head-mismatch",
+                        "verdict_id": "verdict-head-mismatch",
+                        "action": "merge",
+                        "target_status": "reviewed",
+                        "status": "pending",
+                        "summary": "merge after GitHub proof",
+                    }
+                ]
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = platform_runner.resolve_existing_final_action_with_github_gate(
+        xmuse_root=xmuse_root,
+        lane_id="lane-head-mismatch",
+        github_repo="iiyazu/Cross-Muse",
+        github_pull_request=155,
+        required_checks=[
+            "quality-gates",
+            "contract-smoke-gates",
+            "real-runtime-integration-gate",
+            "peer-chat-runtime-gate",
+        ],
+        head_sha="different-head",
+        github_gate_collector=_StaticGithubTruthCollector(
+            _complete_server_side_merge_truth()
+        ),
+    )
+
+    assert result["status"] == "blocked"
+    gate_payload = json.loads(
+        (xmuse_root / "github_gate_evidence.json").read_text(encoding="utf-8")
+    )
+    evidence = gate_payload["items"][0]
+    assert evidence["can_accept"] is False
+    assert evidence["gap_reason"] == "github evidence head SHA mismatch"
+    assert evidence["evidence"]["proof_level"] == "manual_gap"
+    assert evidence["evidence"]["head_sha"] == "abc123"
+    final_actions = json.loads(
+        (xmuse_root / "final_actions.json").read_text(encoding="utf-8")
+    )
+    assert final_actions["holds"][0]["status"] == "blocked"
+    assert final_actions["holds"][0]["github_gate_gap_ref"] == (
+        f"github_gate_evidence.json#evidence={evidence['id']}"
+    )
+
+
+def test_resolve_existing_final_action_projection_preflight_failure_keeps_hold_pending(
+    tmp_path: Path,
+) -> None:
+    xmuse_root = tmp_path / "runtime"
+    xmuse_root.mkdir()
+    (xmuse_root / "feature_lanes.json").write_text(
+        json.dumps(
+            {
+                "lanes": [
+                    {
+                        "feature_id": "lane-preflight",
+                        "status": "awaiting_final_action",
+                        "prompt": "ready for github proof",
+                        "final_action_hold_id": "different-final-action",
+                    }
+                ]
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (xmuse_root / "final_actions.json").write_text(
+        json.dumps(
+            {
+                "holds": [
+                    {
+                        "id": "final-preflight",
+                        "lane_id": "lane-preflight",
+                        "verdict_id": "verdict-preflight",
+                        "action": "merge",
+                        "target_status": "reviewed",
+                        "status": "pending",
+                        "summary": "merge after GitHub proof",
+                    }
+                ]
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeError, match="final-action projection hold mismatch"):
+        platform_runner.resolve_existing_final_action_with_github_gate(
+            xmuse_root=xmuse_root,
+            lane_id="lane-preflight",
+            github_repo="iiyazu/Cross-Muse",
+            github_pull_request=155,
+            required_checks=[
+                "quality-gates",
+                "contract-smoke-gates",
+                "real-runtime-integration-gate",
+                "peer-chat-runtime-gate",
+            ],
+            github_gate_collector=_StaticGithubTruthCollector(
+                _complete_server_side_merge_truth()
+            ),
+        )
+
+    final_actions = json.loads(
+        (xmuse_root / "final_actions.json").read_text(encoding="utf-8")
+    )
+    assert final_actions["holds"][0]["status"] == "pending"
+    assert not (xmuse_root / "github_gate_evidence.json").exists()
+
+
+def test_resolve_existing_final_action_can_retry_after_github_gate_gap(
+    tmp_path: Path,
+) -> None:
+    xmuse_root = tmp_path / "runtime"
+    xmuse_root.mkdir()
+    (xmuse_root / "feature_lanes.json").write_text(
+        json.dumps(
+            {
+                "lanes": [
+                    {
+                        "feature_id": "lane-gh-retry",
+                        "status": "awaiting_final_action",
+                        "prompt": "ready for github proof",
+                        "final_action_hold_id": "final-gh-retry",
+                    }
+                ]
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (xmuse_root / "final_actions.json").write_text(
+        json.dumps(
+            {
+                "holds": [
+                    {
+                        "id": "final-gh-retry",
+                        "lane_id": "lane-gh-retry",
+                        "verdict_id": "verdict-gh-retry",
+                        "action": "merge",
+                        "target_status": "reviewed",
+                        "status": "pending",
+                        "summary": "merge after GitHub proof",
+                    }
+                ]
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    blocked = platform_runner.resolve_existing_final_action_with_github_gate(
+        xmuse_root=xmuse_root,
+        final_action_id="final-gh-retry",
+        github_repo="iiyazu/Cross-Muse",
+        github_pull_request=155,
+        required_checks=[
+            "quality-gates",
+            "contract-smoke-gates",
+            "real-runtime-integration-gate",
+            "peer-chat-runtime-gate",
+        ],
+        github_gate_collector=_StaticGithubTruthCollector(_incomplete_server_side_truth()),
+    )
+    accepted = platform_runner.resolve_existing_final_action_with_github_gate(
+        xmuse_root=xmuse_root,
+        final_action_id="final-gh-retry",
+        github_repo="iiyazu/Cross-Muse",
+        github_pull_request=155,
+        required_checks=[
+            "quality-gates",
+            "contract-smoke-gates",
+            "real-runtime-integration-gate",
+            "peer-chat-runtime-gate",
+        ],
+        head_sha="abc123",
+        github_gate_collector=_StaticGithubTruthCollector(
+            _complete_server_side_merge_truth()
+        ),
+    )
+
+    assert blocked["status"] == "blocked"
+    assert accepted["status"] == "accepted"
+    final_actions = json.loads(
+        (xmuse_root / "final_actions.json").read_text(encoding="utf-8")
+    )
+    lanes = json.loads((xmuse_root / "feature_lanes.json").read_text(encoding="utf-8"))
+    hold = final_actions["holds"][0]
+    lane = lanes["lanes"][0]
+    assert hold["status"] == "approved"
+    assert "github_gate_gap_ref" not in hold
+    assert hold["github_gate_evidence_ref"] == accepted["durable_refs"][
+        "github_gate_evidence_ref"
+    ]
+    assert lane["status"] == "merged"
+    assert lane["github_gate_evidence_ref"] == hold["github_gate_evidence_ref"]
+    assert "github_gate_gap_ref" not in lane
+
+
+class _FakeFinalActionPrCommandRunner:
+    def __init__(self, *, dirty: bool = True) -> None:
+        self.dirty = dirty
+        self.commands: list[tuple[tuple[str, ...], Path]] = []
+        self.base_synced = False
+
+    def __call__(
+        self,
+        command,
+        *,
+        cwd=None,
+        capture_output=True,
+        text=True,
+        timeout=None,
+        check=False,
+    ):
+        del capture_output, text, timeout, check
+        cmd = tuple(str(part) for part in command)
+        self.commands.append((cmd, Path(cwd or ".")))
+        if cmd[:3] == ("git", "rev-parse", "--is-inside-work-tree"):
+            return subprocess.CompletedProcess(command, 0, stdout="true\n", stderr="")
+        if cmd[:3] == ("git", "status", "--porcelain"):
+            stdout = "?? docs/xmuse/new.md\n" if self.dirty else ""
+            return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
+        if cmd[:2] == ("git", "checkout"):
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+        if cmd[:2] == ("git", "add"):
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+        if cmd[:2] == ("git", "commit"):
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout="[codex/lane-pr 1234567] docs: add lane-pr\n",
+                stderr="",
+            )
+        if cmd[:3] == ("git", "fetch", "origin"):
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+        if cmd[:3] == ("git", "merge", "--no-edit"):
+            self.base_synced = True
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout="Merge made by the 'ort' strategy.\n",
+                stderr="",
+            )
+        if cmd[:3] == ("git", "rev-parse", "HEAD"):
+            stdout = "syncedhead123\n" if self.base_synced else "head123\n"
+            return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
+        if cmd[:2] == ("git", "push"):
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+        if cmd[:3] == ("gh", "pr", "create"):
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout="https://github.com/iiyazu/Cross-Muse/pull/999\n",
+                stderr="",
+            )
+        if cmd[:3] == ("gh", "pr", "view"):
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout=json.dumps(
+                    {
+                        "number": 999,
+                        "url": "https://github.com/iiyazu/Cross-Muse/pull/999",
+                        "headRefOid": (
+                            "syncedhead123" if self.base_synced else "head123"
+                        ),
+                    }
+                )
+                + "\n",
+                stderr="",
+            )
+        return subprocess.CompletedProcess(command, 1, stdout="", stderr="unexpected")
+
+
+def test_create_final_action_pull_request_records_pr_without_resolving_hold(
+    tmp_path: Path,
+) -> None:
+    xmuse_root = tmp_path / "runtime"
+    worktree = tmp_path / "worktree"
+    xmuse_root.mkdir()
+    worktree.mkdir()
+    (xmuse_root / "feature_lanes.json").write_text(
+        json.dumps(
+            {
+                "lanes": [
+                    {
+                        "feature_id": "lane-pr",
+                        "status": "awaiting_final_action",
+                        "worktree": str(worktree),
+                        "branch": "lane-pr",
+                        "base_head_sha": "base123",
+                        "final_action_hold_id": "final-pr",
+                        "review_verdict_id": "verdict-pr",
+                    }
+                ]
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (xmuse_root / "final_actions.json").write_text(
+        json.dumps(
+            {
+                "holds": [
+                    {
+                        "id": "final-pr",
+                        "lane_id": "lane-pr",
+                        "verdict_id": "verdict-pr",
+                        "action": "merge",
+                        "target_status": "reviewed",
+                        "status": "pending",
+                        "summary": "merge after PR",
+                    }
+                ]
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    runner = _FakeFinalActionPrCommandRunner()
+
+    result = platform_runner.create_final_action_pull_request(
+        xmuse_root=xmuse_root,
+        final_action_id="final-pr",
+        github_repo="iiyazu/Cross-Muse",
+        command_runner=runner,
+    )
+
+    assert result["status"] == "created"
+    assert result["pull_request_number"] == 999
+    pr_payload = json.loads(
+        (xmuse_root / "final_action_prs.json").read_text(encoding="utf-8")
+    )
+    record = pr_payload["items"][0]
+    assert record["final_action_id"] == "final-pr"
+    assert record["lane_id"] == "lane-pr"
+    assert record["head_branch"] == "codex/lane-pr"
+    assert record["head_sha"] == "syncedhead123"
+    assert record["commit_sha"] == "syncedhead123"
+    assert record["proof_boundary"] == "pull_request_created_not_merge_truth"
+    holds = json.loads((xmuse_root / "final_actions.json").read_text(encoding="utf-8"))
+    assert holds["holds"][0]["status"] == "pending"
+    lanes = json.loads((xmuse_root / "feature_lanes.json").read_text(encoding="utf-8"))
+    lane = lanes["lanes"][0]
+    assert lane["status"] == "awaiting_final_action"
+    assert lane["pull_request_number"] == 999
+    assert lane["pull_request_url"] == "https://github.com/iiyazu/Cross-Muse/pull/999"
+    assert lane["pull_request_head_sha"] == "syncedhead123"
+    assert any(cmd[:3] == ("gh", "pr", "create") for cmd, _cwd in runner.commands)
+    commands = [cmd for cmd, _cwd in runner.commands]
+    assert ("git", "fetch", "origin", "main") in commands
+    assert ("git", "merge", "--no-edit", "origin/main") in commands
+    assert commands.index(("git", "merge", "--no-edit", "origin/main")) < commands.index(
+        ("git", "push", "-u", "origin", "HEAD:refs/heads/codex/lane-pr")
+    )
+
+
+def test_create_final_action_pull_request_requires_worktree_changes(
+    tmp_path: Path,
+) -> None:
+    xmuse_root = tmp_path / "runtime"
+    worktree = tmp_path / "worktree"
+    xmuse_root.mkdir()
+    worktree.mkdir()
+    (xmuse_root / "feature_lanes.json").write_text(
+        json.dumps(
+            {
+                "lanes": [
+                    {
+                        "feature_id": "lane-clean",
+                        "status": "awaiting_final_action",
+                        "worktree": str(worktree),
+                        "branch": "lane-clean",
+                        "base_head_sha": "base123",
+                        "final_action_hold_id": "final-clean",
+                    }
+                ]
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (xmuse_root / "final_actions.json").write_text(
+        json.dumps(
+            {
+                "holds": [
+                    {
+                        "id": "final-clean",
+                        "lane_id": "lane-clean",
+                        "verdict_id": "verdict-clean",
+                        "action": "merge",
+                        "target_status": "reviewed",
+                        "status": "pending",
+                        "summary": "merge after PR",
+                    }
+                ]
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    runner = _FakeFinalActionPrCommandRunner(dirty=False)
+
+    with pytest.raises(RuntimeError, match="final action worktree has no changes"):
+        platform_runner.create_final_action_pull_request(
+            xmuse_root=xmuse_root,
+            lane_id="lane-clean",
+            github_repo="iiyazu/Cross-Muse",
+            command_runner=runner,
+        )
+
+    assert not (xmuse_root / "final_action_prs.json").exists()
+    holds = json.loads((xmuse_root / "final_actions.json").read_text(encoding="utf-8"))
+    assert holds["holds"][0]["status"] == "pending"
+    assert not any(cmd[:3] == ("gh", "pr", "create") for cmd, _cwd in runner.commands)
 
 
 def test_acceptance_gated_live_capture_gap_stays_blocked(tmp_path: Path) -> None:

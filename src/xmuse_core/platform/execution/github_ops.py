@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import urllib.parse
 from collections.abc import Callable
 from fnmatch import fnmatchcase
 from pathlib import Path
@@ -109,12 +110,13 @@ class GitHubServerSideTruthEvidence(BaseModel):
     repo: str
     pull_request_number: int
     required_checks: list[str] = Field(default_factory=list)
-    proof_level: Literal["manual_gap", "contract_proof", "server_side_merge_proof"] = (
-        "manual_gap"
-    )
+    proof_level: Literal["manual_gap", "contract_proof", "server_side_merge_proof"] = "manual_gap"
+    head_sha: str | None = None
     workflow_run_id: int | None = None
     check_suite_id: int | None = None
     check_run_ids: list[int] = Field(default_factory=list)
+    check_run_names: list[str] = Field(default_factory=list)
+    check_run_head_shas: list[str] = Field(default_factory=list)
     expected_source_app: str | None = None
     branch_protection_snapshot: dict[str, Any] | None = None
     ruleset_snapshot: dict[str, Any] | None = None
@@ -147,7 +149,18 @@ class GitHubServerSideTruthEvidence(BaseModel):
     def _validate_required_checks(cls, values: list[str]) -> list[str]:
         return [_require_non_empty(value) for value in values]
 
+    @field_validator("check_run_head_shas")
+    @classmethod
+    def _validate_check_run_head_shas(cls, values: list[str]) -> list[str]:
+        return [_require_non_empty(value) for value in values]
+
+    @field_validator("check_run_names")
+    @classmethod
+    def _validate_check_run_names(cls, values: list[str]) -> list[str]:
+        return [_require_non_empty(value) for value in values]
+
     @field_validator(
+        "head_sha",
         "expected_source_app",
         "reviewer_login",
         "internal_review_artifact",
@@ -170,6 +183,8 @@ class GitHubServerSideTruthEvidence(BaseModel):
         missing = []
         if not self.has_status_check_truth:
             missing.append("workflow_run_id/check_suite_id/check_run_ids/expected_source_app")
+        if not self.has_exact_head_truth:
+            missing.append("exact_head_truth")
         if not self.has_server_enforcement_truth:
             missing.append("branch_protection_snapshot_or_ruleset_snapshot")
         if not self.has_review_truth:
@@ -178,8 +193,7 @@ class GitHubServerSideTruthEvidence(BaseModel):
             missing.append("merge_commit_sha/merged_at/merge_event_id")
         if missing:
             raise ValueError(
-                "server_side_merge_proof missing required server-side fields: "
-                + ", ".join(missing)
+                "server_side_merge_proof missing required server-side fields: " + ", ".join(missing)
             )
         return self
 
@@ -190,6 +204,16 @@ class GitHubServerSideTruthEvidence(BaseModel):
             and (self.check_suite_id is not None or bool(self.check_run_ids))
             and self.expected_source_app is not None
             and len(self.check_run_ids) >= len(self.required_checks)
+            and set(self.required_checks).issubset(set(self.check_run_names))
+        )
+
+    @property
+    def has_exact_head_truth(self) -> bool:
+        return (
+            self.head_sha is not None
+            and len(self.check_run_head_shas) >= len(self.required_checks)
+            and set(self.required_checks).issubset(set(self.check_run_names))
+            and all(check_head == self.head_sha for check_head in self.check_run_head_shas)
         )
 
     @property
@@ -258,9 +282,12 @@ class GitHubServerSideTruthEvidence(BaseModel):
 class GitHubServerSideTruthSnapshot(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
+    head_sha: str | None = None
     workflow_run_id: int | None = None
     check_suite_id: int | None = None
     check_run_ids: list[int] = Field(default_factory=list)
+    check_run_names: list[str] = Field(default_factory=list)
+    check_run_head_shas: list[str] = Field(default_factory=list)
     expected_source_app: str | None = None
     branch_protection_snapshot: dict[str, Any] | None = None
     ruleset_snapshot: dict[str, Any] | None = None
@@ -276,6 +303,38 @@ class GitHubServerSideTruthSnapshot(BaseModel):
     merge_event_id: int | str | None = None
 
 
+class GitHubMainCiEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    workflow_run_id: int | None = None
+    workflow_name: str | None = None
+    head_sha: str | None = None
+    head_branch: str | None = None
+    status: str | None = None
+    conclusion: str | None = None
+    url: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+    gap_reason: str | None = None
+
+    @field_validator(
+        "workflow_name",
+        "head_sha",
+        "head_branch",
+        "status",
+        "conclusion",
+        "url",
+        "created_at",
+        "updated_at",
+        "gap_reason",
+    )
+    @classmethod
+    def _validate_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _require_non_empty(value)
+
+
 class ReadOnlyGitHubServerSideTruthClient(Protocol):
     def fetch_server_side_truth_snapshot(
         self,
@@ -284,6 +343,15 @@ class ReadOnlyGitHubServerSideTruthClient(Protocol):
         pull_request_number: int,
         required_checks: list[str],
     ) -> GitHubServerSideTruthSnapshot | None: ...
+
+
+class ReadOnlyGitHubMainCiTruthClient(Protocol):
+    def fetch_main_ci_truth(
+        self,
+        *,
+        repo: str,
+        merge_commit_sha: str,
+    ) -> GitHubMainCiEvidence | None: ...
 
 
 class ReadOnlyGitHubServerSideTruthCollector:
@@ -317,11 +385,35 @@ class ReadOnlyGitHubServerSideTruthCollector:
         )
 
 
+class ReadOnlyGitHubMainCiTruthCollector:
+    def __init__(self, *, client: ReadOnlyGitHubMainCiTruthClient) -> None:
+        self._client = client
+
+    def collect_main_ci(
+        self,
+        *,
+        repo: str,
+        merge_commit_sha: str,
+    ) -> GitHubMainCiEvidence:
+        evidence = self._client.fetch_main_ci_truth(
+            repo=repo,
+            merge_commit_sha=merge_commit_sha,
+        )
+        if evidence is None:
+            return GitHubMainCiEvidence(
+                head_sha=merge_commit_sha,
+                status="missing",
+                gap_reason="read-only GitHub main CI truth unavailable",
+            )
+        return evidence
+
+
 class GitHubCliServerSideTruthClient:
     def __init__(
         self,
         *,
         base_branch: str = "main",
+        main_ci_workflow_name: str = "xmuse CI",
         runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
         gh_binary: str = "gh",
         internal_review_artifact: str | Path | None = None,
@@ -329,6 +421,7 @@ class GitHubCliServerSideTruthClient:
         internal_reviewed_head_sha: str | None = None,
     ) -> None:
         self._base_branch = _require_non_empty(base_branch)
+        self._main_ci_workflow_name = _require_non_empty(main_ci_workflow_name)
         self._runner = runner or _run_gh_api
         self._gh_binary = _require_non_empty(gh_binary)
         self._internal_review_artifact = (
@@ -337,14 +430,38 @@ class GitHubCliServerSideTruthClient:
             else None
         )
         self._internal_reviewer = (
-            _require_non_empty(internal_reviewer)
-            if internal_reviewer is not None
-            else None
+            _require_non_empty(internal_reviewer) if internal_reviewer is not None else None
         )
         self._internal_reviewed_head_sha = (
             _require_non_empty(internal_reviewed_head_sha)
             if internal_reviewed_head_sha is not None
             else None
+        )
+
+    def fetch_main_ci_truth(
+        self,
+        *,
+        repo: str,
+        merge_commit_sha: str,
+    ) -> GitHubMainCiEvidence | None:
+        repo = _require_non_empty(repo)
+        merge_commit_sha = _require_non_empty(merge_commit_sha)
+        query = urllib.parse.urlencode(
+            {
+                "branch": self._base_branch,
+                "head_sha": merge_commit_sha,
+                "event": "push",
+                "per_page": "20",
+            }
+        )
+        payload = self._gh_api(f"repos/{repo}/actions/runs?{query}")
+        if payload is None:
+            return None
+        return _main_ci_from_actions_runs_payload(
+            payload,
+            merge_commit_sha=merge_commit_sha,
+            base_branch=self._base_branch,
+            workflow_name=self._main_ci_workflow_name,
         )
 
     def fetch_server_side_truth_snapshot(
@@ -362,9 +479,7 @@ class GitHubCliServerSideTruthClient:
         if head_sha is None:
             return None
         reviews_payload = self._gh_api(f"repos/{repo}/pulls/{pull_request_number}/reviews")
-        protection_payload = self._gh_api(
-            f"repos/{repo}/branches/{self._base_branch}/protection"
-        )
+        protection_payload = self._gh_api(f"repos/{repo}/branches/{self._base_branch}/protection")
         rulesets_payload = None
         if protection_payload is None:
             rulesets_payload = self._gh_api(f"repos/{repo}/rulesets")
@@ -379,15 +494,24 @@ class GitHubCliServerSideTruthClient:
             or not isinstance(reviews_payload, list)
         ):
             return None
-        check_run_ids, expected_source_app = _successful_required_check_runs(
+        (
+            check_run_ids,
+            check_run_names,
+            check_run_head_shas,
+            expected_source_app,
+        ) = _successful_required_check_runs(
             checks_payload,
             required_checks=required_checks,
+            head_sha=head_sha,
         )
         review_event_id, reviewer_login = _approved_review_identity(reviews_payload)
         internal_review_verified = self._internal_review_verified(head_sha)
         return GitHubServerSideTruthSnapshot(
+            head_sha=head_sha,
             workflow_run_id=check_run_ids[0] if check_run_ids else None,
             check_run_ids=check_run_ids,
+            check_run_names=check_run_names,
+            check_run_head_shas=check_run_head_shas,
             expected_source_app=expected_source_app,
             branch_protection_snapshot=protection_payload,
             ruleset_snapshot=ruleset_snapshot,
@@ -437,9 +561,12 @@ class GitHubCliServerSideTruthClient:
 class FakeGitHubServerSideTruthCollector(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
+    head_sha: str | None = None
     workflow_run_id: int | None = None
     check_suite_id: int | None = None
     check_run_ids: list[int] = Field(default_factory=list)
+    check_run_names: list[str] = Field(default_factory=list)
+    check_run_head_shas: list[str] = Field(default_factory=list)
     expected_source_app: str | None = "fake-github"
     branch_protection_snapshot: dict[str, Any] | None = None
     ruleset_snapshot: dict[str, Any] | None = None
@@ -466,9 +593,12 @@ class FakeGitHubServerSideTruthCollector(BaseModel):
             pull_request_number=pull_request_number,
             required_checks=required_checks,
             proof_level="contract_proof",
+            head_sha=self.head_sha,
             workflow_run_id=self.workflow_run_id,
             check_suite_id=self.check_suite_id,
             check_run_ids=list(self.check_run_ids),
+            check_run_names=list(self.check_run_names),
+            check_run_head_shas=list(self.check_run_head_shas),
             expected_source_app=self.expected_source_app,
             branch_protection_snapshot=self.branch_protection_snapshot,
             ruleset_snapshot=self.ruleset_snapshot,
@@ -566,9 +696,7 @@ def evaluate_merge_readiness(
     failing = sorted(check.name for check in checks if check.status != "success")
     observed_checks = {check.name for check in checks}
     if required_check_names is not None:
-        failing.extend(
-            name for name in sorted(required_check_names) if name not in observed_checks
-        )
+        failing.extend(name for name in sorted(required_check_names) if name not in observed_checks)
         failing = sorted(set(failing))
     missing_evidence = [] if review_evidence_refs else ["review_evidence_bundle"]
     if failing:
@@ -618,9 +746,12 @@ def build_github_server_side_truth_from_snapshot(
         pull_request_number=pull_request_number,
         required_checks=required_checks,
         proof_level="server_side_merge_proof",
+        head_sha=snapshot.head_sha,
         workflow_run_id=snapshot.workflow_run_id,
         check_suite_id=snapshot.check_suite_id,
         check_run_ids=list(snapshot.check_run_ids),
+        check_run_names=list(snapshot.check_run_names),
+        check_run_head_shas=list(snapshot.check_run_head_shas),
         expected_source_app=snapshot.expected_source_app,
         branch_protection_snapshot=snapshot.branch_protection_snapshot,
         ruleset_snapshot=snapshot.ruleset_snapshot,
@@ -642,9 +773,12 @@ def build_github_server_side_truth_from_snapshot(
             pull_request_number=pull_request_number,
             required_checks=required_checks,
             proof_level="server_side_merge_proof",
+            head_sha=snapshot.head_sha,
             workflow_run_id=snapshot.workflow_run_id,
             check_suite_id=snapshot.check_suite_id,
             check_run_ids=list(snapshot.check_run_ids),
+            check_run_names=list(snapshot.check_run_names),
+            check_run_head_shas=list(snapshot.check_run_head_shas),
             expected_source_app=snapshot.expected_source_app,
             branch_protection_snapshot=snapshot.branch_protection_snapshot,
             ruleset_snapshot=snapshot.ruleset_snapshot,
@@ -664,9 +798,12 @@ def build_github_server_side_truth_from_snapshot(
         pull_request_number=pull_request_number,
         required_checks=required_checks,
         proof_level="manual_gap",
+        head_sha=snapshot.head_sha,
         workflow_run_id=snapshot.workflow_run_id,
         check_suite_id=snapshot.check_suite_id,
         check_run_ids=list(snapshot.check_run_ids),
+        check_run_names=list(snapshot.check_run_names),
+        check_run_head_shas=list(snapshot.check_run_head_shas),
         expected_source_app=snapshot.expected_source_app,
         branch_protection_snapshot=snapshot.branch_protection_snapshot,
         ruleset_snapshot=snapshot.ruleset_snapshot,
@@ -688,6 +825,7 @@ def can_emit_pr_merged(evidence: GitHubServerSideTruthEvidence) -> bool:
     return (
         evidence.proof_level == "server_side_merge_proof"
         and evidence.has_status_check_truth
+        and evidence.has_exact_head_truth
         and evidence.has_server_enforcement_truth
         and evidence.has_review_truth
         and evidence.has_merge_truth
@@ -698,6 +836,8 @@ def _github_server_side_truth_gap_reason(evidence: GitHubServerSideTruthEvidence
     missing = []
     if not evidence.has_status_check_truth:
         missing.append("status_check_truth")
+    if not evidence.has_exact_head_truth:
+        missing.append("exact_head_truth")
     if not evidence.has_server_enforcement_truth:
         missing.append("server_enforcement_truth")
     if not evidence.has_review_truth:
@@ -721,14 +861,17 @@ def _successful_required_check_runs(
     payload: Any,
     *,
     required_checks: list[str],
-) -> tuple[list[int], str | None]:
+    head_sha: str,
+) -> tuple[list[int], list[str], list[str], str | None]:
     if not isinstance(payload, dict):
-        return [], None
+        return [], [], [], None
     check_runs = payload.get("check_runs")
     if not isinstance(check_runs, list):
-        return [], None
+        return [], [], [], None
     required = set(required_checks)
     ids: list[int] = []
+    names: list[str] = []
+    head_shas: list[str] = []
     source_apps: list[str] = []
     for item in check_runs:
         if not isinstance(item, dict):
@@ -736,15 +879,77 @@ def _successful_required_check_runs(
         name = item.get("name")
         if name not in required or item.get("conclusion") != "success":
             continue
+        check_head_sha = _optional_str(item.get("head_sha"))
+        if check_head_sha is None:
+            continue
+        if check_head_sha != head_sha:
+            continue
         check_run_id = item.get("id")
         if isinstance(check_run_id, int):
             ids.append(check_run_id)
+            names.append(str(name))
+            head_shas.append(check_head_sha)
         app_slug = _nested_str(item, "app", "slug")
         if app_slug is not None:
             source_apps.append(app_slug)
     if {str(name) for name in required} and len(ids) < len(required):
-        return ids, source_apps[0] if source_apps else None
-    return ids, source_apps[0] if source_apps else None
+        return ids, names, head_shas, source_apps[0] if source_apps else None
+    return ids, names, head_shas, source_apps[0] if source_apps else None
+
+
+def _main_ci_from_actions_runs_payload(
+    payload: Any,
+    *,
+    merge_commit_sha: str,
+    base_branch: str,
+    workflow_name: str,
+) -> GitHubMainCiEvidence:
+    if not isinstance(payload, dict):
+        return GitHubMainCiEvidence(
+            workflow_name=workflow_name,
+            head_sha=merge_commit_sha,
+            head_branch=base_branch,
+            status="missing",
+            gap_reason="GitHub Actions runs payload is not an object",
+        )
+    runs = payload.get("workflow_runs")
+    if not isinstance(runs, list):
+        return GitHubMainCiEvidence(
+            workflow_name=workflow_name,
+            head_sha=merge_commit_sha,
+            head_branch=base_branch,
+            status="missing",
+            gap_reason="GitHub Actions runs payload missing workflow_runs",
+        )
+    for item in runs:
+        if not isinstance(item, dict):
+            continue
+        if _optional_str(item.get("head_sha")) != merge_commit_sha:
+            continue
+        head_branch = _optional_str(item.get("head_branch"))
+        if head_branch is not None and head_branch != base_branch:
+            continue
+        if _optional_str(item.get("name")) != workflow_name:
+            continue
+        workflow_run_id = item.get("id")
+        return GitHubMainCiEvidence(
+            workflow_run_id=workflow_run_id if isinstance(workflow_run_id, int) else None,
+            workflow_name=workflow_name,
+            head_sha=merge_commit_sha,
+            head_branch=head_branch or base_branch,
+            status=_optional_str(item.get("status")),
+            conclusion=_optional_str(item.get("conclusion")),
+            url=_optional_str(item.get("html_url")),
+            created_at=_optional_str(item.get("created_at")),
+            updated_at=_optional_str(item.get("updated_at")),
+        )
+    return GitHubMainCiEvidence(
+        workflow_name=workflow_name,
+        head_sha=merge_commit_sha,
+        head_branch=base_branch,
+        status="missing",
+        gap_reason="GitHub Actions main CI run not found for merge commit",
+    )
 
 
 def _approved_review_identity(payload: list[Any]) -> tuple[int | str | None, str | None]:

@@ -1,15 +1,12 @@
 # Goal Copilot Behavior Policy
 
-Updated: 2026-06-27.
+Updated: 2026-06-28.
 
 This document defines the "副驾" copilot role for long xmuse `/goal` runs.
 The copilot is an independent read-only reviewer that periodically audits
 progress and writes recommendations to a shared review board.
 
-The copilot is not an implementation agent and not a truth authority. For
-unattended natural-groupchat goals it is Track D: a read-only audit track that
-helps the main Track A avoid target drift, PR bloat, proof inflation, and
-low-value expansion while Tracks B/C run sidecar or projection work.
+The copilot is not an implementation agent and not a truth authority.
 
 ## Purpose
 
@@ -37,6 +34,10 @@ The main `/goal` Codex remains the only coordinator for:
 Copilot output is candidate review input only. It becomes actionable only after
 the main agent verifies it against durable artifacts, Git state, GitHub server
 facts, or repository source.
+For advisory intake classification, durable authority refs include `chat.db`,
+inbox, proposal, review verdict, dispatch queue, final-action hold refs, and
+GitHub server facts. A final-action hold ref proves an operator next-action
+boundary only; it does not prove GitHub gate acceptance or merge.
 
 ## Allowed Actions
 
@@ -77,14 +78,12 @@ recommendation to the review board instead of executing it.
 Default path:
 
 ```text
-.goal-runs/RUN_ID/production-goal-copilot-review-board.md
+.goal-runs/<date>/production-goal-copilot-review-board.md
 ```
 
 The board is a goal artifact, not product truth. It is append-only. The main
-agent reads it during phase fan-in, before PR creation/merge, and roughly every
-60-90 minutes during long unattended runs. This cadence is advisory, not a hard
-timer; review before high-risk fan-in, PR creation, PR merge, or phase
-completion.
+agent reads it during phase fan-in, before PR creation/merge, and roughly
+hourly during long runs.
 
 Each entry uses this shape:
 
@@ -114,6 +113,29 @@ Claims to avoid:
 - claims that current evidence does not support
 ```
 
+Product helper:
+
+- `xmuse_core.platform.goal_copilot.default_goal_copilot_review_board_path()`
+  resolves the ignored board path.
+- `xmuse_core.platform.goal_copilot.append_goal_copilot_review_entry()` only
+  appends to `production-goal-copilot-review-board.md` under
+  `.goal-runs/<date>/`.
+- `xmuse_core.platform.goal_copilot.build_goal_copilot_intake_decision()`
+  keeps accepted recommendations advisory-only and requires durable authority
+  refs before the main agent can classify them as accepted. Candidate refs
+  such as subagent output, worker output, and local tests stay separate from
+  verified authority refs. `review_trigger_verdict:*` is durable review
+  verdict authority and `chat_dispatch_queue:*` is durable dispatch authority;
+  `final_actions.json#hold=*` is durable final-action hold authority for
+  operator next-action recommendations. It is not GitHub gate evidence or
+  merge truth. `mcp_writeback:*`, `github_gate_evidence.json#evidence=*`, and
+  legacy `chat_dispatch_queue#entry=*` refs are evidence/candidate input and
+  must not be promoted to authority by the copilot. Intake output includes a
+  producer/consumer/condition/proof boundary showing it remains advisory and
+  cannot become review, dispatch, GitHub gate, merge, or execution truth.
+- `xmuse_core.platform.goal_copilot.build_goal_copilot_launch_prompt()` emits a
+  launch prompt that preserves the read-only and forbidden-claim boundaries.
+
 ## Main Agent Intake Rule
 
 The main agent should classify material copilot recommendations as:
@@ -141,10 +163,10 @@ Role:
 - The main /goal Codex remains the only proof/phase/Git/merge coordinator.
 
 Repository:
-REPO_PATH
+<repo_path>
 
 Active goal:
-ACTIVE_GOAL_PROMPT_OR_PATH
+<paste or reference the active /goal prompt>
 
 Read first:
 - AGENTS.md
@@ -154,16 +176,10 @@ Read first:
 - docs/xmuse/natural-groupchat-a2a-task-plan.md
 - docs/xmuse/goal-copilot-behavior-policy.md
 - docs/xmuse/mainline-contracts.md
-
-Optional local references when present:
 - /home/iiyatu/projects/python/xmuse-m7-natural-groupchat-goal-design/docs/superpowers/specs/2026-06-26-natural-groupchat-a2a-production-goal-design.md
-- /home/iiyatu/clowder-ai as natural groupchat reference only
-
-If an optional local reference is absent, continue from repo-local docs and
-treat the missing path as non-blocking.
 
 Shared review board:
-.goal-runs/RUN_ID/production-goal-copilot-review-board.md
+.goal-runs/<date>/production-goal-copilot-review-board.md
 
 Hard rules:
 - Do not edit source code.
@@ -175,14 +191,10 @@ Hard rules:
 - Treat your own output as candidate review input only.
 - Verify claims against files, commits, runtime artifacts, or GitHub server facts.
 - Preserve forbidden claims: production readiness, GitHub review truth, live MemoryOS, full closure, overnight readiness, and worker/local-test truth.
-- For natural groupchat throughput goals, check that Track A remains the proof
-  owner, Track B MemoryOS stays sidecar-only, Track C frontend work stays
-  projection-only, and dynamic PR growth remains domain-scoped rather than an
-  umbrella.
 
 Cadence:
 - Review after Phase 0/1 fan-in.
-- Then review roughly every 60-90 minutes when possible.
+- Then review roughly once per hour.
 - Also review before major PR creation, PR merge, or phase completion if asked.
 
 Output:

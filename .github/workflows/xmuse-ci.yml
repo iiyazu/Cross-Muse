@@ -36,7 +36,9 @@ jobs:
           uv run ruff check
           src/xmuse_core/providers/models.py
           src/xmuse_core/providers/registry.py
+          src/xmuse_core/platform/goal_copilot.py
           src/xmuse_core/platform/provider_read_contracts.py
+          tests/xmuse/test_goal_copilot.py
           tests/xmuse/test_provider_read_contracts_module.py
           tests/xmuse/test_quality_gates_phase3.py
 
@@ -49,8 +51,18 @@ jobs:
           tests/xmuse/test_provider_policy.py
           tests/xmuse/test_provider_support_level.py
           tests/xmuse/test_provider_read_contracts_module.py
+          tests/xmuse/test_goal_copilot.py
+          tests/xmuse/test_gate_profiles.py::test_repository_gate_profiles_config_loads
+          tests/xmuse/test_gate_profiles.py::test_repository_docs_only_gate_accepts_explicit_docs_profile
+          tests/xmuse/test_gate_profiles.py::test_xmuse_core_gate_runs_blocking_ruff_before_pytest
+          tests/xmuse/test_platform_orchestrator.py::test_run_gate_uses_plural_gate_profiles
+          tests/xmuse/test_platform_orchestrator.py::test_run_gate_rejects_underscoped_explicit_gate_profile
+          tests/xmuse/test_platform_orchestrator.py::test_get_changed_paths_includes_untracked_files
           tests/xmuse/test_quality_gates_phase3.py
           tests/xmuse/test_platform_runner.py::test_health_once_handles_missing_lane_projection
+          tests/xmuse/test_platform_runner.py::test_runner_wires_peer_chat_memoryos_sidecar_client
+          tests/xmuse/test_platform_runner.py::test_runner_builds_dispatch_bridge_with_peer_god_layer
+          tests/xmuse/test_platform_runner.py::test_platform_runner_supports_peer_chat_memoryos_url
           tests/xmuse/test_full_chain_real_run.py::test_real_runtime_restart_resume_smoke_with_fake_app_server
           tests/xmuse/test_full_chain_real_run.py::test_a2a_inbound_task_reaches_peer_chat_fake_app_server
 
@@ -59,6 +71,7 @@ jobs:
           uv run mypy
           src/xmuse_core/providers/models.py
           src/xmuse_core/providers/registry.py
+          src/xmuse_core/platform/goal_copilot.py
           src/xmuse_core/platform/provider_read_contracts.py
 
   contract-smoke-gates:
@@ -93,6 +106,7 @@ jobs:
         run: >-
           uv run pytest -q
           tests/xmuse/test_mainline_contract_docs.py
+          tests/xmuse/test_natural_groupchat_goal_docs.py
           tests/xmuse/test_deliberation_protocol_v2.py
           tests/xmuse/test_god_speech_act_contract.py
           tests/xmuse/test_deliberation_engine.py
@@ -143,8 +157,10 @@ jobs:
           src/xmuse_core/integrations/memoryos_lite_interop.py
           src/xmuse_core/platform/final_action_gate.py
           src/xmuse_core/platform/github_gate_evidence.py
+          scripts/github_server_truth_capture.py
           tests/xmuse/test_acceptance_spine.py
           tests/xmuse/test_github_server_gate_contract.py
+          tests/xmuse/test_github_server_truth_capture.py
           tests/xmuse/test_memoryos_lite_interop.py
           tests/xmuse/test_real_runtime_integration_gate.py
 
@@ -153,6 +169,7 @@ jobs:
           uv run pytest -q
           tests/xmuse/test_acceptance_spine.py
           tests/xmuse/test_github_server_gate_contract.py
+          tests/xmuse/test_github_server_truth_capture.py
           tests/xmuse/test_memoryos_lite_interop.py
           tests/xmuse/test_real_runtime_integration_gate.py
           tests/xmuse/test_package_boundaries.py
@@ -160,6 +177,8 @@ jobs:
       - name: Runtime gate type check
         run: >-
           uv run mypy
+          scripts/github_server_truth_capture.py
+          src/xmuse_core/platform/execution/github_ops.py
           src/xmuse_core/integrations/memoryos_lite_interop.py
 
   peer-chat-runtime-gate:
@@ -185,11 +204,17 @@ jobs:
         run: >-
           uv run ruff check
           src/xmuse_core/chat/context_assembler.py
+          src/xmuse_core/chat/frontend_projection.py
+          src/xmuse_core/chat/groupchat_worklist.py
+          src/xmuse_core/chat/memory_sidecar.py
           src/xmuse_core/chat/mentions.py
           src/xmuse_core/chat/peer_scheduler.py
           src/xmuse_core/chat/peer_service.py
           src/xmuse_core/chat/prompt_builder.py
+          tests/xmuse/test_groupchat_worklist.py
+          tests/xmuse/test_groupchat_memory_sidecar.py
           tests/xmuse/test_groupchat_collaboration_runtime.py
+          tests/xmuse/test_peer_chat_dashboard.py
           tests/xmuse/test_peer_chat_api.py
           tests/xmuse/test_peer_chat_mentions.py
           tests/xmuse/test_peer_chat_prompt_builder.py
@@ -200,11 +225,16 @@ jobs:
       - name: Peer chat runtime focused tests
         run: >-
           uv run pytest -q
+          tests/xmuse/test_groupchat_worklist.py
+          tests/xmuse/test_groupchat_memory_sidecar.py
           tests/xmuse/test_peer_chat_scheduler.py
           tests/xmuse/test_peer_chat_service.py
           tests/xmuse/test_peer_chat_mentions.py
           tests/xmuse/test_peer_chat_prompt_builder.py
           tests/xmuse/test_peer_chat_runtime_gate.py
           tests/xmuse/test_groupchat_collaboration_runtime.py
+          tests/xmuse/test_peer_chat_dashboard.py::test_dashboard_peer_chat_ux_projection_is_frontend_read_model
+          tests/xmuse/test_peer_chat_dashboard.py::test_dashboard_peer_chat_ux_projection_404s_for_missing_conversation
+          tests/xmuse/test_peer_chat_dashboard.py::test_dashboard_peer_chat_ux_projection_does_not_mutate_authority_files
           tests/xmuse/test_peer_chat_api.py
           tests/xmuse/test_package_boundaries.py

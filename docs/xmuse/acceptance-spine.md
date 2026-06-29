@@ -177,10 +177,10 @@ blocked with `github_gate_unverified`.
 
 The minimal `--goal --acceptance-gate` runner now invokes that producer for a
 short real run. Its first smoke is recorded in
-`docs/xmuse/acceptance-gated-runner-evidence-2026-06-21.md` and correctly ends
+`docs/xmuse/archive/2026-06-21-evidence/acceptance-gated-runner-evidence-2026-06-21.md` and correctly ends
 as `blocked/github_gate_unverified` because it has no `server_side_merge_proof`.
 The first opt-in live GitHub capture smoke is recorded in
-`docs/xmuse/acceptance-gated-live-capture-evidence-2026-06-21.md` and ends as
+`docs/xmuse/archive/2026-06-21-evidence/acceptance-gated-live-capture-evidence-2026-06-21.md` and ends as
 `accepted` because the producer captured a complete `server_side_merge_proof`.
 This supports the current `production-closure short path accepted` claim. It
 does not prove full release readiness, a multi-hour real-provider soak, or

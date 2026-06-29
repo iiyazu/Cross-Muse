@@ -18,6 +18,7 @@ from xmuse_core.gates.models import GateReport
 from xmuse_core.integrations.a2a_provider_client import A2AProviderTaskRequest
 from xmuse_core.integrations.a2a_sdk_boundary import NormalizedA2ATaskResult
 from xmuse_core.platform.agent_spawner import SpawnResult
+from xmuse_core.platform.execution import gate as execution_gate
 from xmuse_core.platform.execution.a2a_review_verdicts import (
     build_a2a_platform_review_verdict_envelope,
 )
@@ -5876,13 +5877,14 @@ async def test_on_lane_executed_attaches_chat_acceptance_spine_execution_evidenc
     assert lane["status"] == "gate_failed"
     assert spine.status is AcceptanceSpineStatus.EXECUTED
     assert spine.execution_evidence_refs == [
-        "peer_ack:execute:participant-1",
-        "mcp_writeback:dispatch-1",
         "feature_lanes.json#lane=lane-accepted-exec:status=executed",
         f"lane_graph:{resolution.id}-graph-v1",
         "dispatch_attempt:dispatch-lane-accepted-exec-abc123",
         "provider_session_binding:binding-lane-accepted-exec",
     ]
+    dispatched = ChatDispatchQueueStore(db).get(dispatch.entry_id)
+    assert dispatched.provider_run_ref == "peer_ack:execute:participant-1"
+    assert dispatched.dispatch_evidence == "mcp_writeback:dispatch-1"
 
 
 @pytest.mark.asyncio
@@ -5961,10 +5963,7 @@ async def test_run_gate_uses_plural_gate_profiles(setup):
 
     async def fake_run(plan):
         assert plan.profiles == ["xmuse-core"]
-        assert plan.warnings == [
-            "explicit gate_profiles selected; full dirty-worktree "
-            "coverage is recorded but not used to reject this lane"
-        ]
+        assert plan.warnings == []
         return GateReport(
             feature_id=plan.feature_id,
             passed=True,
@@ -5979,13 +5978,131 @@ async def test_run_gate_uses_plural_gate_profiles(setup):
 
     with patch(
         "xmuse_core.platform.execution.gate.get_changed_paths",
-        return_value=[
-            "src/xmuse_core/platform/orchestrator.py",
-            "src/memoryos_lite/config.py",
-        ],
+        return_value=["src/xmuse_core/platform/orchestrator.py"],
     ):
         with patch("xmuse_core.gates.runner.GateRunner.run", side_effect=fake_run):
             assert await orch._run_gate("lane-1") is True
+
+
+@pytest.mark.asyncio
+async def test_run_gate_rejects_underscoped_explicit_gate_profile(setup):
+    tmp_path, lanes_path = setup
+    (tmp_path / "gate_profiles.json").write_text(json.dumps({
+        "schema_version": 1,
+        "defaults": {
+            "full_gate_profile": "strict-product",
+            "full_gate_interval": 20,
+            "unknown_diff_policy": "strict-product",
+            "unclassified_test_policy": "fail",
+        },
+        "command_catalog": {
+            "noop": {
+                "argv": ["true"],
+                "cwd": ".",
+                "timeout_s": 0,
+                "allow_extra_args": False,
+            }
+        },
+        "profiles": {
+            "strict-product": {
+                "description": "strict",
+                "blocking": True,
+                "env": {},
+                "commands": [{"command": "noop", "args": []}],
+                "diff_selectors": ["src/xmuse_core/**"],
+                "test_files": ["tests/xmuse/test_platform_orchestrator.py"],
+                "test_nodeids": [],
+                "test_markers": [],
+                "mixed_test_files": [],
+            },
+            "docs-only": {
+                "description": "docs",
+                "blocking": True,
+                "env": {},
+                "commands": [{"command": "noop", "args": []}],
+                "diff_selectors": ["docs/xmuse/**"],
+                "test_files": ["tests/xmuse/test_platform_orchestrator.py"],
+                "test_nodeids": [],
+                "test_markers": [],
+                "mixed_test_files": [],
+            },
+        },
+    }))
+    lanes_path.write_text(json.dumps({"lanes": [
+        {
+            "feature_id": "lane-1",
+            "status": "executed",
+            "prompt": "fix",
+            "worktree": str(tmp_path),
+            "gate_profiles": ["docs-only"],
+        },
+    ]}))
+    orch = PlatformOrchestrator(
+        lanes_path=lanes_path, xmuse_root=tmp_path, mcp_port=9999,
+    )
+
+    with patch(
+        "xmuse_core.platform.execution.gate.get_changed_paths",
+        return_value=["src/xmuse_core/platform/execution/gate.py"],
+    ):
+        assert await orch._run_gate("lane-1") is False
+
+    report_path = tmp_path / "logs" / "gates" / "lane-1" / "report.json"
+    assert report_path.exists()
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["passed"] is False
+    assert report["blocking_passed"] is False
+    assert report["profile_ids"] == ["docs-only"]
+    assert report["command_results"] == []
+    assert report["changed_paths"] == [
+        "src/xmuse_core/platform/execution/gate.py",
+    ]
+    assert report["resolution_reasons"] == {
+        "docs-only": ["explicit_lane_profile"],
+    }
+    assert report["error"] == {
+        "type": "ProfileMismatchError",
+        "message": (
+            "missing blocking profile for changed paths: strict-product"
+        ),
+    }
+    assert report["worktree"] == str(tmp_path)
+
+
+def test_get_changed_paths_includes_untracked_files(tmp_path):
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.email", "xmuse@example.invalid"],
+        cwd=tmp_path,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "xmuse tests"],
+        cwd=tmp_path,
+        check=True,
+    )
+    (tmp_path / "src" / "xmuse_core").mkdir(parents=True)
+    tracked = tmp_path / "src" / "xmuse_core" / "tracked.py"
+    tracked.write_text("before = True\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "commit", "-m", "initial"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+
+    tracked.write_text("after = True\n", encoding="utf-8")
+    (tmp_path / "docs" / "xmuse").mkdir(parents=True)
+    (tmp_path / "docs" / "xmuse" / "new-note.md").write_text(
+        "new\n",
+        encoding="utf-8",
+    )
+
+    changed_paths = set(execution_gate.get_changed_paths(tmp_path))
+
+    assert "src/xmuse_core/tracked.py" in changed_paths
+    assert "docs/xmuse/new-note.md" in changed_paths
 
 
 @pytest.mark.asyncio

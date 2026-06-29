@@ -24,6 +24,7 @@ from xmuse_core.platform.execution.review import (
     spawn_result_transient,
 )
 from xmuse_core.platform.feature_context import build_feature_context_bundle
+from xmuse_core.platform.lane_context import dispatch_authority_context_for_prompt
 from xmuse_core.platform.messages import (
     EXECUTE_PEER_DEGRADED_REASON_FIELD,
     EXECUTE_PEER_DELIVERY_MODE_CONFIGURED,
@@ -919,6 +920,7 @@ def _persistent_execute_context(
         section
         for section in [
             feature_context.as_prompt_context(),
+            dispatch_authority_context_for_prompt(lane),
             _lane_execute_context_for_prompt(lane),
         ]
         if section

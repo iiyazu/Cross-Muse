@@ -6,6 +6,7 @@ import os
 import re
 import sqlite3
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +31,7 @@ from xmuse_core.chat.api_models import (
     DispatchClaimRequest,
     DispatchDispatchedRequest,
     DispatchFailedRequest,
+    GroupchatRootRunCreate,
     MessageCreate,
     ParticipantInit,
     PeerForkCreate,
@@ -45,7 +47,13 @@ from xmuse_core.chat.collaboration_contracts import (
 )
 from xmuse_core.chat.collaboration_store import ChatCollaborationStore
 from xmuse_core.chat.deliberation_engine import DeliberationFreezeGuard
-from xmuse_core.chat.dispatch_queue import ChatDispatchQueueStore
+from xmuse_core.chat.dispatch_queue import ChatDispatchQueueEntry, ChatDispatchQueueStore
+from xmuse_core.chat.groupchat_runtime import (
+    GroupchatPeerRuntime,
+    GroupchatPeerRuntimeRunOutcome,
+    GroupchatPeerRuntimeTickOutcome,
+)
+from xmuse_core.chat.groupchat_worklist import GroupchatWorklistStore
 from xmuse_core.chat.health_cards import build_run_health_chat_card
 from xmuse_core.chat.inbox_store import ChatInboxStore
 from xmuse_core.chat.participant_store import (
@@ -117,6 +125,11 @@ _EXECUTION_CARD_TYPES = {
     "run_terminal",
 }
 _A2A_TASK_SEND_BODY = Body(...)
+
+
+class _UnavailableGroupchatGodLayer:
+    async def ensure_conversation_session(self, **_kwargs: Any) -> None:
+        raise RuntimeError("groupchat_god_layer_unavailable")
 
 
 def _store(base_dir: Path) -> ChatStore:
@@ -499,6 +512,18 @@ def _dedupe_text(values: list[str]) -> list[str]:
     return result
 
 
+@dataclass(frozen=True)
+class _ReviewTriggerDispatchGate:
+    decision: str
+    source_refs: list[str]
+
+
+@dataclass(frozen=True)
+class _StructuredDispatchIntent:
+    entry: ChatDispatchQueueEntry
+    gate_refs: list[str]
+
+
 def _role_template_has_participants(base_dir: Path, template_id: str) -> bool:
     store = _store(base_dir)
     participant_store = _participant_store(base_dir)
@@ -584,8 +609,7 @@ def _is_a2a_sourced_proposal(
         if isinstance(raw_refs, list):
             proposal_refs.extend(str(ref) for ref in raw_refs)
     return any(
-        ref.startswith("a2a_task:") or ref.startswith("a2a_context:")
-        for ref in proposal_refs
+        ref.startswith("a2a_task:") or ref.startswith("a2a_context:") for ref in proposal_refs
     )
 
 
@@ -594,7 +618,7 @@ def _review_trigger_dispatch_verdict_for_proposal(
     *,
     conversation_id: str,
     proposal_id: str,
-) -> str | None:
+) -> _ReviewTriggerDispatchGate | None:
     store = _store(base_dir)
     proposal_message_id = _proposal_message_id_for_review_gate(
         store,
@@ -607,6 +631,7 @@ def _review_trigger_dispatch_verdict_for_proposal(
     messages = {message.id: message for message in store.list_messages(conversation_id)}
     saw_review_trigger = False
     dispatch_allowed = False
+    source_refs: list[str] = []
     for item in inbox.list_by_conversation(conversation_id, include_terminal=True):
         if item.item_type != "review_trigger" or item.source_message_id != proposal_message_id:
             continue
@@ -643,9 +668,17 @@ def _review_trigger_dispatch_verdict_for_proposal(
             raise PeerChatError("proposal_review_blocked", f"{item.id}:{response.id}")
         if verdict == "dispatch_allowed":
             dispatch_allowed = True
+            source_refs.append(f"review_trigger_verdict:{response.id}")
     if not saw_review_trigger:
         return None
-    return "dispatch_allowed" if dispatch_allowed else None
+    return (
+        _ReviewTriggerDispatchGate(
+            decision="dispatch_allowed",
+            source_refs=_dedupe_text(source_refs),
+        )
+        if dispatch_allowed
+        else None
+    )
 
 
 def _reject_pending_review_trigger_for_dispatchable_proposal(
@@ -797,7 +830,8 @@ def _append_resolution_read_model(base_dir: Path, resolution_payload: dict[str, 
         "approval_mode": resolution_payload["approval_mode"],
     }
     data["resolutions"] = [
-        item for item in resolutions
+        item
+        for item in resolutions
         if isinstance(item, dict) and item.get("resolution_id") != entry["resolution_id"]
     ]
     data["resolutions"].append(entry)
@@ -868,10 +902,7 @@ def _build_feature_plan_proposal_record(
         resolution_id = _resolution_id_from_blueprint_ref(blueprint_ref)
         source_resolution = _store(base_dir).get_resolution(resolution_id)
         blueprint = read_approved_mission_blueprint(source_resolution)
-        features = [
-            FeaturePlanFeature.model_validate(item)
-            for item in payload.get("features", [])
-        ]
+        features = [FeaturePlanFeature.model_validate(item) for item in payload.get("features", [])]
     except KeyError as exc:
         raise PeerChatError(
             "invalid_feature_plan_proposal",
@@ -967,11 +998,23 @@ def _project_resolution_into_execution_queue(
     resolution: object,
     *,
     execution_worktree: Path,
+    dispatch_intent: _StructuredDispatchIntent | None = None,
+    proposal_id: str | None = None,
 ) -> None:
     content = getattr(resolution, "content", None)
     if isinstance(content, dict) and content.get("type") in {"mission_blueprint", "feature_plan"}:
         return
     graph = build_lane_graph(resolution)
+    if dispatch_intent is not None and proposal_id is not None:
+        graph = graph.model_copy(
+            update={
+                "source_refs": _dispatch_authority_source_refs(
+                    proposal_id=proposal_id,
+                    resolution_id=graph.resolution_id,
+                    dispatch_intent=dispatch_intent,
+                )
+            }
+        )
     LaneGraphStore(base_dir / "lane_graphs").save(graph)
     project_ready_lanes(
         graph,
@@ -1099,33 +1142,76 @@ def _enqueue_structured_dispatch_intent(
     proposal_type: str,
     references: list[str],
     resolution: object,
-) -> None:
+) -> _StructuredDispatchIntent | None:
     content = getattr(resolution, "content", None)
     if isinstance(content, dict) and content.get("type") in {"mission_blueprint", "feature_plan"}:
-        return
+        return None
     conversation_id = str(resolution.conversation_id)
     resolution_id = str(resolution.id)
     collaboration_run_ids = _collaboration_run_refs(references)
+    gate_refs: list[str] = []
     if not collaboration_run_ids:
         if not _is_a2a_sourced_proposal(
             base_dir,
             conversation_id=conversation_id,
             proposal_id=proposal_id,
         ):
-            return
-        verdict = _review_trigger_dispatch_verdict_for_proposal(
+            return None
+        review_gate = _review_trigger_dispatch_verdict_for_proposal(
             base_dir,
             conversation_id=conversation_id,
             proposal_id=proposal_id,
         )
-        if verdict != "dispatch_allowed":
-            return
-    _dispatch_queue_store(base_dir).enqueue_agent_auto_dispatch(
+        if review_gate is None or review_gate.decision != "dispatch_allowed":
+            return None
+        gate_refs = review_gate.source_refs
+    else:
+        gate_refs = [f"collaboration:{run_id}" for run_id in collaboration_run_ids]
+    entry = _dispatch_queue_store(base_dir).enqueue_agent_auto_dispatch(
         conversation_id=conversation_id,
         proposal_id=proposal_id,
         resolution_id=resolution_id,
         collaboration_run_id=collaboration_run_ids[0] if collaboration_run_ids else None,
         artifact_ref=f"artifact:{proposal_type}",
+        gate_refs=gate_refs,
+    )
+    return _StructuredDispatchIntent(entry=entry, gate_refs=gate_refs)
+
+
+def _dispatch_next_authority_boundary(
+    *,
+    proposal_id: str,
+    resolution_id: str,
+    dispatch_intent: _StructuredDispatchIntent,
+) -> dict[str, object]:
+    entry = dispatch_intent.entry
+    return {
+        "required_authority": "chat.db/dispatch_queue",
+        "required_action": "run_dispatch_bridge",
+        "dispatch_queue_entry_available": True,
+        "dispatch_queue_entry_id": entry.entry_id,
+        "dispatch_policy": entry.dispatch_policy,
+        "source_refs": _dispatch_authority_source_refs(
+            proposal_id=proposal_id,
+            resolution_id=resolution_id,
+            dispatch_intent=dispatch_intent,
+        ),
+    }
+
+
+def _dispatch_authority_source_refs(
+    *,
+    proposal_id: str,
+    resolution_id: str,
+    dispatch_intent: _StructuredDispatchIntent,
+) -> list[str]:
+    return _dedupe_text(
+        [
+            f"proposal:{proposal_id}",
+            *dispatch_intent.gate_refs,
+            f"resolution:{resolution_id}",
+            f"chat_dispatch_queue:{dispatch_intent.entry.entry_id}",
+        ]
     )
 
 
@@ -1133,6 +1219,43 @@ def _chat_timeline_payload(base_dir: Path, conversation_id: str) -> dict[str, An
     payload = _peer_service(base_dir).list_conversation_timeline(conversation_id)
     payload = _with_execution_card_drilldown_refs(base_dir, payload)
     return _with_compact_health_cards(base_dir, conversation_id, payload)
+
+
+def _groupchat_runtime_run_payload(
+    outcome: GroupchatPeerRuntimeRunOutcome,
+) -> dict[str, Any]:
+    return {
+        "ticks": outcome.ticks,
+        "stop_reason": outcome.stop_reason,
+        "chain_status": outcome.chain_status,
+        "chain_status_reason": outcome.chain_status_reason,
+        "tick_outcomes": [_groupchat_tick_payload(tick) for tick in outcome.tick_outcomes],
+    }
+
+
+def _groupchat_tick_payload(outcome: GroupchatPeerRuntimeTickOutcome) -> dict[str, Any]:
+    peer = outcome.peer
+    return {
+        "worklist": {
+            "scanned": outcome.worklist.scanned,
+            "claimed_item_id": outcome.worklist.claimed_item_id,
+            "linked_inbox_item_id": outcome.worklist.linked_inbox_item_id,
+            "completed_message_id": outcome.worklist.completed_message_id,
+            "followup_scanned": outcome.worklist.followup_scanned,
+            "failed_item_id": outcome.worklist.failed_item_id,
+            "failure_reason": outcome.worklist.failure_reason,
+        },
+        "peer": (
+            {
+                "nudged": peer.nudged,
+                "happy_path": peer.happy_path,
+                "failed": peer.failed,
+                "fallback_replies": peer.fallback_replies,
+            }
+            if peer is not None
+            else None
+        ),
+    }
 
 
 def _with_execution_card_drilldown_refs(
@@ -1144,9 +1267,7 @@ def _with_execution_card_drilldown_refs(
         payload["cards"] = [_enrich_execution_card(base_dir, card) for card in cards]
     recent_cards = payload.get("recent_cards")
     if isinstance(recent_cards, list):
-        payload["recent_cards"] = [
-            _enrich_execution_card(base_dir, card) for card in recent_cards
-        ]
+        payload["recent_cards"] = [_enrich_execution_card(base_dir, card) for card in recent_cards]
     items = payload.get("items")
     if isinstance(items, list):
         payload["items"] = [_enrich_timeline_execution_card(base_dir, item) for item in items]
@@ -1181,9 +1302,7 @@ def _enrich_execution_card(base_dir: Path, card: Any) -> Any:
         payload=payload if isinstance(payload, dict) else {},
         xmuse_root=base_dir,
         existing_refs=(
-            metadata["drilldown_refs"]
-            if isinstance(metadata.get("drilldown_refs"), list)
-            else None
+            metadata["drilldown_refs"] if isinstance(metadata.get("drilldown_refs"), list) else None
         ),
     )
     return {
@@ -1316,6 +1435,9 @@ def create_app(
     auth_token: str | None = None,
     a2a_bridge_enabled: bool = False,
     a2a_write_token: str | None = None,
+    groupchat_provider_service: Any | None = None,
+    groupchat_god_layer: Any | None = None,
+    groupchat_response_wait_s: float = 180.0,
 ) -> FastAPI:
     root = Path(base_dir)
     execution_root = Path(execution_worktree) if execution_worktree is not None else REPO_ROOT
@@ -1439,8 +1561,7 @@ def create_app(
                 isinstance(body, dict)
                 and body.get("jsonrpc") == "2.0"
                 and isinstance(exc.detail, dict)
-                and exc.detail.get("code")
-                in {"a2a_write_auth_required", "a2a_write_local_only"}
+                and exc.detail.get("code") in {"a2a_write_auth_required", "a2a_write_local_only"}
             ):
                 return JSONResponse(
                     status_code=exc.status_code,
@@ -1474,8 +1595,7 @@ def create_app(
             None
             if request.initial_participants is None
             else [
-                participant.model_dump(mode="json")
-                for participant in request.initial_participants
+                participant.model_dump(mode="json") for participant in request.initial_participants
             ]
         )
         init_mode = request.init_mode
@@ -1925,9 +2045,7 @@ def create_app(
             "source_authority": "chat_store",
             "items": [
                 spine.model_dump(mode="json")
-                for spine in _acceptance_spine_store(root).list_by_conversation(
-                    conversation_id
-                )
+                for spine in _acceptance_spine_store(root).list_by_conversation(conversation_id)
             ],
         }
 
@@ -1969,10 +2087,56 @@ def create_app(
         except sqlite3.IntegrityError as exc:
             raise HTTPException(status_code=404, detail="conversation not found") from exc
         payload = result.message.model_dump(mode="json")
-        payload["inbox_items"] = [
-            item.model_dump(mode="json") for item in result.inbox_items
-        ]
+        payload["inbox_items"] = [item.model_dump(mode="json") for item in result.inbox_items]
         return payload
+
+    @app.post("/api/chat/conversations/{conversation_id}/groupchat/root-runs")
+    async def run_groupchat_root(
+        conversation_id: str,
+        request: GroupchatRootRunCreate,
+    ) -> dict[str, object]:
+        if not _conversation_exists(_store(root), conversation_id):
+            raise HTTPException(status_code=404, detail="conversation not found")
+        runtime = GroupchatPeerRuntime(
+            db_path=root / "chat.db",
+            god_layer=groupchat_god_layer or _UnavailableGroupchatGodLayer(),
+            worktree=execution_root,
+            scheduler_id="groupchat-api",
+            response_wait_s=groupchat_response_wait_s,
+            provider_service=groupchat_provider_service,
+        )
+        try:
+            outcome = await runtime.run_from_root_message(
+                conversation_id=conversation_id,
+                root_message_id=request.root_message_id,
+                max_ticks=request.max_ticks,
+                policy_id=request.policy_id,
+                max_depth=request.max_depth,
+                human_max_targets=request.human_max_targets,
+                agent_max_targets=request.agent_max_targets,
+                pingpong_warn_after=request.pingpong_warn_after,
+                pingpong_block_after=request.pingpong_block_after,
+            )
+            worklist = GroupchatWorklistStore(root / "chat.db")
+            chain = worklist.get_chain(outcome.chain_id)
+            items = worklist.list_items(outcome.chain_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="groupchat chain not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {
+            "authority": "chat.db/groupchat_chains/groupchat_worklist",
+            "producer": "GroupchatPeerRuntime.run_from_root_message",
+            "consumer": "PeerChatScheduler",
+            "condition": "root_message_groupchat_run",
+            "proof_level": "durable_authority_refs",
+            "conversation_id": conversation_id,
+            "chain_id": outcome.chain_id,
+            "created_chain": outcome.created_chain,
+            "run": _groupchat_runtime_run_payload(outcome.run),
+            "chain": chain.model_dump(mode="json"),
+            "worklist_items": [item.model_dump(mode="json") for item in items],
+        }
 
     @app.post(
         "/api/chat/conversations/{conversation_id}/deliberations",
@@ -2216,17 +2380,25 @@ def create_app(
         )
         _append_resolution_read_model(root, payload)
         produce_blueprint_approval_event(root, resolution)
-        _enqueue_structured_dispatch_intent(
+        dispatch_intent = _enqueue_structured_dispatch_intent(
             root,
             proposal_id=proposal_id,
             proposal_type=escalation.normalized_proposal_type,
             references=proposal.references,
             resolution=resolution,
         )
+        if dispatch_intent is not None:
+            payload["next_authority_boundary"] = _dispatch_next_authority_boundary(
+                proposal_id=proposal_id,
+                resolution_id=resolution.id,
+                dispatch_intent=dispatch_intent,
+            )
         _project_resolution_into_execution_queue(
             root,
             resolution,
             execution_worktree=execution_root,
+            dispatch_intent=dispatch_intent,
+            proposal_id=proposal_id,
         )
         return payload
 

@@ -44,9 +44,7 @@ class AssembledPrompt:
         return {
             "prompt_contract_version": self.version,
             "prompt_layer_order": [layer.name for layer in self.layers],
-            "prompt_layer_hashes": {
-                layer.name: _sha256(layer.content) for layer in self.layers
-            },
+            "prompt_layer_hashes": {layer.name: _sha256(layer.content) for layer in self.layers},
             "prompt_artifact_fingerprint": self.fingerprint,
         }
 
@@ -64,11 +62,13 @@ class XmusePromptBuilder:
             _member_identity_layer(participant),
             _roster_layer(group_context),
             _context_capsule_layer(group_context, inbox_item),
+            *_memoryos_sidecar_layers(group_context),
             _tool_writeback_layer(),
         )
-        text = "\n\n".join(
-            f"## {layer.name}\n\n{layer.content.strip()}" for layer in layers
-        ).strip() + "\n"
+        text = (
+            "\n\n".join(f"## {layer.name}\n\n{layer.content.strip()}" for layer in layers).strip()
+            + "\n"
+        )
         return AssembledPrompt(
             version=PROMPT_CONTRACT_VERSION,
             text=text,
@@ -159,6 +159,72 @@ def _context_capsule_layer(group_context: dict[str, Any], inbox_item: Any) -> Pr
     )
 
 
+def _memoryos_sidecar_layers(group_context: dict[str, Any]) -> tuple[PromptLayer, ...]:
+    memory_context = group_context.get("memoryos_context")
+    if not isinstance(memory_context, dict):
+        return ()
+    status = str(memory_context.get("status") or "unknown").strip() or "unknown"
+    namespace_uri = str(memory_context.get("namespace_uri") or "unknown").strip()
+    proof_level = str(memory_context.get("proof_level") or "unknown").strip()
+    authority = str(memory_context.get("authority") or "memoryos_sidecar").strip()
+    lines = [
+        f"MemoryOS sidecar status: {status}",
+        f"Authority: {authority}",
+        f"Proof level: {proof_level}",
+        f"Namespace: {namespace_uri}",
+        "MemoryOS is sidecar context, not proposal/review/dispatch truth.",
+    ]
+    degraded_reason = memory_context.get("degraded_reason")
+    if isinstance(degraded_reason, str) and degraded_reason.strip():
+        lines.append(f"Degraded reason: {degraded_reason.strip()}")
+        lines.append("No MemoryOS recall is available; continue from chat.db authority.")
+    text = memory_context.get("text")
+    if isinstance(text, str) and text.strip():
+        lines.extend(["", "Recall:", _bounded(text.strip(), max_chars=2400)])
+    continuity_refs = _memoryos_continuity_refs(memory_context)
+    if continuity_refs:
+        lines.extend(["", "Continuity refs:"])
+        lines.extend(f"- {ref}" for ref in continuity_refs)
+    source_refs = _memoryos_source_refs(memory_context)
+    if source_refs:
+        lines.extend(["", "Source refs:"])
+        lines.extend(f"- {ref}" for ref in source_refs)
+    return (
+        PromptLayer(
+            name="memoryos_sidecar_context",
+            content="\n".join(lines),
+            metadata={
+                "authority": authority,
+                "status": status,
+                "proof_level": proof_level,
+                "namespace_uri": namespace_uri,
+                "continuity_refs": continuity_refs,
+                "source_refs": source_refs,
+            },
+        ),
+    )
+
+
+def _memoryos_source_refs(memory_context: dict[str, Any]) -> list[str]:
+    return _memoryos_refs(memory_context.get("source_refs"))
+
+
+def _memoryos_continuity_refs(memory_context: dict[str, Any]) -> list[str]:
+    refs = _memoryos_refs(memory_context.get("continuity_refs"))
+    if refs:
+        return refs
+    single_ref = memory_context.get("continuity_ref")
+    if isinstance(single_ref, str) and single_ref.strip():
+        return [single_ref.strip()]
+    return []
+
+
+def _memoryos_refs(value: Any) -> list[str]:
+    if not isinstance(value, (list, tuple)):
+        return []
+    return [str(ref) for ref in value if isinstance(ref, str) and ref.strip()]
+
+
 def _tool_writeback_layer() -> PromptLayer:
     return PromptLayer(
         name="tool_and_writeback_contract",
@@ -190,9 +256,9 @@ def _tool_writeback_layer() -> PromptLayer:
             "alone: create or reference a collaboration run, have execute record "
             "a JSON execute_feasibility_verdict through "
             "chat_record_collaboration_response using the approval-gate shape "
-            "{\"type\":\"execute_feasibility_verdict\",\"status\":\"executable\","
-            "\"execution_performed\":false,\"summary\":\"<why dispatch is safe>\","
-            "\"evidence_refs\":[\"<ref>\"]}; "
+            '{"type":"execute_feasibility_verdict","status":"executable",'
+            '"execution_performed":false,"summary":"<why dispatch is safe>",'
+            '"evidence_refs":["<ref>"]}; '
             "looser fields such as verdict=feasible do not satisfy dispatch. "
             "If your current inbox item is a collaboration_request or asks you "
             "to use chat_record_collaboration_response, call that tool; do not "
@@ -204,7 +270,7 @@ def _tool_writeback_layer() -> PromptLayer:
             "reply_to_inbox_item_id=xmuse_context.inbox_item.id, and a "
             "collaboration:<run_id> reference. Human approval is still required "
             "before dispatch. Every dispatchable lane_graph lane must include "
-            "explicit gate_profiles, for example [\"xmuse-core\"] for xmuse "
+            'explicit gate_profiles, for example ["xmuse-core"] for xmuse '
             "core code paths; if you cannot choose a gate profile, write a "
             "durable blocker or open question instead of proposing dispatchable "
             "work.\n"
@@ -307,9 +373,26 @@ def _recent_transcript_text(messages: list[Any]) -> str:
 
 def _inbox_request_preview(payload: dict[str, object]) -> str:
     content = payload.get("content")
+    callback_action = _collaboration_callback_action(payload)
     if not isinstance(content, str) or not content.strip():
-        return "Current inbox request: none"
-    return "Current inbox request:\n" + _bounded(content.strip(), max_chars=8000)
+        return "Current inbox request: none" + callback_action
+    return "Current inbox request:\n" + _bounded(content.strip(), max_chars=8000) + callback_action
+
+
+def _collaboration_callback_action(payload: dict[str, object]) -> str:
+    if payload.get("trigger_mode") != "collaboration_done_callback":
+        return ""
+    run_id = payload.get("collaboration_run_id")
+    if not isinstance(run_id, str) or not run_id.strip():
+        return ""
+    run_ref = f"collaboration:{run_id.strip()}"
+    return (
+        "\n\nCollaboration callback action:\n"
+        "- call chat_emit_proposal before ending this turn.\n"
+        f'- include references=["{run_ref}"].\n'
+        "- use reply_to_inbox_item_id=xmuse_context.inbox_item.id.\n"
+        "- plain final text or no tool call is a failed callback."
+    )
 
 
 def _retry_feedback_text(group_context: dict[str, Any]) -> str:

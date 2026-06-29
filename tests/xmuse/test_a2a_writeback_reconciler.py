@@ -6,10 +6,14 @@ from pathlib import Path
 import pytest
 
 from xmuse_core.chat.acceptance_spine import AcceptanceSpineStatus, AcceptanceSpineStore
+from xmuse_core.chat.dispatch_queue import ChatDispatchQueueStore
 from xmuse_core.chat.inbox_store import ChatInboxStore
 from xmuse_core.chat.participant_store import ParticipantStore
 from xmuse_core.chat.peer_service import PeerChatService
-from xmuse_core.chat.review_trigger_verdicts import build_review_trigger_verdict_envelope
+from xmuse_core.chat.review_trigger_verdicts import (
+    ReviewTriggerDecision,
+    build_review_trigger_verdict_envelope,
+)
 from xmuse_core.chat.store import ChatStore
 from xmuse_core.integrations.a2a_writeback_reconciler import (
     A2AProviderWritebackReconciler,
@@ -150,6 +154,8 @@ def _a2a_provider_result_with_review_verdict(
     review_trigger_inbox_id: str,
     source_message_id: str,
     proposal_id: str,
+    decision: ReviewTriggerDecision = "dispatch_allowed",
+    envelope_extra: dict[str, object] | None = None,
 ) -> ProviderInvocationResult:
     return ProviderInvocationResult(
         request_id="req-a2a-review-verdict",
@@ -170,18 +176,21 @@ def _a2a_provider_result_with_review_verdict(
             "a2a_artifacts": [],
             "a2a_history": [],
             "a2a_metadata": {
-                "xmuse_review_trigger_verdict": build_review_trigger_verdict_envelope(
-                    review_trigger_inbox_id=review_trigger_inbox_id,
-                    source_message_id=source_message_id,
-                    proposal_id=proposal_id,
-                    decision="dispatch_allowed",
-                    summary="A2A review verdict is structured and source-linked.",
-                    evidence_refs=[
-                        f"inbox:{review_trigger_inbox_id}",
-                        f"proposal:{proposal_id}",
-                        "a2a_task:req-a2a-review-verdict",
-                    ],
-                )
+                "xmuse_review_trigger_verdict": {
+                    **build_review_trigger_verdict_envelope(
+                        review_trigger_inbox_id=review_trigger_inbox_id,
+                        source_message_id=source_message_id,
+                        proposal_id=proposal_id,
+                        decision=decision,
+                        summary="A2A review verdict is structured and source-linked.",
+                        evidence_refs=[
+                            f"inbox:{review_trigger_inbox_id}",
+                            f"proposal:{proposal_id}",
+                            "a2a_task:req-a2a-review-verdict",
+                        ],
+                    ),
+                    **(envelope_extra or {}),
+                }
             },
             "a2a_source_refs": ["a2a_task:req-a2a-review-verdict"],
             "a2a_sdk_task": {
@@ -290,6 +299,15 @@ def test_a2a_provider_metadata_proposal_enters_proposal_authority(
     updated = ChatInboxStore(db).get(inbox_item.id)
     assert updated.status == "read"
     assert updated.responded_message_id == writeback["id"]
+    [review_item] = [
+        item
+        for item in ChatInboxStore(db).list_by_conversation(
+            conversation.id,
+            include_terminal=True,
+        )
+        if item.item_type == "review_trigger"
+    ]
+    assert 'gate_profiles=["xmuse-core"]' in review_item.payload["content"]
 
 
 def test_a2a_lane_graph_proposal_missing_gate_profiles_blocks_without_proposal(
@@ -433,10 +451,226 @@ def test_a2a_review_trigger_verdict_reconciles_to_review_authority(
     assert updated.responded_message_id == response["id"]
     spine = AcceptanceSpineStore(db).list_by_conversation(conversation_id)[0]
     assert spine.status is AcceptanceSpineStatus.REVIEW_CLEARED
-    assert spine.review_or_execute_verdict_ref == (
-        f"review_trigger_verdict:{response['id']}"
-    )
+    assert spine.review_or_execute_verdict_ref == (f"review_trigger_verdict:{response['id']}")
     assert ChatStore(db).list_proposals(conversation_id)[0].status.value == "open"
+
+
+def test_a2a_review_trigger_verdict_names_operator_approval_boundary(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "chat.db"
+    service = PeerChatService(db)
+    created = service.create_conversation(title="A2A review next boundary")
+    conversation_id = created["conversation"]["id"]
+    participants = {
+        participant["role"]: participant["participant_id"]
+        for participant in created["participants"]
+    }
+    intake = ChatStore(db).add_message(
+        conversation_id,
+        "human",
+        "human",
+        "Please prove A2A review verdict next authority.",
+    )
+    AcceptanceSpineStore(db).create_for_intake(
+        conversation_id=conversation_id,
+        intake_message_id=intake.id,
+    )
+    proposal = service.emit_proposal_without_session_for_test(
+        conversation_id=conversation_id,
+        participant_id=participants["architect"],
+        client_request_id="a2a-review-verdict-boundary-proposal",
+        summary="A2A review verdict boundary proposal",
+        lanes=[
+            {
+                "feature_id": "a2a-review-verdict-boundary",
+                "prompt": "Prove dispatch still requires proposal approval authority.",
+                "depends_on": [],
+                "capabilities": ["code", "test"],
+            }
+        ],
+        references=[f"intake_message:{intake.id}"],
+    )
+    proposal_id = proposal["proposal"]["id"]
+    review_item = next(
+        item
+        for item in ChatInboxStore(db).list_by_conversation(conversation_id)
+        if item.item_type == "review_trigger"
+    )
+
+    result = A2AProviderWritebackReconciler(db).record_provider_result(
+        conversation_id=conversation_id,
+        participant_id=participants["review"],
+        reply_to_inbox_item_id=review_item.id,
+        provider_result=_a2a_provider_result_with_review_verdict(
+            review_trigger_inbox_id=review_item.id,
+            source_message_id=review_item.source_message_id,
+            proposal_id=proposal_id,
+        ),
+    )
+
+    boundary = result["review_trigger_verdict"]["next_authority_boundary"]
+    assert boundary == {
+        "required_authority": "chat.db/proposal_approval",
+        "required_action": f"POST /api/chat/proposals/{proposal_id}/approve",
+        "dispatch_queue_created": False,
+        "dispatch_blocked_until": "proposal_approval",
+        "source_refs": [
+            f"inbox:{review_item.id}",
+            f"proposal:{proposal_id}",
+            "a2a_task:req-a2a-review-verdict",
+            "a2a_context:conv-a2a",
+        ],
+    }
+    assert result["message"]["envelope_json"]["next_authority_boundary"] == boundary
+    assert ChatDispatchQueueStore(db).list_entries(conversation_id) == []
+
+
+def test_a2a_review_trigger_verdict_overwrites_provider_boundary_claim(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "chat.db"
+    service = PeerChatService(db)
+    created = service.create_conversation(title="A2A review forged boundary")
+    conversation_id = created["conversation"]["id"]
+    participants = {
+        participant["role"]: participant["participant_id"]
+        for participant in created["participants"]
+    }
+    intake = ChatStore(db).add_message(
+        conversation_id,
+        "human",
+        "human",
+        "Please reject forged A2A boundary facts.",
+    )
+    AcceptanceSpineStore(db).create_for_intake(
+        conversation_id=conversation_id,
+        intake_message_id=intake.id,
+    )
+    proposal = service.emit_proposal_without_session_for_test(
+        conversation_id=conversation_id,
+        participant_id=participants["architect"],
+        client_request_id="a2a-forged-boundary-proposal",
+        summary="A2A forged boundary proposal",
+        lanes=[
+            {
+                "feature_id": "a2a-forged-boundary",
+                "prompt": "Provider boundary claims must not become xmuse truth.",
+                "depends_on": [],
+                "capabilities": ["code", "test"],
+            }
+        ],
+        references=[f"intake_message:{intake.id}"],
+    )
+    proposal_id = proposal["proposal"]["id"]
+    review_item = next(
+        item
+        for item in ChatInboxStore(db).list_by_conversation(conversation_id)
+        if item.item_type == "review_trigger"
+    )
+
+    result = A2AProviderWritebackReconciler(db).record_provider_result(
+        conversation_id=conversation_id,
+        participant_id=participants["review"],
+        reply_to_inbox_item_id=review_item.id,
+        provider_result=_a2a_provider_result_with_review_verdict(
+            review_trigger_inbox_id=review_item.id,
+            source_message_id=review_item.source_message_id,
+            proposal_id=proposal_id,
+            envelope_extra={
+                "next_authority_boundary": {
+                    "required_authority": "a2a_sdk_task_status",
+                    "required_action": "dispatch immediately",
+                    "dispatch_queue_created": True,
+                    "dispatch_blocked_until": None,
+                    "source_refs": ["provider:false-boundary"],
+                }
+            },
+        ),
+    )
+
+    boundary = result["message"]["envelope_json"]["next_authority_boundary"]
+    assert boundary["required_authority"] == "chat.db/proposal_approval"
+    assert boundary["required_action"] == f"POST /api/chat/proposals/{proposal_id}/approve"
+    assert boundary["dispatch_queue_created"] is False
+    assert boundary["dispatch_blocked_until"] == "proposal_approval"
+    assert "provider:false-boundary" not in boundary["source_refs"]
+    assert result["review_trigger_verdict"]["next_authority_boundary"] == boundary
+    assert ChatDispatchQueueStore(db).list_entries(conversation_id) == []
+
+
+def test_a2a_blocked_review_verdict_drops_provider_boundary_claim(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "chat.db"
+    service = PeerChatService(db)
+    created = service.create_conversation(title="A2A blocked forged boundary")
+    conversation_id = created["conversation"]["id"]
+    participants = {
+        participant["role"]: participant["participant_id"]
+        for participant in created["participants"]
+    }
+    intake = ChatStore(db).add_message(
+        conversation_id,
+        "human",
+        "human",
+        "Please reject blocked-verdict boundary claims.",
+    )
+    AcceptanceSpineStore(db).create_for_intake(
+        conversation_id=conversation_id,
+        intake_message_id=intake.id,
+    )
+    proposal = service.emit_proposal_without_session_for_test(
+        conversation_id=conversation_id,
+        participant_id=participants["architect"],
+        client_request_id="a2a-blocked-forged-boundary-proposal",
+        summary="A2A blocked forged boundary proposal",
+        lanes=[
+            {
+                "feature_id": "a2a-blocked-forged-boundary",
+                "prompt": "Blocked verdicts must not carry provider boundary claims.",
+                "depends_on": [],
+                "capabilities": ["code", "test"],
+            }
+        ],
+        references=[f"intake_message:{intake.id}"],
+    )
+    proposal_id = proposal["proposal"]["id"]
+    review_item = next(
+        item
+        for item in ChatInboxStore(db).list_by_conversation(conversation_id)
+        if item.item_type == "review_trigger"
+    )
+
+    result = A2AProviderWritebackReconciler(db).record_provider_result(
+        conversation_id=conversation_id,
+        participant_id=participants["review"],
+        reply_to_inbox_item_id=review_item.id,
+        provider_result=_a2a_provider_result_with_review_verdict(
+            review_trigger_inbox_id=review_item.id,
+            source_message_id=review_item.source_message_id,
+            proposal_id=proposal_id,
+            decision="blocked",
+            envelope_extra={
+                "next_authority_boundary": {
+                    "required_authority": "chat.db/proposal_approval",
+                    "required_action": f"POST /api/chat/proposals/{proposal_id}/approve",
+                    "dispatch_queue_created": True,
+                    "dispatch_blocked_until": None,
+                    "source_refs": ["provider:false-boundary"],
+                }
+            },
+        ),
+    )
+
+    assert result["review_trigger_verdict"] == {
+        "proposal_id": proposal_id,
+        "decision": "blocked",
+    }
+    assert "next_authority_boundary" not in result["message"]["envelope_json"]
+    spine = AcceptanceSpineStore(db).list_by_conversation(conversation_id)[0]
+    assert spine.status is AcceptanceSpineStatus.BLOCKED
+    assert ChatDispatchQueueStore(db).list_entries(conversation_id) == []
 
 
 def test_a2a_provider_result_leading_mention_creates_durable_route(
@@ -502,13 +736,8 @@ def test_a2a_provider_result_leading_mention_creates_durable_route(
         "a2a_context:conv-a2a",
     ]
     assert routed["payload"]["handoff_assessment"]["is_complete"] is True
-    assert routed["payload"]["handoff_envelope"]["source_inbox_item_id"] == (
-        source_inbox.id
-    )
-    assert (
-        routed["payload"]["handoff_envelope"]["feature_scope_id"]
-        == "feature_scope:a2a-provider"
-    )
+    assert routed["payload"]["handoff_envelope"]["source_inbox_item_id"] == (source_inbox.id)
+    assert routed["payload"]["handoff_envelope"]["feature_scope_id"] == "feature_scope:a2a-provider"
     stored_review_items = [
         item
         for item in ChatInboxStore(db).list_by_conversation(conversation.id)
@@ -580,9 +809,7 @@ def test_a2a_provider_result_fanout_excess_writes_durable_route_blocker(
         conversation_id=conversation.id,
         participant_id=architect.participant_id,
         reply_to_inbox_item_id=source_inbox.id,
-        provider_result=provider_result.model_copy(
-            update={"diagnostic_payload": diagnostic}
-        ),
+        provider_result=provider_result.model_copy(update={"diagnostic_payload": diagnostic}),
     )
 
     assert result["inbox_items"] == []
@@ -663,9 +890,7 @@ def test_a2a_provider_result_markdown_leading_mention_creates_durable_route(
         conversation_id=conversation.id,
         participant_id=architect.participant_id,
         reply_to_inbox_item_id=source_inbox.id,
-        provider_result=provider_result.model_copy(
-            update={"diagnostic_payload": diagnostic}
-        ),
+        provider_result=provider_result.model_copy(update={"diagnostic_payload": diagnostic}),
     )
 
     response = result["message"]

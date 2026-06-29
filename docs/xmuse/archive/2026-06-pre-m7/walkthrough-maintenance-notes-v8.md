@@ -2,7 +2,7 @@
 
 Date: 2026-06-04
 
-Scope: Phase 1 from `docs/xmuse/path-a-foundation-first-roadmap.md`.
+Scope: Phase 1 from `docs/xmuse/archive/2026-06-roadmaps-and-audits/path-a-foundation-first-roadmap.md`.
 
 ## Goal
 

@@ -11,6 +11,7 @@ from xmuse_core.chat.acceptance_spine import AcceptanceSpineStore
 from xmuse_core.platform.github_gate_evidence import (
     GitHubGateEvidenceStore,
     GitHubGateTruthCollector,
+    GitHubMainCiTruthCollector,
 )
 
 
@@ -84,7 +85,12 @@ class FinalActionGateStore:
                     if github_gate_evidence_ref and not accepted_github_ref
                     else None
                 )
-                item["status"] = status
+                normalized_status = status.strip().lower()
+                status_blocked_by_github_gate = bool(
+                    (github_gate_gap_ref or rejected_github_ref)
+                    and normalized_status in {"approved", "accepted", "resolved"}
+                )
+                item["status"] = "blocked" if status_blocked_by_github_gate else status
                 item["resolved_by"] = resolved_by
                 if accepted_github_ref:
                     item["github_gate_evidence_ref"] = accepted_github_ref
@@ -114,6 +120,7 @@ class FinalActionGateStore:
         pull_request_number: int,
         required_checks: list[str],
         collector: GitHubGateTruthCollector,
+        main_ci_collector: GitHubMainCiTruthCollector | None = None,
         evidence_store_path: Path | str | None = None,
     ) -> PendingFinalAction:
         resolved_evidence_store_path = (
@@ -129,6 +136,7 @@ class FinalActionGateStore:
                 pull_request_number=pull_request_number,
                 required_checks=required_checks,
                 collector=collector,
+                main_ci_collector=main_ci_collector,
             )
             record_ref = store.ref_for(record)
             if record.can_accept:

@@ -1,62 +1,59 @@
-# xmuse 文档入口
+# xmuse Documentation Entry
 
-更新日期: 2026-06-27
+Updated: 2026-06-30
 
-本目录现在按“当前 goal 入口、当前产品合同、CI/兼容合同、历史档案”分层。下一轮
-自然 agents 群聊 `/goal` 不再默认读取旧的 closure ledger、walkthrough、runtime
-operation record 或巨大 handoff 文档。
+This directory is the current xmuse documentation entrypoint. It is intentionally
+an index, not a runtime ledger. Long PR histories, local run transcripts, and
+sentinel artifacts belong in status or archive documents.
 
-## 当前 Goal 文档包
+## Read First
 
-下一轮 `/goal` 只需要默认读取这些文档：
+For the current natural groupchat production goal, read:
 
-| 文档 | 用途 |
-|---|---|
-| `docs/xmuse/document-status.md` | 当前文档状态索引：标记 default-read、current-contract、retained-by-test、reference-only 和 archived，避免新会话误读旧 goal |
-| `docs/xmuse/natural-groupchat-a2a-goal.md` | 当前愿景、最新状态、A2A/Ray/Clowder-AI 取舍和 forbidden claims |
-| `docs/xmuse/natural-groupchat-a2a-behavior.md` | authority-first 行为规范、TDD/superpowers/GitHub 约束、patch/refactor 阈值 |
-| `docs/xmuse/natural-groupchat-a2a-task-plan.md` | Phase 0-7 的实施任务、验收和停止条件 |
-| `docs/xmuse/natural-groupchat-a2a-goal-prompt.md` | 可直接贴入 `/goal` 的简洁 prompt |
+| Document | Purpose |
+| --- | --- |
+| `docs/xmuse/document-status.md` | Current document map, baselines, and cleanup boundaries |
+| `docs/xmuse/natural-groupchat-a2a-goal.md` | Current vision, baseline, A2A/Ray/MemoryOS boundaries |
+| `docs/xmuse/natural-groupchat-a2a-behavior.md` | Authority-first behavior policy and execution discipline |
+| `docs/xmuse/natural-groupchat-a2a-task-plan.md` | Track A/B/C task plan and durable stop conditions |
+| `docs/xmuse/natural-groupchat-a2a-goal-prompt.md` | Minimal `/goal` prompt |
+| `docs/xmuse/mainline-contracts.md` | Product north-star and mainline authority contracts |
 
-Optional local references when present:
+External references:
 
-| 路径 | 用途 |
-|---|---|
-| `/home/iiyatu/projects/python/xmuse-m7-natural-groupchat-goal-design/docs/superpowers/specs/2026-06-26-natural-groupchat-a2a-production-goal-design.md` | 详细设计来源 |
-| `/home/iiyatu/clowder-ai` | 自然群聊实现参考，不是 xmuse authority |
+- `docs/superpowers/specs/2026-06-30-natural-groupchat-kernel-design.md`
+  is the approved design-source correction for the Track A natural groupchat
+  kernel. It has been internalized into the current goal package below; the
+  operational entrypoint remains `docs/xmuse/`.
+- `/home/iiyatu/projects/python/xmuse-m7-natural-groupchat-goal-design/docs/superpowers/specs/2026-06-26-natural-groupchat-a2a-production-goal-design.md`
+  is design-source context only.
+- `/home/iiyatu/clowder-ai` is a natural groupchat implementation reference,
+  not xmuse authority.
 
-If either optional local reference is absent, continue from repo-local
-`docs/xmuse/*` and treat the missing path as non-blocking.
+## Baseline Snapshot
 
-当前校准：
+Static documentation baselines are recorded so a future goal can orient quickly,
+but they are not live GitHub truth.
 
-- `origin/main` 当前按 PR #242 / `c1d19ad2ae9bd8b22742376c98968073a508329c`
-  校准。
-- PR #193 (`codex/a2a-sdk-foundation`) 和 A2A hardening PR #234-#242
-  已合并。
-- PR #242 (`codex/a2a-natural-real-chain`) 将 peer chat 主路径默认切到
-  native GOD session，并保留 Ray 作为 optional legacy backend。
-- 最新已观察 main CI run `28292323481` 在 merge commit `c1d19ad...`
-  上成功。
-- Dirty historical worktree 和 archive 文档只能作为参考，不是 main capability。
+- `last_observed_baseline`:
+  `5d03bbe82a3f17f2d854d46ee4dcbf7972fe533d` after PR #279. This records the
+  older support-chain calibration, including the PR #259 dispatch proof split.
+- `post_abc_closure_baseline`:
+  `07630131dcb6e26c8dc09dcf41690381e5cd0ee6`, produced by PR #294 from run
+  `track-abc-integrated-memoryos-degraded-20260629-01`, conversation
+  `conv_c7528fbf03b84755b8d4eb65166aa0a1`, final action
+  `final-cce17cc5e0e7`, PR head
+  `9be3b17190380171756bd8375fcb946247217d7c`, PR CI run `28332878486`, main
+  CI run `28332906024`, and GitHub gate evidence
+  `github_gate_evidence.json#evidence=ghgate_e3e90b98395d4c6e81136db6241ecf49`.
+  Proof level: one docs-only A/B/C integrated closure.
 
-下一轮长 `/goal` 是无人值守吞吐型 goal：时间只表示可承载的任务量级，不
-按小时切死阶段。推荐采用三写轨加一只读副驾轨：
+Every execution loop must refresh `origin/main`, open PRs, and CI status from
+GitHub server facts before acting.
 
-```text
-Track A: natural groupchat real chain / PR / CI / merge
-Track B: MemoryOS sidecar and context continuity
-Track C: frontend API / UX read projection
-Track D: read-only copilot audit
-```
+## Current Product Mainline
 
-Track A 是主链路和合并协调者。Track B/C 只能消费已存在 authority，
-不能替代 `chat.db / inbox / proposal / review verdict / dispatch queue /
-GitHub server facts`。Track D 只能写共享审计记录，不能写代码或创建 PR。
-
-## 当前产品主线
-
-`docs/xmuse/mainline-contracts.md` 是产品主线合同入口。它保留这条 north-star：
+`docs/xmuse/mainline-contracts.md` keeps the north-star:
 
 ```text
 GOD groupchat deliberation
@@ -68,85 +65,118 @@ GOD groupchat deliberation
 ```
 
 `blueprint freeze 是去中心化 GOD deliberation 与中心化 execution/review 的边界`。
-`feature_lanes.json` 仍是兼容投影和 live queue，不是 authority。
+`feature_lanes.json` is a live queue/projection, not authority.
 
-下一轮 natural groupchat A2A goal 会把主线前半段改成更实际的运行路线：
+The current Track A design is kernel-first:
+
+```text
+A1 Natural Groupchat Kernel
+-> A2 Groupchat Decision Closure
+-> A3 Dispatch To Execution Harness
+-> A4 Result Writeback To Groupchat
+-> A5 Unattended Groupchat Development Loop
+```
+
+A1/A2 are natural groupchat success boundaries. PR/CI/guarded merge is
+downstream A3-A5 proof, not A1 completion.
+
+After durable groupchat decisions exist, the downstream development route is:
 
 ```text
 natural groupchat
--> official a2a-sdk provider / handoff / artifact envelope
+-> A2A SDK interop / handoff / artifact envelope
 -> xmuse chat.db / inbox / proposal / review / dispatch authority
 -> provider-native execution
--> PR / CI / operator merge
+-> PR / exact-head CI / guarded merge
 ```
 
-A2A SDK 是 interop boundary，不是 proposal、review、dispatch 或 merge authority。
-Ray 是 optional legacy adapter，不是默认自然群聊 kernel。
+Authority rules:
 
-This practical proposal/review/dispatch route is for small real xmuse demands.
-It does not replace the product mainline requirement that larger mainline
-execution flows preserve blueprint freeze, lane graph, and review lineage.
+- `chat.db`, inbox, proposal, review verdict, dispatch queue, final action, and
+  GitHub server facts are authority.
+- A2A SDK is an interop boundary, not proposal/review/dispatch/merge authority.
+- MemoryOS is a sidecar for context continuity, not truth creation.
+- Frontend/API/TUI are read projections and must not create truth.
+- Ray is optional legacy runtime support, not the default natural groupchat path.
+- Provider stdout, local tests, and worker summaries are diagnostics unless a
+  durable authority surface records them.
 
-## CI 和合同文档
+## Contract And Gate Docs
 
-这些文档仍是当前 CI、合同测试或 release 判断的一部分，保留在顶层：
+These top-level documents are still current because tests, CI contracts, or
+operator flows reference them:
 
-| 文档 | 用途 |
-|---|---|
-| `docs/xmuse/contract-smoke-gates.md` | no-secrets contract smoke CI gate |
-| `docs/xmuse/peer-chat-runtime-gate.md` | no-secrets peer-chat runtime focused gate |
-| `docs/xmuse/deep-research-03-next-goal.md` | historical contract-vs-runtime proof split used by CI docs tests |
-| `docs/xmuse/real-runtime-integration-gate.md` | no-secrets real runtime integration gate contract |
-| `docs/xmuse/broad-suite-baseline-debt.md` | known broad-suite baseline gaps |
+| Document | Purpose |
+| --- | --- |
+| `docs/xmuse/contract-smoke-gates.md` | No-secrets contract smoke CI gate |
+| `docs/xmuse/peer-chat-runtime-gate.md` | No-secrets peer-chat runtime focused gate |
+| `docs/xmuse/deep-research-03-next-goal.md` | Contract-vs-runtime proof split used by CI docs tests |
+| `docs/xmuse/real-runtime-integration-gate.md` | No-secrets real runtime integration gate contract |
+| `docs/xmuse/acceptance-spine.md` | Human-demand acceptance spine authority contract |
+| `docs/xmuse/broad-suite-baseline-debt.md` | Known broad-suite baseline gaps |
+| `docs/xmuse/quality-gates-and-provider-matrix.md` | Test-backed default CI/provider gate matrix |
+| `docs/xmuse/schema-migration-strategy.md` | Test-backed durable-store migration and cleanup stance |
+| `docs/xmuse/mcp-permission-model.md` | Test-backed MCP permission classification model |
+| `docs/xmuse/memoryos-file-separation.md` | xmuse/MemoryOS file ownership and split-export boundary |
+| `docs/xmuse/memoryos-governance-contract.md` | MemoryOS sidecar governance and MCP write boundary |
 | `docs/xmuse/memoryos-lite-runtime-compatibility.md` | MemoryOS Lite public compatibility contract |
-| `docs/xmuse/vision-runtime-evidence-closure-plan.md` | older proof-level boundary plan kept for tests |
-| `docs/xmuse/vision-runtime-evidence-closure-goal-prompt.md` | older prompt kept for tests |
-| `docs/xmuse/github-server-side-gate-live-evidence-2026-06-25.md` | latest committed GitHub server-side evidence snapshot |
+| `docs/xmuse/github-server-side-gate-live-evidence-2026-06-25.md` | Latest committed GitHub server-side evidence snapshot |
 | `docs/xmuse/github-server-side-gate.md` | GitHub server-side gate contract |
-| `docs/xmuse/github-review-merge-contract.md` | PR template, CODEOWNERS and merge-ready contract |
-| `docs/xmuse/release-checklist.md` | current release claim boundary |
+| `docs/xmuse/github-review-merge-contract.md` | PR template, CODEOWNERS, and merge-ready contract |
+| `docs/xmuse/release-checklist.md` | Release claim boundary |
+| `docs/xmuse/shared-contract-fixtures.md` | Contract fixture inventory for `tests/fixtures/xmuse/contracts/` |
+| `docs/xmuse/split-export-manifest.json` | Standalone xmuse export manifest consumed by `scripts/export_xmuse.py` |
+| `docs/xmuse/xmuse-package.pyproject.toml` | Standalone xmuse package metadata template |
 
-Do not use these older CI docs as the active natural groupchat goal plan unless
-the task explicitly targets their contract surface.
+## Policy Docs
 
-## Implementation Policies Still In Force
+| Document | Purpose |
+| --- | --- |
+| `docs/xmuse/code-quality-and-archive-policy.md` | Reuse, refactor, archive, and state-write quality rules |
+| `docs/xmuse/parallel-development-runbook.md` | Parallel session coordination after interfaces are frozen |
+| `docs/xmuse/goal-copilot-behavior-policy.md` | Optional read-only copilot behavior |
+| `docs/xmuse/goal-stage-harness.md` | Standard stage/evidence vocabulary |
+| `docs/xmuse/production-operations.md` | Operational commands and expectations |
+| `docs/xmuse/provider-matrix.md` | Provider support matrix |
+| `docs/xmuse/config-matrix.md` | Configuration surface |
+| `docs/xmuse/解耦开发协议.md` | Layer and event boundary protocol |
 
-| 文档 | 用途 |
-|---|---|
-| `docs/xmuse/code-quality-and-archive-policy.md` | reuse, refactor, archive and state-write quality rules |
-| `docs/xmuse/parallel-development-runbook.md` | parallel session coordination, useful only after interfaces are frozen |
-| `docs/xmuse/goal-copilot-behavior-policy.md` | optional read-only copilot behavior |
-| `docs/xmuse/goal-stage-harness.md` | standard stage/evidence vocabulary |
-| `docs/xmuse/production-operations.md` | operational commands and expectations |
-| `docs/xmuse/provider-matrix.md` | provider support matrix |
-| `docs/xmuse/config-matrix.md` | configuration surface |
-| `docs/xmuse/解耦开发协议.md` | layer and event boundary protocol |
+## Frontend Projection Docs
 
-## Historical Archive
+Frontend/TUI contracts live under `docs/xmuse/frontend/`, not in the runtime
+`xmuse/` package root:
 
-Moved historical material:
+| Document | Purpose |
+| --- | --- |
+| `docs/xmuse/frontend/FRONTEND_IMPLEMENTATION_GUIDE.md` | Frontend/TUI implementation entrypoint |
+| `docs/xmuse/frontend/FRONTEND_API.md` | Current frontend-readable API contract |
+| `docs/xmuse/frontend/FRONTEND_API_INCREMENTAL.md` | Incremental frontend API notes |
+| `docs/xmuse/frontend/FRONTEND_CONTEXT.md` | Frontend/TUI background context |
+| `docs/xmuse/frontend/FRONTEND_VISION.md` | Frontend projection north-star reference |
+
+## Archive Rules
+
+Historical material lives under:
 
 ```text
-docs/xmuse/archive/2026-06-pre-m7/
-docs/xmuse/archive/2026-06-pre-overnight-goal/
+docs/xmuse/archive/
 ```
-
-`2026-06-pre-m7/` contains the old `codex-strengthening-handoff.md`,
-`fullchain-runtime-*`, `production-closure-gap-ledger.md`,
-`real-provider-soak-evidence-2026-06-21.md`, and
-`walkthrough-maintenance-notes*.md` files.
-
-`2026-06-pre-overnight-goal/` contains superseded deep-research, Path/V-series,
-closure, self-iteration, OpenCode-in, and production-strengthening prompts or
-roadmaps that are no longer default entrypoints.
 
 Rules:
 
 1. Do not treat archived evidence as proof for a new PR head.
-2. Do not restart old L8-L11, overnight-readiness, or closure-ledger framing
-   from the archive.
+2. Do not restart old L8-L11, overnight-readiness, Path-A, or closure-ledger
+   framing from archive content.
 3. If an archived implementation detail is reused, cite it as reference and
    re-verify the current code path.
+
+Older self-iteration, vision-runtime, and OpenCode-in proof-closure documents
+live under `docs/xmuse/archive/2026-06-proof-closure-legacy/`. They remain
+testable historical contract material, not current `/goal` entrypoints.
+
+Older parallel-session prompt material lives under
+`docs/xmuse/archive/2026-06-session-prompts-legacy/`. It remains contract
+fixture reference material, not a current operator prompt tree.
 
 Old `docs/superpowers/specs/` and `docs/superpowers/plans/` remain historical
 implementation records because tests and lane history may reference their

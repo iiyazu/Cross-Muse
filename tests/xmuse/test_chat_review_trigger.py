@@ -271,9 +271,7 @@ def test_collaboration_proposal_approval_consumes_review_trigger_verdict(tmp_pat
     updated_item = ChatInboxStore(tmp_path / "chat.db").get(review_item.id)
     assert updated_item.status == "read"
     assert updated_item.responded_message_id == reply["message"]["id"]
-    spine = AcceptanceSpineStore(tmp_path / "chat.db").get_by_intake_message(
-        intake_message_id
-    )
+    spine = AcceptanceSpineStore(tmp_path / "chat.db").get_by_intake_message(intake_message_id)
     assert spine.status is AcceptanceSpineStatus.REVIEW_CLEARED
     assert spine.review_or_execute_verdict_ref == (
         f"review_trigger_verdict:{reply['message']['id']}"
@@ -289,9 +287,7 @@ def test_collaboration_proposal_approval_consumes_review_trigger_verdict(tmp_pat
     )
 
     assert response.status_code == 200, response.text
-    spine = AcceptanceSpineStore(tmp_path / "chat.db").get_by_intake_message(
-        intake_message_id
-    )
+    spine = AcceptanceSpineStore(tmp_path / "chat.db").get_by_intake_message(intake_message_id)
     assert spine.status is AcceptanceSpineStatus.DISPATCHED
     assert spine.review_or_execute_verdict_ref == f"resolution:{response.json()['id']}"
 
@@ -324,9 +320,7 @@ def test_collaboration_proposal_approval_blocks_review_trigger_blocker(tmp_path)
         reply_to_inbox_item_id=review_item.id,
     )
 
-    spine = AcceptanceSpineStore(tmp_path / "chat.db").get_by_intake_message(
-        intake_message_id
-    )
+    spine = AcceptanceSpineStore(tmp_path / "chat.db").get_by_intake_message(intake_message_id)
     assert spine.status is AcceptanceSpineStatus.BLOCKED
     assert spine.blocked_reason == "proposal_review_blocked"
     assert spine.review_or_execute_verdict_ref == (
@@ -377,9 +371,7 @@ def test_collaboration_proposal_approval_rejects_stdout_only_review_verdict(
     updated_item = ChatInboxStore(tmp_path / "chat.db").get(review_item.id)
     assert updated_item.status == "read"
     assert updated_item.responded_message_id == reply["message"]["id"]
-    spine = AcceptanceSpineStore(tmp_path / "chat.db").get_by_intake_message(
-        intake_message_id
-    )
+    spine = AcceptanceSpineStore(tmp_path / "chat.db").get_by_intake_message(intake_message_id)
     assert spine.status is AcceptanceSpineStatus.REVIEW_PENDING
     assert spine.review_or_execute_verdict_ref is None
 
@@ -429,9 +421,7 @@ def test_collaboration_proposal_approval_rejects_mismatched_review_verdict(
         reply_to_inbox_item_id=review_item.id,
     )
 
-    spine = AcceptanceSpineStore(tmp_path / "chat.db").get_by_intake_message(
-        intake_message_id
-    )
+    spine = AcceptanceSpineStore(tmp_path / "chat.db").get_by_intake_message(intake_message_id)
     assert spine.status is AcceptanceSpineStatus.REVIEW_PENDING
     assert spine.review_or_execute_verdict_ref is None
     response = client.post(
@@ -480,9 +470,7 @@ def test_collaboration_proposal_approval_rejects_malformed_review_verdict(
         reply_to_inbox_item_id=review_item.id,
     )
 
-    spine = AcceptanceSpineStore(tmp_path / "chat.db").get_by_intake_message(
-        intake_message_id
-    )
+    spine = AcceptanceSpineStore(tmp_path / "chat.db").get_by_intake_message(intake_message_id)
     assert spine.status is AcceptanceSpineStatus.REVIEW_PENDING
     assert spine.review_or_execute_verdict_ref is None
     response = client.post(
@@ -513,9 +501,7 @@ def test_a2a_review_trigger_verdict_only_proposal_approval_enqueues_dispatch(
         write_verdict=True,
     )
 
-    spine = AcceptanceSpineStore(tmp_path / "chat.db").get_by_intake_message(
-        intake_message_id
-    )
+    spine = AcceptanceSpineStore(tmp_path / "chat.db").get_by_intake_message(intake_message_id)
     assert spine.status is AcceptanceSpineStatus.REVIEW_CLEARED
     assert spine.review_or_execute_verdict_ref == f"review_trigger_verdict:{verdict_message_id}"
 
@@ -535,9 +521,21 @@ def test_a2a_review_trigger_verdict_only_proposal_approval_enqueues_dispatch(
     assert entries[0].resolution_id == response.json()["id"]
     assert entries[0].collaboration_run_id is None
     assert entries[0].artifact_ref == "artifact:lane_graph"
-    spine = AcceptanceSpineStore(tmp_path / "chat.db").get_by_intake_message(
-        intake_message_id
-    )
+    assert entries[0].gate_refs == [f"review_trigger_verdict:{verdict_message_id}"]
+    assert response.json()["next_authority_boundary"] == {
+        "required_authority": "chat.db/dispatch_queue",
+        "required_action": "run_dispatch_bridge",
+        "dispatch_queue_entry_available": True,
+        "dispatch_queue_entry_id": entries[0].entry_id,
+        "dispatch_policy": "real_provider_allowed",
+        "source_refs": [
+            f"proposal:{proposal_id}",
+            f"review_trigger_verdict:{verdict_message_id}",
+            f"resolution:{response.json()['id']}",
+            f"chat_dispatch_queue:{entries[0].entry_id}",
+        ],
+    }
+    spine = AcceptanceSpineStore(tmp_path / "chat.db").get_by_intake_message(intake_message_id)
     assert spine.status is AcceptanceSpineStatus.DISPATCHED
 
 
@@ -653,8 +651,7 @@ def _dispatchable_proposal_with_review_trigger(tmp_path):
         for participant in created["participants"]
     }
     sessions = {
-        session["role"]: session["god_session_id"]
-        for session in created["participant_sessions"]
+        session["role"]: session["god_session_id"] for session in created["participant_sessions"]
     }
     intake = service.post_human_message(
         conversation_id=conversation_id,
@@ -820,9 +817,7 @@ def _a2a_proposal_result() -> ProviderInvocationResult:
             "a2a_disposition": "completed",
             "a2a_terminal": True,
             "a2a_content": "A2A architect returned a structured proposal.",
-            "a2a_artifacts": [
-                {"artifact_id": "artifact-a2a-review-only", "text": "proposal"}
-            ],
+            "a2a_artifacts": [{"artifact_id": "artifact-a2a-review-only", "text": "proposal"}],
             "a2a_history": [],
             "a2a_metadata": {
                 "xmuse_proposal": {
@@ -835,11 +830,11 @@ def _a2a_proposal_result() -> ProviderInvocationResult:
                             {
                                 "feature_id": "feature-a2a-review-only-dispatch",
                                 "prompt": (
-                                    "Allow dispatch after A2A review-trigger verdict "
-                                    "and approval."
+                                    "Allow dispatch after A2A review-trigger verdict and approval."
                                 ),
                                 "depends_on": [],
                                 "capabilities": ["code"],
+                                "gate_profiles": ["xmuse-core"],
                             }
                         ],
                     },

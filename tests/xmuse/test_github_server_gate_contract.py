@@ -11,8 +11,10 @@ from xmuse_core.platform.execution.github_ops import (
     CheckStatus,
     FakeGitHubServerSideTruthCollector,
     GitHubCliServerSideTruthClient,
+    GitHubMainCiEvidence,
     GitHubServerSideTruthEvidence,
     GitHubServerSideTruthSnapshot,
+    ReadOnlyGitHubMainCiTruthCollector,
     ReadOnlyGitHubServerSideTruthCollector,
     build_github_server_side_truth_from_snapshot,
     build_github_server_side_truth_gap,
@@ -25,10 +27,7 @@ CI_WORKFLOW = PROJECT_ROOT / ".github" / "workflows" / "xmuse-ci.yml"
 README = PROJECT_ROOT / "docs" / "xmuse" / "README.md"
 SERVER_GATE_DOC = PROJECT_ROOT / "docs" / "xmuse" / "github-server-side-gate.md"
 LIVE_EVIDENCE_DOC = (
-    PROJECT_ROOT
-    / "docs"
-    / "xmuse"
-    / "github-server-side-gate-live-evidence-2026-06-25.md"
+    PROJECT_ROOT / "docs" / "xmuse" / "github-server-side-gate-live-evidence-2026-06-25.md"
 )
 MERGE_CONTRACT_DOC = PROJECT_ROOT / "docs" / "xmuse" / "github-review-merge-contract.md"
 CODEOWNERS = PROJECT_ROOT / "CODEOWNERS"
@@ -39,6 +38,14 @@ REQUIRED_SERVER_CHECKS = {
     "real-runtime-integration-gate",
     "peer-chat-runtime-gate",
 }
+PR_HEAD_SHA = "head123"
+PR_HEAD_CHECK_NAMES = [
+    "quality-gates",
+    "contract-smoke-gates",
+    "real-runtime-integration-gate",
+    "peer-chat-runtime-gate",
+]
+PR_HEAD_CHECK_SHAS = [PR_HEAD_SHA] * len(REQUIRED_SERVER_CHECKS)
 
 
 def _branch_protection_snapshot(
@@ -89,6 +96,21 @@ class _FakeReadOnlyGitHubTruthClient:
         raise AssertionError("read-only collector must not mutate GitHub settings")
 
 
+class _FakeReadOnlyMainCiTruthClient:
+    def __init__(self, evidence: GitHubMainCiEvidence | None) -> None:
+        self.evidence = evidence
+        self.calls: list[tuple[str, str]] = []
+
+    def fetch_main_ci_truth(
+        self,
+        *,
+        repo: str,
+        merge_commit_sha: str,
+    ) -> GitHubMainCiEvidence | None:
+        self.calls.append((repo, merge_commit_sha))
+        return self.evidence
+
+
 class _FakeGhApiRunner:
     def __init__(self, responses: dict[str, object], *, fail_on: str | None = None) -> None:
         self.responses = responses
@@ -115,6 +137,30 @@ class _FakeGhApiRunner:
             stdout=json.dumps(self.responses[endpoint]),
             stderr="",
         )
+
+
+def _successful_check_run(
+    check_run_id: int,
+    name: str,
+    *,
+    head_sha: str = PR_HEAD_SHA,
+) -> dict[str, object]:
+    return {
+        "id": check_run_id,
+        "name": name,
+        "conclusion": "success",
+        "head_sha": head_sha,
+        "app": {"slug": "github-actions"},
+    }
+
+
+def _successful_required_check_runs() -> list[dict[str, object]]:
+    return [
+        _successful_check_run(111, "quality-gates"),
+        _successful_check_run(112, "contract-smoke-gates"),
+        _successful_check_run(113, "real-runtime-integration-gate"),
+        _successful_check_run(114, "peer-chat-runtime-gate"),
+    ]
 
 
 def _read(path: Path) -> str:
@@ -150,7 +196,7 @@ def test_branch_protection_doc_matches_workflow_job_names_and_ownership() -> Non
     assert "docs/xmuse/github-server-side-gate-live-evidence-2026-06-25.md" in readme
     assert "cf8c243c9c1b3843d9838748a9ebbb5e2c98c740" in live_evidence_doc
     assert "28175465079" in live_evidence_doc
-    assert "app_id\": 15368" in live_evidence_doc
+    assert 'app_id": 15368' in live_evidence_doc
     assert "Branch protection" in merge_doc
     assert ".github/" in codeowners
     assert "src/xmuse_core/integrations/" in codeowners
@@ -205,9 +251,12 @@ def test_local_contract_gap_does_not_allow_pr_merged_event() -> None:
 
 def test_branch_protection_snapshot_must_require_all_expected_checks() -> None:
     snapshot = GitHubServerSideTruthSnapshot(
+        head_sha=PR_HEAD_SHA,
         workflow_run_id=123,
         check_suite_id=456,
         check_run_ids=[111, 112, 113, 114],
+        check_run_names=PR_HEAD_CHECK_NAMES,
+        check_run_head_shas=PR_HEAD_CHECK_SHAS,
         expected_source_app="github-actions",
         branch_protection_snapshot=_branch_protection_snapshot({"quality-gates"}),
         review_event_id=789,
@@ -234,9 +283,12 @@ def test_branch_protection_snapshot_must_require_all_expected_checks() -> None:
 
 def test_fake_server_side_truth_collector_never_emits_merge_truth() -> None:
     collector = FakeGitHubServerSideTruthCollector(
+        head_sha=PR_HEAD_SHA,
         workflow_run_id=123,
         check_suite_id=456,
         check_run_ids=[111, 112, 113, 114],
+        check_run_names=PR_HEAD_CHECK_NAMES,
+        check_run_head_shas=PR_HEAD_CHECK_SHAS,
         branch_protection_snapshot=_branch_protection_snapshot(),
         review_event_id=789,
         reviewer_login="reviewer",
@@ -271,13 +323,39 @@ def test_server_side_merge_proof_requires_real_merge_truth_fields() -> None:
             pull_request_number=42,
             required_checks=sorted(REQUIRED_SERVER_CHECKS),
             proof_level="server_side_merge_proof",
+            head_sha=PR_HEAD_SHA,
             workflow_run_id=123,
             check_suite_id=456,
+            check_run_ids=[111, 112, 113, 114],
+            check_run_names=PR_HEAD_CHECK_NAMES,
+            check_run_head_shas=PR_HEAD_CHECK_SHAS,
             expected_source_app="github-actions",
             branch_protection_snapshot=_branch_protection_snapshot(),
             review_event_id=789,
             reviewer_login="reviewer",
             code_owner_review_verified=True,
+        )
+
+
+def test_server_side_merge_proof_requires_exact_head_truth() -> None:
+    with pytest.raises(ValidationError, match="exact_head_truth"):
+        GitHubServerSideTruthEvidence(
+            repo="iiyazu/Cross-Muse",
+            pull_request_number=42,
+            required_checks=sorted(REQUIRED_SERVER_CHECKS),
+            proof_level="server_side_merge_proof",
+            workflow_run_id=123,
+            check_suite_id=456,
+            check_run_ids=[111, 112, 113, 114],
+            check_run_names=PR_HEAD_CHECK_NAMES,
+            expected_source_app="github-actions",
+            branch_protection_snapshot=_branch_protection_snapshot(),
+            review_event_id=789,
+            reviewer_login="reviewer",
+            code_owner_review_verified=True,
+            merge_commit_sha="abc123",
+            merged_at="2026-06-10T15:00:00Z",
+            merge_event_id="merge-event-1",
         )
 
 
@@ -287,9 +365,12 @@ def test_server_side_merge_truth_allows_pr_merged_event() -> None:
         pull_request_number=42,
         required_checks=sorted(REQUIRED_SERVER_CHECKS),
         proof_level="server_side_merge_proof",
+        head_sha=PR_HEAD_SHA,
         workflow_run_id=123,
         check_suite_id=456,
         check_run_ids=[111, 112, 113, 114],
+        check_run_names=PR_HEAD_CHECK_NAMES,
+        check_run_head_shas=PR_HEAD_CHECK_SHAS,
         expected_source_app="github-actions",
         branch_protection_snapshot=_branch_protection_snapshot(),
         review_event_id=789,
@@ -384,9 +465,12 @@ def test_contract_proof_with_injected_merge_fields_cannot_emit_pr_merged() -> No
 
 def test_server_side_snapshot_normalizer_promotes_complete_read_only_evidence() -> None:
     snapshot = GitHubServerSideTruthSnapshot(
+        head_sha=PR_HEAD_SHA,
         workflow_run_id=123,
         check_suite_id=456,
         check_run_ids=[111, 112, 113, 114],
+        check_run_names=PR_HEAD_CHECK_NAMES,
+        check_run_head_shas=PR_HEAD_CHECK_SHAS,
         expected_source_app="github-actions",
         branch_protection_snapshot=_branch_protection_snapshot(),
         review_event_id=789,
@@ -413,9 +497,12 @@ def test_server_side_snapshot_normalizer_promotes_complete_read_only_evidence() 
 
 def test_server_side_snapshot_normalizer_keeps_incomplete_snapshot_as_gap() -> None:
     snapshot = GitHubServerSideTruthSnapshot(
+        head_sha="abc123",
         workflow_run_id=123,
         check_suite_id=456,
         check_run_ids=[111, 112, 113, 114],
+        check_run_names=PR_HEAD_CHECK_NAMES,
+        check_run_head_shas=["abc123"] * len(REQUIRED_SERVER_CHECKS),
         expected_source_app="github-actions",
         branch_protection_snapshot=_branch_protection_snapshot(),
         code_owner_review_verified=False,
@@ -441,12 +528,15 @@ def test_server_side_snapshot_normalizer_keeps_incomplete_snapshot_as_gap() -> N
 
 def test_server_side_snapshot_accepts_internal_review_when_github_review_not_required() -> None:
     snapshot = GitHubServerSideTruthSnapshot(
+        head_sha="abc123",
         workflow_run_id=123,
         check_suite_id=456,
         check_run_ids=[111, 112, 113, 114],
+        check_run_names=PR_HEAD_CHECK_NAMES,
+        check_run_head_shas=["abc123"] * len(REQUIRED_SERVER_CHECKS),
         expected_source_app="github-actions",
         branch_protection_snapshot=_branch_protection_snapshot(review_policy=None),
-        internal_review_artifact="docs/xmuse/opencode-in-long-runtime-evidence-closure.md",
+        internal_review_artifact="docs/xmuse/archive/2026-06-proof-closure-legacy/opencode-in-long-runtime-evidence-closure.md",
         internal_reviewer="opencode-in-review",
         internal_reviewed_head_sha="abc123",
         internal_review_verified=True,
@@ -471,9 +561,12 @@ def test_server_side_snapshot_accepts_internal_review_when_github_review_not_req
 
 def test_internal_review_does_not_replace_required_github_review() -> None:
     snapshot = GitHubServerSideTruthSnapshot(
+        head_sha="abc123",
         workflow_run_id=123,
         check_suite_id=456,
         check_run_ids=[111, 112, 113, 114],
+        check_run_names=PR_HEAD_CHECK_NAMES,
+        check_run_head_shas=["abc123"] * len(REQUIRED_SERVER_CHECKS),
         expected_source_app="github-actions",
         branch_protection_snapshot=_branch_protection_snapshot(
             review_policy={
@@ -481,7 +574,7 @@ def test_internal_review_does_not_replace_required_github_review() -> None:
                 "require_code_owner_reviews": True,
             }
         ),
-        internal_review_artifact="docs/xmuse/opencode-in-long-runtime-evidence-closure.md",
+        internal_review_artifact="docs/xmuse/archive/2026-06-proof-closure-legacy/opencode-in-long-runtime-evidence-closure.md",
         internal_reviewer="opencode-in-review",
         internal_reviewed_head_sha="abc123",
         internal_review_verified=True,
@@ -508,8 +601,11 @@ def test_internal_review_does_not_replace_required_github_review() -> None:
 
 def test_server_side_snapshot_normalizer_treats_empty_rulesets_as_missing_enforcement() -> None:
     snapshot = GitHubServerSideTruthSnapshot(
+        head_sha="abc123",
         workflow_run_id=123,
         check_run_ids=[111, 112, 113, 114],
+        check_run_names=PR_HEAD_CHECK_NAMES,
+        check_run_head_shas=["abc123"] * len(REQUIRED_SERVER_CHECKS),
         expected_source_app="github-actions",
         ruleset_snapshot={"rulesets": []},
         review_event_id=789,
@@ -536,9 +632,12 @@ def test_server_side_snapshot_normalizer_treats_empty_rulesets_as_missing_enforc
 
 def test_read_only_collector_normalizes_client_snapshot_without_mutation() -> None:
     snapshot = GitHubServerSideTruthSnapshot(
+        head_sha=PR_HEAD_SHA,
         workflow_run_id=123,
         check_suite_id=456,
         check_run_ids=[111, 112, 113, 114],
+        check_run_names=PR_HEAD_CHECK_NAMES,
+        check_run_head_shas=PR_HEAD_CHECK_SHAS,
         expected_source_app="github-actions",
         branch_protection_snapshot=_branch_protection_snapshot(),
         review_event_id=789,
@@ -557,9 +656,7 @@ def test_read_only_collector_normalizes_client_snapshot_without_mutation() -> No
         required_checks=sorted(REQUIRED_SERVER_CHECKS),
     )
 
-    assert client.calls == [
-        ("iiyazu/Cross-Muse", 42, tuple(sorted(REQUIRED_SERVER_CHECKS)))
-    ]
+    assert client.calls == [("iiyazu/Cross-Muse", 42, tuple(sorted(REQUIRED_SERVER_CHECKS)))]
     assert client.mutation_attempted is False
     assert evidence.proof_level == "server_side_merge_proof"
     assert can_emit_pr_merged(evidence) is True
@@ -575,12 +672,25 @@ def test_read_only_collector_records_manual_gap_when_snapshot_unavailable() -> N
         required_checks=sorted(REQUIRED_SERVER_CHECKS),
     )
 
-    assert client.calls == [
-        ("iiyazu/Cross-Muse", 42, tuple(sorted(REQUIRED_SERVER_CHECKS)))
-    ]
+    assert client.calls == [("iiyazu/Cross-Muse", 42, tuple(sorted(REQUIRED_SERVER_CHECKS)))]
     assert evidence.proof_level == "manual_gap"
     assert evidence.gap_reason == "read-only GitHub server-side truth snapshot unavailable"
     assert can_emit_pr_merged(evidence) is False
+
+
+def test_read_only_main_ci_collector_records_missing_when_snapshot_unavailable() -> None:
+    client = _FakeReadOnlyMainCiTruthClient(evidence=None)
+    collector = ReadOnlyGitHubMainCiTruthCollector(client=client)
+
+    evidence = collector.collect_main_ci(
+        repo="iiyazu/Cross-Muse",
+        merge_commit_sha="merge123",
+    )
+
+    assert client.calls == [("iiyazu/Cross-Muse", "merge123")]
+    assert evidence.head_sha == "merge123"
+    assert evidence.status == "missing"
+    assert evidence.gap_reason == "read-only GitHub main CI truth unavailable"
 
 
 def test_read_only_collector_keeps_partial_client_snapshot_as_gap() -> None:
@@ -636,32 +746,7 @@ def test_gh_cli_truth_client_fetches_read_only_server_snapshot() -> None:
                 },
             },
             "repos/iiyazu/Cross-Muse/commits/head123/check-runs": {
-                "check_runs": [
-                    {
-                        "id": 111,
-                        "name": "quality-gates",
-                        "conclusion": "success",
-                        "app": {"slug": "github-actions"},
-                    },
-                    {
-                        "id": 112,
-                        "name": "contract-smoke-gates",
-                        "conclusion": "success",
-                        "app": {"slug": "github-actions"},
-                    },
-                    {
-                        "id": 113,
-                        "name": "real-runtime-integration-gate",
-                        "conclusion": "success",
-                        "app": {"slug": "github-actions"},
-                    },
-                    {
-                        "id": 114,
-                        "name": "peer-chat-runtime-gate",
-                        "conclusion": "success",
-                        "app": {"slug": "github-actions"},
-                    },
-                ]
+                "check_runs": _successful_required_check_runs()
             },
         }
     )
@@ -674,8 +759,11 @@ def test_gh_cli_truth_client_fetches_read_only_server_snapshot() -> None:
     )
 
     assert snapshot == GitHubServerSideTruthSnapshot(
+        head_sha="head123",
         workflow_run_id=111,
         check_run_ids=[111, 112, 113, 114],
+        check_run_names=PR_HEAD_CHECK_NAMES,
+        check_run_head_shas=["head123", "head123", "head123", "head123"],
         expected_source_app="github-actions",
         branch_protection_snapshot=runner.responses[
             "repos/iiyazu/Cross-Muse/branches/main/protection"
@@ -688,6 +776,66 @@ def test_gh_cli_truth_client_fetches_read_only_server_snapshot() -> None:
         merge_event_id="PR_node_42",
     )
     assert all(command[:2] == ["gh", "api"] for command in runner.commands)
+    assert not any(
+        token in command
+        for command in runner.commands
+        for token in ("--method", "PATCH", "PUT", "DELETE", "POST")
+    )
+
+
+def test_gh_cli_truth_client_fetches_post_merge_main_ci_truth() -> None:
+    endpoint = (
+        "repos/iiyazu/Cross-Muse/actions/runs?"
+        "branch=main&head_sha=merge123&event=push&per_page=20"
+    )
+    runner = _FakeGhApiRunner(
+        {
+            endpoint: {
+                "workflow_runs": [
+                    {
+                        "id": 9001,
+                        "name": "other workflow",
+                        "head_sha": "merge123",
+                        "head_branch": "main",
+                        "status": "completed",
+                        "conclusion": "success",
+                    },
+                    {
+                        "id": 9002,
+                        "name": "xmuse CI",
+                        "head_sha": "merge123",
+                        "head_branch": "main",
+                        "status": "completed",
+                        "conclusion": "success",
+                        "html_url": (
+                            "https://github.com/iiyazu/Cross-Muse/actions/runs/9002"
+                        ),
+                        "created_at": "2026-06-29T05:47:21Z",
+                        "updated_at": "2026-06-29T05:48:00Z",
+                    },
+                ]
+            }
+        }
+    )
+    client = GitHubCliServerSideTruthClient(runner=runner)
+
+    evidence = client.fetch_main_ci_truth(
+        repo="iiyazu/Cross-Muse",
+        merge_commit_sha="merge123",
+    )
+
+    assert evidence == GitHubMainCiEvidence(
+        workflow_run_id=9002,
+        workflow_name="xmuse CI",
+        head_sha="merge123",
+        head_branch="main",
+        status="completed",
+        conclusion="success",
+        url="https://github.com/iiyazu/Cross-Muse/actions/runs/9002",
+        created_at="2026-06-29T05:47:21Z",
+        updated_at="2026-06-29T05:48:00Z",
+    )
+    assert runner.commands == [["gh", "api", endpoint]]
     assert not any(
         token in command
         for command in runner.commands
@@ -725,37 +873,12 @@ def test_gh_cli_truth_client_uses_ruleset_snapshot_when_branch_protection_missin
                         {
                             "type": "pull_request",
                             "parameters": {"require_code_owner_review": True},
-                        }
+                        },
                     ],
                 }
             ],
             "repos/iiyazu/Cross-Muse/commits/head123/check-runs": {
-                "check_runs": [
-                    {
-                        "id": 111,
-                        "name": "quality-gates",
-                        "conclusion": "success",
-                        "app": {"slug": "github-actions"},
-                    },
-                    {
-                        "id": 112,
-                        "name": "contract-smoke-gates",
-                        "conclusion": "success",
-                        "app": {"slug": "github-actions"},
-                    },
-                    {
-                        "id": 113,
-                        "name": "real-runtime-integration-gate",
-                        "conclusion": "success",
-                        "app": {"slug": "github-actions"},
-                    },
-                    {
-                        "id": 114,
-                        "name": "peer-chat-runtime-gate",
-                        "conclusion": "success",
-                        "app": {"slug": "github-actions"},
-                    },
-                ]
+                "check_runs": _successful_required_check_runs()
             },
         },
         fail_on="repos/iiyazu/Cross-Muse/branches/main/protection",
@@ -809,37 +932,12 @@ def test_gh_cli_truth_client_does_not_use_ruleset_for_different_branch() -> None
                         {
                             "type": "pull_request",
                             "parameters": {"require_code_owner_review": True},
-                        }
+                        },
                     ],
                 }
             ],
             "repos/iiyazu/Cross-Muse/commits/head123/check-runs": {
-                "check_runs": [
-                    {
-                        "id": 111,
-                        "name": "quality-gates",
-                        "conclusion": "success",
-                        "app": {"slug": "github-actions"},
-                    },
-                    {
-                        "id": 112,
-                        "name": "contract-smoke-gates",
-                        "conclusion": "success",
-                        "app": {"slug": "github-actions"},
-                    },
-                    {
-                        "id": 113,
-                        "name": "real-runtime-integration-gate",
-                        "conclusion": "success",
-                        "app": {"slug": "github-actions"},
-                    },
-                    {
-                        "id": 114,
-                        "name": "peer-chat-runtime-gate",
-                        "conclusion": "success",
-                        "app": {"slug": "github-actions"},
-                    },
-                ]
+                "check_runs": _successful_required_check_runs()
             },
         },
         fail_on="repos/iiyazu/Cross-Muse/branches/main/protection",
@@ -893,37 +991,12 @@ def test_gh_cli_truth_client_does_not_use_ruleset_excluding_base_branch() -> Non
                         {
                             "type": "pull_request",
                             "parameters": {"require_code_owner_review": True},
-                        }
+                        },
                     ],
                 }
             ],
             "repos/iiyazu/Cross-Muse/commits/head123/check-runs": {
-                "check_runs": [
-                    {
-                        "id": 111,
-                        "name": "quality-gates",
-                        "conclusion": "success",
-                        "app": {"slug": "github-actions"},
-                    },
-                    {
-                        "id": 112,
-                        "name": "contract-smoke-gates",
-                        "conclusion": "success",
-                        "app": {"slug": "github-actions"},
-                    },
-                    {
-                        "id": 113,
-                        "name": "real-runtime-integration-gate",
-                        "conclusion": "success",
-                        "app": {"slug": "github-actions"},
-                    },
-                    {
-                        "id": 114,
-                        "name": "peer-chat-runtime-gate",
-                        "conclusion": "success",
-                        "app": {"slug": "github-actions"},
-                    },
-                ]
+                "check_runs": _successful_required_check_runs()
             },
         },
         fail_on="repos/iiyazu/Cross-Muse/branches/main/protection",
@@ -974,37 +1047,12 @@ def test_gh_cli_truth_client_accepts_ruleset_branch_pattern_for_base_branch() ->
                         {
                             "type": "pull_request",
                             "parameters": {"require_code_owner_review": True},
-                        }
+                        },
                     ],
                 }
             ],
             "repos/iiyazu/Cross-Muse/commits/head123/check-runs": {
-                "check_runs": [
-                    {
-                        "id": 111,
-                        "name": "quality-gates",
-                        "conclusion": "success",
-                        "app": {"slug": "github-actions"},
-                    },
-                    {
-                        "id": 112,
-                        "name": "contract-smoke-gates",
-                        "conclusion": "success",
-                        "app": {"slug": "github-actions"},
-                    },
-                    {
-                        "id": 113,
-                        "name": "real-runtime-integration-gate",
-                        "conclusion": "success",
-                        "app": {"slug": "github-actions"},
-                    },
-                    {
-                        "id": 114,
-                        "name": "peer-chat-runtime-gate",
-                        "conclusion": "success",
-                        "app": {"slug": "github-actions"},
-                    },
-                ]
+                "check_runs": _successful_required_check_runs()
             },
         },
         fail_on="repos/iiyazu/Cross-Muse/branches/main/protection",
@@ -1066,14 +1114,7 @@ def test_gh_cli_truth_client_partial_required_checks_remain_manual_gap() -> None
                 },
             },
             "repos/iiyazu/Cross-Muse/commits/head123/check-runs": {
-                "check_runs": [
-                    {
-                        "id": 111,
-                        "name": "quality-gates",
-                        "conclusion": "success",
-                        "app": {"slug": "github-actions"},
-                    }
-                ]
+                "check_runs": [_successful_check_run(111, "quality-gates")]
             },
         }
     )
@@ -1090,4 +1131,200 @@ def test_gh_cli_truth_client_partial_required_checks_remain_manual_gap() -> None
     assert evidence.has_status_check_truth is False
     assert evidence.gap_reason is not None
     assert "status_check_truth" in evidence.gap_reason
+    assert can_emit_pr_merged(evidence) is False
+
+
+def test_gh_cli_truth_client_non_head_check_runs_remain_manual_gap() -> None:
+    runner = _FakeGhApiRunner(
+        {
+            "repos/iiyazu/Cross-Muse/pulls/42": {
+                "node_id": "PR_node_42",
+                "merged": True,
+                "merged_at": "2026-06-10T15:00:00Z",
+                "merge_commit_sha": "abc123",
+                "head": {"sha": "head123"},
+            },
+            "repos/iiyazu/Cross-Muse/pulls/42/reviews": [
+                {"id": 789, "user": {"login": "reviewer"}, "state": "APPROVED"}
+            ],
+            "repos/iiyazu/Cross-Muse/branches/main/protection": {
+                "required_pull_request_reviews": {"require_code_owner_reviews": True},
+                "required_status_checks": {
+                    "checks": [
+                        {"context": "quality-gates"},
+                        {"context": "contract-smoke-gates"},
+                        {"context": "real-runtime-integration-gate"},
+                        {"context": "peer-chat-runtime-gate"},
+                    ]
+                },
+            },
+            "repos/iiyazu/Cross-Muse/commits/head123/check-runs": {
+                "check_runs": [
+                    {
+                        "id": 111,
+                        "name": "quality-gates",
+                        "conclusion": "success",
+                        "head_sha": "other-head",
+                        "app": {"slug": "github-actions"},
+                    },
+                    {
+                        "id": 112,
+                        "name": "contract-smoke-gates",
+                        "conclusion": "success",
+                        "head_sha": "other-head",
+                        "app": {"slug": "github-actions"},
+                    },
+                    {
+                        "id": 113,
+                        "name": "real-runtime-integration-gate",
+                        "conclusion": "success",
+                        "head_sha": "other-head",
+                        "app": {"slug": "github-actions"},
+                    },
+                    {
+                        "id": 114,
+                        "name": "peer-chat-runtime-gate",
+                        "conclusion": "success",
+                        "head_sha": "other-head",
+                        "app": {"slug": "github-actions"},
+                    },
+                ]
+            },
+        }
+    )
+    client = GitHubCliServerSideTruthClient(runner=runner)
+    collector = ReadOnlyGitHubServerSideTruthCollector(client=client)
+
+    evidence = collector.collect(
+        repo="iiyazu/Cross-Muse",
+        pull_request_number=42,
+        required_checks=sorted(REQUIRED_SERVER_CHECKS),
+    )
+
+    assert evidence.proof_level == "manual_gap"
+    assert evidence.head_sha == "head123"
+    assert evidence.has_status_check_truth is False
+    assert evidence.has_exact_head_truth is False
+    assert evidence.gap_reason is not None
+    assert "status_check_truth" in evidence.gap_reason
+    assert "exact_head_truth" in evidence.gap_reason
+    assert can_emit_pr_merged(evidence) is False
+
+
+def test_gh_cli_truth_client_missing_check_run_head_sha_remains_manual_gap() -> None:
+    runner = _FakeGhApiRunner(
+        {
+            "repos/iiyazu/Cross-Muse/pulls/42": {
+                "node_id": "PR_node_42",
+                "merged": True,
+                "merged_at": "2026-06-10T15:00:00Z",
+                "merge_commit_sha": "abc123",
+                "head": {"sha": "head123"},
+            },
+            "repos/iiyazu/Cross-Muse/pulls/42/reviews": [
+                {"id": 789, "user": {"login": "reviewer"}, "state": "APPROVED"}
+            ],
+            "repos/iiyazu/Cross-Muse/branches/main/protection": {
+                "required_pull_request_reviews": {"require_code_owner_reviews": True},
+                "required_status_checks": {
+                    "checks": [
+                        {"context": "quality-gates"},
+                        {"context": "contract-smoke-gates"},
+                    ]
+                },
+            },
+            "repos/iiyazu/Cross-Muse/commits/head123/check-runs": {
+                "check_runs": [
+                    {
+                        "id": 111,
+                        "name": "quality-gates",
+                        "conclusion": "success",
+                        "app": {"slug": "github-actions"},
+                    },
+                    {
+                        "id": 112,
+                        "name": "contract-smoke-gates",
+                        "conclusion": "success",
+                        "app": {"slug": "github-actions"},
+                    },
+                ]
+            },
+        }
+    )
+    client = GitHubCliServerSideTruthClient(runner=runner)
+    collector = ReadOnlyGitHubServerSideTruthCollector(client=client)
+
+    evidence = collector.collect(
+        repo="iiyazu/Cross-Muse",
+        pull_request_number=42,
+        required_checks=["quality-gates", "contract-smoke-gates"],
+    )
+
+    assert evidence.proof_level == "manual_gap"
+    assert evidence.has_status_check_truth is False
+    assert evidence.has_exact_head_truth is False
+    assert evidence.gap_reason is not None
+    assert "status_check_truth" in evidence.gap_reason
+    assert "exact_head_truth" in evidence.gap_reason
+    assert can_emit_pr_merged(evidence) is False
+
+
+def test_gh_cli_truth_client_duplicate_check_names_do_not_satisfy_required_checks() -> None:
+    runner = _FakeGhApiRunner(
+        {
+            "repos/iiyazu/Cross-Muse/pulls/42": {
+                "node_id": "PR_node_42",
+                "merged": True,
+                "merged_at": "2026-06-10T15:00:00Z",
+                "merge_commit_sha": "abc123",
+                "head": {"sha": "head123"},
+            },
+            "repos/iiyazu/Cross-Muse/pulls/42/reviews": [
+                {"id": 789, "user": {"login": "reviewer"}, "state": "APPROVED"}
+            ],
+            "repos/iiyazu/Cross-Muse/branches/main/protection": {
+                "required_pull_request_reviews": {"require_code_owner_reviews": True},
+                "required_status_checks": {
+                    "checks": [
+                        {"context": "quality-gates"},
+                        {"context": "contract-smoke-gates"},
+                    ]
+                },
+            },
+            "repos/iiyazu/Cross-Muse/commits/head123/check-runs": {
+                "check_runs": [
+                    {
+                        "id": 111,
+                        "name": "quality-gates",
+                        "conclusion": "success",
+                        "head_sha": "head123",
+                        "app": {"slug": "github-actions"},
+                    },
+                    {
+                        "id": 112,
+                        "name": "quality-gates",
+                        "conclusion": "success",
+                        "head_sha": "head123",
+                        "app": {"slug": "github-actions"},
+                    },
+                ]
+            },
+        }
+    )
+    client = GitHubCliServerSideTruthClient(runner=runner)
+    collector = ReadOnlyGitHubServerSideTruthCollector(client=client)
+
+    evidence = collector.collect(
+        repo="iiyazu/Cross-Muse",
+        pull_request_number=42,
+        required_checks=["quality-gates", "contract-smoke-gates"],
+    )
+
+    assert evidence.proof_level == "manual_gap"
+    assert evidence.check_run_names == ["quality-gates", "quality-gates"]
+    assert evidence.has_status_check_truth is False
+    assert evidence.has_exact_head_truth is False
+    assert evidence.gap_reason is not None
+    assert "status_check_truth" in evidence.gap_reason
+    assert "exact_head_truth" in evidence.gap_reason
     assert can_emit_pr_merged(evidence) is False

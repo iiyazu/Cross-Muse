@@ -33,6 +33,134 @@ def test_codex_persistent_formats_review_prompt_with_context(tmp_path: Path) -> 
     assert "Gate report passed." in prompt
     assert "Review lane-1" in prompt
     assert "Verdict: merge" in prompt
+    assert "XMUSE_REVIEW_VERDICT_JSON" in prompt
+    assert "artifacts.review_verdict" in prompt
+    assert "fallback transport" in prompt
+
+
+def test_codex_persistent_review_success_includes_structured_verdict_artifact(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    def fake_run_codex_exec(config, full_prompt):
+        return subprocess.CompletedProcess(
+            args=["codex", "exec"],
+            returncode=0,
+            stdout=(
+                "Findings: none\n"
+                "Verdict: merge\n"
+                "XMUSE_REVIEW_VERDICT_JSON: "
+                '{"decision":"merge","summary":"Gate and worker evidence passed."}\n'
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(codex_persistent, "_run_codex_exec", fake_run_codex_exec)
+    config = codex_persistent.RunnerConfig(
+        model="gpt-5.4",
+        mcp_port=8123,
+        worktree=tmp_path,
+        role="review",
+        timeout_s=123,
+    )
+
+    codex_persistent._run_codex_turn(
+        config,
+        {"type": "review", "prompt": "Review this", "context": "ctx"},
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["type"] == "result"
+    assert payload["status"] == "success"
+    assert payload["artifacts"]["message_type"] == "review"
+    assert payload["artifacts"]["review_verdict"] == {
+        "decision": "merge",
+        "summary": "Gate and worker evidence passed.",
+    }
+
+
+def test_codex_persistent_review_freeform_verdict_is_not_structured_artifact(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    def fake_run_codex_exec(config, full_prompt):
+        return subprocess.CompletedProcess(
+            args=["codex", "exec"],
+            returncode=0,
+            stdout="Findings: none\nVerdict: merge\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(codex_persistent, "_run_codex_exec", fake_run_codex_exec)
+    config = codex_persistent.RunnerConfig(
+        model="gpt-5.4",
+        mcp_port=8123,
+        worktree=tmp_path,
+        role="review",
+        timeout_s=123,
+    )
+
+    codex_persistent._run_codex_turn(
+        config,
+        {"type": "review", "prompt": "Review this", "context": "ctx"},
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["type"] == "result"
+    assert payload["status"] == "success"
+    assert "review_verdict" not in payload["artifacts"]
+
+
+@pytest.mark.parametrize(
+    "stdout",
+    [
+        (
+            "Findings: none\n"
+            "XMUSE_REVIEW_VERDICT_JSON: "
+            '{"decision":"merge","summary":"Gate passed."}\n'
+            "Verdict: rework\n"
+        ),
+        (
+            "Findings: none\n"
+            "XMUSE_REVIEW_VERDICT_JSON: "
+            '{"decision":"merge","summary":123}\n'
+        ),
+    ],
+)
+def test_codex_persistent_review_structured_verdict_requires_strict_final_line(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+    stdout: str,
+) -> None:
+    def fake_run_codex_exec(config, full_prompt):
+        return subprocess.CompletedProcess(
+            args=["codex", "exec"],
+            returncode=0,
+            stdout=stdout,
+            stderr="",
+        )
+
+    monkeypatch.setattr(codex_persistent, "_run_codex_exec", fake_run_codex_exec)
+    config = codex_persistent.RunnerConfig(
+        model="gpt-5.4",
+        mcp_port=8123,
+        worktree=tmp_path,
+        role="review",
+        timeout_s=123,
+    )
+
+    codex_persistent._run_codex_turn(
+        config,
+        {"type": "review", "prompt": "Review this", "context": "ctx"},
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["type"] == "result"
+    assert payload["status"] == "success"
+    assert "review_verdict" not in payload["artifacts"]
 
 
 def test_codex_persistent_formats_execute_prompt_with_child_result_contract(

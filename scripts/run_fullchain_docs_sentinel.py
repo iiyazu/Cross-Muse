@@ -25,6 +25,7 @@ OPENCODE_MODEL = "opencode-go/deepseek-v4-flash"
 CODEX_REVIEW_MODEL = "gpt-5.4"
 DEFAULT_PEER_CHAT_POST_WRITEBACK_GRACE_S = 8.0
 DEFAULT_PEER_CHAT_RESPONSE_WAIT_S = 900.0
+SUPPORTED_EXPECTED_STATUSES = frozenset({"awaiting_final_action", "gate_failed"})
 
 
 def main() -> int:
@@ -40,7 +41,8 @@ def main() -> int:
     chat_port = args.chat_port or _free_port()
     mcp_port = args.mcp_port or _free_port()
     feature_id = args.feature_id
-    note_path = f"docs/xmuse/{feature_id}.md"
+    lane_specs = _lane_specs_from_args(args)
+    primary_spec = lane_specs[0]
     provider_readiness = _provider_readiness(
         review_provider_policy=args.review_provider,
         ray_god_mcp=args.ray_god_mcp,
@@ -51,7 +53,10 @@ def main() -> int:
         chat_port=chat_port,
         mcp_port=mcp_port,
         feature_id=feature_id,
-        note_path=note_path,
+        lane_kind=primary_spec["lane_kind"],
+        target_path=primary_spec["target_path"],
+        expected_content=primary_spec["expected_content"],
+        lane_specs=lane_specs,
         repo_head_sha=repo_head_sha,
         peer_chat_post_writeback_grace_s=args.peer_chat_post_writeback_grace_s,
         peer_chat_response_wait_s=args.peer_chat_response_wait_s,
@@ -64,6 +69,8 @@ def main() -> int:
         review_provider_fallback_reason=provider_readiness[
             "review_provider_selection"
         ].get("fallback_reason"),
+        peer_chat_memoryos_url=args.peer_chat_memoryos_url,
+        peer_chat_memoryos_kind=args.peer_chat_memoryos_kind,
     )
     _write_json(artifacts / "commands.json", commands)
     _write_json(artifacts / "provider_readiness.json", provider_readiness)
@@ -91,13 +98,16 @@ def main() -> int:
                 peer_chat_post_writeback_grace_s=args.peer_chat_post_writeback_grace_s,
                 peer_god_backend=args.peer_god_backend,
                 ray_god_mcp=args.ray_god_mcp,
+                peer_chat_memoryos_url=args.peer_chat_memoryos_url,
+                peer_chat_memoryos_kind=args.peer_chat_memoryos_kind,
             )
         )
 
+        lane_label = "multilane" if len(lane_specs) > 1 else primary_spec["lane_kind"]
         created = _post_json(
             f"http://127.0.0.1:{chat_port}/api/chat/conversations",
             {
-                "title": f"Runtime docs sentinel {feature_id}",
+                "title": f"Runtime {lane_label} sentinel {feature_id}",
                 "initial_participants": [
                     {
                         "role": "architect",
@@ -124,7 +134,7 @@ def main() -> int:
 
         demand = _sentinel_demand(
             feature_id=feature_id,
-            note_path=note_path,
+            lane_specs=lane_specs,
             provider_readiness=provider_readiness,
         )
         message = _post_json(
@@ -160,24 +170,26 @@ def main() -> int:
             {
                 "approved_by": ["operator-runtime-driver"],
                 "approval_mode": "runtime_loop_manual_approval_no_auto_merge",
-                "goal_summary": f"Approve docs-only runtime sentinel {feature_id}",
+                "goal_summary": f"Approve runtime sentinel {feature_id}",
             },
         )
         _write_json(artifacts / "approval_response.json", approval)
 
-        lane = _wait_for_lane(
-            run_root / "feature_lanes.json",
-            feature_id=feature_id,
-            timeout_s=args.lane_timeout_s,
-        )
-        snapshot = _build_snapshot(
+        lanes = [
+            _wait_for_lane(
+                run_root / "feature_lanes.json",
+                feature_id=spec["feature_id"],
+                timeout_s=args.lane_timeout_s,
+            )
+            for spec in lane_specs
+        ]
+        snapshot = _build_run_snapshot(
             run_root=run_root,
             conversation_id=conversation_id,
             feature_id=feature_id,
-            expected_note_path=note_path,
-            expected_note_content=_expected_note_content(feature_id),
+            lane_specs=lane_specs,
             proposal=proposal,
-            lane=lane,
+            lanes=lanes,
             provider_readiness=provider_readiness,
         )
         success_checks = _success_checks(snapshot)
@@ -209,11 +221,51 @@ def main() -> int:
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run a real docs-only xmuse fullchain sentinel."
+        description="Run a real xmuse fullchain sentinel."
     )
     parser.add_argument("--run-root", type=Path, required=True)
     parser.add_argument("--execution-worktree", type=Path, required=True)
     parser.add_argument("--feature-id", required=True)
+    parser.add_argument(
+        "--lane-kind",
+        choices=["docs", "code"],
+        default="docs",
+        help="sentinel lane kind; docs preserves the historical default",
+    )
+    parser.add_argument(
+        "--target-path",
+        default=None,
+        help=(
+            "target path in the isolated execution worktree; optional for "
+            "docs mode, required for code mode"
+        ),
+    )
+    parser.add_argument(
+        "--expected-content",
+        default=None,
+        help=(
+            "exact expected file content without trailing newline; optional "
+            "for docs mode, required for code mode"
+        ),
+    )
+    parser.add_argument(
+        "--lane-spec-json",
+        default=None,
+        help=(
+            "optional JSON array of lane specs; each item requires feature_id, "
+            "lane_kind, target_path, and expected_content; expected_status "
+            "defaults to awaiting_final_action"
+        ),
+    )
+    parser.add_argument(
+        "--expected-status",
+        choices=sorted(SUPPORTED_EXPECTED_STATUSES),
+        default="awaiting_final_action",
+        help=(
+            "expected terminal lane status for the single-lane CLI; "
+            "multi-lane runs use each JSON lane spec's expected_status"
+        ),
+    )
     parser.add_argument("--chat-port", type=int, default=None)
     parser.add_argument("--mcp-port", type=int, default=None)
     parser.add_argument("--proposal-timeout-s", type=float, default=900.0)
@@ -265,7 +317,142 @@ def _parse_args() -> argparse.Namespace:
             "opencode_unavailable fallback to Codex"
         ),
     )
+    parser.add_argument(
+        "--peer-chat-memoryos-url",
+        default=os.environ.get("XMUSE_PEER_CHAT_MEMORYOS_URL"),
+        help=(
+            "optional MemoryOS sidecar REST base URL passed to the platform "
+            "runner for integrated A/B/C replay"
+        ),
+    )
+    parser.add_argument(
+        "--peer-chat-memoryos-kind",
+        choices=["generic", "memoryos-lite"],
+        default=os.environ.get("XMUSE_PEER_CHAT_MEMORYOS_KIND", "generic"),
+        help=(
+            "MemoryOS sidecar REST contract for --peer-chat-memoryos-url; "
+            "generic uses /memory/*, memoryos-lite uses /sessions/*"
+        ),
+    )
     return parser.parse_args()
+
+
+def _lane_specs_from_args(args: argparse.Namespace) -> list[dict[str, str]]:
+    raw_specs = getattr(args, "lane_spec_json", None)
+    if raw_specs is None:
+        target = _target_spec(
+            feature_id=args.feature_id,
+            lane_kind=args.lane_kind,
+            target_path=args.target_path,
+            expected_content=args.expected_content,
+        )
+        return [
+            {
+                "feature_id": args.feature_id,
+                "lane_kind": args.lane_kind,
+                "target_path": target["path"],
+                "expected_content": target["expected_content"],
+                "expected_status": _expected_status_from_value(
+                    getattr(args, "expected_status", "awaiting_final_action"),
+                    label=args.feature_id,
+                ),
+            }
+        ]
+    try:
+        parsed = json.loads(raw_specs)
+    except json.JSONDecodeError as exc:
+        raise ValueError("--lane-spec-json must be valid JSON") from exc
+    if not isinstance(parsed, list) or not parsed:
+        raise ValueError("--lane-spec-json must be a non-empty JSON array")
+    specs: list[dict[str, str]] = []
+    seen_feature_ids: set[str] = set()
+    seen_target_paths: set[str] = set()
+    for index, item in enumerate(parsed):
+        if not isinstance(item, dict):
+            raise ValueError(f"lane spec at index {index} must be an object")
+        feature_id = item.get("feature_id")
+        lane_kind = item.get("lane_kind")
+        if not isinstance(feature_id, str) or not feature_id.strip():
+            raise ValueError(f"lane spec at index {index} requires feature_id")
+        if not isinstance(lane_kind, str) or not lane_kind.strip():
+            raise ValueError(f"lane spec {feature_id} requires lane_kind")
+        target = _target_spec(
+            feature_id=feature_id,
+            lane_kind=lane_kind,
+            target_path=item.get("target_path")
+            if isinstance(item.get("target_path"), str)
+            else None,
+            expected_content=item.get("expected_content")
+            if isinstance(item.get("expected_content"), str)
+            else None,
+        )
+        if feature_id in seen_feature_ids:
+            raise ValueError(f"duplicate lane feature_id: {feature_id}")
+        if target["path"] in seen_target_paths:
+            raise ValueError(f"duplicate lane target_path: {target['path']}")
+        expected_status = _expected_status_from_value(
+            item.get("expected_status", "awaiting_final_action"),
+            label=feature_id,
+        )
+        seen_feature_ids.add(feature_id)
+        seen_target_paths.add(target["path"])
+        specs.append(
+            {
+                "feature_id": feature_id,
+                "lane_kind": lane_kind,
+                "target_path": target["path"],
+                "expected_content": target["expected_content"],
+                "expected_status": expected_status,
+            }
+        )
+    return specs
+
+
+def _expected_status_from_value(value: object, *, label: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"lane spec {label} expected_status must be a non-empty string")
+    expected_status = value.strip()
+    if expected_status not in SUPPORTED_EXPECTED_STATUSES:
+        supported = ", ".join(sorted(SUPPORTED_EXPECTED_STATUSES))
+        raise ValueError(
+            f"lane spec {label} unsupported expected_status {expected_status!r}; "
+            f"supported: {supported}"
+        )
+    return expected_status
+
+
+def _target_spec(
+    *,
+    feature_id: str,
+    lane_kind: str,
+    target_path: str | None,
+    expected_content: str | None,
+) -> dict[str, str]:
+    if lane_kind == "docs":
+        return {
+            "path": _clean_target_path(target_path or f"docs/xmuse/{feature_id}.md"),
+            "expected_content": expected_content or _expected_note_content(feature_id),
+        }
+    if lane_kind == "code":
+        if not target_path or not target_path.strip():
+            raise ValueError("--target-path is required for --lane-kind code")
+        if expected_content is None or not expected_content.strip():
+            raise ValueError("--expected-content is required for --lane-kind code")
+        return {
+            "path": _clean_target_path(target_path),
+            "expected_content": expected_content,
+        }
+    raise ValueError(f"unsupported lane kind: {lane_kind}")
+
+
+def _clean_target_path(path: str) -> str:
+    clean = path.strip()
+    if not clean:
+        raise ValueError("target path must be non-empty")
+    target = Path(clean)
+    if target.is_absolute() or ".." in target.parts:
+        raise ValueError("target path must be relative and stay inside the worktree")
+    return clean
 
 
 def _commands_payload(
@@ -275,7 +462,10 @@ def _commands_payload(
     chat_port: int,
     mcp_port: int,
     feature_id: str,
-    note_path: str,
+    lane_kind: str,
+    target_path: str,
+    expected_content: str,
+    lane_specs: list[dict[str, str]],
     repo_head_sha: str,
     peer_chat_response_wait_s: float,
     peer_chat_post_writeback_grace_s: float,
@@ -284,6 +474,8 @@ def _commands_payload(
     review_provider_policy: str,
     selected_review_provider: str,
     review_provider_fallback_reason: str | None,
+    peer_chat_memoryos_url: str | None,
+    peer_chat_memoryos_kind: str,
 ) -> dict[str, Any]:
     return {
         "run_root": str(run_root),
@@ -291,9 +483,14 @@ def _commands_payload(
         "chat_port": chat_port,
         "mcp_port": mcp_port,
         "feature_id": feature_id,
-        "note_path": note_path,
+        "lane_kind": lane_kind,
+        "target_path": target_path,
+        "note_path": target_path,
+        "lane_specs": lane_specs,
+        "lane_count": len(lane_specs),
         "repo_head_sha": repo_head_sha,
-        "expected_note_content": _expected_note_content(feature_id),
+        "expected_content": expected_content,
+        "expected_note_content": expected_content,
         "peer_chat_response_wait_s": peer_chat_response_wait_s,
         "peer_chat_post_writeback_grace_s": peer_chat_post_writeback_grace_s,
         "peer_god_backend": peer_god_backend,
@@ -301,6 +498,8 @@ def _commands_payload(
         "review_provider_policy": review_provider_policy,
         "selected_review_provider": selected_review_provider,
         "review_provider_fallback_reason": review_provider_fallback_reason,
+        "peer_chat_memoryos_url": peer_chat_memoryos_url,
+        "peer_chat_memoryos_kind": peer_chat_memoryos_kind,
     }
 
 
@@ -381,36 +580,52 @@ def _start_runner(
     peer_chat_post_writeback_grace_s: float,
     peer_god_backend: str,
     ray_god_mcp: bool,
+    peer_chat_memoryos_url: str | None = None,
+    peer_chat_memoryos_kind: str = "generic",
 ) -> subprocess.Popen[bytes]:
     logs_dir.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
     env["XMUSE_ROOT"] = str(run_root)
     env["XMUSE_CHAT_API_URL"] = f"http://127.0.0.1:{chat_port}"
     env["XMUSE_PEER_GOD_BACKEND"] = peer_god_backend
+    env["XMUSE_REVIEW_GOD_BACKEND"] = peer_god_backend
+    env["XMUSE_EXECUTE_GOD_BACKEND"] = peer_god_backend
     env["XMUSE_RAY_GOD_MCP"] = "1" if ray_god_mcp else "0"
+    command = [
+        sys.executable,
+        "-m",
+        "xmuse.platform_runner",
+        "--xmuse-root",
+        str(run_root),
+        "--mcp-port",
+        str(mcp_port),
+        "--max-hours",
+        str(max_hours),
+        "--max-concurrent",
+        "4",
+        "--peer-chat",
+        "--persistent-review-god",
+        "--default-review-peer-routing",
+        "--no-auto-merge",
+        "--require-final-action-approval",
+        "--peer-god-backend",
+        peer_god_backend,
+        "--peer-chat-response-wait-s",
+        str(peer_chat_response_wait_s),
+        "--peer-chat-post-writeback-grace-s",
+        str(peer_chat_post_writeback_grace_s),
+    ]
+    if peer_chat_memoryos_url:
+        command.extend(
+            [
+                "--peer-chat-memoryos-url",
+                peer_chat_memoryos_url,
+                "--peer-chat-memoryos-kind",
+                peer_chat_memoryos_kind,
+            ]
+        )
     return _spawn(
-        [
-            sys.executable,
-            "-m",
-            "xmuse.platform_runner",
-            "--xmuse-root",
-            str(run_root),
-            "--mcp-port",
-            str(mcp_port),
-            "--max-hours",
-            str(max_hours),
-            "--max-concurrent",
-            "4",
-            "--peer-chat",
-            "--persistent-review-god",
-            "--default-review-peer-routing",
-            "--no-auto-merge",
-            "--require-final-action-approval",
-            "--peer-chat-response-wait-s",
-            str(peer_chat_response_wait_s),
-            "--peer-chat-post-writeback-grace-s",
-            str(peer_chat_post_writeback_grace_s),
-        ],
+        command,
         env=env,
         stdout_path=logs_dir / "platform_runner.log",
     )
@@ -457,9 +672,26 @@ def _terminate_process(process: subprocess.Popen[bytes]) -> None:
 def _sentinel_demand(
     *,
     feature_id: str,
-    note_path: str,
     provider_readiness: dict[str, Any],
+    lane_specs: list[dict[str, str]] | None = None,
+    lane_kind: str | None = None,
+    target_path: str | None = None,
+    expected_content: str | None = None,
 ) -> str:
+    if lane_specs is None:
+        if lane_kind is None or target_path is None or expected_content is None:
+            raise ValueError(
+                "single-lane demand requires lane_kind, target_path, and "
+                "expected_content"
+            )
+        lane_specs = [
+            {
+                "feature_id": feature_id,
+                "lane_kind": lane_kind,
+                "target_path": target_path,
+                "expected_content": expected_content,
+            }
+        ]
     selection = provider_readiness["review_provider_selection"]
     selected_review_provider = str(selection["selected_provider"])
     fallback_reason = selection.get("fallback_reason")
@@ -469,17 +701,82 @@ def _sentinel_demand(
         if fallback_reason
         else ""
     )
-    return (
-        "@architect Run a real docs-only xmuse runtime sentinel. "
+    proposal_lane_clause = (
+        f"The proposal must contain one lane with feature_id `{feature_id}`. "
+        if len(lane_specs) == 1
+        else (
+            "The proposal must contain exactly "
+            f"{len(lane_specs)} lanes with the exact feature_ids listed in "
+            "<lane_specs>. "
+        )
+    )
+    common = (
         "Use the structured collaboration tools before proposing execution: "
         "create a collaboration request to @execute, have execute record an "
         "execute_feasibility_verdict with status executable and at least one "
         "evidence ref, then emit exactly one lane_graph proposal referencing "
-        "that collaboration run. The proposal must contain one lane with "
-        f"feature_id `{feature_id}`. The lane prompt must instruct the worker "
-        f"to create or overwrite `{note_path}` in the isolated execution "
+        f"that collaboration run. {proposal_lane_clause}"
+    )
+    review_clause = (
+        "Do not include review_runtime; rely on the "
+        f"registered {selected_review_provider} review participant. "
+        f"{fallback_clause}"
+    )
+    forbidden_claims = (
+        "Do not claim production readiness, GitHub review truth, live MemoryOS, "
+        "overnight readiness, full L8-L10 closure, or full L1-L11 closure."
+    )
+    if len(lane_specs) > 1:
+        spec_text = "\n".join(_lane_spec_demand_block(spec) for spec in lane_specs)
+        return (
+            "@architect Run a real low-risk xmuse multi-lane runtime sentinel. "
+            f"{common}"
+            "The lane_graph must contain exactly one lane for each item in "
+            "<lane_specs>. Keep all lanes independent with empty depends_on "
+            "unless the item explicitly says otherwise. Each lane prompt must "
+            "instruct the worker to modify exactly one target file, and that "
+            "target file must be the lane item's target_path. The complete file "
+            "content after execution must be exactly the text inside that "
+            "lane item's <expected_content> block, followed by one trailing "
+            "newline. A lane with expected_status=\"gate_failed\" is an "
+            "intentional bounded failure-isolation lane: it must still create "
+            "the exact artifact, but the gate is expected to fail and must not "
+            "fabricate a review verdict or final-action hold for that lane. "
+            "Do not combine lane artifacts into one file. "
+            "<lane_specs>\n"
+            f"{spec_text}\n"
+            "</lane_specs>\n"
+            "Keep this as a bounded multi-lane sentinel, not a docs-only "
+            "single-lane replay. Do not edit unrelated files, PR #43, MemoryOS "
+            "authority stores, TUI, or GitHub-truth code. "
+            f"{review_clause}"
+            f"{forbidden_claims}"
+        )
+    only_spec = lane_specs[0]
+    if only_spec["lane_kind"] == "code":
+        return (
+            "@architect Run a real low-risk xmuse code-change runtime sentinel. "
+            f"{common}"
+            "The lane prompt must instruct the worker to modify exactly one "
+            f"target file, `{only_spec['target_path']}`, in the isolated execution worktree. "
+            "The complete file content after execution must be exactly the text "
+            "inside <expected_content> below, followed by one trailing newline. "
+            "<expected_content>\n"
+            f"{only_spec['expected_content']}\n"
+            "</expected_content>\n"
+            "Keep the lane as a bounded code-change lane, not a docs-only sentinel. "
+            "Do not edit unrelated files, PR #43, MemoryOS authority stores, TUI, "
+            "or GitHub-truth code. "
+            f"{review_clause}"
+            f"{forbidden_claims}"
+        )
+    return (
+        "@architect Run a real docs-only xmuse runtime sentinel. "
+        f"{common}"
+        "The lane prompt must instruct the worker "
+        f"to create or overwrite `{only_spec['target_path']}` in the isolated execution "
         "worktree with one concise sentence: "
-        f"`{_expected_note_content(feature_id)}` "
+        f"`{only_spec['expected_content']}` "
         "Keep the lane docs-only. Do not include review_runtime; rely on the "
         f"registered {selected_review_provider} review participant. "
         f"{fallback_clause}"
@@ -487,6 +784,20 @@ def _sentinel_demand(
         "tests, PR #43, MemoryOS, TUI, or GitHub-truth code. Do not claim "
         "production readiness, GitHub review truth, live MemoryOS, overnight "
         "readiness, full L8-L10 closure, or full L1-L11 closure."
+    )
+
+
+def _lane_spec_demand_block(spec: dict[str, str]) -> str:
+    return (
+        f"<lane feature_id=\"{spec['feature_id']}\" "
+        f"lane_kind=\"{spec['lane_kind']}\" "
+        f"target_path=\"{spec['target_path']}\" "
+        f"expected_status=\"{spec.get('expected_status', 'awaiting_final_action')}\" "
+        "depends_on=\"\">\n"
+        "<expected_content>\n"
+        f"{spec['expected_content']}\n"
+        "</expected_content>\n"
+        "</lane>"
     )
 
 
@@ -608,8 +919,9 @@ def _build_snapshot(
     run_root: Path,
     conversation_id: str,
     feature_id: str,
-    expected_note_path: str,
-    expected_note_content: str,
+    lane_kind: str,
+    expected_target_path: str,
+    expected_target_content: str,
     proposal: dict[str, Any],
     lane: dict[str, Any],
     provider_readiness: dict[str, Any],
@@ -640,10 +952,12 @@ def _build_snapshot(
         for message in ChatStore(run_root / "chat.db").list_messages(conversation_id)
     ]
     return {
-        "classification": "docs_fullchain_sentinel",
+        "classification": f"{lane_kind}_fullchain_sentinel",
         "run_root": str(run_root),
         "conversation_id": conversation_id,
         "feature_id": feature_id,
+        "lane_kind": lane_kind,
+        "target_path": expected_target_path,
         "provider_readiness": provider_readiness,
         "selected_review_provider": provider_readiness["review_provider_selection"][
             "selected_provider"
@@ -659,14 +973,90 @@ def _build_snapshot(
         "messages": messages,
         "execution_artifact": _execution_artifact(
             lane,
-            expected_note_path=expected_note_path,
-            expected_note_content=expected_note_content,
+            expected_target_path=expected_target_path,
+            expected_target_content=expected_target_content,
         ),
         "final_action_hold": _final_action_hold(run_root, lane),
         "review_task": _review_task(run_root, lane),
         "review_verdict": _review_verdict(run_root, lane),
         "review_peer_participant": _review_peer_participant(participants, lane),
     }
+
+
+def _build_run_snapshot(
+    *,
+    run_root: Path,
+    conversation_id: str,
+    feature_id: str,
+    lane_specs: list[dict[str, str]],
+    proposal: dict[str, Any],
+    lanes: list[dict[str, Any]],
+    provider_readiness: dict[str, Any],
+) -> dict[str, Any]:
+    if len(lane_specs) != len(lanes):
+        raise ValueError("lane_specs and lanes must have the same length")
+    if len(lane_specs) == 1:
+        spec = lane_specs[0]
+        snapshot = _build_snapshot(
+            run_root=run_root,
+            conversation_id=conversation_id,
+            feature_id=spec["feature_id"],
+            lane_kind=spec["lane_kind"],
+            expected_target_path=spec["target_path"],
+            expected_target_content=spec["expected_content"],
+            proposal=proposal,
+            lane=lanes[0],
+            provider_readiness=provider_readiness,
+        )
+        snapshot["expected_status"] = spec.get("expected_status", "awaiting_final_action")
+        return snapshot
+    lane_snapshots = [
+        _snapshot_with_expected_status(
+            _build_snapshot(
+                run_root=run_root,
+                conversation_id=conversation_id,
+                feature_id=spec["feature_id"],
+                lane_kind=spec["lane_kind"],
+                expected_target_path=spec["target_path"],
+                expected_target_content=spec["expected_content"],
+                proposal=proposal,
+                lane=lane,
+                provider_readiness=provider_readiness,
+            ),
+            expected_status=spec.get("expected_status", "awaiting_final_action"),
+        )
+        for spec, lane in zip(lane_specs, lanes, strict=True)
+    ]
+    return {
+        "classification": "multilane_fullchain_sentinel",
+        "run_root": str(run_root),
+        "conversation_id": conversation_id,
+        "feature_id": feature_id,
+        "lane_specs": lane_specs,
+        "lane_snapshots": lane_snapshots,
+        "proposal": lane_snapshots[0]["proposal"],
+        "proposal_has_review_runtime": any(
+            item.get("proposal_has_review_runtime") is True
+            for item in lane_snapshots
+        ),
+        "provider_readiness": provider_readiness,
+        "selected_review_provider": provider_readiness["review_provider_selection"][
+            "selected_provider"
+        ],
+        "review_provider_fallback_reason": provider_readiness[
+            "review_provider_selection"
+        ].get("fallback_reason"),
+        "target_paths": [spec["target_path"] for spec in lane_specs],
+    }
+
+
+def _snapshot_with_expected_status(
+    snapshot: dict[str, Any],
+    *,
+    expected_status: str,
+) -> dict[str, Any]:
+    snapshot["expected_status"] = expected_status
+    return snapshot
 
 
 def _conversation_proposals(db_path: Path, conversation_id: str) -> list[dict[str, Any]]:
@@ -737,25 +1127,25 @@ def _review_peer_participant(
 def _execution_artifact(
     lane: dict[str, Any],
     *,
-    expected_note_path: str,
-    expected_note_content: str,
+    expected_target_path: str,
+    expected_target_content: str,
 ) -> dict[str, Any]:
     worktree = lane.get("worktree") or lane.get("worker_worktree")
     if not isinstance(worktree, str):
         return {
             "exists": False,
-            "expected_content": expected_note_content,
-            "expected_path": expected_note_path,
+            "expected_content": expected_target_content,
+            "expected_path": expected_target_path,
             "path": None,
         }
-    path = Path(worktree) / expected_note_path
+    path = Path(worktree) / expected_target_path
     content = path.read_text(encoding="utf-8") if path.exists() else None
     return {
         "content": content,
         "exists": path.exists(),
-        "expected_content": expected_note_content,
-        "expected_path": expected_note_path,
-        "matches_expected": content == expected_note_content + "\n",
+        "expected_content": expected_target_content,
+        "expected_path": expected_target_path,
+        "matches_expected": content == expected_target_content + "\n",
         "path": str(path),
     }
 
@@ -806,6 +1196,8 @@ def _review_verdict(run_root: Path, lane: dict[str, Any]) -> dict[str, Any] | No
 
 
 def _success_checks(snapshot: dict[str, Any]) -> dict[str, bool]:
+    if isinstance(snapshot.get("lane_snapshots"), list):
+        return _multi_success_checks(snapshot)
     lane = snapshot["lane"]
     proposal = snapshot["proposal"]
     final_action_hold = snapshot.get("final_action_hold")
@@ -822,17 +1214,38 @@ def _success_checks(snapshot: dict[str, Any]) -> dict[str, bool]:
         else {}
     )
     expected_fallback = review_provider_selection.get("fallback_reason")
-    return {
+    expected_status = str(snapshot.get("expected_status") or "awaiting_final_action")
+    common_checks = {
         "single_related_lane_graph_proposal": isinstance(related_proposals, list)
         and len(related_proposals) == 1,
         "approved_proposal_accepted": proposal.get("status") == "accepted"
         and proposal.get("accepted_resolution_id") == lane.get("resolution_id"),
+        "lane_reached_expected_status": lane.get("status") == expected_status,
+        "isolated_artifact_matches": isinstance(artifact, dict)
+        and artifact.get("matches_expected") is True,
+        "proposal_has_no_review_runtime": snapshot.get("proposal_has_review_runtime")
+        is False,
+    }
+    if expected_status == "gate_failed":
+        return common_checks | {
+            "expected_gate_failed": lane.get("status") == "gate_failed"
+            and lane.get("gate_passed") is False
+            and lane.get("failure_reason") == "gate_failed",
+            "execution_peer_handoff_not_degraded": _execution_handoff_not_degraded(
+                lane,
+                expected_status=expected_status,
+            ),
+            "no_review_or_final_action_for_expected_gate_failure": review_task is None
+            and review_verdict is None
+            and final_action_hold is None,
+        }
+    return common_checks | {
         "lane_awaiting_final_action": lane.get("status") == "awaiting_final_action",
         "gate_passed": lane.get("gate_passed") is True,
-        "execution_peer_handoff_not_degraded": lane.get("peer_delivery_mode")
-        == "configured_peer"
-        and lane.get("peer_result_status") not in {"delivery_failed", "degraded"}
-        and lane.get("peer_degraded_reason") is None,
+        "execution_peer_handoff_not_degraded": _execution_handoff_not_degraded(
+            lane,
+            expected_status=expected_status,
+        ),
         "isolated_note_matches": isinstance(artifact, dict)
         and artifact.get("matches_expected") is True,
         "selected_review_peer_recorded": isinstance(selected_review_provider, str)
@@ -851,11 +1264,191 @@ def _success_checks(snapshot: dict[str, Any]) -> dict[str, bool]:
         and review_verdict.get("status") == "finalized",
         "review_task_verdict_emitted": isinstance(review_task, dict)
         and review_task.get("status") == "verdict_emitted",
+        "review_authority_not_stdout_fallback": _review_authority_not_stdout_fallback(
+            lane=lane,
+            review_verdict=review_verdict,
+            final_action_hold=final_action_hold,
+        ),
         "final_action_hold_pending": isinstance(final_action_hold, dict)
         and final_action_hold.get("status") == "pending",
+    }
+
+
+def _execution_handoff_not_degraded(
+    lane: dict[str, Any],
+    *,
+    expected_status: str,
+) -> bool:
+    if lane.get("peer_delivery_mode") == "configured_peer":
+        return (
+            lane.get("peer_result_status") not in {"delivery_failed", "degraded"}
+            and lane.get("peer_degraded_reason") is None
+        )
+    if expected_status != "gate_failed":
+        return False
+    return (
+        lane.get("worker_kind") == "temporary_child_worker"
+        and isinstance(lane.get("worker_worktree"), str)
+        and bool(str(lane.get("worker_worktree")).strip())
+        and lane.get("persistent_execute_degraded") is not True
+        and lane.get("provider_session_binding_degraded") is not True
+        and lane.get("execute_peer_degraded_reason") is None
+        and lane.get("persistent_execute_degraded_reason") is None
+    )
+
+
+def _multi_success_checks(snapshot: dict[str, Any]) -> dict[str, bool]:
+    lane_snapshots = snapshot.get("lane_snapshots")
+    if not isinstance(lane_snapshots, list) or not lane_snapshots:
+        return {"has_lane_snapshots": False}
+    per_lane_checks = [
+        _success_checks({k: v for k, v in item.items() if k != "success_checks"})
+        for item in lane_snapshots
+        if isinstance(item, dict)
+    ]
+    worktrees = [
+        item.get("lane", {}).get("worktree") or item.get("lane", {}).get("worker_worktree")
+        for item in lane_snapshots
+        if isinstance(item, dict)
+    ]
+    feature_ids = [
+        item.get("feature_id") for item in lane_snapshots if isinstance(item, dict)
+    ]
+    target_paths = [
+        item.get("target_path") for item in lane_snapshots if isinstance(item, dict)
+    ]
+    expected_statuses = [
+        item.get("expected_status", "awaiting_final_action")
+        for item in lane_snapshots
+        if isinstance(item, dict)
+    ]
+    common_checks = {
+        "has_lane_snapshots": len(per_lane_checks) == len(lane_snapshots),
+        "all_single_related_lane_graph_proposal": all(
+            checks.get("single_related_lane_graph_proposal") is True
+            for checks in per_lane_checks
+        ),
+        "all_approved_proposal_accepted": all(
+            checks.get("approved_proposal_accepted") is True
+            for checks in per_lane_checks
+        ),
+        "all_expected_lane_statuses": all(
+            checks.get("lane_reached_expected_status") is True
+            for checks in per_lane_checks
+        ),
+        "all_expected_artifacts_match": all(
+            checks.get("isolated_artifact_matches") is True
+            for checks in per_lane_checks
+        ),
         "proposal_has_no_review_runtime": snapshot.get("proposal_has_review_runtime")
         is False,
+        "distinct_feature_ids": len(set(feature_ids)) == len(feature_ids),
+        "distinct_target_paths": len(set(target_paths)) == len(target_paths),
+        "distinct_worktrees": len(set(worktrees)) == len(worktrees),
     }
+    if any(status != "awaiting_final_action" for status in expected_statuses):
+        return common_checks | {
+            "all_success_lanes_completed": all(
+                checks.get("lane_awaiting_final_action", True) is True
+                and checks.get("gate_passed", True) is True
+                and checks.get("review_verdict_finalized", True) is True
+                and checks.get("review_task_verdict_emitted", True) is True
+                and checks.get("final_action_hold_pending", True) is True
+                for checks in per_lane_checks
+            ),
+            "all_expected_gate_failures_reported": all(
+                checks.get("expected_gate_failed", True) is True
+                for checks in per_lane_checks
+            ),
+            "all_expected_gate_failures_skip_review_and_final_action": all(
+                checks.get("no_review_or_final_action_for_expected_gate_failure", True)
+                is True
+                for checks in per_lane_checks
+            ),
+            "all_execution_peer_handoffs_not_degraded": all(
+                checks.get("execution_peer_handoff_not_degraded") is True
+                for checks in per_lane_checks
+            ),
+        }
+    return {
+        **common_checks,
+        "all_lanes_awaiting_final_action": all(
+            checks.get("lane_awaiting_final_action") is True
+            for checks in per_lane_checks
+        ),
+        "all_gates_passed": all(
+            checks.get("gate_passed") is True for checks in per_lane_checks
+        ),
+        "all_execution_peer_handoffs_not_degraded": all(
+            checks.get("execution_peer_handoff_not_degraded") is True
+            for checks in per_lane_checks
+        ),
+        "all_isolated_artifacts_match": all(
+            checks.get("isolated_artifact_matches") is True
+            for checks in per_lane_checks
+        ),
+        "all_review_verdicts_finalized": all(
+            checks.get("review_verdict_finalized") is True
+            for checks in per_lane_checks
+        ),
+        "all_review_tasks_verdict_emitted": all(
+            checks.get("review_task_verdict_emitted") is True
+            for checks in per_lane_checks
+        ),
+        "all_final_action_holds_pending": all(
+            checks.get("final_action_hold_pending") is True
+            for checks in per_lane_checks
+        ),
+        "all_review_authority_not_stdout_fallback": all(
+            checks.get("review_authority_not_stdout_fallback") is True
+            for checks in per_lane_checks
+        ),
+    }
+
+
+def _review_authority_not_stdout_fallback(
+    *,
+    lane: dict[str, Any],
+    review_verdict: dict[str, Any] | None,
+    final_action_hold: dict[str, Any] | None,
+) -> bool:
+    for value in _review_authority_claims(lane, review_verdict, final_action_hold):
+        lowered = value.lower()
+        if "stdout fallback" in lowered or "provider stdout" in lowered:
+            return False
+    for key in ("review_fallback", "review_delivery_mode"):
+        if lane.get(key) == "stdout":
+            return False
+    return True
+
+
+def _review_authority_claims(
+    lane: dict[str, Any],
+    review_verdict: dict[str, Any] | None,
+    final_action_hold: dict[str, Any] | None,
+) -> list[str]:
+    claims: list[str] = []
+    for key in ("review_summary", "review_fallback", "review_fallback_reason"):
+        value = lane.get(key)
+        if isinstance(value, str):
+            claims.append(value)
+    history = lane.get("review_history")
+    if isinstance(history, list):
+        for item in history:
+            if not isinstance(item, dict):
+                continue
+            for key in ("summary", "fallback", "fallback_reason"):
+                value = item.get(key)
+                if isinstance(value, str):
+                    claims.append(value)
+    for record in (review_verdict, final_action_hold):
+        if not isinstance(record, dict):
+            continue
+        for key in ("summary", "status", "decision"):
+            value = record.get(key)
+            if isinstance(value, str):
+                claims.append(value)
+    return claims
 
 
 def _provider_readiness(

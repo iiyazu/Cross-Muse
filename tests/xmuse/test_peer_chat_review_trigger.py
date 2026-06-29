@@ -3,6 +3,7 @@ from __future__ import annotations
 from xmuse_core.chat.inbox_store import ChatInboxStore
 from xmuse_core.chat.participant_store import ParticipantStore
 from xmuse_core.chat.peer_service import PeerChatService
+from xmuse_core.chat.review_triggers import _review_trigger_content
 from xmuse_core.chat.store import ChatStore
 
 
@@ -36,6 +37,7 @@ def test_lane_graph_review_trigger_includes_readable_proposal_content(tmp_path):
                 "prompt": "Implement peer chat",
                 "depends_on": [],
                 "capabilities": ["code"],
+                "gate_profiles": ["strict-product"],
             }
         ],
         references=["memory://conversation/conv/messages/msg_1"],
@@ -56,8 +58,34 @@ def test_lane_graph_review_trigger_includes_readable_proposal_content(tmp_path):
     assert trigger.payload["source_message_id"] == result["message"]["id"]
     assert "Add peer chat" in trigger.payload["content"]
     assert "lane-peer-chat" in trigger.payload["content"]
+    assert 'gate_profiles=["strict-product"]' in trigger.payload["content"]
     assert "memory://conversation/conv/messages/msg_1" in trigger.payload["content"]
     assert "chat_raise_collaboration_blocker" in trigger.payload["content"]
-    assert "A plain chat_post_message recommendation cannot block dispatch" in (
-        trigger.payload["content"]
+    assert (
+        "A plain chat_post_message recommendation cannot block dispatch"
+        in (trigger.payload["content"])
     )
+
+
+def test_lane_graph_review_trigger_projects_singular_gate_profile() -> None:
+    content = _review_trigger_content(
+        source_message_id="msg-proposal",
+        reviewable_type="lane_graph",
+        source_content="[proposal] Singular gate profile",
+        envelope={
+            "proposal_id": "prop-singular",
+            "summary": "Singular gate profile",
+            "lanes": [
+                {
+                    "feature_id": "lane-singular",
+                    "prompt": "Review singular gate profile projection.",
+                    "depends_on": [],
+                    "capabilities": ["docs"],
+                    "gate_profile": "strict-product",
+                }
+            ],
+        },
+    )
+
+    assert "lane-singular" in content
+    assert 'gate_profiles=["strict-product"]' in content

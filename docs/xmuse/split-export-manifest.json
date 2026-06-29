@@ -15,9 +15,11 @@
     "scripts/export_xmuse.py",
     "xmuse/chat_api.py",
     "xmuse/dashboard_api.py",
+    "xmuse/evidence_summary.py",
     "xmuse/mcp_server.py",
     "xmuse/platform_runner.py",
     "xmuse/tui/__main__.py",
+    "xmuse/tui/terminal_demo.py",
     "src/xmuse_core/__init__.py"
   ],
   "runtime_state_patterns": [

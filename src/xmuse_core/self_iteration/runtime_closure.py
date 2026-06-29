@@ -322,7 +322,7 @@ def build_self_iteration_replay_fixture() -> list[GodSpeechActMessageV1]:
                 references=[
                     "message:gsa-003-challenge-proof",
                     "message:gsa-004-object-live-claim",
-                    "docs/xmuse/self-iteration-runtime-closure-plan.md",
+                    "docs/xmuse/archive/2026-06-proof-closure-legacy/self-iteration-runtime-closure-plan.md",
                 ],
                 payload={
                     "evidence": "Default CI exercises contract and fake runtime proof; "
@@ -656,7 +656,7 @@ def build_self_iteration_evidence_bundle(
         [
             "src/xmuse_core/self_iteration/runtime_closure.py",
             "tests/xmuse/test_self_iteration_runtime_closure.py",
-            "docs/xmuse/self-iteration-runtime-closure.md",
+            "docs/xmuse/archive/2026-06-proof-closure-legacy/self-iteration-runtime-closure.md",
         ]
     )
     return SelfIterationEvidenceBundle(
@@ -942,7 +942,7 @@ def build_self_iteration_closure_artifacts(
             review_evidence_bundle=list(review_pass.evidence_refs),
             memory_refs=list(evidence.memory_refs),
             memory_impact="task_state writeback through REST-first MemoryOS contract",
-            new_artifacts=["docs/xmuse/self-iteration-runtime-closure.md"],
+            new_artifacts=["docs/xmuse/archive/2026-06-proof-closure-legacy/self-iteration-runtime-closure.md"],
             provider_changes=["none; default proof is fake/local"],
             gate_profile=",".join(contract.required_checks),
             rollback_plan=contract.rollback_plan,

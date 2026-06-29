@@ -4,10 +4,11 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CI_WORKFLOW = PROJECT_ROOT / ".github" / "workflows" / "xmuse-ci.yml"
-PLAN_DOC = PROJECT_ROOT / "docs" / "xmuse" / "vision-runtime-evidence-closure-plan.md"
-PROMPT_DOC = (
-    PROJECT_ROOT / "docs" / "xmuse" / "vision-runtime-evidence-closure-goal-prompt.md"
+LEGACY_PROOF_ARCHIVE = (
+    PROJECT_ROOT / "docs" / "xmuse" / "archive" / "2026-06-proof-closure-legacy"
 )
+PLAN_DOC = LEGACY_PROOF_ARCHIVE / "vision-runtime-evidence-closure-plan.md"
+PROMPT_DOC = LEGACY_PROOF_ARCHIVE / "vision-runtime-evidence-closure-goal-prompt.md"
 README = PROJECT_ROOT / "docs" / "xmuse" / "README.md"
 
 
@@ -37,6 +38,11 @@ def test_vision_runtime_evidence_docs_define_proof_level_boundaries() -> None:
     plan = _read(PLAN_DOC)
     prompt = _read(PROMPT_DOC)
     readme = _read(README)
+    plan_ref = (
+        "docs/xmuse/archive/2026-06-proof-closure-legacy/"
+        "vision-runtime-evidence-closure-plan.md"
+    )
+    archive_ref = "docs/xmuse/archive/2026-06-proof-closure-legacy/"
 
     for fragment in (
         "contract_proof",
@@ -51,6 +57,6 @@ def test_vision_runtime_evidence_docs_define_proof_level_boundaries() -> None:
     ):
         assert fragment in plan
 
-    assert "docs/xmuse/vision-runtime-evidence-closure-plan.md" in prompt
-    assert "docs/xmuse/vision-runtime-evidence-closure-plan.md" in readme
-    assert "docs/xmuse/vision-runtime-evidence-closure-goal-prompt.md" in readme
+    assert plan_ref in prompt
+    assert archive_ref in readme
+    assert "not current `/goal` entrypoints" in readme

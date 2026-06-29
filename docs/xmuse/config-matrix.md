@@ -1,6 +1,6 @@
 # xmuse Config Matrix
 
-更新日期: 2026-06-04
+更新日期: 2026-06-28
 
 ## 范围与分类
 
@@ -38,7 +38,10 @@
 | `XMUSE_RUNTIME_BACKEND` | optional | `"ray"` | `platform/read_envelopes.py:206` | fallback "ray" |
 | `XMUSE_REVIEW_GOD_BACKEND` | optional | `"ray"` | `xmuse/platform_runner.py:142` | fallback "ray" |
 | `XMUSE_EXECUTE_GOD_BACKEND` | optional | `"ray"` | `xmuse/platform_runner.py:161` | fallback "ray" |
-| `XMUSE_PEER_GOD_BACKEND` | optional | `"ray"` | `xmuse/platform_runner.py:210` | fallback "ray" |
+| `XMUSE_PEER_GOD_BACKEND` | optional | `"native"` | `xmuse/platform_runner.py` `DEFAULT_PEER_GOD_BACKEND` | fallback "native"; Ray is optional legacy |
+| `XMUSE_PEER_CHAT_MEMORYOS_URL` | optional | disabled | `xmuse/platform_runner.py` `--peer-chat-memoryos-url` default | natural peer-chat MemoryOS recall sidecar disabled |
+| `XMUSE_PEER_CHAT_MEMORYOS_KIND` | optional | `"generic"` | `xmuse/platform_runner.py` `--peer-chat-memoryos-kind` default | generic `/memory/*` sidecar contract |
+| `XMUSE_PEER_CHAT_MEMORYOS_API_KEY` | optional | None | `xmuse/platform_runner.py` peer-chat sidecar client construction | no API key header |
 | `XMUSE_DEGRADED_LOCAL_GOD_MODE` | optional | disabled | `xmuse/platform_runner.py:832` | 禁用 |
 | `XMUSE_RAY_GOD_TRANSPORT` | optional | `"app-server"` | `src/xmuse_core/agents/ray_session_layer.py:377` | fallback "app-server" |
 | `XMUSE_RAY_GOD_EFFORT` | optional | `"low"` | `src/xmuse_core/agents/ray_session_layer.py:387` | fallback "low" |
@@ -78,7 +81,7 @@
 
 ### Frontend-only — NEXT_PUBLIC_XMUSE_* (Python 代码不读取)
 
-仅在 `xmuse/FRONTEND_API.md` 和 `xmuse/FRONTEND_IMPLEMENTATION_GUIDE.md` 中作为前端配置说明出现。
+仅在 `docs/xmuse/frontend/FRONTEND_API.md` 和 `docs/xmuse/frontend/FRONTEND_IMPLEMENTATION_GUIDE.md` 中作为前端配置说明出现。
 
 | 变量 | 值 |
 |------|-----|
@@ -113,10 +116,10 @@ V7 真实 groupchat MCP writeback 主链必须设置以下变量。这是当前�
 
 ```bash
 # runtime backend
-XMUSE_PEER_GOD_BACKEND=ray
+XMUSE_PEER_GOD_BACKEND=native
 XMUSE_EXECUTE_GOD_BACKEND=ray
 XMUSE_REVIEW_GOD_BACKEND=ray
-# Ray GOD session transport
+# Ray GOD session transport (legacy/optional; not the natural peer groupchat default)
 XMUSE_RAY_GOD_TRANSPORT=app-server
 XMUSE_RAY_GOD_EFFORT=low
 XMUSE_RAY_GOD_MCP=1
@@ -141,6 +144,8 @@ XMUSE_CHAT_API_URL=http://127.0.0.1:8201
 | `--max-concurrent` | int | `4` |
 | `--god-runtime` | str | `"codex"` |
 | `--chat-driver-model` | str | `"gpt-5.4"` |
+| `--peer-chat-memoryos-url` | str | `$XMUSE_PEER_CHAT_MEMORYOS_URL` 或 disabled |
+| `--peer-chat-memoryos-kind` | `generic`/`memoryos-lite` | `$XMUSE_PEER_CHAT_MEMORYOS_KIND` 或 `generic` |
 | `--health-once` | flag | false |
 | `--health-check-http` | flag | false |
 | `--stale-after-s` | float | `1800.0` |
@@ -170,6 +175,7 @@ XMUSE_CHAT_API_URL=http://127.0.0.1:8201
 | 密钥 | 类型 | 来源 | 处理方式 |
 |------|------|------|----------|
 | `DEEPSEEK_API_KEY` | API key | 环境变量 | OpenCode adapter 必填；缺失报 `CONFIG_ERROR` |
+| `XMUSE_PEER_CHAT_MEMORYOS_API_KEY` | API key | 环境变量 | 仅用于 generic natural peer-chat MemoryOS recall sidecar；不创建 proposal/review/dispatch authority |
 | MemoryOS `X-API-Key` | API key | `MemoryOSClient.api_key` 参数（Optional） | 无人传入，当前实际不使用 |
 | `CallbackCredentials` token | UUID | 内存生成 | 进程重启后失效 |
 

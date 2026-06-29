@@ -4,6 +4,8 @@ import argparse
 import json
 from pathlib import Path
 
+import pytest
+
 from scripts import run_fullchain_docs_sentinel as sentinel
 from xmuse_core.chat.inbox_store import ChatInboxStore
 from xmuse_core.chat.store import ChatStore
@@ -65,6 +67,9 @@ def test_main_writes_expected_note_content_into_command_artifacts(
             run_root=run_root,
             execution_worktree=execution_worktree,
             feature_id=feature_id,
+            lane_kind="docs",
+            target_path=None,
+            expected_content=None,
             chat_port=43111,
             mcp_port=43112,
             proposal_timeout_s=900.0,
@@ -78,6 +83,8 @@ def test_main_writes_expected_note_content_into_command_artifacts(
             peer_god_backend="ray",
             ray_god_mcp=True,
             review_provider="auto",
+            peer_chat_memoryos_url="http://memoryos.sidecar",
+            peer_chat_memoryos_kind="memoryos-lite",
         ),
     )
     monkeypatch.setattr(sentinel, "_repo_head_sha", fake_repo_head_sha)
@@ -115,6 +122,19 @@ def test_main_writes_expected_note_content_into_command_artifacts(
 
     assert repo_head_sha_calls == 1
     assert commands_json["expected_note_content"] == expected_note_content
+    assert commands_json["expected_content"] == expected_note_content
+    assert commands_json["lane_count"] == 1
+    assert commands_json["lane_specs"] == [
+        {
+            "feature_id": feature_id,
+            "lane_kind": "docs",
+            "target_path": f"docs/xmuse/{feature_id}.md",
+            "expected_content": expected_note_content,
+            "expected_status": "awaiting_final_action",
+        }
+    ]
+    assert commands_json["lane_kind"] == "docs"
+    assert commands_json["target_path"] == f"docs/xmuse/{feature_id}.md"
     assert commands_json["repo_head_sha"] == "abc123repohead"
     assert commands_json["peer_chat_response_wait_s"] == 900.0
     assert commands_json["peer_chat_post_writeback_grace_s"] == 8.0
@@ -123,6 +143,8 @@ def test_main_writes_expected_note_content_into_command_artifacts(
     assert commands_json["review_provider_policy"] == "auto"
     assert commands_json["selected_review_provider"] == "codex"
     assert commands_json["review_provider_fallback_reason"] == "opencode_unavailable"
+    assert commands_json["peer_chat_memoryos_url"] == "http://memoryos.sidecar"
+    assert commands_json["peer_chat_memoryos_kind"] == "memoryos-lite"
     provider_readiness = json.loads(
         (run_root / "loop_driver_artifacts" / "provider_readiness.json").read_text(
             encoding="utf-8"
@@ -140,11 +162,358 @@ def test_main_writes_expected_note_content_into_command_artifacts(
     assert "peer_god_backend=ray\n" in commands_txt
     assert "ray_god_mcp=True\n" in commands_txt
     assert "selected_review_provider=codex\n" in commands_txt
+    assert "peer_chat_memoryos_url=http://memoryos.sidecar\n" in commands_txt
+    assert "peer_chat_memoryos_kind=memoryos-lite\n" in commands_txt
 
 
+def test_target_spec_defaults_to_docs_sentinel_path_and_content() -> None:
+    target = sentinel._target_spec(
+        feature_id="docs-target",
+        lane_kind="docs",
+        target_path=None,
+        expected_content=None,
+    )
+
+    assert target == {
+        "path": "docs/xmuse/docs-target.md",
+        "expected_content": (
+            "Post-main fullchain sentinel docs-target reached isolated execution."
+        ),
+    }
+
+
+def test_target_spec_requires_explicit_code_artifact() -> None:
+    with pytest.raises(ValueError, match="--target-path is required"):
+        sentinel._target_spec(
+            feature_id="code-target",
+            lane_kind="code",
+            target_path=None,
+            expected_content="value = 1",
+        )
+    with pytest.raises(ValueError, match="--expected-content is required"):
+        sentinel._target_spec(
+            feature_id="code-target",
+            lane_kind="code",
+            target_path="src/xmuse_core/code_target.py",
+            expected_content=None,
+        )
+
+
+def test_lane_specs_from_args_accepts_multilane_json() -> None:
+    specs = sentinel._lane_specs_from_args(
+        argparse.Namespace(
+            feature_id="run-label",
+            lane_kind="docs",
+            target_path=None,
+            expected_content=None,
+            lane_spec_json=json.dumps(
+                [
+                    {
+                        "feature_id": "lane-alpha",
+                        "lane_kind": "docs",
+                        "target_path": "docs/xmuse/lane-alpha.md",
+                        "expected_content": "alpha reached execution",
+                    },
+                    {
+                        "feature_id": "lane-beta",
+                        "lane_kind": "code",
+                        "target_path": "src/xmuse_core/platform/lane_beta.py",
+                        "expected_content": 'LANE = "beta"',
+                        "expected_status": "gate_failed",
+                    },
+                ]
+            ),
+        )
+    )
+
+    assert specs == [
+        {
+            "feature_id": "lane-alpha",
+            "lane_kind": "docs",
+            "target_path": "docs/xmuse/lane-alpha.md",
+            "expected_content": "alpha reached execution",
+            "expected_status": "awaiting_final_action",
+        },
+        {
+            "feature_id": "lane-beta",
+            "lane_kind": "code",
+            "target_path": "src/xmuse_core/platform/lane_beta.py",
+            "expected_content": 'LANE = "beta"',
+            "expected_status": "gate_failed",
+        },
+    ]
+
+
+def test_lane_specs_from_args_rejects_unsupported_expected_status() -> None:
+    with pytest.raises(ValueError, match="unsupported expected_status"):
+        sentinel._lane_specs_from_args(
+            argparse.Namespace(
+                feature_id="run-label",
+                lane_kind="docs",
+                target_path=None,
+                expected_content=None,
+                lane_spec_json=json.dumps(
+                    [
+                        {
+                            "feature_id": "lane-alpha",
+                            "lane_kind": "docs",
+                            "target_path": "docs/xmuse/lane-alpha.md",
+                            "expected_content": "alpha",
+                            "expected_status": "merged",
+                        },
+                    ]
+                ),
+            )
+        )
+
+
+def test_lane_specs_from_args_rejects_duplicate_targets() -> None:
+    with pytest.raises(ValueError, match="duplicate lane target_path"):
+        sentinel._lane_specs_from_args(
+            argparse.Namespace(
+                feature_id="run-label",
+                lane_kind="docs",
+                target_path=None,
+                expected_content=None,
+                lane_spec_json=json.dumps(
+                    [
+                        {
+                            "feature_id": "lane-alpha",
+                            "lane_kind": "docs",
+                            "target_path": "docs/xmuse/shared.md",
+                            "expected_content": "alpha",
+                        },
+                        {
+                            "feature_id": "lane-beta",
+                            "lane_kind": "docs",
+                            "target_path": "docs/xmuse/shared.md",
+                            "expected_content": "beta",
+                        },
+                    ]
+                ),
+            )
+        )
+
+
+def test_code_lane_demand_names_code_boundary() -> None:
+    demand = sentinel._sentinel_demand(
+        feature_id="code-target",
+        lane_kind="code",
+        target_path="src/xmuse_core/code_target.py",
+        expected_content='SENTINEL = "code-target"',
+        provider_readiness={
+            "review_provider_selection": {
+                "selected_provider": "codex",
+                "fallback_reason": "opencode_unavailable",
+            }
+        },
+    )
+
+    assert "real low-risk xmuse code-change runtime sentinel" in demand
+    assert "not a docs-only sentinel" in demand
+    assert "src/xmuse_core/code_target.py" in demand
+    assert 'SENTINEL = "code-target"' in demand
+    assert "opencode_unavailable" in demand
+
+
+def test_multilane_demand_requires_independent_exact_lane_specs() -> None:
+    demand = sentinel._sentinel_demand(
+        feature_id="rung4-run",
+        lane_specs=[
+            {
+                "feature_id": "lane-alpha",
+                "lane_kind": "docs",
+                "target_path": "docs/xmuse/lane-alpha.md",
+                "expected_content": "alpha reached execution",
+                "expected_status": "awaiting_final_action",
+            },
+            {
+                "feature_id": "lane-beta",
+                "lane_kind": "code",
+                "target_path": "src/xmuse_core/platform/lane_beta.py",
+                "expected_content": 'LANE = "beta"',
+                "expected_status": "gate_failed",
+            },
+        ],
+        provider_readiness={
+            "review_provider_selection": {
+                "selected_provider": "codex",
+                "fallback_reason": None,
+            }
+        },
+    )
+
+    assert "multi-lane runtime sentinel" in demand
+    assert "exactly one lane_graph" in demand
+    assert "Keep all lanes independent with empty depends_on" in demand
+    assert 'feature_id="lane-alpha"' in demand
+    assert 'expected_status="gate_failed"' in demand
+    assert "intentional bounded failure-isolation lane" in demand
+    assert 'target_path="src/xmuse_core/platform/lane_beta.py"' in demand
+    assert 'LANE = "beta"' in demand
+
+
+def test_multi_success_checks_require_all_lanes_and_distinct_worktrees() -> None:
+    def lane_snapshot(feature_id: str, worktree: str) -> dict:
+        return {
+            "feature_id": feature_id,
+            "target_path": f"src/xmuse_core/platform/{feature_id}.py",
+            "proposal_has_review_runtime": False,
+            "related_lane_graph_proposals": [{"id": "proposal"}],
+            "selected_review_provider": "codex",
+            "provider_readiness": {
+                "review_provider_selection": {
+                    "selected_provider": "codex",
+                    "fallback_reason": None,
+                }
+            },
+            "review_peer_participant": {"cli_kind": "codex"},
+            "proposal": {
+                "status": "accepted",
+                "accepted_resolution_id": f"res-{feature_id}",
+            },
+            "lane": {
+                "feature_id": feature_id,
+                "status": "awaiting_final_action",
+                "gate_passed": True,
+                "peer_delivery_mode": "configured_peer",
+                "peer_result_status": "received",
+                "peer_degraded_reason": None,
+                "review_peer_cli_kind": "codex",
+                "resolution_id": f"res-{feature_id}",
+                "worktree": worktree,
+            },
+            "execution_artifact": {"matches_expected": True},
+            "review_task": {"status": "verdict_emitted"},
+            "review_verdict": {"status": "finalized"},
+            "final_action_hold": {"status": "pending"},
+        }
+
+    checks = sentinel._success_checks(
+        {
+            "proposal_has_review_runtime": False,
+            "lane_snapshots": [
+                lane_snapshot("lane-alpha", "/tmp/worktree-alpha"),
+                lane_snapshot("lane-beta", "/tmp/worktree-beta"),
+            ],
+        }
+    )
+
+    assert checks["all_lanes_awaiting_final_action"] is True
+    assert checks["all_isolated_artifacts_match"] is True
+    assert checks["distinct_feature_ids"] is True
+    assert checks["distinct_target_paths"] is True
+    assert checks["distinct_worktrees"] is True
+
+
+def test_multi_success_checks_accept_expected_gate_failed_lane() -> None:
+    def success_lane() -> dict:
+        return {
+            "feature_id": "lane-alpha",
+            "target_path": "docs/xmuse/lane-alpha.md",
+            "expected_status": "awaiting_final_action",
+            "proposal_has_review_runtime": False,
+            "related_lane_graph_proposals": [{"id": "proposal"}],
+            "selected_review_provider": "codex",
+            "provider_readiness": {
+                "review_provider_selection": {
+                    "selected_provider": "codex",
+                    "fallback_reason": None,
+                }
+            },
+            "review_peer_participant": {"cli_kind": "codex"},
+            "proposal": {
+                "status": "accepted",
+                "accepted_resolution_id": "res-alpha",
+            },
+            "lane": {
+                "feature_id": "lane-alpha",
+                "status": "awaiting_final_action",
+                "gate_passed": True,
+                "peer_delivery_mode": "configured_peer",
+                "peer_result_status": "received",
+                "peer_degraded_reason": None,
+                "review_peer_cli_kind": "codex",
+                "resolution_id": "res-alpha",
+                "worktree": "/tmp/worktree-alpha",
+            },
+            "execution_artifact": {"matches_expected": True},
+            "review_task": {"status": "verdict_emitted"},
+            "review_verdict": {"status": "finalized"},
+            "final_action_hold": {"status": "pending"},
+        }
+
+    def gate_failed_lane() -> dict:
+        return {
+            "feature_id": "lane-beta",
+            "target_path": "src/xmuse_core/platform/lane_beta.py",
+            "expected_status": "gate_failed",
+            "proposal_has_review_runtime": False,
+            "related_lane_graph_proposals": [{"id": "proposal"}],
+            "selected_review_provider": "codex",
+            "provider_readiness": {
+                "review_provider_selection": {
+                    "selected_provider": "codex",
+                    "fallback_reason": None,
+                }
+            },
+            "proposal": {
+                "status": "accepted",
+                "accepted_resolution_id": "res-beta",
+            },
+            "lane": {
+                "feature_id": "lane-beta",
+                "status": "gate_failed",
+                "gate_passed": False,
+                "failure_reason": "gate_failed",
+                "worker_kind": "temporary_child_worker",
+                "worker_worktree": "/tmp/worktree-beta",
+                "resolution_id": "res-beta",
+                "worktree": "/tmp/worktree-beta",
+            },
+            "execution_artifact": {"matches_expected": True},
+            "review_task": None,
+            "review_verdict": None,
+            "final_action_hold": None,
+        }
+
+    checks = sentinel._success_checks(
+        {
+            "proposal_has_review_runtime": False,
+            "lane_snapshots": [success_lane(), gate_failed_lane()],
+        }
+    )
+
+    assert all(checks.values())
+    assert checks["all_expected_lane_statuses"] is True
+    assert checks["all_success_lanes_completed"] is True
+    assert checks["all_expected_gate_failures_reported"] is True
+    assert checks["all_expected_gate_failures_skip_review_and_final_action"] is True
+
+    degraded_gate_failure = gate_failed_lane()
+    degraded_gate_failure["lane"]["persistent_execute_degraded"] = True
+    degraded_checks = sentinel._success_checks(
+        {
+            "proposal_has_review_runtime": False,
+            "lane_snapshots": [success_lane(), degraded_gate_failure],
+        }
+    )
+    assert degraded_checks["all_execution_peer_handoffs_not_degraded"] is False
+
+
+@pytest.mark.parametrize(
+    ("peer_god_backend", "ray_god_mcp", "expected_ray_god_mcp"),
+    [
+        ("native", False, "0"),
+        ("ray", True, "1"),
+    ],
+)
 def test_start_runner_uses_configured_peer_chat_writeback_grace(
     tmp_path: Path,
     monkeypatch,
+    peer_god_backend: str,
+    ray_god_mcp: bool,
+    expected_ray_god_mcp: str,
 ) -> None:
     captured: dict[str, object] = {}
 
@@ -164,8 +533,8 @@ def test_start_runner_uses_configured_peer_chat_writeback_grace(
         max_hours=0.75,
         peer_chat_response_wait_s=456.0,
         peer_chat_post_writeback_grace_s=13.5,
-        peer_god_backend="ray",
-        ray_god_mcp=True,
+        peer_god_backend=peer_god_backend,
+        ray_god_mcp=ray_god_mcp,
     )
 
     command = captured["command"]
@@ -175,9 +544,49 @@ def test_start_runner_uses_configured_peer_chat_writeback_grace(
     assert command[wait_flag_index + 1] == "456.0"
     flag_index = command.index("--peer-chat-post-writeback-grace-s")
     assert command[flag_index + 1] == "13.5"
+    backend_flag_index = command.index("--peer-god-backend")
+    assert command[backend_flag_index + 1] == peer_god_backend
     env = captured["env"]
-    assert env["XMUSE_PEER_GOD_BACKEND"] == "ray"
-    assert env["XMUSE_RAY_GOD_MCP"] == "1"
+    assert env["XMUSE_PEER_GOD_BACKEND"] == peer_god_backend
+    assert env["XMUSE_REVIEW_GOD_BACKEND"] == peer_god_backend
+    assert env["XMUSE_EXECUTE_GOD_BACKEND"] == peer_god_backend
+    assert env["XMUSE_RAY_GOD_MCP"] == expected_ray_god_mcp
+
+
+def test_start_runner_passes_configured_peer_chat_memoryos_sidecar(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_spawn(command, *, env, stdout_path):
+        captured["command"] = command
+        captured["env"] = env
+        captured["stdout_path"] = stdout_path
+        return object()
+
+    monkeypatch.setattr(sentinel, "_spawn", fake_spawn)
+
+    sentinel._start_runner(
+        run_root=tmp_path / "run-root",
+        mcp_port=43112,
+        chat_port=43111,
+        logs_dir=tmp_path / "logs",
+        max_hours=0.75,
+        peer_chat_response_wait_s=456.0,
+        peer_chat_post_writeback_grace_s=13.5,
+        peer_god_backend="native",
+        ray_god_mcp=False,
+        peer_chat_memoryos_url="http://memoryos.sidecar",
+        peer_chat_memoryos_kind="memoryos-lite",
+    )
+
+    command = captured["command"]
+    assert isinstance(command, list)
+    url_flag_index = command.index("--peer-chat-memoryos-url")
+    assert command[url_flag_index + 1] == "http://memoryos.sidecar"
+    kind_flag_index = command.index("--peer-chat-memoryos-kind")
+    assert command[kind_flag_index + 1] == "memoryos-lite"
 
 
 def test_wait_for_proposal_review_trigger_waits_until_read(
@@ -325,3 +734,55 @@ def test_success_checks_accept_selected_codex_review_fallback() -> None:
     }
 
     assert all(sentinel._success_checks(snapshot).values())
+
+
+def test_success_checks_reject_stdout_review_authority() -> None:
+    snapshot = {
+        "selected_review_provider": "codex",
+        "review_provider_fallback_reason": "opencode_unavailable",
+        "provider_readiness": {
+            "review_provider_selection": {
+                "policy": "auto",
+                "selected_provider": "codex",
+                "fallback_reason": "opencode_unavailable",
+            }
+        },
+        "related_lane_graph_proposals": [{"id": "prop-1"}],
+        "proposal": {
+            "status": "accepted",
+            "accepted_resolution_id": "res-1",
+        },
+        "proposal_has_review_runtime": False,
+        "lane": {
+            "resolution_id": "res-1",
+            "status": "awaiting_final_action",
+            "gate_passed": True,
+            "peer_delivery_mode": "configured_peer",
+            "peer_result_status": "completed",
+            "peer_degraded_reason": None,
+            "review_peer_cli_kind": "codex",
+            "review_summary": "MCP unavailable; stdout fallback review authority used.",
+            "review_history": [
+                {
+                    "fallback": "persistent",
+                    "fallback_reason": "verdict_merge",
+                    "summary": "MCP unavailable; stdout fallback review authority used.",
+                }
+            ],
+        },
+        "review_peer_participant": {"cli_kind": "codex"},
+        "review_verdict": {
+            "status": "finalized",
+            "summary": "MCP unavailable; stdout fallback review authority used.",
+        },
+        "review_task": {"status": "verdict_emitted"},
+        "final_action_hold": {
+            "status": "pending",
+            "summary": "MCP unavailable; stdout fallback review authority used.",
+        },
+        "execution_artifact": {"matches_expected": True},
+    }
+
+    checks = sentinel._success_checks(snapshot)
+    assert checks["review_authority_not_stdout_fallback"] is False
+    assert not all(checks.values())

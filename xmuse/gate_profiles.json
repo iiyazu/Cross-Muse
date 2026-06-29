@@ -16,6 +16,17 @@
       "cwd": ".",
       "timeout_s": 300,
       "allow_extra_args": true
+    },
+    "ruff": {
+      "argv": [
+        "uv",
+        "run",
+        "ruff",
+        "check"
+      ],
+      "cwd": ".",
+      "timeout_s": 300,
+      "allow_extra_args": true
     }
   },
   "profiles": {
@@ -33,13 +44,16 @@
           "command": "pytest",
           "args": [
             "-q",
-            "tests/xmuse/test_package_boundaries.py"
+            "tests/xmuse/test_package_boundaries.py",
+            "tests/xmuse/test_gate_profiles.py",
+            "tests/xmuse/test_fullchain_docs_sentinel.py"
           ]
         }
       ],
       "diff_selectors": [
         "pyproject.toml",
         ".github/**",
+        "scripts/run_fullchain_docs_sentinel.py",
         "xmuse/gate_profiles.json",
         "src/xmuse_core/gates/**",
         "src/xmuse_core/platform/execution/gate.py"
@@ -47,7 +61,33 @@
       "test_files": [
         "tests/xmuse/test_package_boundaries.py",
         "tests/xmuse/test_gate_profiles.py",
+        "tests/xmuse/test_fullchain_docs_sentinel.py",
         "tests/xmuse/test_platform_orchestrator.py"
+      ],
+      "test_nodeids": [],
+      "test_markers": [],
+      "mixed_test_files": []
+    },
+    "docs-only": {
+      "description": "Docs-only xmuse documentation smoke gate for isolated runtime sentinel lanes.",
+      "blocking": true,
+      "env": {},
+      "commands": [
+        {
+          "command": "pytest",
+          "args": [
+            "-q",
+            "tests/xmuse/test_mainline_contract_docs.py",
+            "tests/xmuse/test_contract_smoke_gates.py"
+          ]
+        }
+      ],
+      "diff_selectors": [
+        "docs/xmuse/**"
+      ],
+      "test_files": [
+        "tests/xmuse/test_mainline_contract_docs.py",
+        "tests/xmuse/test_contract_smoke_gates.py"
       ],
       "test_nodeids": [],
       "test_markers": [],
@@ -58,6 +98,14 @@
       "blocking": true,
       "env": {},
       "commands": [
+        {
+          "command": "ruff",
+          "args": [
+            "src/xmuse_core",
+            "xmuse",
+            "tests/xmuse"
+          ]
+        },
         {
           "command": "pytest",
           "args": [
