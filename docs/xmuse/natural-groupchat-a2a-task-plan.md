@@ -620,6 +620,33 @@ Success proof:
 - neither mode creates proposal, review, dispatch, execution, GitHub, merge, or
   production truth.
 
+Current support proof:
+
+- fullchain replay harness support:
+  PR #328 added `--peer-chat-memoryos-url` and
+  `--peer-chat-memoryos-kind=generic|memoryos-lite` to
+  `scripts/run_fullchain_docs_sentinel.py`, records those fields in
+  `loop_driver_artifacts/commands.json` / `commands.txt`, and passes them to
+  `xmuse.platform_runner` so the next integrated A/B/C replay can exercise
+  MemoryOS sidecar live/degraded behavior on the same durable demand. It also
+  added `tests/xmuse/test_fullchain_docs_sentinel.py` to the strict-product
+  gate coverage for `scripts/run_fullchain_docs_sentinel.py`. Authority
+  boundary: producer fullchain sentinel driver, consumer platform runner
+  peer-chat sidecar wiring, condition explicit MemoryOS sidecar configuration,
+  proof boundary sidecar continuity remains non-authority. PR #328 head
+  `897a867a15ddc226c5934d100dc653fb0f41bc3d` had exact-head CI run
+  `28375596128` success, guarded merge commit
+  `0114733b90f5e618199320e73cc920afb759299d`, and main CI run
+  `28375681239` success;
+
+Next proof target:
+
+- run an integrated replay with `--peer-chat-memoryos-url` configured against
+  a deliberately unavailable endpoint for degraded proof, or against an
+  operator-provided live endpoint for live proof. The replay must inspect
+  `chat.db:peer_turn_latency_traces.supporting_context_json`, frontend
+  `supporting_context.memoryos_sidecar`, and unchanged Track A authority refs.
+
 ### Rung 6 - Frontend Operator Cockpit
 
 Objective: make the authority chain inspectable without reading internals.
@@ -905,7 +932,9 @@ Current final-report notes after the Rung 4 runtime milestone:
   selected explicitly;
 - Track B state: MemoryOS sidecar build/ingest degraded against an unavailable
   endpoint and remained non-blocking; this was degraded attempt projection, not
-  live MemoryOS truth;
+  live MemoryOS truth. After PR #328, the fullchain sentinel can pass
+  explicit generic or MemoryOS Lite sidecar configuration into the platform
+  runner for a same-demand Rung 5 replay;
 - Track C state: read-only peer-chat UX projection exposed review state,
   approved final-action state, GitHub gate refs, degraded MemoryOS attempt
   refs, and gate-failed lane failure boundaries with no write capabilities;
