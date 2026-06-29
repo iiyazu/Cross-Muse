@@ -122,8 +122,8 @@ task explicitly targets them:
   command handoff material whose implementation is now represented by current
   TUI code, tests, and frontend projection docs.
 - `docs/xmuse/archive/2026-06-runtime-script-legacy/` contains deprecated
-  one-off runtime scripts and stubs that have no active loader, CLI entrypoint,
-  test, or operator-flow consumer.
+  one-off runtime scripts, stubs, and root wrapper CLIs that have no active
+  loader, CLI entrypoint, test, or operator-flow consumer.
 - `docs/xmuse/archive/2026-06-session-prompts-legacy/` contains older
   parallel-session prompt contracts. They are historical contract-fixture
   reference material, not current natural groupchat operator prompts.
@@ -151,6 +151,6 @@ goal package with fresh verification.
   `codex_node_launcher.sh`, `gate_profiles.json`, `god_launcher.sh`,
   `master_blueprint.md`, `master_status.md`, `overnight_runner.sh`,
   `scheduler_monitor.sh`, and `start_scheduler_monitor.sh`.
-- One-off injection scripts, deprecated stubs, and completed proposal seeders
-  must stay out of the `xmuse/` package tree unless a current loader, CLI
-  entrypoint, test, or documented operator flow consumes them.
+- One-off injection scripts, deprecated stubs, completed proposal seeders, and
+  root wrapper CLIs must stay out of the `xmuse/` package tree unless a current
+  loader, CLI entrypoint, test, or documented operator flow consumes them.
