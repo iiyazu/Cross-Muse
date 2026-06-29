@@ -1017,9 +1017,7 @@ def _evidence_summary(
     items.extend(dispatch_evidence_items)
     items.extend(final_action_items)
     items.extend(github_gate_items)
-    memoryos_summary = _memoryos_evidence_item(supporting_context)
-    if memoryos_summary is not None:
-        items.append(memoryos_summary)
+    items.extend(_memoryos_evidence_items(supporting_context))
     items.append(
         _evidence_item(
             kind="frontend_projection",
@@ -1284,14 +1282,19 @@ def _failure_boundary(
     return item
 
 
-def _memoryos_evidence_item(supporting_context: dict[str, Any]) -> dict[str, Any] | None:
+def _memoryos_evidence_items(supporting_context: dict[str, Any]) -> list[dict[str, Any]]:
     memoryos = supporting_context.get("memoryos_sidecar")
     if not isinstance(memoryos, dict):
-        return None
-    latest = _dict_items(memoryos.get("latest"))
-    if not latest:
-        return None
-    item = latest[0]
+        return []
+    items: list[dict[str, Any]] = []
+    for item in _dict_items(memoryos.get("latest")):
+        evidence_item = _memoryos_evidence_item(item)
+        if evidence_item is not None:
+            items.append(evidence_item)
+    return items
+
+
+def _memoryos_evidence_item(item: dict[str, Any]) -> dict[str, Any] | None:
     refs = _string_items(item.get("continuity_refs"))
     attempt_ref = _projection_text(item.get("continuity_attempt_ref"))
     ref = refs[0] if refs else attempt_ref
