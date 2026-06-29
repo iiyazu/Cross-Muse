@@ -253,7 +253,8 @@ Tests:
 
 Docs to read first:
 
-- `xmuse/HANDOFF.md`
+- `docs/xmuse/README.md`
+- `docs/xmuse/document-status.md`
 - `xmuse/FRONTEND_IMPLEMENTATION_GUIDE.md`
 - `xmuse/FRONTEND_API.md`
 - `xmuse/FRONTEND_VISION.md`

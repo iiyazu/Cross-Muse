@@ -79,7 +79,7 @@ xmuse runtime processes: none detected
 | `docs/xmuse/code-quality-and-archive-policy.md` | 代码复用、重写、归档和测试质量规则 |
 | `docs/xmuse/memoryos-file-separation.md` | xmuse / MemoryOS 文件、依赖和运行根分离规则 |
 | `docs/xmuse/session-prompts/` | 各模块 Codex session 初始化 prompt |
-| `xmuse/CODEX_GOAL_HANDOFF.md` | 后续 Codex/outer GOD goal 的执行上下文 |
+| `docs/xmuse/archive/2026-06-runtime-root-legacy/CODEX_GOAL_HANDOFF.md` | 后续 Codex/outer GOD goal 的执行上下文 |
 | `xmuse/FRONTEND_API.md` | TUI/前端可消费 API 摘要 |
 | `xmuse/FRONTEND_CONTEXT.md` | 前端/TUI 背景和旧 Open Design 说明 |
 

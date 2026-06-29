@@ -224,3 +224,21 @@ def test_legacy_proof_closure_docs_are_archived_not_default_docs_root() -> None:
     for name in archived_names:
         assert not (DOCS_ROOT / name).exists(), name
         assert (archive_dir / name).is_file(), name
+
+
+def test_legacy_runtime_root_docs_are_archived_not_product_runtime_root() -> None:
+    archived_paths = (
+        ("xmuse", "HANDOFF.md"),
+        ("xmuse", "CODEX_GOAL_HANDOFF.md"),
+        ("xmuse", "INIT.md"),
+        ("xmuse", "contracts", "state_machine.json"),
+    )
+    archive_dir = DOCS_ROOT / "archive" / "2026-06-runtime-root-legacy"
+    status = _read_doc("document-status.md")
+
+    assert "docs/xmuse/archive/2026-06-runtime-root-legacy/" in status
+    assert not (DOCS_ROOT / "xmuse-production-strengthening-goal-prompt.md").exists()
+    assert (archive_dir / "xmuse-production-strengthening-goal-prompt.md").is_file()
+    for parts in archived_paths:
+        assert not (PROJECT_ROOT.joinpath(*parts)).exists(), parts
+        assert (archive_dir / parts[-1]).is_file(), parts

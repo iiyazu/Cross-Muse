@@ -87,7 +87,7 @@ Ray Core 和 LangGraph 的定位:
 | `docs/xmuse/parallel-development-runbook.md` | 多 Codex session 并行开发分工与批次 |
 | `docs/xmuse/code-quality-and-archive-policy.md` | 代码复用/重写/隔离和质量规则 |
 | `docs/xmuse/session-prompts/` | S0-S8 session 初始化 prompt |
-| `xmuse/HANDOFF.md` | 项目交接和当前事实 |
+| `docs/xmuse/archive/2026-06-runtime-root-legacy/HANDOFF.md` | 项目交接和当前事实 |
 | `xmuse/FRONTEND_API.md` | TUI/前端 API 摘要 |
 | `xmuse/FRONTEND_CONTEXT.md` | 前端/TUI 背景 |
 

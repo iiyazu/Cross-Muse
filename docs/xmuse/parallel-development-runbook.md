@@ -22,11 +22,15 @@
 每个 Codex session 启动前必须读取:
 
 ```text
+docs/xmuse/README.md
+docs/xmuse/document-status.md
 docs/xmuse/解耦开发协议.md
 docs/xmuse/code-quality-and-archive-policy.md
-xmuse/HANDOFF.md
-xmuse/CODEX_GOAL_HANDOFF.md
 ```
+
+Older `HANDOFF.md` and `CODEX_GOAL_HANDOFF.md` files are archived under
+`docs/xmuse/archive/2026-06-runtime-root-legacy/`; use them only as historical
+context, not as current session authority.
 
 按模块再读取:
 
