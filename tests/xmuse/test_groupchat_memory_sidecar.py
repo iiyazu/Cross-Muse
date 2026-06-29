@@ -10,6 +10,7 @@ from xmuse_core.integrations.memoryos_client import (
     FakeMemoryOSClient,
     MemoryOSContext,
     MemoryOSIngestRequest,
+    MemoryOSIngestResult,
 )
 from xmuse_core.integrations.memoryos_namespace import conversation_namespace
 
@@ -145,3 +146,35 @@ async def test_memory_sidecar_dispatch_handoff_records_continuity_refs() -> None
     assert result["memory_ref"] == (
         "memory://conversation/conv-1/refs/chat_dispatch_queue:dispatch-1"
     )
+
+
+@pytest.mark.asyncio
+async def test_memory_sidecar_dispatch_handoff_degrades_without_memory_ref() -> None:
+    class MissingRefClient:
+        async def ingest(self, request):
+            return MemoryOSIngestResult(ok=True, memory_ref=None)
+
+        async def build_context(self, namespace, *, query: str, budget: int = 4096):
+            raise AssertionError("dispatch handoff must not build recall context")
+
+        async def search(self, namespace, *, query: str, limit: int = 10):
+            return []
+
+    sidecar = GroupchatMemorySidecar(MissingRefClient())
+
+    result = await sidecar.ingest_dispatch_handoff(
+        conversation_id="conv-1",
+        actor_id="dispatch-bridge:test",
+        dispatch_queue_entry_id="dispatch-1",
+        source_refs=["chat_dispatch_queue:dispatch-1"],
+    )
+
+    assert result["status"] == "degraded"
+    assert result["proof_level"] == "degraded"
+    assert result["degraded_reason"] == "memoryos_missing_memory_ref"
+    assert result["source_refs"] == ["chat_dispatch_queue:dispatch-1"]
+    assert result["continuity_attempt_ref"] == (
+        "memory://conversation/conv-1/context/memoryos-sidecar-attempt"
+    )
+    assert "memory_ref" not in result
+    assert "continuity_refs" not in result
