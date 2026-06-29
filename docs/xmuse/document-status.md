@@ -1,6 +1,6 @@
 # xmuse Document Status
 
-Updated: 2026-06-29
+Updated: 2026-06-30
 
 This file is the durable status index for `docs/xmuse/`. Keep `docs/xmuse/README.md` short; record document classification, baselines, and cleanup boundaries here.
 
@@ -51,6 +51,17 @@ These files are the active natural groupchat package:
 | `docs/xmuse/natural-groupchat-a2a-goal-prompt.md` | Current prompt handle |
 | `docs/xmuse/mainline-contracts.md` | Product contract entry |
 | `docs/xmuse/document-status.md` | Status and cleanup index |
+
+Current Track A correction:
+
+- `docs/superpowers/specs/2026-06-30-natural-groupchat-kernel-design.md`
+  records the approved design-source brainstorming for the natural groupchat
+  kernel. It is not an operator entrypoint by itself; its A1-A5 ladder,
+  `groupchat_worklist`/`groupchat_chains` authority shape, scheduler boundary,
+  and A1 non-goals are internalized into the active goal package above.
+- The active Track A breakthrough order is now A1 Natural Groupchat Kernel,
+  A2 Groupchat Decision Closure, A3 Dispatch To Execution Harness, A4 Result
+  Writeback To Groupchat, then A5 Unattended Groupchat Development Loop.
 
 ## Top-Level Contract Docs
 
@@ -127,6 +138,10 @@ task explicitly targets them:
 - `docs/xmuse/archive/2026-06-session-prompts-legacy/` contains older
   parallel-session prompt contracts. They are historical contract-fixture
   reference material, not current natural groupchat operator prompts.
+- `docs/superpowers/specs/2026-06-30-natural-groupchat-kernel-design.md`
+  remains a design-source reference for the current Track A kernel decision.
+  Future goals should consume it through the active `docs/xmuse/` package, not
+  use it to restart old superpowers planning flows.
 
 If an archived document becomes active again, first promote it into the current
 goal package with fresh verification.

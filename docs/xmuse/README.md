@@ -1,6 +1,6 @@
 # xmuse Documentation Entry
 
-Updated: 2026-06-29
+Updated: 2026-06-30
 
 This directory is the current xmuse documentation entrypoint. It is intentionally
 an index, not a runtime ledger. Long PR histories, local run transcripts, and
@@ -21,6 +21,10 @@ For the current natural groupchat production goal, read:
 
 External references:
 
+- `docs/superpowers/specs/2026-06-30-natural-groupchat-kernel-design.md`
+  is the approved design-source correction for the Track A natural groupchat
+  kernel. It has been internalized into the current goal package below; the
+  operational entrypoint remains `docs/xmuse/`.
 - `/home/iiyatu/projects/python/xmuse-m7-natural-groupchat-goal-design/docs/superpowers/specs/2026-06-26-natural-groupchat-a2a-production-goal-design.md`
   is design-source context only.
 - `/home/iiyatu/clowder-ai` is a natural groupchat implementation reference,
@@ -63,7 +67,20 @@ GOD groupchat deliberation
 `blueprint freeze 是去中心化 GOD deliberation 与中心化 execution/review 的边界`。
 `feature_lanes.json` is a live queue/projection, not authority.
 
-For the current natural groupchat work, the practical runtime route is:
+The current Track A design is kernel-first:
+
+```text
+A1 Natural Groupchat Kernel
+-> A2 Groupchat Decision Closure
+-> A3 Dispatch To Execution Harness
+-> A4 Result Writeback To Groupchat
+-> A5 Unattended Groupchat Development Loop
+```
+
+A1/A2 are natural groupchat success boundaries. PR/CI/guarded merge is
+downstream A3-A5 proof, not A1 completion.
+
+After durable groupchat decisions exist, the downstream development route is:
 
 ```text
 natural groupchat

@@ -1,173 +1,77 @@
-# Natural Groupchat A2A Goal Prompt
+# Natural Groupchat Goal Prompt
 
 Use this prompt directly with `/goal`.
 
 ```text
 Goal title:
-Production natural agents groupchat with A2A SDK interop and xmuse authority.
+xmuse natural groupchat kernel and development-chain closure.
 
 Repo:
 /home/iiyatu/projects/python/xmuse
 
-Primary objective:
-Start from the post-#294 A/B/C docs-sentinel closure and harden xmuse into a
-repeatable, diagnosable real-development harness. First make the integrated
-replay/evidence summary repeatable, then improve durable failure diagnosis,
-then carry one low-risk real code-change lane through durable discussion,
-provider invocation, proposal or blocker, structured review verdict,
-dispatch/execution, final action, PR, exact-head CI, guarded merge, and main CI
-or an explicit durable blocker.
+Objective:
+Start from a clean origin/main truth refresh. Track A is kernel-first:
+A1 Natural Groupchat Kernel -> A2 Groupchat Decision Closure -> A3 Dispatch To
+Execution Harness -> A4 Result Writeback To Groupchat -> A5 Unattended
+Groupchat Development Loop.
+
+Track A ladder:
+A1 Natural Groupchat Kernel
+-> A2 Groupchat Decision Closure
+-> A3 Dispatch To Execution Harness
+-> A4 Result Writeback To Groupchat
+-> A5 Unattended Groupchat Development Loop
 
 Read first:
 - AGENTS.md
 - docs/xmuse/README.md
+- docs/xmuse/document-status.md
 - docs/xmuse/natural-groupchat-a2a-goal.md
 - docs/xmuse/natural-groupchat-a2a-behavior.md
 - docs/xmuse/natural-groupchat-a2a-task-plan.md
 - docs/xmuse/mainline-contracts.md
-- /home/iiyatu/projects/python/xmuse-m7-natural-groupchat-goal-design/docs/superpowers/specs/2026-06-26-natural-groupchat-a2a-production-goal-design.md
+- docs/superpowers/specs/2026-06-30-natural-groupchat-kernel-design.md
 - /home/iiyatu/clowder-ai as natural groupchat reference only
 
-Recorded baseline:
-- Start from a clean origin/main worktree after truth refresh.
-- `last_observed_baseline` is
-  `5d03bbe82a3f17f2d854d46ee4dcbf7972fe533d` after PR #279. This is a static
-  docs baseline, not live remote-head truth. Always verify live `origin/main`
-  and open PR state before acting.
-- PRs #242, #244, #245, #246, #247, #248, #249, #250, #251, #252, #253,
-  #254, #255, #257, #258, #259, #260, #261, #262, #263, #264, #265, #266,
-  #267, #268, #269, #270, #271, #272, #273, #274, #275, #276, #277, #278,
-  and #279 have merged with successful main push CI as of 2026-06-28.
-- PR #249 hardened GitHub server truth: PR/CI/merge evidence must be tied to
-  exact PR head SHA, required check-run names, and per-check-run head SHAs.
-- PR #251 exposed sanitized MemoryOS sidecar support metadata through the
-  read-only UX projection.
-- PR #252 clarified that A2A `dispatch_allowed` review verdict writeback still
-  requires `chat.db/proposal_approval` before dispatch, and drops
-  provider-supplied boundary claims.
-- PR #254 exposed `chat.db/dispatch_queue` as next authority only when proposal
-  approval creates a real queue entry.
-- PR #255 persisted dispatch gate refs for MemoryOS sidecar/context continuity,
-  frontend projection, and read-only copilot audit consumers.
-- PR #257 propagated dispatch authority refs into execute-peer
-  context/prompt/envelope, kept frontend `source_refs` authority-only, and
-  made read-only copilot classify `chat_dispatch_queue:*` as durable authority
-  while leaving `mcp_writeback:*` as execution evidence/candidate input.
-- PR #258 refreshed current goal docs after #257.
-- PR #259 keeps dispatch acknowledgement/evidence refs in `chat_dispatch_queue`
-  and prevents `mcp_writeback:*` / `peer_ack:*` from becoming acceptance spine
-  lane execution proof.
-- PR #260 refreshed current goal docs after #259.
-- PR #261 propagates approved dispatch authority refs into saved lane graphs,
-  projected execution lanes, lane context bundles, normal execution prompts,
-  and persistent execute context; those refs identify queue/proposal/review
-  authority consumption and are still not lane execution proof.
-- PR #262 refreshed current goal docs after #261.
-- PR #263 records approved dispatch handoff continuity into the optional
-  MemoryOS sidecar with queue/proposal/review/resolution/artifact refs; sidecar
-  ingest degradation remains non-blocking and does not become dispatch or lane
-  execution proof.
-- PR #264 refreshed current goal docs after #263.
-- PR #265 exposes dispatch queue entry-level source refs, frontend authority
-  boundary, and projection-only sidecar continuity on the read-only UX
-  projection.
-- PR #266 clarifies read-only copilot intake boundaries: accepted
-  recommendations may use `review_trigger_verdict:*` and `chat_dispatch_queue:*`
-  as durable authority, while `mcp_writeback:*` and legacy
-  `chat_dispatch_queue#entry=*` remain candidate/evidence refs.
-- PR #267 refreshed current goal docs after the B/C/D completion pass.
-- PR #268 fixes acceptance-gated short-run read projection after final-action
-  GitHub gate resolution: accepted gates project as `merged`; manual gaps
-  project as `blocked_for_input` with `blocked_reason`; projection refs point
-  back to `chat.db`, dispatch queue, review verdict, final action, and GitHub
-  gate evidence/gap authority.
-- PR #269 refreshed current goal docs after #268.
-- PR #270 marks synthetic acceptance-gated short-run lane projections as
-  `integration_mode: noop`, so health does not report ordinary dependent
-  release risk for a projection-only gate lane.
-- PR #271 refreshed current goal docs after #270.
-- PR #272 keeps the fullchain docs sentinel peer/review/execute GOD backends
-  aligned with the selected `--peer-god-backend`, so native sentinel runs do
-  not drift into Ray defaults.
-- PR #273 refreshed current goal docs after #272 and records its merge/main-CI
-  facts.
-- PR #274 refreshed current goal docs after the default native post-#273
-  sentinel.
-- PR #275 exposes pending final-action holds as read-only frontend operator
-  next-action projection.
-- PR #276 lets read-only copilot intake classify final-action holds as durable
-  operator next-action authority, not GitHub or merge truth.
-- PR #277 threads MemoryOS sidecar recall continuity refs into dedicated
-  prompt/supporting-context/read-projection fields while keeping generic
-  authority `source_refs` clean.
-- PR #278 refreshed current goal docs after #277.
-- PR #279 adds a repository `docs-only` gate profile, keeps explicit
-  `gate_profiles` scoped by actual changed paths including untracked isolated
-  worker output, and writes durable fail-closed gate reports for profile
-  resolution failures.
-- PR #243 is an older behind-main docs package; treat it as reference-only
-  unless rebased and revalidated.
-- Dirty historical worktrees and archived docs are references only, not main
-  capability.
+Static baselines:
+- last_observed_baseline:
+  5d03bbe82a3f17f2d854d46ee4dcbf7972fe533d after PR #279 and PR #259
+  dispatch proof split 53dbeb9ace749510e9cb0f82f73cbd4df11ec190.
+- post_abc_closure_baseline:
+  07630131dcb6e26c8dc09dcf41690381e5cd0ee6 from PR #294, run
+  track-abc-integrated-memoryos-degraded-20260629-01, conversation
+  conv_c7528fbf03b84755b8d4eb65166aa0a1, final action
+  final-cce17cc5e0e7, PR CI run 28332878486, main CI run 28332906024, GitHub
+  gate evidence github_gate_evidence.json#evidence=ghgate_e3e90b98395d4c6e81136db6241ecf49.
+These are static orientation facts, not live GitHub truth.
 
-Post-#294 milestone:
-- `post_abc_closure_baseline` is
-  `07630131dcb6e26c8dc09dcf41690381e5cd0ee6`, produced by PR #294.
-- Run `track-abc-integrated-memoryos-degraded-20260629-01`, conversation
-  `conv_c7528fbf03b84755b8d4eb65166aa0a1`, final action
-  `final-cce17cc5e0e7`.
-- PR #294: `https://github.com/iiyazu/Cross-Muse/pull/294`.
-- PR #294 head `9be3b17190380171756bd8375fcb946247217d7c` passed exact-head
-  CI run `28332878486`; guarded merge produced
-  `07630131dcb6e26c8dc09dcf41690381e5cd0ee6`; main CI run `28332906024`
-  succeeded.
-- GitHub gate evidence:
-  `github_gate_evidence.json#evidence=ghgate_e3e90b98395d4c6e81136db6241ecf49`.
-- The run proved one docs-only integrated A/B/C chain:
-  natural groupchat proposal/review/dispatch/execution/final-action,
-  degraded MemoryOS sidecar attempt projection, frontend read-only projection,
-  PR, exact-head CI, guarded merge, and main CI.
-- This does not prove repeatability, real-code development, multi-lane
-  scheduling, live MemoryOS truth, complete frontend UX, or production
-  readiness.
-
-Architecture:
-natural groupchat
--> official a2a-sdk provider / handoff / artifact envelope
--> xmuse chat.db / inbox / proposal / review / dispatch authority
--> provider-native execution
--> PR / CI / operator merge
-
-Hard rules:
-- A2A SDK is interop, not xmuse authority.
-- Ray is optional legacy, not the default natural groupchat kernel.
-- Do not start loops with TDD. First identify authority, producer, consumer,
-  condition, proof level, and failure boundary.
-- Use tests after observed runtime evidence to pin contracts/regressions.
-- Skills/workers are process aids only, never proof truth.
-- Flexibly enable read-only subagent or copilot audit when it materially helps
-  implementation/review decisions; audit output remains candidate input only.
-- Use dynamic small main-based PRs by implementation domain; every PR must pass
-  remote CI before merge.
-- If the same complex boundary fails twice, refactor or redesign the boundary
-  instead of stacking patches.
+Operating contract:
+- Each loop declares authority, producer, consumer, condition, proof level,
+  failure boundary, and forbidden claims.
+- A1 authority is chat_messages, groupchat_chains, groupchat_worklist, linked
+  chat_inbox_items, and structured callback/writeback.
+- Text @mentions and router output are candidate signals only; schedulable
+  authority starts when GroupchatWorklistScheduler accepts groupchat_worklist.
+- A2 requires durable proposal, objection or clearance, review verdict,
+  decision, or blocker refs.
+- A3-A5 use the existing execution harness. PR/CI/guarded merge is downstream
+  proof, not A1 completion.
+- A2A SDK is interop. MemoryOS is sidecar. Frontend is projection. Ray is
+  optional legacy.
+- Skills, workers, local tests, provider stdout, and subagent audit are
+  diagnostics or candidate input only.
 
 Minimum success:
-Reach the deepest next-stage rung available without weakening proof boundaries:
-standardized repeatable evidence summary, durable failure taxonomy, one
-low-risk real-code PR/CI/guarded-merge/main-CI path, or an explicit durable
-blocker that names the next authority boundary with source refs.
+Reach the deepest honest boundary without weakening authority: A1 kernel
+closure, A2 decision closure, A3-A5 development-chain closure, or a durable
+blocker with source refs and next authority boundary.
 
-Next-stage order:
-1. repeatability and evidence summary;
-2. durable failure taxonomy and frontend-visible blocker projection;
-3. low-risk real-code lane;
-4. multi-lane or multi-PR harness;
-5. MemoryOS live/degraded contract;
-6. read-only frontend operator cockpit.
+PR discipline:
+Use domain-scoped main-based PRs only when code or current docs change. Each PR
+needs exact-head CI before guarded merge, and main CI observation after merge.
 
 Do not claim:
-production-ready natural groupchat, live MemoryOS authority, fully autonomous
-merge, GitHub review truth, provider stdout review truth, full multi-provider
-parity, frontend complete, or Ray-backed production proof.
+production-ready natural groupchat, live MemoryOS truth, frontend complete,
+GitHub review truth, provider stdout truth, Ray-backed production proof, or
+autonomous merge.
 ```
