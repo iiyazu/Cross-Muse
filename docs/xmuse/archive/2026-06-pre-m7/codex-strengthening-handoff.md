@@ -11565,7 +11565,7 @@ Validation:
 - `uv run mypy scripts/goal_stage_runner.py scripts/github_server_truth_capture.py src/xmuse_core/providers/adapters/opencode.py src/xmuse_core/providers/registry.py src/xmuse_core/runtime/settings.py src/xmuse_core/platform/execution/github_ops.py src/xmuse_core/self_iteration/runtime_closure.py`
   - 结果: `Success: no issues found in 7 source files`。
 - Current canonical command scan:
-  `rg -n "deepseek-v4-flash:max|opencode-go/deepseek-v4-flash:max|deepseek-v4-flash-max|opencode-go/deepseek-v4-flash-max" src/xmuse_core tests/xmuse scripts .env.example docs/xmuse/goal-stage-harness.md docs/xmuse/opencode-in-long-runtime-evidence-plan.md docs/xmuse/provider-matrix.md docs/xmuse/config-matrix.md docs/xmuse/tui-slash-command-handoff.md -g '!*.pyc'`
+  `rg -n "deepseek-v4-flash:max|opencode-go/deepseek-v4-flash:max|deepseek-v4-flash-max|opencode-go/deepseek-v4-flash-max" src/xmuse_core tests/xmuse scripts .env.example docs/xmuse/goal-stage-harness.md docs/xmuse/archive/2026-06-proof-closure-legacy/opencode-in-long-runtime-evidence-plan.md docs/xmuse/provider-matrix.md docs/xmuse/config-matrix.md docs/xmuse/tui-slash-command-handoff.md -g '!*.pyc'`
   - 结果: 无输出，exit 1。
 - `git diff --check`
   - 结果: 无输出，exit 0。
@@ -11622,7 +11622,7 @@ import/config/runtime dependency。
   - `max` 不再拼进 model id。
 - 当前权威 docs 已更新:
   - `docs/xmuse/goal-stage-harness.md`;
-  - `docs/xmuse/opencode-in-long-runtime-evidence-plan.md`;
+  - `docs/xmuse/archive/2026-06-proof-closure-legacy/opencode-in-long-runtime-evidence-plan.md`;
   - `docs/xmuse/provider-matrix.md`;
   - `docs/xmuse/config-matrix.md`;
   - `docs/xmuse/tui-slash-command-handoff.md`。
@@ -11782,7 +11782,7 @@ import/config/runtime dependency。
 
 ## 2026-06-10 OpenCode-In Long Runtime Evidence Closure Slice
 
-本轮目标来自 `docs/xmuse/opencode-in-long-runtime-evidence-plan.md` 与
+本轮目标来自 `docs/xmuse/archive/2026-06-proof-closure-legacy/opencode-in-long-runtime-evidence-plan.md` 与
 `/mnt/c/tmp/deep-research-long-blueprint.md`。重点不是扩功能面，而是继续把
 contract/fake proof 往可审计 long-runtime evidence 推进。
 

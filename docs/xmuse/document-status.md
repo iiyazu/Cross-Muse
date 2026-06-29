@@ -63,8 +63,6 @@ them:
 - `real-runtime-integration-gate.md`
 - `broad-suite-baseline-debt.md`
 - `memoryos-lite-runtime-compatibility.md`
-- `vision-runtime-evidence-closure-plan.md`
-- `vision-runtime-evidence-closure-goal-prompt.md`
 - `github-server-side-gate-live-evidence-2026-06-25.md`
 - `github-server-side-gate.md`
 - `github-review-merge-contract.md`
@@ -93,10 +91,10 @@ task explicitly targets them:
 - `docs/xmuse/archive/2026-06-runtime-loop-legacy/` contains the older
   production-closure and real-runtime loop policy/decomposition documents
   superseded by the natural groupchat goal package.
-- `self-iteration-runtime-closure*.md`, `opencode-in-long-runtime-evidence*.md`,
-  and `vision-runtime-evidence-closure.md` remain root-level reference docs for
-  now because some current tests, code paths, or release docs still point at
-  them.
+- `docs/xmuse/archive/2026-06-proof-closure-legacy/` contains older
+  self-iteration, vision-runtime, and OpenCode-in proof-closure documents.
+  Some tests and compatibility evidence builders still reference these files,
+  but they are no longer default docs-root entrypoints.
 
 If an archived document becomes active again, first promote it into the current
 goal package with fresh verification.

@@ -235,11 +235,11 @@ Acceptance:
 Tasks:
 
 - Update:
-  - `docs/xmuse/self-iteration-runtime-closure.md`
+  - `docs/xmuse/archive/2026-06-proof-closure-legacy/self-iteration-runtime-closure.md`
   - `docs/xmuse/broad-suite-baseline-debt.md`
   - `docs/xmuse/README.md`
 - Add a new artifact if useful:
-  - `docs/xmuse/vision-runtime-evidence-closure.md`
+  - `docs/xmuse/archive/2026-06-proof-closure-legacy/vision-runtime-evidence-closure.md`
 - Record every remaining gap with:
   - owner file;
   - repro/evidence command;

@@ -1,7 +1,7 @@
 # Self-Iteration Runtime Closure Goal Prompt
 
 Use this short prompt for the next long-running goal. Detailed task and behavior
-rules live in `docs/xmuse/self-iteration-runtime-closure-plan.md`.
+rules live in `docs/xmuse/archive/2026-06-proof-closure-legacy/self-iteration-runtime-closure-plan.md`.
 
 ```text
 Execute the xmuse Self-Iteration Runtime Closure plan.
@@ -10,7 +10,7 @@ Read and follow:
 - AGENTS.md
 - docs/xmuse/README.md
 - docs/xmuse/mainline-contracts.md
-- docs/xmuse/self-iteration-runtime-closure-plan.md
+- docs/xmuse/archive/2026-06-proof-closure-legacy/self-iteration-runtime-closure-plan.md
 
 Objective:
 Produce one replayable, auditable xmuse self-iteration loop:

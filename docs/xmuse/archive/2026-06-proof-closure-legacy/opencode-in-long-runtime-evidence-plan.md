@@ -135,8 +135,8 @@ Inspect:
 
 - `docs/xmuse/README.md`
 - `docs/xmuse/mainline-contracts.md`
-- `docs/xmuse/self-iteration-runtime-closure.md`
-- `docs/xmuse/vision-runtime-evidence-closure.md`
+- `docs/xmuse/archive/2026-06-proof-closure-legacy/self-iteration-runtime-closure.md`
+- `docs/xmuse/archive/2026-06-proof-closure-legacy/vision-runtime-evidence-closure.md`
 - `docs/xmuse/provider-matrix.md`
 - `docs/xmuse/broad-suite-baseline-debt.md`
 - relevant `src/xmuse_core/` and `tests/xmuse/` files located with `rg`
@@ -369,7 +369,7 @@ Update docs only where behavior changed or evidence boundaries need to be cleare
 Required docs candidates:
 
 - `docs/xmuse/provider-matrix.md`
-- `docs/xmuse/vision-runtime-evidence-closure.md`
+- `docs/xmuse/archive/2026-06-proof-closure-legacy/vision-runtime-evidence-closure.md`
 - `docs/xmuse/broad-suite-baseline-debt.md`
 - `docs/xmuse/memoryos-lite-runtime-compatibility.md`
 - `docs/xmuse/archive/2026-06-pre-m7/codex-strengthening-handoff.md`

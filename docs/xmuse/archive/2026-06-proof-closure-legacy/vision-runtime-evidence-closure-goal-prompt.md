@@ -1,7 +1,7 @@
 # Vision Runtime Evidence Closure Goal Prompt
 
 Use this concise prompt for `/goal`. Detailed tasks and behavior rules live in
-`docs/xmuse/vision-runtime-evidence-closure-plan.md`.
+`docs/xmuse/archive/2026-06-proof-closure-legacy/vision-runtime-evidence-closure-plan.md`.
 
 ```text
 Goal: Execute xmuse Vision Runtime Evidence Closure after 2fdb299.
@@ -12,9 +12,9 @@ Read and follow:
 - AGENTS.md
 - docs/xmuse/README.md
 - docs/xmuse/mainline-contracts.md
-- docs/xmuse/self-iteration-runtime-closure.md
+- docs/xmuse/archive/2026-06-proof-closure-legacy/self-iteration-runtime-closure.md
 - docs/xmuse/broad-suite-baseline-debt.md
-- docs/xmuse/vision-runtime-evidence-closure-plan.md
+- docs/xmuse/archive/2026-06-proof-closure-legacy/vision-runtime-evidence-closure-plan.md
 - /mnt/c/tmp/deep-research-report_06.md
 
 Objective:

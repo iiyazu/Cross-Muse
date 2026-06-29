@@ -192,7 +192,7 @@ Acceptance:
 
 Tasks:
 
-- Add `docs/xmuse/self-iteration-runtime-closure.md`.
+- Add `docs/xmuse/archive/2026-06-proof-closure-legacy/self-iteration-runtime-closure.md`.
 - Include:
   - human request
   - GOD speech-act transcript refs
