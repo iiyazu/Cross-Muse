@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import fcntl
 import json
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
@@ -9,6 +11,7 @@ from typing import Any, Protocol
 from pydantic import BaseModel, ConfigDict, Field
 
 from xmuse_core.platform.execution.github_ops import (
+    GitHubMainCiEvidence,
     GitHubServerSideTruthEvidence,
     can_emit_pr_merged,
 )
@@ -32,6 +35,15 @@ class GitHubGateTruthCollector(Protocol):
     ) -> GitHubServerSideTruthEvidence: ...
 
 
+class GitHubMainCiTruthCollector(Protocol):
+    def collect_main_ci(
+        self,
+        *,
+        repo: str,
+        merge_commit_sha: str,
+    ) -> GitHubMainCiEvidence: ...
+
+
 class GitHubGateEvidenceRecord(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -41,6 +53,7 @@ class GitHubGateEvidenceRecord(BaseModel):
     pull_request_number: int
     required_checks: list[str] = Field(default_factory=list)
     evidence: GitHubServerSideTruthEvidence
+    main_ci: GitHubMainCiEvidence | None = None
     can_accept: bool
     gap_reason: str | None = None
     created_at: str
@@ -65,6 +78,7 @@ class GitHubGateEvidenceStore:
         pull_request_number: int,
         required_checks: list[str],
         collector: GitHubGateTruthCollector,
+        main_ci_collector: GitHubMainCiTruthCollector | None = None,
     ) -> GitHubGateEvidenceRecord:
         evidence = collector.collect(
             repo=repo,
@@ -78,6 +92,12 @@ class GitHubGateEvidenceStore:
             required_checks=required_checks,
         )
         can_accept = mismatch_reason is None and can_emit_pr_merged(evidence)
+        main_ci = _collect_main_ci(
+            evidence=evidence,
+            repo=repo,
+            can_accept=can_accept,
+            collector=main_ci_collector,
+        )
         record = GitHubGateEvidenceRecord(
             id=_new_id("ghgate"),
             final_action_id=final_action_id,
@@ -85,14 +105,53 @@ class GitHubGateEvidenceStore:
             pull_request_number=pull_request_number,
             required_checks=list(required_checks),
             evidence=evidence,
+            main_ci=main_ci,
             can_accept=can_accept,
             gap_reason=mismatch_reason or evidence.gap_reason,
             created_at=_utc_now(),
         )
-        data = self._read()
-        data.setdefault("items", []).append(record.model_dump(mode="json"))
-        self._write(data)
-        return record
+
+        def append_record(data: dict[str, Any]) -> GitHubGateEvidenceRecord:
+            data.setdefault("items", []).append(record.model_dump(mode="json"))
+            return record
+
+        return self._locked_update(append_record)
+
+    def capture_main_ci_for_ref(
+        self,
+        ref: str,
+        *,
+        collector: GitHubMainCiTruthCollector,
+        final_action_id: str | None = None,
+    ) -> GitHubGateEvidenceRecord:
+        prefix = f"{self._path.name}#evidence="
+        if not ref.startswith(prefix):
+            raise ValueError("github gate evidence ref does not match store")
+        evidence_id = ref.removeprefix(prefix).strip()
+        if not evidence_id:
+            raise ValueError("github gate evidence ref missing id")
+
+        def update_record(data: dict[str, Any]) -> GitHubGateEvidenceRecord:
+            for item in data.get("items", []):
+                if not isinstance(item, dict) or item.get("id") != evidence_id:
+                    continue
+                if (
+                    final_action_id is not None
+                    and item.get("final_action_id") != final_action_id
+                ):
+                    raise ValueError("github gate evidence final action mismatch")
+                record = GitHubGateEvidenceRecord(**item)
+                merge_commit_sha = record.evidence.merge_commit_sha
+                if not merge_commit_sha:
+                    raise ValueError("github gate evidence missing merge commit sha")
+                item["main_ci"] = collector.collect_main_ci(
+                    repo=record.repo,
+                    merge_commit_sha=merge_commit_sha,
+                ).model_dump(mode="json")
+                return GitHubGateEvidenceRecord(**item)
+            raise KeyError(f"unknown github gate evidence ref: {ref}")
+
+        return self._locked_update(update_record)
 
     def ref_for(self, record: GitHubGateEvidenceRecord) -> str:
         return f"{self._path.name}#evidence={record.id}"
@@ -130,6 +189,22 @@ class GitHubGateEvidenceStore:
             encoding="utf-8",
         )
 
+    def _locked_update(
+        self,
+        mutator: Callable[[dict[str, Any]], GitHubGateEvidenceRecord],
+    ) -> GitHubGateEvidenceRecord:
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        lock_path = self._path.with_name(f"{self._path.name}.lock")
+        with lock_path.open("a", encoding="utf-8") as lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            try:
+                data = self._read()
+                result = mutator(data)
+                self._write(data)
+                return result
+            finally:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
 
 def _request_mismatch_reason(
     *,
@@ -145,3 +220,18 @@ def _request_mismatch_reason(
     if evidence.required_checks != required_checks:
         return "github evidence required checks mismatch"
     return None
+
+
+def _collect_main_ci(
+    *,
+    evidence: GitHubServerSideTruthEvidence,
+    repo: str,
+    can_accept: bool,
+    collector: GitHubMainCiTruthCollector | None,
+) -> GitHubMainCiEvidence | None:
+    if collector is None or not can_accept or evidence.merge_commit_sha is None:
+        return None
+    return collector.collect_main_ci(
+        repo=repo,
+        merge_commit_sha=evidence.merge_commit_sha,
+    )
