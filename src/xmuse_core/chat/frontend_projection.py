@@ -20,6 +20,7 @@ SOURCE_AUTHORITY = [
     "chat.db:peer_turn_latency_traces",
     "review_plane.json",
     "final_actions.json",
+    "final_action_prs.json",
     "github_gate_evidence.json",
     "active_sessions.json",
     "god_sessions.json",
@@ -1393,7 +1394,7 @@ def _final_action_state(
         hold = holds_by_id.get(hold_id)
         if not isinstance(hold, dict):
             continue
-        item = _final_action_projection(hold, spine=spine, lane=lane)
+        item = _final_action_projection(hold, root=root, spine=spine, lane=lane)
         if item is None:
             continue
         items.append(item)
@@ -1401,8 +1402,13 @@ def _final_action_state(
         used_lane_projection = used_lane_projection or lane is not None
         item_status = str(item.get("status") or "unknown")
         status_summary[item_status] = status_summary.get(item_status, 0) + 1
+    source_authority = ["final_actions.json", "chat.db:acceptance_spines"]
+    if any("pull_request" in item for item in items):
+        source_authority.append("final_action_prs.json")
+    if any("github_gate" in item for item in items):
+        source_authority.append("github_gate_evidence.json")
     result: dict[str, Any] = {
-        "source_authority": ["final_actions.json", "chat.db:acceptance_spines"],
+        "source_authority": source_authority,
         "projection_only": True,
         "total": len(items),
         "status_summary": status_summary,
@@ -1422,6 +1428,48 @@ def _final_actions_by_id(root: Path) -> dict[str, dict[str, Any]]:
         for hold in raw_holds
         if isinstance(hold, dict) and isinstance(hold.get("id"), str)
     }
+
+
+def _final_action_prs_by_final_action_id(root: Path) -> dict[str, dict[str, Any]]:
+    raw_items = _read_json_file(root / "final_action_prs.json").get("items")
+    if not isinstance(raw_items, list):
+        raw_items = []
+    by_final_action_id: dict[str, dict[str, Any]] = {}
+    for item in raw_items:
+        if not isinstance(item, dict):
+            continue
+        final_action_id = item.get("final_action_id")
+        if isinstance(final_action_id, str) and final_action_id:
+            by_final_action_id[final_action_id] = item
+    return by_final_action_id
+
+
+def _final_action_prs_by_ref(root: Path) -> dict[str, dict[str, Any]]:
+    raw_items = _read_json_file(root / "final_action_prs.json").get("items")
+    if not isinstance(raw_items, list):
+        raw_items = []
+    by_ref: dict[str, dict[str, Any]] = {}
+    for item in raw_items:
+        if not isinstance(item, dict):
+            continue
+        pr_id = _projection_text(item.get("id"))
+        if pr_id:
+            by_ref[f"final_action_prs.json#pr={pr_id}"] = item
+    return by_ref
+
+
+def _final_action_pr_record(
+    root: Path,
+    hold_id: str,
+    lane: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    lane_ref = _projection_text(lane.get("pull_request_ref") if lane is not None else None)
+    if lane_ref:
+        record = _final_action_prs_by_ref(root).get(lane_ref)
+        if record is None or record.get("final_action_id") != hold_id:
+            return None
+        return record
+    return _final_action_prs_by_final_action_id(root).get(hold_id)
 
 
 def _final_action_links(
@@ -1653,13 +1701,14 @@ def _review_authority_boundary() -> dict[str, str]:
 def _final_action_projection(
     hold: dict[str, Any],
     *,
+    root: Path | None = None,
     spine: dict[str, Any] | None = None,
     lane: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     hold_id = _projection_text(hold.get("id"))
     if not hold_id:
         return None
-    return {
+    item = {
         "id": hold_id,
         "lane_id": _projection_text(hold.get("lane_id")),
         "verdict_id": _projection_text(hold.get("verdict_id")),
@@ -1672,6 +1721,63 @@ def _final_action_projection(
         "github_gate_gap_ref": _projection_text(hold.get("github_gate_gap_ref")),
         "source_refs": _final_action_source_refs(hold_id, hold, spine=spine, lane=lane),
         "authority_boundary": _final_action_authority_boundary(),
+    }
+    if root is not None:
+        pr_record = _final_action_pr_record(root, hold_id, lane)
+        pr_projection = _final_action_pr_projection(pr_record)
+        if pr_projection is not None:
+            item["pull_request"] = pr_projection
+        github_gate = _final_action_github_gate_projection(root, hold_id, item, lane=lane)
+        if github_gate is not None:
+            item["github_gate"] = github_gate
+    return item
+
+
+def _final_action_pr_projection(record: dict[str, Any] | None) -> dict[str, Any] | None:
+    if record is None:
+        return None
+    pr_id = _projection_text(record.get("id"))
+    if pr_id is None:
+        return None
+    draft = record.get("draft")
+    return {
+        "id": pr_id,
+        "ref": f"final_action_prs.json#pr={pr_id}",
+        "status": _projection_text(record.get("status")) or "unknown",
+        "repo": _projection_text(record.get("repo")),
+        "base_branch": _projection_text(record.get("base_branch")),
+        "head_branch": _projection_text(record.get("head_branch")),
+        "commit_sha": _projection_text(record.get("commit_sha")),
+        "pull_request_number": record.get("pull_request_number"),
+        "pull_request_url": _projection_text(record.get("pull_request_url")),
+        "head_sha": _projection_text(record.get("head_sha")),
+        "draft": draft if isinstance(draft, bool) else None,
+        "created_at": _projection_text(record.get("created_at")),
+        "proof_boundary": _projection_text(record.get("proof_boundary")),
+        "authority_boundary": _final_action_pr_authority_boundary(),
+    }
+
+
+def _final_action_github_gate_projection(
+    root: Path,
+    hold_id: str,
+    item: dict[str, Any],
+    *,
+    lane: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    ref = _projection_text(item.get("github_gate_evidence_ref")) or _projection_text(
+        lane.get("github_gate_evidence_ref") if lane is not None else None
+    )
+    if ref is None:
+        return None
+    record = _accepted_github_gate_record(root, ref, final_action_id=hold_id)
+    if record is None:
+        return None
+    return {
+        "ref": ref,
+        "status": "accepted",
+        "details": _github_gate_details(record),
+        "authority_boundary": _github_gate_authority_boundary(),
     }
 
 
@@ -1836,6 +1942,24 @@ def _final_action_authority_boundary() -> dict[str, str]:
         "consumer": "frontend.peer_chat_ux_projection",
         "condition": "read_only_projection",
         "proof_boundary": "final_action_hold_not_github_or_merge_truth",
+    }
+
+
+def _final_action_pr_authority_boundary() -> dict[str, str]:
+    return {
+        "producer": "final_action_prs.json",
+        "consumer": "frontend.peer_chat_ux_projection",
+        "condition": "read_only_projection",
+        "proof_boundary": "pull_request_record_not_ci_or_merge_truth",
+    }
+
+
+def _github_gate_authority_boundary() -> dict[str, str]:
+    return {
+        "producer": "github_gate_evidence.json",
+        "consumer": "frontend.peer_chat_ux_projection",
+        "condition": "read_only_projection",
+        "proof_boundary": "server_side_merge_proof_projection_not_new_truth",
     }
 
 
