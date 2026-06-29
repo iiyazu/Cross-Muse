@@ -34,11 +34,17 @@ from xmuse_core.integrations.memoryos_client import (
 from xmuse_core.platform.coordinator_control import CoordinatorControlService
 from xmuse_core.platform.execution.github_ops import (
     GitHubCliServerSideTruthClient,
+    GitHubMainCiEvidence,
     GitHubServerSideTruthEvidence,
+    ReadOnlyGitHubMainCiTruthCollector,
     ReadOnlyGitHubServerSideTruthCollector,
 )
 from xmuse_core.platform.final_action_gate import FinalActionGateStore
-from xmuse_core.platform.github_gate_evidence import GitHubGateTruthCollector
+from xmuse_core.platform.github_gate_evidence import (
+    GitHubGateEvidenceStore,
+    GitHubGateTruthCollector,
+    GitHubMainCiTruthCollector,
+)
 from xmuse_core.platform.model_policy import CodexModelPolicy, resolve_codex_model_policy
 from xmuse_core.platform.orchestrator import PlatformOrchestrator
 from xmuse_core.platform.review_plane import ReviewPlaneController
@@ -379,6 +385,44 @@ def _find_resolvable_final_action_hold(
     return matches[0]
 
 
+def _find_final_action_hold(
+    *,
+    final_action_store: FinalActionGateStore,
+    lane_id: str | None,
+    final_action_id: str | None,
+):
+    matches = []
+    for action in final_action_store.list_actions():
+        if lane_id is not None and action.lane_id != lane_id:
+            continue
+        if final_action_id is not None and action.id != final_action_id:
+            continue
+        matches.append(action)
+    if not matches:
+        raise ValueError("final action hold not found")
+    if len(matches) > 1:
+        raise ValueError("multiple final action holds matched")
+    return matches[0]
+
+
+def _main_ci_status(
+    main_ci: GitHubMainCiEvidence | None,
+    *,
+    merge_commit_sha: str | None,
+) -> str:
+    if main_ci is None:
+        return "missing"
+    status = main_ci.conclusion or main_ci.status or "unknown"
+    if (
+        status == "success"
+        and merge_commit_sha is not None
+        and main_ci.head_sha is not None
+        and main_ci.head_sha != merge_commit_sha
+    ):
+        return "head_mismatch"
+    return status
+
+
 def _find_pending_merge_final_action_hold(
     *,
     final_action_store: FinalActionGateStore,
@@ -682,6 +726,7 @@ def resolve_existing_final_action_with_github_gate(
     lane_id: str | None = None,
     final_action_id: str | None = None,
     github_gate_collector: GitHubGateTruthCollector | None = None,
+    main_ci_collector: GitHubMainCiTruthCollector | None = None,
     resolved_by: str = PLANNING_AUTOMATION_WORKER_ID,
 ) -> dict[str, Any]:
     """Resolve an existing pending final-action hold with GitHub gate truth."""
@@ -740,6 +785,7 @@ def resolve_existing_final_action_with_github_gate(
         pull_request_number=github_pull_request,
         required_checks=clean_checks,
         collector=collector,
+        main_ci_collector=main_ci_collector,
         evidence_store_path=github_gate_evidence_path,
     )
 
@@ -781,6 +827,62 @@ def resolve_existing_final_action_with_github_gate(
     }
 
 
+def capture_existing_final_action_main_ci(
+    *,
+    xmuse_root: Path,
+    lane_id: str | None = None,
+    final_action_id: str | None = None,
+    main_ci_collector: GitHubMainCiTruthCollector,
+) -> dict[str, Any]:
+    """Capture post-merge main CI truth for an existing accepted GitHub gate ref."""
+
+    if lane_id is None and final_action_id is None:
+        raise ValueError("lane_id or final_action_id is required")
+    clean_lane_id = lane_id.strip() if isinstance(lane_id, str) else None
+    clean_final_action_id = (
+        final_action_id.strip() if isinstance(final_action_id, str) else None
+    )
+    if lane_id is not None and not clean_lane_id:
+        raise ValueError("lane_id must be non-empty")
+    if final_action_id is not None and not clean_final_action_id:
+        raise ValueError("final_action_id must be non-empty")
+
+    final_action_store = FinalActionGateStore(xmuse_root / "final_actions.json")
+    hold = _find_final_action_hold(
+        final_action_store=final_action_store,
+        lane_id=clean_lane_id,
+        final_action_id=clean_final_action_id,
+    )
+    github_gate_ref = hold.github_gate_evidence_ref
+    if github_gate_ref is None:
+        raise ValueError("final action hold has no accepted github gate evidence ref")
+    evidence_store = GitHubGateEvidenceStore(xmuse_root / "github_gate_evidence.json")
+    record = evidence_store.capture_main_ci_for_ref(
+        github_gate_ref,
+        collector=main_ci_collector,
+        final_action_id=hold.id,
+    )
+    main_ci_status = _main_ci_status(
+        record.main_ci,
+        merge_commit_sha=record.evidence.merge_commit_sha,
+    )
+    terminal_status = "captured" if main_ci_status == "success" else "blocked"
+    blocked_reason = None if terminal_status == "captured" else "main_ci_unverified"
+    return {
+        "status": terminal_status,
+        "blocked_reason": blocked_reason,
+        "lane_id": hold.lane_id,
+        "final_action_id": hold.id,
+        "github_gate_evidence_ref": github_gate_ref,
+        "main_ci_status": main_ci_status,
+        "durable_refs": {
+            "final_action_ref": f"final_actions.json#hold={hold.id}",
+            "github_gate_evidence_ref": github_gate_ref,
+            "feature_lanes": str(xmuse_root / "feature_lanes.json"),
+        },
+    }
+
+
 def run_acceptance_gated_goal(
     *,
     goal: str,
@@ -790,6 +892,7 @@ def run_acceptance_gated_goal(
     required_checks: list[str] | None = None,
     head_sha: str | None = None,
     github_gate_collector: GitHubGateTruthCollector | None = None,
+    main_ci_collector: GitHubMainCiTruthCollector | None = None,
 ) -> dict[str, Any]:
     """Run the smallest durable acceptance-gated goal path.
 
@@ -948,6 +1051,7 @@ def run_acceptance_gated_goal(
         pull_request_number=github_pull_request,
         required_checks=clean_checks,
         collector=collector,
+        main_ci_collector=main_ci_collector,
         evidence_store_path=github_gate_evidence_path,
     )
 
@@ -2485,6 +2589,14 @@ def main_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--capture-final-action-main-ci",
+        action="store_true",
+        help=(
+            "capture post-merge main CI truth for an existing accepted "
+            "final-action GitHub gate evidence ref and exit"
+        ),
+    )
+    parser.add_argument(
         "--create-final-action-pr",
         action="store_true",
         help=(
@@ -2594,6 +2706,13 @@ def validate_args(args: argparse.Namespace) -> None:
         raise SystemExit(
             "--acceptance-gate and --resolve-final-action are mutually exclusive"
         )
+    if args.capture_final_action_main_ci and (
+        args.acceptance_gate or args.resolve_final_action or args.create_final_action_pr
+    ):
+        raise SystemExit(
+            "--capture-final-action-main-ci is mutually exclusive with "
+            "--acceptance-gate, --resolve-final-action, and --create-final-action-pr"
+        )
     if args.create_final_action_pr and (args.acceptance_gate or args.resolve_final_action):
         raise SystemExit(
             "--create-final-action-pr is mutually exclusive with --acceptance-gate "
@@ -2616,6 +2735,17 @@ def validate_args(args: argparse.Namespace) -> None:
         if args.health_once:
             raise SystemExit(
                 "--resolve-final-action and --health-once are mutually exclusive"
+            )
+    if args.capture_final_action_main_ci:
+        if not (args.final_action_id or args.lane_id):
+            raise SystemExit(
+                "--capture-final-action-main-ci requires --final-action-id or --lane-id"
+            )
+        if not args.github_live_capture:
+            raise SystemExit("--capture-final-action-main-ci requires --github-live-capture")
+        if args.health_once:
+            raise SystemExit(
+                "--capture-final-action-main-ci and --health-once are mutually exclusive"
             )
     if args.create_final_action_pr:
         if not (args.final_action_id or args.lane_id):
@@ -2779,13 +2909,18 @@ def main() -> None:
 
     if args.acceptance_gate:
         github_gate_collector: GitHubGateTruthCollector | None = None
+        main_ci_collector: GitHubMainCiTruthCollector | None = None
         if args.github_live_capture:
+            github_client = GitHubCliServerSideTruthClient(
+                internal_review_artifact=args.internal_review_artifact,
+                internal_reviewer=args.internal_reviewer,
+                internal_reviewed_head_sha=args.internal_reviewed_head_sha,
+            )
             github_gate_collector = ReadOnlyGitHubServerSideTruthCollector(
-                client=GitHubCliServerSideTruthClient(
-                    internal_review_artifact=args.internal_review_artifact,
-                    internal_reviewer=args.internal_reviewer,
-                    internal_reviewed_head_sha=args.internal_reviewed_head_sha,
-                )
+                client=github_client
+            )
+            main_ci_collector = ReadOnlyGitHubMainCiTruthCollector(
+                client=github_client
             )
         print(
             json.dumps(
@@ -2799,6 +2934,7 @@ def main() -> None:
                     head_sha=args.github_head_sha
                     or args.internal_reviewed_head_sha,
                     github_gate_collector=github_gate_collector,
+                    main_ci_collector=main_ci_collector,
                 ),
                 ensure_ascii=False,
                 indent=2,
@@ -2809,13 +2945,18 @@ def main() -> None:
 
     if args.resolve_final_action:
         github_gate_collector: GitHubGateTruthCollector | None = None
+        main_ci_collector: GitHubMainCiTruthCollector | None = None
         if args.github_live_capture:
+            github_client = GitHubCliServerSideTruthClient(
+                internal_review_artifact=args.internal_review_artifact,
+                internal_reviewer=args.internal_reviewer,
+                internal_reviewed_head_sha=args.internal_reviewed_head_sha,
+            )
             github_gate_collector = ReadOnlyGitHubServerSideTruthCollector(
-                client=GitHubCliServerSideTruthClient(
-                    internal_review_artifact=args.internal_review_artifact,
-                    internal_reviewer=args.internal_reviewer,
-                    internal_reviewed_head_sha=args.internal_reviewed_head_sha,
-                )
+                client=github_client
+            )
+            main_ci_collector = ReadOnlyGitHubMainCiTruthCollector(
+                client=github_client
             )
         print(
             json.dumps(
@@ -2830,6 +2971,26 @@ def main() -> None:
                     head_sha=args.github_head_sha
                     or args.internal_reviewed_head_sha,
                     github_gate_collector=github_gate_collector,
+                    main_ci_collector=main_ci_collector,
+                ),
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return
+
+    if args.capture_final_action_main_ci:
+        github_client = GitHubCliServerSideTruthClient()
+        print(
+            json.dumps(
+                capture_existing_final_action_main_ci(
+                    xmuse_root=xmuse_root,
+                    lane_id=args.lane_id,
+                    final_action_id=args.final_action_id,
+                    main_ci_collector=ReadOnlyGitHubMainCiTruthCollector(
+                        client=github_client
+                    ),
                 ),
                 ensure_ascii=False,
                 indent=2,
