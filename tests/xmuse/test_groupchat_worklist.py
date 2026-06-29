@@ -1568,6 +1568,89 @@ def test_scan_routes_gate_gap_final_action_supersedes_matching_dispatch_ack_wait
     assert store.get_chain(chain.chain_id).status_reason == "final_action_github_gate_gap"
 
 
+def test_scan_routes_accepted_gate_recovers_final_action_gap_chain(
+    tmp_path,
+):
+    db, chat, conversation, root, architect, _review, _critic = _conversation_with_groupchat_roster(
+        tmp_path,
+        root_content="@execute no natural route from the root.",
+    )
+    store = GroupchatWorklistStore(db)
+    chain = store.create_chain(conversation_id=conversation.id, root_message_id=root.id)
+    spine_ref = _acceptance_spine_for_dispatch(
+        db,
+        conversation_id=conversation.id,
+        intake_message_id=root.id,
+        proposal_id="proposal-a",
+        dispatch_item_id="dispatch-a",
+    )
+    blocked_result = chat.add_message(
+        conversation_id=conversation.id,
+        author="final-action-gate",
+        role="system",
+        content="Final action merge for lane lane-a is blocked by GitHub gate.",
+        envelope_type="final_action_result",
+        envelope_json={
+            "type": "final_action_result",
+            "authority": "chat.db/messages/final_action_result",
+            "lane_id": "lane-a",
+            "action": "merge",
+            "status": "blocked",
+            "github_gate_gap_ref": "github_gate_gap:lane-a",
+            "status_reason": "github_gate_unverified",
+            "acceptance_spine_ref": spine_ref,
+            "source_refs": [
+                "final_actions.json#hold=final-a",
+                spine_ref,
+                "github_gate_gap:lane-a",
+            ],
+        },
+    )
+    scheduler = GroupchatWorklistScheduler(db_path=db, scheduler_id="groupchat-a1")
+    assert scheduler.scan_routes_once(chain_id=chain.chain_id) == []
+    blocked = scheduler.scan_routes_once(chain_id=chain.chain_id)
+    assert len(blocked) == 1
+    assert blocked[0].status == "blocked"
+    assert blocked[0].source_message_id == blocked_result.id
+    assert store.get_chain(chain.chain_id).status == "blocked"
+
+    accepted_result = chat.add_message(
+        conversation_id=conversation.id,
+        author="final-action-gate",
+        role="system",
+        content="Final action merge for lane lane-a has accepted GitHub gate evidence.",
+        envelope_type="final_action_result",
+        envelope_json={
+            "type": "final_action_result",
+            "authority": "chat.db/messages/final_action_result",
+            "lane_id": "lane-a",
+            "action": "merge",
+            "status": "accepted",
+            "github_gate_evidence_ref": "github_gate_evidence:lane-a",
+            "github_gate": {"status": "accepted"},
+            "acceptance_spine_ref": spine_ref,
+            "source_refs": [
+                "final_actions.json#hold=final-a",
+                spine_ref,
+                "github_gate_evidence:lane-a",
+            ],
+        },
+    )
+
+    recovered = scheduler.scan_routes_once(chain_id=chain.chain_id)
+
+    assert len(recovered) == 1
+    assert recovered[0].source_message_id == accepted_result.id
+    assert recovered[0].target_participant_id == architect.participant_id
+    assert recovered[0].status == "queued"
+    gap_item = store.get_item(blocked[0].item_id)
+    assert gap_item.status == "canceled"
+    assert gap_item.terminal_reason == f"superseded_by_authority:{accepted_result.id}"
+    recovered_chain = store.get_chain(chain.chain_id)
+    assert recovered_chain.status == "open"
+    assert recovered_chain.status_reason is None
+
+
 def test_scan_routes_consumes_unknown_dispatch_result_without_text_routing(tmp_path):
     db, chat, conversation, root, _architect, _review, critic = _conversation_with_groupchat_roster(
         tmp_path,
