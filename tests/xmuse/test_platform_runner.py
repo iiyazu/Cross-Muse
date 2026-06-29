@@ -6,6 +6,7 @@ import json
 import subprocess
 from pathlib import Path
 
+import httpx
 import pytest
 
 from xmuse_core.chat.acceptance_spine import AcceptanceSpineStore
@@ -13,6 +14,10 @@ from xmuse_core.chat.dispatch_queue import ChatDispatchQueueStore
 from xmuse_core.chat.store import ChatStore
 from xmuse_core.chat.stream_store import PeerTurnLatencyTraceStore
 from xmuse_core.integrations.memoryos_client import FakeMemoryOSClient
+from xmuse_core.integrations.memoryos_lite_interop import (
+    MemoryOSLiteInteropAdapter,
+    MemoryOSLiteSessionBindingStore,
+)
 from xmuse_core.integrations.memoryos_namespace import conversation_namespace
 from xmuse_core.platform.execution.github_ops import (
     GitHubMainCiEvidence,
@@ -752,6 +757,80 @@ async def test_runner_wires_peer_chat_memoryos_sidecar_client(
     assert isinstance(memoryos_client, FakePeerMemoryOSClient)
     assert memoryos_client.base_url == "http://peer-memoryos.test"
     assert memoryos_client.api_key == "sidecar-key"
+    assert captured["orchestrator_kwargs"]["memoryos_client"] is None
+
+
+@pytest.mark.asyncio
+async def test_runner_wires_peer_chat_memoryos_lite_sidecar_client(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeMemoryOSLiteInteropAdapter:
+        def __init__(self, *, base_url: str, binding_store) -> None:
+            self.base_url = base_url
+            self.binding_store = binding_store
+
+    class FakeOrchestrator:
+        def __init__(self, **kwargs) -> None:
+            captured["orchestrator_kwargs"] = kwargs
+            self._sm = _FakeStateMachine()
+
+        async def reconcile_status_changes(self) -> None:
+            return None
+
+        async def dispatch_lane(self, lane_id: str) -> None:
+            return None
+
+    class FakePeerScheduler:
+        def __init__(self, **kwargs) -> None:
+            captured["scheduler_kwargs"] = kwargs
+
+        async def tick_once(self) -> None:
+            return None
+
+    class FakeDispatchBridge:
+        def __init__(self, **kwargs) -> None:
+            captured["dispatch_bridge_kwargs"] = kwargs
+
+    import xmuse_core.chat.dispatch_bridge as dispatch_bridge_module
+    import xmuse_core.chat.peer_scheduler as peer_scheduler_module
+
+    monkeypatch.setenv("XMUSE_PEER_GOD_BACKEND", "native")
+    monkeypatch.setattr(platform_runner, "PlatformOrchestrator", FakeOrchestrator)
+    monkeypatch.setattr(
+        platform_runner,
+        "MemoryOSLiteInteropAdapter",
+        FakeMemoryOSLiteInteropAdapter,
+    )
+    monkeypatch.setattr(peer_scheduler_module, "PeerChatScheduler", FakePeerScheduler)
+    monkeypatch.setattr(
+        platform_runner,
+        "_peer_chat_runtime_worktree",
+        _empty_peer_chat_worktree,
+    )
+    monkeypatch.setattr(dispatch_bridge_module, "ChatDispatchBridge", FakeDispatchBridge)
+
+    xmuse_root = tmp_path / "xmuse"
+    await platform_runner.run(
+        lanes_path=tmp_path / "feature_lanes.json",
+        xmuse_root=xmuse_root,
+        mcp_port=8100,
+        max_hours=0,
+        max_concurrent=1,
+        peer_chat_enabled=True,
+        peer_chat_memoryos_url="http://peer-memoryos-lite.test",
+        peer_chat_memoryos_kind="memoryos-lite",
+    )
+
+    memoryos_client = captured["scheduler_kwargs"]["memoryos_client"]
+    assert isinstance(memoryos_client, FakeMemoryOSLiteInteropAdapter)
+    assert memoryos_client.base_url == "http://peer-memoryos-lite.test"
+    assert memoryos_client.binding_store.path == (
+        xmuse_root / "memoryos_lite_sessions.json"
+    )
+    assert captured["dispatch_bridge_kwargs"]["memoryos_client"] is memoryos_client
     assert captured["orchestrator_kwargs"]["memoryos_client"] is None
 
 
@@ -1780,6 +1859,33 @@ def test_platform_runner_supports_peer_chat_memoryos_url() -> None:
     platform_runner.validate_args(args)
     assert args.peer_chat is True
     assert args.peer_chat_memoryos_url == "http://memoryos.sidecar"
+    assert args.peer_chat_memoryos_kind == "generic"
+
+
+def test_platform_runner_supports_peer_chat_memoryos_lite_kind() -> None:
+    args = platform_runner.main_arg_parser().parse_args(
+        [
+            "--peer-chat",
+            "--peer-chat-memoryos-url",
+            "http://memoryos-lite.sidecar",
+            "--peer-chat-memoryos-kind",
+            "memoryos-lite",
+        ]
+    )
+
+    platform_runner.validate_args(args)
+    assert args.peer_chat_memoryos_url == "http://memoryos-lite.sidecar"
+    assert args.peer_chat_memoryos_kind == "memoryos-lite"
+
+
+def test_platform_runner_rejects_invalid_peer_chat_memoryos_kind_from_env(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("XMUSE_PEER_CHAT_MEMORYOS_KIND", "memoryos")
+    args = platform_runner.main_arg_parser().parse_args([])
+
+    with pytest.raises(SystemExit):
+        platform_runner.validate_args(args)
 
 
 @pytest.mark.parametrize("wait_s", ["0", "-1", "nan", "inf"])
@@ -2442,6 +2548,105 @@ async def test_capture_existing_dispatch_sidecar_handoff_records_continuity(
             "continuity_refs": result["continuity_refs"],
         }
     }
+
+
+@pytest.mark.asyncio
+async def test_capture_existing_dispatch_sidecar_handoff_uses_memoryos_lite_adapter(
+    tmp_path: Path,
+) -> None:
+    xmuse_root = tmp_path / "runtime"
+    xmuse_root.mkdir()
+    db = xmuse_root / "chat.db"
+    chat = ChatStore(db)
+    conv = chat.create_conversation("Dispatch MemoryOS Lite sidecar handoff")
+    intake = chat.add_message(conv.id, "Human", "human", "Run MemoryOS Lite handoff")
+    proposal = chat.create_proposal(
+        conversation_id=conv.id,
+        author="Architect GOD",
+        proposal_type="lane_graph",
+        content='{"summary":"memoryos lite sidecar handoff"}',
+        references=[intake.id],
+    )
+    resolution = chat.approve_proposal(
+        proposal.id,
+        approved_by=["human"],
+        approval_mode="human",
+        goal_summary="Run MemoryOS Lite sidecar handoff",
+    )
+    dispatch = ChatDispatchQueueStore(db).enqueue_agent_auto_dispatch(
+        conversation_id=conv.id,
+        proposal_id=proposal.id,
+        resolution_id=resolution.id,
+        collaboration_run_id="collab-memoryos-lite-sidecar",
+        artifact_ref="artifact:memoryos-lite-lane-graph",
+        gate_refs=["review_trigger_verdict:memoryos-lite"],
+    )
+    expected_refs = [
+        f"chat_dispatch_queue:{dispatch.entry_id}",
+        f"proposal:{proposal.id}",
+        "review_trigger_verdict:memoryos-lite",
+        f"resolution:{resolution.id}",
+        "collaboration:collab-memoryos-lite-sidecar",
+        "artifact:memoryos-lite-lane-graph",
+    ]
+    requests: list[tuple[str, dict[str, object]]] = []
+
+    def route(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode() or "{}")
+        requests.append((request.url.path, payload))
+        if request.url.path == "/sessions":
+            return httpx.Response(200, json={"id": "ses-memoryos-lite-sidecar"})
+        if request.url.path == "/sessions/ses-memoryos-lite-sidecar/ingest":
+            metadata = payload["metadata"]
+            assert metadata["xmuse_namespace_uri"] == f"memory://conversation/{conv.id}"
+            assert metadata["xmuse_actor_id"] == "platform-runner-test"
+            assert metadata["xmuse_source_refs"] == expected_refs
+            assert metadata["xmuse_request_metadata"] == {
+                "memoryos_sidecar_kind": "dispatch_handoff",
+                "dispatch_queue_entry_id": dispatch.entry_id,
+                "proof_boundary": "sidecar_continuity_not_execution_truth",
+            }
+            return httpx.Response(
+                200,
+                json={
+                    "message": {
+                        "id": "msg-memoryos-lite-sidecar",
+                        "session_id": "ses-memoryos-lite-sidecar",
+                    }
+                },
+            )
+        raise AssertionError(f"unexpected endpoint: {request.url.path}")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(route)) as http_client:
+        memoryos = MemoryOSLiteInteropAdapter(
+            base_url="http://memoryos-lite.test",
+            http_client=http_client,
+            binding_store=MemoryOSLiteSessionBindingStore(
+                xmuse_root / "memoryos_lite_sessions.json"
+            ),
+        )
+        result = await platform_runner.capture_existing_dispatch_sidecar_handoff(
+            xmuse_root=xmuse_root,
+            dispatch_entry_id=dispatch.entry_id,
+            memoryos_client=memoryos,
+            actor_id="platform-runner-test",
+        )
+
+    expected_memory_ref = (
+        f"memory://conversation/{conv.id}/messages/msg-memoryos-lite-sidecar"
+    )
+    assert result["status"] == "captured"
+    assert result["sidecar_status"] == "recorded"
+    assert result["continuity_refs"] == [expected_memory_ref]
+    traces = PeerTurnLatencyTraceStore(db).list_recent(conv.id, limit=5)
+    [trace] = traces
+    assert trace["supporting_context"]["memoryos_sidecar"]["continuity_refs"] == [
+        expected_memory_ref
+    ]
+    assert [path for path, _payload in requests] == [
+        "/sessions",
+        "/sessions/ses-memoryos-lite-sidecar/ingest",
+    ]
 
 
 def test_resolve_existing_final_action_blocks_on_github_gate_gap(
