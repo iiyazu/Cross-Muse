@@ -2,9 +2,9 @@
 
 更新日期: 2026-06-02 HKT (session 4)
 
-本文是 `xmuse/FRONTEND_API.md` 的增量契约，按当前工作树中的后端实现描述前端需要新增或修正的 API 认知。本文只描述前端直接消费的接口，不描述后端内部实现路线。
+本文是 `docs/xmuse/frontend/FRONTEND_API.md` 的增量契约，按当前工作树中的后端实现描述前端需要新增或修正的 API 认知。本文只描述前端直接消费的接口，不描述后端内部实现路线。
 
-当前前端/TUI 实现入口请先读：`xmuse/FRONTEND_IMPLEMENTATION_GUIDE.md`、
+当前前端/TUI 实现入口请先读：`docs/xmuse/frontend/FRONTEND_IMPLEMENTATION_GUIDE.md`、
 `docs/xmuse/README.md` 和 `docs/xmuse/解耦开发协议.md`。
 
 ## What changed since session 3
@@ -23,8 +23,8 @@
 |---|---|
 | Runtime state | 截至 2026-05-31 14:05 HKT，单 MCP + 单 runner 正在运行；C-class projection 为 8 条 lane |
 | Frontend support level | 后端足够支持 chat-first MVP，但不支持完整 north-star |
-| API docs | `xmuse/FRONTEND_API.md` 已更新为 2026-05-31，新增 actual live endpoint notes |
-| Frontend guide | 新增 `xmuse/FRONTEND_IMPLEMENTATION_GUIDE.md`，作为独立前端开发入口 |
+| API docs | `docs/xmuse/frontend/FRONTEND_API.md` 已更新为 2026-05-31，新增 actual live endpoint notes |
+| Frontend guide | 新增 `docs/xmuse/frontend/FRONTEND_IMPLEMENTATION_GUIDE.md`，作为独立前端开发入口 |
 | Worklist | `GET /api/chat/conversations/{id}/worklist` 仍未实现；MVP 前端需用 `/api/lanes` + `conversation_id` 聚合 |
 | Streaming | WebSocket/streaming 仍未实现；MVP 使用 polling |
 | Proposal actions | `approve` live；`narrow/reject` REST endpoint 仍未实现 |

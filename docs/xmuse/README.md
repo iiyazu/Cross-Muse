@@ -115,6 +115,19 @@ operator flows reference them:
 | `docs/xmuse/config-matrix.md` | Configuration surface |
 | `docs/xmuse/解耦开发协议.md` | Layer and event boundary protocol |
 
+## Frontend Projection Docs
+
+Frontend/TUI contracts live under `docs/xmuse/frontend/`, not in the runtime
+`xmuse/` package root:
+
+| Document | Purpose |
+| --- | --- |
+| `docs/xmuse/frontend/FRONTEND_IMPLEMENTATION_GUIDE.md` | Frontend/TUI implementation entrypoint |
+| `docs/xmuse/frontend/FRONTEND_API.md` | Current frontend-readable API contract |
+| `docs/xmuse/frontend/FRONTEND_API_INCREMENTAL.md` | Incremental frontend API notes |
+| `docs/xmuse/frontend/FRONTEND_CONTEXT.md` | Frontend/TUI background context |
+| `docs/xmuse/frontend/FRONTEND_VISION.md` | Frontend projection north-star reference |
+
 ## Archive Rules
 
 Historical material lives under:

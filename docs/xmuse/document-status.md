@@ -76,6 +76,12 @@ them:
 - `config-matrix.md`
 - `解耦开发协议.md`
 
+## Current Subdirectory Docs
+
+- `docs/xmuse/frontend/` contains current frontend/TUI projection contracts.
+  These documents are product docs, not runtime package assets; keep them out
+  of the `xmuse/` application root.
+
 ## Archive Or Reference Docs
 
 These files remain useful but should not be default `/goal` context unless the

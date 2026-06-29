@@ -1,7 +1,7 @@
 """SQLite-backed stores for chat participants and role templates.
 
 Participant and RoleTemplate Pydantic models match the type signatures in
-xmuse/FRONTEND_VISION.md (Layer 1 contract).  The stores share the same
+docs/xmuse/frontend/FRONTEND_VISION.md (Layer 1 contract).  The stores share the same
 chat.db connection that ChatStore uses; they are initialised by ChatStore._init_db
 via two CREATE TABLE IF NOT EXISTS statements added there.
 """

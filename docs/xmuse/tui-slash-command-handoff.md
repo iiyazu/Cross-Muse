@@ -255,9 +255,9 @@ Docs to read first:
 
 - `docs/xmuse/README.md`
 - `docs/xmuse/document-status.md`
-- `xmuse/FRONTEND_IMPLEMENTATION_GUIDE.md`
-- `xmuse/FRONTEND_API.md`
-- `xmuse/FRONTEND_VISION.md`
+- `docs/xmuse/frontend/FRONTEND_IMPLEMENTATION_GUIDE.md`
+- `docs/xmuse/frontend/FRONTEND_API.md`
+- `docs/xmuse/frontend/FRONTEND_VISION.md`
 - `docs/xmuse/解耦开发协议.md`
 
 ## Testing Requirements

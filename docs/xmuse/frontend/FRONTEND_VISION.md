@@ -2,7 +2,7 @@
 
 > Date: 2026-05-28 (session 2, Layer 5 — frontend contract)
 > Status: design contract for the multi-GOD chat-first frontend
-> Companion to: `xmuse/FRONTEND_API.md`, `xmuse/FRONTEND_API_INCREMENTAL.md`
+> Companion to: `docs/xmuse/frontend/FRONTEND_API.md`, `docs/xmuse/frontend/FRONTEND_API_INCREMENTAL.md`
 
 This document is the **frontend-first** specification of the xmuse user
 experience. It defines what the user sees, the routes they navigate, and the
