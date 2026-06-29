@@ -456,9 +456,9 @@ Driver support:
 
 Current runtime proof:
 
-- status: local runtime multi-lane proof and bounded lane-failure isolation
-  proof satisfied on 2026-06-29; lane-specific projection behavior and later
-  multi-PR promotion remain Track A boundaries;
+- status: local runtime multi-lane proof, bounded lane-failure isolation, and
+  lane-specific `gate_failed` read projection proof satisfied on 2026-06-29;
+  later multi-PR promotion remains a Track A boundary;
 - runtime authority:
   `.goal-runs/2026-06-29/rung4-multilane-runtime-20260629-01`;
 - conversation: `conv_4ee824f469e9440aa6b84eb08b7dd971`;
@@ -559,6 +559,20 @@ Current runtime proof:
   intentional missing colon, then stopped at `gate_failed`. Its gate report
   used profile `xmuse-core`, had `ruff` exit `1` and pytest exit `0`, and no
   review task, review verdict, or final-action hold was fabricated;
+- lane-specific projection proof:
+  PR #324 projected a `feature_lanes.json` `gate_failed` lane into peer-chat UX
+  `evidence_summary.failure_boundaries` as `lane_gate_failure`, inferred the
+  existing `logs/gates/<lane>/report.json` ref when present, and kept
+  `review_state` / `final_action_state` limited to lanes with real review
+  verdicts and final-action holds. Authority/projection boundary: producer
+  `feature_lanes.json` plus gate report, consumer
+  `frontend.peer_chat_ux_projection`, condition `lane_status_gate_failed`,
+  proof/failure boundary `gate_report_boundary`, classification
+  `docs_or_code_gate_failure`. PR #324 head
+  `978d018d85e7894b48572e4c95d8671d27a49ba8` had exact-head CI run
+  `28374174409` success, guarded merge commit
+  `8df139d5b52c30e9c6867a95af79d58766d46fe1`, and main CI run
+  `28374260602` success;
 - run #04 note:
   `.goal-runs/2026-06-29/rung4-failure-isolation-runtime-20260629-04` is
   retained only as a non-proof false-positive proposal-review block. It did
@@ -571,8 +585,8 @@ Current runtime proof:
   gate/review/final-action holds, exact artifact matching, and domain-scoped
   PR/CI/guarded-merge/main-CI promotion for the Rung 4 lane artifacts. It also
   proves bounded lane-failure isolation for an expected `gate_failed` lane. It
-  is not yet live MemoryOS proof, frontend operator cockpit completion, or
-  production readiness.
+  is not yet live MemoryOS proof, frontend operator cockpit completion, later
+  multi-PR promotion, or production readiness.
 
 ### Rung 5 - MemoryOS Live/Degraded Contract
 
@@ -861,16 +875,16 @@ Current final-report notes after the Rung 4 runtime milestone:
 - Track A state: the single real-code lane is closed through GitHub facts, and
   the multi-lane runtime shape plus bounded expected-gate-failure isolation are
   locally proven. Rung 4 proof docs, alpha docs artifact, beta code artifact,
-  gate-coverage hardening, and expected-gate-failure driver contract fixes have
-  reached PR, exact-head CI, guarded merge, and main CI. The next Track A work
-  is lane-specific projection behavior and later promotion of isolated
-  runtime outputs through domain-scoped PRs;
+  gate-coverage hardening, expected-gate-failure driver contract fixes, and
+  lane-specific `gate_failed` read projection have reached PR, exact-head CI,
+  guarded merge, and main CI. The next Track A work is later promotion of
+  isolated runtime outputs through domain-scoped PRs;
 - Track B state: MemoryOS sidecar build/ingest degraded against an unavailable
   endpoint and remained non-blocking; this was degraded attempt projection, not
   live MemoryOS truth;
 - Track C state: read-only peer-chat UX projection exposed review state,
-  approved final-action state, GitHub gate refs, and degraded MemoryOS attempt
-  refs with no write capabilities;
+  approved final-action state, GitHub gate refs, degraded MemoryOS attempt
+  refs, and gate-failed lane failure boundaries with no write capabilities;
 - Ray use: not the default natural groupchat route; remains optional legacy;
 - copilot/subagent audit: useful at PR-ready review, repeated boundary failure,
   or authority classification uncertainty, but output is candidate input only;
