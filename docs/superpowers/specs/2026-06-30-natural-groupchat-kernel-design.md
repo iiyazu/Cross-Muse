@@ -14,16 +14,18 @@ entrypoint. The current operational documentation remains under `docs/xmuse/`.
 Do not use this document to restart old L8-L11, closure-ledger, Path-A, or
 pre-M7 framing. The design below starts from the current xmuse baseline:
 `chat.db`, inbox, proposal, review verdict, dispatch queue, execution harness,
-final-action gate, and GitHub server facts are the authority surfaces.
+final-action gate, and GitHub server facts are platform authority surfaces.
+For A1, only the groupchat-local surfaces named below are in scope.
 
 ## Vision
 
-xmuse should provide a decentralized natural agent groupchat harness and a
-strict development-chain harness.
+xmuse's Track A center of gravity is a decentralized natural agent groupchat
+harness. The strict development-chain harness remains downstream: it consumes
+and validates groupchat decisions, but it is not the A1 kernel.
 
-Track A focuses on the first half: a single natural groupchat conversation
-should let multiple agents deliberate, challenge each other, and form durable
-decisions without a central agent silently becoming the only decision maker.
+The near-term Track A focus is a single natural groupchat conversation where
+multiple agents deliberate, challenge each other, and form durable decisions
+without a central agent silently becoming the only decision maker.
 
 The execution harness already occupies the external-work execution role.
 Therefore the groupchat design should not duplicate clowder-ai's main/subthread
@@ -51,7 +53,7 @@ runtime. Architect, review, and critic participants can be routed, queued,
 claimed, invoked, and written back through durable authority.
 
 A1 does not require PR creation, proposal approval, MemoryOS continuity, or
-frontend completeness.
+frontend completeness. It also does not dispatch work to the execution harness.
 
 ### A2: Groupchat Decision Closure
 
@@ -135,7 +137,7 @@ A1 authority is:
 chat_messages: conversation timeline truth
 groupchat_worklist: groupchat routing and handoff truth
 chat_inbox_items: participant delivery truth
-structured callback/writeback: provider response truth
+structured callback/writeback tied to inbox/worklist: provider response truth
 ```
 
 The following are not authority:
@@ -170,6 +172,11 @@ structured route intent: allowed, but still passes policy guards
 ```
 
 The lightweight router is local and deterministic. It must not call a model.
+Its output is a route candidate, not authority. `GroupchatWorklistScheduler`
+creates schedulable authority only after policy guards accept the candidate
+into `groupchat_worklist`. A rejected candidate may be persisted as a terminal
+`blocked` or `failed` worklist audit item, but it must not become schedulable
+provider work.
 
 Suggested routing categories:
 
@@ -233,19 +240,24 @@ existing structured callback/writeback path
 Flow:
 
 ```text
-new chat message
+new chat message id from append/writeback path
 -> mention/router candidate detection
 -> guard validation
 -> groupchat_worklist enqueue
 -> scheduler claims one item
--> scheduler creates or links a chat_inbox_item
+-> scheduler creates or links exactly one chat_inbox_item
 -> existing PeerChatScheduler runs exactly that delivery
 -> provider writes a durable chat message through callback/writeback
 -> scheduler completes the worklist item with completed_message_id
 -> completed message is scanned for the next candidate route
 ```
 
-The scheduler must not recursively cascade provider calls in the same tick.
+The scheduler must not recursively cascade provider calls in the same tick. It
+must discover work from explicit message ids or a durable cursor, never by
+rescanning the full conversation. Provider stdout, worker summaries, and local
+test output cannot complete a worklist item; completion requires the structured
+callback/writeback path to return a durable `completed_message_id` linked to the
+claimed item.
 
 ## Data Model
 
@@ -258,12 +270,14 @@ chain_id
 conversation_id
 policy_id
 root_message_id
+last_scanned_message_id
 max_depth
 human_max_targets
 agent_max_targets
 pingpong_warn_after
 pingpong_block_after
 status
+status_reason
 created_at
 updated_at
 ```
@@ -276,6 +290,17 @@ completed
 blocked
 failed
 canceled
+```
+
+Chain status semantics for A1:
+
+```text
+open: queued/claimed work may still run, or completed messages still need scan
+completed: no queued/claimed items remain and the scan cursor found no accepted
+  next-hop candidate; this is route exhaustion, not A2 decision approval
+blocked: a policy guard such as depth_limit or pingpong_blocked stopped routing
+failed: a technical delivery/provider/callback failure prevents continuation
+canceled: explicit operator or system cancellation
 ```
 
 ### groupchat_worklist
@@ -295,12 +320,22 @@ route_kind
 status
 depth
 dedup_key
+inbox_item_id
 claim_owner
 claimed_at
 completed_message_id
-failure_reason
+terminal_reason
 created_at
 updated_at
+```
+
+Field constraints:
+
+```text
+source_participant_id may be null for human or system-originated messages
+inbox_item_id is null until the scheduler links a delivery item
+completed_message_id is set only for completed items
+terminal_reason is set for blocked, failed, or canceled items
 ```
 
 Allowed `route_kind` values for A1:
@@ -318,8 +353,20 @@ Allowed `status` values for A1:
 queued
 claimed
 completed
+blocked
 failed
 canceled
+```
+
+Worklist status semantics for A1:
+
+```text
+queued: accepted candidate waiting to run
+claimed: scheduler owns the item and has linked or is linking an inbox item
+completed: callback/writeback produced completed_message_id
+blocked: policy guard intentionally stopped this route before provider work
+failed: technical delivery/provider/callback path failed
+canceled: explicit cancellation or superseded item
 ```
 
 ### Dedup
@@ -347,9 +394,9 @@ depth >= max_depth blocks the next route
 
 Depth blocks should be durable and diagnosable, not silent skips.
 
-### Failure Reasons
+### Guard And Failure Reasons
 
-Failure reasons should be structured:
+Terminal reasons should be structured:
 
 ```text
 target_participant_missing
@@ -361,6 +408,21 @@ callback_missing
 inbox_delivery_failed
 ```
 
+Boundary rules:
+
+```text
+duplicate_route: no new provider work; normally no chain status change
+depth_limit or pingpong_blocked: blocked worklist item and blocked chain
+target_participant_missing: failed worklist item; chain fails if no valid target remains
+provider_timeout, callback_missing, or inbox_delivery_failed: failed worklist item
+  and failed chain for A1
+```
+
+Ping-pong state belongs to `GroupchatWorklistScheduler`, keyed by `chain_id`
+plus the unordered participant pair. It may be derived from completed worklist
+history, but it must not live only in prompts, inbox metadata, provider stdout,
+or frontend projection.
+
 ## Testing And Acceptance
 
 A1 must prove:
@@ -371,10 +433,12 @@ A1 must prove:
 3. A durable groupchat_worklist item is created.
 4. The scheduler claims one item.
 5. The target participant receives a linked chat_inbox_item.
-6. A provider or deterministic test double writes a durable chat message.
+6. A provider or deterministic test double writes a durable chat message through
+   callback/writeback.
 7. The worklist item completes with completed_message_id.
-8. The completed message can produce a next-hop candidate.
-9. Depth, dedup, and ping-pong guards are enforced.
+8. The completed message is scanned once and, if guards accept a next-hop
+   candidate, a next worklist item is created.
+9. Depth, dedup, and ping-pong guards are enforced with durable terminal state.
 10. Provider stdout, frontend projection, and MemoryOS are not authority.
 ```
 
@@ -390,7 +454,8 @@ unit:
 
 store:
   groupchat_chains lifecycle
-  groupchat_worklist enqueue, claim, complete, fail, cancel
+  groupchat_worklist enqueue, claim, complete, block, fail, cancel
+  worklist item to chat_inbox_item linking
 
 integration:
   human -> architect worklist
@@ -398,7 +463,8 @@ integration:
   critic -> review within max_depth
   duplicate mention no double enqueue
   depth_limit blocks next hop
-  pingpong_blocked records failure
+  callback_missing cannot complete from provider stdout
+  pingpong_blocked records blocked terminal state
 
 runtime smoke:
   deterministic provider or fake callback writes durable messages and verifies
