@@ -40,7 +40,12 @@ def main() -> int:
     chat_port = args.chat_port or _free_port()
     mcp_port = args.mcp_port or _free_port()
     feature_id = args.feature_id
-    note_path = f"docs/xmuse/{feature_id}.md"
+    target = _target_spec(
+        feature_id=feature_id,
+        lane_kind=args.lane_kind,
+        target_path=args.target_path,
+        expected_content=args.expected_content,
+    )
     provider_readiness = _provider_readiness(
         review_provider_policy=args.review_provider,
         ray_god_mcp=args.ray_god_mcp,
@@ -51,7 +56,9 @@ def main() -> int:
         chat_port=chat_port,
         mcp_port=mcp_port,
         feature_id=feature_id,
-        note_path=note_path,
+        lane_kind=args.lane_kind,
+        target_path=target["path"],
+        expected_content=target["expected_content"],
         repo_head_sha=repo_head_sha,
         peer_chat_post_writeback_grace_s=args.peer_chat_post_writeback_grace_s,
         peer_chat_response_wait_s=args.peer_chat_response_wait_s,
@@ -124,7 +131,9 @@ def main() -> int:
 
         demand = _sentinel_demand(
             feature_id=feature_id,
-            note_path=note_path,
+            lane_kind=args.lane_kind,
+            target_path=target["path"],
+            expected_content=target["expected_content"],
             provider_readiness=provider_readiness,
         )
         message = _post_json(
@@ -174,8 +183,9 @@ def main() -> int:
             run_root=run_root,
             conversation_id=conversation_id,
             feature_id=feature_id,
-            expected_note_path=note_path,
-            expected_note_content=_expected_note_content(feature_id),
+            lane_kind=args.lane_kind,
+            expected_target_path=target["path"],
+            expected_target_content=target["expected_content"],
             proposal=proposal,
             lane=lane,
             provider_readiness=provider_readiness,
@@ -209,11 +219,33 @@ def main() -> int:
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run a real docs-only xmuse fullchain sentinel."
+        description="Run a real xmuse fullchain sentinel."
     )
     parser.add_argument("--run-root", type=Path, required=True)
     parser.add_argument("--execution-worktree", type=Path, required=True)
     parser.add_argument("--feature-id", required=True)
+    parser.add_argument(
+        "--lane-kind",
+        choices=["docs", "code"],
+        default="docs",
+        help="sentinel lane kind; docs preserves the historical default",
+    )
+    parser.add_argument(
+        "--target-path",
+        default=None,
+        help=(
+            "target path in the isolated execution worktree; optional for "
+            "docs mode, required for code mode"
+        ),
+    )
+    parser.add_argument(
+        "--expected-content",
+        default=None,
+        help=(
+            "exact expected file content without trailing newline; optional "
+            "for docs mode, required for code mode"
+        ),
+    )
     parser.add_argument("--chat-port", type=int, default=None)
     parser.add_argument("--mcp-port", type=int, default=None)
     parser.add_argument("--proposal-timeout-s", type=float, default=900.0)
@@ -268,6 +300,40 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _target_spec(
+    *,
+    feature_id: str,
+    lane_kind: str,
+    target_path: str | None,
+    expected_content: str | None,
+) -> dict[str, str]:
+    if lane_kind == "docs":
+        return {
+            "path": _clean_target_path(target_path or f"docs/xmuse/{feature_id}.md"),
+            "expected_content": expected_content or _expected_note_content(feature_id),
+        }
+    if lane_kind == "code":
+        if not target_path or not target_path.strip():
+            raise ValueError("--target-path is required for --lane-kind code")
+        if expected_content is None or not expected_content.strip():
+            raise ValueError("--expected-content is required for --lane-kind code")
+        return {
+            "path": _clean_target_path(target_path),
+            "expected_content": expected_content,
+        }
+    raise ValueError(f"unsupported lane kind: {lane_kind}")
+
+
+def _clean_target_path(path: str) -> str:
+    clean = path.strip()
+    if not clean:
+        raise ValueError("target path must be non-empty")
+    target = Path(clean)
+    if target.is_absolute() or ".." in target.parts:
+        raise ValueError("target path must be relative and stay inside the worktree")
+    return clean
+
+
 def _commands_payload(
     *,
     run_root: Path,
@@ -275,7 +341,9 @@ def _commands_payload(
     chat_port: int,
     mcp_port: int,
     feature_id: str,
-    note_path: str,
+    lane_kind: str,
+    target_path: str,
+    expected_content: str,
     repo_head_sha: str,
     peer_chat_response_wait_s: float,
     peer_chat_post_writeback_grace_s: float,
@@ -291,9 +359,12 @@ def _commands_payload(
         "chat_port": chat_port,
         "mcp_port": mcp_port,
         "feature_id": feature_id,
-        "note_path": note_path,
+        "lane_kind": lane_kind,
+        "target_path": target_path,
+        "note_path": target_path,
         "repo_head_sha": repo_head_sha,
-        "expected_note_content": _expected_note_content(feature_id),
+        "expected_content": expected_content,
+        "expected_note_content": expected_content,
         "peer_chat_response_wait_s": peer_chat_response_wait_s,
         "peer_chat_post_writeback_grace_s": peer_chat_post_writeback_grace_s,
         "peer_god_backend": peer_god_backend,
@@ -461,7 +532,9 @@ def _terminate_process(process: subprocess.Popen[bytes]) -> None:
 def _sentinel_demand(
     *,
     feature_id: str,
-    note_path: str,
+    lane_kind: str,
+    target_path: str,
+    expected_content: str,
     provider_readiness: dict[str, Any],
 ) -> str:
     selection = provider_readiness["review_provider_selection"]
@@ -473,17 +546,47 @@ def _sentinel_demand(
         if fallback_reason
         else ""
     )
-    return (
-        "@architect Run a real docs-only xmuse runtime sentinel. "
+    common = (
         "Use the structured collaboration tools before proposing execution: "
         "create a collaboration request to @execute, have execute record an "
         "execute_feasibility_verdict with status executable and at least one "
         "evidence ref, then emit exactly one lane_graph proposal referencing "
         "that collaboration run. The proposal must contain one lane with "
-        f"feature_id `{feature_id}`. The lane prompt must instruct the worker "
-        f"to create or overwrite `{note_path}` in the isolated execution "
+        f"feature_id `{feature_id}`. "
+    )
+    review_clause = (
+        "Do not include review_runtime; rely on the "
+        f"registered {selected_review_provider} review participant. "
+        f"{fallback_clause}"
+    )
+    forbidden_claims = (
+        "Do not claim production readiness, GitHub review truth, live MemoryOS, "
+        "overnight readiness, full L8-L10 closure, or full L1-L11 closure."
+    )
+    if lane_kind == "code":
+        return (
+            "@architect Run a real low-risk xmuse code-change runtime sentinel. "
+            f"{common}"
+            "The lane prompt must instruct the worker to modify exactly one "
+            f"target file, `{target_path}`, in the isolated execution worktree. "
+            "The complete file content after execution must be exactly the text "
+            "inside <expected_content> below, followed by one trailing newline. "
+            "<expected_content>\n"
+            f"{expected_content}\n"
+            "</expected_content>\n"
+            "Keep the lane as a bounded code-change lane, not a docs-only sentinel. "
+            "Do not edit unrelated files, PR #43, MemoryOS authority stores, TUI, "
+            "or GitHub-truth code. "
+            f"{review_clause}"
+            f"{forbidden_claims}"
+        )
+    return (
+        "@architect Run a real docs-only xmuse runtime sentinel. "
+        f"{common}"
+        "The lane prompt must instruct the worker "
+        f"to create or overwrite `{target_path}` in the isolated execution "
         "worktree with one concise sentence: "
-        f"`{_expected_note_content(feature_id)}` "
+        f"`{expected_content}` "
         "Keep the lane docs-only. Do not include review_runtime; rely on the "
         f"registered {selected_review_provider} review participant. "
         f"{fallback_clause}"
@@ -612,8 +715,9 @@ def _build_snapshot(
     run_root: Path,
     conversation_id: str,
     feature_id: str,
-    expected_note_path: str,
-    expected_note_content: str,
+    lane_kind: str,
+    expected_target_path: str,
+    expected_target_content: str,
     proposal: dict[str, Any],
     lane: dict[str, Any],
     provider_readiness: dict[str, Any],
@@ -644,10 +748,12 @@ def _build_snapshot(
         for message in ChatStore(run_root / "chat.db").list_messages(conversation_id)
     ]
     return {
-        "classification": "docs_fullchain_sentinel",
+        "classification": f"{lane_kind}_fullchain_sentinel",
         "run_root": str(run_root),
         "conversation_id": conversation_id,
         "feature_id": feature_id,
+        "lane_kind": lane_kind,
+        "target_path": expected_target_path,
         "provider_readiness": provider_readiness,
         "selected_review_provider": provider_readiness["review_provider_selection"][
             "selected_provider"
@@ -663,8 +769,8 @@ def _build_snapshot(
         "messages": messages,
         "execution_artifact": _execution_artifact(
             lane,
-            expected_note_path=expected_note_path,
-            expected_note_content=expected_note_content,
+            expected_target_path=expected_target_path,
+            expected_target_content=expected_target_content,
         ),
         "final_action_hold": _final_action_hold(run_root, lane),
         "review_task": _review_task(run_root, lane),
@@ -741,25 +847,25 @@ def _review_peer_participant(
 def _execution_artifact(
     lane: dict[str, Any],
     *,
-    expected_note_path: str,
-    expected_note_content: str,
+    expected_target_path: str,
+    expected_target_content: str,
 ) -> dict[str, Any]:
     worktree = lane.get("worktree") or lane.get("worker_worktree")
     if not isinstance(worktree, str):
         return {
             "exists": False,
-            "expected_content": expected_note_content,
-            "expected_path": expected_note_path,
+            "expected_content": expected_target_content,
+            "expected_path": expected_target_path,
             "path": None,
         }
-    path = Path(worktree) / expected_note_path
+    path = Path(worktree) / expected_target_path
     content = path.read_text(encoding="utf-8") if path.exists() else None
     return {
         "content": content,
         "exists": path.exists(),
-        "expected_content": expected_note_content,
-        "expected_path": expected_note_path,
-        "matches_expected": content == expected_note_content + "\n",
+        "expected_content": expected_target_content,
+        "expected_path": expected_target_path,
+        "matches_expected": content == expected_target_content + "\n",
         "path": str(path),
     }
 
@@ -838,6 +944,8 @@ def _success_checks(snapshot: dict[str, Any]) -> dict[str, bool]:
         and lane.get("peer_result_status") not in {"delivery_failed", "degraded"}
         and lane.get("peer_degraded_reason") is None,
         "isolated_note_matches": isinstance(artifact, dict)
+        and artifact.get("matches_expected") is True,
+        "isolated_artifact_matches": isinstance(artifact, dict)
         and artifact.get("matches_expected") is True,
         "selected_review_peer_recorded": isinstance(selected_review_provider, str)
         and lane.get("review_peer_cli_kind") == selected_review_provider
