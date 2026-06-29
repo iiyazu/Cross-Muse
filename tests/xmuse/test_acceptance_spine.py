@@ -277,17 +277,42 @@ def test_final_action_approval_without_github_evidence_keeps_spine_blocked(
 ) -> None:
     intake_message_id, hold = _create_spine_with_pending_final_action(tmp_path)
 
-    FinalActionGateStore(tmp_path / "final_actions.json").resolve(
+    final_action = FinalActionGateStore(tmp_path / "final_actions.json").resolve(
         hold.id,
         status="approved",
         resolved_by="human",
     )
 
     spine = AcceptanceSpineStore(tmp_path / "chat.db").get_by_intake_message(intake_message_id)
+    assert final_action.status == "blocked"
+    assert final_action.github_gate_evidence_ref is None
+    assert final_action.github_gate_gap_ref == "github_gate_unverified"
     assert spine.status is AcceptanceSpineStatus.BLOCKED
     assert spine.github_gate_evidence_ref is None
     assert spine.manual_gaps == ["github_gate_unverified"]
     assert spine.blocked_reason == "github_gate_unverified"
+    writebacks = [
+        message
+        for message in ChatStore(tmp_path / "chat.db").list_messages(spine.conversation_id)
+        if message.envelope_type == "final_action_result"
+    ]
+    assert len(writebacks) == 1
+    writeback = writebacks[0]
+    assert "github_gate_unverified" in writeback.content
+    assert writeback.envelope_json["type"] == "final_action_result"
+    assert writeback.envelope_json["final_action_id"] == hold.id
+    assert writeback.envelope_json["status"] == "blocked"
+    assert writeback.envelope_json["github_gate_evidence_ref"] is None
+    assert writeback.envelope_json["github_gate_gap_ref"] == "github_gate_unverified"
+    assert writeback.envelope_json["source_refs"] == [
+        f"final_actions.json#hold={hold.id}",
+        f"chat.db#acceptance_spine={spine.spine_id}",
+        "review_plane.json#verdict=verdict-spine-review",
+        "github_gate_unverified",
+    ]
+    assert writeback.envelope_json["proof_boundary"] == (
+        "final_action_writeback_not_github_or_merge_truth"
+    )
 
 
 def test_final_action_approval_with_direct_github_evidence_ref_stays_blocked(
@@ -310,6 +335,29 @@ def test_final_action_approval_with_direct_github_evidence_ref_stays_blocked(
     assert spine.blocked_reason == "github_gate_unverified"
     assert final_action.github_gate_evidence_ref is None
     assert final_action.github_gate_gap_ref == "github:pr:42#checks=abc123"
+
+
+def test_final_action_terminate_approval_does_not_require_github_gate(
+    tmp_path: Path,
+) -> None:
+    store = FinalActionGateStore(tmp_path / "final_actions.json")
+    hold = store.create_hold(
+        lane_id="lane-terminal",
+        verdict_id="verdict-terminal",
+        action="terminate",
+        target_status="failed",
+        summary="Terminate unrecoverable lane.",
+    )
+
+    final_action = store.resolve(
+        hold.id,
+        status="approved",
+        resolved_by="human",
+    )
+
+    assert final_action.status == "approved"
+    assert final_action.github_gate_evidence_ref is None
+    assert final_action.github_gate_gap_ref is None
 
 
 def test_acceptance_spine_direct_final_action_ref_without_producer_record_stays_blocked(
