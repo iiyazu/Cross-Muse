@@ -1,6 +1,6 @@
 # Natural Groupchat A2A Goal
 
-Updated: 2026-06-28
+Updated: 2026-06-29
 
 This is the current `/goal` entrypoint for the next xmuse production push. It
 supersedes older L8-L11, closure-ledger, walkthrough, and runtime-log driven
@@ -185,10 +185,42 @@ As of this docs snapshot:
 - PR #243 is an older broad docs package and is behind current main. Treat it
   as reference-only unless it is explicitly rebased and revalidated.
 
+## Post-#294 Integrated Closure
+
+The current highest-confidence proof is PR #294:
+
+- `post_abc_closure_baseline`:
+  `07630131dcb6e26c8dc09dcf41690381e5cd0ee6`;
+- natural groupchat run:
+  `track-abc-integrated-memoryos-degraded-20260629-01`;
+- conversation:
+  `conv_c7528fbf03b84755b8d4eb65166aa0a1`;
+- final action:
+  `final-cce17cc5e0e7`;
+- PR:
+  `https://github.com/iiyazu/Cross-Muse/pull/294`;
+- PR head:
+  `9be3b17190380171756bd8375fcb946247217d7c`;
+- exact-head CI:
+  run `28332878486` success;
+- guarded merge/main:
+  merge commit `07630131dcb6e26c8dc09dcf41690381e5cd0ee6`,
+  main CI run `28332906024` success;
+- GitHub gate evidence:
+  `github_gate_evidence.json#evidence=ghgate_e3e90b98395d4c6e81136db6241ecf49`;
+- frontend projection:
+  read-only peer-chat UX projection returned review state, approved
+  final-action state, GitHub gate refs, and degraded MemoryOS attempt ref.
+
+This proves one docs-only A/B/C integrated closure. It does not prove
+repeatable unattended operation, real-code development, multi-lane scheduling,
+live MemoryOS authority, complete frontend UX, or production readiness.
+
 ## Objective
 
-Make xmuse use its own natural agents groupchat to carry a small real xmuse
-change through:
+Make xmuse use its own natural agents groupchat to move beyond the #294
+docs-only closure and carry repeatable, diagnosable, progressively more real
+xmuse development through:
 
 ```text
 Chat API human demand
@@ -203,9 +235,14 @@ Chat API human demand
 -> operator merge or explicit blocker
 ```
 
-The goal is not to declare production-ready natural groupchat. The goal is to
-advance the maximum real chain and leave precise durable blockers where it
-cannot advance.
+The goal is not to declare production-ready natural groupchat. The next-stage
+goal is to harden the harness in this order:
+
+1. make the #294 integrated replay repeatable with a standard evidence summary;
+2. improve durable failure diagnosis at each authority boundary;
+3. run a low-risk real-code lane, not only docs sentinel output;
+4. validate multi-lane or multi-PR behavior after single-code-lane closure;
+5. keep MemoryOS and frontend as sidecar/projection support, never truth.
 
 ## Architecture Direction
 

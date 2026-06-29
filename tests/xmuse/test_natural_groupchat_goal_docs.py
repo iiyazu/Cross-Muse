@@ -8,6 +8,16 @@ OBSERVED_BASELINE_MAIN_SHA = "5d03bbe82a3f17f2d854d46ee4dcbf7972fe533d"
 OBSERVED_BASELINE_PR_HEAD_SHA = "f3212bba613693cdbb38249fd746fb760064d3c8"
 OBSERVED_BASELINE_MAIN_CI_RUN = "28323650818"
 HISTORICAL_DISPATCH_PROOF_SPLIT_SHA = "53dbeb9ace749510e9cb0f82f73cbd4df11ec190"
+POST_ABC_BASELINE_MAIN_SHA = "07630131dcb6e26c8dc09dcf41690381e5cd0ee6"
+POST_ABC_PR_HEAD_SHA = "9be3b17190380171756bd8375fcb946247217d7c"
+POST_ABC_PR_CI_RUN = "28332878486"
+POST_ABC_MAIN_CI_RUN = "28332906024"
+POST_ABC_RUN_ID = "track-abc-integrated-memoryos-degraded-20260629-01"
+POST_ABC_CONVERSATION_ID = "conv_c7528fbf03b84755b8d4eb65166aa0a1"
+POST_ABC_FINAL_ACTION_ID = "final-cce17cc5e0e7"
+POST_ABC_GITHUB_GATE_REF = (
+    "github_gate_evidence.json#evidence=ghgate_e3e90b98395d4c6e81136db6241ecf49"
+)
 
 
 def _read_doc(name: str) -> str:
@@ -75,6 +85,31 @@ def test_natural_groupchat_goal_docs_record_observed_baseline_contract() -> None
     assert "#277" in docs["README.md"]
     assert "#278" in docs["README.md"]
     assert "#279" in docs["README.md"]
+
+
+def test_natural_groupchat_goal_docs_record_post_abc_starting_state() -> None:
+    docs = {
+        "README.md": _read_doc("README.md"),
+        "natural-groupchat-a2a-goal.md": _read_doc("natural-groupchat-a2a-goal.md"),
+        "natural-groupchat-a2a-task-plan.md": _read_doc("natural-groupchat-a2a-task-plan.md"),
+        "natural-groupchat-a2a-goal-prompt.md": _read_doc("natural-groupchat-a2a-goal-prompt.md"),
+    }
+
+    for name, content in docs.items():
+        assert "post_abc_closure_baseline" in content, name
+        assert POST_ABC_BASELINE_MAIN_SHA in content, name
+        assert POST_ABC_PR_HEAD_SHA in content, name
+        assert POST_ABC_PR_CI_RUN in content, name
+        assert POST_ABC_MAIN_CI_RUN in content, name
+        assert POST_ABC_RUN_ID in content, name
+        assert POST_ABC_CONVERSATION_ID in content, name
+        assert POST_ABC_FINAL_ACTION_ID in content, name
+        assert POST_ABC_GITHUB_GATE_REF in content, name
+        assert "docs-only" in content, name
+
+    task_plan = docs["natural-groupchat-a2a-task-plan.md"]
+    assert "Current Source-Derived Starting State" not in task_plan
+    assert "Current final-report notes for the #284" not in task_plan
 
 
 def test_github_server_gate_docs_describe_exact_head_check_run_evidence() -> None:

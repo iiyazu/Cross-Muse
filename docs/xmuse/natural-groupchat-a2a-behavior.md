@@ -1,6 +1,6 @@
 # Natural Groupchat A2A Behavior Policy
 
-Updated: 2026-06-28
+Updated: 2026-06-29
 
 This policy governs the next long `/goal` for natural agents groupchat,
 A2A-based interop, MemoryOS sidecar work, and frontend API readiness.
@@ -164,6 +164,20 @@ create a small xmuse PR, observe exact-head CI, and reach guarded merge or an
 explicit operator blocker. Track B or Track C may become primary only when the
 loop names the Track A blocker it removes or the milestone it directly
 completes.
+
+After PR #294, one docs-only A/B/C chain has reached PR, exact-head CI,
+guarded merge, main CI, and final-action approval. The next primary Track A
+work should therefore increase harness capability rather than repeat the same
+docs sentinel:
+
+- first make the integrated replay and evidence summary repeatable;
+- then improve durable diagnosis for the first stalled boundary;
+- then run one low-risk real-code lane through the same authority chain;
+- only then expand to multi-lane or multi-PR execution.
+
+Another docs-only sentinel counts as core-chain progress only when it proves a
+repeatability, diagnosis, or regression boundary that #294 did not already
+prove.
 
 Each loop may have support Tracks, but support work must not displace the
 primary Track. The loop report must separate:

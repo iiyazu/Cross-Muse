@@ -1,6 +1,6 @@
 # xmuse 文档入口
 
-更新日期: 2026-06-28
+更新日期: 2026-06-29
 
 本目录现在按“当前 goal 入口、当前产品合同、CI/兼容合同、历史档案”分层。下一轮
 自然 agents 群聊 `/goal` 不再默认读取旧的 closure ledger、walkthrough、runtime
@@ -70,6 +70,53 @@ operation record 或巨大 handoff 文档。
 - PR #243 (`codex/natural-groupchat-overnight-goal-docs`) 是较早的宽文档包，
   当前 `BEHIND` main；可作参考，但不是最新 current-goal 状态入口。
 - Dirty historical worktree 和 archive 文档只能作为参考，不是 main capability。
+
+Post-#294 milestone baseline for the next stage:
+
+- `post_abc_closure_baseline` is merge commit
+  `07630131dcb6e26c8dc09dcf41690381e5cd0ee6`, produced by PR #294
+  (`https://github.com/iiyazu/Cross-Muse/pull/294`).
+- The durable run was `track-abc-integrated-memoryos-degraded-20260629-01`,
+  conversation `conv_c7528fbf03b84755b8d4eb65166aa0a1`, final action
+  `final-cce17cc5e0e7`.
+- PR #294 was created by the final-action PR producer from the integrated
+  natural groupchat run. PR head
+  `9be3b17190380171756bd8375fcb946247217d7c` passed exact-head CI run
+  `28332878486`; guarded merge produced `07630131dcb6e26c8dc09dcf41690381e5cd0ee6`;
+  main CI run `28332906024` succeeded.
+- GitHub gate evidence ref:
+  `github_gate_evidence.json#evidence=ghgate_e3e90b98395d4c6e81136db6241ecf49`.
+- The replayed demand proved one A/B/C docs sentinel chain:
+  natural groupchat proposal/review/dispatch/execution/final-action,
+  MemoryOS sidecar degraded attempt projection, frontend read-only projection,
+  PR, exact-head CI, guarded merge, and main CI.
+- This is the current highest-confidence closure proof. It is still a docs
+  sentinel proof, not production-ready natural groupchat, live MemoryOS
+  authority, full frontend completion, multi-lane proof, or full real-code
+  development proof.
+
+## Next-Stage Direction
+
+The next stage should not repeat calibration-only work. Start from the #294
+closure and harden xmuse from "one proven docs sentinel" into a repeatable
+development harness:
+
+1. **Repeatability**: make the integrated A/B/C replay and evidence summary a
+   standard runbook/driver so consecutive runs can be inspected without manual
+   durable-file spelunking.
+2. **Diagnosis efficiency**: add durable failure taxonomy and operator-facing
+   projection for provider no-writeback, review timeout, branch-behind,
+   MemoryOS unavailable, GitHub gate reject, and main-CI failure boundaries.
+3. **Small real code change**: run one low-risk code lane through test-first
+   implementation, review verdict, final action, PR, exact-head CI, guarded
+   merge, and main CI.
+4. **Multiple lanes / PRs**: validate independent lane split, dependency
+   handling, failure isolation, and projection state for 2-3 lanes.
+5. **MemoryOS live/degraded contract**: keep degraded mode non-blocking while
+   adding live sidecar recall/ingest proof when a real MemoryOS service is
+   configured.
+6. **Frontend operator cockpit**: expose the same authority/proof state through
+   read-only frontend/API surfaces; frontend remains projection-only.
 
 ## 当前产品主线
 
