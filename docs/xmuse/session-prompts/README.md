@@ -8,12 +8,15 @@
 每个 session 启动前必须先阅读:
 
 ```text
+docs/xmuse/README.md
+docs/xmuse/document-status.md
 docs/xmuse/解耦开发协议.md
 docs/xmuse/parallel-development-runbook.md
 docs/xmuse/code-quality-and-archive-policy.md
-xmuse/HANDOFF.md
-xmuse/CODEX_GOAL_HANDOFF.md
 ```
+
+Archived handoff files under `docs/xmuse/archive/2026-06-runtime-root-legacy/`
+are historical reference only.
 
 各 session prompt 的“必须阅读”只列额外模块上下文。若本 README 与单个 prompt 冲突，
 以本 README 和《解耦开发协议》为准。

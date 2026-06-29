@@ -95,6 +95,9 @@ task explicitly targets them:
   self-iteration, vision-runtime, and OpenCode-in proof-closure documents.
   Some tests and compatibility evidence builders still reference these files,
   but they are no longer default docs-root entrypoints.
+- `docs/xmuse/archive/2026-06-runtime-root-legacy/` contains old runtime-root
+  handoff files, the archived `INIT.md`, the deprecated single-chain
+  `state_machine.json`, and an older production-strengthening goal prompt.
 
 If an archived document becomes active again, first promote it into the current
 goal package with fresh verification.
