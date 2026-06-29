@@ -191,6 +191,11 @@ class GroupchatPeerRuntime:
         root_message_id: str,
         max_ticks: int,
         policy_id: str = "default-natural-groupchat",
+        max_depth: int = 3,
+        human_max_targets: int = 2,
+        agent_max_targets: int = 1,
+        pingpong_warn_after: int = 2,
+        pingpong_block_after: int = 4,
     ) -> GroupchatPeerRuntimeRootRunOutcome:
         chain = self._chain_for_root(
             conversation_id=conversation_id,
@@ -203,6 +208,11 @@ class GroupchatPeerRuntime:
                 conversation_id=conversation_id,
                 root_message_id=root_message_id,
                 policy_id=policy_id,
+                max_depth=max_depth,
+                human_max_targets=human_max_targets,
+                agent_max_targets=agent_max_targets,
+                pingpong_warn_after=pingpong_warn_after,
+                pingpong_block_after=pingpong_block_after,
             )
             created_chain = True
 
