@@ -4,6 +4,7 @@ import sqlite3
 
 import pytest
 
+from xmuse_core.chat.groupchat_runtime import GroupchatPeerRuntime
 from xmuse_core.chat.groupchat_worklist import (
     GroupchatWorklistScheduler,
     GroupchatWorklistStore,
@@ -11,6 +12,9 @@ from xmuse_core.chat.groupchat_worklist import (
 from xmuse_core.chat.inbox_store import ChatInboxStore
 from xmuse_core.chat.participant_store import ParticipantStore
 from xmuse_core.chat.store import ChatStore
+from xmuse_core.providers.adapters.base import ProviderInvocationResult
+from xmuse_core.providers.goal_contract import WorkerResultStatus
+from xmuse_core.providers.models import ProviderId, ProviderProfileId
 
 
 def _conversation_with_groupchat_roster(
@@ -272,6 +276,195 @@ def test_groupchat_tick_rejects_inbox_read_with_unowned_response_message(tmp_pat
     failed = store.get_item(outcome.failed_item_id)
     assert failed.status == "failed"
     assert failed.terminal_reason == "callback_missing"
+
+
+@pytest.mark.asyncio
+async def test_groupchat_peer_runtime_delivers_linked_inbox_with_a2a_writeback(
+    tmp_path,
+):
+    db = tmp_path / "chat.db"
+    chat = ChatStore(db)
+    conversation = chat.create_conversation("A1 peer runtime")
+    participants = ParticipantStore(db)
+    architect = participants.add(
+        conversation_id=conversation.id,
+        role="architect",
+        display_name="Remote A2A Architect GOD",
+        cli_kind="a2a",
+        model="a2a-remote",
+    )
+    participants.add(
+        conversation_id=conversation.id,
+        role="review",
+        display_name="Review GOD",
+        cli_kind="codex",
+        model="gpt-5.5",
+    )
+    critic = participants.add(
+        conversation_id=conversation.id,
+        role="critic",
+        display_name="Critic GOD",
+        cli_kind="codex",
+        model="gpt-5.5",
+    )
+    root = chat.add_message(
+        conversation_id=conversation.id,
+        author="human",
+        role="human",
+        content="Please design the next A1 runtime bridge.",
+    )
+    chain = GroupchatWorklistStore(db).create_chain(
+        conversation_id=conversation.id,
+        root_message_id=root.id,
+    )
+
+    class ForbiddenGodLayer:
+        async def ensure_conversation_session(self, **kwargs):
+            raise AssertionError("A2A participant should use provider writeback")
+
+    class FakeProviderService:
+        def __init__(self) -> None:
+            self.invocations = []
+
+        def invoke_provider_adapter(self, invocation):
+            self.invocations.append(invocation)
+            return ProviderInvocationResult(
+                request_id=invocation.request_id,
+                provider_id=ProviderId.A2A,
+                profile_id=ProviderProfileId.REMOTE,
+                status=WorkerResultStatus.COMPLETED,
+                evidence_refs=[f"a2a_task:{invocation.request_id}"],
+                diagnostic_payload={
+                    "a2a_task_id": invocation.request_id,
+                    "a2a_context_id": invocation.request_id,
+                    "a2a_state": "TASK_STATE_COMPLETED",
+                    "a2a_disposition": "completed",
+                    "a2a_terminal": True,
+                    "a2a_content": (
+                        "@critic Please challenge whether this runtime bridge "
+                        "preserves chat.db authority."
+                    ),
+                    "a2a_artifacts": [],
+                    "a2a_history": [],
+                    "a2a_metadata": {},
+                    "a2a_source_refs": [f"a2a_task:{invocation.request_id}"],
+                    "a2a_sdk_task": {
+                        "id": invocation.request_id,
+                        "status": {"state": "TASK_STATE_COMPLETED"},
+                    },
+                    "a2a_jsonrpc_id": invocation.request_id,
+                },
+            )
+
+    provider_service = FakeProviderService()
+    outcome = await GroupchatPeerRuntime(
+        db_path=db,
+        god_layer=ForbiddenGodLayer(),
+        worktree=tmp_path,
+        scheduler_id="groupchat-peer-a1",
+        response_wait_s=0.1,
+        provider_service=provider_service,
+    ).tick_once(chain_id=chain.chain_id)
+
+    assert outcome.peer is not None
+    assert outcome.peer.happy_path == 1
+    assert outcome.worklist.scanned == 1
+    assert outcome.worklist.completed_message_id is not None
+    assert outcome.worklist.followup_scanned == 1
+    [invocation] = provider_service.invocations
+    assert invocation.request_id == outcome.worklist.linked_inbox_item_id
+    assert invocation.writeback_context is not None
+    assert invocation.writeback_context.reply_to_inbox_item_id == (
+        outcome.worklist.linked_inbox_item_id
+    )
+    assert invocation.runtime_context["authority"] == "chat.db/inbox"
+    assert invocation.runtime_context["a2a_is_authority"] is False
+
+    completed = GroupchatWorklistStore(db).get_item(outcome.worklist.claimed_item_id)
+    assert completed.status == "completed"
+    assert completed.target_participant_id == architect.participant_id
+    assert completed.completed_message_id == outcome.worklist.completed_message_id
+    provider_reply = next(
+        message
+        for message in chat.list_messages(conversation.id)
+        if message.id == outcome.worklist.completed_message_id
+    )
+    assert provider_reply.author == architect.participant_id
+    assert provider_reply.envelope_type == "a2a_provider_result"
+    assert provider_reply.envelope_json["authority"] == "chat.db/inbox"
+    assert provider_reply.envelope_json["a2a_is_authority"] is False
+
+    followups = [
+        item
+        for item in GroupchatWorklistStore(db).list_items(chain.chain_id)
+        if item.source_message_id == provider_reply.id
+        and item.target_participant_id == critic.participant_id
+    ]
+    assert len(followups) == 1
+    assert followups[0].status == "queued"
+    assert followups[0].depth == 1
+
+
+@pytest.mark.asyncio
+async def test_groupchat_peer_runtime_rejects_peer_stdout_fallback_as_proof(tmp_path):
+    db, _chat, conversation, root, _architect, _review, _critic = (
+        _conversation_with_groupchat_roster(
+            tmp_path,
+            root_content="Please design the next A1 runtime bridge.",
+        )
+    )
+    store = GroupchatWorklistStore(db)
+    chain = store.create_chain(conversation_id=conversation.id, root_message_id=root.id)
+
+    class StdoutFallbackGodLayer:
+        async def ensure_conversation_session(self, **kwargs):
+            return type(
+                "Record",
+                (),
+                {
+                    "god_session_id": "god-live",
+                    "provider_session_id": "provider-thread-live",
+                    "provider_session_kind": "codex_app_server_thread",
+                    "provider_binding_status": "active",
+                    "provider_binding_failure_reason": None,
+                },
+            )()
+
+        async def send_message(self, *args, **kwargs):
+            return None
+
+        async def receive_message(self, god_session_id):
+            return type(
+                "Message",
+                (),
+                {
+                    "type": "result",
+                    "status": "success",
+                    "request_id": "unused",
+                    "message": ("@critic This stdout fallback must not complete worklist proof."),
+                    "artifacts": {},
+                },
+            )()
+
+    outcome = await GroupchatPeerRuntime(
+        db_path=db,
+        god_layer=StdoutFallbackGodLayer(),
+        worktree=tmp_path,
+        scheduler_id="groupchat-peer-a1",
+        response_wait_s=0.1,
+        degraded_fallback_enabled=True,
+    ).tick_once(chain_id=chain.chain_id)
+
+    assert outcome.peer is not None
+    assert outcome.peer.fallback_replies == 1
+    assert outcome.worklist.completed_message_id is None
+    assert outcome.worklist.failed_item_id is not None
+    assert outcome.worklist.failure_reason == "callback_missing"
+    failed = store.get_item(outcome.worklist.failed_item_id)
+    assert failed.status == "failed"
+    assert failed.terminal_reason == "callback_missing"
+    assert store.get_chain(chain.chain_id).status == "failed"
+    assert store.get_chain(chain.chain_id).status_reason == "callback_missing"
 
 
 def test_scan_routes_human_mentions_strip_code_fences_and_cap_targets(tmp_path):

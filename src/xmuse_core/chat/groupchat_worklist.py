@@ -430,7 +430,11 @@ class GroupchatWorklistStore:
             try:
                 item = self._item_row(conn, item_id)
                 message = conn.execute(
-                    "select conversation_id, author, role from messages where id = ?",
+                    """
+                    select conversation_id, author, role, envelope_json
+                    from messages
+                    where id = ?
+                    """,
                     (completed_message_id,),
                 ).fetchone()
                 if message is None:
@@ -441,6 +445,12 @@ class GroupchatWorklistStore:
                     message["author"] != item["target_participant_id"]
                     or message["role"] != "assistant"
                 ):
+                    raise ValueError("structured_writeback_missing")
+                try:
+                    envelope = json.loads(message["envelope_json"] or "{}")
+                except json.JSONDecodeError:
+                    envelope = {}
+                if isinstance(envelope, dict) and envelope.get("degraded_reason"):
                     raise ValueError("structured_writeback_missing")
                 if item["inbox_item_id"] is None:
                     raise ValueError("worklist_item_missing_inbox_link")
