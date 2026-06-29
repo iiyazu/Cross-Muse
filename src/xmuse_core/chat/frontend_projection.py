@@ -18,6 +18,7 @@ SOURCE_AUTHORITY = [
     "chat.db:peer_turn_latency_traces",
     "review_plane.json",
     "final_actions.json",
+    "github_gate_evidence.json",
     "active_sessions.json",
     "god_sessions.json",
 ]
@@ -57,6 +58,17 @@ def build_peer_chat_ux_projection(
         root,
         closure_evidence,
         conversation_lanes,
+    )
+    evidence_summary = _evidence_summary(
+        root=root,
+        conversation_id=conversation_id,
+        conversation=conversation,
+        proposals=proposals,
+        dispatch_entries=dispatch_entries,
+        closure_evidence=closure_evidence,
+        supporting_context=supporting_context,
+        review_state=review_state,
+        final_action_state=final_action_state,
     )
 
     return {
@@ -126,6 +138,7 @@ def build_peer_chat_ux_projection(
         "review_state": review_state,
         "final_action_holds": final_action_holds,
         "final_action_state": final_action_state,
+        "evidence_summary": evidence_summary,
     }
 
 
@@ -453,6 +466,581 @@ def _links(conversation_id: str) -> dict[str, str]:
         "runtime_timeline_api_href": f"{base}/runtime-timeline",
         "dashboard_href": f"/dashboard/peer-chat/conversations/{conversation_id}",
     }
+
+
+def _evidence_summary(
+    *,
+    root: Path,
+    conversation_id: str,
+    conversation: dict[str, Any],
+    proposals: list[dict[str, Any]],
+    dispatch_entries: list[dict[str, Any]],
+    closure_evidence: dict[str, Any],
+    supporting_context: dict[str, Any],
+    review_state: dict[str, Any],
+    final_action_state: dict[str, Any],
+) -> dict[str, Any]:
+    items: list[dict[str, Any]] = [
+        _evidence_item(
+            kind="conversation",
+            proof_class="authority",
+            ref=f"chat.db:conversations#conversation={conversation_id}",
+            status="observed" if conversation else "missing",
+            producer="chat.db:conversations",
+            condition="conversation_exists",
+            proof_boundary="conversation_authority_not_execution_or_github_truth",
+        )
+    ]
+    failure_boundaries: list[dict[str, Any]] = []
+    proposals_by_id = {
+        str(proposal.get("id")): proposal
+        for proposal in proposals
+        if _projection_text(proposal.get("id"))
+    }
+    dispatch_by_id = {
+        str(entry.get("entry_id")): entry
+        for entry in dispatch_entries
+        if _projection_text(entry.get("entry_id"))
+    }
+    reviews_by_ref = {
+        f"review_plane.json#verdict={item.get('id')}": item
+        for item in _dict_items(review_state.get("items"))
+        if _projection_text(item.get("id"))
+    }
+    final_actions_by_ref = {
+        f"final_actions.json#hold={item.get('id')}": item
+        for item in _dict_items(final_action_state.get("items"))
+        if _projection_text(item.get("id"))
+    }
+    acceptance_spine_items: list[dict[str, Any]] = []
+    execution_evidence_items: list[dict[str, Any]] = []
+    dispatch_evidence_items: list[dict[str, Any]] = []
+    final_action_items: list[dict[str, Any]] = []
+    github_gate_items: list[dict[str, Any]] = []
+
+    for spine in _dict_items(closure_evidence.get("items")):
+        proposal_id = _projection_text(spine.get("proposal_id"))
+        if proposal_id:
+            proposal = proposals_by_id.get(proposal_id)
+            if proposal is None:
+                failure_boundaries.append(
+                    _failure_boundary(
+                        kind="proposal",
+                        ref=f"proposal:{proposal_id}",
+                        status="missing",
+                        producer="chat.db:proposals",
+                        condition="proposal_ref_unresolved",
+                        proof_boundary="proposal_artifact_boundary",
+                        next_recovery_action="recreate_or_relink_proposal",
+                    )
+                )
+            else:
+                proposal_status = _projection_text(proposal.get("status")) or "linked"
+                if proposal_status not in {"accepted", "approved"} and spine.get(
+                    "review_or_execute_verdict_ref"
+                ):
+                    proposal_status = "accepted"
+                items.append(
+                    _evidence_item(
+                        kind="proposal",
+                        proof_class="authority",
+                        ref=f"proposal:{proposal_id}",
+                        status=proposal_status,
+                        producer="chat.db:proposals",
+                        condition="proposal_linked_to_acceptance_spine",
+                        proof_boundary="proposal_authority_not_execution_or_github_truth",
+                    )
+                )
+
+        review_ref = _projection_text(spine.get("review_verdict_ref"))
+        if review_ref:
+            review = reviews_by_ref.get(review_ref)
+            if review is None:
+                failure_boundaries.append(
+                    _failure_boundary(
+                        kind="review_verdict",
+                        ref=review_ref,
+                        status="missing",
+                        producer="review_plane.json",
+                        condition="review_verdict_ref_unresolved",
+                        proof_boundary="review_verdict_artifact_boundary",
+                        next_recovery_action="recreate_or_relink_review_verdict",
+                    )
+                )
+            else:
+                items.append(
+                    _evidence_item(
+                        kind="review_verdict",
+                        proof_class="authority",
+                        ref=review_ref,
+                        status=_projection_text(review.get("verdict_status")) or "observed",
+                        producer="review_plane.json",
+                        condition="review_verdict_linked_to_acceptance_spine",
+                        proof_boundary="review_verdict_authority_not_github_or_merge_truth",
+                    )
+                )
+                for ref in _string_items(review.get("evidence_refs")):
+                    execution_evidence_items.append(
+                        _evidence_item(
+                            kind="execution_proof",
+                            proof_class="execution_proof",
+                            ref=ref,
+                            status="observed",
+                            producer="review_plane.json",
+                            condition="review_verdict_evidence_ref",
+                            proof_boundary="execution_proof_not_review_github_or_merge_truth",
+                        )
+                    )
+
+        dispatch_item_id = _projection_text(spine.get("dispatch_item_id"))
+        if dispatch_item_id:
+            dispatch = dispatch_by_id.get(dispatch_item_id)
+            if dispatch is None:
+                failure_boundaries.append(
+                    _failure_boundary(
+                        kind="dispatch_queue_entry",
+                        ref=f"chat_dispatch_queue:{dispatch_item_id}",
+                        status="missing",
+                        producer="chat.db:chat_dispatch_queue",
+                        condition="dispatch_entry_ref_unresolved",
+                        proof_boundary="dispatch_queue_artifact_boundary",
+                        next_recovery_action="recreate_or_relink_dispatch_queue_entry",
+                    )
+                )
+            else:
+                items.append(
+                    _evidence_item(
+                        kind="dispatch_queue_entry",
+                        proof_class="authority",
+                        ref=f"chat_dispatch_queue:{dispatch_item_id}",
+                        status=_projection_text(dispatch.get("status")) or "observed",
+                        producer="chat.db:chat_dispatch_queue",
+                        condition="dispatch_entry_linked_to_acceptance_spine",
+                        proof_boundary="dispatch_queue_authority_not_execution_proof",
+                    )
+                )
+                dispatch_evidence = _projection_text(dispatch.get("dispatch_evidence"))
+                if dispatch_evidence:
+                    dispatch_evidence_items.append(
+                        _evidence_item(
+                            kind="execution_proof",
+                            proof_class="execution_proof",
+                            ref=dispatch_evidence,
+                            status="observed",
+                            producer="chat_dispatch_bridge",
+                            condition="dispatch_entry_dispatch_evidence",
+                            proof_boundary="worker_writeback_not_authority_or_github_truth",
+                        )
+                    )
+                if dispatch.get("status") == "failed":
+                    failure_boundaries.append(
+                        _failure_boundary(
+                            kind="dispatch_queue_entry",
+                            ref=f"chat_dispatch_queue:{dispatch_item_id}",
+                            status="failed",
+                            producer="chat.db:chat_dispatch_queue",
+                            condition="dispatch_entry_failed",
+                            proof_boundary="dispatch_failure_boundary",
+                            next_recovery_action="inspect_dispatch_failure_reason",
+                        )
+                    )
+
+        for ref in _string_items(spine.get("execution_evidence_refs")):
+            execution_evidence_items.append(
+                _evidence_item(
+                    kind="execution_proof",
+                    proof_class="execution_proof",
+                    ref=ref,
+                    status="observed",
+                    producer="lane_execution_or_gate",
+                    condition="acceptance_spine_execution_evidence_ref",
+                    proof_boundary="execution_proof_not_review_github_or_merge_truth",
+                )
+            )
+
+        final_action_ref = _projection_text(spine.get("final_action_ref"))
+        if final_action_ref:
+            final_action = final_actions_by_ref.get(final_action_ref)
+            if final_action is None:
+                failure_boundaries.append(
+                    _failure_boundary(
+                        kind="final_action",
+                        ref=final_action_ref,
+                        status="missing",
+                        producer="final_actions.json",
+                        condition="final_action_ref_unresolved",
+                        proof_boundary="final_action_artifact_boundary",
+                        next_recovery_action="recreate_or_relink_final_action_hold",
+                    )
+                )
+            else:
+                final_action_status = _projection_text(final_action.get("status")) or "observed"
+                final_action_items.append(
+                    _evidence_item(
+                        kind="final_action",
+                        proof_class="authority",
+                        ref=final_action_ref,
+                        status=final_action_status,
+                        producer="final_actions.json",
+                        condition="final_action_linked_to_acceptance_spine",
+                        proof_boundary="final_action_authority_not_github_or_merge_truth",
+                    )
+                )
+                final_action_id = _final_action_id_from_ref(final_action_ref)
+                github_gate_evidence_ref = _projection_text(
+                    final_action.get("github_gate_evidence_ref")
+                )
+                if github_gate_evidence_ref:
+                    github_record = _accepted_github_gate_record(
+                        root,
+                        github_gate_evidence_ref,
+                        final_action_id=final_action_id,
+                    )
+                    if github_record is None:
+                        failure_boundaries.append(
+                            _failure_boundary(
+                                kind="github_gate",
+                                ref=github_gate_evidence_ref,
+                                status="blocked",
+                                producer="github_gate_evidence.json",
+                                condition="github_gate_evidence_ref_missing_or_invalid",
+                                proof_boundary="github_gate_evidence_ref_boundary",
+                                next_recovery_action="capture_exact_head_github_gate_evidence",
+                            )
+                        )
+                    else:
+                        details = _github_gate_details(github_record)
+                        github_gate_items.append(
+                            _evidence_item(
+                                kind="github_gate",
+                                proof_class="github_server_truth",
+                                ref=github_gate_evidence_ref,
+                                status="accepted",
+                                producer="github_gate_evidence.json",
+                                condition="final_action_contains_github_gate_evidence_ref",
+                                proof_boundary="github_gate_evidence_not_main_ci_truth",
+                                details=details,
+                            )
+                        )
+                        main_ci_status = str(
+                            _dict_value(details.get("main_ci")).get("status") or ""
+                        )
+                        if main_ci_status != "success":
+                            failure_boundaries.append(
+                                _failure_boundary(
+                                    kind="main_ci",
+                                    ref=github_gate_evidence_ref,
+                                    status=main_ci_status or "missing",
+                                    producer="github_gate_evidence.json",
+                                    condition="github_gate_evidence_missing_main_ci",
+                                    proof_boundary="main_ci_server_truth_boundary",
+                                    next_recovery_action="capture_post_merge_main_ci_evidence",
+                                )
+                            )
+                github_gate_gap_ref = _projection_text(final_action.get("github_gate_gap_ref"))
+                if github_gate_gap_ref:
+                    failure_boundaries.append(
+                        _failure_boundary(
+                            kind="github_gate",
+                            ref=github_gate_gap_ref,
+                            status="blocked",
+                            producer="final_actions.json",
+                            condition="final_action_contains_github_gate_gap_ref",
+                            proof_boundary="github_gate_gap_boundary",
+                            next_recovery_action="capture_exact_head_github_gate_evidence",
+                        )
+                    )
+
+        spine_id = _projection_text(spine.get("spine_id"))
+        if spine_id:
+            acceptance_spine_items.append(
+                _evidence_item(
+                    kind="acceptance_spine",
+                    proof_class="authority",
+                    ref=f"chat.db:acceptance_spines#spine={spine_id}",
+                    status=_projection_text(spine.get("status")) or "observed",
+                    producer="chat.db:acceptance_spines",
+                    condition="acceptance_spine_tracks_chain",
+                    proof_boundary="acceptance_spine_authority_not_github_or_merge_truth",
+                )
+            )
+        blocked_reason = _projection_text(spine.get("blocked_reason"))
+        if blocked_reason:
+            failure_boundaries.append(
+                _failure_boundary(
+                    kind="acceptance_spine",
+                    ref=f"chat.db:acceptance_spines#spine={spine_id or 'unknown'}",
+                    status="blocked",
+                    producer="chat.db:acceptance_spines",
+                    condition=blocked_reason,
+                    proof_boundary="acceptance_spine_blocker_boundary",
+                    next_recovery_action="resume_from_recorded_acceptance_spine_boundary",
+                )
+            )
+
+    items.extend(execution_evidence_items)
+    items.extend(dispatch_evidence_items)
+    items.extend(final_action_items)
+    items.extend(github_gate_items)
+    memoryos_summary = _memoryos_evidence_item(supporting_context)
+    if memoryos_summary is not None:
+        items.append(memoryos_summary)
+    items.append(
+        _evidence_item(
+            kind="frontend_projection",
+            proof_class="read_projection",
+            ref=f"/api/dashboard/peer-chat/conversations/{conversation_id}/ux-projection",
+            status="available",
+            producer="frontend.peer_chat_ux_projection",
+            consumer="operator",
+            condition="read_only_projection_built_from_authority",
+            proof_boundary="frontend_projection_not_truth_producer",
+        )
+    )
+    items.extend(acceptance_spine_items)
+    items = _dedupe_evidence_items(items)
+    failure_boundaries = _dedupe_evidence_items(failure_boundaries)
+    counts = _evidence_counts(items, failure_boundaries)
+    return {
+        "schema_version": "natural_groupchat_evidence_summary/v1",
+        "projection_only": True,
+        "conversation_id": conversation_id,
+        "status": _evidence_summary_status(items, failure_boundaries),
+        "counts": counts,
+        "items": items,
+        "failure_boundaries": failure_boundaries,
+    }
+
+
+def _dict_items(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
+
+
+def _dict_value(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _jsonish_list(value: Any) -> list[Any]:
+    return list(value) if isinstance(value, list) else []
+
+
+def _accepted_github_gate_record(
+    root: Path,
+    ref: str,
+    *,
+    final_action_id: str | None,
+) -> dict[str, Any] | None:
+    if final_action_id is None:
+        return None
+    prefix = "github_gate_evidence.json#evidence="
+    if not ref.startswith(prefix):
+        return None
+    evidence_id = ref.removeprefix(prefix).strip()
+    if not evidence_id:
+        return None
+    payload = _read_json_file(root / "github_gate_evidence.json")
+    for item in _dict_items(payload.get("items")):
+        if item.get("id") != evidence_id:
+            continue
+        evidence = _dict_value(item.get("evidence"))
+        if (
+            item.get("final_action_id") == final_action_id
+            and item.get("can_accept") is True
+            and evidence.get("proof_level") == "server_side_merge_proof"
+        ):
+            return item
+        return None
+    return None
+
+
+def _github_gate_details(record: dict[str, Any]) -> dict[str, Any]:
+    evidence = _dict_value(record.get("evidence"))
+    merge_commit_sha = _projection_text(evidence.get("merge_commit_sha"))
+    return {
+        "pull_request": {
+            "repo": _projection_text(evidence.get("repo")),
+            "number": evidence.get("pull_request_number"),
+            "head_sha": _projection_text(evidence.get("head_sha")),
+        },
+        "exact_head_ci": {
+            "workflow_run_id": evidence.get("workflow_run_id"),
+            "check_run_ids": _jsonish_list(evidence.get("check_run_ids")),
+            "check_run_names": _string_items(evidence.get("check_run_names")),
+            "check_run_head_shas": _string_items(evidence.get("check_run_head_shas")),
+        },
+        "merge": {
+            "merge_commit_sha": merge_commit_sha,
+            "merged_at": _projection_text(evidence.get("merged_at")),
+            "merge_event_id": evidence.get("merge_event_id"),
+        },
+        "main_ci": _github_main_ci_details(record.get("main_ci"), merge_commit_sha),
+    }
+
+
+def _github_main_ci_details(value: Any, merge_commit_sha: str | None) -> dict[str, Any]:
+    main_ci = _dict_value(value)
+    if not main_ci:
+        return {"status": "missing"}
+    conclusion = _projection_text(main_ci.get("conclusion")) or _projection_text(
+        main_ci.get("status")
+    )
+    head_sha = _projection_text(main_ci.get("head_sha"))
+    status = conclusion or "unknown"
+    if conclusion == "success" and merge_commit_sha and head_sha and head_sha != merge_commit_sha:
+        status = "head_mismatch"
+    return {
+        "workflow_run_id": main_ci.get("workflow_run_id"),
+        "head_sha": head_sha,
+        "conclusion": conclusion,
+        "status": status,
+    }
+
+
+def _evidence_item(
+    *,
+    kind: str,
+    proof_class: str,
+    ref: str,
+    status: str,
+    producer: str,
+    condition: str,
+    proof_boundary: str,
+    consumer: str = "natural_groupchat_evidence_summary",
+    details: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    item: dict[str, Any] = {
+        "kind": kind,
+        "proof_class": proof_class,
+        "ref": ref,
+        "status": status,
+        "producer": producer,
+        "consumer": consumer,
+        "condition": condition,
+        "proof_boundary": proof_boundary,
+    }
+    if details is not None:
+        item["details"] = details
+    return item
+
+
+def _failure_boundary(
+    *,
+    kind: str,
+    ref: str,
+    status: str,
+    producer: str,
+    condition: str,
+    proof_boundary: str,
+    next_recovery_action: str,
+) -> dict[str, Any]:
+    item = _evidence_item(
+        kind=kind,
+        proof_class="failure_boundary",
+        ref=ref,
+        status=status,
+        producer=producer,
+        condition=condition,
+        proof_boundary=proof_boundary,
+    )
+    item["next_recovery_action"] = next_recovery_action
+    return item
+
+
+def _memoryos_evidence_item(supporting_context: dict[str, Any]) -> dict[str, Any] | None:
+    memoryos = supporting_context.get("memoryos_sidecar")
+    if not isinstance(memoryos, dict):
+        return None
+    latest = _dict_items(memoryos.get("latest"))
+    if not latest:
+        return None
+    item = latest[0]
+    refs = _string_items(item.get("continuity_refs"))
+    attempt_ref = _projection_text(item.get("continuity_attempt_ref"))
+    ref = refs[0] if refs else attempt_ref
+    if not ref:
+        namespace_uri = _projection_text(item.get("namespace_uri"))
+        if namespace_uri and namespace_uri != "unknown":
+            ref = namespace_uri
+    if not ref:
+        return None
+    return _evidence_item(
+        kind="memoryos_sidecar",
+        proof_class="sidecar_continuity",
+        ref=ref,
+        status=_projection_text(item.get("status")) or "unknown",
+        producer="chat.db:peer_turn_latency_traces.supporting_context_json",
+        condition="memoryos_sidecar_projection_present",
+        proof_boundary="sidecar_continuity_not_proposal_review_dispatch_or_github_truth",
+    )
+
+
+def _dedupe_evidence_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen: set[tuple[str, str, str]] = set()
+    deduped: list[dict[str, Any]] = []
+    for item in items:
+        key = (
+            str(item.get("kind") or ""),
+            str(item.get("proof_class") or ""),
+            str(item.get("ref") or ""),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+    return deduped
+
+
+def _evidence_counts(
+    items: list[dict[str, Any]],
+    failure_boundaries: list[dict[str, Any]],
+) -> dict[str, int]:
+    counts = {
+        "authority": 0,
+        "execution_proof": 0,
+        "github_server_truth": 0,
+        "sidecar_continuity": 0,
+        "read_projection": 0,
+        "failure_boundary": len(failure_boundaries),
+    }
+    for item in items:
+        proof_class = str(item.get("proof_class") or "")
+        if proof_class in counts and proof_class != "failure_boundary":
+            counts[proof_class] += 1
+    return counts
+
+
+def _evidence_summary_status(
+    items: list[dict[str, Any]],
+    failure_boundaries: list[dict[str, Any]],
+) -> str:
+    if failure_boundaries:
+        return "blocked"
+    kinds = {str(item.get("kind") or "") for item in items}
+    final_statuses = {
+        str(item.get("status") or "")
+        for item in items
+        if item.get("kind") == "final_action"
+    }
+    spine_statuses = {
+        str(item.get("status") or "")
+        for item in items
+        if item.get("kind") == "acceptance_spine"
+    }
+    if (
+        "conversation" in kinds
+        and "proposal" in kinds
+        and "review_verdict" in kinds
+        and "dispatch_queue_entry" in kinds
+        and "execution_proof" in kinds
+        and "final_action" in kinds
+        and "github_gate" in kinds
+        and final_statuses.intersection({"approved", "accepted", "resolved"})
+        and spine_statuses.intersection({"accepted", "approved", "resolved"})
+    ):
+        return "complete"
+    return "in_progress"
 
 
 def _timeline_items(
