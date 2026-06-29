@@ -497,14 +497,20 @@ Current runtime proof:
   exact-head CI run `28364966671` success, guarded merge commit
   `eaa0532eee4598e92465ddefdfcf8a5a13e6ebf3`, and main CI run
   `28365028773` success;
+- alpha docs artifact promotion proof:
+  PR #318 promoted `docs/xmuse/rung4-alpha-runtime-20260629-01.md`, with
+  head `2e34f1051fb8ec111815f21224267bd97ec00426`, exact-head CI run
+  `28365170254` success, guarded merge commit
+  `7b7b94a296363bb1e83cf43d016621405db26d9b`, and main CI run
+  `28365233751` success;
 - review provider boundary: OpenCode was unavailable and recorded as
   `opencode_unavailable`; review used the configured Codex review participant;
 - proof limitation:
   this proves multi-lane scheduling, isolated lane worktrees, lane-specific
-  gate/review/final-action holds, and exact artifact matching. It is not yet
-  complete GitHub PR/CI/merge proof for every lane artifact, lane-failure
-  isolation proof, live MemoryOS proof, frontend operator cockpit completion,
-  or production readiness.
+  gate/review/final-action holds, exact artifact matching, and domain-scoped
+  PR/CI/guarded-merge/main-CI promotion for the Rung 4 lane artifacts. It is
+  not yet lane-failure isolation proof, live MemoryOS proof, frontend operator
+  cockpit completion, or production readiness.
 
 ### Rung 5 - MemoryOS Live/Degraded Contract
 
@@ -791,10 +797,10 @@ Current final-report notes after the Rung 4 runtime milestone:
 - prior #294 docs-sentinel proof remains useful as the control-plane baseline,
   but it is no longer the maximum Track A runtime proof;
 - Track A state: the single real-code lane is closed through GitHub facts, and
-  the multi-lane runtime shape is locally proven. Rung 4 proof docs and the
-  beta code artifact have reached PR, exact-head CI, guarded merge, and main CI.
-  The next Track A work is remaining lane-artifact promotion, then lane-failure
-  isolation and projection behavior;
+  the multi-lane runtime shape is locally proven. Rung 4 proof docs, alpha docs
+  artifact, and beta code artifact have reached PR, exact-head CI, guarded
+  merge, and main CI. The next Track A work is lane-failure isolation and
+  projection behavior;
 - Track B state: MemoryOS sidecar build/ingest degraded against an unavailable
   endpoint and remained non-blocking; this was degraded attempt projection, not
   live MemoryOS truth;
