@@ -79,4 +79,4 @@ production readiness or an accepted demand. It remains the negative proof that
 manual approval, copied GitHub text, and stdout summaries cannot accept a spine
 without producer-backed `server_side_merge_proof`. The paired accepted short
 path is recorded in
-`docs/xmuse/acceptance-gated-live-capture-evidence-2026-06-21.md`.
+`docs/xmuse/archive/2026-06-21-evidence/acceptance-gated-live-capture-evidence-2026-06-21.md`.

@@ -1,10 +1,40 @@
 # xmuse Release Checklist
 
-Updated: 2026-06-21
+Updated: 2026-06-29
 
 ## Release Decision
 
 Current decision: do not cut a full production release yet.
+
+## Default CI Gates
+
+Default CI is a no-secrets gate. It runs the repository workflow checks for
+contract, quality, and focused runtime integration surfaces, but it is not a
+claim that live providers or a live MemoryOS service were exercised.
+
+## Manual Real Runtime Gate
+
+Manual real runtime proof still requires explicit operator runs. Current manual
+targets include:
+
+- `tests/xmuse/test_full_chain_real_run.py::test_real_runtime_restart_resume_smoke_with_fake_app_server`
+- `tests/xmuse/test_full_chain_real_run.py::test_real_ray_codex_app_server_mcp_writeback_soak_restart_resume`
+
+These tests are not default production-readiness proof by themselves; durable
+authority stores and GitHub server facts must still be inspected.
+
+## Provider Support Levels
+
+- Codex = PRIMARY
+- OpenCode = SECONDARY
+- Fake = TEST ONLY
+
+## Known Limitations
+
+- Chat API and MCP have no auth layer for external deployment.
+- Ray remains optional legacy runtime support, not the default natural
+  groupchat path.
+- MemoryOS is sidecar context continuity, not xmuse authority.
 
 Current claim level:
 
@@ -51,13 +81,13 @@ Do not claim:
 ## Durable Evidence
 
 - RC baseline:
-  `docs/xmuse/rc-closure-baseline-2026-06-21.md`
+  `docs/xmuse/archive/2026-06-21-evidence/rc-closure-baseline-2026-06-21.md`
 - GitHub server-side required-check evidence:
-  `docs/xmuse/github-server-side-gate-live-evidence-2026-06-21.md`
+  `docs/xmuse/archive/2026-06-21-evidence/github-server-side-gate-live-evidence-2026-06-21.md`
 - P2 blocked path evidence:
-  `docs/xmuse/acceptance-gated-runner-evidence-2026-06-21.md`
+  `docs/xmuse/archive/2026-06-21-evidence/acceptance-gated-runner-evidence-2026-06-21.md`
 - P3 accepted live path evidence:
-  `docs/xmuse/acceptance-gated-live-capture-evidence-2026-06-21.md`
+  `docs/xmuse/archive/2026-06-21-evidence/acceptance-gated-live-capture-evidence-2026-06-21.md`
 - Real provider bounded soak evidence:
   `docs/xmuse/archive/2026-06-pre-m7/real-provider-soak-evidence-2026-06-21.md`
 - P3 runtime root:
