@@ -69,6 +69,8 @@ def main() -> int:
         review_provider_fallback_reason=provider_readiness[
             "review_provider_selection"
         ].get("fallback_reason"),
+        peer_chat_memoryos_url=args.peer_chat_memoryos_url,
+        peer_chat_memoryos_kind=args.peer_chat_memoryos_kind,
     )
     _write_json(artifacts / "commands.json", commands)
     _write_json(artifacts / "provider_readiness.json", provider_readiness)
@@ -96,6 +98,8 @@ def main() -> int:
                 peer_chat_post_writeback_grace_s=args.peer_chat_post_writeback_grace_s,
                 peer_god_backend=args.peer_god_backend,
                 ray_god_mcp=args.ray_god_mcp,
+                peer_chat_memoryos_url=args.peer_chat_memoryos_url,
+                peer_chat_memoryos_kind=args.peer_chat_memoryos_kind,
             )
         )
 
@@ -313,6 +317,23 @@ def _parse_args() -> argparse.Namespace:
             "opencode_unavailable fallback to Codex"
         ),
     )
+    parser.add_argument(
+        "--peer-chat-memoryos-url",
+        default=os.environ.get("XMUSE_PEER_CHAT_MEMORYOS_URL"),
+        help=(
+            "optional MemoryOS sidecar REST base URL passed to the platform "
+            "runner for integrated A/B/C replay"
+        ),
+    )
+    parser.add_argument(
+        "--peer-chat-memoryos-kind",
+        choices=["generic", "memoryos-lite"],
+        default=os.environ.get("XMUSE_PEER_CHAT_MEMORYOS_KIND", "generic"),
+        help=(
+            "MemoryOS sidecar REST contract for --peer-chat-memoryos-url; "
+            "generic uses /memory/*, memoryos-lite uses /sessions/*"
+        ),
+    )
     return parser.parse_args()
 
 
@@ -453,6 +474,8 @@ def _commands_payload(
     review_provider_policy: str,
     selected_review_provider: str,
     review_provider_fallback_reason: str | None,
+    peer_chat_memoryos_url: str | None,
+    peer_chat_memoryos_kind: str,
 ) -> dict[str, Any]:
     return {
         "run_root": str(run_root),
@@ -475,6 +498,8 @@ def _commands_payload(
         "review_provider_policy": review_provider_policy,
         "selected_review_provider": selected_review_provider,
         "review_provider_fallback_reason": review_provider_fallback_reason,
+        "peer_chat_memoryos_url": peer_chat_memoryos_url,
+        "peer_chat_memoryos_kind": peer_chat_memoryos_kind,
     }
 
 
@@ -555,6 +580,8 @@ def _start_runner(
     peer_chat_post_writeback_grace_s: float,
     peer_god_backend: str,
     ray_god_mcp: bool,
+    peer_chat_memoryos_url: str | None = None,
+    peer_chat_memoryos_kind: str = "generic",
 ) -> subprocess.Popen[bytes]:
     logs_dir.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
@@ -564,31 +591,41 @@ def _start_runner(
     env["XMUSE_REVIEW_GOD_BACKEND"] = peer_god_backend
     env["XMUSE_EXECUTE_GOD_BACKEND"] = peer_god_backend
     env["XMUSE_RAY_GOD_MCP"] = "1" if ray_god_mcp else "0"
+    command = [
+        sys.executable,
+        "-m",
+        "xmuse.platform_runner",
+        "--xmuse-root",
+        str(run_root),
+        "--mcp-port",
+        str(mcp_port),
+        "--max-hours",
+        str(max_hours),
+        "--max-concurrent",
+        "4",
+        "--peer-chat",
+        "--persistent-review-god",
+        "--default-review-peer-routing",
+        "--no-auto-merge",
+        "--require-final-action-approval",
+        "--peer-god-backend",
+        peer_god_backend,
+        "--peer-chat-response-wait-s",
+        str(peer_chat_response_wait_s),
+        "--peer-chat-post-writeback-grace-s",
+        str(peer_chat_post_writeback_grace_s),
+    ]
+    if peer_chat_memoryos_url:
+        command.extend(
+            [
+                "--peer-chat-memoryos-url",
+                peer_chat_memoryos_url,
+                "--peer-chat-memoryos-kind",
+                peer_chat_memoryos_kind,
+            ]
+        )
     return _spawn(
-        [
-            sys.executable,
-            "-m",
-            "xmuse.platform_runner",
-            "--xmuse-root",
-            str(run_root),
-            "--mcp-port",
-            str(mcp_port),
-            "--max-hours",
-            str(max_hours),
-            "--max-concurrent",
-            "4",
-            "--peer-chat",
-            "--persistent-review-god",
-            "--default-review-peer-routing",
-            "--no-auto-merge",
-            "--require-final-action-approval",
-            "--peer-god-backend",
-            peer_god_backend,
-            "--peer-chat-response-wait-s",
-            str(peer_chat_response_wait_s),
-            "--peer-chat-post-writeback-grace-s",
-            str(peer_chat_post_writeback_grace_s),
-        ],
+        command,
         env=env,
         stdout_path=logs_dir / "platform_runner.log",
     )

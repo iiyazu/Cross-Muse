@@ -83,6 +83,8 @@ def test_main_writes_expected_note_content_into_command_artifacts(
             peer_god_backend="ray",
             ray_god_mcp=True,
             review_provider="auto",
+            peer_chat_memoryos_url="http://memoryos.sidecar",
+            peer_chat_memoryos_kind="memoryos-lite",
         ),
     )
     monkeypatch.setattr(sentinel, "_repo_head_sha", fake_repo_head_sha)
@@ -141,6 +143,8 @@ def test_main_writes_expected_note_content_into_command_artifacts(
     assert commands_json["review_provider_policy"] == "auto"
     assert commands_json["selected_review_provider"] == "codex"
     assert commands_json["review_provider_fallback_reason"] == "opencode_unavailable"
+    assert commands_json["peer_chat_memoryos_url"] == "http://memoryos.sidecar"
+    assert commands_json["peer_chat_memoryos_kind"] == "memoryos-lite"
     provider_readiness = json.loads(
         (run_root / "loop_driver_artifacts" / "provider_readiness.json").read_text(
             encoding="utf-8"
@@ -158,6 +162,8 @@ def test_main_writes_expected_note_content_into_command_artifacts(
     assert "peer_god_backend=ray\n" in commands_txt
     assert "ray_god_mcp=True\n" in commands_txt
     assert "selected_review_provider=codex\n" in commands_txt
+    assert "peer_chat_memoryos_url=http://memoryos.sidecar\n" in commands_txt
+    assert "peer_chat_memoryos_kind=memoryos-lite\n" in commands_txt
 
 
 def test_target_spec_defaults_to_docs_sentinel_path_and_content() -> None:
@@ -545,6 +551,42 @@ def test_start_runner_uses_configured_peer_chat_writeback_grace(
     assert env["XMUSE_REVIEW_GOD_BACKEND"] == peer_god_backend
     assert env["XMUSE_EXECUTE_GOD_BACKEND"] == peer_god_backend
     assert env["XMUSE_RAY_GOD_MCP"] == expected_ray_god_mcp
+
+
+def test_start_runner_passes_configured_peer_chat_memoryos_sidecar(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_spawn(command, *, env, stdout_path):
+        captured["command"] = command
+        captured["env"] = env
+        captured["stdout_path"] = stdout_path
+        return object()
+
+    monkeypatch.setattr(sentinel, "_spawn", fake_spawn)
+
+    sentinel._start_runner(
+        run_root=tmp_path / "run-root",
+        mcp_port=43112,
+        chat_port=43111,
+        logs_dir=tmp_path / "logs",
+        max_hours=0.75,
+        peer_chat_response_wait_s=456.0,
+        peer_chat_post_writeback_grace_s=13.5,
+        peer_god_backend="native",
+        ray_god_mcp=False,
+        peer_chat_memoryos_url="http://memoryos.sidecar",
+        peer_chat_memoryos_kind="memoryos-lite",
+    )
+
+    command = captured["command"]
+    assert isinstance(command, list)
+    url_flag_index = command.index("--peer-chat-memoryos-url")
+    assert command[url_flag_index + 1] == "http://memoryos.sidecar"
+    kind_flag_index = command.index("--peer-chat-memoryos-kind")
+    assert command[kind_flag_index + 1] == "memoryos-lite"
 
 
 def test_wait_for_proposal_review_trigger_waits_until_read(
