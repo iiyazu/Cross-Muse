@@ -11,9 +11,9 @@ must be treated as inputs, not authority.
 
 | Source | Role |
 |---|---|
-| `docs/xmuse/post-patha-release-readiness-audit.md` | Release, resume, onboarding, demo, and presentation readiness. |
-| `docs/xmuse/self-development-closure-audit.md` | Whether xmuse can use xmuse to drive a real feature from request to handoff. |
-| `docs/xmuse/legacy-architecture-debt-audit.md` | Main-path vs legacy-path inventory, architecture debt, and cleanup candidates. |
+| `docs/xmuse/archive/2026-06-roadmaps-and-audits/post-patha-release-readiness-audit.md` | Release, resume, onboarding, demo, and presentation readiness. |
+| `docs/xmuse/archive/2026-06-roadmaps-and-audits/self-development-closure-audit.md` | Whether xmuse can use xmuse to drive a real feature from request to handoff. |
+| `docs/xmuse/archive/2026-06-roadmaps-and-audits/legacy-architecture-debt-audit.md` | Main-path vs legacy-path inventory, architecture debt, and cleanup candidates. |
 | `docs/xmuse/archive/2026-06-pre-m7/walkthrough-maintenance-notes-v8.md` | Independent installability closure. |
 | `docs/xmuse/production-operations.md` | Runtime operations and health/cleanup contract. |
 | `docs/xmuse/quality-gates-and-provider-matrix.md` | V10 CI/provider/config support gates. |
@@ -135,8 +135,8 @@ Gate:
 /goal Post-PathA release candidate packaging
 
 Read:
-- docs/xmuse/post-patha-global-audit-synthesis.md
-- docs/xmuse/post-patha-release-readiness-audit.md
+- docs/xmuse/archive/2026-06-roadmaps-and-audits/post-patha-global-audit-synthesis.md
+- docs/xmuse/archive/2026-06-roadmaps-and-audits/post-patha-release-readiness-audit.md
 - docs/xmuse/production-operations.md
 - docs/xmuse/quality-gates-and-provider-matrix.md
 
@@ -164,8 +164,8 @@ Deliver:
 /goal xmuse self-development smoke
 
 Read:
-- docs/xmuse/post-patha-global-audit-synthesis.md
-- docs/xmuse/self-development-closure-audit.md
+- docs/xmuse/archive/2026-06-roadmaps-and-audits/post-patha-global-audit-synthesis.md
+- docs/xmuse/archive/2026-06-roadmaps-and-audits/self-development-closure-audit.md
 - docs/xmuse/production-operations.md
 - docs/xmuse/quality-gates-and-provider-matrix.md
 
@@ -190,8 +190,8 @@ Deliver:
 /goal Legacy containment guide
 
 Read:
-- docs/xmuse/post-patha-global-audit-synthesis.md
-- docs/xmuse/legacy-architecture-debt-audit.md
+- docs/xmuse/archive/2026-06-roadmaps-and-audits/post-patha-global-audit-synthesis.md
+- docs/xmuse/archive/2026-06-roadmaps-and-audits/legacy-architecture-debt-audit.md
 - docs/xmuse/code-quality-and-archive-policy.md
 
 Goal:

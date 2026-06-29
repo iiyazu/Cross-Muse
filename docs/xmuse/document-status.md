@@ -83,28 +83,22 @@ them:
 These files remain useful but should not be default `/goal` context unless the
 task explicitly targets them:
 
-- `deep-research-02-next-goal.md`
-- `deep-research-conversion-roadmap.md`
-- `deep-research-execution-tasks.md`
-- `next-production-goal-design.md`
-- `outer-god-integration-goal.md`
-- `path-a-foundation-first-roadmap.md`
-- `post-patha-global-audit-synthesis.md`
-- `post-patha-release-readiness-audit.md`
-- `production-closure-tasks.md`
-- `real-god-chatgroup-fullchain-loop-decomposition.md`
-- `real-runtime-loop-behavior-policy.md`
-- `self-development-closure-audit.md`
-- `self-iteration-runtime-closure*.md`
-- `opencode-in-long-runtime-evidence*.md`
-- `vision-runtime-evidence-closure.md`
-- `v6-*`, `v10-*`, `v11-*`
+- `docs/xmuse/archive/2026-06-roadmaps-and-audits/` contains old Path-A,
+  deep-research, post-PathA audit, V6/V10/V11, and early integration-roadmap
+  documents.
 - `docs/xmuse/archive/2026-06-21-evidence/` contains old RC and
   acceptance-gated evidence snapshots.
-- dated one-off evidence snapshots older than the current goal package
+- `docs/xmuse/archive/2026-06-rung-sentinel-artifacts.md` contains one-off
+  Rung/Track runtime proof artifacts.
+- `production-closure-tasks.md`, `real-god-chatgroup-fullchain-loop-decomposition.md`,
+  `real-runtime-loop-behavior-policy.md`, `self-iteration-runtime-closure*.md`,
+  `opencode-in-long-runtime-evidence*.md`, and
+  `vision-runtime-evidence-closure.md` remain root-level reference docs for
+  now because some current tests, code paths, or release docs still point at
+  them.
 
-If one of these becomes active again, first either promote it into the current
-goal package with fresh verification or move it under `docs/xmuse/archive/`.
+If an archived document becomes active again, first promote it into the current
+goal package with fresh verification.
 
 ## Code Isolation Notes
 

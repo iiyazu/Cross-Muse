@@ -198,7 +198,7 @@ XMUSE_CHAT_API_URL=http://127.0.0.1:8201
 - `injected`: `XMUSE_FEATURE_ID`, `XMUSE_LANE_ID` (~15 vars, set by xmuse for subprocesses)
 - `frontend-only`: `NEXT_PUBLIC_XMUSE_*` (~3 vars)
 
-**Phase completion status (docs/xmuse/path-a-foundation-first-roadmap.md):**
+**Phase completion status (docs/xmuse/archive/2026-06-roadmaps-and-audits/path-a-foundation-first-roadmap.md):**
 
 | Phase | Name | Status | Output Doc |
 |-------|------|--------|------------|

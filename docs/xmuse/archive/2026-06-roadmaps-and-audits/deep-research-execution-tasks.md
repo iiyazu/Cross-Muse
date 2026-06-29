@@ -2,14 +2,14 @@
 
 Date: 2026-06-10
 
-This document expands `docs/xmuse/deep-research-conversion-roadmap.md` into
+This document expands `docs/xmuse/archive/2026-06-roadmaps-and-audits/deep-research-conversion-roadmap.md` into
 issue-sized execution tasks. It is the task reference for goal prompts that should
 stay short while still executing the full deep-research conversion plan.
 
 ## Source Of Truth
 
 - Source report: `C:\tmp\deep-research-report.md`
-- Roadmap: `docs/xmuse/deep-research-conversion-roadmap.md`
+- Roadmap: `docs/xmuse/archive/2026-06-roadmaps-and-audits/deep-research-conversion-roadmap.md`
 - GitHub repo: `https://github.com/iiyazu/Cross-Muse`
 - GitHub issues: #1 through #12
 
@@ -39,7 +39,7 @@ Read:
 
 - `AGENTS.md`
 - `docs/xmuse/README.md`
-- `docs/xmuse/deep-research-conversion-roadmap.md`
+- `docs/xmuse/archive/2026-06-roadmaps-and-audits/deep-research-conversion-roadmap.md`
 - `pyproject.toml`
 - `src/xmuse_core/chat/`
 - `src/xmuse_core/structuring/`
