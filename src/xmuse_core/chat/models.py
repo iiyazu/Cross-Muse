@@ -130,6 +130,45 @@ class ChatInboxItem(BaseModel):
     updated_at: str
 
 
+class GroupchatChain(BaseModel):
+    chain_id: str
+    conversation_id: str
+    policy_id: str
+    root_message_id: str
+    last_scanned_message_id: str | None = None
+    max_depth: int
+    human_max_targets: int
+    agent_max_targets: int
+    pingpong_warn_after: int
+    pingpong_block_after: int
+    status: Literal["open", "completed", "blocked", "failed", "canceled"]
+    status_reason: str | None = None
+    created_at: str
+    updated_at: str
+
+
+class GroupchatWorklistItem(BaseModel):
+    item_id: str
+    conversation_id: str
+    chain_id: str
+    policy_id: str
+    source_message_id: str
+    source_participant_id: str | None = None
+    target_participant_id: str
+    target_role: str
+    route_kind: Literal["mention", "router", "handoff", "review_request"]
+    status: Literal["queued", "claimed", "completed", "blocked", "failed", "canceled"]
+    depth: int
+    dedup_key: str
+    inbox_item_id: str | None = None
+    claim_owner: str | None = None
+    claimed_at: str | None = None
+    completed_message_id: str | None = None
+    terminal_reason: str | None = None
+    created_at: str
+    updated_at: str
+
+
 class Proposal(BaseModel):
     id: str
     conversation_id: str

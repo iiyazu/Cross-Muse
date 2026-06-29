@@ -781,7 +781,7 @@ class ChatStore:
         ).fetchall()
         for row in rows:
             message = self._message_from_row(row)
-            if message.envelope_json.get("proposal_id") == proposal_id:
+            if (message.envelope_json or {}).get("proposal_id") == proposal_id:
                 return message
         return None
 
@@ -1231,6 +1231,58 @@ class ChatStore:
                 create index if not exists idx_chat_inbox_target_participant_status_created
                     on chat_inbox_items(target_participant_id, status, created_at);
 
+                create table if not exists groupchat_chains (
+                    chain_id text primary key,
+                    conversation_id text not null references conversations(id),
+                    policy_id text not null,
+                    root_message_id text not null references messages(id),
+                    last_scanned_message_id text,
+                    max_depth integer not null,
+                    human_max_targets integer not null,
+                    agent_max_targets integer not null,
+                    pingpong_warn_after integer not null,
+                    pingpong_block_after integer not null,
+                    status text not null,
+                    status_reason text,
+                    created_at text not null,
+                    updated_at text not null
+                );
+
+                create index if not exists idx_groupchat_chains_conversation_status
+                    on groupchat_chains(conversation_id, status, updated_at);
+
+                create table if not exists groupchat_worklist (
+                    item_id text primary key,
+                    conversation_id text not null references conversations(id),
+                    chain_id text not null references groupchat_chains(chain_id),
+                    policy_id text not null,
+                    source_message_id text not null references messages(id),
+                    source_participant_id text,
+                    target_participant_id text not null,
+                    target_role text not null,
+                    route_kind text not null,
+                    status text not null,
+                    depth integer not null,
+                    dedup_key text not null,
+                    inbox_item_id text references chat_inbox_items(id),
+                    claim_owner text,
+                    claimed_at text,
+                    completed_message_id text references messages(id),
+                    terminal_reason text,
+                    created_at text not null,
+                    updated_at text not null
+                );
+
+                create index if not exists idx_groupchat_worklist_chain_status_created
+                    on groupchat_worklist(chain_id, status, created_at);
+                create index if not exists idx_groupchat_worklist_target_status_created
+                    on groupchat_worklist(target_participant_id, status, created_at);
+                create index if not exists idx_groupchat_worklist_dedup
+                    on groupchat_worklist(chain_id, dedup_key, status);
+                create unique index if not exists idx_groupchat_worklist_inbox_item
+                    on groupchat_worklist(inbox_item_id)
+                    where inbox_item_id is not null;
+
                 create table if not exists chat_request_log (
                     id text primary key,
                     conversation_id text not null references conversations(id),
@@ -1301,6 +1353,13 @@ class ChatStore:
                 values (?, ?)
                 """,
                 ("chat_store_v1", _utc_now()),
+            )
+            conn.execute(
+                """
+                insert or ignore into schema_migrations (version, applied_at)
+                values (?, ?)
+                """,
+                ("groupchat_worklist_a1", _utc_now()),
             )
             create_acceptance_spine_schema(conn)
         self._seed_role_templates()
