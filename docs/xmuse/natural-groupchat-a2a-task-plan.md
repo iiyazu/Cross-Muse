@@ -362,6 +362,15 @@ Success proof:
   and next recovery action;
 - frontend/API projection can show the active blocker without writing truth.
 
+Current implementation artifacts:
+
+- taxonomy catalog: `src/xmuse_core/chat/failure_taxonomy.py`;
+- frontend read projection: `evidence_summary.failure_boundaries[*].classification`
+  and `evidence_summary.active_blocker`, derived only from active
+  `chat.db:collaboration_blockers` or classified failure boundaries;
+- focused checks:
+  `uv run pytest -q tests/xmuse/test_natural_groupchat_failure_taxonomy.py tests/xmuse/test_peer_chat_dashboard.py`.
+
 ### Rung 3 - Low-Risk Real-Code Lane
 
 Objective: prove xmuse can carry a small source-code change, not only docs-only

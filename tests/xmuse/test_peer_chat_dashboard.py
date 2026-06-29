@@ -24,6 +24,14 @@ def _write_json(path: Path, payload: object) -> None:
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
+def _without_failure_classification(boundary: dict[str, object]) -> dict[str, object]:
+    return {
+        key: value
+        for key, value in boundary.items()
+        if key not in {"taxonomy", "proof_level", "classification"}
+    }
+
+
 def _create_final_action_projection_fixture(tmp_path: Path):
     db = tmp_path / "chat.db"
     chat = ChatStore(db)
@@ -994,6 +1002,7 @@ def test_dashboard_peer_chat_ux_projection_includes_operator_evidence_summary(
     assert summary["projection_only"] is True
     assert summary["conversation_id"] == conv.id
     assert summary["status"] == "complete"
+    assert summary["active_blocker"] is None
     assert summary["counts"] == {
         "authority": 6,
         "execution_proof": 2,
@@ -1184,7 +1193,8 @@ def test_dashboard_peer_chat_ux_projection_evidence_summary_reports_failure_boun
     summary = response.json()["evidence_summary"]
     assert summary["status"] == "blocked"
     assert summary["counts"]["failure_boundary"] == 2
-    assert summary["failure_boundaries"] == [
+    assert summary["active_blocker"] == summary["failure_boundaries"][0]
+    assert [_without_failure_classification(item) for item in summary["failure_boundaries"]] == [
         {
             "kind": "dispatch_queue_entry",
             "proof_class": "failure_boundary",
@@ -1192,7 +1202,7 @@ def test_dashboard_peer_chat_ux_projection_evidence_summary_reports_failure_boun
             "status": "failed",
             "producer": "chat.db:chat_dispatch_queue",
             "consumer": "natural_groupchat_evidence_summary",
-            "condition": "dispatch_entry_failed",
+            "condition": "provider timeout",
             "proof_boundary": "dispatch_failure_boundary",
             "next_recovery_action": "inspect_dispatch_failure_reason",
         },
@@ -1208,6 +1218,62 @@ def test_dashboard_peer_chat_ux_projection_evidence_summary_reports_failure_boun
             "next_recovery_action": "resume_from_recorded_acceptance_spine_boundary",
         },
     ]
+    assert summary["failure_boundaries"][0]["taxonomy"] == (
+        "natural_groupchat_durable_failure_taxonomy/v1"
+    )
+    assert summary["failure_boundaries"][0]["proof_level"] == "durable xmuse authority gap"
+    assert summary["failure_boundaries"][0]["classification"]["class_id"] == (
+        "provider_turn_no_writeback_or_timeout"
+    )
+    assert summary["failure_boundaries"][0]["classification"]["failure_boundary"] == (
+        "provider_writeback_boundary"
+    )
+
+
+def test_dashboard_peer_chat_ux_projection_evidence_summary_reports_active_collaboration_blocker(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "chat.db"
+    chat = ChatStore(db)
+    conv = chat.create_conversation("Evidence summary active blocker")
+    collaboration = ChatCollaborationStore(db)
+    run = collaboration.create_request(
+        conversation_id=conv.id,
+        goal="Review blocked callback",
+        initiator="architect",
+        targets=["review"],
+        callback_target="architect",
+        question="Can this proposal dispatch?",
+        context_refs=["proposal:blocker"],
+        idempotency_key=None,
+        timeout_s=60,
+    )
+    blocker = collaboration.raise_blocker(
+        run.run_id,
+        issuer="review",
+        severity="blocker",
+        reason="proposal callback missing",
+        affected_ref="proposal:blocker",
+        suggested_fix="Recreate callback proposal",
+        blocks_dispatch=True,
+    )
+
+    response = TestClient(create_app(tmp_path)).get(
+        f"/api/dashboard/peer-chat/conversations/{conv.id}/ux-projection"
+    )
+
+    assert response.status_code == 200
+    summary = response.json()["evidence_summary"]
+    assert summary["status"] == "blocked"
+    assert summary["active_blocker"] == summary["failure_boundaries"][0]
+    assert summary["active_blocker"]["kind"] == "collaboration_blocker"
+    assert summary["active_blocker"]["ref"] == (
+        f"chat.db:collaboration_blockers#blocker={blocker.blocker_id}"
+    )
+    assert summary["active_blocker"]["condition"] == "proposal callback missing"
+    assert summary["active_blocker"]["classification"]["class_id"] == (
+        "collaboration_callback_or_proposal_failure"
+    )
 
 
 def test_dashboard_peer_chat_ux_projection_rejects_stale_github_gate_ref(
@@ -1249,7 +1315,7 @@ def test_dashboard_peer_chat_ux_projection_rejects_stale_github_gate_ref(
     summary = response.json()["evidence_summary"]
     assert summary["status"] == "blocked"
     assert "github_gate" not in {item["kind"] for item in summary["items"]}
-    assert summary["failure_boundaries"] == [
+    assert [_without_failure_classification(item) for item in summary["failure_boundaries"]] == [
         {
             "kind": "github_gate",
             "proof_class": "failure_boundary",
@@ -1317,7 +1383,7 @@ def test_dashboard_peer_chat_ux_projection_reports_missing_final_action_artifact
     summary = response.json()["evidence_summary"]
     assert summary["status"] == "blocked"
     assert "final_action" not in {item["kind"] for item in summary["items"]}
-    assert {
+    expected_boundary = {
         "kind": "final_action",
         "proof_class": "failure_boundary",
         "ref": "final_actions.json#hold=missing-final",
@@ -1327,7 +1393,10 @@ def test_dashboard_peer_chat_ux_projection_reports_missing_final_action_artifact
         "condition": "final_action_ref_unresolved",
         "proof_boundary": "final_action_artifact_boundary",
         "next_recovery_action": "recreate_or_relink_final_action_hold",
-    } in summary["failure_boundaries"]
+    }
+    assert expected_boundary in [
+        _without_failure_classification(item) for item in summary["failure_boundaries"]
+    ]
 
 
 def test_dashboard_peer_chat_ux_projection_filters_non_pending_final_action_holds(
