@@ -1149,6 +1149,186 @@ def test_dashboard_peer_chat_ux_projection_includes_operator_evidence_summary(
     ]
 
 
+def test_dashboard_peer_chat_ux_projection_evidence_summary_keeps_multilane_refs(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "chat.db"
+    chat = ChatStore(db)
+    conv = chat.create_conversation("Multi-lane evidence summary")
+    spine_store = AcceptanceSpineStore(db)
+    queue = ChatDispatchQueueStore(db)
+    final_action_store = FinalActionGateStore(tmp_path / "final_actions.json")
+    verdict_store = VerdictStore(tmp_path / "review_plane.json")
+    github_items: list[dict[str, object]] = []
+    final_action_resolutions: list[tuple[str, str]] = []
+    expected: dict[str, dict[str, str]] = {}
+
+    for lane_id, pr_number in (("lane-alpha", 298), ("lane-beta", 299)):
+        intake = chat.add_message(conv.id, "Human", "human", f"@architect run {lane_id}")
+        proposal = chat.create_proposal(
+            conversation_id=conv.id,
+            author="Architect GOD",
+            proposal_type="lane_graph",
+            content=json.dumps(
+                {"summary": lane_id, "lanes": [{"feature_id": lane_id}]},
+            ),
+            references=[intake.id],
+        )
+        spine = spine_store.create_for_intake(
+            conversation_id=conv.id,
+            intake_message_id=intake.id,
+        )
+        spine_store.attach_proposal(
+            conversation_id=conv.id,
+            intake_message_id=intake.id,
+            proposal_id=proposal.id,
+        )
+        resolution_id = f"res-{lane_id}"
+        spine_store.attach_verdict_for_proposal(
+            proposal_id=proposal.id,
+            verdict_ref=f"resolution:{resolution_id}",
+        )
+        dispatch = queue.enqueue_agent_auto_dispatch(
+            conversation_id=conv.id,
+            proposal_id=proposal.id,
+            resolution_id=resolution_id,
+            collaboration_run_id=f"run-{lane_id}",
+            artifact_ref=f"lane_graph:{lane_id}",
+            gate_refs=[f"review_trigger_verdict:{lane_id}"],
+        )
+        assert queue.claim_next_auto_dispatch(
+            conversation_id=conv.id,
+            claimed_by="bridge-test",
+        )
+        queue.mark_dispatched(
+            dispatch.entry_id,
+            provider_run_ref=f"provider:execute:{lane_id}",
+            dispatch_evidence=f"mcp_writeback:{lane_id}",
+        )
+        spine_store.attach_execution_evidence_for_dispatch(
+            dispatch_item_id=dispatch.entry_id,
+            evidence_refs=[f"logs/gates/{lane_id}/report.json"],
+        )
+        verdict_id = f"verdict-{lane_id}"
+        spine_store.attach_review_verdict_for_resolution(
+            resolution_id=resolution_id,
+            review_verdict_ref=f"review_plane.json#verdict={verdict_id}",
+        )
+        hold = final_action_store.create_hold(
+            lane_id=lane_id,
+            verdict_id=verdict_id,
+            action="merge",
+            target_status="reviewed",
+            summary=f"GitHub gate accepted for {lane_id}.",
+        )
+        spine_store.attach_final_action_for_review_verdict(
+            review_verdict_ref=f"review_plane.json#verdict={verdict_id}",
+            final_action_ref=f"final_actions.json#hold={hold.id}",
+        )
+        verdict_store.save_task_and_verdict(
+            ReviewTask(
+                task_id=f"review-task-{lane_id}",
+                lane_id=lane_id,
+                graph_id=f"graph-{lane_id}",
+                resolution_id=resolution_id,
+                lane_prompt=f"Review {lane_id}.",
+                gate_report_ref=f"logs/gates/{lane_id}/report.json",
+                created_at="2026-06-29T01:00:00Z",
+            ),
+            ReviewVerdict(
+                id=verdict_id,
+                lane_id=lane_id,
+                decision=ReviewDecision.MERGE,
+                status="finalized",
+                summary=f"Review accepted {lane_id}.",
+                evidence_refs=[f"logs/gates/{lane_id}/report.json"],
+                created_at="2026-06-29T01:01:00Z",
+            ),
+        )
+        evidence_id = f"accepted-{lane_id}"
+        github_items.append(
+            {
+                "id": evidence_id,
+                "final_action_id": hold.id,
+                "can_accept": True,
+                "evidence": {
+                    "repo": "iiyazu/Cross-Muse",
+                    "pull_request_number": pr_number,
+                    "required_checks": ["quality-gates"],
+                    "proof_level": "server_side_merge_proof",
+                    "head_sha": f"head-{lane_id}",
+                    "workflow_run_id": pr_number * 10,
+                    "check_run_ids": [pr_number * 100],
+                    "check_run_names": ["quality-gates"],
+                    "check_run_head_shas": [f"head-{lane_id}"],
+                    "merge_commit_sha": f"merge-{lane_id}",
+                    "merged_at": "2026-06-29T01:30:00Z",
+                    "merge_event_id": f"merge-event-{lane_id}",
+                },
+                "main_ci": {
+                    "workflow_run_id": pr_number * 1000,
+                    "head_sha": f"merge-{lane_id}",
+                    "conclusion": "success",
+                },
+            }
+        )
+        final_action_resolutions.append(
+            (hold.id, f"github_gate_evidence.json#evidence={evidence_id}")
+        )
+        expected[lane_id] = {
+            "spine_ref": f"chat.db:acceptance_spines#spine={spine.spine_id}",
+            "dispatch_ref": f"chat_dispatch_queue:{dispatch.entry_id}",
+            "review_ref": f"review_plane.json#verdict={verdict_id}",
+            "final_action_ref": f"final_actions.json#hold={hold.id}",
+            "github_ref": f"github_gate_evidence.json#evidence={evidence_id}",
+            "lane_ref": f"feature_lanes.json#lane={lane_id}",
+        }
+
+    _write_json(
+        tmp_path / "github_gate_evidence.json",
+        {"schema_version": "github_gate_evidence.v1", "items": github_items},
+    )
+    for hold_id, github_ref in final_action_resolutions:
+        final_action_store.resolve(
+            hold_id,
+            status="approved",
+            resolved_by="platform-runner",
+            github_gate_evidence_ref=github_ref,
+        )
+    _write_json(
+        tmp_path / "feature_lanes.json",
+        {
+            "lanes": [
+                {
+                    "feature_id": lane_id,
+                    "conversation_id": conv.id,
+                    "status": "merged",
+                    "review_verdict_id": f"verdict-{lane_id}",
+                    "final_action_hold_id": expected[lane_id]["final_action_ref"].removeprefix(
+                        "final_actions.json#hold="
+                    ),
+                    "github_gate_evidence_ref": expected[lane_id]["github_ref"],
+                }
+                for lane_id in expected
+            ]
+        },
+    )
+
+    response = TestClient(create_app(tmp_path)).get(
+        f"/api/dashboard/peer-chat/conversations/{conv.id}/ux-projection"
+    )
+
+    assert response.status_code == 200
+    items = response.json()["evidence_summary"]["items"]
+    by_ref = {item["ref"]: item for item in items}
+    for lane_id, refs in expected.items():
+        for ref_key in ("dispatch_ref", "review_ref", "final_action_ref", "github_ref"):
+            item = by_ref[refs[ref_key]]
+            assert item.get("lane_id") == lane_id, (ref_key, item)
+            assert refs["lane_ref"] in item["source_refs"]
+            assert refs["spine_ref"] in item["source_refs"]
+
+
 def test_dashboard_peer_chat_ux_projection_evidence_summary_reports_failure_boundary(
     tmp_path: Path,
 ) -> None:
