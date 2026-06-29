@@ -5,6 +5,8 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from xmuse_core.chat.failure_taxonomy import classify_failure_boundary
+
 SOURCE_AUTHORITY = [
     "chat.db:conversations",
     "chat.db:messages",
@@ -65,6 +67,7 @@ def build_peer_chat_ux_projection(
         conversation=conversation,
         proposals=proposals,
         dispatch_entries=dispatch_entries,
+        blockers=blockers,
         closure_evidence=closure_evidence,
         supporting_context=supporting_context,
         review_state=review_state,
@@ -475,6 +478,7 @@ def _evidence_summary(
     conversation: dict[str, Any],
     proposals: list[dict[str, Any]],
     dispatch_entries: list[dict[str, Any]],
+    blockers: list[dict[str, Any]],
     closure_evidence: dict[str, Any],
     supporting_context: dict[str, Any],
     review_state: dict[str, Any],
@@ -517,6 +521,23 @@ def _evidence_summary(
     dispatch_evidence_items: list[dict[str, Any]] = []
     final_action_items: list[dict[str, Any]] = []
     github_gate_items: list[dict[str, Any]] = []
+
+    for blocker in blockers:
+        if not (blocker.get("active") and blocker.get("blocks_dispatch")):
+            continue
+        blocker_id = _projection_text(blocker.get("blocker_id")) or "unknown"
+        failure_boundaries.append(
+            _failure_boundary(
+                kind="collaboration_blocker",
+                ref=f"chat.db:collaboration_blockers#blocker={blocker_id}",
+                status="blocked",
+                producer="chat.db:collaboration_blockers",
+                condition=_projection_text(blocker.get("reason"))
+                or "collaboration_blocker_active",
+                proof_boundary="collaboration_blocker_boundary",
+                next_recovery_action="resolve_collaboration_blocker_with_evidence",
+            )
+        )
 
     for spine in _dict_items(closure_evidence.get("items")):
         proposal_id = _projection_text(spine.get("proposal_id"))
@@ -639,7 +660,10 @@ def _evidence_summary(
                             ref=f"chat_dispatch_queue:{dispatch_item_id}",
                             status="failed",
                             producer="chat.db:chat_dispatch_queue",
-                            condition="dispatch_entry_failed",
+                            condition=(
+                                _projection_text(dispatch.get("failure_reason"))
+                                or "dispatch_entry_failed"
+                            ),
                             proof_boundary="dispatch_failure_boundary",
                             next_recovery_action="inspect_dispatch_failure_reason",
                         )
@@ -806,6 +830,7 @@ def _evidence_summary(
         "projection_only": True,
         "conversation_id": conversation_id,
         "status": _evidence_summary_status(items, failure_boundaries),
+        "active_blocker": failure_boundaries[0] if failure_boundaries else None,
         "counts": counts,
         "items": items,
         "failure_boundaries": failure_boundaries,
@@ -945,6 +970,10 @@ def _failure_boundary(
         proof_boundary=proof_boundary,
     )
     item["next_recovery_action"] = next_recovery_action
+    classification = classify_failure_boundary(item)
+    item["taxonomy"] = classification["taxonomy"]
+    item["proof_level"] = classification["proof_level"]
+    item["classification"] = classification
     return item
 
 
