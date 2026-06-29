@@ -613,6 +613,70 @@ async def test_groupchat_peer_runtime_run_until_idle_reaches_route_exhausted_cha
 
 
 @pytest.mark.asyncio
+async def test_groupchat_peer_runtime_continues_to_dispatch_ack_authority_wait(
+    tmp_path,
+):
+    db, chat, conversation, root, architect, _review, _critic = (
+        _conversation_with_groupchat_roster(
+            tmp_path,
+            root_content="@execute no natural route from the root.",
+        )
+    )
+    store = GroupchatWorklistStore(db)
+    chain = store.create_chain(conversation_id=conversation.id, root_message_id=root.id)
+    dispatch_ack = chat.add_message(
+        conversation_id=conversation.id,
+        author="execute",
+        role="assistant",
+        content="DISPATCH_ACKNOWLEDGED dispatch-a",
+        envelope_type="dispatch_result",
+        envelope_json={
+            "type": "dispatch_result",
+            "authority": "chat.db/messages/dispatch_result",
+            "dispatch_queue_entry_id": "dispatch-a",
+            "proposal_id": "proposal-a",
+            "resolution_id": "resolution-a",
+            "proof_boundary": "dispatch_acknowledgement_not_execution_proof",
+            "source_refs": [
+                "chat_dispatch_queue:dispatch-a",
+                "proposal:proposal-a",
+                "resolution:resolution-a",
+            ],
+        },
+    )
+
+    class ForbiddenGodLayer:
+        async def ensure_conversation_session(self, **kwargs):
+            raise AssertionError("runtime must not deliver provider work for ack wait")
+
+    outcome = await GroupchatPeerRuntime(
+        db_path=db,
+        god_layer=ForbiddenGodLayer(),
+        worktree=tmp_path,
+        scheduler_id="groupchat-peer-a5",
+        response_wait_s=0.1,
+    ).run_until_idle(chain_id=chain.chain_id, max_ticks=4)
+
+    assert outcome.ticks == 2
+    assert outcome.stop_reason == (
+        "waiting_for_authority:dispatch_acknowledgement_not_execution_proof"
+    )
+    assert outcome.chain_status == "open"
+    assert outcome.chain_status_reason is None
+    wait_tick = outcome.tick_outcomes[-1].worklist
+    assert wait_tick.scanned == 1
+    assert wait_tick.claimed_item_id is None
+    assert wait_tick.terminal_item_id is not None
+    assert wait_tick.terminal_reason == "dispatch_acknowledgement_not_execution_proof"
+    assert wait_tick.terminal_source_message_id == dispatch_ack.id
+    waiting_item = store.get_item(wait_tick.terminal_item_id)
+    assert waiting_item.status == "blocked"
+    assert waiting_item.source_message_id == dispatch_ack.id
+    assert waiting_item.target_participant_id == architect.participant_id
+    assert waiting_item.inbox_item_id is None
+
+
+@pytest.mark.asyncio
 async def test_groupchat_peer_runtime_runs_from_root_message_idempotently(tmp_path):
     db = tmp_path / "chat.db"
     chat = ChatStore(db)

@@ -13,6 +13,8 @@ from xmuse_core.chat.inbox_store import ChatInboxStore
 from xmuse_core.chat.models import GroupchatChain
 from xmuse_core.chat.peer_scheduler import PeerChatScheduler, PeerChatSchedulerOutcome
 
+_AUTHORITY_WAIT_REASONS = {"dispatch_acknowledgement_not_execution_proof"}
+
 
 @dataclass(frozen=True)
 class GroupchatPeerRuntimeTickOutcome:
@@ -77,7 +79,10 @@ class GroupchatPeerRuntime:
         claimed = self._worklist.claim_and_link_one(chain_id=chain_id)
         if claimed is None:
             return GroupchatPeerRuntimeTickOutcome(
-                worklist=GroupchatWorklistTickOutcome(scanned=len(scanned)),
+                worklist=GroupchatWorklistTickOutcome(
+                    scanned=len(scanned),
+                    **_terminal_scan_outcome_fields(scanned),
+                ),
             )
         if claimed.inbox_item_id is None:
             failed = self._store.fail_item(
@@ -150,6 +155,7 @@ class GroupchatPeerRuntime:
                 linked_inbox_item_id=completed.inbox_item_id,
                 completed_message_id=completed.completed_message_id,
                 followup_scanned=len(followup),
+                **_terminal_scan_outcome_fields(followup),
             ),
             peer=peer,
         )
@@ -173,6 +179,11 @@ class GroupchatPeerRuntime:
                 stop_reason = f"chain_{chain.status}"
                 break
             if outcome.worklist.claimed_item_id is None:
+                if _is_authority_wait(outcome.worklist.terminal_reason):
+                    stop_reason = f"waiting_for_authority:{outcome.worklist.terminal_reason}"
+                    break
+                if self._store.has_unscanned_messages(chain_id=chain_id):
+                    continue
                 stop_reason = "idle"
                 break
         chain = self._store.get_chain(chain_id)
@@ -265,3 +276,23 @@ class GroupchatPeerRuntime:
             if chain.root_message_id == root_message_id and chain.policy_id == policy_id:
                 return chain
         return None
+
+
+def _terminal_scan_outcome_fields(items: list[Any]) -> dict[str, str | None]:
+    for item in items:
+        if getattr(item, "status", None) not in {"blocked", "failed", "canceled"}:
+            continue
+        return {
+            "terminal_item_id": getattr(item, "item_id", None),
+            "terminal_reason": getattr(item, "terminal_reason", None),
+            "terminal_source_message_id": getattr(item, "source_message_id", None),
+        }
+    return {
+        "terminal_item_id": None,
+        "terminal_reason": None,
+        "terminal_source_message_id": None,
+    }
+
+
+def _is_authority_wait(reason: str | None) -> bool:
+    return reason in _AUTHORITY_WAIT_REASONS
