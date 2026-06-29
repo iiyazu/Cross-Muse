@@ -45,13 +45,15 @@
           "args": [
             "-q",
             "tests/xmuse/test_package_boundaries.py",
-            "tests/xmuse/test_gate_profiles.py"
+            "tests/xmuse/test_gate_profiles.py",
+            "tests/xmuse/test_fullchain_docs_sentinel.py"
           ]
         }
       ],
       "diff_selectors": [
         "pyproject.toml",
         ".github/**",
+        "scripts/run_fullchain_docs_sentinel.py",
         "xmuse/gate_profiles.json",
         "src/xmuse_core/gates/**",
         "src/xmuse_core/platform/execution/gate.py"
@@ -59,6 +61,7 @@
       "test_files": [
         "tests/xmuse/test_package_boundaries.py",
         "tests/xmuse/test_gate_profiles.py",
+        "tests/xmuse/test_fullchain_docs_sentinel.py",
         "tests/xmuse/test_platform_orchestrator.py"
       ],
       "test_nodeids": [],

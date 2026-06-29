@@ -671,6 +671,15 @@ def test_repository_gate_profiles_config_loads():
     assert config.profiles["historical"].blocking is False
     assert "tests/xmuse/test_package_boundaries.py" in strict_command_args
     assert "tests/xmuse/test_gate_profiles.py" in strict_command_args
+    assert "tests/xmuse/test_fullchain_docs_sentinel.py" in strict_command_args
+    assert (
+        "tests/xmuse/test_fullchain_docs_sentinel.py"
+        in config.profiles["strict-product"].test_files
+    )
+    assert (
+        "scripts/run_fullchain_docs_sentinel.py"
+        in config.profiles["strict-product"].diff_selectors
+    )
 
 
 def test_repository_docs_only_gate_accepts_explicit_docs_profile():
