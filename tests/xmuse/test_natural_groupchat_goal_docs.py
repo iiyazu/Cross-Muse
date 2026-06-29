@@ -186,3 +186,18 @@ def test_old_roadmaps_and_audits_are_archived_not_default_docs_root() -> None:
     for name in archived_names:
         assert not (DOCS_ROOT / name).exists(), name
         assert (archive_dir / name).is_file(), name
+
+
+def test_legacy_runtime_loop_docs_are_archived_not_default_docs_root() -> None:
+    archived_names = (
+        "production-closure-tasks.md",
+        "real-god-chatgroup-fullchain-loop-decomposition.md",
+        "real-runtime-loop-behavior-policy.md",
+    )
+    archive_dir = DOCS_ROOT / "archive" / "2026-06-runtime-loop-legacy"
+    status = _read_doc("document-status.md")
+
+    assert "docs/xmuse/archive/2026-06-runtime-loop-legacy/" in status
+    for name in archived_names:
+        assert not (DOCS_ROOT / name).exists(), name
+        assert (archive_dir / name).is_file(), name

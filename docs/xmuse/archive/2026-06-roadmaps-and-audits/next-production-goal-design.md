@@ -9,8 +9,8 @@ demand-to-execution loop.
 Behavior rules:
 
 ```text
-docs/xmuse/real-runtime-loop-behavior-policy.md
-docs/xmuse/real-god-chatgroup-fullchain-loop-decomposition.md
+docs/xmuse/archive/2026-06-runtime-loop-legacy/real-runtime-loop-behavior-policy.md
+docs/xmuse/archive/2026-06-runtime-loop-legacy/real-god-chatgroup-fullchain-loop-decomposition.md
 docs/xmuse/goal-copilot-behavior-policy.md
 ```
 
