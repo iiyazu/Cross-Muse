@@ -456,9 +456,12 @@ Driver support:
 
 Current runtime proof:
 
-- status: local runtime multi-lane proof, bounded lane-failure isolation, and
-  lane-specific `gate_failed` read projection proof satisfied on 2026-06-29;
-  later multi-PR promotion remains a Track A boundary;
+- status: local runtime multi-lane proof, bounded lane-failure isolation,
+  lane-specific `gate_failed` read projection proof, and successful alpha
+  isolated artifact promotion proof satisfied on 2026-06-29. Future multi-PR
+  promotion for multiple eligible successful outputs remains a Track A
+  boundary, but the intentional beta `gate_failed` output is not eligible for
+  promotion;
 - runtime authority:
   `.goal-runs/2026-06-29/rung4-multilane-runtime-20260629-01`;
 - conversation: `conv_4ee824f469e9440aa6b84eb08b7dd971`;
@@ -573,6 +576,21 @@ Current runtime proof:
   `28374174409` success, guarded merge commit
   `8df139d5b52c30e9c6867a95af79d58766d46fe1`, and main CI run
   `28374260602` success;
+- successful isolated artifact promotion proof:
+  PR #326 promoted only the successful alpha artifact
+  `docs/xmuse/rung4-isolation-alpha-success-20260629-05.md` into mainline
+  with exact content matching the runtime execution worktree. The intentional
+  beta `gate_failed` Python artifact
+  `src/xmuse_core/platform/rung4_gate_failure_sentinel.py` was not promoted.
+  Authority/proof boundary: producer
+  `execution-worktree-rung4_isolation_alpha_success_20260629_05`, consumer
+  mainline docs artifact, condition alpha artifact exact-match plus beta
+  invalid code absent from mainline, proof level runtime success checks,
+  alpha docs-only gate report, local `cmp`, exact-head CI, guarded merge, and
+  main CI. PR #326 head `fe76104c855d5fc77350188c061781ceea5cb396` had
+  exact-head CI run `28374838755` success, guarded merge commit
+  `0e5a7ab65cd168918a8ec0d5fe13dfb30b7c2cae`, and main CI run
+  `28374909127` success;
 - run #04 note:
   `.goal-runs/2026-06-29/rung4-failure-isolation-runtime-20260629-04` is
   retained only as a non-proof false-positive proposal-review block. It did
@@ -585,8 +603,10 @@ Current runtime proof:
   gate/review/final-action holds, exact artifact matching, and domain-scoped
   PR/CI/guarded-merge/main-CI promotion for the Rung 4 lane artifacts. It also
   proves bounded lane-failure isolation for an expected `gate_failed` lane. It
-  is not yet live MemoryOS proof, frontend operator cockpit completion, later
-  multi-PR promotion, or production readiness.
+  proves successful isolated alpha artifact promotion while preserving the beta
+  failure boundary. It is not yet live MemoryOS proof, frontend operator
+  cockpit completion, future multi-PR promotion for multiple eligible
+  successful outputs, or production readiness.
 
 ### Rung 5 - MemoryOS Live/Degraded Contract
 
@@ -877,8 +897,12 @@ Current final-report notes after the Rung 4 runtime milestone:
   locally proven. Rung 4 proof docs, alpha docs artifact, beta code artifact,
   gate-coverage hardening, expected-gate-failure driver contract fixes, and
   lane-specific `gate_failed` read projection have reached PR, exact-head CI,
-  guarded merge, and main CI. The next Track A work is later promotion of
-  isolated runtime outputs through domain-scoped PRs;
+  guarded merge, and main CI. The failure-isolation alpha successful artifact
+  has also reached PR, exact-head CI, guarded merge, and main CI, while the beta
+  failed artifact remains intentionally unpromoted. The next staged work can
+  move to Rung 5 MemoryOS live/degraded contract or Rung 6 cockpit closure on
+  the same authority chain, unless a new Track A multi-PR promotion target is
+  selected explicitly;
 - Track B state: MemoryOS sidecar build/ingest degraded against an unavailable
   endpoint and remained non-blocking; this was degraded attempt projection, not
   live MemoryOS truth;
