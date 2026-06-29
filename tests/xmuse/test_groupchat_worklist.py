@@ -1151,6 +1151,73 @@ def test_scan_routes_blocks_fourth_pingpong_pair_as_durable_policy_state(
     assert store.get_chain(chain.chain_id).status_reason == "pingpong_blocked"
 
 
+def test_claimed_pingpong_route_at_warn_threshold_carries_durable_warning(
+    tmp_path,
+):
+    db, chat, conversation, root, architect, _review, critic = (
+        _conversation_with_groupchat_roster(tmp_path)
+    )
+    store = GroupchatWorklistStore(db)
+    chain = store.create_chain(
+        conversation_id=conversation.id,
+        root_message_id=root.id,
+        max_depth=10,
+        pingpong_warn_after=2,
+        pingpong_block_after=4,
+    )
+    scheduler = GroupchatWorklistScheduler(db_path=db, scheduler_id="groupchat-a1")
+    first = store.enqueue_route(
+        chain_id=chain.chain_id,
+        source_message_id=root.id,
+        target_participant_id=architect.participant_id,
+        route_kind="router",
+        depth=0,
+    )
+
+    first_linked = scheduler.claim_and_link_one(chain_id=chain.chain_id)
+    assert first_linked is not None
+    architect_reply = _writeback_reply(
+        chat,
+        conversation_id=conversation.id,
+        participant_id=architect.participant_id,
+        inbox_item_id=first_linked.inbox_item_id,
+        content="@critic challenge this.",
+        client_request_id="structured-writeback-architect-warn-1",
+    )
+    store.complete_item(first.item_id, completed_message_id=architect_reply)
+    critic_item = scheduler.scan_routes_once(chain_id=chain.chain_id)[0]
+
+    critic_linked = scheduler.claim_and_link_one(chain_id=chain.chain_id)
+    assert critic_linked is not None
+    critic_reply = _writeback_reply(
+        chat,
+        conversation_id=conversation.id,
+        participant_id=critic.participant_id,
+        inbox_item_id=critic_linked.inbox_item_id,
+        content="@architect answer the challenge.",
+        client_request_id="structured-writeback-critic-warn-1",
+    )
+    store.complete_item(critic_item.item_id, completed_message_id=critic_reply)
+    architect_item = scheduler.scan_routes_once(chain_id=chain.chain_id)[0]
+
+    warned = scheduler.claim_and_link_one(chain_id=chain.chain_id)
+
+    assert warned is not None
+    assert warned.item_id == architect_item.item_id
+    assert warned.status == "claimed"
+    assert warned.inbox_item_id is not None
+    inbox_item = ChatInboxStore(db).get(warned.inbox_item_id)
+    assert inbox_item.payload["groupchat_policy_warning"] == {
+        "type": "pingpong_warn",
+        "streak": 2,
+        "warn_after": 2,
+        "block_after": 4,
+        "source_participant_id": critic.participant_id,
+        "target_participant_id": architect.participant_id,
+    }
+    assert store.get_chain(chain.chain_id).status == "open"
+
+
 def test_groupchat_worklist_schema_records_migration_marker(tmp_path):
     db, _chat, _conversation, _root, _architect, _review, _critic = (
         _conversation_with_groupchat_roster(tmp_path)

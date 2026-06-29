@@ -972,7 +972,7 @@ class GroupchatWorklistStore:
             where chain_id = ?
               and source_participant_id is not null
               and status in ('queued', 'claimed', 'completed')
-            order by created_at asc
+            order by rowid asc
             """,
             (chain_id,),
         ).fetchall()
@@ -1214,6 +1214,9 @@ class GroupchatWorklistStore:
             "route_kind": item["route_kind"],
             "depth": item["depth"],
         }
+        policy_warning = self._policy_warning_for_item(conn, item=item)
+        if policy_warning is not None:
+            payload["groupchat_policy_warning"] = policy_warning
         conn.execute(
             """
             insert into chat_inbox_items (
@@ -1243,6 +1246,67 @@ class GroupchatWorklistStore:
             ),
         )
         return inbox_item_id
+
+    def _policy_warning_for_item(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        item: sqlite3.Row,
+    ) -> dict[str, object] | None:
+        source_participant_id = item["source_participant_id"]
+        if source_participant_id is None:
+            return None
+        chain = self._chain_row(conn, item["chain_id"])
+        streak = self._pingpong_streak_for_item(
+            conn,
+            item=item,
+            source_participant_id=str(source_participant_id),
+            target_participant_id=str(item["target_participant_id"]),
+        )
+        warn_after = int(chain["pingpong_warn_after"])
+        block_after = int(chain["pingpong_block_after"])
+        if streak < warn_after or streak >= block_after:
+            return None
+        return {
+            "type": "pingpong_warn",
+            "streak": streak,
+            "warn_after": warn_after,
+            "block_after": block_after,
+            "source_participant_id": str(source_participant_id),
+            "target_participant_id": str(item["target_participant_id"]),
+        }
+
+    def _pingpong_streak_for_item(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        item: sqlite3.Row,
+        source_participant_id: str,
+        target_participant_id: str,
+    ) -> int:
+        rows = conn.execute(
+            """
+            select item_id, source_participant_id, target_participant_id
+            from groupchat_worklist
+            where chain_id = ?
+              and source_participant_id is not null
+              and status in ('queued', 'claimed', 'completed')
+            order by rowid asc
+            """,
+            (item["chain_id"],),
+        ).fetchall()
+        pair = {source_participant_id, target_participant_id}
+        streak = 0
+        for row in rows:
+            row_source = str(row["source_participant_id"])
+            row_target = str(row["target_participant_id"])
+            if {row_source, row_target} == pair:
+                streak += 1
+            else:
+                streak = 0
+            if row["item_id"] == item["item_id"]:
+                break
+        return streak
 
     def _validate_inbox_link(self, *, item: sqlite3.Row, inbox: sqlite3.Row) -> None:
         if (
