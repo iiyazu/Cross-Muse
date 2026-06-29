@@ -104,6 +104,8 @@ task explicitly targets them:
 - `docs/xmuse/archive/2026-06-runtime-root-legacy/` contains old runtime-root
   handoff files, the archived `INIT.md`, the deprecated single-chain
   `state_machine.json`, and an older production-strengthening goal prompt.
+- `docs/xmuse/archive/2026-06-runtime-prompt-legacy/` contains deprecated
+  runtime prompt stubs that must not be loaded as active prompt assets.
 
 If an archived document becomes active again, first promote it into the current
 goal package with fresh verification.
@@ -119,3 +121,6 @@ goal package with fresh verification.
 - A2A, MemoryOS, Ray, frontend, and copilot code may stay in main only when the
   module is an explicit adapter/projection/sidecar boundary and tests enforce
   that it cannot create xmuse authority.
+- Current prompt and contract assets may remain under `xmuse/prompts/`,
+  `xmuse/god_prompts/`, and `xmuse/contracts/` only when a loader, launcher,
+  compatibility contract, or focused test still consumes their exact paths.
