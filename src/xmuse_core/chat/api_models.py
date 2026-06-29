@@ -151,6 +151,22 @@ class DispatchFailedRequest(BaseModel):
         return _strip_required_string(value)
 
 
+class GroupchatRootRunCreate(BaseModel):
+    root_message_id: str = Field(min_length=1)
+    max_ticks: int = Field(default=4, ge=1, le=64)
+    policy_id: str = Field(default="default-natural-groupchat", min_length=1)
+    max_depth: int = Field(default=3, ge=1, le=16)
+    human_max_targets: int = Field(default=2, ge=0, le=8)
+    agent_max_targets: int = Field(default=1, ge=0, le=8)
+    pingpong_warn_after: int = Field(default=2, ge=1, le=16)
+    pingpong_block_after: int = Field(default=4, ge=1, le=32)
+
+    @field_validator("root_message_id", "policy_id", mode="before")
+    @classmethod
+    def _strip_required_text(cls, value: object) -> object:
+        return _strip_required_string(value)
+
+
 class DeliberationAppendCreate(BaseModel):
     msg_id: str = Field(min_length=1)
     agent_id: str = Field(min_length=1)
