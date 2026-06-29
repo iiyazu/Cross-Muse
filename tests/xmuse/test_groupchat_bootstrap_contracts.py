@@ -22,6 +22,18 @@ def test_default_preset_resolves_logical_team() -> None:
     assert {role.provider_id for role in preset.roles} == {"codex"}
 
 
+def test_natural_groupchat_a1_preset_resolves_architect_review_critic_team() -> None:
+    preset = resolve_groupchat_preset("architect-review-critic")
+
+    assert preset.preset_id == "architect-review-critic"
+    assert [role.role for role in preset.roles] == ["architect", "review", "critic"]
+    assert [role.address_slug for role in preset.roles] == ["architect", "review", "critic"]
+    critic = preset.roles[2]
+    assert critic.display_name == "critic-god"
+    assert critic.template_slug == "critic"
+    assert critic.profile_id == "default"
+
+
 def test_logical_peer_allows_same_role_but_requires_unique_address_in_proposal() -> None:
     proposal = TeamPlanProposal(
         proposal_id="proposal-1",

@@ -55,6 +55,41 @@ def test_api_proposal_then_apply_materializes_team(tmp_path) -> None:
     assert payload["bootstrap"]["fork_plan"] != []
 
 
+def test_api_architect_review_critic_preset_materializes_a1_roster(tmp_path) -> None:
+    client = TestClient(create_app(tmp_path))
+    created = client.post(
+        "/api/chat/conversations",
+        json={
+            "title": "A1 natural groupchat",
+            "preset_id": "architect-review-critic",
+            "init_mode": "proposal_then_approve",
+        },
+    ).json()
+    conv_id = created["id"]
+    proposal_id = created["bootstrap"]["proposal_id"]
+
+    apply_response = client.post(
+        f"/api/chat/conversations/{conv_id}/bootstrap/apply",
+        json={"proposal_id": proposal_id},
+    )
+
+    assert apply_response.status_code == 200
+    payload = apply_response.json()
+    assert [participant["role"] for participant in payload["participants"]] == [
+        "architect",
+        "review",
+        "critic",
+    ]
+    critic = payload["participants"][2]
+    assert critic["display_name"] == "critic-god"
+    assert critic["profile_id"] == "default"
+    assert payload["bootstrap"]["participant_plan"] == [
+        "architect",
+        "review",
+        "critic",
+    ]
+
+
 def test_api_bootstrap_status_tracks_draft_proposal_and_apply(tmp_path) -> None:
     client = TestClient(create_app(tmp_path))
     created = client.post(

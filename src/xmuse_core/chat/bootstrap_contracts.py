@@ -211,6 +211,32 @@ _PRESETS: dict[str, GroupchatPreset] = {
             ),
         ],
     ),
+    "architect-review-critic": GroupchatPreset(
+        preset_id="architect-review-critic",
+        display_name="Architect / Review / Critic",
+        description="Natural groupchat A1 team for proposal, review, and challenge.",
+        allowed_overrides=["provider", "model", "template", "display_name"],
+        roles=[
+            PresetRoleSpec(
+                role="architect", address_slug="architect",
+                display_name="architect-god", template_slug="architect",
+                provider_id="codex", profile_id="god",
+                cli_kind="codex", model="gpt-5.5",
+            ),
+            PresetRoleSpec(
+                role="review", address_slug="review",
+                display_name="review-god", template_slug="review",
+                provider_id="codex", profile_id="review",
+                cli_kind="codex", model="gpt-5.5",
+            ),
+            PresetRoleSpec(
+                role="critic", address_slug="critic",
+                display_name="critic-god", template_slug="critic",
+                provider_id="codex", profile_id="default",
+                cli_kind="codex", model="gpt-5.5",
+            ),
+        ],
+    ),
     "architect-review": GroupchatPreset(
         preset_id="architect-review",
         display_name="Architect / Review",

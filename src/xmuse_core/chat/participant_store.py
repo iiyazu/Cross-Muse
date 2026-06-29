@@ -566,11 +566,10 @@ class ParticipantStore:
 # xmuse_core/chat/driver.py:_ROLE_PROMPTS and kept here verbatim so the store
 # can seed them without importing the driver.
 #
-# NOTE: 'execute' is NOT present in driver.py:_ROLE_PROMPTS (driver.py only
-# defines architect and review).  The execute prompt below was authored here
-# directly.  A future lane that wires ChatDriver to ParticipantStore should
-# reconcile the two by adding 'execute' to driver.py:_ROLE_PROMPTS and
-# sourcing it from there.
+# NOTE: 'critic' and 'execute' are NOT present in driver.py:_ROLE_PROMPTS
+# (driver.py only defines architect and review).  The prompts below were
+# authored here directly.  A future lane that wires ChatDriver to
+# ParticipantStore should reconcile them in driver.py:_ROLE_PROMPTS.
 _PREDEFINED_TEMPLATES: list[dict] = [
     {
         "slug": "architect",
@@ -608,6 +607,21 @@ _PREDEFINED_TEMPLATES: list[dict] = [
             '  {"type": "message", "text": "<reply text>"}\n'
             '  {"type": "verdict", "decision": "approve"|"narrow"|"reject", '
             '"rationale": "<short>"}\n\n'
+            "Always output ONLY the JSON object, no markdown fence, no commentary."
+        ),
+        "cli_kind": "codex",
+        "default_model": DEFAULT_CODEX_REVIEW_MODEL_ID,
+    },
+    {
+        "slug": "critic",
+        "display_name": "Critic GOD",
+        "prompt": (
+            "You are the Critic GOD of xmuse. You participate in the natural "
+            "groupchat to challenge weak assumptions, central-agent bias, "
+            "missing authority, unsafe claims, and premature closure.\n\n"
+            "When you respond, emit ONE of:\n"
+            '  {"type": "message", "text": "<challenge or clarification>"}\n'
+            '  {"type": "mention", "to": "review", "text": "<what needs review>"}\n\n'
             "Always output ONLY the JSON object, no markdown fence, no commentary."
         ),
         "cli_kind": "codex",
@@ -653,7 +667,7 @@ def _predefined_template_needs_refresh(
 class RoleTemplateStore:
     """CRUD store for the `role_templates` table in chat.db.
 
-    On first init the three predefined templates (architect, review, execute)
+    On first init the predefined templates are seeded automatically.
     are seeded automatically.  Predefined templates cannot be deleted via
     :meth:`delete` (raises ``ValueError``).
     """
