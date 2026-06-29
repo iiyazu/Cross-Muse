@@ -18,6 +18,7 @@ POST_ABC_FINAL_ACTION_ID = "final-cce17cc5e0e7"
 POST_ABC_GITHUB_GATE_REF = (
     "github_gate_evidence.json#evidence=ghgate_e3e90b98395d4c6e81136db6241ecf49"
 )
+KERNEL_DESIGN_DOC = "2026-06-30-natural-groupchat-kernel-design.md"
 
 
 def _read_doc(name: str) -> str:
@@ -39,26 +40,23 @@ def test_natural_groupchat_goal_docs_record_observed_baseline_contract() -> None
         assert "#259" in content
         assert "current main calibration" not in content.lower(), name
 
-    assert "last_observed_baseline" in docs["README.md"]
-    assert "last_observed_baseline" in docs["document-status.md"]
-    assert "last_observed_baseline" in docs["natural-groupchat-a2a-goal.md"]
-    assert "last_observed_baseline" in docs["natural-groupchat-a2a-task-plan.md"]
-    assert "last_observed_baseline" in docs["natural-groupchat-a2a-goal-prompt.md"]
-    assert "The latest merged PR is #279" not in docs["natural-groupchat-a2a-goal.md"]
-    assert "not live GitHub truth" in docs["natural-groupchat-a2a-goal.md"]
-    assert "not live GitHub truth" in docs["natural-groupchat-a2a-task-plan.md"]
+    for name, content in docs.items():
+        assert "last_observed_baseline" in content, name
+        assert (
+            "not live GitHub truth" in content
+            or "not live remote-head truth" in content
+            or "not live truth" in content
+        ), name
 
-    assert OBSERVED_BASELINE_PR_HEAD_SHA in docs["natural-groupchat-a2a-goal.md"]
+    assert "The latest merged PR is #279" not in docs["natural-groupchat-a2a-goal.md"]
     assert HISTORICAL_DISPATCH_PROOF_SPLIT_SHA in docs["natural-groupchat-a2a-goal.md"]
     assert HISTORICAL_DISPATCH_PROOF_SPLIT_SHA in docs["natural-groupchat-a2a-task-plan.md"]
-    assert OBSERVED_BASELINE_MAIN_CI_RUN in docs["natural-groupchat-a2a-goal.md"]
-    assert OBSERVED_BASELINE_MAIN_CI_RUN in docs["natural-groupchat-a2a-task-plan.md"]
-    assert "track-a-post273-sentinel-20260628" in docs["natural-groupchat-a2a-task-plan.md"]
-    assert "track-a-docs-only-gate-final2-20260628" in docs[
-        "natural-groupchat-a2a-task-plan.md"
-    ]
-    assert "default native" in docs["natural-groupchat-a2a-task-plan.md"]
-    assert "28314524612" in docs["natural-groupchat-a2a-task-plan.md"]
+    assert OBSERVED_BASELINE_PR_HEAD_SHA not in docs["natural-groupchat-a2a-goal.md"]
+    assert OBSERVED_BASELINE_MAIN_CI_RUN not in docs["natural-groupchat-a2a-task-plan.md"]
+    assert "Recorded server-side main CI evidence" not in docs["natural-groupchat-a2a-goal.md"]
+    assert "PRs #242" not in docs["natural-groupchat-a2a-goal-prompt.md"]
+    assert "track-a-post273-sentinel-20260628" not in docs["natural-groupchat-a2a-task-plan.md"]
+
     status = docs["document-status.md"]
     assert "Keep `docs/xmuse/README.md` short" in status
     assert "Rung4 promoted runtime sentinel code was removed" in status
@@ -80,18 +78,23 @@ def test_natural_groupchat_goal_docs_record_post_abc_starting_state() -> None:
     for name, content in docs.items():
         assert "post_abc_closure_baseline" in content, name
         assert POST_ABC_BASELINE_MAIN_SHA in content, name
-        assert POST_ABC_PR_HEAD_SHA in content, name
         assert POST_ABC_PR_CI_RUN in content, name
         assert POST_ABC_MAIN_CI_RUN in content, name
         assert POST_ABC_RUN_ID in content, name
         assert POST_ABC_CONVERSATION_ID in content, name
         assert POST_ABC_FINAL_ACTION_ID in content, name
         assert POST_ABC_GITHUB_GATE_REF in content, name
-        assert "docs-only" in content, name
+
+    assert POST_ABC_PR_HEAD_SHA in docs["README.md"]
+    assert POST_ABC_PR_HEAD_SHA in docs["document-status.md"]
+    assert POST_ABC_PR_HEAD_SHA in docs["natural-groupchat-a2a-task-plan.md"]
+    assert "docs-only" in docs["natural-groupchat-a2a-goal.md"]
+    assert "docs-only" in docs["natural-groupchat-a2a-task-plan.md"]
 
     task_plan = docs["natural-groupchat-a2a-task-plan.md"]
     assert "Current Source-Derived Starting State" not in task_plan
     assert "Current final-report notes for the #284" not in task_plan
+    assert "Recorded Main Baseline" not in task_plan
 
 
 def test_github_server_gate_docs_describe_exact_head_check_run_evidence() -> None:
@@ -113,28 +116,78 @@ def test_goal_behavior_docs_define_throughput_discipline() -> None:
     task_plan = _read_doc("natural-groupchat-a2a-task-plan.md")
 
     for fragment in (
-        "Goal Throughput Discipline",
-        "Track A is the default primary Track",
-        "core-chain progress",
-        "support progress",
-        "one primary authority boundary",
-        "Do not count support surfaces as core-chain completion",
-        "Subagent or copilot audit should be sampled at decision points",
+        "Loop Contract",
+        "Track A is the default primary track",
+        "A1 Natural Groupchat Kernel",
+        "A2 Groupchat Decision Closure",
+        "A3 Dispatch To Execution Harness",
+        "They are never proof truth",
+        "Stop Conditions",
     ):
         assert fragment in behavior
 
     for fragment in (
-        "Execution Throughput Gate",
+        "Execution Gate",
+        "track_a_stage",
         "primary_track",
         "support_tracks",
         "primary_authority_boundary",
         "core_chain_progress_target",
         "support_progress_target",
-        "Track A is the default primary track",
-        "Support work must not be reported as core-chain completion",
-        "forbidden progress claims",
+        "Support progress does not count as core-chain completion",
     ):
         assert fragment in task_plan
+
+
+def test_track_a_kernel_design_is_internalized_in_goal_docs() -> None:
+    docs = {
+        "README.md": _read_doc("README.md"),
+        "document-status.md": _read_doc("document-status.md"),
+        "natural-groupchat-a2a-goal.md": _read_doc("natural-groupchat-a2a-goal.md"),
+        "natural-groupchat-a2a-behavior.md": _read_doc("natural-groupchat-a2a-behavior.md"),
+        "natural-groupchat-a2a-task-plan.md": _read_doc("natural-groupchat-a2a-task-plan.md"),
+        "natural-groupchat-a2a-goal-prompt.md": _read_doc("natural-groupchat-a2a-goal-prompt.md"),
+    }
+
+    for name in (
+        "README.md",
+        "document-status.md",
+        "natural-groupchat-a2a-goal.md",
+        "natural-groupchat-a2a-task-plan.md",
+        "natural-groupchat-a2a-goal-prompt.md",
+    ):
+        assert KERNEL_DESIGN_DOC in docs[name], name
+
+    for name in (
+        "README.md",
+        "document-status.md",
+        "natural-groupchat-a2a-goal.md",
+        "natural-groupchat-a2a-behavior.md",
+        "natural-groupchat-a2a-task-plan.md",
+        "natural-groupchat-a2a-goal-prompt.md",
+    ):
+        content = docs[name]
+        assert "A1 Natural Groupchat Kernel" in content, name
+        assert "A2 Groupchat Decision Closure" in content, name
+        assert "A3 Dispatch To Execution Harness" in content, name
+
+    behavior = docs["natural-groupchat-a2a-behavior.md"]
+    task_plan = docs["natural-groupchat-a2a-task-plan.md"]
+    prompt = docs["natural-groupchat-a2a-goal-prompt.md"]
+
+    for fragment in (
+        "groupchat_chains",
+        "groupchat_worklist",
+        "GroupchatWorklistScheduler",
+        "linked chat_inbox_items",
+    ):
+        assert fragment in task_plan
+
+    assert "groupchat_worklist" in behavior
+    assert "GroupchatWorklistScheduler" in behavior
+    assert "candidate signals only" in behavior
+    assert "A1 does not dispatch execution work, create PRs" in behavior
+    assert "PR/CI/guarded merge is downstream" in prompt
 
 
 def test_one_off_rung_sentinel_artifacts_are_archived_not_product_source() -> None:
