@@ -1,6 +1,6 @@
 # xmuse Release Checklist
 
-Updated: 2026-06-29
+Updated: 2026-06-30
 
 ## Release Decision
 
@@ -73,6 +73,9 @@ Do not claim:
 - multi-hour real-provider/Ray/Codex soak complete;
 - long-running GOD groupchat stability across real provider sessions;
 - GitHub PR/CodeOwner review enforcement is enabled on `main`;
+- production-ready natural groupchat;
+- fully autonomous merge;
+- live MemoryOS authority;
 - fake demos, stdout, dashboard, TUI, or copied GitHub text are acceptance
   truth;
 - `uv run mypy xmuse/platform_runner.py` is clean;
