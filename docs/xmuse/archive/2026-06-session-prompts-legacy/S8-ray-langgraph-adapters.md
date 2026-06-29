@@ -11,7 +11,7 @@
 必须阅读:
 
 ```text
-docs/xmuse/session-prompts/README.md
+docs/xmuse/archive/2026-06-session-prompts-legacy/README.md
 src/xmuse_core/agents/ray_god_actor.py
 src/xmuse_core/agents/god_session_layer.py
 src/xmuse_core/structuring/blueprint_execution/**

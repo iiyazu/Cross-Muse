@@ -137,12 +137,6 @@ Frontend/TUI contracts live under `docs/xmuse/frontend/`, not in the runtime
 | `docs/xmuse/frontend/FRONTEND_CONTEXT.md` | Frontend/TUI background context |
 | `docs/xmuse/frontend/FRONTEND_VISION.md` | Frontend projection north-star reference |
 
-## Parallel Session Reference
-
-`docs/xmuse/session-prompts/` remains as a contract-fixture reference for the
-older parallel-session boundary. It is not the current natural groupchat goal
-entrypoint.
-
 ## Archive Rules
 
 Historical material lives under:
@@ -162,6 +156,10 @@ Rules:
 Older self-iteration, vision-runtime, and OpenCode-in proof-closure documents
 live under `docs/xmuse/archive/2026-06-proof-closure-legacy/`. They remain
 testable historical contract material, not current `/goal` entrypoints.
+
+Older parallel-session prompt material lives under
+`docs/xmuse/archive/2026-06-session-prompts-legacy/`. It remains contract
+fixture reference material, not a current operator prompt tree.
 
 Old `docs/superpowers/specs/` and `docs/superpowers/plans/` remain historical
 implementation records because tests and lane history may reference their

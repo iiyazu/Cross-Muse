@@ -11,7 +11,7 @@
 必须阅读:
 
 ```text
-docs/xmuse/session-prompts/README.md
+docs/xmuse/archive/2026-06-session-prompts-legacy/README.md
 docs/xmuse/frontend/FRONTEND_API.md
 docs/xmuse/frontend/FRONTEND_CONTEXT.md
 ```

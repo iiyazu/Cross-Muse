@@ -12,7 +12,7 @@
 必须阅读:
 
 ```text
-docs/xmuse/session-prompts/README.md
+docs/xmuse/archive/2026-06-session-prompts-legacy/README.md
 xmuse/platform_runner.py
 src/xmuse_core/platform/orchestrator.py
 ```
