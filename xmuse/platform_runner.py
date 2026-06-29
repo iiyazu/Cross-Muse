@@ -24,10 +24,17 @@ from pathlib import Path
 from typing import Any
 
 from xmuse_core.agents.memoryos_client import MemoryOSClient
+from xmuse_core.chat.dispatch_bridge import (
+    dispatch_sidecar_handoff_source_refs,
+    sidecar_handoff_supporting_context,
+)
 from xmuse_core.chat.dispatch_queue import ChatDispatchQueueStore
 from xmuse_core.chat.driver import ChatDriver
+from xmuse_core.chat.inbox_store import ChatInboxStore
+from xmuse_core.chat.memory_sidecar import GroupchatMemorySidecar
 from xmuse_core.chat.peer_service import PeerChatService
 from xmuse_core.chat.store import ChatStore
+from xmuse_core.chat.stream_store import PeerTurnLatencyTraceStore
 from xmuse_core.integrations.memoryos_client import (
     RestMemoryOSClient as PeerChatMemoryOSClient,
 )
@@ -881,6 +888,121 @@ def capture_existing_final_action_main_ci(
             "feature_lanes": str(xmuse_root / "feature_lanes.json"),
         },
     }
+
+
+async def capture_existing_dispatch_sidecar_handoff(
+    *,
+    xmuse_root: Path,
+    dispatch_entry_id: str,
+    memoryos_client: Any,
+    actor_id: str = PLANNING_AUTOMATION_WORKER_ID,
+    timeout_s: float = 1.0,
+) -> dict[str, Any]:
+    """Capture optional MemoryOS sidecar continuity for an existing dispatch."""
+
+    clean_dispatch_entry_id = (
+        dispatch_entry_id.strip() if isinstance(dispatch_entry_id, str) else ""
+    )
+    if not clean_dispatch_entry_id:
+        raise ValueError("dispatch_entry_id is required")
+    clean_actor_id = actor_id.strip() if isinstance(actor_id, str) else ""
+    if not clean_actor_id:
+        raise ValueError("actor_id is required")
+
+    db_path = xmuse_root / "chat.db"
+    dispatch_store = ChatDispatchQueueStore(db_path)
+    entry = dispatch_store.get(clean_dispatch_entry_id)
+    source_refs = dispatch_sidecar_handoff_source_refs(entry)
+    sidecar = GroupchatMemorySidecar(memoryos_client, timeout_s=timeout_s)
+    result = await sidecar.ingest_dispatch_handoff(
+        conversation_id=entry.conversation_id,
+        actor_id=clean_actor_id,
+        dispatch_queue_entry_id=entry.entry_id,
+        source_refs=source_refs,
+    )
+    trace = _record_dispatch_sidecar_handoff_trace(
+        db_path=db_path,
+        entry=entry,
+        result=result,
+    )
+    context = trace["supporting_context"]["memoryos_sidecar"]
+    status = str(context.get("status") or "unknown")
+    return {
+        "status": "captured" if status in {"recorded", "attached", "empty"} else "degraded",
+        "dispatch_entry_id": entry.entry_id,
+        "conversation_id": entry.conversation_id,
+        "sidecar_status": status,
+        "continuity_refs": context.get("continuity_refs") or [],
+        "continuity_attempt_ref": context.get("continuity_attempt_ref"),
+        "degraded_reason": context.get("degraded_reason"),
+        "source_refs": source_refs,
+        "durable_refs": {
+            "dispatch_ref": f"chat_dispatch_queue:{entry.entry_id}",
+            "peer_turn_latency_trace": f"chat.db:peer_turn_latency_traces#trace={trace['id']}",
+        },
+        "proof_boundary": "sidecar_continuity_not_proposal_review_dispatch_or_github_truth",
+    }
+
+
+def _record_dispatch_sidecar_handoff_trace(
+    *,
+    db_path: Path,
+    entry,
+    result: dict[str, Any],
+) -> dict[str, Any]:
+    item = _find_dispatch_inbox_item(db_path, entry)
+    now = time.monotonic()
+    if item is None:
+        inbox_item_id = _synthetic_sidecar_inbox_item_id(entry.entry_id)
+        message_created_at = entry.created_at
+        inbox_claimed_at = entry.claimed_at
+        participant_id = None
+        target_role = entry.target
+    else:
+        inbox_item_id = item.id
+        message_created_at = item.created_at
+        inbox_claimed_at = item.claimed_at
+        participant_id = item.target_participant_id
+        target_role = item.target_role
+    return PeerTurnLatencyTraceStore(db_path).record(
+        conversation_id=entry.conversation_id,
+        inbox_item_id=inbox_item_id,
+        participant_id=participant_id,
+        target_role=target_role,
+        message_created_at=message_created_at,
+        inbox_claimed_at=inbox_claimed_at,
+        delivery_started_at=now,
+        provider_turn_started_at=now,
+        first_delta_at=None,
+        writeback_at=now,
+        total_latency_ms=0,
+        delivery_mode="memoryos_sidecar_dispatch_handoff",
+        degraded_reason=None,
+        supporting_context={
+            "memoryos_sidecar": sidecar_handoff_supporting_context(result)
+        },
+    )
+
+
+def _find_dispatch_inbox_item(db_path: Path, entry) -> Any | None:
+    inbox = ChatInboxStore(db_path)
+    for item in inbox.list_by_conversation(
+        entry.conversation_id,
+        include_terminal=True,
+    ):
+        payload = getattr(item, "payload", {})
+        if not isinstance(payload, dict):
+            continue
+        if payload.get("dispatch_queue_entry_id") == entry.entry_id:
+            return item
+    return None
+
+
+def _synthetic_sidecar_inbox_item_id(dispatch_entry_id: str) -> str:
+    safe = []
+    for char in dispatch_entry_id:
+        safe.append(char if char.isalnum() or char in {"-", "_"} else "_")
+    return "sidecar_handoff_" + "".join(safe)[:160]
 
 
 def run_acceptance_gated_goal(
@@ -2597,6 +2719,14 @@ def main_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--capture-dispatch-sidecar-handoff",
+        action="store_true",
+        help=(
+            "capture optional MemoryOS sidecar handoff continuity for an "
+            "existing dispatch queue entry and exit"
+        ),
+    )
+    parser.add_argument(
         "--create-final-action-pr",
         action="store_true",
         help=(
@@ -2613,6 +2743,11 @@ def main_arg_parser() -> argparse.ArgumentParser:
         "--lane-id",
         default=None,
         help="lane id used by --resolve-final-action",
+    )
+    parser.add_argument(
+        "--dispatch-entry-id",
+        default=None,
+        help="dispatch queue entry id used by --capture-dispatch-sidecar-handoff",
     )
     parser.add_argument(
         "--github-repo",
@@ -2706,17 +2841,18 @@ def validate_args(args: argparse.Namespace) -> None:
         raise SystemExit(
             "--acceptance-gate and --resolve-final-action are mutually exclusive"
         )
-    if args.capture_final_action_main_ci and (
-        args.acceptance_gate or args.resolve_final_action or args.create_final_action_pr
-    ):
+    one_shot_modes = [
+        bool(args.acceptance_gate),
+        bool(args.resolve_final_action),
+        bool(args.capture_final_action_main_ci),
+        bool(args.capture_dispatch_sidecar_handoff),
+        bool(args.create_final_action_pr),
+    ]
+    if sum(1 for enabled in one_shot_modes if enabled) > 1:
         raise SystemExit(
-            "--capture-final-action-main-ci is mutually exclusive with "
-            "--acceptance-gate, --resolve-final-action, and --create-final-action-pr"
-        )
-    if args.create_final_action_pr and (args.acceptance_gate or args.resolve_final_action):
-        raise SystemExit(
-            "--create-final-action-pr is mutually exclusive with --acceptance-gate "
-            "and --resolve-final-action"
+            "one-shot modes are mutually exclusive: --acceptance-gate, "
+            "--resolve-final-action, --capture-final-action-main-ci, "
+            "--capture-dispatch-sidecar-handoff, --create-final-action-pr"
         )
     if args.acceptance_gate:
         if not args.goal or not args.goal.strip():
@@ -2746,6 +2882,17 @@ def validate_args(args: argparse.Namespace) -> None:
         if args.health_once:
             raise SystemExit(
                 "--capture-final-action-main-ci and --health-once are mutually exclusive"
+            )
+    if args.capture_dispatch_sidecar_handoff:
+        if not args.dispatch_entry_id or not args.dispatch_entry_id.strip():
+            raise SystemExit("--capture-dispatch-sidecar-handoff requires --dispatch-entry-id")
+        if not args.peer_chat_memoryos_url or not args.peer_chat_memoryos_url.strip():
+            raise SystemExit(
+                "--capture-dispatch-sidecar-handoff requires --peer-chat-memoryos-url"
+            )
+        if args.health_once:
+            raise SystemExit(
+                "--capture-dispatch-sidecar-handoff and --health-once are mutually exclusive"
             )
     if args.create_final_action_pr:
         if not (args.final_action_id or args.lane_id):
@@ -2991,6 +3138,27 @@ def main() -> None:
                     main_ci_collector=ReadOnlyGitHubMainCiTruthCollector(
                         client=github_client
                     ),
+                ),
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return
+
+    if args.capture_dispatch_sidecar_handoff:
+        peer_chat_memoryos_client = PeerChatMemoryOSClient(
+            base_url=args.peer_chat_memoryos_url,
+            api_key=os.environ.get("XMUSE_PEER_CHAT_MEMORYOS_API_KEY"),
+        )
+        print(
+            json.dumps(
+                asyncio.run(
+                    capture_existing_dispatch_sidecar_handoff(
+                        xmuse_root=xmuse_root,
+                        dispatch_entry_id=args.dispatch_entry_id,
+                        memoryos_client=peer_chat_memoryos_client,
+                    )
                 ),
                 ensure_ascii=False,
                 indent=2,
