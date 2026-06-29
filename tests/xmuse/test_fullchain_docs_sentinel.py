@@ -460,9 +460,8 @@ def test_multi_success_checks_accept_expected_gate_failed_lane() -> None:
                 "status": "gate_failed",
                 "gate_passed": False,
                 "failure_reason": "gate_failed",
-                "peer_delivery_mode": "configured_peer",
-                "peer_result_status": "received",
-                "peer_degraded_reason": None,
+                "worker_kind": "temporary_child_worker",
+                "worker_worktree": "/tmp/worktree-beta",
                 "resolution_id": "res-beta",
                 "worktree": "/tmp/worktree-beta",
             },
@@ -484,6 +483,16 @@ def test_multi_success_checks_accept_expected_gate_failed_lane() -> None:
     assert checks["all_success_lanes_completed"] is True
     assert checks["all_expected_gate_failures_reported"] is True
     assert checks["all_expected_gate_failures_skip_review_and_final_action"] is True
+
+    degraded_gate_failure = gate_failed_lane()
+    degraded_gate_failure["lane"]["persistent_execute_degraded"] = True
+    degraded_checks = sentinel._success_checks(
+        {
+            "proposal_has_review_runtime": False,
+            "lane_snapshots": [success_lane(), degraded_gate_failure],
+        }
+    )
+    assert degraded_checks["all_execution_peer_handoffs_not_degraded"] is False
 
 
 @pytest.mark.parametrize(
