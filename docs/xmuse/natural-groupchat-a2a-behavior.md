@@ -255,6 +255,8 @@ proof command or runtime replay
 MemoryOS is an opt-in sidecar for recall, summaries, decisions, blockers, and
 artifact refs. It must not mutate xmuse authority stores directly. If
 unavailable, omit recall and continue.
+Natural peer-chat may use either the generic `/memory/*` sidecar contract or
+the MemoryOS Lite `/sessions/*` REST adapter. Both are sidecar modes only.
 
 Approved dispatch handoff refs may be ingested into the optional sidecar for
 continuity. The producer remains `chat.db/chat_dispatch_queue`, the consumer is
