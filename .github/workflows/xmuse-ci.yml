@@ -54,6 +54,7 @@ jobs:
           tests/xmuse/test_goal_copilot.py
           tests/xmuse/test_gate_profiles.py::test_repository_gate_profiles_config_loads
           tests/xmuse/test_gate_profiles.py::test_repository_docs_only_gate_accepts_explicit_docs_profile
+          tests/xmuse/test_gate_profiles.py::test_xmuse_core_gate_runs_blocking_ruff_before_pytest
           tests/xmuse/test_platform_orchestrator.py::test_run_gate_uses_plural_gate_profiles
           tests/xmuse/test_platform_orchestrator.py::test_run_gate_rejects_underscoped_explicit_gate_profile
           tests/xmuse/test_platform_orchestrator.py::test_get_changed_paths_includes_untracked_files

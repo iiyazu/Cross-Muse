@@ -16,6 +16,17 @@
       "cwd": ".",
       "timeout_s": 300,
       "allow_extra_args": true
+    },
+    "ruff": {
+      "argv": [
+        "uv",
+        "run",
+        "ruff",
+        "check"
+      ],
+      "cwd": ".",
+      "timeout_s": 300,
+      "allow_extra_args": true
     }
   },
   "profiles": {
@@ -33,7 +44,8 @@
           "command": "pytest",
           "args": [
             "-q",
-            "tests/xmuse/test_package_boundaries.py"
+            "tests/xmuse/test_package_boundaries.py",
+            "tests/xmuse/test_gate_profiles.py"
           ]
         }
       ],
@@ -83,6 +95,14 @@
       "blocking": true,
       "env": {},
       "commands": [
+        {
+          "command": "ruff",
+          "args": [
+            "src/xmuse_core",
+            "xmuse",
+            "tests/xmuse"
+          ]
+        },
         {
           "command": "pytest",
           "args": [
