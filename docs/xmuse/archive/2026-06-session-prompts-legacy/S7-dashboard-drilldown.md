@@ -11,7 +11,7 @@
 必须阅读:
 
 ```text
-docs/xmuse/session-prompts/README.md
+docs/xmuse/archive/2026-06-session-prompts-legacy/README.md
 xmuse/dashboard_api.py
 src/xmuse_core/platform/read_contracts.py
 src/xmuse_core/platform/run_health.py

@@ -11,7 +11,7 @@
 必须阅读:
 
 ```text
-docs/xmuse/session-prompts/README.md
+docs/xmuse/archive/2026-06-session-prompts-legacy/README.md
 src/xmuse_core/structuring/models.py
 src/xmuse_core/structuring/feature_plan_store.py
 src/xmuse_core/structuring/feature_graph_builder.py

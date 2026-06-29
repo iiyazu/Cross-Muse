@@ -90,9 +90,6 @@ them:
 - `docs/xmuse/frontend/` contains current frontend/TUI projection contracts.
   These documents are product docs, not runtime package assets; keep them out
   of the `xmuse/` application root.
-- `docs/xmuse/session-prompts/` contains older parallel-session prompt
-  contracts referenced by shared contract fixtures. It is reference material,
-  not the current natural groupchat `/goal` entrypoint.
 
 ## Archive Or Reference Docs
 
@@ -127,6 +124,9 @@ task explicitly targets them:
 - `docs/xmuse/archive/2026-06-runtime-script-legacy/` contains deprecated
   one-off runtime scripts and stubs that have no active loader, CLI entrypoint,
   test, or operator-flow consumer.
+- `docs/xmuse/archive/2026-06-session-prompts-legacy/` contains older
+  parallel-session prompt contracts. They are historical contract-fixture
+  reference material, not current natural groupchat operator prompts.
 
 If an archived document becomes active again, first promote it into the current
 goal package with fresh verification.
