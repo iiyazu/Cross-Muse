@@ -19,6 +19,15 @@ class GroupchatPeerRuntimeTickOutcome:
     peer: PeerChatSchedulerOutcome | None = None
 
 
+@dataclass(frozen=True)
+class GroupchatPeerRuntimeRunOutcome:
+    ticks: int
+    stop_reason: str
+    chain_status: str
+    chain_status_reason: str | None
+    tick_outcomes: tuple[GroupchatPeerRuntimeTickOutcome, ...]
+
+
 class GroupchatPeerRuntime:
     """Bridge groupchat worklist routing into the existing peer scheduler."""
 
@@ -135,6 +144,36 @@ class GroupchatPeerRuntime:
                 followup_scanned=len(followup),
             ),
             peer=peer,
+        )
+
+    async def run_until_idle(
+        self,
+        *,
+        chain_id: str,
+        max_ticks: int,
+    ) -> GroupchatPeerRuntimeRunOutcome:
+        if max_ticks <= 0:
+            raise ValueError("max_ticks must be positive")
+
+        outcomes: list[GroupchatPeerRuntimeTickOutcome] = []
+        stop_reason = "max_ticks"
+        for _ in range(max_ticks):
+            outcome = await self.tick_once(chain_id=chain_id)
+            outcomes.append(outcome)
+            chain = self._store.get_chain(chain_id)
+            if chain.status != "open":
+                stop_reason = f"chain_{chain.status}"
+                break
+            if outcome.worklist.claimed_item_id is None:
+                stop_reason = "idle"
+                break
+        chain = self._store.get_chain(chain_id)
+        return GroupchatPeerRuntimeRunOutcome(
+            ticks=len(outcomes),
+            stop_reason=stop_reason,
+            chain_status=chain.status,
+            chain_status_reason=chain.status_reason,
+            tick_outcomes=tuple(outcomes),
         )
 
     def _peer_scheduler_for(self, inbox_item_id: str) -> PeerChatScheduler:
