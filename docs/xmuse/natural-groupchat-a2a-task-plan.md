@@ -1,6 +1,6 @@
 # Natural Groupchat A2A Task Plan
 
-Updated: 2026-06-28
+Updated: 2026-06-29
 
 This plan is the detailed task reference for
 `docs/xmuse/natural-groupchat-a2a-goal-prompt.md`.
@@ -31,6 +31,16 @@ Track-specific closure means:
   degraded sidecar state does not block xmuse authority.
 - Track C: frontend/API/UX read projection follows the same Track A/B demand and
   exposes operator next actions and proof traces without writing truth.
+
+The #294 run satisfied the first docs-sentinel integrated A/B/C closure. The
+next stage must not treat another docs sentinel as equivalent progress unless
+it proves repeatability, better diagnosis, or a new failure boundary. The next
+closure target is a progressively more capable development harness:
+
+- repeat the integrated chain through a standard evidence summary;
+- shorten durable diagnosis at the first stalled boundary;
+- carry one low-risk real-code lane through PR/CI/guarded merge/main CI;
+- then expand to multi-lane or multi-PR behavior.
 
 ## Execution Throughput Gate
 
@@ -252,6 +262,157 @@ source-derived starting state observed after PR #284 is:
 This section is an observed source-derived starting point, not a replacement for
 the static `last_observed_baseline` above and not a requirement to rewrite docs
 after every PR.
+
+## Post-#294 Starting State
+
+Live server and durable run facts recorded on 2026-06-29:
+
+- `post_abc_closure_baseline`:
+  `07630131dcb6e26c8dc09dcf41690381e5cd0ee6`;
+- PR #294:
+  `https://github.com/iiyazu/Cross-Muse/pull/294`;
+- PR head:
+  `9be3b17190380171756bd8375fcb946247217d7c`;
+- exact-head CI:
+  `28332878486` success for `quality-gates`, `contract-smoke-gates`,
+  `real-runtime-integration-gate`, and `peer-chat-runtime-gate`;
+- guarded merge:
+  `gh pr merge --match-head-commit 9be3b17190380171756bd8375fcb946247217d7c`;
+- main CI:
+  `28332906024` success on
+  `07630131dcb6e26c8dc09dcf41690381e5cd0ee6`;
+- durable run root:
+  `.goal-runs/2026-06-29/track-abc-integrated-memoryos-degraded-20260629-01`;
+- durable authority/proof refs:
+  `chat.db`, `review_plane.json`, `final_actions.json`,
+  `final_action_prs.json`, `github_gate_evidence.json`,
+  `logs/gates/track-abc-integrated-memoryos-degraded-20260629-01/report.json`,
+  and the isolated execution worktree file
+  `docs/xmuse/track-abc-integrated-memoryos-degraded-20260629-01.md`;
+- MemoryOS state:
+  sidecar `build_context` and `ingest` degraded against an unavailable endpoint,
+  did not block Track A, and frontend projection exposed
+  `continuity_attempt_ref`;
+- frontend state:
+  `/api/dashboard/peer-chat/conversations/<conversation_id>/ux-projection`
+  returned `projection_only=true`, empty `write_capabilities`,
+  `review_state.total=1`, `final_action_state.status_summary={"approved":1}`,
+  no pending final-action holds, and MemoryOS degraded summary.
+
+Proof limitation: #294 is still a docs-only sentinel. It proves one integrated
+A/B/C path through PR/CI/guarded merge/main CI, not long-run repeatability,
+real-code implementation, multi-lane scheduling, live MemoryOS truth, complete
+frontend UX, or production readiness.
+
+## Next-Stage Task Ladder
+
+Execute the next stage in this order. Do not skip to a later rung unless the
+previous rung has a durable success record or a named blocker.
+
+### Rung 1 - Repeatability And Evidence Summary
+
+Objective: turn the #294 replay shape into a standard operator-grade run path.
+
+Deliver:
+
+- a single command or runbook for integrated A/B/C replay from durable demand to
+  final-action state;
+- a generated or scripted evidence summary that lists conversation, proposal,
+  review verdict, dispatch queue entry, execution proof, final action, PR,
+  exact-head CI, merge commit, main CI, MemoryOS state, and frontend projection
+  endpoint;
+- clear failure boundary output when the replay stops early.
+
+Success proof:
+
+- two consecutive replays either reach final action or record the same named
+  durable boundary without manual durable-file spelunking;
+- evidence summaries separate authority, execution proof, GitHub server truth,
+  sidecar continuity, and read projection.
+
+### Rung 2 - Durable Failure Taxonomy
+
+Objective: reduce long-goal diagnosis time before increasing task complexity.
+
+Deliver durable classifications for:
+
+- provider turn no-writeback or timeout;
+- collaboration callback/proposal failure;
+- review-trigger timeout or rejected verdict;
+- lane execution failure;
+- docs/code gate failure;
+- branch-behind or stale-base PR creation;
+- exact-head CI failure;
+- guarded merge rejection;
+- main CI failure;
+- MemoryOS unavailable or ingest failure;
+- frontend projection gap.
+
+Success proof:
+
+- each class has producer, consumer, condition, proof level, failure boundary,
+  and next recovery action;
+- frontend/API projection can show the active blocker without writing truth.
+
+### Rung 3 - Low-Risk Real-Code Lane
+
+Objective: prove xmuse can carry a small source-code change, not only docs-only
+sentinel output.
+
+Constraints:
+
+- select one low-blast-radius behavior with existing local tests nearby;
+- require test-first or contract-first implementation after the runtime demand
+  identifies the lane;
+- keep the PR domain-scoped and small;
+- do not expand to multi-lane until the single code lane reaches PR/CI/merge or
+  a durable blocker.
+
+Success proof:
+
+- natural groupchat demand produces proposal/review/dispatch/execution/review
+  verdict/final-action;
+- the resulting PR contains a code/test diff, exact-head CI success, guarded
+  merge, and main CI success; or
+- a durable blocker names the exact authority boundary preventing code-lane
+  closure.
+
+### Rung 4 - Multi-Lane / Multi-PR Harness
+
+Objective: test scheduling, dependency, failure isolation, and projection
+behavior across 2-3 independent lanes.
+
+Success proof:
+
+- each lane has separate source refs, review verdict, final action, and PR/gate
+  state when applicable;
+- one lane failure does not fabricate success for another lane;
+- frontend projection shows lane-specific status without treating
+  `feature_lanes.json` as authority.
+
+### Rung 5 - MemoryOS Live/Degraded Contract
+
+Objective: prove both live and degraded sidecar modes without changing xmuse
+truth.
+
+Success proof:
+
+- degraded mode records attempt refs and does not block Track A;
+- live mode, when configured, records recall/ingest continuity refs;
+- neither mode creates proposal, review, dispatch, execution, GitHub, merge, or
+  production truth.
+
+### Rung 6 - Frontend Operator Cockpit
+
+Objective: make the authority chain inspectable without reading internals.
+
+Success proof:
+
+- read-only frontend/API surfaces show timeline, proposal, review, dispatch,
+  execution/gate, final action, GitHub gate, MemoryOS sidecar, and blocker
+  state for the same demand;
+- `write_capabilities` remains empty for the peer-chat UX projection;
+- frontend never becomes a truth producer.
 
 ## Phase 0 - Truth Refresh And Run Setup
 

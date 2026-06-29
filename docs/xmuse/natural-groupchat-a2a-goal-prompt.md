@@ -10,10 +10,13 @@ Repo:
 /home/iiyatu/projects/python/xmuse
 
 Primary objective:
-Use xmuse's own natural agents groupchat to carry one small real xmuse demand
-through durable discussion, provider invocation, proposal or blocker, structured
-review verdict, dispatch/execution, PR, CI observation, and operator merge or
-explicit durable blocker.
+Start from the post-#294 A/B/C docs-sentinel closure and harden xmuse into a
+repeatable, diagnosable real-development harness. First make the integrated
+replay/evidence summary repeatable, then improve durable failure diagnosis,
+then carry one low-risk real code-change lane through durable discussion,
+provider invocation, proposal or blocker, structured review verdict,
+dispatch/execution, final action, PR, exact-head CI, guarded merge, and main CI
+or an explicit durable blocker.
 
 Read first:
 - AGENTS.md
@@ -107,6 +110,21 @@ Recorded baseline:
 - Dirty historical worktrees and archived docs are references only, not main
   capability.
 
+Post-#294 milestone:
+- `post_abc_closure_baseline` is
+  `07630131dcb6e26c8dc09dcf41690381e5cd0ee6`, produced by PR #294.
+- PR #294 head `9be3b17190380171756bd8375fcb946247217d7c` passed exact-head
+  CI run `28332878486`; guarded merge produced
+  `07630131dcb6e26c8dc09dcf41690381e5cd0ee6`; main CI run `28332906024`
+  succeeded.
+- The run proved one docs-only integrated A/B/C chain:
+  natural groupchat proposal/review/dispatch/execution/final-action,
+  degraded MemoryOS sidecar attempt projection, frontend read-only projection,
+  PR, exact-head CI, guarded merge, and main CI.
+- This does not prove repeatability, real-code development, multi-lane
+  scheduling, live MemoryOS truth, complete frontend UX, or production
+  readiness.
+
 Architecture:
 natural groupchat
 -> official a2a-sdk provider / handoff / artifact envelope
@@ -129,8 +147,18 @@ Hard rules:
   instead of stacking patches.
 
 Minimum success:
-Reach a real PR/CI/operator merge path for one small xmuse demand, or stop at a
-durable blocker that names the next authority boundary with source refs.
+Reach the deepest next-stage rung available without weakening proof boundaries:
+standardized repeatable evidence summary, durable failure taxonomy, one
+low-risk real-code PR/CI/guarded-merge/main-CI path, or an explicit durable
+blocker that names the next authority boundary with source refs.
+
+Next-stage order:
+1. repeatability and evidence summary;
+2. durable failure taxonomy and frontend-visible blocker projection;
+3. low-risk real-code lane;
+4. multi-lane or multi-PR harness;
+5. MemoryOS live/degraded contract;
+6. read-only frontend operator cockpit.
 
 Do not claim:
 production-ready natural groupchat, live MemoryOS authority, fully autonomous
