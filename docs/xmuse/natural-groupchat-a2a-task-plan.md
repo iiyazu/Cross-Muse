@@ -456,8 +456,9 @@ Driver support:
 
 Current runtime proof:
 
-- status: local runtime multi-lane proof satisfied on 2026-06-29; multi-PR
-  promotion remains the next Track A boundary;
+- status: local runtime multi-lane proof and bounded lane-failure isolation
+  proof satisfied on 2026-06-29; lane-specific projection behavior and later
+  multi-PR promotion remain Track A boundaries;
 - runtime authority:
   `.goal-runs/2026-06-29/rung4-multilane-runtime-20260629-01`;
 - conversation: `conv_4ee824f469e9440aa6b84eb08b7dd971`;
@@ -503,14 +504,75 @@ Current runtime proof:
   `28365170254` success, guarded merge commit
   `7b7b94a296363bb1e83cf43d016621405db26d9b`, and main CI run
   `28365233751` success;
+- artifact-promotion proof summary:
+  PR #319 recorded that both Rung 4 lane artifacts reached PR, exact-head CI,
+  guarded merge, and main CI, with head
+  `64ee62b4ae48844bb4884af03ba3941ca55a05aa`, exact-head CI run
+  `28365347268` success, guarded merge commit
+  `df48e1e0c47aeab4d60fe1b2513447126fffe9d7`, and main CI run
+  `28365413861` success;
+- expected gate-failure driver support:
+  PR #320 added `expected_status` support for `awaiting_final_action` and
+  `gate_failed` lanes, with head
+  `d39efdbffb4f92d65e61ffeb9d2835ff121e6d78`, exact-head CI run
+  `28365835382` success, guarded merge commit
+  `142f0eaaab8237870ae447aec4a98c1e584e3294`, and main CI run
+  `28365900501` success;
+- gate-coverage hardening:
+  PR #321 fixed the blocker exposed by the first failure-isolation probe by
+  adding blocking `ruff check src/xmuse_core xmuse tests/xmuse` coverage to
+  the `xmuse-core` gate profile. The earlier blocker was that a newly added
+  syntax-invalid Python file under `src/xmuse_core/platform/` could pass the
+  fixed pytest-only `xmuse-core` gate when no selected test imported it. PR
+  #321 head `ab4a593f14ffa78cb4c11c5f5d981a2546b5bba0` had exact-head CI run
+  `28368643962` success, guarded merge commit
+  `309dd1fb8468496f680e5dae1ce127417a456d1d`, and main CI run
+  `28368707458` success;
+- expected `gate_failed` proof contract:
+  PR #322 fixed the fullchain driver success check so an expected
+  `gate_failed` lane is validated by execution-worker metadata, exact
+  artifact match, failed gate report, and absence of review/final-action
+  truth, instead of requiring review-peer handoff metadata for a lane that
+  intentionally stops before review. PR #322 head
+  `4d8e02a570bf2a577987fae89fcd5a390dc77f0d` had exact-head CI run
+  `28370810980` success, guarded merge commit
+  `29484374c8eb7c2d1f297545d680d520dee80949`, and main CI run
+  `28370877337` success;
+- bounded lane-failure isolation proof:
+  `.goal-runs/2026-06-29/rung4-failure-isolation-runtime-20260629-05`
+  ran from main head `29484374c8eb7c2d1f297545d680d520dee80949` and exited
+  successfully with `loop_driver_artifacts/success_checks.json` all true.
+  Conversation `conv_c21829be6e5144aaa877d8dccfb55aa4` created collaboration
+  `collab_6596e04b15474e0db20e6c2ab2521b52`, proposal
+  `prop_41b4eb68cfb946ba8b42272c1a56869d`, and accepted resolution
+  `res_d0ba8e2c3c5545b8ba2da636befa68d3`;
+- failure-isolation alpha lane:
+  `rung4_isolation_alpha_success_20260629_05` wrote exactly
+  `docs/xmuse/rung4-isolation-alpha-success-20260629-05.md`, passed the
+  `docs-only` gate, emitted review task
+  `rtask_cff1e3958f3c43e9a255512f3874d8d1`, finalized merge verdict
+  `verdict-merge-rtask_cff1e3958f3c43e9a255512f3874d8d1`, and stopped at
+  pending final-action hold `final-dccb338b0c28`;
+- failure-isolation beta lane:
+  `rung4_isolation_beta_gate_failed_20260629_05` wrote exactly
+  `src/xmuse_core/platform/rung4_gate_failure_sentinel.py` with the
+  intentional missing colon, then stopped at `gate_failed`. Its gate report
+  used profile `xmuse-core`, had `ruff` exit `1` and pytest exit `0`, and no
+  review task, review verdict, or final-action hold was fabricated;
+- run #04 note:
+  `.goal-runs/2026-06-29/rung4-failure-isolation-runtime-20260629-04` is
+  retained only as a non-proof false-positive proposal-review block. It did
+  not contradict the gate fix, but it did not reach approved dispatch and must
+  not be cited as failure-isolation proof;
 - review provider boundary: OpenCode was unavailable and recorded as
   `opencode_unavailable`; review used the configured Codex review participant;
 - proof limitation:
   this proves multi-lane scheduling, isolated lane worktrees, lane-specific
   gate/review/final-action holds, exact artifact matching, and domain-scoped
-  PR/CI/guarded-merge/main-CI promotion for the Rung 4 lane artifacts. It is
-  not yet lane-failure isolation proof, live MemoryOS proof, frontend operator
-  cockpit completion, or production readiness.
+  PR/CI/guarded-merge/main-CI promotion for the Rung 4 lane artifacts. It also
+  proves bounded lane-failure isolation for an expected `gate_failed` lane. It
+  is not yet live MemoryOS proof, frontend operator cockpit completion, or
+  production readiness.
 
 ### Rung 5 - MemoryOS Live/Degraded Contract
 
@@ -797,10 +859,12 @@ Current final-report notes after the Rung 4 runtime milestone:
 - prior #294 docs-sentinel proof remains useful as the control-plane baseline,
   but it is no longer the maximum Track A runtime proof;
 - Track A state: the single real-code lane is closed through GitHub facts, and
-  the multi-lane runtime shape is locally proven. Rung 4 proof docs, alpha docs
-  artifact, and beta code artifact have reached PR, exact-head CI, guarded
-  merge, and main CI. The next Track A work is lane-failure isolation and
-  projection behavior;
+  the multi-lane runtime shape plus bounded expected-gate-failure isolation are
+  locally proven. Rung 4 proof docs, alpha docs artifact, beta code artifact,
+  gate-coverage hardening, and expected-gate-failure driver contract fixes have
+  reached PR, exact-head CI, guarded merge, and main CI. The next Track A work
+  is lane-specific projection behavior and later promotion of isolated
+  runtime outputs through domain-scoped PRs;
 - Track B state: MemoryOS sidecar build/ingest degraded against an unavailable
   endpoint and remained non-blocking; this was degraded attempt projection, not
   live MemoryOS truth;
