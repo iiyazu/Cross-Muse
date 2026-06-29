@@ -6,8 +6,6 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from xmuse_core.agents.god_session_registry import GodSessionRegistry
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SCHEMA_DOC = PROJECT_ROOT / "docs" / "xmuse" / "schema-migration-strategy.md"
 PERMISSION_DOC = PROJECT_ROOT / "docs" / "xmuse" / "mcp-permission-model.md"
@@ -52,6 +50,20 @@ HIGH_RISK_STORES = {
 }
 
 IDENTITY_BOUND_CHAT_TOOLS = {
+    "chat_post_message",
+    "chat_read_inbox",
+    "chat_mark_inbox",
+    "chat_mention",
+    "chat_emit_proposal",
+    "chat_create_collaboration_request",
+    "chat_record_collaboration_response",
+    "chat_raise_collaboration_blocker",
+    "chat_resolve_collaboration_blocker",
+    "chat_evaluate_dispatch_gate",
+    "chat_emit_blueprint_proposal",
+}
+
+REPRESENTATIVE_IDENTITY_RUNTIME_TOOLS = {
     "chat_post_message",
     "chat_read_inbox",
     "chat_mark_inbox",
@@ -128,12 +140,22 @@ def test_schema_migration_strategy_classifies_all_durable_stores() -> None:
 
 def test_mcp_permission_metadata_covers_every_registered_tool() -> None:
     from xmuse_core.platform.mcp_permissions import (
+        DISABLED_MCP_TOOL_NAMES,
         IDENTITY_BOUND_CHAT_TOOL_NAMES,
         MCP_TOOL_PERMISSIONS,
+        REGISTERED_MCP_TOOL_NAMES,
         PermissionCategory,
     )
 
-    assert set(MCP_TOOL_PERMISSIONS) == _all_mcp_tool_names()
+    registered_tool_names = _all_mcp_tool_names()
+    assert REGISTERED_MCP_TOOL_NAMES == registered_tool_names
+    assert set(MCP_TOOL_PERMISSIONS) == registered_tool_names | DISABLED_MCP_TOOL_NAMES
+    assert DISABLED_MCP_TOOL_NAMES == {
+        "memory_search",
+        "memory_build_context",
+        "memory_ingest",
+    }
+    assert DISABLED_MCP_TOOL_NAMES.isdisjoint(registered_tool_names)
     assert IDENTITY_BOUND_CHAT_TOOL_NAMES == IDENTITY_BOUND_CHAT_TOOLS
 
     categories = {metadata.permission_category for metadata in MCP_TOOL_PERMISSIONS.values()}
@@ -247,18 +269,13 @@ def test_identity_bound_chat_mcp_tools_reject_wrong_conversation_participant_and
     review = next(
         participant for participant in created["participants"] if participant["role"] == "review"
     )
-    registry = GodSessionRegistry(xmuse_root / "god_sessions.json")
-    session = registry.create(
-        role="architect",
-        agent_name=architect["display_name"],
-        runtime="codex",
-        session_address=f"@{conversation_id}:{architect['participant_id']}",
-        session_inbox_id=f"inbox-{conversation_id}-{architect['participant_id']}",
-        conversation_id=conversation_id,
-        participant_id=architect["participant_id"],
+    session = next(
+        session
+        for session in created["participant_sessions"]
+        if session["participant_id"] == architect["participant_id"]
     )
 
-    for tool_name in sorted(IDENTITY_BOUND_CHAT_TOOLS):
+    for tool_name in sorted(REPRESENTATIVE_IDENTITY_RUNTIME_TOOLS):
         wrong_conversation = _mcp_call(
             client,
             tool_name,
@@ -266,7 +283,7 @@ def test_identity_bound_chat_mcp_tools_reject_wrong_conversation_participant_and
                 tool_name,
                 conversation_id=other_conversation_id,
                 participant_id=architect["participant_id"],
-                god_session_id=session.god_session_id,
+                god_session_id=session["god_session_id"],
             ),
         )
         assert wrong_conversation["error"]["code"] == "session_participant_mismatch"
@@ -278,7 +295,7 @@ def test_identity_bound_chat_mcp_tools_reject_wrong_conversation_participant_and
                 tool_name,
                 conversation_id=conversation_id,
                 participant_id=review["participant_id"],
-                god_session_id=session.god_session_id,
+                god_session_id=session["god_session_id"],
             ),
         )
         assert wrong_participant["error"]["code"] == "session_participant_mismatch"

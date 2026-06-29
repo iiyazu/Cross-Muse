@@ -194,6 +194,12 @@ IDENTITY_BOUND_CHAT_TOOL_NAMES = {
     if metadata.permission_category is PermissionCategory.IDENTITY_BOUND_GOD
 }
 
+DISABLED_MCP_TOOL_NAMES = {
+    name for name, metadata in MCP_TOOL_PERMISSIONS.items() if metadata.family == "memory"
+}
+
+REGISTERED_MCP_TOOL_NAMES = set(MCP_TOOL_PERMISSIONS) - DISABLED_MCP_TOOL_NAMES
+
 READ_ONLY_TOOL_NAMES = {
     name
     for name, metadata in MCP_TOOL_PERMISSIONS.items()

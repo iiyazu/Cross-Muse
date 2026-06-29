@@ -244,6 +244,74 @@ def test_legacy_runtime_root_docs_are_archived_not_product_runtime_root() -> Non
         assert (archive_dir / parts[-1]).is_file(), parts
 
 
+def test_docs_root_files_are_explicitly_classified() -> None:
+    classified_root_files = {
+        "README.md",
+        "acceptance-spine.md",
+        "broad-suite-baseline-debt.md",
+        "code-quality-and-archive-policy.md",
+        "config-matrix.md",
+        "contract-smoke-gates.md",
+        "deep-research-03-next-goal.md",
+        "document-status.md",
+        "github-review-merge-contract.md",
+        "github-server-side-gate-live-evidence-2026-06-25.md",
+        "github-server-side-gate.md",
+        "goal-copilot-behavior-policy.md",
+        "goal-stage-harness.md",
+        "mainline-contracts.md",
+        "mcp-permission-model.md",
+        "memoryos-file-separation.md",
+        "memoryos-governance-contract.md",
+        "memoryos-lite-runtime-compatibility.md",
+        "natural-groupchat-a2a-behavior.md",
+        "natural-groupchat-a2a-goal-prompt.md",
+        "natural-groupchat-a2a-goal.md",
+        "natural-groupchat-a2a-task-plan.md",
+        "parallel-development-runbook.md",
+        "peer-chat-runtime-gate.md",
+        "production-operations.md",
+        "provider-matrix.md",
+        "quality-gates-and-provider-matrix.md",
+        "real-runtime-integration-gate.md",
+        "release-checklist.md",
+        "schema-migration-strategy.md",
+        "shared-contract-fixtures.md",
+        "split-export-manifest.json",
+        "xmuse-package.pyproject.toml",
+        "解耦开发协议.md",
+    }
+    status = _read_doc("document-status.md")
+
+    observed_root_files = {path.name for path in DOCS_ROOT.iterdir() if path.is_file()}
+
+    assert observed_root_files == classified_root_files
+    for name in classified_root_files:
+        assert f"`{name}`" in status or f"`docs/xmuse/{name}`" in status, name
+
+
+def test_docs_top_level_directories_are_explicitly_classified() -> None:
+    status = _read_doc("document-status.md")
+    observed_top_level_dirs = {
+        path.name for path in DOCS_ROOT.iterdir() if path.is_dir()
+    }
+
+    assert observed_top_level_dirs == {"archive", "frontend", "session-prompts"}
+    assert "docs/xmuse/archive/" in status
+    assert "docs/xmuse/frontend/" in status
+    assert "docs/xmuse/session-prompts/" in status
+    assert "not the current natural groupchat `/goal` entrypoint" in status
+
+
+def test_legacy_tui_handoff_is_archived_not_default_docs_root() -> None:
+    archive_dir = DOCS_ROOT / "archive" / "2026-06-tui-handoff-legacy"
+    status = _read_doc("document-status.md")
+
+    assert "docs/xmuse/archive/2026-06-tui-handoff-legacy/" in status
+    assert not (DOCS_ROOT / "tui-slash-command-handoff.md").exists()
+    assert (archive_dir / "tui-slash-command-handoff.md").is_file()
+
+
 def test_frontend_projection_docs_live_outside_runtime_package_root() -> None:
     frontend_docs = (
         "FRONTEND_API.md",
