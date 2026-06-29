@@ -189,12 +189,20 @@ class GroupchatMemorySidecar:
                 "proof_level": "degraded",
                 "degraded_reason": result.degraded_reason or "memoryos_ingest_failed",
             }
+        memory_ref = _optional_ref(result.memory_ref)
+        if memory_ref is None:
+            return {
+                **base,
+                "status": "degraded",
+                "proof_level": "degraded",
+                "degraded_reason": "memoryos_missing_memory_ref",
+            }
         return {
             **base,
             "status": "recorded",
             "proof_level": "contract",
-            "memory_ref": result.memory_ref,
-            "continuity_refs": [result.memory_ref] if result.memory_ref else [],
+            "memory_ref": memory_ref,
+            "continuity_refs": [memory_ref],
             "degraded_reason": None,
         }
 
@@ -233,6 +241,13 @@ def _continuity_ref(namespace: MemoryOSNamespace) -> str:
 
 def _continuity_attempt_ref(namespace: MemoryOSNamespace) -> str:
     return f"{namespace.uri}/context/memoryos-sidecar-attempt"
+
+
+def _optional_ref(value: str | None) -> str | None:
+    if value is None:
+        return None
+    clean = value.strip()
+    return clean or None
 
 
 def _dispatch_handoff_content(dispatch_queue_entry_id: str, source_refs: list[str]) -> str:

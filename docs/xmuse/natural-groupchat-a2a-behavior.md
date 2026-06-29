@@ -262,6 +262,9 @@ MemoryOS sidecar, the condition is explicit MemoryOS configuration, and the
 failure boundary is degraded sidecar ingest without blocking dispatch. Sidecar
 ingest output is never proposal, review, dispatch, merge, or lane execution
 truth.
+Sidecar ingest may be projected as `recorded` only when the sidecar returns a
+non-empty memory ref; an ok response without a memory ref is degraded sidecar
+state, not continuity proof.
 
 MemoryOS recall context may attach namespace-scoped continuity refs such as
 `memory://conversation/<id>/context/memoryos-sidecar` to the peer prompt,
