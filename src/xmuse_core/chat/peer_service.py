@@ -3040,7 +3040,19 @@ class PeerChatService:
                     "required_role": "architect",
                 },
             )
-        proposal_references = references or []
+        resolved_reply_to_inbox_item_id = (
+            reply_to_inbox_item_id
+            or self._single_claimed_inbox_item_id(
+                conversation_id=conversation_id,
+                participant_id=participant_id,
+            )
+        )
+        proposal_references = self._proposal_references_with_groupchat_source_refs(
+            conversation_id=conversation_id,
+            participant_id=participant_id,
+            references=references or [],
+            reply_to_inbox_item_id=resolved_reply_to_inbox_item_id,
+        )
         self._require_ready_collaboration_references(
             conversation_id=conversation_id,
             references=proposal_references,
@@ -3057,13 +3069,6 @@ class PeerChatService:
         )
         proposal_id = str(payload["proposal"]["id"])
         proposal_message_id = self._proposal_message_id(payload)
-        resolved_reply_to_inbox_item_id = (
-            reply_to_inbox_item_id
-            or self._single_claimed_inbox_item_id(
-                conversation_id=conversation_id,
-                participant_id=participant_id,
-            )
-        )
         if resolved_reply_to_inbox_item_id:
             self._mark_inbox_replied_by_tool(
                 conversation_id=conversation_id,
@@ -3092,6 +3097,44 @@ class PeerChatService:
             reviewable_type="lane_graph",
         )
         return payload
+
+    def _proposal_references_with_groupchat_source_refs(
+        self,
+        *,
+        conversation_id: str,
+        participant_id: str,
+        references: list[str],
+        reply_to_inbox_item_id: str | None,
+    ) -> list[str]:
+        proposal_references = list(references)
+        if not reply_to_inbox_item_id:
+            return proposal_references
+        try:
+            inbox_item = self._inbox.get(reply_to_inbox_item_id)
+        except KeyError as exc:
+            raise PeerChatError("unknown_inbox_item", reply_to_inbox_item_id) from exc
+        if (
+            inbox_item.conversation_id != conversation_id
+            or inbox_item.target_participant_id != participant_id
+        ):
+            raise PeerChatError("inbox_item_not_owned", reply_to_inbox_item_id)
+        if inbox_item.item_type != "groupchat_route":
+            return proposal_references
+        payload = inbox_item.payload
+        groupchat_refs = [
+            ("groupchat_chain", payload.get("groupchat_chain_id")),
+            ("groupchat_worklist", payload.get("groupchat_worklist_item_id")),
+        ]
+        seen = set(proposal_references)
+        for prefix, raw_value in groupchat_refs:
+            if not isinstance(raw_value, str) or not raw_value:
+                continue
+            ref = f"{prefix}:{raw_value}"
+            if ref in seen:
+                continue
+            proposal_references.append(ref)
+            seen.add(ref)
+        return proposal_references
 
     def emit_proposal_without_session_for_test(
         self,

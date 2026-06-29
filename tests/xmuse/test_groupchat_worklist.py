@@ -11,6 +11,7 @@ from xmuse_core.chat.groupchat_worklist import (
 )
 from xmuse_core.chat.inbox_store import ChatInboxStore
 from xmuse_core.chat.participant_store import ParticipantStore
+from xmuse_core.chat.peer_service import PeerChatService
 from xmuse_core.chat.store import ChatStore
 from xmuse_core.providers.adapters.base import ProviderInvocationResult
 from xmuse_core.providers.goal_contract import WorkerResultStatus
@@ -140,6 +141,75 @@ def test_groupchat_worklist_claims_links_and_completes_from_durable_writeback(tm
     assert routed[0].route_kind == "mention"
     assert routed[0].depth == 1
     assert store.get_chain(chain.chain_id).last_scanned_message_id == reply_id
+
+
+def test_groupchat_proposal_emitted_from_worklist_inbox_carries_source_refs(tmp_path):
+    db = tmp_path / "chat.db"
+    service = PeerChatService(db)
+    created = service.create_conversation(title="A2 proposal refs")
+    conversation_id = created["conversation"]["id"]
+    participants = {item["role"]: item for item in created["participants"]}
+    sessions = {
+        item["role"]: item["god_session_id"] for item in created["participant_sessions"]
+    }
+    intake = service.post_human_message(
+        conversation_id=conversation_id,
+        author="human-1",
+        content="Discuss and propose the next groupchat decision boundary.",
+        client_request_id="groupchat-a2-source-ref-intake",
+    )
+    store = GroupchatWorklistStore(db)
+    chain = store.create_chain(
+        conversation_id=conversation_id,
+        root_message_id=intake.message.id,
+    )
+    item = store.enqueue_route(
+        chain_id=chain.chain_id,
+        source_message_id=intake.message.id,
+        target_participant_id=participants["architect"]["participant_id"],
+        route_kind="router",
+        depth=0,
+    )
+    linked = GroupchatWorklistScheduler(
+        db_path=db,
+        scheduler_id="groupchat-a2",
+    ).claim_and_link_one(chain_id=chain.chain_id)
+    assert linked is not None
+    assert linked.inbox_item_id is not None
+
+    proposal = service.emit_proposal(
+        registry_path=tmp_path / "god_sessions.json",
+        conversation_id=conversation_id,
+        participant_id=participants["architect"]["participant_id"],
+        god_session_id=sessions["architect"],
+        client_request_id="groupchat-a2-source-ref-proposal",
+        summary="Preserve groupchat source refs on durable proposals",
+        lanes=[
+            {
+                "feature_id": "groupchat-a2-source-refs",
+                "prompt": "Carry groupchat worklist authority refs into proposals.",
+                "depends_on": [],
+                "capabilities": ["code"],
+            }
+        ],
+        references=[f"intake_message:{intake.message.id}"],
+        reply_to_inbox_item_id=linked.inbox_item_id,
+    )
+
+    expected_refs = {
+        f"intake_message:{intake.message.id}",
+        f"groupchat_chain:{chain.chain_id}",
+        f"groupchat_worklist:{item.item_id}",
+    }
+    proposal_refs = set(proposal["proposal"]["references"])
+    message = next(
+        msg
+        for msg in ChatStore(db).list_messages(conversation_id)
+        if msg.id == proposal["message"]["id"]
+    )
+
+    assert expected_refs <= proposal_refs
+    assert expected_refs <= set(message.envelope_json["references"])
 
 
 def test_scan_routes_root_human_message_with_local_router_and_advances_cursor(
