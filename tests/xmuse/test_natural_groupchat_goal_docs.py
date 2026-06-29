@@ -296,11 +296,10 @@ def test_docs_top_level_directories_are_explicitly_classified() -> None:
         path.name for path in DOCS_ROOT.iterdir() if path.is_dir()
     }
 
-    assert observed_top_level_dirs == {"archive", "frontend", "session-prompts"}
+    assert observed_top_level_dirs == {"archive", "frontend"}
     assert "docs/xmuse/archive/" in status
     assert "docs/xmuse/frontend/" in status
-    assert "docs/xmuse/session-prompts/" in status
-    assert "not the current natural groupchat `/goal` entrypoint" in status
+    assert "docs/xmuse/session-prompts/" not in status
 
 
 def test_legacy_tui_handoff_is_archived_not_default_docs_root() -> None:
@@ -310,6 +309,31 @@ def test_legacy_tui_handoff_is_archived_not_default_docs_root() -> None:
     assert "docs/xmuse/archive/2026-06-tui-handoff-legacy/" in status
     assert not (DOCS_ROOT / "tui-slash-command-handoff.md").exists()
     assert (archive_dir / "tui-slash-command-handoff.md").is_file()
+
+
+def test_legacy_parallel_session_prompts_are_archived_not_default_docs_root() -> None:
+    archived_names = {
+        "README.md",
+        "S0-integration-contract.md",
+        "S1-chat-tui-read-layer.md",
+        "S2-coordinator-core.md",
+        "S3-blueprint-decomposition.md",
+        "S4-lane-graph-generation.md",
+        "S5-execution-scheduling.md",
+        "S6-cli-subagent-skills.md",
+        "S7-dashboard-drilldown.md",
+        "S8-ray-langgraph-adapters.md",
+    }
+    archive_dir = DOCS_ROOT / "archive" / "2026-06-session-prompts-legacy"
+    readme = _read_doc("README.md")
+    status = _read_doc("document-status.md")
+
+    assert not (DOCS_ROOT / "session-prompts").exists()
+    assert "docs/xmuse/archive/2026-06-session-prompts-legacy/" in readme
+    assert "docs/xmuse/archive/2026-06-session-prompts-legacy/" in status
+    assert "not current natural groupchat operator prompts" in status
+    for name in archived_names:
+        assert (archive_dir / name).is_file(), name
 
 
 def test_frontend_projection_docs_live_outside_runtime_package_root() -> None:
