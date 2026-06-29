@@ -1876,6 +1876,100 @@ def test_dashboard_peer_chat_ux_projection_evidence_summary_reports_failure_boun
     )
 
 
+def test_dashboard_peer_chat_ux_projection_projects_gate_failed_lane_boundary(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "chat.db"
+    chat = ChatStore(db)
+    conv = chat.create_conversation("Gate failed lane projection")
+    intake = chat.add_message(conv.id, "Human", "human", "@architect run isolated lanes")
+    proposal = chat.create_proposal(
+        conversation_id=conv.id,
+        author="Architect GOD",
+        proposal_type="lane_graph",
+        content='{"summary":"Gate failure lane","lanes":[{"feature_id":"lane-gate-failed"}]}',
+        references=[intake.id],
+    )
+    report_ref = "logs/gates/lane-gate-failed/report.json"
+    (tmp_path / report_ref).parent.mkdir(parents=True)
+    _write_json(
+        tmp_path / report_ref,
+        {
+            "passed": False,
+            "blocking_passed": False,
+            "profiles": {"xmuse-core": {"passed": False}},
+        },
+    )
+    _write_json(
+        tmp_path / "feature_lanes.json",
+        {
+            "lanes": [
+                {
+                    "feature_id": "lane-gate-failed",
+                    "conversation_id": conv.id,
+                    "status": "gate_failed",
+                    "gate_profiles": ["xmuse-core"],
+                    "gate_passed": False,
+                    "failure_reason": "gate_failed",
+                    "target_path": "src/xmuse_core/platform/rung4_gate_failure_sentinel.py",
+                    "branch": "lane-gate-failed",
+                    "base_head_sha": "head-before-lane",
+                    "dispatch_queue_entry_id": "dispatch:gate-failed",
+                    "source_refs": [f"proposal:{proposal.id}"],
+                }
+            ]
+        },
+    )
+
+    response = TestClient(create_app(tmp_path)).get(
+        f"/api/dashboard/peer-chat/conversations/{conv.id}/ux-projection"
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    summary = payload["evidence_summary"]
+    assert summary["status"] == "blocked"
+    assert summary["counts"]["failure_boundary"] == 1
+    assert payload["review_state"]["total"] == 0
+    assert payload["final_action_state"]["total"] == 0
+    assert "review_verdict" not in {item["kind"] for item in summary["items"]}
+    assert "final_action" not in {item["kind"] for item in summary["items"]}
+    assert [_without_failure_classification(item) for item in summary["failure_boundaries"]] == [
+        {
+            "kind": "lane_gate_failure",
+            "proof_class": "failure_boundary",
+            "ref": report_ref,
+            "status": "gate_failed",
+            "producer": "feature_lanes.json",
+            "consumer": "natural_groupchat_evidence_summary",
+            "condition": "lane_status_gate_failed",
+            "proof_boundary": "gate_report_boundary",
+            "details": {
+                "projection_source": "feature_lanes.json",
+                "lane_status": "gate_failed",
+                "gate_profiles": ["xmuse-core"],
+                "gate_report_refs": [report_ref],
+                "gate_passed": False,
+                "failure_reason": "gate_failed",
+                "target_path": "src/xmuse_core/platform/rung4_gate_failure_sentinel.py",
+                "branch": "lane-gate-failed",
+                "base_head_sha": "head-before-lane",
+                "dispatch_queue_entry_id": "dispatch:gate-failed",
+            },
+            "lane_id": "lane-gate-failed",
+            "source_refs": [
+                "feature_lanes.json#lane=lane-gate-failed",
+                report_ref,
+                f"proposal:{proposal.id}",
+            ],
+            "next_recovery_action": "repair_lane_and_rerun_selected_gate_profile",
+        }
+    ]
+    assert summary["failure_boundaries"][0]["classification"]["class_id"] == (
+        "docs_or_code_gate_failure"
+    )
+
+
 def test_dashboard_peer_chat_ux_projection_evidence_summary_reports_active_collaboration_blocker(
     tmp_path: Path,
 ) -> None:

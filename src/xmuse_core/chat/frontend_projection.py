@@ -66,6 +66,7 @@ def build_peer_chat_ux_projection(
         root=root,
         conversation_id=conversation_id,
         conversation=conversation,
+        conversation_lanes=conversation_lanes,
         proposals=proposals,
         dispatch_entries=dispatch_entries,
         blockers=blockers,
@@ -484,6 +485,7 @@ def _evidence_summary(
     root: Path,
     conversation_id: str,
     conversation: dict[str, Any],
+    conversation_lanes: list[dict[str, Any]],
     proposals: list[dict[str, Any]],
     dispatch_entries: list[dict[str, Any]],
     blockers: list[dict[str, Any]],
@@ -556,6 +558,8 @@ def _evidence_summary(
                 next_recovery_action="resolve_collaboration_blocker_with_evidence",
             )
         )
+
+    failure_boundaries.extend(_gate_failed_lane_boundaries(root, conversation_lanes))
 
     for spine in _dict_items(closure_evidence.get("items")):
         review_ref = _projection_text(spine.get("review_verdict_ref"))
@@ -1264,6 +1268,9 @@ def _failure_boundary(
     condition: str,
     proof_boundary: str,
     next_recovery_action: str,
+    details: dict[str, Any] | None = None,
+    lane_id: str | None = None,
+    source_refs: list[str] | None = None,
 ) -> dict[str, Any]:
     item = _evidence_item(
         kind=kind,
@@ -1273,6 +1280,9 @@ def _failure_boundary(
         producer=producer,
         condition=condition,
         proof_boundary=proof_boundary,
+        details=details,
+        lane_id=lane_id,
+        source_refs=source_refs,
     )
     item["next_recovery_action"] = next_recovery_action
     classification = classify_failure_boundary(item)
@@ -1753,6 +1763,92 @@ def _conversation_lanes(root: Path, conversation_id: str) -> list[dict[str, Any]
         for lane in raw_lanes
         if isinstance(lane, dict) and lane.get("conversation_id") == conversation_id
     ]
+
+
+def _gate_failed_lane_boundaries(
+    root: Path,
+    conversation_lanes: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    boundaries: list[dict[str, Any]] = []
+    for lane in conversation_lanes:
+        if _projection_text(lane.get("status")) != "gate_failed":
+            continue
+        lane_id = _lane_feature_id(lane)
+        lane_ref = _lane_source_ref(lane)
+        if lane_id is None or lane_ref is None:
+            continue
+        gate_refs = _lane_gate_report_refs(root, lane, lane_id)
+        source_refs = _dedupe(
+            [
+                lane_ref,
+                *gate_refs,
+                *_string_items(lane.get("source_refs")),
+                *_string_items(lane.get("review_evidence_refs")),
+            ]
+        )
+        condition = (
+            _projection_text(lane.get("failure_reason"))
+            or "lane_status_gate_failed"
+        )
+        if condition == "gate_failed":
+            condition = "lane_status_gate_failed"
+        boundaries.append(
+            _failure_boundary(
+                kind="lane_gate_failure",
+                ref=gate_refs[0] if gate_refs else lane_ref,
+                status="gate_failed",
+                producer="feature_lanes.json",
+                condition=condition,
+                proof_boundary="gate_report_boundary",
+                next_recovery_action="repair_lane_and_rerun_selected_gate_profile",
+                details=_lane_gate_failure_details(lane, gate_refs),
+                lane_id=lane_id,
+                source_refs=source_refs,
+            )
+        )
+    return boundaries
+
+
+def _lane_gate_report_refs(
+    root: Path,
+    lane: dict[str, Any],
+    lane_id: str,
+) -> list[str]:
+    refs: list[str] = []
+    refs.extend(_string_items(lane.get("gate_report_ref")))
+    refs.extend(_string_items(lane.get("gate_report_refs")))
+    inferred_ref = f"logs/gates/{lane_id}/report.json"
+    if (root / inferred_ref).is_file():
+        refs.append(inferred_ref)
+    return _dedupe(refs)
+
+
+def _lane_gate_failure_details(
+    lane: dict[str, Any],
+    gate_refs: list[str],
+) -> dict[str, Any]:
+    details: dict[str, Any] = {
+        "projection_source": "feature_lanes.json",
+        "lane_status": "gate_failed",
+    }
+    gate_profiles = _string_items(lane.get("gate_profiles"))
+    if gate_profiles:
+        details["gate_profiles"] = gate_profiles
+    if gate_refs:
+        details["gate_report_refs"] = gate_refs
+    for key in (
+        "gate_passed",
+        "failure_reason",
+        "target_path",
+        "branch",
+        "base_head_sha",
+        "dispatch_queue_entry_id",
+        "worktree",
+    ):
+        value = lane.get(key)
+        if value not in (None, "", []):
+            details[key] = value
+    return details
 
 
 def _lane_feature_id(lane: dict[str, Any] | None) -> str | None:
