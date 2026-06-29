@@ -57,6 +57,9 @@ class GroupchatWorklistTickOutcome:
     followup_scanned: int = 0
     failed_item_id: str | None = None
     failure_reason: str | None = None
+    terminal_item_id: str | None = None
+    terminal_reason: str | None = None
+    terminal_source_message_id: str | None = None
 
 
 class GroupchatWorklistStore:
@@ -520,6 +523,11 @@ class GroupchatWorklistStore:
                 (chain_id,),
             ).fetchall()
         return [self._item_from_row(row) for row in rows]
+
+    def has_unscanned_messages(self, *, chain_id: str) -> bool:
+        with self._connect() as conn:
+            chain = self._chain_row(conn, chain_id)
+            return self._next_unscanned_message_row(conn, chain=chain) is not None
 
     def scan_routes_once(self, *, chain_id: str) -> list[GroupchatWorklistItem]:
         now = _utc_now()
@@ -1611,6 +1619,24 @@ class GroupchatWorklistStore:
         return GroupchatWorklistItem(**dict(row))
 
 
+def _terminal_scan_outcome_fields(
+    items: list[GroupchatWorklistItem],
+) -> dict[str, str | None]:
+    for item in items:
+        if item.status not in _ITEM_TERMINAL_STATUSES:
+            continue
+        return {
+            "terminal_item_id": item.item_id,
+            "terminal_reason": item.terminal_reason,
+            "terminal_source_message_id": item.source_message_id,
+        }
+    return {
+        "terminal_item_id": None,
+        "terminal_reason": None,
+        "terminal_source_message_id": None,
+    }
+
+
 class GroupchatWorklistScheduler:
     def __init__(
         self,
@@ -1648,7 +1674,10 @@ class GroupchatWorklistScheduler:
         scanned = self.scan_routes_once(chain_id=chain_id)
         claimed = self.claim_and_link_one(chain_id=chain_id)
         if claimed is None:
-            return GroupchatWorklistTickOutcome(scanned=len(scanned))
+            return GroupchatWorklistTickOutcome(
+                scanned=len(scanned),
+                **_terminal_scan_outcome_fields(scanned),
+            )
         if claimed.inbox_item_id is None:
             failed = self._store.fail_item(
                 claimed.item_id,
@@ -1709,6 +1738,7 @@ class GroupchatWorklistScheduler:
             linked_inbox_item_id=completed.inbox_item_id,
             completed_message_id=completed.completed_message_id,
             followup_scanned=len(followup),
+            **_terminal_scan_outcome_fields(followup),
         )
 
     def complete_from_writeback(
