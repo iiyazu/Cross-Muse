@@ -14,7 +14,7 @@ runtime-first.
 Detailed task decomposition lives in:
 
 ```text
-docs/xmuse/real-god-chatgroup-fullchain-loop-decomposition.md
+docs/xmuse/archive/2026-06-runtime-loop-legacy/real-god-chatgroup-fullchain-loop-decomposition.md
 ```
 
 ## `/goal` Prompt Boundary

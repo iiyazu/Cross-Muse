@@ -90,10 +90,11 @@ task explicitly targets them:
   acceptance-gated evidence snapshots.
 - `docs/xmuse/archive/2026-06-rung-sentinel-artifacts.md` contains one-off
   Rung/Track runtime proof artifacts.
-- `production-closure-tasks.md`, `real-god-chatgroup-fullchain-loop-decomposition.md`,
-  `real-runtime-loop-behavior-policy.md`, `self-iteration-runtime-closure*.md`,
-  `opencode-in-long-runtime-evidence*.md`, and
-  `vision-runtime-evidence-closure.md` remain root-level reference docs for
+- `docs/xmuse/archive/2026-06-runtime-loop-legacy/` contains the older
+  production-closure and real-runtime loop policy/decomposition documents
+  superseded by the natural groupchat goal package.
+- `self-iteration-runtime-closure*.md`, `opencode-in-long-runtime-evidence*.md`,
+  and `vision-runtime-evidence-closure.md` remain root-level reference docs for
   now because some current tests, code paths, or release docs still point at
   them.
 

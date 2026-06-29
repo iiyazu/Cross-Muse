@@ -10,7 +10,7 @@ evidence and move forward.
 Behavior rules live in:
 
 ```text
-docs/xmuse/real-runtime-loop-behavior-policy.md
+docs/xmuse/archive/2026-06-runtime-loop-legacy/real-runtime-loop-behavior-policy.md
 ```
 
 ## How To Use This From `/goal`
