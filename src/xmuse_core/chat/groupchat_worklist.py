@@ -16,6 +16,7 @@ _CHAIN_OPEN_STATUSES = {"open"}
 _ITEM_ACTIVE_STATUSES = {"queued", "claimed"}
 _ITEM_TERMINAL_STATUSES = {"completed", "blocked", "failed", "canceled"}
 _A1_ROUTABLE_ROLES = {"architect", "review", "critic"}
+_CHAIN_BLOCKING_ROUTE_REASONS = {"final_action_github_gate_gap"}
 
 
 def _utc_now() -> str:
@@ -716,6 +717,12 @@ class GroupchatWorklistStore:
             for row in participants
             if str(row["role"]).strip().lower() in _A1_ROUTABLE_ROLES
         }
+        structured_targets = self._structured_writeback_targets(
+            role_targets=role_targets,
+            message=message,
+        )
+        if structured_targets is not None:
+            return structured_targets
         mentioned_roles = self._mentioned_roles(message=message, role_targets=role_targets)
         mentioned_targets = [
             _RouteTarget(
@@ -749,6 +756,75 @@ class GroupchatWorklistStore:
                 route_kind="router",
             )
         ]
+
+    def _structured_writeback_targets(
+        self,
+        *,
+        role_targets: dict[str, sqlite3.Row],
+        message: sqlite3.Row,
+    ) -> list[_RouteTarget] | None:
+        envelope_type = str(message["envelope_type"] or "").strip().lower()
+        envelope = self._message_envelope(message)
+        if (
+            envelope_type != "final_action_result"
+            and str(envelope.get("type") or "").strip().lower() != "final_action_result"
+        ):
+            return None
+
+        architect = role_targets.get("architect")
+        if architect is None:
+            return []
+
+        action = str(envelope.get("action") or "").strip().lower()
+        if action != "merge":
+            return []
+
+        status = str(envelope.get("status") or "").strip().lower()
+        github_gate = envelope.get("github_gate")
+        github_gate_status = ""
+        if isinstance(github_gate, dict):
+            github_gate_status = str(github_gate.get("status") or "").strip().lower()
+        accepted_status = status in {"accepted", "approved", "resolved"}
+        accepted_gate = bool(envelope.get("github_gate_evidence_ref")) and (
+            github_gate_status in {"", "accepted", "approved", "resolved"}
+        )
+        gate_gap = bool(envelope.get("github_gate_gap_ref")) or (
+            str(envelope.get("status_reason") or "").strip().lower() == "github_gate_unverified"
+        )
+        if (
+            gate_gap
+            or status in {"blocked", "failed", "rejected"}
+            or (accepted_status and not accepted_gate)
+        ):
+            return [
+                _RouteTarget(
+                    participant_id=str(architect["participant_id"]),
+                    role=str(architect["role"]),
+                    route_kind="handoff",
+                    terminal_reason="final_action_github_gate_gap",
+                )
+            ]
+        if accepted_status and accepted_gate:
+            return [
+                _RouteTarget(
+                    participant_id=str(architect["participant_id"]),
+                    role=str(architect["role"]),
+                    route_kind="handoff",
+                )
+            ]
+        return []
+
+    def _message_envelope(self, message: sqlite3.Row) -> dict:
+        raw = message["envelope_json"]
+        if isinstance(raw, dict):
+            return raw
+        if not raw:
+            return {}
+        try:
+            parsed = json.loads(str(raw))
+        except (TypeError, ValueError):
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
 
     def _mentioned_roles(
         self,
@@ -908,7 +984,7 @@ class GroupchatWorklistStore:
             return None
 
         reason = target.terminal_reason
-        chain_blocks = False
+        chain_blocks = reason in _CHAIN_BLOCKING_ROUTE_REASONS
         if reason is None:
             if depth >= int(chain["max_depth"]):
                 reason = "depth_limit"
