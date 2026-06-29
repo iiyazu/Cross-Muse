@@ -1275,11 +1275,18 @@ def _enqueue_structured_dispatch_intent(
     collaboration_run_ids = _collaboration_run_refs(references)
     gate_refs: list[str] = []
     if not collaboration_run_ids:
-        if not _is_a2a_sourced_proposal(
+        is_a2a_sourced = _is_a2a_sourced_proposal(
             base_dir,
             conversation_id=conversation_id,
             proposal_id=proposal_id,
-        ):
+        )
+        is_groupchat_sourced = _is_groupchat_sourced_proposal(
+            base_dir,
+            conversation_id=conversation_id,
+            proposal_id=proposal_id,
+            references=references,
+        )
+        if not is_a2a_sourced and not is_groupchat_sourced:
             return None
         review_gate = _review_trigger_dispatch_verdict_for_proposal(
             base_dir,
@@ -1289,6 +1296,17 @@ def _enqueue_structured_dispatch_intent(
         if review_gate is None or review_gate.decision != "dispatch_allowed":
             return None
         gate_refs = review_gate.source_refs
+        if is_groupchat_sourced:
+            critic_gate = _enforce_groupchat_critic_gate(
+                base_dir,
+                conversation_id=conversation_id,
+                proposal_id=proposal_id,
+                proposal_type=proposal_type,
+                references=references,
+            )
+            if critic_gate is None or critic_gate.decision != "clearance":
+                return None
+            gate_refs = _dedupe_text([*gate_refs, *critic_gate.source_refs])
     else:
         gate_refs = [f"collaboration:{run_id}" for run_id in collaboration_run_ids]
     entry = _dispatch_queue_store(base_dir).enqueue_agent_auto_dispatch(

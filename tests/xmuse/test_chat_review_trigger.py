@@ -514,7 +514,7 @@ def test_groupchat_proposal_approval_requires_review_and_critic_clearance(tmp_pa
     assert response.status_code == 400
     assert response.json()["detail"]["code"] == "proposal_review_pending"
 
-    service.post_god_message(
+    review_reply = service.post_god_message(
         registry_path=tmp_path / "god_sessions.json",
         conversation_id=conversation_id,
         participant_id=participants["review"],
@@ -542,7 +542,7 @@ def test_groupchat_proposal_approval_requires_review_and_critic_clearance(tmp_pa
     assert response.status_code == 400
     assert response.json()["detail"]["code"] == "proposal_critic_missing"
 
-    service.post_god_message(
+    critic_reply = service.post_god_message(
         registry_path=tmp_path / "god_sessions.json",
         conversation_id=conversation_id,
         participant_id=participants["critic"],
@@ -566,6 +566,22 @@ def test_groupchat_proposal_approval_requires_review_and_critic_clearance(tmp_pa
     )
 
     assert response.status_code == 200, response.text
+    entries = ChatDispatchQueueStore(tmp_path / "chat.db").list_entries(conversation_id)
+    assert len(entries) == 1
+    assert entries[0].proposal_id == proposal["proposal"]["id"]
+    assert entries[0].resolution_id == response.json()["id"]
+    assert entries[0].collaboration_run_id is None
+    assert entries[0].gate_refs == [
+        f"review_trigger_verdict:{review_reply['message']['id']}",
+        f"groupchat_critic_verdict:{critic_reply['message']['id']}",
+    ]
+    assert response.json()["next_authority_boundary"]["source_refs"] == [
+        f"proposal:{proposal['proposal']['id']}",
+        f"review_trigger_verdict:{review_reply['message']['id']}",
+        f"groupchat_critic_verdict:{critic_reply['message']['id']}",
+        f"resolution:{response.json()['id']}",
+        f"chat_dispatch_queue:{entries[0].entry_id}",
+    ]
 
 
 def test_groupchat_proposal_approval_blocks_critic_objection(tmp_path) -> None:
