@@ -444,6 +444,16 @@ Success proof:
 - frontend projection shows lane-specific status without treating
   `feature_lanes.json` as authority.
 
+Driver support:
+
+- use `scripts/run_fullchain_docs_sentinel.py --lane-spec-json '<json-array>'`
+  to ask the existing fullchain driver for multiple independent lane specs in
+  one runtime proposal;
+- each lane spec must define `feature_id`, `lane_kind`, `target_path`, and
+  `expected_content`;
+- the driver records run-level multi-lane success checks while preserving the
+  single-lane CLI defaults used by earlier Rung 2/Rung 3 proof.
+
 ### Rung 5 - MemoryOS Live/Degraded Contract
 
 Objective: prove both live and degraded sidecar modes without changing xmuse
