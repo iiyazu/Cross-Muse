@@ -171,18 +171,15 @@ def test_split_export_manifest_excludes_runtime_state_from_source_export() -> No
 
 def test_xmuse_package_template_exports_xmuse_entrypoints_without_memoryos_dependency() -> None:
     pyproject = _load_xmuse_pyproject()
+    source = tomllib.loads(SOURCE_PYPROJECT.read_text(encoding="utf-8"))
 
     assert pyproject["project"]["name"] == "xmuse"
     assert pyproject["project"]["readme"] == "docs/xmuse/README.md"
-    assert set(pyproject["project"]["scripts"]) == {
-        "xmuse-chat-api",
-        "xmuse-mcp-server",
-        "xmuse-platform-runner",
-        "xmuse-tui",
-    }
+    assert set(pyproject["project"]["scripts"]) == set(source["project"]["scripts"])
 
     dependencies = pyproject["project"]["dependencies"]
     assert not any(dep.startswith("memoryos-lite") for dep in dependencies)
+    assert any(dep.startswith("a2a-sdk") for dep in dependencies)
     assert any(dep.startswith("ray[default]") for dep in dependencies)
     assert any(dep.startswith("textual") for dep in dependencies)
 
@@ -215,12 +212,20 @@ def test_xmuse_package_template_builds_both_xmuse_packages_and_excludes_state() 
     assert set(pyproject["tool"]["hatch"]["build"]["exclude"]) >= {
         "/xmuse/**/*.db",
         "/xmuse/**/*.sqlite3",
-        "/xmuse/**/*.json",
         "/xmuse/**/*.jsonl",
         "/xmuse/**/*.lock",
+        "/xmuse/*.json",
+        "/xmuse/approvals/**",
+        "/xmuse/dispatch/**",
+        "/xmuse/feature_plans/**",
         "/xmuse/history/**",
+        "/xmuse/knowledge/**",
         "/xmuse/lane_graphs/**",
+        "/xmuse/legacy/**",
         "/xmuse/logs/**",
+        "/xmuse/master/**",
+        "/xmuse/read_models/**",
+        "/xmuse/reports/**",
         "/xmuse/self_evolution/**",
         "/xmuse/work/**",
     }
@@ -235,12 +240,15 @@ def test_project_pyproject_entrypoints_match_split_side() -> None:
         assert scripts == {"memoryos", "memoryos-lite"}
         assert not any(name.startswith("xmuse") for name in scripts)
     elif project_name == "xmuse":
-        assert scripts == {
+        assert {
             "xmuse-chat-api",
+            "xmuse-evidence-summary",
             "xmuse-mcp-server",
             "xmuse-platform-runner",
             "xmuse-tui",
-        }
+            "xmuse-tui-terminal-demo",
+        } <= scripts
+        assert all(name.startswith("xmuse") for name in scripts)
         assert not any(name.startswith("memoryos") for name in scripts)
     else:
         raise AssertionError(f"unexpected split project name: {project_name}")

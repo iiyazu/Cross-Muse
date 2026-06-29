@@ -61,12 +61,21 @@ them:
 - `peer-chat-runtime-gate.md`
 - `deep-research-03-next-goal.md`
 - `real-runtime-integration-gate.md`
+- `acceptance-spine.md`
 - `broad-suite-baseline-debt.md`
+- `quality-gates-and-provider-matrix.md`
+- `schema-migration-strategy.md`
+- `mcp-permission-model.md`
+- `memoryos-file-separation.md`
+- `memoryos-governance-contract.md`
 - `memoryos-lite-runtime-compatibility.md`
 - `github-server-side-gate-live-evidence-2026-06-25.md`
 - `github-server-side-gate.md`
 - `github-review-merge-contract.md`
 - `release-checklist.md`
+- `shared-contract-fixtures.md`
+- `split-export-manifest.json`
+- `xmuse-package.pyproject.toml`
 - `code-quality-and-archive-policy.md`
 - `parallel-development-runbook.md`
 - `goal-copilot-behavior-policy.md`
@@ -81,6 +90,9 @@ them:
 - `docs/xmuse/frontend/` contains current frontend/TUI projection contracts.
   These documents are product docs, not runtime package assets; keep them out
   of the `xmuse/` application root.
+- `docs/xmuse/session-prompts/` contains older parallel-session prompt
+  contracts referenced by shared contract fixtures. It is reference material,
+  not the current natural groupchat `/goal` entrypoint.
 
 ## Archive Or Reference Docs
 
@@ -109,6 +121,9 @@ task explicitly targets them:
 - `docs/xmuse/archive/2026-06-runtime-launcher-legacy/` contains deprecated
   root launcher/gate scripts that have no active runtime, test, or operator
   consumer.
+- `docs/xmuse/archive/2026-06-tui-handoff-legacy/` contains older TUI slash
+  command handoff material whose implementation is now represented by current
+  TUI code, tests, and frontend projection docs.
 
 If an archived document becomes active again, first promote it into the current
 goal package with fresh verification.
