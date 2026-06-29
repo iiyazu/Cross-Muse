@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -91,6 +92,7 @@ class ChatDispatchBridge:
             )
             scheduler_outcome = await scheduler.tick_once()
             if scheduler_outcome.happy_path == 1:
+                self._reconcile_dispatch_writeback(entry, inbox_item_id)
                 if not self._has_dispatch_ack_marker(inbox_item_id):
                     queue.mark_failed(
                         entry.entry_id,
@@ -286,6 +288,50 @@ class ChatDispatchBridge:
                 continue
             return "DISPATCH_ACKNOWLEDGED" in message.content
         return False
+
+    def _reconcile_dispatch_writeback(
+        self,
+        entry: ChatDispatchQueueEntry,
+        inbox_item_id: str,
+    ) -> None:
+        try:
+            item = ChatInboxStore(self._db_path).get(inbox_item_id)
+        except KeyError:
+            return
+        if not item.responded_message_id:
+            return
+
+        messages = ChatStore(self._db_path).list_messages(item.conversation_id)
+        message = next(
+            (candidate for candidate in messages if candidate.id == item.responded_message_id),
+            None,
+        )
+        if message is None:
+            return
+
+        envelope = dict(message.envelope_json or {})
+        authority_refs = _dispatch_source_refs(entry)
+        envelope["type"] = _optional_text(envelope.get("type")) or (
+            message.envelope_type or "dispatch_result"
+        )
+        envelope["authority"] = "chat.db/messages/dispatch_result"
+        envelope["proof_boundary"] = "dispatch_acknowledgement_not_execution_proof"
+        envelope["source_inbox_item_id"] = inbox_item_id
+        envelope["dispatch_queue_entry_id"] = entry.entry_id
+        envelope["proposal_id"] = entry.proposal_id
+        envelope["resolution_id"] = entry.resolution_id
+        envelope["collaboration_run_id"] = entry.collaboration_run_id
+        envelope["artifact_ref"] = entry.artifact_ref
+        envelope["dispatch_evidence_ref"] = f"mcp_writeback:{inbox_item_id}"
+        envelope["source_refs"] = _dedupe_refs(
+            [*authority_refs, *_string_items(envelope.get("source_refs"))]
+        )
+
+        with sqlite3.connect(self._db_path) as conn:
+            conn.execute(
+                "update messages set envelope_json = ? where id = ?",
+                (json.dumps(envelope, ensure_ascii=False), message.id),
+            )
 
 
 def _dispatch_artifact_context(

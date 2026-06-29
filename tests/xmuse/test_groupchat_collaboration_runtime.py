@@ -2330,6 +2330,23 @@ async def test_dispatch_bridge_acknowledges_gated_entry_through_execute_peer(
         if message.envelope_type == "dispatch_request"
     )
     assert dispatch_message.envelope_json["source_refs"] == expected_source_refs
+    dispatch_result = next(
+        message
+        for message in ChatStore(tmp_path / "chat.db").list_messages(conversation_id)
+        if message.envelope_type == "dispatch_result"
+    )
+    assert dispatch_result.envelope_json["dispatch_queue_entry_id"] == entry.entry_id
+    assert dispatch_result.envelope_json["proposal_id"] == entry.proposal_id
+    assert dispatch_result.envelope_json["resolution_id"] == entry.resolution_id
+    assert dispatch_result.envelope_json["collaboration_run_id"] == entry.collaboration_run_id
+    assert dispatch_result.envelope_json["artifact_ref"] == entry.artifact_ref
+    assert dispatch_result.envelope_json["dispatch_evidence_ref"] == (
+        f"mcp_writeback:{context['inbox_item']['id']}"
+    )
+    assert dispatch_result.envelope_json["source_refs"] == expected_source_refs
+    assert dispatch_result.envelope_json["proof_boundary"] == (
+        "dispatch_acknowledgement_not_execution_proof"
+    )
     assert "Source refs:" in prompt
     assert "These refs identify xmuse authority boundaries; they are not execution proof." in prompt
     for source_ref in expected_source_refs:
