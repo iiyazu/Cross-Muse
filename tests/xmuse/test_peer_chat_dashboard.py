@@ -10,6 +10,10 @@ from xmuse_core.agents.god_session_registry import GodSessionRegistry
 from xmuse_core.chat.acceptance_spine import AcceptanceSpineStore
 from xmuse_core.chat.collaboration_store import ChatCollaborationStore
 from xmuse_core.chat.dispatch_queue import ChatDispatchQueueStore
+from xmuse_core.chat.groupchat_worklist import (
+    GroupchatWorklistScheduler,
+    GroupchatWorklistStore,
+)
 from xmuse_core.chat.inbox_store import ChatInboxStore
 from xmuse_core.chat.participant_store import ParticipantStore
 from xmuse_core.chat.peer_service import PeerChatService
@@ -441,6 +445,8 @@ def test_dashboard_peer_chat_ux_projection_is_frontend_read_model(
         "chat.db:messages",
         "chat.db:participants",
         "chat.db:chat_inbox_items",
+        "chat.db:groupchat_chains",
+        "chat.db:groupchat_worklist",
         "chat.db:proposals",
         "chat.db:chat_dispatch_queue",
         "chat.db:collaboration_runs",
@@ -596,6 +602,90 @@ def test_dashboard_peer_chat_ux_projection_exposes_pending_final_action_hold(
             "github_gate_evidence_ref": None,
             "github_gate_gap_ref": None,
         },
+    }
+
+
+def test_dashboard_peer_chat_ux_projection_exposes_groupchat_worklist_wait_boundary(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "chat.db"
+    chat = ChatStore(db)
+    conv = chat.create_conversation("Dispatch wait UX")
+    architect = ParticipantStore(db).add(
+        conversation_id=conv.id,
+        role="architect",
+        display_name="Architect GOD",
+        cli_kind="codex",
+        model="gpt-5.4",
+    )
+    root = chat.add_message(
+        conv.id,
+        author="Human",
+        role="human",
+        content="Run the approved dispatch.",
+    )
+    store = GroupchatWorklistStore(db)
+    chain = store.create_chain(conversation_id=conv.id, root_message_id=root.id)
+    dispatch_ack = chat.add_message(
+        conv.id,
+        author="execute",
+        role="assistant",
+        content="DISPATCH_ACKNOWLEDGED dispatch-a",
+        envelope_type="dispatch_result",
+        envelope_json={
+            "type": "dispatch_result",
+            "authority": "chat.db/messages/dispatch_result",
+            "dispatch_queue_entry_id": "dispatch-a",
+            "proposal_id": "proposal-a",
+            "resolution_id": "resolution-a",
+            "proof_boundary": "dispatch_acknowledgement_not_execution_proof",
+            "source_refs": [
+                "chat_dispatch_queue:dispatch-a",
+                "proposal:proposal-a",
+                "resolution:resolution-a",
+            ],
+        },
+    )
+    scheduler = GroupchatWorklistScheduler(db_path=db, scheduler_id="groupchat-a1")
+    assert scheduler.scan_routes_once(chain_id=chain.chain_id) == []
+    routed = scheduler.scan_routes_once(chain_id=chain.chain_id)
+    assert len(routed) == 1
+
+    response = TestClient(create_app(tmp_path)).get(
+        f"/api/dashboard/peer-chat/conversations/{conv.id}/ux-projection"
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert "chat.db:groupchat_worklist" in payload["source_authority"]
+    worklist_by_id = {item["id"]: item for item in payload["worklist"]}
+    item = worklist_by_id[routed[0].item_id]
+    assert item["kind"] == "groupchat_worklist_item"
+    assert item["status"] == "blocked"
+    assert item["target_role"] == architect.role
+    assert item["target_participant_id"] == architect.participant_id
+    assert item["next_action"] == "wait_for_execution_evidence_or_final_action_writeback"
+    assert item["detail_kind"] == "groupchat_worklist_item"
+    assert item["source_refs"] == [
+        f"chat:message:{dispatch_ack.id}",
+        "chat_dispatch_queue:dispatch-a",
+        "proposal:proposal-a",
+        "resolution:resolution-a",
+    ]
+    assert item["authority_boundary"] == {
+        "producer": "chat.db:groupchat_worklist",
+        "consumer": "frontend.peer_chat_ux_projection",
+        "condition": "read_only_projection",
+        "proof_boundary": "dispatch_acknowledgement_not_execution_proof",
+    }
+    assert item["compact_detail"] == {
+        "chain_id": chain.chain_id,
+        "source_message_id": dispatch_ack.id,
+        "route_kind": "handoff",
+        "depth": 1,
+        "terminal_reason": "dispatch_acknowledgement_not_execution_proof",
+        "proof_boundary": "dispatch_acknowledgement_not_execution_proof",
+        "next_authority_boundary": "execution_evidence_or_final_action_writeback",
     }
 
 

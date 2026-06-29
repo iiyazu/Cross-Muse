@@ -12,6 +12,8 @@ SOURCE_AUTHORITY = [
     "chat.db:messages",
     "chat.db:participants",
     "chat.db:chat_inbox_items",
+    "chat.db:groupchat_chains",
+    "chat.db:groupchat_worklist",
     "chat.db:proposals",
     "chat.db:chat_dispatch_queue",
     "chat.db:collaboration_runs",
@@ -42,6 +44,7 @@ def build_peer_chat_ux_projection(
             raise KeyError(f"conversation not found: {conversation_id}")
         participants = _participants(conn, conversation_id)
         inbox_items = _inbox_items(conn, conversation_id)
+        groupchat_worklist = _groupchat_worklist_items(conn, conversation_id)
         messages = _messages(conn, conversation_id)
         proposals = _proposals(conn, conversation_id)
         dispatch_entries = _dispatch_entries(conn, conversation_id)
@@ -78,6 +81,7 @@ def build_peer_chat_ux_projection(
     worklist = _worklist_items(
         conversation_id=conversation_id,
         inbox_items=inbox_items,
+        groupchat_worklist=groupchat_worklist,
         dispatch_entries=dispatch_entries,
         blockers=blockers,
         final_action_holds=final_action_holds["items"],
@@ -100,6 +104,16 @@ def build_peer_chat_ux_projection(
             inbox_items=inbox_items,
             sessions=sessions,
         ),
+        "groupchat_worklist": {
+            "source_authority": [
+                "chat.db:groupchat_chains",
+                "chat.db:groupchat_worklist",
+                "chat.db:messages",
+            ],
+            "projection_only": True,
+            "terminal": len(groupchat_worklist),
+            "items": groupchat_worklist,
+        },
         "worklist": worklist,
         "artifacts": {
             "total": len(proposals),
@@ -241,6 +255,54 @@ def _inbox_items(conn: sqlite3.Connection, conversation_id: str) -> list[dict[st
         }
         for row in rows
     ]
+
+
+def _groupchat_worklist_items(
+    conn: sqlite3.Connection,
+    conversation_id: str,
+) -> list[dict[str, Any]]:
+    rows = _fetch_all(
+        conn,
+        """
+        select w.item_id, w.conversation_id, w.chain_id, w.policy_id,
+               w.source_message_id, w.source_participant_id, w.target_participant_id,
+               w.target_role, w.route_kind, w.status, w.depth, w.dedup_key,
+               w.inbox_item_id, w.claim_owner, w.claimed_at, w.completed_message_id,
+               w.terminal_reason, w.created_at, w.updated_at,
+               m.envelope_json as source_envelope_json
+        from groupchat_worklist w
+        left join messages m
+          on m.id = w.source_message_id
+         and m.conversation_id = w.conversation_id
+        where w.conversation_id = ?
+          and w.status in ('blocked', 'failed', 'canceled')
+        order by w.created_at asc, w.rowid asc
+        limit 100
+        """,
+        (conversation_id,),
+    )
+    items: list[dict[str, Any]] = []
+    for row in rows:
+        item = dict(row)
+        source_envelope = _json_object(item.pop("source_envelope_json", None))
+        proof_boundary = _groupchat_worklist_proof_boundary(
+            item.get("terminal_reason"),
+            source_envelope,
+        )
+        source_refs = _groupchat_worklist_source_refs(
+            item.get("source_message_id"),
+            source_envelope,
+        )
+        item["source_refs"] = source_refs
+        item["proof_boundary"] = proof_boundary
+        item["next_authority_boundary"] = _next_groupchat_worklist_authority_boundary(
+            item.get("terminal_reason")
+        )
+        item["authority_boundary"] = _groupchat_worklist_authority_boundary(
+            proof_boundary=proof_boundary
+        )
+        items.append(item)
+    return items
 
 
 def _proposals(conn: sqlite3.Connection, conversation_id: str) -> list[dict[str, Any]]:
@@ -1497,6 +1559,7 @@ def _worklist_items(
     *,
     conversation_id: str,
     inbox_items: list[dict[str, Any]],
+    groupchat_worklist: list[dict[str, Any]],
     dispatch_entries: list[dict[str, Any]],
     blockers: list[dict[str, Any]],
     final_action_holds: list[dict[str, Any]],
@@ -1521,6 +1584,32 @@ def _worklist_items(
                 "compact_detail": {
                     "source_message_id": item.get("source_message_id"),
                     "failure_reason": item.get("failure_reason"),
+                },
+            }
+        )
+    for item in groupchat_worklist:
+        items.append(
+            {
+                "kind": "groupchat_worklist_item",
+                "id": item.get("item_id"),
+                "status": item.get("status"),
+                "target_role": item.get("target_role"),
+                "target_participant_id": item.get("target_participant_id"),
+                "created_at": item.get("created_at"),
+                "updated_at": item.get("updated_at"),
+                "next_action": _next_action_for_groupchat_worklist(item),
+                "detail_kind": "groupchat_worklist_item",
+                "detail_api_href": links["inspector_api_href"],
+                "source_refs": list(item.get("source_refs") or []),
+                "authority_boundary": item.get("authority_boundary"),
+                "compact_detail": {
+                    "chain_id": item.get("chain_id"),
+                    "source_message_id": item.get("source_message_id"),
+                    "route_kind": item.get("route_kind"),
+                    "depth": item.get("depth"),
+                    "terminal_reason": item.get("terminal_reason"),
+                    "proof_boundary": item.get("proof_boundary"),
+                    "next_authority_boundary": item.get("next_authority_boundary"),
                 },
             }
         )
@@ -2173,6 +2262,19 @@ def _next_action_for_final_action(hold: dict[str, Any]) -> str:
     return "resolve_final_action"
 
 
+def _next_action_for_groupchat_worklist(item: dict[str, Any]) -> str:
+    terminal_reason = _projection_text(item.get("terminal_reason"))
+    if terminal_reason == "dispatch_acknowledgement_not_execution_proof":
+        return "wait_for_execution_evidence_or_final_action_writeback"
+    if terminal_reason == "final_action_github_gate_gap":
+        return "verify_github_gate_and_resolve_final_action"
+    if terminal_reason == "callback_missing":
+        return "repair_structured_callback_writeback"
+    if item.get("status") in {"blocked", "failed", "canceled"}:
+        return "inspect_groupchat_worklist_terminal"
+    return "none"
+
+
 def _session_api_href(session: dict[str, Any] | None) -> str | None:
     if not isinstance(session, dict):
         return None
@@ -2231,6 +2333,50 @@ def _dispatch_sidecar_continuity(source_refs: list[str]) -> dict[str, Any]:
         "projection_only": True,
         "handoff_state": "contract_available",
         "source_refs": list(source_refs),
+    }
+
+
+def _groupchat_worklist_source_refs(
+    source_message_id: Any,
+    source_envelope: dict[str, Any],
+) -> list[str]:
+    refs = []
+    if isinstance(source_message_id, str) and source_message_id:
+        refs.append(f"chat:message:{source_message_id}")
+    refs.extend(_string_items(source_envelope.get("source_refs")))
+    return _dedupe(refs)
+
+
+def _groupchat_worklist_proof_boundary(
+    terminal_reason: Any,
+    source_envelope: dict[str, Any],
+) -> str:
+    proof_boundary = _projection_text(source_envelope.get("proof_boundary"))
+    if proof_boundary is not None:
+        return proof_boundary
+    reason = _projection_text(terminal_reason)
+    if reason is not None:
+        return reason
+    return "groupchat_worklist_terminal_boundary"
+
+
+def _next_groupchat_worklist_authority_boundary(terminal_reason: Any) -> str:
+    reason = _projection_text(terminal_reason)
+    if reason == "dispatch_acknowledgement_not_execution_proof":
+        return "execution_evidence_or_final_action_writeback"
+    if reason == "final_action_github_gate_gap":
+        return "github_gate_evidence_or_manual_gap_resolution"
+    if reason == "callback_missing":
+        return "structured_callback_writeback"
+    return "operator_or_upstream_authority_resolution"
+
+
+def _groupchat_worklist_authority_boundary(*, proof_boundary: str) -> dict[str, str]:
+    return {
+        "producer": "chat.db:groupchat_worklist",
+        "consumer": "frontend.peer_chat_ux_projection",
+        "condition": "read_only_projection",
+        "proof_boundary": proof_boundary,
     }
 
 
