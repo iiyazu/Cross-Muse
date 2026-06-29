@@ -8,6 +8,10 @@ from xmuse.chat_api import create_app
 from xmuse_core.chat.acceptance_spine import AcceptanceSpineStatus, AcceptanceSpineStore
 from xmuse_core.chat.collaboration_store import ChatCollaborationStore
 from xmuse_core.chat.dispatch_queue import ChatDispatchQueueStore
+from xmuse_core.chat.groupchat_worklist import (
+    GroupchatWorklistScheduler,
+    GroupchatWorklistStore,
+)
 from xmuse_core.chat.inbox_store import ChatInboxStore
 from xmuse_core.chat.participant_store import ParticipantStore
 from xmuse_core.chat.peer_service import PeerChatService
@@ -487,6 +491,136 @@ def test_collaboration_proposal_approval_rejects_malformed_review_verdict(
     assert ChatStore(tmp_path / "chat.db").list_resolutions(conversation_id) == []
 
 
+def test_groupchat_proposal_approval_requires_review_and_critic_clearance(tmp_path) -> None:
+    client = TestClient(create_app(tmp_path))
+    (
+        service,
+        conversation_id,
+        participants,
+        sessions,
+        proposal,
+        review_item,
+    ) = _groupchat_sourced_proposal_with_review_trigger(tmp_path)
+
+    response = client.post(
+        f"/api/chat/proposals/{proposal['proposal']['id']}/approve",
+        json={
+            "approved_by": ["human"],
+            "approval_mode": "manual",
+            "goal_summary": "Groupchat decision needs review and critic clearance.",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "proposal_review_pending"
+
+    service.post_god_message(
+        registry_path=tmp_path / "god_sessions.json",
+        conversation_id=conversation_id,
+        participant_id=participants["review"],
+        god_session_id=sessions["review"],
+        client_request_id="groupchat-review-dispatch-allowed",
+        content="Review clears the bounded groupchat decision.",
+        envelope=_review_verdict_envelope(
+            review_item=review_item,
+            proposal=proposal,
+            decision="dispatch_allowed",
+            summary="Review clears the bounded groupchat decision.",
+        ),
+        reply_to_inbox_item_id=review_item.id,
+    )
+
+    response = client.post(
+        f"/api/chat/proposals/{proposal['proposal']['id']}/approve",
+        json={
+            "approved_by": ["human"],
+            "approval_mode": "manual",
+            "goal_summary": "Groupchat decision still needs critic clearance.",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "proposal_critic_missing"
+
+    service.post_god_message(
+        registry_path=tmp_path / "god_sessions.json",
+        conversation_id=conversation_id,
+        participant_id=participants["critic"],
+        god_session_id=sessions["critic"],
+        client_request_id="groupchat-critic-clearance",
+        content="Critic clearance: no blocking objection remains.",
+        envelope=_groupchat_critic_verdict_envelope(
+            proposal=proposal,
+            decision="clearance",
+            summary="No blocking objection remains.",
+        ),
+    )
+
+    response = client.post(
+        f"/api/chat/proposals/{proposal['proposal']['id']}/approve",
+        json={
+            "approved_by": ["human"],
+            "approval_mode": "manual",
+            "goal_summary": "Groupchat decision has review and critic clearance.",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+
+
+def test_groupchat_proposal_approval_blocks_critic_objection(tmp_path) -> None:
+    client = TestClient(create_app(tmp_path))
+    (
+        service,
+        conversation_id,
+        participants,
+        sessions,
+        proposal,
+        review_item,
+    ) = _groupchat_sourced_proposal_with_review_trigger(tmp_path)
+    service.post_god_message(
+        registry_path=tmp_path / "god_sessions.json",
+        conversation_id=conversation_id,
+        participant_id=participants["review"],
+        god_session_id=sessions["review"],
+        client_request_id="groupchat-review-before-critic-block",
+        content="Review clears dispatch shape; critic still owns objection gate.",
+        envelope=_review_verdict_envelope(
+            review_item=review_item,
+            proposal=proposal,
+            decision="dispatch_allowed",
+            summary="Review clears dispatch shape; critic still owns objection gate.",
+        ),
+        reply_to_inbox_item_id=review_item.id,
+    )
+    service.post_god_message(
+        registry_path=tmp_path / "god_sessions.json",
+        conversation_id=conversation_id,
+        participant_id=participants["critic"],
+        god_session_id=sessions["critic"],
+        client_request_id="groupchat-critic-blocks",
+        content="Blocking objection: the proposal lacks a durable rollback boundary.",
+        envelope=_groupchat_critic_verdict_envelope(
+            proposal=proposal,
+            decision="blocked",
+            summary="The proposal lacks a durable rollback boundary.",
+        ),
+    )
+
+    response = client.post(
+        f"/api/chat/proposals/{proposal['proposal']['id']}/approve",
+        json={
+            "approved_by": ["human"],
+            "approval_mode": "manual",
+            "goal_summary": "Blocked critic objection cannot approve.",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "proposal_critic_blocked"
+    assert ChatStore(tmp_path / "chat.db").list_resolutions(conversation_id) == []
+
+
 def test_a2a_review_trigger_verdict_only_proposal_approval_enqueues_dispatch(
     tmp_path,
 ) -> None:
@@ -639,6 +773,92 @@ def _review_verdict_envelope(
             f"inbox:{review_item.id}",
             f"proposal:{proposal['proposal']['id']}",
         ],
+    )
+
+
+def _groupchat_critic_verdict_envelope(
+    *,
+    proposal,
+    decision: str,
+    summary: str,
+):
+    return {
+        "schema_version": 1,
+        "type": "groupchat_critic_verdict",
+        "proposal_id": proposal["proposal"]["id"],
+        "decision": decision,
+        "summary": summary,
+        "evidence_refs": [f"proposal:{proposal['proposal']['id']}"],
+    }
+
+
+def _groupchat_sourced_proposal_with_review_trigger(tmp_path):
+    service = PeerChatService(tmp_path / "chat.db")
+    created = service.create_conversation(
+        title="Groupchat Critic Gate",
+        preset_id="architect-review-critic",
+    )
+    conversation_id = created["conversation"]["id"]
+    participants = {
+        participant["role"]: participant["participant_id"]
+        for participant in created["participants"]
+    }
+    sessions = {
+        session["role"]: session["god_session_id"] for session in created["participant_sessions"]
+    }
+    intake = service.post_human_message(
+        conversation_id=conversation_id,
+        author="human-1",
+        content="Discuss a groupchat decision and propose the next lane.",
+        client_request_id="groupchat-critic-gate-intake",
+    )
+    worklist = GroupchatWorklistStore(tmp_path / "chat.db")
+    chain = worklist.create_chain(
+        conversation_id=conversation_id,
+        root_message_id=intake.message.id,
+    )
+    route = worklist.enqueue_route(
+        chain_id=chain.chain_id,
+        source_message_id=intake.message.id,
+        target_participant_id=participants["architect"],
+        route_kind="router",
+        depth=0,
+    )
+    linked = GroupchatWorklistScheduler(
+        db_path=tmp_path / "chat.db",
+        scheduler_id="groupchat-a2-test",
+    ).claim_and_link_one(chain_id=chain.chain_id)
+    assert linked is not None
+    assert linked.inbox_item_id is not None
+    proposal = service.emit_proposal(
+        registry_path=tmp_path / "god_sessions.json",
+        conversation_id=conversation_id,
+        participant_id=participants["architect"],
+        god_session_id=sessions["architect"],
+        client_request_id="groupchat-critic-gate-proposal",
+        summary="Groupchat proposal needs review and critic gates",
+        lanes=[
+            {
+                "feature_id": "groupchat-a2-critic-gate",
+                "prompt": "Require review verdict and critic clearance before approval.",
+                "depends_on": [],
+                "capabilities": ["code"],
+            }
+        ],
+        references=[f"intake_message:{intake.message.id}"],
+        reply_to_inbox_item_id=linked.inbox_item_id,
+    )
+    assert f"groupchat_chain:{chain.chain_id}" in proposal["proposal"]["references"]
+    assert f"groupchat_worklist:{route.item_id}" in proposal["proposal"]["references"]
+    review_items = _review_inbox_items(tmp_path, conversation_id)
+    assert len(review_items) == 1
+    return (
+        service,
+        conversation_id,
+        participants,
+        sessions,
+        proposal,
+        review_items[0],
     )
 
 
