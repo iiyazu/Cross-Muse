@@ -308,6 +308,10 @@ def _dispatch_artifact_context(
 
 
 def _dispatch_source_refs(entry: ChatDispatchQueueEntry) -> list[str]:
+    return dispatch_sidecar_handoff_source_refs(entry)
+
+
+def dispatch_sidecar_handoff_source_refs(entry: ChatDispatchQueueEntry) -> list[str]:
     refs = [f"chat_dispatch_queue:{entry.entry_id}"]
     if entry.proposal_id:
         refs.append(f"proposal:{entry.proposal_id}")
@@ -399,6 +403,10 @@ def _compact_json(value: dict[str, object], *, max_chars: int = 8000) -> str:
 
 
 def _sidecar_handoff_supporting_context(result: dict[str, Any]) -> dict[str, Any]:
+    return sidecar_handoff_supporting_context(result)
+
+
+def sidecar_handoff_supporting_context(result: dict[str, Any]) -> dict[str, Any]:
     continuity_refs = _dedupe_refs(_string_items(result.get("continuity_refs")))
     context = {
         "status": _optional_text(result.get("status")) or "unknown",

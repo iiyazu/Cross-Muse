@@ -11,6 +11,9 @@ import pytest
 from xmuse_core.chat.acceptance_spine import AcceptanceSpineStore
 from xmuse_core.chat.dispatch_queue import ChatDispatchQueueStore
 from xmuse_core.chat.store import ChatStore
+from xmuse_core.chat.stream_store import PeerTurnLatencyTraceStore
+from xmuse_core.integrations.memoryos_client import FakeMemoryOSClient
+from xmuse_core.integrations.memoryos_namespace import conversation_namespace
 from xmuse_core.platform.execution.github_ops import (
     GitHubMainCiEvidence,
     GitHubServerSideTruthEvidence,
@@ -1977,6 +1980,35 @@ def test_runner_rejects_main_ci_capture_without_live_capture() -> None:
         platform_runner.validate_args(args)
 
 
+def test_runner_parser_supports_dispatch_sidecar_handoff_capture() -> None:
+    args = platform_runner.main_arg_parser().parse_args(
+        [
+            "--capture-dispatch-sidecar-handoff",
+            "--dispatch-entry-id",
+            "dispatch:conv:res:execute",
+            "--peer-chat-memoryos-url",
+            "http://memoryos.test",
+        ]
+    )
+
+    platform_runner.validate_args(args)
+    assert args.capture_dispatch_sidecar_handoff is True
+    assert args.dispatch_entry_id == "dispatch:conv:res:execute"
+
+
+def test_runner_rejects_dispatch_sidecar_handoff_capture_without_url() -> None:
+    args = platform_runner.main_arg_parser().parse_args(
+        [
+            "--capture-dispatch-sidecar-handoff",
+            "--dispatch-entry-id",
+            "dispatch:conv:res:execute",
+        ]
+    )
+
+    with pytest.raises(SystemExit):
+        platform_runner.validate_args(args)
+
+
 def test_runner_rejects_live_capture_without_internal_review_artifact() -> None:
     args = platform_runner.main_arg_parser().parse_args(
         [
@@ -2332,6 +2364,84 @@ def test_capture_existing_final_action_main_ci_updates_accepted_gate_record(
     assert after["items"][0]["main_ci"]["head_sha"] == (
         after["items"][0]["evidence"]["merge_commit_sha"]
     )
+
+
+@pytest.mark.asyncio
+async def test_capture_existing_dispatch_sidecar_handoff_records_continuity(
+    tmp_path: Path,
+) -> None:
+    xmuse_root = tmp_path / "runtime"
+    xmuse_root.mkdir()
+    db = xmuse_root / "chat.db"
+    chat = ChatStore(db)
+    conv = chat.create_conversation("Dispatch sidecar handoff")
+    intake = chat.add_message(conv.id, "Human", "human", "Run sidecar handoff")
+    proposal = chat.create_proposal(
+        conversation_id=conv.id,
+        author="Architect GOD",
+        proposal_type="lane_graph",
+        content='{"summary":"sidecar handoff"}',
+        references=[intake.id],
+    )
+    resolution = chat.approve_proposal(
+        proposal.id,
+        approved_by=["human"],
+        approval_mode="human",
+        goal_summary="Run sidecar handoff",
+    )
+    dispatch = ChatDispatchQueueStore(db).enqueue_agent_auto_dispatch(
+        conversation_id=conv.id,
+        proposal_id=proposal.id,
+        resolution_id=resolution.id,
+        collaboration_run_id="collab-sidecar",
+        artifact_ref="artifact:sidecar-lane-graph",
+        gate_refs=["review_trigger_verdict:sidecar"],
+    )
+    memoryos = FakeMemoryOSClient()
+
+    result = await platform_runner.capture_existing_dispatch_sidecar_handoff(
+        xmuse_root=xmuse_root,
+        dispatch_entry_id=dispatch.entry_id,
+        memoryos_client=memoryos,
+        actor_id="platform-runner-test",
+    )
+
+    expected_refs = [
+        f"chat_dispatch_queue:{dispatch.entry_id}",
+        f"proposal:{proposal.id}",
+        "review_trigger_verdict:sidecar",
+        f"resolution:{resolution.id}",
+        "collaboration:collab-sidecar",
+        "artifact:sidecar-lane-graph",
+    ]
+    assert result["status"] == "captured"
+    assert result["dispatch_entry_id"] == dispatch.entry_id
+    assert result["sidecar_status"] == "recorded"
+    assert result["source_refs"] == expected_refs
+    assert result["continuity_refs"] == [
+        f"memory://conversation/{conv.id}/refs/chat_dispatch_queue:{dispatch.entry_id}"
+    ]
+    pages = await memoryos.search(
+        conversation_namespace(conv.id),
+        query="dispatch handoff",
+    )
+    assert len(pages) == 1
+    assert pages[0].actor_id == "platform-runner-test"
+    assert pages[0].source_refs == expected_refs
+    traces = PeerTurnLatencyTraceStore(db).list_recent(conv.id, limit=5)
+    [trace] = traces
+    assert trace["delivery_mode"] == "memoryos_sidecar_dispatch_handoff"
+    assert trace["supporting_context"] == {
+        "memoryos_sidecar": {
+            "status": "recorded",
+            "authority": "memoryos_sidecar",
+            "proof_level": "contract",
+            "namespace_uri": f"memory://conversation/{conv.id}",
+            "degraded_reason": None,
+            "source_refs": expected_refs,
+            "continuity_refs": result["continuity_refs"],
+        }
+    }
 
 
 def test_resolve_existing_final_action_blocks_on_github_gate_gap(
