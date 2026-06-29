@@ -25,6 +25,7 @@ OPENCODE_MODEL = "opencode-go/deepseek-v4-flash"
 CODEX_REVIEW_MODEL = "gpt-5.4"
 DEFAULT_PEER_CHAT_POST_WRITEBACK_GRACE_S = 8.0
 DEFAULT_PEER_CHAT_RESPONSE_WAIT_S = 900.0
+SUPPORTED_EXPECTED_STATUSES = frozenset({"awaiting_final_action", "gate_failed"})
 
 
 def main() -> int:
@@ -248,7 +249,17 @@ def _parse_args() -> argparse.Namespace:
         default=None,
         help=(
             "optional JSON array of lane specs; each item requires feature_id, "
-            "lane_kind, target_path, and expected_content"
+            "lane_kind, target_path, and expected_content; expected_status "
+            "defaults to awaiting_final_action"
+        ),
+    )
+    parser.add_argument(
+        "--expected-status",
+        choices=sorted(SUPPORTED_EXPECTED_STATUSES),
+        default="awaiting_final_action",
+        help=(
+            "expected terminal lane status for the single-lane CLI; "
+            "multi-lane runs use each JSON lane spec's expected_status"
         ),
     )
     parser.add_argument("--chat-port", type=int, default=None)
@@ -320,6 +331,10 @@ def _lane_specs_from_args(args: argparse.Namespace) -> list[dict[str, str]]:
                 "lane_kind": args.lane_kind,
                 "target_path": target["path"],
                 "expected_content": target["expected_content"],
+                "expected_status": _expected_status_from_value(
+                    getattr(args, "expected_status", "awaiting_final_action"),
+                    label=args.feature_id,
+                ),
             }
         ]
     try:
@@ -354,6 +369,10 @@ def _lane_specs_from_args(args: argparse.Namespace) -> list[dict[str, str]]:
             raise ValueError(f"duplicate lane feature_id: {feature_id}")
         if target["path"] in seen_target_paths:
             raise ValueError(f"duplicate lane target_path: {target['path']}")
+        expected_status = _expected_status_from_value(
+            item.get("expected_status", "awaiting_final_action"),
+            label=feature_id,
+        )
         seen_feature_ids.add(feature_id)
         seen_target_paths.add(target["path"])
         specs.append(
@@ -362,9 +381,23 @@ def _lane_specs_from_args(args: argparse.Namespace) -> list[dict[str, str]]:
                 "lane_kind": lane_kind,
                 "target_path": target["path"],
                 "expected_content": target["expected_content"],
+                "expected_status": expected_status,
             }
         )
     return specs
+
+
+def _expected_status_from_value(value: object, *, label: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"lane spec {label} expected_status must be a non-empty string")
+    expected_status = value.strip()
+    if expected_status not in SUPPORTED_EXPECTED_STATUSES:
+        supported = ", ".join(sorted(SUPPORTED_EXPECTED_STATUSES))
+        raise ValueError(
+            f"lane spec {label} unsupported expected_status {expected_status!r}; "
+            f"supported: {supported}"
+        )
+    return expected_status
 
 
 def _target_spec(
@@ -668,7 +701,11 @@ def _sentinel_demand(
             "target file must be the lane item's target_path. The complete file "
             "content after execution must be exactly the text inside that "
             "lane item's <expected_content> block, followed by one trailing "
-            "newline. Do not combine lane artifacts into one file. "
+            "newline. A lane with expected_status=\"gate_failed\" is an "
+            "intentional bounded failure-isolation lane: it must still create "
+            "the exact artifact, but the gate is expected to fail and must not "
+            "fabricate a review verdict or final-action hold for that lane. "
+            "Do not combine lane artifacts into one file. "
             "<lane_specs>\n"
             f"{spec_text}\n"
             "</lane_specs>\n"
@@ -717,7 +754,9 @@ def _lane_spec_demand_block(spec: dict[str, str]) -> str:
     return (
         f"<lane feature_id=\"{spec['feature_id']}\" "
         f"lane_kind=\"{spec['lane_kind']}\" "
-        f"target_path=\"{spec['target_path']}\" depends_on=\"\">\n"
+        f"target_path=\"{spec['target_path']}\" "
+        f"expected_status=\"{spec.get('expected_status', 'awaiting_final_action')}\" "
+        "depends_on=\"\">\n"
         "<expected_content>\n"
         f"{spec['expected_content']}\n"
         "</expected_content>\n"
@@ -921,7 +960,7 @@ def _build_run_snapshot(
         raise ValueError("lane_specs and lanes must have the same length")
     if len(lane_specs) == 1:
         spec = lane_specs[0]
-        return _build_snapshot(
+        snapshot = _build_snapshot(
             run_root=run_root,
             conversation_id=conversation_id,
             feature_id=spec["feature_id"],
@@ -932,17 +971,22 @@ def _build_run_snapshot(
             lane=lanes[0],
             provider_readiness=provider_readiness,
         )
+        snapshot["expected_status"] = spec.get("expected_status", "awaiting_final_action")
+        return snapshot
     lane_snapshots = [
-        _build_snapshot(
-            run_root=run_root,
-            conversation_id=conversation_id,
-            feature_id=spec["feature_id"],
-            lane_kind=spec["lane_kind"],
-            expected_target_path=spec["target_path"],
-            expected_target_content=spec["expected_content"],
-            proposal=proposal,
-            lane=lane,
-            provider_readiness=provider_readiness,
+        _snapshot_with_expected_status(
+            _build_snapshot(
+                run_root=run_root,
+                conversation_id=conversation_id,
+                feature_id=spec["feature_id"],
+                lane_kind=spec["lane_kind"],
+                expected_target_path=spec["target_path"],
+                expected_target_content=spec["expected_content"],
+                proposal=proposal,
+                lane=lane,
+                provider_readiness=provider_readiness,
+            ),
+            expected_status=spec.get("expected_status", "awaiting_final_action"),
         )
         for spec, lane in zip(lane_specs, lanes, strict=True)
     ]
@@ -967,6 +1011,15 @@ def _build_run_snapshot(
         ].get("fallback_reason"),
         "target_paths": [spec["target_path"] for spec in lane_specs],
     }
+
+
+def _snapshot_with_expected_status(
+    snapshot: dict[str, Any],
+    *,
+    expected_status: str,
+) -> dict[str, Any]:
+    snapshot["expected_status"] = expected_status
+    return snapshot
 
 
 def _conversation_proposals(db_path: Path, conversation_id: str) -> list[dict[str, Any]]:
@@ -1124,11 +1177,32 @@ def _success_checks(snapshot: dict[str, Any]) -> dict[str, bool]:
         else {}
     )
     expected_fallback = review_provider_selection.get("fallback_reason")
-    return {
+    expected_status = str(snapshot.get("expected_status") or "awaiting_final_action")
+    common_checks = {
         "single_related_lane_graph_proposal": isinstance(related_proposals, list)
         and len(related_proposals) == 1,
         "approved_proposal_accepted": proposal.get("status") == "accepted"
         and proposal.get("accepted_resolution_id") == lane.get("resolution_id"),
+        "lane_reached_expected_status": lane.get("status") == expected_status,
+        "isolated_artifact_matches": isinstance(artifact, dict)
+        and artifact.get("matches_expected") is True,
+        "proposal_has_no_review_runtime": snapshot.get("proposal_has_review_runtime")
+        is False,
+    }
+    if expected_status == "gate_failed":
+        return common_checks | {
+            "expected_gate_failed": lane.get("status") == "gate_failed"
+            and lane.get("gate_passed") is False
+            and lane.get("failure_reason") == "gate_failed",
+            "execution_peer_handoff_not_degraded": lane.get("peer_delivery_mode")
+            == "configured_peer"
+            and lane.get("peer_result_status") not in {"delivery_failed", "degraded"}
+            and lane.get("peer_degraded_reason") is None,
+            "no_review_or_final_action_for_expected_gate_failure": review_task is None
+            and review_verdict is None
+            and final_action_hold is None,
+        }
+    return common_checks | {
         "lane_awaiting_final_action": lane.get("status") == "awaiting_final_action",
         "gate_passed": lane.get("gate_passed") is True,
         "execution_peer_handoff_not_degraded": lane.get("peer_delivery_mode")
@@ -1136,8 +1210,6 @@ def _success_checks(snapshot: dict[str, Any]) -> dict[str, bool]:
         and lane.get("peer_result_status") not in {"delivery_failed", "degraded"}
         and lane.get("peer_degraded_reason") is None,
         "isolated_note_matches": isinstance(artifact, dict)
-        and artifact.get("matches_expected") is True,
-        "isolated_artifact_matches": isinstance(artifact, dict)
         and artifact.get("matches_expected") is True,
         "selected_review_peer_recorded": isinstance(selected_review_provider, str)
         and lane.get("review_peer_cli_kind") == selected_review_provider
@@ -1162,8 +1234,6 @@ def _success_checks(snapshot: dict[str, Any]) -> dict[str, bool]:
         ),
         "final_action_hold_pending": isinstance(final_action_hold, dict)
         and final_action_hold.get("status") == "pending",
-        "proposal_has_no_review_runtime": snapshot.get("proposal_has_review_runtime")
-        is False,
     }
 
 
@@ -1187,7 +1257,12 @@ def _multi_success_checks(snapshot: dict[str, Any]) -> dict[str, bool]:
     target_paths = [
         item.get("target_path") for item in lane_snapshots if isinstance(item, dict)
     ]
-    return {
+    expected_statuses = [
+        item.get("expected_status", "awaiting_final_action")
+        for item in lane_snapshots
+        if isinstance(item, dict)
+    ]
+    common_checks = {
         "has_lane_snapshots": len(per_lane_checks) == len(lane_snapshots),
         "all_single_related_lane_graph_proposal": all(
             checks.get("single_related_lane_graph_proposal") is True
@@ -1197,6 +1272,46 @@ def _multi_success_checks(snapshot: dict[str, Any]) -> dict[str, bool]:
             checks.get("approved_proposal_accepted") is True
             for checks in per_lane_checks
         ),
+        "all_expected_lane_statuses": all(
+            checks.get("lane_reached_expected_status") is True
+            for checks in per_lane_checks
+        ),
+        "all_expected_artifacts_match": all(
+            checks.get("isolated_artifact_matches") is True
+            for checks in per_lane_checks
+        ),
+        "proposal_has_no_review_runtime": snapshot.get("proposal_has_review_runtime")
+        is False,
+        "distinct_feature_ids": len(set(feature_ids)) == len(feature_ids),
+        "distinct_target_paths": len(set(target_paths)) == len(target_paths),
+        "distinct_worktrees": len(set(worktrees)) == len(worktrees),
+    }
+    if any(status != "awaiting_final_action" for status in expected_statuses):
+        return common_checks | {
+            "all_success_lanes_completed": all(
+                checks.get("lane_awaiting_final_action", True) is True
+                and checks.get("gate_passed", True) is True
+                and checks.get("review_verdict_finalized", True) is True
+                and checks.get("review_task_verdict_emitted", True) is True
+                and checks.get("final_action_hold_pending", True) is True
+                for checks in per_lane_checks
+            ),
+            "all_expected_gate_failures_reported": all(
+                checks.get("expected_gate_failed", True) is True
+                for checks in per_lane_checks
+            ),
+            "all_expected_gate_failures_skip_review_and_final_action": all(
+                checks.get("no_review_or_final_action_for_expected_gate_failure", True)
+                is True
+                for checks in per_lane_checks
+            ),
+            "all_execution_peer_handoffs_not_degraded": all(
+                checks.get("execution_peer_handoff_not_degraded") is True
+                for checks in per_lane_checks
+            ),
+        }
+    return {
+        **common_checks,
         "all_lanes_awaiting_final_action": all(
             checks.get("lane_awaiting_final_action") is True
             for checks in per_lane_checks
@@ -1228,11 +1343,6 @@ def _multi_success_checks(snapshot: dict[str, Any]) -> dict[str, bool]:
             checks.get("review_authority_not_stdout_fallback") is True
             for checks in per_lane_checks
         ),
-        "proposal_has_no_review_runtime": snapshot.get("proposal_has_review_runtime")
-        is False,
-        "distinct_feature_ids": len(set(feature_ids)) == len(feature_ids),
-        "distinct_target_paths": len(set(target_paths)) == len(target_paths),
-        "distinct_worktrees": len(set(worktrees)) == len(worktrees),
     }
 
 

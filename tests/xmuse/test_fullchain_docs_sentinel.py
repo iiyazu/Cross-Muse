@@ -128,6 +128,7 @@ def test_main_writes_expected_note_content_into_command_artifacts(
             "lane_kind": "docs",
             "target_path": f"docs/xmuse/{feature_id}.md",
             "expected_content": expected_note_content,
+            "expected_status": "awaiting_final_action",
         }
     ]
     assert commands_json["lane_kind"] == "docs"
@@ -212,6 +213,7 @@ def test_lane_specs_from_args_accepts_multilane_json() -> None:
                         "lane_kind": "code",
                         "target_path": "src/xmuse_core/platform/lane_beta.py",
                         "expected_content": 'LANE = "beta"',
+                        "expected_status": "gate_failed",
                     },
                 ]
             ),
@@ -224,14 +226,39 @@ def test_lane_specs_from_args_accepts_multilane_json() -> None:
             "lane_kind": "docs",
             "target_path": "docs/xmuse/lane-alpha.md",
             "expected_content": "alpha reached execution",
+            "expected_status": "awaiting_final_action",
         },
         {
             "feature_id": "lane-beta",
             "lane_kind": "code",
             "target_path": "src/xmuse_core/platform/lane_beta.py",
             "expected_content": 'LANE = "beta"',
+            "expected_status": "gate_failed",
         },
     ]
+
+
+def test_lane_specs_from_args_rejects_unsupported_expected_status() -> None:
+    with pytest.raises(ValueError, match="unsupported expected_status"):
+        sentinel._lane_specs_from_args(
+            argparse.Namespace(
+                feature_id="run-label",
+                lane_kind="docs",
+                target_path=None,
+                expected_content=None,
+                lane_spec_json=json.dumps(
+                    [
+                        {
+                            "feature_id": "lane-alpha",
+                            "lane_kind": "docs",
+                            "target_path": "docs/xmuse/lane-alpha.md",
+                            "expected_content": "alpha",
+                            "expected_status": "merged",
+                        },
+                    ]
+                ),
+            )
+        )
 
 
 def test_lane_specs_from_args_rejects_duplicate_targets() -> None:
@@ -292,12 +319,14 @@ def test_multilane_demand_requires_independent_exact_lane_specs() -> None:
                 "lane_kind": "docs",
                 "target_path": "docs/xmuse/lane-alpha.md",
                 "expected_content": "alpha reached execution",
+                "expected_status": "awaiting_final_action",
             },
             {
                 "feature_id": "lane-beta",
                 "lane_kind": "code",
                 "target_path": "src/xmuse_core/platform/lane_beta.py",
                 "expected_content": 'LANE = "beta"',
+                "expected_status": "gate_failed",
             },
         ],
         provider_readiness={
@@ -312,6 +341,8 @@ def test_multilane_demand_requires_independent_exact_lane_specs() -> None:
     assert "exactly one lane_graph" in demand
     assert "Keep all lanes independent with empty depends_on" in demand
     assert 'feature_id="lane-alpha"' in demand
+    assert 'expected_status="gate_failed"' in demand
+    assert "intentional bounded failure-isolation lane" in demand
     assert 'target_path="src/xmuse_core/platform/lane_beta.py"' in demand
     assert 'LANE = "beta"' in demand
 
@@ -367,6 +398,92 @@ def test_multi_success_checks_require_all_lanes_and_distinct_worktrees() -> None
     assert checks["distinct_feature_ids"] is True
     assert checks["distinct_target_paths"] is True
     assert checks["distinct_worktrees"] is True
+
+
+def test_multi_success_checks_accept_expected_gate_failed_lane() -> None:
+    def success_lane() -> dict:
+        return {
+            "feature_id": "lane-alpha",
+            "target_path": "docs/xmuse/lane-alpha.md",
+            "expected_status": "awaiting_final_action",
+            "proposal_has_review_runtime": False,
+            "related_lane_graph_proposals": [{"id": "proposal"}],
+            "selected_review_provider": "codex",
+            "provider_readiness": {
+                "review_provider_selection": {
+                    "selected_provider": "codex",
+                    "fallback_reason": None,
+                }
+            },
+            "review_peer_participant": {"cli_kind": "codex"},
+            "proposal": {
+                "status": "accepted",
+                "accepted_resolution_id": "res-alpha",
+            },
+            "lane": {
+                "feature_id": "lane-alpha",
+                "status": "awaiting_final_action",
+                "gate_passed": True,
+                "peer_delivery_mode": "configured_peer",
+                "peer_result_status": "received",
+                "peer_degraded_reason": None,
+                "review_peer_cli_kind": "codex",
+                "resolution_id": "res-alpha",
+                "worktree": "/tmp/worktree-alpha",
+            },
+            "execution_artifact": {"matches_expected": True},
+            "review_task": {"status": "verdict_emitted"},
+            "review_verdict": {"status": "finalized"},
+            "final_action_hold": {"status": "pending"},
+        }
+
+    def gate_failed_lane() -> dict:
+        return {
+            "feature_id": "lane-beta",
+            "target_path": "src/xmuse_core/platform/lane_beta.py",
+            "expected_status": "gate_failed",
+            "proposal_has_review_runtime": False,
+            "related_lane_graph_proposals": [{"id": "proposal"}],
+            "selected_review_provider": "codex",
+            "provider_readiness": {
+                "review_provider_selection": {
+                    "selected_provider": "codex",
+                    "fallback_reason": None,
+                }
+            },
+            "proposal": {
+                "status": "accepted",
+                "accepted_resolution_id": "res-beta",
+            },
+            "lane": {
+                "feature_id": "lane-beta",
+                "status": "gate_failed",
+                "gate_passed": False,
+                "failure_reason": "gate_failed",
+                "peer_delivery_mode": "configured_peer",
+                "peer_result_status": "received",
+                "peer_degraded_reason": None,
+                "resolution_id": "res-beta",
+                "worktree": "/tmp/worktree-beta",
+            },
+            "execution_artifact": {"matches_expected": True},
+            "review_task": None,
+            "review_verdict": None,
+            "final_action_hold": None,
+        }
+
+    checks = sentinel._success_checks(
+        {
+            "proposal_has_review_runtime": False,
+            "lane_snapshots": [success_lane(), gate_failed_lane()],
+        }
+    )
+
+    assert all(checks.values())
+    assert checks["all_expected_lane_statuses"] is True
+    assert checks["all_success_lanes_completed"] is True
+    assert checks["all_expected_gate_failures_reported"] is True
+    assert checks["all_expected_gate_failures_skip_review_and_final_action"] is True
 
 
 @pytest.mark.parametrize(
