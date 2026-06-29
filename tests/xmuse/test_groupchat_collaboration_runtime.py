@@ -2403,6 +2403,30 @@ async def test_dispatch_bridge_ingests_dispatch_handoff_to_memoryos_sidecar(
     assert "These refs are sidecar continuity refs, not lane execution proof." in pages[0].content
     for source_ref in expected_source_refs:
         assert f"- {source_ref}" in pages[0].content
+    traces = PeerTurnLatencyTraceStore(tmp_path / "chat.db").list_recent(
+        conversation_id,
+        limit=10,
+    )
+    [sidecar_trace] = [
+        trace
+        for trace in traces
+        if trace["supporting_context"].get("memoryos_sidecar", {}).get("status")
+        == "recorded"
+    ]
+    assert sidecar_trace["delivery_mode"] == "memoryos_sidecar_dispatch_handoff"
+    assert sidecar_trace["degraded_reason"] is None
+    sidecar_context = sidecar_trace["supporting_context"]["memoryos_sidecar"]
+    assert sidecar_context == {
+        "status": "recorded",
+        "authority": "memoryos_sidecar",
+        "proof_level": "contract",
+        "namespace_uri": f"memory://conversation/{conversation_id}",
+        "degraded_reason": None,
+        "source_refs": expected_source_refs,
+        "continuity_refs": [
+            f"memory://conversation/{conversation_id}/refs/chat_dispatch_queue:{entry.entry_id}"
+        ],
+    }
 
 
 @pytest.mark.asyncio
@@ -2450,6 +2474,37 @@ async def test_dispatch_bridge_continues_when_memoryos_sidecar_ingest_degrades(
     assert reloaded.status == "dispatched"
     assert reloaded.provider_run_ref == f"peer_ack:execute:{execute.participant_id}"
     assert reloaded.dispatch_evidence.startswith("mcp_writeback:")
+    traces = PeerTurnLatencyTraceStore(tmp_path / "chat.db").list_recent(
+        conversation_id,
+        limit=10,
+    )
+    [sidecar_trace] = [
+        trace
+        for trace in traces
+        if trace["supporting_context"].get("memoryos_sidecar", {}).get("status")
+        == "degraded"
+    ]
+    assert sidecar_trace["delivery_mode"] == "memoryos_sidecar_dispatch_handoff"
+    assert sidecar_trace["degraded_reason"] is None
+    assert sidecar_trace["supporting_context"]["memoryos_sidecar"] == {
+        "status": "degraded",
+        "authority": "memoryos_sidecar",
+        "proof_level": "degraded",
+        "namespace_uri": f"memory://conversation/{conversation_id}",
+        "degraded_reason": "memoryos_exception:RuntimeError",
+        "source_refs": [
+            f"chat_dispatch_queue:{entry.entry_id}",
+            "proposal:proposal-memoryos-degraded",
+            "review_trigger_verdict:review-memoryos-degraded",
+            "resolution:resolution-memoryos-degraded",
+            "collaboration:collab-memoryos-degraded",
+            "artifact:memoryos-degraded-lane-graph",
+        ],
+        "continuity_refs": [],
+        "continuity_attempt_ref": (
+            f"memory://conversation/{conversation_id}/context/memoryos-sidecar-attempt"
+        ),
+    }
 
 
 @pytest.mark.asyncio

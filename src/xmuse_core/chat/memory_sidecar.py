@@ -142,12 +142,14 @@ class GroupchatMemorySidecar:
     ) -> dict[str, Any]:
         namespace = conversation_namespace(conversation_id)
         refs = _dedupe_refs(source_refs)
+        continuity_attempt_ref = _continuity_attempt_ref(namespace)
         base = {
             "authority": "memoryos_sidecar",
             "namespace_uri": namespace.uri,
             "actor_id": actor_id,
             "dispatch_queue_entry_id": dispatch_queue_entry_id,
             "source_refs": refs,
+            "continuity_attempt_ref": continuity_attempt_ref,
         }
         request = MemoryOSIngestRequest(
             namespace=namespace,
@@ -192,6 +194,7 @@ class GroupchatMemorySidecar:
             "status": "recorded",
             "proof_level": "contract",
             "memory_ref": result.memory_ref,
+            "continuity_refs": [result.memory_ref] if result.memory_ref else [],
             "degraded_reason": None,
         }
 
