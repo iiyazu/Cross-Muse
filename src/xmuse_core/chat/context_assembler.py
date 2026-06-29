@@ -340,6 +340,20 @@ def _compact_message_envelope(
         "provider_status",
         "failure_kind",
         "authority",
+        "proof_boundary",
+        "dispatch_queue_entry_id",
+        "proposal_id",
+        "resolution_id",
+        "collaboration_run_id",
+        "artifact_ref",
+        "dispatch_evidence_ref",
+        "final_action_id",
+        "final_action_ref",
+        "lane_id",
+        "status",
+        "github_gate_evidence_ref",
+        "github_gate_gap_ref",
+        "acceptance_spine_ref",
     ):
         value = envelope_json.get(key)
         if isinstance(value, str) and value.strip():
@@ -350,6 +364,11 @@ def _compact_message_envelope(
     source_refs = _payload_str_list(envelope_json, "source_refs")
     if source_refs:
         compact["source_refs"] = source_refs[:8]
+    github_gate = envelope_json.get("github_gate")
+    if isinstance(github_gate, dict):
+        compact_github_gate = _compact_github_gate(github_gate)
+        if compact_github_gate:
+            compact["github_gate"] = compact_github_gate
     diagnostic = envelope_json.get("diagnostic_payload")
     if isinstance(diagnostic, dict):
         artifacts = _compact_artifacts(diagnostic, max_chars=max_chars)
@@ -357,6 +376,60 @@ def _compact_message_envelope(
             compact["artifacts"] = artifacts
             compact["artifact_count"] = _artifact_count(diagnostic)
     return compact or None
+
+
+def _compact_github_gate(github_gate: dict[str, Any]) -> dict[str, Any]:
+    compact: dict[str, Any] = {}
+    for key in (
+        "status",
+        "proof_level",
+        "repo",
+        "head_sha",
+    ):
+        value = github_gate.get(key)
+        if isinstance(value, str) and value.strip():
+            compact[key] = value
+    for key in ("pull_request_number", "workflow_run_id", "check_suite_id"):
+        value = github_gate.get(key)
+        if isinstance(value, int):
+            compact[key] = value
+    check_runs = github_gate.get("check_runs")
+    if isinstance(check_runs, list):
+        compact_runs = [
+            {
+                clean_key: clean_value
+                for clean_key, clean_value in {
+                    "id": item.get("id") if isinstance(item, dict) else None,
+                    "name": item.get("name") if isinstance(item, dict) else None,
+                    "head_sha": item.get("head_sha") if isinstance(item, dict) else None,
+                }.items()
+                if isinstance(clean_value, (int, str))
+                and (not isinstance(clean_value, str) or clean_value.strip())
+            }
+            for item in check_runs[:8]
+            if isinstance(item, dict)
+        ]
+        compact_runs = [item for item in compact_runs if item]
+        if compact_runs:
+            compact["check_runs"] = compact_runs
+    main_ci = github_gate.get("main_ci")
+    if isinstance(main_ci, dict):
+        compact_main_ci = _compact_github_main_ci(main_ci)
+        if compact_main_ci:
+            compact["main_ci"] = compact_main_ci
+    return compact
+
+
+def _compact_github_main_ci(main_ci: dict[str, Any]) -> dict[str, Any]:
+    compact: dict[str, Any] = {}
+    workflow_run_id = main_ci.get("workflow_run_id")
+    if isinstance(workflow_run_id, int):
+        compact["workflow_run_id"] = workflow_run_id
+    for key in ("workflow_name", "head_sha", "status", "conclusion"):
+        value = main_ci.get(key)
+        if isinstance(value, str) and value.strip():
+            compact[key] = value
+    return compact
 
 
 def _compact_artifacts(
