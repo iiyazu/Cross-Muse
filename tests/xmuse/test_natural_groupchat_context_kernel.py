@@ -263,6 +263,141 @@ def test_group_chat_context_projects_compact_message_envelope_artifacts(
     assert context["context_capsule"]["recent_messages"][0]["envelope"] == (recent["envelope"])
 
 
+def test_group_chat_context_projects_writeback_authority_envelope_refs(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "chat.db"
+    chat = ChatStore(db_path)
+    conversation = chat.create_conversation("Writeback authority context")
+    dispatch = chat.add_message(
+        conversation.id,
+        author="execute",
+        role="assistant",
+        content="DISPATCH_ACKNOWLEDGED dispatch-1",
+        envelope_type="dispatch_result",
+        envelope_json={
+            "type": "dispatch_result",
+            "authority": "chat.db/messages/dispatch_result",
+            "dispatch_queue_entry_id": "dispatch-1",
+            "proposal_id": "proposal-1",
+            "resolution_id": "resolution-1",
+            "collaboration_run_id": "collab-1",
+            "artifact_ref": "artifact:lane_graph",
+            "dispatch_evidence_ref": "mcp_writeback:inbox-1",
+            "source_refs": [
+                "chat_dispatch_queue:dispatch-1",
+                "proposal:proposal-1",
+                "review_trigger_verdict:review-1",
+                "resolution:resolution-1",
+            ],
+            "proof_boundary": "dispatch_acknowledgement_not_execution_proof",
+        },
+    )
+    final_action = chat.add_message(
+        conversation.id,
+        author="final-action-gate",
+        role="system",
+        content="Final action merge for lane lane-1 is accepted.",
+        envelope_type="final_action_result",
+        envelope_json={
+            "type": "final_action_result",
+            "authority": "chat.db/messages/final_action_result",
+            "final_action_id": "final-1",
+            "final_action_ref": "final_actions.json#hold=final-1",
+            "lane_id": "lane-1",
+            "status": "accepted",
+            "github_gate_evidence_ref": "github_gate_evidence.json#evidence=ghgate-1",
+            "github_gate_gap_ref": None,
+            "acceptance_spine_ref": "chat.db#acceptance_spine=spine-1",
+            "source_refs": [
+                "final_actions.json#hold=final-1",
+                "chat.db#acceptance_spine=spine-1",
+                "github_gate_evidence.json#evidence=ghgate-1",
+            ],
+            "proof_boundary": "final_action_writeback_not_github_or_merge_truth",
+            "github_gate": {
+                "status": "accepted",
+                "proof_level": "server_side_merge_proof",
+                "repo": "iiyazu/Cross-Muse",
+                "pull_request_number": 42,
+                "head_sha": "head123",
+                "workflow_run_id": 111,
+                "check_suite_id": 222,
+                "required_checks": ["quality-gates"],
+                "check_runs": [
+                    {"id": 111, "name": "quality-gates", "head_sha": "head123"}
+                ],
+                "merge": {
+                    "merge_commit_sha": "merge123",
+                    "merged_at": "2026-06-10T15:00:00Z",
+                    "merge_event_id": "merge-event-1",
+                },
+                "main_ci": {
+                    "workflow_run_id": 333,
+                    "workflow_name": "xmuse CI",
+                    "head_sha": "merge123",
+                    "head_branch": "main",
+                    "status": "completed",
+                    "conclusion": "success",
+                    "url": "https://github.com/iiyazu/Cross-Muse/actions/runs/333",
+                },
+            },
+        },
+    )
+
+    context = ContextAssembler(
+        participants=ParticipantStore(db_path),
+        chat=chat,
+    ).group_chat_context(conversation.id)
+
+    by_id = {message["id"]: message["envelope"] for message in context["recent_messages"]}
+    assert by_id[dispatch.id] == {
+        "type": "dispatch_result",
+        "authority": "chat.db/messages/dispatch_result",
+        "dispatch_queue_entry_id": "dispatch-1",
+        "proposal_id": "proposal-1",
+        "resolution_id": "resolution-1",
+        "collaboration_run_id": "collab-1",
+        "artifact_ref": "artifact:lane_graph",
+        "dispatch_evidence_ref": "mcp_writeback:inbox-1",
+        "proof_boundary": "dispatch_acknowledgement_not_execution_proof",
+        "source_refs": [
+            "chat_dispatch_queue:dispatch-1",
+            "proposal:proposal-1",
+            "review_trigger_verdict:review-1",
+            "resolution:resolution-1",
+        ],
+    }
+    assert by_id[final_action.id]["final_action_ref"] == "final_actions.json#hold=final-1"
+    assert by_id[final_action.id]["status"] == "accepted"
+    assert by_id[final_action.id]["github_gate_evidence_ref"] == (
+        "github_gate_evidence.json#evidence=ghgate-1"
+    )
+    assert by_id[final_action.id]["proof_boundary"] == (
+        "final_action_writeback_not_github_or_merge_truth"
+    )
+    assert by_id[final_action.id]["github_gate"] == {
+        "status": "accepted",
+        "proof_level": "server_side_merge_proof",
+        "repo": "iiyazu/Cross-Muse",
+        "pull_request_number": 42,
+        "head_sha": "head123",
+        "workflow_run_id": 111,
+        "check_suite_id": 222,
+        "check_runs": [{"id": 111, "name": "quality-gates", "head_sha": "head123"}],
+        "main_ci": {
+            "workflow_run_id": 333,
+            "workflow_name": "xmuse CI",
+            "head_sha": "merge123",
+            "status": "completed",
+            "conclusion": "success",
+        },
+    }
+    assert context["context_capsule"]["recent_messages"][-1]["envelope"] == (
+        by_id[final_action.id]
+    )
+
+
 def test_group_chat_context_projects_structured_state_from_chat_authorities(
     tmp_path: Path,
 ) -> None:
