@@ -388,6 +388,7 @@ class TestRoleTemplateStore:
         slugs = {t.slug for t in store.list_all()}
         assert "architect" in slugs
         assert "review" in slugs
+        assert "critic" in slugs
         assert "execute" in slugs
 
     def test_predefined_templates_have_predefined_flag(
@@ -397,7 +398,7 @@ class TestRoleTemplateStore:
         predefined_slugs = {
             t.slug for t in store.list_all() if t.predefined
         }
-        assert {"architect", "review", "execute"}.issubset(predefined_slugs)
+        assert {"architect", "review", "critic", "execute"}.issubset(predefined_slugs)
 
     def test_predefined_templates_are_codex_only(self, db_path: Path) -> None:
         store = RoleTemplateStore(db_path)
@@ -407,11 +408,13 @@ class TestRoleTemplateStore:
                 expected_profile_id = {
                     "architect": "god",
                     "review": "review",
+                    "critic": "default",
                     "execute": "worker",
                 }[template.slug]
                 expected_default_model = {
                     "architect": "gpt-5.4",
                     "review": "gpt-5.4",
+                    "critic": "gpt-5.4",
                     "execute": "gpt-5.4-mini",
                 }[template.slug]
                 assert template.provider_id == "codex"
@@ -711,6 +714,15 @@ class TestRoleTemplateStore:
         with pytest.raises(ValueError, match="cannot delete predefined role template"):
             store.delete(execute.id)
 
+    def test_delete_predefined_critic_raises_value_error(
+        self, db_path: Path
+    ) -> None:
+        store = RoleTemplateStore(db_path)
+        critic = store.get_by_slug("critic")
+        assert critic is not None
+        with pytest.raises(ValueError, match="cannot delete predefined role template"):
+            store.delete(critic.id)
+
     def test_seeding_is_idempotent_across_multiple_instances(
         self, db_path: Path
     ) -> None:
@@ -722,12 +734,13 @@ class TestRoleTemplateStore:
         slugs = [t.slug for t in predefined]
         assert slugs.count("architect") == 1
         assert slugs.count("review") == 1
+        assert slugs.count("critic") == 1
         assert slugs.count("execute") == 1
 
     def test_predefined_templates_match_expected_count(
         self, db_path: Path
     ) -> None:
-        """Exactly three predefined templates should exist after init."""
+        """All predefined templates should exist after init."""
         store = RoleTemplateStore(db_path)
         predefined = [t for t in store.list_all() if t.predefined]
         assert len(predefined) == len(_PREDEFINED_TEMPLATES)
