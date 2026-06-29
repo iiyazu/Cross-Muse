@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import urllib.parse
 from collections.abc import Callable
 from fnmatch import fnmatchcase
 from pathlib import Path
@@ -302,6 +303,38 @@ class GitHubServerSideTruthSnapshot(BaseModel):
     merge_event_id: int | str | None = None
 
 
+class GitHubMainCiEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    workflow_run_id: int | None = None
+    workflow_name: str | None = None
+    head_sha: str | None = None
+    head_branch: str | None = None
+    status: str | None = None
+    conclusion: str | None = None
+    url: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+    gap_reason: str | None = None
+
+    @field_validator(
+        "workflow_name",
+        "head_sha",
+        "head_branch",
+        "status",
+        "conclusion",
+        "url",
+        "created_at",
+        "updated_at",
+        "gap_reason",
+    )
+    @classmethod
+    def _validate_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _require_non_empty(value)
+
+
 class ReadOnlyGitHubServerSideTruthClient(Protocol):
     def fetch_server_side_truth_snapshot(
         self,
@@ -310,6 +343,15 @@ class ReadOnlyGitHubServerSideTruthClient(Protocol):
         pull_request_number: int,
         required_checks: list[str],
     ) -> GitHubServerSideTruthSnapshot | None: ...
+
+
+class ReadOnlyGitHubMainCiTruthClient(Protocol):
+    def fetch_main_ci_truth(
+        self,
+        *,
+        repo: str,
+        merge_commit_sha: str,
+    ) -> GitHubMainCiEvidence | None: ...
 
 
 class ReadOnlyGitHubServerSideTruthCollector:
@@ -343,11 +385,35 @@ class ReadOnlyGitHubServerSideTruthCollector:
         )
 
 
+class ReadOnlyGitHubMainCiTruthCollector:
+    def __init__(self, *, client: ReadOnlyGitHubMainCiTruthClient) -> None:
+        self._client = client
+
+    def collect_main_ci(
+        self,
+        *,
+        repo: str,
+        merge_commit_sha: str,
+    ) -> GitHubMainCiEvidence:
+        evidence = self._client.fetch_main_ci_truth(
+            repo=repo,
+            merge_commit_sha=merge_commit_sha,
+        )
+        if evidence is None:
+            return GitHubMainCiEvidence(
+                head_sha=merge_commit_sha,
+                status="missing",
+                gap_reason="read-only GitHub main CI truth unavailable",
+            )
+        return evidence
+
+
 class GitHubCliServerSideTruthClient:
     def __init__(
         self,
         *,
         base_branch: str = "main",
+        main_ci_workflow_name: str = "xmuse CI",
         runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
         gh_binary: str = "gh",
         internal_review_artifact: str | Path | None = None,
@@ -355,6 +421,7 @@ class GitHubCliServerSideTruthClient:
         internal_reviewed_head_sha: str | None = None,
     ) -> None:
         self._base_branch = _require_non_empty(base_branch)
+        self._main_ci_workflow_name = _require_non_empty(main_ci_workflow_name)
         self._runner = runner or _run_gh_api
         self._gh_binary = _require_non_empty(gh_binary)
         self._internal_review_artifact = (
@@ -369,6 +436,32 @@ class GitHubCliServerSideTruthClient:
             _require_non_empty(internal_reviewed_head_sha)
             if internal_reviewed_head_sha is not None
             else None
+        )
+
+    def fetch_main_ci_truth(
+        self,
+        *,
+        repo: str,
+        merge_commit_sha: str,
+    ) -> GitHubMainCiEvidence | None:
+        repo = _require_non_empty(repo)
+        merge_commit_sha = _require_non_empty(merge_commit_sha)
+        query = urllib.parse.urlencode(
+            {
+                "branch": self._base_branch,
+                "head_sha": merge_commit_sha,
+                "event": "push",
+                "per_page": "20",
+            }
+        )
+        payload = self._gh_api(f"repos/{repo}/actions/runs?{query}")
+        if payload is None:
+            return None
+        return _main_ci_from_actions_runs_payload(
+            payload,
+            merge_commit_sha=merge_commit_sha,
+            base_branch=self._base_branch,
+            workflow_name=self._main_ci_workflow_name,
         )
 
     def fetch_server_side_truth_snapshot(
@@ -802,6 +895,61 @@ def _successful_required_check_runs(
     if {str(name) for name in required} and len(ids) < len(required):
         return ids, names, head_shas, source_apps[0] if source_apps else None
     return ids, names, head_shas, source_apps[0] if source_apps else None
+
+
+def _main_ci_from_actions_runs_payload(
+    payload: Any,
+    *,
+    merge_commit_sha: str,
+    base_branch: str,
+    workflow_name: str,
+) -> GitHubMainCiEvidence:
+    if not isinstance(payload, dict):
+        return GitHubMainCiEvidence(
+            workflow_name=workflow_name,
+            head_sha=merge_commit_sha,
+            head_branch=base_branch,
+            status="missing",
+            gap_reason="GitHub Actions runs payload is not an object",
+        )
+    runs = payload.get("workflow_runs")
+    if not isinstance(runs, list):
+        return GitHubMainCiEvidence(
+            workflow_name=workflow_name,
+            head_sha=merge_commit_sha,
+            head_branch=base_branch,
+            status="missing",
+            gap_reason="GitHub Actions runs payload missing workflow_runs",
+        )
+    for item in runs:
+        if not isinstance(item, dict):
+            continue
+        if _optional_str(item.get("head_sha")) != merge_commit_sha:
+            continue
+        head_branch = _optional_str(item.get("head_branch"))
+        if head_branch is not None and head_branch != base_branch:
+            continue
+        if _optional_str(item.get("name")) != workflow_name:
+            continue
+        workflow_run_id = item.get("id")
+        return GitHubMainCiEvidence(
+            workflow_run_id=workflow_run_id if isinstance(workflow_run_id, int) else None,
+            workflow_name=workflow_name,
+            head_sha=merge_commit_sha,
+            head_branch=head_branch or base_branch,
+            status=_optional_str(item.get("status")),
+            conclusion=_optional_str(item.get("conclusion")),
+            url=_optional_str(item.get("html_url")),
+            created_at=_optional_str(item.get("created_at")),
+            updated_at=_optional_str(item.get("updated_at")),
+        )
+    return GitHubMainCiEvidence(
+        workflow_name=workflow_name,
+        head_sha=merge_commit_sha,
+        head_branch=base_branch,
+        status="missing",
+        gap_reason="GitHub Actions main CI run not found for merge commit",
+    )
 
 
 def _approved_review_identity(payload: list[Any]) -> tuple[int | str | None, str | None]:

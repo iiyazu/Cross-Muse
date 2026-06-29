@@ -11,8 +11,10 @@ from xmuse_core.platform.execution.github_ops import (
     CheckStatus,
     FakeGitHubServerSideTruthCollector,
     GitHubCliServerSideTruthClient,
+    GitHubMainCiEvidence,
     GitHubServerSideTruthEvidence,
     GitHubServerSideTruthSnapshot,
+    ReadOnlyGitHubMainCiTruthCollector,
     ReadOnlyGitHubServerSideTruthCollector,
     build_github_server_side_truth_from_snapshot,
     build_github_server_side_truth_gap,
@@ -92,6 +94,21 @@ class _FakeReadOnlyGitHubTruthClient:
     def mutate_branch_protection(self) -> None:
         self.mutation_attempted = True
         raise AssertionError("read-only collector must not mutate GitHub settings")
+
+
+class _FakeReadOnlyMainCiTruthClient:
+    def __init__(self, evidence: GitHubMainCiEvidence | None) -> None:
+        self.evidence = evidence
+        self.calls: list[tuple[str, str]] = []
+
+    def fetch_main_ci_truth(
+        self,
+        *,
+        repo: str,
+        merge_commit_sha: str,
+    ) -> GitHubMainCiEvidence | None:
+        self.calls.append((repo, merge_commit_sha))
+        return self.evidence
 
 
 class _FakeGhApiRunner:
@@ -661,6 +678,21 @@ def test_read_only_collector_records_manual_gap_when_snapshot_unavailable() -> N
     assert can_emit_pr_merged(evidence) is False
 
 
+def test_read_only_main_ci_collector_records_missing_when_snapshot_unavailable() -> None:
+    client = _FakeReadOnlyMainCiTruthClient(evidence=None)
+    collector = ReadOnlyGitHubMainCiTruthCollector(client=client)
+
+    evidence = collector.collect_main_ci(
+        repo="iiyazu/Cross-Muse",
+        merge_commit_sha="merge123",
+    )
+
+    assert client.calls == [("iiyazu/Cross-Muse", "merge123")]
+    assert evidence.head_sha == "merge123"
+    assert evidence.status == "missing"
+    assert evidence.gap_reason == "read-only GitHub main CI truth unavailable"
+
+
 def test_read_only_collector_keeps_partial_client_snapshot_as_gap() -> None:
     snapshot = GitHubServerSideTruthSnapshot(
         workflow_run_id=123,
@@ -744,6 +776,66 @@ def test_gh_cli_truth_client_fetches_read_only_server_snapshot() -> None:
         merge_event_id="PR_node_42",
     )
     assert all(command[:2] == ["gh", "api"] for command in runner.commands)
+    assert not any(
+        token in command
+        for command in runner.commands
+        for token in ("--method", "PATCH", "PUT", "DELETE", "POST")
+    )
+
+
+def test_gh_cli_truth_client_fetches_post_merge_main_ci_truth() -> None:
+    endpoint = (
+        "repos/iiyazu/Cross-Muse/actions/runs?"
+        "branch=main&head_sha=merge123&event=push&per_page=20"
+    )
+    runner = _FakeGhApiRunner(
+        {
+            endpoint: {
+                "workflow_runs": [
+                    {
+                        "id": 9001,
+                        "name": "other workflow",
+                        "head_sha": "merge123",
+                        "head_branch": "main",
+                        "status": "completed",
+                        "conclusion": "success",
+                    },
+                    {
+                        "id": 9002,
+                        "name": "xmuse CI",
+                        "head_sha": "merge123",
+                        "head_branch": "main",
+                        "status": "completed",
+                        "conclusion": "success",
+                        "html_url": (
+                            "https://github.com/iiyazu/Cross-Muse/actions/runs/9002"
+                        ),
+                        "created_at": "2026-06-29T05:47:21Z",
+                        "updated_at": "2026-06-29T05:48:00Z",
+                    },
+                ]
+            }
+        }
+    )
+    client = GitHubCliServerSideTruthClient(runner=runner)
+
+    evidence = client.fetch_main_ci_truth(
+        repo="iiyazu/Cross-Muse",
+        merge_commit_sha="merge123",
+    )
+
+    assert evidence == GitHubMainCiEvidence(
+        workflow_run_id=9002,
+        workflow_name="xmuse CI",
+        head_sha="merge123",
+        head_branch="main",
+        status="completed",
+        conclusion="success",
+        url="https://github.com/iiyazu/Cross-Muse/actions/runs/9002",
+        created_at="2026-06-29T05:47:21Z",
+        updated_at="2026-06-29T05:48:00Z",
+    )
+    assert runner.commands == [["gh", "api", endpoint]]
     assert not any(
         token in command
         for command in runner.commands

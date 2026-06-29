@@ -11,7 +11,10 @@ import pytest
 from xmuse_core.chat.acceptance_spine import AcceptanceSpineStore
 from xmuse_core.chat.dispatch_queue import ChatDispatchQueueStore
 from xmuse_core.chat.store import ChatStore
-from xmuse_core.platform.execution.github_ops import GitHubServerSideTruthEvidence
+from xmuse_core.platform.execution.github_ops import (
+    GitHubMainCiEvidence,
+    GitHubServerSideTruthEvidence,
+)
 from xmuse_core.platform.run_health import build_process_inventory
 from xmuse_core.structuring.models import (
     FeatureGraphSet,
@@ -61,6 +64,21 @@ class _StaticGithubTruthCollector:
         return self._evidence
 
 
+class _StaticMainCiTruthCollector:
+    def __init__(self, evidence: GitHubMainCiEvidence) -> None:
+        self._evidence = evidence
+
+    def collect_main_ci(
+        self,
+        *,
+        repo: str,
+        merge_commit_sha: str,
+    ) -> GitHubMainCiEvidence:
+        assert repo == "iiyazu/Cross-Muse"
+        assert merge_commit_sha == self._evidence.head_sha
+        return self._evidence
+
+
 def _complete_server_side_merge_truth() -> GitHubServerSideTruthEvidence:
     return GitHubServerSideTruthEvidence(
         repo="iiyazu/Cross-Muse",
@@ -102,6 +120,20 @@ def _complete_server_side_merge_truth() -> GitHubServerSideTruthEvidence:
         merge_commit_sha="4fd40a735e62be255e787ce93bdc3d5653d0255e",
         merged_at="2026-06-21T10:56:19Z",
         merge_event_id="PR_kwDOExample",
+    )
+
+
+def _successful_main_ci_truth() -> GitHubMainCiEvidence:
+    return GitHubMainCiEvidence(
+        workflow_run_id=28351375224,
+        workflow_name="xmuse CI",
+        head_sha="4fd40a735e62be255e787ce93bdc3d5653d0255e",
+        head_branch="main",
+        status="completed",
+        conclusion="success",
+        url="https://github.com/iiyazu/Cross-Muse/actions/runs/28351375224",
+        created_at="2026-06-29T05:47:21Z",
+        updated_at="2026-06-29T05:48:00Z",
     )
 
 
@@ -1917,6 +1949,34 @@ def test_runner_parser_supports_opt_in_live_github_capture(tmp_path: Path) -> No
     assert args.internal_reviewed_head_sha == "abc123"
 
 
+def test_runner_parser_supports_main_ci_capture_without_internal_review_args() -> None:
+    args = platform_runner.main_arg_parser().parse_args(
+        [
+            "--capture-final-action-main-ci",
+            "--final-action-id",
+            "final-main-ci",
+            "--github-live-capture",
+        ]
+    )
+
+    platform_runner.validate_args(args)
+    assert args.capture_final_action_main_ci is True
+    assert args.final_action_id == "final-main-ci"
+
+
+def test_runner_rejects_main_ci_capture_without_live_capture() -> None:
+    args = platform_runner.main_arg_parser().parse_args(
+        [
+            "--capture-final-action-main-ci",
+            "--final-action-id",
+            "final-main-ci",
+        ]
+    )
+
+    with pytest.raises(SystemExit):
+        platform_runner.validate_args(args)
+
+
 def test_runner_rejects_live_capture_without_internal_review_artifact() -> None:
     args = platform_runner.main_arg_parser().parse_args(
         [
@@ -2038,6 +2098,7 @@ def test_acceptance_gated_goal_run_accepts_with_server_side_merge_proof(
         github_gate_collector=_StaticGithubTruthCollector(
             _complete_server_side_merge_truth()
         ),
+        main_ci_collector=_StaticMainCiTruthCollector(_successful_main_ci_truth()),
     )
 
     assert result["status"] == "accepted"
@@ -2054,6 +2115,18 @@ def test_acceptance_gated_goal_run_accepts_with_server_side_merge_proof(
     assert evidence["final_action_id"] == hold["id"]
     assert evidence["can_accept"] is True
     assert evidence["evidence"]["proof_level"] == "server_side_merge_proof"
+    assert evidence["main_ci"] == {
+        "workflow_run_id": 28351375224,
+        "workflow_name": "xmuse CI",
+        "head_sha": "4fd40a735e62be255e787ce93bdc3d5653d0255e",
+        "head_branch": "main",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/iiyazu/Cross-Muse/actions/runs/28351375224",
+        "created_at": "2026-06-29T05:47:21Z",
+        "updated_at": "2026-06-29T05:48:00Z",
+        "gap_reason": None,
+    }
     assert hold["github_gate_evidence_ref"] == (
         f"github_gate_evidence.json#evidence={evidence['id']}"
     )
@@ -2147,6 +2220,7 @@ def test_resolve_existing_final_action_accepts_with_server_side_merge_proof(
         github_gate_collector=_StaticGithubTruthCollector(
             _complete_server_side_merge_truth()
         ),
+        main_ci_collector=_StaticMainCiTruthCollector(_successful_main_ci_truth()),
     )
 
     assert result["status"] == "accepted"
@@ -2162,6 +2236,10 @@ def test_resolve_existing_final_action_accepts_with_server_side_merge_proof(
     hold = final_actions["holds"][0]
     lane = lanes["lanes"][0]
     assert evidence["can_accept"] is True
+    assert evidence["main_ci"]["conclusion"] == "success"
+    assert evidence["main_ci"]["head_sha"] == (
+        evidence["evidence"]["merge_commit_sha"]
+    )
     assert hold["status"] == "approved"
     assert hold["github_gate_evidence_ref"] == (
         f"github_gate_evidence.json#evidence={evidence['id']}"
@@ -2169,6 +2247,91 @@ def test_resolve_existing_final_action_accepts_with_server_side_merge_proof(
     assert lane["status"] == "merged"
     assert lane["github_gate_evidence_ref"] == hold["github_gate_evidence_ref"]
     assert lane["final_action_ref"] == "final_actions.json#hold=final-gh-proof"
+
+
+def test_capture_existing_final_action_main_ci_updates_accepted_gate_record(
+    tmp_path: Path,
+) -> None:
+    xmuse_root = tmp_path / "runtime"
+    xmuse_root.mkdir()
+    (xmuse_root / "feature_lanes.json").write_text(
+        json.dumps(
+            {
+                "lanes": [
+                    {
+                        "feature_id": "lane-main-ci",
+                        "status": "awaiting_final_action",
+                        "prompt": "ready for main ci proof",
+                        "final_action_hold_id": "final-main-ci",
+                    }
+                ]
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (xmuse_root / "final_actions.json").write_text(
+        json.dumps(
+            {
+                "holds": [
+                    {
+                        "id": "final-main-ci",
+                        "lane_id": "lane-main-ci",
+                        "verdict_id": "verdict-main-ci",
+                        "action": "merge",
+                        "target_status": "reviewed",
+                        "status": "pending",
+                        "summary": "merge after GitHub proof",
+                    }
+                ]
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    accepted = platform_runner.resolve_existing_final_action_with_github_gate(
+        xmuse_root=xmuse_root,
+        final_action_id="final-main-ci",
+        github_repo="iiyazu/Cross-Muse",
+        github_pull_request=155,
+        required_checks=[
+            "quality-gates",
+            "contract-smoke-gates",
+            "real-runtime-integration-gate",
+            "peer-chat-runtime-gate",
+        ],
+        head_sha="abc123",
+        github_gate_collector=_StaticGithubTruthCollector(
+            _complete_server_side_merge_truth()
+        ),
+    )
+    before = json.loads(
+        (xmuse_root / "github_gate_evidence.json").read_text(encoding="utf-8")
+    )
+    assert before["items"][0]["main_ci"] is None
+
+    captured = platform_runner.capture_existing_final_action_main_ci(
+        xmuse_root=xmuse_root,
+        final_action_id="final-main-ci",
+        main_ci_collector=_StaticMainCiTruthCollector(_successful_main_ci_truth()),
+    )
+
+    after = json.loads(
+        (xmuse_root / "github_gate_evidence.json").read_text(encoding="utf-8")
+    )
+    assert captured["status"] == "captured"
+    assert captured["blocked_reason"] is None
+    assert captured["github_gate_evidence_ref"] == accepted["durable_refs"][
+        "github_gate_evidence_ref"
+    ]
+    assert len(after["items"]) == 1
+    assert after["items"][0]["main_ci"]["conclusion"] == "success"
+    assert after["items"][0]["main_ci"]["head_sha"] == (
+        after["items"][0]["evidence"]["merge_commit_sha"]
+    )
 
 
 def test_resolve_existing_final_action_blocks_on_github_gate_gap(
