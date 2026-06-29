@@ -162,19 +162,28 @@ class GitHubGateEvidenceStore:
         *,
         final_action_id: str | None = None,
     ) -> bool:
+        record = self.get_by_ref(ref, final_action_id=final_action_id)
+        return record is not None and record.can_accept
+
+    def get_by_ref(
+        self,
+        ref: str,
+        *,
+        final_action_id: str | None = None,
+    ) -> GitHubGateEvidenceRecord | None:
         prefix = f"{self._path.name}#evidence="
         if not ref.startswith(prefix):
-            return False
+            return None
         evidence_id = ref.removeprefix(prefix).strip()
         if not evidence_id:
-            return False
+            return None
         for item in self._read().get("items", []):
             if not isinstance(item, dict) or item.get("id") != evidence_id:
                 continue
             if final_action_id is not None and item.get("final_action_id") != final_action_id:
-                return False
-            return item.get("can_accept") is True
-        return False
+                return None
+            return GitHubGateEvidenceRecord(**item)
+        return None
 
     def _read(self) -> dict[str, Any]:
         if not self._path.exists():

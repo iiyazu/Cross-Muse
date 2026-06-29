@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from xmuse_core.chat.acceptance_spine import AcceptanceSpine, AcceptanceSpineStore
 from xmuse_core.chat.store import ChatStore
 from xmuse_core.platform.github_gate_evidence import (
+    GitHubGateEvidenceRecord,
     GitHubGateEvidenceStore,
     GitHubGateTruthCollector,
     GitHubMainCiTruthCollector,
@@ -122,6 +123,7 @@ class FinalActionGateStore:
                     action,
                     requested_status=status,
                     spine=spine,
+                    github_gate_evidence_store_path=github_gate_evidence_store_path,
                 )
                 return action
         raise KeyError(f"unknown final action hold: {hold_id}")
@@ -229,6 +231,7 @@ class FinalActionGateStore:
         *,
         requested_status: str,
         spine: AcceptanceSpine | None,
+        github_gate_evidence_store_path: Path | str | None,
     ) -> None:
         if spine is None:
             return
@@ -243,6 +246,34 @@ class FinalActionGateStore:
             review_verdict_ref=spine.review_verdict_ref,
             github_gate_ref=action.github_gate_evidence_ref or action.github_gate_gap_ref,
         )
+        github_gate = _github_gate_writeback_summary(
+            action,
+            evidence_store_path=(
+                Path(github_gate_evidence_store_path)
+                if github_gate_evidence_store_path is not None
+                else self._path.parent / "github_gate_evidence.json"
+            ),
+        )
+        envelope_json = {
+            "type": "final_action_result",
+            "authority": "chat.db/messages/final_action_result",
+            "final_action_id": action.id,
+            "final_action_ref": final_action_ref,
+            "lane_id": action.lane_id,
+            "verdict_id": action.verdict_id,
+            "action": action.action,
+            "target_status": action.target_status,
+            "requested_status": requested_status,
+            "status": action.status,
+            "resolved_by": action.resolved_by,
+            "github_gate_evidence_ref": action.github_gate_evidence_ref,
+            "github_gate_gap_ref": action.github_gate_gap_ref,
+            "acceptance_spine_ref": spine_ref,
+            "source_refs": source_refs,
+            "proof_boundary": "final_action_writeback_not_github_or_merge_truth",
+        }
+        if github_gate is not None:
+            envelope_json["github_gate"] = github_gate
         ChatStore(chat_db_path).create_message_inbox_and_log(
             conversation_id=spine.conversation_id,
             tool_name="final_action_gate_writeback",
@@ -255,24 +286,7 @@ class FinalActionGateStore:
             role="system",
             content=_final_action_writeback_content(action),
             envelope_type="final_action_result",
-            envelope_json={
-                "type": "final_action_result",
-                "authority": "chat.db/messages/final_action_result",
-                "final_action_id": action.id,
-                "final_action_ref": final_action_ref,
-                "lane_id": action.lane_id,
-                "verdict_id": action.verdict_id,
-                "action": action.action,
-                "target_status": action.target_status,
-                "requested_status": requested_status,
-                "status": action.status,
-                "resolved_by": action.resolved_by,
-                "github_gate_evidence_ref": action.github_gate_evidence_ref,
-                "github_gate_gap_ref": action.github_gate_gap_ref,
-                "acceptance_spine_ref": spine_ref,
-                "source_refs": source_refs,
-                "proof_boundary": "final_action_writeback_not_github_or_merge_truth",
-            },
+            envelope_json=envelope_json,
             mentions=[],
             inbox_items=[],
         )
@@ -308,6 +322,80 @@ def _final_action_writeback_content(action: PendingFinalAction) -> str:
         lines.append(f"GitHub gate gap: {action.github_gate_gap_ref}")
     lines.append("This writeback is not GitHub merge or main CI truth.")
     return "\n".join(lines)
+
+
+def _github_gate_writeback_summary(
+    action: PendingFinalAction,
+    *,
+    evidence_store_path: Path,
+) -> dict[str, Any] | None:
+    ref = action.github_gate_evidence_ref or action.github_gate_gap_ref
+    if ref is None:
+        return None
+    record = GitHubGateEvidenceStore(evidence_store_path).get_by_ref(
+        ref,
+        final_action_id=action.id,
+    )
+    if record is None:
+        return None
+    return _github_gate_record_summary(record)
+
+
+def _github_gate_record_summary(record: GitHubGateEvidenceRecord) -> dict[str, Any]:
+    evidence = record.evidence
+    summary: dict[str, Any] = {
+        "status": "accepted" if record.can_accept else "gap",
+        "proof_level": evidence.proof_level,
+        "repo": record.repo,
+        "pull_request_number": record.pull_request_number,
+        "required_checks": list(record.required_checks),
+        "head_sha": evidence.head_sha,
+        "workflow_run_id": evidence.workflow_run_id,
+        "check_suite_id": evidence.check_suite_id,
+        "check_runs": _github_check_run_summaries(record),
+        "merge": {
+            "merge_commit_sha": evidence.merge_commit_sha,
+            "merged_at": evidence.merged_at,
+            "merge_event_id": evidence.merge_event_id,
+        },
+        "gap_reason": record.gap_reason,
+    }
+    if record.main_ci is not None:
+        summary["main_ci"] = {
+            "workflow_run_id": record.main_ci.workflow_run_id,
+            "workflow_name": record.main_ci.workflow_name,
+            "head_sha": record.main_ci.head_sha,
+            "head_branch": record.main_ci.head_branch,
+            "status": record.main_ci.status,
+            "conclusion": record.main_ci.conclusion,
+            "url": record.main_ci.url,
+        }
+    return summary
+
+
+def _github_check_run_summaries(record: GitHubGateEvidenceRecord) -> list[dict[str, Any]]:
+    evidence = record.evidence
+    count = max(
+        len(evidence.check_run_ids),
+        len(evidence.check_run_names),
+        len(evidence.check_run_head_shas),
+    )
+    runs: list[dict[str, Any]] = []
+    for index in range(count):
+        runs.append(
+            {
+                "id": evidence.check_run_ids[index]
+                if index < len(evidence.check_run_ids)
+                else None,
+                "name": evidence.check_run_names[index]
+                if index < len(evidence.check_run_names)
+                else None,
+                "head_sha": evidence.check_run_head_shas[index]
+                if index < len(evidence.check_run_head_shas)
+                else None,
+            }
+        )
+    return runs
 
 
 def _dedupe_refs(refs: list[str | None]) -> list[str]:
