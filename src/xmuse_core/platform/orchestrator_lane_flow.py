@@ -289,16 +289,23 @@ def ensure_lane_worktree(orchestrator, lane: dict[str, Any]) -> dict[str, Any]:
     lane_id = str(lane["feature_id"])
     existing_worktree = lane.get("worktree")
     existing_branch = lane.get("branch")
-    if existing_worktree and existing_branch and lane.get("base_head_sha"):
+    existing_worktree_path = Path(str(existing_worktree)) if existing_worktree else None
+    if (
+        existing_worktree_path is not None
+        and existing_branch
+        and lane.get("base_head_sha")
+        and _is_lane_specific_worktree(existing_worktree_path, lane_id)
+    ):
         return lane
 
-    branch = str(existing_branch or _safe_lane_ref(lane_id))
-    worktree = (
-        Path(str(existing_worktree))
-        if existing_worktree
-        else _compat_symbol(orchestrator, "WORKTREE_BASE", WORKTREE_BASE)
-        / _safe_lane_ref(lane_id)
+    branch = (
+        str(existing_branch)
+        if existing_worktree_path is not None
+        and existing_branch
+        and _is_lane_specific_worktree(existing_worktree_path, lane_id)
+        else _safe_lane_ref(lane_id)
     )
+    worktree = _lane_worktree_path(orchestrator, lane_id, existing_worktree_path)
     if _is_empty_directory(worktree):
         worktree.rmdir()
     if not worktree.exists():
@@ -329,6 +336,23 @@ def ensure_lane_worktree(orchestrator, lane: dict[str, Any]) -> dict[str, Any]:
         worktree=str(worktree),
     )
     return updated
+
+
+def _lane_worktree_path(
+    orchestrator,
+    lane_id: str,
+    existing_worktree: Path | None,
+) -> Path:
+    safe_lane = _safe_lane_ref(lane_id)
+    if existing_worktree is None:
+        return _compat_symbol(orchestrator, "WORKTREE_BASE", WORKTREE_BASE) / safe_lane
+    if _is_lane_specific_worktree(existing_worktree, lane_id):
+        return existing_worktree
+    return existing_worktree.parent / f"{existing_worktree.name}-{safe_lane}"
+
+
+def _is_lane_specific_worktree(worktree: Path, lane_id: str) -> bool:
+    return worktree.name == _safe_lane_ref(lane_id)
 
 
 def _ensure_existing_worktree_branch(worktree: Path, branch: str) -> tuple[str, bool]:
