@@ -121,6 +121,15 @@ def test_main_writes_expected_note_content_into_command_artifacts(
     assert repo_head_sha_calls == 1
     assert commands_json["expected_note_content"] == expected_note_content
     assert commands_json["expected_content"] == expected_note_content
+    assert commands_json["lane_count"] == 1
+    assert commands_json["lane_specs"] == [
+        {
+            "feature_id": feature_id,
+            "lane_kind": "docs",
+            "target_path": f"docs/xmuse/{feature_id}.md",
+            "expected_content": expected_note_content,
+        }
+    ]
     assert commands_json["lane_kind"] == "docs"
     assert commands_json["target_path"] == f"docs/xmuse/{feature_id}.md"
     assert commands_json["repo_head_sha"] == "abc123repohead"
@@ -183,6 +192,76 @@ def test_target_spec_requires_explicit_code_artifact() -> None:
         )
 
 
+def test_lane_specs_from_args_accepts_multilane_json() -> None:
+    specs = sentinel._lane_specs_from_args(
+        argparse.Namespace(
+            feature_id="run-label",
+            lane_kind="docs",
+            target_path=None,
+            expected_content=None,
+            lane_spec_json=json.dumps(
+                [
+                    {
+                        "feature_id": "lane-alpha",
+                        "lane_kind": "docs",
+                        "target_path": "docs/xmuse/lane-alpha.md",
+                        "expected_content": "alpha reached execution",
+                    },
+                    {
+                        "feature_id": "lane-beta",
+                        "lane_kind": "code",
+                        "target_path": "src/xmuse_core/platform/lane_beta.py",
+                        "expected_content": 'LANE = "beta"',
+                    },
+                ]
+            ),
+        )
+    )
+
+    assert specs == [
+        {
+            "feature_id": "lane-alpha",
+            "lane_kind": "docs",
+            "target_path": "docs/xmuse/lane-alpha.md",
+            "expected_content": "alpha reached execution",
+        },
+        {
+            "feature_id": "lane-beta",
+            "lane_kind": "code",
+            "target_path": "src/xmuse_core/platform/lane_beta.py",
+            "expected_content": 'LANE = "beta"',
+        },
+    ]
+
+
+def test_lane_specs_from_args_rejects_duplicate_targets() -> None:
+    with pytest.raises(ValueError, match="duplicate lane target_path"):
+        sentinel._lane_specs_from_args(
+            argparse.Namespace(
+                feature_id="run-label",
+                lane_kind="docs",
+                target_path=None,
+                expected_content=None,
+                lane_spec_json=json.dumps(
+                    [
+                        {
+                            "feature_id": "lane-alpha",
+                            "lane_kind": "docs",
+                            "target_path": "docs/xmuse/shared.md",
+                            "expected_content": "alpha",
+                        },
+                        {
+                            "feature_id": "lane-beta",
+                            "lane_kind": "docs",
+                            "target_path": "docs/xmuse/shared.md",
+                            "expected_content": "beta",
+                        },
+                    ]
+                ),
+            )
+        )
+
+
 def test_code_lane_demand_names_code_boundary() -> None:
     demand = sentinel._sentinel_demand(
         feature_id="code-target",
@@ -202,6 +281,92 @@ def test_code_lane_demand_names_code_boundary() -> None:
     assert "src/xmuse_core/code_target.py" in demand
     assert 'SENTINEL = "code-target"' in demand
     assert "opencode_unavailable" in demand
+
+
+def test_multilane_demand_requires_independent_exact_lane_specs() -> None:
+    demand = sentinel._sentinel_demand(
+        feature_id="rung4-run",
+        lane_specs=[
+            {
+                "feature_id": "lane-alpha",
+                "lane_kind": "docs",
+                "target_path": "docs/xmuse/lane-alpha.md",
+                "expected_content": "alpha reached execution",
+            },
+            {
+                "feature_id": "lane-beta",
+                "lane_kind": "code",
+                "target_path": "src/xmuse_core/platform/lane_beta.py",
+                "expected_content": 'LANE = "beta"',
+            },
+        ],
+        provider_readiness={
+            "review_provider_selection": {
+                "selected_provider": "codex",
+                "fallback_reason": None,
+            }
+        },
+    )
+
+    assert "multi-lane runtime sentinel" in demand
+    assert "exactly one lane_graph" in demand
+    assert "Keep all lanes independent with empty depends_on" in demand
+    assert 'feature_id="lane-alpha"' in demand
+    assert 'target_path="src/xmuse_core/platform/lane_beta.py"' in demand
+    assert 'LANE = "beta"' in demand
+
+
+def test_multi_success_checks_require_all_lanes_and_distinct_worktrees() -> None:
+    def lane_snapshot(feature_id: str, worktree: str) -> dict:
+        return {
+            "feature_id": feature_id,
+            "target_path": f"src/xmuse_core/platform/{feature_id}.py",
+            "proposal_has_review_runtime": False,
+            "related_lane_graph_proposals": [{"id": "proposal"}],
+            "selected_review_provider": "codex",
+            "provider_readiness": {
+                "review_provider_selection": {
+                    "selected_provider": "codex",
+                    "fallback_reason": None,
+                }
+            },
+            "review_peer_participant": {"cli_kind": "codex"},
+            "proposal": {
+                "status": "accepted",
+                "accepted_resolution_id": f"res-{feature_id}",
+            },
+            "lane": {
+                "feature_id": feature_id,
+                "status": "awaiting_final_action",
+                "gate_passed": True,
+                "peer_delivery_mode": "configured_peer",
+                "peer_result_status": "received",
+                "peer_degraded_reason": None,
+                "review_peer_cli_kind": "codex",
+                "resolution_id": f"res-{feature_id}",
+                "worktree": worktree,
+            },
+            "execution_artifact": {"matches_expected": True},
+            "review_task": {"status": "verdict_emitted"},
+            "review_verdict": {"status": "finalized"},
+            "final_action_hold": {"status": "pending"},
+        }
+
+    checks = sentinel._success_checks(
+        {
+            "proposal_has_review_runtime": False,
+            "lane_snapshots": [
+                lane_snapshot("lane-alpha", "/tmp/worktree-alpha"),
+                lane_snapshot("lane-beta", "/tmp/worktree-beta"),
+            ],
+        }
+    )
+
+    assert checks["all_lanes_awaiting_final_action"] is True
+    assert checks["all_isolated_artifacts_match"] is True
+    assert checks["distinct_feature_ids"] is True
+    assert checks["distinct_target_paths"] is True
+    assert checks["distinct_worktrees"] is True
 
 
 @pytest.mark.parametrize(
