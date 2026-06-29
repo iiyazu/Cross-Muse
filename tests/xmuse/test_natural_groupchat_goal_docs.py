@@ -299,3 +299,29 @@ def test_runtime_prompt_and_contract_assets_are_classified() -> None:
     } == active_contracts
     assert not (PROJECT_ROOT / "xmuse" / "prompts" / "god.md").exists()
     assert (legacy_archive / "god.md").is_file()
+
+
+def test_runtime_launcher_and_config_assets_are_classified() -> None:
+    active_runtime_root_assets = {
+        "codex_node_launcher.sh",
+        "gate_profiles.json",
+        "god_launcher.sh",
+        "master_blueprint.md",
+        "master_status.md",
+        "overnight_runner.sh",
+        "scheduler_monitor.sh",
+        "start_scheduler_monitor.sh",
+    }
+    archive_dir = DOCS_ROOT / "archive" / "2026-06-runtime-launcher-legacy"
+    status = _read_doc("document-status.md")
+
+    observed_runtime_root_assets = {
+        path.name
+        for pattern in ("*.sh", "*.json", "*.md")
+        for path in (PROJECT_ROOT / "xmuse").glob(pattern)
+    }
+
+    assert "docs/xmuse/archive/2026-06-runtime-launcher-legacy/" in status
+    assert observed_runtime_root_assets == active_runtime_root_assets
+    assert not (PROJECT_ROOT / "xmuse" / "bootstrap_gate.sh").exists()
+    assert (archive_dir / "bootstrap_gate.sh").is_file()

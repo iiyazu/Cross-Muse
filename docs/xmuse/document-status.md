@@ -106,6 +106,9 @@ task explicitly targets them:
   `state_machine.json`, and an older production-strengthening goal prompt.
 - `docs/xmuse/archive/2026-06-runtime-prompt-legacy/` contains deprecated
   runtime prompt stubs that must not be loaded as active prompt assets.
+- `docs/xmuse/archive/2026-06-runtime-launcher-legacy/` contains deprecated
+  root launcher/gate scripts that have no active runtime, test, or operator
+  consumer.
 
 If an archived document becomes active again, first promote it into the current
 goal package with fresh verification.
@@ -124,3 +127,9 @@ goal package with fresh verification.
 - Current prompt and contract assets may remain under `xmuse/prompts/`,
   `xmuse/god_prompts/`, and `xmuse/contracts/` only when a loader, launcher,
   compatibility contract, or focused test still consumes their exact paths.
+- Root-level launcher and config assets may remain under `xmuse/` only when
+  they are active runtime entrypoints or exact-path compatibility contracts.
+  Current allowed root `*.sh`, `*.json`, and `*.md` assets are:
+  `codex_node_launcher.sh`, `gate_profiles.json`, `god_launcher.sh`,
+  `master_blueprint.md`, `master_status.md`, `overnight_runner.sh`,
+  `scheduler_monitor.sh`, and `start_scheduler_monitor.sh`.
