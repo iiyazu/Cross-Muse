@@ -957,6 +957,116 @@ def test_scan_routes_ignores_active_participants_outside_fixed_a1_roster(tmp_pat
     )
 
 
+def test_scan_routes_hands_accepted_final_action_back_to_architect(tmp_path):
+    db, chat, conversation, root, architect, _review, _critic = _conversation_with_groupchat_roster(
+        tmp_path,
+        root_content="@execute no natural route from the root.",
+    )
+    store = GroupchatWorklistStore(db)
+    chain = store.create_chain(conversation_id=conversation.id, root_message_id=root.id)
+    accepted = chat.add_message(
+        conversation_id=conversation.id,
+        author="final-action-gate",
+        role="system",
+        content="Final action merge for lane lane-a is accepted.",
+        envelope_type="final_action_result",
+        envelope_json={
+            "type": "final_action_result",
+            "lane_id": "lane-a",
+            "action": "merge",
+            "status": "accepted",
+            "github_gate_evidence_ref": "github_gate_evidence:lane-a",
+            "github_gate": {
+                "status": "accepted",
+                "exact_head_sha": "abc123",
+                "pr": {"number": 42},
+            },
+        },
+    )
+    scheduler = GroupchatWorklistScheduler(db_path=db, scheduler_id="groupchat-a1")
+
+    assert scheduler.scan_routes_once(chain_id=chain.chain_id) == []
+    routed = scheduler.scan_routes_once(chain_id=chain.chain_id)
+
+    assert len(routed) == 1
+    assert routed[0].source_message_id == accepted.id
+    assert routed[0].target_participant_id == architect.participant_id
+    assert routed[0].route_kind == "handoff"
+    assert routed[0].status == "queued"
+    assert store.get_chain(chain.chain_id).status == "open"
+
+
+def test_scan_routes_uses_final_action_envelope_before_text_mentions(tmp_path):
+    db, chat, conversation, root, architect, _review, _critic = _conversation_with_groupchat_roster(
+        tmp_path,
+        root_content="@execute no natural route from the root.",
+    )
+    store = GroupchatWorklistStore(db)
+    chain = store.create_chain(conversation_id=conversation.id, root_message_id=root.id)
+    accepted = chat.add_message(
+        conversation_id=conversation.id,
+        author="final-action-gate",
+        role="system",
+        content="@critic Final action merge for lane lane-a is accepted.",
+        envelope_type="final_action_result",
+        envelope_json={
+            "type": "final_action_result",
+            "lane_id": "lane-a",
+            "action": "merge",
+            "status": "accepted",
+            "github_gate_evidence_ref": "github_gate_evidence:lane-a",
+            "github_gate": {"status": "accepted"},
+        },
+    )
+    scheduler = GroupchatWorklistScheduler(db_path=db, scheduler_id="groupchat-a1")
+
+    assert scheduler.scan_routes_once(chain_id=chain.chain_id) == []
+    routed = scheduler.scan_routes_once(chain_id=chain.chain_id)
+
+    assert len(routed) == 1
+    assert routed[0].source_message_id == accepted.id
+    assert routed[0].target_participant_id == architect.participant_id
+    assert routed[0].route_kind == "handoff"
+
+
+def test_scan_routes_blocks_final_action_github_gate_gap(tmp_path):
+    db, chat, conversation, root, architect, _review, _critic = _conversation_with_groupchat_roster(
+        tmp_path,
+        root_content="@execute no natural route from the root.",
+    )
+    store = GroupchatWorklistStore(db)
+    chain = store.create_chain(conversation_id=conversation.id, root_message_id=root.id)
+    blocked_result = chat.add_message(
+        conversation_id=conversation.id,
+        author="final-action-gate",
+        role="system",
+        content="Final action merge for lane lane-a is blocked by GitHub gate.",
+        envelope_type="final_action_result",
+        envelope_json={
+            "type": "final_action_result",
+            "lane_id": "lane-a",
+            "action": "merge",
+            "status": "blocked",
+            "github_gate_gap_ref": "github_gate_gap:lane-a",
+            "status_reason": "github_gate_unverified",
+        },
+    )
+    scheduler = GroupchatWorklistScheduler(db_path=db, scheduler_id="groupchat-a1")
+
+    assert scheduler.scan_routes_once(chain_id=chain.chain_id) == []
+    routed = scheduler.scan_routes_once(chain_id=chain.chain_id)
+
+    assert len(routed) == 1
+    assert routed[0].source_message_id == blocked_result.id
+    assert routed[0].target_participant_id == architect.participant_id
+    assert routed[0].route_kind == "handoff"
+    assert routed[0].status == "blocked"
+    assert routed[0].terminal_reason == "final_action_github_gate_gap"
+    chain_after = store.get_chain(chain.chain_id)
+    assert chain_after.status == "blocked"
+    assert chain_after.status_reason == "final_action_github_gate_gap"
+
+
 def test_scan_routes_ignores_inline_mentions_even_when_mentions_json_contains_target(
     tmp_path,
 ):

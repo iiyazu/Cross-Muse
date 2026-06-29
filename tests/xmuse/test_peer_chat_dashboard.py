@@ -1065,7 +1065,12 @@ def test_dashboard_peer_chat_ux_projection_includes_operator_evidence_summary(
                 {
                     "id": "accepted-evidence",
                     "final_action_id": hold.id,
+                    "repo": "iiyazu/Cross-Muse",
+                    "pull_request_number": 295,
+                    "required_checks": ["quality-gates"],
                     "can_accept": True,
+                    "gap_reason": None,
+                    "created_at": "2026-06-29T01:31:00Z",
                     "evidence": {
                         "repo": "iiyazu/Cross-Muse",
                         "pull_request_number": 295,
@@ -1556,7 +1561,12 @@ def test_dashboard_peer_chat_ux_projection_evidence_summary_keeps_multilane_refs
             {
                 "id": evidence_id,
                 "final_action_id": hold.id,
+                "repo": "iiyazu/Cross-Muse",
+                "pull_request_number": pr_number,
+                "required_checks": ["quality-gates"],
                 "can_accept": True,
+                "gap_reason": None,
+                "created_at": "2026-06-29T01:31:00Z",
                 "evidence": {
                     "repo": "iiyazu/Cross-Muse",
                     "pull_request_number": pr_number,
@@ -1567,6 +1577,18 @@ def test_dashboard_peer_chat_ux_projection_evidence_summary_keeps_multilane_refs
                     "check_run_ids": [pr_number * 100],
                     "check_run_names": ["quality-gates"],
                     "check_run_head_shas": [f"head-{lane_id}"],
+                    "expected_source_app": "github-actions",
+                    "branch_protection_snapshot": {
+                        "required_status_checks": {
+                            "strict": True,
+                            "checks": [{"context": "quality-gates"}],
+                        },
+                        "required_pull_request_reviews": None,
+                    },
+                    "internal_review_artifact": f"review_plane.json#verdict={verdict_id}",
+                    "internal_reviewer": "review-god",
+                    "internal_reviewed_head_sha": f"head-{lane_id}",
+                    "internal_review_verified": True,
                     "merge_commit_sha": f"merge-{lane_id}",
                     "merged_at": "2026-06-29T01:30:00Z",
                     "merge_event_id": f"merge-event-{lane_id}",
@@ -1721,6 +1743,7 @@ def test_dashboard_peer_chat_ux_projection_evidence_summary_uses_lane_projection
                     "required_checks": ["quality-gates"],
                     "can_accept": True,
                     "gap_reason": None,
+                    "created_at": "2026-06-29T05:11:00Z",
                     "evidence": {
                         "repo": "iiyazu/Cross-Muse",
                         "pull_request_number": 304,
@@ -1731,6 +1754,18 @@ def test_dashboard_peer_chat_ux_projection_evidence_summary_uses_lane_projection
                         "check_run_ids": [30401],
                         "check_run_names": ["quality-gates"],
                         "check_run_head_shas": ["head-lane-only"],
+                        "expected_source_app": "github-actions",
+                        "branch_protection_snapshot": {
+                            "required_status_checks": {
+                                "strict": True,
+                                "checks": [{"context": "quality-gates"}],
+                            },
+                            "required_pull_request_reviews": None,
+                        },
+                        "internal_review_artifact": ("review_plane.json#verdict=verdict-lane-only"),
+                        "internal_reviewer": "review-god",
+                        "internal_reviewed_head_sha": "head-lane-only",
+                        "internal_review_verified": True,
                         "merge_commit_sha": "merge-lane-only",
                         "merged_at": "2026-06-29T05:10:00Z",
                         "merge_event_id": "merge-event-lane-only",
