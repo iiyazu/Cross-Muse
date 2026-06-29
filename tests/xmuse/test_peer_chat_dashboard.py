@@ -449,6 +449,7 @@ def test_dashboard_peer_chat_ux_projection_is_frontend_read_model(
         "chat.db:peer_turn_latency_traces",
         "review_plane.json",
         "final_actions.json",
+        "final_action_prs.json",
         "github_gate_evidence.json",
         "active_sessions.json",
         "god_sessions.json",
@@ -811,6 +812,187 @@ def test_dashboard_peer_chat_ux_projection_links_natural_chain_lane_state(
                 },
             }
         ],
+    }
+
+
+def test_dashboard_peer_chat_ux_projection_projects_final_action_pr_and_github_gate_from_lanes(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "chat.db"
+    chat = ChatStore(db)
+    conv = chat.create_conversation("Natural final-action PR projection")
+    chat.add_message(conv.id, "Human", "human", "@architect run final-action PR")
+    task = ReviewTask(
+        task_id="review-task-pr",
+        lane_id="lane-pr",
+        graph_id="graph-pr",
+        resolution_id="res-pr",
+        lane_prompt="Review natural final-action PR lane.",
+        gate_report_ref="logs/gates/lane-pr/report.json",
+        created_at="2026-06-29T04:00:00Z",
+    )
+    verdict = ReviewVerdict(
+        id="verdict-pr",
+        lane_id="lane-pr",
+        decision=ReviewDecision.MERGE,
+        status="finalized",
+        summary="Review accepted PR lane.",
+        evidence_refs=["logs/gates/lane-pr/report.json"],
+        created_at="2026-06-29T04:01:00Z",
+    )
+    VerdictStore(tmp_path / "review_plane.json").save_task_and_verdict(task, verdict)
+    _write_json(
+        tmp_path / "final_actions.json",
+        {
+            "holds": [
+                {
+                    "id": "final-pr",
+                    "lane_id": "lane-pr",
+                    "verdict_id": "verdict-pr",
+                    "action": "merge",
+                    "target_status": "reviewed",
+                    "status": "approved",
+                    "summary": "GitHub gate accepted for PR lane.",
+                    "resolved_by": "platform-runner",
+                    "github_gate_evidence_ref": "github_gate_evidence.json#evidence=gh-pr",
+                }
+            ]
+        },
+    )
+    _write_json(
+        tmp_path / "final_action_prs.json",
+        {
+            "schema_version": "final_action_prs.v1",
+            "items": [
+                {
+                    "id": "fapr-pr",
+                    "final_action_id": "final-pr",
+                    "lane_id": "lane-pr",
+                    "status": "created",
+                    "repo": "iiyazu/Cross-Muse",
+                    "base_branch": "main",
+                    "head_branch": "codex/lane-pr",
+                    "commit_sha": "head-pr",
+                    "pull_request_number": 301,
+                    "pull_request_url": "https://github.com/iiyazu/Cross-Muse/pull/301",
+                    "head_sha": "head-pr",
+                    "draft": False,
+                    "worktree": "/tmp/lane-pr",
+                    "proof_boundary": "pull_request_created_not_merge_truth",
+                    "created_at": "2026-06-29T04:02:00Z",
+                }
+            ],
+        },
+    )
+    _write_json(
+        tmp_path / "github_gate_evidence.json",
+        {
+            "schema_version": "github_gate_evidence.v1",
+            "items": [
+                {
+                    "id": "gh-pr",
+                    "final_action_id": "final-pr",
+                    "repo": "iiyazu/Cross-Muse",
+                    "pull_request_number": 301,
+                    "required_checks": ["quality-gates"],
+                    "can_accept": True,
+                    "gap_reason": None,
+                    "created_at": "2026-06-29T04:05:00Z",
+                    "evidence": {
+                        "repo": "iiyazu/Cross-Muse",
+                        "pull_request_number": 301,
+                        "required_checks": ["quality-gates"],
+                        "proof_level": "server_side_merge_proof",
+                        "head_sha": "head-pr",
+                        "workflow_run_id": 28349550118,
+                        "check_run_ids": [83979528377],
+                        "check_run_names": ["quality-gates"],
+                        "check_run_head_shas": ["head-pr"],
+                        "merge_commit_sha": "merge-pr",
+                        "merged_at": "2026-06-29T04:56:51Z",
+                        "merge_event_id": "merge-event-pr",
+                    },
+                    "main_ci": {
+                        "workflow_run_id": 28349587620,
+                        "head_sha": "merge-pr",
+                        "conclusion": "success",
+                    },
+                }
+            ],
+        },
+    )
+    _write_json(
+        tmp_path / "feature_lanes.json",
+        {
+            "lanes": [
+                {
+                    "feature_id": "lane-pr",
+                    "conversation_id": conv.id,
+                    "status": "merged",
+                    "review_verdict_id": "verdict-pr",
+                    "final_action_hold_id": "final-pr",
+                    "pull_request_ref": "final_action_prs.json#pr=fapr-pr",
+                    "pull_request_number": 301,
+                    "pull_request_url": "https://github.com/iiyazu/Cross-Muse/pull/301",
+                    "pull_request_head_sha": "head-pr",
+                    "github_gate_evidence_ref": "github_gate_evidence.json#evidence=gh-pr",
+                }
+            ]
+        },
+    )
+
+    response = TestClient(create_app(tmp_path)).get(
+        f"/api/dashboard/peer-chat/conversations/{conv.id}/ux-projection"
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert "final_action_prs.json" in payload["source_authority"]
+    assert payload["final_action_state"]["source_authority"] == [
+        "final_actions.json",
+        "chat.db:acceptance_spines",
+        "final_action_prs.json",
+        "github_gate_evidence.json",
+    ]
+    item = payload["final_action_state"]["items"][0]
+    assert item["pull_request"] == {
+        "id": "fapr-pr",
+        "ref": "final_action_prs.json#pr=fapr-pr",
+        "status": "created",
+        "repo": "iiyazu/Cross-Muse",
+        "base_branch": "main",
+        "head_branch": "codex/lane-pr",
+        "commit_sha": "head-pr",
+        "pull_request_number": 301,
+        "pull_request_url": "https://github.com/iiyazu/Cross-Muse/pull/301",
+        "head_sha": "head-pr",
+        "draft": False,
+        "created_at": "2026-06-29T04:02:00Z",
+        "proof_boundary": "pull_request_created_not_merge_truth",
+        "authority_boundary": {
+            "producer": "final_action_prs.json",
+            "consumer": "frontend.peer_chat_ux_projection",
+            "condition": "read_only_projection",
+            "proof_boundary": "pull_request_record_not_ci_or_merge_truth",
+        },
+    }
+    assert item["github_gate"]["ref"] == "github_gate_evidence.json#evidence=gh-pr"
+    assert item["github_gate"]["status"] == "accepted"
+    assert item["github_gate"]["details"]["pull_request"] == {
+        "repo": "iiyazu/Cross-Muse",
+        "number": 301,
+        "head_sha": "head-pr",
+    }
+    assert item["github_gate"]["details"]["merge"] == {
+        "merge_commit_sha": "merge-pr",
+        "merged_at": "2026-06-29T04:56:51Z",
+        "merge_event_id": "merge-event-pr",
+    }
+    assert item["github_gate"]["details"]["main_ci"] == {
+        "workflow_run_id": 28349587620,
+        "head_sha": "merge-pr",
+        "conclusion": "success",
+        "status": "success",
     }
 
 
