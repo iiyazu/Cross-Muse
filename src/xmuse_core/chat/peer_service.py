@@ -15,6 +15,7 @@ from xmuse_core.chat.bootstrap_contracts import (
     BootstrapDraft,
     BootstrapInitMode,
     BootstrapStatus,
+    GroupchatPreset,
     LogicalForkSpec,
     LogicalPeerSpec,
     TeamPlanProposal,
@@ -181,8 +182,9 @@ class PeerChatService:
             raise PeerChatError("invalid_bootstrap_init_mode", init_mode) from exc
 
         role_templates = RoleTemplateStore(self._db_path)
+        preset = resolve_groupchat_preset(preset_id)
         participant_specs = (
-            self._default_participant_specs(role_templates)
+            self._preset_participant_specs(role_templates, preset)
             if participants is None
             else self._normalize_participant_specs(role_templates, participants)
         )
@@ -199,7 +201,7 @@ class PeerChatService:
         )
         draft = self._bootstrap_draft(
             conversation_id=conversation_id,
-            preset_id=preset_id,
+            preset_id=preset.preset_id,
             init_participant=init_participant,
             init_session=init_session,
             participant_specs=participant_specs,
@@ -1059,21 +1061,33 @@ class PeerChatService:
             "sessions": sessions,
         }
 
-    def _default_participant_specs(
+    def _preset_participant_specs(
         self,
         role_templates: RoleTemplateStore,
+        preset: GroupchatPreset,
     ) -> list[dict[str, str]]:
         specs = []
-        for role in ("architect", "review", "execute"):
-            template = role_templates.get_by_slug(role)
+        for peer in preset.roles:
+            template = role_templates.get_by_slug(peer.template_slug)
             if template is None:
-                raise PeerChatError("missing_predefined_role_template", role)
+                raise PeerChatError(
+                    "missing_predefined_role_template",
+                    peer.template_slug,
+                )
+            model = peer.model
+            if peer.cli_kind == "codex":
+                model = normalize_codex_model_id(
+                    peer.model,
+                    profile_id=peer.profile_id,
+                )
             specs.append(
                 {
-                    "role": role,
-                    "display_name": f"{role}-god",
-                    "cli_kind": template.cli_kind,
-                    "model": template.default_model,
+                    "role": peer.role,
+                    "display_name": peer.display_name,
+                    "provider_id": peer.provider_id,
+                    "profile_id": peer.profile_id,
+                    "cli_kind": peer.cli_kind,
+                    "model": model,
                     "role_template_id": template.id,
                 }
             )
