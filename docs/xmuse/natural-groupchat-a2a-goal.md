@@ -189,12 +189,16 @@ As of this docs snapshot:
 
 The current highest-confidence proof is PR #294:
 
+- `post_abc_closure_baseline`:
+  `07630131dcb6e26c8dc09dcf41690381e5cd0ee6`;
 - natural groupchat run:
   `track-abc-integrated-memoryos-degraded-20260629-01`;
 - conversation:
   `conv_c7528fbf03b84755b8d4eb65166aa0a1`;
 - final action:
   `final-cce17cc5e0e7`;
+- PR:
+  `https://github.com/iiyazu/Cross-Muse/pull/294`;
 - PR head:
   `9be3b17190380171756bd8375fcb946247217d7c`;
 - exact-head CI:

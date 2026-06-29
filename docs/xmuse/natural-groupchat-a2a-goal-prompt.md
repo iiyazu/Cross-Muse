@@ -113,10 +113,16 @@ Recorded baseline:
 Post-#294 milestone:
 - `post_abc_closure_baseline` is
   `07630131dcb6e26c8dc09dcf41690381e5cd0ee6`, produced by PR #294.
+- Run `track-abc-integrated-memoryos-degraded-20260629-01`, conversation
+  `conv_c7528fbf03b84755b8d4eb65166aa0a1`, final action
+  `final-cce17cc5e0e7`.
+- PR #294: `https://github.com/iiyazu/Cross-Muse/pull/294`.
 - PR #294 head `9be3b17190380171756bd8375fcb946247217d7c` passed exact-head
   CI run `28332878486`; guarded merge produced
   `07630131dcb6e26c8dc09dcf41690381e5cd0ee6`; main CI run `28332906024`
   succeeded.
+- GitHub gate evidence:
+  `github_gate_evidence.json#evidence=ghgate_e3e90b98395d4c6e81136db6241ecf49`.
 - The run proved one docs-only integrated A/B/C chain:
   natural groupchat proposal/review/dispatch/execution/final-action,
   degraded MemoryOS sidecar attempt projection, frontend read-only projection,
