@@ -1349,6 +1349,112 @@ def test_dashboard_peer_chat_ux_projection_includes_operator_evidence_summary(
     }
 
 
+def test_dashboard_peer_chat_ux_projection_summarizes_multiple_sidecar_items(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "chat.db"
+    chat = ChatStore(db)
+    conv = chat.create_conversation("Multiple sidecar evidence")
+    namespace = f"memory://conversation/{conv.id}"
+    traces = PeerTurnLatencyTraceStore(db)
+    traces.record(
+        conversation_id=conv.id,
+        inbox_item_id="inbox-degraded",
+        participant_id="execute-degraded",
+        target_role="execute",
+        message_created_at="2026-06-29T01:00:00Z",
+        inbox_claimed_at="2026-06-29T01:00:01Z",
+        delivery_started_at=1.0,
+        provider_turn_started_at=1.1,
+        first_delta_at=None,
+        writeback_at=1.2,
+        total_latency_ms=200,
+        delivery_mode="memoryos_sidecar_dispatch_handoff",
+        degraded_reason=None,
+        supporting_context={
+            "memoryos_sidecar": {
+                "status": "degraded",
+                "authority": "memoryos_sidecar",
+                "proof_level": "degraded",
+                "namespace_uri": namespace,
+                "degraded_reason": "memoryos_unavailable",
+                "continuity_attempt_ref": f"{namespace}/context/memoryos-sidecar-attempt",
+            }
+        },
+    )
+    traces.record(
+        conversation_id=conv.id,
+        inbox_item_id="inbox-recorded",
+        participant_id="execute-recorded",
+        target_role="execute",
+        message_created_at="2026-06-29T01:01:00Z",
+        inbox_claimed_at="2026-06-29T01:01:01Z",
+        delivery_started_at=2.0,
+        provider_turn_started_at=2.1,
+        first_delta_at=None,
+        writeback_at=2.2,
+        total_latency_ms=200,
+        delivery_mode="memoryos_sidecar_dispatch_handoff",
+        degraded_reason=None,
+        supporting_context={
+            "memoryos_sidecar": {
+                "status": "recorded",
+                "authority": "memoryos_sidecar",
+                "proof_level": "contract",
+                "namespace_uri": namespace,
+                "degraded_reason": None,
+                "source_refs": ["chat_dispatch_queue:dispatch-recorded"],
+                "continuity_refs": [f"{namespace}/messages/msg-recorded"],
+            }
+        },
+    )
+
+    response = TestClient(create_app(tmp_path)).get(
+        f"/api/dashboard/peer-chat/conversations/{conv.id}/ux-projection"
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    summary = payload["evidence_summary"]
+    assert summary["counts"] == {
+        "authority": 1,
+        "execution_proof": 0,
+        "github_server_truth": 0,
+        "sidecar_continuity": 2,
+        "read_projection": 1,
+        "failure_boundary": 0,
+    }
+    sidecar_items = [
+        item for item in summary["items"] if item["kind"] == "memoryos_sidecar"
+    ]
+    assert sidecar_items == [
+        {
+            "kind": "memoryos_sidecar",
+            "proof_class": "sidecar_continuity",
+            "ref": f"{namespace}/messages/msg-recorded",
+            "status": "recorded",
+            "producer": "chat.db:peer_turn_latency_traces.supporting_context_json",
+            "consumer": "natural_groupchat_evidence_summary",
+            "condition": "memoryos_sidecar_projection_present",
+            "proof_boundary": "sidecar_continuity_not_proposal_review_dispatch_or_github_truth",
+        },
+        {
+            "kind": "memoryos_sidecar",
+            "proof_class": "sidecar_continuity",
+            "ref": f"{namespace}/context/memoryos-sidecar-attempt",
+            "status": "degraded",
+            "producer": "chat.db:peer_turn_latency_traces.supporting_context_json",
+            "consumer": "natural_groupchat_evidence_summary",
+            "condition": "memoryos_sidecar_projection_present",
+            "proof_boundary": "sidecar_continuity_not_proposal_review_dispatch_or_github_truth",
+        },
+    ]
+    assert payload["operator_closure"]["sidecar_status_summary"] == {
+        "recorded": 1,
+        "degraded": 1,
+    }
+
+
 def test_dashboard_peer_chat_ux_projection_evidence_summary_keeps_multilane_refs(
     tmp_path: Path,
 ) -> None:
