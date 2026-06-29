@@ -38,6 +38,13 @@ from xmuse_core.chat.stream_store import PeerTurnLatencyTraceStore
 from xmuse_core.integrations.memoryos_client import (
     RestMemoryOSClient as PeerChatMemoryOSClient,
 )
+from xmuse_core.integrations.memoryos_lite_interop import (
+    DEFAULT_BINDING_STORE_NAME as MEMORYOS_LITE_BINDING_STORE_NAME,
+)
+from xmuse_core.integrations.memoryos_lite_interop import (
+    MemoryOSLiteInteropAdapter,
+    MemoryOSLiteSessionBindingStore,
+)
 from xmuse_core.platform.coordinator_control import CoordinatorControlService
 from xmuse_core.platform.execution.github_ops import (
     GitHubCliServerSideTruthClient,
@@ -87,6 +94,7 @@ PLANNING_AUTOMATION_WORKER_ID = "platform-runner"
 WRITER_LEASE_TTL_S = 60.0
 WRITER_LEASE_RENEW_INTERVAL_S = WRITER_LEASE_TTL_S / 3
 DEFAULT_PEER_GOD_BACKEND = "native"
+PEER_CHAT_MEMORYOS_KINDS = ("generic", "memoryos-lite")
 REQUIRED_GITHUB_CHECKS = [
     "quality-gates",
     "contract-smoke-gates",
@@ -1255,6 +1263,7 @@ async def run(
     peer_chat_post_writeback_grace_s: float = 8.0,
     peer_chat_dispatch_response_wait_s: float = 300.0,
     peer_chat_memoryos_url: str | None = None,
+    peer_chat_memoryos_kind: str = "generic",
     memoryos_url: str | None = None,
     model_policy: CodexModelPolicy | None = None,
     execution_provider_profile_ref: str | None = None,
@@ -1280,13 +1289,10 @@ async def run(
             if memoryos_url is not None
             else None
         )
-        peer_chat_memoryos_client = (
-            PeerChatMemoryOSClient(
-                base_url=peer_chat_memoryos_url,
-                api_key=os.environ.get("XMUSE_PEER_CHAT_MEMORYOS_API_KEY"),
-            )
-            if peer_chat_memoryos_url is not None
-            else None
+        peer_chat_memoryos_client = _build_peer_chat_memoryos_client(
+            base_url=peer_chat_memoryos_url,
+            kind=peer_chat_memoryos_kind,
+            xmuse_root=xmuse_root,
         )
         from xmuse_core.agents.god_session_layer import GodSessionLayer
         from xmuse_core.agents.launchers import build_default_launchers
@@ -2613,6 +2619,15 @@ def main_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--peer-chat-memoryos-kind",
+        choices=PEER_CHAT_MEMORYOS_KINDS,
+        default=os.environ.get("XMUSE_PEER_CHAT_MEMORYOS_KIND", "generic"),
+        help=(
+            "MemoryOS sidecar REST contract for --peer-chat-memoryos-url; "
+            "generic uses /memory/*, memoryos-lite uses /sessions/*"
+        ),
+    )
+    parser.add_argument(
         "--persistent-review-god",
         action="store_true",
         help=(
@@ -2854,6 +2869,11 @@ def validate_args(args: argparse.Namespace) -> None:
             "--resolve-final-action, --capture-final-action-main-ci, "
             "--capture-dispatch-sidecar-handoff, --create-final-action-pr"
         )
+    if args.peer_chat_memoryos_kind not in PEER_CHAT_MEMORYOS_KINDS:
+        raise SystemExit(
+            "--peer-chat-memoryos-kind must be one of "
+            + ", ".join(PEER_CHAT_MEMORYOS_KINDS)
+        )
     if args.acceptance_gate:
         if not args.goal or not args.goal.strip():
             raise SystemExit("--acceptance-gate requires --goal")
@@ -2986,6 +3006,30 @@ def _runtime_paths_from_args(args: argparse.Namespace) -> tuple[Path, Path]:
     xmuse_root = resolve_xmuse_root(args.xmuse_root, fallback=DEFAULT_XMUSE_ROOT)
     lanes_path = args.lanes or (xmuse_root / "feature_lanes.json")
     return xmuse_root, lanes_path
+
+
+def _build_peer_chat_memoryos_client(
+    *,
+    base_url: str | None,
+    kind: str,
+    xmuse_root: Path,
+) -> Any | None:
+    clean_url = base_url.strip() if isinstance(base_url, str) else ""
+    if not clean_url:
+        return None
+    if kind == "generic":
+        return PeerChatMemoryOSClient(
+            base_url=clean_url,
+            api_key=os.environ.get("XMUSE_PEER_CHAT_MEMORYOS_API_KEY"),
+        )
+    if kind == "memoryos-lite":
+        return MemoryOSLiteInteropAdapter(
+            base_url=clean_url,
+            binding_store=MemoryOSLiteSessionBindingStore(
+                xmuse_root / MEMORYOS_LITE_BINDING_STORE_NAME
+            ),
+        )
+    raise ValueError(f"unsupported peer chat MemoryOS sidecar kind: {kind}")
 
 
 def _peer_chat_runtime_worktree(xmuse_root: Path) -> Path:
@@ -3147,9 +3191,10 @@ def main() -> None:
         return
 
     if args.capture_dispatch_sidecar_handoff:
-        peer_chat_memoryos_client = PeerChatMemoryOSClient(
+        peer_chat_memoryos_client = _build_peer_chat_memoryos_client(
             base_url=args.peer_chat_memoryos_url,
-            api_key=os.environ.get("XMUSE_PEER_CHAT_MEMORYOS_API_KEY"),
+            kind=args.peer_chat_memoryos_kind,
+            xmuse_root=xmuse_root,
         )
         print(
             json.dumps(
@@ -3231,6 +3276,7 @@ def main() -> None:
         peer_chat_post_writeback_grace_s=args.peer_chat_post_writeback_grace_s,
         peer_chat_dispatch_response_wait_s=args.peer_chat_dispatch_response_wait_s,
         peer_chat_memoryos_url=args.peer_chat_memoryos_url,
+        peer_chat_memoryos_kind=args.peer_chat_memoryos_kind,
         memoryos_url=args.memoryos_url,
         model_policy=model_policy,
         execution_provider_profile_ref=args.execution_provider_profile_ref,
