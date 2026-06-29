@@ -18,7 +18,7 @@ import urllib.request
 from pathlib import Path
 
 CHAT_BASE = "http://127.0.0.1:8201/api/chat"
-VISION_DOC = "xmuse/FRONTEND_VISION.md"
+VISION_DOC = "docs/xmuse/frontend/FRONTEND_VISION.md"
 
 
 def post(path: str, payload: dict) -> dict:
@@ -76,7 +76,7 @@ def main() -> int:
             "content": (
                 "Layer 1 participant_store.py is already complete and tested "
                 "(38 passing tests). Implement the remaining backend layers "
-                "described in xmuse/FRONTEND_VISION.md. Do NOT modify "
+                "described in docs/xmuse/frontend/FRONTEND_VISION.md. Do NOT modify "
                 "src/xmuse_core/chat/participant_store.py or "
                 "tests/test_fe_vision_layer1_participant_store.py. Treat them "
                 "as fixed-shape dependencies. Each lane below covers one slice."
@@ -93,7 +93,7 @@ def main() -> int:
     L5 = "fe-vision2-layer5-acceptance-tests"
 
     common_intro = (
-        "Read xmuse/FRONTEND_VISION.md and src/xmuse_core/chat/participant_store.py "
+        "Read docs/xmuse/frontend/FRONTEND_VISION.md and src/xmuse_core/chat/participant_store.py "
         "for the contract. ALREADY IMPLEMENTED (treat as fixed):\n"
         "  - Participant + RoleTemplate Pydantic models\n"
         "  - ParticipantStore + RoleTemplateStore classes\n"

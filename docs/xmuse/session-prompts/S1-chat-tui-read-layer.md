@@ -12,8 +12,8 @@
 
 ```text
 docs/xmuse/session-prompts/README.md
-xmuse/FRONTEND_API.md
-xmuse/FRONTEND_CONTEXT.md
+docs/xmuse/frontend/FRONTEND_API.md
+docs/xmuse/frontend/FRONTEND_CONTEXT.md
 ```
 
 允许修改:

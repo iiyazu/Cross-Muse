@@ -81,7 +81,7 @@
 
 ### Frontend-only — NEXT_PUBLIC_XMUSE_* (Python 代码不读取)
 
-仅在 `xmuse/FRONTEND_API.md` 和 `xmuse/FRONTEND_IMPLEMENTATION_GUIDE.md` 中作为前端配置说明出现。
+仅在 `docs/xmuse/frontend/FRONTEND_API.md` 和 `docs/xmuse/frontend/FRONTEND_IMPLEMENTATION_GUIDE.md` 中作为前端配置说明出现。
 
 | 变量 | 值 |
 |------|-----|

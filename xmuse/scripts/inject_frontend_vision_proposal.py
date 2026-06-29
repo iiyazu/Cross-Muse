@@ -35,7 +35,7 @@ import urllib.request
 from pathlib import Path
 
 CHAT_BASE = "http://127.0.0.1:8201/api/chat"
-VISION_DOC = "xmuse/FRONTEND_VISION.md"
+VISION_DOC = "docs/xmuse/frontend/FRONTEND_VISION.md"
 
 
 def post(path: str, payload: dict) -> dict:
@@ -111,7 +111,7 @@ def main() -> int:
     L5 = "fe-vision-layer5-acceptance-tests"
 
     common_intro = (
-        "Read xmuse/FRONTEND_VISION.md and xmuse/FRONTEND_API_INCREMENTAL.md "
+        "Read docs/xmuse/frontend/FRONTEND_VISION.md and docs/xmuse/frontend/FRONTEND_API_INCREMENTAL.md "
         "for the contract before editing. Touch only the files listed in your "
         "lane prompt. Existing endpoints/types must not change shape. "
         "Add focused pytest tests in your lane only; do not modify "
@@ -298,7 +298,7 @@ def main() -> int:
             "author": "Operator",
             "proposal_type": "frontend-vision-backend",
             "content": "Implement Frontend Vision Layer 1-4 (8 lanes, dep-aware)",
-            "references": [VISION_DOC, "xmuse/FRONTEND_API_INCREMENTAL.md"],
+            "references": [VISION_DOC, "docs/xmuse/frontend/FRONTEND_API_INCREMENTAL.md"],
         },
     )
     proposal_id = proposal["id"]

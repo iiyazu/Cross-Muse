@@ -6,7 +6,7 @@
 > - repo 内 xmuse 前端
 > - 独立 xmuse 前端实现者
 >
-> 当前前端/TUI 实现入口请先读：`xmuse/FRONTEND_IMPLEMENTATION_GUIDE.md`、
+> 当前前端/TUI 实现入口请先读：`docs/xmuse/frontend/FRONTEND_IMPLEMENTATION_GUIDE.md`、
 > `docs/xmuse/README.md` 和 `docs/xmuse/解耦开发协议.md`。
 
 ## Scope
@@ -20,7 +20,7 @@
 - Chat/Dashboard REST 和本地 read envelope 已足够支持 chat-first/TUI MVP。
 - Dashboard drill-down、lane graph、feature graph-set、run health、peer-chat
   read models 已有可消费接口。
-- `xmuse/FRONTEND_VISION.md` 中的部分 north-star endpoint 仍未实现；不要把
+- `docs/xmuse/frontend/FRONTEND_VISION.md` 中的部分 north-star endpoint 仍未实现；不要把
   vision 文档当作全部 live API。
 - 当前不要假设有 live runner。PlanningRun、autonomous execution card、approved
   blueprint -> feature/lane graph 自动生成 API 仍按迁移中能力处理。
