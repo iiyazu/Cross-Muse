@@ -66,8 +66,29 @@ limiting.
 | chat_mark_inbox | identity_bound_god | true | god_session | chat_identity_idempotency | conversation_participant_session |
 | chat_mention | identity_bound_god | true | god_session | chat_identity_idempotency | conversation_participant_session |
 | chat_emit_proposal | identity_bound_god | true | god_session | chat_identity_idempotency | conversation_participant_session |
+| chat_create_collaboration_request | identity_bound_god | true | god_session | chat_identity_idempotency | conversation_participant_session |
+| chat_record_collaboration_response | identity_bound_god | true | god_session | chat_identity_idempotency | conversation_participant_session |
+| chat_raise_collaboration_blocker | identity_bound_god | true | god_session | chat_identity_idempotency | conversation_participant_session |
+| chat_resolve_collaboration_blocker | identity_bound_god | true | god_session | chat_identity_idempotency | conversation_participant_session |
+| chat_evaluate_dispatch_gate | identity_bound_god | true | god_session | chat_identity_idempotency | conversation_participant_session |
 | chat_inspect_conversation | read_only | false | none | none | conversation |
 | chat_emit_blueprint_proposal | identity_bound_god | true | god_session | chat_identity_idempotency | conversation_participant_session |
+
+## Disabled MemoryOS MCP Policy Entries
+
+These names have permission metadata for authorization policy checks, but they
+are not registered in the MCP server tool schema:
+
+| Tool | Category | Mutates | Identity verification | Audit guard | Scope |
+| --- | --- | --- | --- | --- | --- |
+| memory_search | read_only | false | none | none | memory_namespace |
+| memory_build_context | read_only | false | none | none | memory_namespace |
+| memory_ingest | write | true | none | audit_guard_required | memory_namespace |
+
+`memory_search` and `memory_build_context` remain REST-sidecar read concepts.
+`memory_ingest` is a disabled MCP write concept and is denied unless host
+auth/RBAC is explicitly enabled. MemoryOS must not become xmuse truth authority
+through MCP tool registration.
 
 ## V11 Runtime Rejection Contract
 

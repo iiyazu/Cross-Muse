@@ -95,12 +95,21 @@ operator flows reference them:
 | `docs/xmuse/peer-chat-runtime-gate.md` | No-secrets peer-chat runtime focused gate |
 | `docs/xmuse/deep-research-03-next-goal.md` | Contract-vs-runtime proof split used by CI docs tests |
 | `docs/xmuse/real-runtime-integration-gate.md` | No-secrets real runtime integration gate contract |
+| `docs/xmuse/acceptance-spine.md` | Human-demand acceptance spine authority contract |
 | `docs/xmuse/broad-suite-baseline-debt.md` | Known broad-suite baseline gaps |
+| `docs/xmuse/quality-gates-and-provider-matrix.md` | Test-backed default CI/provider gate matrix |
+| `docs/xmuse/schema-migration-strategy.md` | Test-backed durable-store migration and cleanup stance |
+| `docs/xmuse/mcp-permission-model.md` | Test-backed MCP permission classification model |
+| `docs/xmuse/memoryos-file-separation.md` | xmuse/MemoryOS file ownership and split-export boundary |
+| `docs/xmuse/memoryos-governance-contract.md` | MemoryOS sidecar governance and MCP write boundary |
 | `docs/xmuse/memoryos-lite-runtime-compatibility.md` | MemoryOS Lite public compatibility contract |
 | `docs/xmuse/github-server-side-gate-live-evidence-2026-06-25.md` | Latest committed GitHub server-side evidence snapshot |
 | `docs/xmuse/github-server-side-gate.md` | GitHub server-side gate contract |
 | `docs/xmuse/github-review-merge-contract.md` | PR template, CODEOWNERS, and merge-ready contract |
 | `docs/xmuse/release-checklist.md` | Release claim boundary |
+| `docs/xmuse/shared-contract-fixtures.md` | Contract fixture inventory for `tests/fixtures/xmuse/contracts/` |
+| `docs/xmuse/split-export-manifest.json` | Standalone xmuse export manifest consumed by `scripts/export_xmuse.py` |
+| `docs/xmuse/xmuse-package.pyproject.toml` | Standalone xmuse package metadata template |
 
 ## Policy Docs
 
@@ -127,6 +136,12 @@ Frontend/TUI contracts live under `docs/xmuse/frontend/`, not in the runtime
 | `docs/xmuse/frontend/FRONTEND_API_INCREMENTAL.md` | Incremental frontend API notes |
 | `docs/xmuse/frontend/FRONTEND_CONTEXT.md` | Frontend/TUI background context |
 | `docs/xmuse/frontend/FRONTEND_VISION.md` | Frontend projection north-star reference |
+
+## Parallel Session Reference
+
+`docs/xmuse/session-prompts/` remains as a contract-fixture reference for the
+older parallel-session boundary. It is not the current natural groupchat goal
+entrypoint.
 
 ## Archive Rules
 
