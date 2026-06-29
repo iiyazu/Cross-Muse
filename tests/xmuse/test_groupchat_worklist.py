@@ -645,6 +645,111 @@ async def test_groupchat_peer_runtime_runs_from_root_message_idempotently(tmp_pa
 
 
 @pytest.mark.asyncio
+async def test_groupchat_peer_runtime_root_run_uses_policy_guards(tmp_path):
+    db = tmp_path / "chat.db"
+    chat = ChatStore(db)
+    conversation = chat.create_conversation("A1 root policy guards")
+    participants = ParticipantStore(db)
+    architect = participants.add(
+        conversation_id=conversation.id,
+        role="architect",
+        display_name="Remote A2A Architect GOD",
+        cli_kind="a2a",
+        model="a2a-remote",
+    )
+    critic = participants.add(
+        conversation_id=conversation.id,
+        role="critic",
+        display_name="Remote A2A Critic GOD",
+        cli_kind="a2a",
+        model="a2a-remote",
+    )
+    participants.add(
+        conversation_id=conversation.id,
+        role="review",
+        display_name="Review GOD",
+        cli_kind="codex",
+        model="gpt-5.5",
+    )
+    root = chat.add_message(
+        conversation_id=conversation.id,
+        author="human",
+        role="human",
+        content="Please design the guarded root-run entry.",
+    )
+
+    class ForbiddenGodLayer:
+        async def ensure_conversation_session(self, **kwargs):
+            raise AssertionError("A2A participants should use provider writeback")
+
+    class FollowupProviderService:
+        def __init__(self) -> None:
+            self.invocations: list[object] = []
+
+        def invoke_provider_adapter(self, invocation):
+            self.invocations.append(invocation)
+            return ProviderInvocationResult(
+                request_id=invocation.request_id,
+                provider_id=ProviderId.A2A,
+                profile_id=ProviderProfileId.REMOTE,
+                status=WorkerResultStatus.COMPLETED,
+                evidence_refs=[f"a2a_task:{invocation.request_id}"],
+                diagnostic_payload={
+                    "a2a_task_id": invocation.request_id,
+                    "a2a_context_id": invocation.request_id,
+                    "a2a_state": "TASK_STATE_COMPLETED",
+                    "a2a_disposition": "completed",
+                    "a2a_terminal": True,
+                    "a2a_content": "@critic This follow-up should hit depth guard.",
+                    "a2a_artifacts": [],
+                    "a2a_history": [],
+                    "a2a_metadata": {},
+                    "a2a_source_refs": [f"a2a_task:{invocation.request_id}"],
+                    "a2a_sdk_task": {
+                        "id": invocation.request_id,
+                        "status": {"state": "TASK_STATE_COMPLETED"},
+                    },
+                    "a2a_jsonrpc_id": invocation.request_id,
+                },
+            )
+
+    provider_service = FollowupProviderService()
+    outcome = await GroupchatPeerRuntime(
+        db_path=db,
+        god_layer=ForbiddenGodLayer(),
+        worktree=tmp_path,
+        scheduler_id="groupchat-peer-a1",
+        response_wait_s=0.1,
+        provider_service=provider_service,
+    ).run_from_root_message(
+        conversation_id=conversation.id,
+        root_message_id=root.id,
+        max_ticks=4,
+        max_depth=1,
+    )
+
+    assert outcome.created_chain is True
+    assert outcome.run.ticks == 1
+    assert outcome.run.stop_reason == "chain_blocked"
+    assert outcome.run.chain_status == "blocked"
+    assert outcome.run.chain_status_reason == "depth_limit"
+    assert len(provider_service.invocations) == 1
+    chain = GroupchatWorklistStore(db).get_chain(outcome.chain_id)
+    assert chain.max_depth == 1
+    items = GroupchatWorklistStore(db).list_items(outcome.chain_id)
+    assert len([item for item in items if item.status == "completed"]) == 1
+    blocked = [
+        item
+        for item in items
+        if item.status == "blocked" and item.terminal_reason == "depth_limit"
+    ]
+    assert len(blocked) == 1
+    assert blocked[0].source_participant_id == architect.participant_id
+    assert blocked[0].target_participant_id == critic.participant_id
+    assert blocked[0].inbox_item_id is None
+
+
+@pytest.mark.asyncio
 async def test_groupchat_peer_runtime_rejects_peer_stdout_fallback_as_proof(tmp_path):
     db, _chat, conversation, root, _architect, _review, _critic = (
         _conversation_with_groupchat_roster(
