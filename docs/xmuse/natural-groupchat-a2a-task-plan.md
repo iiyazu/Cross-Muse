@@ -485,14 +485,26 @@ Current runtime proof:
   `distinct_feature_ids`, `distinct_target_paths`, `distinct_worktrees`,
   `all_isolated_artifacts_match`, `all_gates_passed`,
   `all_review_verdicts_finalized`, and `all_final_action_holds_pending`;
+- GitHub promotion proof recorded so far:
+  PR #316 recorded this Rung 4 runtime proof in the task plan, with head
+  `923f9b03917372eb0b75dfb62cd7ce1a9ed0d0d3`, exact-head CI run
+  `28364777516` success, guarded merge commit
+  `d0db3229dd5b4af83b492c671a4006e2bb239f64`, and main CI run
+  `28364839627` success;
+- beta code artifact promotion proof:
+  PR #317 promoted `src/xmuse_core/platform/rung4_beta_sentinel.py` and its
+  focused test, with head `b2263c03e675779ff27b1f9f1f2b29b27a12276d`,
+  exact-head CI run `28364966671` success, guarded merge commit
+  `eaa0532eee4598e92465ddefdfcf8a5a13e6ebf3`, and main CI run
+  `28365028773` success;
 - review provider boundary: OpenCode was unavailable and recorded as
   `opencode_unavailable`; review used the configured Codex review participant;
 - proof limitation:
   this proves multi-lane scheduling, isolated lane worktrees, lane-specific
   gate/review/final-action holds, and exact artifact matching. It is not yet
-  GitHub PR/CI/merge proof for each lane, lane-failure isolation proof, live
-  MemoryOS proof, frontend operator cockpit completion, or production
-  readiness.
+  complete GitHub PR/CI/merge proof for every lane artifact, lane-failure
+  isolation proof, live MemoryOS proof, frontend operator cockpit completion,
+  or production readiness.
 
 ### Rung 5 - MemoryOS Live/Degraded Contract
 
@@ -779,9 +791,10 @@ Current final-report notes after the Rung 4 runtime milestone:
 - prior #294 docs-sentinel proof remains useful as the control-plane baseline,
   but it is no longer the maximum Track A runtime proof;
 - Track A state: the single real-code lane is closed through GitHub facts, and
-  the multi-lane runtime shape is locally proven. The next Track A work is
-  multi-PR promotion for the Rung 4 artifacts, then lane-failure isolation and
-  projection behavior;
+  the multi-lane runtime shape is locally proven. Rung 4 proof docs and the
+  beta code artifact have reached PR, exact-head CI, guarded merge, and main CI.
+  The next Track A work is remaining lane-artifact promotion, then lane-failure
+  isolation and projection behavior;
 - Track B state: MemoryOS sidecar build/ingest degraded against an unavailable
   endpoint and remained non-blocking; this was degraded attempt projection, not
   live MemoryOS truth;
