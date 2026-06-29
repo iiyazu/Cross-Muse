@@ -31,6 +31,7 @@ from xmuse_core.chat.api_models import (
     DispatchClaimRequest,
     DispatchDispatchedRequest,
     DispatchFailedRequest,
+    GroupchatRootRunCreate,
     MessageCreate,
     ParticipantInit,
     PeerForkCreate,
@@ -47,6 +48,12 @@ from xmuse_core.chat.collaboration_contracts import (
 from xmuse_core.chat.collaboration_store import ChatCollaborationStore
 from xmuse_core.chat.deliberation_engine import DeliberationFreezeGuard
 from xmuse_core.chat.dispatch_queue import ChatDispatchQueueEntry, ChatDispatchQueueStore
+from xmuse_core.chat.groupchat_runtime import (
+    GroupchatPeerRuntime,
+    GroupchatPeerRuntimeRunOutcome,
+    GroupchatPeerRuntimeTickOutcome,
+)
+from xmuse_core.chat.groupchat_worklist import GroupchatWorklistStore
 from xmuse_core.chat.health_cards import build_run_health_chat_card
 from xmuse_core.chat.inbox_store import ChatInboxStore
 from xmuse_core.chat.participant_store import (
@@ -118,6 +125,11 @@ _EXECUTION_CARD_TYPES = {
     "run_terminal",
 }
 _A2A_TASK_SEND_BODY = Body(...)
+
+
+class _UnavailableGroupchatGodLayer:
+    async def ensure_conversation_session(self, **_kwargs: Any) -> None:
+        raise RuntimeError("groupchat_god_layer_unavailable")
 
 
 def _store(base_dir: Path) -> ChatStore:
@@ -1209,6 +1221,43 @@ def _chat_timeline_payload(base_dir: Path, conversation_id: str) -> dict[str, An
     return _with_compact_health_cards(base_dir, conversation_id, payload)
 
 
+def _groupchat_runtime_run_payload(
+    outcome: GroupchatPeerRuntimeRunOutcome,
+) -> dict[str, Any]:
+    return {
+        "ticks": outcome.ticks,
+        "stop_reason": outcome.stop_reason,
+        "chain_status": outcome.chain_status,
+        "chain_status_reason": outcome.chain_status_reason,
+        "tick_outcomes": [_groupchat_tick_payload(tick) for tick in outcome.tick_outcomes],
+    }
+
+
+def _groupchat_tick_payload(outcome: GroupchatPeerRuntimeTickOutcome) -> dict[str, Any]:
+    peer = outcome.peer
+    return {
+        "worklist": {
+            "scanned": outcome.worklist.scanned,
+            "claimed_item_id": outcome.worklist.claimed_item_id,
+            "linked_inbox_item_id": outcome.worklist.linked_inbox_item_id,
+            "completed_message_id": outcome.worklist.completed_message_id,
+            "followup_scanned": outcome.worklist.followup_scanned,
+            "failed_item_id": outcome.worklist.failed_item_id,
+            "failure_reason": outcome.worklist.failure_reason,
+        },
+        "peer": (
+            {
+                "nudged": peer.nudged,
+                "happy_path": peer.happy_path,
+                "failed": peer.failed,
+                "fallback_replies": peer.fallback_replies,
+            }
+            if peer is not None
+            else None
+        ),
+    }
+
+
 def _with_execution_card_drilldown_refs(
     base_dir: Path,
     payload: dict[str, Any],
@@ -1386,6 +1435,9 @@ def create_app(
     auth_token: str | None = None,
     a2a_bridge_enabled: bool = False,
     a2a_write_token: str | None = None,
+    groupchat_provider_service: Any | None = None,
+    groupchat_god_layer: Any | None = None,
+    groupchat_response_wait_s: float = 180.0,
 ) -> FastAPI:
     root = Path(base_dir)
     execution_root = Path(execution_worktree) if execution_worktree is not None else REPO_ROOT
@@ -2037,6 +2089,54 @@ def create_app(
         payload = result.message.model_dump(mode="json")
         payload["inbox_items"] = [item.model_dump(mode="json") for item in result.inbox_items]
         return payload
+
+    @app.post("/api/chat/conversations/{conversation_id}/groupchat/root-runs")
+    async def run_groupchat_root(
+        conversation_id: str,
+        request: GroupchatRootRunCreate,
+    ) -> dict[str, object]:
+        if not _conversation_exists(_store(root), conversation_id):
+            raise HTTPException(status_code=404, detail="conversation not found")
+        runtime = GroupchatPeerRuntime(
+            db_path=root / "chat.db",
+            god_layer=groupchat_god_layer or _UnavailableGroupchatGodLayer(),
+            worktree=execution_root,
+            scheduler_id="groupchat-api",
+            response_wait_s=groupchat_response_wait_s,
+            provider_service=groupchat_provider_service,
+        )
+        try:
+            outcome = await runtime.run_from_root_message(
+                conversation_id=conversation_id,
+                root_message_id=request.root_message_id,
+                max_ticks=request.max_ticks,
+                policy_id=request.policy_id,
+                max_depth=request.max_depth,
+                human_max_targets=request.human_max_targets,
+                agent_max_targets=request.agent_max_targets,
+                pingpong_warn_after=request.pingpong_warn_after,
+                pingpong_block_after=request.pingpong_block_after,
+            )
+            worklist = GroupchatWorklistStore(root / "chat.db")
+            chain = worklist.get_chain(outcome.chain_id)
+            items = worklist.list_items(outcome.chain_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="groupchat chain not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {
+            "authority": "chat.db/groupchat_chains/groupchat_worklist",
+            "producer": "GroupchatPeerRuntime.run_from_root_message",
+            "consumer": "PeerChatScheduler",
+            "condition": "root_message_groupchat_run",
+            "proof_level": "durable_authority_refs",
+            "conversation_id": conversation_id,
+            "chain_id": outcome.chain_id,
+            "created_chain": outcome.created_chain,
+            "run": _groupchat_runtime_run_payload(outcome.run),
+            "chain": chain.model_dump(mode="json"),
+            "worklist_items": [item.model_dump(mode="json") for item in items],
+        }
 
     @app.post(
         "/api/chat/conversations/{conversation_id}/deliberations",
