@@ -261,3 +261,41 @@ def test_frontend_projection_docs_live_outside_runtime_package_root() -> None:
     for name in frontend_docs:
         assert not (PROJECT_ROOT / "xmuse" / name).exists(), name
         assert (docs_dir / name).is_file(), name
+
+
+def test_runtime_prompt_and_contract_assets_are_classified() -> None:
+    active_prompts = {
+        "brainstorm_agent.md",
+        "decompose_agent.md",
+        "execute_agent.md",
+        "lane_review_agent.md",
+        "master_god_prompt.md",
+        "plan_agent.md",
+        "review_agent.md",
+        "slave_god_prompt.md",
+        "spec_review_agent.md",
+    }
+    active_god_prompts = {
+        "execution_god.md",
+        "review_god.md",
+    }
+    active_contracts = {
+        "knowledge_maintainer_template.json",
+        "master_dispatch_template.json",
+        "slave_dispatch_template.json",
+    }
+    legacy_archive = DOCS_ROOT / "archive" / "2026-06-runtime-prompt-legacy"
+    status = _read_doc("document-status.md")
+
+    assert "docs/xmuse/archive/2026-06-runtime-prompt-legacy/" in status
+    assert {path.name for path in (PROJECT_ROOT / "xmuse" / "prompts").glob("*.md")} == (
+        active_prompts
+    )
+    assert {
+        path.name for path in (PROJECT_ROOT / "xmuse" / "god_prompts").glob("*.md")
+    } == active_god_prompts
+    assert {
+        path.name for path in (PROJECT_ROOT / "xmuse" / "contracts").glob("*.json")
+    } == active_contracts
+    assert not (PROJECT_ROOT / "xmuse" / "prompts" / "god.md").exists()
+    assert (legacy_archive / "god.md").is_file()
