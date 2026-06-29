@@ -8,6 +8,10 @@ from xmuse_core.chat.acceptance_spine import AcceptanceSpineStore
 from xmuse_core.chat.collaboration_store import ChatCollaborationStore
 from xmuse_core.chat.context_assembler import ContextAssembler
 from xmuse_core.chat.dispatch_queue import ChatDispatchQueueStore
+from xmuse_core.chat.groupchat_worklist import (
+    GroupchatWorklistScheduler,
+    GroupchatWorklistStore,
+)
 from xmuse_core.chat.inbox_store import ChatInboxStore
 from xmuse_core.chat.mentions import MentionResolver
 from xmuse_core.chat.natural_routing import (
@@ -396,6 +400,94 @@ def test_group_chat_context_projects_writeback_authority_envelope_refs(
     assert context["context_capsule"]["recent_messages"][-1]["envelope"] == (
         by_id[final_action.id]
     )
+
+
+def test_group_chat_context_projects_terminal_groupchat_worklist_boundary(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "chat.db"
+    chat = ChatStore(db_path)
+    conversation = chat.create_conversation("Terminal worklist context")
+    participants = ParticipantStore(db_path)
+    architect = participants.add(
+        conversation_id=conversation.id,
+        role="architect",
+        display_name="Architect GOD",
+        cli_kind="codex",
+        model="gpt-5.4",
+    )
+    root = chat.add_message(
+        conversation.id,
+        author="human",
+        role="user",
+        content="Run the next approved dispatch.",
+    )
+    store = GroupchatWorklistStore(db_path)
+    chain = store.create_chain(conversation_id=conversation.id, root_message_id=root.id)
+    dispatch_ack = chat.add_message(
+        conversation.id,
+        author="execute",
+        role="assistant",
+        content="DISPATCH_ACKNOWLEDGED dispatch-a",
+        envelope_type="dispatch_result",
+        envelope_json={
+            "type": "dispatch_result",
+            "authority": "chat.db/messages/dispatch_result",
+            "dispatch_queue_entry_id": "dispatch-a",
+            "proposal_id": "proposal-a",
+            "resolution_id": "resolution-a",
+            "proof_boundary": "dispatch_acknowledgement_not_execution_proof",
+            "source_refs": [
+                "chat_dispatch_queue:dispatch-a",
+                "proposal:proposal-a",
+                "resolution:resolution-a",
+            ],
+        },
+    )
+    scheduler = GroupchatWorklistScheduler(db_path=db_path, scheduler_id="groupchat-a1")
+    assert scheduler.scan_routes_once(chain_id=chain.chain_id) == []
+    routed = scheduler.scan_routes_once(chain_id=chain.chain_id)
+    assert len(routed) == 1
+
+    context = ContextAssembler(
+        participants=participants,
+        chat=chat,
+        db_path=db_path,
+    ).group_chat_context(conversation.id)
+
+    worklist = context["structured_state"]["groupchat_worklist"]
+    assert worklist["source_authority"] == [
+        "chat.db:groupchat_chains",
+        "chat.db:groupchat_worklist",
+        "chat.db:messages",
+    ]
+    assert worklist["items"] == [
+        {
+            "item_id": routed[0].item_id,
+            "chain_id": chain.chain_id,
+            "status": "blocked",
+            "target_role": architect.role,
+            "target_participant_id": architect.participant_id,
+            "route_kind": "handoff",
+            "depth": 1,
+            "terminal_reason": "dispatch_acknowledgement_not_execution_proof",
+            "source_message_id": dispatch_ack.id,
+            "source_refs": [
+                f"chat:message:{dispatch_ack.id}",
+                "chat_dispatch_queue:dispatch-a",
+                "proposal:proposal-a",
+                "resolution:resolution-a",
+            ],
+            "proof_boundary": "dispatch_acknowledgement_not_execution_proof",
+            "next_authority_boundary": "execution_evidence_or_final_action_writeback",
+            "authority_boundary": {
+                "producer": "chat.db:groupchat_worklist",
+                "consumer": "group_chat_context",
+                "condition": "read_only_structured_state",
+                "proof_boundary": "dispatch_acknowledgement_not_execution_proof",
+            },
+        }
+    ]
 
 
 def test_group_chat_context_projects_structured_state_from_chat_authorities(

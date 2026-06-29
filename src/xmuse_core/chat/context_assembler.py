@@ -8,6 +8,7 @@ from xmuse_core.agents.god_session_registry import GodSessionRecord, GodSessionR
 from xmuse_core.chat.acceptance_spine import AcceptanceSpineStore
 from xmuse_core.chat.collaboration_store import ChatCollaborationStore
 from xmuse_core.chat.dispatch_queue import ChatDispatchQueueStore
+from xmuse_core.chat.groupchat_worklist import GroupchatWorklistStore
 from xmuse_core.chat.inbox_store import ChatInboxStore
 from xmuse_core.chat.mentions import normalize_address
 from xmuse_core.chat.participant_store import Participant, ParticipantStore
@@ -552,6 +553,7 @@ def _structured_state(
         limit=10,
     )
     spines = AcceptanceSpineStore(db_path).list_by_conversation(conversation_id)
+    worklist = _groupchat_worklist_state(conversation_id=conversation_id, db_path=db_path)
     open_inbox = [item for item in inbox_items if item.status in {"unread", "claimed"}]
     blockers = [
         item
@@ -577,6 +579,7 @@ def _structured_state(
             "collaboration_responses": sum(len(run.responses) for run in collaborations),
             "dispatch_entries": len(dispatch_entries),
             "acceptance_spines": len(spines),
+            "groupchat_worklist_terminal": len(worklist["items"]),
         },
         "open_inbox": [
             {
@@ -669,6 +672,104 @@ def _structured_state(
             }
             for spine in spines[-8:]
         ],
+        "groupchat_worklist": worklist,
+    }
+
+
+def _groupchat_worklist_state(
+    *,
+    conversation_id: str,
+    db_path: Path,
+) -> dict[str, Any]:
+    worklist_store = GroupchatWorklistStore(db_path)
+    chat = ChatStore(db_path)
+    messages_by_id = {
+        message.id: message for message in chat.list_messages(conversation_id)
+    }
+    chains = worklist_store.list_chains(conversation_id)
+    items = []
+    for chain in chains:
+        for item in worklist_store.list_items(chain.chain_id):
+            if item.status not in {"blocked", "failed", "canceled"}:
+                continue
+            source_message = messages_by_id.get(item.source_message_id)
+            proof_boundary = _worklist_proof_boundary(item.terminal_reason, source_message)
+            items.append(
+                {
+                    "item_id": item.item_id,
+                    "chain_id": item.chain_id,
+                    "status": item.status,
+                    "target_role": item.target_role,
+                    "target_participant_id": item.target_participant_id,
+                    "route_kind": item.route_kind,
+                    "depth": item.depth,
+                    "terminal_reason": item.terminal_reason,
+                    "source_message_id": item.source_message_id,
+                    "source_refs": _worklist_source_refs(item.source_message_id, source_message),
+                    "proof_boundary": proof_boundary,
+                    "next_authority_boundary": _next_worklist_authority_boundary(
+                        item.terminal_reason
+                    ),
+                    "authority_boundary": _groupchat_worklist_authority_boundary(
+                        consumer="group_chat_context",
+                        condition="read_only_structured_state",
+                        proof_boundary=proof_boundary,
+                    ),
+                }
+            )
+    return {
+        "source_authority": [
+            "chat.db:groupchat_chains",
+            "chat.db:groupchat_worklist",
+            "chat.db:messages",
+        ],
+        "items": items[-8:],
+    }
+
+
+def _worklist_source_refs(source_message_id: str, source_message: Any | None) -> list[str]:
+    refs = [f"chat:message:{source_message_id}"]
+    envelope = getattr(source_message, "envelope_json", None)
+    if isinstance(envelope, dict):
+        refs.extend(_payload_str_list(envelope, "source_refs"))
+    return _dedupe_strings(refs)
+
+
+def _worklist_proof_boundary(
+    terminal_reason: str | None,
+    source_message: Any | None,
+) -> str:
+    envelope = getattr(source_message, "envelope_json", None)
+    if isinstance(envelope, dict):
+        proof_boundary = _payload_str(envelope, "proof_boundary")
+        if proof_boundary is not None:
+            return proof_boundary
+    if terminal_reason:
+        return terminal_reason
+    return "groupchat_worklist_terminal_boundary"
+
+
+def _next_worklist_authority_boundary(terminal_reason: str | None) -> str:
+    if terminal_reason == "dispatch_acknowledgement_not_execution_proof":
+        return "execution_evidence_or_final_action_writeback"
+    if terminal_reason == "final_action_github_gate_gap":
+        return "github_gate_evidence_or_manual_gap_resolution"
+    if terminal_reason == "callback_missing":
+        return "structured_callback_writeback"
+    return "operator_or_upstream_authority_resolution"
+
+
+def _groupchat_worklist_authority_boundary(
+    *,
+    consumer: str,
+    condition: str,
+    proof_boundary: str,
+) -> dict[str, str]:
+    return {
+        "producer": "chat.db:groupchat_worklist",
+        "consumer": consumer,
+        "condition": condition,
+        "proof_boundary": proof_boundary,
     }
 
 
@@ -727,6 +828,17 @@ def _payload_str_list(payload: dict[str, Any], key: str) -> list[str]:
     if not isinstance(value, (list, tuple)):
         return []
     return [str(item) for item in value if isinstance(item, str) and item.strip()]
+
+
+def _dedupe_strings(items: list[str]) -> list[str]:
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for item in items:
+        if item in seen:
+            continue
+        seen.add(item)
+        deduped.append(item)
+    return deduped
 
 
 def _enum_value(value: Any) -> str:
