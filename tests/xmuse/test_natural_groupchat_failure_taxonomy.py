@@ -105,6 +105,22 @@ def test_failure_boundary_classifier_uses_existing_durable_evidence_only() -> No
             "exact_head_ci_failure",
         ),
         (
+            {"condition": "required CI head_mismatch"},
+            "exact_head_ci_failure",
+        ),
+        (
+            {"condition": "required CI head mismatch"},
+            "exact_head_ci_failure",
+        ),
+        (
+            {"condition": "post-merge main CI head mismatch"},
+            "exact_head_ci_failure",
+        ),
+        (
+            {"condition": "guarded merge head_mismatch"},
+            "exact_head_ci_failure",
+        ),
+        (
             {"condition": "guarded merge rejected by match-head"},
             "guarded_merge_rejection",
         ),
