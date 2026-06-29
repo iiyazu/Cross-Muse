@@ -381,6 +381,10 @@ Constraints:
 - select one low-blast-radius behavior with existing local tests nearby;
 - require test-first or contract-first implementation after the runtime demand
   identifies the lane;
+- use `scripts/run_fullchain_docs_sentinel.py --lane-kind code --target-path
+  <relative-source-or-test-path> --expected-content <exact-file-content>` when
+  the goal needs the existing fullchain driver to carry a real code artifact
+  instead of a docs sentinel;
 - keep the PR domain-scoped and small;
 - do not expand to multi-lane until the single code lane reaches PR/CI/merge or
   a durable blocker.

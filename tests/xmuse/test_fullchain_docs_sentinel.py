@@ -67,6 +67,9 @@ def test_main_writes_expected_note_content_into_command_artifacts(
             run_root=run_root,
             execution_worktree=execution_worktree,
             feature_id=feature_id,
+            lane_kind="docs",
+            target_path=None,
+            expected_content=None,
             chat_port=43111,
             mcp_port=43112,
             proposal_timeout_s=900.0,
@@ -117,6 +120,9 @@ def test_main_writes_expected_note_content_into_command_artifacts(
 
     assert repo_head_sha_calls == 1
     assert commands_json["expected_note_content"] == expected_note_content
+    assert commands_json["expected_content"] == expected_note_content
+    assert commands_json["lane_kind"] == "docs"
+    assert commands_json["target_path"] == f"docs/xmuse/{feature_id}.md"
     assert commands_json["repo_head_sha"] == "abc123repohead"
     assert commands_json["peer_chat_response_wait_s"] == 900.0
     assert commands_json["peer_chat_post_writeback_grace_s"] == 8.0
@@ -142,6 +148,60 @@ def test_main_writes_expected_note_content_into_command_artifacts(
     assert "peer_god_backend=ray\n" in commands_txt
     assert "ray_god_mcp=True\n" in commands_txt
     assert "selected_review_provider=codex\n" in commands_txt
+
+
+def test_target_spec_defaults_to_docs_sentinel_path_and_content() -> None:
+    target = sentinel._target_spec(
+        feature_id="docs-target",
+        lane_kind="docs",
+        target_path=None,
+        expected_content=None,
+    )
+
+    assert target == {
+        "path": "docs/xmuse/docs-target.md",
+        "expected_content": (
+            "Post-main fullchain sentinel docs-target reached isolated execution."
+        ),
+    }
+
+
+def test_target_spec_requires_explicit_code_artifact() -> None:
+    with pytest.raises(ValueError, match="--target-path is required"):
+        sentinel._target_spec(
+            feature_id="code-target",
+            lane_kind="code",
+            target_path=None,
+            expected_content="value = 1",
+        )
+    with pytest.raises(ValueError, match="--expected-content is required"):
+        sentinel._target_spec(
+            feature_id="code-target",
+            lane_kind="code",
+            target_path="src/xmuse_core/code_target.py",
+            expected_content=None,
+        )
+
+
+def test_code_lane_demand_names_code_boundary() -> None:
+    demand = sentinel._sentinel_demand(
+        feature_id="code-target",
+        lane_kind="code",
+        target_path="src/xmuse_core/code_target.py",
+        expected_content='SENTINEL = "code-target"',
+        provider_readiness={
+            "review_provider_selection": {
+                "selected_provider": "codex",
+                "fallback_reason": "opencode_unavailable",
+            }
+        },
+    )
+
+    assert "real low-risk xmuse code-change runtime sentinel" in demand
+    assert "not a docs-only sentinel" in demand
+    assert "src/xmuse_core/code_target.py" in demand
+    assert 'SENTINEL = "code-target"' in demand
+    assert "opencode_unavailable" in demand
 
 
 @pytest.mark.parametrize(
