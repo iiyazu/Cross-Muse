@@ -179,11 +179,11 @@ class GroupchatPeerRuntime:
                 stop_reason = f"chain_{chain.status}"
                 break
             if outcome.worklist.claimed_item_id is None:
+                if self._store.has_unscanned_messages(chain_id=chain_id):
+                    continue
                 if _is_authority_wait(outcome.worklist.terminal_reason):
                     stop_reason = f"waiting_for_authority:{outcome.worklist.terminal_reason}"
                     break
-                if self._store.has_unscanned_messages(chain_id=chain_id):
-                    continue
                 stop_reason = "idle"
                 break
         chain = self._store.get_chain(chain_id)
