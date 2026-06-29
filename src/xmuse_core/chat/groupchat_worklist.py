@@ -16,7 +16,9 @@ _CHAIN_OPEN_STATUSES = {"open"}
 _ITEM_ACTIVE_STATUSES = {"queued", "claimed"}
 _ITEM_TERMINAL_STATUSES = {"completed", "blocked", "failed", "canceled"}
 _A1_ROUTABLE_ROLES = {"architect", "review", "critic"}
+_DISPATCH_ACK_WAIT_REASON = "dispatch_acknowledgement_not_execution_proof"
 _CHAIN_BLOCKING_ROUTE_REASONS = {"final_action_github_gate_gap"}
+_CHAIN_WAITING_ROUTE_REASONS = {_DISPATCH_ACK_WAIT_REASON}
 
 
 def _utc_now() -> str:
@@ -42,6 +44,8 @@ class _RouteTarget:
     role: str
     route_kind: RouteKind
     terminal_reason: str | None = None
+    clears_terminal_reasons: tuple[str, ...] = ()
+    clears_authority_refs: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -718,6 +722,7 @@ class GroupchatWorklistStore:
             if str(row["role"]).strip().lower() in _A1_ROUTABLE_ROLES
         }
         structured_targets = self._structured_writeback_targets(
+            conn,
             role_targets=role_targets,
             message=message,
         )
@@ -759,16 +764,27 @@ class GroupchatWorklistStore:
 
     def _structured_writeback_targets(
         self,
+        conn: sqlite3.Connection,
         *,
         role_targets: dict[str, sqlite3.Row],
         message: sqlite3.Row,
     ) -> list[_RouteTarget] | None:
         envelope_type = str(message["envelope_type"] or "").strip().lower()
         envelope = self._message_envelope(message)
+        structured_type = str(envelope.get("type") or "").strip().lower()
+        message_type = structured_type if structured_type not in {"", "message"} else envelope_type
+        authority = str(envelope.get("authority") or "").strip().lower()
+        proof_boundary = str(envelope.get("proof_boundary") or "").strip().lower()
         if (
-            envelope_type != "final_action_result"
-            and str(envelope.get("type") or "").strip().lower() != "final_action_result"
+            message_type == "dispatch_result"
+            or authority == "chat.db/messages/dispatch_result"
+            or proof_boundary == _DISPATCH_ACK_WAIT_REASON
         ):
+            return self._dispatch_result_targets(
+                role_targets=role_targets,
+                envelope=envelope,
+            )
+        if message_type != "final_action_result":
             return None
 
         architect = role_targets.get("architect")
@@ -802,6 +818,8 @@ class GroupchatWorklistStore:
                     role=str(architect["role"]),
                     route_kind="handoff",
                     terminal_reason="final_action_github_gate_gap",
+                    clears_terminal_reasons=tuple(_CHAIN_WAITING_ROUTE_REASONS),
+                    clears_authority_refs=tuple(self._writeback_authority_refs(conn, envelope)),
                 )
             ]
         if accepted_status and accepted_gate:
@@ -810,9 +828,32 @@ class GroupchatWorklistStore:
                     participant_id=str(architect["participant_id"]),
                     role=str(architect["role"]),
                     route_kind="handoff",
+                    clears_terminal_reasons=tuple(_CHAIN_WAITING_ROUTE_REASONS),
+                    clears_authority_refs=tuple(self._writeback_authority_refs(conn, envelope)),
                 )
             ]
         return []
+
+    def _dispatch_result_targets(
+        self,
+        *,
+        role_targets: dict[str, sqlite3.Row],
+        envelope: dict,
+    ) -> list[_RouteTarget]:
+        architect = role_targets.get("architect")
+        if architect is None:
+            return []
+        proof_boundary = str(envelope.get("proof_boundary") or "").strip().lower()
+        if proof_boundary != _DISPATCH_ACK_WAIT_REASON:
+            return []
+        return [
+            _RouteTarget(
+                participant_id=str(architect["participant_id"]),
+                role=str(architect["role"]),
+                route_kind="handoff",
+                terminal_reason=_DISPATCH_ACK_WAIT_REASON,
+            )
+        ]
 
     def _message_envelope(self, message: sqlite3.Row) -> dict:
         raw = message["envelope_json"]
@@ -974,7 +1015,7 @@ class GroupchatWorklistStore:
             select item_id from groupchat_worklist
             where chain_id = ?
               and dedup_key = ?
-              and status in ('queued', 'claimed', 'completed')
+              and status in ('queued', 'claimed', 'completed', 'blocked')
             order by created_at asc
             limit 1
             """,
@@ -1017,6 +1058,14 @@ class GroupchatWorklistStore:
             dedup_key=dedup_key,
             terminal_reason=reason,
         )
+        self._cancel_blocked_chain_items_by_reason(
+            conn,
+            chain_id=chain["chain_id"],
+            reasons=target.clears_terminal_reasons,
+            authority_refs=target.clears_authority_refs,
+            superseding_message_id=message["id"],
+            now=now,
+        )
         if chain_blocks:
             self._set_chain_status(
                 conn,
@@ -1032,6 +1081,112 @@ class GroupchatWorklistStore:
                 now=now,
             )
         return item_id
+
+    def _cancel_blocked_chain_items_by_reason(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        chain_id: str,
+        reasons: tuple[str, ...],
+        authority_refs: tuple[str, ...],
+        superseding_message_id: str,
+        now: str,
+    ) -> None:
+        if not reasons:
+            return
+        placeholders = ",".join("?" for _ in reasons)
+        rows = conn.execute(
+            f"""
+            select item_id, source_message_id
+            from groupchat_worklist
+            where chain_id = ?
+              and status = 'blocked'
+              and terminal_reason in ({placeholders})
+            """,
+            (chain_id, *reasons),
+        ).fetchall()
+        required_refs = {ref for ref in authority_refs if ref}
+        if not required_refs:
+            return
+        for row in rows:
+            if not self._blocked_item_matches_authority_refs(
+                conn,
+                source_message_id=str(row["source_message_id"]),
+                authority_refs=required_refs,
+            ):
+                continue
+            conn.execute(
+                """
+                update groupchat_worklist
+                set status = 'canceled', terminal_reason = ?, updated_at = ?
+                where item_id = ? and status = 'blocked'
+                """,
+                (
+                    f"superseded_by_authority:{superseding_message_id}",
+                    now,
+                    row["item_id"],
+                ),
+            )
+
+    def _blocked_item_matches_authority_refs(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        source_message_id: str,
+        authority_refs: set[str],
+    ) -> bool:
+        row = conn.execute(
+            """
+            select id, envelope_type, envelope_json
+            from messages
+            where id = ?
+            """,
+            (source_message_id,),
+        ).fetchone()
+        if row is None:
+            return False
+        candidate_refs = set(self._writeback_authority_refs(conn, self._message_envelope(row)))
+        return bool(candidate_refs & authority_refs)
+
+    def _writeback_authority_refs(
+        self,
+        conn: sqlite3.Connection,
+        envelope: dict,
+    ) -> list[str]:
+        refs = _string_items(envelope.get("source_refs"))
+        dispatch_entry_id = _optional_text(envelope.get("dispatch_queue_entry_id"))
+        if dispatch_entry_id:
+            refs.append(f"chat_dispatch_queue:{dispatch_entry_id}")
+        spine_id = _acceptance_spine_id_from_ref(
+            _optional_text(envelope.get("acceptance_spine_ref"))
+        )
+        if spine_id:
+            dispatch_ref = self._dispatch_ref_for_acceptance_spine(conn, spine_id=spine_id)
+            if dispatch_ref:
+                refs.append(dispatch_ref)
+        return _dedupe_text(refs)
+
+    def _dispatch_ref_for_acceptance_spine(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        spine_id: str,
+    ) -> str | None:
+        try:
+            row = conn.execute(
+                """
+                select dispatch_item_id
+                from acceptance_spines
+                where spine_id = ?
+                """,
+                (spine_id,),
+            ).fetchone()
+        except sqlite3.OperationalError:
+            return None
+        if row is None:
+            return None
+        dispatch_item_id = _optional_text(row["dispatch_item_id"])
+        return f"chat_dispatch_queue:{dispatch_item_id}" if dispatch_item_id else None
 
     def _pingpong_streak_after_candidate(
         self,
@@ -1223,11 +1378,13 @@ class GroupchatWorklistStore:
             """,
             (chain_id,),
         ).fetchone()
+        waiting = self._waiting_authority_blocker_count(conn, chain_id=chain_id)
         chain = self._chain_row(conn, chain_id)
         if (
             chain["status"] == "open"
             and pending is not None
             and int(pending["count"]) == 0
+            and waiting == 0
         ):
             self._set_chain_status(
                 conn,
@@ -1236,6 +1393,25 @@ class GroupchatWorklistStore:
                 status_reason="route_exhausted",
                 now=now,
             )
+
+    def _waiting_authority_blocker_count(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        chain_id: str,
+    ) -> int:
+        placeholders = ",".join("?" for _ in _CHAIN_WAITING_ROUTE_REASONS)
+        row = conn.execute(
+            f"""
+            select count(*) as count
+            from groupchat_worklist
+            where chain_id = ?
+              and status = 'blocked'
+              and terminal_reason in ({placeholders})
+            """,
+            (chain_id, *_CHAIN_WAITING_ROUTE_REASONS),
+        ).fetchone()
+        return int(row["count"]) if row is not None else 0
 
     def _set_chain_status(
         self,
@@ -1548,3 +1724,47 @@ class GroupchatWorklistScheduler:
 
     def fail_missing_callback(self, item_id: str) -> GroupchatWorklistItem:
         return self._store.fail_item(item_id, reason="callback_missing")
+
+
+def _optional_text(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    cleaned = value.strip()
+    return cleaned or None
+
+
+def _string_items(value: object) -> list[str]:
+    if isinstance(value, str):
+        item = value.strip()
+        return [item] if item else []
+    if not isinstance(value, list):
+        return []
+    items: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            continue
+        cleaned = item.strip()
+        if cleaned:
+            items.append(cleaned)
+    return items
+
+
+def _dedupe_text(values: list[str]) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        deduped.append(value)
+    return deduped
+
+
+def _acceptance_spine_id_from_ref(ref: str | None) -> str | None:
+    if not ref:
+        return None
+    for marker in ("#acceptance_spine=", "#spine="):
+        _prefix, separator, spine_id = ref.partition(marker)
+        if separator and spine_id.strip():
+            return spine_id.strip()
+    return None
