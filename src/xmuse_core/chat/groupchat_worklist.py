@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import uuid
+from collections.abc import Iterable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
@@ -12,6 +15,7 @@ from xmuse_core.chat.models import GroupchatChain, GroupchatWorklistItem
 _CHAIN_OPEN_STATUSES = {"open"}
 _ITEM_ACTIVE_STATUSES = {"queued", "claimed"}
 _ITEM_TERMINAL_STATUSES = {"completed", "blocked", "failed", "canceled"}
+_A1_ROUTABLE_ROLES = {"architect", "review", "critic"}
 
 
 def _utc_now() -> str:
@@ -23,6 +27,20 @@ def _new_id(prefix: str) -> str:
 
 
 RouteKind = Literal["mention", "router", "handoff", "review_request"]
+
+_LEADING_MARKDOWN_MENTION_PREFIX_RE = re.compile(
+    r"^(?:(?:>\s*)|(?:[-*+]\s+)|(?:\d+[.)]\s+))+"
+)
+_HANDLE_CONTINUATION_RE = re.compile(r"[a-z0-9_.-]")
+_TOKEN_BOUNDARY_RE = re.compile(r"[\s,.:;!?()[\]{}<>，。！？、：；（）【】《》「」『』〈〉]")
+
+
+@dataclass(frozen=True)
+class _RouteTarget:
+    participant_id: str
+    role: str
+    route_kind: RouteKind
+    terminal_reason: str | None = None
 
 
 class GroupchatWorklistStore:
@@ -68,7 +86,7 @@ class GroupchatWorklistStore:
                     conversation_id,
                     policy_id,
                     root_message_id,
-                    root_message_id,
+                    None,
                     max_depth,
                     human_max_targets,
                     agent_max_targets,
@@ -150,6 +168,12 @@ class GroupchatWorklistStore:
                         status="failed",
                         terminal_reason="target_participant_missing",
                     )
+                    self._advance_chain_cursor_if_after_current(
+                        conn,
+                        chain=chain,
+                        message_id=source_message_id,
+                        now=now,
+                    )
                     self._set_chain_status(
                         conn,
                         chain_id=chain_id,
@@ -179,6 +203,12 @@ class GroupchatWorklistStore:
                     (chain_id, dedup_key),
                 ).fetchone()
                 if duplicate is not None:
+                    self._advance_chain_cursor_if_after_current(
+                        conn,
+                        chain=chain,
+                        message_id=source_message_id,
+                        now=now,
+                    )
                     conn.commit()
                     return self._item_from_row(duplicate)
 
@@ -196,6 +226,12 @@ class GroupchatWorklistStore:
                         status="blocked",
                         dedup_key=dedup_key,
                         terminal_reason="depth_limit",
+                    )
+                    self._advance_chain_cursor_if_after_current(
+                        conn,
+                        chain=chain,
+                        message_id=source_message_id,
+                        now=now,
                     )
                     self._set_chain_status(
                         conn,
@@ -219,6 +255,12 @@ class GroupchatWorklistStore:
                     depth=depth,
                     status="queued",
                     dedup_key=dedup_key,
+                )
+                self._advance_chain_cursor_if_after_current(
+                    conn,
+                    chain=chain,
+                    message_id=source_message_id,
+                    now=now,
                 )
                 conn.commit()
             except Exception:
@@ -411,7 +453,6 @@ class GroupchatWorklistStore:
                 ).rowcount
                 if updated != 1:
                     raise ValueError("worklist_item_not_claimed")
-                self._complete_chain_if_exhausted(conn, chain_id=item["chain_id"], now=now)
                 conn.commit()
             except Exception:
                 conn.rollback()
@@ -449,6 +490,70 @@ class GroupchatWorklistStore:
             ).fetchall()
         return [self._item_from_row(row) for row in rows]
 
+    def scan_routes_once(self, *, chain_id: str) -> list[GroupchatWorklistItem]:
+        now = _utc_now()
+        item_ids: list[str] = []
+        with self._connect() as conn:
+            conn.execute("begin immediate")
+            try:
+                chain = self._chain_row(conn, chain_id)
+                if chain["status"] not in _CHAIN_OPEN_STATUSES:
+                    conn.commit()
+                    return []
+
+                message = self._next_unscanned_message_row(conn, chain=chain)
+                if message is None:
+                    self._complete_chain_if_exhausted(conn, chain_id=chain_id, now=now)
+                    conn.commit()
+                    return []
+
+                source_participant_id = self._source_participant_id(
+                    conn,
+                    chain=chain,
+                    message=message,
+                )
+                depth = self._route_depth_for_message(conn, chain_id=chain_id, message=message)
+                targets = self._route_targets_for_message(
+                    conn,
+                    chain=chain,
+                    message=message,
+                    source_participant_id=source_participant_id,
+                )
+                for target in targets:
+                    item_id = self._insert_scanned_route(
+                        conn,
+                        now=now,
+                        chain=chain,
+                        message=message,
+                        source_participant_id=source_participant_id,
+                        target=target,
+                        depth=depth,
+                    )
+                    if item_id is not None:
+                        item_ids.append(item_id)
+                    chain = self._chain_row(conn, chain_id)
+                    if chain["status"] not in _CHAIN_OPEN_STATUSES:
+                        break
+
+                self._advance_chain_cursor(
+                    conn,
+                    chain_id=chain_id,
+                    message_id=message["id"],
+                    now=now,
+                )
+                chain = self._chain_row(conn, chain_id)
+                if (
+                    chain["status"] in _CHAIN_OPEN_STATUSES
+                    and not item_ids
+                    and self._next_unscanned_message_row(conn, chain=chain) is None
+                ):
+                    self._complete_chain_if_exhausted(conn, chain_id=chain_id, now=now)
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+        return [self.get_item(item_id) for item_id in item_ids]
+
     def dedup_key(
         self,
         *,
@@ -460,6 +565,448 @@ class GroupchatWorklistStore:
     ) -> str:
         return "|".join(
             (conversation_id, chain_id, source_message_id, target_participant_id, route_kind)
+        )
+
+    def _next_unscanned_message_row(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        chain: sqlite3.Row,
+    ) -> sqlite3.Row | None:
+        root_row = conn.execute(
+            "select rowid from messages where id = ? and conversation_id = ?",
+            (chain["root_message_id"], chain["conversation_id"]),
+        ).fetchone()
+        if root_row is None:
+            raise ValueError("root_message_missing")
+        if chain["last_scanned_message_id"] is None:
+            return conn.execute(
+                """
+                select rowid, id, conversation_id, author, role, content,
+                       created_at, envelope_type, envelope_json, mentions_json,
+                       reply_to_message_id
+                from messages
+                where conversation_id = ? and rowid >= ?
+                order by rowid asc
+                limit 1
+                """,
+                (chain["conversation_id"], root_row["rowid"]),
+            ).fetchone()
+
+        cursor = conn.execute(
+            "select rowid from messages where id = ? and conversation_id = ?",
+            (chain["last_scanned_message_id"], chain["conversation_id"]),
+        ).fetchone()
+        if cursor is None:
+            raise ValueError("scan_cursor_message_missing")
+        return conn.execute(
+            """
+            select rowid, id, conversation_id, author, role, content,
+                   created_at, envelope_type, envelope_json, mentions_json,
+                   reply_to_message_id
+            from messages
+            where conversation_id = ? and rowid > ?
+            order by rowid asc
+            limit 1
+            """,
+            (chain["conversation_id"], cursor["rowid"]),
+        ).fetchone()
+
+    def _source_participant_id(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        chain: sqlite3.Row,
+        message: sqlite3.Row,
+    ) -> str | None:
+        if message["role"] == "human":
+            return None
+        row = conn.execute(
+            """
+            select participant_id
+            from participants
+            where conversation_id = ?
+              and participant_id = ?
+              and status = 'active'
+            """,
+            (chain["conversation_id"], message["author"]),
+        ).fetchone()
+        if row is not None:
+            return str(row["participant_id"])
+        row = conn.execute(
+            """
+            select participant_id
+            from participants
+            where conversation_id = ?
+              and role = ?
+              and status = 'active'
+            order by created_at asc
+            limit 1
+            """,
+            (chain["conversation_id"], message["role"]),
+        ).fetchone()
+        return str(row["participant_id"]) if row is not None else None
+
+    def _route_depth_for_message(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        chain_id: str,
+        message: sqlite3.Row,
+    ) -> int:
+        source_item = conn.execute(
+            """
+            select depth
+            from groupchat_worklist
+            where chain_id = ? and completed_message_id = ?
+            order by updated_at desc, created_at desc
+            limit 1
+            """,
+            (chain_id, message["id"]),
+        ).fetchone()
+        if source_item is not None:
+            return int(source_item["depth"]) + 1
+        return 0 if message["role"] == "human" else 1
+
+    def _route_targets_for_message(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        chain: sqlite3.Row,
+        message: sqlite3.Row,
+        source_participant_id: str | None,
+    ) -> list[_RouteTarget]:
+        participants = conn.execute(
+            """
+            select participant_id, role, display_name
+            from participants
+            where conversation_id = ? and status = 'active'
+            order by created_at asc
+            """,
+            (chain["conversation_id"],),
+        ).fetchall()
+        role_targets = {
+            str(row["role"]).strip().lower(): row
+            for row in participants
+            if str(row["role"]).strip().lower() in _A1_ROUTABLE_ROLES
+        }
+        mentioned_roles = self._mentioned_roles(message=message, role_targets=role_targets)
+        mentioned_targets = [
+            _RouteTarget(
+                participant_id=str(role_targets[role]["participant_id"]),
+                role=str(role_targets[role]["role"]),
+                route_kind="mention",
+            )
+            for role in mentioned_roles
+            if role in role_targets
+            and role_targets[role]["participant_id"] != source_participant_id
+        ]
+        if mentioned_targets:
+            limit = (
+                int(chain["human_max_targets"])
+                if source_participant_id is None
+                else int(chain["agent_max_targets"])
+            )
+            return self._cap_route_targets(targets=mentioned_targets, limit=limit)
+        if self._has_line_start_mention(str(message["content"])):
+            return []
+        if source_participant_id is not None:
+            return []
+        routed_role = self._local_router_role(str(message["content"]))
+        target = role_targets.get(routed_role)
+        if target is None:
+            return []
+        return [
+            _RouteTarget(
+                participant_id=str(target["participant_id"]),
+                role=str(target["role"]),
+                route_kind="router",
+            )
+        ]
+
+    def _mentioned_roles(
+        self,
+        *,
+        message: sqlite3.Row,
+        role_targets: dict[str, sqlite3.Row],
+    ) -> list[str]:
+        roles: list[str] = []
+        seen: set[str] = set()
+
+        def add_role(raw: str) -> None:
+            role = raw.strip().lower().removeprefix("@")
+            if role in role_targets and role not in seen:
+                seen.add(role)
+                roles.append(role)
+
+        for role in self._line_start_mentioned_roles(
+            content=str(message["content"]),
+            roles=role_targets.keys(),
+        ):
+            add_role(role)
+        return roles
+
+    def _line_start_mentioned_roles(
+        self,
+        *,
+        content: str,
+        roles: Iterable[str],
+    ) -> list[str]:
+        known_roles = sorted({str(role).lower() for role in roles}, key=len, reverse=True)
+        stripped = re.sub(r"```[\s\S]*?```", "", content)
+        found: list[str] = []
+        seen: set[str] = set()
+        for raw_line in stripped.splitlines():
+            normalized = raw_line.lstrip().lower()
+            normalized = _LEADING_MARKDOWN_MENTION_PREFIX_RE.sub("", normalized)
+            if not normalized.startswith("@"):
+                continue
+            cursor = 0
+            while cursor < len(normalized):
+                segment = normalized[cursor:]
+                matched_role: str | None = None
+                for role in known_roles:
+                    pattern = f"@{role}"
+                    if not segment.startswith(pattern):
+                        continue
+                    char_after = segment[len(pattern) : len(pattern) + 1]
+                    if char_after and (
+                        _HANDLE_CONTINUATION_RE.fullmatch(char_after)
+                        and not _TOKEN_BOUNDARY_RE.fullmatch(char_after)
+                    ):
+                        continue
+                    matched_role = role
+                    break
+                if matched_role is None:
+                    break
+                if matched_role not in seen:
+                    seen.add(matched_role)
+                    found.append(matched_role)
+                cursor += len(matched_role) + 1
+                while cursor < len(normalized) and _TOKEN_BOUNDARY_RE.fullmatch(
+                    normalized[cursor]
+                ):
+                    cursor += 1
+                if cursor >= len(normalized) or normalized[cursor] != "@":
+                    break
+        return found
+
+    def _has_line_start_mention(self, content: str) -> bool:
+        stripped = re.sub(r"```[\s\S]*?```", "", content)
+        for raw_line in stripped.splitlines():
+            normalized = raw_line.lstrip().lower()
+            normalized = _LEADING_MARKDOWN_MENTION_PREFIX_RE.sub("", normalized)
+            if normalized.startswith("@") and len(normalized) > 1:
+                return True
+        return False
+
+    def _local_router_role(self, content: str) -> str:
+        lowered = content.lower()
+        critic_terms = (
+            "why",
+            "risk",
+            "bias",
+            "challenge",
+            "not accepted",
+            "correction",
+            "no progress",
+        )
+        review_terms = ("review", "verify", "audit", "acceptance", "check")
+        architect_terms = ("implementation", "proposal", "build", "fix", "add", "design")
+        if any(term in lowered for term in critic_terms):
+            return "critic"
+        if any(term in lowered for term in review_terms):
+            return "review"
+        if any(term in lowered for term in architect_terms):
+            return "architect"
+        return "critic"
+
+    def _cap_route_targets(
+        self,
+        *,
+        targets: list[_RouteTarget],
+        limit: int,
+    ) -> list[_RouteTarget]:
+        if limit < 0:
+            limit = 0
+        capped: list[_RouteTarget] = []
+        extras: list[_RouteTarget] = []
+        seen: set[str] = set()
+        for target in targets:
+            if target.participant_id in seen:
+                continue
+            seen.add(target.participant_id)
+            if len(capped) < limit:
+                capped.append(target)
+            else:
+                extras.append(
+                    _RouteTarget(
+                        participant_id=target.participant_id,
+                        role=target.role,
+                        route_kind=target.route_kind,
+                        terminal_reason="fanout_limit",
+                    )
+                )
+        return capped + extras
+
+    def _insert_scanned_route(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        now: str,
+        chain: sqlite3.Row,
+        message: sqlite3.Row,
+        source_participant_id: str | None,
+        target: _RouteTarget,
+        depth: int,
+    ) -> str | None:
+        dedup_key = self.dedup_key(
+            conversation_id=chain["conversation_id"],
+            chain_id=chain["chain_id"],
+            source_message_id=message["id"],
+            target_participant_id=target.participant_id,
+            route_kind=target.route_kind,
+        )
+        duplicate = conn.execute(
+            """
+            select item_id from groupchat_worklist
+            where chain_id = ?
+              and dedup_key = ?
+              and status in ('queued', 'claimed', 'completed')
+            order by created_at asc
+            limit 1
+            """,
+            (chain["chain_id"], dedup_key),
+        ).fetchone()
+        if duplicate is not None:
+            return None
+
+        reason = target.terminal_reason
+        chain_blocks = False
+        if reason is None:
+            if depth >= int(chain["max_depth"]):
+                reason = "depth_limit"
+                chain_blocks = True
+            elif (
+                source_participant_id is not None
+                and self._pingpong_streak_after_candidate(
+                    conn,
+                    chain_id=chain["chain_id"],
+                    source_participant_id=source_participant_id,
+                    target_participant_id=target.participant_id,
+                )
+                >= int(chain["pingpong_block_after"])
+            ):
+                reason = "pingpong_blocked"
+                chain_blocks = True
+
+        status = "blocked" if reason is not None else "queued"
+        item_id = self._insert_item(
+            conn,
+            now=now,
+            chain=chain,
+            source_message_id=message["id"],
+            source_participant_id=source_participant_id,
+            target_participant_id=target.participant_id,
+            target_role=target.role,
+            route_kind=target.route_kind,
+            depth=depth,
+            status=status,
+            dedup_key=dedup_key,
+            terminal_reason=reason,
+        )
+        if chain_blocks:
+            self._set_chain_status(
+                conn,
+                chain_id=chain["chain_id"],
+                status="blocked",
+                status_reason=reason or "blocked",
+                now=now,
+            )
+            self._cancel_queued_chain_siblings(
+                conn,
+                item=self._item_row(conn, item_id),
+                reason=f"chain_blocked:{reason}",
+                now=now,
+            )
+        return item_id
+
+    def _pingpong_streak_after_candidate(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        chain_id: str,
+        source_participant_id: str,
+        target_participant_id: str,
+    ) -> int:
+        rows = conn.execute(
+            """
+            select source_participant_id, target_participant_id
+            from groupchat_worklist
+            where chain_id = ?
+              and source_participant_id is not null
+              and status in ('queued', 'claimed', 'completed')
+            order by created_at asc
+            """,
+            (chain_id,),
+        ).fetchall()
+        pair = {source_participant_id, target_participant_id}
+        streak = 0
+        for row in rows:
+            row_source = str(row["source_participant_id"])
+            row_target = str(row["target_participant_id"])
+            if {row_source, row_target} == pair:
+                streak += 1
+            else:
+                streak = 0
+        return streak + 1
+
+    def _advance_chain_cursor(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        chain_id: str,
+        message_id: str,
+        now: str,
+    ) -> None:
+        conn.execute(
+            """
+            update groupchat_chains
+            set last_scanned_message_id = ?, updated_at = ?
+            where chain_id = ?
+            """,
+            (message_id, now, chain_id),
+        )
+
+    def _advance_chain_cursor_if_after_current(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        chain: sqlite3.Row,
+        message_id: str,
+        now: str,
+    ) -> None:
+        next_message = self._next_unscanned_message_row(conn, chain=chain)
+        if next_message is None or next_message["id"] != message_id:
+            return
+        source = conn.execute(
+            "select rowid from messages where id = ? and conversation_id = ?",
+            (message_id, chain["conversation_id"]),
+        ).fetchone()
+        if source is None:
+            raise ValueError("source_message_missing")
+        if chain["last_scanned_message_id"] is not None:
+            cursor = conn.execute(
+                "select rowid from messages where id = ? and conversation_id = ?",
+                (chain["last_scanned_message_id"], chain["conversation_id"]),
+            ).fetchone()
+            if cursor is not None and int(cursor["rowid"]) >= int(source["rowid"]):
+                return
+        self._advance_chain_cursor(
+            conn,
+            chain_id=chain["chain_id"],
+            message_id=message_id,
+            now=now,
         )
 
     def _insert_item(
@@ -743,6 +1290,9 @@ class GroupchatWorklistScheduler:
             conversation_id=conversation_id,
             chain_id=chain_id,
         )
+
+    def scan_routes_once(self, *, chain_id: str) -> list[GroupchatWorklistItem]:
+        return self._store.scan_routes_once(chain_id=chain_id)
 
     def complete_from_writeback(
         self,
