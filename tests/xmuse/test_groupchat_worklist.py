@@ -4,6 +4,7 @@ import sqlite3
 
 import pytest
 
+from xmuse_core.chat.acceptance_spine import AcceptanceSpineStore
 from xmuse_core.chat.groupchat_runtime import GroupchatPeerRuntime
 from xmuse_core.chat.groupchat_worklist import (
     GroupchatWorklistScheduler,
@@ -85,6 +86,31 @@ def _writeback_reply(
         reply_owner_participant_id=participant_id,
     )
     return result["message"]["id"]
+
+
+def _acceptance_spine_for_dispatch(
+    db,
+    *,
+    conversation_id: str,
+    intake_message_id: str,
+    proposal_id: str,
+    dispatch_item_id: str,
+) -> str:
+    store = AcceptanceSpineStore(db)
+    spine = store.create_for_intake(
+        conversation_id=conversation_id,
+        intake_message_id=intake_message_id,
+    )
+    store.attach_proposal(
+        conversation_id=conversation_id,
+        intake_message_id=intake_message_id,
+        proposal_id=proposal_id,
+    )
+    store.attach_dispatch_for_proposal(
+        proposal_id=proposal_id,
+        dispatch_item_id=dispatch_item_id,
+    )
+    return f"chat.db#acceptance_spine={spine.spine_id}"
 
 
 def test_groupchat_worklist_claims_links_and_completes_from_durable_writeback(tmp_path):
@@ -1065,6 +1091,378 @@ def test_scan_routes_blocks_final_action_github_gate_gap(tmp_path):
     chain_after = store.get_chain(chain.chain_id)
     assert chain_after.status == "blocked"
     assert chain_after.status_reason == "final_action_github_gate_gap"
+
+
+def test_scan_routes_dispatch_ack_waits_for_execution_authority(tmp_path):
+    db, chat, conversation, root, architect, _review, critic = _conversation_with_groupchat_roster(
+        tmp_path,
+        root_content="@execute no natural route from the root.",
+    )
+    store = GroupchatWorklistStore(db)
+    chain = store.create_chain(conversation_id=conversation.id, root_message_id=root.id)
+    dispatch_ack = chat.add_message(
+        conversation_id=conversation.id,
+        author="execute",
+        role="assistant",
+        content="@critic DISPATCH_ACKNOWLEDGED dispatch-a",
+        envelope_type="dispatch_result",
+        envelope_json={
+            "type": "dispatch_result",
+            "authority": "chat.db/messages/dispatch_result",
+            "dispatch_queue_entry_id": "dispatch-a",
+            "proposal_id": "proposal-a",
+            "resolution_id": "resolution-a",
+            "collaboration_run_id": "collab-a",
+            "artifact_ref": "artifact:lane_graph",
+            "dispatch_evidence_ref": "mcp_writeback:inbox-a",
+            "proof_boundary": "dispatch_acknowledgement_not_execution_proof",
+            "source_refs": [
+                "chat_dispatch_queue:dispatch-a",
+                "proposal:proposal-a",
+                "resolution:resolution-a",
+            ],
+        },
+    )
+    scheduler = GroupchatWorklistScheduler(db_path=db, scheduler_id="groupchat-a1")
+
+    assert scheduler.scan_routes_once(chain_id=chain.chain_id) == []
+    routed = scheduler.scan_routes_once(chain_id=chain.chain_id)
+
+    assert len(routed) == 1
+    assert routed[0].source_message_id == dispatch_ack.id
+    assert routed[0].target_participant_id == architect.participant_id
+    assert routed[0].target_participant_id != critic.participant_id
+    assert routed[0].route_kind == "handoff"
+    assert routed[0].status == "blocked"
+    assert routed[0].terminal_reason == "dispatch_acknowledgement_not_execution_proof"
+    assert store.get_chain(chain.chain_id).status == "open"
+
+    assert scheduler.scan_routes_once(chain_id=chain.chain_id) == []
+    assert store.get_chain(chain.chain_id).status == "open"
+
+
+def test_scan_routes_final_action_supersedes_dispatch_ack_wait(tmp_path):
+    db, chat, conversation, root, architect, _review, _critic = _conversation_with_groupchat_roster(
+        tmp_path,
+        root_content="@execute no natural route from the root.",
+    )
+    store = GroupchatWorklistStore(db)
+    chain = store.create_chain(conversation_id=conversation.id, root_message_id=root.id)
+    dispatch_ack = chat.add_message(
+        conversation_id=conversation.id,
+        author="execute",
+        role="assistant",
+        content="DISPATCH_ACKNOWLEDGED dispatch-a",
+        envelope_type="dispatch_result",
+        envelope_json={
+            "type": "dispatch_result",
+            "dispatch_queue_entry_id": "dispatch-a",
+            "proof_boundary": "dispatch_acknowledgement_not_execution_proof",
+            "source_refs": ["chat_dispatch_queue:dispatch-a"],
+        },
+    )
+    spine_ref = _acceptance_spine_for_dispatch(
+        db,
+        conversation_id=conversation.id,
+        intake_message_id=root.id,
+        proposal_id="proposal-a",
+        dispatch_item_id="dispatch-a",
+    )
+    scheduler = GroupchatWorklistScheduler(db_path=db, scheduler_id="groupchat-a1")
+
+    assert scheduler.scan_routes_once(chain_id=chain.chain_id) == []
+    waiting = scheduler.scan_routes_once(chain_id=chain.chain_id)
+    assert len(waiting) == 1
+    assert waiting[0].source_message_id == dispatch_ack.id
+    assert waiting[0].status == "blocked"
+
+    final_action = chat.add_message(
+        conversation_id=conversation.id,
+        author="final-action-gate",
+        role="system",
+        content="Final action merge for lane lane-a is accepted.",
+        envelope_type="final_action_result",
+        envelope_json={
+            "type": "final_action_result",
+            "lane_id": "lane-a",
+            "action": "merge",
+            "status": "accepted",
+            "github_gate_evidence_ref": "github_gate_evidence:lane-a",
+            "github_gate": {"status": "accepted"},
+            "acceptance_spine_ref": spine_ref,
+        },
+    )
+
+    routed = scheduler.scan_routes_once(chain_id=chain.chain_id)
+
+    assert len(routed) == 1
+    assert routed[0].source_message_id == final_action.id
+    assert routed[0].target_participant_id == architect.participant_id
+    assert routed[0].status == "queued"
+    ack_item = store.get_item(waiting[0].item_id)
+    assert ack_item.status == "canceled"
+    assert ack_item.terminal_reason == f"superseded_by_authority:{final_action.id}"
+    assert store.get_chain(chain.chain_id).status == "open"
+
+
+def test_scan_routes_final_action_cancels_only_matching_dispatch_ack_wait(
+    tmp_path,
+):
+    db, chat, conversation, root, architect, _review, _critic = _conversation_with_groupchat_roster(
+        tmp_path,
+        root_content="@execute no natural route from the root.",
+    )
+    store = GroupchatWorklistStore(db)
+    chain = store.create_chain(conversation_id=conversation.id, root_message_id=root.id)
+    chat.add_message(
+        conversation_id=conversation.id,
+        author="execute",
+        role="assistant",
+        content="DISPATCH_ACKNOWLEDGED dispatch-a",
+        envelope_type="dispatch_result",
+        envelope_json={
+            "type": "dispatch_result",
+            "dispatch_queue_entry_id": "dispatch-a",
+            "proof_boundary": "dispatch_acknowledgement_not_execution_proof",
+            "source_refs": ["chat_dispatch_queue:dispatch-a"],
+        },
+    )
+    chat.add_message(
+        conversation_id=conversation.id,
+        author="execute",
+        role="assistant",
+        content="DISPATCH_ACKNOWLEDGED dispatch-b",
+        envelope_type="dispatch_result",
+        envelope_json={
+            "type": "dispatch_result",
+            "dispatch_queue_entry_id": "dispatch-b",
+            "proof_boundary": "dispatch_acknowledgement_not_execution_proof",
+            "source_refs": ["chat_dispatch_queue:dispatch-b"],
+        },
+    )
+    spine_ref = _acceptance_spine_for_dispatch(
+        db,
+        conversation_id=conversation.id,
+        intake_message_id=root.id,
+        proposal_id="proposal-a",
+        dispatch_item_id="dispatch-a",
+    )
+    scheduler = GroupchatWorklistScheduler(db_path=db, scheduler_id="groupchat-a1")
+
+    assert scheduler.scan_routes_once(chain_id=chain.chain_id) == []
+    wait_a = scheduler.scan_routes_once(chain_id=chain.chain_id)[0]
+    wait_b = scheduler.scan_routes_once(chain_id=chain.chain_id)[0]
+    assert wait_a.status == "blocked"
+    assert wait_b.status == "blocked"
+
+    final_action = chat.add_message(
+        conversation_id=conversation.id,
+        author="final-action-gate",
+        role="system",
+        content="Final action merge for lane lane-a is accepted.",
+        envelope_type="final_action_result",
+        envelope_json={
+            "type": "final_action_result",
+            "lane_id": "lane-a",
+            "action": "merge",
+            "status": "accepted",
+            "github_gate_evidence_ref": "github_gate_evidence:lane-a",
+            "github_gate": {"status": "accepted"},
+            "acceptance_spine_ref": spine_ref,
+        },
+    )
+
+    routed = scheduler.scan_routes_once(chain_id=chain.chain_id)
+
+    assert len(routed) == 1
+    assert routed[0].source_message_id == final_action.id
+    assert routed[0].target_participant_id == architect.participant_id
+    assert store.get_item(wait_a.item_id).status == "canceled"
+    assert store.get_item(wait_a.item_id).terminal_reason == (
+        f"superseded_by_authority:{final_action.id}"
+    )
+    assert store.get_item(wait_b.item_id).status == "blocked"
+    assert store.get_item(wait_b.item_id).terminal_reason == (
+        "dispatch_acknowledgement_not_execution_proof"
+    )
+    assert store.get_chain(chain.chain_id).status == "open"
+
+
+def test_scan_routes_gate_gap_final_action_supersedes_matching_dispatch_ack_wait(
+    tmp_path,
+):
+    db, chat, conversation, root, architect, _review, _critic = _conversation_with_groupchat_roster(
+        tmp_path,
+        root_content="@execute no natural route from the root.",
+    )
+    store = GroupchatWorklistStore(db)
+    chain = store.create_chain(conversation_id=conversation.id, root_message_id=root.id)
+    chat.add_message(
+        conversation_id=conversation.id,
+        author="execute",
+        role="assistant",
+        content="DISPATCH_ACKNOWLEDGED dispatch-a",
+        envelope_type="dispatch_result",
+        envelope_json={
+            "type": "dispatch_result",
+            "dispatch_queue_entry_id": "dispatch-a",
+            "proof_boundary": "dispatch_acknowledgement_not_execution_proof",
+            "source_refs": ["chat_dispatch_queue:dispatch-a"],
+        },
+    )
+    spine_ref = _acceptance_spine_for_dispatch(
+        db,
+        conversation_id=conversation.id,
+        intake_message_id=root.id,
+        proposal_id="proposal-a",
+        dispatch_item_id="dispatch-a",
+    )
+    scheduler = GroupchatWorklistScheduler(db_path=db, scheduler_id="groupchat-a1")
+
+    assert scheduler.scan_routes_once(chain_id=chain.chain_id) == []
+    waiting = scheduler.scan_routes_once(chain_id=chain.chain_id)[0]
+    assert waiting.status == "blocked"
+
+    final_action = chat.add_message(
+        conversation_id=conversation.id,
+        author="final-action-gate",
+        role="system",
+        content="Final action merge for lane lane-a is blocked by GitHub gate.",
+        envelope_type="final_action_result",
+        envelope_json={
+            "type": "final_action_result",
+            "lane_id": "lane-a",
+            "action": "merge",
+            "status": "blocked",
+            "github_gate_gap_ref": "github_gate_gap:lane-a",
+            "status_reason": "github_gate_unverified",
+            "acceptance_spine_ref": spine_ref,
+        },
+    )
+
+    routed = scheduler.scan_routes_once(chain_id=chain.chain_id)
+
+    assert len(routed) == 1
+    assert routed[0].source_message_id == final_action.id
+    assert routed[0].target_participant_id == architect.participant_id
+    assert routed[0].status == "blocked"
+    assert routed[0].terminal_reason == "final_action_github_gate_gap"
+    ack_item = store.get_item(waiting.item_id)
+    assert ack_item.status == "canceled"
+    assert ack_item.terminal_reason == f"superseded_by_authority:{final_action.id}"
+    assert store.get_chain(chain.chain_id).status == "blocked"
+    assert store.get_chain(chain.chain_id).status_reason == "final_action_github_gate_gap"
+
+
+def test_scan_routes_consumes_unknown_dispatch_result_without_text_routing(tmp_path):
+    db, chat, conversation, root, _architect, _review, critic = _conversation_with_groupchat_roster(
+        tmp_path,
+        root_content="@execute no natural route from the root.",
+    )
+    store = GroupchatWorklistStore(db)
+    chain = store.create_chain(conversation_id=conversation.id, root_message_id=root.id)
+    chat.add_message(
+        conversation_id=conversation.id,
+        author="execute",
+        role="assistant",
+        content="@critic DISPATCH_ACKNOWLEDGED dispatch-a",
+        envelope_type="dispatch_result",
+        envelope_json={
+            "type": "dispatch_result",
+            "dispatch_queue_entry_id": "dispatch-a",
+            "proof_boundary": "unknown_dispatch_boundary",
+        },
+    )
+    scheduler = GroupchatWorklistScheduler(db_path=db, scheduler_id="groupchat-a1")
+
+    assert scheduler.scan_routes_once(chain_id=chain.chain_id) == []
+    routed = scheduler.scan_routes_once(chain_id=chain.chain_id)
+
+    assert routed == []
+    assert all(
+        item.target_participant_id != critic.participant_id
+        for item in store.list_items(chain.chain_id)
+    )
+
+
+def test_scan_routes_dispatch_ack_uses_envelope_authority_when_column_is_message(
+    tmp_path,
+):
+    db, chat, conversation, root, architect, _review, _critic = _conversation_with_groupchat_roster(
+        tmp_path,
+        root_content="@execute no natural route from the root.",
+    )
+    store = GroupchatWorklistStore(db)
+    chain = store.create_chain(conversation_id=conversation.id, root_message_id=root.id)
+    dispatch_ack = chat.add_message(
+        conversation_id=conversation.id,
+        author="execute",
+        role="assistant",
+        content="@critic DISPATCH_ACKNOWLEDGED dispatch-a",
+        envelope_type="message",
+        envelope_json={
+            "type": "message",
+            "authority": "chat.db/messages/dispatch_result",
+            "dispatch_queue_entry_id": "dispatch-a",
+            "proof_boundary": "dispatch_acknowledgement_not_execution_proof",
+        },
+    )
+    scheduler = GroupchatWorklistScheduler(db_path=db, scheduler_id="groupchat-a1")
+
+    assert scheduler.scan_routes_once(chain_id=chain.chain_id) == []
+    routed = scheduler.scan_routes_once(chain_id=chain.chain_id)
+
+    assert len(routed) == 1
+    assert routed[0].source_message_id == dispatch_ack.id
+    assert routed[0].target_participant_id == architect.participant_id
+    assert routed[0].status == "blocked"
+    assert routed[0].terminal_reason == "dispatch_acknowledgement_not_execution_proof"
+
+
+def test_scan_routes_dispatch_ack_wait_is_idempotent_on_cursor_replay(tmp_path):
+    db, chat, conversation, root, _architect, _review, _critic = (
+        _conversation_with_groupchat_roster(
+            tmp_path,
+            root_content="@execute no natural route from the root.",
+        )
+    )
+    store = GroupchatWorklistStore(db)
+    chain = store.create_chain(conversation_id=conversation.id, root_message_id=root.id)
+    dispatch_ack = chat.add_message(
+        conversation_id=conversation.id,
+        author="execute",
+        role="assistant",
+        content="DISPATCH_ACKNOWLEDGED dispatch-a",
+        envelope_type="dispatch_result",
+        envelope_json={
+            "type": "dispatch_result",
+            "dispatch_queue_entry_id": "dispatch-a",
+            "proof_boundary": "dispatch_acknowledgement_not_execution_proof",
+            "source_refs": ["chat_dispatch_queue:dispatch-a"],
+        },
+    )
+    scheduler = GroupchatWorklistScheduler(db_path=db, scheduler_id="groupchat-a1")
+
+    assert scheduler.scan_routes_once(chain_id=chain.chain_id) == []
+    first = scheduler.scan_routes_once(chain_id=chain.chain_id)
+    assert len(first) == 1
+    assert first[0].status == "blocked"
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            "update groupchat_chains set last_scanned_message_id = ? where chain_id = ?",
+            (root.id, chain.chain_id),
+        )
+
+    replayed = scheduler.scan_routes_once(chain_id=chain.chain_id)
+
+    assert replayed == []
+    items = [
+        item
+        for item in store.list_items(chain.chain_id)
+        if item.source_message_id == dispatch_ack.id
+    ]
+    assert len(items) == 1
+    assert items[0].status == "blocked"
 
 
 def test_scan_routes_ignores_inline_mentions_even_when_mentions_json_contains_target(
