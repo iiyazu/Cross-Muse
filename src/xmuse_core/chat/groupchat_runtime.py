@@ -10,6 +10,7 @@ from xmuse_core.chat.groupchat_worklist import (
     GroupchatWorklistTickOutcome,
 )
 from xmuse_core.chat.inbox_store import ChatInboxStore
+from xmuse_core.chat.models import GroupchatChain
 from xmuse_core.chat.peer_scheduler import PeerChatScheduler, PeerChatSchedulerOutcome
 
 
@@ -26,6 +27,13 @@ class GroupchatPeerRuntimeRunOutcome:
     chain_status: str
     chain_status_reason: str | None
     tick_outcomes: tuple[GroupchatPeerRuntimeTickOutcome, ...]
+
+
+@dataclass(frozen=True)
+class GroupchatPeerRuntimeRootRunOutcome:
+    chain_id: str
+    created_chain: bool
+    run: GroupchatPeerRuntimeRunOutcome
 
 
 class GroupchatPeerRuntime:
@@ -176,6 +184,50 @@ class GroupchatPeerRuntime:
             tick_outcomes=tuple(outcomes),
         )
 
+    async def run_from_root_message(
+        self,
+        *,
+        conversation_id: str,
+        root_message_id: str,
+        max_ticks: int,
+        policy_id: str = "default-natural-groupchat",
+    ) -> GroupchatPeerRuntimeRootRunOutcome:
+        chain = self._chain_for_root(
+            conversation_id=conversation_id,
+            root_message_id=root_message_id,
+            policy_id=policy_id,
+        )
+        created_chain = False
+        if chain is None:
+            chain = self._store.create_chain(
+                conversation_id=conversation_id,
+                root_message_id=root_message_id,
+                policy_id=policy_id,
+            )
+            created_chain = True
+
+        if chain.status != "open":
+            return GroupchatPeerRuntimeRootRunOutcome(
+                chain_id=chain.chain_id,
+                created_chain=created_chain,
+                run=GroupchatPeerRuntimeRunOutcome(
+                    ticks=0,
+                    stop_reason=f"chain_{chain.status}",
+                    chain_status=chain.status,
+                    chain_status_reason=chain.status_reason,
+                    tick_outcomes=(),
+                ),
+            )
+
+        return GroupchatPeerRuntimeRootRunOutcome(
+            chain_id=chain.chain_id,
+            created_chain=created_chain,
+            run=await self.run_until_idle(
+                chain_id=chain.chain_id,
+                max_ticks=max_ticks,
+            ),
+        )
+
     def _peer_scheduler_for(self, inbox_item_id: str) -> PeerChatScheduler:
         return PeerChatScheduler(
             db_path=self._db_path,
@@ -191,3 +243,15 @@ class GroupchatPeerRuntime:
             memoryos_client=self._memoryos_client,
             memoryos_timeout_s=self._memoryos_timeout_s,
         )
+
+    def _chain_for_root(
+        self,
+        *,
+        conversation_id: str,
+        root_message_id: str,
+        policy_id: str,
+    ) -> GroupchatChain | None:
+        for chain in self._store.list_chains(conversation_id):
+            if chain.root_message_id == root_message_id and chain.policy_id == policy_id:
+                return chain
+        return None

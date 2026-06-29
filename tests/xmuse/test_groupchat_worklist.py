@@ -517,6 +517,134 @@ async def test_groupchat_peer_runtime_run_until_idle_reaches_route_exhausted_cha
 
 
 @pytest.mark.asyncio
+async def test_groupchat_peer_runtime_runs_from_root_message_idempotently(tmp_path):
+    db = tmp_path / "chat.db"
+    chat = ChatStore(db)
+    conversation = chat.create_conversation("A1 root run entry")
+    participants = ParticipantStore(db)
+    architect = participants.add(
+        conversation_id=conversation.id,
+        role="architect",
+        display_name="Remote A2A Architect GOD",
+        cli_kind="a2a",
+        model="a2a-remote",
+    )
+    participants.add(
+        conversation_id=conversation.id,
+        role="review",
+        display_name="Review GOD",
+        cli_kind="codex",
+        model="gpt-5.5",
+    )
+    critic = participants.add(
+        conversation_id=conversation.id,
+        role="critic",
+        display_name="Remote A2A Critic GOD",
+        cli_kind="a2a",
+        model="a2a-remote",
+    )
+    root = chat.add_message(
+        conversation_id=conversation.id,
+        author="human",
+        role="human",
+        content="Please design the root-run A1 entry.",
+    )
+
+    class ForbiddenGodLayer:
+        async def ensure_conversation_session(self, **kwargs):
+            raise AssertionError("A2A participants should use provider writeback")
+
+    class TwoTurnProviderService:
+        def __init__(self) -> None:
+            self.invocations = []
+
+        def invoke_provider_adapter(self, invocation):
+            self.invocations.append(invocation)
+            content = (
+                "@critic Please challenge this root-run entry."
+                if len(self.invocations) == 1
+                else "No further route from root-run entry."
+            )
+            return ProviderInvocationResult(
+                request_id=invocation.request_id,
+                provider_id=ProviderId.A2A,
+                profile_id=ProviderProfileId.REMOTE,
+                status=WorkerResultStatus.COMPLETED,
+                evidence_refs=[f"a2a_task:{invocation.request_id}"],
+                diagnostic_payload={
+                    "a2a_task_id": invocation.request_id,
+                    "a2a_context_id": invocation.request_id,
+                    "a2a_state": "TASK_STATE_COMPLETED",
+                    "a2a_disposition": "completed",
+                    "a2a_terminal": True,
+                    "a2a_content": content,
+                    "a2a_artifacts": [],
+                    "a2a_history": [],
+                    "a2a_metadata": {},
+                    "a2a_source_refs": [f"a2a_task:{invocation.request_id}"],
+                    "a2a_sdk_task": {
+                        "id": invocation.request_id,
+                        "status": {"state": "TASK_STATE_COMPLETED"},
+                    },
+                    "a2a_jsonrpc_id": invocation.request_id,
+                },
+            )
+
+    provider_service = TwoTurnProviderService()
+    runtime = GroupchatPeerRuntime(
+        db_path=db,
+        god_layer=ForbiddenGodLayer(),
+        worktree=tmp_path,
+        scheduler_id="groupchat-peer-a1",
+        response_wait_s=0.1,
+        provider_service=provider_service,
+    )
+
+    first = await runtime.run_from_root_message(
+        conversation_id=conversation.id,
+        root_message_id=root.id,
+        max_ticks=1,
+    )
+    second = await runtime.run_from_root_message(
+        conversation_id=conversation.id,
+        root_message_id=root.id,
+        max_ticks=4,
+    )
+    third = await runtime.run_from_root_message(
+        conversation_id=conversation.id,
+        root_message_id=root.id,
+        max_ticks=4,
+    )
+
+    assert first.created_chain is True
+    assert first.run.ticks == 1
+    assert first.run.stop_reason == "max_ticks"
+    assert first.run.chain_status == "open"
+    assert second.created_chain is False
+    assert second.chain_id == first.chain_id
+    assert second.run.ticks == 1
+    assert second.run.stop_reason == "chain_completed"
+    assert third.created_chain is False
+    assert third.chain_id == first.chain_id
+    assert third.run.ticks == 0
+    assert third.run.stop_reason == "chain_completed"
+    assert len(provider_service.invocations) == 2
+    chains = GroupchatWorklistStore(db).list_chains(conversation.id)
+    assert len(chains) == 1
+    assert chains[0].chain_id == first.chain_id
+    assert chains[0].root_message_id == root.id
+    completed = [
+        item
+        for item in GroupchatWorklistStore(db).list_items(first.chain_id)
+        if item.status == "completed"
+    ]
+    assert {item.target_participant_id for item in completed} == {
+        architect.participant_id,
+        critic.participant_id,
+    }
+
+
+@pytest.mark.asyncio
 async def test_groupchat_peer_runtime_rejects_peer_stdout_fallback_as_proof(tmp_path):
     db, _chat, conversation, root, _architect, _review, _critic = (
         _conversation_with_groupchat_roster(
