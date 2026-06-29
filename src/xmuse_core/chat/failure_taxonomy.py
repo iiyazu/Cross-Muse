@@ -178,6 +178,8 @@ def _class_id_for_boundary(boundary: dict[str, Any]) -> str:
     proof_boundary = str(boundary.get("proof_boundary") or "").lower()
     kind = str(boundary.get("kind") or "").lower()
 
+    if "head_mismatch" in text or "head mismatch" in text:
+        return "exact_head_ci_failure"
     if "memoryos" in text or "sidecar" in text:
         return "memoryos_unavailable_or_ingest_failure"
     if "main_ci" in text or "main ci" in text:
@@ -186,7 +188,11 @@ def _class_id_for_boundary(boundary: dict[str, Any]) -> str:
         return "branch_behind_or_stale_base_pr_creation"
     if "guarded" in text or "merge_reject" in text or "match-head" in text:
         return "guarded_merge_rejection"
-    if "exact_head" in text or "exact-head" in text or "check_run" in text:
+    if (
+        "exact_head" in text
+        or "exact-head" in text
+        or "check_run" in text
+    ):
         return "exact_head_ci_failure"
     if "github_gate" in proof_boundary or "github_gate" in kind:
         return "exact_head_ci_failure"
