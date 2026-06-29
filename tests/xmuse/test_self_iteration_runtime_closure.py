@@ -141,7 +141,7 @@ def test_runtime_contract_serializes_required_self_iteration_fields(tmp_path: Pa
     assert round_trip.memory_context_ref is not None
     assert round_trip.review_profile == "self-iteration-contract"
     assert artifacts.evidence_bundle.proof_level is ProofLevel.FAKE_RUNTIME
-    assert "docs/xmuse/self-iteration-runtime-closure.md" in (
+    assert "docs/xmuse/archive/2026-06-proof-closure-legacy/self-iteration-runtime-closure.md" in (
         artifacts.evidence_bundle.changed_files
     )
 
