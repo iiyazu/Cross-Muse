@@ -419,18 +419,21 @@ def test_runtime_launcher_and_config_assets_are_classified() -> None:
     assert (archive_dir / "bootstrap_gate.sh").is_file()
 
 
-def test_legacy_runtime_one_off_scripts_are_archived_not_packaged() -> None:
+def test_legacy_runtime_one_off_scripts_and_wrappers_are_archived_not_packaged() -> None:
     archived_names = {
         "hermes_loop.py",
         "inject_frontend_vision_proposal.py",
         "inject_frontend_vision_v2.py",
+        "runner_supervisor.py",
+        "self_evolution_runner.py",
     }
     archive_dir = DOCS_ROOT / "archive" / "2026-06-runtime-script-legacy"
     status = _read_doc("document-status.md")
 
     assert "docs/xmuse/archive/2026-06-runtime-script-legacy/" in status
     assert "One-off injection scripts" in status
-    assert not (PROJECT_ROOT / "xmuse" / "hermes_loop.py").exists()
+    assert "root wrapper CLIs" in status
     assert not (PROJECT_ROOT / "xmuse" / "scripts").exists()
     for name in archived_names:
+        assert not (PROJECT_ROOT / "xmuse" / name).exists(), name
         assert (archive_dir / name).is_file(), name
