@@ -3,7 +3,7 @@
 Updated: 2026-06-21
 
 These tasks start from the RC baseline in
-`docs/xmuse/rc-closure-baseline-2026-06-21.md`. They define what remains before
+`docs/xmuse/archive/2026-06-21-evidence/rc-closure-baseline-2026-06-21.md`. They define what remains before
 xmuse can claim production-grade closure. As of 2026-06-21, P0-P3 establish a
 short-run production-closure path with live GitHub accepted evidence. They do
 not establish full release readiness or a multi-hour provider soak.
@@ -14,7 +14,7 @@ Goal: close issue #37 or leave it explicitly blocked with fresh command
 evidence.
 
 Status: closed for required-check enforcement on 2026-06-21 by
-`docs/xmuse/github-server-side-gate-live-evidence-2026-06-21.md`. GitHub
+`docs/xmuse/archive/2026-06-21-evidence/github-server-side-gate-live-evidence-2026-06-21.md`. GitHub
 PR/CodeOwner review enforcement is explicitly absent
 (`required_pull_request_reviews = null`), and xmuse policy uses verified
 internal review truth when GitHub does not require PR review.
@@ -70,7 +70,7 @@ Acceptance:
 Goal: operators have one durable way to run a demand to terminal truth.
 
 Status: minimal blocked-path command implemented on 2026-06-21. Evidence:
-`docs/xmuse/acceptance-gated-runner-evidence-2026-06-21.md`. The command can
+`docs/xmuse/archive/2026-06-21-evidence/acceptance-gated-runner-evidence-2026-06-21.md`. The command can
 create a durable human intake spine, proposal, dispatch evidence, review
 verdict, final-action hold, and producer-owned GitHub gate evidence. Without
 `server_side_merge_proof`, the terminal result is `blocked/github_gate_unverified`.
@@ -101,7 +101,7 @@ Goal: demonstrate the production path with real configured peers and GitHub
 capture, not only deterministic test doubles.
 
 Status: short-run live GitHub capture accepted path implemented on 2026-06-21.
-Evidence: `docs/xmuse/acceptance-gated-live-capture-evidence-2026-06-21.md`.
+Evidence: `docs/xmuse/archive/2026-06-21-evidence/acceptance-gated-live-capture-evidence-2026-06-21.md`.
 The command uses opt-in read-only `gh api` capture and can produce
 producer-owned `server_side_merge_proof`. This proves the short acceptance-gated
 terminal path, not a multi-hour provider soak.

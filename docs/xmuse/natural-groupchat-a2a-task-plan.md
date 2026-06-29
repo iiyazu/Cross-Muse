@@ -291,8 +291,9 @@ Live server and durable run facts recorded on 2026-06-29:
   `chat.db`, `review_plane.json`, `final_actions.json`,
   `final_action_prs.json`, `github_gate_evidence.json`,
   `logs/gates/track-abc-integrated-memoryos-degraded-20260629-01/report.json`,
-  and the isolated execution worktree file
-  `docs/xmuse/track-abc-integrated-memoryos-degraded-20260629-01.md`;
+  and the isolated execution worktree file formerly promoted at
+  `docs/xmuse/track-abc-integrated-memoryos-degraded-20260629-01.md`, now
+  archived in `docs/xmuse/archive/2026-06-rung-sentinel-artifacts.md`;
 - GitHub gate evidence:
   `github_gate_evidence.json#evidence=ghgate_e3e90b98395d4c6e81136db6241ecf49`;
 - MemoryOS state:
@@ -472,14 +473,16 @@ Current runtime proof:
   `dispatch:conv_4ee824f469e9440aa6b84eb08b7dd971:res_f71363a69c0147a783fdd424e8b09b5f:execute`;
 - alpha lane:
   `rung4_alpha_lane_20260629_01`, kind `docs`, target
-  `docs/xmuse/rung4-alpha-runtime-20260629-01.md`, separate worktree,
+  `docs/xmuse/rung4-alpha-runtime-20260629-01.md` in the isolated execution
+  worktree, separate worktree,
   gate passed, review task `rtask_4376f36278774cb6a7ff004c308d28d9`,
   finalized merge verdict
   `verdict-merge-rtask_4376f36278774cb6a7ff004c308d28d9`, final-action
   hold `final-311825e65368` pending;
 - beta lane:
   `rung4_beta_lane_20260629_01`, kind `code`, target
-  `src/xmuse_core/platform/rung4_beta_sentinel.py`, separate worktree,
+  `src/xmuse_core/platform/rung4_beta_sentinel.py` in the isolated execution
+  worktree, separate worktree,
   gate passed, review task `rtask_5ffeeafce1d141788177b148ef1514ee`,
   finalized merge verdict
   `verdict-merge-rtask_5ffeeafce1d141788177b148ef1514ee`, final-action
@@ -496,17 +499,20 @@ Current runtime proof:
   `d0db3229dd5b4af83b492c671a4006e2bb239f64`, and main CI run
   `28364839627` success;
 - beta code artifact promotion proof:
-  PR #317 promoted `src/xmuse_core/platform/rung4_beta_sentinel.py` and its
-  focused test, with head `b2263c03e675779ff27b1f9f1f2b29b27a12276d`,
-  exact-head CI run `28364966671` success, guarded merge commit
+  PR #317 temporarily promoted `src/xmuse_core/platform/rung4_beta_sentinel.py`
+  and its focused test as a lane proof artifact, with head
+  `b2263c03e675779ff27b1f9f1f2b29b27a12276d`, exact-head CI run
+  `28364966671` success, guarded merge commit
   `eaa0532eee4598e92465ddefdfcf8a5a13e6ebf3`, and main CI run
-  `28365028773` success;
+  `28365028773` success. The artifact was later removed from product source
+  and archived in `docs/xmuse/archive/2026-06-rung-sentinel-artifacts.md`;
 - alpha docs artifact promotion proof:
-  PR #318 promoted `docs/xmuse/rung4-alpha-runtime-20260629-01.md`, with
-  head `2e34f1051fb8ec111815f21224267bd97ec00426`, exact-head CI run
-  `28365170254` success, guarded merge commit
+  PR #318 promoted `docs/xmuse/rung4-alpha-runtime-20260629-01.md` as a lane
+  proof artifact, with head `2e34f1051fb8ec111815f21224267bd97ec00426`,
+  exact-head CI run `28365170254` success, guarded merge commit
   `7b7b94a296363bb1e83cf43d016621405db26d9b`, and main CI run
-  `28365233751` success;
+  `28365233751` success. The one-line artifact is now archived in
+  `docs/xmuse/archive/2026-06-rung-sentinel-artifacts.md`;
 - artifact-promotion proof summary:
   PR #319 recorded that both Rung 4 lane artifacts reached PR, exact-head CI,
   guarded merge, and main CI, with head
@@ -551,7 +557,8 @@ Current runtime proof:
   `res_d0ba8e2c3c5545b8ba2da636befa68d3`;
 - failure-isolation alpha lane:
   `rung4_isolation_alpha_success_20260629_05` wrote exactly
-  `docs/xmuse/rung4-isolation-alpha-success-20260629-05.md`, passed the
+  `docs/xmuse/rung4-isolation-alpha-success-20260629-05.md` in the isolated
+  execution worktree, passed the
   `docs-only` gate, emitted review task
   `rtask_cff1e3958f3c43e9a255512f3874d8d1`, finalized merge verdict
   `verdict-merge-rtask_cff1e3958f3c43e9a255512f3874d8d1`, and stopped at
@@ -582,6 +589,9 @@ Current runtime proof:
   with exact content matching the runtime execution worktree. The intentional
   beta `gate_failed` Python artifact
   `src/xmuse_core/platform/rung4_gate_failure_sentinel.py` was not promoted.
+  The promoted one-line alpha artifact is now archived in
+  `docs/xmuse/archive/2026-06-rung-sentinel-artifacts.md` so the docs root
+  stays focused on current contracts rather than one-off runtime products.
   Authority/proof boundary: producer
   `execution-worktree-rung4_isolation_alpha_success_20260629_05`, consumer
   mainline docs artifact, condition alpha artifact exact-match plus beta

@@ -27,6 +27,7 @@ def _read_doc(name: str) -> str:
 def test_natural_groupchat_goal_docs_record_observed_baseline_contract() -> None:
     docs = {
         "README.md": _read_doc("README.md"),
+        "document-status.md": _read_doc("document-status.md"),
         "natural-groupchat-a2a-goal.md": _read_doc("natural-groupchat-a2a-goal.md"),
         "natural-groupchat-a2a-task-plan.md": _read_doc("natural-groupchat-a2a-task-plan.md"),
         "natural-groupchat-a2a-goal-prompt.md": _read_doc("natural-groupchat-a2a-goal-prompt.md"),
@@ -39,6 +40,7 @@ def test_natural_groupchat_goal_docs_record_observed_baseline_contract() -> None
         assert "current main calibration" not in content.lower(), name
 
     assert "last_observed_baseline" in docs["README.md"]
+    assert "last_observed_baseline" in docs["document-status.md"]
     assert "last_observed_baseline" in docs["natural-groupchat-a2a-goal.md"]
     assert "last_observed_baseline" in docs["natural-groupchat-a2a-task-plan.md"]
     assert "last_observed_baseline" in docs["natural-groupchat-a2a-goal-prompt.md"]
@@ -57,39 +59,19 @@ def test_natural_groupchat_goal_docs_record_observed_baseline_contract() -> None
     ]
     assert "default native" in docs["natural-groupchat-a2a-task-plan.md"]
     assert "28314524612" in docs["natural-groupchat-a2a-task-plan.md"]
-    assert "#250" in docs["README.md"]
-    assert "#251" in docs["README.md"]
-    assert "#252" in docs["README.md"]
-    assert "#254" in docs["README.md"]
-    assert "#255" in docs["README.md"]
-    assert "#257" in docs["README.md"]
-    assert "#258" in docs["README.md"]
-    assert "#259" in docs["README.md"]
-    assert "#260" in docs["README.md"]
-    assert "#261" in docs["README.md"]
-    assert "#262" in docs["README.md"]
-    assert "#263" in docs["README.md"]
-    assert "#264" in docs["README.md"]
-    assert "#265" in docs["README.md"]
-    assert "#266" in docs["README.md"]
-    assert "#267" in docs["README.md"]
-    assert "#268" in docs["README.md"]
-    assert "#269" in docs["README.md"]
-    assert "#270" in docs["README.md"]
-    assert "#271" in docs["README.md"]
-    assert "#272" in docs["README.md"]
-    assert "#273" in docs["README.md"]
-    assert "#274" in docs["README.md"]
-    assert "#275" in docs["README.md"]
-    assert "#276" in docs["README.md"]
-    assert "#277" in docs["README.md"]
-    assert "#278" in docs["README.md"]
-    assert "#279" in docs["README.md"]
+    status = docs["document-status.md"]
+    assert "Keep `docs/xmuse/README.md` short" in status
+    assert "Rung4 promoted runtime sentinel code was removed" in status
+    assert "Sentinel artifacts are not product modules" in status
+    assert "docs/xmuse/archive/2026-06-rung-sentinel-artifacts.md" in status
+    assert "#279" in status
+    assert "#259" in status
 
 
 def test_natural_groupchat_goal_docs_record_post_abc_starting_state() -> None:
     docs = {
         "README.md": _read_doc("README.md"),
+        "document-status.md": _read_doc("document-status.md"),
         "natural-groupchat-a2a-goal.md": _read_doc("natural-groupchat-a2a-goal.md"),
         "natural-groupchat-a2a-task-plan.md": _read_doc("natural-groupchat-a2a-task-plan.md"),
         "natural-groupchat-a2a-goal-prompt.md": _read_doc("natural-groupchat-a2a-goal-prompt.md"),
@@ -153,3 +135,28 @@ def test_goal_behavior_docs_define_throughput_discipline() -> None:
         "forbidden progress claims",
     ):
         assert fragment in task_plan
+
+
+def test_one_off_rung_sentinel_artifacts_are_archived_not_product_source() -> None:
+    archive = _read_doc("archive/2026-06-rung-sentinel-artifacts.md")
+
+    for removed_path in (
+        PROJECT_ROOT / "src" / "xmuse_core" / "platform" / "rung4_beta_sentinel.py",
+        PROJECT_ROOT / "tests" / "xmuse" / "test_rung4_beta_sentinel.py",
+        DOCS_ROOT / "rung4-alpha-20260629-02.md",
+        DOCS_ROOT / "rung4-beta-20260629-02.md",
+        DOCS_ROOT / "rung4-alpha-runtime-20260629-01.md",
+        DOCS_ROOT / "rung4-isolation-alpha-success-20260629-05.md",
+        DOCS_ROOT / "track-a-post288-sentinel-20260629.md",
+        DOCS_ROOT / "track-abc-integrated-memoryos-degraded-20260629-01.md",
+    ):
+        assert not removed_path.exists(), removed_path
+
+    for fragment in (
+        "Sentinel Artifacts",
+        "Runtime sentinel artifact for the xmuse Rung 4 beta lane",
+        "Rung4 isolation alpha lane stayed successful while beta failed gate.",
+        "not product documentation entrypoints",
+        "not reusable product modules",
+    ):
+        assert fragment in archive
