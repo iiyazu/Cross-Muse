@@ -242,3 +242,22 @@ def test_legacy_runtime_root_docs_are_archived_not_product_runtime_root() -> Non
     for parts in archived_paths:
         assert not (PROJECT_ROOT.joinpath(*parts)).exists(), parts
         assert (archive_dir / parts[-1]).is_file(), parts
+
+
+def test_frontend_projection_docs_live_outside_runtime_package_root() -> None:
+    frontend_docs = (
+        "FRONTEND_API.md",
+        "FRONTEND_API_INCREMENTAL.md",
+        "FRONTEND_CONTEXT.md",
+        "FRONTEND_IMPLEMENTATION_GUIDE.md",
+        "FRONTEND_VISION.md",
+    )
+    docs_dir = DOCS_ROOT / "frontend"
+    readme = _read_doc("README.md")
+    status = _read_doc("document-status.md")
+
+    assert "docs/xmuse/frontend/" in readme
+    assert "docs/xmuse/frontend/" in status
+    for name in frontend_docs:
+        assert not (PROJECT_ROOT / "xmuse" / name).exists(), name
+        assert (docs_dir / name).is_file(), name
