@@ -10,7 +10,10 @@ from xmuse_core.chat.acceptance_spine import AcceptanceSpineStatus, AcceptanceSp
 from xmuse_core.chat.dispatch_queue import ChatDispatchQueueStore
 from xmuse_core.chat.peer_service import PeerChatService
 from xmuse_core.chat.store import ChatStore
-from xmuse_core.platform.execution.github_ops import GitHubServerSideTruthEvidence
+from xmuse_core.platform.execution.github_ops import (
+    GitHubMainCiEvidence,
+    GitHubServerSideTruthEvidence,
+)
 from xmuse_core.platform.final_action_gate import FinalActionGateStore
 from xmuse_core.platform.review_plane import ReviewPlaneController
 from xmuse_core.structuring.models import ReviewDecision, ReviewVerdict
@@ -391,6 +394,7 @@ def test_final_action_approval_with_server_gate_producer_accepts_spine(
         pull_request_number=42,
         required_checks=["quality-gates", "contract-smoke-gates"],
         collector=_StaticGithubTruthCollector(_complete_server_truth()),
+        main_ci_collector=_StaticMainCiTruthCollector(_complete_main_ci_truth()),
     )
 
     spine = AcceptanceSpineStore(tmp_path / "chat.db").get_by_intake_message(intake_message_id)
@@ -414,6 +418,54 @@ def test_final_action_approval_with_server_gate_producer_accepts_spine(
     assert api_item["final_action_ref"] == f"final_actions.json#hold={hold.id}"
     assert api_item["github_gate_evidence_ref"] == final_action.github_gate_evidence_ref
     assert api_item["manual_gaps"] == []
+
+    writebacks = [
+        message
+        for message in ChatStore(tmp_path / "chat.db").list_messages(spine.conversation_id)
+        if message.envelope_type == "final_action_result"
+    ]
+    assert len(writebacks) == 1
+    writeback = writebacks[0]
+    assert writeback.envelope_json["github_gate_evidence_ref"] == (
+        final_action.github_gate_evidence_ref
+    )
+    assert writeback.envelope_json["github_gate"]["status"] == "accepted"
+    assert writeback.envelope_json["github_gate"]["proof_level"] == (
+        "server_side_merge_proof"
+    )
+    assert writeback.envelope_json["github_gate"]["repo"] == "iiyazu/Cross-Muse"
+    assert writeback.envelope_json["github_gate"]["pull_request_number"] == 42
+    assert writeback.envelope_json["github_gate"]["head_sha"] == "head123"
+    assert writeback.envelope_json["github_gate"]["workflow_run_id"] == 111
+    assert writeback.envelope_json["github_gate"]["check_suite_id"] == 222
+    assert writeback.envelope_json["github_gate"]["required_checks"] == [
+        "quality-gates",
+        "contract-smoke-gates",
+    ]
+    assert writeback.envelope_json["github_gate"]["check_runs"] == [
+        {"id": 111, "name": "quality-gates", "head_sha": "head123"},
+        {"id": 112, "name": "contract-smoke-gates", "head_sha": "head123"},
+    ]
+    assert writeback.envelope_json["github_gate"]["merge"] == {
+        "merge_commit_sha": "abc123",
+        "merged_at": "2026-06-10T15:00:00Z",
+        "merge_event_id": "merge-event-1",
+    }
+    assert writeback.envelope_json["github_gate"]["main_ci"] == {
+        "workflow_run_id": 333,
+        "workflow_name": "xmuse CI",
+        "head_sha": "abc123",
+        "head_branch": "main",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/iiyazu/Cross-Muse/actions/runs/333",
+    }
+    assert writeback.envelope_json["source_refs"] == [
+        f"final_actions.json#hold={hold.id}",
+        f"chat.db#acceptance_spine={spine.spine_id}",
+        "review_plane.json#verdict=verdict-spine-review",
+        final_action.github_gate_evidence_ref,
+    ]
 
 
 def test_final_action_approval_with_server_gate_gap_keeps_spine_blocked(
@@ -541,6 +593,21 @@ class _StaticGithubTruthCollector:
         return self._evidence
 
 
+class _StaticMainCiTruthCollector:
+    def __init__(self, evidence: GitHubMainCiEvidence) -> None:
+        self._evidence = evidence
+
+    def collect_main_ci(
+        self,
+        *,
+        repo: str,
+        merge_commit_sha: str,
+    ) -> GitHubMainCiEvidence:
+        assert repo == "iiyazu/Cross-Muse"
+        assert merge_commit_sha == "abc123"
+        return self._evidence
+
+
 def _complete_server_truth() -> GitHubServerSideTruthEvidence:
     return GitHubServerSideTruthEvidence(
         repo="iiyazu/Cross-Muse",
@@ -565,6 +632,20 @@ def _complete_server_truth() -> GitHubServerSideTruthEvidence:
         merge_commit_sha="abc123",
         merged_at="2026-06-10T15:00:00Z",
         merge_event_id="merge-event-1",
+    )
+
+
+def _complete_main_ci_truth() -> GitHubMainCiEvidence:
+    return GitHubMainCiEvidence(
+        workflow_run_id=333,
+        workflow_name="xmuse CI",
+        head_sha="abc123",
+        head_branch="main",
+        status="completed",
+        conclusion="success",
+        url="https://github.com/iiyazu/Cross-Muse/actions/runs/333",
+        created_at="2026-06-10T15:01:00Z",
+        updated_at="2026-06-10T15:02:00Z",
     )
 
 
