@@ -205,11 +205,13 @@ jobs:
           uv run ruff check
           src/xmuse_core/chat/context_assembler.py
           src/xmuse_core/chat/frontend_projection.py
+          src/xmuse_core/chat/groupchat_worklist.py
           src/xmuse_core/chat/memory_sidecar.py
           src/xmuse_core/chat/mentions.py
           src/xmuse_core/chat/peer_scheduler.py
           src/xmuse_core/chat/peer_service.py
           src/xmuse_core/chat/prompt_builder.py
+          tests/xmuse/test_groupchat_worklist.py
           tests/xmuse/test_groupchat_memory_sidecar.py
           tests/xmuse/test_groupchat_collaboration_runtime.py
           tests/xmuse/test_peer_chat_dashboard.py
@@ -223,6 +225,7 @@ jobs:
       - name: Peer chat runtime focused tests
         run: >-
           uv run pytest -q
+          tests/xmuse/test_groupchat_worklist.py
           tests/xmuse/test_groupchat_memory_sidecar.py
           tests/xmuse/test_peer_chat_scheduler.py
           tests/xmuse/test_peer_chat_service.py

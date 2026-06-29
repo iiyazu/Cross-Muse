@@ -13,7 +13,11 @@ from xmuse_core.chat.participant_store import ParticipantStore
 from xmuse_core.chat.store import ChatStore
 
 
-def _conversation_with_groupchat_roster(tmp_path):
+def _conversation_with_groupchat_roster(
+    tmp_path,
+    *,
+    root_content: str = "Please discuss the next A1 boundary.",
+):
     db = tmp_path / "chat.db"
     chat = ChatStore(db)
     conversation = chat.create_conversation("A1 kernel")
@@ -43,7 +47,7 @@ def _conversation_with_groupchat_roster(tmp_path):
         conversation_id=conversation.id,
         author="human",
         role="human",
-        content="Please discuss the next A1 boundary.",
+        content=root_content,
     )
     return db, chat, conversation, root, architect, review, critic
 
@@ -119,8 +123,387 @@ def test_groupchat_worklist_claims_links_and_completes_from_durable_writeback(tm
 
     assert completed.status == "completed"
     assert completed.completed_message_id == reply_id
-    assert store.get_chain(chain.chain_id).status == "completed"
-    assert store.get_chain(chain.chain_id).status_reason == "route_exhausted"
+    assert store.get_chain(chain.chain_id).status == "open"
+
+    routed = GroupchatWorklistScheduler(
+        db_path=db,
+        scheduler_id="groupchat-a1",
+    ).scan_routes_once(chain_id=chain.chain_id)
+
+    assert len(routed) == 1
+    assert routed[0].source_message_id == reply_id
+    assert routed[0].target_participant_id == _critic.participant_id
+    assert routed[0].route_kind == "mention"
+    assert routed[0].depth == 1
+    assert store.get_chain(chain.chain_id).last_scanned_message_id == reply_id
+
+
+def test_scan_routes_root_human_message_with_local_router_and_advances_cursor(
+    tmp_path,
+):
+    db, _chat, conversation, root, _architect, review, _critic = (
+        _conversation_with_groupchat_roster(
+            tmp_path,
+            root_content="Please review the A1 acceptance boundary.",
+        )
+    )
+    store = GroupchatWorklistStore(db)
+    chain = store.create_chain(conversation_id=conversation.id, root_message_id=root.id)
+
+    assert chain.last_scanned_message_id is None
+
+    routed = GroupchatWorklistScheduler(
+        db_path=db,
+        scheduler_id="groupchat-a1",
+    ).scan_routes_once(chain_id=chain.chain_id)
+
+    assert len(routed) == 1
+    assert routed[0].source_message_id == root.id
+    assert routed[0].target_participant_id == review.participant_id
+    assert routed[0].target_role == "review"
+    assert routed[0].route_kind == "router"
+    assert routed[0].status == "queued"
+    assert store.get_chain(chain.chain_id).last_scanned_message_id == root.id
+
+
+def test_scan_routes_human_mentions_strip_code_fences_and_cap_targets(tmp_path):
+    db, _chat, conversation, root, architect, review, critic = (
+        _conversation_with_groupchat_roster(
+            tmp_path,
+            root_content=(
+                "Ignore this example:\n"
+                "```\n"
+                "@architect not a real route\n"
+                "```\n"
+                "@critic @review @architect please discuss"
+            ),
+        )
+    )
+    store = GroupchatWorklistStore(db)
+    chain = store.create_chain(conversation_id=conversation.id, root_message_id=root.id)
+
+    routed = GroupchatWorklistScheduler(
+        db_path=db,
+        scheduler_id="groupchat-a1",
+    ).scan_routes_once(chain_id=chain.chain_id)
+    items = store.list_items(chain.chain_id)
+
+    queued_targets = [
+        item.target_participant_id for item in routed if item.status == "queued"
+    ]
+    assert queued_targets == [critic.participant_id, review.participant_id]
+    blocked = [
+        item
+        for item in items
+        if item.status == "blocked" and item.terminal_reason == "fanout_limit"
+    ]
+    assert len(blocked) == 1
+    assert blocked[0].target_participant_id == architect.participant_id
+    assert store.get_chain(chain.chain_id).status == "open"
+
+
+def test_scan_routes_ignores_active_participants_outside_fixed_a1_roster(tmp_path):
+    db, chat, conversation, root, _architect, _review, _critic = (
+        _conversation_with_groupchat_roster(
+            tmp_path,
+            root_content="@execute should not be a natural groupchat target.",
+        )
+    )
+    execute = ParticipantStore(db).add(
+        conversation_id=conversation.id,
+        role="execute",
+        display_name="Execute GOD",
+        cli_kind="codex",
+        model="gpt-5.5",
+    )
+    store = GroupchatWorklistStore(db)
+    chain = store.create_chain(conversation_id=conversation.id, root_message_id=root.id)
+    chat.add_message(
+        conversation_id=conversation.id,
+        author="human",
+        role="human",
+        content="@execute still should not route.",
+    )
+
+    first_scan = GroupchatWorklistScheduler(
+        db_path=db,
+        scheduler_id="groupchat-a1",
+    ).scan_routes_once(chain_id=chain.chain_id)
+    second_scan = GroupchatWorklistScheduler(
+        db_path=db,
+        scheduler_id="groupchat-a1",
+    ).scan_routes_once(chain_id=chain.chain_id)
+
+    assert first_scan == []
+    assert second_scan == []
+    assert all(
+        item.target_participant_id != execute.participant_id
+        for item in store.list_items(chain.chain_id)
+    )
+
+
+def test_scan_routes_ignores_inline_mentions_even_when_mentions_json_contains_target(
+    tmp_path,
+):
+    db, chat, conversation, root, _architect, review, _critic = (
+        _conversation_with_groupchat_roster(tmp_path)
+    )
+    store = GroupchatWorklistStore(db)
+    chain = store.create_chain(conversation_id=conversation.id, root_message_id=root.id)
+    first = store.enqueue_route(
+        chain_id=chain.chain_id,
+        source_message_id=root.id,
+        target_participant_id=_architect.participant_id,
+        route_kind="router",
+        depth=0,
+    )
+    scheduler = GroupchatWorklistScheduler(db_path=db, scheduler_id="groupchat-a1")
+    linked = scheduler.claim_and_link_one(chain_id=chain.chain_id)
+    assert linked is not None
+    inline_reply = chat.create_message_inbox_and_log(
+        conversation_id=conversation.id,
+        tool_name="chat_post_message",
+        caller_identity=_architect.participant_id,
+        client_request_id="inline-mentions-json",
+        author=_architect.participant_id,
+        role="assistant",
+        content="Please ask @review later, but this line is not a route.",
+        envelope_type="message",
+        envelope_json={
+            "writeback_path": "groupchat_worklist_test",
+            "reply_to_inbox_item_id": linked.inbox_item_id,
+        },
+        mentions=["@review"],
+        inbox_items=[],
+        reply_to_inbox_item_id=linked.inbox_item_id,
+        reply_owner_participant_id=_architect.participant_id,
+    )["message"]["id"]
+    store.complete_item(first.item_id, completed_message_id=inline_reply)
+
+    routed = scheduler.scan_routes_once(chain_id=chain.chain_id)
+
+    assert routed == []
+    assert all(
+        item.target_participant_id != review.participant_id
+        for item in store.list_items(chain.chain_id)
+    )
+
+
+def test_scan_routes_agent_mentions_only_first_target_and_records_fanout_limit(
+    tmp_path,
+):
+    db, chat, conversation, root, architect, review, critic = (
+        _conversation_with_groupchat_roster(tmp_path)
+    )
+    store = GroupchatWorklistStore(db)
+    chain = store.create_chain(conversation_id=conversation.id, root_message_id=root.id)
+    first = store.enqueue_route(
+        chain_id=chain.chain_id,
+        source_message_id=root.id,
+        target_participant_id=architect.participant_id,
+        route_kind="router",
+        depth=0,
+    )
+    linked = GroupchatWorklistScheduler(
+        db_path=db,
+        scheduler_id="groupchat-a1",
+    ).claim_and_link_one(chain_id=chain.chain_id)
+    assert linked is not None
+    reply_id = _writeback_reply(
+        chat,
+        conversation_id=conversation.id,
+        participant_id=architect.participant_id,
+        inbox_item_id=linked.inbox_item_id,
+        content="@critic @review please challenge the design.",
+    )
+    store.complete_item(first.item_id, completed_message_id=reply_id)
+
+    routed = GroupchatWorklistScheduler(
+        db_path=db,
+        scheduler_id="groupchat-a1",
+    ).scan_routes_once(chain_id=chain.chain_id)
+    items = store.list_items(chain.chain_id)
+
+    queued = [item for item in routed if item.status == "queued"]
+    assert [item.target_participant_id for item in queued] == [critic.participant_id]
+    assert queued[0].depth == 1
+    blocked = [
+        item
+        for item in items
+        if item.status == "blocked" and item.terminal_reason == "fanout_limit"
+    ]
+    assert len(blocked) == 1
+    assert blocked[0].target_participant_id == review.participant_id
+    assert store.get_chain(chain.chain_id).status == "open"
+
+
+def test_scan_routes_does_not_complete_chain_when_later_messages_remain(tmp_path):
+    db, chat, conversation, root, architect, review, _critic = (
+        _conversation_with_groupchat_roster(tmp_path)
+    )
+    store = GroupchatWorklistStore(db)
+    chain = store.create_chain(conversation_id=conversation.id, root_message_id=root.id)
+    first = store.enqueue_route(
+        chain_id=chain.chain_id,
+        source_message_id=root.id,
+        target_participant_id=architect.participant_id,
+        route_kind="router",
+        depth=0,
+    )
+    scheduler = GroupchatWorklistScheduler(db_path=db, scheduler_id="groupchat-a1")
+    linked = scheduler.claim_and_link_one(chain_id=chain.chain_id)
+    assert linked is not None
+    no_route_reply = _writeback_reply(
+        chat,
+        conversation_id=conversation.id,
+        participant_id=architect.participant_id,
+        inbox_item_id=linked.inbox_item_id,
+        content="I have no next handoff yet.",
+    )
+    store.complete_item(first.item_id, completed_message_id=no_route_reply)
+    later_human = chat.add_message(
+        conversation_id=conversation.id,
+        author="human",
+        role="human",
+        content="Please review the later boundary.",
+    )
+
+    first_scan = scheduler.scan_routes_once(chain_id=chain.chain_id)
+
+    assert first_scan == []
+    assert store.get_chain(chain.chain_id).status == "open"
+    assert store.get_chain(chain.chain_id).last_scanned_message_id == no_route_reply
+
+    second_scan = scheduler.scan_routes_once(chain_id=chain.chain_id)
+
+    assert len(second_scan) == 1
+    assert second_scan[0].source_message_id == later_human.id
+    assert second_scan[0].target_participant_id == review.participant_id
+
+
+def test_enqueue_route_does_not_jump_scan_cursor_past_unscanned_messages(tmp_path):
+    db, chat, conversation, root, architect, review, _critic = (
+        _conversation_with_groupchat_roster(
+            tmp_path,
+            root_content="@execute no natural route from the root.",
+        )
+    )
+    store = GroupchatWorklistStore(db)
+    chain = store.create_chain(conversation_id=conversation.id, root_message_id=root.id)
+    middle = chat.add_message(
+        conversation_id=conversation.id,
+        author="human",
+        role="human",
+        content="Please review the middle message.",
+    )
+    later = chat.add_message(
+        conversation_id=conversation.id,
+        author="human",
+        role="human",
+        content="Please route this later message manually.",
+    )
+    scheduler = GroupchatWorklistScheduler(db_path=db, scheduler_id="groupchat-a1")
+
+    assert scheduler.scan_routes_once(chain_id=chain.chain_id) == []
+    assert store.get_chain(chain.chain_id).last_scanned_message_id == root.id
+
+    store.enqueue_route(
+        chain_id=chain.chain_id,
+        source_message_id=later.id,
+        target_participant_id=architect.participant_id,
+        route_kind="router",
+        depth=0,
+    )
+
+    routed = scheduler.scan_routes_once(chain_id=chain.chain_id)
+
+    assert len(routed) == 1
+    assert routed[0].source_message_id == middle.id
+    assert routed[0].target_participant_id == review.participant_id
+
+
+def test_scan_routes_blocks_fourth_pingpong_pair_as_durable_policy_state(
+    tmp_path,
+):
+    db, chat, conversation, root, architect, _review, critic = (
+        _conversation_with_groupchat_roster(tmp_path)
+    )
+    store = GroupchatWorklistStore(db)
+    chain = store.create_chain(
+        conversation_id=conversation.id,
+        root_message_id=root.id,
+        max_depth=10,
+        pingpong_block_after=4,
+    )
+    scheduler = GroupchatWorklistScheduler(db_path=db, scheduler_id="groupchat-a1")
+    first = store.enqueue_route(
+        chain_id=chain.chain_id,
+        source_message_id=root.id,
+        target_participant_id=architect.participant_id,
+        route_kind="router",
+        depth=0,
+    )
+
+    first_linked = scheduler.claim_and_link_one(chain_id=chain.chain_id)
+    assert first_linked is not None
+    architect_reply_1 = _writeback_reply(
+        chat,
+        conversation_id=conversation.id,
+        participant_id=architect.participant_id,
+        inbox_item_id=first_linked.inbox_item_id,
+        content="@critic challenge this.",
+        client_request_id="structured-writeback-architect-1",
+    )
+    store.complete_item(first.item_id, completed_message_id=architect_reply_1)
+    critic_item_1 = scheduler.scan_routes_once(chain_id=chain.chain_id)[0]
+
+    critic_linked_1 = scheduler.claim_and_link_one(chain_id=chain.chain_id)
+    assert critic_linked_1 is not None
+    critic_reply_1 = _writeback_reply(
+        chat,
+        conversation_id=conversation.id,
+        participant_id=critic.participant_id,
+        inbox_item_id=critic_linked_1.inbox_item_id,
+        content="@architect answer the challenge.",
+        client_request_id="structured-writeback-critic-1",
+    )
+    store.complete_item(critic_item_1.item_id, completed_message_id=critic_reply_1)
+    architect_item_2 = scheduler.scan_routes_once(chain_id=chain.chain_id)[0]
+
+    architect_linked_2 = scheduler.claim_and_link_one(chain_id=chain.chain_id)
+    assert architect_linked_2 is not None
+    architect_reply_2 = _writeback_reply(
+        chat,
+        conversation_id=conversation.id,
+        participant_id=architect.participant_id,
+        inbox_item_id=architect_linked_2.inbox_item_id,
+        content="@critic one more challenge.",
+        client_request_id="structured-writeback-architect-2",
+    )
+    store.complete_item(architect_item_2.item_id, completed_message_id=architect_reply_2)
+    critic_item_2 = scheduler.scan_routes_once(chain_id=chain.chain_id)[0]
+
+    critic_linked_2 = scheduler.claim_and_link_one(chain_id=chain.chain_id)
+    assert critic_linked_2 is not None
+    critic_reply_2 = _writeback_reply(
+        chat,
+        conversation_id=conversation.id,
+        participant_id=critic.participant_id,
+        inbox_item_id=critic_linked_2.inbox_item_id,
+        content="@architect this would be the fourth pair handoff.",
+        client_request_id="structured-writeback-critic-2",
+    )
+    store.complete_item(critic_item_2.item_id, completed_message_id=critic_reply_2)
+
+    blocked = scheduler.scan_routes_once(chain_id=chain.chain_id)
+
+    assert len(blocked) == 1
+    assert blocked[0].status == "blocked"
+    assert blocked[0].terminal_reason == "pingpong_blocked"
+    assert blocked[0].target_participant_id == architect.participant_id
+    assert store.claim_next(owner="groupchat-a1", chain_id=chain.chain_id) is None
+    assert store.get_chain(chain.chain_id).status == "blocked"
+    assert store.get_chain(chain.chain_id).status_reason == "pingpong_blocked"
 
 
 def test_groupchat_worklist_schema_records_migration_marker(tmp_path):
