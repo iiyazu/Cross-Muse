@@ -4,7 +4,7 @@ import json
 import re
 import sqlite3
 import uuid
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -41,6 +41,17 @@ class _RouteTarget:
     role: str
     route_kind: RouteKind
     terminal_reason: str | None = None
+
+
+@dataclass(frozen=True)
+class GroupchatWorklistTickOutcome:
+    scanned: int = 0
+    claimed_item_id: str | None = None
+    linked_inbox_item_id: str | None = None
+    completed_message_id: str | None = None
+    followup_scanned: int = 0
+    failed_item_id: str | None = None
+    failure_reason: str | None = None
 
 
 class GroupchatWorklistStore:
@@ -419,13 +430,18 @@ class GroupchatWorklistStore:
             try:
                 item = self._item_row(conn, item_id)
                 message = conn.execute(
-                    "select conversation_id from messages where id = ?",
+                    "select conversation_id, author, role from messages where id = ?",
                     (completed_message_id,),
                 ).fetchone()
                 if message is None:
                     raise ValueError("completed_message_missing")
                 if message["conversation_id"] != item["conversation_id"]:
                     raise ValueError("completed_message_conversation_mismatch")
+                if (
+                    message["author"] != item["target_participant_id"]
+                    or message["role"] != "assistant"
+                ):
+                    raise ValueError("structured_writeback_missing")
                 if item["inbox_item_id"] is None:
                     raise ValueError("worklist_item_missing_inbox_link")
                 inbox = conn.execute(
@@ -1276,7 +1292,10 @@ class GroupchatWorklistScheduler:
         db_path: Path,
         scheduler_id: str,
     ) -> None:
+        from xmuse_core.chat.inbox_store import ChatInboxStore
+
         self._store = GroupchatWorklistStore(db_path)
+        self._inbox = ChatInboxStore(db_path)
         self._scheduler_id = scheduler_id
 
     def claim_and_link_one(
@@ -1293,6 +1312,78 @@ class GroupchatWorklistScheduler:
 
     def scan_routes_once(self, *, chain_id: str) -> list[GroupchatWorklistItem]:
         return self._store.scan_routes_once(chain_id=chain_id)
+
+    def tick_once(
+        self,
+        *,
+        chain_id: str,
+        deliver: Callable[[GroupchatWorklistItem], object],
+    ) -> GroupchatWorklistTickOutcome:
+        scanned = self.scan_routes_once(chain_id=chain_id)
+        claimed = self.claim_and_link_one(chain_id=chain_id)
+        if claimed is None:
+            return GroupchatWorklistTickOutcome(scanned=len(scanned))
+        if claimed.inbox_item_id is None:
+            failed = self._store.fail_item(
+                claimed.item_id,
+                reason="inbox_delivery_failed",
+            )
+            return GroupchatWorklistTickOutcome(
+                scanned=len(scanned),
+                claimed_item_id=claimed.item_id,
+                failed_item_id=failed.item_id,
+                failure_reason="inbox_delivery_failed",
+            )
+
+        try:
+            deliver(claimed)
+        except Exception:
+            failed = self._store.fail_item(
+                claimed.item_id,
+                reason="provider_delivery_failed",
+            )
+            return GroupchatWorklistTickOutcome(
+                scanned=len(scanned),
+                claimed_item_id=claimed.item_id,
+                linked_inbox_item_id=claimed.inbox_item_id,
+                failed_item_id=failed.item_id,
+                failure_reason="provider_delivery_failed",
+            )
+
+        inbox_item = self._inbox.get(claimed.inbox_item_id)
+        if inbox_item.status != "read" or inbox_item.responded_message_id is None:
+            failed = self.fail_missing_callback(claimed.item_id)
+            return GroupchatWorklistTickOutcome(
+                scanned=len(scanned),
+                claimed_item_id=claimed.item_id,
+                linked_inbox_item_id=claimed.inbox_item_id,
+                failed_item_id=failed.item_id,
+                failure_reason="callback_missing",
+            )
+
+        try:
+            completed = self.complete_from_writeback(
+                claimed.item_id,
+                completed_message_id=inbox_item.responded_message_id,
+            )
+        except ValueError:
+            failed = self.fail_missing_callback(claimed.item_id)
+            return GroupchatWorklistTickOutcome(
+                scanned=len(scanned),
+                claimed_item_id=claimed.item_id,
+                linked_inbox_item_id=claimed.inbox_item_id,
+                failed_item_id=failed.item_id,
+                failure_reason="callback_missing",
+            )
+
+        followup = self.scan_routes_once(chain_id=chain_id)
+        return GroupchatWorklistTickOutcome(
+            scanned=len(scanned),
+            claimed_item_id=completed.item_id,
+            linked_inbox_item_id=completed.inbox_item_id,
+            completed_message_id=completed.completed_message_id,
+            followup_scanned=len(followup),
+        )
 
     def complete_from_writeback(
         self,

@@ -166,6 +166,114 @@ def test_scan_routes_root_human_message_with_local_router_and_advances_cursor(
     assert store.get_chain(chain.chain_id).last_scanned_message_id == root.id
 
 
+def test_groupchat_tick_runs_scan_delivery_completion_and_followup_scan(tmp_path):
+    db, chat, conversation, root, _architect, _review, critic = (
+        _conversation_with_groupchat_roster(
+            tmp_path,
+            root_content="Please design the next A1 boundary.",
+        )
+    )
+    store = GroupchatWorklistStore(db)
+    chain = store.create_chain(conversation_id=conversation.id, root_message_id=root.id)
+    delivered = []
+
+    def durable_writeback(item):
+        delivered.append(item)
+        assert item.inbox_item_id is not None
+        return _writeback_reply(
+            chat,
+            conversation_id=conversation.id,
+            participant_id=item.target_participant_id,
+            inbox_item_id=item.inbox_item_id,
+            content="@critic Please challenge this A1 tick boundary.",
+        )
+
+    outcome = GroupchatWorklistScheduler(
+        db_path=db,
+        scheduler_id="groupchat-a1",
+    ).tick_once(chain_id=chain.chain_id, deliver=durable_writeback)
+
+    assert outcome.scanned == 1
+    assert outcome.claimed_item_id == delivered[0].item_id
+    assert outcome.completed_message_id is not None
+    assert outcome.followup_scanned == 1
+    completed = store.get_item(outcome.claimed_item_id)
+    assert completed.status == "completed"
+    assert completed.completed_message_id == outcome.completed_message_id
+    items = store.list_items(chain.chain_id)
+    followups = [
+        item
+        for item in items
+        if item.source_message_id == outcome.completed_message_id
+        and item.target_participant_id == critic.participant_id
+    ]
+    assert len(followups) == 1
+    assert followups[0].status == "queued"
+    assert followups[0].depth == 1
+
+
+def test_groupchat_tick_requires_structured_inbox_writeback_to_complete(tmp_path):
+    db, _chat, conversation, root, _architect, _review, _critic = (
+        _conversation_with_groupchat_roster(
+            tmp_path,
+            root_content="Please design the next A1 boundary.",
+        )
+    )
+    store = GroupchatWorklistStore(db)
+    chain = store.create_chain(conversation_id=conversation.id, root_message_id=root.id)
+
+    outcome = GroupchatWorklistScheduler(
+        db_path=db,
+        scheduler_id="groupchat-a1",
+    ).tick_once(
+        chain_id=chain.chain_id,
+        deliver=lambda _item: "provider_stdout_only",
+    )
+
+    assert outcome.failed_item_id is not None
+    assert outcome.failure_reason == "callback_missing"
+    failed = store.get_item(outcome.failed_item_id)
+    assert failed.status == "failed"
+    assert failed.terminal_reason == "callback_missing"
+    assert store.get_chain(chain.chain_id).status == "failed"
+    assert store.get_chain(chain.chain_id).status_reason == "callback_missing"
+
+
+def test_groupchat_tick_rejects_inbox_read_with_unowned_response_message(tmp_path):
+    db, chat, conversation, root, _architect, _review, _critic = (
+        _conversation_with_groupchat_roster(
+            tmp_path,
+            root_content="Please design the next A1 boundary.",
+        )
+    )
+    store = GroupchatWorklistStore(db)
+    chain = store.create_chain(conversation_id=conversation.id, root_message_id=root.id)
+
+    def forged_read(item):
+        assert item.inbox_item_id is not None
+        unrelated = chat.add_message(
+            conversation_id=conversation.id,
+            author="human",
+            role="human",
+            content="This is not a participant writeback.",
+        )
+        ChatInboxStore(db).mark_read(
+            item.inbox_item_id,
+            responded_message_id=unrelated.id,
+        )
+
+    outcome = GroupchatWorklistScheduler(
+        db_path=db,
+        scheduler_id="groupchat-a1",
+    ).tick_once(chain_id=chain.chain_id, deliver=forged_read)
+
+    assert outcome.failed_item_id is not None
+    assert outcome.failure_reason == "callback_missing"
+    failed = store.get_item(outcome.failed_item_id)
+    assert failed.status == "failed"
+    assert failed.terminal_reason == "callback_missing"
+
+
 def test_scan_routes_human_mentions_strip_code_fences_and_cap_targets(tmp_path):
     db, _chat, conversation, root, architect, review, critic = (
         _conversation_with_groupchat_roster(
