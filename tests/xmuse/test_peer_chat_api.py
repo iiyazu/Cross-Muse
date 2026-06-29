@@ -5,9 +5,15 @@ from fastapi.testclient import TestClient
 
 from xmuse.chat_api import create_app
 from xmuse_core.agents.god_session_registry import GodSessionRegistry
+from xmuse_core.chat.groupchat_worklist import GroupchatWorklistStore
 from xmuse_core.chat.inbox_store import ChatInboxStore
+from xmuse_core.chat.participant_store import ParticipantStore
 from xmuse_core.chat.peer_service import PeerChatService
+from xmuse_core.chat.store import ChatStore
 from xmuse_core.chat.stream_store import PeerTurnLatencyTraceStore
+from xmuse_core.providers.adapters.base import ProviderInvocationResult
+from xmuse_core.providers.goal_contract import WorkerResultStatus
+from xmuse_core.providers.models import ProviderId, ProviderProfileId
 
 
 def _assert_participant_sessions(
@@ -278,10 +284,9 @@ def test_rest_message_all_broadcasts_to_active_peers(tmp_path):
     assert {item["payload"]["route_kind"] for item in payload["inbox_items"]} == {"mention"}
     assert {item["payload"]["route_depth"] for item in payload["inbox_items"]} == {1}
     assert len({item["payload"]["route_key"] for item in payload["inbox_items"]}) == 3
-    assert {
-        tuple(item["payload"]["source_refs"])
-        for item in payload["inbox_items"]
-    } == {("human_request:post_human_message:rest-all-broadcast",)}
+    assert {tuple(item["payload"]["source_refs"]) for item in payload["inbox_items"]} == {
+        ("human_request:post_human_message:rest-all-broadcast",)
+    }
 
 
 def test_thread_message_endpoint_uses_peer_service(tmp_path):
@@ -295,6 +300,118 @@ def test_thread_message_endpoint_uses_peer_service(tmp_path):
 
     assert response.status_code == 201
     assert response.json()["message"]["mentions"] == ["@review"]
+
+
+def test_groupchat_root_run_endpoint_executes_a1_worklist_chain(tmp_path):
+    db = tmp_path / "chat.db"
+    chat = ChatStore(db)
+    conversation = chat.create_conversation("A1 API root run")
+    participants = ParticipantStore(db)
+    architect = participants.add(
+        conversation_id=conversation.id,
+        role="architect",
+        display_name="Remote A2A Architect GOD",
+        cli_kind="a2a",
+        model="a2a-remote",
+    )
+    participants.add(
+        conversation_id=conversation.id,
+        role="review",
+        display_name="Remote A2A Review GOD",
+        cli_kind="a2a",
+        model="a2a-remote",
+    )
+    critic = participants.add(
+        conversation_id=conversation.id,
+        role="critic",
+        display_name="Remote A2A Critic GOD",
+        cli_kind="a2a",
+        model="a2a-remote",
+    )
+    root = chat.add_message(
+        conversation_id=conversation.id,
+        author="human",
+        role="human",
+        content="Please design the next A1 API root-run boundary.",
+    )
+
+    class A2AProviderService:
+        def __init__(self) -> None:
+            self.invocations: list[object] = []
+
+        def invoke_provider_adapter(self, invocation):
+            self.invocations.append(invocation)
+            content = (
+                "@critic Please challenge this API root-run boundary."
+                if len(self.invocations) == 1
+                else "No further route; API root-run boundary is exhausted."
+            )
+            return ProviderInvocationResult(
+                request_id=invocation.request_id,
+                provider_id=ProviderId.A2A,
+                profile_id=ProviderProfileId.REMOTE,
+                status=WorkerResultStatus.COMPLETED,
+                evidence_refs=[f"a2a_task:{invocation.request_id}"],
+                diagnostic_payload={
+                    "a2a_task_id": invocation.request_id,
+                    "a2a_context_id": invocation.request_id,
+                    "a2a_state": "TASK_STATE_COMPLETED",
+                    "a2a_disposition": "completed",
+                    "a2a_terminal": True,
+                    "a2a_content": content,
+                    "a2a_artifacts": [],
+                    "a2a_history": [],
+                    "a2a_metadata": {},
+                    "a2a_source_refs": [f"a2a_task:{invocation.request_id}"],
+                    "a2a_sdk_task": {
+                        "id": invocation.request_id,
+                        "status": {"state": "TASK_STATE_COMPLETED"},
+                    },
+                    "a2a_jsonrpc_id": invocation.request_id,
+                },
+            )
+
+    provider_service = A2AProviderService()
+    client = TestClient(
+        create_app(
+            tmp_path,
+            groupchat_provider_service=provider_service,
+            groupchat_response_wait_s=0.1,
+        )
+    )
+
+    response = client.post(
+        f"/api/chat/conversations/{conversation.id}/groupchat/root-runs",
+        json={"root_message_id": root.id, "max_ticks": 4},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["authority"] == "chat.db/groupchat_chains/groupchat_worklist"
+    assert payload["created_chain"] is True
+    assert payload["run"]["ticks"] == 2
+    assert payload["run"]["stop_reason"] == "chain_completed"
+    assert payload["chain"]["conversation_id"] == conversation.id
+    assert payload["chain"]["root_message_id"] == root.id
+    assert payload["chain"]["status"] == "completed"
+    assert len(provider_service.invocations) == 2
+
+    completed = [item for item in payload["worklist_items"] if item["status"] == "completed"]
+    assert {item["target_participant_id"] for item in completed} == {
+        architect.participant_id,
+        critic.participant_id,
+    }
+    assert all(item["completed_message_id"] for item in completed)
+    assert {invocation.request_id for invocation in provider_service.invocations} == {
+        item["inbox_item_id"] for item in completed
+    }
+    assert all(
+        invocation.runtime_context["authority"] == "chat.db/inbox"
+        and invocation.runtime_context["a2a_is_authority"] is False
+        for invocation in provider_service.invocations
+    )
+    stored_chain = GroupchatWorklistStore(db).get_chain(payload["chain_id"])
+    assert stored_chain.status == "completed"
 
 
 def test_rest_message_preserves_unknown_at_text_as_plain_message(tmp_path):
@@ -402,10 +519,13 @@ def test_god_post_message_mentions_are_display_only_without_followup_inbox(
 
     assert result["message"]["mentions"] == ["@execute"]
     assert result["inbox_items"] == []
-    assert ChatInboxStore(tmp_path / "chat.db").list_for_participant(
-        conversation_id=conv_id,
-        participant_id=participants["execute"]["participant_id"],
-    ) == []
+    assert (
+        ChatInboxStore(tmp_path / "chat.db").list_for_participant(
+            conversation_id=conv_id,
+            participant_id=participants["execute"]["participant_id"],
+        )
+        == []
+    )
 
 
 def test_god_mention_explicitly_routes_to_target_peer_inbox(tmp_path) -> None:
