@@ -1194,10 +1194,10 @@ def _success_checks(snapshot: dict[str, Any]) -> dict[str, bool]:
             "expected_gate_failed": lane.get("status") == "gate_failed"
             and lane.get("gate_passed") is False
             and lane.get("failure_reason") == "gate_failed",
-            "execution_peer_handoff_not_degraded": lane.get("peer_delivery_mode")
-            == "configured_peer"
-            and lane.get("peer_result_status") not in {"delivery_failed", "degraded"}
-            and lane.get("peer_degraded_reason") is None,
+            "execution_peer_handoff_not_degraded": _execution_handoff_not_degraded(
+                lane,
+                expected_status=expected_status,
+            ),
             "no_review_or_final_action_for_expected_gate_failure": review_task is None
             and review_verdict is None
             and final_action_hold is None,
@@ -1205,10 +1205,10 @@ def _success_checks(snapshot: dict[str, Any]) -> dict[str, bool]:
     return common_checks | {
         "lane_awaiting_final_action": lane.get("status") == "awaiting_final_action",
         "gate_passed": lane.get("gate_passed") is True,
-        "execution_peer_handoff_not_degraded": lane.get("peer_delivery_mode")
-        == "configured_peer"
-        and lane.get("peer_result_status") not in {"delivery_failed", "degraded"}
-        and lane.get("peer_degraded_reason") is None,
+        "execution_peer_handoff_not_degraded": _execution_handoff_not_degraded(
+            lane,
+            expected_status=expected_status,
+        ),
         "isolated_note_matches": isinstance(artifact, dict)
         and artifact.get("matches_expected") is True,
         "selected_review_peer_recorded": isinstance(selected_review_provider, str)
@@ -1235,6 +1235,29 @@ def _success_checks(snapshot: dict[str, Any]) -> dict[str, bool]:
         "final_action_hold_pending": isinstance(final_action_hold, dict)
         and final_action_hold.get("status") == "pending",
     }
+
+
+def _execution_handoff_not_degraded(
+    lane: dict[str, Any],
+    *,
+    expected_status: str,
+) -> bool:
+    if lane.get("peer_delivery_mode") == "configured_peer":
+        return (
+            lane.get("peer_result_status") not in {"delivery_failed", "degraded"}
+            and lane.get("peer_degraded_reason") is None
+        )
+    if expected_status != "gate_failed":
+        return False
+    return (
+        lane.get("worker_kind") == "temporary_child_worker"
+        and isinstance(lane.get("worker_worktree"), str)
+        and bool(str(lane.get("worker_worktree")).strip())
+        and lane.get("persistent_execute_degraded") is not True
+        and lane.get("provider_session_binding_degraded") is not True
+        and lane.get("execute_peer_degraded_reason") is None
+        and lane.get("persistent_execute_degraded_reason") is None
+    )
 
 
 def _multi_success_checks(snapshot: dict[str, Any]) -> dict[str, bool]:
