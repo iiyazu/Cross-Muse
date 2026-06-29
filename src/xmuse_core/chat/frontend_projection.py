@@ -74,6 +74,13 @@ def build_peer_chat_ux_projection(
         review_state=review_state,
         final_action_state=final_action_state,
     )
+    worklist = _worklist_items(
+        conversation_id=conversation_id,
+        inbox_items=inbox_items,
+        dispatch_entries=dispatch_entries,
+        blockers=blockers,
+        final_action_holds=final_action_holds["items"],
+    )
 
     return {
         "schema_version": "peer_chat_ux_projection/v1",
@@ -92,13 +99,7 @@ def build_peer_chat_ux_projection(
             inbox_items=inbox_items,
             sessions=sessions,
         ),
-        "worklist": _worklist_items(
-            conversation_id=conversation_id,
-            inbox_items=inbox_items,
-            dispatch_entries=dispatch_entries,
-            blockers=blockers,
-            final_action_holds=final_action_holds["items"],
-        ),
+        "worklist": worklist,
         "artifacts": {
             "total": len(proposals),
             "items": [
@@ -143,6 +144,12 @@ def build_peer_chat_ux_projection(
         "final_action_holds": final_action_holds,
         "final_action_state": final_action_state,
         "evidence_summary": evidence_summary,
+        "operator_closure": _operator_closure(
+            evidence_summary=evidence_summary,
+            final_action_state=final_action_state,
+            supporting_context=supporting_context,
+            worklist=worklist,
+        ),
     }
 
 
@@ -1045,6 +1052,58 @@ def _dict_items(value: Any) -> list[dict[str, Any]]:
     if not isinstance(value, list):
         return []
     return [item for item in value if isinstance(item, dict)]
+
+
+def _operator_closure(
+    *,
+    evidence_summary: dict[str, Any],
+    final_action_state: dict[str, Any],
+    supporting_context: dict[str, Any],
+    worklist: list[dict[str, Any]],
+) -> dict[str, Any]:
+    active_blocker = _dict_value(evidence_summary.get("active_blocker")) or None
+    actionable = [
+        item
+        for item in worklist
+        if _projection_text(item.get("next_action")) not in {None, "", "none"}
+    ]
+    status = _projection_text(evidence_summary.get("status")) or "unknown"
+    if active_blocker is not None:
+        next_action = "inspect_active_blocker"
+    elif actionable:
+        next_action = "act_on_worklist"
+    elif status == "complete":
+        next_action = "observe_complete"
+    else:
+        next_action = "continue_chain"
+    memoryos = _dict_value(supporting_context.get("memoryos_sidecar"))
+    return {
+        "schema_version": "operator_closure/v1",
+        "projection_only": True,
+        "status": status,
+        "next_action": next_action,
+        "active_blocker": active_blocker,
+        "proof_counts": _dict_value(evidence_summary.get("counts")),
+        "worklist_next_actions": _worklist_next_action_counts(worklist),
+        "final_action_status_summary": _dict_value(
+            final_action_state.get("status_summary")
+        ),
+        "sidecar_status_summary": _dict_value(memoryos.get("status_summary")),
+        "authority_boundary": {
+            "producer": "frontend.peer_chat_ux_projection",
+            "consumer": "operator",
+            "condition": "read_only_operator_closure_projection",
+            "proof_boundary": "operator_closure_not_truth_producer",
+        },
+    }
+
+
+def _worklist_next_action_counts(worklist: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for item in worklist:
+        action = _projection_text(item.get("next_action")) or "unknown"
+        counts[action] = counts.get(action, 0) + 1
+    return counts
 
 
 def _dict_value(value: Any) -> dict[str, Any]:

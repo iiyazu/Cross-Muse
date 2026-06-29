@@ -1179,7 +1179,8 @@ def test_dashboard_peer_chat_ux_projection_includes_operator_evidence_summary(
     )
 
     assert response.status_code == 200
-    summary = response.json()["evidence_summary"]
+    payload = response.json()
+    summary = payload["evidence_summary"]
     assert summary["schema_version"] == "natural_groupchat_evidence_summary/v1"
     assert summary["projection_only"] is True
     assert summary["conversation_id"] == conv.id
@@ -1329,6 +1330,23 @@ def test_dashboard_peer_chat_ux_projection_includes_operator_evidence_summary(
             "proof_boundary": "acceptance_spine_authority_not_github_or_merge_truth",
         },
     ]
+    assert payload["operator_closure"] == {
+        "schema_version": "operator_closure/v1",
+        "projection_only": True,
+        "status": "complete",
+        "next_action": "observe_complete",
+        "active_blocker": None,
+        "proof_counts": summary["counts"],
+        "worklist_next_actions": {"none": 1},
+        "final_action_status_summary": {"approved": 1},
+        "sidecar_status_summary": {"degraded": 1},
+        "authority_boundary": {
+            "producer": "frontend.peer_chat_ux_projection",
+            "consumer": "operator",
+            "condition": "read_only_operator_closure_projection",
+            "proof_boundary": "operator_closure_not_truth_producer",
+        },
+    }
 
 
 def test_dashboard_peer_chat_ux_projection_evidence_summary_keeps_multilane_refs(
