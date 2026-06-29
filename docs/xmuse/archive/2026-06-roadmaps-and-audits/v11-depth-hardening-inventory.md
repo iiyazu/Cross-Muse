@@ -14,7 +14,7 @@ All commands were run from `/home/iiyatu/projects/python/xmuse`:
 ```bash
 # Read context docs
 cd /home/iiyatu/projects/python/xmuse && for doc in \
-  docs/xmuse/path-a-foundation-first-roadmap.md \
+  docs/xmuse/archive/2026-06-roadmaps-and-audits/path-a-foundation-first-roadmap.md \
   docs/xmuse/quality-gates-and-provider-matrix.md \
   docs/xmuse/production-operations.md \
   docs/xmuse/config-matrix.md \

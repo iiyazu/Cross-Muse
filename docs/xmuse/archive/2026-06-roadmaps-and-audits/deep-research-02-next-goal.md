@@ -11,8 +11,8 @@ The previous roadmap closed the first contract and hardening pass. This goal tur
 ## Authoritative Inputs
 
 - Research report: `C:\tmp\deep-research-report_02.md`
-- Existing roadmap: `docs/xmuse/deep-research-conversion-roadmap.md`
-- Existing task list: `docs/xmuse/deep-research-execution-tasks.md`
+- Existing roadmap: `docs/xmuse/archive/2026-06-roadmaps-and-audits/deep-research-conversion-roadmap.md`
+- Existing task list: `docs/xmuse/archive/2026-06-roadmaps-and-audits/deep-research-execution-tasks.md`
 - Current repo: `/home/iiyatu/projects/python/xmuse`
 - GitHub repo: `https://github.com/iiyazu/Cross-Muse`
 - Current closed baseline: issues `#1-#12`, latest pushed `main`

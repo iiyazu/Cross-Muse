@@ -264,7 +264,7 @@ No centralized function for `chat.db` path — each entry point independently do
 | **LOW** | `tests/fixtures/xmuse/contracts/artifacts/*.json` (2 files) | Worktree path strings containing "memoryOS" — fixture data, not dependency |
 | **INFO** | `docs/xmuse/archive/plans/*.md` (3 files) | Historical artifacts with old memoryOS paths — properly archived |
 | **INFO** | `docs/xmuse/memoryos-file-separation.md` | Dedicated separation document — by design |
-| **INFO** | `docs/xmuse/v6-legacy-coupling-inventory.md` | Legacy coupling inventory — by design |
+| **INFO** | `docs/xmuse/archive/2026-06-roadmaps-and-audits/v6-legacy-coupling-inventory.md` | Legacy coupling inventory — by design |
 | **INFO** | `walkthrough-maintenance-notes.md` | 13 memoryOS refs — architecturally correct (describes external memory layer) |
 
 ### 5.2 Files With NO MemoryOS References (Clean)

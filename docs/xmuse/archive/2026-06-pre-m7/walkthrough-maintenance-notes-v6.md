@@ -244,7 +244,7 @@
 
 ### 当前收敛状态
 
-- 已审计全部 10 个 legacy memoryOS 接缝，产出 `docs/xmuse/v6-legacy-coupling-inventory.md`。
+- 已审计全部 10 个 legacy memoryOS 接缝，产出 `docs/xmuse/archive/2026-06-roadmaps-and-audits/v6-legacy-coupling-inventory.md`。
 - 明确分类: 3 个 sidecar-reusable, 2 个需扩展, 5 个 legacy lane-memory coupling。
 - 未新增任何 runtime coupling；未改任何 `.py` 文件。
 - inventory 确认 `memory_update_events.py` 的 event→lesson 模式是 V6 replay packet builder 的天然起点。
@@ -522,7 +522,7 @@
 
 ### 当前收敛状态
 
-- `docs/xmuse/v6-session-vs-shared-memory-boundary.md` 已产出，基于 Tasks 1-5 的证据。
+- `docs/xmuse/archive/2026-06-roadmaps-and-audits/v6-session-vs-shared-memory-boundary.md` 已产出，基于 Tasks 1-5 的证据。
 - 四类场景有明确结论:
   - GOD session continuity → provider session binding
   - 群聊 shared memory → memoryOS sidecar (P1)

@@ -2,7 +2,7 @@
 
 Date: 2026-06-04
 
-Scope: Path A Phase 3 (Quality Gates) from `docs/xmuse/path-a-foundation-first-roadmap.md`.
+Scope: Path A Phase 3 (Quality Gates) from `docs/xmuse/archive/2026-06-roadmaps-and-audits/path-a-foundation-first-roadmap.md`.
 This audit identifies the smallest useful default CI gate set for the independent xmuse project. It does not implement CI workflow.
 
 ---
