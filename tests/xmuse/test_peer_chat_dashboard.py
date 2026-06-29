@@ -1511,6 +1511,166 @@ def test_dashboard_peer_chat_ux_projection_evidence_summary_keeps_multilane_refs
             assert refs["spine_ref"] in item["source_refs"]
 
 
+def test_dashboard_peer_chat_ux_projection_evidence_summary_uses_lane_projection_fallback(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "chat.db"
+    chat = ChatStore(db)
+    conv = chat.create_conversation("Lane-derived evidence summary")
+    intake = chat.add_message(conv.id, "Human", "human", "@architect run lane-derived")
+    AcceptanceSpineStore(db).create_for_intake(
+        conversation_id=conv.id,
+        intake_message_id=intake.id,
+    )
+    proposal = chat.create_proposal(
+        conversation_id=conv.id,
+        author="Architect GOD",
+        proposal_type="lane_graph",
+        content=json.dumps({"summary": "Lane-derived", "lanes": [{"feature_id": "lane-only"}]}),
+        references=[intake.id],
+    )
+    resolution = chat.approve_proposal(
+        proposal_id=proposal.id,
+        approved_by=["human"],
+        approval_mode="human",
+        goal_summary="Run lane-derived summary",
+    )
+    dispatch = ChatDispatchQueueStore(db).enqueue_agent_auto_dispatch(
+        conversation_id=conv.id,
+        proposal_id=proposal.id,
+        resolution_id=resolution.id,
+        collaboration_run_id="collab-lane-only",
+        artifact_ref="artifact:lane-only",
+        gate_refs=["review_trigger_verdict:lane-only"],
+    )
+    assert ChatDispatchQueueStore(db).claim_next_auto_dispatch(
+        conversation_id=conv.id,
+        claimed_by="bridge-test",
+    )
+    ChatDispatchQueueStore(db).mark_dispatched(
+        dispatch.entry_id,
+        provider_run_ref="peer_ack:execute:lane-only",
+        dispatch_evidence="mcp_writeback:lane-only",
+    )
+    verdict = ReviewVerdict(
+        id="verdict-lane-only",
+        lane_id="lane-only",
+        decision=ReviewDecision.MERGE,
+        status="finalized",
+        summary="Review accepted lane-only.",
+        evidence_refs=[
+            "feature_lanes.json#lane=lane-only",
+            "review_plane.json#task=review-task-lane-only",
+        ],
+        created_at="2026-06-29T05:00:00Z",
+    )
+    VerdictStore(tmp_path / "review_plane.json").save_task_and_verdict(
+        ReviewTask(
+            task_id="review-task-lane-only",
+            lane_id="lane-only",
+            graph_id="graph-lane-only",
+            resolution_id=resolution.id,
+            lane_prompt="Review lane-only.",
+            gate_report_ref="logs/gates/lane-only/report.json",
+            created_at="2026-06-29T04:59:00Z",
+        ),
+        verdict,
+    )
+    final_action_store = FinalActionGateStore(tmp_path / "final_actions.json")
+    hold = final_action_store.create_hold(
+        lane_id="lane-only",
+        verdict_id=verdict.id,
+        action="merge",
+        target_status="reviewed",
+        summary="GitHub gate accepted for lane-only.",
+    )
+    _write_json(
+        tmp_path / "github_gate_evidence.json",
+        {
+            "schema_version": "github_gate_evidence.v1",
+            "items": [
+                {
+                    "id": "accepted-lane-only",
+                    "final_action_id": hold.id,
+                    "repo": "iiyazu/Cross-Muse",
+                    "pull_request_number": 304,
+                    "required_checks": ["quality-gates"],
+                    "can_accept": True,
+                    "gap_reason": None,
+                    "evidence": {
+                        "repo": "iiyazu/Cross-Muse",
+                        "pull_request_number": 304,
+                        "required_checks": ["quality-gates"],
+                        "proof_level": "server_side_merge_proof",
+                        "head_sha": "head-lane-only",
+                        "workflow_run_id": 3040,
+                        "check_run_ids": [30401],
+                        "check_run_names": ["quality-gates"],
+                        "check_run_head_shas": ["head-lane-only"],
+                        "merge_commit_sha": "merge-lane-only",
+                        "merged_at": "2026-06-29T05:10:00Z",
+                        "merge_event_id": "merge-event-lane-only",
+                    },
+                    "main_ci": {
+                        "workflow_run_id": 304000,
+                        "head_sha": "merge-lane-only",
+                        "conclusion": "success",
+                    },
+                }
+            ],
+        },
+    )
+    final_action_store.resolve(
+        hold.id,
+        status="approved",
+        resolved_by="platform-runner",
+        github_gate_evidence_ref="github_gate_evidence.json#evidence=accepted-lane-only",
+    )
+    _write_json(
+        tmp_path / "feature_lanes.json",
+        {
+            "lanes": [
+                {
+                    "feature_id": "lane-only",
+                    "conversation_id": conv.id,
+                    "status": "merged",
+                    "review_verdict_id": verdict.id,
+                    "final_action_hold_id": hold.id,
+                    "github_gate_evidence_ref": (
+                        "github_gate_evidence.json#evidence=accepted-lane-only"
+                    ),
+                }
+            ]
+        },
+    )
+
+    response = TestClient(create_app(tmp_path)).get(
+        f"/api/dashboard/peer-chat/conversations/{conv.id}/ux-projection"
+    )
+
+    assert response.status_code == 200
+    summary = response.json()["evidence_summary"]
+    assert summary["status"] == "complete"
+    assert summary["active_blocker"] is None
+    by_ref = {item["ref"]: item for item in summary["items"]}
+    assert by_ref[f"proposal:{proposal.id}"]["condition"] == "proposal_present_for_conversation"
+    assert by_ref[f"chat_dispatch_queue:{dispatch.entry_id}"]["condition"] == (
+        "dispatch_entry_present_for_conversation"
+    )
+    assert by_ref[f"review_plane.json#verdict={verdict.id}"]["condition"] == (
+        "review_verdict_projected_from_review_state"
+    )
+    assert by_ref[f"final_actions.json#hold={hold.id}"]["condition"] == (
+        "final_action_projected_from_final_action_state"
+    )
+    assert by_ref["logs/gates/lane-only/report.json"]["producer"] == "review_plane.json"
+    assert "feature_lanes.json#lane=lane-only" not in by_ref
+    assert "review_plane.json#task=review-task-lane-only" not in by_ref
+    assert by_ref["github_gate_evidence.json#evidence=accepted-lane-only"]["details"][
+        "main_ci"
+    ]["status"] == "success"
+
+
 def test_dashboard_peer_chat_ux_projection_evidence_summary_reports_failure_boundary(
     tmp_path: Path,
 ) -> None:

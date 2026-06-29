@@ -617,7 +617,7 @@ def _evidence_summary(
                         **lane_kwargs(review),
                     )
                 )
-                for ref in _string_items(review.get("evidence_refs")):
+                for ref in _summary_execution_refs_from_review(review):
                     execution_evidence_items.append(
                         _evidence_item(
                             kind="execution_proof",
@@ -839,6 +839,170 @@ def _evidence_summary(
                     condition=blocked_reason,
                     proof_boundary="acceptance_spine_blocker_boundary",
                     next_recovery_action="resume_from_recorded_acceptance_spine_boundary",
+                )
+            )
+
+    for proposal in proposals:
+        proposal_id = _projection_text(proposal.get("id"))
+        if proposal_id is None:
+            continue
+        items.append(
+            _evidence_item(
+                kind="proposal",
+                proof_class="authority",
+                ref=f"proposal:{proposal_id}",
+                status=_projection_text(proposal.get("status")) or "observed",
+                producer="chat.db:proposals",
+                condition="proposal_present_for_conversation",
+                proof_boundary="proposal_authority_not_execution_or_github_truth",
+            )
+        )
+
+    for dispatch in dispatch_entries:
+        dispatch_item_id = _projection_text(dispatch.get("entry_id"))
+        if dispatch_item_id is None:
+            continue
+        items.append(
+            _evidence_item(
+                kind="dispatch_queue_entry",
+                proof_class="authority",
+                ref=f"chat_dispatch_queue:{dispatch_item_id}",
+                status=_projection_text(dispatch.get("status")) or "observed",
+                producer="chat.db:chat_dispatch_queue",
+                condition="dispatch_entry_present_for_conversation",
+                proof_boundary="dispatch_queue_authority_not_execution_proof",
+                **lane_kwargs(source_refs=dispatch.get("source_refs")),
+            )
+        )
+        dispatch_evidence = _projection_text(dispatch.get("dispatch_evidence"))
+        if dispatch_evidence:
+            dispatch_evidence_items.append(
+                _evidence_item(
+                    kind="execution_proof",
+                    proof_class="execution_proof",
+                    ref=dispatch_evidence,
+                    status="observed",
+                    producer="chat_dispatch_bridge",
+                    condition="dispatch_entry_dispatch_evidence",
+                    proof_boundary="worker_writeback_not_authority_or_github_truth",
+                    **lane_kwargs(source_refs=[dispatch_evidence]),
+                )
+            )
+
+    for review in _dict_items(review_state.get("items")):
+        review_id = _projection_text(review.get("id"))
+        if review_id is None:
+            continue
+        review_ref = f"review_plane.json#verdict={review_id}"
+        items.append(
+            _evidence_item(
+                kind="review_verdict",
+                proof_class="authority",
+                ref=review_ref,
+                status=_projection_text(review.get("verdict_status")) or "observed",
+                producer="review_plane.json",
+                condition="review_verdict_projected_from_review_state",
+                proof_boundary="review_verdict_authority_not_github_or_merge_truth",
+                **lane_kwargs(review),
+            )
+        )
+        for ref in _summary_execution_refs_from_review(review):
+            execution_evidence_items.append(
+                _evidence_item(
+                    kind="execution_proof",
+                    proof_class="execution_proof",
+                    ref=ref,
+                    status="observed",
+                    producer="review_plane.json",
+                    condition="review_verdict_evidence_ref",
+                    proof_boundary="execution_proof_not_review_github_or_merge_truth",
+                    **lane_kwargs(review, source_refs=[ref]),
+                )
+            )
+
+    for final_action in _dict_items(final_action_state.get("items")):
+        final_action_id = _projection_text(final_action.get("id"))
+        if final_action_id is None:
+            continue
+        final_action_ref = f"final_actions.json#hold={final_action_id}"
+        final_action_status = _projection_text(final_action.get("status")) or "observed"
+        final_action_items.append(
+            _evidence_item(
+                kind="final_action",
+                proof_class="authority",
+                ref=final_action_ref,
+                status=final_action_status,
+                producer="final_actions.json",
+                condition="final_action_projected_from_final_action_state",
+                proof_boundary="final_action_authority_not_github_or_merge_truth",
+                **lane_kwargs(final_action),
+            )
+        )
+        github_gate_evidence_ref = _projection_text(
+            final_action.get("github_gate_evidence_ref")
+        )
+        if github_gate_evidence_ref:
+            github_record = _accepted_github_gate_record(
+                root,
+                github_gate_evidence_ref,
+                final_action_id=final_action_id,
+            )
+            if github_record is None:
+                failure_boundaries.append(
+                    _failure_boundary(
+                        kind="github_gate",
+                        ref=github_gate_evidence_ref,
+                        status="blocked",
+                        producer="github_gate_evidence.json",
+                        condition="github_gate_evidence_ref_missing_or_invalid",
+                        proof_boundary="github_gate_evidence_ref_boundary",
+                        next_recovery_action="capture_exact_head_github_gate_evidence",
+                    )
+                )
+            else:
+                details = _github_gate_details(github_record)
+                github_gate_items.append(
+                    _evidence_item(
+                        kind="github_gate",
+                        proof_class="github_server_truth",
+                        ref=github_gate_evidence_ref,
+                        status="accepted",
+                        producer="github_gate_evidence.json",
+                        condition="final_action_contains_github_gate_evidence_ref",
+                        proof_boundary="github_gate_evidence_not_main_ci_truth",
+                        details=details,
+                        **lane_kwargs(
+                            final_action,
+                            source_refs=[github_gate_evidence_ref],
+                        ),
+                    )
+                )
+                main_ci_status = str(
+                    _dict_value(details.get("main_ci")).get("status") or ""
+                )
+                if main_ci_status != "success":
+                    failure_boundaries.append(
+                        _failure_boundary(
+                            kind="main_ci",
+                            ref=github_gate_evidence_ref,
+                            status=main_ci_status or "missing",
+                            producer="github_gate_evidence.json",
+                            condition="github_gate_evidence_missing_main_ci",
+                            proof_boundary="main_ci_server_truth_boundary",
+                            next_recovery_action="capture_post_merge_main_ci_evidence",
+                        )
+                    )
+        github_gate_gap_ref = _projection_text(final_action.get("github_gate_gap_ref"))
+        if github_gate_gap_ref:
+            failure_boundaries.append(
+                _failure_boundary(
+                    kind="github_gate",
+                    ref=github_gate_gap_ref,
+                    status="blocked",
+                    producer="final_actions.json",
+                    condition="final_action_contains_github_gate_gap_ref",
+                    proof_boundary="github_gate_gap_boundary",
+                    next_recovery_action="capture_exact_head_github_gate_evidence",
                 )
             )
 
@@ -1136,11 +1300,6 @@ def _evidence_summary_status(
         for item in items
         if item.get("kind") == "final_action"
     }
-    spine_statuses = {
-        str(item.get("status") or "")
-        for item in items
-        if item.get("kind") == "acceptance_spine"
-    }
     if (
         "conversation" in kinds
         and "proposal" in kinds
@@ -1150,10 +1309,24 @@ def _evidence_summary_status(
         and "final_action" in kinds
         and "github_gate" in kinds
         and final_statuses.intersection({"approved", "accepted", "resolved"})
-        and spine_statuses.intersection({"accepted", "approved", "resolved"})
     ):
         return "complete"
     return "in_progress"
+
+
+def _summary_execution_refs_from_review(review: dict[str, Any]) -> list[str]:
+    refs = _string_items(review.get("evidence_refs"))
+    gate_report_ref = _projection_text(review.get("gate_report_ref"))
+    if gate_report_ref:
+        refs.append(gate_report_ref)
+    return _dedupe(
+        [
+            ref
+            for ref in refs
+            if not ref.startswith("feature_lanes.json#lane=")
+            and not ref.startswith("review_plane.json#task=")
+        ]
+    )
 
 
 def _timeline_items(
