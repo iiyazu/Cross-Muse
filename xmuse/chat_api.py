@@ -48,6 +48,10 @@ from xmuse_core.chat.collaboration_contracts import (
 from xmuse_core.chat.collaboration_store import ChatCollaborationStore
 from xmuse_core.chat.deliberation_engine import DeliberationFreezeGuard
 from xmuse_core.chat.dispatch_queue import ChatDispatchQueueEntry, ChatDispatchQueueStore
+from xmuse_core.chat.groupchat_critic_verdicts import (
+    GroupchatCriticVerdictError,
+    groupchat_critic_verdict_decision,
+)
 from xmuse_core.chat.groupchat_runtime import (
     GroupchatPeerRuntime,
     GroupchatPeerRuntimeRunOutcome,
@@ -519,6 +523,12 @@ class _ReviewTriggerDispatchGate:
 
 
 @dataclass(frozen=True)
+class _GroupchatCriticGate:
+    decision: str
+    source_refs: list[str]
+
+
+@dataclass(frozen=True)
 class _StructuredDispatchIntent:
     entry: ChatDispatchQueueEntry
     gate_refs: list[str]
@@ -588,6 +598,45 @@ def _is_a2a_sourced_proposal(
     conversation_id: str,
     proposal_id: str,
 ) -> bool:
+    return any(
+        ref.startswith("a2a_task:")
+        or ref.startswith("a2a_context:")
+        or ref.startswith("a2a_provider_result:")
+        for ref in _proposal_refs_for_gate(
+            base_dir,
+            conversation_id=conversation_id,
+            proposal_id=proposal_id,
+        )
+    )
+
+
+def _is_groupchat_sourced_proposal(
+    base_dir: Path,
+    *,
+    conversation_id: str,
+    proposal_id: str,
+    references: list[str] | None = None,
+) -> bool:
+    proposal_refs = list(references or [])
+    proposal_refs.extend(
+        _proposal_refs_for_gate(
+            base_dir,
+            conversation_id=conversation_id,
+            proposal_id=proposal_id,
+        )
+    )
+    return any(
+        ref.startswith("groupchat_chain:") or ref.startswith("groupchat_worklist:")
+        for ref in proposal_refs
+    )
+
+
+def _proposal_refs_for_gate(
+    base_dir: Path,
+    *,
+    conversation_id: str,
+    proposal_id: str,
+) -> list[str]:
     store = _store(base_dir)
     proposal_refs: list[str] = []
     try:
@@ -601,16 +650,14 @@ def _is_a2a_sourced_proposal(
         ):
             continue
         if message.envelope_json.get("source_kind") == "a2a_provider_result":
-            return True
+            proposal_refs.append("a2a_provider_result:proposal_message")
         raw_refs = message.envelope_json.get("source_refs")
         if isinstance(raw_refs, list):
             proposal_refs.extend(str(ref) for ref in raw_refs)
         raw_refs = message.envelope_json.get("references")
         if isinstance(raw_refs, list):
             proposal_refs.extend(str(ref) for ref in raw_refs)
-    return any(
-        ref.startswith("a2a_task:") or ref.startswith("a2a_context:") for ref in proposal_refs
-    )
+    return proposal_refs
 
 
 def _review_trigger_dispatch_verdict_for_proposal(
@@ -691,16 +738,93 @@ def _reject_pending_review_trigger_for_dispatchable_proposal(
 ) -> None:
     if proposal_type != "lane_graph":
         return
-    if not _collaboration_run_refs(references) and not _is_a2a_sourced_proposal(
-        base_dir,
-        conversation_id=conversation_id,
-        proposal_id=proposal_id,
+    if (
+        not _collaboration_run_refs(references)
+        and not _is_a2a_sourced_proposal(
+            base_dir,
+            conversation_id=conversation_id,
+            proposal_id=proposal_id,
+        )
+        and not _is_groupchat_sourced_proposal(
+            base_dir,
+            conversation_id=conversation_id,
+            proposal_id=proposal_id,
+            references=references,
+        )
     ):
         return
     _review_trigger_dispatch_verdict_for_proposal(
         base_dir,
         conversation_id=conversation_id,
         proposal_id=proposal_id,
+    )
+
+
+def _enforce_groupchat_critic_gate(
+    base_dir: Path,
+    *,
+    conversation_id: str,
+    proposal_id: str,
+    proposal_type: str,
+    references: list[str],
+) -> _GroupchatCriticGate | None:
+    if proposal_type != "lane_graph":
+        return None
+    if not _is_groupchat_sourced_proposal(
+        base_dir,
+        conversation_id=conversation_id,
+        proposal_id=proposal_id,
+        references=references,
+    ):
+        return None
+    return _groupchat_critic_gate_for_proposal(
+        base_dir,
+        conversation_id=conversation_id,
+        proposal_id=proposal_id,
+    )
+
+
+def _groupchat_critic_gate_for_proposal(
+    base_dir: Path,
+    *,
+    conversation_id: str,
+    proposal_id: str,
+) -> _GroupchatCriticGate:
+    store = _store(base_dir)
+    participants = {
+        participant.participant_id: participant
+        for participant in _participant_store(base_dir).list_by_conversation(conversation_id)
+    }
+    source_refs: list[str] = []
+    for message in store.list_messages(conversation_id):
+        if (
+            message.role != "assistant"
+            or message.envelope_json.get("type") != "groupchat_critic_verdict"
+        ):
+            continue
+        participant = participants.get(message.author)
+        if participant is None or participant.role != "critic":
+            continue
+        try:
+            verdict = groupchat_critic_verdict_decision(
+                message.envelope_json,
+                expected_proposal_id=proposal_id,
+            )
+        except GroupchatCriticVerdictError as exc:
+            raise PeerChatError(
+                "proposal_critic_missing",
+                f"{message.id}:{exc.code}",
+            ) from exc
+        verdict_ref = f"groupchat_critic_verdict:{message.id}"
+        if verdict == "blocked":
+            raise PeerChatError("proposal_critic_blocked", verdict_ref)
+        if verdict == "clearance":
+            source_refs.append(verdict_ref)
+    if not source_refs:
+        raise PeerChatError("proposal_critic_missing", proposal_id)
+    return _GroupchatCriticGate(
+        decision="clearance",
+        source_refs=_dedupe_text(source_refs),
     )
 
 
@@ -2331,6 +2455,13 @@ def create_app(
                     content=content,
                 )
             _reject_pending_review_trigger_for_dispatchable_proposal(
+                root,
+                conversation_id=proposal.conversation_id,
+                proposal_id=proposal_id,
+                proposal_type=escalation.normalized_proposal_type,
+                references=proposal.references,
+            )
+            _enforce_groupchat_critic_gate(
                 root,
                 conversation_id=proposal.conversation_id,
                 proposal_id=proposal_id,
