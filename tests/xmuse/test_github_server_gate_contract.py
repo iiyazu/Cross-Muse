@@ -536,7 +536,7 @@ def test_server_side_snapshot_accepts_internal_review_when_github_review_not_req
         check_run_head_shas=["abc123"] * len(REQUIRED_SERVER_CHECKS),
         expected_source_app="github-actions",
         branch_protection_snapshot=_branch_protection_snapshot(review_policy=None),
-        internal_review_artifact="docs/xmuse/opencode-in-long-runtime-evidence-closure.md",
+        internal_review_artifact="docs/xmuse/archive/2026-06-proof-closure-legacy/opencode-in-long-runtime-evidence-closure.md",
         internal_reviewer="opencode-in-review",
         internal_reviewed_head_sha="abc123",
         internal_review_verified=True,
@@ -574,7 +574,7 @@ def test_internal_review_does_not_replace_required_github_review() -> None:
                 "require_code_owner_reviews": True,
             }
         ),
-        internal_review_artifact="docs/xmuse/opencode-in-long-runtime-evidence-closure.md",
+        internal_review_artifact="docs/xmuse/archive/2026-06-proof-closure-legacy/opencode-in-long-runtime-evidence-closure.md",
         internal_reviewer="opencode-in-review",
         internal_reviewed_head_sha="abc123",
         internal_review_verified=True,

@@ -201,3 +201,26 @@ def test_legacy_runtime_loop_docs_are_archived_not_default_docs_root() -> None:
     for name in archived_names:
         assert not (DOCS_ROOT / name).exists(), name
         assert (archive_dir / name).is_file(), name
+
+
+def test_legacy_proof_closure_docs_are_archived_not_default_docs_root() -> None:
+    archived_names = (
+        "self-iteration-runtime-closure.md",
+        "self-iteration-runtime-closure-plan.md",
+        "self-iteration-runtime-closure-goal-prompt.md",
+        "vision-runtime-evidence-closure.md",
+        "vision-runtime-evidence-closure-plan.md",
+        "vision-runtime-evidence-closure-goal-prompt.md",
+        "opencode-in-long-runtime-evidence-closure.md",
+        "opencode-in-long-runtime-evidence-plan.md",
+        "opencode-in-long-runtime-evidence-goal-prompt.md",
+    )
+    archive_dir = DOCS_ROOT / "archive" / "2026-06-proof-closure-legacy"
+    readme = _read_doc("README.md")
+    status = _read_doc("document-status.md")
+
+    assert "docs/xmuse/archive/2026-06-proof-closure-legacy/" in readme
+    assert "docs/xmuse/archive/2026-06-proof-closure-legacy/" in status
+    for name in archived_names:
+        assert not (DOCS_ROOT / name).exists(), name
+        assert (archive_dir / name).is_file(), name
