@@ -7,7 +7,7 @@
 ## 当前 goal
 
 本轮 goal 是 Outer GOD 生产级统合: 复核 S0-S8 并行 session 产物，按
-`docs/xmuse/outer-god-integration-goal.md` 验收 Stage-1 闭环，并继续推进代码结构治理。
+`docs/xmuse/archive/2026-06-roadmaps-and-audits/outer-god-integration-goal.md` 验收 Stage-1 闭环，并继续推进代码结构治理。
 当前已写入 `xmuse/work/parallel_session_flags/S0.integration.ready.json`，focused gate
 和全量测试均已通过；最新一次 focused gate 为 `422 passed, 1 warning`，全量测试为
 `3228 passed, 1 skipped, 9 warnings in 1008.69s`，orchestrator lane-flow 平台 gate 为
