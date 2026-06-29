@@ -1,7 +1,7 @@
 # OpenCode-In Long Runtime Evidence Goal Prompt
 
 Use this concise prompt for the next `/goal`. Detailed tasks and behavior rules
-live in `docs/xmuse/opencode-in-long-runtime-evidence-plan.md`.
+live in `docs/xmuse/archive/2026-06-proof-closure-legacy/opencode-in-long-runtime-evidence-plan.md`.
 
 ```text
 Goal: Execute the xmuse OpenCode-in Long Runtime Evidence Closure iteration.
@@ -14,7 +14,7 @@ Read and follow:
 - docs/xmuse/README.md
 - docs/xmuse/mainline-contracts.md
 - docs/xmuse/goal-stage-harness.md
-- docs/xmuse/opencode-in-long-runtime-evidence-plan.md
+- docs/xmuse/archive/2026-06-proof-closure-legacy/opencode-in-long-runtime-evidence-plan.md
 - /mnt/c/tmp/deep-research-long-blueprint.md
 
 Objective:

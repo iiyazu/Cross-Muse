@@ -199,7 +199,7 @@ Current canonical command scan:
 rg -n "deepseek-v4-flash:max|opencode-go/deepseek-v4-flash:max|deepseek-v4-flash-max|opencode-go/deepseek-v4-flash-max" \
   src/xmuse_core tests/xmuse scripts .env.example \
   docs/xmuse/goal-stage-harness.md \
-  docs/xmuse/opencode-in-long-runtime-evidence-plan.md \
+  docs/xmuse/archive/2026-06-proof-closure-legacy/opencode-in-long-runtime-evidence-plan.md \
   docs/xmuse/provider-matrix.md \
   docs/xmuse/config-matrix.md \
   docs/xmuse/tui-slash-command-handoff.md \
@@ -225,7 +225,7 @@ PR `#42` has a read-only capture path:
 uv run python scripts/github_server_truth_capture.py \
   --repo iiyazu/Cross-Muse \
   --pull-request 42 \
-  --internal-review-artifact docs/xmuse/opencode-in-long-runtime-evidence-closure.md \
+  --internal-review-artifact docs/xmuse/archive/2026-06-proof-closure-legacy/opencode-in-long-runtime-evidence-closure.md \
   --internal-reviewer opencode-in-review \
   --internal-reviewed-head-sha <PR_HEAD_SHA> \
   --output /tmp/xmuse-github-server-truth.json

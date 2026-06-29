@@ -97,8 +97,6 @@ operator flows reference them:
 | `docs/xmuse/real-runtime-integration-gate.md` | No-secrets real runtime integration gate contract |
 | `docs/xmuse/broad-suite-baseline-debt.md` | Known broad-suite baseline gaps |
 | `docs/xmuse/memoryos-lite-runtime-compatibility.md` | MemoryOS Lite public compatibility contract |
-| `docs/xmuse/vision-runtime-evidence-closure-plan.md` | Older proof-level boundary plan kept for tests |
-| `docs/xmuse/vision-runtime-evidence-closure-goal-prompt.md` | Older proof-level prompt kept for tests |
 | `docs/xmuse/github-server-side-gate-live-evidence-2026-06-25.md` | Latest committed GitHub server-side evidence snapshot |
 | `docs/xmuse/github-server-side-gate.md` | GitHub server-side gate contract |
 | `docs/xmuse/github-review-merge-contract.md` | PR template, CODEOWNERS, and merge-ready contract |
@@ -132,6 +130,10 @@ Rules:
    framing from archive content.
 3. If an archived implementation detail is reused, cite it as reference and
    re-verify the current code path.
+
+Older self-iteration, vision-runtime, and OpenCode-in proof-closure documents
+live under `docs/xmuse/archive/2026-06-proof-closure-legacy/`. They remain
+testable historical contract material, not current `/goal` entrypoints.
 
 Old `docs/superpowers/specs/` and `docs/superpowers/plans/` remain historical
 implementation records because tests and lane history may reference their

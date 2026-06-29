@@ -3,7 +3,7 @@
 Updated: 2026-06-10
 
 This artifact records the minimal auditable xmuse self-iteration loop produced
-from `docs/xmuse/self-iteration-runtime-closure-plan.md`.
+from `docs/xmuse/archive/2026-06-proof-closure-legacy/self-iteration-runtime-closure-plan.md`.
 
 It proves contract and fake/local runtime behavior only. It does not prove live
 Ray, live Codex provider, live MemoryOS Lite, GitHub branch protection, or a
