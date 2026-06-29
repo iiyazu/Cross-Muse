@@ -19,6 +19,7 @@ _A1_ROUTABLE_ROLES = {"architect", "review", "critic"}
 _DISPATCH_ACK_WAIT_REASON = "dispatch_acknowledgement_not_execution_proof"
 _CHAIN_BLOCKING_ROUTE_REASONS = {"final_action_github_gate_gap"}
 _CHAIN_WAITING_ROUTE_REASONS = {_DISPATCH_ACK_WAIT_REASON}
+_CHAIN_RECOVERABLE_BLOCKED_REASONS = {"final_action_github_gate_gap"}
 
 
 def _utc_now() -> str:
@@ -536,12 +537,20 @@ class GroupchatWorklistStore:
             conn.execute("begin immediate")
             try:
                 chain = self._chain_row(conn, chain_id)
-                if chain["status"] not in _CHAIN_OPEN_STATUSES:
+                blocked_reason = str(chain["status_reason"] or "")
+                recovering_blocked_chain = (
+                    chain["status"] == "blocked"
+                    and blocked_reason in _CHAIN_RECOVERABLE_BLOCKED_REASONS
+                )
+                if chain["status"] not in _CHAIN_OPEN_STATUSES and not recovering_blocked_chain:
                     conn.commit()
                     return []
 
                 message = self._next_unscanned_message_row(conn, chain=chain)
                 if message is None:
+                    if recovering_blocked_chain:
+                        conn.commit()
+                        return []
                     self._complete_chain_if_exhausted(conn, chain_id=chain_id, now=now)
                     conn.commit()
                     return []
@@ -558,6 +567,15 @@ class GroupchatWorklistStore:
                     message=message,
                     source_participant_id=source_participant_id,
                 )
+                if recovering_blocked_chain:
+                    targets = [
+                        target
+                        for target in targets
+                        if blocked_reason in target.clears_terminal_reasons
+                    ]
+                    if not targets:
+                        conn.commit()
+                        return []
                 for target in targets:
                     item_id = self._insert_scanned_route(
                         conn,
@@ -836,7 +854,9 @@ class GroupchatWorklistStore:
                     participant_id=str(architect["participant_id"]),
                     role=str(architect["role"]),
                     route_kind="handoff",
-                    clears_terminal_reasons=tuple(_CHAIN_WAITING_ROUTE_REASONS),
+                    clears_terminal_reasons=tuple(
+                        _CHAIN_WAITING_ROUTE_REASONS | _CHAIN_BLOCKING_ROUTE_REASONS
+                    ),
                     clears_authority_refs=tuple(self._writeback_authority_refs(conn, envelope)),
                 )
             ]
@@ -1066,7 +1086,7 @@ class GroupchatWorklistStore:
             dedup_key=dedup_key,
             terminal_reason=reason,
         )
-        self._cancel_blocked_chain_items_by_reason(
+        canceled_blockers = self._cancel_blocked_chain_items_by_reason(
             conn,
             chain_id=chain["chain_id"],
             reasons=target.clears_terminal_reasons,
@@ -1074,6 +1094,23 @@ class GroupchatWorklistStore:
             superseding_message_id=message["id"],
             now=now,
         )
+        if (
+            canceled_blockers > 0
+            and chain["status"] == "blocked"
+            and chain["status_reason"] in target.clears_terminal_reasons
+            and not self._has_blocked_chain_item_by_reason(
+                conn,
+                chain_id=chain["chain_id"],
+                reason=str(chain["status_reason"]),
+            )
+        ):
+            self._set_chain_status(
+                conn,
+                chain_id=chain["chain_id"],
+                status="open",
+                status_reason=None,
+                now=now,
+            )
         if chain_blocks:
             self._set_chain_status(
                 conn,
@@ -1099,9 +1136,9 @@ class GroupchatWorklistStore:
         authority_refs: tuple[str, ...],
         superseding_message_id: str,
         now: str,
-    ) -> None:
+    ) -> int:
         if not reasons:
-            return
+            return 0
         placeholders = ",".join("?" for _ in reasons)
         rows = conn.execute(
             f"""
@@ -1115,7 +1152,8 @@ class GroupchatWorklistStore:
         ).fetchall()
         required_refs = {ref for ref in authority_refs if ref}
         if not required_refs:
-            return
+            return 0
+        canceled = 0
         for row in rows:
             if not self._blocked_item_matches_authority_refs(
                 conn,
@@ -1123,7 +1161,7 @@ class GroupchatWorklistStore:
                 authority_refs=required_refs,
             ):
                 continue
-            conn.execute(
+            canceled += conn.execute(
                 """
                 update groupchat_worklist
                 set status = 'canceled', terminal_reason = ?, updated_at = ?
@@ -1134,7 +1172,28 @@ class GroupchatWorklistStore:
                     now,
                     row["item_id"],
                 ),
-            )
+            ).rowcount
+        return canceled
+
+    def _has_blocked_chain_item_by_reason(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        chain_id: str,
+        reason: str,
+    ) -> bool:
+        row = conn.execute(
+            """
+            select 1
+            from groupchat_worklist
+            where chain_id = ?
+              and status = 'blocked'
+              and terminal_reason = ?
+            limit 1
+            """,
+            (chain_id, reason),
+        ).fetchone()
+        return row is not None
 
     def _blocked_item_matches_authority_refs(
         self,
@@ -1427,7 +1486,7 @@ class GroupchatWorklistStore:
         *,
         chain_id: str,
         status: str,
-        status_reason: str,
+        status_reason: str | None,
         now: str,
     ) -> None:
         conn.execute(
