@@ -160,3 +160,29 @@ def test_one_off_rung_sentinel_artifacts_are_archived_not_product_source() -> No
         "not reusable product modules",
     ):
         assert fragment in archive
+
+
+def test_old_roadmaps_and_audits_are_archived_not_default_docs_root() -> None:
+    archived_names = (
+        "deep-research-02-next-goal.md",
+        "deep-research-conversion-roadmap.md",
+        "deep-research-execution-tasks.md",
+        "next-production-goal-design.md",
+        "outer-god-integration-goal.md",
+        "path-a-foundation-first-roadmap.md",
+        "post-patha-global-audit-synthesis.md",
+        "post-patha-release-readiness-audit.md",
+        "self-development-closure-audit.md",
+        "legacy-architecture-debt-audit.md",
+        "v10-ci-candidate-audit.md",
+        "v11-depth-hardening-inventory.md",
+        "v6-legacy-coupling-inventory.md",
+        "v6-session-vs-shared-memory-boundary.md",
+    )
+    archive_dir = DOCS_ROOT / "archive" / "2026-06-roadmaps-and-audits"
+    status = _read_doc("document-status.md")
+
+    assert "docs/xmuse/archive/2026-06-roadmaps-and-audits/" in status
+    for name in archived_names:
+        assert not (DOCS_ROOT / name).exists(), name
+        assert (archive_dir / name).is_file(), name
