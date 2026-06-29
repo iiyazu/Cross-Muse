@@ -441,6 +441,7 @@ def test_dashboard_peer_chat_ux_projection_is_frontend_read_model(
         "chat.db:peer_turn_latency_traces",
         "review_plane.json",
         "final_actions.json",
+        "github_gate_evidence.json",
         "active_sessions.json",
         "god_sessions.json",
     ]
@@ -803,6 +804,530 @@ def test_dashboard_peer_chat_ux_projection_links_natural_chain_lane_state(
             }
         ],
     }
+
+
+def test_dashboard_peer_chat_ux_projection_includes_operator_evidence_summary(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "chat.db"
+    chat = ChatStore(db)
+    conv = chat.create_conversation("Evidence summary projection")
+    intake = chat.add_message(conv.id, "Human", "human", "@architect summarize closure")
+    proposal = chat.create_proposal(
+        conversation_id=conv.id,
+        author="Architect GOD",
+        proposal_type="lane_graph",
+        content='{"summary":"Evidence lane","lanes":[{"feature_id":"lane-evidence"}]}',
+        references=[intake.id],
+    )
+    spine_store = AcceptanceSpineStore(db)
+    spine_store.create_for_intake(conversation_id=conv.id, intake_message_id=intake.id)
+    spine_store.attach_proposal(
+        conversation_id=conv.id,
+        intake_message_id=intake.id,
+        proposal_id=proposal.id,
+    )
+    spine_store.attach_verdict_for_proposal(
+        proposal_id=proposal.id,
+        verdict_ref="resolution:res-evidence",
+    )
+    dispatch = ChatDispatchQueueStore(db).enqueue_agent_auto_dispatch(
+        conversation_id=conv.id,
+        proposal_id=proposal.id,
+        resolution_id="res-evidence",
+        collaboration_run_id="run-evidence",
+        artifact_ref="lane_graph:res-evidence",
+        gate_refs=["review_trigger_verdict:evidence-ready"],
+    )
+    assert ChatDispatchQueueStore(db).claim_next_auto_dispatch(
+        conversation_id=conv.id,
+        claimed_by="bridge-test",
+    )
+    ChatDispatchQueueStore(db).mark_dispatched(
+        dispatch.entry_id,
+        provider_run_ref="provider:execute:evidence",
+        dispatch_evidence="mcp_writeback:evidence",
+    )
+    spine_store.attach_execution_evidence_for_dispatch(
+        dispatch_item_id=dispatch.entry_id,
+        evidence_refs=["logs/gates/lane-evidence/report.json"],
+    )
+    spine_store.attach_review_verdict_for_resolution(
+        resolution_id="res-evidence",
+        review_verdict_ref="review_plane.json#verdict=verdict-evidence",
+    )
+    hold = FinalActionGateStore(tmp_path / "final_actions.json").create_hold(
+        lane_id="lane-evidence",
+        verdict_id="verdict-evidence",
+        action="merge",
+        target_status="reviewed",
+        summary="GitHub gate accepted.",
+    )
+    spine_store.attach_final_action_for_review_verdict(
+        review_verdict_ref="review_plane.json#verdict=verdict-evidence",
+        final_action_ref=f"final_actions.json#hold={hold.id}",
+    )
+    _write_json(
+        tmp_path / "github_gate_evidence.json",
+        {
+            "schema_version": "github_gate_evidence.v1",
+            "items": [
+                {
+                    "id": "accepted-evidence",
+                    "final_action_id": hold.id,
+                    "can_accept": True,
+                    "evidence": {
+                        "repo": "iiyazu/Cross-Muse",
+                        "pull_request_number": 295,
+                        "required_checks": ["quality-gates"],
+                        "proof_level": "server_side_merge_proof",
+                        "head_sha": "abc123",
+                        "workflow_run_id": 28343033679,
+                        "check_run_ids": [83961033533],
+                        "check_run_names": ["quality-gates"],
+                        "check_run_head_shas": ["abc123"],
+                        "expected_source_app": "github-actions",
+                        "branch_protection_snapshot": {
+                            "required_status_checks": {
+                                "strict": True,
+                                "checks": [{"context": "quality-gates"}],
+                            },
+                            "required_pull_request_reviews": None,
+                        },
+                        "internal_review_artifact": "review_plane.json#verdict=verdict-evidence",
+                        "internal_reviewer": "review-god",
+                        "internal_reviewed_head_sha": "abc123",
+                        "internal_review_verified": True,
+                        "merge_commit_sha": "def456",
+                        "merged_at": "2026-06-29T01:30:00Z",
+                        "merge_event_id": "merge-event-evidence",
+                    },
+                    "main_ci": {
+                        "workflow_run_id": 28343075740,
+                        "head_sha": "def456",
+                        "conclusion": "success",
+                    },
+                }
+            ],
+        },
+    )
+    FinalActionGateStore(tmp_path / "final_actions.json").resolve(
+        hold.id,
+        status="approved",
+        resolved_by="platform-runner",
+        github_gate_evidence_ref="github_gate_evidence.json#evidence=accepted-evidence",
+    )
+    task = ReviewTask(
+        task_id="review-task-evidence",
+        lane_id="lane-evidence",
+        graph_id="graph-evidence",
+        resolution_id="res-evidence",
+        lane_prompt="Review evidence summary lane.",
+        gate_report_ref="logs/gates/lane-evidence/report.json",
+        created_at="2026-06-29T01:00:00Z",
+    )
+    verdict = ReviewVerdict(
+        id="verdict-evidence",
+        lane_id="lane-evidence",
+        decision=ReviewDecision.MERGE,
+        status="finalized",
+        summary="Review accepted evidence summary lane.",
+        evidence_refs=["logs/gates/lane-evidence/report.json"],
+        created_at="2026-06-29T01:01:00Z",
+    )
+    VerdictStore(tmp_path / "review_plane.json").save_task_and_verdict(task, verdict)
+    _write_json(
+        tmp_path / "feature_lanes.json",
+        {
+            "lanes": [
+                {
+                    "feature_id": "lane-evidence",
+                    "conversation_id": conv.id,
+                    "status": "merged",
+                    "review_verdict_id": "verdict-evidence",
+                    "final_action_hold_id": hold.id,
+                    "github_gate_evidence_ref": (
+                        "github_gate_evidence.json#evidence=accepted-evidence"
+                    ),
+                }
+            ]
+        },
+    )
+    PeerTurnLatencyTraceStore(db).record(
+        conversation_id=conv.id,
+        inbox_item_id="inbox-evidence",
+        participant_id="architect-evidence",
+        target_role="architect",
+        god_session_id="god-evidence",
+        provider_session_id="provider-thread-evidence",
+        provider_session_kind="codex_app_server_thread",
+        provider_binding_status="active",
+        message_created_at="2026-06-29T01:00:00Z",
+        inbox_claimed_at="2026-06-29T01:00:01Z",
+        delivery_started_at=1.0,
+        provider_turn_started_at=1.1,
+        first_delta_at=1.2,
+        writeback_at=1.5,
+        total_latency_ms=500,
+        delivery_mode="mcp_writeback",
+        degraded_reason=None,
+        supporting_context={
+            "memoryos_sidecar": {
+                "status": "degraded",
+                "proof_level": "degraded",
+                "namespace_uri": f"memory://conversation/{conv.id}",
+                "degraded_reason": "memoryos_unavailable",
+                "continuity_attempt_ref": (
+                    f"memory://conversation/{conv.id}/context/memoryos-sidecar-attempt"
+                ),
+            }
+        },
+    )
+
+    response = TestClient(create_app(tmp_path)).get(
+        f"/api/dashboard/peer-chat/conversations/{conv.id}/ux-projection"
+    )
+
+    assert response.status_code == 200
+    summary = response.json()["evidence_summary"]
+    assert summary["schema_version"] == "natural_groupchat_evidence_summary/v1"
+    assert summary["projection_only"] is True
+    assert summary["conversation_id"] == conv.id
+    assert summary["status"] == "complete"
+    assert summary["counts"] == {
+        "authority": 6,
+        "execution_proof": 2,
+        "github_server_truth": 1,
+        "sidecar_continuity": 1,
+        "read_projection": 1,
+        "failure_boundary": 0,
+    }
+    assert summary["items"] == [
+        {
+            "kind": "conversation",
+            "proof_class": "authority",
+            "ref": f"chat.db:conversations#conversation={conv.id}",
+            "status": "observed",
+            "producer": "chat.db:conversations",
+            "consumer": "natural_groupchat_evidence_summary",
+            "condition": "conversation_exists",
+            "proof_boundary": "conversation_authority_not_execution_or_github_truth",
+        },
+        {
+            "kind": "proposal",
+            "proof_class": "authority",
+            "ref": f"proposal:{proposal.id}",
+            "status": "accepted",
+            "producer": "chat.db:proposals",
+            "consumer": "natural_groupchat_evidence_summary",
+            "condition": "proposal_linked_to_acceptance_spine",
+            "proof_boundary": "proposal_authority_not_execution_or_github_truth",
+        },
+        {
+            "kind": "review_verdict",
+            "proof_class": "authority",
+            "ref": "review_plane.json#verdict=verdict-evidence",
+            "status": "finalized",
+            "producer": "review_plane.json",
+            "consumer": "natural_groupchat_evidence_summary",
+            "condition": "review_verdict_linked_to_acceptance_spine",
+            "proof_boundary": "review_verdict_authority_not_github_or_merge_truth",
+        },
+        {
+            "kind": "dispatch_queue_entry",
+            "proof_class": "authority",
+            "ref": f"chat_dispatch_queue:{dispatch.entry_id}",
+            "status": "dispatched",
+            "producer": "chat.db:chat_dispatch_queue",
+            "consumer": "natural_groupchat_evidence_summary",
+            "condition": "dispatch_entry_linked_to_acceptance_spine",
+            "proof_boundary": "dispatch_queue_authority_not_execution_proof",
+        },
+        {
+            "kind": "execution_proof",
+            "proof_class": "execution_proof",
+            "ref": "logs/gates/lane-evidence/report.json",
+            "status": "observed",
+            "producer": "review_plane.json",
+            "consumer": "natural_groupchat_evidence_summary",
+            "condition": "review_verdict_evidence_ref",
+            "proof_boundary": "execution_proof_not_review_github_or_merge_truth",
+        },
+        {
+            "kind": "execution_proof",
+            "proof_class": "execution_proof",
+            "ref": "mcp_writeback:evidence",
+            "status": "observed",
+            "producer": "chat_dispatch_bridge",
+            "consumer": "natural_groupchat_evidence_summary",
+            "condition": "dispatch_entry_dispatch_evidence",
+            "proof_boundary": "worker_writeback_not_authority_or_github_truth",
+        },
+        {
+            "kind": "final_action",
+            "proof_class": "authority",
+            "ref": f"final_actions.json#hold={hold.id}",
+            "status": "approved",
+            "producer": "final_actions.json",
+            "consumer": "natural_groupchat_evidence_summary",
+            "condition": "final_action_linked_to_acceptance_spine",
+            "proof_boundary": "final_action_authority_not_github_or_merge_truth",
+        },
+        {
+            "kind": "github_gate",
+            "proof_class": "github_server_truth",
+            "ref": "github_gate_evidence.json#evidence=accepted-evidence",
+            "status": "accepted",
+            "producer": "github_gate_evidence.json",
+            "consumer": "natural_groupchat_evidence_summary",
+            "condition": "final_action_contains_github_gate_evidence_ref",
+            "proof_boundary": "github_gate_evidence_not_main_ci_truth",
+            "details": {
+                "pull_request": {
+                    "repo": "iiyazu/Cross-Muse",
+                    "number": 295,
+                    "head_sha": "abc123",
+                },
+                "exact_head_ci": {
+                    "workflow_run_id": 28343033679,
+                    "check_run_ids": [83961033533],
+                    "check_run_names": ["quality-gates"],
+                    "check_run_head_shas": ["abc123"],
+                },
+                "merge": {
+                    "merge_commit_sha": "def456",
+                    "merged_at": "2026-06-29T01:30:00Z",
+                    "merge_event_id": "merge-event-evidence",
+                },
+                "main_ci": {
+                    "workflow_run_id": 28343075740,
+                    "head_sha": "def456",
+                    "conclusion": "success",
+                    "status": "success",
+                },
+            },
+        },
+        {
+            "kind": "memoryos_sidecar",
+            "proof_class": "sidecar_continuity",
+            "ref": f"memory://conversation/{conv.id}/context/memoryos-sidecar-attempt",
+            "status": "degraded",
+            "producer": "chat.db:peer_turn_latency_traces.supporting_context_json",
+            "consumer": "natural_groupchat_evidence_summary",
+            "condition": "memoryos_sidecar_projection_present",
+            "proof_boundary": "sidecar_continuity_not_proposal_review_dispatch_or_github_truth",
+        },
+        {
+            "kind": "frontend_projection",
+            "proof_class": "read_projection",
+            "ref": f"/api/dashboard/peer-chat/conversations/{conv.id}/ux-projection",
+            "status": "available",
+            "producer": "frontend.peer_chat_ux_projection",
+            "consumer": "operator",
+            "condition": "read_only_projection_built_from_authority",
+            "proof_boundary": "frontend_projection_not_truth_producer",
+        },
+        {
+            "kind": "acceptance_spine",
+            "proof_class": "authority",
+            "ref": summary["items"][-1]["ref"],
+            "status": "accepted",
+            "producer": "chat.db:acceptance_spines",
+            "consumer": "natural_groupchat_evidence_summary",
+            "condition": "acceptance_spine_tracks_chain",
+            "proof_boundary": "acceptance_spine_authority_not_github_or_merge_truth",
+        },
+    ]
+
+
+def test_dashboard_peer_chat_ux_projection_evidence_summary_reports_failure_boundary(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "chat.db"
+    chat = ChatStore(db)
+    conv = chat.create_conversation("Evidence summary blocked")
+    intake = chat.add_message(conv.id, "Human", "human", "@architect run blocked lane")
+    proposal = chat.create_proposal(
+        conversation_id=conv.id,
+        author="Architect GOD",
+        proposal_type="lane_graph",
+        content='{"summary":"Blocked lane","lanes":[{"feature_id":"lane-blocked"}]}',
+        references=[intake.id],
+    )
+    spine_store = AcceptanceSpineStore(db)
+    spine_store.create_for_intake(conversation_id=conv.id, intake_message_id=intake.id)
+    spine_store.attach_proposal(
+        conversation_id=conv.id,
+        intake_message_id=intake.id,
+        proposal_id=proposal.id,
+    )
+    spine_store.attach_verdict_for_proposal(
+        proposal_id=proposal.id,
+        verdict_ref="resolution:res-blocked",
+    )
+    queue = ChatDispatchQueueStore(db)
+    dispatch = queue.enqueue_agent_auto_dispatch(
+        conversation_id=conv.id,
+        proposal_id=proposal.id,
+        resolution_id="res-blocked",
+        collaboration_run_id="run-blocked",
+        artifact_ref="lane_graph:res-blocked",
+        gate_refs=["review_trigger_verdict:blocker-ready"],
+    )
+    queue.mark_failed(dispatch.entry_id, failure_reason="provider timeout")
+
+    response = TestClient(create_app(tmp_path)).get(
+        f"/api/dashboard/peer-chat/conversations/{conv.id}/ux-projection"
+    )
+
+    assert response.status_code == 200
+    summary = response.json()["evidence_summary"]
+    assert summary["status"] == "blocked"
+    assert summary["counts"]["failure_boundary"] == 2
+    assert summary["failure_boundaries"] == [
+        {
+            "kind": "dispatch_queue_entry",
+            "proof_class": "failure_boundary",
+            "ref": f"chat_dispatch_queue:{dispatch.entry_id}",
+            "status": "failed",
+            "producer": "chat.db:chat_dispatch_queue",
+            "consumer": "natural_groupchat_evidence_summary",
+            "condition": "dispatch_entry_failed",
+            "proof_boundary": "dispatch_failure_boundary",
+            "next_recovery_action": "inspect_dispatch_failure_reason",
+        },
+        {
+            "kind": "acceptance_spine",
+            "proof_class": "failure_boundary",
+            "ref": summary["failure_boundaries"][-1]["ref"],
+            "status": "blocked",
+            "producer": "chat.db:acceptance_spines",
+            "consumer": "natural_groupchat_evidence_summary",
+            "condition": "provider timeout",
+            "proof_boundary": "acceptance_spine_blocker_boundary",
+            "next_recovery_action": "resume_from_recorded_acceptance_spine_boundary",
+        },
+    ]
+
+
+def test_dashboard_peer_chat_ux_projection_rejects_stale_github_gate_ref(
+    tmp_path: Path,
+) -> None:
+    conv, hold, spine = _create_final_action_projection_fixture(tmp_path)
+    payload = json.loads((tmp_path / "final_actions.json").read_text(encoding="utf-8"))
+    payload["holds"][0]["status"] = "approved"
+    payload["holds"][0]["resolved_by"] = "operator"
+    payload["holds"][0]["github_gate_evidence_ref"] = (
+        "github_gate_evidence.json#evidence=missing"
+    )
+    _write_json(tmp_path / "final_actions.json", payload)
+    task = ReviewTask(
+        task_id="review-task-final-action",
+        lane_id="lane-final",
+        graph_id="graph-final",
+        resolution_id="res-final-action",
+        lane_prompt="Review final action lane.",
+        gate_report_ref="logs/gates/lane-final/report.json",
+        created_at="2026-06-29T01:00:00Z",
+    )
+    verdict = ReviewVerdict(
+        id="verdict-final-action",
+        lane_id="lane-final",
+        decision=ReviewDecision.MERGE,
+        status="finalized",
+        summary="Review accepted final action lane.",
+        evidence_refs=["logs/gates/lane-final/report.json"],
+        created_at="2026-06-29T01:01:00Z",
+    )
+    VerdictStore(tmp_path / "review_plane.json").save_task_and_verdict(task, verdict)
+
+    response = TestClient(create_app(tmp_path)).get(
+        f"/api/dashboard/peer-chat/conversations/{conv.id}/ux-projection"
+    )
+
+    assert response.status_code == 200
+    summary = response.json()["evidence_summary"]
+    assert summary["status"] == "blocked"
+    assert "github_gate" not in {item["kind"] for item in summary["items"]}
+    assert summary["failure_boundaries"] == [
+        {
+            "kind": "github_gate",
+            "proof_class": "failure_boundary",
+            "ref": "github_gate_evidence.json#evidence=missing",
+            "status": "blocked",
+            "producer": "github_gate_evidence.json",
+            "consumer": "natural_groupchat_evidence_summary",
+            "condition": "github_gate_evidence_ref_missing_or_invalid",
+            "proof_boundary": "github_gate_evidence_ref_boundary",
+            "next_recovery_action": "capture_exact_head_github_gate_evidence",
+        }
+    ]
+    assert summary["items"][-1] == {
+        "kind": "acceptance_spine",
+        "proof_class": "authority",
+        "ref": f"chat.db:acceptance_spines#spine={spine.spine_id}",
+        "status": "awaiting_final_action",
+        "producer": "chat.db:acceptance_spines",
+        "consumer": "natural_groupchat_evidence_summary",
+        "condition": "acceptance_spine_tracks_chain",
+        "proof_boundary": "acceptance_spine_authority_not_github_or_merge_truth",
+    }
+
+
+def test_dashboard_peer_chat_ux_projection_reports_missing_final_action_artifact(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "chat.db"
+    chat = ChatStore(db)
+    conv = chat.create_conversation("Missing final action evidence")
+    intake = chat.add_message(conv.id, "Human", "human", "@architect missing final action")
+    proposal = chat.create_proposal(
+        conversation_id=conv.id,
+        author="Architect GOD",
+        proposal_type="lane_graph",
+        content='{"summary":"Missing final action lane"}',
+        references=[intake.id],
+    )
+    spine_store = AcceptanceSpineStore(db)
+    spine_store.create_for_intake(conversation_id=conv.id, intake_message_id=intake.id)
+    spine_store.attach_proposal(
+        conversation_id=conv.id,
+        intake_message_id=intake.id,
+        proposal_id=proposal.id,
+    )
+    spine_store.attach_verdict_for_proposal(
+        proposal_id=proposal.id,
+        verdict_ref="resolution:res-missing-final",
+    )
+    spine_store.attach_review_verdict_for_resolution(
+        resolution_id="res-missing-final",
+        review_verdict_ref="review_plane.json#verdict=verdict-missing-final",
+    )
+    spine = spine_store.attach_final_action_for_review_verdict(
+        review_verdict_ref="review_plane.json#verdict=verdict-missing-final",
+        final_action_ref="final_actions.json#hold=missing-final",
+    )
+    assert spine is not None
+
+    response = TestClient(create_app(tmp_path)).get(
+        f"/api/dashboard/peer-chat/conversations/{conv.id}/ux-projection"
+    )
+
+    assert response.status_code == 200
+    summary = response.json()["evidence_summary"]
+    assert summary["status"] == "blocked"
+    assert "final_action" not in {item["kind"] for item in summary["items"]}
+    assert {
+        "kind": "final_action",
+        "proof_class": "failure_boundary",
+        "ref": "final_actions.json#hold=missing-final",
+        "status": "missing",
+        "producer": "final_actions.json",
+        "consumer": "natural_groupchat_evidence_summary",
+        "condition": "final_action_ref_unresolved",
+        "proof_boundary": "final_action_artifact_boundary",
+        "next_recovery_action": "recreate_or_relink_final_action_hold",
+    } in summary["failure_boundaries"]
 
 
 def test_dashboard_peer_chat_ux_projection_filters_non_pending_final_action_holds(

@@ -327,6 +327,8 @@ Deliver:
   review verdict, dispatch queue entry, execution proof, final action, PR,
   exact-head CI, merge commit, main CI, MemoryOS state, and frontend projection
   endpoint;
+  - current read-only summary command:
+    `uv run xmuse-evidence-summary --conversation-id <conversation_id>`;
 - clear failure boundary output when the replay stops early.
 
 Success proof:

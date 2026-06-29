@@ -25,6 +25,7 @@ xmuse-mcp-server = "xmuse.mcp_server:main"
 xmuse-platform-runner = "xmuse.platform_runner:main"
 xmuse-tui = "xmuse.tui.__main__:main"
 xmuse-tui-terminal-demo = "xmuse.tui.terminal_demo:main"
+xmuse-evidence-summary = "xmuse.evidence_summary:main"
 
 [build-system]
 requires = ["hatchling>=1.28.0"]
