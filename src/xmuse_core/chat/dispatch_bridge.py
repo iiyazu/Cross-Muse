@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from xmuse_core.chat.dispatch_queue import ChatDispatchQueueEntry, ChatDispatchQueueStore
 from xmuse_core.chat.inbox_store import ChatInboxStore
@@ -71,7 +73,11 @@ class ChatDispatchBridge:
                 return ChatDispatchBridgeOutcome(claimed=1, failed=1)
 
             inbox_item_id = self._create_dispatch_inbox_item(entry, participant)
-            await self._ingest_dispatch_handoff(entry)
+            await self._ingest_dispatch_handoff(
+                entry,
+                inbox_item_id=inbox_item_id,
+                participant=participant,
+            )
             scheduler = PeerChatScheduler(
                 db_path=self._db_path,
                 god_layer=self._god_layer,
@@ -182,15 +188,59 @@ class ChatDispatchBridge:
             raise RuntimeError("dispatch bridge inbox item is missing an id")
         return item_id
 
-    async def _ingest_dispatch_handoff(self, entry: ChatDispatchQueueEntry) -> None:
+    async def _ingest_dispatch_handoff(
+        self,
+        entry: ChatDispatchQueueEntry,
+        *,
+        inbox_item_id: str,
+        participant: Participant,
+    ) -> None:
         if self._memory_sidecar is None:
             return
-        await self._memory_sidecar.ingest_dispatch_handoff(
+        result = await self._memory_sidecar.ingest_dispatch_handoff(
             conversation_id=entry.conversation_id,
             actor_id=f"dispatch-bridge:{self._bridge_id}",
             dispatch_queue_entry_id=entry.entry_id,
             source_refs=_dispatch_source_refs(entry),
         )
+        self._record_sidecar_handoff_context(
+            entry,
+            inbox_item_id=inbox_item_id,
+            participant=participant,
+            result=result,
+        )
+
+    def _record_sidecar_handoff_context(
+        self,
+        entry: ChatDispatchQueueEntry,
+        *,
+        inbox_item_id: str,
+        participant: Participant,
+        result: dict[str, Any],
+    ) -> None:
+        try:
+            item = ChatInboxStore(self._db_path).get(inbox_item_id)
+            observed_at = time.monotonic()
+            PeerTurnLatencyTraceStore(self._db_path).record(
+                conversation_id=entry.conversation_id,
+                inbox_item_id=inbox_item_id,
+                participant_id=participant.participant_id,
+                target_role=participant.role,
+                message_created_at=item.created_at,
+                inbox_claimed_at=item.claimed_at,
+                delivery_started_at=observed_at,
+                provider_turn_started_at=observed_at,
+                first_delta_at=None,
+                writeback_at=observed_at,
+                total_latency_ms=0,
+                delivery_mode="memoryos_sidecar_dispatch_handoff",
+                degraded_reason=None,
+                supporting_context={
+                    "memoryos_sidecar": _sidecar_handoff_supporting_context(result)
+                },
+            )
+        except Exception:
+            return
 
     def _dispatch_failure_reason(self, inbox_item_id: str) -> str:
         trace_reason = self._trace_failure_reason(inbox_item_id)
@@ -346,6 +396,38 @@ def _compact_json(value: dict[str, object], *, max_chars: int = 8000) -> str:
     if len(text) <= max_chars:
         return text
     return text[: max_chars - 3] + "..."
+
+
+def _sidecar_handoff_supporting_context(result: dict[str, Any]) -> dict[str, Any]:
+    continuity_refs = _dedupe_refs(_string_items(result.get("continuity_refs")))
+    context = {
+        "status": _optional_text(result.get("status")) or "unknown",
+        "authority": _optional_text(result.get("authority")) or "memoryos_sidecar",
+        "proof_level": _optional_text(result.get("proof_level")) or "unknown",
+        "namespace_uri": _optional_text(result.get("namespace_uri")) or "unknown",
+        "degraded_reason": _optional_text(result.get("degraded_reason")),
+        "source_refs": _dedupe_refs(_string_items(result.get("source_refs"))),
+        "continuity_refs": continuity_refs,
+    }
+    continuity_attempt_ref = _optional_text(result.get("continuity_attempt_ref"))
+    if continuity_attempt_ref and not continuity_refs:
+        context["continuity_attempt_ref"] = continuity_attempt_ref
+    return context
+
+
+def _optional_text(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    clean = value.strip()
+    return clean or None
+
+
+def _string_items(value: object) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, str)]
 
 
 def _dedupe_refs(refs: list[str]) -> list[str]:

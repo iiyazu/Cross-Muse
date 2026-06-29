@@ -119,3 +119,29 @@ async def test_memory_sidecar_recall_attaches_namespace_continuity_refs() -> Non
     assert result["continuity_attempt_ref"] == (
         "memory://conversation/conv-1/context/memoryos-sidecar-attempt"
     )
+
+
+@pytest.mark.asyncio
+async def test_memory_sidecar_dispatch_handoff_records_continuity_refs() -> None:
+    memoryos = FakeMemoryOSClient()
+    sidecar = GroupchatMemorySidecar(memoryos)
+
+    result = await sidecar.ingest_dispatch_handoff(
+        conversation_id="conv-1",
+        actor_id="dispatch-bridge:test",
+        dispatch_queue_entry_id="dispatch-1",
+        source_refs=["chat_dispatch_queue:dispatch-1", "proposal:prop-1"],
+    )
+
+    assert result["status"] == "recorded"
+    assert result["proof_level"] == "contract"
+    assert result["source_refs"] == ["chat_dispatch_queue:dispatch-1", "proposal:prop-1"]
+    assert result["continuity_attempt_ref"] == (
+        "memory://conversation/conv-1/context/memoryos-sidecar-attempt"
+    )
+    assert result["continuity_refs"] == [
+        "memory://conversation/conv-1/refs/chat_dispatch_queue:dispatch-1"
+    ]
+    assert result["memory_ref"] == (
+        "memory://conversation/conv-1/refs/chat_dispatch_queue:dispatch-1"
+    )
