@@ -398,6 +398,39 @@ Success proof:
 - a durable blocker names the exact authority boundary preventing code-lane
   closure.
 
+Current proof:
+
+- status: satisfied on 2026-06-29 for the single low-risk code-lane sentinel;
+- runtime authority:
+  `.goal-runs/2026-06-29/rung3-code-lane-20260629-01`;
+- conversation: `conv_08de5942e3b24368ab7026d0728440d4`;
+- feature: `rung3_code_lane_probe_20260629_01`;
+- collaboration: `collab_be68a63eed284fcd82bf2419423162c6`;
+- proposal: `prop_bf3f0baff4c54a368c74bb6cf241dd25`;
+- resolution: `res_bee0c0e9fa774427947314cc817b3eef`;
+- dispatch:
+  `dispatch:conv_08de5942e3b24368ab7026d0728440d4:res_bee0c0e9fa774427947314cc817b3eef:execute`;
+- final-action hold: `final-495a93360bd6`, pending merge at runtime
+  closure;
+- local fullchain proof:
+  `loop_driver_artifacts/success_checks.json` all true;
+- PR proof: PR #313, head
+  `3bfefc5becf04fa2f29a716351cf708c667f6053`, exact-head CI run
+  `28358689114` success;
+- guarded merge proof: merge commit
+  `2eca37cc20a3d8d954a2e1af6462ec894d2ba96b`;
+- main CI proof: run `28358757312` success on
+  `2eca37cc20a3d8d954a2e1af6462ec894d2ba96b`;
+- review provider boundary: OpenCode was unavailable and recorded as
+  `opencode_unavailable`; review used the configured Codex review participant.
+
+Remaining boundary:
+
+- this proves one single-lane code artifact through groupchat, PR, CI, guarded
+  merge, and main CI;
+- it does not prove multi-lane scheduling, lane failure isolation, live
+  MemoryOS sidecar success, or frontend operational UX closure.
+
 ### Rung 4 - Multi-Lane / Multi-PR Harness
 
 Objective: test scheduling, dependency, failure isolation, and projection
@@ -683,15 +716,16 @@ Final report includes:
 - durable blockers and next authority boundary;
 - exact forbidden claims not made.
 
-Current final-report notes for the #294 milestone:
+Current final-report notes after the #313 milestone:
 
-- maximum verified chain: one docs-only integrated A/B/C natural groupchat run
-  reached final action, PR #294, exact-head CI, guarded merge, and main CI as
-  GitHub server facts;
-- Track A state: #294 proves the docs-sentinel control-plane path through
-  proposal/review/dispatch/execution/final-action/PR/CI/merge. The next Track A
-  work is repeatable evidence summary, durable diagnosis, then one low-risk
-  real-code lane;
+- maximum verified Track A chain: one low-risk code-lane natural groupchat run
+  reached proposal/review/dispatch/execution/gate/review verdict/final-action,
+  PR #313, exact-head CI, guarded merge, and main CI as GitHub server facts;
+- prior #294 docs-sentinel proof remains useful as the control-plane baseline,
+  but it is no longer the maximum Track A proof;
+- Track A state: the single real-code lane is closed. The next Track A work is
+  Rung 4 multi-lane/multi-PR scheduling, dependency/failure isolation, and
+  projection behavior;
 - Track B state: MemoryOS sidecar build/ingest degraded against an unavailable
   endpoint and remained non-blocking; this was degraded attempt projection, not
   live MemoryOS truth;
@@ -701,7 +735,6 @@ Current final-report notes for the #294 milestone:
 - Ray use: not the default natural groupchat route; remains optional legacy;
 - copilot/subagent audit: useful at PR-ready review, repeated boundary failure,
   or authority classification uncertainty, but output is candidate input only;
-- next authority boundary: start from `post_abc_closure_baseline`, refresh live
-  facts in Phase 0, then progress through repeatability/evidence summary,
-  durable failure taxonomy, low-risk real-code lane, multi-lane/PR,
-  MemoryOS live/degraded contract, and read-only frontend cockpit.
+- next authority boundary: start from clean `origin/main`, refresh live facts
+  in Phase 0, then progress through Rung 4 multi-lane/PR evidence, MemoryOS
+  live/degraded contract, and read-only frontend cockpit.
