@@ -454,6 +454,46 @@ Driver support:
 - the driver records run-level multi-lane success checks while preserving the
   single-lane CLI defaults used by earlier Rung 2/Rung 3 proof.
 
+Current runtime proof:
+
+- status: local runtime multi-lane proof satisfied on 2026-06-29; multi-PR
+  promotion remains the next Track A boundary;
+- runtime authority:
+  `.goal-runs/2026-06-29/rung4-multilane-runtime-20260629-01`;
+- conversation: `conv_4ee824f469e9440aa6b84eb08b7dd971`;
+- feature: `rung4_multilane_probe_20260629_01`;
+- collaboration: `collab_fb3952d6507a4ba8981cd5ec2c487c2a`;
+- proposal: `prop_0e91d365ca7842efabb1a317d2e70f50`, accepted;
+- dispatch:
+  `dispatch:conv_4ee824f469e9440aa6b84eb08b7dd971:res_f71363a69c0147a783fdd424e8b09b5f:execute`;
+- alpha lane:
+  `rung4_alpha_lane_20260629_01`, kind `docs`, target
+  `docs/xmuse/rung4-alpha-runtime-20260629-01.md`, separate worktree,
+  gate passed, review task `rtask_4376f36278774cb6a7ff004c308d28d9`,
+  finalized merge verdict
+  `verdict-merge-rtask_4376f36278774cb6a7ff004c308d28d9`, final-action
+  hold `final-311825e65368` pending;
+- beta lane:
+  `rung4_beta_lane_20260629_01`, kind `code`, target
+  `src/xmuse_core/platform/rung4_beta_sentinel.py`, separate worktree,
+  gate passed, review task `rtask_5ffeeafce1d141788177b148ef1514ee`,
+  finalized merge verdict
+  `verdict-merge-rtask_5ffeeafce1d141788177b148ef1514ee`, final-action
+  hold `final-863428f3f143` pending;
+- local fullchain proof:
+  `loop_driver_artifacts/success_checks.json` all true, including
+  `distinct_feature_ids`, `distinct_target_paths`, `distinct_worktrees`,
+  `all_isolated_artifacts_match`, `all_gates_passed`,
+  `all_review_verdicts_finalized`, and `all_final_action_holds_pending`;
+- review provider boundary: OpenCode was unavailable and recorded as
+  `opencode_unavailable`; review used the configured Codex review participant;
+- proof limitation:
+  this proves multi-lane scheduling, isolated lane worktrees, lane-specific
+  gate/review/final-action holds, and exact artifact matching. It is not yet
+  GitHub PR/CI/merge proof for each lane, lane-failure isolation proof, live
+  MemoryOS proof, frontend operator cockpit completion, or production
+  readiness.
+
 ### Rung 5 - MemoryOS Live/Degraded Contract
 
 Objective: prove both live and degraded sidecar modes without changing xmuse
@@ -726,15 +766,21 @@ Final report includes:
 - durable blockers and next authority boundary;
 - exact forbidden claims not made.
 
-Current final-report notes after the #313 milestone:
+Current final-report notes after the Rung 4 runtime milestone:
 
 - maximum verified Track A chain: one low-risk code-lane natural groupchat run
   reached proposal/review/dispatch/execution/gate/review verdict/final-action,
   PR #313, exact-head CI, guarded merge, and main CI as GitHub server facts;
+- maximum local runtime Track A shape: the Rung 4 run
+  `rung4-multilane-runtime-20260629-01` carried one accepted natural
+  groupchat proposal into two independent lane executions with distinct
+  worktrees, targets, gate reports, review tasks, finalized merge verdicts,
+  and pending final-action holds;
 - prior #294 docs-sentinel proof remains useful as the control-plane baseline,
-  but it is no longer the maximum Track A proof;
-- Track A state: the single real-code lane is closed. The next Track A work is
-  Rung 4 multi-lane/multi-PR scheduling, dependency/failure isolation, and
+  but it is no longer the maximum Track A runtime proof;
+- Track A state: the single real-code lane is closed through GitHub facts, and
+  the multi-lane runtime shape is locally proven. The next Track A work is
+  multi-PR promotion for the Rung 4 artifacts, then lane-failure isolation and
   projection behavior;
 - Track B state: MemoryOS sidecar build/ingest degraded against an unavailable
   endpoint and remained non-blocking; this was degraded attempt projection, not
