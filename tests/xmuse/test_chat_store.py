@@ -44,6 +44,36 @@ def test_accepting_proposal_creates_approved_resolution_snapshot(tmp_path: Path)
     assert resolution.version == 1
 
 
+def test_approving_accepted_proposal_returns_existing_resolution(tmp_path: Path) -> None:
+    store = ChatStore(tmp_path / "chat.db")
+    conversation = store.create_conversation(title="xmuse MVP")
+    proposal = store.create_proposal(
+        conversation_id=conversation.id,
+        author="architect-god",
+        proposal_type="lane-plan",
+        content="Split into chat, planner, execution, dashboard lanes.",
+        references=[],
+    )
+
+    first = store.approve_proposal(
+        proposal_id=proposal.id,
+        approved_by=["review"],
+        approval_mode="groupchat_review",
+        goal_summary="Build the MVP",
+    )
+    second = store.approve_proposal(
+        proposal_id=proposal.id,
+        approved_by=["review"],
+        approval_mode="groupchat_review",
+        goal_summary="Build the MVP again",
+    )
+
+    assert second.id == first.id
+    assert second.goal_summary == first.goal_summary
+    assert store.get_proposal(proposal.id).accepted_resolution_id == first.id
+    assert [resolution.id for resolution in store.list_resolutions(conversation.id)] == [first.id]
+
+
 def test_resolution_versioning_supersedes_prior_snapshot(tmp_path: Path) -> None:
     store = ChatStore(tmp_path / "chat.db")
     conversation = store.create_conversation(title="xmuse MVP")

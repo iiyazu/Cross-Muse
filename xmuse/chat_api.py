@@ -1363,6 +1363,132 @@ def _dispatch_authority_source_refs(
     )
 
 
+def approve_proposal_with_gates(
+    base_dir: Path | str,
+    proposal_id: str,
+    request: ProposalApproval,
+    *,
+    execution_worktree: Path | str | None = None,
+) -> dict[str, object]:
+    root = Path(base_dir)
+    execution_root = Path(execution_worktree) if execution_worktree is not None else REPO_ROOT
+    store = _store(root)
+    proposal = store.get_proposal(proposal_id)
+    escalation = classify_structured_proposal(
+        proposal_type=proposal.proposal_type,
+        content=proposal.content,
+        references=proposal.references,
+    )
+    content = request.content
+    feature_plan_proposal = None
+    proposal_payload: dict[str, Any] = {}
+    try:
+        loaded_payload = json.loads(escalation.normalized_content)
+    except json.JSONDecodeError:
+        loaded_payload = {}
+    if isinstance(loaded_payload, dict):
+        proposal_payload = loaded_payload
+    if escalation.normalized_proposal_type == "feature_plan":
+        _require_current_feature_plan_blueprint(
+            store,
+            conversation_id=proposal.conversation_id,
+            proposal_payload=proposal_payload,
+            references=proposal.references,
+        )
+        feature_plan_proposal = _build_feature_plan_proposal_record(
+            root,
+            proposal=proposal,
+            content=content,
+        )
+        content = _feature_plan_resolution_content(feature_plan_proposal)
+    else:
+        content = _resolution_content_for_approval(
+            proposal_type=escalation.normalized_proposal_type,
+            proposal_payload=proposal_payload,
+            approval_content=content,
+        )
+    if isinstance(content, dict):
+        content = _apply_lane_graph_review_runtime_authority(
+            root,
+            conversation_id=proposal.conversation_id,
+            proposal_type=escalation.normalized_proposal_type,
+            content=content,
+        )
+    _reject_pending_review_trigger_for_dispatchable_proposal(
+        root,
+        conversation_id=proposal.conversation_id,
+        proposal_id=proposal_id,
+        proposal_type=escalation.normalized_proposal_type,
+        references=proposal.references,
+    )
+    _enforce_groupchat_critic_gate(
+        root,
+        conversation_id=proposal.conversation_id,
+        proposal_id=proposal_id,
+        proposal_type=escalation.normalized_proposal_type,
+        references=proposal.references,
+    )
+    _enforce_collaboration_dispatch_gate(
+        root,
+        conversation_id=proposal.conversation_id,
+        proposal_id=proposal_id,
+        proposal_type=escalation.normalized_proposal_type,
+        references=proposal.references,
+    )
+    resolution = store.approve_proposal(
+        proposal_id=proposal_id,
+        approved_by=request.approved_by,
+        approval_mode=request.approval_mode.strip(),
+        goal_summary=request.goal_summary.strip(),
+        content=content,
+    )
+    if feature_plan_proposal is not None:
+        save_approved_feature_plan_artifacts(
+            feature_plan_proposal,
+            approval=FeaturePlanProposalApproval(
+                approved_by=request.approved_by,
+                approval_mode=request.approval_mode.strip(),
+                approved_at=resolution.created_at,
+            ),
+            resolution_id=resolution.id,
+            version=resolution.version,
+            feature_plans_root=root / "feature_plans",
+            graph_sets_root=root / "lane_graphs",
+            lanes_path=root / "feature_lanes.json",
+        )
+    payload = resolution.model_dump(mode="json")
+    _mark_review_trigger_read_for_approved_proposal(
+        root,
+        conversation_id=resolution.conversation_id,
+        proposal_id=proposal_id,
+    )
+    _append_resolution_read_model(root, payload)
+    produce_blueprint_approval_event(root, resolution)
+    dispatch_intent = _enqueue_structured_dispatch_intent(
+        root,
+        proposal_id=proposal_id,
+        proposal_type=escalation.normalized_proposal_type,
+        references=proposal.references,
+        resolution=resolution,
+    )
+    if dispatch_intent is not None:
+        payload["next_authority_boundary"] = _dispatch_next_authority_boundary(
+            proposal_id=proposal_id,
+            proposal_references=proposal.references,
+            resolution_id=resolution.id,
+            dispatch_intent=dispatch_intent,
+        )
+    _project_resolution_into_execution_queue(
+        root,
+        resolution,
+        execution_worktree=execution_root,
+        dispatch_intent=dispatch_intent,
+        proposal_id=proposal_id,
+        proposal_references=proposal.references,
+    )
+    return payload
+
+
 def _chat_timeline_payload(base_dir: Path, conversation_id: str) -> dict[str, Any]:
     payload = _peer_service(base_dir).list_conversation_timeline(conversation_id)
     payload = _with_execution_card_drilldown_refs(base_dir, payload)
@@ -2436,75 +2562,11 @@ def create_app(
     @app.post("/api/chat/proposals/{proposal_id}/approve")
     def approve_proposal(proposal_id: str, request: ProposalApproval) -> dict[str, object]:
         try:
-            store = _store(root)
-            proposal = store.get_proposal(proposal_id)
-            escalation = classify_structured_proposal(
-                proposal_type=proposal.proposal_type,
-                content=proposal.content,
-                references=proposal.references,
-            )
-            content = request.content
-            feature_plan_proposal = None
-            proposal_payload: dict[str, Any] = {}
-            try:
-                loaded_payload = json.loads(escalation.normalized_content)
-            except json.JSONDecodeError:
-                loaded_payload = {}
-            if isinstance(loaded_payload, dict):
-                proposal_payload = loaded_payload
-            if escalation.normalized_proposal_type == "feature_plan":
-                _require_current_feature_plan_blueprint(
-                    store,
-                    conversation_id=proposal.conversation_id,
-                    proposal_payload=proposal_payload,
-                    references=proposal.references,
-                )
-                feature_plan_proposal = _build_feature_plan_proposal_record(
-                    root,
-                    proposal=proposal,
-                    content=content,
-                )
-                content = _feature_plan_resolution_content(feature_plan_proposal)
-            else:
-                content = _resolution_content_for_approval(
-                    proposal_type=escalation.normalized_proposal_type,
-                    proposal_payload=proposal_payload,
-                    approval_content=content,
-                )
-            if isinstance(content, dict):
-                content = _apply_lane_graph_review_runtime_authority(
-                    root,
-                    conversation_id=proposal.conversation_id,
-                    proposal_type=escalation.normalized_proposal_type,
-                    content=content,
-                )
-            _reject_pending_review_trigger_for_dispatchable_proposal(
+            return approve_proposal_with_gates(
                 root,
-                conversation_id=proposal.conversation_id,
                 proposal_id=proposal_id,
-                proposal_type=escalation.normalized_proposal_type,
-                references=proposal.references,
-            )
-            _enforce_groupchat_critic_gate(
-                root,
-                conversation_id=proposal.conversation_id,
-                proposal_id=proposal_id,
-                proposal_type=escalation.normalized_proposal_type,
-                references=proposal.references,
-            )
-            _enforce_collaboration_dispatch_gate(
-                root,
-                conversation_id=proposal.conversation_id,
-                proposal_id=proposal_id,
-                proposal_type=escalation.normalized_proposal_type,
-                references=proposal.references,
-            )
-            resolution = store.approve_proposal(
-                proposal_id=proposal_id,
-                approved_by=request.approved_by,
-                approval_mode=request.approval_mode.strip(),
-                goal_summary=request.goal_summary.strip(),
-                content=content,
+                request=request,
+                execution_worktree=execution_root,
             )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="proposal not found") from exc
@@ -2513,51 +2575,6 @@ def create_app(
                 status_code=400,
                 detail={"code": exc.code, "message": exc.message},
             ) from exc
-        if feature_plan_proposal is not None:
-            save_approved_feature_plan_artifacts(
-                feature_plan_proposal,
-                approval=FeaturePlanProposalApproval(
-                    approved_by=request.approved_by,
-                    approval_mode=request.approval_mode.strip(),
-                    approved_at=resolution.created_at,
-                ),
-                resolution_id=resolution.id,
-                version=resolution.version,
-                feature_plans_root=root / "feature_plans",
-                graph_sets_root=root / "lane_graphs",
-                lanes_path=root / "feature_lanes.json",
-            )
-        payload = resolution.model_dump(mode="json")
-        _mark_review_trigger_read_for_approved_proposal(
-            root,
-            conversation_id=resolution.conversation_id,
-            proposal_id=proposal_id,
-        )
-        _append_resolution_read_model(root, payload)
-        produce_blueprint_approval_event(root, resolution)
-        dispatch_intent = _enqueue_structured_dispatch_intent(
-            root,
-            proposal_id=proposal_id,
-            proposal_type=escalation.normalized_proposal_type,
-            references=proposal.references,
-            resolution=resolution,
-        )
-        if dispatch_intent is not None:
-            payload["next_authority_boundary"] = _dispatch_next_authority_boundary(
-                proposal_id=proposal_id,
-                proposal_references=proposal.references,
-                resolution_id=resolution.id,
-                dispatch_intent=dispatch_intent,
-            )
-        _project_resolution_into_execution_queue(
-            root,
-            resolution,
-            execution_worktree=execution_root,
-            dispatch_intent=dispatch_intent,
-            proposal_id=proposal_id,
-            proposal_references=proposal.references,
-        )
-        return payload
 
     @app.get("/api/chat/proposals/{proposal_id}")
     def get_proposal(proposal_id: str) -> dict[str, object]:

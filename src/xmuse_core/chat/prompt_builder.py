@@ -268,8 +268,11 @@ def _tool_writeback_layer() -> PromptLayer:
             "creates the target inbox and callback. "
             "Then emit a lane_graph proposal with chat_emit_proposal, "
             "reply_to_inbox_item_id=xmuse_context.inbox_item.id, and a "
-            "collaboration:<run_id> reference. Human approval is still required "
-            "before dispatch. Every dispatchable lane_graph lane must include "
+            "collaboration:<run_id> reference. If you are the review GOD and "
+            "durable review and critic gates have cleared, call "
+            "chat_approve_proposal to create the approved decision and dispatch "
+            "authority; otherwise leave a durable blocker or ask for the missing "
+            "gate evidence. Every dispatchable lane_graph lane must include "
             'explicit gate_profiles, for example ["xmuse-core"] for xmuse '
             "core code paths; if you cannot choose a gate profile, write a "
             "durable blocker or open question instead of proposing dispatchable "
