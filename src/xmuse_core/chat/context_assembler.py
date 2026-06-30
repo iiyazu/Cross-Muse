@@ -670,6 +670,7 @@ def _structured_state(
                 "final_action_ref": spine.final_action_ref,
                 "github_gate_evidence_ref": spine.github_gate_evidence_ref,
                 "manual_gaps": spine.manual_gaps,
+                "blocked_reason": spine.blocked_reason,
             }
             for spine in spines[-8:]
         ],
