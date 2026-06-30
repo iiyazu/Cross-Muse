@@ -662,3 +662,54 @@ def test_group_chat_context_projects_structured_state_from_chat_authorities(
     assert state["acceptance_spines"][0]["review_or_execute_verdict_ref"] == (
         f"resolution:{resolution.id}"
     )
+
+
+def test_group_chat_context_projects_acceptance_spine_blocked_reason(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "chat.db"
+    chat = ChatStore(db_path)
+    conversation = chat.create_conversation("Blocked spine context")
+    participants = ParticipantStore(db_path)
+    demand = chat.add_message(
+        conversation.id,
+        author="human",
+        role="user",
+        content="@architect propose a bounded lane.",
+        mentions=["@architect"],
+    )
+    proposal = chat.create_proposal(
+        conversation_id=conversation.id,
+        author="part_architect",
+        proposal_type="lane_graph",
+        content='{"type":"lane_graph","lanes":[]}',
+        references=[f"message:{demand.id}"],
+    )
+    spine_store = AcceptanceSpineStore(db_path)
+    spine_store.create_for_intake(
+        conversation_id=conversation.id,
+        intake_message_id=demand.id,
+    )
+    spine_store.attach_proposal(
+        conversation_id=conversation.id,
+        intake_message_id=demand.id,
+        proposal_id=proposal.id,
+    )
+    spine_store.attach_review_blocker_for_proposal(
+        proposal_id=proposal.id,
+        blocker_ref="groupchat_critic_verdict:msg-critic-blocked",
+        blocked_reason="proposal_critic_blocked",
+    )
+
+    context = ContextAssembler(
+        participants=participants,
+        chat=chat,
+        db_path=db_path,
+    ).group_chat_context(conversation.id)
+
+    spine = context["structured_state"]["acceptance_spines"][0]
+    assert spine["status"] == "blocked"
+    assert spine["review_or_execute_verdict_ref"] == (
+        "groupchat_critic_verdict:msg-critic-blocked"
+    )
+    assert spine["blocked_reason"] == "proposal_critic_blocked"
