@@ -535,7 +535,21 @@ def test_dashboard_peer_chat_ux_projection_is_frontend_read_model(
     ]
     assert "recall body" not in json.dumps(supporting_context)
     assert payload["closure_evidence"]["total"] == 1
-    assert payload["closure_evidence"]["items"][0]["proposal_id"] == proposal.id
+    closure_item = payload["closure_evidence"]["items"][0]
+    assert closure_item["proposal_id"] == proposal.id
+    assert closure_item["source_refs"] == [
+        f"chat.db:acceptance_spines#spine={closure_item['spine_id']}",
+        f"message:{message.id}",
+        f"proposal:{proposal.id}",
+        message.id,
+        "artifact:ux-plan",
+        f"chat_dispatch_queue:{dispatch.entry_id}",
+        "collaboration:frontend-gate",
+        "review_trigger_verdict:frontend-review",
+        "resolution:resolution-ux",
+        f"collaboration:{run.run_id}",
+        "artifact:ux-lane-graph",
+    ]
 
 
 def test_dashboard_peer_chat_ux_projection_exposes_pending_final_action_hold(

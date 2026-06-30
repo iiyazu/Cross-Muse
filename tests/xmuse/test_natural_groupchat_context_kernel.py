@@ -670,6 +670,16 @@ def test_group_chat_context_projects_structured_state_from_chat_authorities(
     assert state["acceptance_spines"][0]["review_or_execute_verdict_ref"] == (
         f"resolution:{resolution.id}"
     )
+    assert state["acceptance_spines"][0]["source_refs"] == [
+        "chat.db:acceptance_spines#spine="
+        f"{AcceptanceSpineStore(db_path).get_by_intake_message(demand.id).spine_id}",
+        f"message:{demand.id}",
+        f"proposal:{proposal.id}",
+        "groupchat_worklist:structured-state",
+        f"resolution:{resolution.id}",
+        f"chat_dispatch_queue:{dispatch.entry_id}",
+        f"collaboration:{collaboration.run_id}",
+    ]
 
 
 def test_group_chat_context_projects_acceptance_spine_blocked_reason(

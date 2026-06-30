@@ -553,6 +553,13 @@ def _structured_state(
         limit=10,
     )
     proposals_by_id = {proposal.id: proposal for proposal in proposals}
+    dispatch_source_refs_by_id = {
+        entry.entry_id: _dispatch_source_refs(
+            entry,
+            proposal_refs=_proposal_source_refs(entry.proposal_id, proposals_by_id),
+        )
+        for entry in dispatch_entries
+    }
     spines = AcceptanceSpineStore(db_path).list_by_conversation(conversation_id)
     worklist = _groupchat_worklist_state(conversation_id=conversation_id, db_path=db_path)
     open_inbox = [item for item in inbox_items if item.status in {"unread", "claimed"}]
@@ -656,10 +663,7 @@ def _structured_state(
                 "proposal_id": entry.proposal_id,
                 "resolution_id": entry.resolution_id,
                 "gate_refs": list(entry.gate_refs),
-                "source_refs": _dispatch_source_refs(
-                    entry,
-                    proposal_refs=_proposal_source_refs(entry.proposal_id, proposals_by_id),
-                ),
+                "source_refs": dispatch_source_refs_by_id.get(entry.entry_id, []),
                 "dispatch_policy": entry.dispatch_policy,
             }
             for entry in dispatch_entries
@@ -676,7 +680,11 @@ def _structured_state(
                 "github_gate_evidence_ref": spine.github_gate_evidence_ref,
                 "manual_gaps": spine.manual_gaps,
                 "blocked_reason": spine.blocked_reason,
-                "source_refs": _acceptance_spine_source_refs(spine),
+                "source_refs": _acceptance_spine_source_refs(
+                    spine,
+                    proposal_refs=_proposal_source_refs(spine.proposal_id, proposals_by_id),
+                    dispatch_refs=dispatch_source_refs_by_id.get(spine.dispatch_item_id, []),
+                ),
             }
             for spine in spines[-8:]
         ],
@@ -710,19 +718,26 @@ def _proposal_source_refs(proposal_id: str | None, proposals_by_id: dict[str, An
     return [ref for ref in proposal.references if isinstance(ref, str) and ref.strip()]
 
 
-def _acceptance_spine_source_refs(spine: Any) -> list[str]:
+def _acceptance_spine_source_refs(
+    spine: Any,
+    *,
+    proposal_refs: list[str] | None = None,
+    dispatch_refs: list[str] | None = None,
+) -> list[str]:
     refs = [
         f"chat.db:acceptance_spines#spine={spine.spine_id}",
         f"message:{spine.intake_message_id}",
     ]
     if spine.proposal_id:
         refs.append(f"proposal:{spine.proposal_id}")
+    refs.extend(proposal_refs or [])
     if spine.review_trigger_inbox_id:
         refs.append(f"inbox:{spine.review_trigger_inbox_id}")
     if spine.review_or_execute_verdict_ref:
         refs.append(spine.review_or_execute_verdict_ref)
     if spine.dispatch_item_id:
         refs.append(f"chat_dispatch_queue:{spine.dispatch_item_id}")
+    refs.extend(dispatch_refs or [])
     refs.extend(spine.execution_evidence_refs)
     if spine.review_verdict_ref:
         refs.append(spine.review_verdict_ref)
