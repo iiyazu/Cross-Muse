@@ -2543,13 +2543,19 @@ class PeerChatService:
             )
         except GroupchatCriticVerdictError:
             return
-        if verdict != "blocked":
-            return
-        AcceptanceSpineStore(self._db_path).attach_review_blocker_for_proposal(
-            proposal_id=clean_proposal_id,
-            blocker_ref=f"groupchat_critic_verdict:{message_id}",
-            blocked_reason="proposal_critic_blocked",
-        )
+        verdict_ref = f"groupchat_critic_verdict:{message_id}"
+        spine = AcceptanceSpineStore(self._db_path)
+        if verdict == "blocked":
+            spine.attach_review_blocker_for_proposal(
+                proposal_id=clean_proposal_id,
+                blocker_ref=verdict_ref,
+                blocked_reason="proposal_critic_blocked",
+            )
+        elif verdict == "clearance":
+            spine.attach_verdict_for_proposal(
+                proposal_id=clean_proposal_id,
+                verdict_ref=verdict_ref,
+            )
 
     def _review_closure_resolution_id(
         self,
