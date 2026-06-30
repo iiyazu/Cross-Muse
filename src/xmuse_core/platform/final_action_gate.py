@@ -239,7 +239,7 @@ class FinalActionGateStore:
         if not chat_db_path.exists():
             return
         final_action_ref = f"{self._path.name}#hold={action.id}"
-        spine_ref = f"chat.db#acceptance_spine={spine.spine_id}"
+        spine_ref = f"chat.db:acceptance_spines#spine={spine.spine_id}"
         source_refs = _final_action_source_refs(
             final_action_ref=final_action_ref,
             spine_ref=spine_ref,
