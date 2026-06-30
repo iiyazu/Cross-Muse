@@ -713,3 +713,9 @@ def test_group_chat_context_projects_acceptance_spine_blocked_reason(
         "groupchat_critic_verdict:msg-critic-blocked"
     )
     assert spine["blocked_reason"] == "proposal_critic_blocked"
+    assert spine["source_refs"] == [
+        f"chat.db:acceptance_spines#spine={spine_store.get_by_intake_message(demand.id).spine_id}",
+        f"message:{demand.id}",
+        f"proposal:{proposal.id}",
+        "groupchat_critic_verdict:msg-critic-blocked",
+    ]
