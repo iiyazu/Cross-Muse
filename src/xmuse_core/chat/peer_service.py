@@ -3171,11 +3171,19 @@ class PeerChatService:
         if inbox_item.item_type != "groupchat_route":
             return proposal_references
         payload = inbox_item.payload
+        seen = set(proposal_references)
+        for raw_ref in payload.get("source_refs") or []:
+            if not isinstance(raw_ref, str) or not raw_ref.strip():
+                continue
+            ref = raw_ref.strip()
+            if ref in seen:
+                continue
+            proposal_references.append(ref)
+            seen.add(ref)
         groupchat_refs = [
             ("groupchat_chain", payload.get("groupchat_chain_id")),
             ("groupchat_worklist", payload.get("groupchat_worklist_item_id")),
         ]
-        seen = set(proposal_references)
         for prefix, raw_value in groupchat_refs:
             if not isinstance(raw_value, str) or not raw_value:
                 continue

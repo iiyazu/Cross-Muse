@@ -241,6 +241,26 @@ def test_groupchat_proposal_emitted_from_worklist_inbox_carries_source_refs(tmp_
         content="Discuss and propose the next groupchat decision boundary.",
         client_request_id="groupchat-a2-source-ref-intake",
     )
+    source = ChatStore(db).add_message(
+        conversation_id=conversation_id,
+        author="execute",
+        role="assistant",
+        content="DISPATCH_ACKNOWLEDGED dispatch-a",
+        envelope_type="dispatch_result",
+        envelope_json={
+            "type": "dispatch_result",
+            "authority": "chat.db/messages/dispatch_result",
+            "dispatch_queue_entry_id": "dispatch-a",
+            "proposal_id": "proposal-a",
+            "resolution_id": "resolution-a",
+            "source_refs": [
+                "chat_dispatch_queue:dispatch-a",
+                "proposal:proposal-a",
+                "resolution:resolution-a",
+            ],
+            "proof_boundary": "dispatch_acknowledgement_not_execution_proof",
+        },
+    )
     store = GroupchatWorklistStore(db)
     chain = store.create_chain(
         conversation_id=conversation_id,
@@ -248,10 +268,10 @@ def test_groupchat_proposal_emitted_from_worklist_inbox_carries_source_refs(tmp_
     )
     item = store.enqueue_route(
         chain_id=chain.chain_id,
-        source_message_id=intake.message.id,
+        source_message_id=source.id,
         target_participant_id=participants["architect"]["participant_id"],
-        route_kind="router",
-        depth=0,
+        route_kind="handoff",
+        depth=1,
     )
     linked = GroupchatWorklistScheduler(
         db_path=db,
@@ -281,6 +301,10 @@ def test_groupchat_proposal_emitted_from_worklist_inbox_carries_source_refs(tmp_
 
     expected_refs = {
         f"intake_message:{intake.message.id}",
+        f"chat:message:{source.id}",
+        "chat_dispatch_queue:dispatch-a",
+        "proposal:proposal-a",
+        "resolution:resolution-a",
         f"groupchat_chain:{chain.chain_id}",
         f"groupchat_worklist:{item.item_id}",
     }
