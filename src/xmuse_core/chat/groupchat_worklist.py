@@ -1532,6 +1532,7 @@ class GroupchatWorklistStore:
             "groupchat_worklist_item_id": item["item_id"],
             "route_kind": item["route_kind"],
             "depth": item["depth"],
+            "source_refs": self._linked_inbox_source_refs(conn, item=item),
         }
         policy_warning = self._policy_warning_for_item(conn, item=item)
         if policy_warning is not None:
@@ -1565,6 +1566,48 @@ class GroupchatWorklistStore:
             ),
         )
         return inbox_item_id
+
+    def _linked_inbox_source_refs(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        item: sqlite3.Row,
+    ) -> list[str]:
+        refs = [f"chat:message:{item['source_message_id']}"]
+        source = conn.execute(
+            "select envelope_json from messages where id = ?",
+            (item["source_message_id"],),
+        ).fetchone()
+        if source is not None:
+            envelope = self._message_envelope(source)
+            refs.extend(_string_items(envelope.get("source_refs")))
+            refs.extend(self._envelope_authority_refs(envelope))
+        refs.append(f"groupchat_chain:{item['chain_id']}")
+        refs.append(f"groupchat_worklist:{item['item_id']}")
+        return _dedupe_text(refs)
+
+    def _envelope_authority_refs(self, envelope: dict) -> list[str]:
+        refs = []
+        for key, prefix in (
+            ("dispatch_queue_entry_id", "chat_dispatch_queue"),
+            ("proposal_id", "proposal"),
+            ("resolution_id", "resolution"),
+            ("collaboration_run_id", "collaboration"),
+        ):
+            value = _optional_text(envelope.get(key))
+            if value:
+                refs.append(f"{prefix}:{value}")
+        for key in (
+            "artifact_ref",
+            "acceptance_spine_ref",
+            "final_action_ref",
+            "github_gate_evidence_ref",
+            "github_gate_gap_ref",
+        ):
+            value = _optional_text(envelope.get(key))
+            if value:
+                refs.append(value)
+        return refs
 
     def _policy_warning_for_item(
         self,
