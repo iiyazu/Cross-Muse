@@ -166,6 +166,7 @@ MCP_TOOL_PERMISSIONS: dict[str, McpToolPermission] = {
     "chat_mark_inbox": _identity_chat(mutates=True),
     "chat_mention": _identity_chat(mutates=True),
     "chat_emit_proposal": _identity_chat(mutates=True),
+    "chat_approve_proposal": _identity_chat(mutates=True),
     "chat_create_collaboration_request": _identity_chat(mutates=True),
     "chat_record_collaboration_response": _identity_chat(mutates=True),
     "chat_raise_collaboration_blocker": _identity_chat(mutates=True),

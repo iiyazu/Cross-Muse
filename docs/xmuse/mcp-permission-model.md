@@ -66,6 +66,7 @@ limiting.
 | chat_mark_inbox | identity_bound_god | true | god_session | chat_identity_idempotency | conversation_participant_session |
 | chat_mention | identity_bound_god | true | god_session | chat_identity_idempotency | conversation_participant_session |
 | chat_emit_proposal | identity_bound_god | true | god_session | chat_identity_idempotency | conversation_participant_session |
+| chat_approve_proposal | identity_bound_god | true | god_session | chat_identity_idempotency | conversation_participant_session |
 | chat_create_collaboration_request | identity_bound_god | true | god_session | chat_identity_idempotency | conversation_participant_session |
 | chat_record_collaboration_response | identity_bound_god | true | god_session | chat_identity_idempotency | conversation_participant_session |
 | chat_raise_collaboration_blocker | identity_bound_god | true | god_session | chat_identity_idempotency | conversation_participant_session |

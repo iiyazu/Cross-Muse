@@ -426,7 +426,10 @@ async def test_scheduler_claims_and_nudges_oldest_item(tmp_path: Path) -> None:
     assert '"execution_performed":false' in layer.sent[0][2]
     assert '"evidence_refs":["<ref>"]' in layer.sent[0][2]
     assert "verdict=feasible do not satisfy dispatch" in layer.sent[0][2]
-    assert "Human approval is still required before dispatch" in layer.sent[0][2]
+    assert "durable review and critic gates have cleared" in layer.sent[0][2]
+    assert "chat_approve_proposal to create the approved decision and dispatch authority" in (
+        layer.sent[0][2]
+    )
 
     assert "Only if MCP tools are unavailable" in layer.sent[0][2]
     assert "This is a group chat" in layer.sent[0][2]

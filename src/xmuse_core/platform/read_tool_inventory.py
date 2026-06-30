@@ -135,6 +135,7 @@ _AUDIT_GUARD_REQUIRED_TOOL_NAMES = {
 }
 
 _CHAT_IDENTITY_IDEMPOTENCY_TOOL_NAMES = {
+    "chat_approve_proposal",
     "chat_create_conversation",
     "chat_create_collaboration_request",
     "chat_emit_blueprint_proposal",
