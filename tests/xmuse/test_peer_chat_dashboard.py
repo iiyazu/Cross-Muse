@@ -556,6 +556,16 @@ def test_dashboard_peer_chat_ux_projection_exposes_pending_final_action_hold(
     tmp_path: Path,
 ) -> None:
     conv, hold, spine = _create_final_action_projection_fixture(tmp_path)
+    expected_source_refs = [
+        f"final_actions.json#hold={hold.id}",
+        f"chat.db:acceptance_spines#spine={spine.spine_id}",
+        f"message:{spine.intake_message_id}",
+        f"proposal:{spine.proposal_id}",
+        spine.intake_message_id,
+        "resolution:res-final-action",
+        "lane_graph:res-final-action-graph-v1",
+        "review_plane.json#verdict=verdict-final-action",
+    ]
 
     response = TestClient(create_app(tmp_path)).get(
         f"/api/dashboard/peer-chat/conversations/{conv.id}/ux-projection"
@@ -581,11 +591,7 @@ def test_dashboard_peer_chat_ux_projection_exposes_pending_final_action_hold(
                 "resolved_by": None,
                 "github_gate_evidence_ref": None,
                 "github_gate_gap_ref": None,
-                "source_refs": [
-                    f"final_actions.json#hold={hold.id}",
-                    "review_plane.json#verdict=verdict-final-action",
-                    f"chat.db:acceptance_spines#spine={spine.spine_id}",
-                ],
+                "source_refs": expected_source_refs,
                 "authority_boundary": {
                     "producer": "final_actions.json",
                     "consumer": "frontend.peer_chat_ux_projection",
@@ -606,11 +612,7 @@ def test_dashboard_peer_chat_ux_projection_exposes_pending_final_action_hold(
         "next_action": "verify_github_gate_and_resolve_final_action",
         "detail_kind": "final_action_hold",
         "detail_api_href": f"/api/dashboard/peer-chat/conversations/{conv.id}/inspector",
-        "source_refs": [
-            f"final_actions.json#hold={hold.id}",
-            "review_plane.json#verdict=verdict-final-action",
-            f"chat.db:acceptance_spines#spine={spine.spine_id}",
-        ],
+        "source_refs": expected_source_refs,
         "compact_detail": {
             "action": "merge",
             "lane_id": "lane-final",
@@ -2351,9 +2353,16 @@ def test_dashboard_peer_chat_ux_projection_keeps_github_refs_out_of_hold_source_
     assert projected["github_gate_gap_ref"] == "github_gate_evidence.json#evidence=gap"
     assert projected["source_refs"] == [
         f"final_actions.json#hold={hold.id}",
-        "review_plane.json#verdict=verdict-final-action",
         f"chat.db:acceptance_spines#spine={spine.spine_id}",
+        f"message:{spine.intake_message_id}",
+        f"proposal:{spine.proposal_id}",
+        spine.intake_message_id,
+        "resolution:res-final-action",
+        "lane_graph:res-final-action-graph-v1",
+        "review_plane.json#verdict=verdict-final-action",
     ]
+    assert "github_gate_evidence.json#evidence=accepted" not in projected["source_refs"]
+    assert "github_gate_evidence.json#evidence=gap" not in projected["source_refs"]
     worklist_item = next(item for item in response.json()["worklist"] if item["id"] == hold.id)
     assert worklist_item["source_refs"] == projected["source_refs"]
     assert worklist_item["compact_detail"]["github_gate_evidence_ref"] == (

@@ -2498,6 +2498,11 @@ def _final_action_source_refs(
     lane: dict[str, Any] | None = None,
 ) -> list[str]:
     refs = [f"final_actions.json#hold={hold_id}"]
+    refs.extend(_string_items(hold.get("source_refs")))
+    if spine is not None:
+        refs.extend(_string_items(spine.get("source_refs")))
+    if lane is not None:
+        refs.extend(_string_items(lane.get("source_refs")))
     verdict_ref = spine.get("review_verdict_ref") if spine is not None else None
     if isinstance(verdict_ref, str) and verdict_ref:
         refs.append(verdict_ref)
