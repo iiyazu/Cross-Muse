@@ -307,9 +307,12 @@ def test_final_action_approval_without_github_evidence_keeps_spine_blocked(
     assert writeback.envelope_json["status"] == "blocked"
     assert writeback.envelope_json["github_gate_evidence_ref"] is None
     assert writeback.envelope_json["github_gate_gap_ref"] == "github_gate_unverified"
+    assert writeback.envelope_json["acceptance_spine_ref"] == (
+        f"chat.db:acceptance_spines#spine={spine.spine_id}"
+    )
     assert writeback.envelope_json["source_refs"] == [
         f"final_actions.json#hold={hold.id}",
-        f"chat.db#acceptance_spine={spine.spine_id}",
+        f"chat.db:acceptance_spines#spine={spine.spine_id}",
         f"message:{intake_message_id}",
         f"proposal:{spine.proposal_id}",
         spine.review_or_execute_verdict_ref,
@@ -463,9 +466,12 @@ def test_final_action_approval_with_server_gate_producer_accepts_spine(
         "conclusion": "success",
         "url": "https://github.com/iiyazu/Cross-Muse/actions/runs/333",
     }
+    assert writeback.envelope_json["acceptance_spine_ref"] == (
+        f"chat.db:acceptance_spines#spine={spine.spine_id}"
+    )
     assert writeback.envelope_json["source_refs"] == [
         f"final_actions.json#hold={hold.id}",
-        f"chat.db#acceptance_spine={spine.spine_id}",
+        f"chat.db:acceptance_spines#spine={spine.spine_id}",
         f"message:{intake_message_id}",
         f"proposal:{spine.proposal_id}",
         spine.review_or_execute_verdict_ref,
@@ -520,7 +526,7 @@ def test_final_action_writeback_preserves_spine_execution_lineage_refs(
     ][0]
     assert writeback.envelope_json["source_refs"] == [
         f"final_actions.json#hold={hold.id}",
-        f"chat.db#acceptance_spine={accepted_spine.spine_id}",
+        f"chat.db:acceptance_spines#spine={accepted_spine.spine_id}",
         f"message:{intake_message_id}",
         f"proposal:{accepted_spine.proposal_id}",
         accepted_spine.review_or_execute_verdict_ref,

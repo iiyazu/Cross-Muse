@@ -111,7 +111,7 @@ def _acceptance_spine_for_dispatch(
         proposal_id=proposal_id,
         dispatch_item_id=dispatch_item_id,
     )
-    return f"chat.db#acceptance_spine={spine.spine_id}"
+    return f"chat.db:acceptance_spines#spine={spine.spine_id}"
 
 
 def test_groupchat_worklist_claims_links_and_completes_from_durable_writeback(tmp_path):
