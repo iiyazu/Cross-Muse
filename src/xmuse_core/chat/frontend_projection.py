@@ -50,7 +50,12 @@ def build_peer_chat_ux_projection(
         dispatch_entries = _dispatch_entries(conn, conversation_id, proposals=proposals)
         collaboration_runs = _collaboration_runs(conn, conversation_id)
         blockers = _blockers(conn, conversation_id)
-        closure_evidence = _closure_evidence(conn, conversation_id)
+        closure_evidence = _closure_evidence(
+            conn,
+            conversation_id,
+            proposals=proposals,
+            dispatch_entries=dispatch_entries,
+        )
         supporting_context = _supporting_context(conn, conversation_id)
     sessions = _conversation_sessions(root, conversation_id)
     conversation_lanes = _conversation_lanes(root, conversation_id)
@@ -433,7 +438,13 @@ def _blockers(conn: sqlite3.Connection, conversation_id: str) -> list[dict[str, 
     ]
 
 
-def _closure_evidence(conn: sqlite3.Connection, conversation_id: str) -> dict[str, Any]:
+def _closure_evidence(
+    conn: sqlite3.Connection,
+    conversation_id: str,
+    *,
+    proposals: list[dict[str, Any]],
+    dispatch_entries: list[dict[str, Any]],
+) -> dict[str, Any]:
     rows = _fetch_all(
         conn,
         """
@@ -451,16 +462,32 @@ def _closure_evidence(conn: sqlite3.Connection, conversation_id: str) -> dict[st
     )
     items = []
     status_summary: dict[str, int] = {}
+    proposals_by_id = {
+        proposal["id"]: proposal
+        for proposal in proposals
+        if isinstance(proposal.get("id"), str)
+    }
+    dispatch_by_id = {
+        entry["entry_id"]: entry
+        for entry in dispatch_entries
+        if isinstance(entry.get("entry_id"), str)
+    }
     for row in rows:
         status = str(row["status"] or "unknown")
         status_summary[status] = status_summary.get(status, 0) + 1
-        items.append(
-            {
-                **dict(row),
-                "execution_evidence_refs": _json_list(row["execution_evidence_refs_json"]),
-                "manual_gaps": _json_list(row["manual_gaps_json"]),
-            }
+        item = {
+            **dict(row),
+            "execution_evidence_refs": _json_list(row["execution_evidence_refs_json"]),
+            "manual_gaps": _json_list(row["manual_gaps_json"]),
+        }
+        item["source_refs"] = _acceptance_spine_source_refs(
+            item,
+            proposal_refs=_proposal_source_refs(item.get("proposal_id"), proposals_by_id),
+            dispatch_refs=_string_items(
+                dispatch_by_id.get(str(item.get("dispatch_item_id")), {}).get("source_refs")
+            ),
         )
+        items.append(item)
     return {
         "source_authority": "chat.db.acceptance_spines",
         "total": len(items),
@@ -2346,6 +2373,46 @@ def _proposal_source_refs(
     if proposal is None:
         return []
     return _string_items(proposal.get("references"))
+
+
+def _acceptance_spine_source_refs(
+    item: dict[str, Any],
+    *,
+    proposal_refs: list[str] | None = None,
+    dispatch_refs: list[str] | None = None,
+) -> list[str]:
+    refs = []
+    spine_id = item.get("spine_id")
+    if isinstance(spine_id, str) and spine_id:
+        refs.append(f"chat.db:acceptance_spines#spine={spine_id}")
+    intake_message_id = item.get("intake_message_id")
+    if isinstance(intake_message_id, str) and intake_message_id:
+        refs.append(f"message:{intake_message_id}")
+    proposal_id = item.get("proposal_id")
+    if isinstance(proposal_id, str) and proposal_id:
+        refs.append(f"proposal:{proposal_id}")
+    refs.extend(proposal_refs or [])
+    review_trigger_inbox_id = item.get("review_trigger_inbox_id")
+    if isinstance(review_trigger_inbox_id, str) and review_trigger_inbox_id:
+        refs.append(f"inbox:{review_trigger_inbox_id}")
+    review_or_execute_verdict_ref = item.get("review_or_execute_verdict_ref")
+    if isinstance(review_or_execute_verdict_ref, str) and review_or_execute_verdict_ref:
+        refs.append(review_or_execute_verdict_ref)
+    dispatch_item_id = item.get("dispatch_item_id")
+    if isinstance(dispatch_item_id, str) and dispatch_item_id:
+        refs.append(f"chat_dispatch_queue:{dispatch_item_id}")
+    refs.extend(dispatch_refs or [])
+    refs.extend(_string_items(item.get("execution_evidence_refs")))
+    review_verdict_ref = item.get("review_verdict_ref")
+    if isinstance(review_verdict_ref, str) and review_verdict_ref:
+        refs.append(review_verdict_ref)
+    final_action_ref = item.get("final_action_ref")
+    if isinstance(final_action_ref, str) and final_action_ref:
+        refs.append(final_action_ref)
+    github_gate_evidence_ref = item.get("github_gate_evidence_ref")
+    if isinstance(github_gate_evidence_ref, str) and github_gate_evidence_ref:
+        refs.append(github_gate_evidence_ref)
+    return _dedupe(refs)
 
 
 def _dispatch_authority_boundary() -> dict[str, str]:
