@@ -665,6 +665,7 @@ def _structured_state(
                 "status": spine.status.value,
                 "proposal_id": spine.proposal_id,
                 "review_trigger_inbox_id": spine.review_trigger_inbox_id,
+                "review_or_execute_verdict_ref": spine.review_or_execute_verdict_ref,
                 "dispatch_item_id": spine.dispatch_item_id,
                 "final_action_ref": spine.final_action_ref,
                 "github_gate_evidence_ref": spine.github_gate_evidence_ref,
