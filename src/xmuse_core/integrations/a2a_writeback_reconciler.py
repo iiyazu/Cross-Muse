@@ -63,7 +63,12 @@ class A2AProviderWritebackReconciler:
                 "missing_a2a_diagnostic_payload",
                 provider_result.request_id,
             )
-        source_refs = _source_refs(provider_result, diagnostic)
+        source_refs = self._source_refs_with_linked_groupchat_route(
+            conversation_id=conversation_id,
+            participant_id=participant_id,
+            reply_to_inbox_item_id=reply_to_inbox_item_id,
+            source_refs=_source_refs(provider_result, diagnostic),
+        )
         content = _content(provider_result, diagnostic)
         review_verdict = self._review_trigger_verdict(
             conversation_id=conversation_id,
@@ -587,6 +592,38 @@ class A2AProviderWritebackReconciler:
                 }
             )
         return {"inbox_items": inbox_items}
+
+    def _source_refs_with_linked_groupchat_route(
+        self,
+        *,
+        conversation_id: str,
+        participant_id: str,
+        reply_to_inbox_item_id: str,
+        source_refs: list[str],
+    ) -> list[str]:
+        try:
+            inbox_item = ChatInboxStore(self._db_path).get(reply_to_inbox_item_id)
+        except KeyError:
+            return source_refs
+        if (
+            inbox_item.conversation_id != conversation_id
+            or inbox_item.target_participant_id != participant_id
+            or inbox_item.item_type != "groupchat_route"
+        ):
+            return source_refs
+        payload = inbox_item.payload
+        groupchat_source_refs = payload.get("source_refs")
+        refs = [*source_refs]
+        if isinstance(groupchat_source_refs, list):
+            refs.extend(str(item) for item in groupchat_source_refs if str(item).strip())
+        for prefix, key in (
+            ("groupchat_chain", "groupchat_chain_id"),
+            ("groupchat_worklist", "groupchat_worklist_item_id"),
+        ):
+            raw_value = payload.get(key)
+            if isinstance(raw_value, str) and raw_value.strip():
+                refs.append(f"{prefix}:{raw_value.strip()}")
+        return _dedupe_refs(refs)
 
 
 def _source_refs(
