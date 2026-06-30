@@ -92,6 +92,7 @@ def test_codex_provider_adapter_builds_compatibility_command_from_invocation(
     assert adapter.build_command_for_invocation(invocation) == [
         "codex",
         "exec",
+        "--ignore-user-config",
         "-m",
         "gpt-5.4",
         "--dangerously-bypass-approvals-and-sandbox",
@@ -149,10 +150,11 @@ def test_codex_provider_adapter_builds_resume_command_from_active_binding(
         provider_session_binding=_provider_session_binding(worktree=str(tmp_path)),
     )
 
-    assert command[:4] == [
+    assert command[:5] == [
         "codex",
         "exec",
         "resume",
+        "--ignore-user-config",
         "codex-session-11111111-2222-3333-4444-555555555555",
     ]
     assert command[-2:] == ["-C", str(tmp_path)]
@@ -176,10 +178,11 @@ def test_runner_provider_service_builds_codex_resume_command_from_explicit_bindi
         provider_session_binding=_provider_session_binding(worktree=str(tmp_path)),
     )
 
-    assert command[:4] == [
+    assert command[:5] == [
         "codex",
         "exec",
         "resume",
+        "--ignore-user-config",
         "codex-session-11111111-2222-3333-4444-555555555555",
     ]
     assert command[-2:] == ["-C", str(tmp_path)]
@@ -206,10 +209,11 @@ def test_runner_provider_service_builds_codex_review_resume_command_from_explici
         ),
     )
 
-    assert command[:4] == [
+    assert command[:5] == [
         "codex",
         "exec",
         "resume",
+        "--ignore-user-config",
         "codex-session-11111111-2222-3333-4444-555555555555",
     ]
     assert command[-2:] == ["-C", str(tmp_path)]
@@ -297,6 +301,7 @@ def test_codex_provider_adapter_builds_explicit_resume_command(tmp_path: Path) -
         "codex",
         "exec",
         "resume",
+        "--ignore-user-config",
         "codex-session-11111111-2222-3333-4444-555555555555",
         "-m",
         "gpt-5.4",

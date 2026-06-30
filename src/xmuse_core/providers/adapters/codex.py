@@ -146,6 +146,7 @@ class CodexProviderAdapter:
         return [
             self.codex_command,
             "exec",
+            "--ignore-user-config",
             "-m",
             self.profile.model_id,
             "--dangerously-bypass-approvals-and-sandbox",
@@ -175,6 +176,7 @@ class CodexProviderAdapter:
             self.codex_command,
             "exec",
             "resume",
+            "--ignore-user-config",
             cleaned_session_id,
             "-m",
             self.profile.model_id,

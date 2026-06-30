@@ -573,6 +573,7 @@ def _codex_command(config: RunnerConfig) -> list[str]:
     return [
         "codex",
         "exec",
+        "--ignore-user-config",
         "-m",
         config.model,
         "--dangerously-bypass-approvals-and-sandbox",
