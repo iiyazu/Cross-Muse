@@ -659,3 +659,6 @@ def test_group_chat_context_projects_structured_state_from_chat_authorities(
     assert state["dispatch_queue"][0]["entry_id"] == dispatch.entry_id
     assert state["dispatch_queue"][0]["gate_refs"] == [f"collaboration:{collaboration.run_id}"]
     assert state["acceptance_spines"][0]["proposal_id"] == proposal.id
+    assert state["acceptance_spines"][0]["review_or_execute_verdict_ref"] == (
+        f"resolution:{resolution.id}"
+    )
