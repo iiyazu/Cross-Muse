@@ -477,6 +477,8 @@ def test_dashboard_peer_chat_ux_projection_is_frontend_read_model(
     expected_dispatch_refs = [
         f"chat_dispatch_queue:{dispatch.entry_id}",
         f"proposal:{proposal.id}",
+        message.id,
+        "artifact:ux-plan",
         "collaboration:frontend-gate",
         "review_trigger_verdict:frontend-review",
         "resolution:resolution-ux",

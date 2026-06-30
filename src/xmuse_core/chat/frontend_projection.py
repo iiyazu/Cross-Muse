@@ -47,7 +47,7 @@ def build_peer_chat_ux_projection(
         groupchat_worklist = _groupchat_worklist_items(conn, conversation_id)
         messages = _messages(conn, conversation_id)
         proposals = _proposals(conn, conversation_id)
-        dispatch_entries = _dispatch_entries(conn, conversation_id)
+        dispatch_entries = _dispatch_entries(conn, conversation_id, proposals=proposals)
         collaboration_runs = _collaboration_runs(conn, conversation_id)
         blockers = _blockers(conn, conversation_id)
         closure_evidence = _closure_evidence(conn, conversation_id)
@@ -334,7 +334,12 @@ def _proposals(conn: sqlite3.Connection, conversation_id: str) -> list[dict[str,
     ]
 
 
-def _dispatch_entries(conn: sqlite3.Connection, conversation_id: str) -> list[dict[str, Any]]:
+def _dispatch_entries(
+    conn: sqlite3.Connection,
+    conversation_id: str,
+    *,
+    proposals: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
     gate_refs_expr = (
         "gate_refs_json"
         if _table_has_column(conn, "chat_dispatch_queue", "gate_refs_json")
@@ -355,13 +360,21 @@ def _dispatch_entries(conn: sqlite3.Connection, conversation_id: str) -> list[di
         (conversation_id,),
     )
     entries: list[dict[str, Any]] = []
+    proposals_by_id = {
+        proposal["id"]: proposal
+        for proposal in proposals
+        if isinstance(proposal.get("id"), str)
+    }
     for row in rows:
         entry = {
             **dict(row),
             "auto_execute": bool(row["auto_execute"]),
             "gate_refs": _json_list(row["gate_refs_json"]),
         }
-        source_refs = _dispatch_source_refs(entry)
+        source_refs = _dispatch_source_refs(
+            entry,
+            proposal_refs=_proposal_source_refs(entry.get("proposal_id"), proposals_by_id),
+        )
         entry["source_refs"] = source_refs
         entry["authority_boundary"] = _dispatch_authority_boundary()
         entry["sidecar_continuity"] = _dispatch_sidecar_continuity(source_refs)
@@ -2295,7 +2308,14 @@ def _inbox_source_refs(item: dict[str, Any]) -> list[str]:
     return refs
 
 
-def _dispatch_source_refs(entry: dict[str, Any]) -> list[str]:
+def _dispatch_source_refs(
+    entry: dict[str, Any],
+    *,
+    proposal_refs: list[str] | None = None,
+) -> list[str]:
+    existing_refs = _string_items(entry.get("source_refs"))
+    if existing_refs and proposal_refs is None:
+        return _dedupe(existing_refs)
     refs = []
     entry_id = entry.get("entry_id")
     if isinstance(entry_id, str) and entry_id:
@@ -2303,6 +2323,7 @@ def _dispatch_source_refs(entry: dict[str, Any]) -> list[str]:
     proposal_id = entry.get("proposal_id")
     if isinstance(proposal_id, str) and proposal_id:
         refs.append(f"proposal:{proposal_id}")
+    refs.extend(proposal_refs or [])
     refs.extend(_string_items(entry.get("gate_refs")))
     for prefix, key in (
         ("resolution", "resolution_id"),
@@ -2313,6 +2334,18 @@ def _dispatch_source_refs(entry: dict[str, Any]) -> list[str]:
             refs.append(f"{prefix}:{value}")
     refs.extend(_string_items(entry.get("artifact_ref")))
     return _dedupe(refs)
+
+
+def _proposal_source_refs(
+    proposal_id: Any,
+    proposals_by_id: dict[str, dict[str, Any]],
+) -> list[str]:
+    if not isinstance(proposal_id, str) or not proposal_id:
+        return []
+    proposal = proposals_by_id.get(proposal_id)
+    if proposal is None:
+        return []
+    return _string_items(proposal.get("references"))
 
 
 def _dispatch_authority_boundary() -> dict[str, str]:

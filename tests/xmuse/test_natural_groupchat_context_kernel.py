@@ -571,7 +571,7 @@ def test_group_chat_context_projects_structured_state_from_chat_authorities(
         author=architect.participant_id,
         proposal_type="lane_graph",
         content='{"type":"lane_graph","lanes":[]}',
-        references=[f"message:{demand.id}"],
+        references=[f"message:{demand.id}", "groupchat_worklist:structured-state"],
     )
     collaboration = ChatCollaborationStore(db_path).create_request(
         conversation_id=conversation.id,
@@ -661,6 +661,8 @@ def test_group_chat_context_projects_structured_state_from_chat_authorities(
     assert state["dispatch_queue"][0]["source_refs"] == [
         f"chat_dispatch_queue:{dispatch.entry_id}",
         f"proposal:{proposal.id}",
+        f"message:{demand.id}",
+        "groupchat_worklist:structured-state",
         f"collaboration:{collaboration.run_id}",
         f"resolution:{resolution.id}",
     ]
