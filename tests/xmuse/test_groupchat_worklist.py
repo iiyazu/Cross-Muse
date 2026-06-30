@@ -4,7 +4,7 @@ import sqlite3
 
 import pytest
 
-from xmuse_core.chat.acceptance_spine import AcceptanceSpineStore
+from xmuse_core.chat.acceptance_spine import AcceptanceSpineStatus, AcceptanceSpineStore
 from xmuse_core.chat.groupchat_runtime import GroupchatPeerRuntime
 from xmuse_core.chat.groupchat_worklist import (
     GroupchatWorklistScheduler,
@@ -580,6 +580,190 @@ async def test_groupchat_peer_runtime_delivers_linked_inbox_with_a2a_writeback(
     assert len(followups) == 1
     assert followups[0].status == "queued"
     assert followups[0].depth == 1
+
+
+@pytest.mark.asyncio
+async def test_groupchat_root_a2a_proposal_writeback_reaches_review_trigger(
+    tmp_path,
+):
+    db = tmp_path / "chat.db"
+    chat = ChatStore(db)
+    conversation = chat.create_conversation("A2 root proposal")
+    participants = ParticipantStore(db)
+    architect = participants.add(
+        conversation_id=conversation.id,
+        role="architect",
+        display_name="Remote A2A Architect GOD",
+        cli_kind="a2a",
+        model="a2a-remote",
+    )
+    review = participants.add(
+        conversation_id=conversation.id,
+        role="review",
+        display_name="Review GOD",
+        cli_kind="codex",
+        model="gpt-5.5",
+    )
+    participants.add(
+        conversation_id=conversation.id,
+        role="critic",
+        display_name="Critic GOD",
+        cli_kind="codex",
+        model="gpt-5.5",
+    )
+    root = chat.add_message(
+        conversation_id=conversation.id,
+        author="human",
+        role="human",
+        content="Please design the next A2 groupchat proposal boundary.",
+    )
+    AcceptanceSpineStore(db).create_for_intake(
+        conversation_id=conversation.id,
+        intake_message_id=root.id,
+    )
+
+    class ForbiddenGodLayer:
+        async def ensure_conversation_session(self, **kwargs):
+            raise AssertionError("A2A architect should use provider writeback")
+
+    class ProposalProviderService:
+        def __init__(self) -> None:
+            self.invocations = []
+
+        def invoke_provider_adapter(self, invocation):
+            self.invocations.append(invocation)
+            return ProviderInvocationResult(
+                request_id=invocation.request_id,
+                provider_id=ProviderId.A2A,
+                profile_id=ProviderProfileId.REMOTE,
+                status=WorkerResultStatus.COMPLETED,
+                evidence_refs=[
+                    f"a2a_task:{invocation.request_id}",
+                    f"a2a_context:{invocation.request_id}",
+                ],
+                diagnostic_payload={
+                    "a2a_task_id": invocation.request_id,
+                    "a2a_context_id": invocation.request_id,
+                    "a2a_state": "TASK_STATE_COMPLETED",
+                    "a2a_disposition": "completed",
+                    "a2a_terminal": True,
+                    "a2a_content": "Remote A2A architect returned a groupchat proposal.",
+                    "a2a_artifacts": [
+                        {
+                            "artifact_id": "artifact-groupchat-root-a2",
+                            "text": "proposal",
+                        }
+                    ],
+                    "a2a_history": [],
+                    "a2a_metadata": {
+                        "xmuse_proposal": {
+                            "schema_version": 1,
+                            "proposal_type": "lane_graph",
+                            "summary": "Groupchat root-run A2 proposal",
+                            "content": {
+                                "summary": "Groupchat root-run A2 proposal",
+                                "lanes": [
+                                    {
+                                        "feature_id": "groupchat-root-a2-proposal",
+                                        "prompt": (
+                                            "Prove groupchat root-run proposal writeback "
+                                            "reaches review trigger authority."
+                                        ),
+                                        "depends_on": [],
+                                        "capabilities": ["code", "test"],
+                                        "gate_profiles": ["xmuse-core"],
+                                    }
+                                ],
+                            },
+                            "references": ["artifact:groupchat-root-a2-proposal"],
+                        }
+                    },
+                    "a2a_source_refs": [
+                        f"a2a_task:{invocation.request_id}",
+                        f"a2a_context:{invocation.request_id}",
+                    ],
+                    "a2a_sdk_task": {
+                        "id": invocation.request_id,
+                        "status": {"state": "TASK_STATE_COMPLETED"},
+                    },
+                    "a2a_jsonrpc_id": invocation.request_id,
+                },
+            )
+
+    provider_service = ProposalProviderService()
+    outcome = await GroupchatPeerRuntime(
+        db_path=db,
+        god_layer=ForbiddenGodLayer(),
+        worktree=tmp_path,
+        scheduler_id="groupchat-peer-a2",
+        response_wait_s=0.1,
+        provider_service=provider_service,
+    ).run_from_root_message(
+        conversation_id=conversation.id,
+        root_message_id=root.id,
+        max_ticks=1,
+    )
+
+    assert outcome.created_chain is True
+    assert outcome.run.ticks == 1
+    [tick] = outcome.run.tick_outcomes
+    assert tick.worklist.completed_message_id is not None
+    [invocation] = provider_service.invocations
+    assert invocation.request_id == tick.worklist.linked_inbox_item_id
+
+    [proposal] = chat.list_proposals(conversation.id)
+    items = GroupchatWorklistStore(db).list_items(outcome.chain_id)
+    completed = [item for item in items if item.status == "completed"]
+    assert len(completed) == 1
+    worklist_item = completed[0]
+    assert worklist_item.inbox_item_id == invocation.request_id
+    assert worklist_item.target_participant_id == architect.participant_id
+    expected_refs = {
+        f"inbox:{invocation.request_id}",
+        f"a2a_task:{invocation.request_id}",
+        f"a2a_context:{invocation.request_id}",
+        "artifact:groupchat-root-a2-proposal",
+        f"chat:message:{root.id}",
+        f"groupchat_chain:{outcome.chain_id}",
+        f"groupchat_worklist:{worklist_item.item_id}",
+    }
+    assert expected_refs <= set(proposal.references)
+
+    proposal_message = next(
+        msg
+        for msg in chat.list_messages(conversation.id)
+        if msg.envelope_type == "proposal" and msg.envelope_json["proposal_id"] == proposal.id
+    )
+    assert expected_refs <= set(proposal_message.envelope_json["source_refs"])
+
+    review_items = [
+        item
+        for item in ChatInboxStore(db).list_by_conversation(
+            conversation.id,
+            include_terminal=True,
+        )
+        if item.item_type == "review_trigger"
+    ]
+    assert len(review_items) == 1
+    review_item = review_items[0]
+    assert review_item.target_participant_id == review.participant_id
+    assert review_item.source_message_id == proposal_message.id
+    assert review_item.payload["reviewable_type"] == "lane_graph"
+
+    spine = AcceptanceSpineStore(db).list_by_conversation(conversation.id)[0]
+    assert spine.status is AcceptanceSpineStatus.REVIEW_PENDING
+    assert spine.proposal_id == proposal.id
+    assert spine.review_trigger_inbox_id == review_item.id
+
+    provider_reply = next(
+        msg
+        for msg in chat.list_messages(conversation.id)
+        if msg.envelope_type == "a2a_provider_result"
+    )
+    proposal_writeback = provider_reply.envelope_json["proposal_writeback"]
+    assert proposal_writeback["acceptance_spine"]["status"] == "attached"
+    assert proposal_writeback["review_trigger"]["status"] == "ensured"
+    assert proposal_writeback["review_trigger"]["inbox_item_id"] == review_item.id
 
 
 @pytest.mark.asyncio
