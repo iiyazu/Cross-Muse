@@ -55,6 +55,7 @@ IDENTITY_BOUND_CHAT_TOOLS = {
     "chat_mark_inbox",
     "chat_mention",
     "chat_emit_proposal",
+    "chat_approve_proposal",
     "chat_create_collaboration_request",
     "chat_record_collaboration_response",
     "chat_raise_collaboration_blocker",
@@ -69,6 +70,7 @@ REPRESENTATIVE_IDENTITY_RUNTIME_TOOLS = {
     "chat_mark_inbox",
     "chat_mention",
     "chat_emit_proposal",
+    "chat_approve_proposal",
     "chat_emit_blueprint_proposal",
 }
 
@@ -238,6 +240,13 @@ def _identity_tool_args(
                     "capabilities": ["code"],
                 }
             ],
+        }
+    if tool_name == "chat_approve_proposal":
+        return {
+            **base,
+            "client_request_id": "req-approve-proposal",
+            "proposal_id": "proposal-missing",
+            "goal_summary": "approve proposal",
         }
     if tool_name == "chat_emit_blueprint_proposal":
         return {

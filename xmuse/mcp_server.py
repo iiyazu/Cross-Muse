@@ -767,6 +767,34 @@ CHAT_TOOL_SCHEMAS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "chat_approve_proposal",
+        "description": (
+            "Review-only: approve a proposal after durable review and critic gates "
+            "have cleared; this writes the resolution and any dispatch queue entry."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "conversation_id": {"type": "string"},
+                "participant_id": {"type": "string"},
+                "god_session_id": {"type": "string"},
+                "client_request_id": {"type": "string"},
+                "proposal_id": {"type": "string"},
+                "goal_summary": {"type": "string"},
+                "content": {"type": "object"},
+            },
+            "required": [
+                "conversation_id",
+                "participant_id",
+                "god_session_id",
+                "client_request_id",
+                "proposal_id",
+                "goal_summary",
+            ],
+            "additionalProperties": False,
+        },
+    },
+    {
         "name": "chat_inspect_conversation",
         "description": (
             "Inspect an xmuse chat conversation with full summary including "
@@ -1052,6 +1080,17 @@ def _tool_result(ops: XmuseOperations, name: str, arguments: dict[str, Any]) -> 
         sm = LaneStateMachine(ops.lanes_path)
         handler = McpToolHandler(state_machine=sm, xmuse_root=ops.xmuse_root)
         return _content_json(handler.call(name, arguments))
+    if name == "chat_approve_proposal":
+        from xmuse_core.chat.peer_types import PeerChatError
+
+        try:
+            return _content_json(_approve_chat_proposal_from_mcp(ops, arguments))
+        except PeerChatError as exc:
+            error: dict[str, Any] = {"code": exc.code, "message": exc.message}
+            error.update(exc.details)
+            return _content_json({"error": error})
+        except (TypeError, ValueError) as exc:
+            return _content_json({"error": {"code": "invalid_arguments", "message": str(exc)}})
     if name.startswith("chat_"):
         from xmuse_core.chat.peer_service import PeerChatError, PeerChatService
 
@@ -1069,6 +1108,104 @@ def _tool_result(ops: XmuseOperations, name: str, arguments: dict[str, Any]) -> 
     raise ValueError(f"unknown tool: {name}")
 
 
+def _approve_chat_proposal_from_mcp(
+    ops: XmuseOperations,
+    arguments: dict[str, Any],
+) -> dict[str, object]:
+    from xmuse.chat_api import approve_proposal_with_gates
+    from xmuse_core.agents.god_session_registry import GodSessionRegistry
+    from xmuse_core.chat.api_models import ProposalApproval
+    from xmuse_core.chat.participant_store import ParticipantStore
+    from xmuse_core.chat.peer_types import PeerChatError
+    from xmuse_core.chat.store import ChatStore
+
+    conversation_id = _required_chat_tool_string(arguments, "conversation_id")
+    participant_id = _required_chat_tool_string(arguments, "participant_id")
+    god_session_id = _required_chat_tool_string(arguments, "god_session_id")
+    client_request_id = _required_chat_tool_string(arguments, "client_request_id")
+    proposal_id = _required_chat_tool_string(arguments, "proposal_id")
+    goal_summary = _required_chat_tool_string(arguments, "goal_summary")
+    raw_content = arguments.get("content")
+    if raw_content is not None and not isinstance(raw_content, dict):
+        raise PeerChatError("invalid_arguments", "content must be an object")
+
+    registry = GodSessionRegistry(ops.xmuse_root / "god_sessions.json")
+    try:
+        session = registry.get(god_session_id)
+    except KeyError as exc:
+        raise PeerChatError("unknown_god_session", god_session_id) from exc
+    if session.conversation_id != conversation_id or session.participant_id != participant_id:
+        raise PeerChatError("session_participant_mismatch", god_session_id)
+
+    participants = ParticipantStore(ops.xmuse_root / "chat.db")
+    try:
+        participant = participants.get(participant_id)
+    except KeyError as exc:
+        raise PeerChatError("unknown_participant", participant_id) from exc
+    if participant.conversation_id != conversation_id:
+        raise PeerChatError("unknown_participant", participant_id)
+    if participant.role != "review":
+        raise PeerChatError(
+            "proposal_approval_authority_forbidden",
+            "chat_approve_proposal is restricted to review participants",
+            details={
+                "participant_id": participant_id,
+                "participant_role": participant.role,
+                "required_role": "review",
+            },
+        )
+
+    chat = ChatStore(ops.xmuse_root / "chat.db")
+    try:
+        proposal = chat.get_proposal(proposal_id)
+    except KeyError as exc:
+        raise PeerChatError("proposal_not_found", proposal_id) from exc
+    if proposal.conversation_id != conversation_id:
+        raise PeerChatError("proposal_conversation_mismatch", proposal_id)
+
+    caller_identity = f"god:{god_session_id}:{participant_id}"
+    logged = chat.get_logged_request_result(
+        conversation_id=conversation_id,
+        tool_name="chat_approve_proposal",
+        caller_identity=caller_identity,
+        client_request_id=client_request_id,
+    )
+    if logged is not None:
+        return logged
+
+    try:
+        payload = approve_proposal_with_gates(
+            ops.xmuse_root,
+            proposal_id=proposal_id,
+            request=ProposalApproval(
+                approved_by=[participant_id],
+                approval_mode="groupchat_review",
+                goal_summary=goal_summary,
+                content=raw_content,
+            ),
+        )
+    except KeyError as exc:
+        raise PeerChatError("proposal_not_found", proposal_id) from exc
+    chat.record_logged_request_result(
+        conversation_id=conversation_id,
+        tool_name="chat_approve_proposal",
+        caller_identity=caller_identity,
+        client_request_id=client_request_id,
+        result=payload,
+    )
+    registry.promote_running(god_session_id)
+    return payload
+
+
+def _required_chat_tool_string(arguments: dict[str, Any], field_name: str) -> str:
+    value = arguments.get(field_name)
+    if not isinstance(value, str) or not value.strip():
+        from xmuse_core.chat.peer_types import PeerChatError
+
+        raise PeerChatError("invalid_arguments", f"{field_name} is required")
+    return value.strip()
+
+
 def _all_tool_schemas() -> list[dict[str, Any]]:
     return TOOL_SCHEMAS + PLATFORM_TOOL_SCHEMAS + READ_CONTRACT_TOOL_SCHEMAS + CHAT_TOOL_SCHEMAS
 
@@ -1081,6 +1218,7 @@ def _peer_chat_tool_schemas() -> list[dict[str, Any]]:
         "chat_resolve_collaboration_blocker",
         "chat_evaluate_dispatch_gate",
         "chat_emit_proposal",
+        "chat_approve_proposal",
         "chat_inspect_conversation",
     }
     schemas: list[dict[str, Any]] = []

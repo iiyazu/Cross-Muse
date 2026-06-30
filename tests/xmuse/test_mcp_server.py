@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from xmuse_core.agents.god_session_registry import GodSessionRegistry
 from xmuse_core.chat.acceptance_spine import AcceptanceSpineStatus, AcceptanceSpineStore
+from xmuse_core.chat.dispatch_queue import ChatDispatchQueueStore
 from xmuse_core.chat.inbox_store import ChatInboxStore
 from xmuse_core.chat.review_trigger_verdicts import build_review_trigger_verdict_envelope
 from xmuse_core.chat.store import ChatStore
@@ -73,6 +74,25 @@ def mcp_chat_call(client: TestClient, name: str, arguments: dict | None = None) 
     return structured
 
 
+def mcp_chat_error(client: TestClient, name: str, arguments: dict | None = None) -> dict:
+    response = client.post(
+        "/mcp/chat",
+        json={
+            "jsonrpc": "2.0",
+            "id": f"call-{name}",
+            "method": "tools/call",
+            "params": {"name": name, "arguments": arguments or {}},
+        },
+    )
+    assert response.status_code == 200, response.text
+    result = response.json()["result"]
+    if result["isError"] is True:
+        return {"code": "mcp_error", "message": result["content"][0]["text"]}
+    structured = result["structuredContent"]
+    assert "error" in structured, structured
+    return structured["error"]
+
+
 def test_sse_endpoint_and_tools_list(tmp_path: Path) -> None:
     server = load_mcp_module()
 
@@ -135,6 +155,7 @@ def test_peer_chat_mcp_endpoint_exposes_writeback_and_explicit_handoff_tools(
     assert response.status_code == 200
     tools = {tool["name"]: tool for tool in response.json()["result"]["tools"]}
     assert set(tools) == {
+        "chat_approve_proposal",
         "chat_create_collaboration_request",
         "chat_emit_proposal",
         "chat_evaluate_dispatch_gate",
@@ -162,6 +183,7 @@ def test_peer_chat_mcp_endpoint_exposes_writeback_and_explicit_handoff_tools(
         "items": {"type": "string"},
     }
     assert "gate_profiles" in tools["chat_emit_proposal"]["description"]
+    assert "proposal_id" in tools["chat_approve_proposal"]["inputSchema"]["required"]
     assert "run_id" in tools["chat_record_collaboration_response"]["inputSchema"]["required"]
     response_tool_description = tools["chat_record_collaboration_response"]["description"]
     assert '"status":"executable"' in response_tool_description
@@ -629,6 +651,485 @@ def test_peer_chat_mcp_structured_execution_proposal_approval_enqueues_dispatch(
     assert entries[0].status == "queued"
     assert entries[0].proposal_id == proposal["id"]
     assert entries[0].collaboration_run_id == run_id
+
+
+def test_peer_chat_mcp_groupchat_review_approval_enqueues_dispatch(
+    tmp_path: Path,
+) -> None:
+    server = load_mcp_module()
+    xmuse_root = tmp_path / "xmuse"
+    mcp_client = TestClient(server.create_app(xmuse_root=xmuse_root))
+
+    created = mcp_call(
+        mcp_client,
+        "chat_create_conversation",
+        {
+            "title": "Groupchat closure",
+            "participants": [
+                {"role": "architect"},
+                {"role": "review"},
+                {"role": "critic"},
+                {"role": "execute"},
+            ],
+        },
+    )
+    conversation_id = created["conversation"]["id"]
+    participants = {item["role"]: item for item in created["participants"]}
+    registry = GodSessionRegistry(xmuse_root / "god_sessions.json")
+    architect_session = registry.find_by_conversation_participant(
+        conversation_id=conversation_id,
+        participant_id=participants["architect"]["participant_id"],
+    )
+    review_session = registry.find_by_conversation_participant(
+        conversation_id=conversation_id,
+        participant_id=participants["review"]["participant_id"],
+    )
+    critic_session = registry.find_by_conversation_participant(
+        conversation_id=conversation_id,
+        participant_id=participants["critic"]["participant_id"],
+    )
+    assert architect_session is not None
+    assert review_session is not None
+    assert critic_session is not None
+
+    chat = ChatStore(xmuse_root / "chat.db")
+    human = chat.add_message(conversation_id, "human", "human", "@architect approve via groupchat")
+    AcceptanceSpineStore(xmuse_root / "chat.db").create_for_intake(
+        conversation_id=conversation_id,
+        intake_message_id=human.id,
+    )
+    architect_item = ChatInboxStore(xmuse_root / "chat.db").create_item(
+        conversation_id=conversation_id,
+        target_participant_id=participants["architect"]["participant_id"],
+        target_role="architect",
+        target_address="@architect",
+        sender_participant_id=None,
+        sender_address="@human",
+        source_message_id=human.id,
+        item_type="mention",
+        payload={"content": human.content},
+    )
+    proposal = mcp_chat_call(
+        mcp_client,
+        "chat_emit_proposal",
+        {
+            "conversation_id": conversation_id,
+            "participant_id": participants["architect"]["participant_id"],
+            "god_session_id": architect_session.god_session_id,
+            "client_request_id": "groupchat-approval-proposal",
+            "summary": "Groupchat approval MCP closure",
+            "lanes": [
+                {
+                    "feature_id": "groupchat-approval-mcp-closure",
+                    "prompt": "Implement the approved groupchat closure slice.",
+                    "depends_on": [],
+                    "capabilities": ["code", "test"],
+                    "gate_profiles": ["xmuse-core"],
+                }
+            ],
+            "references": ["groupchat_chain:closure-a2"],
+            "reply_to_inbox_item_id": architect_item.id,
+        },
+    )["proposal"]
+    review_items = [
+        item
+        for item in ChatInboxStore(xmuse_root / "chat.db").list_by_conversation(
+            conversation_id,
+            include_terminal=True,
+        )
+        if item.item_type == "review_trigger"
+    ]
+    assert len(review_items) == 1
+
+    review_message = mcp_chat_call(
+        mcp_client,
+        "chat_post_message",
+        {
+            "conversation_id": conversation_id,
+            "participant_id": participants["review"]["participant_id"],
+            "god_session_id": review_session.god_session_id,
+            "client_request_id": "groupchat-approval-review-verdict",
+            "content": "Review verdict: dispatch allowed after bounded groupchat review.",
+            "envelope": build_review_trigger_verdict_envelope(
+                review_trigger_inbox_id=review_items[0].id,
+                source_message_id=review_items[0].source_message_id,
+                proposal_id=proposal["id"],
+                decision="dispatch_allowed",
+                summary="Dispatch allowed after bounded groupchat review.",
+                evidence_refs=[
+                    f"inbox:{review_items[0].id}",
+                    "groupchat_chain:closure-a2",
+                ],
+            ),
+            "reply_to_inbox_item_id": review_items[0].id,
+        },
+    )["message"]
+
+    critic_handoff = mcp_chat_call(
+        mcp_client,
+        "chat_mention",
+        {
+            "conversation_id": conversation_id,
+            "participant_id": participants["review"]["participant_id"],
+            "god_session_id": review_session.god_session_id,
+            "client_request_id": "groupchat-approval-review-to-critic",
+            "target_address": "@critic",
+            "content": "Please record the critic clearance or objection for this proposal.",
+        },
+    )
+    critic_item_id = critic_handoff["inbox_items"][0]["id"]
+    critic_message = mcp_chat_call(
+        mcp_client,
+        "chat_post_message",
+        {
+            "conversation_id": conversation_id,
+            "participant_id": participants["critic"]["participant_id"],
+            "god_session_id": critic_session.god_session_id,
+            "client_request_id": "groupchat-approval-critic-clearance",
+            "content": "Critic clearance: no blocking objection remains.",
+            "envelope": {
+                "schema_version": 1,
+                "type": "groupchat_critic_verdict",
+                "proposal_id": proposal["id"],
+                "decision": "clearance",
+                "summary": "No blocking objection remains.",
+                "evidence_refs": ["groupchat_chain:closure-a2"],
+            },
+            "reply_to_inbox_item_id": critic_item_id,
+        },
+    )["message"]
+
+    approved = mcp_chat_call(
+        mcp_client,
+        "chat_approve_proposal",
+        {
+            "conversation_id": conversation_id,
+            "participant_id": participants["review"]["participant_id"],
+            "god_session_id": review_session.god_session_id,
+            "client_request_id": "groupchat-approval-decision",
+            "proposal_id": proposal["id"],
+            "goal_summary": "Approve groupchat decision after review and critic clearance.",
+        },
+    )
+
+    assert approved["approved_by"] == [participants["review"]["participant_id"]]
+    assert approved["approval_mode"] == "groupchat_review"
+    entries = ChatDispatchQueueStore(xmuse_root / "chat.db").list_entries(conversation_id)
+    assert len(entries) == 1
+    assert entries[0].status == "queued"
+    assert entries[0].proposal_id == proposal["id"]
+    assert entries[0].resolution_id == approved["id"]
+    assert entries[0].collaboration_run_id is None
+    assert entries[0].gate_refs == [
+        f"review_trigger_verdict:{review_message['id']}",
+        f"groupchat_critic_verdict:{critic_message['id']}",
+    ]
+    assert approved["next_authority_boundary"]["source_refs"] == [
+        f"proposal:{proposal['id']}",
+        "groupchat_chain:closure-a2",
+        f"review_trigger_verdict:{review_message['id']}",
+        f"groupchat_critic_verdict:{critic_message['id']}",
+        f"resolution:{approved['id']}",
+        f"chat_dispatch_queue:{entries[0].entry_id}",
+    ]
+    spine = next(
+        item
+        for item in AcceptanceSpineStore(xmuse_root / "chat.db").list_by_conversation(
+            conversation_id
+        )
+        if item.proposal_id == proposal["id"]
+    )
+    assert spine.status is AcceptanceSpineStatus.DISPATCHED
+    assert spine.dispatch_item_id == entries[0].entry_id
+
+    approved_again = mcp_chat_call(
+        mcp_client,
+        "chat_approve_proposal",
+        {
+            "conversation_id": conversation_id,
+            "participant_id": participants["review"]["participant_id"],
+            "god_session_id": review_session.god_session_id,
+            "client_request_id": "groupchat-approval-decision",
+            "proposal_id": proposal["id"],
+            "goal_summary": "Approve groupchat decision after review and critic clearance.",
+        },
+    )
+    assert approved_again["id"] == approved["id"]
+    assert len(ChatStore(xmuse_root / "chat.db").list_resolutions(conversation_id)) == 1
+    assert len(ChatDispatchQueueStore(xmuse_root / "chat.db").list_entries(conversation_id)) == 1
+
+
+def test_chat_approve_proposal_enforces_mcp_authority_guards(tmp_path: Path) -> None:
+    server = load_mcp_module()
+    xmuse_root = tmp_path / "xmuse"
+    mcp_client = TestClient(server.create_app(xmuse_root=xmuse_root))
+
+    first = mcp_call(
+        mcp_client,
+        "chat_create_conversation",
+        {
+            "title": "Approval guards",
+            "participants": [
+                {"role": "architect"},
+                {"role": "review"},
+                {"role": "execute"},
+            ],
+        },
+    )
+    first_conversation_id = first["conversation"]["id"]
+    first_participants = {item["role"]: item for item in first["participants"]}
+    second = mcp_call(
+        mcp_client,
+        "chat_create_conversation",
+        {
+            "title": "Other approval guards",
+            "participants": [{"role": "review"}],
+        },
+    )
+    second_conversation_id = second["conversation"]["id"]
+    second_review = next(item for item in second["participants"] if item["role"] == "review")
+    registry = GodSessionRegistry(xmuse_root / "god_sessions.json")
+    architect_session = registry.find_by_conversation_participant(
+        conversation_id=first_conversation_id,
+        participant_id=first_participants["architect"]["participant_id"],
+    )
+    review_session = registry.find_by_conversation_participant(
+        conversation_id=first_conversation_id,
+        participant_id=first_participants["review"]["participant_id"],
+    )
+    other_review_session = registry.find_by_conversation_participant(
+        conversation_id=second_conversation_id,
+        participant_id=second_review["participant_id"],
+    )
+    assert architect_session is not None
+    assert review_session is not None
+    assert other_review_session is not None
+
+    proposal = ChatStore(xmuse_root / "chat.db").create_proposal(
+        conversation_id=first_conversation_id,
+        author="architect",
+        proposal_type="lane_graph",
+        content=json.dumps(
+            {
+                "summary": "Guarded proposal",
+                "lanes": [
+                    {
+                        "feature_id": "guarded-proposal",
+                        "prompt": "Keep approval guarded.",
+                        "depends_on": [],
+                        "capabilities": ["code"],
+                    }
+                ],
+            }
+        ),
+        references=["groupchat_chain:approval-guard"],
+    )
+
+    error = mcp_chat_error(
+        mcp_client,
+        "chat_approve_proposal",
+        {
+            "conversation_id": first_conversation_id,
+            "participant_id": first_participants["architect"]["participant_id"],
+            "god_session_id": architect_session.god_session_id,
+            "client_request_id": "approval-non-review",
+            "proposal_id": proposal.id,
+            "goal_summary": "Architect must not approve.",
+        },
+    )
+    assert error["code"] == "proposal_approval_authority_forbidden"
+
+    error = mcp_chat_error(
+        mcp_client,
+        "chat_approve_proposal",
+        {
+            "conversation_id": first_conversation_id,
+            "participant_id": first_participants["architect"]["participant_id"],
+            "god_session_id": review_session.god_session_id,
+            "client_request_id": "approval-session-mismatch",
+            "proposal_id": proposal.id,
+            "goal_summary": "Mismatched session must not approve.",
+        },
+    )
+    assert error["code"] == "session_participant_mismatch"
+
+    error = mcp_chat_error(
+        mcp_client,
+        "chat_approve_proposal",
+        {
+            "conversation_id": second_conversation_id,
+            "participant_id": second_review["participant_id"],
+            "god_session_id": other_review_session.god_session_id,
+            "client_request_id": "approval-proposal-conversation-mismatch",
+            "proposal_id": proposal.id,
+            "goal_summary": "Cross-conversation proposal must not approve.",
+        },
+    )
+    assert error["code"] == "proposal_conversation_mismatch"
+    assert ChatStore(xmuse_root / "chat.db").list_resolutions(first_conversation_id) == []
+
+
+def test_chat_approve_proposal_blocks_missing_or_blocked_gates(tmp_path: Path) -> None:
+    server = load_mcp_module()
+    xmuse_root = tmp_path / "xmuse"
+    mcp_client = TestClient(server.create_app(xmuse_root=xmuse_root))
+
+    created = mcp_call(
+        mcp_client,
+        "chat_create_conversation",
+        {
+            "title": "Approval gate blockers",
+            "participants": [
+                {"role": "architect"},
+                {"role": "review"},
+                {"role": "critic"},
+                {"role": "execute"},
+            ],
+        },
+    )
+    conversation_id = created["conversation"]["id"]
+    participants = {item["role"]: item for item in created["participants"]}
+    registry = GodSessionRegistry(xmuse_root / "god_sessions.json")
+    architect_session = registry.find_by_conversation_participant(
+        conversation_id=conversation_id,
+        participant_id=participants["architect"]["participant_id"],
+    )
+    review_session = registry.find_by_conversation_participant(
+        conversation_id=conversation_id,
+        participant_id=participants["review"]["participant_id"],
+    )
+    critic_session = registry.find_by_conversation_participant(
+        conversation_id=conversation_id,
+        participant_id=participants["critic"]["participant_id"],
+    )
+    assert architect_session is not None
+    assert review_session is not None
+    assert critic_session is not None
+
+    proposal = mcp_chat_call(
+        mcp_client,
+        "chat_emit_proposal",
+        {
+            "conversation_id": conversation_id,
+            "participant_id": participants["architect"]["participant_id"],
+            "god_session_id": architect_session.god_session_id,
+            "client_request_id": "blocked-gates-proposal",
+            "summary": "Blocked gates proposal",
+            "lanes": [
+                {
+                    "feature_id": "blocked-gates-proposal",
+                    "prompt": "Keep approval blocked until gates clear.",
+                    "depends_on": [],
+                    "capabilities": ["code"],
+                    "gate_profiles": ["xmuse-core"],
+                }
+            ],
+            "references": ["groupchat_chain:blocked-gates"],
+        },
+    )["proposal"]
+    review_item = next(
+        item
+        for item in ChatInboxStore(xmuse_root / "chat.db").list_by_conversation(
+            conversation_id,
+            include_terminal=True,
+        )
+        if item.item_type == "review_trigger"
+    )
+
+    error = mcp_chat_error(
+        mcp_client,
+        "chat_approve_proposal",
+        {
+            "conversation_id": conversation_id,
+            "participant_id": participants["review"]["participant_id"],
+            "god_session_id": review_session.god_session_id,
+            "client_request_id": "approval-review-pending",
+            "proposal_id": proposal["id"],
+            "goal_summary": "Pending review must not approve.",
+        },
+    )
+    assert error["code"] == "proposal_review_pending"
+
+    mcp_chat_call(
+        mcp_client,
+        "chat_post_message",
+        {
+            "conversation_id": conversation_id,
+            "participant_id": participants["review"]["participant_id"],
+            "god_session_id": review_session.god_session_id,
+            "client_request_id": "blocked-gates-review-verdict",
+            "content": "Review clears dispatch shape.",
+            "envelope": build_review_trigger_verdict_envelope(
+                review_trigger_inbox_id=review_item.id,
+                source_message_id=review_item.source_message_id,
+                proposal_id=proposal["id"],
+                decision="dispatch_allowed",
+                summary="Review clears dispatch shape.",
+                evidence_refs=[f"inbox:{review_item.id}"],
+            ),
+            "reply_to_inbox_item_id": review_item.id,
+        },
+    )
+    error = mcp_chat_error(
+        mcp_client,
+        "chat_approve_proposal",
+        {
+            "conversation_id": conversation_id,
+            "participant_id": participants["review"]["participant_id"],
+            "god_session_id": review_session.god_session_id,
+            "client_request_id": "approval-critic-missing",
+            "proposal_id": proposal["id"],
+            "goal_summary": "Missing critic clearance must not approve.",
+        },
+    )
+    assert error["code"] == "proposal_critic_missing"
+
+    critic_handoff = mcp_chat_call(
+        mcp_client,
+        "chat_mention",
+        {
+            "conversation_id": conversation_id,
+            "participant_id": participants["review"]["participant_id"],
+            "god_session_id": review_session.god_session_id,
+            "client_request_id": "blocked-gates-review-to-critic",
+            "target_address": "@critic",
+            "content": "Please record the critic blocker for this proposal.",
+        },
+    )
+    mcp_chat_call(
+        mcp_client,
+        "chat_post_message",
+        {
+            "conversation_id": conversation_id,
+            "participant_id": participants["critic"]["participant_id"],
+            "god_session_id": critic_session.god_session_id,
+            "client_request_id": "blocked-gates-critic-blocker",
+            "content": "Critic blocker: missing rollback boundary.",
+            "envelope": {
+                "schema_version": 1,
+                "type": "groupchat_critic_verdict",
+                "proposal_id": proposal["id"],
+                "decision": "blocked",
+                "summary": "Missing rollback boundary.",
+                "evidence_refs": ["groupchat_chain:blocked-gates"],
+            },
+            "reply_to_inbox_item_id": critic_handoff["inbox_items"][0]["id"],
+        },
+    )
+    error = mcp_chat_error(
+        mcp_client,
+        "chat_approve_proposal",
+        {
+            "conversation_id": conversation_id,
+            "participant_id": participants["review"]["participant_id"],
+            "god_session_id": review_session.god_session_id,
+            "client_request_id": "approval-critic-blocked",
+            "proposal_id": proposal["id"],
+            "goal_summary": "Blocked critic verdict must not approve.",
+        },
+    )
+    assert error["code"] == "proposal_critic_blocked"
+    assert ChatStore(xmuse_root / "chat.db").list_resolutions(conversation_id) == []
 
 
 def test_chat_create_collaboration_request_enqueues_normalized_target_inbox(

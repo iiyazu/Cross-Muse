@@ -837,8 +837,26 @@ class ChatStore:
         goal_summary: str,
         content: dict | None = None,
     ) -> StructuredResolution:
-        proposal = self.get_proposal(proposal_id)
+        created_resolution = False
         with self._connect() as conn:
+            conn.execute("begin immediate")
+            proposal_row = conn.execute(
+                "select * from proposals where id = ?",
+                (proposal_id,),
+            ).fetchone()
+            if proposal_row is None:
+                raise KeyError(f"unknown proposal: {proposal_id}")
+            proposal = self._proposal_from_row(proposal_row)
+            if proposal.accepted_resolution_id:
+                resolution_row = conn.execute(
+                    "select * from resolutions where id = ?",
+                    (proposal.accepted_resolution_id,),
+                ).fetchone()
+                if resolution_row is None:
+                    raise KeyError(
+                        f"unknown resolution: {proposal.accepted_resolution_id}"
+                    )
+                return self._resolution_from_row(resolution_row)
             version = self._next_resolution_version(conn, proposal.conversation_id)
             resolution_id = self._new_id("res")
             resolution_content = self._content_for_approved_proposal(
@@ -902,10 +920,12 @@ class ChatStore:
                 resolution_content=resolution_content,
                 resolution_id=resolution.id,
             )
-        AcceptanceSpineStore(self._path).attach_verdict_for_proposal(
-            proposal_id=proposal.id,
-            verdict_ref=f"resolution:{resolution.id}",
-        )
+            created_resolution = True
+        if created_resolution:
+            AcceptanceSpineStore(self._path).attach_verdict_for_proposal(
+                proposal_id=proposal.id,
+                verdict_ref=f"resolution:{resolution.id}",
+            )
         return resolution
 
     def _content_for_approved_proposal(
@@ -1102,6 +1122,37 @@ class ChatStore:
                 (conversation_id, tool_name, caller_identity, client_request_id),
             ).fetchone()
         return json.loads(row["result_json"]) if row is not None else None
+
+    def record_logged_request_result(
+        self,
+        *,
+        conversation_id: str,
+        tool_name: str,
+        caller_identity: str,
+        client_request_id: str,
+        result: dict,
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                insert into chat_request_log (
+                    id, conversation_id, tool_name, caller_identity,
+                    client_request_id, result_json, created_at
+                )
+                values (?, ?, ?, ?, ?, ?, ?)
+                on conflict(conversation_id, tool_name, caller_identity, client_request_id)
+                do update set result_json = excluded.result_json
+                """,
+                (
+                    self._new_id("req"),
+                    conversation_id,
+                    tool_name,
+                    caller_identity,
+                    client_request_id,
+                    json.dumps(result),
+                    _utc_now(),
+                ),
+            )
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self._path)

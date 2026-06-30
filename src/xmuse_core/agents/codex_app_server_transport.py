@@ -61,6 +61,7 @@ class AppServerTurnAccumulator:
         if method in {"item/started", "item/completed"} and self._matches_turn(params):
             tool_name = _mcp_tool_name(params)
             if tool_name in {
+                "chat_approve_proposal",
                 "chat_create_collaboration_request",
                 "chat_emit_proposal",
                 "chat_mention",
@@ -547,9 +548,12 @@ class CodexAppServerTransport:
                 "then emit a lane_graph proposal with chat_emit_proposal and a "
                 "collaboration:<run_id> reference, passing "
                 "reply_to_inbox_item_id=xmuse_context.inbox_item.id so the proposal "
-                "closes the current inbox item. Human approval remains required before "
-                "dispatch. Every dispatchable lane_graph lane must include explicit "
-                "gate_profiles, for example [\"xmuse-core\"] for xmuse core code "
+                "closes the current inbox item. If you are the review GOD and durable "
+                "review and critic gates have cleared, call chat_approve_proposal to "
+                "create the approved decision and dispatch authority; otherwise leave "
+                "a durable blocker or ask for the missing gate evidence. Every "
+                "dispatchable lane_graph lane must include explicit gate_profiles, "
+                "for example [\"xmuse-core\"] for xmuse core code "
                 "paths; if you cannot choose a gate profile, write a blocker or open "
                 "question instead of proposing dispatchable work. "
                 "Only return a direct final assistant message if MCP tools are not "
