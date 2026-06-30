@@ -1,6 +1,6 @@
 # xmuse Frontend Implementation Guide
 
-更新日期: 2026-06-02 HKT
+更新日期: 2026-06-30 HKT
 
 本文档面向单独开发 xmuse 前端/TUI 的人。它只基于 WSL/Linux 侧当前仓库的后端
 实现和文档，不依赖 Windows/Open Design 目录。当前用户前门方向是 Textual TUI；
@@ -20,7 +20,7 @@
 当前后端还不足以支撑完整 north-star 愿景：
 
 - 没有 WebSocket/streaming；先用轮询。
-- 没有独立的 `GET /api/chat/conversations/{id}/worklist`。
+- `GET /api/chat/conversations/{id}/worklist` 已提供只读 worklist projection。
 - proposal `narrow/reject` REST endpoint 未落地；当前主要有 approve。
 - C-class autonomous blueprint execution 的 PlanningRun/card/API 仍未稳定落地。
 - 用户批准 blueprint 后自动 feature/lane DAG 生成正在 C-class 中推进，前端先按
@@ -176,7 +176,17 @@ UI 状态优先使用 `effective_status`，没有时再降级到 `status`。
 
 ### Worklist
 
-当前没有专用 worklist endpoint。MVP 可在前端用以下数据聚合：
+当前有专用只读 worklist endpoint：
+
+```text
+GET /api/chat/conversations/{conversation_id}/worklist
+```
+
+它返回 `chat_worklist_projection/v1`，包含 `worklist`、`groupchat_worklist`、
+`counts`、`source_authority`、`projection_only=true`、`write_capabilities=[]`。
+前端应优先使用这个 endpoint 展示右侧 worklist；它不是 truth producer。
+
+若运行在旧后端或 endpoint 不可用，MVP 可临时用以下数据聚合：
 
 1. 读取 `GET /api/lanes`。
 2. 按 `conversation_id` 过滤当前 conversation。
@@ -185,7 +195,8 @@ UI 状态优先使用 `effective_status`，没有时再降级到 `status`。
 5. 点击 lane 跳转 `/dashboard/lanes/:feature_id`。
 6. 点击 graph 跳转 `/dashboard/lane-graphs/:graph_id`。
 
-C-class 落地后，worklist 应迁移到后端聚合 endpoint。
+C-class 后续仍可扩展该 endpoint 的 lane/graph grouping，但不能让前端写入
+truth。
 
 ## 轮询策略
 
@@ -258,7 +269,6 @@ Dashboard API:
 
 前端可以先做类型和 UI 占位，但不要假定后端已返回：
 
-- `GET /api/chat/conversations/{conversation_id}/worklist`
 - WebSocket/streaming endpoint
 - proposal narrow/reject endpoints
 - C-class planning run endpoints
