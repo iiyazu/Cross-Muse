@@ -2873,6 +2873,80 @@ def test_scheduler_requires_structured_verdict_for_a2a_review_trigger(
     assert spine.review_or_execute_verdict_ref is None
 
 
+def test_groupchat_critic_clearance_updates_acceptance_spine(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "chat.db"
+    registry_path = tmp_path / "god_sessions.json"
+    service = PeerChatService(db_path)
+    created = service.create_conversation(
+        title="Groupchat critic clearance",
+        preset_id="architect-review-critic",
+    )
+    conversation_id = created["conversation"]["id"]
+    participants = {
+        participant["role"]: participant["participant_id"]
+        for participant in created["participants"]
+    }
+    sessions = {
+        session["role"]: session["god_session_id"]
+        for session in created["participant_sessions"]
+    }
+    intake = ChatStore(db_path).add_message(
+        conversation_id,
+        "human",
+        "human",
+        "Please produce a critic-cleared A2 decision.",
+    )
+    AcceptanceSpineStore(db_path).create_for_intake(
+        conversation_id=conversation_id,
+        intake_message_id=intake.id,
+    )
+    proposal = service.emit_proposal_without_session_for_test(
+        conversation_id=conversation_id,
+        participant_id=participants["architect"],
+        client_request_id="groupchat-critic-clearance-proposal",
+        summary="Critic-cleared proposal",
+        lanes=[
+            {
+                "feature_id": "critic-clearance",
+                "prompt": "Keep critic clearance durable.",
+                "depends_on": [],
+                "capabilities": ["code"],
+            }
+        ],
+        references=[f"message:{intake.id}"],
+    )
+    spine = AcceptanceSpineStore(db_path).get_by_intake_message(intake.id)
+    assert spine.status is AcceptanceSpineStatus.REVIEW_PENDING
+
+    result = service.post_god_message(
+        registry_path=registry_path,
+        conversation_id=conversation_id,
+        participant_id=participants["critic"],
+        god_session_id=sessions["critic"],
+        client_request_id="groupchat-critic-clearance-verdict",
+        content="Critic clearance: proposal can proceed to review/dispatch.",
+        envelope={
+            "schema_version": 1,
+            "type": "groupchat_critic_verdict",
+            "proposal_id": proposal["proposal"]["id"],
+            "decision": "clearance",
+            "summary": "No blocking objection from critic.",
+            "evidence_refs": [
+                f"message:{intake.id}",
+                f"proposal:{proposal['proposal']['id']}",
+            ],
+        },
+    )
+
+    updated = AcceptanceSpineStore(db_path).get_by_intake_message(intake.id)
+    assert updated.status is AcceptanceSpineStatus.REVIEW_CLEARED
+    assert updated.review_or_execute_verdict_ref == (
+        f"groupchat_critic_verdict:{result['message']['id']}"
+    )
+
+
 @pytest.mark.asyncio
 async def test_scheduler_rejects_peer_stdout_without_degraded_fallback(
     tmp_path: Path,
