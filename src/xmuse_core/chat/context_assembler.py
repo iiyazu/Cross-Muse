@@ -671,11 +671,35 @@ def _structured_state(
                 "github_gate_evidence_ref": spine.github_gate_evidence_ref,
                 "manual_gaps": spine.manual_gaps,
                 "blocked_reason": spine.blocked_reason,
+                "source_refs": _acceptance_spine_source_refs(spine),
             }
             for spine in spines[-8:]
         ],
         "groupchat_worklist": worklist,
     }
+
+
+def _acceptance_spine_source_refs(spine: Any) -> list[str]:
+    refs = [
+        f"chat.db:acceptance_spines#spine={spine.spine_id}",
+        f"message:{spine.intake_message_id}",
+    ]
+    if spine.proposal_id:
+        refs.append(f"proposal:{spine.proposal_id}")
+    if spine.review_trigger_inbox_id:
+        refs.append(f"inbox:{spine.review_trigger_inbox_id}")
+    if spine.review_or_execute_verdict_ref:
+        refs.append(spine.review_or_execute_verdict_ref)
+    if spine.dispatch_item_id:
+        refs.append(f"chat_dispatch_queue:{spine.dispatch_item_id}")
+    refs.extend(spine.execution_evidence_refs)
+    if spine.review_verdict_ref:
+        refs.append(spine.review_verdict_ref)
+    if spine.final_action_ref:
+        refs.append(spine.final_action_ref)
+    if spine.github_gate_evidence_ref:
+        refs.append(spine.github_gate_evidence_ref)
+    return _dedupe_strings(refs)
 
 
 def _groupchat_worklist_state(
