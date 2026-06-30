@@ -609,7 +609,7 @@ def test_groupchat_proposal_approval_blocks_critic_objection(tmp_path) -> None:
         ),
         reply_to_inbox_item_id=review_item.id,
     )
-    service.post_god_message(
+    critic_reply = service.post_god_message(
         registry_path=tmp_path / "god_sessions.json",
         conversation_id=conversation_id,
         participant_id=participants["critic"],
@@ -621,6 +621,15 @@ def test_groupchat_proposal_approval_blocks_critic_objection(tmp_path) -> None:
             decision="blocked",
             summary="The proposal lacks a durable rollback boundary.",
         ),
+    )
+
+    spine = AcceptanceSpineStore(tmp_path / "chat.db").list_by_conversation(
+        conversation_id
+    )[0]
+    assert spine.status is AcceptanceSpineStatus.BLOCKED
+    assert spine.blocked_reason == "proposal_critic_blocked"
+    assert spine.review_or_execute_verdict_ref == (
+        f"groupchat_critic_verdict:{critic_reply['message']['id']}"
     )
 
     response = client.post(

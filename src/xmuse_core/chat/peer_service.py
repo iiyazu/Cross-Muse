@@ -29,6 +29,10 @@ from xmuse_core.chat.bootstrap_contracts import (
 from xmuse_core.chat.bootstrap_store import BootstrapStateStore
 from xmuse_core.chat.collaboration_contracts import CollaborationStatus
 from xmuse_core.chat.envelopes import normalize_envelope
+from xmuse_core.chat.groupchat_critic_verdicts import (
+    GroupchatCriticVerdictError,
+    groupchat_critic_verdict_decision,
+)
 from xmuse_core.chat.inbox_store import ChatInboxStore
 from xmuse_core.chat.lane_scope import conversation_scoped_lanes
 from xmuse_core.chat.mentions import (
@@ -2443,9 +2447,16 @@ class PeerChatService:
                     message_id=message_id,
                     envelope=normalized,
                 )
+        message = result.get("message")
+        message_id = message.get("id") if isinstance(message, dict) else None
+        if isinstance(message_id, str) and message_id:
+            self._record_groupchat_critic_verdict(
+                conversation_id=conversation_id,
+                participant_id=participant_id,
+                message_id=message_id,
+                envelope=normalized,
+            )
         if review_closure_resolution_id is not None:
-            message = result.get("message")
-            message_id = message.get("id") if isinstance(message, dict) else None
             if isinstance(message_id, str) and message_id:
                 AcceptanceSpineStore(self._db_path).attach_review_verdict_for_resolution(
                     resolution_id=review_closure_resolution_id,
@@ -2500,6 +2511,45 @@ class PeerChatService:
                 proposal_id=proposal_id,
                 verdict_ref=verdict_ref,
             )
+
+    def _record_groupchat_critic_verdict(
+        self,
+        *,
+        conversation_id: str,
+        participant_id: str,
+        message_id: str,
+        envelope: dict[str, Any],
+    ) -> None:
+        if envelope.get("type") != "groupchat_critic_verdict":
+            return
+        try:
+            participant = self._participant_for_conversation(
+                conversation_id=conversation_id,
+                participant_id=participant_id,
+                error_code="unknown_participant",
+            )
+        except PeerChatError:
+            return
+        if participant.role != "critic":
+            return
+        proposal_id = envelope.get("proposal_id")
+        if not isinstance(proposal_id, str) or not proposal_id.strip():
+            return
+        clean_proposal_id = proposal_id.strip()
+        try:
+            verdict = groupchat_critic_verdict_decision(
+                envelope,
+                expected_proposal_id=clean_proposal_id,
+            )
+        except GroupchatCriticVerdictError:
+            return
+        if verdict != "blocked":
+            return
+        AcceptanceSpineStore(self._db_path).attach_review_blocker_for_proposal(
+            proposal_id=clean_proposal_id,
+            blocker_ref=f"groupchat_critic_verdict:{message_id}",
+            blocked_reason="proposal_critic_blocked",
+        )
 
     def _review_closure_resolution_id(
         self,
