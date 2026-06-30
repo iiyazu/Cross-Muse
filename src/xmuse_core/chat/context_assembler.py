@@ -655,6 +655,7 @@ def _structured_state(
                 "proposal_id": entry.proposal_id,
                 "resolution_id": entry.resolution_id,
                 "gate_refs": list(entry.gate_refs),
+                "source_refs": _dispatch_source_refs(entry),
                 "dispatch_policy": entry.dispatch_policy,
             }
             for entry in dispatch_entries
@@ -677,6 +678,22 @@ def _structured_state(
         ],
         "groupchat_worklist": worklist,
     }
+
+
+def _dispatch_source_refs(entry: Any) -> list[str]:
+    refs = []
+    if entry.entry_id:
+        refs.append(f"chat_dispatch_queue:{entry.entry_id}")
+    if entry.proposal_id:
+        refs.append(f"proposal:{entry.proposal_id}")
+    refs.extend(entry.gate_refs)
+    if entry.resolution_id:
+        refs.append(f"resolution:{entry.resolution_id}")
+    if entry.collaboration_run_id:
+        refs.append(f"collaboration:{entry.collaboration_run_id}")
+    if entry.artifact_ref:
+        refs.append(entry.artifact_ref)
+    return _dedupe_strings(refs)
 
 
 def _acceptance_spine_source_refs(spine: Any) -> list[str]:
