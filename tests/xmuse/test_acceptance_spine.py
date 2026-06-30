@@ -310,6 +310,9 @@ def test_final_action_approval_without_github_evidence_keeps_spine_blocked(
     assert writeback.envelope_json["source_refs"] == [
         f"final_actions.json#hold={hold.id}",
         f"chat.db#acceptance_spine={spine.spine_id}",
+        f"message:{intake_message_id}",
+        f"proposal:{spine.proposal_id}",
+        spine.review_or_execute_verdict_ref,
         "review_plane.json#verdict=verdict-spine-review",
         "github_gate_unverified",
     ]
@@ -463,6 +466,67 @@ def test_final_action_approval_with_server_gate_producer_accepts_spine(
     assert writeback.envelope_json["source_refs"] == [
         f"final_actions.json#hold={hold.id}",
         f"chat.db#acceptance_spine={spine.spine_id}",
+        f"message:{intake_message_id}",
+        f"proposal:{spine.proposal_id}",
+        spine.review_or_execute_verdict_ref,
+        "review_plane.json#verdict=verdict-spine-review",
+        final_action.github_gate_evidence_ref,
+    ]
+
+
+def test_final_action_writeback_preserves_spine_execution_lineage_refs(
+    tmp_path: Path,
+) -> None:
+    intake_message_id, hold = _create_spine_with_pending_final_action(tmp_path)
+    db = tmp_path / "chat.db"
+    spine_store = AcceptanceSpineStore(db)
+    spine = spine_store.get_by_intake_message(intake_message_id)
+    assert spine.proposal_id is not None
+    assert spine.review_or_execute_verdict_ref is not None
+    resolution_id = spine.review_or_execute_verdict_ref.removeprefix("resolution:")
+    dispatch = ChatDispatchQueueStore(db).enqueue_agent_auto_dispatch(
+        conversation_id=spine.conversation_id,
+        proposal_id=spine.proposal_id,
+        resolution_id=resolution_id,
+        collaboration_run_id=None,
+        artifact_ref="artifact:final-action-lineage",
+        gate_refs=["review:accepted"],
+    )
+    spine_store.attach_lane_execution_for_resolution(
+        resolution_id=resolution_id,
+        evidence_refs=[
+            "feature_lanes.json#lane=lane-spine-review:status=executed",
+            "lane_graph:graph-spine-review",
+        ],
+    )
+
+    FinalActionGateStore(tmp_path / "final_actions.json").resolve_with_github_gate_evidence(
+        hold.id,
+        status="approved",
+        resolved_by="human",
+        repo="iiyazu/Cross-Muse",
+        pull_request_number=42,
+        required_checks=["quality-gates", "contract-smoke-gates"],
+        collector=_StaticGithubTruthCollector(_complete_server_truth()),
+        main_ci_collector=_StaticMainCiTruthCollector(_complete_main_ci_truth()),
+    )
+
+    final_action = FinalActionGateStore(tmp_path / "final_actions.json").get(hold.id)
+    accepted_spine = spine_store.get_by_intake_message(intake_message_id)
+    writeback = [
+        message
+        for message in ChatStore(db).list_messages(accepted_spine.conversation_id)
+        if message.envelope_type == "final_action_result"
+    ][0]
+    assert writeback.envelope_json["source_refs"] == [
+        f"final_actions.json#hold={hold.id}",
+        f"chat.db#acceptance_spine={accepted_spine.spine_id}",
+        f"message:{intake_message_id}",
+        f"proposal:{accepted_spine.proposal_id}",
+        accepted_spine.review_or_execute_verdict_ref,
+        f"chat_dispatch_queue:{dispatch.entry_id}",
+        "feature_lanes.json#lane=lane-spine-review:status=executed",
+        "lane_graph:graph-spine-review",
         "review_plane.json#verdict=verdict-spine-review",
         final_action.github_gate_evidence_ref,
     ]

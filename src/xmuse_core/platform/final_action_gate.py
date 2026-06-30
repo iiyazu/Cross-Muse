@@ -243,7 +243,7 @@ class FinalActionGateStore:
         source_refs = _final_action_source_refs(
             final_action_ref=final_action_ref,
             spine_ref=spine_ref,
-            review_verdict_ref=spine.review_verdict_ref,
+            spine=spine,
             github_gate_ref=action.github_gate_evidence_ref or action.github_gate_gap_ref,
         )
         github_gate = _github_gate_writeback_summary(
@@ -296,17 +296,25 @@ def _final_action_source_refs(
     *,
     final_action_ref: str,
     spine_ref: str,
-    review_verdict_ref: str | None,
+    spine: AcceptanceSpine,
     github_gate_ref: str | None,
 ) -> list[str]:
-    return _dedupe_refs(
-        [
-            final_action_ref,
-            spine_ref,
-            review_verdict_ref,
-            github_gate_ref,
-        ]
-    )
+    refs = [
+        final_action_ref,
+        spine_ref,
+        f"message:{spine.intake_message_id}",
+    ]
+    if spine.proposal_id:
+        refs.append(f"proposal:{spine.proposal_id}")
+    if spine.review_or_execute_verdict_ref:
+        refs.append(spine.review_or_execute_verdict_ref)
+    if spine.dispatch_item_id:
+        refs.append(f"chat_dispatch_queue:{spine.dispatch_item_id}")
+    refs.extend(spine.execution_evidence_refs)
+    if spine.review_verdict_ref:
+        refs.append(spine.review_verdict_ref)
+    refs.append(github_gate_ref)
+    return _dedupe_refs(refs)
 
 
 def _final_action_writeback_content(action: PendingFinalAction) -> str:
