@@ -12,6 +12,7 @@ from xmuse_core.chat.groupchat_worklist import (
 )
 from xmuse_core.chat.inbox_store import ChatInboxStore
 from xmuse_core.chat.participant_store import ParticipantStore
+from xmuse_core.chat.peer_scheduler import _a2a_runtime_context
 from xmuse_core.chat.peer_service import PeerChatService
 from xmuse_core.chat.store import ChatStore
 from xmuse_core.providers.adapters.base import ProviderInvocationResult
@@ -167,6 +168,62 @@ def test_groupchat_worklist_claims_links_and_completes_from_durable_writeback(tm
     assert routed[0].route_kind == "mention"
     assert routed[0].depth == 1
     assert store.get_chain(chain.chain_id).last_scanned_message_id == reply_id
+
+
+def test_groupchat_worklist_linked_inbox_carries_runtime_source_refs(tmp_path):
+    db, chat, conversation, root, architect, _review, _critic = (
+        _conversation_with_groupchat_roster(
+            tmp_path,
+            root_content="@execute no natural route from the root.",
+        )
+    )
+    source = chat.add_message(
+        conversation_id=conversation.id,
+        author="execute",
+        role="assistant",
+        content="DISPATCH_ACKNOWLEDGED dispatch-a",
+        envelope_type="dispatch_result",
+        envelope_json={
+            "type": "dispatch_result",
+            "authority": "chat.db/messages/dispatch_result",
+            "dispatch_queue_entry_id": "dispatch-a",
+            "source_refs": [
+                "chat_dispatch_queue:dispatch-a",
+                "proposal:proposal-a",
+            ],
+            "proof_boundary": "dispatch_acknowledgement_not_execution_proof",
+        },
+    )
+    store = GroupchatWorklistStore(db)
+    chain = store.create_chain(conversation_id=conversation.id, root_message_id=root.id)
+    item = store.enqueue_route(
+        chain_id=chain.chain_id,
+        source_message_id=source.id,
+        target_participant_id=architect.participant_id,
+        route_kind="handoff",
+        depth=1,
+    )
+
+    linked = GroupchatWorklistScheduler(
+        db_path=db,
+        scheduler_id="groupchat-a1",
+    ).claim_and_link_one(chain_id=chain.chain_id)
+
+    assert linked is not None
+    assert linked.item_id == item.item_id
+    assert linked.inbox_item_id is not None
+    inbox_item = ChatInboxStore(db).get(linked.inbox_item_id)
+    expected_source_refs = [
+        f"chat:message:{source.id}",
+        "chat_dispatch_queue:dispatch-a",
+        "proposal:proposal-a",
+        f"groupchat_chain:{chain.chain_id}",
+        f"groupchat_worklist:{item.item_id}",
+    ]
+    assert inbox_item.payload["source_refs"] == expected_source_refs
+    runtime_context = _a2a_runtime_context(inbox_item)
+    assert runtime_context["source_refs"] == expected_source_refs
+    assert runtime_context["route"]["source_refs"] == expected_source_refs
 
 
 def test_groupchat_proposal_emitted_from_worklist_inbox_carries_source_refs(tmp_path):
