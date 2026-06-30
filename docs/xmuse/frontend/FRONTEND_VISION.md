@@ -184,36 +184,48 @@ Compact, cc-style. Groups by feature; each lane shown as a single line.
 
 ```ts
 type WorklistResponse = {
+  schema_version: "chat_worklist_projection/v1";
   conversation_id: string;
-  features: WorklistFeature[];
-  schema_version: "1";
+  projection_only: true;
+  write_capabilities: [];
+  source_authority: string[];
+  counts: WorklistCounts;
+  worklist: WorklistItem[];
+  groupchat_worklist: {
+    projection_only: true;
+    source_authority: string[];
+    terminal: number;
+    items: GroupchatWorklistItem[];
+  };
 };
 
-type WorklistFeature = {
-  feature_group: string;          // "graph_authority" or "graph_authority/ingest-pipeline"
-  graph_id: string;
-  lanes: WorklistLane[];
-  status_summary: WorklistStatusCounts;
-};
-
-type WorklistLane = {
-  feature_id: string;
-  title: string;                  // short label; falls back to feature_id
-  effective_status: EffectiveLaneStatus;
-  // optional UX hints:
-  retry_count?: number;
-  has_blocked_clarification?: boolean;
-};
-
-type WorklistStatusCounts = {
+type WorklistCounts = {
   total: number;
-  ready: number;
-  dispatched: number;
-  executed: number;
-  under_review: number;
-  merged: number;
-  failed: number;
+  inbox: number;
+  groupchat_worklist: number;
+  dispatch: number;
+  blocker: number;
+  final_action: number;
 };
+
+type WorklistItem = {
+  kind:
+    | "inbox_item"
+    | "groupchat_worklist_item"
+    | "dispatch_queue_entry"
+    | "blocker"
+    | "final_action_hold";
+  id: string;
+  status: string;
+  target_role?: string;
+  next_action: string;
+  detail_kind: string;
+  detail_api_href: string;
+  source_refs: string[];
+  compact_detail: Record<string, unknown>;
+};
+
+type GroupchatWorklistItem = Record<string, unknown>;
 ```
 
 ### Rendering rules
@@ -474,8 +486,9 @@ order on the backend side after this document is approved.
 ### Layer 2 — Worklist Endpoint
 
 - `GET /api/chat/conversations/{id}/worklist` projecting
-  `feature_lanes.json` filtered by `conversation_id` + grouped by
-  `feature_group`.
+  the read-only peer-chat UX worklist plus `groupchat_worklist` authority
+  diagnostics. It must keep `write_capabilities=[]`; lane/graph grouping can be
+  added later as projection, not truth.
 
 ### Layer 3 — Feature Read Model
 

@@ -581,7 +581,14 @@ Dashboard 是灰盒 drill-down surface：前端主流程应从 chat card / workl
 ## Chat REST API
 
 当前 Chat API 的真实 endpoint 以 `xmuse/chat_api.py` 为准。MVP 可用，但
-WebSocket、worklist endpoint、proposal narrow/reject endpoint 仍未落地。
+WebSocket、proposal narrow/reject endpoint 仍未落地。
+
+`GET /api/chat/conversations/{conversation_id}/worklist` 已作为只读投影落地：
+它复用 peer-chat UX projection 的 `worklist` / `groupchat_worklist` 读模型，
+返回 `schema_version=chat_worklist_projection/v1`、`projection_only=true`、
+`write_capabilities=[]`、`source_authority`、`counts` 和 worklist items。该
+endpoint 只能读取 `chat.db`/projection authority，不能创建 proposal、dispatch
+或其他 truth。
 
 ### `POST /api/chat/conversations`
 

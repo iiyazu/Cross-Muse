@@ -25,7 +25,7 @@
 | Frontend support level | 后端足够支持 chat-first MVP，但不支持完整 north-star |
 | API docs | `docs/xmuse/frontend/FRONTEND_API.md` 已更新为 2026-05-31，新增 actual live endpoint notes |
 | Frontend guide | 新增 `docs/xmuse/frontend/FRONTEND_IMPLEMENTATION_GUIDE.md`，作为独立前端开发入口 |
-| Worklist | `GET /api/chat/conversations/{id}/worklist` 仍未实现；MVP 前端需用 `/api/lanes` + `conversation_id` 聚合 |
+| Worklist | `GET /api/chat/conversations/{id}/worklist` 已提供只读 `chat_worklist_projection/v1`；前端优先使用该 endpoint，旧后端才回退 `/api/lanes` 聚合 |
 | Streaming | WebSocket/streaming 仍未实现；MVP 使用 polling |
 | Proposal actions | `approve` live；`narrow/reject` REST endpoint 仍未实现 |
 | Feature graph sets | `/api/feature-graph-sets` 和 detail endpoint live，可支撑 feature graph-set drill-down |
@@ -38,7 +38,7 @@
 
 1. `/chat` 使用 `GET /api/chat/threads`。
 2. `/chat/:conversation_id` 使用 messages、participants、cards、items 渲染群聊。
-3. 右侧 worklist 暂时由 `GET /api/lanes` 聚合，按 `conversation_id` 过滤。
+3. 右侧 worklist 使用 `GET /api/chat/conversations/{id}/worklist`；旧后端才回退 `GET /api/lanes` 聚合。
 4. 点击 worklist lane/graph/card 跳转 dashboard drill-down。
 5. 所有实时感用 polling 实现，暂不等待 WebSocket。
 
@@ -48,7 +48,6 @@
 
 这些 endpoint 或能力在愿景中合理，但当前不能假定 live：
 
-- `GET /api/chat/conversations/{conversation_id}/worklist`
 - `GET /api/chat/conversations/{conversation_id}/stream`
 - `POST /api/chat/proposals/{proposal_id}/narrow`
 - `POST /api/chat/proposals/{proposal_id}/reject`

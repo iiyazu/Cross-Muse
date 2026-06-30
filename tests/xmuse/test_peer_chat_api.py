@@ -5,7 +5,10 @@ from fastapi.testclient import TestClient
 
 from xmuse.chat_api import create_app
 from xmuse_core.agents.god_session_registry import GodSessionRegistry
-from xmuse_core.chat.groupchat_worklist import GroupchatWorklistStore
+from xmuse_core.chat.groupchat_worklist import (
+    GroupchatWorklistScheduler,
+    GroupchatWorklistStore,
+)
 from xmuse_core.chat.inbox_store import ChatInboxStore
 from xmuse_core.chat.participant_store import ParticipantStore
 from xmuse_core.chat.peer_service import PeerChatService
@@ -412,6 +415,99 @@ def test_groupchat_root_run_endpoint_executes_a1_worklist_chain(tmp_path):
     )
     stored_chain = GroupchatWorklistStore(db).get_chain(payload["chain_id"])
     assert stored_chain.status == "completed"
+
+
+def test_chat_worklist_endpoint_projects_groupchat_authority_read_only(tmp_path):
+    db = tmp_path / "chat.db"
+    chat = ChatStore(db)
+    conversation = chat.create_conversation("Chat worklist projection")
+    architect = ParticipantStore(db).add(
+        conversation_id=conversation.id,
+        role="architect",
+        display_name="Architect GOD",
+        cli_kind="codex",
+        model="gpt-5.4",
+    )
+    root = chat.add_message(
+        conversation.id,
+        author="Human",
+        role="human",
+        content="Run the approved dispatch.",
+    )
+    worklist = GroupchatWorklistStore(db)
+    chain = worklist.create_chain(conversation_id=conversation.id, root_message_id=root.id)
+    dispatch_ack = chat.add_message(
+        conversation.id,
+        author="execute",
+        role="assistant",
+        content="DISPATCH_ACKNOWLEDGED dispatch-a",
+        envelope_type="dispatch_result",
+        envelope_json={
+            "type": "dispatch_result",
+            "authority": "chat.db/messages/dispatch_result",
+            "dispatch_queue_entry_id": "dispatch-a",
+            "proposal_id": "proposal-a",
+            "resolution_id": "resolution-a",
+            "proof_boundary": "dispatch_acknowledgement_not_execution_proof",
+            "source_refs": [
+                "chat_dispatch_queue:dispatch-a",
+                "proposal:proposal-a",
+                "resolution:resolution-a",
+            ],
+        },
+    )
+    scheduler = GroupchatWorklistScheduler(db_path=db, scheduler_id="groupchat-a1")
+    assert scheduler.scan_routes_once(chain_id=chain.chain_id) == []
+    routed = scheduler.scan_routes_once(chain_id=chain.chain_id)
+    assert len(routed) == 1
+
+    with sqlite3.connect(db) as conn:
+        before_count = conn.execute("select count(*) from groupchat_worklist").fetchone()[0]
+
+    response = TestClient(create_app(tmp_path)).get(
+        f"/api/chat/conversations/{conversation.id}/worklist"
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["schema_version"] == "chat_worklist_projection/v1"
+    assert payload["projection_only"] is True
+    assert payload["write_capabilities"] == []
+    assert "chat.db:groupchat_worklist" in payload["source_authority"]
+    assert payload["counts"] == {
+        "total": 1,
+        "inbox": 0,
+        "groupchat_worklist": 1,
+        "dispatch": 0,
+        "blocker": 0,
+        "final_action": 0,
+    }
+    projected = {item["id"]: item for item in payload["worklist"]}
+    item = projected[routed[0].item_id]
+    assert item["kind"] == "groupchat_worklist_item"
+    assert item["status"] == "blocked"
+    assert item["target_role"] == architect.role
+    assert item["target_participant_id"] == architect.participant_id
+    assert item["next_action"] == "wait_for_execution_evidence_or_final_action_writeback"
+    assert item["source_refs"] == [
+        f"chat:message:{dispatch_ack.id}",
+        "chat_dispatch_queue:dispatch-a",
+        "proposal:proposal-a",
+        "resolution:resolution-a",
+    ]
+    assert payload["groupchat_worklist"]["items"][0]["item_id"] == routed[0].item_id
+
+    with sqlite3.connect(db) as conn:
+        after_count = conn.execute("select count(*) from groupchat_worklist").fetchone()[0]
+    assert after_count == before_count
+
+
+def test_chat_worklist_endpoint_404s_for_missing_conversation(tmp_path):
+    response = TestClient(create_app(tmp_path)).get(
+        "/api/chat/conversations/missing/worklist"
+    )
+
+    assert response.status_code == 404
 
 
 def test_rest_message_preserves_unknown_at_text_as_plain_message(tmp_path):

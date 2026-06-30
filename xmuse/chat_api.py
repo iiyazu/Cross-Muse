@@ -48,6 +48,7 @@ from xmuse_core.chat.collaboration_contracts import (
 from xmuse_core.chat.collaboration_store import ChatCollaborationStore
 from xmuse_core.chat.deliberation_engine import DeliberationFreezeGuard
 from xmuse_core.chat.dispatch_queue import ChatDispatchQueueEntry, ChatDispatchQueueStore
+from xmuse_core.chat.frontend_projection import build_peer_chat_ux_projection
 from xmuse_core.chat.groupchat_critic_verdicts import (
     GroupchatCriticVerdictError,
     groupchat_critic_verdict_decision,
@@ -395,6 +396,44 @@ def _first_balanced_json_object(text: str) -> str | None:
 
 def _conversation_exists(store: ChatStore, conversation_id: str) -> bool:
     return any(conversation.id == conversation_id for conversation in store.list_conversations())
+
+
+def _chat_worklist_projection_payload(root: Path, conversation_id: str) -> dict[str, Any]:
+    projection = build_peer_chat_ux_projection(conversation_id, root)
+    worklist = list(projection.get("worklist") or [])
+    counts_by_kind = {
+        "inbox": 0,
+        "groupchat_worklist": 0,
+        "dispatch": 0,
+        "blocker": 0,
+        "final_action": 0,
+    }
+    kind_to_count = {
+        "inbox_item": "inbox",
+        "groupchat_worklist_item": "groupchat_worklist",
+        "dispatch_queue_entry": "dispatch",
+        "blocker": "blocker",
+        "final_action_hold": "final_action",
+    }
+    for item in worklist:
+        if not isinstance(item, dict):
+            continue
+        bucket = kind_to_count.get(str(item.get("kind") or ""))
+        if bucket is not None:
+            counts_by_kind[bucket] += 1
+    return {
+        "schema_version": "chat_worklist_projection/v1",
+        "conversation_id": conversation_id,
+        "projection_only": True,
+        "write_capabilities": [],
+        "source_authority": projection.get("source_authority", []),
+        "counts": {
+            "total": len(worklist),
+            **counts_by_kind,
+        },
+        "worklist": worklist,
+        "groupchat_worklist": projection.get("groupchat_worklist", {}),
+    }
 
 
 def _deliberation_message_from_request(
@@ -2322,6 +2361,13 @@ def create_app(
                 for spine in _acceptance_spine_store(root).list_by_conversation(conversation_id)
             ],
         }
+
+    @app.get("/api/chat/conversations/{conversation_id}/worklist")
+    def chat_worklist_projection(conversation_id: str) -> dict[str, object]:
+        try:
+            return _chat_worklist_projection_payload(root, conversation_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="conversation not found") from exc
 
     @app.post(
         "/api/chat/conversations/{conversation_id}/messages",
