@@ -552,6 +552,7 @@ def _structured_state(
         conversation_id,
         limit=10,
     )
+    proposals_by_id = {proposal.id: proposal for proposal in proposals}
     spines = AcceptanceSpineStore(db_path).list_by_conversation(conversation_id)
     worklist = _groupchat_worklist_state(conversation_id=conversation_id, db_path=db_path)
     open_inbox = [item for item in inbox_items if item.status in {"unread", "claimed"}]
@@ -655,7 +656,10 @@ def _structured_state(
                 "proposal_id": entry.proposal_id,
                 "resolution_id": entry.resolution_id,
                 "gate_refs": list(entry.gate_refs),
-                "source_refs": _dispatch_source_refs(entry),
+                "source_refs": _dispatch_source_refs(
+                    entry,
+                    proposal_refs=_proposal_source_refs(entry.proposal_id, proposals_by_id),
+                ),
                 "dispatch_policy": entry.dispatch_policy,
             }
             for entry in dispatch_entries
@@ -680,12 +684,13 @@ def _structured_state(
     }
 
 
-def _dispatch_source_refs(entry: Any) -> list[str]:
+def _dispatch_source_refs(entry: Any, *, proposal_refs: list[str] | None = None) -> list[str]:
     refs = []
     if entry.entry_id:
         refs.append(f"chat_dispatch_queue:{entry.entry_id}")
     if entry.proposal_id:
         refs.append(f"proposal:{entry.proposal_id}")
+    refs.extend(proposal_refs or [])
     refs.extend(entry.gate_refs)
     if entry.resolution_id:
         refs.append(f"resolution:{entry.resolution_id}")
@@ -694,6 +699,15 @@ def _dispatch_source_refs(entry: Any) -> list[str]:
     if entry.artifact_ref:
         refs.append(entry.artifact_ref)
     return _dedupe_strings(refs)
+
+
+def _proposal_source_refs(proposal_id: str | None, proposals_by_id: dict[str, Any]) -> list[str]:
+    if not proposal_id:
+        return []
+    proposal = proposals_by_id.get(proposal_id)
+    if proposal is None:
+        return []
+    return [ref for ref in proposal.references if isinstance(ref, str) and ref.strip()]
 
 
 def _acceptance_spine_source_refs(spine: Any) -> list[str]:
