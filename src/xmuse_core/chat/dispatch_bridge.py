@@ -132,7 +132,7 @@ class ChatDispatchBridge:
         participant: Participant,
     ) -> str:
         artifact_context = _dispatch_artifact_context(self._db_path, entry)
-        source_refs = _dispatch_source_refs(entry)
+        source_refs = _dispatch_source_refs(entry, db_path=self._db_path)
         content = _dispatch_prompt(
             entry,
             participant,
@@ -203,7 +203,7 @@ class ChatDispatchBridge:
             conversation_id=entry.conversation_id,
             actor_id=f"dispatch-bridge:{self._bridge_id}",
             dispatch_queue_entry_id=entry.entry_id,
-            source_refs=_dispatch_source_refs(entry),
+            source_refs=_dispatch_source_refs(entry, db_path=self._db_path),
         )
         self._record_sidecar_handoff_context(
             entry,
@@ -310,7 +310,7 @@ class ChatDispatchBridge:
             return
 
         envelope = dict(message.envelope_json or {})
-        authority_refs = _dispatch_source_refs(entry)
+        authority_refs = _dispatch_source_refs(entry, db_path=self._db_path)
         envelope["type"] = _optional_text(envelope.get("type")) or (
             message.envelope_type or "dispatch_result"
         )
@@ -353,14 +353,24 @@ def _dispatch_artifact_context(
     return context
 
 
-def _dispatch_source_refs(entry: ChatDispatchQueueEntry) -> list[str]:
-    return dispatch_sidecar_handoff_source_refs(entry)
+def _dispatch_source_refs(
+    entry: ChatDispatchQueueEntry,
+    *,
+    db_path: Path | None = None,
+) -> list[str]:
+    proposal_refs = _proposal_source_refs(db_path, entry.proposal_id) if db_path else []
+    return dispatch_sidecar_handoff_source_refs(entry, proposal_refs=proposal_refs)
 
 
-def dispatch_sidecar_handoff_source_refs(entry: ChatDispatchQueueEntry) -> list[str]:
+def dispatch_sidecar_handoff_source_refs(
+    entry: ChatDispatchQueueEntry,
+    *,
+    proposal_refs: list[str] | tuple[str, ...] = (),
+) -> list[str]:
     refs = [f"chat_dispatch_queue:{entry.entry_id}"]
     if entry.proposal_id:
         refs.append(f"proposal:{entry.proposal_id}")
+    refs.extend(proposal_refs)
     refs.extend(entry.gate_refs)
     if entry.resolution_id:
         refs.append(f"resolution:{entry.resolution_id}")
@@ -369,6 +379,16 @@ def dispatch_sidecar_handoff_source_refs(entry: ChatDispatchQueueEntry) -> list[
     if entry.artifact_ref:
         refs.append(entry.artifact_ref)
     return _dedupe_refs(refs)
+
+
+def _proposal_source_refs(db_path: Path | None, proposal_id: str | None) -> list[str]:
+    if db_path is None or not proposal_id:
+        return []
+    try:
+        proposal = ChatStore(db_path).get_proposal(proposal_id)
+    except KeyError:
+        return []
+    return list(proposal.references)
 
 
 def _dispatch_prompt(

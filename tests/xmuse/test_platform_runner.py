@@ -2515,6 +2515,7 @@ async def test_capture_existing_dispatch_sidecar_handoff_records_continuity(
     expected_refs = [
         f"chat_dispatch_queue:{dispatch.entry_id}",
         f"proposal:{proposal.id}",
+        intake.id,
         "review_trigger_verdict:sidecar",
         f"resolution:{resolution.id}",
         "collaboration:collab-sidecar",
@@ -2584,6 +2585,7 @@ async def test_capture_existing_dispatch_sidecar_handoff_uses_memoryos_lite_adap
     expected_refs = [
         f"chat_dispatch_queue:{dispatch.entry_id}",
         f"proposal:{proposal.id}",
+        intake.id,
         "review_trigger_verdict:memoryos-lite",
         f"resolution:{resolution.id}",
         "collaboration:collab-memoryos-lite-sidecar",
