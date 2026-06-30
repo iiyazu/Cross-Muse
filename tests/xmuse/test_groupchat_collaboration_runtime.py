@@ -1911,6 +1911,8 @@ def test_proposal_approval_enqueues_agent_auto_dispatch_entry_after_gate(
                 }
             ),
             "references": [
+                "chat:message:groupchat-source",
+                "source:work-item-source",
                 f"collaboration:{run.run_id}",
                 f"collaboration:{second_run.run_id}",
             ],
@@ -1947,6 +1949,8 @@ def test_proposal_approval_enqueues_agent_auto_dispatch_entry_after_gate(
     ]
     expected_source_refs = [
         f"proposal:{proposal.json()['id']}",
+        "chat:message:groupchat-source",
+        "source:work-item-source",
         f"collaboration:{run.run_id}",
         f"collaboration:{second_run.run_id}",
         f"resolution:{resolution_id}",
@@ -2280,9 +2284,19 @@ async def test_dispatch_bridge_acknowledges_gated_entry_through_execute_peer(
 ) -> None:
     conversation_id = _conversation(tmp_path)
     execute = _execute_participant(tmp_path, conversation_id)
+    proposal = ChatStore(tmp_path / "chat.db").create_proposal(
+        conversation_id=conversation_id,
+        author="architect",
+        proposal_type="lane_graph",
+        content=json.dumps({"type": "lane_graph", "lanes": []}),
+        references=[
+            "chat:message:dispatch-source",
+            "groupchat_worklist:dispatch-work",
+        ],
+    )
     entry = ChatDispatchQueueStore(tmp_path / "chat.db").enqueue_agent_auto_dispatch(
         conversation_id=conversation_id,
-        proposal_id="proposal-real-provider",
+        proposal_id=proposal.id,
         resolution_id="resolution-real-provider",
         collaboration_run_id="collab-real-provider",
         artifact_ref="artifact:lane_graph",
@@ -2293,7 +2307,9 @@ async def test_dispatch_bridge_acknowledges_gated_entry_through_execute_peer(
     )
     expected_source_refs = [
         f"chat_dispatch_queue:{entry.entry_id}",
-        "proposal:proposal-real-provider",
+        f"proposal:{proposal.id}",
+        "chat:message:dispatch-source",
+        "groupchat_worklist:dispatch-work",
         "review_trigger_verdict:review-real-provider",
         "collaboration:collab-real-provider",
         "resolution:resolution-real-provider",

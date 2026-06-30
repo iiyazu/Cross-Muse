@@ -920,7 +920,16 @@ async def capture_existing_dispatch_sidecar_handoff(
     db_path = xmuse_root / "chat.db"
     dispatch_store = ChatDispatchQueueStore(db_path)
     entry = dispatch_store.get(clean_dispatch_entry_id)
-    source_refs = dispatch_sidecar_handoff_source_refs(entry)
+    proposal_refs: list[str] = []
+    if entry.proposal_id:
+        try:
+            proposal_refs = list(ChatStore(db_path).get_proposal(entry.proposal_id).references)
+        except KeyError:
+            proposal_refs = []
+    source_refs = dispatch_sidecar_handoff_source_refs(
+        entry,
+        proposal_refs=proposal_refs,
+    )
     sidecar = GroupchatMemorySidecar(memoryos_client, timeout_s=timeout_s)
     result = await sidecar.ingest_dispatch_handoff(
         conversation_id=entry.conversation_id,
