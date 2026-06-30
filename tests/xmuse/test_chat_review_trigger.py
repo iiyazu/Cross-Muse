@@ -577,6 +577,7 @@ def test_groupchat_proposal_approval_requires_review_and_critic_clearance(tmp_pa
     ]
     assert response.json()["next_authority_boundary"]["source_refs"] == [
         f"proposal:{proposal['proposal']['id']}",
+        *proposal["proposal"]["references"],
         f"review_trigger_verdict:{review_reply['message']['id']}",
         f"groupchat_critic_verdict:{critic_reply['message']['id']}",
         f"resolution:{response.json()['id']}",
@@ -681,6 +682,7 @@ def test_a2a_review_trigger_verdict_only_proposal_approval_enqueues_dispatch(
     assert entries[0].collaboration_run_id is None
     assert entries[0].artifact_ref == "artifact:lane_graph"
     assert entries[0].gate_refs == [f"review_trigger_verdict:{verdict_message_id}"]
+    proposal_refs = ChatStore(tmp_path / "chat.db").get_proposal(proposal_id).references
     assert response.json()["next_authority_boundary"] == {
         "required_authority": "chat.db/dispatch_queue",
         "required_action": "run_dispatch_bridge",
@@ -689,6 +691,7 @@ def test_a2a_review_trigger_verdict_only_proposal_approval_enqueues_dispatch(
         "dispatch_policy": "real_provider_allowed",
         "source_refs": [
             f"proposal:{proposal_id}",
+            *proposal_refs,
             f"review_trigger_verdict:{verdict_message_id}",
             f"resolution:{response.json()['id']}",
             f"chat_dispatch_queue:{entries[0].entry_id}",

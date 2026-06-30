@@ -1124,6 +1124,7 @@ def _project_resolution_into_execution_queue(
     execution_worktree: Path,
     dispatch_intent: _StructuredDispatchIntent | None = None,
     proposal_id: str | None = None,
+    proposal_references: list[str] | None = None,
 ) -> None:
     content = getattr(resolution, "content", None)
     if isinstance(content, dict) and content.get("type") in {"mission_blueprint", "feature_plan"}:
@@ -1134,6 +1135,7 @@ def _project_resolution_into_execution_queue(
             update={
                 "source_refs": _dispatch_authority_source_refs(
                     proposal_id=proposal_id,
+                    proposal_references=proposal_references or [],
                     resolution_id=graph.resolution_id,
                     dispatch_intent=dispatch_intent,
                 )
@@ -1323,6 +1325,7 @@ def _enqueue_structured_dispatch_intent(
 def _dispatch_next_authority_boundary(
     *,
     proposal_id: str,
+    proposal_references: list[str],
     resolution_id: str,
     dispatch_intent: _StructuredDispatchIntent,
 ) -> dict[str, object]:
@@ -1335,6 +1338,7 @@ def _dispatch_next_authority_boundary(
         "dispatch_policy": entry.dispatch_policy,
         "source_refs": _dispatch_authority_source_refs(
             proposal_id=proposal_id,
+            proposal_references=proposal_references,
             resolution_id=resolution_id,
             dispatch_intent=dispatch_intent,
         ),
@@ -1344,12 +1348,14 @@ def _dispatch_next_authority_boundary(
 def _dispatch_authority_source_refs(
     *,
     proposal_id: str,
+    proposal_references: list[str],
     resolution_id: str,
     dispatch_intent: _StructuredDispatchIntent,
 ) -> list[str]:
     return _dedupe_text(
         [
             f"proposal:{proposal_id}",
+            *proposal_references,
             *dispatch_intent.gate_refs,
             f"resolution:{resolution_id}",
             f"chat_dispatch_queue:{dispatch_intent.entry.entry_id}",
@@ -2539,6 +2545,7 @@ def create_app(
         if dispatch_intent is not None:
             payload["next_authority_boundary"] = _dispatch_next_authority_boundary(
                 proposal_id=proposal_id,
+                proposal_references=proposal.references,
                 resolution_id=resolution.id,
                 dispatch_intent=dispatch_intent,
             )
@@ -2548,6 +2555,7 @@ def create_app(
             execution_worktree=execution_root,
             dispatch_intent=dispatch_intent,
             proposal_id=proposal_id,
+            proposal_references=proposal.references,
         )
         return payload
 
