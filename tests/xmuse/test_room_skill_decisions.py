@@ -51,7 +51,13 @@ def _decision(*, selected: bool = True) -> SkillDecision:
     )
 
 
-def _claimed(tmp_path, *, content: str = "verify this risk", attempt_limit: int = 3):
+def _claimed(
+    tmp_path,
+    *,
+    content: str = "verify this risk",
+    attempt_limit: int = 3,
+    activity_override: tuple[str, str, dict[str, object]] | None = None,
+):
     path = tmp_path / "chat.db"
     conversation = RoomTestStore(path).create_conversation("skill room")
     participant = ParticipantStore(path).add(
@@ -62,12 +68,25 @@ def _claimed(tmp_path, *, content: str = "verify this risk", attempt_limit: int 
         model="gpt-5",
     )
     kernel = RoomKernelStore(path)
-    kernel.post_human_activity(
+    posted = kernel.post_human_activity(
         conversation_id=conversation.id,
         human_id="alice",
         content=content,
         client_request_id="human-1",
     )
+    if activity_override is not None:
+        actor_kind, activity_type, payload = activity_override
+        with sqlite3.connect(path) as conn:
+            conn.execute(
+                "update room_activities set actor_kind = ?, activity_type = ?, "
+                "payload_json = ? where activity_id = ?",
+                (
+                    actor_kind,
+                    activity_type,
+                    json.dumps(payload),
+                    posted["activity"]["activity_id"],
+                ),
+            )
     claim = kernel.claim_next_observation(
         conversation_id=conversation.id,
         participant_id=participant.participant_id,
@@ -132,6 +151,50 @@ def test_none_is_durable_and_changed_replay_conflicts(tmp_path):
     assert bound.selection.matched_terms == ()
     with pytest.raises(RoomSkillDecisionError, match="room_skill_binding_conflict"):
         store.bind_for_attempt(attempt_id=attempt_id, catalog=_Catalog(_decision()), now=NOW)
+
+
+def test_execution_infrastructure_activity_binds_stable_empty_source_to_none(tmp_path):
+    path, _, _, _, claim = _claimed(
+        tmp_path,
+        activity_override=(
+            "infrastructure",
+            "execution.failed",
+            {"reason_code": "execution_patch_apply_check_failed"},
+        ),
+    )
+    store = RoomAttemptSkillDecisionStore(path)
+    catalog = _Catalog(_decision(selected=False))
+
+    record = store.bind_for_attempt(
+        attempt_id=claim["attempt"]["attempt_id"],
+        catalog=catalog,
+        now=NOW,
+    )
+
+    assert record.selection.decision == "none"
+    assert record.selection.selection_reason == "no_match"
+    assert catalog.calls == [("review", "")]
+
+
+@pytest.mark.parametrize(
+    "activity_override",
+    [
+        ("human", "message.posted", {}),
+        ("human", "execution.failed", {"content": "must not be trusted"}),
+        ("infrastructure", "runtime.failed", {}),
+    ],
+)
+def test_unknown_or_malformed_activity_source_remains_fail_closed(
+    tmp_path, activity_override
+):
+    path, _, _, _, claim = _claimed(tmp_path, activity_override=activity_override)
+
+    with pytest.raises(RoomSkillDecisionError, match="room_skill_binding_lost"):
+        RoomAttemptSkillDecisionStore(path).bind_for_attempt(
+            attempt_id=claim["attempt"]["attempt_id"],
+            catalog=_Catalog(_decision(selected=False)),
+            now=NOW,
+        )
 
 
 def test_delivery_requires_decision_and_activation_must_match_ledger(tmp_path):
