@@ -4,14 +4,10 @@ from collections.abc import Iterable
 
 from xmuse_core.providers.models import (
     AdapterKind,
-    CostTier,
     PersistentCapability,
     ProviderId,
     ProviderProfile,
     ProviderProfileId,
-    RiskTier,
-    SupportLevel,
-    TaskCapability,
 )
 
 DEFAULT_CODEX_ORDINARY_MODEL_ID = "gpt-5.4"
@@ -20,13 +16,6 @@ DEFAULT_CODEX_GOD_MODEL_ID = DEFAULT_CODEX_ORDINARY_MODEL_ID
 DEFAULT_CODEX_REVIEW_MODEL_ID = DEFAULT_CODEX_ORDINARY_MODEL_ID
 DEFAULT_CODEX_WORKER_MODEL_ID = "gpt-5.4-mini"
 DEFAULT_CODEX_FINAL_QUALITY_MODEL_ID = "gpt-5.5"
-DEFAULT_OPENCODE_DEEPSEEK_MODEL_ID = "deepseek-v4-flash"
-DEFAULT_OPENCODE_DEEPSEEK_MODEL_ENV_NAME = "DEEPSEEK_MODEL"
-DEFAULT_OPENCODE_DEEPSEEK_BASE_ENV_NAME = "DEEPSEEK_BASE_URL"
-DEFAULT_OPENCODE_DEEPSEEK_API_KEY_ENV_NAME = "DEEPSEEK_API_KEY"
-DEFAULT_A2A_REMOTE_MODEL_ID = "a2a-remote"
-DEFAULT_A2A_REMOTE_ENDPOINT_ENV_NAME = "XMUSE_A2A_PROVIDER_URL"
-DEFAULT_A2A_REMOTE_API_KEY_ENV_NAME = "XMUSE_A2A_PROVIDER_API_KEY"
 
 
 def is_reserved_final_quality_model_id(model_id: str | None) -> bool:
@@ -42,10 +31,7 @@ def default_codex_model_id_for_profile(
     normalized_profile_id = _coerce_profile_id(profile_id)
     if normalized_profile_id is ProviderProfileId.WORKER:
         return DEFAULT_CODEX_WORKER_MODEL_ID
-    if (
-        allow_final_quality
-        and normalized_profile_id is ProviderProfileId.FINAL_QUALITY
-    ):
+    if allow_final_quality and normalized_profile_id is ProviderProfileId.FINAL_QUALITY:
         return DEFAULT_CODEX_FINAL_QUALITY_MODEL_ID
     return DEFAULT_CODEX_ORDINARY_MODEL_ID
 
@@ -96,11 +82,7 @@ class ProviderRegistry:
         return list(self._profiles)
 
     def list_provider_profiles(self, provider_id: ProviderId) -> list[ProviderProfile]:
-        return [
-            profile
-            for profile in self._profiles
-            if profile.provider_id is provider_id
-        ]
+        return [profile for profile in self._profiles if profile.provider_id is provider_id]
 
     def get(self, ref: str) -> ProviderProfile:
         cleaned_ref = ref.strip()
@@ -112,30 +94,9 @@ class ProviderRegistry:
             raise KeyError(f"unknown provider profile: {cleaned_ref}") from exc
 
 
-def build_default_provider_registry(
-    *,
-    opencode_deepseek_model_id: str = DEFAULT_OPENCODE_DEEPSEEK_MODEL_ID,
-) -> ProviderRegistry:
+def build_default_provider_registry() -> ProviderRegistry:
     return ProviderRegistry(
         [
-            ProviderProfile(
-                provider_id=ProviderId.A2A,
-                profile_id=ProviderProfileId.REMOTE,
-                adapter_kind=AdapterKind.A2A_REMOTE,
-                model_id=DEFAULT_A2A_REMOTE_MODEL_ID,
-                api_base_env_name=DEFAULT_A2A_REMOTE_ENDPOINT_ENV_NAME,
-                env_requirement_names=(DEFAULT_A2A_REMOTE_ENDPOINT_ENV_NAME,),
-                supports_mcp=False,
-                persistent_capability=PersistentCapability.UNSUPPORTED,
-                support_level=SupportLevel.EXPERIMENTAL,
-                cost_tier=CostTier.MEDIUM,
-                risk_tier=RiskTier.MEDIUM,
-                task_capabilities=(
-                    TaskCapability.BOUNDED_CODE_WRITING,
-                    TaskCapability.BOUNDED_DELIBERATION,
-                    TaskCapability.REVIEW,
-                ),
-            ),
             ProviderProfile(
                 provider_id=ProviderId.CODEX,
                 profile_id=ProviderProfileId.DEFAULT,
@@ -143,17 +104,6 @@ def build_default_provider_registry(
                 model_id=DEFAULT_CODEX_MODEL_ID,
                 supports_mcp=True,
                 persistent_capability=PersistentCapability.SUPPORTED,
-                support_level=SupportLevel.PRIMARY,
-                cost_tier=CostTier.HIGH,
-                risk_tier=RiskTier.HIGH,
-                task_capabilities=(
-                    TaskCapability.BOUNDED_CODE_WRITING,
-                    TaskCapability.BOUNDED_DELIBERATION,
-                    TaskCapability.REVIEW,
-                    TaskCapability.LANE_COORDINATION,
-                    TaskCapability.PLANNING,
-                    TaskCapability.TAKEOVER,
-                ),
             ),
             ProviderProfile(
                 provider_id=ProviderId.CODEX,
@@ -162,10 +112,6 @@ def build_default_provider_registry(
                 model_id=DEFAULT_CODEX_WORKER_MODEL_ID,
                 supports_mcp=True,
                 persistent_capability=PersistentCapability.SUPPORTED,
-                support_level=SupportLevel.PRIMARY,
-                cost_tier=CostTier.LOW,
-                risk_tier=RiskTier.LOW,
-                task_capabilities=(TaskCapability.BOUNDED_CODE_WRITING,),
             ),
             ProviderProfile(
                 provider_id=ProviderId.CODEX,
@@ -174,10 +120,6 @@ def build_default_provider_registry(
                 model_id=DEFAULT_CODEX_REVIEW_MODEL_ID,
                 supports_mcp=True,
                 persistent_capability=PersistentCapability.SUPPORTED,
-                support_level=SupportLevel.PRIMARY,
-                cost_tier=CostTier.HIGH,
-                risk_tier=RiskTier.HIGH,
-                task_capabilities=(TaskCapability.REVIEW,),
             ),
             ProviderProfile(
                 provider_id=ProviderId.CODEX,
@@ -186,15 +128,6 @@ def build_default_provider_registry(
                 model_id=DEFAULT_CODEX_GOD_MODEL_ID,
                 supports_mcp=True,
                 persistent_capability=PersistentCapability.SUPPORTED,
-                support_level=SupportLevel.PRIMARY,
-                cost_tier=CostTier.MEDIUM,
-                risk_tier=RiskTier.HIGH,
-                task_capabilities=(
-                    TaskCapability.BOUNDED_DELIBERATION,
-                    TaskCapability.LANE_COORDINATION,
-                    TaskCapability.PLANNING,
-                    TaskCapability.TAKEOVER,
-                ),
             ),
             ProviderProfile(
                 provider_id=ProviderId.CODEX,
@@ -203,28 +136,6 @@ def build_default_provider_registry(
                 model_id=DEFAULT_CODEX_FINAL_QUALITY_MODEL_ID,
                 supports_mcp=True,
                 persistent_capability=PersistentCapability.SUPPORTED,
-                support_level=SupportLevel.PRIMARY,
-                cost_tier=CostTier.HIGH,
-                risk_tier=RiskTier.HIGH,
-                task_capabilities=(TaskCapability.MERGE_FINAL_REVIEW,),
-            ),
-            ProviderProfile(
-                provider_id=ProviderId.OPENCODE,
-                profile_id=ProviderProfileId.DEEPSEEK_FLASH_WORKER,
-                adapter_kind=AdapterKind.OPENCODE_CLI,
-                model_id=opencode_deepseek_model_id,
-                model_id_env_name=DEFAULT_OPENCODE_DEEPSEEK_MODEL_ENV_NAME,
-                api_base_env_name=DEFAULT_OPENCODE_DEEPSEEK_BASE_ENV_NAME,
-                env_requirement_names=(DEFAULT_OPENCODE_DEEPSEEK_API_KEY_ENV_NAME,),
-                supports_mcp=False,
-                persistent_capability=PersistentCapability.UNSUPPORTED,
-                support_level=SupportLevel.SECONDARY,
-                cost_tier=CostTier.LOW,
-                risk_tier=RiskTier.LOW,
-                task_capabilities=(
-                    TaskCapability.BOUNDED_CODE_WRITING,
-                    TaskCapability.BOUNDED_DELIBERATION,
-                ),
             ),
         ]
     )

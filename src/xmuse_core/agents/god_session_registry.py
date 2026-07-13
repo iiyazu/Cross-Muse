@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import builtins
 import fcntl
 import json
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from tempfile import NamedTemporaryFile
+from typing import Any, cast
 from uuid import uuid4
 
 from xmuse_core.chat.participant_store import INIT_GOD_ROLE
@@ -94,7 +97,7 @@ class GodSessionRegistry:
             self._write(sessions)
             return record
 
-    def list(self) -> list[GodSessionRecord]:
+    def list(self) -> builtins.list[GodSessionRecord]:
         payload = self._read()
         return [GodSessionRecord(**entry) for entry in payload["sessions"]]
 
@@ -215,7 +218,7 @@ class GodSessionRegistry:
         god_session_id: str,
         *,
         prompt_contract_version: str | None,
-        prompt_layer_order: list[str] | None,
+        prompt_layer_order: builtins.list[str] | None,
         prompt_layer_hashes: dict[str, str] | None,
         prompt_artifact_fingerprint: str | None,
     ) -> GodSessionRecord:
@@ -235,26 +238,48 @@ class GodSessionRegistry:
                     return updated
             raise KeyError(god_session_id)
 
-    def promote_running(self, god_session_id: str) -> GodSessionRecord:
+    def promote_running(
+        self,
+        god_session_id: str,
+        *,
+        pid: int | None = None,
+    ) -> GodSessionRecord:
         with self._locked_file():
             sessions = self.list()
             for index, record in enumerate(sessions):
                 if record.god_session_id != god_session_id:
                     continue
+                if record.status == "running":
+                    if pid is None or record.pid == pid:
+                        return record
+                    updated = replace(record, pid=pid)
+                    sessions[index] = updated
+                    self._write(sessions)
+                    return updated
                 if record.status != "starting":
                     return record
-                updated = replace(record, status="running")
+                updated = replace(
+                    record,
+                    status="running",
+                    pid=pid if pid is not None else record.pid,
+                )
                 sessions[index] = updated
                 self._write(sessions)
                 return updated
             raise KeyError(god_session_id)
 
-    def _read(self) -> dict[str, list[dict[str, object]]]:
+    def _read(self) -> dict[str, builtins.list[dict[str, Any]]]:
         if not self.path.exists():
             return {"sessions": []}
-        return json.loads(self.path.read_text())
+        payload = json.loads(self.path.read_text())
+        if not isinstance(payload, dict) or not isinstance(payload.get("sessions"), list):
+            raise ValueError("invalid god session registry")
+        sessions = payload["sessions"]
+        if not all(isinstance(entry, dict) for entry in sessions):
+            raise ValueError("invalid god session registry entry")
+        return {"sessions": cast(builtins.list[dict[str, Any]], sessions)}
 
-    def _write(self, sessions: list[GodSessionRecord]) -> None:
+    def _write(self, sessions: builtins.list[GodSessionRecord]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         payload = {"sessions": [asdict(session) for session in sessions]}
         with NamedTemporaryFile(
@@ -270,7 +295,7 @@ class GodSessionRegistry:
         temp_path.replace(self.path)
 
     @contextmanager
-    def _locked_file(self):
+    def _locked_file(self) -> Iterator[None]:
         self.lock_path.parent.mkdir(parents=True, exist_ok=True)
         with self.lock_path.open("a+", encoding="utf-8") as handle:
             fcntl.flock(handle, fcntl.LOCK_EX)

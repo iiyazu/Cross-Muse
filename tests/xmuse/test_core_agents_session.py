@@ -89,9 +89,12 @@ async def test_abort_hanging_process():
 @pytest.mark.asyncio
 async def test_health_warning_on_bad_output():
     session = await LocalSession.spawn([sys.executable, "-c", BAD_OUTPUT_AGENT_SCRIPT])
-    assert not session.health_warning
-    for _ in range(55):
-        msg = await session.receive()
-        if msg is None and not session.is_alive():
-            break
-    assert session.health_warning
+    try:
+        assert not session.health_warning
+        for _ in range(55):
+            msg = await session.receive()
+            if msg is None and not session.is_alive():
+                break
+        assert session.health_warning
+    finally:
+        await session.abort(grace_period=1.0)

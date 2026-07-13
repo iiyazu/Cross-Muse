@@ -1,32 +1,25 @@
-"""SQLite-backed stores for chat participants and role templates.
-
-Participant and RoleTemplate Pydantic models match the type signatures in
-docs/xmuse/frontend/FRONTEND_VISION.md (Layer 1 contract).  The stores share the same
-chat.db connection that ChatStore uses; they are initialised by ChatStore._init_db
-via two CREATE TABLE IF NOT EXISTS statements added there.
-"""
+"""SQLite-backed durable Room participant identities."""
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import uuid
 from datetime import UTC, datetime
+from hashlib import sha256
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal, cast
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from xmuse_core.chat.room_database import RoomDatabase
 from xmuse_core.providers.models import ProviderId, ProviderProfileId
-from xmuse_core.providers.registry import (
-    DEFAULT_CODEX_GOD_MODEL_ID,
-    DEFAULT_CODEX_REVIEW_MODEL_ID,
-    DEFAULT_CODEX_WORKER_MODEL_ID,
-    normalize_codex_model_id,
-)
+from xmuse_core.providers.registry import normalize_codex_model_id
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _utc_now() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
@@ -37,29 +30,78 @@ def _new_id(prefix: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Pydantic models (match FRONTEND_VISION.md type signatures exactly)
+# Pydantic models (match FRONTEND_API.md participant/role-template shapes)
 # ---------------------------------------------------------------------------
 
-CliKind = Literal["codex", "opencode", "a2a"]
+CurrentChatCliKind = Literal["codex"]
+StoredChatCliKind = Literal["codex", "a2a", "opencode"]
+StoredProviderIdValue = ProviderId | Literal["a2a", "opencode"]
 INIT_GOD_ROLE = "init"
 INIT_GOD_DISPLAY_NAME = "init-god"
-_SUPPORTED_CLI_KINDS = {"codex", "opencode", "a2a"}
+_CURRENT_CHAT_CLI_KINDS = {"codex"}
+_STORED_ONLY_CLI_KINDS = {"a2a", "opencode"}
+_STORED_CHAT_CLI_KINDS = _CURRENT_CHAT_CLI_KINDS | _STORED_ONLY_CLI_KINDS
+PERSONA_SNAPSHOT_SCHEMA: Literal["persona_snapshot/v1"] = "persona_snapshot/v1"
+MAX_PERSONA_SNAPSHOT_BYTES = 2 * 1024
 
 
-def _require_supported_cli_kind(cli_kind: str) -> CliKind:
+def _canonical_json(value: object) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+class PersonaSnapshot(BaseModel):
+    """Server-authored, immutable participant collaboration identity."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: Literal["persona_snapshot/v1"] = PERSONA_SNAPSHOT_SCHEMA
+    role_description: str = Field(min_length=1)
+    collaboration_focus: str = Field(min_length=1)
+
+    @field_validator("role_description", "collaboration_focus", mode="before")
+    @classmethod
+    def _strip_text(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                raise ValueError("persona text must not be blank")
+            return stripped
+        return value
+
+    @model_validator(mode="after")
+    def _bounded(self) -> PersonaSnapshot:
+        if len(persona_snapshot_json(self).encode("utf-8")) > MAX_PERSONA_SNAPSHOT_BYTES:
+            raise ValueError("persona_snapshot_too_large")
+        return self
+
+
+def persona_snapshot_json(snapshot: PersonaSnapshot) -> str:
+    return _canonical_json(snapshot.model_dump(mode="json"))
+
+
+def persona_snapshot_digest(snapshot: PersonaSnapshot) -> str:
+    return f"sha256:{sha256(persona_snapshot_json(snapshot).encode('utf-8')).hexdigest()}"
+
+
+def _require_stored_cli_kind(cli_kind: str) -> StoredChatCliKind:
     normalized = cli_kind.strip().lower()
-    if normalized not in _SUPPORTED_CLI_KINDS:
+    if normalized not in _STORED_CHAT_CLI_KINDS:
         raise ValueError(f"unsupported xmuse chat participant cli_kind: {cli_kind!r}")
     return normalized  # type: ignore[return-value]
 
 
-def _read_cli_kind(cli_kind: str) -> CliKind:
+def _require_current_cli_kind(cli_kind: str) -> CurrentChatCliKind:
+    normalized = _require_stored_cli_kind(cli_kind)
+    if normalized not in _CURRENT_CHAT_CLI_KINDS:
+        raise ValueError("xmuse Room participant writes support only cli_kind 'codex'")
+    return cast(CurrentChatCliKind, normalized)
+
+
+def _read_cli_kind(cli_kind: str) -> StoredChatCliKind:
     normalized = cli_kind.strip().lower()
-    if normalized in {"opencode", "a2a"}:
+    if normalized in _STORED_CHAT_CLI_KINDS:
         return normalized  # type: ignore[return-value]
-    # Older chat.db files may contain unsupported runtime ids. Fall back to the
-    # closest supported runtime instead of making old conversations unloadable.
-    return "codex"
+    raise ValueError(f"unsupported stored xmuse chat participant cli_kind: {cli_kind!r}")
 
 
 def _read_model(
@@ -69,12 +111,6 @@ def _read_model(
     profile_id: ProviderProfileId,
 ) -> str:
     raw_cli_kind = cli_kind.strip().lower()
-    if raw_cli_kind not in _SUPPORTED_CLI_KINDS:
-        return _normalize_model_for_cli_kind(
-            "codex",
-            None,
-            profile_id=profile_id,
-        )
     return _normalize_model_for_cli_kind(
         _read_cli_kind(raw_cli_kind),
         model,
@@ -83,7 +119,7 @@ def _read_model(
 
 
 def _normalize_model_for_cli_kind(
-    cli_kind: CliKind,
+    cli_kind: StoredChatCliKind,
     model: str | None,
     *,
     profile_id: ProviderProfileId,
@@ -106,62 +142,57 @@ def provider_profile_id_for_role(role: str) -> ProviderProfileId:
     return ProviderProfileId.DEFAULT
 
 
-def provider_profile_id_for_template_slug(slug: str) -> ProviderProfileId:
-    if slug == "architect":
-        return ProviderProfileId.GOD
-    if slug == "review":
-        return ProviderProfileId.REVIEW
-    if slug == "execute":
-        return ProviderProfileId.WORKER
-    return ProviderProfileId.DEFAULT
-
-
 def provider_profile_id_for_cli_kind_role(
-    cli_kind: CliKind,
+    cli_kind: StoredChatCliKind,
     role: str,
 ) -> ProviderProfileId:
-    if cli_kind == "a2a":
-        return ProviderProfileId.REMOTE
     return provider_profile_id_for_role(role)
 
 
-def provider_profile_id_for_cli_kind_template_slug(
-    cli_kind: CliKind,
-    slug: str,
-) -> ProviderProfileId:
-    if cli_kind == "a2a":
-        return ProviderProfileId.REMOTE
-    return provider_profile_id_for_template_slug(slug)
-
-
-def provider_id_for_cli_kind(cli_kind: CliKind) -> ProviderId:
+def provider_id_for_cli_kind(cli_kind: StoredChatCliKind) -> StoredProviderIdValue:
     if cli_kind == "opencode":
-        return ProviderId.OPENCODE
+        return "opencode"
     if cli_kind == "a2a":
-        return ProviderId.A2A
+        return "a2a"
     return ProviderId.CODEX
 
 
-def resolve_codex_cli_kind(
+def resolve_current_chat_cli_kind(
     *,
     cli_kind: str | None,
-    provider_id: ProviderId | str | None,
+    provider_id: StoredProviderIdValue | str | None,
     profile_id: ProviderProfileId | str | None,
     expected_profile_id: ProviderProfileId,
     subject: str,
-) -> CliKind:
+) -> CurrentChatCliKind:
+    resolved = _resolve_chat_cli_kind(
+        cli_kind=cli_kind,
+        provider_id=provider_id,
+        profile_id=profile_id,
+        expected_profile_id=expected_profile_id,
+        subject=subject,
+    )
+    if resolved != "codex":
+        raise ValueError(f"{subject} supports only the local Codex provider")
+    return resolved
+
+
+def _resolve_chat_cli_kind(
+    *,
+    cli_kind: str | None,
+    provider_id: StoredProviderIdValue | str | None,
+    profile_id: ProviderProfileId | str | None,
+    expected_profile_id: ProviderProfileId,
+    subject: str,
+) -> StoredChatCliKind:
     normalized_cli_kind = (
-        _require_supported_cli_kind(cli_kind.strip()) if isinstance(cli_kind, str) else None
+        _require_stored_cli_kind(cli_kind.strip()) if isinstance(cli_kind, str) else None
     )
     normalized_provider_id = _parse_provider_id(provider_id)
     normalized_profile_id = _parse_profile_id(profile_id)
 
     if normalized_provider_id is None and normalized_profile_id is not None:
-        normalized_provider_id = (
-            ProviderId.A2A
-            if normalized_profile_id is ProviderProfileId.REMOTE
-            else ProviderId.CODEX
-        )
+        normalized_provider_id = ProviderId.CODEX
     if normalized_provider_id is None and normalized_cli_kind is not None:
         normalized_provider_id = provider_id_for_cli_kind(normalized_cli_kind)
     if normalized_cli_kind is None and normalized_provider_id is not None:
@@ -169,16 +200,12 @@ def resolve_codex_cli_kind(
 
     if normalized_provider_id is not None and normalized_cli_kind is not None:
         expected_provider_id = provider_id_for_cli_kind(normalized_cli_kind)
-        if normalized_provider_id is not expected_provider_id:
+        if normalized_provider_id != expected_provider_id:
             raise ValueError(
-                f"{subject} must use provider_id {expected_provider_id.value!r}, "
-                f"got {normalized_provider_id.value!r}"
+                f"{subject} must use provider_id {_provider_id_value(expected_provider_id)!r}, "
+                f"got {_provider_id_value(normalized_provider_id)!r}"
             )
-    effective_expected_profile_id = (
-        ProviderProfileId.REMOTE
-        if normalized_cli_kind == "a2a"
-        else expected_profile_id
-    )
+    effective_expected_profile_id = expected_profile_id
     if (
         normalized_profile_id is not None
         and normalized_profile_id is not effective_expected_profile_id
@@ -190,25 +217,36 @@ def resolve_codex_cli_kind(
 
     if normalized_cli_kind is not None:
         return normalized_cli_kind
-    if normalized_provider_id is ProviderId.OPENCODE:
+    if normalized_provider_id == "opencode":
         return "opencode"
     return "codex"
 
 
-def _cli_kind_for_provider_id(provider_id: ProviderId) -> CliKind:
-    if provider_id is ProviderId.OPENCODE:
+def _cli_kind_for_provider_id(provider_id: StoredProviderIdValue) -> StoredChatCliKind:
+    if provider_id == "opencode":
         return "opencode"
-    if provider_id is ProviderId.A2A:
+    if provider_id == "a2a":
         return "a2a"
     return "codex"
 
 
-def _parse_provider_id(value: ProviderId | str | None) -> ProviderId | None:
+def _parse_provider_id(
+    value: StoredProviderIdValue | str | None,
+) -> StoredProviderIdValue | None:
     if value is None:
         return None
     if isinstance(value, ProviderId):
         return value
-    return ProviderId(value.strip())
+    normalized = value.strip().lower()
+    if normalized in {"a2a", "opencode"}:
+        return normalized  # type: ignore[return-value]
+    return ProviderId(normalized)
+
+
+def _provider_id_value(provider_id: StoredProviderIdValue) -> str:
+    if isinstance(provider_id, ProviderId):
+        return provider_id.value
+    return provider_id
 
 
 def _parse_profile_id(value: ProviderProfileId | str | None) -> ProviderProfileId | None:
@@ -220,21 +258,126 @@ def _parse_profile_id(value: ProviderProfileId | str | None) -> ProviderProfileI
 
 
 class Participant(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
     participant_id: str
     conversation_id: str
     role: str
     display_name: str
-    provider_id: ProviderId
+    provider_id: StoredProviderIdValue
     profile_id: ProviderProfileId
-    cli_kind: CliKind
+    cli_kind: StoredChatCliKind
     model: str
     role_template_id: str | None
+    persona_snapshot: PersonaSnapshot | None = None
+    persona_snapshot_sha256: str | None = None
     status: Literal["active", "stopped"]
     last_seen_at: str | None
     created_at: str
 
+    @model_validator(mode="after")
+    def _persona_binding_is_valid(self) -> Participant:
+        if self.persona_snapshot is None:
+            if self.persona_snapshot_sha256 is not None:
+                raise ValueError("participant_persona_snapshot_missing")
+            return self
+        expected = persona_snapshot_digest(self.persona_snapshot)
+        if self.persona_snapshot_sha256 != expected:
+            raise ValueError("participant_persona_snapshot_digest_mismatch")
+        return self
 
-def participant_summary(participant: Participant) -> dict[str, str]:
+
+def prepare_participant(
+    *,
+    conversation_id: str,
+    role: str,
+    display_name: str,
+    cli_kind: CurrentChatCliKind,
+    model: str,
+    role_template_id: str | None = None,
+    persona_snapshot: PersonaSnapshot | dict[str, Any] | None = None,
+    status: Literal["active", "stopped"] = "active",
+    participant_id: str | None = None,
+    created_at: str | None = None,
+) -> Participant:
+    """Build and validate a participant without opening a database connection."""
+
+    normalized_cli_kind = _require_current_cli_kind(cli_kind)
+    profile_id = provider_profile_id_for_cli_kind_role(normalized_cli_kind, role)
+    normalized_persona = (
+        PersonaSnapshot.model_validate(persona_snapshot) if persona_snapshot is not None else None
+    )
+    return Participant(
+        participant_id=participant_id or _new_id("part"),
+        conversation_id=conversation_id,
+        role=role,
+        display_name=display_name,
+        provider_id=provider_id_for_cli_kind(normalized_cli_kind),
+        profile_id=profile_id,
+        cli_kind=normalized_cli_kind,
+        model=_normalize_model_for_cli_kind(
+            normalized_cli_kind,
+            model,
+            profile_id=profile_id,
+        ),
+        role_template_id=role_template_id,
+        persona_snapshot=normalized_persona,
+        persona_snapshot_sha256=(
+            persona_snapshot_digest(normalized_persona) if normalized_persona is not None else None
+        ),
+        status=status,
+        last_seen_at=None,
+        created_at=created_at or _utc_now(),
+    )
+
+
+def insert_participant_conn(conn: sqlite3.Connection, participant: Participant) -> None:
+    """Insert a prepared participant in the caller-owned transaction."""
+
+    columns = {
+        str(row["name"] if isinstance(row, sqlite3.Row) else row[1])
+        for row in conn.execute("pragma table_info(participants)").fetchall()
+    }
+    values: list[object] = [
+        participant.participant_id,
+        participant.conversation_id,
+        participant.role,
+        participant.display_name,
+        participant.cli_kind,
+        participant.model,
+        participant.role_template_id,
+    ]
+    insert_columns = [
+        "participant_id",
+        "conversation_id",
+        "role",
+        "display_name",
+        "cli_kind",
+        "model",
+        "role_template_id",
+    ]
+    if {"persona_snapshot_json", "persona_snapshot_sha256"} <= columns:
+        insert_columns.extend(("persona_snapshot_json", "persona_snapshot_sha256"))
+        values.extend(
+            (
+                persona_snapshot_json(participant.persona_snapshot)
+                if participant.persona_snapshot is not None
+                else None,
+                participant.persona_snapshot_sha256,
+            )
+        )
+    elif participant.persona_snapshot is not None:
+        raise ValueError("participant_persona_schema_unavailable")
+    insert_columns.extend(("status", "last_seen_at", "created_at"))
+    values.extend((participant.status, participant.last_seen_at, participant.created_at))
+    placeholders = ", ".join("?" for _ in insert_columns)
+    conn.execute(
+        f"insert into participants ({', '.join(insert_columns)}) values ({placeholders})",
+        values,
+    )
+
+
+def participant_summary(participant: Participant) -> dict[str, Any]:
     return {
         "participant_id": participant.participant_id,
         "role": participant.role,
@@ -243,27 +386,20 @@ def participant_summary(participant: Participant) -> dict[str, str]:
         "profile_id": participant.profile_id,
         "cli_kind": participant.cli_kind,
         "model": participant.model,
+        "persona_snapshot": (
+            participant.persona_snapshot.model_dump(mode="json")
+            if participant.persona_snapshot is not None
+            else None
+        ),
+        "persona_snapshot_sha256": participant.persona_snapshot_sha256,
         "status": participant.status,
     }
-
-
-class RoleTemplate(BaseModel):
-    id: str
-    slug: str
-    display_name: str
-    prompt: str
-    provider_id: ProviderId
-    profile_id: ProviderProfileId
-    cli_kind: CliKind
-    default_model: str
-    predefined: bool
-    created_at: str
-    updated_at: str
 
 
 # ---------------------------------------------------------------------------
 # ParticipantStore
 # ---------------------------------------------------------------------------
+
 
 class ParticipantStore:
     """CRUD store for the `participants` table in chat.db."""
@@ -281,55 +417,26 @@ class ParticipantStore:
         conversation_id: str,
         role: str,
         display_name: str,
-        cli_kind: CliKind,
+        cli_kind: CurrentChatCliKind,
         model: str,
         role_template_id: str | None = None,
+        persona_snapshot: PersonaSnapshot | dict[str, Any] | None = None,
         status: Literal["active", "stopped"] = "active",
     ) -> Participant:
-        normalized_cli_kind = _require_supported_cli_kind(cli_kind)
-        profile_id = provider_profile_id_for_cli_kind_role(normalized_cli_kind, role)
-        participant = Participant(
-            participant_id=_new_id("part"),
+        participant = prepare_participant(
             conversation_id=conversation_id,
             role=role,
             display_name=display_name,
-            provider_id=provider_id_for_cli_kind(normalized_cli_kind),
-            profile_id=profile_id,
-            cli_kind=normalized_cli_kind,
-            model=_normalize_model_for_cli_kind(
-                normalized_cli_kind,
-                model,
-                profile_id=profile_id,
-            ),
+            cli_kind=cli_kind,
+            model=model,
             role_template_id=role_template_id,
+            persona_snapshot=persona_snapshot,
             status=status,
-            last_seen_at=None,
-            created_at=_utc_now(),
         )
         with self._connect() as conn:
             if role == INIT_GOD_ROLE:
                 self._assert_init_god_available(conn, conversation_id)
-            conn.execute(
-                """
-                insert into participants (
-                    participant_id, conversation_id, role, display_name,
-                    cli_kind, model, role_template_id, status,
-                    last_seen_at, created_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    participant.participant_id,
-                    participant.conversation_id,
-                    participant.role,
-                    participant.display_name,
-                    participant.cli_kind,
-                    participant.model,
-                    participant.role_template_id,
-                    participant.status,
-                    participant.last_seen_at,
-                    participant.created_at,
-                ),
-            )
+            insert_participant_conn(conn, participant)
         return participant
 
     def ensure_init_god(
@@ -337,11 +444,12 @@ class ParticipantStore:
         *,
         conversation_id: str,
         model: str,
-        cli_kind: CliKind = "codex",
+        cli_kind: CurrentChatCliKind = "codex",
         display_name: str = INIT_GOD_DISPLAY_NAME,
         role_template_id: str | None = None,
+        persona_snapshot: PersonaSnapshot | dict[str, Any] | None = None,
     ) -> Participant:
-        normalized_cli_kind = _require_supported_cli_kind(cli_kind)
+        normalized_cli_kind = _require_current_cli_kind(cli_kind)
         profile_id = provider_profile_id_for_cli_kind_role(
             normalized_cli_kind,
             INIT_GOD_ROLE,
@@ -351,6 +459,11 @@ class ParticipantStore:
             model,
             profile_id=profile_id,
         )
+        normalized_persona = (
+            PersonaSnapshot.model_validate(persona_snapshot)
+            if persona_snapshot is not None
+            else None
+        )
         existing = self._find_init_god(conversation_id)
         if existing is not None:
             if (
@@ -358,10 +471,10 @@ class ParticipantStore:
                 or existing.cli_kind != normalized_cli_kind
                 or existing.model != normalized_model
                 or existing.role_template_id != role_template_id
+                or existing.persona_snapshot != normalized_persona
             ):
                 raise ValueError(
-                    "existing init god participant does not match requested "
-                    "identity/config"
+                    "existing init god participant does not match requested identity/config"
                 )
             if existing.status != "active":
                 return self.update_status(existing.participant_id, "active")
@@ -373,6 +486,7 @@ class ParticipantStore:
             cli_kind=normalized_cli_kind,
             model=normalized_model,
             role_template_id=role_template_id,
+            persona_snapshot=normalized_persona,
         )
 
     def ensure_bootstrap_participant(
@@ -381,16 +495,22 @@ class ParticipantStore:
         conversation_id: str,
         role: str,
         display_name: str,
-        cli_kind: CliKind,
+        cli_kind: CurrentChatCliKind,
         model: str,
         role_template_id: str | None = None,
+        persona_snapshot: PersonaSnapshot | dict[str, Any] | None = None,
     ) -> Participant:
-        normalized_cli_kind = _require_supported_cli_kind(cli_kind)
+        normalized_cli_kind = _require_current_cli_kind(cli_kind)
         profile_id = provider_profile_id_for_cli_kind_role(normalized_cli_kind, role)
         normalized_model = _normalize_model_for_cli_kind(
             normalized_cli_kind,
             model,
             profile_id=profile_id,
+        )
+        normalized_persona = (
+            PersonaSnapshot.model_validate(persona_snapshot)
+            if persona_snapshot is not None
+            else None
         )
         existing = self._find_bootstrap_participant(
             conversation_id=conversation_id,
@@ -402,10 +522,10 @@ class ParticipantStore:
                 existing.cli_kind != normalized_cli_kind
                 or existing.model != normalized_model
                 or existing.role_template_id != role_template_id
+                or existing.persona_snapshot != normalized_persona
             ):
                 raise ValueError(
-                    "existing bootstrap participant does not match requested "
-                    "identity/config"
+                    "existing bootstrap participant does not match requested identity/config"
                 )
             if existing.status != "active":
                 return self.update_status(existing.participant_id, "active")
@@ -417,6 +537,7 @@ class ParticipantStore:
             cli_kind=normalized_cli_kind,
             model=normalized_model,
             role_template_id=role_template_id,
+            persona_snapshot=normalized_persona,
         )
 
     def get(self, participant_id: str) -> Participant:
@@ -449,6 +570,12 @@ class ParticipantStore:
     ) -> Participant:
         now = last_seen_at or _utc_now()
         with self._connect() as conn:
+            participant = conn.execute(
+                "select cli_kind from participants where participant_id = ?",
+                (participant_id,),
+            ).fetchone()
+            if participant is not None and status == "active":
+                _require_current_cli_kind(str(participant["cli_kind"]))
             conn.execute(
                 """
                 update participants
@@ -471,15 +598,18 @@ class ParticipantStore:
     # ------------------------------------------------------------------
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self._path)
-        conn.row_factory = sqlite3.Row
-        conn.execute("pragma foreign_keys = on")
-        return conn
+        return RoomDatabase(self._path).connect()
 
     def _from_row(self, row: sqlite3.Row) -> Participant:
         d = dict(row)
         cli_kind = _read_cli_kind(d["cli_kind"])
         profile_id = provider_profile_id_for_cli_kind_role(cli_kind, d["role"])
+        raw_persona = d.get("persona_snapshot_json")
+        persona = (
+            PersonaSnapshot.model_validate(json.loads(raw_persona))
+            if isinstance(raw_persona, str) and raw_persona.strip()
+            else None
+        )
         return Participant(
             participant_id=d["participant_id"],
             conversation_id=d["conversation_id"],
@@ -490,6 +620,8 @@ class ParticipantStore:
             cli_kind=cli_kind,
             model=_read_model(d["cli_kind"], d["model"], profile_id=profile_id),
             role_template_id=d.get("role_template_id"),
+            persona_snapshot=persona,
+            persona_snapshot_sha256=d.get("persona_snapshot_sha256"),
             status=d["status"],
             last_seen_at=d.get("last_seen_at"),
             created_at=d["created_at"],
@@ -556,341 +688,3 @@ class ParticipantStore:
             raise ValueError(
                 f"duplicate init god participant for conversation_id: {conversation_id}"
             )
-
-
-# ---------------------------------------------------------------------------
-# RoleTemplateStore
-# ---------------------------------------------------------------------------
-
-# Prompts for 'architect' and 'review' are sourced from
-# xmuse_core/chat/driver.py:_ROLE_PROMPTS and kept here verbatim so the store
-# can seed them without importing the driver.
-#
-# NOTE: 'critic' and 'execute' are NOT present in driver.py:_ROLE_PROMPTS
-# (driver.py only defines architect and review).  The prompts below were
-# authored here directly.  A future lane that wires ChatDriver to
-# ParticipantStore should reconcile them in driver.py:_ROLE_PROMPTS.
-_PREDEFINED_TEMPLATES: list[dict] = [
-    {
-        "slug": "architect",
-        "display_name": "Architect GOD",
-        "prompt": (
-            "You are the Architect GOD of xmuse, a multi-agent autonomous "
-            "delivery system. You participate in a group chat with a human "
-            "operator and other GODs (review, etc).\n\n"
-            "Your job: read the conversation, understand what the human or "
-            "another GOD is asking for, and respond. You may:\n"
-            "- ask a clarifying question\n"
-            "- propose a concrete next step\n"
-            "- @mention another GOD if their input is needed\n"
-            "- emit a structured proposal that, when approved, becomes a lane "
-            "graph the platform will execute\n\n"
-            "Output format (strict): emit ONE of:\n"
-            '  {"type": "message", "text": "<reply text>"}\n'
-            '  {"type": "mention", "to": "review", "text": "<reply text>"}\n'
-            '  {"type": "proposal", "summary": "<short>", "lanes": [{"feature_id": "...", '
-            '"prompt": "...", "depends_on": [], "capabilities": ["code"], '
-            '"feature_group": "..."}]}\n\n'
-            "Always output ONLY the JSON object, no markdown fence, no commentary. "
-            "If unsure, emit type=message asking for clarification."
-        ),
-        "cli_kind": "codex",
-        "default_model": DEFAULT_CODEX_GOD_MODEL_ID,
-    },
-    {
-        "slug": "review",
-        "display_name": "Review GOD",
-        "prompt": (
-            "You are the Review GOD of xmuse. You participate in the group "
-            "chat to evaluate proposals from the architect or human.\n\n"
-            "When you respond, emit ONE of:\n"
-            '  {"type": "message", "text": "<reply text>"}\n'
-            '  {"type": "verdict", "decision": "approve"|"narrow"|"reject", '
-            '"rationale": "<short>"}\n\n'
-            "Always output ONLY the JSON object, no markdown fence, no commentary."
-        ),
-        "cli_kind": "codex",
-        "default_model": DEFAULT_CODEX_REVIEW_MODEL_ID,
-    },
-    {
-        "slug": "critic",
-        "display_name": "Critic GOD",
-        "prompt": (
-            "You are the Critic GOD of xmuse. You participate in the natural "
-            "groupchat to challenge weak assumptions, central-agent bias, "
-            "missing authority, unsafe claims, and premature closure.\n\n"
-            "When you respond, emit ONE of:\n"
-            '  {"type": "message", "text": "<challenge or clarification>"}\n'
-            '  {"type": "mention", "to": "review", "text": "<what needs review>"}\n\n'
-            "Always output ONLY the JSON object, no markdown fence, no commentary."
-        ),
-        "cli_kind": "codex",
-        "default_model": DEFAULT_CODEX_REVIEW_MODEL_ID,
-    },
-    {
-        "slug": "execute",
-        "display_name": "Execute GOD",
-        "prompt": (
-            "You are the Execute GOD of xmuse. You implement lanes inside the "
-            "worktree. You do not escape the sandbox or run arbitrary shell "
-            "commands outside the allowed tool set.\n\n"
-            "When you respond, emit ONE of:\n"
-            '  {"type": "message", "text": "<status update>"}\n'
-            '  {"type": "execute_feasibility_verdict", "status": "executable", '
-            '"execution_performed": false, "summary": "<why this can be dispatched>", '
-            '"evidence_refs": ["<proposal/artifact/blocker refs>"]}\n'
-            '  {"type": "execute_feasibility_verdict", "status": "blocked", '
-            '"execution_performed": false, "summary": "<why dispatch is blocked>", '
-            '"evidence_refs": ["<proposal/artifact/blocker refs>"]}\n'
-            '  {"type": "done", "summary": "<what was implemented>"}\n\n'
-            "Use execute_feasibility_verdict when asked to confirm whether a "
-            "collaboration proposal can enter real-provider dispatch. "
-            "Executable verdicts require at least one concrete evidence ref. "
-            "Always output ONLY the JSON object, no markdown fence, no commentary."
-        ),
-        "cli_kind": "codex",
-        "default_model": DEFAULT_CODEX_WORKER_MODEL_ID,
-    },
-]
-
-
-def _predefined_template_needs_refresh(
-    row: sqlite3.Row,
-    template: dict,
-) -> bool:
-    return any(
-        row[field] != template[field]
-        for field in ("display_name", "prompt", "cli_kind", "default_model")
-    )
-
-
-class RoleTemplateStore:
-    """CRUD store for the `role_templates` table in chat.db.
-
-    On first init the predefined templates are seeded automatically.
-    are seeded automatically.  Predefined templates cannot be deleted via
-    :meth:`delete` (raises ``ValueError``).
-    """
-
-    def __init__(self, path: Path | str) -> None:
-        self._path = Path(path)
-        self._seed_predefined()
-
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
-
-    def list_all(self) -> list[RoleTemplate]:
-        with self._connect() as conn:
-            rows = conn.execute(
-                "select * from role_templates order by rowid asc"
-            ).fetchall()
-        return [self._from_row(r) for r in rows]
-
-    def get(self, template_id: str) -> RoleTemplate:
-        with self._connect() as conn:
-            row = conn.execute(
-                "select * from role_templates where id = ?",
-                (template_id,),
-            ).fetchone()
-        if row is None:
-            raise KeyError(f"unknown role_template: {template_id}")
-        return self._from_row(row)
-
-    def get_by_slug(self, slug: str) -> RoleTemplate | None:
-        with self._connect() as conn:
-            row = conn.execute(
-                "select * from role_templates where slug = ?",
-                (slug,),
-            ).fetchone()
-        return self._from_row(row) if row is not None else None
-
-    def create(
-        self,
-        *,
-        slug: str,
-        display_name: str,
-        prompt: str,
-        cli_kind: CliKind,
-        default_model: str,
-    ) -> RoleTemplate:
-        now = _utc_now()
-        normalized_cli_kind = _require_supported_cli_kind(cli_kind)
-        profile_id = provider_profile_id_for_cli_kind_template_slug(
-            normalized_cli_kind,
-            slug,
-        )
-        template = RoleTemplate(
-            id=_new_id("tmpl"),
-            slug=slug,
-            display_name=display_name,
-            prompt=prompt,
-            provider_id=provider_id_for_cli_kind(normalized_cli_kind),
-            profile_id=profile_id,
-            cli_kind=normalized_cli_kind,
-            default_model=_normalize_model_for_cli_kind(
-                normalized_cli_kind,
-                default_model,
-                profile_id=profile_id,
-            ),
-            predefined=False,
-            created_at=now,
-            updated_at=now,
-        )
-        with self._connect() as conn:
-            conn.execute(
-                """
-                insert into role_templates (
-                    id, slug, display_name, prompt, cli_kind,
-                    default_model, predefined, created_at, updated_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    template.id,
-                    template.slug,
-                    template.display_name,
-                    template.prompt,
-                    template.cli_kind,
-                    template.default_model,
-                    1 if template.predefined else 0,
-                    template.created_at,
-                    template.updated_at,
-                ),
-            )
-        return template
-
-    def update(
-        self,
-        template_id: str,
-        *,
-        display_name: str | None = None,
-        prompt: str | None = None,
-        cli_kind: CliKind | None = None,
-        default_model: str | None = None,
-    ) -> RoleTemplate:
-        existing = self.get(template_id)
-        now = _utc_now()
-        new_display_name = display_name if display_name is not None else existing.display_name
-        new_prompt = prompt if prompt is not None else existing.prompt
-        new_cli_kind = (
-            _require_supported_cli_kind(cli_kind)
-            if cli_kind is not None
-            else existing.cli_kind
-        )
-        new_profile_id = provider_profile_id_for_cli_kind_template_slug(
-            new_cli_kind,
-            existing.slug,
-        )
-        new_default_model = _normalize_model_for_cli_kind(
-            new_cli_kind,
-            default_model if default_model is not None else existing.default_model,
-            profile_id=new_profile_id,
-        )
-        with self._connect() as conn:
-            conn.execute(
-                """
-                update role_templates
-                set display_name = ?, prompt = ?, cli_kind = ?,
-                    default_model = ?, updated_at = ?
-                where id = ?
-                """,
-                (new_display_name, new_prompt, new_cli_kind, new_default_model, now, template_id),
-            )
-        return self.get(template_id)
-
-    def delete(self, template_id: str) -> None:
-        existing = self.get(template_id)
-        if existing.predefined:
-            raise ValueError(f"cannot delete predefined role template: {existing.slug!r}")
-        with self._connect() as conn:
-            conn.execute("delete from role_templates where id = ?", (template_id,))
-
-    # ------------------------------------------------------------------
-    # Internal
-    # ------------------------------------------------------------------
-
-    def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self._path)
-        conn.row_factory = sqlite3.Row
-        conn.execute("pragma foreign_keys = on")
-        return conn
-
-    def _seed_predefined(self) -> None:
-        """Insert the three builtin templates if they are not yet present."""
-        now = _utc_now()
-        with self._connect() as conn:
-            for tpl in _PREDEFINED_TEMPLATES:
-                existing = conn.execute(
-                    "select * from role_templates where slug = ?",
-                    (tpl["slug"],),
-                ).fetchone()
-                if existing is not None:
-                    if bool(existing["predefined"]) and _predefined_template_needs_refresh(
-                        existing,
-                        tpl,
-                    ):
-                        conn.execute(
-                            """
-                            update role_templates
-                            set display_name = ?,
-                                prompt = ?,
-                                cli_kind = ?,
-                                default_model = ?,
-                                predefined = 1,
-                                updated_at = ?
-                            where id = ?
-                            """,
-                            (
-                                tpl["display_name"],
-                                tpl["prompt"],
-                                tpl["cli_kind"],
-                                tpl["default_model"],
-                                now,
-                                existing["id"],
-                            ),
-                        )
-                    continue
-                conn.execute(
-                    """
-                    insert into role_templates (
-                        id, slug, display_name, prompt, cli_kind,
-                        default_model, predefined, created_at, updated_at
-                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        _new_id("tmpl"),
-                        tpl["slug"],
-                        tpl["display_name"],
-                        tpl["prompt"],
-                        tpl["cli_kind"],
-                        tpl["default_model"],
-                        1,  # predefined = true
-                        now,
-                        now,
-                    ),
-                )
-
-    def _from_row(self, row: sqlite3.Row) -> RoleTemplate:
-        d = dict(row)
-        cli_kind = _read_cli_kind(d["cli_kind"])
-        profile_id = provider_profile_id_for_cli_kind_template_slug(
-            cli_kind,
-            d["slug"],
-        )
-        return RoleTemplate(
-            id=d["id"],
-            slug=d["slug"],
-            display_name=d["display_name"],
-            prompt=d["prompt"],
-            provider_id=provider_id_for_cli_kind(cli_kind),
-            profile_id=profile_id,
-            cli_kind=cli_kind,
-            default_model=_read_model(
-                d["cli_kind"],
-                d["default_model"],
-                profile_id=profile_id,
-            ),
-            predefined=bool(d["predefined"]),
-            created_at=d["created_at"],
-            updated_at=d["updated_at"],
-        )

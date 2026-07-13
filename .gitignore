@@ -6,6 +6,11 @@
 .mypy_cache/
 .ruff_cache/
 .goal-runs/
+.od-skills/
+.opencode/
+opencode.json
+docs/superpowers/
+docs/xmuse/archive/
 __pycache__/
 *.py[cod]
 
@@ -13,6 +18,15 @@ dist/
 build/
 *.egg-info/
 node_modules/
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/coverage/
+frontend/*.log
+frontend/*.tsbuildinfo
+frontend/.env.local
+frontend/.env*.local
+\\wsl.localhost*/
 
 .coverage
 .coverage.*
@@ -23,18 +37,5 @@ xmuse/**/*.sqlite3
 xmuse/**/*.jsonl
 xmuse/**/*.lock
 xmuse/*.json
-!xmuse/gate_profiles.json
-xmuse/approvals/
-xmuse/artifacts/
-xmuse/dispatch/
-xmuse/feature_plans/
-xmuse/history/
-xmuse/knowledge/
-xmuse/lane_graphs/
-xmuse/legacy/
 xmuse/logs/
-xmuse/master/
-xmuse/read_models/
-xmuse/reports/
-xmuse/self_evolution/
-xmuse/work/
+xmuse/runtime/

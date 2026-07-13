@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from xmuse_core.agents import god_session_registry as registry_module
+import xmuse_core.agents.god_session_registry as registry_module
 from xmuse_core.agents.god_session_registry import GodSessionRegistry
 
 
@@ -181,6 +181,48 @@ def test_promote_running_updates_starting_status_after_writeback(tmp_path):
     assert reloaded.status == "running"
     assert reloaded.participant_id == "part-review-1"
     assert reloaded.model == "gpt-5.5"
+
+
+def test_promote_running_records_process_pid(tmp_path):
+    path = tmp_path / "god_sessions.json"
+    registry = GodSessionRegistry(path)
+
+    created = registry.create(
+        role="architect",
+        agent_name="architect-god",
+        runtime="codex",
+        session_address="addr://architect-1",
+        session_inbox_id="inbox-architect-1",
+        conversation_id="conv-1",
+        participant_id="part-architect-1",
+    )
+
+    updated = registry.promote_running(created.god_session_id, pid=4242)
+
+    assert updated.status == "running"
+    assert updated.pid == 4242
+    reloaded = GodSessionRegistry(path).get(created.god_session_id)
+    assert reloaded.status == "running"
+    assert reloaded.pid == 4242
+
+
+def test_promote_running_updates_pid_for_running_record(tmp_path):
+    path = tmp_path / "god_sessions.json"
+    registry = GodSessionRegistry(path)
+
+    created = registry.create(
+        role="architect",
+        agent_name="architect-god",
+        runtime="codex",
+        session_address="addr://architect-1",
+        session_inbox_id="inbox-architect-1",
+    )
+    registry.promote_running(created.god_session_id, pid=1111)
+
+    updated = registry.promote_running(created.god_session_id, pid=2222)
+
+    assert updated.status == "running"
+    assert updated.pid == 2222
 
 
 def test_create_rejects_duplicate_session_address(tmp_path):
@@ -407,20 +449,29 @@ def test_find_by_conversation_participant_can_select_feature_scope(tmp_path):
         feature_scope_id="feature-a",
     )
 
-    assert registry.find_by_conversation_participant(
-        "conv_a",
-        "part_review",
-    ) == unscoped
-    assert registry.find_by_conversation_participant(
-        "conv_a",
-        "part_review",
-        feature_scope_id=None,
-    ) == unscoped
-    assert registry.find_by_conversation_participant(
-        "conv_a",
-        "part_review",
-        feature_scope_id="feature-a",
-    ) == scoped
+    assert (
+        registry.find_by_conversation_participant(
+            "conv_a",
+            "part_review",
+        )
+        == unscoped
+    )
+    assert (
+        registry.find_by_conversation_participant(
+            "conv_a",
+            "part_review",
+            feature_scope_id=None,
+        )
+        == unscoped
+    )
+    assert (
+        registry.find_by_conversation_participant(
+            "conv_a",
+            "part_review",
+            feature_scope_id="feature-a",
+        )
+        == scoped
+    )
 
 
 def test_registry_loads_legacy_records_without_peer_metadata(tmp_path):
