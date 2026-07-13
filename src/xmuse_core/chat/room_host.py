@@ -151,7 +151,14 @@ class RoomHostDeliveryOutcome:
 class RoomHostDeferral:
     participant_id: str
     observation_id: str
-    reason: Literal["lease_active", "cooldown", "attempts_exhausted", "batch_budget", "claim_race"]
+    reason: Literal[
+        "lease_active",
+        "cooldown",
+        "attempts_exhausted",
+        "batch_budget",
+        "claim_race",
+        "native_hold",
+    ]
     retryable: bool
     retry_at: str | None
 
@@ -215,6 +222,7 @@ class RoomParticipantHost:
         memory_runtime: RoomMemoryRuntime | None = None,
         runner_generation: str | None = None,
         runner_boot_id: str | None = None,
+        delivery_gate: Callable[[str], bool] | None = None,
     ) -> None:
         if (runner_generation is None) != (runner_boot_id is None):
             raise ValueError("room_runner_identity_pair_required")
@@ -245,6 +253,7 @@ class RoomParticipantHost:
         self._retained_controls: dict[asyncio.Task[Any], tuple[str, str]] = {}
         self._runner_generation = runner_generation
         self._runner_boot_id = runner_boot_id
+        self._delivery_gate = delivery_gate
 
     def runtime_health_snapshot(self) -> dict[str, Any]:
         """Return a bounded operational snapshot without Room or provider authority."""
@@ -306,9 +315,22 @@ class RoomParticipantHost:
         if now.tzinfo is None:
             raise ValueError("room_host_clock_timezone_required")
         self._controls.reconcile_attempt_limit(self._policy.max_attempts_per_observation)
-        return RoomKernelStore(self._db_path).list_claimable_conversation_ids(
-            max_attempts_per_observation=(self._policy.max_attempts_per_observation),
+        kernel = RoomKernelStore(self._db_path)
+        if self._delivery_gate is None:
+            return kernel.list_claimable_conversation_ids(
+                max_attempts_per_observation=self._policy.max_attempts_per_observation,
+                now=now,
+            )
+        frontiers = kernel.list_claimable_room_participants(
+            max_attempts_per_observation=self._policy.max_attempts_per_observation,
             now=now,
+        )
+        return list(
+            dict.fromkeys(
+                conversation_id
+                for conversation_id, participant_id in frontiers
+                if self._delivery_gate(participant_id)
+            )
         )
 
     def fence_prior_runner_attempts(self) -> dict[str, Any] | None:
@@ -730,6 +752,11 @@ class RoomParticipantHost:
             for _, _, participant_id, participant, candidate, _activity in candidates:
                 if self._skill_runtime_unhealthy_reason is not None:
                     break
+                if self._delivery_gate is not None and not self._delivery_gate(participant_id):
+                    deferrals.append(
+                        self._defer(participant_id, candidate, "native_hold", True, None)
+                    )
+                    continue
                 if candidate.get("control_state") == "exhausted":
                     deferrals.append(
                         self._defer(
@@ -1120,7 +1147,12 @@ class RoomParticipantHost:
         participant_id: str,
         observation: dict[str, Any],
         reason: Literal[
-            "lease_active", "cooldown", "attempts_exhausted", "batch_budget", "claim_race"
+            "lease_active",
+            "cooldown",
+            "attempts_exhausted",
+            "batch_budget",
+            "claim_race",
+            "native_hold",
         ],
         retryable: bool,
         retry_at: str | None,

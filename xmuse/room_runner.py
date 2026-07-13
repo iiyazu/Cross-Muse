@@ -33,6 +33,11 @@ from xmuse.memoryos_adapter import (
 from xmuse_core.agents.codex_app_server_transport import CODEX_ROOM_READ_ONLY_SANDBOX
 from xmuse_core.agents.god_session_layer import GodSessionLayer
 from xmuse_core.agents.room_codex_launcher import build_room_launchers
+from xmuse_core.chat.room_codex_native_runtime import (
+    RoomCodexNativeRuntime,
+    run_room_codex_native_loop,
+)
+from xmuse_core.chat.room_codex_projection_cache import RoomCodexProjectionCache
 from xmuse_core.chat.room_codex_transport import CodexRoomObservationTransport
 from xmuse_core.chat.room_controls import RoomObservationControlStore
 from xmuse_core.chat.room_database import RoomDatabase
@@ -86,6 +91,7 @@ class RoomRunnerError(RuntimeError):
 class RoomRuntimeComposition:
     host: RoomParticipantHost
     session_layer: GodSessionLayer
+    native_runtime: RoomCodexNativeRuntime
     memory_runtime: RoomMemoryRuntime
     memory_enabled: bool
 
@@ -155,7 +161,9 @@ async def run_room_runner(
     host_task: asyncio.Task[None] | None = None
     heartbeat_task: asyncio.Task[None] | None = None
     memory_task: asyncio.Task[None] | None = None
+    native_task: asyncio.Task[None] | None = None
     host_started = asyncio.Event()
+    native_started = asyncio.Event()
     receipt_state: dict[str, Any] = {
         "state": "starting",
         "error_code": None,
@@ -263,6 +271,33 @@ async def run_room_runner(
                 raise RoomRunnerError("room_runner_recovery_fence_failed") from exc
 
             _install_signal_handlers(stop)
+            native_task = asyncio.create_task(
+                run_room_codex_native_loop(
+                    composition.native_runtime,
+                    stop=stop,
+                    started=native_started,
+                ),
+                name="xmuse-room-codex-native-bridge",
+            )
+            native_start_wait = asyncio.create_task(
+                native_started.wait(), name="xmuse-room-codex-native-start"
+            )
+            try:
+                await asyncio.wait(
+                    {native_task, native_start_wait},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+            finally:
+                if not native_start_wait.done():
+                    native_start_wait.cancel()
+                await asyncio.gather(native_start_wait, return_exceptions=True)
+            await asyncio.sleep(0)
+            if native_task.done():
+                try:
+                    native_task.result()
+                except Exception as exc:
+                    raise RoomRunnerError("room_runner_native_bridge_failed") from exc
+                raise RoomRunnerError("room_runner_native_bridge_stopped")
             host_task = asyncio.create_task(
                 run_room_participant_host_loop(
                     composition.host,
@@ -327,7 +362,7 @@ async def run_room_runner(
             shutdown_task = asyncio.create_task(stop.wait(), name="xmuse-room-runner-stop")
             try:
                 done, _ = await asyncio.wait(
-                    {host_task, heartbeat_task, shutdown_task},
+                    {host_task, native_task, heartbeat_task, shutdown_task},
                     return_when=asyncio.FIRST_COMPLETED,
                 )
                 if heartbeat_task in done and not stop.is_set():
@@ -344,6 +379,12 @@ async def run_room_runner(
                     except Exception as exc:
                         raise RoomRunnerError("room_runner_host_loop_failed") from exc
                     raise RoomRunnerError("room_runner_host_loop_stopped")
+                if native_task in done and not stop.is_set():
+                    try:
+                        native_task.result()
+                    except Exception as exc:
+                        raise RoomRunnerError("room_runner_native_bridge_failed") from exc
+                    raise RoomRunnerError("room_runner_native_bridge_stopped")
             finally:
                 if not shutdown_task.done():
                     shutdown_task.cancel()
@@ -364,6 +405,11 @@ async def run_room_runner(
             stop.set()
             if host_task is not None:
                 await host_task
+            if native_task is not None:
+                if not native_task.done():
+                    native_task.cancel()
+                await asyncio.gather(native_task, return_exceptions=True)
+            await composition.native_runtime.shutdown()
             await composition.host.shutdown()
             await composition.session_layer.shutdown()
             receipt_state["state"] = "stopped"
@@ -413,10 +459,15 @@ async def run_room_runner(
             if memory_task is not None:
                 memory_task.cancel()
                 await asyncio.gather(memory_task, return_exceptions=True)
+            if native_task is not None and not native_task.done():
+                native_task.cancel()
+                await asyncio.gather(native_task, return_exceptions=True)
             if host_task is not None and not host_task.done():
                 host_task.cancel()
                 await asyncio.gather(host_task, return_exceptions=True)
             if composition is not None:
+                with suppress(Exception):
+                    await composition.native_runtime.shutdown()
                 with suppress(Exception):
                     await composition.host.shutdown()
                 with suppress(Exception):
@@ -449,6 +500,13 @@ def _compose_runtime(
         240,
         int(math.ceil(delivery_timeout_s + cleanup_grace_s + 30.0)),
     )
+    native_runtime = RoomCodexNativeRuntime(
+        root / "chat.db",
+        session_layer,
+        worktree=worktree,
+        runner_generation=runner_generation,
+        projection_cache=RoomCodexProjectionCache(root),
+    )
     host = RoomParticipantHost(
         root / "chat.db",
         CodexRoomObservationTransport(
@@ -472,10 +530,12 @@ def _compose_runtime(
         memory_runtime=memory,
         runner_generation=runner_generation,
         runner_boot_id=runner_boot_id,
+        delivery_gate=native_runtime.accepts_delivery,
     )
     return RoomRuntimeComposition(
         host=host,
         session_layer=session_layer,
+        native_runtime=native_runtime,
         memory_runtime=memory,
         memory_enabled=memory_enabled,
     )

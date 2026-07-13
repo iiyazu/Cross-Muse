@@ -3,12 +3,23 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import secrets
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
+from xmuse_core.agents.codex_app_server_connection import (
+    AppServerConnectionError,
+    AppServerEventStream,
+    CodexAppServerConnection,
+)
+from xmuse_core.agents.codex_native_adapter import (
+    CodexNativeAdapter,
+    NativeInvokeResult,
+    NativeModelCatalog,
+)
 from xmuse_core.agents.protocol import StdoutMessage
 
 APP_SERVER_STREAM_LIMIT_BYTES = 16 * 1024 * 1024
@@ -24,7 +35,6 @@ _ROOM_DISABLED_CODEX_FEATURES = (
     "computer_use",
     "image_generation",
     "multi_agent",
-    "goals",
     "code_mode_host",
     "hooks",
     "skill_mcp_dependency_install",
@@ -102,6 +112,14 @@ CODEX_ROOM_READ_ONLY_SANDBOX = CodexSandboxProfile(
     turn_policy_type="readOnly",
     network_access=False,
 )
+
+
+class _TransportNativeRpc:
+    def __init__(self, transport: CodexAppServerTransport) -> None:
+        self._transport = transport
+
+    async def request(self, method: str, params: Mapping[str, object]) -> object:
+        return await self._transport._request(method, dict(params))
 
 
 @dataclass
@@ -279,13 +297,26 @@ class CodexAppServerTransport:
         if codex_home is not None and self._codex_home is None:
             raise TypeError("codex_home must be a Path or None")
         self._process: asyncio.subprocess.Process | None = None
-        self._next_request_id = 1
+        self._connection: CodexAppServerConnection | None = None
+        self._connection_generation = 0
+        self._native_incarnation = secrets.token_hex(16)
         self._thread_id: str | None = None
         self._resume_thread_id = _clean_text(resume_thread_id)
         self._active_turn_request_id: int | None = None
+        self._active_turn_response: asyncio.Future[object] | None = None
+        self._active_event_stream: AppServerEventStream | None = None
         self._active_accumulator: AppServerTurnAccumulator | None = None
         self._active_request_id: str | None = None
         self._active_message_type: str | None = None
+        self._native_model = self._model or None
+        self._native_effort = self._reasoning_effort
+        self._native_active_turn_id: str | None = None
+        self._native_idle = asyncio.Event()
+        self._native_idle.set()
+        self._native_catalog: NativeModelCatalog | None = None
+        self._native_state_stream: AppServerEventStream | None = None
+        self._native_state_task: asyncio.Task[None] | None = None
+        self._native_adapter = CodexNativeAdapter(_TransportNativeRpc(self))
 
     async def start(self) -> None:
         if self._process is not None and self._process.returncode is None:
@@ -296,6 +327,7 @@ class CodexAppServerTransport:
             "stderr": asyncio.subprocess.PIPE,
             "cwd": self._worktree,
             "limit": APP_SERVER_STREAM_LIMIT_BYTES,
+            "start_new_session": True,
         }
         process_environment = self._process_environment()
         if process_environment is not None:
@@ -328,6 +360,7 @@ class CodexAppServerTransport:
                 if thread_id is None:
                     raise RuntimeError("codex app-server thread/start returned no thread id")
                 self._thread_id = thread_id
+                self._record_thread_settings(response)
                 return
             response = await self._request(
                 "thread/resume",
@@ -340,6 +373,7 @@ class CodexAppServerTransport:
             if thread_id != self._resume_thread_id:
                 raise RuntimeError("codex app-server thread/resume returned mismatched thread id")
             self._thread_id = thread_id
+            self._record_thread_settings(response)
         except BaseException:
             try:
                 await asyncio.shield(self.shutdown())
@@ -367,6 +401,7 @@ class CodexAppServerTransport:
         self._active_accumulator = AppServerTurnAccumulator(
             request_id=request_id,
         )
+        self._native_idle.clear()
         self._active_turn_request_id = await self._send_request(
             "turn/start",
             self._turn_start_params(prompt),
@@ -382,10 +417,7 @@ class CodexAppServerTransport:
                 return None
             if self._is_active_turn_error(message):
                 request_id = self._active_request_id
-                self._active_accumulator = None
-                self._active_turn_request_id = None
-                self._active_request_id = None
-                self._active_message_type = None
+                self._clear_active_turn()
                 return StdoutMessage(
                     type="error",
                     request_id=request_id,
@@ -395,10 +427,7 @@ class CodexAppServerTransport:
                 )
             result = self._active_accumulator.feed(message)
             if result is not None:
-                self._active_accumulator = None
-                self._active_turn_request_id = None
-                self._active_request_id = None
-                self._active_message_type = None
+                self._clear_active_turn()
                 return result
 
     async def _read_message_with_idle_heartbeat(self) -> dict[str, Any] | None:
@@ -417,6 +446,17 @@ class CodexAppServerTransport:
         return self._active_accumulator.latency_stages()
 
     async def shutdown(self) -> None:
+        if self._connection is not None:
+            connection, self._connection = self._connection, None
+            self._close_active_event_stream()
+            await connection.close()
+            if self._native_state_task is not None:
+                await asyncio.gather(self._native_state_task, return_exceptions=True)
+                self._native_state_task = None
+            if self._native_state_stream is not None:
+                self._native_state_stream.close()
+                self._native_state_stream = None
+            return
         if self._process is None or self._process.returncode is not None:
             return
         self._process.terminate()
@@ -434,6 +474,122 @@ class CodexAppServerTransport:
             "thread_id": self._thread_id,
             "resume_thread_id": self._resume_thread_id,
         }
+
+    async def native_snapshot(self) -> dict[str, object]:
+        await self.start()
+        if self._thread_id is None:
+            raise RuntimeError("codex app-server thread is not initialized")
+        connection = self._ensure_connection()
+        await self._refresh_native_active_turn(connection)
+        return await self._native_adapter.snapshot(
+            thread_id=self._thread_id,
+            session_identity=f"{self._thread_id}\0{self._native_incarnation}",
+            connection_generation=connection.generation,
+            current_model=self._native_model,
+            current_effort=self._native_effort,
+            active_turn_id=self._native_active_turn_id,
+        )
+
+    async def _refresh_native_active_turn(self, connection: CodexAppServerConnection) -> None:
+        """Re-prove the live turn from bounded App Server state.
+
+        Notifications remain the low-latency path, but review and compaction may
+        produce nested turn identifiers.  The thread status and a one-page turn
+        query prevent an identifier mismatch from holding Room delivery forever.
+        """
+
+        assert self._thread_id is not None
+        response = await connection.request(
+            "thread/read", {"threadId": self._thread_id, "includeTurns": False}
+        )
+        thread = response.get("thread") if isinstance(response, dict) else None
+        status = thread.get("status") if isinstance(thread, dict) else None
+        status_type = status.get("type") if isinstance(status, dict) else None
+        if status_type == "idle":
+            self._native_active_turn_id = None
+            self._native_idle.set()
+            return
+        if status_type != "active":
+            raise RuntimeError("codex native thread state unavailable")
+        turns_response = await connection.request(
+            "thread/turns/list",
+            {
+                "threadId": self._thread_id,
+                "limit": 16,
+                "sortDirection": "desc",
+                "itemsView": "notLoaded",
+            },
+        )
+        turns = turns_response.get("data") if isinstance(turns_response, dict) else None
+        if not isinstance(turns, list):
+            raise RuntimeError("codex native turn state unavailable")
+        active_ids = [
+            turn_id
+            for raw in turns
+            if isinstance(raw, dict)
+            and raw.get("status") == "inProgress"
+            and (turn_id := _clean_text(raw.get("id"))) is not None
+        ]
+        if len(active_ids) != 1:
+            raise RuntimeError("codex native active turn unproven")
+        self._native_active_turn_id = active_ids[0]
+        self._native_idle.clear()
+
+    async def assert_room_delivery_allowed(self) -> None:
+        snapshot = await self.native_snapshot()
+        goal = snapshot.get("goal")
+        if snapshot.get("active_turn") is True or (
+            isinstance(goal, dict) and goal.get("status") == "active"
+        ):
+            raise RuntimeError("codex_native_room_delivery_conflict")
+
+    async def discover_native_capabilities(self) -> dict[str, object]:
+        snapshot = await self.native_snapshot()
+        if self._thread_id is None:
+            raise RuntimeError("codex app-server thread is not initialized")
+        guards = snapshot.get("guards")
+        session_guard = guards.get("session") if isinstance(guards, dict) else None
+        if not isinstance(session_guard, str):
+            raise RuntimeError("codex native snapshot returned no session guard")
+        descriptor, catalog = await self._native_adapter.discover_capabilities(
+            thread_id=self._thread_id,
+            session_guard=session_guard,
+        )
+        self._native_catalog = catalog
+        return descriptor | {"models": list(catalog.models)}
+
+    async def invoke_native(
+        self,
+        capability_id: str,
+        safe_request: dict[str, object],
+        *,
+        resolved_review_target: dict[str, object] | None = None,
+    ) -> NativeInvokeResult:
+        await self.start()
+        if self._thread_id is None:
+            raise RuntimeError("codex app-server thread is not initialized")
+        if self._native_catalog is None:
+            self._native_catalog = await self._native_adapter.list_models()
+        result = await self._native_adapter.invoke(
+            capability_id,
+            safe_request,
+            thread_id=self._thread_id,
+            active_turn_id=self._native_active_turn_id,
+            current_model=self._native_model,
+            current_effort=self._native_effort,
+            catalog=self._native_catalog,
+            resolved_review_target=resolved_review_target,
+        )
+        if result.private_active_turn_id is not None:
+            self._native_active_turn_id = result.private_active_turn_id
+            self._native_idle.clear()
+        return result
+
+    def subscribe_native_events(self) -> AppServerEventStream:
+        return self._ensure_connection().subscribe()
+
+    async def wait_native_idle(self) -> None:
+        await self._native_idle.wait()
 
     def _command(self) -> list[str]:
         command = [
@@ -500,7 +656,6 @@ class CodexAppServerTransport:
         return {
             "threadId": thread_id,
             "cwd": str(self._worktree),
-            "model": self._model or None,
             "approvalPolicy": "never",
             "sandbox": self._sandbox_profile.thread_sandbox,
             "baseInstructions": self._base_instructions(),
@@ -512,48 +667,147 @@ class CodexAppServerTransport:
             "threadId": self._thread_id,
             "input": [{"type": "text", "text": prompt}],
             "cwd": str(self._worktree),
-            "model": self._model or None,
             "approvalPolicy": "never",
             "sandboxPolicy": self._sandbox_profile.turn_sandbox_policy(),
-            "effort": self._reasoning_effort,
             "summary": "concise",
         }
 
     async def _request(self, method: str, params: dict[str, Any]) -> Any:
-        request_id = await self._send_request(method, params)
-        while True:
-            message = await self._read_message()
-            if message is None:
-                raise RuntimeError(f"codex app-server closed before {method} response")
-            if message.get("id") != request_id:
-                continue
-            if "error" in message:
-                raise RuntimeError(f"codex app-server {method} failed: {message['error']}")
-            return message.get("result")
+        try:
+            return await self._ensure_connection().request(method, params)
+        except AppServerConnectionError as exc:
+            raise RuntimeError(f"codex app-server {method} failed: {exc.code}") from exc
 
     async def _send_request(self, method: str, params: dict[str, Any]) -> int:
-        if self._process is None or self._process.stdin is None:
-            raise RuntimeError("codex app-server process is not started")
-        request_id = self._next_request_id
-        self._next_request_id += 1
-        payload = {"id": request_id, "method": method, "params": params}
-        self._process.stdin.write((json.dumps(payload, ensure_ascii=False) + "\n").encode())
-        await self._process.stdin.drain()
-        return request_id
+        connection = self._ensure_connection()
+        self._close_active_event_stream()
+        self._active_event_stream = connection.subscribe()
+        request = await connection.start_request(method, params)
+        self._active_turn_response = request.response
+        return request.request_id
 
     async def _read_message(self) -> dict[str, Any] | None:
-        if self._process is None or self._process.stdout is None:
+        if self._active_event_stream is None:
             return None
         while True:
-            line = await self._process.stdout.readline()
-            if not line:
-                return None
+            response = self._active_turn_response
+            event_task = asyncio.create_task(self._active_event_stream.receive())
+            waiters: set[asyncio.Future[object] | asyncio.Task[dict[str, object]]] = {event_task}
+            if response is not None:
+                waiters.add(response)
             try:
-                message = json.loads(line.decode(errors="replace"))
-            except json.JSONDecodeError:
-                continue
-            if isinstance(message, dict):
-                return message
+                done, _pending = await asyncio.wait(waiters, return_when=asyncio.FIRST_COMPLETED)
+                if response is not None and response in done:
+                    self._active_turn_response = None
+                    try:
+                        result = response.result()
+                    except AppServerConnectionError as exc:
+                        event_task.cancel()
+                        await asyncio.gather(event_task, return_exceptions=True)
+                        return {
+                            "id": self._active_turn_request_id,
+                            "error": {"code": exc.code},
+                        }
+                    self._bind_active_turn_from_response(result)
+                    if event_task.done():
+                        return dict(event_task.result())
+                    event_task.cancel()
+                    await asyncio.gather(event_task, return_exceptions=True)
+                    continue
+                return dict(event_task.result())
+            except AppServerConnectionError as exc:
+                return {
+                    "id": self._active_turn_request_id,
+                    "error": {"code": exc.code},
+                }
+            except asyncio.CancelledError:
+                event_task.cancel()
+                await asyncio.gather(event_task, return_exceptions=True)
+                raise
+
+    def _ensure_connection(self) -> CodexAppServerConnection:
+        if self._connection is not None:
+            return self._connection
+        if self._process is None:
+            raise RuntimeError("codex app-server process is not started")
+        self._connection_generation += 1
+        self._connection = CodexAppServerConnection(
+            self._process,
+            generation=self._connection_generation,
+        )
+        self._native_state_stream = self._connection.subscribe()
+        self._native_state_task = asyncio.create_task(
+            self._observe_native_state(self._native_state_stream),
+            name="codex-app-server-native-state",
+        )
+        return self._connection
+
+    def _bind_active_turn_from_response(self, result: object) -> None:
+        if self._active_accumulator is None or not isinstance(result, dict):
+            return
+        turn = result.get("turn")
+        if isinstance(turn, dict):
+            turn_id = _clean_text(turn.get("id"))
+            self._active_accumulator.turn_id = turn_id or self._active_accumulator.turn_id
+            self._native_active_turn_id = turn_id or self._native_active_turn_id
+
+    async def _observe_native_state(self, stream: AppServerEventStream) -> None:
+        try:
+            while True:
+                self._apply_native_event(await stream.receive())
+        except (AppServerConnectionError, asyncio.CancelledError):
+            return
+
+    def _apply_native_event(self, message: dict[str, object]) -> None:
+        method = message.get("method")
+        params = message.get("params")
+        if not isinstance(method, str) or not isinstance(params, dict):
+            return
+        if method == "thread/settings/updated":
+            settings = params.get("threadSettings")
+            if isinstance(settings, dict):
+                self._native_model = _clean_text(settings.get("model")) or self._native_model
+                self._native_effort = _clean_text(settings.get("effort")) or self._native_effort
+            return
+        if method == "turn/started":
+            turn = params.get("turn")
+            turn_id = _clean_text(turn.get("id")) if isinstance(turn, dict) else None
+            self._native_active_turn_id = turn_id or self._native_active_turn_id
+            self._native_idle.clear()
+            return
+        if method == "turn/completed":
+            turn = params.get("turn")
+            turn_id = _clean_text(turn.get("id")) if isinstance(turn, dict) else None
+            turn_id = turn_id or _clean_text(params.get("turnId"))
+            if turn_id is None or turn_id == self._native_active_turn_id:
+                self._native_active_turn_id = None
+                self._native_idle.set()
+
+    def _record_thread_settings(self, response: object) -> None:
+        if not isinstance(response, dict):
+            return
+        self._native_model = _clean_text(response.get("model")) or self._native_model
+        self._native_effort = _clean_text(response.get("reasoningEffort")) or self._native_effort
+
+    def _close_active_event_stream(self) -> None:
+        if self._active_event_stream is not None:
+            self._active_event_stream.close()
+            self._active_event_stream = None
+        response, self._active_turn_response = self._active_turn_response, None
+        if response is not None:
+            if response.done():
+                _consume_future_result(response)
+            else:
+                response.add_done_callback(_consume_future_result)
+
+    def _clear_active_turn(self) -> None:
+        self._close_active_event_stream()
+        self._active_accumulator = None
+        self._active_turn_request_id = None
+        self._active_request_id = None
+        self._active_message_type = None
+        self._native_active_turn_id = None
+        self._native_idle.set()
 
     def _is_active_turn_error(self, message: dict[str, Any]) -> bool:
         return bool(
@@ -597,6 +851,15 @@ def _format_turn_prompt(*, role: str, msg_type: str, prompt: str, context: str) 
         f"{context.strip()}\n"
         "</xmuse_context>"
     ).strip()
+
+
+def _consume_future_result(future: asyncio.Future[object]) -> None:
+    if future.cancelled():
+        return
+    try:
+        future.exception()
+    except (asyncio.CancelledError, AppServerConnectionError):
+        pass
 
 
 def _clean_text(value: object) -> str | None:
@@ -695,11 +958,13 @@ def _mcp_tool_name(params: dict[str, Any]) -> str | None:
 
 
 def _normalize_effort(value: object) -> str:
-    text = _clean_text(value) or "low"
+    text = _clean_text(value)
+    if text is None:
+        raise ValueError("codex app-server effort is required")
     normalized = text.lower()
-    if normalized in {"none", "minimal", "low", "medium", "high", "xhigh"}:
+    if normalized in {"none", "minimal", "low", "medium", "high", "xhigh", "max"}:
         return normalized
-    return "low"
+    raise ValueError("codex app-server effort is unsupported")
 
 
 __all__ = [
