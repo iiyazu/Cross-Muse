@@ -37,6 +37,8 @@ def _layout(tmp_path: Path) -> SandboxLayout:
     ruff.write_bytes(b"ruff")
     bwrap = tmp_path / "bwrap"
     bwrap.write_bytes(b"bwrap")
+    node = tmp_path / "trusted-node"
+    node.write_bytes(b"node")
     return SandboxLayout(
         stage=paths["stage"],
         git_common_dir=paths["git"],
@@ -44,6 +46,7 @@ def _layout(tmp_path: Path) -> SandboxLayout:
         python_root=paths["python"],
         site_packages=paths["site"],
         ruff=ruff,
+        node=node,
         frontend_node_modules=paths["node"],
         bwrap=bwrap,
     )
@@ -66,7 +69,8 @@ def test_gate_resource_profiles_are_fixed_and_do_not_use_address_space_limits() 
 
 
 def test_bwrap_command_has_no_host_environment_or_arbitrary_shell(tmp_path: Path) -> None:
-    command = build_bwrap_command(_layout(tmp_path), GATE_SPECS["backend_ruff"])
+    layout = _layout(tmp_path)
+    command = build_bwrap_command(layout, GATE_SPECS["backend_ruff"])
 
     for required in (
         "--unshare-all",
@@ -93,12 +97,16 @@ def test_bwrap_command_has_no_host_environment_or_arbitrary_shell(tmp_path: Path
     assert "/bin/sh" not in command
     assert "-c" not in command
 
-    frontend = build_bwrap_command(_layout(tmp_path), GATE_SPECS["frontend_build"])
+    frontend = build_bwrap_command(layout, GATE_SPECS["frontend_build"])
     assert "/usr/bin/npm" not in frontend
     assert frontend[-3:] == [
-        "/usr/bin/node",
+        "/tools/node",
         "/workspace/frontend/node_modules/next/dist/bin/next",
         "build",
+    ]
+    assert layout.node is not None
+    assert ["--ro-bind", str(layout.node), "/tools/node"] == frontend[
+        frontend.index(str(layout.node)) - 1 : frontend.index(str(layout.node)) + 2
     ]
 
 
@@ -573,3 +581,45 @@ def test_frontend_toolchain_requires_every_fixed_gate_entry(tmp_path: Path) -> N
         )
 
     assert error.value.code == "execution_frontend_dependencies_unavailable"
+
+
+def test_frontend_toolchain_digest_binds_discovered_node_executable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = tmp_path / "repo"
+    entry = repo / "frontend" / "node_modules" / "next" / "dist" / "bin" / "next"
+    entry.parent.mkdir(parents=True)
+    entry.write_text("next\n", encoding="utf-8")
+    (repo / "frontend" / "node_modules" / ".package-lock.json").write_text("{}\n", encoding="utf-8")
+    node = tmp_path / "setup-node"
+    node.write_text("#!/bin/sh\nprintf 'v22.0.0\\n'\n# first\n", encoding="utf-8")
+    node.chmod(0o755)
+    original_which = sandbox.shutil.which
+    original_tool_version = sandbox._tool_version
+    monkeypatch.setattr(
+        sandbox.shutil,
+        "which",
+        lambda name: str(node) if name == "node" else original_which(name),
+    )
+    monkeypatch.setattr(
+        sandbox,
+        "_tool_version",
+        lambda path, *args: "v22.0.0" if Path(path) == node else original_tool_version(path, *args),
+    )
+    profile = get_execution_gate_profile("xmuse-monorepo/v2")
+
+    first = build_toolchain_capability_digest(
+        repo,
+        profile,
+        gate_ids=("frontend_build",),
+        bwrap_path="/usr/bin/true",
+    )
+    node.write_text("#!/bin/sh\nprintf 'v22.0.0\\n'\n# second\n", encoding="utf-8")
+    second = build_toolchain_capability_digest(
+        repo,
+        profile,
+        gate_ids=("frontend_build",),
+        bwrap_path="/usr/bin/true",
+    )
+
+    assert first != second
