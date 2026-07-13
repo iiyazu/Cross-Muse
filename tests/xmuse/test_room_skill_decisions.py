@@ -184,9 +184,7 @@ def test_execution_infrastructure_activity_binds_stable_empty_source_to_none(tmp
         ("infrastructure", "runtime.failed", {}),
     ],
 )
-def test_unknown_or_malformed_activity_source_remains_fail_closed(
-    tmp_path, activity_override
-):
+def test_unknown_or_malformed_activity_source_remains_fail_closed(tmp_path, activity_override):
     path, _, _, _, claim = _claimed(tmp_path, activity_override=activity_override)
 
     with pytest.raises(RoomSkillDecisionError, match="room_skill_binding_lost"):
