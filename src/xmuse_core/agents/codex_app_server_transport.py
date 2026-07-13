@@ -9,6 +9,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
+from xmuse_core.agents.codex_app_server_connection import (
+    AppServerConnectionError,
+    AppServerEventStream,
+    CodexAppServerConnection,
+)
 from xmuse_core.agents.protocol import StdoutMessage
 
 APP_SERVER_STREAM_LIMIT_BYTES = 16 * 1024 * 1024
@@ -279,10 +284,13 @@ class CodexAppServerTransport:
         if codex_home is not None and self._codex_home is None:
             raise TypeError("codex_home must be a Path or None")
         self._process: asyncio.subprocess.Process | None = None
-        self._next_request_id = 1
+        self._connection: CodexAppServerConnection | None = None
+        self._connection_generation = 0
         self._thread_id: str | None = None
         self._resume_thread_id = _clean_text(resume_thread_id)
         self._active_turn_request_id: int | None = None
+        self._active_turn_response: asyncio.Future[object] | None = None
+        self._active_event_stream: AppServerEventStream | None = None
         self._active_accumulator: AppServerTurnAccumulator | None = None
         self._active_request_id: str | None = None
         self._active_message_type: str | None = None
@@ -296,6 +304,7 @@ class CodexAppServerTransport:
             "stderr": asyncio.subprocess.PIPE,
             "cwd": self._worktree,
             "limit": APP_SERVER_STREAM_LIMIT_BYTES,
+            "start_new_session": True,
         }
         process_environment = self._process_environment()
         if process_environment is not None:
@@ -382,10 +391,7 @@ class CodexAppServerTransport:
                 return None
             if self._is_active_turn_error(message):
                 request_id = self._active_request_id
-                self._active_accumulator = None
-                self._active_turn_request_id = None
-                self._active_request_id = None
-                self._active_message_type = None
+                self._clear_active_turn()
                 return StdoutMessage(
                     type="error",
                     request_id=request_id,
@@ -395,10 +401,7 @@ class CodexAppServerTransport:
                 )
             result = self._active_accumulator.feed(message)
             if result is not None:
-                self._active_accumulator = None
-                self._active_turn_request_id = None
-                self._active_request_id = None
-                self._active_message_type = None
+                self._clear_active_turn()
                 return result
 
     async def _read_message_with_idle_heartbeat(self) -> dict[str, Any] | None:
@@ -417,6 +420,11 @@ class CodexAppServerTransport:
         return self._active_accumulator.latency_stages()
 
     async def shutdown(self) -> None:
+        if self._connection is not None:
+            connection, self._connection = self._connection, None
+            self._close_active_event_stream()
+            await connection.close()
+            return
         if self._process is None or self._process.returncode is not None:
             return
         self._process.terminate()
@@ -520,40 +528,96 @@ class CodexAppServerTransport:
         }
 
     async def _request(self, method: str, params: dict[str, Any]) -> Any:
-        request_id = await self._send_request(method, params)
-        while True:
-            message = await self._read_message()
-            if message is None:
-                raise RuntimeError(f"codex app-server closed before {method} response")
-            if message.get("id") != request_id:
-                continue
-            if "error" in message:
-                raise RuntimeError(f"codex app-server {method} failed: {message['error']}")
-            return message.get("result")
+        try:
+            return await self._ensure_connection().request(method, params)
+        except AppServerConnectionError as exc:
+            raise RuntimeError(f"codex app-server {method} failed: {exc.code}") from exc
 
     async def _send_request(self, method: str, params: dict[str, Any]) -> int:
-        if self._process is None or self._process.stdin is None:
-            raise RuntimeError("codex app-server process is not started")
-        request_id = self._next_request_id
-        self._next_request_id += 1
-        payload = {"id": request_id, "method": method, "params": params}
-        self._process.stdin.write((json.dumps(payload, ensure_ascii=False) + "\n").encode())
-        await self._process.stdin.drain()
-        return request_id
+        connection = self._ensure_connection()
+        self._close_active_event_stream()
+        self._active_event_stream = connection.subscribe()
+        request = await connection.start_request(method, params)
+        self._active_turn_response = request.response
+        return request.request_id
 
     async def _read_message(self) -> dict[str, Any] | None:
-        if self._process is None or self._process.stdout is None:
+        if self._active_event_stream is None:
             return None
         while True:
-            line = await self._process.stdout.readline()
-            if not line:
-                return None
+            response = self._active_turn_response
+            event_task = asyncio.create_task(self._active_event_stream.receive())
+            waiters: set[asyncio.Future[object] | asyncio.Task[dict[str, object]]] = {event_task}
+            if response is not None:
+                waiters.add(response)
             try:
-                message = json.loads(line.decode(errors="replace"))
-            except json.JSONDecodeError:
-                continue
-            if isinstance(message, dict):
-                return message
+                done, _pending = await asyncio.wait(waiters, return_when=asyncio.FIRST_COMPLETED)
+                if response is not None and response in done:
+                    self._active_turn_response = None
+                    try:
+                        result = response.result()
+                    except AppServerConnectionError as exc:
+                        event_task.cancel()
+                        await asyncio.gather(event_task, return_exceptions=True)
+                        return {
+                            "id": self._active_turn_request_id,
+                            "error": {"code": exc.code},
+                        }
+                    self._bind_active_turn_from_response(result)
+                    if event_task.done():
+                        return dict(event_task.result())
+                    event_task.cancel()
+                    await asyncio.gather(event_task, return_exceptions=True)
+                    continue
+                return dict(event_task.result())
+            except AppServerConnectionError as exc:
+                return {
+                    "id": self._active_turn_request_id,
+                    "error": {"code": exc.code},
+                }
+            except asyncio.CancelledError:
+                event_task.cancel()
+                await asyncio.gather(event_task, return_exceptions=True)
+                raise
+
+    def _ensure_connection(self) -> CodexAppServerConnection:
+        if self._connection is not None:
+            return self._connection
+        if self._process is None:
+            raise RuntimeError("codex app-server process is not started")
+        self._connection_generation += 1
+        self._connection = CodexAppServerConnection(
+            self._process,
+            generation=self._connection_generation,
+        )
+        return self._connection
+
+    def _bind_active_turn_from_response(self, result: object) -> None:
+        if self._active_accumulator is None or not isinstance(result, dict):
+            return
+        turn = result.get("turn")
+        if isinstance(turn, dict):
+            self._active_accumulator.turn_id = (
+                _clean_text(turn.get("id")) or self._active_accumulator.turn_id
+            )
+
+    def _close_active_event_stream(self) -> None:
+        if self._active_event_stream is not None:
+            self._active_event_stream.close()
+            self._active_event_stream = None
+        response, self._active_turn_response = self._active_turn_response, None
+        if response is not None:
+            if response.done():
+                _consume_future_result(response)
+            else:
+                response.add_done_callback(_consume_future_result)
+
+    def _clear_active_turn(self) -> None:
+        self._close_active_event_stream()
+        self._active_accumulator = None
+        self._active_turn_request_id = None
+        self._active_request_id = None
+        self._active_message_type = None
 
     def _is_active_turn_error(self, message: dict[str, Any]) -> bool:
         return bool(
@@ -597,6 +661,15 @@ def _format_turn_prompt(*, role: str, msg_type: str, prompt: str, context: str) 
         f"{context.strip()}\n"
         "</xmuse_context>"
     ).strip()
+
+
+def _consume_future_result(future: asyncio.Future[object]) -> None:
+    if future.cancelled():
+        return
+    try:
+        future.exception()
+    except (asyncio.CancelledError, AppServerConnectionError):
+        pass
 
 
 def _clean_text(value: object) -> str | None:
