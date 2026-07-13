@@ -1,133 +1,203 @@
 # xmuse
 
-xmuse is a multi-agent software delivery platform for chat-driven GOD orchestration. It
-turns a human request into a persistent groupchat where specialist GOD participants can
-discuss, propose work, hand off execution, and leave durable evidence.
+xmuse is a local runtime for natural, logically decentralized Agent group conversations.
+Persistent Agents observe the same durable Room activity and independently choose whether
+to `respond`, `handoff`, `propose`, `defer`, or `noop`. Infrastructure owns
+delivery, identity, causality, attempts, safety, and recovery; it never speaks as an Agent.
 
-The current release candidate is intended to be understandable, installable, and
-demo-runnable from a fresh checkout without reading the handoff history.
-
-## Current Capabilities
-
-- Chat-first groupchat intake with default Architect, Review, and Execute GOD participants.
-- Durable chat state in `chat.db` plus GOD session metadata in `god_sessions.json`.
-- Peer scheduling through `PeerChatScheduler`, with MCP writeback as the real happy path.
-- Provider matrix for Codex, OpenCode, and test/demo fake paths.
-- Runtime health and cleanup visibility through `xmuse-platform-runner --health-once`.
-- Scoped CI gates for package boundaries, provider/config contracts, health smoke, and type baseline.
-
-## Architecture Overview
+## Current product loop
 
 ```text
-Human operator
-  -> Chat API :8201
-  -> chat.db inbox/message stores
-  -> PeerChatScheduler
-  -> GOD session layer
-  -> Codex app-server thread
-  -> MCP /mcp/chat :8100
-  -> chat.db reply/writeback evidence
+Browser
+  -> fixed same-origin Next routes
+  -> Room-only Chat API
+  -> RoomDatabase / RoomKernel
+  -> isolated Room Runner
+  -> participant-bound read-only Codex session
+  -> bundled Skill decision and context evidence
+  -> Room-only MCP chat_room_submit_outcome
+  -> durable outcome
+  -> Room projection / Operations Inspector
+
+execution proposal
+  -> immutable exact-patch candidate in chat.db
+  -> manual confirmation (default), or startup-enabled unanimous Room consensus
+  -> one-shot networkless Bubblewrap controller in a detached worktree
+  -> fixed path-selected gates
+  -> guarded promotion of the same patch + execution infrastructure activity
+
+optional source-backed memory
+  -> visible Room activity / approved Agent candidate memory outbox in chat.db
+  -> archive-only MemoryOS index (rebuildable, loopback, no LLM/vector network)
+  -> bounded source-validated memory_evidence in the next Agent context
 ```
 
-The fake demo uses the same chat store and scheduler semantics, but replaces the external
-Codex/Ray/MCP transport with an in-process fake GOD layer. It is for onboarding only and is
-not evidence that the real production runtime works.
+- `chat.db` is authority for Room activity, observations, attempts, controls, messages,
+  proposals, cursors, leases, Skill evidence, accepted outcomes, exact-patch candidates,
+  assessments, authorizations, execution attempts, gate evidence, and promotion journals.
+  It also owns memory outbox rows, candidate approvals, delivery evidence, and recall
+  receipts; the MemoryOS database is a disposable index, never Room authority.
+- `god_sessions.json` records durable participant/provider bindings. Provider stdout,
+  browser state, screenshots, and telemetry are not authority.
+- Human speech atomically creates one root observation for every active participant. After
+  that root phase terminates, peer activities for the same participant and correlation are
+  claimed as one immutable batch (at most 16 items), with one attempt, Skill decision, and
+  durable outcome. Mentions and handoffs change attention priority, never eligibility or the
+  per-turn response budget.
+- Only the identity-, attempt-, and lease-bound MCP outcome becomes Agent speech. Provider
+  final text is diagnostic.
+- Room Codex sessions use a config-isolated home, read-only filesystem policy, no network,
+  and exactly one pre-approved MCP outcome tool.
+- Agents can author or assess an exact unified diff through that same durable outcome tool;
+  they never receive a writable workspace or arbitrary command surface. Execution is manual
+  by default. Consensus execution additionally requires the startup kill-switch, a Room
+  policy opt-in, a frozen unanimous peer snapshot, complete patch-review receipts, and the
+  server-only low-risk policy.
+- The one-shot Harness applies only the authorized bytes in a detached worktree. Bubblewrap
+  removes network and ambient credentials. A server-owned, versioned gate profile freezes
+  repository markers, the complete local toolchain capability, and the path-selected gate
+  order into the authorization. Frontend gates invoke fixed read-only dependency entrypoints,
+  never candidate-controlled package scripts. Promotion rechecks policy, clean HEAD, profile
+  evidence, and file digests. Pre-promotion failure leaves target bytes unchanged; an
+  ambiguous promotion image is blocked for human repair.
+- Confirmed-dead Runner attempts are fenced and reopened only after provider cleanup.
+  Cancel/retry and guarded Runtime recovery use durable, idempotent control ledgers.
+- The browser consumes bounded `room_list_projection/v1`,
+  `room_chat_projection/v3`, and `room_operations_projection/v2`.
+- Provider context uses `room_context_envelope/v2`: the Human root, primary source, causal
+  ancestry, batch members, bounded recent burst, active roster, and frozen role persona are
+  retained under a 64 KiB limit. A peer follow-up may create visible speech once; its tail is
+  context-only and cannot start a third provider wave.
+- Optional MemoryOS recall accepts only bounded `metadata.v3_context.items[]` archival
+  evidence whose document and activity sources can be re-proved from `chat.db`. Timeouts,
+  malformed data, and sidecar failure degrade memory only; the Room attempt still completes
+  from its causal context. Agents may propose source-backed memory candidates, but only
+  Room facts/decisions auto-publish to that Room. User preferences and project rules require
+  an explicit operator approval before shared-archive recall.
+- This remains a loopback-only, single-user application. Managed writes use a server-only
+  `XMUSE_OPERATOR_TOKEN`; fixed Next routes never expose it to the browser.
 
-## Install
+The default product has no platform runner, central speaker queue, fixed role sequence,
+Dashboard, broad MCP root, self-evolution control plane, MemoryOS sidecar, or A2A runtime.
+MemoryOS is an explicit `--memory` archive-only option; it does not expand the Room Agent's
+single MCP tool or filesystem/network permissions. Retired implementations live only in Git
+history.
 
-Prerequisites:
+## Run locally
 
-- Python 3.11
-- `uv`
-
-From the repository root:
+Requirements: Linux or WSL, Python 3.11+, `uv`, Git, Bubblewrap, Node.js 20.9+, npm,
+and an authenticated Codex CLI on `PATH`.
 
 ```bash
 uv sync --frozen --all-groups
+cd frontend
+npm ci
+NEXT_PUBLIC_XMUSE_CHAT_API_BASE_URL=http://127.0.0.1:8201/api/chat npm run build
+cd ..
+export XMUSE_ROOT=/tmp/xmuse-local
+uv run xmuse-workroom doctor
+uv run xmuse-workroom start
 ```
 
-Optional local env file:
+Open `http://127.0.0.1:3000`. From another terminal:
 
 ```bash
-cp .env.example .env
+uv run xmuse-workroom status
+uv run xmuse-workroom stop
 ```
 
-Default install and CI paths do not require Codex, Ray services, OpenCode, DeepSeek keys, or
-any sibling repository.
-
-## Quickstart
-
-Run the local health smoke:
+The default execution workspace is this xmuse checkout with
+`xmuse-monorepo/v2`. To use another clean Git workspace, choose its fixed profile
+explicitly; the same path is mounted read-only for Room Agents and used as the exact-patch
+promotion target:
 
 ```bash
-uv run xmuse-platform-runner --health-once
+uv run xmuse-workroom start \
+  --workspace /absolute/path/to/python-project \
+  --execution-profile python-uv/v1
 ```
 
-Run the maintained fake groupchat demo:
+The fixed profiles are `docs/v1` (documentation plus diff-check), `python-uv/v1`
+(`ruff`, `mypy src`, and `pytest`), and `xmuse-monorepo/v2` (backend plus direct
+TypeScript, ESLint, Vitest, and Next build gates). Only `docs/v1` can run diff-check alone.
+Missing markers, preinstalled dependencies, Bubblewrap, or fixed tool entrypoints block both
+manual and consensus execution. Python gates are supervised at 2 GiB aggregate RSS, 64
+processes, and 1 GiB scratch; frontend gates use 4 GiB, 128 processes, and 2 GiB scratch.
+Neither the workspace path nor internal profile/toolchain digests enter browser projections.
+
+To opt into the source-backed archive index, point Workroom at a real MemoryOS executable:
 
 ```bash
-uv run python scripts/demo_fake_groupchat.py
+uv run xmuse-workroom start --memory \
+  --memoryos-executable /absolute/path/to/memoryos
 ```
 
-Expected output includes:
+Workroom fixes the sidecar to loopback, creates a private derived data directory and random
+server-only API key, and disables its agent kernel, rewrite, rerank, paging, item extraction,
+recall cache, and archival vector network. MemoryOS health is reported separately and never
+changes Room Runtime readiness. A confirmed-dead owned sidecar is restarted with bounded
+`1/2/4/8/16/30s` backoff while the same Workroom generation retains its private endpoint,
+key, and data directory; a live-but-unhealthy, identity-mismatched, or unknown port owner is
+reported as degraded and is never killed speculatively. Crash-loop or explicit derived-cache
+blockers can be rebuilt from the Inspector through a guarded, durable operator action. The
+manager first proves and stops the sidecar, deletes only the fixed derived directory, resets
+bindings/outbox from `chat.db`, restarts the same capability, and waits for replay evidence.
 
-```text
-fake-groupchat-demo-ok
-scheduler_happy_path=1
-GOD reply: ...
-```
+The five supported commands are `xmuse-chat-api`, `xmuse-mcp-server`,
+`xmuse-room-runner`, `xmuse-workroom`, and `xmuse-data`.
 
-See [QUICKSTART.md](QUICKSTART.md) for a clean environment walkthrough.
-
-## Fake Groupchat Demo
-
-The fake demo:
-
-- creates a real xmuse conversation through `PeerChatService`;
-- posts a human message that creates an Architect GOD inbox item;
-- runs `PeerChatScheduler.tick_once()`;
-- writes a GOD reply via existing `chat_read_inbox` and `chat_post_message` service semantics;
-- verifies the scheduler observed an MCP-style writeback happy path.
-
-Command:
+## Data maintenance
 
 ```bash
-uv run python scripts/demo_fake_groupchat.py --message "Draft a release checklist."
+uv run xmuse-data doctor --root "$XMUSE_ROOT"
+uv run xmuse-data backup /path/to/new-backup --root "$XMUSE_ROOT"
+uv run xmuse-workroom stop --root "$XMUSE_ROOT"
+uv run xmuse-data restore /path/to/backup --root "$XMUSE_ROOT" --replace
+uv run xmuse-data compact --root "$XMUSE_ROOT"
 ```
 
-## Real Ray/Codex/MCP Manual Gate
+`xmuse-data` recognizes current `xmuse.room_db/v1` and old
+`xmuse.chat_db/v1` database variants for offline doctor/backup/restore/compact only. It
+preserves schema markers and durable identities without initializing or running retired
+product surfaces. Backups contain `chat.db` and the fenced participant binding snapshot, not
+the MemoryOS cache. Restore clears only the fixed derived MemoryOS directory, forgets old
+session/attachment bindings, and reopens visible activities plus approved candidates for
+rebuild.
 
-The real runtime gate is operator-run and is not part of default CI:
+## Verify
 
 ```bash
-export XMUSE_PEER_GOD_BACKEND=ray
-export XMUSE_EXECUTE_GOD_BACKEND=ray
-export XMUSE_REVIEW_GOD_BACKEND=ray
-export XMUSE_RAY_GOD_TRANSPORT=app-server
-export XMUSE_RAY_GOD_EFFORT=low
-export XMUSE_RAY_GOD_MCP=1
-export XMUSE_CHAT_API_URL=http://127.0.0.1:8201
-
-uv run python -m xmuse.chat_api
-uv run python -m xmuse.mcp_server --port 8100
-uv run xmuse-platform-runner --peer-chat --mcp-port 8100
+TMPDIR=/tmp uv run pytest -q
+uv run ruff check .
+uv run mypy --explicit-package-bases xmuse src/xmuse_core \
+  scripts/room_first_real_acceptance.py scripts/room_soak_chaos.py
+cd frontend
+npm ci && npm run typecheck && npm test && npm run lint && npm run build && npm run test:e2e
 ```
 
-Manual verification:
+The independent multi-Room lab exercises the same production Kernel/Host path without
+adding a telemetry API or Dashboard. `ci-sim` is deterministic and suitable for ordinary
+CI; live profiles require a clean HEAD, free fixed ports, authenticated Codex, and a result
+path outside the workspace:
 
 ```bash
-uv run pytest -q tests/xmuse/test_full_chain_real_run.py::test_real_ray_codex_app_server_mcp_writeback_soak_restart_resume
+uv run python scripts/room_soak_chaos.py ci-sim --result /tmp/xmuse-ci-soak.json
+uv run python scripts/room_soak_chaos.py live-short --result /tmp/xmuse-live-short.json
+uv run python scripts/room_soak_chaos.py memory-recovery \
+  --memoryos-executable /absolute/path/to/memoryos \
+  --result /tmp/xmuse-memory-recovery.json
+uv run python scripts/room_soak_chaos.py live-soak \
+  --confirm-provider-cost \
+  --result /tmp/xmuse-live-soak.json
 ```
 
-## Production / Experimental / Legacy Boundaries
+`memory-recovery` uses two phases: nine warm-up turns and one post-recovery turn per Room.
+This deliberately moves the recall anchor beyond the default eight-activity recent burst,
+so a passing receipt proves archival MemoryOS evidence instead of duplicating Room context.
+`live-soak` distributes four provider waves across at least 60 minutes; the confirmation
+flag is mandatory. Results use `room_soak_chaos_result/v1` and contain only aggregate
+counts, percentiles, stable reason codes, resource totals, and digests. Room/provider text,
+tokens, process identities, bindings, and local paths are rejected by the result contract.
 
-| Area | Status | Boundary |
-| --- | --- | --- |
-| Chat API, MCP server, `PeerChatScheduler`, Ray/Codex app-server writeback | Production path | Manual real runtime gate required before claiming production readiness. |
-| Codex = primary | Supported provider | Only production groupchat GOD provider. |
-| OpenCode = secondary | Bounded worker only | Requires `DEEPSEEK_API_KEY`; no MCP writeback or persistent GOD session. |
-| Fake = test/demo only | Onboarding and CI smoke | Must not be used as proof of real Ray/Codex/MCP operation. |
-| TUI/dashboard | Experimental UI surfaces | Useful for inspection, not release-blocking production proof. |
-| Legacy master loop, Hermes, old shell scripts | Legacy | Kept for historical compatibility; not the current groupchat mainline. |
-
-Known limits are tracked in [docs/xmuse/release-checklist.md](docs/xmuse/release-checklist.md).
+Implementation and fresh tests are evidence. See [QUICKSTART.md](QUICKSTART.md) and the
+[implementation map](docs/xmuse/README.md).

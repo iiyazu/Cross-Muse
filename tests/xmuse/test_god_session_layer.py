@@ -1,21 +1,20 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
 
 from xmuse_core.agents.god_session_layer import GodSessionLayer
-from xmuse_core.agents.god_session_registry import GodSessionRecord
-from xmuse_core.agents.persistent_peer import PersistentCliPeerService
+from xmuse_core.agents.god_session_registry import GodSessionRegistry
 from xmuse_core.agents.protocol import StdoutMessage, parse_stdout_line
 from xmuse_core.agents.registry import AgentDescriptor, AgentRuntime, SessionConfig
-from xmuse_core.chat.participant_store import ParticipantStore
-from xmuse_core.chat.store import ChatStore
 
 
 class FakeSession:
-    def __init__(self, alive: bool = True) -> None:
+    def __init__(self, alive: bool = True, pid: int | None = None) -> None:
         self._alive = alive
+        self.pid = pid
         self.sent_messages: list[tuple[str, dict[str, object]]] = []
         self.received_messages: list[object] = []
         self.aborted = False
@@ -34,37 +33,6 @@ class FakeSession:
     async def abort(self) -> None:
         self.aborted = True
         self._alive = False
-
-
-class RecordingPeerSessionLayer:
-    def __init__(self) -> None:
-        self.ensure_calls: list[dict[str, object]] = []
-        self._record: GodSessionRecord | None = None
-
-    async def ensure_conversation_session(self, **kwargs) -> GodSessionRecord:
-        self.ensure_calls.append(kwargs)
-        if self._record is None:
-            self._record = GodSessionRecord(
-                god_session_id="god-peer-1",
-                role=kwargs["role"],
-                agent_name=kwargs["agent"].name,
-                runtime=kwargs["agent"].runtime.value,
-                session_address="@peer",
-                session_inbox_id="inbox-peer",
-                conversation_id=kwargs["conversation_id"],
-                participant_id=kwargs["participant_id"],
-                model=kwargs.get("model"),
-                prompt_fingerprint=kwargs.get("prompt_fingerprint"),
-                worktree=str(kwargs["worktree"]),
-                feature_scope_id=kwargs.get("feature_scope_id"),
-            )
-        return self._record
-
-    async def send_message(self, **kwargs) -> None:
-        return None
-
-    async def receive_message(self, god_session_id: str):
-        return None
 
 
 class FakeLauncher:
@@ -113,13 +81,76 @@ class ProviderSessionAwareLauncher(FakeLauncher):
         *,
         provider_session_id: str | None = None,
     ) -> list[str]:
-        self.build_persistent_command_calls.append(
-            (role, worktree, provider_session_id)
-        )
+        self.build_persistent_command_calls.append((role, worktree, provider_session_id))
         command = ["fake-persistent-agent", role, str(worktree)]
         if provider_session_id is not None:
             command.extend(["--session-id", provider_session_id])
         return command
+
+
+class ModelAwareLauncher(FakeLauncher):
+    def __init__(self) -> None:
+        super().__init__()
+        self.build_persistent_command_calls: list[tuple[str, Path, str | None]] = []
+
+    def build_persistent_command(
+        self,
+        role: str,
+        worktree: Path,
+        *,
+        model: str | None = None,
+    ) -> list[str]:
+        self.build_persistent_command_calls.append((role, worktree, model))
+        command = ["fake-persistent-agent", role, str(worktree)]
+        if model is not None:
+            command.extend(["--model", model])
+        return command
+
+
+class NativeSessionLauncher(FakeLauncher):
+    def __init__(self) -> None:
+        super().__init__()
+        self.spawn_persistent_session_calls: list[dict[str, object]] = []
+
+    async def spawn_persistent_session(
+        self,
+        *,
+        role: str,
+        worktree: Path,
+        model: str | None = None,
+        provider_session_id: str | None = None,
+        db_path: Path | None = None,
+    ) -> FakeSession:
+        self.spawn_persistent_session_calls.append(
+            {
+                "role": role,
+                "worktree": worktree,
+                "model": model,
+                "provider_session_id": provider_session_id,
+                "db_path": db_path,
+            }
+        )
+        return FakeSession(pid=4242)
+
+
+class SlowNativeSessionLauncher(NativeSessionLauncher):
+    async def spawn_persistent_session(
+        self,
+        *,
+        role: str,
+        worktree: Path,
+        model: str | None = None,
+        provider_session_id: str | None = None,
+        db_path: Path | None = None,
+    ) -> FakeSession:
+        await asyncio.sleep(0.01)
+        return await super().spawn_persistent_session(
+            role=role,
+            worktree=worktree,
+            model=model,
+            provider_session_id=provider_session_id,
+            db_path=db_path,
+        )
 
 
 class MisconfiguredPersistentLauncher:
@@ -139,19 +170,6 @@ def _make_agent() -> AgentDescriptor:
         capabilities=["code"],
         session_config=SessionConfig(),
     )
-
-
-def _make_review_participant(tmp_path: Path) -> tuple[Path, str, str]:
-    db_path = tmp_path / "chat.db"
-    conversation = ChatStore(db_path).create_conversation("Peer session")
-    participant = ParticipantStore(db_path).add(
-        conversation_id=conversation.id,
-        role="review",
-        display_name="Review GOD",
-        cli_kind="codex",
-        model="gpt-5.5",
-    )
-    return db_path, conversation.id, participant.participant_id
 
 
 class UnsupportedPersistentLauncher(FakeLauncher):
@@ -220,6 +238,45 @@ async def test_ensure_session_prefers_persistent_command_builder(tmp_path, monke
 
 
 @pytest.mark.asyncio
+async def test_ensure_session_prefers_provider_native_session_factory(
+    tmp_path,
+    monkeypatch,
+):
+    launcher = NativeSessionLauncher()
+    layer = GodSessionLayer(
+        registry_path=tmp_path / "god_sessions.json",
+        launchers={AgentRuntime.CODEX: launcher},
+    )
+
+    async def fail_spawn(command, env=None):
+        raise AssertionError("provider-native session factory should be used")
+
+    monkeypatch.setattr(
+        "xmuse_core.agents.god_session_layer.LocalSession.spawn",
+        fail_spawn,
+    )
+
+    record = await layer.ensure_session(
+        role="architect",
+        agent=_make_agent(),
+        worktree=tmp_path,
+    )
+
+    assert record.pid == 4242
+    assert launcher.spawn_persistent_session_calls == [
+        {
+            "role": "architect",
+            "worktree": tmp_path,
+            "model": None,
+            "provider_session_id": None,
+            "db_path": tmp_path / "chat.db",
+        }
+    ]
+    assert launcher.build_persistent_command_calls == []
+    assert launcher.build_env_calls == []
+
+
+@pytest.mark.asyncio
 async def test_ensure_session_rejects_launcher_without_persistent_protocol(
     tmp_path,
     monkeypatch,
@@ -282,7 +339,7 @@ async def test_ensure_session_rejects_role_reuse_when_shape_differs(tmp_path, mo
     await layer.ensure_session(role="execute", agent=_make_agent(), worktree=tmp_path)
 
     other_agent = AgentDescriptor(
-        runtime=AgentRuntime.CLAUDE_CODE,
+        runtime="future_cli",
         name="reviewer",
         capabilities=["code"],
         session_config=SessionConfig(),
@@ -334,6 +391,120 @@ async def test_ensure_session_respawns_dead_role_once_then_reuses_new_live_sessi
     ]
     assert launcher.build_command_calls == []
     assert launcher.build_env_calls == ["execute", "execute"]
+
+
+@pytest.mark.asyncio
+async def test_ensure_conversation_session_records_running_pid(tmp_path, monkeypatch):
+    launcher = FakeLauncher()
+    registry_path = tmp_path / "god_sessions.json"
+    layer = GodSessionLayer(
+        registry_path=registry_path,
+        launchers={AgentRuntime.CODEX: launcher},
+    )
+
+    async def fake_spawn(command, env=None):
+        return FakeSession(pid=4242)
+
+    monkeypatch.setattr(
+        "xmuse_core.agents.god_session_layer.LocalSession.spawn",
+        fake_spawn,
+    )
+
+    record = await layer.ensure_conversation_session(
+        conversation_id="conv_architect",
+        participant_id="architect-god",
+        role="architect",
+        agent=_make_agent(),
+        worktree=tmp_path,
+        model="gpt-5.5",
+        prompt_fingerprint="sha256:architect",
+    )
+
+    assert record.status == "running"
+    assert record.pid == 4242
+    reloaded = GodSessionRegistry(registry_path).get(record.god_session_id)
+    assert reloaded.status == "running"
+    assert reloaded.pid == 4242
+
+
+@pytest.mark.asyncio
+async def test_ensure_conversation_session_deduplicates_concurrent_spawn(tmp_path):
+    launcher = SlowNativeSessionLauncher()
+    registry_path = tmp_path / "god_sessions.json"
+    layer = GodSessionLayer(
+        registry_path=registry_path,
+        launchers={AgentRuntime.CODEX: launcher},
+    )
+
+    first, second = await asyncio.gather(
+        layer.ensure_conversation_session(
+            conversation_id="conv_parallel",
+            participant_id="architect-god",
+            role="architect",
+            agent=_make_agent(),
+            worktree=tmp_path,
+            model="gpt-5.5",
+            prompt_fingerprint="sha256:architect",
+        ),
+        layer.ensure_conversation_session(
+            conversation_id="conv_parallel",
+            participant_id="architect-god",
+            role="architect",
+            agent=_make_agent(),
+            worktree=tmp_path,
+            model="gpt-5.5",
+            prompt_fingerprint="sha256:architect",
+        ),
+    )
+
+    assert first.god_session_id == second.god_session_id
+    assert launcher.spawn_persistent_session_calls == [
+        {
+            "role": "architect",
+            "worktree": tmp_path,
+            "model": "gpt-5.5",
+            "provider_session_id": None,
+            "db_path": tmp_path / "chat.db",
+        }
+    ]
+    assert len(GodSessionRegistry(registry_path).list()) == 1
+
+
+@pytest.mark.asyncio
+async def test_ensure_conversation_session_passes_peer_model_to_persistent_command(
+    tmp_path,
+    monkeypatch,
+):
+    launcher = ModelAwareLauncher()
+    spawned_commands: list[list[str]] = []
+    layer = GodSessionLayer(
+        registry_path=tmp_path / "god_sessions.json",
+        launchers={AgentRuntime.CODEX: launcher},
+    )
+
+    async def fake_spawn(command, env=None):
+        spawned_commands.append(command)
+        return FakeSession(pid=4242)
+
+    monkeypatch.setattr(
+        "xmuse_core.agents.god_session_layer.LocalSession.spawn",
+        fake_spawn,
+    )
+
+    await layer.ensure_conversation_session(
+        conversation_id="conv_builder",
+        participant_id="builder-god",
+        role="execute",
+        agent=_make_agent(),
+        worktree=tmp_path,
+        model="gpt-5.4-mini",
+        prompt_fingerprint="sha256:builder",
+    )
+
+    assert launcher.build_persistent_command_calls == [("execute", tmp_path, "gpt-5.4-mini")]
+    assert spawned_commands == [
+        ["fake-persistent-agent", "execute", str(tmp_path), "--model", "gpt-5.4-mini"]
+    ]
 
 
 @pytest.mark.asyncio
@@ -440,22 +611,22 @@ async def test_receive_message_routes_by_god_session_id(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_receive_message_persists_opencode_provider_session_id(
+async def test_receive_message_persists_codex_provider_session_id(
     tmp_path,
     monkeypatch,
 ):
     launcher = FakeLauncher()
     layer = GodSessionLayer(
         registry_path=tmp_path / "god_sessions.json",
-        launchers={AgentRuntime.OPENCODE: launcher},
+        launchers={AgentRuntime.CODEX: launcher},
     )
     session = FakeSession()
     session.received_messages.append(
         StdoutMessage(
             type="result",
-            runtime="opencode",
+            runtime="codex",
             status="success",
-            artifacts={"opencode_session_id": " ses_opencode_123 "},
+            artifacts={"provider_session_id": " provider_thread_123 "},
         )
     )
 
@@ -468,16 +639,16 @@ async def test_receive_message_persists_opencode_provider_session_id(
     )
 
     record = await layer.ensure_conversation_session(
-        conversation_id="conv_opencode",
+        conversation_id="conv_codex",
         participant_id="part_review",
         role="review",
         agent=AgentDescriptor(
-            runtime=AgentRuntime.OPENCODE,
-            name="review-opencode-god",
+            runtime=AgentRuntime.CODEX,
+            name="review-codex-god",
             capabilities=["review"],
         ),
         worktree=tmp_path,
-        model="opencode-go/deepseek-v4-flash",
+        model="gpt-5.5",
         prompt_fingerprint="sha256:review",
     )
 
@@ -485,14 +656,66 @@ async def test_receive_message_persists_opencode_provider_session_id(
 
     assert isinstance(message, StdoutMessage)
     reloaded = layer._registry.get(record.god_session_id)
-    assert reloaded.provider_session_id == "ses_opencode_123"
-    assert reloaded.provider_session_kind == "opencode_session"
+    assert reloaded.provider_session_id == "provider_thread_123"
+    assert reloaded.provider_session_kind == "codex_app_server_thread"
     assert reloaded.provider_binding_status == "active"
     assert reloaded.provider_binding_failure_reason is None
 
 
 @pytest.mark.asyncio
-async def test_ensure_conversation_session_resumes_active_opencode_provider_session(
+async def test_receive_message_ignores_future_provider_session_artifact(
+    tmp_path,
+    monkeypatch,
+):
+    launcher = FakeLauncher()
+    layer = GodSessionLayer(
+        registry_path=tmp_path / "god_sessions.json",
+        launchers={"future_cli": launcher},
+    )
+    session = FakeSession()
+    session.received_messages.append(
+        StdoutMessage(
+            type="result",
+            runtime="future_cli",
+            status="success",
+            artifacts={"provider_session_id": "future_thread_123"},
+        )
+    )
+
+    async def fake_spawn(command, env=None):
+        return session
+
+    monkeypatch.setattr(
+        "xmuse_core.agents.god_session_layer.LocalSession.spawn",
+        fake_spawn,
+    )
+
+    record = await layer.ensure_conversation_session(
+        conversation_id="conv_future",
+        participant_id="part_review",
+        role="review",
+        agent=AgentDescriptor(
+            runtime="future_cli",
+            name="review-future-cli-god",
+            capabilities=["review"],
+        ),
+        worktree=tmp_path,
+        model="future-cli-model",
+        prompt_fingerprint="sha256:review",
+    )
+
+    message = await layer.receive_message(record.god_session_id)
+
+    assert isinstance(message, StdoutMessage)
+    reloaded = layer._registry.get(record.god_session_id)
+    assert reloaded.provider_session_id is None
+    assert reloaded.provider_session_kind is None
+    assert reloaded.provider_binding_status is None
+    assert reloaded.provider_binding_failure_reason is None
+
+
+@pytest.mark.asyncio
+async def test_ensure_conversation_session_resumes_active_codex_provider_session(
     tmp_path,
     monkeypatch,
 ):
@@ -500,15 +723,15 @@ async def test_ensure_conversation_session_resumes_active_opencode_provider_sess
     first_launcher = FakeLauncher()
     first_layer = GodSessionLayer(
         registry_path=registry_path,
-        launchers={AgentRuntime.OPENCODE: first_launcher},
+        launchers={AgentRuntime.CODEX: first_launcher},
     )
     session = FakeSession()
     session.received_messages.append(
         StdoutMessage(
             type="result",
-            runtime="opencode",
+            runtime="codex",
             status="success",
-            artifacts={"opencode_session_id": "ses_opencode_resume"},
+            artifacts={"provider_session_id": "provider_thread_resume"},
         )
     )
     spawned_commands: list[list[str]] = []
@@ -522,18 +745,18 @@ async def test_ensure_conversation_session_resumes_active_opencode_provider_sess
         first_spawn,
     )
     agent = AgentDescriptor(
-        runtime=AgentRuntime.OPENCODE,
-        name="review-opencode-god",
+        runtime=AgentRuntime.CODEX,
+        name="review-codex-god",
         capabilities=["review"],
     )
 
     first = await first_layer.ensure_conversation_session(
-        conversation_id="conv_opencode_restart",
+        conversation_id="conv_codex_restart",
         participant_id="part_review",
         role="review",
         agent=agent,
         worktree=tmp_path,
-        model="opencode-go/deepseek-v4-flash",
+        model="gpt-5.5",
         prompt_fingerprint="sha256:review",
     )
     await first_layer.receive_message(first.god_session_id)
@@ -541,7 +764,7 @@ async def test_ensure_conversation_session_resumes_active_opencode_provider_sess
     restart_launcher = ProviderSessionAwareLauncher()
     restarted_layer = GodSessionLayer(
         registry_path=registry_path,
-        launchers={AgentRuntime.OPENCODE: restart_launcher},
+        launchers={AgentRuntime.CODEX: restart_launcher},
     )
 
     async def restart_spawn(command, env=None):
@@ -554,20 +777,20 @@ async def test_ensure_conversation_session_resumes_active_opencode_provider_sess
     )
 
     second = await restarted_layer.ensure_conversation_session(
-        conversation_id="conv_opencode_restart",
+        conversation_id="conv_codex_restart",
         participant_id="part_review",
         role="review",
         agent=agent,
         worktree=tmp_path,
-        model="opencode-go/deepseek-v4-flash",
+        model="gpt-5.5",
         prompt_fingerprint="sha256:review",
     )
 
     assert second.god_session_id == first.god_session_id
     assert restart_launcher.build_persistent_command_calls == [
-        ("review", tmp_path, "ses_opencode_resume")
+        ("review", tmp_path, "provider_thread_resume")
     ]
-    assert spawned_commands[-1][-2:] == ["--session-id", "ses_opencode_resume"]
+    assert spawned_commands[-1][-2:] == ["--session-id", "provider_thread_resume"]
 
 
 @pytest.mark.asyncio
@@ -987,7 +1210,7 @@ async def test_ensure_conversation_session_rejects_registry_mismatch_before_spaw
         fail_if_spawned,
     )
     mismatched_agent = AgentDescriptor(
-        runtime=AgentRuntime.CLAUDE_CODE,
+        runtime="future_cli",
         name="reviewer",
         capabilities=["code"],
         session_config=SessionConfig(),
@@ -1098,9 +1321,7 @@ async def test_ensure_conversation_session_rejects_none_expected_model_for_concr
 
 def test_stdout_protocol_parses_top_level_request_id_only():
     parsed = parse_stdout_line('{"type":"result","request_id":"req-1","artifacts":{}}')
-    artifact_only = parse_stdout_line(
-        '{"type":"result","artifacts":{"request_id":"req-1"}}'
-    )
+    artifact_only = parse_stdout_line('{"type":"result","artifacts":{"request_id":"req-1"}}')
 
     assert parsed is not None
     assert parsed.request_id == "req-1"
@@ -1172,17 +1393,17 @@ async def test_ensure_conversation_session_migrates_bootstrap_record_with_model_
     registry_path = tmp_path / "sessions.json"
     layer = GodSessionLayer(
         registry_path=registry_path,
-        launchers={AgentRuntime.OPENCODE: FakeLauncher()},
+        launchers={"future_cli": FakeLauncher()},
     )
     bootstrap = layer._registry.create(
         role="review",
-        agent_name="review-opencode-god",
-        runtime="opencode",
+        agent_name="review-future-cli-god",
+        runtime="future_cli",
         session_address="@conv_boot:part_review",
         session_inbox_id="inbox-conv_boot-part_review",
         conversation_id="conv_boot",
         participant_id="part_review",
-        model="deepseek-v4-flash",
+        model="future-cli-model",
     )
 
     async def fake_spawn(command, env=None):
@@ -1198,59 +1419,19 @@ async def test_ensure_conversation_session_migrates_bootstrap_record_with_model_
         participant_id="part_review",
         role="review",
         agent=AgentDescriptor(
-            runtime=AgentRuntime.OPENCODE,
-            name="review-opencode-god",
+            runtime="future_cli",
+            name="review-future-cli-god",
             capabilities=["review"],
         ),
         worktree=tmp_path,
-        model="deepseek-v4-flash",
-        prompt_fingerprint="sha256:review-opencode",
+        model="future-cli-model",
+        prompt_fingerprint="sha256:review-future-cli",
         feature_scope_id=None,
     )
 
     assert record.god_session_id == bootstrap.god_session_id
     reloaded = layer._registry.get(record.god_session_id)
-    assert reloaded.model == "deepseek-v4-flash"
-    assert reloaded.prompt_fingerprint == "sha256:review-opencode"
+    assert reloaded.model == "future-cli-model"
+    assert reloaded.prompt_fingerprint == "sha256:review-future-cli"
     assert reloaded.worktree == str(tmp_path)
     assert reloaded.feature_scope_id is None
-
-
-@pytest.mark.asyncio
-async def test_persistent_peer_uses_role_capability_and_stable_session_prompt(
-    tmp_path: Path,
-) -> None:
-    db_path, conversation_id, participant_id = _make_review_participant(tmp_path)
-    worktree = tmp_path / "lane-review"
-    layer = RecordingPeerSessionLayer()
-    service = PersistentCliPeerService(db_path=db_path, session_layer=layer)
-
-    first = await service.ensure_peer(
-        conversation_id=conversation_id,
-        participant_id=participant_id,
-        model="gpt-5.5",
-        prompt="review lane one with req-1",
-        session_prompt="stable review role prompt",
-        worktree=worktree,
-        feature_scope_id="feature-a",
-    )
-    second = await service.ensure_peer(
-        conversation_id=conversation_id,
-        participant_id=participant_id,
-        model="gpt-5.5",
-        prompt="review lane two with req-2",
-        session_prompt="stable review role prompt",
-        worktree=worktree,
-        feature_scope_id="feature-a",
-    )
-
-    assert first.god_session_id == second.god_session_id == "god-peer-1"
-    assert first.worktree == second.worktree == str(worktree)
-    assert len(layer.ensure_calls) == 2
-    first_call = layer.ensure_calls[0]
-    second_call = layer.ensure_calls[1]
-    assert first_call["agent"].name == "Review GOD"
-    assert first_call["agent"].capabilities == ["review"]
-    assert second_call["agent"].capabilities == ["review"]
-    assert first.prompt_fingerprint == second.prompt_fingerprint
-    assert first_call["prompt_fingerprint"] == second_call["prompt_fingerprint"]

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterator
 from dataclasses import dataclass
 
 from xmuse_core.chat.participant_store import Participant, ParticipantStore
@@ -100,7 +101,7 @@ def has_inactive_mention_candidates(content: str) -> bool:
     return any(not candidate.active for candidate in _iter_mention_candidates(content))
 
 
-def _iter_mention_candidates(content: str):
+def _iter_mention_candidates(content: str) -> Iterator[_MentionCandidate]:
     index = 0
     while index < len(content):
         fenced_end = _find_fenced_code_block_end(content, index)
@@ -119,7 +120,7 @@ def _iter_mention_candidates(content: str):
         index += 1
 
 
-def _iter_inactive_code_mentions(content: str, start: int, end: int):
+def _iter_inactive_code_mentions(content: str, start: int, end: int) -> Iterator[_MentionCandidate]:
     index = start
     while index < end:
         if content[index] == "@" and _looks_like_mention_start(content, index):
@@ -203,11 +204,7 @@ def _skip_markdown_line_prefix(content: str, index: int) -> int:
         index += 1
         while index < length and content[index] in {" ", "\t"}:
             index += 1
-    if (
-        index + 1 < length
-        and content[index] in {"-", "*", "+"}
-        and content[index + 1].isspace()
-    ):
+    if index + 1 < length and content[index] in {"-", "*", "+"} and content[index + 1].isspace():
         index += 1
         while index < length and content[index] in {" ", "\t"}:
             index += 1
@@ -309,7 +306,7 @@ class MentionResolver:
         return [
             participant
             for participant in self._participants.list_by_conversation(conversation_id)
-            if participant.status == "active"
+            if participant.status == "active" and participant.cli_kind == "codex"
         ]
 
     def _resolve_active(self, active: list[Participant], raw: str) -> ResolvedMention:
@@ -337,8 +334,7 @@ class MentionResolver:
             matches = [
                 participant
                 for participant in active
-                if normalize_address(participant.role) == normalized
-                or normalize_address(participant.display_name) == normalized
+                if normalized in _participant_aliases(participant)
             ]
         if not matches:
             return None
@@ -353,9 +349,11 @@ class MentionResolver:
                 f"@participant:{participant.participant_id}",
                 f"@{participant.role}",
                 f"@{participant.display_name}",
+                f"@{participant.role}_god",
+                f"@{participant.role}-god",
             ):
                 normalized = normalize_address(raw)
-                aliases[normalized] = _MentionAlias(raw=raw, normalized=normalized)
+                aliases.setdefault(normalized, _MentionAlias(raw=raw, normalized=normalized))
         return sorted(aliases.values(), key=lambda alias: len(alias.normalized), reverse=True)
 
     def _extract_scoped_raw(
@@ -385,7 +383,7 @@ class MentionResolver:
         return value.isalnum() or value in "_-:"
 
 
-def _raw_resolution_candidates(raw: str):
+def _raw_resolution_candidates(raw: str) -> Iterator[str]:
     stripped = raw.strip()
     if not stripped:
         return
@@ -401,3 +399,16 @@ def _raw_resolution_candidates(raw: str):
     parts = body.split()
     for end in range(len(parts) - 1, 0, -1):
         yield prefix + " ".join(parts[:end])
+
+
+def _participant_aliases(participant: Participant) -> set[str]:
+    return {
+        normalize_address(raw)
+        for raw in (
+            participant.role,
+            participant.display_name,
+            f"{participant.role}_god",
+            f"{participant.role}-god",
+        )
+        if raw.strip()
+    }

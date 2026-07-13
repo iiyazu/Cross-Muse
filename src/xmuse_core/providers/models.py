@@ -19,16 +19,12 @@ def _require_unique_non_empty(
     cleaned = [_require_non_empty(value, field_name) for value in values]
     duplicates = sorted({value for value in cleaned if cleaned.count(value) > 1})
     if duplicates:
-        raise ValueError(
-            f"{field_name} must not contain duplicates: {', '.join(duplicates)}"
-        )
+        raise ValueError(f"{field_name} must not contain duplicates: {', '.join(duplicates)}")
     return tuple(cleaned)
 
 
 class ProviderId(StrEnum):
-    A2A = "a2a"
     CODEX = "codex"
-    OPENCODE = "opencode"
 
 
 class ProviderProfileId(StrEnum):
@@ -37,44 +33,10 @@ class ProviderProfileId(StrEnum):
     REVIEW = "review"
     GOD = "god"
     FINAL_QUALITY = "final_quality"
-    DEEPSEEK_FLASH_WORKER = "deepseek_flash_worker"
-    REMOTE = "remote"
 
 
 class AdapterKind(StrEnum):
-    A2A_REMOTE = "a2a_remote"
     CODEX_CLI = "codex_cli"
-    OPENCODE_CLI = "opencode_cli"
-
-
-class SupportLevel(StrEnum):
-    PRIMARY = "primary"
-    SECONDARY = "secondary"
-    EXPERIMENTAL = "experimental"
-    LEGACY = "legacy"
-    TEST_ONLY = "test_only"
-
-
-class CostTier(StrEnum):
-    LOW = "low"
-    MEDIUM = "medium"
-    HIGH = "high"
-
-
-class RiskTier(StrEnum):
-    LOW = "low"
-    MEDIUM = "medium"
-    HIGH = "high"
-
-
-class TaskCapability(StrEnum):
-    BOUNDED_CODE_WRITING = "bounded_code_writing"
-    BOUNDED_DELIBERATION = "bounded_deliberation"
-    REVIEW = "review"
-    LANE_COORDINATION = "lane_coordination"
-    PLANNING = "planning"
-    TAKEOVER = "takeover"
-    MERGE_FINAL_REVIEW = "merge_final_review"
 
 
 class PersistentCapability(StrEnum):
@@ -94,10 +56,6 @@ class ProviderProfile(BaseModel):
     env_requirement_names: tuple[str, ...] = Field(default_factory=tuple)
     supports_mcp: bool
     persistent_capability: PersistentCapability
-    support_level: SupportLevel = SupportLevel.PRIMARY
-    cost_tier: CostTier
-    risk_tier: RiskTier
-    task_capabilities: tuple[TaskCapability, ...]
 
     @field_validator("model_id")
     @classmethod
@@ -122,22 +80,6 @@ class ProviderProfile(BaseModel):
         value: tuple[str, ...],
     ) -> tuple[str, ...]:
         return _require_unique_non_empty(value, "env_requirement_names")
-
-    @field_validator("task_capabilities")
-    @classmethod
-    def _validate_task_capabilities(
-        cls,
-        value: tuple[TaskCapability, ...],
-    ) -> tuple[TaskCapability, ...]:
-        if not value:
-            raise ValueError("task_capabilities must contain at least one capability")
-        duplicates = sorted({item.value for item in value if value.count(item) > 1})
-        if duplicates:
-            raise ValueError(
-                "task_capabilities must not contain duplicates: "
-                + ", ".join(duplicates)
-            )
-        return value
 
     @property
     def ref(self) -> str:

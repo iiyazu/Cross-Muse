@@ -3,238 +3,56 @@ name: xmuse CI
 on:
   pull_request:
   push:
-    branches:
-      - main
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
   group: xmuse-ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
-  quality-gates:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v5
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v7
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.11"
-
-      - name: Install project
-        run: uv sync --frozen --all-groups
-
-      - name: Ruff
-        run: >-
-          uv run ruff check
-          src/xmuse_core/providers/models.py
-          src/xmuse_core/providers/registry.py
-          src/xmuse_core/platform/goal_copilot.py
-          src/xmuse_core/platform/provider_read_contracts.py
-          tests/xmuse/test_goal_copilot.py
-          tests/xmuse/test_provider_read_contracts_module.py
-          tests/xmuse/test_quality_gates_phase3.py
-
-      - name: Focused pytest gates
-        run: >-
-          uv run pytest -q
-          tests/xmuse/test_package_boundaries.py
-          tests/xmuse/test_split_export_contract.py::test_project_pyproject_has_no_local_memoryos_source_or_dependency
-          tests/xmuse/test_provider_models.py
-          tests/xmuse/test_provider_policy.py
-          tests/xmuse/test_provider_support_level.py
-          tests/xmuse/test_provider_read_contracts_module.py
-          tests/xmuse/test_goal_copilot.py
-          tests/xmuse/test_gate_profiles.py::test_repository_gate_profiles_config_loads
-          tests/xmuse/test_gate_profiles.py::test_repository_docs_only_gate_accepts_explicit_docs_profile
-          tests/xmuse/test_gate_profiles.py::test_xmuse_core_gate_runs_blocking_ruff_before_pytest
-          tests/xmuse/test_platform_orchestrator.py::test_run_gate_uses_plural_gate_profiles
-          tests/xmuse/test_platform_orchestrator.py::test_run_gate_rejects_underscoped_explicit_gate_profile
-          tests/xmuse/test_platform_orchestrator.py::test_get_changed_paths_includes_untracked_files
-          tests/xmuse/test_quality_gates_phase3.py
-          tests/xmuse/test_platform_runner.py::test_health_once_handles_missing_lane_projection
-          tests/xmuse/test_platform_runner.py::test_runner_wires_peer_chat_memoryos_sidecar_client
-          tests/xmuse/test_platform_runner.py::test_runner_builds_dispatch_bridge_with_peer_god_layer
-          tests/xmuse/test_platform_runner.py::test_platform_runner_supports_peer_chat_memoryos_url
-          tests/xmuse/test_full_chain_real_run.py::test_real_runtime_restart_resume_smoke_with_fake_app_server
-          tests/xmuse/test_full_chain_real_run.py::test_a2a_inbound_task_reaches_peer_chat_fake_app_server
-
-      - name: Scoped type check
-        run: >-
-          uv run mypy
-          src/xmuse_core/providers/models.py
-          src/xmuse_core/providers/registry.py
-          src/xmuse_core/platform/goal_copilot.py
-          src/xmuse_core/platform/provider_read_contracts.py
-
-  contract-smoke-gates:
+  backend:
     runs-on: ubuntu-latest
     timeout-minutes: 25
-
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v5
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v7
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
+      - run: uv sync --frozen --all-groups
+      - run: uv run ruff check .
+      - run: TMPDIR=/tmp uv run pytest -q
+      - run: uv build --wheel
 
-      - name: Install project
-        run: uv sync --frozen --all-groups
-
-      - name: Full lint gate
-        run: uv run ruff check .
-
-      - name: Scoped format gate
-        run: >-
-          uv run ruff format --check
-          src/xmuse_core/platform/production_readiness.py
-          tests/xmuse/test_contract_smoke_gates.py
-
-      - name: Mainline contract smoke tests
-        run: >-
-          uv run pytest -q
-          tests/xmuse/test_mainline_contract_docs.py
-          tests/xmuse/test_natural_groupchat_goal_docs.py
-          tests/xmuse/test_deliberation_protocol_v2.py
-          tests/xmuse/test_god_speech_act_contract.py
-          tests/xmuse/test_deliberation_engine.py
-          tests/xmuse/test_deliberation_chat_api.py
-          tests/xmuse/test_mission_blueprint_v1.py
-          tests/xmuse/test_lane_planner_v2.py
-          tests/xmuse/test_blueprint_lane_dag_service.py
-          tests/xmuse/test_feature_graph_patch_forward.py
-          tests/xmuse/test_github_ops_contract.py
-          tests/xmuse/test_memoryos_rest_integration.py
-          tests/xmuse/test_memoryos_event_writeback.py
-          tests/xmuse/test_production_hardening.py
-          tests/xmuse/test_contract_smoke_gates.py
-          tests/xmuse/test_self_iteration_runtime_closure.py
-          tests/xmuse/test_vision_runtime_evidence_closure.py
-          tests/xmuse/test_package_boundaries.py
-
-      - name: Scoped contract type check
-        run: >-
-          uv run mypy
-          src/xmuse_core/platform/production_readiness.py
-          src/xmuse_core/platform/execution/subagent_runtime.py
-          src/xmuse_core/self_iteration/runtime_closure.py
-
-  real-runtime-integration-gate:
+  frontend:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: frontend
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v5
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v7
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v6
         with:
-          python-version: "3.11"
-
-      - name: Install project
-        run: uv sync --frozen --all-groups
-
-      - name: Runtime gate lint
-        run: >-
-          uv run ruff check
-          src/xmuse_core/chat/acceptance_spine.py
-          src/xmuse_core/integrations/memoryos_lite_interop.py
-          src/xmuse_core/platform/final_action_gate.py
-          src/xmuse_core/platform/github_gate_evidence.py
-          scripts/github_server_truth_capture.py
-          tests/xmuse/test_acceptance_spine.py
-          tests/xmuse/test_github_server_gate_contract.py
-          tests/xmuse/test_github_server_truth_capture.py
-          tests/xmuse/test_memoryos_lite_interop.py
-          tests/xmuse/test_real_runtime_integration_gate.py
-
-      - name: Runtime integration focused tests
-        run: >-
-          uv run pytest -q
-          tests/xmuse/test_acceptance_spine.py
-          tests/xmuse/test_github_server_gate_contract.py
-          tests/xmuse/test_github_server_truth_capture.py
-          tests/xmuse/test_memoryos_lite_interop.py
-          tests/xmuse/test_real_runtime_integration_gate.py
-          tests/xmuse/test_package_boundaries.py
-
-      - name: Runtime gate type check
-        run: >-
-          uv run mypy
-          scripts/github_server_truth_capture.py
-          src/xmuse_core/platform/execution/github_ops.py
-          src/xmuse_core/integrations/memoryos_lite_interop.py
-
-  peer-chat-runtime-gate:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v5
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v7
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.11"
-
-      - name: Install project
-        run: uv sync --frozen --all-groups
-
-      - name: Peer chat runtime lint
-        run: >-
-          uv run ruff check
-          src/xmuse_core/chat/context_assembler.py
-          src/xmuse_core/chat/frontend_projection.py
-          src/xmuse_core/chat/groupchat_worklist.py
-          src/xmuse_core/chat/memory_sidecar.py
-          src/xmuse_core/chat/mentions.py
-          src/xmuse_core/chat/peer_scheduler.py
-          src/xmuse_core/chat/peer_service.py
-          src/xmuse_core/chat/prompt_builder.py
-          tests/xmuse/test_groupchat_worklist.py
-          tests/xmuse/test_groupchat_memory_sidecar.py
-          tests/xmuse/test_groupchat_collaboration_runtime.py
-          tests/xmuse/test_peer_chat_dashboard.py
-          tests/xmuse/test_peer_chat_api.py
-          tests/xmuse/test_peer_chat_mentions.py
-          tests/xmuse/test_peer_chat_prompt_builder.py
-          tests/xmuse/test_peer_chat_runtime_gate.py
-          tests/xmuse/test_peer_chat_scheduler.py
-          tests/xmuse/test_peer_chat_service.py
-
-      - name: Peer chat runtime focused tests
-        run: >-
-          uv run pytest -q
-          tests/xmuse/test_groupchat_worklist.py
-          tests/xmuse/test_groupchat_memory_sidecar.py
-          tests/xmuse/test_peer_chat_scheduler.py
-          tests/xmuse/test_peer_chat_service.py
-          tests/xmuse/test_peer_chat_mentions.py
-          tests/xmuse/test_peer_chat_prompt_builder.py
-          tests/xmuse/test_peer_chat_runtime_gate.py
-          tests/xmuse/test_groupchat_collaboration_runtime.py
-          tests/xmuse/test_peer_chat_dashboard.py::test_dashboard_peer_chat_ux_projection_is_frontend_read_model
-          tests/xmuse/test_peer_chat_dashboard.py::test_dashboard_peer_chat_ux_projection_404s_for_missing_conversation
-          tests/xmuse/test_peer_chat_dashboard.py::test_dashboard_peer_chat_ux_projection_does_not_mutate_authority_files
-          tests/xmuse/test_peer_chat_api.py
-          tests/xmuse/test_package_boundaries.py
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run lint
+      - run: npm run build
+        env:
+          XMUSE_OPERATOR_TOKEN: XMUSE_CI_BUILD_CANARY_MUST_NOT_LEAK
+      - name: Verify operator token is absent from build output
+        run: |
+          if grep -R -F -q "XMUSE_CI_BUILD_CANARY_MUST_NOT_LEAK" .next; then
+            echo "operator token canary leaked into the Next build"
+            exit 1
+          fi
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e

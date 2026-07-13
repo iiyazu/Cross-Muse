@@ -1,26 +1,24 @@
-"""Tests for ParticipantStore and RoleTemplateStore.
+"""Tests for durable Room participant identity storage."""
 
-Covers:
-- ParticipantStore: add / get / list_by_conversation / update_status / delete
-- RoleTemplateStore: create / get / get_by_slug / list_all / update / delete
-- Predefined-template guard: delete raises ValueError
-- Seeding idempotency
-"""
 from __future__ import annotations
 
 import sqlite3
+from hashlib import sha256
 from pathlib import Path
 
 import pytest
 
+from tests.xmuse.room_fixtures import RoomTestStore
+from xmuse_core.chat.participant_session_identity import (
+    participant_session_prompt_fingerprint,
+)
 from xmuse_core.chat.participant_store import (
-    _PREDEFINED_TEMPLATES,
     INIT_GOD_DISPLAY_NAME,
     INIT_GOD_ROLE,
     ParticipantStore,
-    RoleTemplateStore,
+    PersonaSnapshot,
+    prepare_participant,
 )
-from xmuse_core.chat.store import ChatStore
 
 # ---------------------------------------------------------------------------
 # Shared fixture
@@ -31,14 +29,14 @@ from xmuse_core.chat.store import ChatStore
 def db_path(tmp_path: Path) -> Path:
     """Fresh chat.db with all tables created and predefined templates seeded."""
     path = tmp_path / "chat.db"
-    ChatStore(path)
+    RoomTestStore(path)
     return path
 
 
 @pytest.fixture()
 def conv_id(db_path: Path) -> str:
     """A conversation id that satisfies the FK constraint on participants."""
-    return ChatStore(db_path).create_conversation("test-conv").id
+    return RoomTestStore(db_path).create_conversation("test-conv").id
 
 
 # ---------------------------------------------------------------------------
@@ -47,9 +45,56 @@ def conv_id(db_path: Path) -> str:
 
 
 class TestParticipantStore:
-    def test_add_returns_participant_with_correct_fields(
+    def test_persona_snapshot_is_bounded_persisted_and_fingerprinted(
         self, db_path: Path, conv_id: str
     ) -> None:
+        persona = PersonaSnapshot(
+            role_description="Reviews durable evidence.",
+            collaboration_focus="Find distinct proof gaps without repeating peers.",
+        )
+        stored = ParticipantStore(db_path).add(
+            conversation_id=conv_id,
+            role="review",
+            display_name="Reviewer",
+            cli_kind="codex",
+            model="gpt-5.4",
+            persona_snapshot=persona,
+        )
+
+        fetched = ParticipantStore(db_path).get(stored.participant_id)
+        assert fetched.persona_snapshot == persona
+        assert fetched.persona_snapshot_sha256 is not None
+        assert fetched.persona_snapshot_sha256.startswith("sha256:")
+        without_persona = prepare_participant(
+            conversation_id=conv_id,
+            role="review",
+            display_name="Reviewer",
+            cli_kind="codex",
+            model="gpt-5.4",
+        )
+        assert participant_session_prompt_fingerprint(
+            fetched
+        ) != participant_session_prompt_fingerprint(without_persona)
+        legacy_prompt = "\n".join(
+            [
+                "xmuse-room-session-v1",
+                "role=review",
+                "display_name=Reviewer",
+                "cli_kind=codex",
+                f"model={without_persona.model}",
+            ]
+        )
+        assert participant_session_prompt_fingerprint(without_persona) == (
+            f"sha256:{sha256(legacy_prompt.encode('utf-8')).hexdigest()}"
+        )
+
+        with pytest.raises(ValueError, match="persona_snapshot_too_large"):
+            PersonaSnapshot(
+                role_description="x" * 2048,
+                collaboration_focus="review",
+            )
+
+    def test_add_returns_participant_with_correct_fields(self, db_path: Path, conv_id: str) -> None:
         store = ParticipantStore(db_path)
         p = store.add(
             conversation_id=conv_id,
@@ -71,26 +116,60 @@ class TestParticipantStore:
         assert p.last_seen_at is None
         assert p.created_at
 
-    def test_add_accepts_a2a_remote_participant(
+    def test_add_rejects_retired_a2a_participant(
         self,
         db_path: Path,
         conv_id: str,
     ) -> None:
         store = ParticipantStore(db_path)
 
-        participant = store.add(
-            conversation_id=conv_id,
-            role="review",
-            display_name="Remote A2A Review",
-            cli_kind="a2a",
-            model="a2a-remote",
-        )
-        fetched = store.get(participant.participant_id)
+        with pytest.raises(ValueError, match="support only cli_kind 'codex'"):
+            store.add(
+                conversation_id=conv_id,
+                role="review",
+                display_name="Remote A2A Review",
+                cli_kind="a2a",  # type: ignore[arg-type]
+                model="a2a-remote",
+            )
 
-        assert fetched.provider_id == "a2a"
-        assert fetched.profile_id == "remote"
-        assert fetched.cli_kind == "a2a"
-        assert fetched.model == "a2a-remote"
+    @pytest.mark.parametrize("cli_kind", ["a2a", "opencode"])
+    def test_retired_participant_rows_are_readable_but_cannot_be_reactivated(
+        self,
+        db_path: Path,
+        conv_id: str,
+        cli_kind: str,
+    ) -> None:
+        with sqlite3.connect(db_path) as conn:
+            conn.execute(
+                """
+                insert into participants (
+                    participant_id, conversation_id, role, display_name,
+                    cli_kind, model, role_template_id, status,
+                    last_seen_at, created_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    f"part_historical_{cli_kind}",
+                    conv_id,
+                    "review",
+                    f"Historical {cli_kind}",
+                    cli_kind,
+                    "historical-model",
+                    None,
+                    "stopped",
+                    None,
+                    "2026-05-29T00:00:00Z",
+                ),
+            )
+
+        store = ParticipantStore(db_path)
+        historical = store.get(f"part_historical_{cli_kind}")
+        assert historical.cli_kind == cli_kind
+        assert historical.provider_id == cli_kind
+        assert historical in store.list_by_conversation(conv_id)
+        with pytest.raises(ValueError, match="support only cli_kind 'codex'"):
+            store.update_status(historical.participant_id, "active")
+        assert store.get(historical.participant_id).status == "stopped"
 
     def test_add_with_role_template_id(self, db_path: Path, conv_id: str) -> None:
         store = ParticipantStore(db_path)
@@ -104,9 +183,7 @@ class TestParticipantStore:
         )
         assert p.role_template_id == "tmpl_abc123"
 
-    def test_get_returns_persisted_participant(
-        self, db_path: Path, conv_id: str
-    ) -> None:
+    def test_get_returns_persisted_participant(self, db_path: Path, conv_id: str) -> None:
         store = ParticipantStore(db_path)
         added = store.add(
             conversation_id=conv_id,
@@ -125,10 +202,8 @@ class TestParticipantStore:
         with pytest.raises(KeyError, match="unknown participant"):
             store.get("part_does_not_exist")
 
-    def test_list_by_conversation_returns_only_matching(
-        self, db_path: Path
-    ) -> None:
-        chat = ChatStore(db_path)
+    def test_list_by_conversation_returns_only_matching(self, db_path: Path) -> None:
+        chat = RoomTestStore(db_path)
         conv1 = chat.create_conversation("conv-1")
         conv2 = chat.create_conversation("conv-2")
         store = ParticipantStore(db_path)
@@ -161,9 +236,7 @@ class TestParticipantStore:
         assert p2.participant_id in ids
         assert len(result) == 2
 
-    def test_list_by_conversation_empty_when_none_added(
-        self, db_path: Path, conv_id: str
-    ) -> None:
+    def test_list_by_conversation_empty_when_none_added(self, db_path: Path, conv_id: str) -> None:
         store = ParticipantStore(db_path)
         assert store.list_by_conversation(conv_id) == []
 
@@ -180,9 +253,7 @@ class TestParticipantStore:
         assert updated.status == "stopped"
         assert updated.last_seen_at is not None
 
-    def test_update_status_with_explicit_last_seen_at(
-        self, db_path: Path, conv_id: str
-    ) -> None:
+    def test_update_status_with_explicit_last_seen_at(self, db_path: Path, conv_id: str) -> None:
         store = ParticipantStore(db_path)
         p = store.add(
             conversation_id=conv_id,
@@ -238,11 +309,23 @@ class TestParticipantStore:
                 model="sonnet",
             )
 
+    def test_add_rejects_opencode_cli_kind(self, db_path: Path, conv_id: str) -> None:
+        store = ParticipantStore(db_path)
+
+        with pytest.raises(ValueError, match="support only cli_kind 'codex'"):
+            store.add(
+                conversation_id=conv_id,
+                role="review",
+                display_name="OpenCode Review",
+                cli_kind="opencode",
+                model="gpt-oss",
+            )
+
     def test_ensure_init_god_reuses_same_participant_per_conversation(
         self,
         db_path: Path,
     ) -> None:
-        chat = ChatStore(db_path)
+        chat = RoomTestStore(db_path)
         first_conv = chat.create_conversation("first")
         second_conv = chat.create_conversation("second")
         store = ParticipantStore(db_path)
@@ -281,7 +364,7 @@ class TestParticipantStore:
                 model="gpt-5.5",
             )
 
-    def test_legacy_claude_participant_reads_as_codex(
+    def test_unknown_legacy_participant_cli_kind_is_rejected(
         self, db_path: Path, conv_id: str
     ) -> None:
         with sqlite3.connect(db_path) as conn:
@@ -307,10 +390,8 @@ class TestParticipantStore:
                 ),
             )
 
-        participant = ParticipantStore(db_path).get("part_legacy")
-
-        assert participant.cli_kind == "codex"
-        assert participant.model == "gpt-5.4"
+        with pytest.raises(ValueError, match="unsupported stored xmuse chat participant"):
+            ParticipantStore(db_path).get("part_legacy")
 
     def test_legacy_codex_gpt54_participant_reads_as_gpt54(
         self, db_path: Path, conv_id: str
@@ -373,374 +454,3 @@ class TestParticipantStore:
 
         assert participant.cli_kind == "codex"
         assert participant.model == "gpt-5.4"
-
-
-# ---------------------------------------------------------------------------
-# RoleTemplateStore
-# ---------------------------------------------------------------------------
-
-
-class TestRoleTemplateStore:
-    def test_predefined_templates_seeded_by_chat_store(
-        self, db_path: Path
-    ) -> None:
-        store = RoleTemplateStore(db_path)
-        slugs = {t.slug for t in store.list_all()}
-        assert "architect" in slugs
-        assert "review" in slugs
-        assert "critic" in slugs
-        assert "execute" in slugs
-
-    def test_predefined_templates_have_predefined_flag(
-        self, db_path: Path
-    ) -> None:
-        store = RoleTemplateStore(db_path)
-        predefined_slugs = {
-            t.slug for t in store.list_all() if t.predefined
-        }
-        assert {"architect", "review", "critic", "execute"}.issubset(predefined_slugs)
-
-    def test_predefined_templates_are_codex_only(self, db_path: Path) -> None:
-        store = RoleTemplateStore(db_path)
-
-        for template in store.list_all():
-            if template.predefined:
-                expected_profile_id = {
-                    "architect": "god",
-                    "review": "review",
-                    "critic": "default",
-                    "execute": "worker",
-                }[template.slug]
-                expected_default_model = {
-                    "architect": "gpt-5.4",
-                    "review": "gpt-5.4",
-                    "critic": "gpt-5.4",
-                    "execute": "gpt-5.4-mini",
-                }[template.slug]
-                assert template.provider_id == "codex"
-                assert template.profile_id == expected_profile_id
-                assert template.cli_kind == "codex"
-                assert template.default_model == expected_default_model
-
-    def test_create_returns_non_predefined_template(
-        self, db_path: Path
-    ) -> None:
-        store = RoleTemplateStore(db_path)
-        t = store.create(
-            slug="custom-role",
-            display_name="Custom Role",
-            prompt="You are a custom agent.",
-            cli_kind="codex",
-            default_model="gpt-5.5",
-        )
-        assert t.id.startswith("tmpl_")
-        assert t.slug == "custom-role"
-        assert t.provider_id == "codex"
-        assert t.profile_id == "default"
-        assert t.default_model == "gpt-5.4"
-        assert t.predefined is False
-        assert t.created_at
-        assert t.updated_at
-
-    def test_create_rejects_claude_cli_kind(self, db_path: Path) -> None:
-        store = RoleTemplateStore(db_path)
-
-        with pytest.raises(ValueError, match="unsupported xmuse chat participant cli_kind"):
-            store.create(
-                slug="claude-role",
-                display_name="Claude Role",
-                prompt="No longer supported.",
-                cli_kind="claude",
-                default_model="sonnet",
-            )
-
-    def test_legacy_claude_template_reads_as_codex(self, db_path: Path) -> None:
-        with sqlite3.connect(db_path) as conn:
-            conn.execute(
-                """
-                insert into role_templates (
-                    id, slug, display_name, prompt, cli_kind,
-                    default_model, predefined, created_at, updated_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    "tmpl_legacy",
-                    "legacy-claude",
-                    "Legacy Claude",
-                    "No longer supported.",
-                    "claude",
-                    "sonnet",
-                    0,
-                    "2026-05-29T00:00:00Z",
-                    "2026-05-29T00:00:00Z",
-                ),
-            )
-
-        template = RoleTemplateStore(db_path).get("tmpl_legacy")
-
-        assert template.cli_kind == "codex"
-        assert template.default_model == "gpt-5.4"
-
-    def test_create_a2a_role_template_uses_remote_profile(self, db_path: Path) -> None:
-        template = RoleTemplateStore(db_path).create(
-            slug="remote-review",
-            display_name="Remote Review",
-            prompt="Review through a remote A2A agent.",
-            cli_kind="a2a",
-            default_model="a2a-remote",
-        )
-
-        assert template.provider_id == "a2a"
-        assert template.profile_id == "remote"
-        assert template.cli_kind == "a2a"
-        assert template.default_model == "a2a-remote"
-
-    def test_legacy_codex_gpt54_template_reads_as_gpt54(self, db_path: Path) -> None:
-        with sqlite3.connect(db_path) as conn:
-            conn.execute(
-                """
-                insert into role_templates (
-                    id, slug, display_name, prompt, cli_kind,
-                    default_model, predefined, created_at, updated_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    "tmpl_legacy_codex",
-                    "legacy-codex-gpt54",
-                    "Legacy Codex gpt-5.4",
-                    "Old default.",
-                    "codex",
-                    "gpt-5.4",
-                    0,
-                    "2026-05-29T00:00:00Z",
-                    "2026-05-29T00:00:00Z",
-                ),
-            )
-
-        template = RoleTemplateStore(db_path).get("tmpl_legacy_codex")
-
-        assert template.cli_kind == "codex"
-        assert template.default_model == "gpt-5.4"
-
-    def test_legacy_codex_gpt55_template_reads_as_ordinary_model(
-        self, db_path: Path
-    ) -> None:
-        with sqlite3.connect(db_path) as conn:
-            conn.execute(
-                """
-                insert into role_templates (
-                    id, slug, display_name, prompt, cli_kind,
-                    default_model, predefined, created_at, updated_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    "tmpl_legacy_codex_gpt55",
-                    "legacy-codex-gpt55",
-                    "Legacy Codex gpt-5.5",
-                    "Old default.",
-                    "codex",
-                    "gpt-5.5",
-                    0,
-                    "2026-05-29T00:00:00Z",
-                    "2026-05-29T00:00:00Z",
-                ),
-            )
-
-        template = RoleTemplateStore(db_path).get("tmpl_legacy_codex_gpt55")
-
-        assert template.cli_kind == "codex"
-        assert template.default_model == "gpt-5.4"
-
-    def test_legacy_codex_gpt54_participant_readback_preserves_mid_tier_model(
-        self, db_path: Path, conv_id: str
-    ) -> None:
-        with sqlite3.connect(db_path) as conn:
-            conn.execute(
-                """
-                insert into participants (
-                    participant_id, conversation_id, role, display_name,
-                    cli_kind, model, role_template_id, status,
-                    last_seen_at, created_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    "part_legacy_codex",
-                    conv_id,
-                    "review",
-                    "Legacy Review",
-                    "codex",
-                    "gpt-5.4",
-                    None,
-                    "active",
-                    None,
-                    "2026-05-29T00:00:00Z",
-                ),
-            )
-
-        participant = ParticipantStore(db_path).get("part_legacy_codex")
-
-        assert participant.cli_kind == "codex"
-        assert participant.model == "gpt-5.4"
-
-    def test_get_returns_template_by_id(self, db_path: Path) -> None:
-        store = RoleTemplateStore(db_path)
-        created = store.create(
-            slug="my-role",
-            display_name="My Role",
-            prompt="Do stuff.",
-            cli_kind="codex",
-            default_model="gpt-4o",
-        )
-        fetched = store.get(created.id)
-        assert fetched.id == created.id
-        assert fetched.slug == "my-role"
-
-    def test_get_raises_key_error_for_unknown(self, db_path: Path) -> None:
-        store = RoleTemplateStore(db_path)
-        with pytest.raises(KeyError, match="unknown role_template"):
-            store.get("tmpl_nonexistent")
-
-    def test_get_by_slug_returns_predefined(self, db_path: Path) -> None:
-        store = RoleTemplateStore(db_path)
-        result = store.get_by_slug("architect")
-        assert result is not None
-        assert result.slug == "architect"
-        assert result.predefined is True
-
-    def test_get_by_slug_returns_none_for_unknown(self, db_path: Path) -> None:
-        store = RoleTemplateStore(db_path)
-        assert store.get_by_slug("no-such-slug") is None
-
-    def test_list_all_includes_predefined_and_custom(
-        self, db_path: Path
-    ) -> None:
-        store = RoleTemplateStore(db_path)
-        store.create(
-            slug="extra",
-            display_name="Extra",
-            prompt="...",
-            cli_kind="codex",
-            default_model="gpt-5.5",
-        )
-        slugs = {t.slug for t in store.list_all()}
-        assert "architect" in slugs
-        assert "extra" in slugs
-
-    def test_update_changes_display_name_and_prompt(
-        self, db_path: Path
-    ) -> None:
-        store = RoleTemplateStore(db_path)
-        created = store.create(
-            slug="updatable",
-            display_name="Old Name",
-            prompt="Old prompt.",
-            cli_kind="codex",
-            default_model="gpt-5.5",
-        )
-        updated = store.update(
-            created.id, display_name="New Name", prompt="New prompt."
-        )
-        assert updated.display_name == "New Name"
-        assert updated.prompt == "New prompt."
-        assert updated.updated_at >= created.updated_at
-
-    def test_update_partial_leaves_other_fields_unchanged(
-        self, db_path: Path
-    ) -> None:
-        store = RoleTemplateStore(db_path)
-        created = store.create(
-            slug="partial",
-            display_name="Name",
-            prompt="Prompt.",
-            cli_kind="codex",
-            default_model="gpt-5.5",
-        )
-        updated = store.update(created.id, display_name="New Name")
-        assert updated.display_name == "New Name"
-        assert updated.prompt == "Prompt."
-        assert updated.cli_kind == "codex"
-        assert updated.default_model == "gpt-5.4"
-
-    def test_update_rejects_claude_cli_kind(self, db_path: Path) -> None:
-        store = RoleTemplateStore(db_path)
-        created = store.create(
-            slug="codex-only",
-            display_name="Codex Only",
-            prompt="Prompt.",
-            cli_kind="codex",
-            default_model="gpt-5.5",
-        )
-
-        with pytest.raises(ValueError, match="unsupported xmuse chat participant cli_kind"):
-            store.update(created.id, cli_kind="claude")
-
-    def test_delete_removes_custom_template(self, db_path: Path) -> None:
-        store = RoleTemplateStore(db_path)
-        created = store.create(
-            slug="deletable",
-            display_name="Deletable",
-            prompt="...",
-            cli_kind="codex",
-            default_model="gpt-5.5",
-        )
-        store.delete(created.id)
-        with pytest.raises(KeyError):
-            store.get(created.id)
-
-    def test_delete_predefined_architect_raises_value_error(
-        self, db_path: Path
-    ) -> None:
-        store = RoleTemplateStore(db_path)
-        architect = store.get_by_slug("architect")
-        assert architect is not None
-        with pytest.raises(ValueError, match="cannot delete predefined role template"):
-            store.delete(architect.id)
-
-    def test_delete_predefined_review_raises_value_error(
-        self, db_path: Path
-    ) -> None:
-        store = RoleTemplateStore(db_path)
-        review = store.get_by_slug("review")
-        assert review is not None
-        with pytest.raises(ValueError, match="cannot delete predefined role template"):
-            store.delete(review.id)
-
-    def test_delete_predefined_execute_raises_value_error(
-        self, db_path: Path
-    ) -> None:
-        store = RoleTemplateStore(db_path)
-        execute = store.get_by_slug("execute")
-        assert execute is not None
-        with pytest.raises(ValueError, match="cannot delete predefined role template"):
-            store.delete(execute.id)
-
-    def test_delete_predefined_critic_raises_value_error(
-        self, db_path: Path
-    ) -> None:
-        store = RoleTemplateStore(db_path)
-        critic = store.get_by_slug("critic")
-        assert critic is not None
-        with pytest.raises(ValueError, match="cannot delete predefined role template"):
-            store.delete(critic.id)
-
-    def test_seeding_is_idempotent_across_multiple_instances(
-        self, db_path: Path
-    ) -> None:
-        """Multiple RoleTemplateStore instances must not duplicate predefined rows."""
-        RoleTemplateStore(db_path)
-        RoleTemplateStore(db_path)
-        store = RoleTemplateStore(db_path)
-        predefined = [t for t in store.list_all() if t.predefined]
-        slugs = [t.slug for t in predefined]
-        assert slugs.count("architect") == 1
-        assert slugs.count("review") == 1
-        assert slugs.count("critic") == 1
-        assert slugs.count("execute") == 1
-
-    def test_predefined_templates_match_expected_count(
-        self, db_path: Path
-    ) -> None:
-        """All predefined templates should exist after init."""
-        store = RoleTemplateStore(db_path)
-        predefined = [t for t in store.list_all() if t.predefined]
-        assert len(predefined) == len(_PREDEFINED_TEMPLATES)

@@ -9,6 +9,7 @@ from xmuse_core.agents.protocol import StdoutMessage, format_stdin_message, pars
 
 class AgentSession(Protocol):
     async def send(self, message: str) -> None: ...
+    async def send_typed(self, msg_type: str, **kwargs: object) -> None: ...
     async def receive(self) -> StdoutMessage | None: ...
     async def abort(self) -> None: ...
     def is_alive(self) -> bool: ...
@@ -41,7 +42,7 @@ class LocalSession:
         self._process.stdin.write(data)
         await self._process.stdin.drain()
 
-    async def send_typed(self, msg_type: str, **kwargs) -> None:
+    async def send_typed(self, msg_type: str, **kwargs: object) -> None:
         await self.send(format_stdin_message(msg_type, **kwargs))
 
     async def receive(self) -> StdoutMessage | None:
