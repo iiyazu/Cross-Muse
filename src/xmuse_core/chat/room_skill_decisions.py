@@ -98,6 +98,7 @@ def _authority(conn: sqlite3.Connection, attempt_id: str) -> sqlite3.Row:
         """select t.*, o.status observation_status, o.control_state,
                   o.current_attempt_id, o.lease_token, o.expires_at observation_expires_at,
                   p.role participant_role, p.cli_kind participant_cli_kind,
+                  a.actor_kind activity_actor_kind, a.activity_type,
                   a.payload_json activity_payload_json
            from room_observation_attempts t
            join room_observations o on o.observation_id = t.observation_id
@@ -132,7 +133,16 @@ def _source_text(row: sqlite3.Row) -> str:
         payload = json.loads(row["activity_payload_json"])
     except (TypeError, ValueError) as exc:
         raise RoomSkillDecisionError("room_skill_binding_lost") from exc
-    content = payload.get("content") if isinstance(payload, dict) else None
+    if not isinstance(payload, dict):
+        raise RoomSkillDecisionError("room_skill_binding_lost")
+    actor_kind = row["activity_actor_kind"]
+    activity_type = row["activity_type"]
+    if actor_kind == "infrastructure" and isinstance(activity_type, str):
+        if activity_type.startswith("execution."):
+            return ""
+    if actor_kind == "human" and activity_type != "message.posted":
+        raise RoomSkillDecisionError("room_skill_binding_lost")
+    content = payload.get("content")
     if not isinstance(content, str):
         raise RoomSkillDecisionError("room_skill_binding_lost")
     return content

@@ -125,6 +125,81 @@ def test_peer_batch_waits_for_root_barrier_and_completes_once_with_reply(tmp_pat
     assert completed["cursor"]["last_acknowledged_seq"] == peer["batch"]["cutoff_seq"]
 
 
+def test_peer_reply_validation_can_be_corrected_with_same_request_id(tmp_path):
+    path, conversation_id, members = _room(tmp_path)
+    kernel = RoomKernelStore(path)
+    claims = _root_claims(kernel, conversation_id, members)
+    human_root_id = claims[0]["activity"]["activity_id"]
+    for index, (participant, claim) in enumerate(zip(members, claims, strict=True)):
+        _complete(
+            kernel,
+            conversation_id,
+            participant,
+            claim,
+            f"root-correctable-{index}",
+            "respond",
+            {"content": str(index)},
+        )
+    peer = kernel.claim_next_observation_batch(
+        conversation_id=conversation_id,
+        participant_id=members[0].participant_id,
+        lease_owner="peer-correctable",
+    )
+    assert peer is not None
+    valid_target = peer["batch"]["members"][0]["activity"]["activity_id"]
+    before = {}
+    with sqlite3.connect(path) as conn:
+        for table in ("chat_request_log", "messages", "room_activities"):
+            before[table] = conn.execute(f"select count(*) from {table}").fetchone()[0]
+
+    with pytest.raises(ValueError, match="room_reply_to_activity_not_in_batch"):
+        _complete(
+            kernel,
+            conversation_id,
+            members[0],
+            peer,
+            "correctable-request",
+            "respond",
+            {"content": "one durable follow-up"},
+            reply_to_activity_id=human_root_id,
+        )
+    with sqlite3.connect(path) as conn:
+        for table, count in before.items():
+            assert conn.execute(f"select count(*) from {table}").fetchone()[0] == count
+
+    corrected = _complete(
+        kernel,
+        conversation_id,
+        members[0],
+        peer,
+        "correctable-request",
+        "respond",
+        {"content": "one durable follow-up"},
+        reply_to_activity_id=valid_target,
+    )
+    replay = _complete(
+        kernel,
+        conversation_id,
+        members[0],
+        peer,
+        "correctable-request",
+        "respond",
+        {"content": "one durable follow-up"},
+        reply_to_activity_id=valid_target,
+    )
+    assert replay == corrected
+    with sqlite3.connect(path) as conn:
+        assert conn.execute("select count(*) from chat_request_log").fetchone()[0] == (
+            before["chat_request_log"] + 1
+        )
+        assert conn.execute("select count(*) from messages").fetchone()[0] == (
+            before["messages"] + 1
+        )
+        assert conn.execute("select count(*) from room_activities").fetchone()[0] == (
+            before["room_activities"] + 1
+        )
+
+
 def test_batch_cancel_retry_canonicalizes_member_and_reuses_immutable_membership(tmp_path):
     path, conversation_id, members = _room(tmp_path)
     kernel = RoomKernelStore(path)

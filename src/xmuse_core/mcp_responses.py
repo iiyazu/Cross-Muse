@@ -6,7 +6,7 @@ import json
 from typing import Any
 
 
-def content_json(payload: Any) -> dict[str, Any]:
+def content_json(payload: Any, *, is_error: bool = False) -> dict[str, Any]:
     return {
         "content": [
             {
@@ -15,8 +15,15 @@ def content_json(payload: Any) -> dict[str, Any]:
             }
         ],
         "structuredContent": payload,
-        "isError": False,
+        "isError": is_error,
     }
+
+
+def structured_error(code: str, message: str) -> dict[str, Any]:
+    return content_json(
+        {"error": {"code": code, "message": message}},
+        is_error=True,
+    )
 
 
 def error_content(message: str) -> dict[str, Any]:
@@ -35,4 +42,10 @@ def json_rpc_error(request_id: Any, code: int, message: str) -> dict[str, Any]:
     }
 
 
-__all__ = ["content_json", "error_content", "json_rpc_error", "json_rpc_response"]
+__all__ = [
+    "content_json",
+    "error_content",
+    "json_rpc_error",
+    "json_rpc_response",
+    "structured_error",
+]

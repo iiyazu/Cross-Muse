@@ -270,14 +270,20 @@ def test_http_respond_and_invalid_authority_arguments(tmp_path: Path):
     )
     missing = _arguments(conversation_id, participant, session, claim)
     missing.pop("observation_id")
-    assert _chat_call(client, missing)["isError"] is True
+    missing_result = _chat_call(client, missing)
+    assert missing_result["isError"] is True
+    assert missing_result["structuredContent"]["error"]["code"] == "invalid_arguments"
     extra = _arguments(conversation_id, participant, session, claim, author="caller")
-    error = _chat_call(client, extra)["structuredContent"]["error"]
+    extra_result = _chat_call(client, extra)
+    assert extra_result["isError"] is True
+    error = extra_result["structuredContent"]["error"]
     assert error["code"] == "invalid_arguments"
     assert _counts(db)["messages"] == 2
     extra["author"] = None
     extra["max_causal_depth"] = 1
-    error = _chat_call(client, extra)["structuredContent"]["error"]
+    extra_result = _chat_call(client, extra)
+    assert extra_result["isError"] is True
+    error = extra_result["structuredContent"]["error"]
     assert error["code"] == "invalid_arguments"
     assert _counts(db)["messages"] == 2
 
@@ -304,11 +310,53 @@ def test_http_unknown_nested_outcome_authority_fields_reject_without_writes(tmp_
             },
         ),
     )
+    assert result["isError"] is True
     assert result["structuredContent"]["error"]["code"] == "room_observation_payload_invalid"
     assert _counts(db) == before
     observation = RoomKernelStore(db).get_observation(claim["observation"]["observation_id"])
     assert observation["status"] == "claimed"
     assert observation["lease_token"] == claim["observation"]["lease_token"]
+
+
+def test_http_execution_patch_contract_error_is_a_failed_tool_result(tmp_path: Path):
+    db, _, conversation_id, participant, session, claim = _room(tmp_path)
+    from xmuse.room_mcp_server import create_app
+
+    path = "src/xmuse_core/example.py"
+    before = _counts(db)
+    result = _chat_call(
+        TestClient(create_app(tmp_path)),
+        _arguments(
+            conversation_id,
+            participant,
+            session,
+            claim,
+            outcome_type="propose",
+            outcome_payload={
+                "proposal_type": "execution_patch",
+                "content": "invalid exact patch",
+                "references": [],
+                "execution_patch": {
+                    "schema_version": "room_execution_patch/v1",
+                    "base_head": "a" * 40,
+                    "summary": "Change the example",
+                    "unified_diff": (
+                        f"diff --git a/{path} b/{path}\n"
+                        "index 1111111..2222222 100644\n"
+                        f"--- a/{path}\n+++ b/{path}\n"
+                        "@@ -1 +1 @@\n-old\n+new\n"
+                    ),
+                    "allowed_files": [path, "extra.py"],
+                },
+            },
+        ),
+    )
+
+    assert result["isError"] is True
+    assert result["structuredContent"]["error"]["code"] == (
+        "room_execution_patch_allowed_files_mismatch"
+    )
+    assert _counts(db) == before
 
 
 def test_http_noop_returns_null_materializations(tmp_path: Path):

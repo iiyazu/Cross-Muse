@@ -705,7 +705,10 @@ class RoomParticipantHost:
                 if o["participant_id"] == participant.participant_id
                 and o["delivery_mode"] == "active"
                 and o["status"] != "completed"
-                and o.get("control_state", "active") in {"active", "exhausted"}
+                # Keep the local frontier identical to the Kernel claimable
+                # predicate. Exhaustion is durable terminal infrastructure
+                # state; an operator retry reopens it by restoring ``active``.
+                and o.get("control_state", "active") == "active"
                 and (
                     activities[o["activity_id"]]["actor_kind"] == "human"
                     or str(activities[o["activity_id"]]["correlation_id"])

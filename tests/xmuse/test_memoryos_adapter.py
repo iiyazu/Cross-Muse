@@ -21,6 +21,16 @@ def _sha(value: str) -> str:
     return f"sha256:{hashlib.sha256(value.encode('utf-8')).hexdigest()}"
 
 
+def _canonical_digest(value: Mapping[str, Any]) -> str:
+    encoded = json.dumps(
+        dict(value),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
+
+
 def _v3_item(
     *,
     text: str = "prior durable fact",
@@ -28,30 +38,53 @@ def _v3_item(
 ) -> dict[str, Any]:
     del correlation_id
     return {
-        "layer": "archival",
         "item_id": "memory-item-1",
-        "text": text,
-        "estimated_tokens": 4,
+        "archive_id": "archive-room-1",
+        "document_id": "xmuse-room-activity-activity-prior",
         "source_refs": [
             {
                 "source_type": "document",
                 "source_id": "activity-prior",
-                "metadata": {"conversation_id": "untrusted-value"},
             }
         ],
-        "metadata": {"document_id": "xmuse-room-activity-activity-prior"},
+        "text": text,
+        "estimated_tokens": 4,
+        "content_sha256": _sha(text),
+        "score": 0.75,
+        "rank": 1,
+        "truncated": False,
     }
+
+
+def _compact_payload(*items: Mapping[str, Any], omitted_count: int = 0) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "schema": "memoryos_source_evidence/v1",
+        "items": [dict(item) for item in items],
+        "omitted_count": omitted_count,
+        "estimated_tokens": sum(int(item["estimated_tokens"]) for item in items),
+        "truncated": omitted_count > 0,
+    }
+    payload["diagnostics_digest"] = _canonical_digest(payload)
+    return payload
 
 
 def _v3_payload(item: Mapping[str, Any]) -> dict[str, Any]:
-    return {
-        "metadata": {
-            "v3_context": {
-                "metadata": {"memory_arch": "v3"},
-                "items": [dict(item)],
-            }
+    return _compact_payload(item)
+
+
+def _resign(payload: dict[str, Any]) -> dict[str, Any]:
+    signed = {
+        key: payload[key]
+        for key in {
+            "schema",
+            "items",
+            "omitted_count",
+            "estimated_tokens",
+            "truncated",
         }
     }
+    payload["diagnostics_digest"] = _canonical_digest(signed)
+    return payload
 
 
 class _StoreError(RuntimeError):
@@ -77,6 +110,7 @@ class FakeStore:
     def build_recall_request(self, **_kwargs: Any) -> dict[str, Any]:
         return {
             "session_id": "memory-session-1",
+            "archive_ids": ["archive-room-1"],
             "task": "recall prior evidence",
             "retrieval_query": "current task",
             "excluded_activity_ids": [],
@@ -228,11 +262,8 @@ def test_v3_archival_recall_is_source_resolved_and_receipt_is_two_stage() -> Non
 @pytest.mark.parametrize(
     ("payload", "expected"),
     [
-        ({"text": "top-level fake"}, "schema_rejected"),
-        (
-            {"metadata": {"v3_context": {"metadata": {}, "items": []}}},
-            "schema_rejected",
-        ),
+        ({"text": "top-level fake"}, "unavailable"),
+        ({"metadata": {"v3_context": {"metadata": {}, "items": []}}}, "unavailable"),
     ],
 )
 def test_recall_rejects_non_v3_or_top_level_simplified_text(
@@ -240,6 +271,7 @@ def test_recall_rejects_non_v3_or_top_level_simplified_text(
 ) -> None:
     evidence = asyncio.run(_runtime(FakeStore(), FakeAdapter(payload)).recall(_request()))
     assert evidence.status == expected
+    assert evidence.reason_code == "memoryos_source_evidence_capability_drift"
     assert evidence.items == ()
 
 
@@ -257,6 +289,140 @@ def test_recall_rejects_forged_text_and_filters_current_correlation() -> None:
     filtered = asyncio.run(_runtime(store, FakeAdapter(_v3_payload(_v3_item()))).recall(_request()))
     assert filtered.status == "empty"
     assert filtered.items == ()
+
+
+def test_compact_wire_accepts_extensions_and_full_eight_item_budget() -> None:
+    items = []
+    for rank in range(1, 9):
+        item = _v3_item()
+        item.update(
+            {
+                "item_id": f"memory-item-{rank}",
+                "estimated_tokens": 100,
+                "rank": rank,
+                "future_item_field": {"ignored": True},
+            }
+        )
+        if rank == 1:
+            item["item_id"] = "é" * 256
+            item["source_refs"][0]["future_source_field"] = "ignored"
+        items.append(item)
+    payload = _compact_payload(*items)
+    payload["future_top_level_field"] = "ignored"
+
+    evidence = asyncio.run(_runtime(FakeStore(), FakeAdapter(payload)).recall(_request()))
+
+    assert evidence.status == "ok"
+    assert len(evidence.items) == 8
+    assert sum(item.estimated_tokens for item in evidence.items) == 800
+
+
+def test_compact_rank_and_truncation_are_not_positional_or_derived() -> None:
+    first = _v3_item()
+    first.update({"rank": 8, "truncated": True})
+    second = _v3_item()
+    second.update({"item_id": "memory-item-2", "rank": 3})
+    payload = _compact_payload(first, second)
+    payload.update({"truncated": True, "omitted_count": 0})
+    _resign(payload)
+
+    evidence = asyncio.run(_runtime(FakeStore(), FakeAdapter(payload)).recall(_request()))
+
+    assert evidence.status == "ok"
+    assert len(evidence.items) == 2
+
+
+def test_compact_wire_drift_fails_closed_before_source_reproof() -> None:
+    mutations: list[dict[str, Any]] = []
+
+    wrong_rank = _v3_payload(_v3_item())
+    wrong_rank["items"][0]["rank"] = True
+    mutations.append(_resign(wrong_rank))
+
+    bad_hash = _v3_payload(_v3_item())
+    bad_hash["items"][0]["content_sha256"] = "sha256:" + "0" * 64
+    mutations.append(_resign(bad_hash))
+
+    missing_score = _v3_payload(_v3_item())
+    missing_score["items"][0]["score"] = None
+    mutations.append(_resign(missing_score))
+
+    oversized_text = _v3_payload(_v3_item())
+    oversized_text["items"][0]["text"] = "界" * 2_731
+    oversized_text["items"][0]["content_sha256"] = _sha("界" * 2_731)
+    mutations.append(_resign(oversized_text))
+
+    oversized_utf8_id = _v3_payload(_v3_item())
+    oversized_utf8_id["items"][0]["item_id"] = "界" * 171
+    mutations.append(_resign(oversized_utf8_id))
+
+    duplicate_refs = _v3_payload(_v3_item())
+    duplicate_refs["items"][0]["source_refs"] *= 2
+    mutations.append(_resign(duplicate_refs))
+
+    cross_archive = _v3_payload(_v3_item())
+    cross_archive["items"][0]["archive_id"] = "archive-other-room"
+    mutations.append(_resign(cross_archive))
+
+    duplicate_rank = _compact_payload(_v3_item(), {**_v3_item(), "item_id": "item-2"})
+    mutations.append(duplicate_rank)
+
+    out_of_range_rank = _v3_payload(_v3_item())
+    out_of_range_rank["items"][0]["rank"] = 9
+    mutations.append(_resign(out_of_range_rank))
+
+    wrong_sum = _v3_payload(_v3_item())
+    wrong_sum["estimated_tokens"] = 5
+    mutations.append(_resign(wrong_sum))
+
+    too_many = []
+    for rank in range(1, 10):
+        item = _v3_item()
+        item.update({"item_id": f"item-{rank}", "rank": rank})
+        too_many.append(item)
+    mutations.append(_compact_payload(*too_many))
+
+    too_much_text = []
+    for rank in range(1, 6):
+        text = str(rank) * 7_000
+        item = _v3_item(text=text)
+        item.update(
+            {
+                "item_id": f"large-item-{rank}",
+                "estimated_tokens": 1,
+                "rank": rank,
+            }
+        )
+        too_much_text.append(item)
+    mutations.append(_compact_payload(*too_much_text))
+
+    bad_digest = _v3_payload(_v3_item())
+    bad_digest["diagnostics_digest"] = "sha256:" + "0" * 64
+    mutations.append(bad_digest)
+
+    semantic_oversize = _v3_payload(_v3_item())
+    semantic_oversize["future_top_level_field"] = "x" * (64 * 1024)
+    mutations.append(semantic_oversize)
+
+    for payload in mutations:
+        evidence = asyncio.run(_runtime(FakeStore(), FakeAdapter(payload)).recall(_request()))
+        assert evidence.status == "unavailable"
+        assert evidence.reason_code == "memoryos_source_evidence_capability_drift"
+        assert evidence.items == ()
+
+
+def test_missing_compact_capability_is_stable_attention_not_room_failure() -> None:
+    class _UnsupportedAdapter(FakeAdapter):
+        def build_context(self, **_kwargs: Any) -> Mapping[str, Any]:
+            raise MemoryOSAdapterError("memoryos_source_evidence_unsupported")
+
+    evidence = asyncio.run(
+        _runtime(FakeStore(), _UnsupportedAdapter(_compact_payload())).recall(_request())
+    )
+
+    assert evidence.status == "unavailable"
+    assert evidence.reason_code == "memoryos_source_evidence_unsupported"
+    assert evidence.items == ()
 
 
 def test_attachment_uses_real_document_source_ref_contract() -> None:
@@ -352,40 +518,38 @@ def test_http_adapter_bounds_json_disables_redirects_and_keeps_key_out_of_url(
 ) -> None:
     from xmuse.memoryos_adapter import MemoryOSArchiveAdapter
 
-    bad_json = _HttpOpener([_HttpResponse(b"not-json")])
+    health = json.dumps(
+        {
+            "status": "ok",
+            "capabilities": {
+                "build_context_profiles": ["full", "source_evidence/v1"],
+            },
+        }
+    ).encode("utf-8")
+    bad_json = _HttpOpener([_HttpResponse(health), _HttpResponse(b"not-json")])
     monkeypatch.setattr(urllib.request, "build_opener", lambda *_args: bad_json)
     adapter = MemoryOSArchiveAdapter("http://127.0.0.1:8301", "server-key")
     with pytest.raises(MemoryOSAdapterError) as exc_info:
         adapter.build_context(session_id="session-1", task="task", retrieval_query="query")
-    assert exc_info.value.code == "memoryos_response_invalid"
-    request = bad_json.requests[0]
+    assert exc_info.value.code == "memoryos_source_evidence_capability_drift"
+    request = bad_json.requests[1]
     assert "server-key" not in request.full_url
     assert request.get_header("X-api-key") == "server-key"
+    assert json.loads(request.data or b"{}")["response_profile"] == "source_evidence/v1"
 
-    real_shape = {
-        "metadata": {
-            "v3_context": {
-                # MemoryOS v3 can emit diagnostics larger than the final context;
-                # xmuse still admits only the bounded items below.
-                "metadata": {"memory_arch": "v3", "diagnostics": "x" * 600_000},
-                "items": [],
-            }
-        }
-    }
+    real_shape = _compact_payload()
     real_shape_opener = _HttpOpener([_HttpResponse(json.dumps(real_shape).encode("utf-8"))])
     monkeypatch.setattr(urllib.request, "build_opener", lambda *_args: real_shape_opener)
     assert (
-        adapter.build_context(session_id="session-1", task="task", retrieval_query="query")[
-            "metadata"
-        ]["v3_context"]["items"]
+        adapter.build_context(session_id="session-1", task="task", retrieval_query="query")["items"]
         == []
     )
 
-    oversized = _HttpOpener([_HttpResponse(b"{" + b"x" * (1024 * 1024) + b"}")])
+    oversized = _HttpOpener([_HttpResponse(b"{" + b"x" * (128 * 1024) + b"}")])
     monkeypatch.setattr(urllib.request, "build_opener", lambda *_args: oversized)
     with pytest.raises(MemoryOSAdapterError) as exc_info:
         adapter.build_context(session_id="session-1", task="task", retrieval_query="query")
-    assert exc_info.value.code == "memoryos_response_too_large"
+    assert exc_info.value.code == "memoryos_source_evidence_capability_drift"
 
     redirect = urllib.error.HTTPError(
         "http://127.0.0.1:8301/sessions",
@@ -405,6 +569,61 @@ def test_http_adapter_bounds_json_disables_redirects_and_keeps_key_out_of_url(
     with pytest.raises(MemoryOSAdapterError) as exc_info:
         adapter.health()
     assert exc_info.value.code == "memoryos_unavailable"
+
+
+def test_http_adapter_requires_advertised_compact_profile_without_full_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from xmuse.memoryos_adapter import MemoryOSArchiveAdapter
+
+    health_without_profile = json.dumps(
+        {
+            "status": "ok",
+            "capabilities": {"build_context_profiles": ["full"]},
+        }
+    ).encode("utf-8")
+    unsupported = _HttpOpener([_HttpResponse(health_without_profile)])
+    monkeypatch.setattr(urllib.request, "build_opener", lambda *_args: unsupported)
+    adapter = MemoryOSArchiveAdapter("http://127.0.0.1:8301", "server-key")
+
+    with pytest.raises(MemoryOSAdapterError) as exc_info:
+        adapter.build_context(session_id="session-1", task="task", retrieval_query=None)
+
+    assert exc_info.value.code == "memoryos_source_evidence_unsupported"
+    assert len(unsupported.requests) == 1
+    assert unsupported.requests[0].full_url.endswith("/health")
+
+    health_with_profile = json.dumps(
+        {
+            "status": "ok",
+            "capabilities": {
+                "build_context_profiles": ["full", "source_evidence/v1"],
+            },
+        }
+    ).encode("utf-8")
+    for status_code in (413, 422):
+        validation_error = urllib.error.HTTPError(
+            "http://127.0.0.1:8301/sessions/session-1/build-context",
+            status_code,
+            "compact contract rejected",
+            hdrs=None,
+            fp=None,
+        )
+        drifted = _HttpOpener([_HttpResponse(health_with_profile), validation_error])
+        monkeypatch.setattr(
+            urllib.request,
+            "build_opener",
+            lambda *_args, _drifted=drifted: _drifted,
+        )
+        adapter = MemoryOSArchiveAdapter("http://127.0.0.1:8301", "server-key")
+
+        with pytest.raises(MemoryOSAdapterError) as exc_info:
+            adapter.build_context(session_id="session-1", task="task", retrieval_query=None)
+
+        assert exc_info.value.code == "memoryos_source_evidence_capability_drift"
+        assert len(drifted.requests) == 2
+        body = json.loads(drifted.requests[1].data or b"{}")
+        assert body["response_profile"] == "source_evidence/v1"
 
 
 def test_archive_ingest_accepts_replay_and_reports_content_conflict(
@@ -454,14 +673,8 @@ def test_final_memory_evidence_stays_within_eight_kib_and_oversize_fails_closed(
     item_one = _v3_item(text=first)
     item_one["estimated_tokens"] = 200
     item_two = {**item_one, "item_id": "memory-item-2"}
-    payload = {
-        "metadata": {
-            "v3_context": {
-                "metadata": {"memory_arch": "v3"},
-                "items": [item_one, item_two],
-            }
-        }
-    }
+    item_two["rank"] = 2
+    payload = _compact_payload(item_one, item_two)
     bounded = asyncio.run(_runtime(store, FakeAdapter(payload)).recall(_request()))
     assert bounded.status == "ok"
     assert len(bounded.items) == 1
