@@ -10,6 +10,7 @@ import pytest
 
 from tests.xmuse.room_fixtures import RoomTestStore
 from xmuse_core.chat.participant_session_identity import (
+    legacy_participant_session_prompt_fingerprint,
     participant_session_prompt_fingerprint,
 )
 from xmuse_core.chat.participant_store import (
@@ -75,17 +76,19 @@ class TestParticipantStore:
         assert participant_session_prompt_fingerprint(
             fetched
         ) != participant_session_prompt_fingerprint(without_persona)
-        legacy_prompt = "\n".join(
+        v2_prompt = "\n".join(
             [
-                "xmuse-room-session-v1",
+                "xmuse-room-session-v2",
                 "role=review",
                 "display_name=Reviewer",
                 "cli_kind=codex",
-                f"model={without_persona.model}",
             ]
         )
         assert participant_session_prompt_fingerprint(without_persona) == (
-            f"sha256:{sha256(legacy_prompt.encode('utf-8')).hexdigest()}"
+            f"sha256:{sha256(v2_prompt.encode('utf-8')).hexdigest()}"
+        )
+        assert legacy_participant_session_prompt_fingerprint(without_persona) != (
+            participant_session_prompt_fingerprint(without_persona)
         )
 
         with pytest.raises(ValueError, match="persona_snapshot_too_large"):

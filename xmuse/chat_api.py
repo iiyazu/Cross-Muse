@@ -11,6 +11,7 @@ from typing import Any
 import uvicorn
 from fastapi import FastAPI
 
+from xmuse.chat_api_codex import register_room_codex_routes
 from xmuse.chat_api_execution_runtime import RoomExecutionRuntime
 from xmuse.chat_api_executions import register_room_execution_routes
 from xmuse.chat_api_foundation import (
@@ -84,6 +85,11 @@ def create_app(
     register_room_setup_routes(app, root=context.root)
     register_room_projection_routes(app, root=context.root)
     register_room_control_routes(
+        app,
+        root=context.root,
+        operator_token=operator_token,
+    )
+    register_room_codex_routes(
         app,
         root=context.root,
         operator_token=operator_token,

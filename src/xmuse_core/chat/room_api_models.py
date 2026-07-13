@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -178,3 +178,41 @@ class RoomMemoryCandidateResolveRequest(BaseModel):
     @classmethod
     def _strip_memory_resolve_text(cls, value: object) -> object:
         return strip_required_string(value)
+
+
+class RoomCodexActionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    client_action_id: str = Field(min_length=1, max_length=128)
+    capability_id: Literal[
+        "goal_set",
+        "goal_pause",
+        "goal_resume",
+        "goal_get",
+        "goal_clear",
+        "settings_update",
+        "models_list",
+        "console_turn_start",
+        "turn_steer",
+        "turn_interrupt",
+        "compact_start",
+        "review_start",
+    ]
+    request: dict[str, Any]
+    expected_session_guard: str = Field(min_length=1, max_length=128)
+    expected_goal_guard: str | None = Field(max_length=128)
+    expected_settings_guard: str | None = Field(max_length=128)
+    expected_turn_guard: str | None = Field(max_length=128)
+    confirmed_pending_observations: bool = False
+
+    @field_validator(
+        "client_action_id",
+        "expected_session_guard",
+        "expected_goal_guard",
+        "expected_settings_guard",
+        "expected_turn_guard",
+        mode="before",
+    )
+    @classmethod
+    def _strip_codex_action_text(cls, value: object) -> object:
+        return strip_optional_string(value)

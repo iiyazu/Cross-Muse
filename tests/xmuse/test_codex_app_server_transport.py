@@ -90,8 +90,6 @@ def test_app_server_room_mcp_command_uses_only_room_capability(
         "--disable",
         "multi_agent",
         "--disable",
-        "goals",
-        "--disable",
         "code_mode_host",
         "--disable",
         "hooks",
@@ -107,6 +105,9 @@ def test_app_server_room_mcp_command_uses_only_room_capability(
     assert not any("default_tools_approval_mode" in item for item in command)
     assert "tool_search" not in command
     assert "tool_suggest" not in command
+    assert not any(
+        command[index : index + 2] == ["--disable", "goals"] for index in range(len(command) - 1)
+    )
     process_environment = transport._process_environment()
     assert process_environment is not None
     assert process_environment["CODEX_HOME"] == str(isolated_home.resolve())
@@ -313,6 +314,118 @@ def test_app_server_rejects_non_capability_mcp_paths(
         )
 
 
+def test_resume_does_not_override_native_model_or_effort(tmp_path: Path) -> None:
+    transport = CodexAppServerTransport(
+        god_id="god",
+        role="review",
+        display_name="Reviewer",
+        model="bootstrap-only",
+        worktree=tmp_path,
+        resume_thread_id="thread-existing",
+        reasoning_effort="max",
+    )
+
+    params = transport._thread_resume_params("thread-existing")
+    assert "model" not in params and "effort" not in params
+
+
+@pytest.mark.asyncio
+async def test_same_thread_rebind_changes_opaque_session_guard(tmp_path: Path, monkeypatch) -> None:
+    class Connection:
+        generation = 1
+
+        async def request(self, method: str, _params: dict[str, object]) -> object:
+            if method == "thread/read":
+                return {"thread": {"status": {"type": "idle"}}}
+            assert method == "thread/goal/get"
+            return {"goal": None}
+
+    async def no_start() -> None: ...
+
+    guards: list[str] = []
+    for _ in range(2):
+        transport = CodexAppServerTransport(
+            god_id="god",
+            role="review",
+            display_name="Reviewer",
+            model="gpt-5.4",
+            worktree=tmp_path,
+            resume_thread_id="thread-existing",
+        )
+        transport._thread_id = "thread-existing"
+        transport._connection = Connection()  # type: ignore[assignment]
+        monkeypatch.setattr(transport, "start", no_start)
+        snapshot = await transport.native_snapshot()
+        raw_guards = snapshot["guards"]
+        assert isinstance(raw_guards, dict)
+        session_guard = raw_guards["session"]
+        assert isinstance(session_guard, str)
+        guards.append(session_guard)
+
+    assert guards[0] != guards[1]
+
+
+@pytest.mark.asyncio
+async def test_native_snapshot_reproves_active_turn_and_clears_stale_event_state(
+    tmp_path: Path, monkeypatch
+) -> None:
+    class Connection:
+        generation = 1
+        active = True
+
+        async def request(self, method: str, _params: dict[str, object]) -> object:
+            if method == "thread/read":
+                return {"thread": {"status": {"type": "active" if self.active else "idle"}}}
+            if method == "thread/turns/list":
+                return {
+                    "data": [
+                        {
+                            "id": "native-review-turn",
+                            "status": "inProgress",
+                            "items": [],
+                        }
+                    ]
+                }
+            assert method == "thread/goal/get"
+            return {"goal": None}
+
+    async def no_start() -> None: ...
+
+    connection = Connection()
+    transport = CodexAppServerTransport(
+        god_id="god",
+        role="review",
+        display_name="Reviewer",
+        model="gpt-5.4",
+        worktree=tmp_path,
+        resume_thread_id="thread-existing",
+    )
+    transport._thread_id = "thread-existing"
+    transport._connection = connection  # type: ignore[assignment]
+    transport._native_active_turn_id = "stale-nested-turn"
+    monkeypatch.setattr(transport, "start", no_start)
+
+    active = await transport.native_snapshot()
+    assert active["active_turn"] is True
+    connection.active = False
+    idle = await transport.native_snapshot()
+    assert idle["active_turn"] is False
+    assert transport._native_active_turn_id is None
+
+
+@pytest.mark.parametrize("effort", ["unknown", "ultra", "", None])
+def test_app_server_rejects_unknown_or_delegating_effort(tmp_path: Path, effort: object) -> None:
+    with pytest.raises(ValueError, match="effort"):
+        CodexAppServerTransport(
+            god_id="god",
+            role="review",
+            display_name="Reviewer",
+            model="gpt-5.4",
+            worktree=tmp_path,
+            reasoning_effort=effort,  # type: ignore[arg-type]
+        )
+
+
 def test_app_server_accumulator_records_summary_and_plan_latency_stages() -> None:
     now = 10.0
 
@@ -440,7 +553,7 @@ def test_app_server_turn_start_requests_concise_reasoning_summary(tmp_path: Path
 
     assert params["threadId"] == "thread-1"
     assert params["summary"] == "concise"
-    assert params["effort"] == "low"
+    assert "model" not in params and "effort" not in params
     assert params["input"] == [{"type": "text", "text": "hello"}]
     assert params["approvalPolicy"] == "never"
     assert params["sandboxPolicy"] == {"type": "readOnly", "networkAccess": False}

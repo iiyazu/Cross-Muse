@@ -599,6 +599,20 @@ class RoomKernelStore:
         eligible again.
         """
 
+        frontiers = self.list_claimable_room_participants(
+            max_attempts_per_observation=max_attempts_per_observation,
+            now=now,
+        )
+        return list(dict.fromkeys(conversation_id for conversation_id, _ in frontiers))
+
+    def list_claimable_room_participants(
+        self,
+        *,
+        max_attempts_per_observation: int,
+        now: datetime | None = None,
+    ) -> list[tuple[str, str]]:
+        """Return each Room frontier together with the participant that owns it."""
+
         if (
             isinstance(max_attempts_per_observation, bool)
             or not isinstance(max_attempts_per_observation, int)
@@ -647,7 +661,7 @@ class RoomKernelStore:
                           or o.manual_retry_budget > 0
                       )
                 )
-                select conversation_id, min(seq) as frontier_seq
+                select conversation_id, participant_id, seq as frontier_seq
                 from unresolved
                 where frontier_rank = 1
                   and attempt_count < (? + manual_retry_budget)
@@ -674,12 +688,11 @@ class RoomKernelStore:
                             and root_o.control_state not in ('cancelled','exhausted')
                       )
                   )
-                group by conversation_id
-                order by frontier_seq, conversation_id
+                order by frontier_seq, conversation_id, participant_id
                 """,
                 (INIT_GOD_ROLE, max_attempts_per_observation, stamp),
             ).fetchall()
-        return [str(row["conversation_id"]) for row in rows]
+        return [(str(row["conversation_id"]), str(row["participant_id"])) for row in rows]
 
     def get_participant_cursor(
         self, conversation_id: str, participant_id: str

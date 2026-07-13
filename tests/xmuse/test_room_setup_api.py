@@ -396,4 +396,6 @@ def test_default_room_api_business_route_allowlist(tmp_path: Path) -> None:
         ("/api/chat/conversations/{conversation_id}/memory", "GET"),
         ("/api/chat/operator/memory-candidates/{candidate_id}/resolve", "POST"),
         ("/api/chat/operator/memory-runtime/rebuild", "POST"),
+        ("/api/chat/conversations/{conversation_id}/codex-agents", "GET"),
+        ("/api/chat/operator/room-participants/{participant_id}/codex-actions", "POST"),
     }

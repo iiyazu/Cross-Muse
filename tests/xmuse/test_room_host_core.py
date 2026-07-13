@@ -138,6 +138,37 @@ def test_core_normal_delivery_requires_durable_outcome(tmp_path):
     assert states[people[1].participant_id].reason == "durable_outcome_missing"
 
 
+def test_native_delivery_gate_prevents_claim_and_filters_fully_held_room(tmp_path):
+    db, _registry, cid, people, _sessions = _room(tmp_path, 2)
+    RoomKernelStore(db).post_human_activity(
+        conversation_id=cid, human_id="h", content="hello", client_request_id="held"
+    )
+    accepting = {people[0].participant_id}
+    transport = _Transport()
+    host = RoomParticipantHost(
+        db,
+        transport,
+        policy=RoomHostPolicy(participant_cooldown_s=0),
+        delivery_gate=lambda participant_id: participant_id in accepting,
+    )
+
+    assert host.list_claimable_conversation_ids() == [cid]
+    result = asyncio.run(host.pump_once(conversation_id=cid))
+    assert [item.participant.participant_id for item in transport.deliveries] == [
+        people[0].participant_id
+    ]
+    assert [(item.participant_id, item.reason) for item in result.deferrals] == [
+        (people[1].participant_id, "native_hold")
+    ]
+    accepting.clear()
+    accepting.add(people[0].participant_id)
+    assert host.list_claimable_conversation_ids() == []
+    accepting.add(people[1].participant_id)
+    assert host.list_claimable_conversation_ids() == [cid]
+    accepting.clear()
+    assert host.list_claimable_conversation_ids() == []
+
+
 def test_memory_sidecar_failure_is_attention_and_room_still_completes(tmp_path):
     db, registry, cid, people, sessions = _room(tmp_path, 1)
     RoomKernelStore(db).post_human_activity(

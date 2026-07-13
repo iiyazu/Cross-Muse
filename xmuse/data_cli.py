@@ -330,6 +330,7 @@ _JSON_COLUMNS = {
     "room_execution_operator_actions": ("result_json",),
     "room_execution_runs": ("changed_files_json", "gate_ids_json"),
     "room_execution_promotion_journal": ("file_entries_json",),
+    "room_codex_bridge_actions": ("request_json", "ack_summary_json"),
 }
 
 
