@@ -1,10 +1,10 @@
 name: xmuse CI
 
 on:
-  pull_request:
   push:
     branches: [main]
-  workflow_dispatch:
+  pull_request:
+    branches: [main]
 
 concurrency:
   group: xmuse-ci-${{ github.workflow }}-${{ github.ref }}
@@ -14,28 +14,56 @@ permissions:
   contents: read
 
 jobs:
-  backend:
+  backend-quality:
+    name: backend-quality
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v5
-      - uses: astral-sh/setup-uv@v7
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
-          python-version: "3.11"
+          enable-cache: true
+      - run: uv python install 3.11
       - run: uv sync --frozen --all-groups
       - run: uv run ruff check .
-      - run: TMPDIR=/tmp uv run pytest -q
-      - run: uv build --wheel
+      - run: uv run ruff format --check .
+      - run: uv run mypy --explicit-package-bases xmuse src/xmuse_core scripts
+      - run: uv build
+      - name: Install and smoke-test wheel entrypoints
+        run: |
+          uv pip install --python .venv/bin/python --reinstall --no-deps dist/*.whl
+          .venv/bin/xmuse-chat-api --help
+          .venv/bin/xmuse-mcp-server --help
+          .venv/bin/xmuse-room-runner --help
+          .venv/bin/xmuse-workroom --help
+          .venv/bin/xmuse-data --help
 
-  frontend:
+  backend-contracts:
+    name: backend-contracts
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          enable-cache: true
+      - run: uv python install 3.11
+      - run: uv sync --frozen --all-groups
+      - name: Full warning-strict backend suite
+        env:
+          PYTHONWARNINGS: error
+          TMPDIR: /tmp
+        run: uv run pytest -q
+
+  frontend-quality:
+    name: frontend-quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:
           node-version: "22"
@@ -45,14 +73,62 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run lint
-      - run: npm run build
+      - name: Build with an operator-token canary
         env:
           XMUSE_OPERATOR_TOKEN: XMUSE_CI_BUILD_CANARY_MUST_NOT_LEAK
-      - name: Verify operator token is absent from build output
+        run: npm run build
+      - name: Prove the operator token is absent from browser output
         run: |
           if grep -R -F -q "XMUSE_CI_BUILD_CANARY_MUST_NOT_LEAK" .next; then
             echo "operator token canary leaked into the Next build"
             exit 1
           fi
+
+  frontend-e2e:
+    name: frontend-e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
+
+  room-ci-sim:
+    name: room-ci-sim
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          enable-cache: true
+      - run: uv python install 3.11
+      - run: uv sync --frozen --all-groups
+      - name: Run the fixed 12-Room scripted chaos profile
+        run: |
+          uv run python scripts/room_soak_chaos.py ci-sim \
+            --root /tmp/xmuse-ci-sim-runtime \
+            --result /tmp/xmuse-ci-sim-result.json \
+            --no-build-frontend
+      - name: Validate the safe result contract
+        run: |
+          uv run python - <<'PY'
+          import json
+          from pathlib import Path
+          from xmuse_core.chat.room_soak_chaos import evaluate_soak_result, validate_soak_result
+
+          result = json.loads(Path("/tmp/xmuse-ci-sim-result.json").read_text())
+          assert result["schema_version"] == "room_soak_chaos_result/v1"
+          normalized = validate_soak_result(result)
+          assert normalized["status"] == "passed"
+          assert evaluate_soak_result(normalized) == (True, ())
+          PY
