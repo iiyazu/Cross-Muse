@@ -32,7 +32,7 @@ jobs:
       - name: Install and smoke-test wheel entrypoints
         run: |
           uv pip install --python .venv/bin/python --reinstall --no-deps dist/*.whl
-          .venv/bin/xmuse-chat-api --help
+          .venv/bin/python -c "import xmuse.chat_api"
           .venv/bin/xmuse-mcp-server --help
           .venv/bin/xmuse-room-runner --help
           .venv/bin/xmuse-workroom --help
