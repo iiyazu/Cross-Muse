@@ -1,5 +1,8 @@
 # xmuse
 
+[![xmuse CI](https://github.com/iiyazu/Cross-Muse/actions/workflows/xmuse-ci.yml/badge.svg)](https://github.com/iiyazu/Cross-Muse/actions/workflows/xmuse-ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 xmuse is a local runtime for natural, logically decentralized Agent group conversations.
 Persistent Agents observe the same durable Room activity and independently choose whether
 to `respond`, `handoff`, `propose`, `defer`, or `noop`. Infrastructure owns
