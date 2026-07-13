@@ -33,6 +33,20 @@ describe("RoomInspector", () => {
     expect(inspector).not.toHaveAttribute("aria-modal");
   });
 
+  it("places the optional Agent Console before operational evidence", () => {
+    const { container } = render(
+      <RoomInspector
+        {...props({
+          agentConsoleSection: <section><h3>Agent Console</h3></section>
+        })}
+      />
+    );
+    const inspector = container.querySelector(".room-inspector")!;
+    expect(within(inspector as HTMLElement).getAllByRole("heading", { level: 3 }).map(
+      (heading) => heading.textContent
+    )).toEqual(["Agent Console", "运行与恢复", "执行候选", "长期记忆", "活跃成员"]);
+  });
+
   it("traps modal focus, closes on Escape, and restores prior focus on unmount", async () => {
     const user = userEvent.setup();
     const before = document.createElement("button");

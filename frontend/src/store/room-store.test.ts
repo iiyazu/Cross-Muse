@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { RoomCodexProjection } from "@/lib/types";
+
 const apiMocks = vi.hoisted(() => ({
   cancelRoomExecutionRun: vi.fn(),
   createConversation: vi.fn(),
@@ -15,6 +17,7 @@ const apiMocks = vi.hoisted(() => ({
   fetchRoomExecutionCandidate: vi.fn(),
   fetchRoomExecutions: vi.fn(),
   fetchRoomMemory: vi.fn(),
+  fetchRoomCodexAgents: vi.fn(),
   fetchRoomProjection: vi.fn(),
   fetchRooms: vi.fn(),
   isCallerAbort: vi.fn((error: unknown) => error instanceof Error && error.name === "AbortError"),
@@ -23,6 +26,7 @@ const apiMocks = vi.hoisted(() => ({
   recoverRoomRuntime: vi.fn(),
   resolveRoomMemoryCandidate: vi.fn(),
   submitRoomObservationControl: vi.fn(),
+  submitRoomCodexAction: vi.fn(),
   updateRoomExecutionPolicy: vi.fn()
 }));
 
@@ -268,6 +272,61 @@ function memoryProjection(conversationId = "conv-1") {
   };
 }
 
+function codexProjection(
+  conversationId = "conv-1",
+  participantId = "participant-1"
+): RoomCodexProjection {
+  return {
+    schema_version: "room_codex_projection/v1" as const,
+    conversation_id: conversationId,
+    generated_at: "2026-07-13T10:00:00Z",
+    projection_only: true as const,
+    proof_boundary: "projection_not_codex_app_server_or_room_authority" as const,
+    participants: [{
+      participant: {
+        participant_id: participantId,
+        role: "architect",
+        display_name: "Architect",
+        status: "active" as const
+      },
+      native_snapshot: {
+        source: "codex_app_server_projection_cache",
+        observed_at: "2026-07-13T10:00:00Z",
+        available: true,
+        value: null
+      },
+      capabilities: {
+        source: "codex_app_server_projection_cache",
+        observed_at: "2026-07-13T10:00:00Z",
+        available: true,
+        value: null,
+        actions: []
+      },
+      room_bridge: {
+        source: "chat.db:room_codex_bridge",
+        observed_at: "2026-07-13T10:00:00Z",
+        hold: null,
+        queue: { unresolved_count: 0, active_attempt_count: 0, root_blocking: false },
+        actions: []
+      },
+      history_partial: false,
+      omitted_event_count: 0
+    }],
+    native_events: {
+      source: "codex_app_server_projection_cache",
+      projection_available: true,
+      reason_code: null,
+      event_seq_domain: "room_codex_projection_cache",
+      items: [],
+      latest_event_seq: 0,
+      has_older: false,
+      has_newer: false,
+      next_before_event_seq: null,
+      next_after_event_seq: null
+    }
+  };
+}
+
 function projection(sequence = 0, content = "") {
   return {
     schema_version: "room_chat_projection/v3",
@@ -325,6 +384,8 @@ beforeEach(() => {
     operationsConsecutiveFailures: 0,
     executionsByRoom: {},
     memoryByRoom: {},
+    codexByRoom: {},
+    codexPreferenceRevision: 0,
     executionActionPending: null,
     executionActionError: null,
     memoryActionPending: null,
@@ -344,6 +405,7 @@ beforeEach(() => {
   apiMocks.fetchRoomExecutions.mockResolvedValue(executionList());
   apiMocks.fetchRoomExecutionCandidate.mockResolvedValue(executionDetail());
   apiMocks.fetchRoomMemory.mockResolvedValue(memoryProjection());
+  apiMocks.fetchRoomCodexAgents.mockResolvedValue(codexProjection());
 });
 
 describe("Room store", () => {
@@ -1119,5 +1181,183 @@ describe("Room store", () => {
       "older",
       "newest"
     ]);
+  });
+
+  it("single-flights Codex projection reads and selects the first participant", async () => {
+    let resolve!: (value: ReturnType<typeof codexProjection>) => void;
+    apiMocks.fetchRoomCodexAgents.mockImplementationOnce(
+      () => new Promise((done) => { resolve = done; })
+    );
+    const first = useRoomStore.getState().refreshCodexAgents("conv-1");
+    const second = useRoomStore.getState().refreshCodexAgents("conv-1");
+    expect(apiMocks.fetchRoomCodexAgents).toHaveBeenCalledTimes(1);
+    resolve(codexProjection());
+    await Promise.all([first, second]);
+    expect(useRoomStore.getState().codexByRoom["conv-1"]).toMatchObject({
+      selectedParticipantId: "participant-1",
+      loading: false,
+      consecutiveFailures: 0
+    });
+  });
+
+  it("aborts the previous Room Codex read during a rapid Room switch", async () => {
+    let resolveA!: (value: ReturnType<typeof codexProjection>) => void;
+    apiMocks.fetchRoomCodexAgents.mockImplementationOnce(
+      () => new Promise((done) => { resolveA = done; })
+    );
+    useRoomStore.setState({ selectedRoomId: "room-a" });
+    const readA = useRoomStore.getState().refreshCodexAgents("room-a");
+    await Promise.resolve();
+    await useRoomStore.getState().selectRoom("room-b");
+    useRoomStore.getState().stopSync();
+    resolveA(codexProjection("room-a"));
+    await readA;
+    expect(useRoomStore.getState().selectedRoomId).toBe("room-b");
+    expect(useRoomStore.getState().codexByRoom["room-a"]?.projection).toBeNull();
+  });
+
+  it("keeps a trusted Codex projection when a future projection is rejected", async () => {
+    await useRoomStore.getState().refreshCodexAgents("conv-1");
+    apiMocks.fetchRoomCodexAgents.mockRejectedValueOnce(new Error("unsupported future schema"));
+    await useRoomStore.getState().refreshCodexAgents("conv-1");
+    expect(useRoomStore.getState().codexByRoom["conv-1"].projection?.schema_version)
+      .toBe("room_codex_projection/v1");
+    expect(useRoomStore.getState().codexByRoom["conv-1"].error?.message)
+      .toBe("unsupported future schema");
+  });
+
+  it("deduplicates a pending Codex action and refreshes after a 409", async () => {
+    await useRoomStore.getState().refreshCodexAgents("conv-1");
+    useRoomStore.setState({ selectedRoomId: "conv-1" });
+    const descriptor = {
+      capability_id: "goal_get" as const,
+      available: true,
+      disabled_reason: null,
+      method: "POST" as const,
+      href: "/api/room-participants/participant-1/codex-actions",
+      expected_session_guard: `sha256:${"a".repeat(64)}`,
+      expected_goal_guard: null,
+      expected_settings_guard: null,
+      expected_turn_guard: null,
+      confirmation_required: false
+    };
+    let reject!: (reason: unknown) => void;
+    apiMocks.submitRoomCodexAction.mockImplementationOnce(
+      () => new Promise((_resolve, fail) => { reject = fail; })
+    );
+    const first = useRoomStore.getState().submitCodexAction(
+      "participant-1", "goal_get", {}, descriptor
+    );
+    const duplicate = await useRoomStore.getState().submitCodexAction(
+      "participant-1", "goal_get", {}, descriptor
+    );
+    expect(duplicate).toBeNull();
+    expect(apiMocks.submitRoomCodexAction).toHaveBeenCalledTimes(1);
+    const readsBeforeConflict = apiMocks.fetchRoomCodexAgents.mock.calls.length;
+    reject({ status: 409, message: "guard changed" });
+    expect(await first).toBeNull();
+    expect(apiMocks.fetchRoomCodexAgents.mock.calls.length).toBe(readsBeforeConflict + 1);
+    expect(useRoomStore.getState().codexByRoom["conv-1"].actionPending).toEqual({});
+  });
+
+  it("retains the Codex client action id across an uncertain 503 retry", async () => {
+    await useRoomStore.getState().refreshCodexAgents("conv-1");
+    useRoomStore.setState({ selectedRoomId: "conv-1" });
+    const descriptor = {
+      capability_id: "goal_get" as const,
+      available: true,
+      disabled_reason: null,
+      method: "POST" as const,
+      href: "/api/chat/operator/room-participants/participant-1/codex-actions",
+      expected_session_guard: `sha256:${"b".repeat(64)}`,
+      expected_goal_guard: null,
+      expected_settings_guard: null,
+      expected_turn_guard: null,
+      confirmation_required: false
+    };
+    apiMocks.submitRoomCodexAction
+      .mockRejectedValueOnce({ status: 503, message: "upstream uncertain" })
+      .mockResolvedValueOnce({ status: "applied" });
+
+    await useRoomStore.getState().submitCodexAction("participant-1", "goal_get", {}, descriptor);
+    await useRoomStore.getState().submitCodexAction("participant-1", "goal_get", {}, descriptor);
+
+    const firstOptions = apiMocks.submitRoomCodexAction.mock.calls[0][4];
+    const secondOptions = apiMocks.submitRoomCodexAction.mock.calls[1][4];
+    expect(firstOptions.clientActionId).toBe(secondOptions.clientActionId);
+    expect(apiMocks.fetchRoomCodexAgents.mock.calls.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("keeps participant selection scoped to each Room", async () => {
+    useRoomStore.setState({
+      codexByRoom: {
+        "room-a": {
+          projection: codexProjection("room-a", "agent-a"),
+          selectedParticipantId: "agent-a",
+          loading: false,
+          requestGeneration: 0,
+          consecutiveFailures: 0,
+          lastSyncedAt: 1,
+          error: null,
+          actionPending: {},
+          actionErrors: {}
+        },
+        "room-b": {
+          projection: codexProjection("room-b", "agent-b"),
+          selectedParticipantId: "agent-b",
+          loading: false,
+          requestGeneration: 0,
+          consecutiveFailures: 0,
+          lastSyncedAt: 1,
+          error: null,
+          actionPending: {},
+          actionErrors: {}
+        }
+      }
+    });
+    useRoomStore.getState().selectCodexParticipant("agent-a-2", "room-a");
+    expect(useRoomStore.getState().codexByRoom["room-a"].selectedParticipantId).toBe("agent-a-2");
+    expect(useRoomStore.getState().codexByRoom["room-b"].selectedParticipantId).toBe("agent-b");
+  });
+
+  it("publishes a local preference revision so controlled Console selects rerender", () => {
+    const revision = useRoomStore.getState().codexPreferenceRevision;
+    useRoomStore.getState().setCodexConsolePreference("participant-preference", "plan");
+    expect(useRoomStore.getState().getCodexConsolePreference("participant-preference")).toBe("plan");
+    expect(useRoomStore.getState().codexPreferenceRevision).toBe(revision + 1);
+  });
+
+  it("polls visible Codex state at two seconds and refreshes immediately on focus", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    useRoomStore.setState({
+      selectedRoomId: "conv-1",
+      inspectorOpen: true,
+      codexByRoom: {
+        "conv-1": {
+          projection: codexProjection(),
+          selectedParticipantId: "participant-1",
+          loading: false,
+          requestGeneration: 0,
+          consecutiveFailures: 0,
+          lastSyncedAt: 1,
+          error: null,
+          actionPending: {},
+          actionErrors: {}
+        }
+      }
+    });
+    useRoomStore.getState().startCodexSync();
+    expect(apiMocks.fetchRoomCodexAgents).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1_999);
+    expect(apiMocks.fetchRoomCodexAgents).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(apiMocks.fetchRoomCodexAgents).toHaveBeenCalledTimes(1);
+    window.dispatchEvent(new Event("focus"));
+    await Promise.resolve();
+    expect(apiMocks.fetchRoomCodexAgents).toHaveBeenCalledTimes(2);
+    useRoomStore.getState().stopSync();
+    vi.restoreAllMocks();
+    vi.useRealTimers();
   });
 });

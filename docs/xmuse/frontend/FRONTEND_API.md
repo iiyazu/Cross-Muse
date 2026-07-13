@@ -204,6 +204,28 @@ an allowlist. Pending phases survive browser reloads; `409` refreshes Operations
 memory instead of claiming success. Process identity, generation, API key, endpoint, cache
 path, Room content, session bindings, and MemoryOS trace never enter this projection.
 
+## Per-participant Codex Agent Console
+
+`GET /api/chat/conversations/{id}/codex-agents` returns
+`room_codex_projection/v1`. It keeps Codex native snapshot/events separate from the durable
+Room Bridge hold, queue, and action ledger. The projection is bounded and non-authoritative;
+native identifiers, raw reasoning, prompts, tool arguments/results, credentials, absolute
+paths, and provider output are excluded.
+
+Controls are rendered only from `room_codex_native_capabilities/v1` and the participant's
+guarded action descriptors. The browser posts an allowlisted capability, its closed safe
+request, opaque expected guards, confirmation bit, and idempotent action ID through the fixed
+`/api/room-participants/{id}/codex-actions` route. It cannot submit native method names or raw
+RPC parameters. `/goal`, `/model`, `/effort`, `/plan`, `/default`, `/steer`, `/interrupt`,
+`/compact`, `/review`, and `/status` are local UI aliases for the same descriptors; the Room
+composer does not parse them. Parameterless Plan/Default choices are versioned local UX
+preferences and do not change `chat.db` or Codex thread settings.
+
+The Console refreshes single-flight with room/generation guards, aborts stale room requests,
+uses a roughly two-second visible and fifteen-second hidden cadence with backoff and jitter,
+and refreshes on focus. Read or action errors preserve Room projections. Conflict or runtime
+unavailability triggers a fresh projection instead of optimistic success.
+
 ## Browser state and authority
 
 The URL is `/rooms/{conversation_id}`. The store keeps at most eight recent Room projections

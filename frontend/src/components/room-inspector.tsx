@@ -19,6 +19,7 @@ export type RoomInspectorProps = {
   target: RoomInspectorTarget | null;
   targetReady: boolean;
   targetVersion: string | number;
+  agentConsoleSection?: ReactNode;
   operationsSection: ReactNode;
   executionSection: ReactNode;
   memorySection: ReactNode;
@@ -48,6 +49,7 @@ export function RoomInspector({
   target,
   targetReady,
   targetVersion,
+  agentConsoleSection,
   operationsSection,
   executionSection,
   memorySection,
@@ -151,6 +153,7 @@ export function RoomInspector({
           type="button"
         >×</button>
       </header>
+      {agentConsoleSection}
       {operationsSection}
       {executionSection}
       {memorySection}
