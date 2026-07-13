@@ -111,7 +111,13 @@ async def _handle_rpc(request: Request, root: Path) -> Response:
             result = {"tools": room_tool_schemas()}
         elif method == "tools/call":
             _authorize(request)
-            result = mcp_responses.content_json(_submit_outcome(root, _validate_tool_call(params)))
+            try:
+                arguments = _validate_tool_call(params)
+            except (TypeError, ValueError) as exc:
+                result = mcp_responses.structured_error("invalid_arguments", str(exc))
+            else:
+                outcome = _submit_outcome(root, arguments)
+                result = mcp_responses.content_json(outcome, is_error="error" in outcome)
         else:
             return JSONResponse(
                 mcp_responses.json_rpc_error(

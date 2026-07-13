@@ -669,7 +669,15 @@ async def test_room_observation_turn_is_diagnostic_without_legacy_side_effects(
         "chat_room_submit_outcome",
         "conversation_id, participant_id, god_session_id, observation_id, "
         "lease_token, and client_request_id",
-        "exact same arguments and client_request_id",
+        "no structured tool result",
+        "replay the exact full arguments with the same client_request_id",
+        "structured validation error",
+        "correct only the rejected non-authority argument",
+        "never repeat an argument already proven invalid",
+        "durable_outcome.reply_to_activity_ids",
+        "immutable-authority error",
+        "do not invent replacement authority data or loop",
+        "Never call the outcome tool again after one successful durable commit",
         "diagnostic only and never room truth",
         "chat_post_message, chat_mention, chat_emit_proposal",
     ):
@@ -726,7 +734,15 @@ def test_room_observation_instructions_allow_independent_choice_without_role_ord
         "chat_room_submit_outcome",
         "conversation_id, participant_id, god_session_id, observation_id, "
         "lease_token, and client_request_id",
-        "exact same arguments and client_request_id",
+        "no structured tool result",
+        "replay the exact full arguments with the same client_request_id",
+        "structured validation error",
+        "correct only the rejected non-authority argument",
+        "never repeat an argument already proven invalid",
+        "durable_outcome.reply_to_activity_ids",
+        "immutable-authority error",
+        "do not invent replacement authority data or loop",
+        "Never call the outcome tool again after one successful durable commit",
         "chat_post_message, chat_mention, chat_emit_proposal, collaboration, review, critic",
         "diagnostic only and never room truth",
     ):

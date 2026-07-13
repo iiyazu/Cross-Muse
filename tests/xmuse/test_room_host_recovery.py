@@ -311,7 +311,8 @@ def test_attempt_cap_and_cooldown_are_stable(tmp_path):
         _host(db, _Return(), clock, max_attempts_per_observation=2).pump_once(conversation_id=cid)
     )
     assert not final.deliveries
-    assert final.deferrals[0].reason == "attempts_exhausted" and not final.deferrals[0].retryable
+    assert not final.deferrals
+    assert RoomKernelStore(db).list_observations(cid)[0]["control_state"] == "exhausted"
     capped = _host(
         db,
         _Return(),
@@ -347,6 +348,56 @@ def test_attempt_cap_and_cooldown_are_stable(tmp_path):
     assert asyncio.run(
         _host(db, _Return(), NOW + timedelta(seconds=2)).pump_once(conversation_id=cid)
     ).deliveries
+
+
+def test_exhausted_infrastructure_frontier_does_not_starve_later_human_root(tmp_path):
+    db, _registry, cid, people, _sessions = _room(tmp_path)
+    participant_id = people[0].participant_id
+    stamp = NOW.isoformat().replace("+00:00", "Z")
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            """insert into room_activities
+               (activity_id, conversation_id, seq, activity_type, actor_kind,
+                actor_identity, actor_participant_id, causation_id, correlation_id,
+                visibility, audience_json, payload_json, materialized_message_id,
+                causal_depth, materialized_proposal_id, delivery_mode, created_at)
+               values ('old-infrastructure', ?, 1, 'execution.failed', 'infrastructure',
+                       'infrastructure:execution-harness', null, 'old-cause',
+                       'old-correlation', 'room', '{}', '{}', null, 0, null,
+                       'active', ?)""",
+            (cid, stamp),
+        )
+        conn.execute(
+            """insert into room_observations
+               (observation_id, conversation_id, activity_id, participant_id,
+                priority, delivery_mode, status, attempt_count, control_state,
+                created_at, updated_at)
+               values ('old-exhausted', ?, 'old-infrastructure', ?, 0, 'active',
+                       'pending', 3, 'exhausted', ?, ?)""",
+            (cid, participant_id, stamp, stamp),
+        )
+        conn.execute(
+            """insert or ignore into room_participant_cursors
+               (conversation_id, participant_id, last_acknowledged_seq, updated_at)
+               values (?, ?, 0, ?)""",
+            (cid, participant_id, stamp),
+        )
+
+    posted = _post(db, cid, "later-human")
+    transport = _Return()
+    result = asyncio.run(_host(db, transport).pump_once(conversation_id=cid))
+
+    assert len(result.deliveries) == 1
+    assert len(transport.deliveries) == 1
+    delivered = transport.deliveries[0]
+    assert delivered.source_activity["activity_id"] == posted["activity"]["activity_id"]
+    assert delivered.source_activity["actor_kind"] == "human"
+    assert delivered.observation["attempt_count"] == 1
+    observations = {
+        item["observation_id"]: item for item in RoomKernelStore(db).list_observations(cid)
+    }
+    assert observations["old-exhausted"]["control_state"] == "exhausted"
+    assert observations[posted["observations"][0]["observation_id"]]["status"] == "claimed"
 
 
 def test_claim_race_defers_without_transport(tmp_path, monkeypatch):

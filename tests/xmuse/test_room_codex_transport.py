@@ -625,6 +625,12 @@ def test_batch_context_preserves_root_ancestry_members_and_reply_contract(
         delivery.source_activity["activity_id"],
         "activity-peer-two",
     ]
+    assert (
+        room["human_root"]["activity_id"] not in context["durable_outcome"]["reply_to_activity_ids"]
+    )
+    assert "xmuse_context.durable_outcome.reply_to_activity_ids" in str(sent["prompt"])
+    assert "reply_to_activity_id is optional" in str(sent["prompt"])
+    assert "including the Human root when absent from that list" in str(sent["prompt"])
     assert "context-only" in str(sent["prompt"])
 
 
